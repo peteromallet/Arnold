@@ -58,7 +58,7 @@ cd ~/Documents
 git clone https://github.com/peteromallet/arnold.git
 cd arnold
 python -m pip install -e .
-python -m megaplan setup
+python -m arnold.pipelines.megaplan setup
 
 The default `partnered` profile pairs a premium model (Claude or Codex) with cheap DeepSeek. Ask me for whichever I have — an Anthropic/Claude or OpenAI/Codex login — plus a DeepSeek API key (or Fireworks key), and wire them up.
 
@@ -72,10 +72,10 @@ cd ~/Documents
 git clone https://github.com/peteromallet/arnold.git
 cd arnold
 python -m pip install -e .
-python -m megaplan setup
+python -m arnold.pipelines.megaplan setup
 ```
 
-`megaplan setup` detects your installed agents and walks you through credentials. The old `[agent]` extra remains as a no-op compatibility alias on current releases, but it is no longer required. You need two things:
+The setup command detects your installed agents and walks you through credentials. The old `[agent]` extra remains as a no-op compatibility alias on current releases, but it is no longer required. You need two things:
 
 - **A premium model** — **Claude** (the default; your Claude Code login or `ANTHROPIC_API_KEY`) **or Codex** (your Codex login or `OPENAI_API_KEY`, selected with `--vendor codex`). The public `claude` agent route always uses the Shannon-backed interactive tmux worker — it preserves OAuth subscription billing and never falls back to a headless `claude -p` subprocess.
 - **DeepSeek access** for the cheap phases — a **`DEEPSEEK_API_KEY`** (the default route) or a **Fireworks** key (`FIREWORKS_API_KEY`, via `--deepseek-provider fireworks`).
@@ -83,10 +83,10 @@ python -m megaplan setup
 Direct-provider keys live in `~/.hermes/.env`. Then point megaplan at an idea:
 
 ```bash
-megaplan init --project-dir . "Fix the authentication bug in login.py"
+python -m arnold.pipelines.megaplan init --project-dir . "Fix the authentication bug in login.py"
 ```
 
-In subagent mode (the default for Claude Code and Codex) the agent drives the phases and returns at breakpoints. To run them by hand: `megaplan plan|critique|gate|finalize|execute --plan <name>`.
+In subagent mode (the default for Claude Code and Codex) the agent drives the phases and returns at breakpoints. To run them by hand, reuse the same verified launcher: `python -m arnold.pipelines.megaplan plan|critique|gate|finalize|execute --plan <name>`.
 
 ## Development
 
@@ -99,15 +99,15 @@ python -m pytest tests/characterization/test_import_surface.py tests/test_pipeli
 ## Some other features
 
 - **Epics** — chain many sprints into one long-running effort. Megaplan runs them in sequence with carried context, so it can deliver the equivalent of months of work reliably instead of one sprint at a time.
-- **Different models per phase** — pick a named profile (`megaplan init --profile <name>`) or override one phase (`--phase-model execute=claude`). Inspect with `megaplan config profiles list`; define your own in `.megaplan/profiles.toml`. Built-ins span all-Claude, all-Codex, all-DeepSeek, and all-open (Kimi/GLM via OpenRouter).
-- **Cloud runs** — `megaplan cloud` runs a plan (or a whole chain) on a remote Railway box with a persistent workspace volume, so it outlives your terminal. Ask your agent to `megaplan cloud bootstrap <idea>`. See [docs/cloud.md](docs/cloud.md).
-- **Bake-offs** — `megaplan bakeoff` runs the same idea through multiple profiles concurrently (one git worktree each), compares the results, and merges only the human-picked winner — the way to find the cheapest model mix that still passes review.
-- **Metaplan mode** — produce a design doc / RFC / spec instead of a code diff: `megaplan init --mode metaplan --output docs/foo.md "..."`.
+- **Different models per phase** — pick a named profile (`python -m arnold.pipelines.megaplan init --profile <name>`) or override one phase (`--phase-model execute=claude`). Inspect with `python -m arnold.pipelines.megaplan config profiles list`; define your own in `.megaplan/profiles.toml`. Built-ins span all-Claude, all-Codex, all-DeepSeek, and all-open (Kimi/GLM via OpenRouter).
+- **Cloud runs** — `python -m arnold.pipelines.megaplan cloud` runs a plan (or a whole chain) on a remote Railway box with a persistent workspace volume, so it outlives your terminal. Ask your agent to `python -m arnold.pipelines.megaplan cloud bootstrap <idea>`. See [docs/cloud.md](docs/cloud.md).
+- **Bake-offs** — `python -m arnold.pipelines.megaplan bakeoff` runs the same idea through multiple profiles concurrently (one git worktree each), compares the results, and merges only the human-picked winner — the way to find the cheapest model mix that still passes review.
+- **Metaplan mode** — produce a design doc / RFC / spec instead of a code diff: `python -m arnold.pipelines.megaplan init --mode metaplan --output docs/foo.md "..."`.
 - **Robustness levels** — `--robustness light|standard|robust|superrobust` dials critique depth and parallelism, from a single critique pass up to parallel critique + parallel review.
-- **Database mode** — keep state in Supabase Postgres instead of `.megaplan/` for shared state across machines and cloud runs (`pip install 'megaplan-harness[db]'`, then set `MEGAPLAN_ACTOR_ID`).
-- **Observability** — `megaplan status --plan <name>` shows the active step, cost, execute progress, and next-step guidance.
-- **Configuration** — `megaplan config show | set <key> <value> | reset` tunes timeouts, critique concurrency, and per-phase agents. See [docs/configuration.md](docs/configuration.md) for the full config and environment map.
-- **Adaptive critique defense** — `megaplan doctor --adaptive-critique` probes the adaptive critique wiring; `[execution] strict_adaptive_critique = true` refuses silent fallback to static lenses on production runs. See [docs/critique.md](docs/critique.md).
+- **Database mode** — keep state in Supabase Postgres instead of `.megaplan/` for shared state across machines and cloud runs (`pip install 'arnold[db]'`, then set `MEGAPLAN_ACTOR_ID`).
+- **Observability** — `python -m arnold.pipelines.megaplan status --plan <name>` shows the active step, cost, execute progress, and next-step guidance.
+- **Configuration** — `python -m arnold.pipelines.megaplan config show | set <key> <value> | reset` tunes timeouts, critique concurrency, and per-phase agents. See [docs/configuration.md](docs/configuration.md) for the full config and environment map.
+- **Adaptive critique defense** — `python -m arnold.pipelines.megaplan doctor --adaptive-critique` probes the adaptive critique wiring; `[execution] strict_adaptive_critique = true` refuses silent fallback to static lenses on production runs. See [docs/critique.md](docs/critique.md).
 
 ## Code health
 

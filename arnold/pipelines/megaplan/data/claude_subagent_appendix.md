@@ -3,7 +3,7 @@
 This appendix is Claude-specific. It adds a subagent path; subagent mode is the default for Claude.
 
 ### Activation
-- Default to subagent unless an inline override is explicitly set for this run or `megaplan config show` reports `"orchestration": {"mode": "inline"}`.
+- Default to subagent unless an inline override is explicitly set for this run or `<launcher> config show` reports `"orchestration": {"mode": "inline"}`.
 - Per-run override wins over config. If the run explicitly says `inline`, stay inline even when config prefers `subagent`.
 - Use subagent mode for long multi-phase runs where keeping the outer conversation clean matters, especially auto-approve runs.
 - Prefer inline mode for small edits, quick clarifications, or any run where the user wants to watch each phase in the main thread.
@@ -15,14 +15,14 @@ When subagent mode is active, the outer skill becomes a launcher plus breakpoint
 - `run_in_background: true` when `{AUTO_APPROVE}` is true; otherwise foreground is fine
 - Expand `{AUTO_APPROVE_FLAG}` to an empty string when `raw_config.execution.auto_approve` is explicitly set; otherwise expand it to `--auto-approve` for auto-approve runs and an empty string for review runs.
 - Expand `{ROBUSTNESS_FLAG}` to an empty string when `raw_config.execution.robustness` is explicitly set; otherwise expand it to `--robustness {ROBUSTNESS}`.
-- For doc-mode runs, also append `--mode doc --output <relative/path>` to the `megaplan init` call in the subagent's Startup step. Everything else in the template applies unchanged; the workflow phases and breakpoints are identical in doc mode.
-- After editing this source file, rerun `megaplan setup --force` so installed `SKILL.md` files pick up the refreshed appendix.
+- For doc-mode runs, also append `--mode doc --output <relative/path>` to the `<launcher> init` call in the subagent's Startup step. Everything else in the template applies unchanged; the workflow phases and breakpoints are identical in doc mode.
+- After editing this source file, rerun `<launcher> setup --force` so installed `SKILL.md` files pick up the refreshed appendix.
 
 ### Outer Skill Handling
 - Decide inline vs subagent before starting the workflow.
 - In subagent mode, launch the agent, wait for either `BREAKPOINT:` or `COMPLETE:`, and keep the main thread thin.
-- Support inject-after by letting the background subagent continue while the user runs `megaplan override add-note`; the next phase boundary picks it up from `megaplan status`.
-- Support kill-and-inject by stopping the running subagent, appending a note with `megaplan override add-note`, and relaunching a new subagent on the same plan.
+- Support inject-after by letting the background subagent continue while the user runs `<launcher> override add-note`; the next phase boundary picks it up from `<launcher> status`.
+- Support kill-and-inject by stopping the running subagent, appending a note with `<launcher> override add-note`, and relaunching a new subagent on the same plan.
 - When a breakpoint arrives, relay the summary to the user, collect the answer, and resume the same agent with `SendMessage` when possible.
 - Parse only the explicit breakpoint header, not incidental text, when deciding whether the agent stopped intentionally.
 - When completion arrives, report the final result back to the user without replaying every internal phase.
@@ -41,7 +41,7 @@ Your job is to drive the megaplan workflow through the CLI until the run finishe
 
 Always follow these priorities, in order:
 1. The latest user direction relayed through notes or resume messages.
-2. The live CLI state from `megaplan status --plan <name>`.
+2. The live CLI state from `<launcher> status --plan <name>`.
 3. The workflow and breakpoint rules in this template.
 4. Your own memory of earlier turns.
 
@@ -60,12 +60,13 @@ Never do these things:
 
 ## 2. Startup
 Start the run like this:
-1. Use empty-string expansion for `{AUTO_APPROVE_FLAG}` and `{ROBUSTNESS_FLAG}` whenever the corresponding `raw_config.execution` key is explicitly set.
-2. Run `megaplan init --project-dir "{PROJECT_DIR}" {AUTO_APPROVE_FLAG} {ROBUSTNESS_FLAG} "{IDEA}"`.
-3. Capture the returned plan name.
-4. Output `PLAN_NAME: <name>` on its own line immediately after init and before any `BREAKPOINT:` or `COMPLETE:`.
-5. Run `megaplan status --plan <name>`.
-6. From then on, use that plan name for every command.
+1. Resolve and verify a working `<launcher>` with a harmless config call. Prefer `python -m arnold.pipelines.megaplan config show`; do not use the removed `megaplan` module or console entrypoint.
+2. Use empty-string expansion for `{AUTO_APPROVE_FLAG}` and `{ROBUSTNESS_FLAG}` whenever the corresponding `raw_config.execution` key is explicitly set.
+3. Run `<launcher> init --project-dir "{PROJECT_DIR}" {AUTO_APPROVE_FLAG} {ROBUSTNESS_FLAG} "{IDEA}"`.
+4. Capture the returned plan name.
+5. Output `PLAN_NAME: <name>` on its own line immediately after init and before any `BREAKPOINT:` or `COMPLETE:`.
+6. Run `<launcher> status --plan <name>`.
+7. From then on, use that plan name and the same `<launcher>` for every command.
 
 At startup and after every later resume:
 - Read `state`, `next_step`, and `valid_next`.
@@ -110,10 +111,10 @@ Extreme robustness (legacy name: superrobust):
 Gate decision tree for full, thorough, and extreme:
 - Condition 1: `gate_unset`
   Trigger: state is `critiqued` and `valid_next` includes `gate`.
-  Action: run `megaplan gate --plan <name>`.
+  Action: run `<launcher> gate --plan <name>`.
 - Condition 2: `gate_iterate`
   Trigger: the latest gate recommendation is `ITERATE`, so `valid_next` includes `revise` but not `override force-proceed`.
-  Action: run `megaplan revise --plan <name>`, then continue back through `critique` and `gate`.
+  Action: run `<launcher> revise --plan <name>`, then continue back through `critique` and `gate`.
 - Condition 3: `gate_escalate`
   Trigger: the latest gate recommendation is `ESCALATE`, so `valid_next` offers `override add-note`, `override force-proceed`, or `override abort`.
   Action: stop with `BREAKPOINT: GATE_ESCALATE`.
@@ -122,7 +123,7 @@ Gate decision tree for full, thorough, and extreme:
   Action: do not finalize yet. Use `orchestrator_guidance` plus `preflight_results` to fix the blocking checks through `revise`. On iteration 1, the guidance text may stay generic, so inspect `preflight_results` yourself before revising. If the blocker cannot be resolved safely without a user decision, stop with `BREAKPOINT: GATE_BLOCKED`.
 - Condition 5: `gate_proceed`
   Trigger: the latest gate recommendation is `PROCEED` and preflight passed, so state becomes `gated`.
-  Action: run `megaplan finalize --plan <name>`.
+  Action: run `<launcher> finalize --plan <name>`.
 
 Review routing for full, thorough, and extreme:
 - If `review` succeeds, the run is done.
@@ -132,7 +133,7 @@ Review routing for full, thorough, and extreme:
 
 ## 4. After Every Phase
 After every phase command, immediately run:
-`megaplan status --plan <name>`
+`<launcher> status --plan <name>`
 
 Then do all of the following before choosing the next command:
 - Re-read `state`, `next_step`, and `valid_next`.
@@ -143,7 +144,7 @@ Then do all of the following before choosing the next command:
   `Plan passed gate and preflight. Proceed to finalize.`
   `Gate says PROCEED but preflight blocked. Fix: <checks>.`
   `Gate escalated. Ask the user: force-proceed, add-note, or abort.`
-  `Score plateaued with recurring critiques the loop can't fix. Consider force-proceeding: \`megaplan override force-proceed --plan <name>\``
+  `Score plateaued with recurring critiques the loop can't fix. Consider force-proceeding: \`<launcher> override force-proceed --plan <name>\``
   `Score improving (<previous> -> <current>). Continue to revise.`
   `Score worsening (<previous> -> <current>). Investigate; the loop may be diverging.`
   `Gate recommends another iteration. Revise the plan.`
@@ -193,13 +194,13 @@ Review safeguards:
 
 Notes and interruption safeguards:
 - If the outer skill kills and relaunches you, start fresh with no reliable memory from the prior run.
-- After any note injection or relaunch, run `megaplan status --plan <name>` immediately, read the full `notes` array, and treat all notes as context.
+- After any note injection or relaunch, run `<launcher> status --plan <name>` immediately, read the full `notes` array, and treat all notes as context.
 - Treat the most recent note as the relaunch explanation, then resume from `next_step`; the CLI state machine is the source of truth.
 
 ## 7. Resume Protocol
 When the outer conversation resumes you with `SendMessage`, or when a new subagent is launched on an existing plan:
 1. Re-read the message carefully.
-2. Run `megaplan status --plan <name>`.
+2. Run `<launcher> status --plan <name>`.
 3. Read the full `notes` array.
 4. Resume from the current CLI state and `next_step`, not from memory.
 
@@ -210,22 +211,22 @@ Resume rules:
 - After resuming, continue autonomously until the next defined breakpoint or completion.
 
 ## 7A. Note Injection from Outer Skill
-- Use the stored `PLAN_NAME` for note and status calls. If it was not captured, run `megaplan list` and fall back to the most recent plan.
+- Use the stored `PLAN_NAME` for note and status calls. If it was not captured, run `<launcher> list` and fall back to the most recent plan.
 - Classify the user message: "add context for next phase" -> Option A, "change direction NOW" -> Option B, "just a question" -> answer without touching the run. Default to Option A unless the message clearly demands interruption.
-- Option A (inject-at-boundary): run `megaplan override add-note --plan <name> --note "<note>"`, confirm to the user, and do not `TaskStop` or `SendMessage`.
-- Option B (kill+relaunch): `TaskStop` the orchestrator, run `megaplan override add-note --plan <name> --note "<note>"`, relaunch a new orchestrator with prompt `Resume plan <name>. Run megaplan status to get current state, read all notes, and continue from where it left off.`, then confirm to the user.
+- Option A (inject-at-boundary): run `<launcher> override add-note --plan <name> --note "<note>"`, confirm to the user, and do not `TaskStop` or `SendMessage`.
+- Option B (kill+relaunch): `TaskStop` the orchestrator, run `<launcher> override add-note --plan <name> --note "<note>"`, relaunch a new orchestrator with prompt `Resume plan <name>. Run <launcher> status to get current state, read all notes, and continue from where it left off.`, then confirm to the user.
 - Latency: Option A can take up to one phase boundary; if that is not acceptable, the user should ask for Option B.
 
 ## 8. Execution Details
 Finalize and execute:
-- After `gated`, run `megaplan finalize --plan <name>`.
-- In auto-approve mode, run `megaplan execute --plan <name> --confirm-destructive`.
-- In review mode, stop with `BREAKPOINT: EXECUTE_APPROVAL`, then after approval run `megaplan execute --plan <name> --confirm-destructive --user-approved`.
+- After `gated`, run `<launcher> finalize --plan <name>`.
+- In auto-approve mode, run `<launcher> execute --plan <name> --confirm-destructive`.
+- In review mode, stop with `BREAKPOINT: EXECUTE_APPROVAL`, then after approval run `<launcher> execute --plan <name> --confirm-destructive --user-approved`.
 
 Per-batch execution:
 - If the execution briefing or CLI response indicates per-batch execution, continue batch by batch.
 - Batch numbering is global and 1-indexed.
-- Use `megaplan progress --plan <name>` between batch executions.
+- Use `<launcher> progress --plan <name>` between batch executions.
 - Re-run the same batch number after a timeout if needed; the harness will reconcile previously completed work.
 
 Execution loop end conditions:
@@ -234,18 +235,18 @@ Execution loop end conditions:
 
 ## 9. Overrides & Plan Editing
 Override rules:
-- `megaplan override add-note` is safe from any active state when you need to record new user direction without changing state.
-- `megaplan override force-proceed` from `critiqued` moves the run into `gated`. Use it only when the user clearly wants to override the gate.
-- `megaplan override force-proceed` cannot bypass a missing project directory or missing success criteria.
-- `megaplan override force-proceed` from `executed` moves the run to `done`. Use that only when the user explicitly accepts unresolved review issues.
-- `megaplan override abort` ends the run. Use it only when the user clearly wants to stop.
-- `megaplan override replan` is available from `critiqued`, `gated`, or `finalized`. Use it when the orchestrator itself needs to edit the plan directly instead of asking the revise worker to do it.
+- `<launcher> override add-note` is safe from any active state when you need to record new user direction without changing state.
+- `<launcher> override force-proceed` from `critiqued` moves the run into `gated`. Use it only when the user clearly wants to override the gate.
+- `<launcher> override force-proceed` cannot bypass a missing project directory or missing success criteria.
+- `<launcher> override force-proceed` from `executed` moves the run to `done`. Use that only when the user explicitly accepts unresolved review issues.
+- `<launcher> override abort` ends the run. Use it only when the user clearly wants to stop.
+- `<launcher> override replan` is available from `critiqued`, `gated`, or `finalized`. Use it when the orchestrator itself needs to edit the plan directly instead of asking the revise worker to do it.
 
 Replan behavior:
 - After `override replan`, read the latest plan file, edit it directly, then continue with `critique`.
 
 Step editing:
-- `megaplan step add`, `step remove`, and `step move` are available while the run is in `planned`, `critiqued`, `gated`, or `finalized`.
+- `<launcher> step add`, `step remove`, and `step move` are available while the run is in `planned`, `critiqued`, `gated`, or `finalized`.
 - Use them when you need to insert, remove, or reorder step sections without hand-editing the markdown.
 - After a step edit, re-check `status` and continue from the returned state.
 
@@ -261,28 +262,28 @@ When the workflow completes, return exactly this shape:
 
 ## 11. Command Reference
 Core commands:
-- `megaplan status --plan <name>`
-- `megaplan progress --plan <name>`
-- `megaplan audit --plan <name>`
+- `<launcher> status --plan <name>`
+- `<launcher> progress --plan <name>`
+- `<launcher> audit --plan <name>`
 
 Workflow commands:
-- `megaplan prep --plan <name>`
-- `megaplan plan --plan <name>`
-- `megaplan critique --plan <name>`
-- `megaplan gate --plan <name>`
-- `megaplan revise --plan <name>`
-- `megaplan finalize --plan <name>`
-- `megaplan execute --plan <name> --confirm-destructive`
-- `megaplan execute --plan <name> --confirm-destructive --user-approved`
-- `megaplan execute --plan <name> --confirm-destructive --user-approved --batch N`
-- `megaplan review --plan <name>`
+- `<launcher> prep --plan <name>`
+- `<launcher> plan --plan <name>`
+- `<launcher> critique --plan <name>`
+- `<launcher> gate --plan <name>`
+- `<launcher> revise --plan <name>`
+- `<launcher> finalize --plan <name>`
+- `<launcher> execute --plan <name> --confirm-destructive`
+- `<launcher> execute --plan <name> --confirm-destructive --user-approved`
+- `<launcher> execute --plan <name> --confirm-destructive --user-approved --batch N`
+- `<launcher> review --plan <name>`
 
 Override and editing commands:
-- `megaplan override add-note --plan <name> --note "..."`
-- `megaplan override force-proceed --plan <name> --reason "..."`
-- `megaplan override replan --plan <name> --reason "..." [--note "..."]`
-- `megaplan override abort --plan <name> --reason "..."`
-- `megaplan step add --plan <name> --after S<N> "description"`
-- `megaplan step remove --plan <name> S<N>`
-- `megaplan step move --plan <name> S<N> --after S<M>`
+- `<launcher> override add-note --plan <name> --note "..."`
+- `<launcher> override force-proceed --plan <name> --reason "..."`
+- `<launcher> override replan --plan <name> --reason "..." [--note "..."]`
+- `<launcher> override abort --plan <name> --reason "..."`
+- `<launcher> step add --plan <name> --after S<N> "description"`
+- `<launcher> step remove --plan <name> S<N>`
+- `<launcher> step move --plan <name> S<N> --after S<M>`
 ```

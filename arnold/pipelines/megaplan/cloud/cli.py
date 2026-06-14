@@ -36,7 +36,7 @@ load_spec = load_cloud_spec
 
 # Cloud deployments always drive phases via subprocess (remote SSH exec);
 # the substrate is pinned here so the cloud CLI explicitly declares its
-# execution model to _phase_command (M3 Step 12 shim).
+# execution model to _phase_command (M3 Step 12 compatibility boundary).
 cloud_substrate: str = "subprocess_isolated"
 
 
@@ -86,7 +86,7 @@ def _register_cloud_subcommands(cloud_parser: argparse.ArgumentParser) -> None:
         "--no-git-refresh",
         action="store_true",
         help=(
-            "Pass --no-git-refresh to the remote `arnold chain start`, "
+            "Pass --no-git-refresh to the remote `python -m arnold.pipelines.megaplan chain start`, "
             "skipping the automatic base-branch refresh."
         ),
     )
@@ -919,7 +919,7 @@ def _chain_start_command(
     no_git_refresh: bool = False,
     log_relative: str = _CHAIN_LOG_RELATIVE,
 ) -> str:
-    """Construct the ``arnold chain start`` command with canonical quoting.
+    """Construct the ``python -m arnold.pipelines.megaplan chain start`` command with canonical quoting.
 
     Both ``_run_chain_wrapper`` and ``cloud_supervise_tick`` use this helper
     so the session name, log path, trusted env var, and shell quoting stay
@@ -931,7 +931,7 @@ def _chain_start_command(
     if no_git_refresh:
         flags += " --no-git-refresh"
     return (
-        f"MEGAPLAN_TRUSTED_CONTAINER=1 arnold chain start {flags} "
+        f"MEGAPLAN_TRUSTED_CONTAINER=1 python -m arnold.pipelines.megaplan chain start {flags} "
         f">> {shlex.quote(log_relative)} 2>&1"
     )
 
@@ -1901,7 +1901,7 @@ def _remote_human_verification_status_command(
     """
     return (
         f"cd {shlex.quote(workspace)} && "
-        f"MEGAPLAN_TRUSTED_CONTAINER=1 arnold verify-human --list "
+        f"MEGAPLAN_TRUSTED_CONTAINER=1 python -m arnold.pipelines.megaplan verify-human --list "
         f"--plan {shlex.quote(plan_name)} --json"
     )
 
