@@ -8,6 +8,8 @@ Pure graph-shape validation with zero megaplan imports.  Checks:
 * ``"halt"`` is never used as an :class:`Edge`.``label`` (it is reserved
   as a target only), except for the conventional ``label='halt' target='halt'``
   terminal pair;
+* every stage's ``decision_routes`` values are validated against outgoing
+  edge labels (``None`` values for terminal decisions are accepted);
 * every stage that emits at least one ``kind == "decision"`` edge must cover
   the declared ``decision_vocabulary`` when non-empty;
 * every stage that emits at least one ``kind == "override"`` edge must cover
@@ -184,6 +186,117 @@ def _stage_override_vocabulary(
     return options.override_vocabulary_fallback
 
 
+# ── Suspension-schema enum extraction ──────────────────────────────────────
+
+# Reserved extension keys that signal schema intent unrelated to decisions.
+_X_EXTENSION_KEYS: frozenset[str] = frozenset({"x-arnold-resume"})
+
+
+def _decision_enum_from_suspension_schema(schema: Any) -> frozenset[str] | None:
+    """Extract decision enum values from a suspension schema.
+
+    Only two conservative patterns are recognised:
+
+    1. **Simple key/value maps** — a ``Mapping`` whose values are all
+       ``str`` type-hint literals (e.g. ``{"approved": "str", "rejected":
+       "str"}``) AND whose keys do **not** include any ``x-`` extension
+       keys.  The returned frozenset is the set of keys.
+
+    2. **JSON Schema ``properties.choice.enum``** — a JSON Schema object
+       with a ``properties.choice`` sub-object that carries an ``enum``
+       array of string values.  Only ``choice`` is recognised; enums on
+       other property names are ignored.
+
+    Returns ``None`` for:
+
+    * Non-mappings (including ``None``)
+    * Loose schemas (mappings that match neither pattern)
+    * Empty enums (the enum array exists but is empty or has no strings)
+    * Unrelated property enums (enum on a property other than ``choice``)
+    * Schemas whose only signal is an ``x-`` extension key (e.g.
+      ``x-arnold-resume``) with no other decision-bearing shape
+    """
+    if not isinstance(schema, Mapping):
+        return None
+
+    # ── Pattern 1: simple key/value map with string type hints ────────
+    if _is_simple_kv_map_with_string_types(schema):
+        return frozenset(schema.keys())
+
+    # ── Pattern 2: JSON Schema properties.choice.enum ─────────────────
+    enum_values = _extract_choice_enum_from_json_schema(schema)
+    if enum_values is not None:
+        return enum_values
+
+    # ── Check if the schema has ONLY x- extension keys (no other signal)
+    if _only_x_extension_keys(schema):
+        return None
+
+    return None
+
+
+def _is_simple_kv_map_with_string_types(schema: Mapping) -> bool:
+    """Return True when *schema* is a key/value map with string type hints.
+
+    Every value must be a ``str`` (conventionally type-hint literals like
+    ``"str"``, ``"int"``, ``"bool"``), no key may start with ``x-``, and
+    there must be at least one key.
+    """
+    if not schema:
+        return False
+    for key, value in schema.items():
+        if isinstance(key, str) and key.startswith("x-"):
+            return False
+        if not isinstance(value, str):
+            return False
+    return True
+
+
+def _extract_choice_enum_from_json_schema(schema: Mapping) -> frozenset[str] | None:
+    """Extract ``properties.choice.enum`` string values from a JSON Schema.
+
+    Requires the top-level ``type`` to be ``"object"``, ``properties`` to
+    be a ``Mapping``, ``properties.choice`` to be a ``Mapping`` with
+    ``type: "string"``, and ``choice.enum`` to be a non-empty sequence of
+    strings.
+
+    Returns ``None`` when the schema does not satisfy this shape.
+    """
+    if schema.get("type") != "object":
+        return None
+    properties = schema.get("properties")
+    if not isinstance(properties, Mapping):
+        return None
+    choice = properties.get("choice")
+    if not isinstance(choice, Mapping):
+        return None
+    if choice.get("type") != "string":
+        return None
+    enum = choice.get("enum")
+    if not isinstance(enum, (list, tuple)) or not enum:
+        return None
+    strings: set[str] = set()
+    for item in enum:
+        if isinstance(item, str):
+            strings.add(item)
+        else:
+            # Non-string enum value — bail out conservatively
+            return None
+    if not strings:
+        return None
+    return frozenset(strings)
+
+
+def _only_x_extension_keys(schema: Mapping) -> bool:
+    """Return True when every key in *schema* is an ``x-`` extension key."""
+    if not schema:
+        return False
+    for key in schema:
+        if not (isinstance(key, str) and key.startswith("x-")):
+            return False
+    return True
+
+
 # ── Validation ────────────────────────────────────────────────────────────
 
 
@@ -193,7 +306,8 @@ def validate_control_flow(
     """Run control-flow validation over *pipeline*.
 
     Checks: entry existence, edge targets, reserved halt label,
-    decision/override vocabulary coverage, reachability from entry,
+    decision/override vocabulary coverage, decision_route target
+    validation against outgoing edge labels, reachability from entry,
     and unguarded cycle detection.
 
     Returns a :class:`Diagnostics` whose ``defects`` list is empty iff
@@ -246,6 +360,24 @@ def validate_control_flow(
                     edge=edge,
                     details={"known_stages": sorted(stage_names)},
                 )
+
+        # ── decision_route target validation ──────────────────────────
+        decision_routes = getattr(stage, "decision_routes", None)
+        if decision_routes:
+            edge_labels = {getattr(e, "label", "") for e in edges}
+            for decision_key, route_target in decision_routes.items():
+                if route_target is not None and route_target not in edge_labels:
+                    diag.add_defect(
+                        f"stage {stage_name!r}: decision_route {decision_key!r} "
+                        f"targets unknown edge label {route_target!r}",
+                        code="decision_route_target_unknown",
+                        stage=stage_name,
+                        details={
+                            "decision_key": decision_key,
+                            "route_target": route_target,
+                            "available_edge_labels": sorted(edge_labels),
+                        },
+                    )
 
         # ── decision vocabulary check ────────────────────────────────
         if decision_edges:

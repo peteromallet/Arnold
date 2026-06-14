@@ -208,6 +208,18 @@ class Stage:
     corresponding set of valid override-action strings (e.g.
     ``frozenset({"force_proceed", "abort"})``).  Both are plugin-owned:
     Arnold imposes no literal set; runtimes declare their own vocabulary.
+
+    ``decision_routes`` maps human decision keys to outgoing edge labels
+    (e.g. ``{"approved": "next", "rejected": "halt"}``).  A value of
+    ``None`` means the decision is terminal / has no next stage.  This
+    field is build-time metadata for route-target validation; the runtime
+    ``HumanSuspension`` serialization is not affected.
+
+    ``suspension_schema`` carries an optional JSON Schema (or compatible
+    ``Mapping``) that describes the expected shape of the suspension
+    interaction envelope for this stage.  Validators may use it to
+    extract decision enums, surface structural mismatches, or provide
+    IDE diagnostics.  ``None`` means no schema is declared.
     """
 
     name: str
@@ -215,6 +227,8 @@ class Stage:
     edges: tuple[Edge, ...] = ()
     decision_vocabulary: frozenset[str] = field(default_factory=frozenset)
     override_vocabulary: frozenset[str] = field(default_factory=frozenset)
+    decision_routes: dict[str, str | None] = field(default_factory=dict)
+    suspension_schema: Mapping[str, Any] | None = None
     reads: tuple["ReadRef | PortRef", ...] = field(default_factory=tuple)
     writes: tuple["WriteRef | Port", ...] = field(default_factory=tuple)
     produces: tuple["Port", ...] = field(default_factory=tuple)
@@ -237,6 +251,18 @@ class ParallelStage:
     ``decision_vocabulary`` and ``override_vocabulary`` serve the same
     purpose as in :class:`Stage` — they declare the set of valid decision
     and override-action strings for the join result's dispatch.
+
+    ``decision_routes`` maps human decision keys to outgoing edge labels
+    (e.g. ``{"approved": "next", "rejected": "halt"}``).  A value of
+    ``None`` means the decision is terminal / has no next stage.  This
+    field is build-time metadata for route-target validation; the runtime
+    ``HumanSuspension`` serialization is not affected.
+
+    ``suspension_schema`` carries an optional JSON Schema (or compatible
+    ``Mapping``) that describes the expected shape of the suspension
+    interaction envelope for this stage.  Validators may use it to
+    extract decision enums, surface structural mismatches, or provide
+    IDE diagnostics.  ``None`` means no schema is declared.
     """
 
     name: str
@@ -246,6 +272,8 @@ class ParallelStage:
     max_workers: int | None = None
     decision_vocabulary: frozenset[str] = field(default_factory=frozenset)
     override_vocabulary: frozenset[str] = field(default_factory=frozenset)
+    decision_routes: dict[str, str | None] = field(default_factory=dict)
+    suspension_schema: Mapping[str, Any] | None = None
     reads: tuple["ReadRef | PortRef", ...] = field(default_factory=tuple)
     writes: tuple["WriteRef | Port", ...] = field(default_factory=tuple)
     produces: tuple["Port", ...] = field(default_factory=tuple)

@@ -117,7 +117,7 @@ def test_cloud_chain_no_git_refresh_reaches_remote_chain_start() -> None:
 
     assert args.no_git_refresh is True
     assert (
-        "MEGAPLAN_TRUSTED_CONTAINER=1 arnold chain start "
+        "MEGAPLAN_TRUSTED_CONTAINER=1 python -m arnold.pipelines.megaplan chain start "
         "--spec /workspace/app/chain.yaml --no-git-refresh"
     ) in command
 
@@ -198,7 +198,7 @@ def test_cloud_chain_uploads_files_and_writes_marker_for_railway_and_local(
         assert "git -C \"$SRC\" pull --ff-only" in commands[4]
         assert "pip install -e \"$SRC\"" in commands[4]
         assert "/usr/local/bin/mp-refresh-megaplan" not in commands[4]
-        assert "MEGAPLAN_TRUSTED_CONTAINER=1 arnold chain start --spec /workspace/chain-8fb6734d/app/chain.yaml" in commands[4]
+        assert "MEGAPLAN_TRUSTED_CONTAINER=1 python -m arnold.pipelines.megaplan chain start --spec /workspace/chain-8fb6734d/app/chain.yaml" in commands[4]
         assert "python3 - <<'MEGAPLAN_VERIFY'" in commands[5]
         marker_payload = json.loads((_marker_dir(cloud_yaml_path) / "last_chain.json").read_text(encoding="utf-8"))
         assert marker_payload["remote_spec"] == "/workspace/chain-8fb6734d/app/chain.yaml"
@@ -262,7 +262,7 @@ def test_cloud_chain_three_sprint_smoke_dispatches_trusted_container_command(
     assert "/workspace/cloud-chain-smoke-4bb0e3d6/app" in commands[0]
     assert "command -v" in commands[1]
     assert "git -C /workspace/cloud-chain-smoke-4bb0e3d6/app rev-parse --abbrev-ref HEAD" in commands[2]
-    assert "MEGAPLAN_TRUSTED_CONTAINER=1 arnold chain start --spec /workspace/cloud-chain-smoke-4bb0e3d6/app/chain.yaml" in commands[4]
+    assert "MEGAPLAN_TRUSTED_CONTAINER=1 python -m arnold.pipelines.megaplan chain start --spec /workspace/cloud-chain-smoke-4bb0e3d6/app/chain.yaml" in commands[4]
 
 
 def test_cloud_chain_prints_launch_provenance_after_success(
@@ -937,26 +937,27 @@ def test_cloud_bootstrap_fails_before_upload_when_ensure_repo_fails(
 def test_mp_chain_wrapper_matches_canonical_command(tmp_path: Path) -> None:
     """The wrapper's effective command matches _chain_start_command() output.
 
-    We replace ``arnold`` with a stub that records its arguments and env,
-    then verify that the wrapper produces the same command as the canonical
-    ``_chain_start_command()`` helper for both normal and --one modes.
+    We replace ``python`` with a stub that records its arguments and env,
+    then verify that the wrapper produces the same direct module command as
+    the canonical ``_chain_start_command()`` helper for both normal and
+    --one modes.
     """
     wrapper_path = (
         Path(__file__).parent.parent / "arnold" / "pipelines" / "megaplan" / "cloud" / "wrappers" / "mp-chain"
     )
     spec_path = "/workspace/app/chain.yaml"
 
-    # Stub arnold: records its arguments + env var to a known file.
+    # Stub python: records its arguments + env var to a known file.
     stub_output_file = tmp_path / "stub-output.txt"
-    arnold_stub = tmp_path / "arnold"
-    arnold_stub.write_text(
+    python_stub = tmp_path / "python"
+    python_stub.write_text(
         "#!/bin/bash\n"
         f'echo "ARGS=$*" >> {shlex.quote(str(stub_output_file))}'
         "\n"
         f'echo "MEGAPLAN_TRUSTED_CONTAINER=${{MEGAPLAN_TRUSTED_CONTAINER:-unset}}" >> {shlex.quote(str(stub_output_file))}'
         "\n"
     )
-    arnold_stub.chmod(0o755)
+    python_stub.chmod(0o755)
 
     # Include standard bin directories so bash builtins and env are available.
     env = {
@@ -985,8 +986,8 @@ def test_mp_chain_wrapper_matches_canonical_command(tmp_path: Path) -> None:
     env_line = stub_lines[1]   # MEGAPLAN_TRUSTED_CONTAINER=1
 
     assert "MEGAPLAN_TRUSTED_CONTAINER=1" in env_line
-    # The wrapper must emit the same Arnold arguments as the canonical helper.
-    expected_args = "chain start --spec " + spec_path
+    # The wrapper must emit the same direct module arguments as the canonical helper.
+    expected_args = "-m arnold.pipelines.megaplan chain start --spec " + spec_path
     assert expected_args in args_line, (
         f"expected args {expected_args!r} in {args_line!r}"
     )
@@ -1014,7 +1015,7 @@ def test_mp_chain_wrapper_matches_canonical_command(tmp_path: Path) -> None:
     args_line_one = stub_lines_one[0]
 
     assert "MEGAPLAN_TRUSTED_CONTAINER=1" in stub_lines_one[1]
-    expected_args_one = "chain start --spec " + spec_path + " --one"
+    expected_args_one = "-m arnold.pipelines.megaplan chain start --spec " + spec_path + " --one"
     assert expected_args_one in args_line_one, (
         f"expected args {expected_args_one!r} in {args_line_one!r}"
     )
@@ -1029,7 +1030,7 @@ def test_tmux_chain_restart_refreshes_megaplan_before_one_shot_start() -> None:
 
     assert "/usr/local/bin/mp-refresh-megaplan" not in command
     assert "source clone missing at $SRC; skipping editable install" in command
-    assert "MEGAPLAN_TRUSTED_CONTAINER=1 arnold chain start --spec /workspace/app/chain.yaml --one" in command
+    assert "MEGAPLAN_TRUSTED_CONTAINER=1 python -m arnold.pipelines.megaplan chain start --spec /workspace/app/chain.yaml --one" in command
     assert ">> .megaplan/cloud-chain.log 2>&1" in command
     assert "refusing restart" in command
 

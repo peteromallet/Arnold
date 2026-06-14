@@ -82,6 +82,9 @@ up logic. Copy the `_template` package (at `arnold/pipelines/_template/`) as a
 starting point — it comes pre-wired with the full contract surface and a
 `SKILL.md` quickstart.
 
+For custom graph wiring, start from `Pipeline.builder("my-module")`, add typed
+stages and edges through the builder, then call `.build()` from `build_pipeline()`.
+
 ### Typed Ports
 
 When stages produce or consume typed data, declare ports via the ``produces``

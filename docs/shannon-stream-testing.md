@@ -22,7 +22,7 @@ MEGAPLAN_SHANNON_STREAM_CONFORMANCE=1 python -m pytest tests/test_shannon_stream
 ```
 
 If both pass, the channel is good. Everything below is for proving the *integration* (a real
-megaplan phase flowing through the new worker) and exercising the cap / shadow / cutover knobs.
+python -m arnold.pipelines.megaplan phase flowing through the new worker) and exercising the cap / shadow / cutover knobs.
 
 ---
 
@@ -47,7 +47,7 @@ Expected: all pass. `test_shannon_stream_conformance.py` **skips** here by desig
 you opt in — see Level 2).
 
 > Note: a *full* `pytest` run in a bare checkout shows ~27 unrelated failures — tests that spawn
-> `python -m megaplan ...` as a subprocess fail with `ModuleNotFoundError` because the checkout
+> `python -m arnold ...` as a subprocess fail with `ModuleNotFoundError` because the checkout
 > isn't pip-installed. Those are environmental, not this change. Either run the scoped list above,
 > or `pip install -e .` first to make the subprocess tests pass.
 
@@ -94,11 +94,11 @@ Then run a tiny plan on the Claude vendor and watch how it executes:
 ```bash
 # a trivial single-file task is enough to exercise the channel
 PYENV_VERSION=3.11.11 MEGAPLAN_SHANNON_STREAM_WORKER=1 \
-  megaplan init "Add a one-line docstring to <some small file>" \
+  python -m arnold.pipelines.megaplan init "Add a one-line docstring to <some small file>" \
   --profile solo --robustness bare --vendor claude --in-worktree sstest
 
 PYENV_VERSION=3.11.11 MEGAPLAN_SHANNON_STREAM_WORKER=1 \
-  megaplan auto --project-dir ~/Documents/.megaplan-worktrees/sstest
+  python -m arnold.pipelines.megaplan auto --project-dir ~/Documents/.megaplan-worktrees/sstest
 ```
 
 **While it runs, confirm the channel — two checks:**
@@ -121,7 +121,7 @@ If you just want to see the worker handle a single turn without spinning a whole
 directly from a Python shell:
 
 ```python
-from megaplan.workers.shannon_stream import run_shannon_stream_step   # see its signature
+from arnold.pipelines.megaplan.workers.shannon_stream import run_shannon_stream_step   # see its signature
 # build a minimal step/state per the existing call site in megaplan/workers/_impl.py (~line 3076)
 ```
 
@@ -135,7 +135,7 @@ from megaplan.workers.shannon_stream import run_shannon_stream_step   # see its 
 |---|---|---|
 | **Concurrency cap** | `MEGAPLAN_WORKER_TURN_CAP=2` | start 3+ Claude turns at once; only 2 run concurrently, the rest queue (slot files under `MEGAPLAN_WORKER_TURN_CAP_DIR`). |
 | **Auth channel** | `MEGAPLAN_SHANNON_STREAM_AUTH_CHANNEL=subscription` (default) or `api_key` | with `api_key`, set `ANTHROPIC_API_KEY`/`MEGAPLAN_SHANNON_STREAM_API_KEY` to bill the API instead of the subscription (the "validated flip"). |
-| **Sampled shadow** | `MEGAPLAN_CHANNEL_SHADOW_SAMPLE_RATE=0.1` | runs the tmux + stream channels on a ≤10% sample and records deterministic-artifact parity (reuses the bakeoff harness; see `megaplan/bakeoff/channel_shadow.py`). |
+| **Sampled shadow** | `MEGAPLAN_CHANNEL_SHADOW_SAMPLE_RATE=0.1` | runs the tmux + stream channels on a ≤10% sample and records deterministic-artifact parity (reuses the bakeoff harness; see `arnold/pipelines/megaplan/bakeoff/channel_shadow.py`). |
 | **Idle / execute timeouts** | `MEGAPLAN_SHANNON_STREAM_IDLE_TIMEOUT_SECONDS`, `..._EXECUTE_TIMEOUT_SECONDS` | tune liveness bounds. |
 
 The API-adapter proof is recorded at `docs/shannon-stream-api-proof-record.json` (a dry-run in the
@@ -156,7 +156,7 @@ it's actually testing for.
 
 The honest end-to-end test isn't a docstring — it's "does the new channel produce equivalent results
 to tmux on *real* phases?" That's what shadow mode is for. Turn it on against an actual running
-megaplan chain (not a toy):
+python -m arnold.pipelines.megaplan chain (not a toy):
 
 ```bash
 export MEGAPLAN_SHANNON_STREAM_WORKER=1
@@ -166,7 +166,7 @@ export MEGAPLAN_CHANNEL_SHADOW_SAMPLE_RATE=0.1   # run BOTH channels on ~10% of 
 
 It runs the stream channel alongside tmux on a sampled fraction of real phases and records
 **deterministic-artifact parity** (exit-kind class, payload schema validity, landed-diff status,
-worker-did-work) via the bakeoff harness (`megaplan/bakeoff/channel_shadow.py`). After a handful of
+worker-did-work) via the bakeoff harness (`arnold/pipelines/megaplan/bakeoff/channel_shadow.py`). After a handful of
 real phases, inspect the recorded parity:
 
 ```bash
@@ -228,7 +228,7 @@ Level 3's docstring may use no tools. Run a task that genuinely needs **Bash + E
 worker actually executes tools headlessly:
 
 ```bash
-MEGAPLAN_SHANNON_STREAM_WORKER=1 megaplan init \
+MEGAPLAN_SHANNON_STREAM_WORKER=1 python -m arnold.pipelines.megaplan init \
   "Create scripts/hello.sh that echoes hi, chmod +x it, run it, and capture output to out.txt" \
   --profile solo --robustness bare --vendor claude --in-worktree sstools
 # then drive it and confirm the files were actually created + the commands ran

@@ -3,7 +3,7 @@ set -euo pipefail
 # Regenerate composed bundles; fail if any changed.
 #
 # Launcher resolution mirrors the megaplan SKILL.md order so the hook works
-# regardless of how python is exposed on this machine (pyenv shim, venv,
+# regardless of how python is exposed on this machine (pyenv, venv,
 # uv, etc.). The first launcher whose `setup --regen-composed` returns
 # 0 or 1 wins; an error like `command not found` falls through to the next.
 LAUNCHERS=(
@@ -16,7 +16,7 @@ LAUNCHERS=(
 run_regen() {
   local cmd="$1"
   # shellcheck disable=SC2086
-  eval "$cmd -m megaplan setup --regen-composed"
+  eval "$cmd -m arnold.pipelines.megaplan setup --regen-composed"
 }
 
 rc=127
@@ -36,7 +36,7 @@ for launcher in "${LAUNCHERS[@]}"; do
 done
 
 if [ "$rc" = "1" ]; then
-  git add megaplan/data/_composed/
+  git add arnold/pipelines/megaplan/data/_composed/
   echo 'megaplan: regenerated composed bundles — re-run git commit' >&2
   exit 1
 fi
