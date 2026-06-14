@@ -314,8 +314,8 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     _add_vendor_critic_args(init_parser)
-    _add_workflow_shape_args(init_parser)
     _add_execute_tier_cap_arg(init_parser)
+    _add_workflow_shape_args(init_parser)
     init_parser.add_argument(
         "--prep-direction",
         default=None,
@@ -705,8 +705,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     for name in ["status", "progress", "watch"]:
         step_parser = subparsers.add_parser(name)
+        step_parser.add_argument("--project-dir", default=None)
         step_parser.add_argument("--plan")
-        step_parser.add_argument("--project-dir")
         if name == "status":
             step_parser.add_argument(
                 "--pending-human",
@@ -728,6 +728,7 @@ def build_parser() -> argparse.ArgumentParser:
     feedback_parser.add_argument(
         "--plan", required=False, help="Plan name (required for edit/show)"
     )
+    feedback_parser.add_argument("--project-dir", default=None)
     feedback_parser.add_argument(
         "--no-edit",
         action="store_true",
@@ -787,6 +788,7 @@ def build_parser() -> argparse.ArgumentParser:
         "resume", help="Resume a failed or blocked plan from its stored cursor"
     )
     resume_parser.add_argument("--plan", required=True)
+    resume_parser.add_argument("--project-dir", default=None)
     resume_parser.add_argument(
         "--choice",
         default=None,
@@ -824,6 +826,7 @@ def build_parser() -> argparse.ArgumentParser:
         "review",
     ]:
         step_parser = subparsers.add_parser(name)
+        step_parser.add_argument("--project-dir", default=None)
         step_parser.add_argument("--plan")
         step_parser.add_argument("--agent", choices=KNOWN_AGENTS)
         step_parser.add_argument(
@@ -984,6 +987,7 @@ def build_parser() -> argparse.ArgumentParser:
         ],
     )
     override_parser.add_argument("--plan")
+    override_parser.add_argument("--project-dir", default=None)
     override_parser.add_argument("--reason", default="")
     override_parser.add_argument("--note")
     override_parser.add_argument("--expires-after-runs", type=int, default=None)

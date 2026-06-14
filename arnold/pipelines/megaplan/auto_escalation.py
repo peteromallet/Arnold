@@ -22,6 +22,7 @@ _EK_BLOCKED_BY_QUALITY = "blocked_by_quality"
 _EK_BLOCKED_BY_PREREQ = "blocked_by_prereq"
 _EK_TIMEOUT = "timeout"
 _EK_CONTEXT_EXHAUSTED = "context_exhausted"
+_EK_MALFORMED_MODEL_OUTPUT = "malformed_model_output"
 _EK_INTERNAL_ERROR = "internal_error"
 _EK_MALFORMED_MODEL_OUTPUT = "malformed_model_output"
 _EK_EXTERNAL_ERROR = "external_error"
@@ -87,7 +88,8 @@ def classify_failure(
 
     Returns (None, []) for success, absent exit_kind, or unrecognised values.
     Categories without per-task signal (context_exhausted, timeout,
-    internal_error, external_error) return failing_task_ids=[].
+    malformed_model_output, internal_error, external_error) return
+    failing_task_ids=[].
     """
     if not exit_kind or exit_kind == _EK_SUCCESS:
         return None, []

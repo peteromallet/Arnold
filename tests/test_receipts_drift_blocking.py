@@ -87,6 +87,10 @@ def _assert_audit_line(audit_dir: Path, plan_id: str) -> None:
     assert matching[-1]["scope_drift_severity"] == "high"
 
 
+# standard(=full) now ALSO surfaces unclaimed files as a recoverable blocker
+# (DEFECT 3), but via the distinct ``scope_drift_unclaimed_files`` reason
+# rather than the hardened-only ``scope_drift_severity=high`` reason. robust
+# (=thorough) keeps the high-severity gate.
 @pytest.mark.parametrize("execute_mode", ["auto", "batch"])
 @pytest.mark.parametrize(
     ("robustness", "should_block"),

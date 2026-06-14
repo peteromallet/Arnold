@@ -80,6 +80,7 @@ from arnold.pipelines.megaplan.workers._impl import (
     _extract_claude_usage,
     _external_worker_env,
     _worker_stream_idle_timeout_seconds,
+    build_three_channel_liveness_probe,
     mock_worker_output,
     resolve_work_dir,
     run_command,
@@ -1462,6 +1463,464 @@ def _claude_transcript_paths(
     return paths
 
 
+def _read_turn_ndjson_from_transcript(
+    transcript_path: str | Path,
+    *,
+    since_user_uuid: str | None = None,
+) -> str | None:
+    """Return raw NDJSON lines for the most recent COMPLETED turn in *transcript_path*.
+
+    Reads a Claude Code ``.jsonl`` transcript file and walks it backwards to
+    locate the most recently completed assistant turn.  A turn is defined as:
+
+    * **Turn-opener** — the first ``type=user`` record whose
+      ``message.content`` contains at least one block whose ``type`` is NOT
+      ``tool_result`` (genuine user input, not an injected tool result).
+    * **Turn-close** — an ``assistant`` record with
+      ``stop_reason='end_turn'`` *immediately* followed by a ``system``
+      record whose ``subtype='turn_duration'`` and ``parentUuid`` matches the
+      assistant's ``uuid``.
+
+    Every record between (and including) the turn-opener and the turn-close
+    ``system`` record is returned as raw NDJSON — one JSON object per line,
+    exactly as it appears in the transcript file.  This includes interleaved
+    ``tool_use`` assistant blocks, ``tool_result`` user blocks, and any other
+    records the Claude runtime inserted during the turn.
+
+    When *since_user_uuid* is given, only turns whose turn-opener ``uuid``
+    differs from *since_user_uuid* are considered (i.e. only turns that start
+    with a *new* user message).  Returns ``None`` when no completed turn is
+    found, the file does not exist, or every visible turn is stale.
+    """
+    path = Path(transcript_path)
+    if not path.is_file():
+        return None
+
+    # Read raw lines so we can return them byte-for-byte.
+    try:
+        raw_lines = path.read_text(encoding="utf-8").splitlines()
+    except (OSError, UnicodeDecodeError):
+        return None
+
+    if not raw_lines:
+        return None
+
+    # Parse every line into JSON; skip unparseable trailing cruft.
+    parsed: list[dict[str, Any] | None] = []
+    for line in raw_lines:
+        stripped = line.strip()
+        if not stripped:
+            parsed.append(None)
+            continue
+        try:
+            parsed.append(json.loads(stripped))
+        except json.JSONDecodeError:
+            parsed.append(None)
+
+    # Walk backwards to find the most recent completed turn.
+    n = len(parsed)
+    close_idx: int | None = None   # index of the system turn_duration row
+    assistant_uuid: str | None = None
+
+    # 1) Find the turn-close: system subtype=turn_duration with parentUuid.
+    for i in range(n - 1, -1, -1):
+        row = parsed[i]
+        if not isinstance(row, dict):
+            continue
+        if row.get("type") != "system":
+            continue
+        if row.get("subtype") != "turn_duration":
+            continue
+        puuid = row.get("parentUuid")
+        if not isinstance(puuid, str) or not puuid:
+            continue
+        # Found a candidate turn_duration.  The assistant must be the
+        # immediately preceding record (the runtime always appends the
+        # turn_duration right after the assistant row).
+        if i == 0:
+            continue
+        prev = parsed[i - 1]
+        if not isinstance(prev, dict):
+            continue
+        if prev.get("type") != "assistant":
+            continue
+        msg = prev.get("message")
+        if not isinstance(msg, dict):
+            continue
+        if msg.get("stop_reason") != "end_turn":
+            continue
+        if prev.get("uuid") != puuid:
+            continue
+        close_idx = i
+        assistant_uuid = puuid
+        break
+
+    if close_idx is None:
+        return None  # No completed turn found.
+
+    # 2) Walk backwards from the assistant row to find the turn-opener.
+    open_idx: int | None = None
+    for i in range(close_idx - 1, -1, -1):
+        row = parsed[i]
+        if not isinstance(row, dict):
+            continue
+        if row.get("type") != "user":
+            continue
+        msg = row.get("message")
+        if not isinstance(msg, dict):
+            continue
+        content = msg.get("content")
+        # A genuine turn-opener is real user input, not an injected tool_result.
+        # Claude Code writes a plain Shannon prompt as a STRING and tool_result
+        # injections as a LIST of blocks.  Accept both shapes:
+        #   * str  -> a genuine opener (every real Shannon turn-opener is a string)
+        #   * list -> opener only if it carries a non-tool_result block
+        if isinstance(content, str):
+            if not content.strip():
+                continue
+        elif isinstance(content, list) and content:
+            if not any(
+                isinstance(block, dict) and block.get("type") != "tool_result"
+                for block in content
+            ):
+                continue
+        else:
+            continue
+        # Check the since_user_uuid filter.
+        row_uuid = row.get("uuid")
+        if since_user_uuid is not None and row_uuid == since_user_uuid:
+            return None  # This turn's opener is the stale UUID → no newer turn.
+        open_idx = i
+        break
+
+    if open_idx is None:
+        return None  # No user-opener found before this turn.
+
+    # 3) Return the raw lines for [open_idx .. close_idx] inclusive.
+    return "\n".join(raw_lines[open_idx : close_idx + 1]) + "\n"
+
+
+def _tmux_capture_pane(session_name: str) -> str | None:
+    """Return the captured pane text for *session_name*, or ``None`` on failure.
+
+    Pinned to the session's PRIVATE tmux server (``-L``) so it reads the same
+    isolated server the vendored launcher created — querying the shared default
+    server would mis-report the live pane as empty/gone (see
+    :func:`megaplan.runtime.process.tmux_socket_for`).
+    """
+    try:
+        result = subprocess.run(
+            ["tmux", "-L", tmux_socket_for(session_name),
+             "capture-pane", "-p", "-t", session_name],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+    except FileNotFoundError:
+        return None
+    if result.returncode != 0:
+        return None
+    return result.stdout
+
+
+def _is_headless_crash_signature(tmux_session: "TmuxSession") -> bool:
+    """Return True when the tmux pane shows the headless-crash signature.
+
+    The signature is: the tmux session is gone **or** its pane captured content
+    is empty/whitespace.  Either condition means ``claude`` never painted output
+    into the pane before the readiness timeout — the canonical indicator that the
+    CLI crashed or refused to render in the headless tmux path (e.g. a
+    headless-broken auto-updated build).
+
+    Conservatively returns ``False`` when the pane is non-empty — the process
+    may still be alive but slow, so we let the ordinary CliError propagate
+    unchanged.
+    """
+    try:
+        session_alive = tmux_session.exists()
+    except Exception:
+        # Cannot tell — treat as non-crash so we don't over-fire.
+        return False
+
+    if not session_alive:
+        # Session is already gone — process exited before producing readiness.
+        return True
+
+    pane = _tmux_capture_pane(tmux_session.name)
+    # None means capture-pane failed (session vanished between the exists() call
+    # and the capture); empty/whitespace means no visible output was written.
+    return pane is None or not pane.strip()
+
+
+_HEADLESS_BROKEN_MSG = (
+    "claude CLI appears broken in the headless tmux path (empty pane / server "
+    "exited before readiness). Pin a known-good build via "
+    "MEGAPLAN_SHANNON_CLAUDE_BIN (e.g. a version that renders headlessly)."
+)
+
+# The readiness probe re-checks tmux liveness over this bounded window before
+# concluding the claude turn really died at startup. A few extra polls ride out
+# a brief startup race (the session is being (re)created while the probe fired)
+# without ever masking a genuine crash: a truly dead session stays dead and
+# the loop converges in ~2-5s. Env-tunable for slow/loaded hosts.
+_READINESS_DEAD_RECHECK_ATTEMPTS = 5
+_READINESS_DEAD_RECHECK_INTERVAL_S = 0.5
+
+
+def _readiness_session_recovered(tmux_session: "TmuxSession") -> bool:
+    """Bounded re-poll: True iff the tmux session comes back with painted output.
+
+    Called when a readiness capture failed with a dead-session signature
+    (``no current target`` / ``no server running`` / ...). A short race is
+    possible — the probe can fire in the window between session create and the
+    pane being painted — so we poll ``has-session`` + ``capture-pane`` a handful
+    of times over a couple seconds. If the session reappears with visible
+    output we treat it as recovered (let the ordinary readiness flow continue);
+    if it stays gone we return False so the caller classifies a retryable
+    dead-turn. Best-effort: any probe error is treated as "still gone".
+    """
+    attempts = max(1, _readiness_int_env(
+        "MEGAPLAN_SHANNON_READINESS_DEAD_RECHECK_ATTEMPTS",
+        _READINESS_DEAD_RECHECK_ATTEMPTS,
+    ))
+    interval = _readiness_float_env(
+        "MEGAPLAN_SHANNON_READINESS_DEAD_RECHECK_INTERVAL_S",
+        _READINESS_DEAD_RECHECK_INTERVAL_S,
+    )
+    for _ in range(attempts):
+        try:
+            if tmux_session.exists():
+                pane = _tmux_capture_pane(tmux_session.name)
+                if pane is not None and pane.strip():
+                    return True
+        except Exception:
+            pass
+        if interval > 0:
+            time.sleep(interval)
+    return False
+
+
+def _readiness_int_env(name: str, default: int) -> int:
+    raw = os.getenv(name, "").strip()
+    if not raw:
+        return default
+    try:
+        return max(1, int(raw))
+    except ValueError:
+        return default
+
+
+def _readiness_float_env(name: str, default: float) -> float:
+    raw = os.getenv(name, "").strip()
+    if not raw:
+        return default
+    try:
+        return max(0.0, float(raw))
+    except ValueError:
+        return default
+
+
+_SHANNON_READINESS_DEAD_TURN_MSG = (
+    "Shannon readiness probe: the claude tmux session died during startup "
+    "(tmux reported a dead session/window: {marker}). The claude CLI most "
+    "likely failed to start — commonly CPU-starved under concurrent load. "
+    "Retrying on a fresh session."
+)
+
+
+def _ps_children(pid: str) -> list[str]:
+    """Return the direct child PIDs of *pid* via ``ps`` (portable; macOS+Linux).
+
+    Best-effort: returns ``[]`` when ``ps`` is unavailable or errors.
+    """
+    try:
+        result = subprocess.run(
+            ["ps", "-o", "pid=,ppid="],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+    except (FileNotFoundError, OSError):
+        return []
+    if result.returncode != 0:
+        return []
+    children: list[str] = []
+    for line in result.stdout.splitlines():
+        parts = line.split()
+        if len(parts) != 2:
+            continue
+        child, parent = parts
+        if parent == pid:
+            children.append(child)
+    return children
+
+
+def _process_tree_pids(roots: list[str], *, max_pids: int = 256) -> list[str]:
+    """BFS the process subtree rooted at each pid in *roots* (descendants too).
+
+    Catches the silent-tool-call case: the claude process spawns
+    ``bash`` → ``python`` → ``pytest``, and CPU is burned by the descendants,
+    not the claude process itself. Bounded by *max_pids* so a fork bomb cannot
+    blow up the walk. Degrades to whatever it could collect.
+    """
+    seen: list[str] = []
+    seen_set: set[str] = set()
+    frontier = [p for p in roots if p]
+    while frontier and len(seen) < max_pids:
+        pid = frontier.pop()
+        if pid in seen_set:
+            continue
+        seen_set.add(pid)
+        seen.append(pid)
+        frontier.extend(_ps_children(pid))
+    return seen
+
+
+def _cputime_to_seconds(raw: str) -> float | None:
+    """Parse a ``ps`` ``cputime`` field (``[[DD-]HH:]MM:SS[.ss]``) to seconds."""
+    raw = raw.strip()
+    if not raw or raw == "-":
+        return None
+    days = 0
+    if "-" in raw:
+        day_str, _, raw = raw.partition("-")
+        try:
+            days = int(day_str)
+        except ValueError:
+            days = 0
+    parts = raw.split(":")
+    try:
+        nums = [float(p) for p in parts]
+    except ValueError:
+        return None
+    seconds = 0.0
+    for n in nums:
+        seconds = seconds * 60 + n
+    return seconds + days * 86400.0
+
+
+def _subtree_cputime_sample(roots: list[str]) -> float | None:
+    """Cumulative CPU-time (seconds) consumed by the process subtree of *roots*.
+
+    The probe compares successive samples: a positive DELTA means a descendant
+    consumed CPU between samples (the silent-tool-call signal). We sum cumulative
+    cputime (not instantaneous %) so a brief burst between samples is never
+    missed. Returns ``None`` when ``ps`` is unavailable or no pid is readable, so
+    a missing/blocked ``ps`` degrades to "unknown" rather than "flat" — never a
+    false kill.
+    """
+    pids = _process_tree_pids(roots)
+    if not pids:
+        return None
+    try:
+        result = subprocess.run(
+            ["ps", "-o", "pid=,cputime="],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+    except (FileNotFoundError, OSError):
+        return None
+    if result.returncode != 0:
+        return None
+    pid_set = set(pids)
+    total = 0.0
+    saw_any = False
+    for line in result.stdout.splitlines():
+        parts = line.split(None, 1)
+        if len(parts) != 2:
+            continue
+        pid, cputime = parts[0], parts[1]
+        if pid not in pid_set:
+            continue
+        secs = _cputime_to_seconds(cputime)
+        if secs is None:
+            continue
+        saw_any = True
+        total += secs
+    return total if saw_any else None
+
+
+def _socket_recv_sample(roots: list[str]) -> float | None:
+    """Cumulative bytes RECEIVED on the worker subtree's outbound sockets.
+
+    Catches the silent-thinking case: while Claude thinks server-side it has
+    surfaced no tokens (transcript flat) and burns ~no local CPU, but its HTTPS
+    connection to the API is still receiving SSE pings/keepalives — recv-bytes
+    advance. A genuinely wedged connection (ESTABLISHED but receiving nothing)
+    shows a FLAT recv counter.
+
+    macOS: ``nettop -P -L 1 -x -p <pid>`` prints one CSV sample with a
+    ``bytes_in`` column. We sum ``bytes_in`` across the subtree pids. ``nettop``
+    is macOS-only; on Linux (or when ``nettop`` is absent) this returns ``None``
+    (degrades to "unknown", never "flat") so the OTHER two channels carry the
+    decision and a missing tool can never cause a false kill.
+    """
+    nettop = shutil.which("nettop")
+    if not nettop or not roots:
+        return None
+    pids = _process_tree_pids(roots)
+    if not pids:
+        return None
+    total = 0.0
+    saw_any = False
+    for pid in pids:
+        sample = _nettop_bytes_in(nettop, pid)
+        if sample is None:
+            continue
+        saw_any = True
+        total += sample
+    return total if saw_any else None
+
+
+def _nettop_bytes_in(nettop_path: str, pid: str) -> float | None:
+    """Sum the ``bytes_in`` column of a single-sample ``nettop`` run for *pid*.
+
+    ``nettop -P -L 1 -x -p <pid>`` emits a CSV header row plus per-connection
+    rows for one sample interval. We locate the ``bytes_in`` column from the
+    header and sum it across rows. Returns ``None`` on any parse failure or when
+    nettop produced no usable bytes_in column — the caller treats that as
+    "unknown", not "flat".
+
+    ASSUMPTION / COMPROMISE: nettop's CSV layout (``-x``) and ``bytes_in`` header
+    name. If a future macOS renames the column the parse yields ``None`` and the
+    channel degrades to unknown — safe (no false kill), it just stops
+    contributing the socket signal until fixed.
+    """
+    try:
+        result = subprocess.run(
+            [nettop_path, "-P", "-L", "1", "-x", "-p", pid],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+    except (FileNotFoundError, OSError, subprocess.TimeoutExpired):
+        return None
+    if result.returncode != 0 or not result.stdout.strip():
+        return None
+    lines = [ln for ln in result.stdout.splitlines() if ln.strip()]
+    if len(lines) < 2:
+        return None
+    header = [h.strip() for h in lines[0].split(",")]
+    try:
+        idx = header.index("bytes_in")
+    except ValueError:
+        return None
+    total = 0.0
+    saw_any = False
+    for row in lines[1:]:
+        cols = row.split(",")
+        if idx >= len(cols):
+            continue
+        try:
+            total += float(cols[idx].strip() or 0)
+            saw_any = True
+        except ValueError:
+            continue
+    return total if saw_any else None
+
+
 def _make_shannon_liveness_probe(
     tmux_session: TmuxSession,
     session_id: str | None,
@@ -1470,119 +1929,78 @@ def _make_shannon_liveness_probe(
     claude_config_dir: str | None = None,
     home: str | None = None,
 ):
-    """Build a liveness probe for the buffered shannon worker.
+    """Build the THREE-CHANNEL liveness probe for the buffered shannon worker.
 
-    The shannon worker runs Claude under ``--output-format=json``: the CLI
-    buffers its ENTIRE response and writes nothing to the host stdout/stderr
-    pipe until the turn completes. The ``run_command`` idle-output watchdog
-    therefore sees zero bytes for the whole turn and, on a long-but-healthy
-    turn, would kill it at the idle bound with a misleading ``worker_stall``.
+    The shannon worker runs Claude in a tmux pane under
+    ``--output-format=stream-json``: it can be legitimately silent on the host
+    stdout/stderr pipe for many minutes — while running a long synchronous tool
+    call (a 10-20 min ``pytest``) or while thinking server-side before any token
+    surfaces. The ``run_command`` idle-output watchdog therefore sees zero bytes
+    and, on a healthy-but-silent turn, would false-kill it at the idle bound.
 
-    This probe gives ``run_command`` a REAL liveness signal so it only kills a
-    worker that is genuinely stuck. It reports progress (``True``) ONLY when:
+    "Silence == death" is wrong because silence is AMBIGUOUS. This probe gives
+    ``run_command`` a real liveness signal by sampling THREE independent channels
+    and treating the turn as ALIVE if ANY advanced since the last sample, WEDGED
+    only if ALL THREE are flat for the whole idle window K:
 
-    * a candidate Claude transcript ``.jsonl`` mtime has advanced — the turn is
-      flushing completed content blocks / tool events to disk. This is the only
-      TRUSTWORTHY signal of genuine work.
+    1. **Transcript .jsonl growth** — newest matching transcript mtime advances
+       as completed content blocks / tool events flush to disk (normal token
+       streaming). Dir resolution honours ``CLAUDE_CONFIG_DIR`` (native mode) via
+       :func:`_claude_transcript_paths`, so the native-mode glob is no longer
+       blind.
+    2. **Process-subtree CPU** — cumulative CPU-time of the pane's process
+       subtree (the claude process + descendants, e.g. ``bash``→``python``→
+       ``pytest``). A positive delta means a descendant did work — catches the
+       SILENT TOOL CALL (transcript flat, no tokens, but the test is running).
+    3. **API socket recv** — bytes received on the subtree's outbound HTTPS
+       sockets (SSE pings/deltas arriving even before tokens surface) — catches
+       the SILENT THINKING. macOS ``nettop`` only; degrades to "unknown" (never
+       "flat") elsewhere.
 
-    Crucially, tmux pane-content churn is NOT treated as progress on its own.
-    A wedged Claude (HTTP/SSE stream stalled — sockets ESTABLISHED, 0% CPU, no
-    tokens) still repaints its interactive pane (cursor redraws, spinner
-    animations, status-line refreshes) while writing NOTHING to its transcript.
-    Counting that pane churn as "progress" reset the idle clock forever, so a
-    wedged turn never tripped the inter-event ``stalled_stream`` bound and burned
-    the full window before retrying — and re-wedging. Requiring transcript growth
-    makes a wedged turn correctly read as idle so the bound bites within its
-    intended window.
-
-    It reports ``False`` (no progress) when the session is alive but the
-    transcript mtime is static across the idle window — i.e. a genuinely hung
-    turn — or when the tmux session has vanished entirely. Every tmux/FS call
-    degrades gracefully; a probe that cannot read ANY signal at all (no
-    transcript found AND pane unreadable) returns ``True`` so the conservative
-    wall-clock ``timeout`` stays the sole bound rather than risking a false kill.
+    The combining / decision logic lives in
+    :func:`megaplan.workers._impl.build_three_channel_liveness_probe` (unit-
+    testable without a live process / sockets). Every sampler degrades gracefully
+    to ``None`` ("unknown") when its tool is unavailable, so a missing ``nettop``
+    or ``ps`` can never cause a false kill — the other channels carry the
+    decision, and if NONE are readable the probe stays conservative (alive) and
+    the hard caps in ``run_command`` bound a genuinely dead turn.
     """
-    # Captured-snapshot state across probe calls.
-    last_pane = [""]
-    last_mtime = [0.0]
-    primed = [False]
 
-    def _capture_pane() -> str | None:
-        try:
-            result = subprocess.run(
-                ["tmux", "capture-pane", "-p", "-t", tmux_session.name],
-                check=False,
-                capture_output=True,
-                text=True,
-            )
-        except FileNotFoundError:
-            return None
-        if result.returncode != 0:
-            return None
-        return result.stdout
-
-    def _max_transcript_mtime() -> float:
+    def _transcript_sample() -> float | None:
         newest = 0.0
+        saw_any = False
         for path in _claude_transcript_paths(
             session_id, work_dir, claude_config_dir=claude_config_dir, home=home
         ):
             try:
-                m = path.stat().st_mtime
+                st = path.stat()
             except OSError:
                 continue
-            if m > newest:
-                newest = m
-        return newest
+            saw_any = True
+            # Combine mtime and size so a same-second append (mtime granularity)
+            # still registers as growth on filesystems with coarse mtimes.
+            signal = max(st.st_mtime, 0.0) + float(st.st_size) * 1e-9
+            if signal > newest:
+                newest = signal
+        return newest if saw_any else None
 
-    def _probe() -> bool:
-        # If the tmux session is gone, the worker can no longer be progressing
-        # in a pane we can observe — defer to the stdout/wall-clock bounds (do
-        # NOT claim progress).
+    def _pane_pids() -> list[str]:
         try:
-            session_alive = tmux_session.exists()
+            return pane_pids(tmux_session.name)
         except Exception:
-            session_alive = True  # cannot tell — do not kill on this alone
+            return []
 
-        pane = _capture_pane()
-        mtime = _max_transcript_mtime()
+    def _cpu_sample() -> float | None:
+        return _subtree_cputime_sample(_pane_pids())
 
-        if not primed[0]:
-            # First probe establishes the baseline; treat as progress so the
-            # very first idle expiry never kills before we have a comparison.
-            last_pane[0] = pane or ""
-            last_mtime[0] = mtime
-            primed[0] = True
-            return True
+    def _socket_sample() -> float | None:
+        return _socket_recv_sample(_pane_pids())
 
-        # Transcript mtime advancing is the ONLY trusted progress signal: it
-        # means completed content blocks / tool events are being flushed to
-        # disk. Pane churn is deliberately ignored as a standalone signal — a
-        # wedged Claude repaints its pane without writing any transcript, and
-        # counting that as progress reset the idle clock forever (the root-cause
-        # bug). We still refresh the pane baseline for diagnostics/parity.
-        progressing = mtime > last_mtime[0]
-
-        # Refresh baselines for the next comparison.
-        if pane is not None:
-            last_pane[0] = pane
-        if mtime > last_mtime[0]:
-            last_mtime[0] = mtime
-
-        if progressing:
-            return True
-
-        # No transcript movement. If we have NO observable transcript signal at
-        # all (no transcript file found yet) and the session still exists, stay
-        # conservative (return True) and let the wall-clock cap govern — we
-        # cannot distinguish a hang from a turn that simply has not opened its
-        # transcript. Only declare "not progressing" when we genuinely observed
-        # a static-but-alive transcript.
-        have_signal = mtime > 0.0
-        if not have_signal and session_alive:
-            return True
-        return False
-
-    return _probe
+    return build_three_channel_liveness_probe(
+        transcript_sample=_transcript_sample,
+        cpu_sample=_cpu_sample,
+        socket_sample=_socket_sample,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -1737,6 +2155,137 @@ def _ensure_workspace_trusted(
             file=sys.stderr,
             flush=True,
         )
+
+
+def _assert_runnable_claude_binary(resolved: str, *, origin: str) -> None:
+    """Fail fast if *resolved* is not a runnable ``claude`` build.
+
+    The Claude CLI auto-updater installs each build under
+    ``~/.local/share/claude/versions/<ver>`` (a ~200 MB native executable) and
+    points ``~/.local/bin/claude`` at it. A crashed/interrupted update can leave
+    a corrupt *stub* in that slot: a tiny shell script whose only line is
+    ``exec <same path> "$@"`` — i.e. it execs ITSELF, spinning in an infinite
+    re-exec loop that burns CPU and never paints a TUI. When Shannon pins that
+    stub, the interactive readiness probe waits forever and captures an EMPTY
+    tmux pane ("Timed out waiting for Claude prompt"), with no actionable clue.
+
+    We detect that case here and raise a clear, actionable :class:`CliError`
+    instead of letting it degrade into a blind readiness timeout. A real claude
+    build is a large native binary, never a 2-line self-referential script, so
+    this is safe: it only rejects the known-broken stub shape, not legitimate
+    wrapper shims (which exec a *different* target).
+    """
+    try:
+        size = os.path.getsize(resolved)
+    except OSError:
+        size = -1
+    # Native claude builds are tens-to-hundreds of MB. Only sniff small files;
+    # never read a 200 MB binary into memory.
+    if size < 0 or size > 65536:
+        return
+    try:
+        with open(resolved, "rb") as fh:
+            head = fh.read(4096)
+    except OSError:
+        return
+    if not head.startswith(b"#!"):
+        return  # tiny non-script (unlikely) — leave it alone
+    text = head.decode("utf-8", "replace")
+    real = os.path.realpath(resolved)
+    for line in text.splitlines():
+        stripped = line.strip()
+        if not stripped.startswith("exec "):
+            continue
+        # The stub execs its own resolved path (directly or via the symlink that
+        # points back to it). Any exec target that resolves to *resolved* itself
+        # is the infinite-loop stub.
+        for tok in shlex.split(stripped[len("exec "):]):
+            if tok.startswith("-") or tok == '"$@"' or tok == "$@":
+                continue
+            try:
+                tok_real = os.path.realpath(os.path.expanduser(tok))
+            except OSError:
+                tok_real = tok
+            if tok_real == real:
+                raise CliError(
+                    "worker_error",
+                    f"The pinned claude binary ({origin}) at {resolved} is a "
+                    "corrupt self-referential stub (it execs itself in an "
+                    "infinite loop) — typically the residue of a crashed Claude "
+                    "CLI auto-update. Shannon would spin forever waiting for a "
+                    "prompt that never paints. Repoint your claude install at a "
+                    "real build, e.g.:\n"
+                    "  chflags -h nouchg ~/.local/bin/claude 2>/dev/null; "
+                    "rm -f ~/.local/bin/claude\n"
+                    "  ln -s \"$(ls -d ~/.local/share/claude/versions/* | "
+                    "grep -vx %s | sort -V | tail -1)\" ~/.local/bin/claude\n"
+                    "or set MEGAPLAN_SHANNON_CLAUDE_BIN to a known-good version."
+                    % shlex.quote(resolved),
+                )
+            break  # only inspect the exec's first non-flag token (the program)
+    return
+
+
+def _resolve_pinned_claude(cfg: ShannonConfig) -> str | None:
+    """Resolve the claude binary to pin for this run, or None to leave PATH alone.
+
+    Precedence: the explicit ``MEGAPLAN_SHANNON_CLAUDE_BIN`` override, else (when
+    ``pin_claude`` — the default) the *real* absolute path of the ``claude``
+    currently on PATH. We resolve the symlink to its target so a mid-run symlink
+    flip — e.g. the Claude CLI auto-updater repointing ``~/.local/bin/claude`` to
+    a newer, headless-broken build — cannot switch the version under a running
+    step. Returns None when pinning is disabled or no ``claude`` is found
+    (preserves the legacy PATH-resolution behavior).
+
+    The resolved target is validated before pinning: a corrupt self-referential
+    update stub is rejected with an actionable error instead of silently pinning
+    a binary that spins forever and yields a blind readiness timeout (an empty
+    captured pane). See :func:`_assert_runnable_claude_binary`.
+    """
+    if cfg.claude_bin:
+        resolved = os.path.realpath(os.path.expanduser(cfg.claude_bin))
+        if not os.path.isfile(resolved):
+            raise CliError(
+                "worker_error",
+                f"MEGAPLAN_SHANNON_CLAUDE_BIN={cfg.claude_bin!r} is not a file "
+                f"(resolved {resolved}).",
+            )
+        _assert_runnable_claude_binary(resolved, origin="MEGAPLAN_SHANNON_CLAUDE_BIN")
+        return resolved
+    if not cfg.pin_claude:
+        return None
+    found = shutil.which("claude")
+    if not found:
+        return None
+    resolved = os.path.realpath(found)
+    _assert_runnable_claude_binary(resolved, origin="claude on PATH")
+    return resolved
+
+
+def _install_claude_pin(
+    env: dict[str, str], run_dir: Path, pinned: str
+) -> dict[str, str]:
+    """Prepend a per-run shim dir to ``PATH`` so the vendored launcher's
+    ``which claude`` resolves to *pinned* (an absolute binary path), immune to
+    any ``~/.local/bin/claude`` symlink churn during the run. Returns a new env
+    dict; does not mutate the input.
+    """
+    shim_dir = run_dir / "claude_pin"
+    shim_dir.mkdir(parents=True, exist_ok=True)
+    shim = shim_dir / "claude"
+    try:
+        if shim.exists() or shim.is_symlink():
+            shim.unlink()
+        os.symlink(pinned, shim)
+    except OSError:
+        # Symlink not permitted on this mount — fall back to an exec wrapper.
+        shim.write_text(
+            f'#!/bin/bash\nexec {shlex.quote(pinned)} "$@"\n', encoding="utf-8"
+        )
+        shim.chmod(0o755)
+    new_env = dict(env)
+    new_env["PATH"] = f"{shim_dir}{os.pathsep}{new_env.get('PATH', '')}"
+    return new_env
 
 
 def run_shannon_step(
@@ -2102,8 +2651,22 @@ def run_shannon_step(
             try:
                 pre_result = run_turn(pre_turn, ctx)
             except CliError as error:
-                if error.code == "worker_timeout":
+                if error.code in {"worker_timeout", "worker_stall"}:
                     error.extra["session_id"] = pre_turn.session_id
+                    # Loud-fail guard: a timeout/stall during the readiness
+                    # probe with an empty or absent pane is the headless-crash
+                    # signature — the claude CLI exited or hung before painting
+                    # any output into the tmux pane.  Surface a clear CliError
+                    # instead of letting this look like a generic stall.
+                    if _is_headless_crash_signature(ctx.tmux_session):
+                        raise CliError(
+                            "shannon_claude_headless_broken",
+                            _HEADLESS_BROKEN_MSG,
+                            extra={
+                                "session_id": pre_turn.session_id,
+                                "original_code": error.code,
+                            },
+                        ) from error
                 raise
             if pre_result.returncode != 0:
                 if _raw_contains_success_result(pre_result.raw):
@@ -2115,12 +2678,50 @@ def run_shannon_step(
                         flush=True,
                     )
                     continue
+                # Dead-session signature (``no current target`` / ``no server
+                # running`` / ...): the claude tmux session/window vanished before
+                # painting a result — the canonical "claude exited at startup,
+                # likely CPU-starved under load" failure. This is a transient
+                # INFRA stall, not an opaque worker_error. Ride out a brief startup
+                # race with a bounded re-poll first; if the session is still gone,
+                # classify it as a retryable ``worker_stall`` (mirrors the
+                # tmux-died-mid-turn guard on the main turn) so the auto loop sheds
+                # the session and retries fast/cleanly instead of looping on an
+                # un-retryable internal_error.
+                if _raw_indicates_tmux_died(pre_result.raw):
+                    if _readiness_session_recovered(ctx.tmux_session):
+                        print(
+                            "[megaplan] shannon readiness probe: tmux session "
+                            "recovered after a brief startup race; continuing.",
+                            file=sys.stderr,
+                            flush=True,
+                        )
+                        continue
+                    marker = _matched_tmux_died_marker(pre_result.raw)
+                    raise CliError(
+                        "worker_stall",
+                        _SHANNON_READINESS_DEAD_TURN_MSG.format(marker=marker),
+                        extra={
+                            "raw_output": pre_result.raw,
+                            "session_id": pre_turn.session_id,
+                            "error_layer": "worker_stream_stall",
+                        },
+                    )
                 raise CliError(
                     "worker_error",
                     f"Shannon readiness probe failed with exit code {pre_result.returncode}",
                     extra={"raw_output": pre_result.raw, "session_id": pre_turn.session_id},
                 )
             if not pre_result.raw.strip():
+                # Zero-exit but empty output: the process ran and exited cleanly
+                # but wrote nothing.  This is also a headless-crash signature
+                # when the pane is empty — claude quit without rendering.
+                if _is_headless_crash_signature(ctx.tmux_session):
+                    raise CliError(
+                        "shannon_claude_headless_broken",
+                        _HEADLESS_BROKEN_MSG,
+                        extra={"session_id": pre_turn.session_id, "original_code": "empty_output"},
+                    )
                 raise CliError(
                     "worker_error",
                     "Shannon readiness probe returned no output",
@@ -2210,6 +2811,73 @@ def run_shannon_step(
 
     raw = main_result.raw
 
+    # ── (h.1) Prefer .jsonl transcript over stdout/pane raw ──────────────
+    # Claude Code appends every turn to a per-session .jsonl transcript under
+    # ~/.claude/projects/<slug>/<session>.jsonl.  The structured NDJSON in that
+    # file is more reliable than the tmux pane / stdout scrape, which can be
+    # empty on paste-first-turn success.  Try the transcript first; fall back
+    # to stdout raw on any failure so the existing repair path stays reachable.
+    transcript_raw: str | None = None
+    try:
+        transcript_paths = _claude_transcript_paths(
+            main_turn.session_id,
+            ctx.work_dir,
+            claude_config_dir=ctx.claude_config_dir,
+            home=ctx.env.get("HOME"),
+        )
+        if transcript_paths:
+            # Multiple candidates can exist (shouldn't, but be defensive).
+            # Pick newest-by-mtime — the real Claude transcript was written
+            # during this turn and has the freshest stamp.
+            transcript_paths.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+            for tp in transcript_paths:
+                ndjson = _read_turn_ndjson_from_transcript(tp)
+                if ndjson:
+                    transcript_raw = ndjson
+                    break
+    except Exception:
+        # Any failure in transcript resolution (file IO, glob, JSON) is
+        # swallowed — fall through to stdout raw below.
+        transcript_raw = None
+
+    # ── (h.2) tmux-died-mid-turn → retryable worker_stall ───────────────
+    # A dead tmux server during the turn (the vendored launcher surfaces
+    # ``tmux capture-pane ... no server running``) means the Claude session
+    # crashed before emitting a result — a transient infra stall, not a bad
+    # result. Without this guard the tmux-error text falls through to
+    # ``_parse_shannon_output``, which finds no result envelope and the only
+    # surviving line is Claude's ``system/init`` message — so the crash is
+    # misparsed and surfaces as a non-retryable ``internal_error`` that loops.
+    # Classify it as a retryable ``worker_stall`` instead: shed the persisted
+    # session id (matching the run_turn stall handler above) and re-raise so the
+    # next attempt spawns a fresh session.  Gated on ``transcript_raw is None``:
+    # if the .jsonl transcript above recovered a real result (the turn actually
+    # completed but the pane/stdout scrape came back empty — the alive-but-hung
+    # case), keep that result instead of forcing a needless retry.
+    if (
+        transcript_raw is None
+        and not _raw_contains_success_result(raw)
+        and _raw_indicates_tmux_died(raw)
+    ):
+        try:
+            sessions = state.get("sessions")
+            if isinstance(sessions, dict):
+                entry = sessions.get(session_key)
+                entry_id = entry.get("id") if isinstance(entry, dict) else None
+                if entry_id is not None and entry_id in {
+                    main_turn.session_id, persisted_session_id,
+                }:
+                    sessions.pop(session_key, None)
+        except Exception:
+            pass
+        raise CliError(
+            "worker_stall",
+            "Shannon tmux server died during the turn (no server running); the "
+            "Claude session crashed before producing a result — retrying on a "
+            "fresh session.",
+            extra={"raw_output": raw, "session_id": main_turn.session_id},
+        )
+
     # ── (i) parse + (execute-only) repair the structured envelope ───────
     # A heavy execute batch can exhaust max_tokens on reasoning before emitting
     # the envelope. The work itself stands — a resume turn that asks for ONLY
@@ -2239,43 +2907,53 @@ def run_shannon_step(
         pay_ = dict(capture_outcome.legacy_payload)
         return env_, pay_
 
-    try:
-        envelope, payload = _parse_and_validate(raw)
-    except CliError as error:
-        repaired_raw: str | None = None
-        if step == "execute" and error.code in {"parse_error", "schema_error"}:
-            repair_sid = session_id_of(raw) or main_turn.session_id
-            repair_turn = Turn(
-                session_id=repair_sid,
-                resume=True,
-                body=_EXECUTE_ENVELOPE_REPAIR_PROMPT,
-                delivery="argv",
-                expect="envelope",
-                timeout=cfg.execute_timeout_seconds,
-                pre_sleep_s=0.0,
-            )
-            print(
-                "[megaplan] execute output was truncated/invalid; resuming "
-                f"session {repair_sid} to re-request only the structured envelope.",
-                file=sys.stderr,
-                flush=True,
-            )
-            try:
-                repair_result = run_turn(repair_turn, ctx)
-                repaired_raw = repair_result.raw or None
-            except CliError:
-                repaired_raw = None
-        if repaired_raw is None:
-            raise CliError(error.code, error.message, extra={"raw_output": raw}) from error
+    # Try transcript NDJSON first; on parse / schema failure fall through
+    # to stdout raw before the execute-only repair path is ever invoked.
+    if transcript_raw is not None:
         try:
-            envelope, payload = _parse_and_validate(repaired_raw)
-        except CliError as repair_error:
-            raise CliError(
-                repair_error.code,
-                f"{repair_error.message} (after structured-envelope repair attempt)",
-                extra={"raw_output": repaired_raw, "original_raw_output": raw},
-            ) from repair_error
-        raw = repaired_raw
+            envelope, payload = _parse_and_validate(transcript_raw)
+            raw = transcript_raw  # WorkerResult.raw_output carries whichever was parsed
+        except CliError:
+            transcript_raw = None  # signal: fall through to stdout
+
+    if transcript_raw is None:
+        try:
+            envelope, payload = _parse_and_validate(raw)
+        except CliError as error:
+            repaired_raw: str | None = None
+            if step == "execute" and error.code in {"parse_error", "schema_error"}:
+                repair_sid = session_id_of(raw) or main_turn.session_id
+                repair_turn = Turn(
+                    session_id=repair_sid,
+                    resume=True,
+                    body=_EXECUTE_ENVELOPE_REPAIR_PROMPT,
+                    delivery="argv",
+                    expect="envelope",
+                    timeout=cfg.execute_timeout_seconds,
+                    pre_sleep_s=0.0,
+                )
+                print(
+                    "[megaplan] execute output was truncated/invalid; resuming "
+                    f"session {repair_sid} to re-request only the structured envelope.",
+                    file=sys.stderr,
+                    flush=True,
+                )
+                try:
+                    repair_result = run_turn(repair_turn, ctx)
+                    repaired_raw = repair_result.raw or None
+                except CliError:
+                    repaired_raw = None
+            if repaired_raw is None:
+                raise CliError(error.code, error.message, extra={"raw_output": raw}) from error
+            try:
+                envelope, payload = _parse_and_validate(repaired_raw)
+            except CliError as repair_error:
+                raise CliError(
+                    repair_error.code,
+                    f"{repair_error.message} (after structured-envelope repair attempt)",
+                    extra={"raw_output": repaired_raw, "original_raw_output": raw},
+                ) from repair_error
+            raw = repaired_raw
 
     if not read_only:
         _verify_engine_after_mutating_worker(step, state, root, execution_env)

@@ -859,6 +859,22 @@ def _run_and_merge_batch(
     deviations = list(payload.get("deviations", []))
     deviations.extend(routing_degradations)
     batch_task_id_set = set(batch_task_ids)
+    # Resolve milestone evidence-window context (chain policy → base SHA and
+    # carry-forward manifest) BEFORE the first use below. Quality-deviation,
+    # unclaimed-path attribution, and git-observation all judge against this
+    # window; computing it here keeps every consumer on the same base_ref.
+    _chain_policy: dict[str, Any] = {}
+    if state is not None:
+        _cp = (state.get("meta") or {}).get("chain_policy")
+        if isinstance(_cp, dict):
+            _chain_policy = _cp
+    _cf_manifest = _chain_policy.get("carry_forward_manifest")
+    _carry_forward_paths: set[str] | None = None
+    if isinstance(_cf_manifest, dict) and _cf_manifest:
+        _carry_forward_paths = set(_cf_manifest.keys())
+    elif isinstance(_cf_manifest, list) and _cf_manifest:
+        _carry_forward_paths = {str(p) for p in _cf_manifest if isinstance(p, str)} or None
+    _milestone_base_sha: str | None = _chain_policy.get("milestone_base_sha")
     if not is_prose_mode(state):
         deviations.extend(
             _collect_quality_deviations(
@@ -867,6 +883,7 @@ def _run_and_merge_batch(
                 before_line_counts=before_line_counts,
                 quality_config=quality_config,
                 capture_git_status_snapshot_fn=capture_git_status_snapshot_fn,
+                base_ref=_milestone_base_sha,
             )
         )
     merged_count, total_batch_tasks, acknowledged_count, total_batch_checks = (
@@ -889,6 +906,8 @@ def _run_and_merge_batch(
             batch_task_ids=batch_task_ids,
             issues=deviations,
             capture_recursive_snapshot_fn=_capture_git_status_snapshot_recursive,
+            carry_forward_paths=_carry_forward_paths,
+            base_ref=_milestone_base_sha,
         )
         observation_snapshot_fn = capture_git_status_snapshot_fn
         if (
@@ -1150,6 +1169,17 @@ def handle_execute_one_batch(
                 state, step="execute", agent=agent, mode=mode, model=model
             )
             save_state_merge_meta(plan_dir, state)
+    selected_resolved_model = model if model is not None else resolved_model
+    routing_record = _build_routing_record(
+        batch_complexity=raw_batch_complexity,
+        selected_tier=tier_complexity,
+        selected_spec=tier_spec_raw,
+        resolved_agent=agent,
+        resolved_mode=mode,
+        resolved_model=selected_resolved_model,
+        tier_map_configured=bool(tier_map),
+        tier_routing_active=tier_routing_active,
+    )
 
     selected_resolved_model = model if model is not None else resolved_model
     routing_record = _build_routing_record(
@@ -1279,6 +1309,9 @@ def handle_execute_one_batch(
     if drift is not None:
         _append_scope_drift_blocker(blocking_reasons, state, drift)
 
+    routing_blocked = any(
+        reason in blocking_reasons for reason in result.routing_degradations
+    )
     routing_blocked = any(
         reason in blocking_reasons for reason in result.routing_degradations
     )
@@ -1471,7 +1504,11 @@ def handle_execute_one_batch(
     return response
 
 
-def _reset_blocked_tasks_to_pending(finalize_data: dict[str, Any]) -> list[str]:
+def _reset_blocked_tasks_to_pending(
+    finalize_data: dict[str, Any],
+    *,
+    exclude_task_ids: Iterable[str] = (),
+) -> list[str]:
     """Flip tasks at status="blocked" back to "pending" and clear per-attempt fields.
 
     Returns the sorted list of task IDs that were reset. The mutation is
@@ -1483,12 +1520,15 @@ def _reset_blocked_tasks_to_pending(finalize_data: dict[str, Any]) -> list[str]:
     the next execute attempt sees a clean slate and isn't biased by stale
     notes from the prior session.
     """
+    excluded = {task_id for task_id in exclude_task_ids if task_id}
     reset_ids: list[str] = []
     for task in finalize_data.get("tasks", []):
         if not isinstance(task, dict):
             continue
         task_id = task.get("id")
         if not isinstance(task_id, str):
+            continue
+        if task_id in excluded:
             continue
         if task.get("status") != "blocked":
             continue
@@ -1500,6 +1540,159 @@ def _reset_blocked_tasks_to_pending(finalize_data: dict[str, Any]) -> list[str]:
         task["reviewer_verdict"] = ""
         reset_ids.append(task_id)
     return sorted(reset_ids)
+
+
+_BASELINE_VERIFICATION_MARKER = "introduce no new failures vs the recorded baseline"
+_BASELINE_UNAVAILABLE_BLOCKER_KIND = "baseline-unavailable-no-new-failures-checkpoint"
+
+
+def _is_baseline_dependent_verification_task(task: dict[str, Any]) -> bool:
+    description = task.get("description")
+    if not isinstance(description, str):
+        return False
+    return _BASELINE_VERIFICATION_MARKER in description.lower()
+
+
+def _has_downstream_runnable_tasks(
+    tasks: list[Any],
+    *,
+    checkpoint_index: int,
+) -> bool:
+    for later in tasks[checkpoint_index + 1 :]:
+        if not isinstance(later, dict):
+            continue
+        if later.get("status") == "pending" and isinstance(later.get("id"), str):
+            return True
+    return False
+
+
+def _task_dependencies_complete(tasks: list[Any], task: dict[str, Any]) -> bool:
+    task_by_id = {
+        candidate.get("id"): candidate
+        for candidate in tasks
+        if isinstance(candidate, dict) and isinstance(candidate.get("id"), str)
+    }
+    for dep_id in task.get("depends_on") or []:
+        if not isinstance(dep_id, str):
+            continue
+        dependency = task_by_id.get(dep_id)
+        if not isinstance(dependency, dict):
+            return False
+        if dependency.get("status") not in {"done", "skipped"}:
+            return False
+    return True
+
+
+def baseline_unavailable_checkpoint_ids(
+    finalize_data: dict[str, Any],
+    task_ids: Iterable[str],
+) -> set[str]:
+    """Return no-new-failures checkpoint task IDs that cannot use a baseline."""
+    if finalize_data.get("baseline_test_failures") is not None:
+        return set()
+    candidate_ids = {task_id for task_id in task_ids if task_id}
+    if not candidate_ids:
+        return set()
+    tasks = finalize_data.get("tasks")
+    if not isinstance(tasks, list):
+        return set()
+
+    blocked_ids: set[str] = set()
+    for task in tasks:
+        if not isinstance(task, dict):
+            continue
+        task_id = task.get("id")
+        if not isinstance(task_id, str) or task_id not in candidate_ids:
+            continue
+        if _is_baseline_dependent_verification_task(task):
+            blocked_ids.add(task_id)
+    return blocked_ids
+
+
+def baseline_unavailable_checkpoint_deviations(
+    finalize_data: dict[str, Any],
+    task_ids: Iterable[str],
+) -> tuple[Deviation, ...]:
+    deviations: list[Deviation] = []
+    for task_id in sorted(baseline_unavailable_checkpoint_ids(finalize_data, task_ids)):
+        deviations.append(
+            Deviation(
+                kind="quality_gate",
+                task_id=task_id,
+                blocker_id=f"quality:{task_id}:{_BASELINE_UNAVAILABLE_BLOCKER_KIND}",
+                phase="execute",
+                message=(
+                    f"task {task_id} is a no-new-failures checkpoint, but "
+                    "finalize.json has baseline_test_failures=null, so the "
+                    "harness cannot distinguish pre-existing suite failures "
+                    "from regressions for this checkpoint"
+                ),
+            )
+        )
+    return tuple(deviations)
+
+
+def _deviation_messages(deviations: Iterable[Deviation]) -> list[str]:
+    return [deviation.message for deviation in deviations]
+
+
+def _deviation_dicts(deviations: Iterable[Deviation]) -> list[dict[str, Any]]:
+    return [deviation.to_dict() for deviation in deviations]
+
+
+def _defer_baseline_unavailable_checkpoints(
+    finalize_data: dict[str, Any],
+) -> list[str]:
+    """Skip interim baseline-dependent checkpoints when no baseline exists.
+
+    A task whose contract is "introduce no new failures vs the recorded
+    baseline" is not actionable when baseline capture failed. If such a task is
+    placed before later implementation tasks, running it only produces an
+    indeterminate block and prevents the consumer fixes that may make the suite
+    meaningful. Defer only interim checkpoints; a final checkpoint with no
+    downstream work remains runnable/blocking so the operator still gets an
+    end-of-run signal.
+    """
+    if finalize_data.get("baseline_test_failures") is not None:
+        return []
+    tasks = finalize_data.get("tasks")
+    if not isinstance(tasks, list):
+        return []
+
+    deferred_ids: list[str] = []
+    for index, task in enumerate(tasks):
+        if not isinstance(task, dict):
+            continue
+        task_id = task.get("id")
+        if not isinstance(task_id, str):
+            continue
+        if task.get("status") not in {"pending", "blocked"}:
+            continue
+        if not _task_dependencies_complete(tasks, task):
+            continue
+        if not _is_baseline_dependent_verification_task(task):
+            continue
+        if not _has_downstream_runnable_tasks(tasks, checkpoint_index=index):
+            continue
+
+        prior_notes = str(task.get("executor_notes") or "").strip()
+        defer_note = (
+            "Deferred by harness: baseline_test_failures is null, so this "
+            "interim no-new-failures checkpoint cannot compare against a "
+            "recorded baseline. Continuing to downstream implementation tasks; "
+            "the final verification/review phase remains authoritative."
+        )
+        task["status"] = "skipped"
+        task["executor_notes"] = (
+            f"{prior_notes}\n{defer_note}" if prior_notes else defer_note
+        )
+        task["files_changed"] = []
+        task["commands_run"] = []
+        task["evidence_files"] = []
+        task["reviewer_verdict"] = "deferred_baseline_unavailable"
+        task.pop("recorded_invocation_id", None)
+        deferred_ids.append(task_id)
+    return deferred_ids
 
 
 def _review_requests_rework(review_data: dict[str, Any]) -> bool:
@@ -1595,6 +1788,66 @@ def _review_rework_task_ids(
             seen.add(task_id)
             runnable.append(task_id)
     return runnable, unrunnable
+
+
+def _stable_string_list(values: Iterable[Any]) -> list[str]:
+    seen: set[str] = set()
+    result: list[str] = []
+    for value in values:
+        if not isinstance(value, str):
+            continue
+        stripped = value.strip()
+        if not stripped or stripped in seen:
+            continue
+        seen.add(stripped)
+        result.append(stripped)
+    return result
+
+
+def _milestone_changed_files(finalize_data: dict[str, Any]) -> list[str]:
+    files: list[Any] = []
+    for task in finalize_data.get("tasks", []) or []:
+        if not isinstance(task, dict):
+            continue
+        for key in ("files_changed", "evidence_files"):
+            values = task.get(key, [])
+            if isinstance(values, list):
+                files.extend(values)
+    return _stable_string_list(files)
+
+
+def _review_rework_context(
+    review_data: dict[str, Any],
+    finalize_data: dict[str, Any],
+    batch_task_ids: list[str],
+) -> dict[str, Any]:
+    wanted = set(batch_task_ids)
+    milestone_files = _milestone_changed_files(finalize_data)
+    context_items: list[dict[str, Any]] = []
+    scope_candidates: list[Any] = []
+    for item in review_data.get("rework_items", []) or []:
+        if not isinstance(item, dict) or item.get("task_id") not in wanted:
+            continue
+        evidence_file = item.get("evidence_file", "")
+        normalized = {
+            "task_id": item.get("task_id"),
+            "issue": item.get("issue", ""),
+            "expected": item.get("expected", ""),
+            "actual": item.get("actual", ""),
+            "evidence_file": evidence_file if isinstance(evidence_file, str) else "",
+            "flag_id": item.get("flag_id"),
+            "source": item.get("source"),
+        }
+        if normalized["evidence_file"]:
+            scope_candidates.append(normalized["evidence_file"])
+        else:
+            scope_candidates.extend(milestone_files)
+        context_items.append(normalized)
+    return {
+        "rework_items": context_items,
+        "scope_files": _stable_string_list(scope_candidates) or milestone_files,
+        "milestone_changed_files": milestone_files,
+    }
 
 
 def _block_no_runnable_rework(
@@ -1727,6 +1980,59 @@ def _escalate_persistent_unroutable_rework(
     return response
 
 
+def _escalate_persistent_unroutable_rework(
+    *,
+    plan_dir: Path,
+    state: PlanState,
+    auto_approve: bool,
+    unrunnable_task_ids: list[str],
+    runnable_task_ids: list[str],
+) -> StepResponse:
+    """Escalate to recoverable-blocked when unroutable rework persists past the cap.
+
+    Used for the MIXED case (some runnable rework task IDs PLUS unroutable
+    ``REVIEW``-style items). The unroutable subset cannot be removed by re-running
+    execute on the runnable tasks, so without this the same unfixable findings
+    recur forever. Reuses the same recoverable-blocked surface as
+    ``_handle_unroutable_review_rework`` (clearable via ``override
+    recover-blocked``/``force-proceed`` after operator review).
+    """
+    unmatched = ", ".join(sorted(set(unrunnable_task_ids)))
+    runnable = ", ".join(sorted(set(runnable_task_ids)))
+    from megaplan.observability.events import EventKind, emit
+
+    emit(
+        EventKind.STATE_TRANSITION,
+        plan_dir=plan_dir,
+        phase="execute",
+        payload={
+            "reason": "unroutable_review_rework_mixed",
+            "from": STATE_FINALIZED,
+            "to": STATE_BLOCKED,
+            "max_attempts": _MAX_UNROUTABLE_REWORK_RERUNS,
+            "unrunnable_rework_task_ids": sorted(set(unrunnable_task_ids)),
+            "runnable_rework_task_ids": sorted(set(runnable_task_ids)),
+        },
+    )
+    response = _block_no_runnable_rework(
+        plan_dir=plan_dir,
+        state=state,
+        auto_approve=auto_approve,
+        reason=(
+            "review rework includes unroutable item(s) that re-running execute "
+            f"cannot resolve. Unmatched rework task_id(s): {unmatched}. "
+            f"Runnable rework task_id(s): {runnable or 'none'}. "
+            f"Unroutable re-run attempts exhausted ({_MAX_UNROUTABLE_REWORK_RERUNS}/"
+            f"{_MAX_UNROUTABLE_REWORK_RERUNS}); re-run review so rework_items "
+            "reference concrete finalize task IDs, or recover-blocked after "
+            "operator review."
+        ),
+        unrunnable_task_ids=unrunnable_task_ids,
+    )
+    response["result"] = "blocked"
+    return response
+
+
 def handle_execute_auto_loop(
     *,
     root: Path,
@@ -1758,7 +2064,21 @@ def handle_execute_auto_loop(
     # this code path with blocked tasks — eb4ac447 routes task-level
     # status=blocked to awaiting_human, which terminates the auto loop.
     if getattr(args, "retry_blocked_tasks", False):
-        reset_ids = _reset_blocked_tasks_to_pending(finalize_data)
+        blocked_before_retry = [
+            task["id"]
+            for task in tasks
+            if isinstance(task, dict)
+            and task.get("status") == "blocked"
+            and isinstance(task.get("id"), str)
+        ]
+        baseline_unavailable_ids = baseline_unavailable_checkpoint_ids(
+            finalize_data,
+            blocked_before_retry,
+        )
+        reset_ids = _reset_blocked_tasks_to_pending(
+            finalize_data,
+            exclude_task_ids=baseline_unavailable_ids,
+        )
         if reset_ids:
             write_plan_artifact_json(plan_dir, "finalize.json", finalize_data, contract_context=None)
             log.info(
@@ -1767,6 +2087,20 @@ def handle_execute_auto_loop(
                 ", ".join(reset_ids),
             )
             tasks = finalize_data.get("tasks", [])
+        if baseline_unavailable_ids:
+            log.info(
+                "retry-blocked-tasks: left baseline-unavailable checkpoint(s) blocked: %s",
+                ", ".join(sorted(baseline_unavailable_ids)),
+            )
+
+    deferred_checkpoint_ids = _defer_baseline_unavailable_checkpoints(finalize_data)
+    if deferred_checkpoint_ids:
+        atomic_write_json(plan_dir / "finalize.json", finalize_data)
+        log.info(
+            "deferred baseline-unavailable interim verification checkpoint(s): %s",
+            ", ".join(deferred_checkpoint_ids),
+        )
+        tasks = finalize_data.get("tasks", [])
 
     all_task_ids = [
         task["id"]
@@ -1899,7 +2233,52 @@ def handle_execute_auto_loop(
             }
         # Now, only short-circuit if blocked tasks remain (within-session)
         if blocked_task_ids:
-            blocked_list = ", ".join(sorted(blocked_task_ids))
+            baseline_deviations = baseline_unavailable_checkpoint_deviations(
+                finalize_data,
+                blocked_task_ids,
+            )
+            baseline_blocked_ids = {
+                deviation.task_id
+                for deviation in baseline_deviations
+                if deviation.task_id is not None
+            }
+            prereq_blocked_ids = blocked_task_ids - baseline_blocked_ids
+            if baseline_deviations and not prereq_blocked_ids:
+                summary = "Blocked: " + "; ".join(
+                    _deviation_messages(baseline_deviations)
+                )
+                append_history(
+                    state,
+                    make_history_entry(
+                        "execute",
+                        duration_ms=0,
+                        cost_usd=0.0,
+                        result="blocked",
+                        message=summary,
+                    ),
+                )
+                save_state_merge_meta(plan_dir, state)
+                response = {
+                    "success": False,
+                    "step": "execute",
+                    "summary": summary,
+                    "artifacts": ["finalize.json", "final.md"],
+                    "monitor_hint": build_monitor_hint(plan_dir),
+                    "next_step": "execute",
+                    "state": STATE_FINALIZED,
+                    "files_changed": [],
+                    "deviations": _deviation_dicts(baseline_deviations),
+                    "warnings": [summary],
+                    "auto_approve": auto_approve,
+                    "user_approved_gate": bool(
+                        state["meta"].get("user_approved_gate", False)
+                    ),
+                    "_phase_outcome": "blocked_by_quality",
+                }
+                _attach_next_step_runtime(response)
+                return response
+
+            blocked_list = ", ".join(sorted(prereq_blocked_ids or blocked_task_ids))
             summary = (
                 f"Blocked: existing blocked task(s) prevent dependent execution: {blocked_list}. "
                 "Resolve or replan the blocked task(s) before continuing."
@@ -1928,9 +2307,11 @@ def handle_execute_auto_loop(
                 "warnings": [summary],
                 "auto_approve": auto_approve,
                 "user_approved_gate": bool(state["meta"].get("user_approved_gate", False)),
-                "blocked_task_ids": sorted(blocked_task_ids),
+                "blocked_task_ids": sorted(prereq_blocked_ids or blocked_task_ids),
                 "_phase_outcome": "blocked_by_prereq",
             }
+            if baseline_deviations:
+                response["deviations"] = _deviation_dicts(baseline_deviations)
             _attach_next_step_runtime(response)
             return response
 
@@ -2016,6 +2397,11 @@ def handle_execute_auto_loop(
                 batch_task_ids,
                 completed_task_ids,
                 root=root,
+                rework_context=(
+                    _review_rework_context(review_data, finalize_data, batch_task_ids)
+                    if rework_mode
+                    else None
+                ),
             )
         )
         batch_number_for_artifact = (
@@ -2355,6 +2741,19 @@ def handle_execute_auto_loop(
             else None
         ),
     )
+    deferred_checkpoint_ids = _defer_baseline_unavailable_checkpoints(finalize_data)
+    if deferred_checkpoint_ids:
+        atomic_write_json(plan_dir / "finalize.json", finalize_data)
+        tracking_note = _format_execute_tracking_note(
+            merged_count=tracked_tasks,
+            total_tasks=total_tasks,
+            acknowledged_count=acknowledged_checks,
+            total_checks=total_checks,
+        )
+        log.info(
+            "deferred baseline-unavailable interim verification checkpoint(s): %s",
+            ", ".join(deferred_checkpoint_ids),
+        )
     active_blocked_task_ids = {
         task["id"]
         for task in finalize_data.get("tasks", [])
@@ -2369,6 +2768,7 @@ def handle_execute_auto_loop(
     blocked_task_reason = _blocked_task_reason(active_blocked_task_ids)
     if blocked_task_reason:
         blocking_reasons.append(blocked_task_reason)
+    blocking_reasons.extend(_deviation_messages(baseline_deviations))
     _append_scope_drift_blocker(blocking_reasons, state, drift)
     if routing_degradations:
         blocking_reasons.extend(routing_degradations)
@@ -2485,7 +2885,7 @@ def handle_execute_auto_loop(
     # Determine _phase_outcome with priority: timeout > prereq > quality > success
     if timeout_error is not None:
         phase_outcome = "timeout"
-    elif active_blocked_task_ids:
+    elif prereq_blocked_task_ids:
         phase_outcome = "blocked_by_prereq"
     elif blocked:
         phase_outcome = "blocked_by_quality"
@@ -2494,10 +2894,10 @@ def handle_execute_auto_loop(
 
     # Collect blocked task notes for blocked_by_prereq path
     blocked_task_notes: dict[str, str] = {}
-    if active_blocked_task_ids:
+    if prereq_blocked_task_ids:
         for task in finalize_data.get("tasks", []):
             tid = task.get("id")
-            if isinstance(tid, str) and tid in active_blocked_task_ids:
+            if isinstance(tid, str) and tid in prereq_blocked_task_ids:
                 notes = task.get("executor_notes") or ""
                 if notes:
                     blocked_task_notes[tid] = str(notes)

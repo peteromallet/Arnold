@@ -2954,6 +2954,49 @@ def _batch_worker(step, state, plan_dir, args, *, root=None, resolved=None, prom
         return WorkerResult(payload=payload, raw_output="batch2", duration_ms=3, cost_usd=0.2, session_id="batch-2"), "codex", "persistent", False
     raise AssertionError(f"Unexpected batch prompt: {prompt_override}")
 
+
+def _single_remaining_t2_worker(
+    step,
+    state,
+    plan_dir,
+    args,
+    *,
+    root=None,
+    resolved=None,
+    prompt_override=None,
+):
+    payload = {
+        "output": "Remaining task complete.",
+        "files_changed": ["batch2.py"],
+        "commands_run": ["pytest -k batch2"],
+        "deviations": [],
+        "task_updates": [
+            {
+                "task_id": "T2",
+                "status": "done",
+                "executor_notes": "Completed downstream task.",
+                "files_changed": ["batch2.py"],
+                "commands_run": ["pytest -k batch2"],
+            }
+        ],
+        "sense_check_acknowledgments": [
+            {"sense_check_id": "SC2", "executor_note": "Confirmed downstream task."}
+        ],
+    }
+    return (
+        WorkerResult(
+            payload=payload,
+            raw_output="batch2",
+            duration_ms=2,
+            cost_usd=0.1,
+            session_id="batch-2",
+        ),
+        "codex",
+        "persistent",
+        False,
+    )
+
+
 def test_batch_1_on_two_batch_plan_stays_finalized(
     plan_fixture: PlanFixture,
     monkeypatch: pytest.MonkeyPatch,
@@ -3946,6 +3989,146 @@ def test_review_rework_global_and_legacy_review_targets_are_blockers() -> None:
     assert unrunnable == ["global:whole-run", "REVIEW"]
 
 
+def test_execute_mixed_routable_unroutable_rework_escalates_recoverably_after_cap(
+    plan_fixture: PlanFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """DEFECT 1: when review rework mixes a runnable task with an unroutable
+    REVIEW item, the unroutable cap must still trip (instead of being reset and
+    the unroutable findings silently dropped every cycle). After the cap, the
+    plan escalates to recoverable STATE_BLOCKED even though a runnable item also
+    exists.
+    """
+    make_args = plan_fixture.make_args
+    megaplan.handle_plan(plan_fixture.root, make_args(plan=plan_fixture.plan_name))
+    megaplan.handle_critique(plan_fixture.root, make_args(plan=plan_fixture.plan_name))
+    megaplan.handle_override(
+        plan_fixture.root,
+        make_args(plan=plan_fixture.plan_name, override_action="force-proceed", reason="test"),
+    )
+    megaplan.handle_finalize(plan_fixture.root, make_args(plan=plan_fixture.plan_name))
+
+    finalize_data = read_json(plan_fixture.plan_dir / "finalize.json")
+    runnable_task_id = finalize_data["tasks"][0]["id"]
+    for task in finalize_data["tasks"]:
+        task["status"] = "done"
+        task["executor_notes"] = "done"
+        task["commands_run"] = ["true"]
+        task["files_changed"] = ["a.py"]
+    (plan_fixture.plan_dir / "finalize.json").write_text(
+        json.dumps(finalize_data, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    # MIXED rework: one runnable finalize task + one unroutable REVIEW item.
+    review_payload = {
+        "review_verdict": "needs_rework",
+        "rework_items": [
+            {
+                "task_id": runnable_task_id,
+                "issue": "Tighten the implementation for the runnable task.",
+                "expected": "Runnable task addressed.",
+                "actual": "Needs another pass.",
+            },
+            {
+                "task_id": "REVIEW",
+                "issue": "Discovery rewrote a production manifest out of scope.",
+                "expected": "Reference a concrete finalize task.",
+                "actual": "No concrete finalize task was referenced.",
+            },
+        ],
+    }
+    (plan_fixture.plan_dir / "review.json").write_text(
+        json.dumps(review_payload, indent=2) + "\n",
+        encoding="utf-8",
+    )
+
+    def rework_worker(step, state, plan_dir, args, *, root=None, resolved=None, prompt_override=None):
+        del step, state, plan_dir, args, root, resolved, prompt_override
+        payload = {
+            "output": "Re-ran the runnable rework task.",
+            "files_changed": ["a.py"],
+            "commands_run": ["true"],
+            "deviations": [],
+            "task_updates": [
+                {
+                    "task_id": runnable_task_id,
+                    "status": "done",
+                    "executor_notes": "Re-addressed the runnable rework item with evidence.",
+                    "files_changed": ["a.py"],
+                    "commands_run": ["true"],
+                }
+            ],
+            "sense_check_acknowledgments": [],
+        }
+        return (
+            WorkerResult(
+                payload=payload,
+                raw_output="rework",
+                duration_ms=1,
+                cost_usd=0.0,
+                session_id="rework",
+            ),
+            "codex",
+            "persistent",
+            False,
+        )
+
+    monkeypatch.setattr(megaplan.workers, "run_step_with_worker", rework_worker)
+
+    def rerun_execute_with_same_mixed_review() -> dict:
+        state = load_state(plan_fixture.plan_dir)
+        state["current_state"] = megaplan.STATE_FINALIZED
+        # Re-mark every task done so the only pending work is the rework reroute.
+        fd = read_json(plan_fixture.plan_dir / "finalize.json")
+        for task in fd["tasks"]:
+            task["status"] = "done"
+            task["executor_notes"] = "done"
+            task["commands_run"] = ["true"]
+            task["files_changed"] = ["a.py"]
+        (plan_fixture.plan_dir / "finalize.json").write_text(
+            json.dumps(fd, indent=2) + "\n", encoding="utf-8"
+        )
+        (plan_fixture.plan_dir / "state.json").write_text(
+            json.dumps(state, indent=2) + "\n", encoding="utf-8"
+        )
+        (plan_fixture.plan_dir / "review.json").write_text(
+            json.dumps(review_payload, indent=2) + "\n", encoding="utf-8"
+        )
+        return megaplan.handle_execute(
+            plan_fixture.root,
+            make_args(
+                plan=plan_fixture.plan_name,
+                confirm_destructive=True,
+                user_approved=True,
+            ),
+        )
+
+    # Cycles 1-3: unroutable attempts increment (1,2,3 <= cap of 3); the
+    # runnable rework re-runs execute each time (healthy path preserved).
+    rerun_execute_with_same_mixed_review()
+    rerun_execute_with_same_mixed_review()
+    rerun_execute_with_same_mixed_review()
+    state_after_three = load_state(plan_fixture.plan_dir)
+    assert state_after_three["meta"]["unroutable_rework_attempts"] == 3
+
+    # Cycle 4: attempts (4) > cap (3) with the unroutable item still present →
+    # escalate to recoverable blocked even though a runnable item also exists.
+    fourth = rerun_execute_with_same_mixed_review()
+    state = load_state(plan_fixture.plan_dir)
+
+    assert fourth["state"] == megaplan.STATE_BLOCKED
+    assert state["current_state"] == megaplan.STATE_BLOCKED
+    assert fourth["success"] is False
+    assert "REVIEW" in fourth["unrunnable_rework_task_ids"]
+    assert "unroutable item" in fourth["summary"]
+
+    from megaplan.orchestration.phase_result import read_phase_result
+
+    pr = read_phase_result(plan_fixture.plan_dir)
+    assert pr is not None
+    assert pr.exit_kind == "blocked_by_quality"
+
+
 def test_execute_auto_loop_resets_blocked_tasks_when_flag_set(
     plan_fixture: PlanFixture,
     monkeypatch: pytest.MonkeyPatch,
@@ -3999,6 +4182,240 @@ def test_execute_auto_loop_resets_blocked_tasks_when_flag_set(
     pr = read_phase_result(plan_fixture.plan_dir)
     assert pr is not None, "phase_result.json must be written for every execute exit"
     assert pr.exit_kind == "success"
+
+
+def test_execute_auto_loop_defers_interim_baseline_checkpoint_when_baseline_missing(
+    plan_fixture: PlanFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _setup_two_batch_plan(plan_fixture)
+    finalize_data = read_json(plan_fixture.plan_dir / "finalize.json")
+    finalize_data["baseline_test_failures"] = None
+    finalize_data["tasks"][0]["description"] = (
+        "Introduce no new failures vs the recorded baseline; do not loop the suite."
+    )
+    finalize_data["sense_checks"] = [
+        {"id": "SC2", "task_id": "T2", "question": "Batch two?", "executor_note": "", "verdict": ""},
+    ]
+    (plan_fixture.plan_dir / "finalize.json").write_text(
+        json.dumps(finalize_data, indent=2) + "\n", encoding="utf-8"
+    )
+
+    monkeypatch.setattr(
+        megaplan.execute.batch, "_capture_git_status_snapshot", lambda *_: ({}, None)
+    )
+    monkeypatch.setattr(
+        megaplan.workers, "run_step_with_worker", _single_remaining_t2_worker
+    )
+
+    response = megaplan.handle_execute(
+        plan_fixture.root,
+        plan_fixture.make_args(
+            plan=plan_fixture.plan_name,
+            confirm_destructive=True,
+            user_approved=True,
+        ),
+    )
+    finalize_after = read_json(plan_fixture.plan_dir / "finalize.json")
+
+    assert response["success"] is True
+    assert finalize_after["tasks"][0]["status"] == "skipped"
+    assert finalize_after["tasks"][0]["reviewer_verdict"] == "deferred_baseline_unavailable"
+    assert "baseline_test_failures is null" in finalize_after["tasks"][0]["executor_notes"]
+    assert finalize_after["tasks"][1]["status"] == "done"
+
+
+def test_baseline_checkpoint_not_deferred_before_dependencies_complete(
+    plan_fixture: PlanFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _setup_two_batch_plan(plan_fixture)
+    finalize_data = read_json(plan_fixture.plan_dir / "finalize.json")
+    finalize_data["baseline_test_failures"] = None
+    finalize_data["tasks"][0]["description"] = "First implementation batch"
+    finalize_data["tasks"][1]["description"] = (
+        "Introduce no new failures vs the recorded baseline; do not loop the suite."
+    )
+    finalize_data["tasks"].append(
+        {
+            "id": "T3",
+            "description": "Downstream implementation",
+            "depends_on": ["T2"],
+            "status": "pending",
+            "executor_notes": "",
+            "files_changed": [],
+            "commands_run": [],
+            "evidence_files": [],
+            "reviewer_verdict": "",
+        }
+    )
+    (plan_fixture.plan_dir / "finalize.json").write_text(
+        json.dumps(finalize_data, indent=2) + "\n", encoding="utf-8"
+    )
+
+    monkeypatch.setattr(
+        megaplan.execute.batch, "_capture_git_status_snapshot", lambda *_: ({}, None)
+    )
+    monkeypatch.setattr(megaplan.workers, "run_step_with_worker", _batch_worker)
+
+    response = megaplan.handle_execute(
+        plan_fixture.root,
+        plan_fixture.make_args(
+            plan=plan_fixture.plan_name,
+            confirm_destructive=True,
+            user_approved=True,
+            batch=1,
+        ),
+    )
+    finalize_after = read_json(plan_fixture.plan_dir / "finalize.json")
+
+    assert response["success"] is True
+    assert finalize_after["tasks"][0]["status"] == "done"
+    assert finalize_after["tasks"][1]["status"] == "pending"
+    assert finalize_after["tasks"][2]["status"] == "pending"
+
+
+def test_retry_blocked_tasks_defers_baseline_checkpoint_instead_of_rerunning_loop(
+    plan_fixture: PlanFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _setup_two_batch_plan(plan_fixture)
+    finalize_data = read_json(plan_fixture.plan_dir / "finalize.json")
+    finalize_data["baseline_test_failures"] = None
+    finalize_data["tasks"][0]["description"] = (
+        "Introduce no new failures vs the recorded baseline; do not loop the suite."
+    )
+    finalize_data["tasks"][0]["status"] = "blocked"
+    finalize_data["tasks"][0]["executor_notes"] = (
+        "The suite failed, but no baseline_test_failures were captured."
+    )
+    finalize_data["tasks"][0]["commands_run"] = ["pytest -q"]
+    finalize_data["sense_checks"] = [
+        {"id": "SC2", "task_id": "T2", "question": "Batch two?", "executor_note": "", "verdict": ""},
+    ]
+    (plan_fixture.plan_dir / "finalize.json").write_text(
+        json.dumps(finalize_data, indent=2) + "\n", encoding="utf-8"
+    )
+
+    monkeypatch.setattr(
+        megaplan.execute.batch, "_capture_git_status_snapshot", lambda *_: ({}, None)
+    )
+    monkeypatch.setattr(
+        megaplan.workers, "run_step_with_worker", _single_remaining_t2_worker
+    )
+
+    response = megaplan.handle_execute(
+        plan_fixture.root,
+        plan_fixture.make_args(
+            plan=plan_fixture.plan_name,
+            confirm_destructive=True,
+            user_approved=True,
+            retry_blocked_tasks=True,
+        ),
+    )
+    finalize_after = read_json(plan_fixture.plan_dir / "finalize.json")
+
+    assert response["success"] is True
+    assert finalize_after["tasks"][0]["status"] == "skipped"
+    assert finalize_after["tasks"][0]["reviewer_verdict"] == "deferred_baseline_unavailable"
+    assert finalize_after["tasks"][0]["commands_run"] == []
+    assert finalize_after["tasks"][1]["status"] == "done"
+
+
+def test_retry_blocked_does_not_rerun_final_no_baseline_checkpoint(
+    plan_fixture: PlanFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _setup_two_batch_plan(plan_fixture)
+    finalize_data = read_json(plan_fixture.plan_dir / "finalize.json")
+    finalize_data["baseline_test_failures"] = None
+    finalize_data["tasks"] = [
+        {
+            "id": "T1",
+            "description": "Implementation",
+            "depends_on": [],
+            "status": "done",
+            "executor_notes": "done",
+            "files_changed": ["done.py"],
+            "commands_run": ["true"],
+            "evidence_files": [],
+            "reviewer_verdict": "",
+        },
+        {
+            "id": "T2",
+            "description": "Introduce no new failures vs the recorded baseline; do not loop the suite.",
+            "depends_on": ["T1"],
+            "status": "blocked",
+            "executor_notes": "Cannot compare failures without a baseline.",
+            "files_changed": [],
+            "commands_run": ["pytest"],
+            "evidence_files": [],
+            "reviewer_verdict": "",
+        },
+    ]
+    finalize_data["sense_checks"] = []
+    (plan_fixture.plan_dir / "finalize.json").write_text(
+        json.dumps(finalize_data, indent=2) + "\n", encoding="utf-8"
+    )
+
+    def worker_should_not_run(*_args, **_kwargs):
+        raise AssertionError("retry-blocked must not rerun an unresolvable final checkpoint")
+
+    monkeypatch.setattr(megaplan.workers, "run_step_with_worker", worker_should_not_run)
+
+    response = megaplan.handle_execute(
+        plan_fixture.root,
+        plan_fixture.make_args(
+            plan=plan_fixture.plan_name,
+            confirm_destructive=True,
+            user_approved=True,
+            retry_blocked_tasks=True,
+        ),
+    )
+    from megaplan.orchestration.phase_result import read_phase_result
+
+    pr = read_phase_result(plan_fixture.plan_dir)
+
+    assert response["success"] is False
+    assert "baseline_test_failures=null" in response["summary"]
+    assert "blocked_task_ids" not in response
+    assert pr is not None
+    assert pr.exit_kind == "blocked_by_quality"
+    assert pr.blocked_tasks == ()
+    assert pr.deviations[0].blocker_id == "quality:T2:baseline-unavailable-no-new-failures-checkpoint"
+
+
+def test_status_reclassifies_stale_no_baseline_checkpoint_prereq_block(
+    plan_fixture: PlanFixture,
+) -> None:
+    _setup_two_batch_plan(plan_fixture)
+    finalize_data = read_json(plan_fixture.plan_dir / "finalize.json")
+    finalize_data["baseline_test_failures"] = None
+    finalize_data["tasks"][0]["description"] = (
+        "Introduce no new failures vs the recorded baseline; do not loop the suite."
+    )
+    finalize_data["tasks"][0]["status"] = "blocked"
+    finalize_data["tasks"][0]["executor_notes"] = "Old run classified this as a prerequisite."
+    (plan_fixture.plan_dir / "finalize.json").write_text(
+        json.dumps(finalize_data, indent=2) + "\n", encoding="utf-8"
+    )
+    from megaplan.cli.status_view import _build_status_payload
+    from megaplan.orchestration.phase_result import BlockedTask
+    from tests.conftest import make_fake_phase_result
+
+    make_fake_phase_result(
+        plan_fixture.plan_dir,
+        exit_kind="blocked_by_prereq",
+        blocked_tasks=(BlockedTask(task_id="T1", reason="blocked_by_prereq"),),
+    )
+
+    payload = _build_status_payload(plan_fixture.plan_dir, load_state(plan_fixture.plan_dir))
+
+    assert payload["quality_blockers"][0]["blocker_id"] == (
+        "quality:T1:baseline-unavailable-no-new-failures-checkpoint"
+    )
+    assert payload["quality_blockers"][0]["task_id"] == "T1"
+    assert payload["blocker_recovery"]["prerequisite_blockers"] == []
 
 
 def test_execute_auto_loop_short_circuits_when_flag_unset(

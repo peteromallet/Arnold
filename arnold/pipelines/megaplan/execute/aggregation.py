@@ -203,14 +203,18 @@ def _expand_untracked_directory_entries(
 
 def _capture_execute_scope_snapshot(
     project_dir: Path,
+    *,
+    base_ref: str | None = None,
 ) -> tuple[dict[str, str], str | None]:
-    observed_snapshot, observed_error = _capture_git_status_snapshot(project_dir)
+    observed_snapshot, observed_error = _capture_git_status_snapshot(
+        project_dir, base_ref=base_ref
+    )
     if observed_error is not None:
         return observed_snapshot, observed_error
     if not any(path.endswith("/") for path in observed_snapshot):
         return observed_snapshot, None
     recursive_snapshot, recursive_error = _capture_git_status_snapshot_recursive(
-        project_dir
+        project_dir, base_ref=base_ref
     )
     if recursive_error is None:
         return recursive_snapshot, None
@@ -256,7 +260,9 @@ def _compute_execute_scope_drift(
                     files_claimed.add(claimed_path)
                     per_call_claimed.add(claimed_path)
     try:
-        observed_snapshot, observed_error = _capture_execute_scope_snapshot(project_dir)
+        observed_snapshot, observed_error = _capture_execute_scope_snapshot(
+            project_dir, base_ref=milestone_base_sha
+        )
     except Exception as exc:
         raise CliError(
             "scope_drift_snapshot",
@@ -264,7 +270,23 @@ def _compute_execute_scope_drift(
             f"failed to capture git status snapshot while evaluating execute scope drift for {project_dir}: {exc}",
             extra={"project_dir": str(project_dir)},
         ) from exc
-    files_in_diff = set(observed_snapshot.keys()) if observed_error is None else set()
+    status_files: set[str] = set(observed_snapshot.keys()) if observed_error is None else set()
+
+    # When a declared milestone base SHA is available, scope the diff to the
+    # committed range since that SHA so pre-milestone committed changes are
+    # excluded from scope drift.
+    if milestone_base_sha:
+        from megaplan.loop.git import _collect_committed_range_paths
+        window_files = _collect_committed_range_paths(project_dir, base_ref=milestone_base_sha)
+        files_in_diff: set[str] = window_files | status_files
+    else:
+        files_in_diff = status_files
+
+    # Carry-forward files are inherited from a prior milestone — exclude them
+    # from scope drift entirely (non-blocking by definition).
+    if carry_forward_paths:
+        files_in_diff = files_in_diff - carry_forward_paths
+
     loc_by_file = collect_loc_by_file(project_dir, files_in_diff)
     return compute_scope_drift(
         files_claimed=files_claimed,

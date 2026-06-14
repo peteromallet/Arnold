@@ -62,13 +62,9 @@ def _resolve_concrete_slot_spec(spec: str, *, vendor: str | None = None) -> str:
 
 
 # Slots that are opt-in / non-blocking and so must NOT hard-fail preflight.
-# ``feedback`` only runs under --with-feedback and is deliberately pinned to a
-# fixed vendor (claude:low) for cross-run ratings comparability — see
-# ``apply_vendor_rewrite``. Demanding its credential would make every
-# single-vendor profile (all-codex, all-deepseek-*, solo) unrunnable for a
-# user who lacks that one extra key, even though they never invoke feedback.
-# If feedback IS used without the key, it fails at runtime on a throwaway
-# template rather than blocking the whole run.
+# ``feedback`` only runs when explicitly requested, so its credential remains
+# soft. If feedback IS used without the key, it fails at runtime on a
+# throwaway template rather than blocking the whole run up front.
 _SOFT_SLOTS: frozenset[str] = frozenset({"feedback"})
 
 

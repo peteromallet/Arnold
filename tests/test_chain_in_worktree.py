@@ -70,6 +70,7 @@ def test_chain_start_in_worktree_reroots_whole_chain(
         *,
         no_git_refresh: bool,
         no_push: bool,
+        fresh: bool,
         one: bool,
         mode: str = "start",
     ) -> dict[str, Any]:
@@ -77,6 +78,7 @@ def test_chain_start_in_worktree_reroots_whole_chain(
         seen["root"] = root
         seen["no_git_refresh"] = no_git_refresh
         seen["no_push"] = no_push
+        seen["fresh"] = fresh
         seen["one"] = one
         return {"status": "done", "chain_state": {}}
 
@@ -108,11 +110,75 @@ def test_chain_start_in_worktree_reroots_whole_chain(
         "root": expected_wt.resolve(),
         "no_git_refresh": True,
         "no_push": True,
+        "fresh": False,
         "one": True,
     }
     assert _git(expected_wt, "rev-parse", "HEAD").stdout.strip() == head
     assert _git(repo, "rev-parse", "--abbrev-ref", "HEAD").stdout.strip() == "main"
     assert _git(repo, "status", "--porcelain").stdout.strip() == "?? chain.yaml\n?? idea.md"
+
+
+def test_chain_start_fresh_in_worktree_recreates_existing_target(
+    tmp_path: Path,
+    fake_home: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repo = tmp_path / "repo"
+    first_head = _init_repo(repo)
+    idea = repo / "idea.md"
+    idea.write_text("do the thing\n", encoding="utf-8")
+    spec = repo / "chain.yaml"
+    _write_chain_spec(spec, idea)
+    target = fake_home / "Documents" / ".megaplan-worktrees" / "chain-wt"
+    _git(repo, "worktree", "add", "-b", "chain-wt", str(target), first_head)
+    (target / "STALE").write_text("old run\n", encoding="utf-8")
+    seen: dict[str, Any] = {}
+
+    def fake_run_chain(
+        spec_path: Path,
+        root: Path,
+        *,
+        no_git_refresh: bool,
+        no_push: bool,
+        fresh: bool,
+        one: bool,
+        mode: str = "start",
+    ) -> dict[str, Any]:
+        del no_git_refresh, no_push, one, mode
+        seen["spec_path"] = spec_path
+        seen["root"] = root
+        seen["fresh"] = fresh
+        return {"status": "done", "chain_state": {}}
+
+    monkeypatch.setattr("megaplan.chain.run_chain", fake_run_chain)
+    monkeypatch.chdir(repo)
+
+    code = megaplan.main(
+        [
+            "chain",
+            "start",
+            "--spec",
+            str(spec),
+            "--in-worktree",
+            "chain-wt",
+            "--fresh",
+            "--no-git-refresh",
+            "--no-push",
+        ]
+    )
+    payload = json.loads(capsys.readouterr().out)
+
+    assert code == 0
+    assert payload["status"] == "done"
+    assert seen == {
+        "spec_path": spec.resolve(),
+        "root": target.resolve(),
+        "fresh": True,
+    }
+    assert target.is_dir()
+    assert not (target / "STALE").exists()
+    assert _git(target, "rev-parse", "HEAD").stdout.strip() == first_head
 
 
 def test_chain_in_worktree_rejects_project_dir(

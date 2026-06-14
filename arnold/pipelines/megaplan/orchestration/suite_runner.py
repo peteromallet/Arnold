@@ -11,6 +11,7 @@ can reliably reap the whole process tree on deadline expiry (gate warning #1).
 
 from __future__ import annotations
 
+import os
 import re
 import shlex
 import subprocess
@@ -46,6 +47,10 @@ class SuiteRunResult:
     raw_log_path: Path
     code_hash: str
     collections_parse_ok: bool
+    # Set only when ``status == "timeout"``: ``"idle"`` (output stalled — suite
+    # wedged) vs ``"deadline"`` (hit the absolute runaway ceiling). ``None``
+    # otherwise. Lets callers write an accurate, actionable timeout note.
+    timeout_reason: str | None = None
 
 
 def _compute_code_hash(
@@ -227,30 +232,113 @@ def _raw_log_path(project_dir: Path, config: dict[str, Any], run_id: str) -> Pat
     return ver_dir / f"raw_{run_id}.log"
 
 
+# How often the soft progress heartbeat fires while the suite is running.
+_PROGRESS_HEARTBEAT_S = 60.0
+
+
 def _spawn_to_log(project_dir: Path, argv: list[str], raw_log_path: Path) -> tuple[Any | None, Any]:
     log_fh = raw_log_path.open("w", encoding="utf-8")
+    # Force the child to flush stdout per-test rather than block-buffering to an
+    # 8 KB pipe-to-file boundary. Without this the raw log grows in coarse chunks
+    # and the progress/idle detector in ``_wait_for_process`` can't tell a
+    # slow-but-moving suite from a wedged one. ``pytest -q`` emits one char per
+    # test; unbuffered means each lands in the log immediately, so *log growth ==
+    # real progress*.
+    env = dict(os.environ)
+    env.setdefault("PYTHONUNBUFFERED", "1")
     try:
         return spawn(
             argv,
             cwd=str(project_dir),
             stdout=log_fh,
             stderr=subprocess.STDOUT,
+            env=env,
         ), log_fh
     except Exception:
         log_fh.close()
         return None, None
 
 
-def _wait_for_process(proc: Any, run_id: str, deadline_seconds: float) -> tuple[int | None, bool]:
+def _make_progress_writer(raw_log_path: Path) -> Any:
+    """Append soft 'still running' heartbeats to a sibling ``.progress`` file.
+
+    Written to a *different* file than the raw log so the heartbeat itself never
+    counts as suite progress (which would defeat the idle detector).
+    """
+    progress_path = raw_log_path.with_suffix(".progress")
+
+    def _cb(elapsed_s: float, log_bytes: int) -> None:
+        try:
+            with progress_path.open("a", encoding="utf-8") as fh:
+                fh.write(
+                    f"[suite] still running: {elapsed_s:.0f}s elapsed, "
+                    f"{log_bytes} bytes of test output captured\n"
+                )
+        except OSError:
+            pass
+
+    return _cb
+
+
+def _wait_for_process(
+    proc: Any,
+    run_id: str,
+    deadline_seconds: float,
+    *,
+    raw_log_path: Path | None = None,
+    idle_seconds: float | None = None,
+    progress_cb: Any | None = None,
+) -> tuple[int | None, bool, str | None]:
+    """Wait for the suite process, killing it on a stall or the absolute ceiling.
+
+    Two independent caps:
+
+    * ``idle_seconds`` (primary, opt-in) — a *hang detector*. While the raw log
+      keeps growing the suite is making progress, so the idle clock is reset; only
+      a log that goes silent for ``idle_seconds`` is treated as wedged. This is
+      independent of total suite size, so it does not need re-tuning as the suite
+      grows (a 10 k-test suite is never silent for 3 minutes unless a test hangs).
+    * ``deadline_seconds`` (always) — an absolute runaway ceiling, a last resort
+      that should essentially never trip for a healthy, moving suite.
+
+    ``progress_cb(elapsed_s, log_bytes)`` is invoked roughly every
+    ``_PROGRESS_HEARTBEAT_S`` so callers can emit a soft "still running" signal.
+
+    Returns ``(exit_code, timed_out, timeout_reason)`` where ``timeout_reason`` is
+    ``"idle"``, ``"deadline"`` or ``None``.
+    """
     exit_code: int | None = None
     timed_out = False
+    timeout_reason: str | None = None
+    last_size = -1
+    start = time.monotonic()
+    last_progress_t = start
+    last_heartbeat_t = start
     try:
-        while time.monotonic() < deadline_seconds:
-            remaining = deadline_seconds - time.monotonic()
-            if remaining <= 0:
+        while True:
+            now = time.monotonic()
+            if now >= deadline_seconds:
+                timeout_reason = "deadline"
                 break
+            if idle_seconds and raw_log_path is not None:
+                try:
+                    size = raw_log_path.stat().st_size
+                except OSError:
+                    size = last_size
+                if size != last_size:
+                    last_size = size
+                    last_progress_t = now
+                elif now - last_progress_t >= idle_seconds:
+                    timeout_reason = "idle"
+                    break
+            if progress_cb is not None and now - last_heartbeat_t >= _PROGRESS_HEARTBEAT_S:
+                last_heartbeat_t = now
+                try:
+                    progress_cb(now - start, max(last_size, 0))
+                except Exception:
+                    pass
             try:
-                exit_code = proc.wait(timeout=min(0.5, remaining))
+                exit_code = proc.wait(timeout=0.5)
                 break
             except subprocess.TimeoutExpired:
                 continue
@@ -261,13 +349,16 @@ def _wait_for_process(proc: Any, run_id: str, deadline_seconds: float) -> tuple[
 
     if exit_code is None and proc.poll() is None:
         timed_out = True
+        if timeout_reason is None:
+            timeout_reason = "deadline"
         kill_group(proc, grace_s=5.0, escalate=True, label=f"suite_runner:{run_id}")
     if not timed_out:
+        timeout_reason = None
         try:
             exit_code = proc.wait(timeout=2)
         except (subprocess.TimeoutExpired, ProcessLookupError, OSError):
             exit_code = proc.poll()
-    return exit_code, timed_out
+    return exit_code, timed_out, timeout_reason
 
 
 def _status_from_exit(exit_code: int | None, timed_out: bool) -> SuiteStatus:
@@ -331,8 +422,16 @@ def run_suite(
     *,
     phase: str,
     deadline_seconds: float,
+    idle_seconds: float | None = None,
 ) -> SuiteRunResult:
-    """Run the configured test command with a hard deadline."""
+    """Run the configured test command.
+
+    ``deadline_seconds`` is an absolute runaway ceiling. ``idle_seconds`` (opt-in)
+    adds a progress-based stall detector: the suite is killed only if its output
+    log stops growing for that long, so a slow-but-moving suite is never killed
+    merely for being large. See :func:`_wait_for_process`. When ``idle_seconds``
+    is set, a soft heartbeat is written to ``raw_<id>.progress`` alongside the log.
+    """
     run_id = uuid4().hex[:12]
     command = _pytest_command(config.get("test_command") if isinstance(config, dict) else None)
     raw_log_path = _raw_log_path(project_dir, config, run_id)
@@ -343,7 +442,15 @@ def run_suite(
     if proc is None:
         return _spawn_error_result(run_id, phase, command, raw_log_path, code_hash, t0)
 
-    exit_code, timed_out = _wait_for_process(proc, run_id, deadline_seconds)
+    progress_cb = _make_progress_writer(raw_log_path) if idle_seconds else None
+    exit_code, timed_out, timeout_reason = _wait_for_process(
+        proc,
+        run_id,
+        deadline_seconds,
+        raw_log_path=raw_log_path,
+        idle_seconds=idle_seconds,
+        progress_cb=progress_cb,
+    )
     duration = time.monotonic() - t0
     log_fh.close()
     parsed = _parse_pytest_output(raw_log_path.read_text(encoding="utf-8"))
@@ -356,7 +463,7 @@ def run_suite(
         collected=parsed["collected"], collected_ids=collected_ids,
         failures=parsed["failures"], passes=parsed["passes"], status=status,
         exit_code=exit_code, raw_log_path=raw_log_path, code_hash=code_hash,
-        collections_parse_ok=collections_parse_ok,
+        collections_parse_ok=collections_parse_ok, timeout_reason=timeout_reason,
     )
 
 

@@ -243,6 +243,7 @@ def _recover_execute_timeout(
     finalize_data = read_json(plan_dir / "finalize.json")
     project_dir = Path(state["config"]["project_dir"])
     plan_mode = state["config"].get("mode", "code")
+    base_ref = state.get("meta", {}).get("chain_policy", {}).get("milestone_base_sha")
     checkpoint_path = _timeout_checkpoint_path(plan_dir, batch_number=batch_number)
     try:
         checkpoint_data = _capture_execute_checkpoint_payload(

@@ -69,10 +69,10 @@ def test_init_records_critic_model_provenance(monkeypatch):
         "test_baseline_timeout": 900,
     }
 
-    monkeypatch.setattr(init_mod, "get_effective", lambda _section, key: defaults[key])
-    monkeypatch.setattr(init_mod, "load_profile_metadata", lambda project_dir: {})
+    monkeypatch.setattr(init_mod, "get_effective", lambda _section, key, *, project_dir=None: defaults[key])
+    monkeypatch.setattr(init_mod, "load_profile_metadata", lambda home=None, project_dir=None: {})
 
-    monkeypatch.setattr(init_mod, "setting_is_explicit", lambda section, key: False)
+    monkeypatch.setattr(init_mod, "setting_is_explicit", lambda section, key, *, home=None, project_dir=None: False)
     config, *_ = init_mod._build_state_config(
         _init_args(critic_model="deepseek-v4-pro"),
         project_dir=Path("/tmp/proj"),
@@ -89,7 +89,7 @@ def test_init_records_critic_model_provenance(monkeypatch):
     monkeypatch.setattr(
         init_mod,
         "setting_is_explicit",
-        lambda section, key: section == "execution" and key == "critic_model",
+        lambda section, key, *, home=None, project_dir=None: section == "execution" and key == "critic_model",
     )
     defaults["critic_model"] = "config-pin"
     config, *_ = init_mod._build_state_config(
@@ -105,11 +105,11 @@ def test_init_records_critic_model_provenance(monkeypatch):
     assert config["critic_model"] == "config-pin"
     assert config["critic_model_explicit"] is True
 
-    monkeypatch.setattr(init_mod, "setting_is_explicit", lambda section, key: False)
+    monkeypatch.setattr(init_mod, "setting_is_explicit", lambda section, key, *, home=None, project_dir=None: False)
     monkeypatch.setattr(
         init_mod,
         "load_profile_metadata",
-        lambda project_dir: {"partnered": {"critic_model": "profile-pin"}},
+        lambda home=None, project_dir=None: {"partnered": {"critic_model": "profile-pin"}},
     )
     config, *_ = init_mod._build_state_config(
         _init_args(profile="partnered"),

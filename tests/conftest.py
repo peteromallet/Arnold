@@ -128,7 +128,7 @@ def make_args_factory(project_dir: Path) -> Callable[..., Namespace]:
             "project_dir": str(project_dir),
             "auto_approve": None,
             "robustness": None,
-            "agent": None,
+            "agent": "codex",
             "ephemeral": False,
             "fresh": False,
             "persist": False,
@@ -186,7 +186,7 @@ def _make_plan_fixture_with_robustness(
     monkeypatch.setattr(megaplan.cli, "config_dir", _config_dir)
 
     make_args = make_args_factory(project_dir)
-    response = megaplan.handle_init(root, make_args(robustness=robustness))
+    response = megaplan.handle_init(root, make_args(robustness=robustness, agent="codex"))
     plan_name = response["plan"]
     return PlanFixture(
         root=root,

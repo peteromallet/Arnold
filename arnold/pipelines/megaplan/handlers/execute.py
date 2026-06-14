@@ -7,6 +7,7 @@ from typing import Any
 from arnold.pipelines.megaplan.execute.batch import (
     handle_execute_auto_loop,
     handle_execute_one_batch,
+    normalize_tier_map,
 )
 from arnold.pipelines.megaplan.profiles import apply_profile_expansion
 from arnold.pipelines.megaplan.types import (
@@ -336,6 +337,8 @@ def handle_execute(root: Path, args: argparse.Namespace) -> StepResponse:
                         kind=str(d.get("kind", "quality_gate")),
                         message=str(d.get("message", "")),
                         task_id=d.get("task_id"),
+                        blocker_id=d.get("blocker_id"),
+                        phase=d.get("phase"),
                     )
                     for d in dev_raw
                     if isinstance(d, (str, dict))

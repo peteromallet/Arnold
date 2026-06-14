@@ -2878,7 +2878,7 @@ def test_shannon_prompt_override_is_budgeted_through_non_enforced_model_seam(
     from arnold.pipelines.megaplan.workers.shannon import run_shannon_step
 
     ensure_runtime_layout(tmp_path)
-    monkeypatch.delenv("MEGAPLAN_SHANNON_PASTE_FIRST_TURN", raising=False)
+    monkeypatch.setenv("MEGAPLAN_SHANNON_PASTE_FIRST_TURN", "0")
     monkeypatch.setenv("MEGAPLAN_SHANNON_READINESS_PROBE", "0")
     monkeypatch.setenv("MEGAPLAN_SHANNON_SESSION_ROULETTE", "0")
     plan_dir, state = _mock_state(tmp_path)
@@ -3469,6 +3469,24 @@ def test_inner_env_scrubbed_via_vendored_patch() -> None:
     assert env_filter.match("CLAUDE_CODE_MAX_OUTPUT_TOKENS") is None
     assert env_filter.match("TMUX") is None
     assert env_filter.match("SHELL") is None
+
+
+def test_ensure_workspace_trusted_accepts_isolated_bypass_permissions_prompt(tmp_path: Path) -> None:
+    from megaplan.workers.shannon import _ensure_workspace_trusted
+
+    work_dir = tmp_path / "workspace"
+    work_dir.mkdir()
+    claude_config_dir = tmp_path / "claude_config"
+    claude_config_dir.mkdir()
+
+    _ensure_workspace_trusted(work_dir, claude_config_dir=str(claude_config_dir))
+
+    data = json.loads((claude_config_dir / ".claude.json").read_text(encoding="utf-8"))
+    assert data["hasCompletedOnboarding"] is True
+    assert data["bypassPermissionsModeAccepted"] is True
+    entry = data["projects"][str(work_dir.resolve())]
+    assert entry["hasTrustDialogAccepted"] is True
+    assert entry["hasCompletedProjectOnboarding"] is True
 
 
 def test_run_artifacts_written_to_run_dir_not_cwd(

@@ -30,17 +30,17 @@ def _make_result(**overrides: object) -> SuiteRunResult:
     return SuiteRunResult(**{k: v for k, v in defaults.items()})  # type: ignore[arg-type]
 
 
-# ── default timeout (900s) ──────────────────────────────────────────────
+# ── default absolute ceiling (3600s) ────────────────────────────────────
 
 
-def test_capture_test_baseline_default_timeout_is_900(
+def test_capture_test_baseline_default_timeout_is_3600(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """When no test_baseline_timeout key is present, the run_suite call
     should use deadline=monotonic+900 and the timeout note should reference 900."""
     monkeypatch.delenv(megaplan_handlers.MOCK_ENV_VAR, raising=False)
 
-    fake_result = _make_result(status="timeout")
+    fake_result = _make_result(status="timeout")  # timeout_reason defaults to None
 
     with mock.patch(
         "arnold.pipelines.megaplan.orchestration.suite_runner.run_suite", return_value=fake_result
@@ -48,12 +48,35 @@ def test_capture_test_baseline_default_timeout_is_900(
         result = megaplan_handlers._capture_test_baseline(tmp_path, {})
 
     assert result["baseline_test_failures"] is None
-    assert "timed out" in result["baseline_test_note"].lower()
-    assert "900" in result["baseline_test_note"]
+    assert "ceiling" in result["baseline_test_note"].lower()
+    assert "3600" in result["baseline_test_note"]
     mock_run.assert_called_once()
 
 
-# ── override honoured ───────────────────────────────────────────────────
+def test_capture_test_baseline_idle_stall_note(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A timeout attributed to idle (a wedged suite) yields a 'stalled'/'wedged'
+    note referencing the idle cap, not the absolute ceiling."""
+    monkeypatch.delenv(megaplan.handlers.MOCK_ENV_VAR, raising=False)
+
+    fake_result = _make_result(status="timeout", timeout_reason="idle")
+
+    with mock.patch(
+        "megaplan.orchestration.suite_runner.run_suite", return_value=fake_result
+    ) as mock_run:
+        result = megaplan.handlers._capture_test_baseline(
+            tmp_path, {"test_baseline_idle_timeout": 180}
+        )
+
+    assert result["baseline_test_failures"] is None
+    note = result["baseline_test_note"].lower()
+    assert "stalled" in note and "wedged" in note
+    assert "180" in result["baseline_test_note"]
+    mock_run.assert_called_once()
+
+
+# ── absolute-ceiling override honoured ──────────────────────────────────
 
 
 def test_capture_test_baseline_override_timeout_300(
@@ -72,7 +95,7 @@ def test_capture_test_baseline_override_timeout_300(
         )
 
     assert result["baseline_test_failures"] is None
-    assert "timed out" in result["baseline_test_note"].lower()
+    assert "ceiling" in result["baseline_test_note"].lower()
     assert "300" in result["baseline_test_note"]
     mock_run.assert_called_once()
 
@@ -93,7 +116,7 @@ def test_capture_test_baseline_override_timeout_1500(
         )
 
     assert result["baseline_test_failures"] is None
-    assert "timed out" in result["baseline_test_note"].lower()
+    assert "ceiling" in result["baseline_test_note"].lower()
     assert "1500" in result["baseline_test_note"]
     mock_run.assert_called_once()
 

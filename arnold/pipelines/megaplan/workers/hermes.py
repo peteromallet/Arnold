@@ -1072,6 +1072,40 @@ def parse_agent_output(
             print(f"[hermes-worker] Repaired malformed JSON with one retry", file=sys.stderr)
 
     if payload is None:
+        if parse_error is not None:
+            repair_result_holder: dict[str, object] = {}
+
+            def _repair_call(repair_prompt: str) -> str:
+                repair_result = agent.run_conversation(
+                    user_message=repair_prompt,
+                    conversation_history=messages,
+                    **extra_run_kwargs,
+                )
+                repair_result_holder["result"] = repair_result
+                return str(repair_result.get("final_response", "") or "")
+
+            try:
+                repaired = _repair_worker_json_once(
+                    step,
+                    repair_raw or raw_output,
+                    _repair_call,
+                    parse_error=parse_error,
+                    validate=False,
+                )
+            except CliError as exc:
+                raise CliError(
+                    "worker_parse_error",
+                    exc.message,
+                    extra=exc.extra,
+                ) from exc
+            if repaired is not None:
+                payload, raw_output = repaired
+                repair_result = repair_result_holder.get("result")
+                if isinstance(repair_result, dict):
+                    messages = repair_result.get("messages", messages)
+                print(f"[hermes-worker] Repaired malformed JSON with one retry", file=sys.stderr)
+
+    if payload is None:
         raise CliError(
             "worker_parse_error",
             f"Hermes worker returned invalid JSON for step '{step}': "
@@ -1297,6 +1331,37 @@ def run_hermes_step(
             "Do NOT use markdown. Do NOT wrap in code fences. Output ONLY raw JSON "
             "matching this template:\n\n" + template
         )
+
+    try:
+        check_prompt_size(prompt, phase=step)
+    except CliError as error:
+        if step != "review" or error.code != "prompt_oversized":
+            raise
+        prompt = compact_review_prompt(
+            state,
+            plan_dir,
+            root,
+            prompt_size_error=error.extra,
+            projection_capabilities=projection_capabilities,
+        )
+        if output_path is not None:
+            prompt += (
+                f"\n\nOUTPUT FILE: {output_path}\n"
+                "This file is your ONLY output. It contains a JSON template with the structure to fill in.\n"
+                "Workflow:\n"
+                "1. Start by reading the file to see the structure\n"
+                "2. Do your work\n"
+                "3. Read the file, add your results, write it back\n\n"
+                "Do NOT put your results in a text response. The file is the only output that matters."
+            )
+        else:
+            template = _schema_template(schema)
+            prompt += (
+                "\n\nIMPORTANT: Your final response MUST be a single valid JSON object. "
+                "Do NOT use markdown. Do NOT wrap in code fences. Output ONLY raw JSON "
+                "matching this template:\n\n" + template
+            )
+        check_prompt_size(prompt, phase=step)
 
     if (
         output_path is not None
