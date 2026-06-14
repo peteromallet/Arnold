@@ -7,7 +7,7 @@
 // ("Timed out waiting for Claude prompt"). The fix trims trailing blank lines
 // before inspecting the meaningful tail.
 //
-// Run: bun test arnold/pipelines/megaplan/vendor/shannon/pane_ready.test.ts
+// Run: bun test megaplan/vendor/shannon/pane_ready.test.ts
 import { expect, test } from "bun:test";
 import { paneLooksReadyForUserMessage } from "./index.ts";
 
@@ -21,7 +21,7 @@ test("ready prompt buried above trailing blank lines is detected (P16)", () => {
     "",
     "",
     BORDER,
-    // Note: Claude renders a non-breaking space after the marker.
+    // Note: Claude renders a non-breaking space (U+00A0) after the marker.
     "❯ Try \"create a util logging.py that...\"",
     BORDER,
     "  ⏵⏵ bypass permissions on (shift+tab to cycle) · ← for agents",

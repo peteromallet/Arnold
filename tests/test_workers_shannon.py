@@ -1747,7 +1747,8 @@ def test_vendored_shannon_current_launch_and_paste_contracts() -> None:
     # plain Claude CLI inside the tmux pane.
     assert "const claudeLaunchArgs = [" in src
     assert '"claude",' in src
-    assert '"tmux",\n      "new-session",' in src
+    assert "tmuxArgs(" in src
+    assert '"new-session",' in src
     assert "...claudeLaunchArgs," in src
     # The user prompt is not threaded into the inner Claude argv; sendPrompt
     # waits for readiness and delivers prompt bytes through tmux paste instead.
@@ -1763,12 +1764,12 @@ def test_vendored_shannon_current_launch_and_paste_contracts() -> None:
     # without naming the worker/session/cwd in tmux global buffer state.
     assert "const _mpBuf = randomUUID();" in src
     assert "const _mpBuf = `shannon-${tmuxSession}`;" not in src
-    assert 'Bun.spawn(["tmux", "load-buffer", "-b", _mpBuf, "-"]' in src
+    assert 'Bun.spawn(tmuxArgs(tmuxSession, "load-buffer", "-b", _mpBuf, "-")' in src
     assert "_mpLoad.stdin.write(prompt)" in src
     assert '"paste-buffer", "-p", "-b", _mpBuf, "-t", tmuxSession' in src
     assert '"send-keys", "-t", tmuxSession, "C-m"' in src
     assert "finally {" in src
-    assert 'await runCommand(["tmux", "delete-buffer", "-b", _mpBuf]);' in src
+    assert 'await runCommand(tmuxArgs(tmuxSession, "delete-buffer", "-b", _mpBuf));' in src
 
     # Optional short-turn typing is a narrow env-gated branch: by default the
     # threshold is zero, typed prompts must fit the threshold and contain no
@@ -2622,7 +2623,11 @@ def test_vendored_shannon_launches_native_claude_and_sends_after_ready() -> None
 
     src = VENDORED_SHANNON_PATH.read_text(encoding="utf-8")
     assert '"claude",' in src
-    assert '"-p"' not in src[src.index("const claudeLaunchArgs"):src.index("await runCommand([", src.index("const claudeLaunchArgs"))]
+    launch_block = src[
+        src.index("const claudeLaunchArgs"):
+        src.index("];", src.index("const claudeLaunchArgs"))
+    ]
+    assert '"-p"' not in launch_block
     assert "...options.claudeArgs, prompt" not in src
     assert "...rootSafeClaudeArgs(options.claudeArgs), prompt" not in src
     assert "let launchedWithPrompt" not in src

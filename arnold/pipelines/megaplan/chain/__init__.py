@@ -855,18 +855,37 @@ def _latest_execution_batch_all_tasks_done(plan_dir: Path) -> tuple[bool, str]:
         )
         if isinstance(finalize_tasks, list) and finalize_tasks:
             finalize_records = [task for task in finalize_tasks if isinstance(task, dict)]
+            from arnold.pipelines.megaplan.execute.batch import (
+                baseline_unavailable_checkpoint_ids,
+            )
+
+            finalize_ids = {
+                str(task.get("id"))
+                for task in finalize_records
+                if isinstance(task.get("id"), str)
+            }
+            baseline_unavailable = baseline_unavailable_checkpoint_ids(
+                finalize_payload, finalize_ids
+            )
+            authoritative_finalize_records = [
+                task
+                for task in finalize_records
+                if str(task.get("id") or "") not in baseline_unavailable
+            ]
             finalize_decisions: dict[str, AuthorityDecision] = {}
             finalize_completed = corroborated_completed_task_ids(
-                finalize_records,
+                authoritative_finalize_records,
                 plan_dir=plan_dir,
                 decisions=finalize_decisions,
             )
             pending = _non_authoritative_task_reasons(
-                finalize_records,
+                authoritative_finalize_records,
                 finalize_completed,
                 finalize_decisions,
             )
-            pending.extend(_finalize_records_missing_authority_fields(finalize_records))
+            pending.extend(
+                _finalize_records_missing_authority_fields(authoritative_finalize_records)
+            )
             if pending:
                 return False, f"finalize.json has non-authoritative tasks: {', '.join(pending)}"
     return True, latest.name
@@ -1024,6 +1043,20 @@ def _resumable_retry_state(root: Path, plan: str | None) -> str | None:
     if isinstance(current_state, str) and current_state in RESUMABLE_RETRY_STATES:
         return current_state
     return None
+
+
+def _plan_current_state_from_payload(root: Path, plan: str | None) -> str | None:
+    if not plan:
+        return None
+    try:
+        plan_dir = resolve_plan_dir(root, plan)
+        raw = json.loads((plan_dir / "state.json").read_text(encoding="utf-8"))
+    except (CliError, FileNotFoundError, json.JSONDecodeError, OSError, UnicodeDecodeError):
+        return None
+    if not isinstance(raw, dict):
+        return None
+    current_state = raw.get("current_state")
+    return current_state if isinstance(current_state, str) else None
 
 
 def _resolve_idea_path(root: Path, idea: str) -> Path:
@@ -1688,6 +1721,20 @@ def run_chain(
             on_phase_complete=phase_callback if use_pr else None,
             writer=writer,
         )
+        if outcome.status == "stalled":
+            reconciled_state = _plan_current_state_from_payload(root, plan_name)
+            terminal_good = {"done", STATE_FINALIZED}
+            if reconciled_state in terminal_good:
+                writer(
+                    f"[chain] driver reported {outcome.status!r} for {plan_name}, "
+                    f"but plan state.json is {reconciled_state!r}; reconciling "
+                    "to advance\n"
+                )
+                outcome.reason = (
+                    f"reconciled from {outcome.status} via plan "
+                    f"state.json={reconciled_state}"
+                )
+                outcome.status = "done"
         state.last_state = outcome.status
         chain_spec.save_chain_state(spec_path, state)
         decision = _handle_outcome(

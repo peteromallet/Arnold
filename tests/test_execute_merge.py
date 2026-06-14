@@ -132,3 +132,45 @@ def test_missing_file_skips_silently(tmp_path: Path, monkeypatch: Any) -> None:
 
     assert task["status"] == "done"
     assert issues == []
+
+
+def test_fixed_syntax_error_prose_does_not_block_when_file_parses(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    (tmp_path / "some_file.py").write_text("import os as _os\n", encoding="utf-8")
+
+    task, _issues = _merge_task_update(
+        tmp_path,
+        monkeypatch,
+        task_update={
+            "task_id": "T1",
+            "status": "done",
+            "executor_notes": "implemented",
+            "files_changed": ["some_file.py"],
+            "commands_run": [],
+        },
+        deviations=["T1 had a double-`as` syntax error in the import; fixed it"],
+    )
+
+    assert task["status"] == "done"
+
+
+def test_real_syntax_error_in_file_still_blocks_via_ast(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    (tmp_path / "broken.py").write_text("def f(:\n    pass\n", encoding="utf-8")
+
+    task, issues = _merge_task_update(
+        tmp_path,
+        monkeypatch,
+        task_update={
+            "task_id": "T1",
+            "status": "done",
+            "executor_notes": "implemented",
+            "files_changed": ["broken.py"],
+            "commands_run": [],
+        },
+    )
+
+    assert task["status"] == "blocked"
+    assert any("patch_corruption" in issue for issue in issues)

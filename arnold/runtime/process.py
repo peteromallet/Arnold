@@ -50,6 +50,66 @@ def _fallback_kill(proc: Any) -> None:
         pass
 
 
+def _descendant_pids(root_pid: int) -> list[int]:
+    """Return the transitive closure of *root_pid*'s descendant PIDs.
+
+    Parent links survive children starting their own sessions, so this catches
+    descendants that a direct process-group signal cannot reach.
+    """
+    descendants: list[int] = []
+    seen: set[int] = {root_pid}
+    frontier = [root_pid]
+    while frontier:
+        next_frontier: list[int] = []
+        for parent in frontier:
+            try:
+                result = subprocess.run(
+                    ["pgrep", "-P", str(parent)],
+                    check=False,
+                    capture_output=True,
+                    text=True,
+                )
+            except FileNotFoundError:
+                return descendants
+            if result.returncode not in (0, 1):
+                continue
+            for line in result.stdout.split():
+                try:
+                    child = int(line)
+                except ValueError:
+                    continue
+                if child in seen:
+                    continue
+                seen.add(child)
+                descendants.append(child)
+                next_frontier.append(child)
+        frontier = next_frontier
+    return descendants
+
+
+def _reap_descendants(pids: list[int], tag: str) -> None:
+    """SIGKILL descendants that survived process-group signalling."""
+    for pid in pids:
+        try:
+            os.kill(pid, 0)
+        except (ProcessLookupError, OSError):
+            continue
+        logger.debug("kill_group: SIGKILL stray descendant pid=%d%s", pid, tag)
+        try:
+            pgid = os.getpgid(pid)
+        except (ProcessLookupError, OSError):
+            pgid = None
+        if pgid is not None:
+            try:
+                os.killpg(pgid, signal.SIGKILL)
+            except (ProcessLookupError, OSError):
+                pass
+        try:
+            os.kill(pid, signal.SIGKILL)
+        except (ProcessLookupError, OSError):
+            pass
+
+
 def _strip_setsid_collision(kw: dict[str, Any]) -> None:
     """Remove redundant preexec_fn=os.setsid when start_new_session=True.
 
@@ -121,13 +181,17 @@ def kill_group(
         _fallback_kill(proc)
         return
 
+    descendants = _descendant_pids(proc.pid)
+
     try:
         logger.debug("kill_group: SIGTERM pgid=%d%s", pgid, tag)
         os.killpg(pgid, signal.SIGTERM)
     except (ProcessLookupError, OSError):
+        _reap_descendants(descendants, tag)
         return
 
     if not escalate:
+        _reap_descendants(descendants, tag)
         return
 
     deadline = time.monotonic() + grace_s
@@ -138,14 +202,17 @@ def kill_group(
                 break
             try:
                 proc.wait(timeout=min(0.1, remaining))
+                _reap_descendants(descendants, tag)
                 return
             except subprocess.TimeoutExpired:
                 pass
             except (ProcessLookupError, OSError):
+                _reap_descendants(descendants, tag)
                 return
     else:
         while time.monotonic() < deadline:
             if proc.returncode is not None:
+                _reap_descendants(descendants, tag)
                 return
             time.sleep(0.05)
 
@@ -161,6 +228,7 @@ def kill_group(
             proc.wait(timeout=2)
         except subprocess.TimeoutExpired:
             pass
+    _reap_descendants(descendants, tag)
 
 
 # ---------------------------------------------------------------------------
@@ -186,17 +254,26 @@ class OrphanDetectedError(Exception):
         self.remediation = remediation
 
 
+def tmux_socket_for(session_name: str) -> str:
+    """Return the private tmux socket name for a Shannon session."""
+    override = os.environ.get("SHANNON_TMUX_SOCKET")
+    if override:
+        return override
+    return f"mp-{session_name}"
+
+
 class TmuxSession:
     """Handle for a single tmux session, keyed by name."""
 
     def __init__(self, name: str) -> None:
         self.name = name
+        self.socket = tmux_socket_for(name)
 
     def teardown(self) -> None:
-        """Kill the tmux session.  Idempotent — safe to call repeatedly."""
+        """Kill the tmux session and its private server. Idempotent."""
         try:
             result = subprocess.run(
-                ["tmux", "kill-session", "-t", self.name],
+                ["tmux", "-L", self.socket, "kill-session", "-t", self.name],
                 check=False,
                 capture_output=True,
                 text=True,
@@ -216,12 +293,21 @@ class TmuxSession:
                 self.name,
                 result.returncode,
             )
+        try:
+            subprocess.run(
+                ["tmux", "-L", self.socket, "kill-server"],
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+        except FileNotFoundError:
+            pass
 
     def exists(self) -> bool:
         """Return True iff the tmux session is currently live."""
         try:
             result = subprocess.run(
-                ["tmux", "has-session", "-t", self.name],
+                ["tmux", "-L", self.socket, "has-session", "-t", self.name],
                 check=False,
                 capture_output=True,
             )
@@ -257,7 +343,16 @@ def pane_pids(session_name: str) -> list[str]:
     """Return the PIDs of every pane in *session_name*."""
     try:
         result = subprocess.run(
-            ["tmux", "list-panes", "-t", session_name, "-F", "#{pane_pid}"],
+            [
+                "tmux",
+                "-L",
+                tmux_socket_for(session_name),
+                "list-panes",
+                "-t",
+                session_name,
+                "-F",
+                "#{pane_pid}",
+            ],
             check=False,
             capture_output=True,
             text=True,
@@ -279,4 +374,5 @@ __all__ = [
     "TmuxSession",
     "detect_orphans",
     "pane_pids",
+    "tmux_socket_for",
 ]

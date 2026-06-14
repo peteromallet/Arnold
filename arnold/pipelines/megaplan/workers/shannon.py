@@ -25,6 +25,8 @@ Env-var → ShannonConfig field mapping (all read by :meth:`ShannonConfig.load`)
   MEGAPLAN_SHANNON_BASH_TIMEOUT_MS           → launched Claude Bash timeout (default 7200000)
   MEGAPLAN_SHANNON_DROP_ROOT                 → drop_root  (default: auto from root+trusted_container)
   MEGAPLAN_SHANNON_CHMOD_WORKSPACE           → chmod_workspace             (default True)
+  MEGAPLAN_SHANNON_PIN_CLAUDE                → pin_claude                  (default True)
+  MEGAPLAN_SHANNON_CLAUDE_BIN                → claude_bin
   MEGAPLAN_SHANNON_ENV_SCRUB                 → env_scrub                   (default True)
 """
 
@@ -277,6 +279,8 @@ class ShannonConfig:
     drop_root: bool        # MEGAPLAN_SHANNON_DROP_ROOT (or auto-detect)
     chmod_workspace: bool  # MEGAPLAN_SHANNON_CHMOD_WORKSPACE
     claude_config_mode: str  # MEGAPLAN_SHANNON_CLAUDE_CONFIG_MODE; isolated|native
+    pin_claude: bool   # MEGAPLAN_SHANNON_PIN_CLAUDE; pin resolved claude bin per-run
+    claude_bin: str    # MEGAPLAN_SHANNON_CLAUDE_BIN; explicit claude binary path
 
     # ── structural tells (T9 targets; fields land here now) ──────────────
     voice: str       # prompt voice; no env-var yet; default "announced"
@@ -364,6 +368,8 @@ class ShannonConfig:
                 "Invalid MEGAPLAN_SHANNON_CLAUDE_CONFIG_MODE "
                 f"{claude_config_mode!r}; expected 'isolated' or 'native'.",
             )
+        pin_claude = _truthy("MEGAPLAN_SHANNON_PIN_CLAUDE")
+        claude_bin = _get("MEGAPLAN_SHANNON_CLAUDE_BIN")
 
         return cls(
             readiness_probe_raw=readiness_probe_raw,
@@ -384,6 +390,8 @@ class ShannonConfig:
             drop_root=drop_root,
             chmod_workspace=(_truthy("MEGAPLAN_SHANNON_CHMOD_WORKSPACE") is not False),
             claude_config_mode=claude_config_mode,
+            pin_claude=(True if pin_claude is None else bool(pin_claude)),
+            claude_bin=claude_bin,
             voice="announced",
             env_scrub=(_truthy("MEGAPLAN_SHANNON_ENV_SCRUB") is not False),
         )
@@ -921,6 +929,79 @@ def _chmod_tree_for_nonroot(path: Path) -> None:
         )
     except OSError:
         return
+
+
+def _assert_runnable_claude_binary(path: str, *, origin: str) -> None:
+    candidate = Path(path)
+    if not candidate.exists():
+        raise CliError(
+            "worker_error",
+            f"Shannon Claude binary from {origin} does not exist: {path}",
+        )
+    try:
+        if candidate.stat().st_size > 64 * 1024:
+            return
+    except OSError:
+        return
+    try:
+        text = candidate.read_text(encoding="utf-8", errors="ignore")
+    except (OSError, UnicodeDecodeError):
+        return
+    if not os.access(candidate, os.X_OK):
+        raise CliError(
+            "worker_error",
+            f"Shannon Claude binary from {origin} is not executable: {path}",
+        )
+    real = os.path.realpath(str(candidate))
+    for line in text.splitlines():
+        stripped = line.strip()
+        if not stripped.startswith("exec "):
+            continue
+        parts = shlex.split(stripped)
+        if len(parts) < 2:
+            continue
+        target = parts[1]
+        if not os.path.isabs(target):
+            target = str((candidate.parent / target).resolve())
+        if os.path.realpath(target) == real:
+            raise CliError(
+                "worker_error",
+                f"Shannon Claude binary from {origin} is a self-referential stub: {path}",
+            )
+
+
+def _resolve_pinned_claude(cfg: ShannonConfig) -> str | None:
+    if not cfg.pin_claude:
+        return None
+    origin = "MEGAPLAN_SHANNON_CLAUDE_BIN" if cfg.claude_bin else "PATH"
+    resolved = cfg.claude_bin or shutil.which("claude")
+    if not resolved:
+        raise CliError(
+            "worker_error",
+            "Shannon could not resolve a claude binary to pin. Set "
+            "MEGAPLAN_SHANNON_CLAUDE_BIN or disable pinning with "
+            "MEGAPLAN_SHANNON_PIN_CLAUDE=0.",
+        )
+    real = os.path.realpath(resolved)
+    _assert_runnable_claude_binary(real, origin=origin)
+    return real
+
+
+def _install_claude_pin(env: dict[str, str], run_dir: Path, pinned: str) -> dict[str, str]:
+    pin_dir = run_dir / "claude_pin"
+    pin_dir.mkdir(parents=True, exist_ok=True)
+    shim = pin_dir / "claude"
+    try:
+        if shim.exists() or shim.is_symlink():
+            shim.unlink()
+        os.symlink(pinned, shim)
+    except OSError:
+        shim.write_text(f"#!/bin/sh\nexec {shlex.quote(pinned)} \"$@\"\n", encoding="utf-8")
+        shim.chmod(0o755)
+    next_env = dict(env)
+    path = next_env.get("PATH", "")
+    next_env["PATH"] = str(pin_dir) if not path else str(pin_dir) + os.pathsep + path
+    return next_env
 
 
 def _prepare_nonroot_shannon_runtime(
@@ -1954,6 +2035,9 @@ def run_shannon_step(
     bash_timeout_ms = str(_shannon_bash_timeout_ms())
     env.setdefault("BASH_DEFAULT_TIMEOUT_MS", bash_timeout_ms)
     env.setdefault("BASH_MAX_TIMEOUT_MS", bash_timeout_ms)
+    pinned_claude = _resolve_pinned_claude(cfg)
+    if pinned_claude is not None:
+        env = _install_claude_pin(env, run_dir, pinned_claude)
     # Compute the nonroot shannon prefix + child env EXACTLY ONCE per run and
     # thread the result through ctx — :func:`run_turn` MUST NOT recompute it.
     shannon_prefix, env = _prepare_nonroot_shannon_runtime(work_dir, env, cfg=cfg)

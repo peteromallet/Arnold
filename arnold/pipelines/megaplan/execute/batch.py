@@ -706,6 +706,34 @@ def _blocked_task_reason(task_ids: Iterable[str]) -> str | None:
     )
 
 
+def baseline_unavailable_checkpoint_ids(
+    finalize_data: dict[str, Any],
+    candidate_ids: Iterable[str],
+) -> set[str]:
+    """Return no-new-failures checkpoint ids that cannot be evaluated.
+
+    A null ``baseline_test_failures`` means baseline capture failed or was
+    skipped. In that case the harness cannot evaluate the synthetic "Introduce
+    no new failures vs the recorded baseline" checkpoint, so it should not
+    deadlock execution or chain completion by treating that checkpoint as a
+    human-resolvable task block.
+    """
+    candidate_set = {task_id for task_id in candidate_ids if task_id}
+    if not candidate_set or finalize_data.get("baseline_test_failures") is not None:
+        return set()
+    unavailable: set[str] = set()
+    for task in finalize_data.get("tasks", []):
+        if not isinstance(task, dict):
+            continue
+        task_id = task.get("id")
+        if not isinstance(task_id, str) or task_id not in candidate_set:
+            continue
+        description = str(task.get("description") or "").casefold()
+        if "no new failures" in description and "recorded baseline" in description:
+            unavailable.add(task_id)
+    return unavailable
+
+
 def _has_code_task_advisory_evidence(task: dict[str, Any]) -> bool:
     return bool(task.get("commands_run"))
 
@@ -2322,6 +2350,10 @@ def handle_execute_auto_loop(
         and isinstance(task.get("id"), str)
         and task["id"] in active_task_ids
     }
+    baseline_unavailable_blocked_ids = baseline_unavailable_checkpoint_ids(
+        finalize_data, active_blocked_task_ids
+    )
+    active_blocked_task_ids -= baseline_unavailable_blocked_ids
     blocked_task_reason = _blocked_task_reason(active_blocked_task_ids)
     if blocked_task_reason:
         blocking_reasons.append(blocked_task_reason)
