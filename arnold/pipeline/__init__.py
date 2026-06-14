@@ -86,6 +86,7 @@ from arnold.pipeline.media_cost import (
     media_usage_from_hook_metadata,
     normalize_usage_extraction,
 )
+from arnold.pipeline.media_content import register_media_content_validators
 from arnold.pipeline.token_cost import (
     DEFAULT_PRICING,
     BillingRoute,
@@ -194,7 +195,23 @@ from arnold.pipeline.step_io_telemetry import (
     read_violation_records,
 )
 from arnold.pipeline.declaration_lowering import derive_binding_map
-from arnold.pipeline.resume import persist_resume_cursor
+from arnold.pipeline.resume import (
+    COMPOSITE_RESUME_CURSOR_FILENAME,
+    RESUME_CURSOR_FILENAME,
+    persist_composite_resume_cursor,
+    persist_resume_cursor,
+    read_composite_resume_cursor,
+    read_resume_cursor,
+)
+from arnold.pipeline.resume_validation import (
+    RESUME_REVERIFY_DECLARATION_KEY,
+    RESUME_REVERIFY_EXTENSION_KEY,
+    ResumeReverifyDeclaration,
+    ResumeReverifyResult,
+    parse_resume_reverify_declaration,
+    resolve_resume_reverify_artifact,
+    reverify_resume_produces,
+)
 from arnold.pipeline.state import StateDelta, apply_delta
 from arnold.pipeline.types import (
     CONTENT_TYPES,
@@ -237,6 +254,7 @@ __all__ = [
     "CAPABILITY_ALIASES",
     "CONTENT_TYPES",
     "CONTRACT_RESULT_SCHEMA_VERSION",
+    "COMPOSITE_RESUME_CURSOR_FILENAME",
     "ContentValidator",
     "ContentValidatorRegistry",
     "ContentTypeRegistry",
@@ -355,18 +373,30 @@ __all__ = [
     "normalize_schema_version",
     "normalize_usage",
     "normalize_usage_extraction",
+    "register_media_content_validators",
     "parse_agent_spec_shape",
     "parse_llm_json",
     "parse_profiles_doc",
     "persist_resume_cursor",
+    "persist_composite_resume_cursor",
     "plateau",
     "prove_invocation_capabilities",
     "prove_stage_required_capabilities",
     "read_manifest",
+    "read_composite_resume_cursor",
+    "read_resume_cursor",
     "reduce_contract_results",
     "register_schema",
     "resolve_default_profile",
     "resolve_billing_route",
+    "RESUME_CURSOR_FILENAME",
+    "RESUME_REVERIFY_DECLARATION_KEY",
+    "RESUME_REVERIFY_EXTENSION_KEY",
+    "ResumeReverifyDeclaration",
+    "ResumeReverifyResult",
+    "parse_resume_reverify_declaration",
+    "resolve_resume_reverify_artifact",
+    "reverify_resume_produces",
     "ModelAdapterNotImplementedError",
     "get_default_adapter_registry",
     "get_pricing",

@@ -37,6 +37,10 @@ from arnold.pipeline.contract_validation import validate_payload_against_schema
 from arnold.pipeline.step_io_contract import StepIOOperation
 from arnold.pipelines.megaplan._pipeline.schema_registry_adapter import create_step_io_contract_context
 from arnold.pipelines.megaplan.orchestration.plan_contracts import normalize_contract_payload
+from arnold.pipelines.megaplan.orchestration.test_selection import (
+    compute_test_blast_radius,
+    resolve_baseline_test_selection,
+)
 from arnold.pipelines.megaplan.store import write_plan_artifact_json
 
 from .shared import _finish_step, _raise_step_validation_error, _run_worker
@@ -617,6 +621,86 @@ def _render_user_actions_md(payload: dict[str, Any]) -> str:
         lines.append("")
     return "\n".join(lines).rstrip() + "\n"
 
+# Keys persisted to / restored from the per-plan baseline cache.
+_BASELINE_CACHE_KEYS = (
+    "baseline_test_failures",
+    "baseline_test_command",
+    "baseline_test_note",
+)
+
+
+def _baseline_cache_path(plan_dir: Path) -> Path:
+    return plan_dir / "baseline.json"
+
+
+def _read_cached_baseline(plan_dir: Path) -> dict[str, Any] | None:
+    """Return a previously-captured baseline for this plan, or ``None``.
+
+    Only a SUCCESSFUL baseline (``baseline_test_failures`` is a concrete list,
+    not ``None``) is treated as reusable. A poisoned/timeout/runner-error
+    baseline (``failures is None``) is intentionally NOT cached at write time,
+    so a retry under better conditions can re-establish it.
+    """
+    path = _baseline_cache_path(plan_dir)
+    if not path.exists():
+        return None
+    try:
+        import json as _json
+
+        data = _json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    if not isinstance(data.get("baseline_test_failures"), list):
+        return None
+    return {k: data.get(k) for k in _BASELINE_CACHE_KEYS if k in data}
+
+
+def _write_cached_baseline(plan_dir: Path, baseline: dict[str, Any]) -> None:
+    """Persist a SUCCESSFUL baseline so a finalize retry reuses it.
+
+    A baseline with ``baseline_test_failures is None`` (timeout / runner error /
+    not-applicable) is not cached — those are transient/degraded outcomes that a
+    retry should be free to re-attempt.
+    """
+    if not isinstance(baseline.get("baseline_test_failures"), list):
+        return
+    payload = {k: baseline[k] for k in _BASELINE_CACHE_KEYS if k in baseline}
+    try:
+        atomic_write_json(_baseline_cache_path(plan_dir), payload)
+    except OSError:
+        # Best-effort cache; a write failure must never fail the phase.
+        pass
+
+
+def _capture_test_baseline_for_plan(
+    plan_dir: Path, project_dir: Path, config: dict[str, Any]
+) -> dict[str, Any]:
+    """Capture the test baseline ONCE per plan, reusing a cached result on retry.
+
+    The baseline runs the whole suite (minutes of work). A finalize retry — e.g.
+    after a Shannon readiness-probe stall — has no reason to re-establish it, so
+    a successful baseline is persisted to ``<plan_dir>/baseline.json`` and reused
+    verbatim on any subsequent finalize attempt for the same plan. Mock mode and
+    degraded (null-failures) outcomes bypass the cache and fall through to a live
+    capture, preserving prior behaviour exactly for those cases.
+    """
+    if os.getenv(MOCK_ENV_VAR) != "1":
+        cached = _read_cached_baseline(plan_dir)
+        if cached is not None:
+            LOGGER.info(
+                "finalize: reusing cached test baseline from %s "
+                "(%d pre-existing failures) — skipping suite re-run",
+                _baseline_cache_path(plan_dir),
+                len(cached.get("baseline_test_failures") or []),
+            )
+            return cached
+    baseline = _capture_test_baseline(project_dir, config)
+    _write_cached_baseline(plan_dir, baseline)
+    return baseline
+
+
 def _capture_test_baseline(project_dir: Path, config: dict[str, Any]) -> dict[str, Any]:
     if os.getenv(MOCK_ENV_VAR) == "1":
         return {
@@ -645,14 +729,37 @@ def _capture_test_baseline(project_dir: Path, config: dict[str, Any]) -> dict[st
 
     import time as _time_mod
     from arnold.pipelines.megaplan.orchestration.suite_runner import append_suite_run, run_suite
-
-    deadline = _time_mod.monotonic() + timeout
-    result = run_suite(
-        project_dir,
-        config,
-        phase="baseline",
-        deadline_seconds=deadline,
+    from arnold.pipelines.megaplan.orchestration.baseline_gate import (
+        BaselineSlot,
+        baseline_slot,
+        baseline_slot_wait_seconds,
     )
+
+    # Host-wide baseline-concurrency gate. Several megaplan chains in finalize at
+    # once would otherwise run the full pytest suite simultaneously and saturate
+    # the box's CPU. Acquire a slot BEFORE the suite starts so queue-wait time
+    # never counts against the suite's own timeout. If no slot frees within the
+    # bounded wait, degrade gracefully (skip the baseline) rather than hanging.
+    with baseline_slot() as slot:
+        if slot is BaselineSlot.DEGRADED:
+            return {
+                "baseline_test_failures": None,
+                "baseline_test_command": config.get("test_command"),
+                "baseline_test_note": (
+                    "Baseline test capture skipped: could not acquire a host-wide "
+                    f"baseline slot within {baseline_slot_wait_seconds():.0f}s "
+                    "(MEGAPLAN_TEST_BASELINE_MAX_CONCURRENT) — too many chains are "
+                    "running the full suite concurrently. Proceeding without a "
+                    "baseline to avoid CPU contention."
+                ),
+            }
+        deadline = _time_mod.monotonic() + timeout
+        result = run_suite(
+            project_dir,
+            config,
+            phase="baseline",
+            deadline_seconds=deadline,
+        )
     plan_dir_str = config.get("plan_dir")
     if plan_dir_str:
         append_suite_run(Path(plan_dir_str), result)
@@ -980,6 +1087,47 @@ def _write_capability_claims_from_finalize(
         )
 
 
+def _resolve_evidence_base_ref(project_dir: Path) -> str | None:
+    """Compute a stable base ref for the evidence window.
+
+    Uses ``git merge-base`` with the configured base branch (default
+    ``main``) so downstream evidence validation can anchor its diff
+    window.  Returns ``None`` when git is unavailable or the merge-base
+    cannot be resolved.
+    """
+    import subprocess as _subprocess
+
+    try:
+        proc = _subprocess.run(
+            ["git", "merge-base", "HEAD", "origin/main"],
+            cwd=str(project_dir),
+            text=True,
+            capture_output=True,
+            timeout=15,
+        )
+        if proc.returncode == 0 and proc.stdout.strip():
+            return proc.stdout.strip()
+    except (FileNotFoundError, _subprocess.TimeoutExpired, OSError):
+        pass
+
+    # Fallback: try local main / master
+    for base in ("main", "master"):
+        try:
+            proc = _subprocess.run(
+                ["git", "merge-base", "HEAD", base],
+                cwd=str(project_dir),
+                text=True,
+                capture_output=True,
+                timeout=15,
+            )
+            if proc.returncode == 0 and proc.stdout.strip():
+                return proc.stdout.strip()
+        except (FileNotFoundError, _subprocess.TimeoutExpired, OSError):
+            pass
+
+    return None
+
+
 def _write_finalize_artifacts(plan_dir: Path, payload: dict[str, Any], state: PlanState) -> str:
     contract_payload = normalize_contract_payload(
         {"provides": payload.get("provides", []), "assumes": payload.get("assumes", [])},
@@ -994,7 +1142,21 @@ def _write_finalize_artifacts(plan_dir: Path, payload: dict[str, Any], state: Pl
     else:
         _config = dict(state.get("config", {}))
         _config["plan_dir"] = str(plan_dir)
-        baseline = _capture_test_baseline(Path(_config["project_dir"]), _config)
+
+        # ── M4 T5: Resolve plan blast radius before baseline capture ──────
+        test_selection = resolve_baseline_test_selection(plan_dir, state)
+        if test_selection["mode"] == "scoped" and test_selection.get("command_override"):
+            _config["test_command"] = test_selection["command_override"]
+        payload["test_selection"] = test_selection
+        # ──────────────────────────────────────────────────────────────────
+
+        # ── M4 T8: Compute evidence base_ref for downstream consumers ─────
+        payload["evidence_base_ref"] = _resolve_evidence_base_ref(
+            Path(_config["project_dir"])
+        )
+        # ──────────────────────────────────────────────────────────────────
+
+        baseline = _capture_test_baseline_for_plan(plan_dir, Path(_config["project_dir"]), _config)
         payload.update(baseline)
         _ensure_user_actions_pre_gate_task(payload, state)
         _ensure_user_actions_post_gate_task(payload, state)

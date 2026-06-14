@@ -67,6 +67,13 @@ def plan_state_lock(lock_path: Path) -> Iterator[None]:
             fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
 
 
+@contextmanager
+def runtime_state_lock(lock_path: str | Path) -> Iterator[None]:
+    """Compatibility alias for neutral runtime state locks."""
+    with plan_state_lock(Path(lock_path)):
+        yield
+
+
 # ---------------------------------------------------------------------------
 # Atomic writes (fsync → replace → fsync-parent)
 # ---------------------------------------------------------------------------

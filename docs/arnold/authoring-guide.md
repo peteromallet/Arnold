@@ -7,6 +7,8 @@ the pipeline checker, and documented for agents through a sibling `SKILL.md`.
 This page is authored guidance. Code-owned field lists, schema surfaces, defect
 templates, command inventories, and vocabulary live in the generated reference:
 [`docs/reference/arnold-projections.md`](../reference/arnold-projections.md).
+The canonical field table and per-package reference summary are at
+[`package-authoring-contract.md`](package-authoring-contract.md).
 
 ## Choose the Right Artifact
 
@@ -48,43 +50,94 @@ copied here by hand.
 
 ## Build the Graph
 
-Prefer `Pipeline.builder(...)` for normal module authoring. It keeps stage
-construction readable and still returns the plain frozen `Pipeline` type used by
-the executor.
+Start from the [contract surface](package-authoring-contract.md). Every Arnold
+pipeline package must expose the required fields at module level and a nullary
+`build_pipeline()` entrypoint. The fastest path to a valid graph is
+:func:`~arnold.pipelines._authoring.build_skeleton_pipeline`:
 
 ```python
-from pathlib import Path
-
-from megaplan._pipeline.types import Pipeline
-
-_PIPELINE_DIR = Path(__file__).parent / "my-module"
+from arnold.pipeline.types import Pipeline
+from arnold.pipelines._authoring import build_skeleton_pipeline
 
 name = "my-module"
 description = "Review a draft and emit a revised Markdown artifact."
-driver = ("graph", "dispatch+emit")
-entrypoint = "build_pipeline"
+driver = "in_process"                      # str or tuple[str, ...]
+entrypoint = "build_pipeline"              # bare name or "module:name"
 arnold_api_version = "1.0"
 capabilities = ("document-review",)
 
+# Recommended (declare even as None / empty tuple):
+default_profile: str | None = None
+supported_modes: tuple[str, ...] = ()
+
 
 def build_pipeline() -> Pipeline:
-    return (
-        Pipeline.builder(
-            name,
-            description=description,
-            pipeline_dir=_PIPELINE_DIR,
-        )
-        .input("draft", file=True)
-        .agent("review", prompt="prompts/review.md", inputs=["draft"])
-        .agent("revise", prompt="prompts/revise.md", inputs=["review"])
-        .build()
-    )
+    return build_skeleton_pipeline(name, description)
 ```
 
-Use the lower-level `Stage` and `Edge` dataclasses only when the builder cannot
-express the shape cleanly. If a stage emits typed recommendations, route with
-gate edges instead of ad hoc string labels so contract checks and future replay
-tools can reason about the topology.
+This produces a minimal, instantly-terminating pipeline with a single no-op
+step. Replace the skeleton body with real stage construction using
+:class:`~arnold.pipeline.builder.PipelineBuilder` once you are ready to wire
+up logic. Copy the `_template` package (at `arnold/pipelines/_template/`) as a
+starting point — it comes pre-wired with the full contract surface and a
+`SKILL.md` quickstart.
+
+### Typed Ports
+
+When stages produce or consume typed data, declare ports via the ``produces``
+and ``consumes`` keyword arguments on :class:`~arnold.pipeline.types.Stage`.
+Use :class:`~arnold.pipeline.types.Port` and
+:class:`~arnold.pipeline.types.PortRef` from `arnold.pipeline.types`:
+
+```python
+from arnold.pipeline.types import Pipeline, Port, PortRef, Stage
+
+def build_pipeline() -> Pipeline:
+    review_stage = Stage(
+        name="review",
+        step=ReviewStep(),
+        produces=(Port(name="draft_review", content_type="text/markdown"),),
+        consumes=(PortRef(port_name="draft", content_type="text/markdown"),),
+    )
+    # Wire stages via PipelineBuilder or the lower-level Stage dataclass.
+    ...
+```
+
+Ports carry optional :class:`~arnold.pipeline.types.PortCardinality`
+(``"singleton"``, ``"collection"``, ``"stream"``), taint labels
+(``frozenset[str]`` for security/trust propagation), and schema metadata
+(``logical_type``, ``accepted_version_range``) for typed-seam validation.
+The executor validates port compatibility at graph-construction time. Use
+:class:`~arnold.pipeline.types.RoutingKey` for content-type–qualified
+fan-out dispatch when multiple downstream stages consume the same port.
+
+### Hooks and Resume (Recommended)
+
+Once the graph is stable, add the optional extension surface:
+
+- **``hooks``** — a module-level :class:`~arnold.pipeline.hooks.ExecutorHooks`
+  subclass or instance for lifecycle callbacks (``on_step_start``,
+  ``on_step_end``, ``on_suspension``).
+- **``resume``** — a module-level resume driver callable that accepts a
+  suspension artifact and returns a resume result.
+- **``build_continuation_pipeline``** — a nullary callable returning a
+  ``Pipeline`` for resuming a previously suspended run without re-running
+  completed stages.
+
+All three are **recommended**, not required. The runtime validator reports
+their absence as informational (``info:`` prefix) rather than errors. See the
+[contract field table](package-authoring-contract.md) for the full list and
+the evidence-pack / megaplan reference comparison.
+
+### What NOT to Use
+
+- **No YAML authoring.** Pipeline graphs and metadata live in Python modules
+  only. There is no YAML or JSON manifest format for pipeline authoring under
+  `arnold/pipelines/`.
+- **No kernel-level critique/judge primitives.** Arnold provides no built-in
+  ``critique``, ``judge``, or ``fact-check`` step kinds. If a pipeline needs
+  review or evaluation logic, implement it as a normal :class:`Step` with
+  well-typed ports.
 
 ## Keep Metadata Boring
 
@@ -116,6 +169,42 @@ arnold pipelines doctor
 The checker validates executable graphs and judge manifests. The generated
 reference lists the current defect surfaces and CLI facts; this guide only
 explains when to use them.
+
+## Package Shape Checklist
+
+Before publishing a pipeline package, run the runtime validator through the
+CLI (which calls :func:`~arnold.pipelines._authoring.validate_package_module`):
+
+```bash
+arnold pipelines check <your-package-name>
+```
+
+The validator inspects the module via ``import`` + ``getattr`` (runtime
+resolution, not AST parsing) and reports diagnostics prefixed ``error:`` or
+``info:``. Use this checklist to verify every item:
+
+- [ ] **``name``** — non-empty ``str``.
+- [ ] **``description``** — non-empty ``str``.
+- [ ] **``arnold_api_version``** — non-empty ``str``.
+- [ ] **``capabilities``** — non-empty ``tuple[str, ...]``.
+- [ ] **``driver``** — ``str`` or ``tuple[str, ...]``.
+- [ ] **``entrypoint``** — bare name or ``module:name`` string that resolves to
+  a callable.
+- [ ] **``build_pipeline``** — nullary callable that returns a
+  :class:`~arnold.pipeline.types.Pipeline`.
+- [ ] **Graph validation** — the built pipeline passes
+  :func:`~arnold.pipeline.validator.validate` with zero defects.
+- [ ] **``default_profile``** *(recommended)* — declare even as ``None``.
+- [ ] **``supported_modes``** *(recommended)* — declare even as empty tuple.
+- [ ] **``hooks``** *(recommended)* — lifecycle callbacks
+  (:class:`~arnold.pipeline.hooks.ExecutorHooks` subclass or instance).
+- [ ] **``resume``** *(recommended)* — resume driver callable.
+- [ ] **``build_continuation_pipeline``** *(recommended)* — continuation graph.
+
+Any ``error:`` diagnostic must be fixed. ``info:`` diagnostics are advisory
+but should be addressed before the package reaches production. See the
+[contract field table](package-authoring-contract.md) for the canonical
+field definitions and the evidence-pack / megaplan reference comparison.
 
 ## Package Evidence Deliberately
 

@@ -30,12 +30,15 @@ from __future__ import annotations
 
 import os
 import time
+import urllib.error
 from typing import Any, Callable, Dict, Optional
 from unittest import mock
 
 from arnold.agent.adapters import BackendAdapter, EventEmitter, KeySource, SessionStore
 from arnold.agent.adapters._pricing import estimate_cost_usd
 from arnold.agent.contracts import AgentRequest, AgentResult, ResultProvenance
+from arnold.pipeline.cost_types import CanonicalUsage
+from arnold.pipeline.token_cost import PricingEntry, estimate_usage_cost
 
 # ---------------------------------------------------------------------------
 # Injectable AIAgent factory
@@ -77,11 +80,19 @@ class DeepSeekAdapter:
         key_source: KeySource | None = None,
         event_emitter: EventEmitter | None = None,
         agent_factory: _AIAgentFactory | None = None,
+        key_pool: Any | None = None,
+        base_url: str = "https://api.deepseek.com/",
+        transport: Callable[[str, dict[str, Any], dict[str, str], float | None], dict[str, Any]] | None = None,
+        pricing_rows: dict[tuple[str, str], PricingEntry] | None = None,
     ) -> None:
         self._session_store = session_store
         self._key_source = key_source
         self._event_emitter = event_emitter
         self._agent_factory = agent_factory or _default_aiaagent_factory
+        self._key_pool = key_pool
+        self._base_url = base_url
+        self._transport = transport
+        self._pricing_rows = pricing_rows
 
     # ------------------------------------------------------------------
     # BackendAdapter conformance
@@ -89,7 +100,87 @@ class DeepSeekAdapter:
 
     def __call__(self, request: AgentRequest) -> AgentResult:
         """Execute *request* through an ``AIAgent`` and return an ``AgentResult``."""
+        if self._transport is not None or self._key_pool is not None:
+            return self._dispatch_openai_compatible(request)
         return self._dispatch(request)
+
+    def _dispatch_openai_compatible(self, request: AgentRequest) -> AgentResult:
+        started_at = time.monotonic()
+        key = ""
+        if self._key_pool is not None:
+            key = self._key_pool.acquire("deepseek")
+        if not key:
+            key = os.getenv("DEEPSEEK_API_KEY") or os.getenv("HERMES_API_KEY") or ""
+        if not key:
+            raise LookupError("no DeepSeek API key available")
+
+        model = request.resolved_model or request.model or "deepseek-chat"
+        messages: list[dict[str, str]] = []
+        if request.system_prompt:
+            messages.append({"role": "system", "content": request.system_prompt})
+        messages.append({"role": "user", "content": request.prompt or ""})
+        payload: dict[str, Any] = {
+            "model": model,
+            "messages": messages,
+        }
+        if request.effort:
+            payload["reasoning_effort"] = request.effort
+        payload.update(request.metadata or {})
+
+        url = self._base_url.rstrip("/") + "/v1/chat/completions"
+        headers = {"Authorization": f"Bearer {key}", "Content-Type": "application/json"}
+        transport = self._transport
+        if transport is None:
+            raise LookupError("no DeepSeek transport configured")
+        try:
+            response = transport(url, payload, headers, request.timeout_seconds)
+        except urllib.error.HTTPError as exc:
+            if self._key_pool is not None and exc.code == 429:
+                self._key_pool.report_429("deepseek", key)
+            elif self._key_pool is not None and exc.code in {401, 403}:
+                self._key_pool.report_failure("deepseek", key)
+            raise
+
+        choice = (response.get("choices") or [{}])[0]
+        message = choice.get("message") or {}
+        content = message.get("content") or response.get("result") or ""
+        usage = response.get("usage") or {}
+        prompt_tokens = int(usage.get("prompt_tokens") or 0)
+        completion_tokens = int(usage.get("completion_tokens") or 0)
+        total_tokens = int(usage.get("total_tokens") or (prompt_tokens + completion_tokens))
+        cost = estimate_usage_cost(
+            model,
+            CanonicalUsage(
+                input_tokens=prompt_tokens,
+                output_tokens=completion_tokens,
+                request_count=1,
+            ),
+            provider="deepseek",
+            pricing_rows=self._pricing_rows,
+        )
+        elapsed_ms = int((time.monotonic() - started_at) * 1000)
+        return AgentResult(
+            payload={"response": content, "completed": True},
+            raw_output=content,
+            duration_ms=elapsed_ms,
+            cost_usd=float(cost.amount_usd or 0.0),
+            model_actual=response.get("model") or model,
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens,
+            total_tokens=total_tokens,
+            provenance=ResultProvenance(
+                agent=request.agent,
+                mode=request.mode,
+                model=response.get("model") or model,
+                resolved_model=request.resolved_model or request.model,
+                effort=request.effort,
+                metadata={"provider": "deepseek"},
+            ),
+            metadata={
+                "cost_status": cost.status,
+                "pricing_version": cost.pricing_version,
+            },
+        )
 
     # ------------------------------------------------------------------
     # Internal dispatch

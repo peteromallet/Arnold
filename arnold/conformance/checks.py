@@ -27,6 +27,11 @@ _DEFAULT_ARNOLD_ROOT = Path(__file__).resolve().parents[1]
 _DEFAULT_MEGAPLAN_COUPLING_ALLOWLIST = (
     Path(__file__).resolve().parent / "_megaplan_coupling_allowlist.txt"
 )
+ACTIVE_MEGAPLAN_PACKAGE_NAMES = (
+    "megaplan",
+    "arnold.pipelines.megaplan",
+    "arnold_pipelines.megaplan",
+)
 
 
 # ---------------------------------------------------------------------------
@@ -428,6 +433,192 @@ def check_generic_arnold_megaplan_coupling(
     )
 
 
+def check_package_name_staleness(
+    *,
+    package_root: Path | None = None,
+    allowlist: Collection[str] | None = None,
+) -> ConformanceCheckResult:
+    """Fail when neutral Arnold code carries active Megaplan package literals."""
+
+    root = package_root or _DEFAULT_ARNOLD_ROOT
+    allowed = set(allowlist or set())
+    unexpected: dict[str, tuple[str, ...]] = {}
+    for path in sorted(root.rglob("*.py")):
+        if _is_excluded_from_generic_arnold_scan(root, path):
+            continue
+        module = _module_name_from_path(root, path)
+        if module in allowed:
+            continue
+        try:
+            tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        except SyntaxError:
+            continue
+        hits = sorted(
+            {
+                package_name
+                for value in _string_constants(tree)
+                for package_name in ACTIVE_MEGAPLAN_PACKAGE_NAMES
+                if package_name in value
+                and not (
+                    package_name == "megaplan"
+                    and (
+                        "arnold.pipelines.megaplan" in value
+                        or "arnold_pipelines.megaplan" in value
+                    )
+                )
+            }
+        )
+        if hits:
+            unexpected[module] = tuple(hits)
+
+    details = {"unexpected": unexpected}
+    if unexpected:
+        return ConformanceCheckResult(
+            check_id="package-name-staleness",
+            passed=False,
+            message="stale Megaplan package-name literals: " + ", ".join(sorted(unexpected)),
+            details=details,
+        )
+    return ConformanceCheckResult(check_id="package-name-staleness", passed=True, details=details)
+
+
+def check_import_coupling(
+    *,
+    package_root: Path | None = None,
+    allowlist: Collection[str] | None = None,
+) -> ConformanceCheckResult:
+    result = check_generic_arnold_megaplan_coupling(
+        package_root=package_root,
+        allowlist=allowlist,
+    )
+    return ConformanceCheckResult(
+        check_id="import-coupling",
+        passed=result.passed,
+        message=result.message,
+        details=result.details,
+    )
+
+
+def check_semantic_coupling(
+    *,
+    package_root: Path | None = None,
+    allowlist: Collection[str] | None = None,
+) -> ConformanceCheckResult:
+    root = package_root or _DEFAULT_ARNOLD_ROOT
+    allowed = set(allowlist or set())
+    unexpected: dict[str, tuple[str, ...]] = {}
+    for path in sorted(root.rglob("*.py")):
+        if _is_excluded_from_generic_arnold_scan(root, path):
+            continue
+        module = _module_name_from_path(root, path)
+        if module in allowed:
+            continue
+        try:
+            tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        except SyntaxError:
+            continue
+        hits: set[str] = set()
+        for value in _string_constants(tree):
+            if ".megaplan" in value:
+                hits.add(".megaplan")
+            if "PlanState" in value:
+                hits.add("PlanState")
+            if "tiebreaker" in value:
+                hits.add("tiebreaker")
+                hits.add("phase:tiebreaker")
+            if value.startswith("handle_"):
+                hits.add("handler-name")
+        if hits:
+            unexpected[module] = tuple(sorted(hits))
+    details = {"unexpected": unexpected}
+    return ConformanceCheckResult(
+        check_id="semantic-coupling",
+        passed=not unexpected,
+        message="" if not unexpected else "semantic Megaplan coupling: " + ", ".join(sorted(unexpected)),
+        details=details,
+    )
+
+
+def check_public_workflow_layering(
+    *,
+    package_root: Path | None = None,
+    allowlist: Collection[str] | None = None,
+) -> ConformanceCheckResult:
+    root = package_root or _DEFAULT_ARNOLD_ROOT
+    allowed = set(allowlist or set())
+    unexpected: dict[str, tuple[str, ...]] = {}
+    for path in sorted(root.rglob("*.py")):
+        if path.name != "__init__.py" or "pipelines" not in path.parts:
+            continue
+        if _is_excluded_from_generic_arnold_scan(root, path):
+            continue
+        module = _module_name_from_path(root, path)
+        if module in allowed:
+            continue
+        try:
+            tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        except SyntaxError:
+            continue
+        hits: set[str] = set()
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ImportFrom) and node.module == "arnold.pipeline":
+                if any(alias.name == "Stage" for alias in node.names):
+                    hits.add("package-imports-Stage")
+            if isinstance(node, ast.AnnAssign | ast.arg | ast.FunctionDef):
+                if "Stage" in ast.unparse(node):
+                    hits.add("annotation-Stage")
+        for value in _string_constants(tree):
+            if value == "Stage":
+                hits.add("exports-Stage")
+        if hits:
+            unexpected[module] = tuple(sorted(hits))
+    details = {"unexpected": unexpected}
+    return ConformanceCheckResult(
+        check_id="public-workflow-layering",
+        passed=not unexpected,
+        message="" if not unexpected else "public workflow layering leak: " + ", ".join(sorted(unexpected)),
+        details=details,
+    )
+
+
+def check_never_port_artifacts(
+    *,
+    repo_root: Path | None = None,
+    allowlist: Collection[str] | None = None,
+) -> ConformanceCheckResult:
+    root = repo_root or _DEFAULT_ARNOLD_ROOT.parent
+    allowed = set(allowlist or set())
+    unexpected: dict[str, tuple[str, ...]] = {}
+    for path in sorted(root.rglob("*")):
+        if not path.is_file():
+            continue
+        rel = path.relative_to(root).as_posix()
+        if rel in allowed:
+            continue
+        reason: str | None = None
+        if rel.startswith(".megaplan/_archived-plans/"):
+            reason = ".megaplan archived plan"
+        elif rel == ".hermes_state":
+            reason = "Hermes runtime state"
+        elif rel.endswith((".db-wal", ".db-shm")):
+            reason = "database sidecar"
+        elif rel.startswith("logs/") and rel.endswith(".log"):
+            reason = "driver log"
+        elif rel.startswith("runs/") and (
+            "prompt" in Path(rel).name or Path(rel).name in {"receipt.json", "runtime_state.json"}
+        ):
+            reason = "runtime artifact"
+        if reason:
+            unexpected[rel] = (reason,)
+    details = {"unexpected": unexpected}
+    return ConformanceCheckResult(
+        check_id="never-port-artifacts",
+        passed=not unexpected,
+        message="" if not unexpected else "runtime artifacts present: " + ", ".join(sorted(unexpected)),
+        details=details,
+    )
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -562,6 +753,10 @@ def _megaplan_imports_from_node(
         imports: list[str] = []
         if resolved and _is_megaplan_import(resolved):
             imports.append(resolved)
+            if resolved.startswith("arnold_pipelines."):
+                for alias in node.names:
+                    alias_module = f"{resolved}.{alias.name}"
+                    imports.append(alias_module)
         elif resolved:
             for alias in node.names:
                 alias_module = f"{resolved}.{alias.name}"
@@ -594,12 +789,30 @@ def _resolve_import_from_module(
 
 
 def _is_megaplan_import(module: str) -> bool:
-    return (
-        module == "megaplan"
-        or module.startswith("megaplan.")
-        or module == "arnold.pipelines.megaplan"
-        or module.startswith("arnold.pipelines.megaplan.")
+    return any(
+        module == package_name or module.startswith(package_name + ".")
+        for package_name in ACTIVE_MEGAPLAN_PACKAGE_NAMES
     )
+
+
+def _string_constants(tree: ast.AST) -> set[str]:
+    docstring_nodes: set[ast.AST] = set()
+    for node in ast.walk(tree):
+        body = getattr(node, "body", None)
+        if (
+            isinstance(body, list)
+            and body
+            and isinstance(body[0], ast.Expr)
+            and isinstance(body[0].value, ast.Constant)
+            and isinstance(body[0].value.value, str)
+        ):
+            docstring_nodes.add(body[0].value)
+    return {
+        node.value
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Constant) and isinstance(node.value, str)
+        and node not in docstring_nodes
+    }
 
 
 def check_adapter_smoke_invocation(
@@ -671,6 +884,7 @@ def check_adapter_registry_round_trip(
 
 
 __all__ = [
+    "ACTIVE_MEGAPLAN_PACKAGE_NAMES",
     "check_adapter_protocol_conformance",
     "check_adapter_unknown_kind_fail_closed",
     "check_adapter_smoke_invocation",
@@ -679,4 +893,10 @@ __all__ = [
     "check_contract_result_schema_version_skew",
     "check_contract_result_empty_schema_version_accepted",
     "check_generic_arnold_megaplan_coupling",
+    "check_import_coupling",
+    "check_never_port_artifacts",
+    "check_package_name_staleness",
+    "check_public_workflow_layering",
+    "check_semantic_coupling",
+    "check_package_name_staleness",
 ]

@@ -127,7 +127,7 @@ def validate_terminal_command(command: str, project_dir: Path) -> str:
     if not _is_within(target, project_dir):
         raise SandboxViolation(
             f"refusing terminal command: leading `cd {target_raw}` targets "
-            f"{target}, which is outside the project directory {project_dir}. "
+            f"{target}, which is outside the sandbox root/project directory {project_dir}. "
             "Run commands relative to the project directory; do not `cd` to "
             "an absolute path outside the worktree."
         )
@@ -148,7 +148,7 @@ def validate_write_path(raw_path: str, project_dir: Path) -> str:
     if not _is_within(target, project_dir):
         raise SandboxViolation(
             f"refusing write to {raw_path}: resolves to {target}, which is "
-            f"outside the project directory {project_dir}. Use a path "
+            f"outside the sandbox root/project directory {project_dir}. Use a path "
             "relative to the project directory or an absolute path within it."
         )
     return str(target)

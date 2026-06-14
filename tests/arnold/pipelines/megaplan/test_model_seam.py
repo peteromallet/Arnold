@@ -232,10 +232,9 @@ def test_capture_step_output_skips_compatibility_projection_for_native_execute()
         },
     )
 
-    assert outcome.legacy_payload == {
-        "task_updates": [{"id": "T7", "status": "done"}],
-        "sense_check_acknowledgments": [],
-    }
+    assert outcome.legacy_payload["task_updates"][0]["task_id"] == "T7"
+    assert outcome.legacy_payload["task_updates"][0]["status"] == "done"
+    assert outcome.legacy_payload["sense_check_acknowledgments"] == []
     assert outcome.telemetry.audit_result is AuditStatus.PASSED
     assert outcome.contract_result.payload["telemetry"]["audit_result"] == "passed"
 
@@ -1464,6 +1463,11 @@ def test_audit_step_payload_reuses_native_schema_authority() -> None:
                 "sense_check_acknowledgments": [],
             },
         )
+
+
+def test_audit_step_payload_requires_registered_step_contract() -> None:
+    with pytest.raises(ValueError, match="Unknown Megaplan step contract"):
+        model_seam.audit_step_payload("totally_new_step", {"anything": "goes"})
 
 
 def test_capture_migration_has_no_remaining_long_tail_sites() -> None:

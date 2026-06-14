@@ -234,8 +234,9 @@ def test_fanout_single_suspended_via_majority_vote_executor(tmp_path: Path) -> N
     assert result["contract_result"]["status"] == "suspended"
     assert result["state"]["resume_cursor"] == {
         "kind": "composite_suspension",
-        "version": 1,
-        "children": {"paused": {"phase": "paused", "attempt": 2}},
+            "version": 1,
+            "phase": "panel",
+            "children": {"paused": {"phase": "paused", "attempt": 2}},
         "pending_suspensions": result["contract_result"]["payload"]["pending_suspensions"],
         "shared_awaitable": "user",
     }

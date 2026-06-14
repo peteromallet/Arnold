@@ -87,6 +87,7 @@ from arnold.runtime.state_persistence import (  # noqa: F401 — re-export for c
     atomic_write_json,
     atomic_write_text,
     plan_state_lock,
+    runtime_state_lock,
 )
 from arnold.runtime.semantic_replay import (  # noqa: F401 — re-export for convenience
     semantic_equivalent,
@@ -127,6 +128,7 @@ __all__: list[str] = [
     "last_state_snapshot_projector",
     "oracle_run",
     "plan_state_lock",
+    "runtime_state_lock",
     "read_event_journal",
     "read_event_journal_paged",
     "stream_event_journal",

@@ -886,6 +886,20 @@ def _finalize_review_outcome(
     finalize_data = read_json(plan_dir / "finalize.json")
     review_projection = deepcopy(finalize_data)
 
+    # ── M4 T8: Consume evidence_window from execution audit ───────────────
+    evidence_window: dict[str, Any] | None = None
+    audit_path = plan_dir / "execution_audit.json"
+    if audit_path.exists():
+        try:
+            audit_data = read_json(audit_path)
+            if isinstance(audit_data, dict):
+                evidence_window = audit_data.get("evidence_window")
+        except (OSError, ValueError):
+            pass
+    if isinstance(evidence_window, dict):
+        worker.payload.setdefault("evidence_window", evidence_window)
+    # ──────────────────────────────────────────────────────────────────────
+
     review_verdict = worker.payload.get("review_verdict")
     invalid_review_verdict = False
     if review_verdict not in {"approved", "needs_rework"}:

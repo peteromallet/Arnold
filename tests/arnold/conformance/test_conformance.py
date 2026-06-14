@@ -361,6 +361,9 @@ class TestConformanceImportIsolation:
         """In-process check: ``megaplan`` absent from ``sys.modules`` after import."""
         # Force a clean state by removing megaplan if already present
         # (it won't be, but this makes the test idempotent)
+        for name in list(sys.modules):
+            if name == "megaplan" or name.startswith("megaplan."):
+                sys.modules.pop(name, None)
         assert "megaplan" not in sys.modules, (
             f"megaplan already in sys.modules before conformance import: "
             f"{sorted(k for k in sys.modules if 'megaplan' in k)}"

@@ -12,7 +12,7 @@ No imports from ``arnold.pipelines.megaplan`` (zero-leak gate).
 
 from __future__ import annotations
 
-from typing import Any, Callable, Mapping, Optional, Protocol, runtime_checkable
+from typing import Any, Mapping, Optional, Protocol, runtime_checkable
 
 from arnold.agent.contracts import AgentRequest, AgentResult
 
@@ -20,11 +20,11 @@ from arnold.agent.contracts import AgentRequest, AgentResult
 # BackendAdapter — the adapter seam
 # ---------------------------------------------------------------------------
 
-BackendAdapter = Callable[[AgentRequest], AgentResult]
-"""A callable that accepts an :class:`AgentRequest` and returns an :class:`AgentResult`.
+@runtime_checkable
+class BackendAdapter(Protocol):
+    """A callable that accepts an AgentRequest and returns an AgentResult."""
 
-All three backend adapters (DeepSeek, Codex, Shannon) conform to this shape.
-"""
+    def __call__(self, request: AgentRequest) -> AgentResult: ...
 
 # ---------------------------------------------------------------------------
 # Runtime infra Protocols

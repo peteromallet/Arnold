@@ -2356,6 +2356,7 @@ def _run_codex_step_uncapped(
     read_only: bool = False,
     output_path: Path | None = None,
     repair_attempted: bool = False,
+    free_text: bool = False,
 ) -> WorkerResult:
     if read_only and step not in {"prep-triage", "prep-distill", "critique", "review"}:
         raise CliError(
@@ -2464,7 +2465,10 @@ def _run_codex_step_uncapped(
         command.extend(_codex_model_flag(model))
         if effort is not None:
             command.extend(["-c", f"model_reasoning_effort={effort}"])
-        command.extend(["--output-schema", str(schema_file), "-"])
+        if free_text:
+            command.append("-")
+        else:
+            command.extend(["--output-schema", str(schema_file), "-"])
     elif persistent and session.get("id") and not fresh:
         # codex exec resume does not support --output-schema; capture_step_output
         # handles the output file validation after parsing instead. It also
@@ -2830,6 +2834,21 @@ def _run_codex_step_uncapped(
         error_code, error_message = _diagnose_codex_failure(raw, result.returncode)
         if error_code != "worker_error":
             raise CliError(error_code, error_message, extra={"raw_output": raw})
+    if free_text:
+        try:
+            output_raw = output_path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            output_raw = ""
+        text = output_raw or raw
+        return WorkerResult(
+            payload={},
+            raw_output=text,
+            duration_ms=result.duration_ms,
+            cost_usd=0.0,
+            session_id=extract_session_id(raw),
+            trace_output=raw if json_trace else None,
+            rendered_prompt=prompt,
+        )
     try:
         capture_outcome = capture_step_output(
             StepInvocation(
@@ -2988,6 +3007,8 @@ def run_codex_step(
     model: str | None = None,
     read_only: bool = False,
     output_path: Path | None = None,
+    free_text: bool = False,
+    repair_attempted: bool = False,
 ) -> WorkerResult:
     return _run_with_turn_cap(
         lambda: _run_codex_step_uncapped(
@@ -3004,6 +3025,8 @@ def run_codex_step(
             model=model,
             read_only=read_only,
             output_path=output_path,
+            free_text=free_text,
+            repair_attempted=repair_attempted,
         ),
         engine="codex",
         step=step,

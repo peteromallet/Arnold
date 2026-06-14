@@ -8,6 +8,7 @@ from typing import Any, Mapping
 import pytest
 
 from arnold.pipeline.contract_reduce import ReducePolicy
+from arnold.pipeline.pattern_joins import aggregate_panel_join
 from arnold.pipeline.pattern_joins import majority_vote as arnold_majority_vote
 from arnold.pipeline.pattern_joins import weighted_vote as arnold_weighted_vote
 from arnold.pipeline.types import (
@@ -57,6 +58,58 @@ def _make_weighted_result(
         payload={"reviewer_id": reviewer_id},
     )
     return StepResult(verdict=verdict)
+
+
+# ---------------------------------------------------------------------------
+# Arnold (neutral) aggregate_panel_join tests
+# ---------------------------------------------------------------------------
+
+
+class TestAggregatePanelJoin:
+    def test_collects_outputs_and_sums_numeric_usage(self) -> None:
+        join = aggregate_panel_join(
+            next_label="done",
+            usage_keys=("input_tokens", "output_tokens"),
+        )
+        results = [
+            StepResult(
+                outputs={"critic_a": "a.md"},
+                state_patch={"input_tokens": 10, "output_tokens": 3},
+            ),
+            StepResult(
+                outputs={"critic_b": "b.md"},
+                state_patch={"input_tokens": 2.5, "output_tokens": 4},
+            ),
+        ]
+
+        out = join(results, _ctx())
+
+        assert out.next == "done"
+        assert out.outputs == {"critic_a": "a.md", "critic_b": "b.md"}
+        assert out.state_patch == {
+            "panel_usage": {"input_tokens": 12.5, "output_tokens": 7.0}
+        }
+
+    def test_ignores_non_numeric_usage_values(self) -> None:
+        join = aggregate_panel_join(usage_keys=("tokens", "missing"))
+        results = [
+            StepResult(
+                outputs={"a": "a.md"},
+                state_patch={"tokens": "unknown"},
+            ),
+            StepResult(
+                outputs={"b": "b.md"},
+                state_patch={"tokens": 5},
+            ),
+        ]
+
+        out = join(results, _ctx())
+
+        assert out.next == "panel_done"
+        assert out.outputs == {"a": "a.md", "b": "b.md"}
+        assert out.state_patch == {
+            "panel_usage": {"tokens": 5.0, "missing": 0.0}
+        }
 
 
 # ---------------------------------------------------------------------------

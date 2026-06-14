@@ -197,6 +197,38 @@ def _raw_contains_success_result(raw: str) -> bool:
     return False
 
 
+def _extract_free_text_result(raw: str) -> tuple[dict[str, Any], str]:
+    """Extract a successful Shannon/Claude text result from JSON/NDJSON."""
+    envelope: dict[str, Any] = {}
+    candidates: list[dict[str, Any]] = []
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError:
+        parsed = None
+    if isinstance(parsed, dict):
+        candidates.append(parsed)
+    elif isinstance(parsed, list):
+        candidates.extend(item for item in parsed if isinstance(item, dict))
+    for line in raw.splitlines():
+        try:
+            item = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(item, dict):
+            candidates.append(item)
+    for item in candidates:
+        if item.get("type") == "system" and item.get("session_id"):
+            envelope["session_id"] = item.get("session_id")
+        if item.get("type") != "result":
+            continue
+        envelope.update(item)
+        text = str(item.get("result") or "")
+        if item.get("is_error"):
+            raise CliError("shannon_failed", f"Shannon step failed: {text}")
+        return envelope, text
+    raise CliError("shannon_failed", "Shannon step failed: no result event found")
+
+
 # ---------------------------------------------------------------------------
 # Configuration
 # ---------------------------------------------------------------------------
@@ -1640,6 +1672,7 @@ def run_shannon_step(
     model: str | None = None,
     read_only: bool = False,
     output_path: Path | None = None,
+    free_text: bool = False,
 ) -> WorkerResult:
     """Run a megaplan phase via Shannon (Claude in an interactive tmux session).
 
@@ -1653,6 +1686,7 @@ def run_shannon_step(
     Parameters match :func:`~megaplan.workers.run_claude_step` so the
     ``run_step_with_worker`` dispatch can call them interchangeably.
     """
+    del free_text
     # ── (a) mock worker shortcut ────────────────────────────────────────
     if os.getenv(MOCK_ENV_VAR) == "1":
         _check_mock_safe()
