@@ -252,20 +252,13 @@ def _make_child_ctx(
     # Try to construct a compatible context object
     ctx_type = type(parent_ctx)
     try:
-        # Attempt copy-construction with common fields
         new_ctx = object.__new__(ctx_type)
-        for field_name in ("artifact_root", "state", "inputs", "mode",
-                           "resource_handles", "envelope", "profile",
-                           "budget", "plan_dir"):
-            if hasattr(parent_ctx, field_name):
-                if field_name == "artifact_root":
-                    setattr(new_ctx, field_name, child_root)
-                elif field_name == "inputs":
-                    setattr(new_ctx, field_name, child_inputs)
-                elif field_name == "plan_dir":
-                    setattr(new_ctx, field_name, Path(child_root))
-                else:
-                    setattr(new_ctx, field_name, getattr(parent_ctx, field_name))
+        # Generic attribute copy from parent_ctx
+        for attr_name, attr_value in vars(parent_ctx).items():
+            setattr(new_ctx, attr_name, attr_value)
+        # Universal overrides
+        setattr(new_ctx, "artifact_root", child_root)
+        setattr(new_ctx, "inputs", child_inputs)
         return new_ctx
     except Exception:
         # Fallback: return parent_ctx as-is (caller's responsibility)

@@ -1,4 +1,4 @@
-"""Unit tests for megaplan._pipeline.discovery.manifest.read_manifest.
+"""Unit tests for arnold.pipeline.discovery.manifest.read_manifest.
 
 Covers the failure modes listed in M6/T5:
 - well-formed manifest
@@ -15,7 +15,7 @@ from pathlib import Path
 
 import pytest
 
-from arnold.pipelines.megaplan._pipeline.discovery.manifest import (
+from arnold.pipeline.discovery.manifest import (
     CURRENT_MAJOR,
     Manifest,
     ManifestError,

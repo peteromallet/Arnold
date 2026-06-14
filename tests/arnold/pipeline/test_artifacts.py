@@ -9,7 +9,6 @@ from typing import Any
 import pytest
 
 from arnold.pipeline.artifacts import (
-    _artifact_root_as_plan_dir,
     artifact_dir,
     artifact_path,
     latest_artifact,
@@ -157,70 +156,6 @@ class TestWriteVersioned:
         tmp = path.with_suffix(path.suffix + ".tmp")
         assert not tmp.exists()
         assert path.read_text() == "data"
-
-
-# ---------------------------------------------------------------------------
-# Megaplan bridge adapter
-# ---------------------------------------------------------------------------
-
-
-class TestBridgeAdapter:
-    def test_artifact_root_as_plan_dir_returns_artifact_root(self) -> None:
-        ctx = _ctx("/tmp/my_plan")
-        result = _artifact_root_as_plan_dir(ctx)
-        assert result == "/tmp/my_plan"
-
-    def test_artifact_root_as_plan_dir_is_string(self) -> None:
-        ctx = _ctx("/tmp/foo")
-        result = _artifact_root_as_plan_dir(ctx)
-        assert isinstance(result, str)
-
-
-# ---------------------------------------------------------------------------
-# Neutral steps fail if they access plan_dir
-# ---------------------------------------------------------------------------
-
-
-class TestNeutralStepsPlanDirGuard:
-    """Prove that Arnold-neutral StepContext has artifact_root, NOT plan_dir.
-
-    Any neutral Step that tries to access ``ctx.plan_dir`` will get an
-    ``AttributeError`` because the field does not exist on the Arnold
-    ``StepContext``.  This test guards against accidental drift.
-    """
-
-    def test_step_context_has_no_plan_dir(self) -> None:
-        ctx = _ctx("/tmp/test")
-        with pytest.raises(AttributeError):
-            _ = ctx.plan_dir  # type: ignore[attr-defined]
-
-    def test_step_context_has_artifact_root(self) -> None:
-        ctx = _ctx("/tmp/test")
-        assert ctx.artifact_root == "/tmp/test"
-
-
-# ---------------------------------------------------------------------------
-# Bridge steps still receive plan_dir
-# ---------------------------------------------------------------------------
-
-
-class TestBridgeStepPlanDir:
-    """Megaplan bridge callers can construct a legacy StepContext with plan_dir.
-
-    The bridge adapter provides artifact_root as a plan_dir-compatible
-    string, and Megaplan code can feed it into the legacy constructor.
-    This test simulates that flow without importing megaplan.
-    """
-
-    def test_bridge_adapter_provides_plan_dir_value(self) -> None:
-        """_artifact_root_as_plan_dir gives a value usable as plan_dir."""
-        arnold_ctx = _ctx("/tmp/bridge_test")
-        plan_dir_str = _artifact_root_as_plan_dir(arnold_ctx)
-        # In real bridge code this would be:
-        #   mega_ctx = MegaplanStepContext(plan_dir=Path(plan_dir_str), ...)
-        # Here we just verify the value is correct.
-        assert plan_dir_str == "/tmp/bridge_test"
-        assert Path(plan_dir_str).as_posix() == "/tmp/bridge_test"
 
 
 # ---------------------------------------------------------------------------

@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any, Mapping, Sequence
 
 from arnold.pipelines.megaplan._core import atomic_write_json
-from arnold.pipelines.megaplan.control_interface import (
+from arnold.control.interface import (
     CONTROL_TARGET_ABORT,
     CONTROL_TARGET_FORCE_ADVANCE,
     CONTROL_TARGET_RECOVER_FROM_STUCK,
@@ -22,10 +22,9 @@ from arnold.pipelines.megaplan.control_interface import (
     ControlTarget,
     ControlTransitionRequest,
     RunStateView,
-    apply_transition,
-    read_valid_targets,
 )
-from arnold.pipelines.megaplan.run_outcome import RunOutcome
+from arnold.pipelines.megaplan.control_interface import apply_transition, read_valid_targets
+from arnold.runtime.outcome import RunOutcome
 from arnold.pipelines.megaplan.supervisor.model import RunNode, SupervisorState
 from arnold.pipelines.megaplan.supervisor.state import save_supervisor_state, supervisor_state_root
 

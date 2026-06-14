@@ -53,6 +53,7 @@ _INVOCATION_ID_RE = re.compile(r"\b[0-9a-f]{16}\b")
 FIXTURE_DIR = Path(__file__).resolve().parent.parent / "fixtures" / "golden"
 FIXTURE_FRESH = FIXTURE_DIR / "pipeline_fresh_run.json"
 FIXTURE_RESUME = FIXTURE_DIR / "pipeline_resume_after_finalize.json"
+FIXTURE_ITERATE = FIXTURE_DIR / "pipeline_iterate.json"
 
 _TEXT_ARTIFACTS = ("plan_v1.md", "plan_v2.md", "final.md")
 _TRANSIENT_ARTIFACTS = {"critique_output.json"}
@@ -616,6 +617,20 @@ class TestPipelineGolden:
         )
         current = _run_fresh_pipeline(fixture)
         _assert_matches_fixture(current, FIXTURE_FRESH)
+
+    def test_iterate_matches_fixture(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        fixture = _make_mock_plan(
+            tmp_path / "iterate",
+            monkeypatch,
+            idea="golden iterate run",
+            name="golden-iterate",
+        )
+        current = _run_fresh_pipeline(fixture)
+        _assert_matches_fixture(current, FIXTURE_ITERATE)
 
     def test_resume_after_finalize_matches_fixture(
         self,

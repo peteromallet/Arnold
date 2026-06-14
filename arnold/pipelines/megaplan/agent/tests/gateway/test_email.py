@@ -312,11 +312,11 @@ class TestToolset(unittest.TestCase):
     """Verify email toolset is registered."""
 
     def test_email_toolset_exists(self):
-        from toolsets import TOOLSETS
+        from arnold.agent.toolsets import TOOLSETS
         self.assertIn("hermes-email", TOOLSETS)
 
     def test_email_in_gateway_toolset(self):
-        from toolsets import TOOLSETS
+        from arnold.agent.toolsets import TOOLSETS
         includes = TOOLSETS["hermes-gateway"]["includes"]
         self.assertIn("hermes-email", includes)
 

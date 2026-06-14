@@ -451,7 +451,7 @@ HA_CALL_SERVICE_SCHEMA = {
 # Registration
 # ---------------------------------------------------------------------------
 
-from tools.registry import registry
+from arnold.agent.tools.registry import registry
 
 registry.register(
     name="ha_list_entities",

@@ -1,0 +1,175 @@
+"""Conformance suite runner — aggregates Arnold conformance checks.
+
+This module provides :func:`run_conformance_suite`, which accepts a registry,
+pipelines, adapter kinds/invocations, and sample ``ContractResult`` instances,
+wiring the four check domains into a single ``ConformanceSuiteResult`` while
+keeping every underlying check callable independently.
+
+The check domains
+-----------------
+* **Adapter protocol** — :mod:`arnold.conformance.checks` (fail-closed resolution,
+  registry round-trips, smoke invocations).
+* **Contract schema** — :mod:`arnold.conformance.checks` (JSON round-trip fidelity,
+  schema-version skew detection, empty-schema-version acceptance).
+* **Routing vocabulary** — :mod:`arnold.conformance.routing` (vocabulary coverage,
+  edge consistency, resolve-edge normal/decision/override/halt/unmatched
+  behaviour).
+* **Join delegation** — :mod:`arnold.conformance.join` (delegation to
+  ``stage.join``, child-result forwarding, context forwarding).
+* **Generic Arnold anti-coupling** — :mod:`arnold.conformance.checks`
+  (ratcheted detection of Megaplan imports outside the Megaplan pipeline).
+
+No ``megaplan`` imports.  No forbidden vocabulary literals.
+"""
+
+from __future__ import annotations
+
+from typing import Sequence
+
+from arnold.conformance import ConformanceCheckResult, ConformanceSuiteResult
+from arnold.conformance.checks import (
+    check_adapter_protocol_conformance,
+    check_adapter_registry_round_trip,
+    check_adapter_smoke_invocation,
+    check_adapter_unknown_kind_fail_closed,
+    check_contract_result_empty_schema_version_accepted,
+    check_contract_result_schema_round_trip,
+    check_contract_result_schema_version_skew,
+    check_generic_arnold_megaplan_coupling,
+)
+from arnold.conformance.join import run_join_conformance_suite
+from arnold.conformance.routing import run_routing_conformance_suite
+from arnold.pipeline.hooks import ExecutorHooks
+from arnold.pipeline.step_invocation import (
+    StepInvocation,
+    StepInvocationAdapterRegistry,
+)
+from arnold.pipeline.types import ContractResult, Pipeline
+
+
+# ---------------------------------------------------------------------------
+# Suite runner
+# ---------------------------------------------------------------------------
+
+
+def run_conformance_suite(
+    *,
+    registry: StepInvocationAdapterRegistry | None = None,
+    pipelines: Sequence[Pipeline] | None = None,
+    adapter_smoke_kinds: Sequence[tuple[str, StepInvocation]] | None = None,
+    adapter_round_trip_kinds: Sequence[str] | None = None,
+    sample_contracts: Sequence[ContractResult] | None = None,
+    hooks: ExecutorHooks | None = None,
+    suite_id: str = "ar1-conformance",
+) -> ConformanceSuiteResult:
+    """Run Arnold conformance-check domains and aggregate into one result.
+
+    Every underlying check function remains independently callable.  This
+    runner is a convenience aggregator that preserves per-check diagnostics
+    (``check_id``, ``passed``, ``message``, ``details``) without altering
+    production pipeline semantics.
+
+    Parameters
+    ----------
+    registry:
+        The adapter registry to validate.  When *None* a fresh fail-closed
+        ``StepInvocationAdapterRegistry()`` is constructed inside the adapter
+        checks.
+    pipelines:
+        One or more ``Pipeline`` instances to check for routing-vocabulary
+        and resolve-edge conformance.  When *None* or empty, routing checks
+        are skipped.
+    adapter_smoke_kinds:
+        Optional ``(kind, invocation)`` pairs for per-adapter smoke
+        invocations.  Each pair must have *kind* already registered in
+        *registry*.
+    adapter_round_trip_kinds:
+        Optional list of registered kind names whose adapters should survive
+        a resolve → re-resolve round-trip.
+    sample_contracts:
+        Optional ``ContractResult`` instances to use in schema round-trip
+        checks.  When *None*, the generic schema checks (skew detection,
+        empty-version acceptance) still run, but per-contract round-trips
+        use the default representative ``ContractResult`` from
+        :func:`check_contract_result_schema_round_trip`.
+    hooks:
+        The hook implementation for join-delegation checks.  When *None*,
+        ``NullExecutorHooks`` are used (which delegate by default).
+    suite_id:
+        Identifier for the returned ``ConformanceSuiteResult``.
+
+    Returns
+    -------
+    ConformanceSuiteResult
+        Aggregate result with all individual checks preserved in ``checks``.
+    """
+    results: list[ConformanceCheckResult] = []
+
+    # ------------------------------------------------------------------
+    # Domain 1 — Adapter protocol
+    # ------------------------------------------------------------------
+    results.append(
+        check_adapter_protocol_conformance(
+            registry,
+            smoke_kind=None,
+            smoke_invocation=None,
+        )
+    )
+    results.append(check_adapter_unknown_kind_fail_closed(registry))
+
+    for kind, invocation in (adapter_smoke_kinds or []):
+        results.append(
+            check_adapter_smoke_invocation(
+                registry or StepInvocationAdapterRegistry(),
+                kind,
+                invocation,
+            )
+        )
+
+    for kind in (adapter_round_trip_kinds or []):
+        results.append(
+            check_adapter_registry_round_trip(
+                registry or StepInvocationAdapterRegistry(),
+                kind,
+            )
+        )
+
+    # ------------------------------------------------------------------
+    # Domain 2 — Contract result schema
+    # ------------------------------------------------------------------
+    results.append(check_contract_result_schema_version_skew())
+    results.append(check_contract_result_empty_schema_version_accepted())
+
+    if sample_contracts:
+        for contract in sample_contracts:
+            results.append(
+                check_contract_result_schema_round_trip(contract=contract)
+            )
+    else:
+        results.append(check_contract_result_schema_round_trip())
+
+    # ------------------------------------------------------------------
+    # Domain 3 — Routing vocabulary & resolve-edge
+    # ------------------------------------------------------------------
+    for pipeline in (pipelines or []):
+        results.extend(run_routing_conformance_suite(pipeline))
+
+    # ------------------------------------------------------------------
+    # Domain 4 — Join delegation
+    # ------------------------------------------------------------------
+    results.extend(run_join_conformance_suite(hooks))
+
+    # ------------------------------------------------------------------
+    # Domain 5 — Generic Arnold anti-coupling ratchet
+    # ------------------------------------------------------------------
+    results.append(check_generic_arnold_megaplan_coupling())
+
+    return ConformanceSuiteResult(
+        suite_id=suite_id,
+        checks=tuple(results),
+    )
+
+
+__all__ = [
+    "run_conformance_suite",
+]

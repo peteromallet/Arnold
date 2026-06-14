@@ -24,13 +24,15 @@ _SEAM_IMPORT_NAMES = {
 }
 _APPROVED_SEAM_IMPORTS = {
     "arnold/pipelines/megaplan/_core/worker_fanout.py": {"render_step_message"},
-    "arnold/pipelines/megaplan/execute/batch.py": {"render_step_message", "capture_step_output"},
+    "arnold/pipelines/megaplan/_pipeline/steps/agent.py": {"render_step_message", "capture_step_output"},
+    "arnold/pipelines/megaplan/execute/batch.py": {"capture_step_output"},
     "arnold/pipelines/megaplan/execute/timeout.py": {"capture_step_output"},
     "arnold/pipelines/megaplan/orchestration/tiebreaker.py": {"render_prompt_for_dispatch"},
     "arnold/pipelines/megaplan/prompts/tiebreaker_orchestrator.py": {"render_prompt_for_dispatch"},
+    "arnold/pipelines/megaplan/resident/agent_loop.py": {"render_step_message"},
     "arnold/pipelines/megaplan/resident/runtime.py": {"render_step_message"},
-    "arnold/pipelines/megaplan/workers/_impl.py": {"render_prompt_for_dispatch", "capture_step_output"},
-    "arnold/pipelines/megaplan/workers/hermes.py": {"render_prompt_for_dispatch", "capture_step_output"},
+    "arnold/pipelines/megaplan/workers/_impl.py": {"render_prompt_for_dispatch", "capture_step_output", "render_step_message"},
+    "arnold/pipelines/megaplan/workers/hermes.py": {"render_prompt_for_dispatch", "capture_step_output", "render_step_message"},
     "arnold/pipelines/megaplan/workers/shannon.py": {
         "render_step_message",
         "render_prompt_for_dispatch",

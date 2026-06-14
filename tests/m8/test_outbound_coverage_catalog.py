@@ -30,6 +30,24 @@ TRACKED_FUNCTIONS = {
     "validate_payload",
 }
 
+# Functions that produce/validate step output outside the primary C1 chokepoints.
+# This set is a closed contract: any addition requires updating both this constant
+# and the "Known Residual Functions" table in docs/m8-outbound-coverage.md.
+KNOWN_RESIDUAL_FUNCTIONS: frozenset[str] = frozenset(
+    {
+        "_validate_finalize_payload",
+        "_finalize_semantic_postcheck",
+    }
+)
+
+# Documented residual set (must match KNOWN_RESIDUAL_FUNCTIONS exactly).
+_DOCUMENTED_RESIDUAL_SET: frozenset[str] = frozenset(
+    {
+        "_validate_finalize_payload",
+        "_finalize_semantic_postcheck",
+    }
+)
+
 # validate_payload is declared as a live orphan; non-retired call sites are
 # explicitly allowed if they raise/retire/delegate, or are already documented.
 _VALIDATE_PAYLOAD_EXEMPT_PATTERNS = [
@@ -387,6 +405,75 @@ class TestOutboundCoverageCatalog:
                 f"in {site.containing_func} is not documented and not in "
                 f"known retirement/deletion paths"
             )
+
+    # ── C1 chokepoint binding (assertion a) ──────────────────────────────
+
+    def test_all_validate_payload_against_schema_sites_bind_to_chokepoint_or_residual(
+        self,
+        call_sites: list[CallSite],
+        covered: dict[str, set[tuple[str, str]]],
+    ) -> None:
+        """Every vpa_s call site is documented in the catalog or is a known residual.
+
+        A call site is acceptable if:
+        - It is documented in the coverage catalog (file + containing function), OR
+        - Its containing function appears in KNOWN_RESIDUAL_FUNCTIONS.
+        """
+        func_name = "validate_payload_against_schema"
+        sites = [s for s in call_sites if s.func_name == func_name]
+        covered_set = covered.get(func_name, set())
+
+        violations: list[CallSite] = []
+        for site in sites:
+            key = (site.file, site.containing_func)
+            if key in covered_set:
+                continue
+            if site.containing_func in KNOWN_RESIDUAL_FUNCTIONS:
+                continue
+            violations.append(site)
+
+        if violations:
+            violation_str = "\n".join(
+                f"  {s.file}:{s.line} in {s.containing_func}" for s in violations
+            )
+            pytest.fail(
+                f"Found {len(violations)} validate_payload_against_schema call site(s) "
+                f"not bound to C1 chokepoint documentation and not in known-residual list:\n"
+                f"{violation_str}"
+            )
+
+    # ── Residual set integrity (assertion b) ─────────────────────────────
+
+    def test_known_residual_set_equals_documented_set(self) -> None:
+        """KNOWN_RESIDUAL_FUNCTIONS must exactly match the documented residual set.
+
+        Both must be updated in lockstep. Any drift is a contract violation.
+        """
+        assert KNOWN_RESIDUAL_FUNCTIONS == _DOCUMENTED_RESIDUAL_SET, (
+            f"KNOWN_RESIDUAL_FUNCTIONS {KNOWN_RESIDUAL_FUNCTIONS!r} does not match "
+            f"documented residual set {_DOCUMENTED_RESIDUAL_SET!r}. "
+            f"Update both tests/m8/test_outbound_coverage_catalog.py and "
+            f"docs/m8-outbound-coverage.md in lockstep."
+        )
+
+    # ── _normalize_worker_payload deleted (assertion c) ──────────────────
+
+    def test_normalize_worker_payload_not_importable(self) -> None:
+        """_normalize_worker_payload must not be importable from the workers package."""
+        import importlib
+
+        workers = importlib.import_module("arnold.pipelines.megaplan.workers")
+        assert not hasattr(workers, "_normalize_worker_payload"), (
+            "_normalize_worker_payload is still accessible on the workers package; "
+            "it must be deleted from the public surface."
+        )
+        workers_impl = importlib.import_module(
+            "arnold.pipelines.megaplan.workers._impl"
+        )
+        assert not hasattr(workers_impl, "_normalize_worker_payload"), (
+            "_normalize_worker_payload is still defined in workers._impl; "
+            "it must be removed entirely."
+        )
 
 
 # ---------------------------------------------------------------------------

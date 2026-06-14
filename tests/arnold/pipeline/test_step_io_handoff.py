@@ -6,12 +6,18 @@ from arnold.pipeline import (
     AcceptedVersionRange,
     CONTRACT_RESULT_SCHEMA_VERSION,
     ContractSchemaRegistry,
+    ContractResult,
+    ContractStatus,
+    EvidenceArtifactRef,
+    Freshness,
     Port,
     PortRef,
+    Provenance,
     SeamId,
     SeamResolution,
     StepIOClassification,
     StepIOContractContext,
+    StepIOEnvelope,
     StepIOOperation,
     evaluate_step_io_handoff,
     read_violation_records,
@@ -28,6 +34,35 @@ def _schema(const: int | None = None) -> dict:
         "properties": properties,
         "additionalProperties": False,
     }
+
+
+def _contract_result(payload: dict, *, schema_version: str = CONTRACT_RESULT_SCHEMA_VERSION) -> ContractResult:
+    return ContractResult(
+        payload=payload,
+        status=ContractStatus.SUSPENDED,
+        schema_version=schema_version,
+        evidence_refs=(
+            EvidenceArtifactRef(
+                uri="file:///tmp/evidence.json",
+                content_type="application/json",
+                digest="sha256:" + "d" * 64,
+                size_bytes=17,
+                name="evidence.json",
+            ),
+        ),
+        authority_level="verified",
+        provenance=Provenance(
+            sources=("policy:review",),
+            generator="scanner@1.2",
+            generated_at="2026-06-12T12:00:00Z",
+            chain=("step-a", "step-b"),
+        ),
+        freshness=Freshness(
+            observed_at="2026-06-12T12:00:00Z",
+            ttl_seconds=300,
+            expires_at="2026-06-12T12:05:00Z",
+        ),
+    )
 
 
 def _typed_seam() -> SeamResolution:
@@ -100,6 +135,35 @@ def test_handoff_validates_resolved_typed_port_pair_and_uses_payload_schema_vers
     assert result.policy.effective_mode == "enforce"
     assert result.allow_read is True
     assert result.allow_write is True
+
+
+def test_step_io_context_does_not_discover_schema_registry_from_megaplan_env(
+    tmp_path, monkeypatch
+) -> None:
+    registry = ContractSchemaRegistry(tmp_path)
+    payload_version = registry.register("review", _schema())
+    monkeypatch.setenv("MEGAPLAN_CONTRACT_SCHEMA_ROOT", str(tmp_path))
+
+    result = evaluate_step_io_handoff(
+        {
+            "logical_type": "review",
+            "schema_version": payload_version,
+            "payload": {"answer": 7},
+        },
+        operation=StepIOOperation.READ,
+        context=StepIOContractContext(operation=StepIOOperation.READ),
+        seam=_typed_seam(),
+        producer_port=Port("result", "application/json", logical_type="review"),
+        consumer_port_decl=PortRef(
+            "result",
+            "application/json",
+            logical_type="review",
+            accepted_version_range=AcceptedVersionRange("review", min_version=payload_version),
+        ),
+        configured_mode="enforce",
+    )
+
+    assert result.decision.classification == StepIOClassification.SCHEMA_UNAVAILABLE
 
 
 def test_handoff_enforce_blocks_invalid_typed_read_on_resolved_typed_seam(tmp_path) -> None:
@@ -209,6 +273,12 @@ def test_handoff_shadow_mode_emits_telemetry_without_blocking_invalid_typed_hand
     assert result.allow_write is False
     records = read_violation_records(telemetry_path)
     assert records[0]["mode"] == "shadow"
+    assert records[0]["seam"] == "pipe::review.result<=execute.result"
+    assert records[0]["pipeline_id"] == "pipe"
+    assert records[0]["producer_step"] == "execute"
+    assert records[0]["producer_port"] == "result"
+    assert records[0]["consumer_step"] == "review"
+    assert records[0]["consumer_port"] == "result"
     assert records[0]["classification"] == "typed_invalid"
     assert result.author_diagnostic is not None
     assert result.author_diagnostic.failure_code == result.decision.diagnostics[0].code
@@ -383,3 +453,71 @@ def test_handoff_can_resolve_ports_from_pipeline_binding_map(tmp_path) -> None:
     assert result.seam.binding_found is True
     assert result.policy.effective_mode == "enforce"
     assert result.decision.classification == StepIOClassification.TYPED_VALID
+
+
+def test_handoff_contract_result_with_existing_envelope_payload_passes_through_without_double_wrap(
+    tmp_path,
+) -> None:
+    registry = ContractSchemaRegistry(tmp_path)
+    payload_version = registry.register("review", _schema())
+    inner_envelope = StepIOEnvelope(
+        logical_type="review",
+        schema_version=payload_version,
+        payload={"answer": 7},
+    )
+    contract = _contract_result(inner_envelope.to_json())
+
+    result = evaluate_step_io_handoff(
+        contract,
+        operation="read",
+        context=StepIOContractContext(operation=StepIOOperation.READ, registry=registry),
+        seam=_typed_seam(),
+        producer_port=Port("result", "application/json", logical_type="review"),
+        consumer_port_decl=PortRef("result", "application/json", logical_type="review"),
+        configured_mode="enforce",
+    )
+
+    assert result.decision.classification == StepIOClassification.TYPED_VALID
+    assert result.decision.envelope == inner_envelope
+    assert result.decision.value == {"answer": 7}
+    assert result.contract_result == contract
+    assert result.contract_result.status is ContractStatus.SUSPENDED
+    assert result.contract_result.authority_level == "verified"
+    assert result.contract_result.evidence_refs[0].name == "evidence.json"
+
+
+def test_handoff_contract_result_raw_payload_projects_latest_schema_version_and_preserves_metadata(
+    tmp_path,
+) -> None:
+    registry = ContractSchemaRegistry(tmp_path)
+    registry.register("review", _schema(const=6))
+    latest_version = registry.register("review", _schema())
+    contract = _contract_result({"answer": 7}, schema_version=CONTRACT_RESULT_SCHEMA_VERSION)
+
+    result = evaluate_step_io_handoff(
+        contract,
+        operation="write",
+        context=StepIOContractContext(operation=StepIOOperation.WRITE, registry=registry),
+        seam=_typed_seam(),
+        producer_port=Port("result", "application/json", logical_type="review"),
+        consumer_port_decl=PortRef(
+            "result",
+            "application/json",
+            logical_type="review",
+            accepted_version_range=AcceptedVersionRange("review", min_version=latest_version),
+        ),
+        configured_mode="enforce",
+    )
+
+    assert result.decision.classification == StepIOClassification.TYPED_VALID
+    assert result.decision.envelope == StepIOEnvelope(
+        logical_type="review",
+        schema_version=latest_version,
+        payload={"answer": 7},
+    )
+    assert result.decision.envelope.schema_version != contract.schema_version
+    assert result.decision.value == {"answer": 7}
+    assert result.contract_result == contract
+    assert result.contract_result.provenance.generator == "scanner@1.2"
+    assert result.contract_result.provenance.chain == ("step-a", "step-b")
+    assert result.contract_result.freshness.ttl_seconds == 300

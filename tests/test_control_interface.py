@@ -8,7 +8,10 @@ from unittest.mock import patch
 
 import pytest
 
+import arnold.control as control_package
+import arnold.control.interface as neutral_control_interface
 import arnold.pipelines.megaplan as megaplan
+import arnold.pipelines.megaplan.control as megaplan_control
 import arnold.pipelines.megaplan.control_interface as control_interface
 from arnold.pipelines.megaplan._core.state import write_plan_state
 from arnold.pipelines.megaplan._pipeline.flags import control_interface_routing_on
@@ -111,6 +114,35 @@ def _read(plan_dir: Path) -> dict:
     return json.loads((plan_dir / "state.json").read_text(encoding="utf-8"))
 
 
+_CONTROL_SURFACE_SHARED_NAMES = (
+    "ArtifactRequest",
+    "ControlBinding",
+    "ControlInterfaceTarget",
+    "ControlProjection",
+    "ControlTarget",
+    "ControlTargetRef",
+    "ControlTransition",
+    "ControlTransitionRequest",
+    "ControlTransitionResult",
+    "RunOutcome",
+    "RunStateView",
+)
+
+_MEGAPLAN_LAZY_CONTROL_NAMES = (
+    "ArtifactRequest",
+    "ControlBinding",
+    "ControlInterfaceTarget",
+    "ControlProjection",
+    "ControlTargetRef",
+    "ControlTransition",
+    "ControlTransitionConflict",
+    "ControlTransitionRequest",
+    "ControlTransitionResult",
+    "RunOutcome",
+    "RunStateView",
+)
+
+
 def test_control_interface_import_surface_from_module_and_package() -> None:
     assert control_interface.RunOutcome is RunOutcome
     assert control_interface.ControlTarget is ControlTarget
@@ -136,6 +168,47 @@ def test_control_interface_import_surface_from_module_and_package() -> None:
     assert megaplan.apply_transition is apply_transition
     assert megaplan.read_valid_targets is read_valid_targets
     assert megaplan.synthesize_artifacts is synthesize_artifacts
+
+
+@pytest.mark.parametrize("name", _CONTROL_SURFACE_SHARED_NAMES)
+def test_neutral_control_identity_is_consistent_across_public_surfaces(name: str) -> None:
+    assert getattr(control_interface, name) is getattr(neutral_control_interface, name)
+    assert getattr(control_package, name) is getattr(neutral_control_interface, name)
+
+
+@pytest.mark.parametrize("name", _MEGAPLAN_LAZY_CONTROL_NAMES)
+def test_lazy_megaplan_exports_match_neutral_control_identity(name: str) -> None:
+    exported = getattr(megaplan, name)
+
+    if name == "RunOutcome":
+        assert exported is RunOutcome
+        return
+
+    if name == "ControlTransitionConflict":
+        assert exported is control_interface.ControlTransitionConflict
+        assert exported is not neutral_control_interface.ControlTransitionConflict
+        return
+
+    assert exported is getattr(control_interface, name)
+    assert exported is getattr(neutral_control_interface, name)
+
+
+def test_megaplan_control_message_target_remains_distinct_from_neutral_control_target() -> None:
+    assert megaplan_control.ControlTarget is not ControlTarget
+    assert megaplan_control.ControlTarget.__module__ == "arnold.pipelines.megaplan.control"
+    assert ControlTarget.__module__ == "arnold.control.interface"
+
+    neutral_target = ControlTarget(id="recover")
+    message_target = megaplan_control.ControlTarget(
+        intent="resume_plan",
+        target_id="recover",
+        project_root=Path("/tmp/project"),
+    )
+
+    assert neutral_target.id == "recover"
+    assert message_target.target_id == "recover"
+    assert hasattr(message_target, "intent")
+    assert not hasattr(neutral_target, "intent")
 
 
 def test_run_outcome_vocabulary_is_exact_and_domain_neutral() -> None:
@@ -589,3 +662,90 @@ def test_control_interface_has_no_planning_imports_or_literals() -> None:
     )
 
     assert all(token not in source for token in forbidden)
+
+
+# ---------------------------------------------------------------------------
+# T5: neutral-symbol availability from arnold.control.interface and arnold.control
+# ---------------------------------------------------------------------------
+
+_NEUTRAL_CONTROL_NAMES = frozenset(
+    {
+        "ControlBinding",
+        "CONTROL_TARGET_ABORT",
+        "CONTROL_TARGET_FORCE_ADVANCE",
+        "CONTROL_TARGET_RECOVER_FROM_STUCK",
+        "CONTROL_TARGET_REROUTE",
+        "ArtifactRequest",
+        "ControlProjection",
+        "ControlInterfaceTarget",
+        "ControlTarget",
+        "ControlTargetRef",
+        "ControlTransition",
+        "ControlTransitionRequest",
+        "ControlTransitionResult",
+        "RunOutcome",
+        "RunStateView",
+    }
+)
+
+_EXCLUDED_FROM_CONTROL_PACKAGE = frozenset(
+    {
+        "ControlTransitionConflict",
+    }
+)
+
+
+def test_neutral_control_interface_exports_all_required_names() -> None:
+    """Every neutral carrier/constant/protocol name must be importable from arnold.control.interface."""
+    import arnold.control.interface as neutral_iface
+
+    for name in _NEUTRAL_CONTROL_NAMES:
+        assert hasattr(neutral_iface, name), f"arnold.control.interface missing {name!r}"
+
+    # ControlTransitionConflict must also be present in the interface module
+    assert hasattr(neutral_iface, "ControlTransitionConflict")
+
+
+def test_arnold_control_package_exports_neutral_names_excluding_conflict() -> None:
+    """arnold.control re-exports exactly the neutral names, excluding ControlTransitionConflict."""
+    import arnold.control as control_pkg
+
+    for name in _NEUTRAL_CONTROL_NAMES:
+        assert hasattr(control_pkg, name), f"arnold.control missing {name!r}"
+
+    for name in _EXCLUDED_FROM_CONTROL_PACKAGE:
+        assert not hasattr(
+            control_pkg, name
+        ), f"arnold.control must not export {name!r}"
+
+
+def test_neutral_control_interface_and_package_all_match_expectations() -> None:
+    """__all__ in both modules matches the expected neutral surface."""
+    import arnold.control as control_pkg
+    import arnold.control.interface as neutral_iface
+
+    expected_interface_all = sorted(_NEUTRAL_CONTROL_NAMES | {"ControlTransitionConflict"})
+    expected_control_all = sorted(_NEUTRAL_CONTROL_NAMES)
+
+    assert sorted(neutral_iface.__all__) == expected_interface_all, (
+        f"arnold.control.interface __all__ mismatch: "
+        f"got {sorted(neutral_iface.__all__)}, expected {expected_interface_all}"
+    )
+    assert sorted(control_pkg.__all__) == expected_control_all, (
+        f"arnold.control __all__ mismatch: "
+        f"got {sorted(control_pkg.__all__)}, expected {expected_control_all}"
+    )
+
+
+def test_neutral_symbol_identity_consistent_across_interface_and_package() -> None:
+    """Every neutral name resolves to the same object from both import paths."""
+    import arnold.control as control_pkg
+    import arnold.control.interface as neutral_iface
+
+    for name in _NEUTRAL_CONTROL_NAMES:
+        from_pkg = getattr(control_pkg, name)
+        from_iface = getattr(neutral_iface, name)
+        assert from_pkg is from_iface, (
+            f"Identity mismatch for {name!r}: "
+            f"arnold.control.{name} is not arnold.control.interface.{name}"
+        )

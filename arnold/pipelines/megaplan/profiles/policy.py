@@ -16,6 +16,7 @@ from ..types import (
     parse_agent_spec,
     resolve_premium_placeholder_spec,
 )
+from arnold.pipelines.megaplan.step_contracts import build_default_agent_routing
 
 log = logging.getLogger("megaplan")
 
@@ -23,22 +24,7 @@ log = logging.getLogger("megaplan")
 # per process (apply_profile_expansion runs many times per plan).
 _WARNED_STALE_OVERRIDE: set[tuple[str, str]] = set()
 
-DEFAULT_AGENT_ROUTING: dict[str, str] = {
-    "plan": PREMIUM_AGENT,
-    "prep": "hermes",
-    "critique": PREMIUM_AGENT,
-    "critique_evaluator": PREMIUM_AGENT,
-    "revise": PREMIUM_AGENT,
-    "gate": PREMIUM_AGENT,
-    "feedback": f"{PREMIUM_AGENT}:low",
-    "finalize": PREMIUM_AGENT,
-    "execute": PREMIUM_AGENT,
-    "loop_plan": PREMIUM_AGENT,
-    "loop_execute": PREMIUM_AGENT,
-    "review": PREMIUM_AGENT,
-    "tiebreaker_researcher": PREMIUM_AGENT,
-    "tiebreaker_challenger": PREMIUM_AGENT,
-}
+DEFAULT_AGENT_ROUTING: dict[str, str] = build_default_agent_routing()
 KNOWN_AGENTS = ["claude", "codex", "hermes", "shannon"]
 ROBUSTNESS_LEVELS = ("bare", "light", "full", "thorough", "extreme")
 ROBUSTNESS_ALIASES: dict[str, str] = {

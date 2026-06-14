@@ -32,7 +32,7 @@ from arnold.runtime.operations import (
     OperationRequest,
     OperationResult,
 )
-from arnold.pipelines.megaplan._pipeline.discovery.trust import TrustTier
+from arnold.pipelines.megaplan._pipeline.discovery.trust import TrustGrade
 from arnold.pipelines.megaplan._pipeline.registry import (
     PipelineRegistry,
     control_status_result_from_operation_result,
@@ -317,7 +317,7 @@ def test_operation_helpers_discover_factories_and_metadata(
         "\n"
         "class _Registry:\n"
         "    def supported_operations(self):\n"
-        "        return frozenset({OperationKind.RUN_PHASE, OperationKind.OVERRIDE_APPLY})\n"
+        "        return frozenset({OperationKind.EXECUTE, OperationKind.OVERRIDE_APPLY})\n"
         "    def dispatch(self, request: OperationRequest) -> OperationResult:\n"
         "        return OperationResult(ok=True, payload={'kind': request.kind.value})\n"
         "\n"
@@ -335,7 +335,7 @@ def test_operation_helpers_discover_factories_and_metadata(
 
     monkeypatch.setattr(
         "arnold.pipelines.megaplan._pipeline.registry.classify",
-        lambda *args, **kwargs: TrustTier.BLESSED,
+        lambda *args, **kwargs: TrustGrade.BLESSED,
     )
     monkeypatch.setattr(
         "arnold.pipelines.megaplan._pipeline.registry._get_scan_roots",
@@ -350,7 +350,7 @@ def test_operation_helpers_discover_factories_and_metadata(
     discovered = reg.operation_registry_for("ops-demo")
     assert isinstance(discovered, OperationRegistry)
     assert reg.supported_operations_for("ops-demo") == frozenset(
-        {OperationKind.RUN_PHASE, OperationKind.OVERRIDE_APPLY}
+        {OperationKind.EXECUTE, OperationKind.OVERRIDE_APPLY}
     )
     assert reg.override_catalog_for("ops-demo") == {
         "force-proceed": {"opaque": True}
@@ -436,7 +436,7 @@ def test_dispatch_operation_for_returns_exact_unsupported_result_without_dispatc
     monkeypatch.setattr(
         registry_module,
         "supported_operations_for",
-        lambda plugin_id: frozenset({OperationKind.RUN_PHASE}),
+        lambda plugin_id: frozenset({OperationKind.EXECUTE}),
     )
     monkeypatch.setattr(
         registry_module,

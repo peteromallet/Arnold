@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping
 
 from arnold.pipeline.declaration_lowering import bind_with_lowered_declarations
 from arnold.pipelines.megaplan.profiles.policy import normalize_robustness
@@ -605,6 +605,80 @@ def _persist_resume_runtime_envelope(
     repo.save_state(state)
 
 
+def _cursor_from_typed_suspension(plan_dir: Path) -> dict[str, Any] | None:
+    from arnold.pipelines.megaplan._pipeline.resume import (
+        extract_typed_resume_metadata,
+    )
+
+    metadata = extract_typed_resume_metadata(plan_dir)
+    if metadata is None:
+        return None
+    cursor_data = metadata.cursor_data
+    cursor = dict(cursor_data) if isinstance(cursor_data, Mapping) else {}
+    if metadata.phase and not isinstance(cursor.get("phase"), str):
+        cursor["phase"] = metadata.phase
+    if metadata.choices and not isinstance(cursor.get("choices"), list):
+        cursor["choices"] = list(metadata.choices)
+    return cursor
+
+
+def _resolve_resume_cursor(
+    *,
+    plan_dir: Path,
+    previous_state: PlanState,
+) -> tuple[dict[str, Any], str, dict[str, Any] | None]:
+    state_cursor = previous_state.get("resume_cursor")
+    if isinstance(state_cursor, dict):
+        return dict(state_cursor), "state", None
+
+    typed_cursor = _cursor_from_typed_suspension(plan_dir)
+    if typed_cursor is not None:
+        return typed_cursor, "typed_contract", None
+
+    from arnold.pipelines.megaplan._pipeline.resume import (
+        check_awaiting_user,
+        load_composite_resume_cursor,
+    )
+
+    composite_cursor = load_composite_resume_cursor(plan_dir)
+    if isinstance(composite_cursor, dict):
+        return dict(composite_cursor), "composite", None
+
+    awaiting_user = check_awaiting_user(plan_dir)
+    if awaiting_user is None:
+        raise CliError(
+            "missing_resume_cursor",
+            f"Plan '{plan_dir.name}' has no resume cursor",
+        )
+
+    return (
+        {
+            "retry_strategy": "awaiting_user",
+            "kind": "awaiting_user",
+        },
+        "awaiting_user",
+        {"awaiting_user": awaiting_user},
+    )
+
+
+def _resolve_resume_phase(
+    cursor: Mapping[str, Any],
+    *,
+    previous_state: PlanState,
+) -> str | None:
+    for key in ("phase", "stage"):
+        value = cursor.get(key)
+        if isinstance(value, str) and value:
+            return value
+    paused_stage = previous_state.get("_pipeline_paused_stage")
+    if isinstance(paused_stage, str) and paused_stage:
+        return paused_stage
+    current_state = previous_state.get("current_state")
+    if isinstance(current_state, str) and current_state in WORKFLOW:
+        return current_state
+    return None
+
+
 # `_RESUME_ACTIVE_STATES` is now derived on demand from the realized graph
 # via `topology.predecessors(phase, policy='resume')` — see M3 Step 7.
 
@@ -624,15 +698,23 @@ def resume_plan(
     if plan_dir is None:
         raise CliError("missing_plan", f"Plan '{plan}' does not exist")
     repo = PlanRepository.from_plan_dir(plan_dir, store=store)
-    loaded = repo.load_plan()
-    cursor = loaded.resume_cursor
-    if not isinstance(cursor, dict):
-        raise CliError("missing_resume_cursor", f"Plan '{plan}' has no resume cursor")
-    phase = cursor.get("phase")
-    if not isinstance(phase, str) or not phase:
-        raise CliError("invalid_resume_cursor", f"Plan '{plan}' has an invalid resume cursor", extra={"resume_cursor": cursor})
-    args = _resume_phase_args(phase, cursor, plan)
     previous_state = repo.load_state()
+    cursor, cursor_source, cursor_extra = _resolve_resume_cursor(
+        plan_dir=plan_dir,
+        previous_state=previous_state,
+    )
+    phase = _resolve_resume_phase(cursor, previous_state=previous_state)
+    if not isinstance(phase, str) or not phase:
+        extra = dict(cursor_extra or {})
+        extra["resume_cursor"] = dict(cursor)
+        raise CliError(
+            "invalid_resume_cursor",
+            f"Plan '{plan}' has an invalid resume cursor",
+            extra=extra,
+        )
+    cursor = dict(cursor)
+    cursor.setdefault("phase", phase)
+    args = _resume_phase_args(phase, cursor, plan)
     raw_pipeline_name = (
         cursor.get("pipeline")
         if isinstance(cursor.get("pipeline"), str) and cursor.get("pipeline")

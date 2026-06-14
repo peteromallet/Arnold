@@ -494,14 +494,14 @@ class TestDiscoveryManifest:
 class TestDiscoveryTrust:
     def test_classify_with_no_fragment_is_quarantined(self) -> None:
         """Without an in_tree_path_fragment, everything is QUARANTINED."""
-        from arnold.pipeline.discovery.trust import TrustTier, classify
+        from arnold.pipeline.discovery.trust import TrustGrade, classify
 
         tier = classify(Path("/some/random/path.py"))
-        assert tier == TrustTier.QUARANTINED
+        assert tier == TrustGrade.QUARANTINED
 
     def test_classify_with_fragment_detects_in_tree(self, tmp_path: Path) -> None:
         """With in_tree_path_fragment, paths inside it are AUTO_EXEC."""
-        from arnold.pipeline.discovery.trust import TrustTier, classify
+        from arnold.pipeline.discovery.trust import TrustGrade, classify
 
         root = tmp_path / "myapp" / "pipelines"
         root.mkdir(parents=True)
@@ -512,21 +512,21 @@ class TestDiscoveryTrust:
             module,
             in_tree_path_fragment="myapp/pipelines",
         )
-        assert tier == TrustTier.AUTO_EXEC
+        assert tier == TrustGrade.AUTO_EXEC
 
     def test_classify_with_fragment_outside_is_quarantined(self) -> None:
         """Paths outside the fragment are QUARANTINED."""
-        from arnold.pipeline.discovery.trust import TrustTier, classify
+        from arnold.pipeline.discovery.trust import TrustGrade, classify
 
         tier = classify(
             Path("/other/place/mod.py"),
             in_tree_path_fragment="myapp/pipelines",
         )
-        assert tier == TrustTier.QUARANTINED
+        assert tier == TrustGrade.QUARANTINED
 
     def test_blessed_allowlist_overrides(self, tmp_path: Path) -> None:
         """A path in the blessed allowlist is BLESSED regardless."""
-        from arnold.pipeline.discovery.trust import TrustTier, classify
+        from arnold.pipeline.discovery.trust import TrustGrade, classify
 
         module = tmp_path / "blessed.py"
         module.write_text("")
@@ -537,7 +537,7 @@ class TestDiscoveryTrust:
             blessed_allowlist=(resolved,),
             in_tree_path_fragment="myapp/pipelines",
         )
-        assert tier == TrustTier.BLESSED
+        assert tier == TrustGrade.BLESSED
 
     def test_derive_tenant_id_is_stable(self, tmp_path: Path) -> None:
         from arnold.pipeline.discovery.trust import derive_tenant_id
@@ -1042,7 +1042,7 @@ class TestTrustClassificationExtended:
     """Extended trust classification tests."""
 
     def test_classify_blessed_wins_over_fragment(self, tmp_path: Path) -> None:
-        from arnold.pipeline.discovery.trust import TrustTier, classify
+        from arnold.pipeline.discovery.trust import TrustGrade, classify
 
         module = tmp_path / "myapp" / "pipelines" / "mod.py"
         module.parent.mkdir(parents=True)
@@ -1054,13 +1054,13 @@ class TestTrustClassificationExtended:
             blessed_allowlist=(resolved,),
             in_tree_path_fragment="myapp/pipelines",
         )
-        assert tier == TrustTier.BLESSED
+        assert tier == TrustGrade.BLESSED
 
     def test_classify_no_fragment_no_allowlist_is_quarantined(self) -> None:
-        from arnold.pipeline.discovery.trust import TrustTier, classify
+        from arnold.pipeline.discovery.trust import TrustGrade, classify
 
         tier = classify(Path("/any/path.py"))
-        assert tier == TrustTier.QUARANTINED
+        assert tier == TrustGrade.QUARANTINED
 
     def test_derive_tenant_id_different_inputs_different_ids(self, tmp_path: Path) -> None:
         from arnold.pipeline.discovery.trust import derive_tenant_id

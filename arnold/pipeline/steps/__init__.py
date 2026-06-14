@@ -6,6 +6,7 @@ no budget/profile/envelope concerns).
 
 * :class:`AgentStep`          — single-model markdown step.
 * :class:`PanelReviewerStep`  — one reviewer within a parallel panel.
+* :class:`HumanGateStep`      — pause execution and wait for human input.
 
 The corresponding Megaplan bridge classes live in
 ``megaplan/_pipeline/steps/`` (``megaplan._pipeline.steps.agent.AgentStep``
@@ -15,9 +16,11 @@ the neutral core that will replace them after M7.
 """
 
 from arnold.pipeline.steps.agent import AgentStep
+from arnold.pipeline.steps.human_gate import HumanGateStep
 from arnold.pipeline.steps.panel import PanelReviewerStep
 
 __all__ = [
     "AgentStep",
+    "HumanGateStep",
     "PanelReviewerStep",
 ]

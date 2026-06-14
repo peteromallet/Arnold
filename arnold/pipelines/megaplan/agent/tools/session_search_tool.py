@@ -403,7 +403,7 @@ SESSION_SEARCH_SCHEMA = {
 
 
 # --- Registry ---
-from tools.registry import registry
+from arnold.agent.tools.registry import registry
 
 registry.register(
     name="session_search",

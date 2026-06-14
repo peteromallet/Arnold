@@ -2,13 +2,13 @@
 
 **Verdict:** PASS
 
-**Verdict ID:** `m8-acceptance-20260607-0822`
+**Verdict ID:** `m8-acceptance-20260612-2135`
 
-**Timestamp:** 2026-06-07T13:20:00Z
+**Timestamp:** 2026-06-12T21:35:00Z
 
-**Command:** `docs/m8-acceptance-verdict.md` (initialized by T21, validated by T23, finalized with command outcomes by T24)
+**Command:** `docs/m8-acceptance-verdict.md` (initialized by T21, validated by T23, C4 enforcement reviewed by T18)
 
-**Result:** PASS — all five acceptance artifact classes mechanically verified.
+**Result:** PASS — all five acceptance artifact classes mechanically verified. C4 Authoring-API enforcement is implemented and locked across declaration lowering, runtime typed-handoff enforcement, static checks, capability alias normalization, schema-version availability, CLI pipeline check, and the evidence-pack authored pipeline.
 
 ---
 
@@ -20,7 +20,7 @@ pass before the overall verdict can be PASS.
 | # | Artifact Class | Description | Status | Evidence Location |
 |---|---------------|-------------|--------|-------------------|
 | 1 | **Regression Tests** | Budget overflow, suspension propagation, structural rejection, additional-properties rejection, route-bypass prevention | PASS (34/34) | `tests/m8/regression/test_budget_suspension_regressions.py` (14 tests, T3), `tests/m8/regression/test_structural_regressions.py` (9 tests, T2), `tests/m8/regression/test_route_bypass.py` (11 tests, T12). Executed: `pytest tests/m8/regression/ -v --tb=short` → 34 passed in 0.26s |
-| 2 | **Benchmark Gate** | Width-32 load profile with locked thresholds, hash-on-write manifest audit above 1 MiB, non-zero exit on threshold exceed | PASS (25/25) | `tests/m8/benchmark/test_benchmark_gate.py`, `tests/m8/benchmark/test_gate.py`, `tests/m8/benchmark/test_helpers.py` (25 tests, T5); conftest.py default-skip posture; 16 skipped by default, 25 passed with `--m8-benchmark` in 45.13s. All 5 tiers (64KiB, 1MiB, 8MiB, 32MiB, 100MiB) generated and validated. |
+| 2 | **Benchmark Gate** | Width-32 load profile with locked thresholds, hash-on-write manifest audit above 1 MiB, non-zero exit on threshold exceed | PASS (25/25) | `tests/m8/benchmark/test_benchmark_gate.py`, `tests/m8/benchmark/test_gate.py`, `tests/m8/benchmark/test_helpers.py` (25 tests, T5); conftest.py default-skip posture; 16 skipped by default, 25 passed with `--m8-benchmark` in 45.13s. All 5 tiers (64KiB, 1MiB, 8MiB, 32MiB, 100MiB) generated and validated. C4 benchmark profile (median + p95 per cell, width-32 hard-gate, 20 runs per cell, linear_10 plus fanout widths 8/32/64, artifact tiers metadata/le_1MiB/1_to_4MiB/100MiB_hash) emits `tests/m8/benchmark/C4BENCH_REPORT.md` via `tests/m8/benchmark/c4bench.py` (T15/T16). FAIL outcomes always include concrete hot-path loci: `executor_handoff`, `chokepoint_validation`, `structural_audit`, `by_ref_sidecar_validation`, `hash_on_write`. |
 | 3 | **Evidence-Pack Verifier** | Model-less pipeline with typed schemas, named artifacts, suspend/resume, human_review continuation | PASS (57/57) | `arnold/pipelines/evidence_pack/verifier.py` (T7), `arnold/pipelines/evidence_pack/steps.py` (T8), `arnold/pipelines/evidence_pack/pipelines.py` (T9), `tests/arnold/pipelines/evidence_pack/test_end_to_end.py` (7 tests, T10/T11). Executed: `pytest tests/arnold/pipelines/evidence_pack/ -v --tb=short` → 57 passed in 0.11s |
 | 4 | **Seam-Coverage Matrix** | Every architectural-spine seam accounted as implemented, delegated, or out-of-scope with file:line evidence | PASS (40/40) | `docs/m8-seam-coverage-matrix.md` (T17), `tests/m8/test_acceptance_artifacts.py` (40 tests, T18). Executed: `pytest tests/m8/test_acceptance_artifacts.py -v --tb=short` → 40 passed |
 | 5 | **Outbound Coverage Catalog** | Every `validate_payload_against_schema`, `audit_step_payload`, `capture_step_output`, and `validate_payload` call site catalogued | PASS (7/7) | `docs/m8-outbound-coverage.md` (T19), `tests/m8/test_outbound_coverage_catalog.py` (7 tests, T20). Executed: `pytest tests/m8/test_outbound_coverage_catalog.py -v --tb=short` → 7 passed |
@@ -141,14 +141,35 @@ Benchmark gate implementation and tests:
 | Benchmark gate (locked profile, report schema, threshold enforcement) | `tests/m8/benchmark/test_benchmark_gate.py` (T5) |
 | Width-32 gate (profile, hash, schema, diagnostics) | `tests/m8/benchmark/test_gate.py` (T5) |
 | Conftest (--m8-benchmark flag, default-skip) | `tests/m8/benchmark/conftest.py` (T5) |
+| C4 benchmark profile (locked acceptance profile, gate verdicts, hot-path loci) | `tests/m8/benchmark/c4bench.py` (T15) |
+| C4 benchmark tests (profile shape, report format, FAIL outcome loci) | `tests/m8/benchmark/test_c4bench.py` (T15/T16) |
 
 The benchmark exercises fan-out widths 8/32/64, artifact sizes through 100 MiB,
 full audit at ≤1 MiB, manifest audit above 1 MiB, hash-on-write, and a
 machine-readable report (`M8BENCH_REPORT_SCHEMA`). Width-32 threshold failures
 carry precise tier/observed/threshold diagnostics (`WIDTH_32_DIAGNOSTIC_TEMPLATE`).
 
+### C4 Benchmark Profile (Locked Acceptance Profile)
+
+The C4 benchmark profile (`tests/m8/benchmark/c4bench.py`) replaces the
+warning-style benchmark with a locked acceptance profile:
+
+- **Shape:** `linear_10` plus fanout widths 8/32/64
+- **Artifact tiers:** `metadata` (1 KiB, p95 ≤ 0.002s), `le_1MiB` (1 MiB, p95 ≤ 0.008s), `1_to_4MiB` (4 MiB, p95 ≤ 0.025s), `100MiB_hash` (100 MiB, p95 ≤ 0.150s)
+- **Repetitions:** 20 runs per cell (supports median + p95)
+- **Hard gate:** width 32 — p95 threshold, phase overhead gate (≤ 0.500s and ≤ 10% wall-clock regression)
+- **Hot-path loci:** `executor_handoff`, `chokepoint_validation`, `structural_audit`, `by_ref_sidecar_validation`, `hash_on_write`
+
+The report is always produced — PASS and FAIL outcomes alike. On FAIL, the
+report records the concrete hot-path locus (or loci) responsible, the observed
+p95 value, and the threshold that was exceeded. The verdict is mechanical
+(SHAPE-not-MEANING): it compares measured p95 against the locked threshold; it
+does not interpret whether the value is "acceptably close" or whether a
+velocity trend is improving.
+
 Report location: generated at runtime by the benchmark gate; the report schema
 is defined in `tests/m8/benchmark/test_benchmark_gate.py` (`M8BENCH_REPORT_SCHEMA`).
+The C4 benchmark report is emitted at `tests/m8/benchmark/C4BENCH_REPORT.md`.
 
 **Targeted command outcomes:**
 
@@ -180,9 +201,9 @@ This verdict document carries the following command/result fields:
 | Field | Value | Role |
 |-------|-------|------|
 | `Verdict` | `PASS` | Result (PASS/FAIL enum) |
-| `Verdict ID` | `m8-acceptance-20260607-0822` | Command (unique identifier) |
-| `Timestamp` | 2026-06-07T13:20:00Z | Result (when validation was executed) |
-| `Command` | `docs/m8-acceptance-verdict.md` (validated by T23) | Command (which task produced this artifact) |
+| `Verdict ID` | `m8-acceptance-20260612-2135` | Command (unique identifier) |
+| `Timestamp` | 2026-06-12T21:35:00Z | Result (when validation was executed) |
+| `Command` | `docs/m8-acceptance-verdict.md` (validated by T23, C4 enforcement reviewed by T18) | Command (which task produced this artifact) |
 
 The verdict schema (`VERDICT_SCHEMA` in `arnold/pipelines/evidence_pack/verifier.py`)
 enforces exactly two enum values (`PASS`, `FAIL`) for the verdict field, with
@@ -196,7 +217,9 @@ verifier pipeline at `verifier.verdict`.
 ## SHAPE-not-MEANING Limitation
 
 This acceptance verdict, and all M8 validation artifacts, prove **structural**
-validity — NOT semantic correctness.
+validity — NOT semantic correctness. The gate makes no velocity claims, no
+correctness claims, and no performance-trend claims. It is a mechanical
+SHAPE-only check.
 
 The contract guarantees:
 
@@ -206,6 +229,11 @@ The contract guarantees:
 - Suspended children propagate SUSPENDED to parents (not silently treated as
   completed).
 - Unknown adapter kinds are fail-closed (not silently accepted).
+- C4 typed `reads`/`writes` authoring declarations lower into effective
+  `consumes`/`produces` and are enforced at runtime and static-check time.
+- Capability aliases (`requires-vision-model`, `requires-image-decoder`)
+  normalize to the closed canonical vocabulary before proof.
+- Schema-version availability is verified against the registry before execution.
 
 The contract does NOT catch:
 
@@ -214,11 +242,13 @@ The contract does NOT catch:
 - Human judgment errors in the review gate (the gate only validates the structure
   of the decision, not its correctness).
 - Any failure class not expressible as a structural invariant.
+- Velocity trends, throughput projections, or "good enough" threshold proximity.
 
 **"Validated" is never oversold as "correct."** Every check in this gate is
 mechanical (table parsing, regex, exact string matching, schema field
-enumeration, AST inspection) — never prose interpretation or LLM-based
-semantic analysis. Per `tests/m8/test_acceptance_artifacts.py`
+enumeration, AST inspection, p95-vs-threshold numeric comparison) — never
+prose interpretation, LLM-based semantic analysis, or velocity extrapolation.
+Per `tests/m8/test_acceptance_artifacts.py`
 (TestMechanicalNotProse, class at line 843): no LLM or AI imports, only
 structural checks used, and the word "semantic" appears only in the disclaimer
 that describes what the tests do NOT do.

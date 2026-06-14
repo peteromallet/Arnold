@@ -600,6 +600,97 @@ def test_reduce_suspension_scope_raises_not_implemented() -> None:
 
 
 # ---------------------------------------------------------------------------
+# majority_vote fan-out integration seams
+# ---------------------------------------------------------------------------
+
+
+def test_majority_vote_quorum_propagates_not_implemented() -> None:
+    """majority_vote(reduce_policy=QUORUM) propagates NotImplementedError
+    through to reduce_contract_results when child contracts are present."""
+    from arnold.pipeline.pattern_joins import majority_vote
+    from arnold.pipeline.types import PipelineVerdict, StepResult
+
+    join = majority_vote(reduce_policy=ReducePolicy.QUORUM)
+    results = [
+        StepResult(
+            verdict=PipelineVerdict(score=1.0, recommendation="a"),
+            contract_result=_make_contract(status=ContractStatus.COMPLETED),
+        ),
+        StepResult(
+            verdict=PipelineVerdict(score=1.0, recommendation="a"),
+            contract_result=_make_contract(status=ContractStatus.COMPLETED),
+        ),
+    ]
+    with pytest.raises(NotImplementedError, match="reduce_policy='quorum'"):
+        join(results, _ctx())
+
+
+def test_majority_vote_suspension_scope_fan_out_propagates_not_implemented() -> None:
+    """majority_vote(suspension_scope='fan-out') propagates NotImplementedError
+    through to reduce_contract_results when child contracts are present."""
+    from arnold.pipeline.pattern_joins import majority_vote
+    from arnold.pipeline.types import PipelineVerdict, StepResult
+
+    join = majority_vote(suspension_scope="fan-out")
+    results = [
+        StepResult(
+            verdict=PipelineVerdict(score=1.0, recommendation="a"),
+            contract_result=_make_contract(status=ContractStatus.COMPLETED),
+        ),
+    ]
+    with pytest.raises(
+        NotImplementedError,
+        match="suspension_scope is reserved for a later milestone",
+    ):
+        join(results, _ctx())
+
+
+def test_majority_vote_default_max_wins_no_scope_succeeds() -> None:
+    """majority_vote() with default MAX_WINS and suspension_scope=None
+    reduces successfully and records reduce_policy='max_wins'."""
+    from arnold.pipeline.pattern_joins import majority_vote
+    from arnold.pipeline.types import PipelineVerdict, StepResult
+
+    join = majority_vote()  # all defaults
+    results = [
+        StepResult(
+            verdict=PipelineVerdict(score=1.0, recommendation="a"),
+            contract_result=_make_contract(status=ContractStatus.COMPLETED),
+        ),
+    ]
+    out = join(results, _ctx())
+    assert out.contract_result is not None
+    assert out.contract_result.payload.get("reduce_policy") == "max_wins"
+    assert out.contract_result.status == ContractStatus.COMPLETED
+
+
+def test_majority_vote_max_wins_explicit_none_scope_succeeds() -> None:
+    """Explicit MAX_WINS + suspension_scope=None succeeds identically."""
+    from arnold.pipeline.pattern_joins import majority_vote
+    from arnold.pipeline.types import PipelineVerdict, StepResult
+
+    join = majority_vote(
+        reduce_policy=ReducePolicy.MAX_WINS,
+        suspension_scope=None,
+    )
+    results = [
+        StepResult(
+            verdict=PipelineVerdict(score=1.0, recommendation="a"),
+            contract_result=_make_contract(status=ContractStatus.FAILED),
+        ),
+    ]
+    out = join(results, _ctx())
+    assert out.contract_result is not None
+    assert out.contract_result.payload.get("reduce_policy") == "max_wins"
+    assert out.contract_result.status == ContractStatus.FAILED
+
+
+def _ctx() -> "StepContext":
+    from arnold.pipeline.types import StepContext
+    return StepContext(artifact_root="/tmp/test", state={})
+
+
+# ---------------------------------------------------------------------------
 # Evidence refs and provenance merging
 # ---------------------------------------------------------------------------
 

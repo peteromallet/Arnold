@@ -289,8 +289,7 @@ def append_engine_overlap_waiver(
     identity = isolation_engine_identity(isolation if isinstance(isolation, dict) else {})
     scoped_target_root = str(normalize_path(target_root)) if target_root is not None else str(env.target_root)
     run_limit = expires_after_runs if isinstance(expires_after_runs, int) and expires_after_runs > 0 else None
-    basis = {
-        "timestamp": timestamp,
+    id_basis = {
         "reason": reason,
         "phase": phase or "",
         "source": source,
@@ -303,7 +302,7 @@ def append_engine_overlap_waiver(
         "expires_after_runs": run_limit,
     }
     digest = hashlib.sha256(
-        json.dumps(basis, sort_keys=True, default=str).encode("utf-8")
+        json.dumps(id_basis, sort_keys=True, default=str).encode("utf-8")
     ).hexdigest()[:16]
     waiver = {
         "id": f"engine-overlap-waiver-{digest}",

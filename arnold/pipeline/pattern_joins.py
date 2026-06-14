@@ -24,7 +24,56 @@ from arnold.pipeline.types import (
     StepResult,
 )
 
-__all__ = ["majority_vote", "weighted_vote"]
+__all__ = ["aggregate_panel_join", "majority_vote", "weighted_vote"]
+
+
+def aggregate_panel_join(
+    next_label: str = "panel_done",
+    *,
+    usage_keys: tuple[str, ...] = (),
+) -> JoinFn:
+    """Return a join callable that aggregates fan-out panel results.
+
+    Sums numeric values for each *usage_key* found in the children's
+    ``state_patch``, preserves per-child outputs keyed by emitted output
+    names, and returns a ``StepResult`` whose ``next`` label is
+    *next_label* and whose ``state_patch`` carries the aggregated usage
+    totals under ``"panel_usage"``.
+
+    Args:
+        next_label: dispatch label for the join result (default
+            ``"panel_done"``).
+        usage_keys: names of numeric usage fields to sum from each
+            child's ``state_patch`` (e.g. ``("input_tokens",
+            "output_tokens")``).
+    """
+    _usage_keys = frozenset(usage_keys)
+
+    def _join(results: list[StepResult], ctx: StepContext) -> StepResult:
+        del ctx  # aggregation is state-agnostic
+
+        # Sum usage_keys from child state_patches.
+        aggregated: dict[str, float] = {key: 0.0 for key in _usage_keys}
+        for result in results:
+            for key in _usage_keys:
+                val = result.state_patch.get(key)
+                if isinstance(val, (int, float)):
+                    aggregated[key] += float(val)
+
+        # Preserve per-child outputs: collect all emitted output keys.
+        # Each child's outputs dict is keyed by its reviewer_id/step name.
+        all_outputs: dict[str, Any] = {}
+        for result in results:
+            for out_key, out_val in result.outputs.items():
+                all_outputs[out_key] = out_val
+
+        return StepResult(
+            outputs=all_outputs,
+            next=next_label,
+            state_patch={"panel_usage": dict(aggregated)},
+        )
+
+    return _join
 
 
 def majority_vote(

@@ -33,6 +33,23 @@ def _write_json(path: Path, data: dict[str, object]) -> None:
     path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
 
 
+def _run_git(repo_dir: Path, *args: str) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        ["git", *args],
+        cwd=repo_dir,
+        text=True,
+        capture_output=True,
+        check=True,
+    )
+
+
+def _init_git_repo(repo_dir: Path) -> None:
+    repo_dir.mkdir(parents=True, exist_ok=True)
+    _run_git(repo_dir, "init", "-b", "main")
+    _run_git(repo_dir, "config", "user.name", "Test User")
+    _run_git(repo_dir, "config", "user.email", "test@example.com")
+
+
 def test_validate_critique_checks_allows_custom_checks_when_none_are_required() -> None:
     payload = {
         "checks": [
@@ -864,6 +881,117 @@ def test_validate_execution_evidence_flags_diff_mismatches_and_weak_notes(
     assert any("ghost.py" in finding for finding in result["findings"])
     assert any("deleted.txt" in finding and "untracked.md" in finding for finding in result["findings"])
     assert any("SC1" in finding and "perfunctory" in finding for finding in result["findings"])
+
+
+def test_validate_execution_evidence_projects_large_advisories_with_plan_dir(tmp_path: Path) -> None:
+    project_dir = tmp_path / "project"
+    plan_dir = tmp_path / "plan"
+    _init_git_repo(project_dir)
+    plan_dir.mkdir()
+
+    claimed_paths = [f"claimed/ghost_{index:02d}.py" for index in range(45)]
+    changed_paths = [f"changed/file_{index:02d}.py" for index in range(45)]
+    for path in changed_paths:
+        file_path = project_dir / path
+        file_path.parent.mkdir(parents=True, exist_ok=True)
+        file_path.write_text("before = True\n", encoding="utf-8")
+    _run_git(project_dir, "add", ".")
+    _run_git(project_dir, "commit", "-m", "baseline")
+    for path in changed_paths:
+        (project_dir / path).write_text("after = True\n", encoding="utf-8")
+
+    finalize_data = {
+        "tasks": [
+            {
+                "id": "T1",
+                "status": "done",
+                "files_changed": claimed_paths,
+                "commands_run": [],
+                "executor_notes": "Verified the execution audit against git status and task claims.",
+            }
+        ],
+        "sense_checks": [],
+    }
+
+    result = validate_execution_evidence(
+        finalize_data,
+        project_dir,
+        plan_dir=plan_dir,
+        artifact_prefix="execution_audit_regression",
+    )
+
+    phantom_finding = next(
+        finding for finding in result["findings"] if "not present in git status" in finding
+    )
+    unclaimed_finding = next(
+        finding for finding in result["findings"] if "not claimed by any task" in finding
+    )
+    assert "45 paths (showing 40):" in phantom_finding
+    assert "45 paths (showing 40):" in unclaimed_finding
+    assert "ArtifactRef execution_audit_regression_phantom_claims.json" in phantom_finding
+    assert "ArtifactRef execution_audit_regression_unclaimed_changes.json" in unclaimed_finding
+
+    phantom_sidecar = json.loads(
+        (plan_dir / "execution_audit_regression_phantom_claims.json").read_text(encoding="utf-8")
+    )
+    unclaimed_sidecar = json.loads(
+        (plan_dir / "execution_audit_regression_unclaimed_changes.json").read_text(encoding="utf-8")
+    )
+    assert phantom_sidecar["label"] == "phantom_claims"
+    assert phantom_sidecar["count"] == 45
+    assert phantom_sidecar["items"] == claimed_paths
+    assert phantom_sidecar["semantic_bulk_operation_summary"]["path_count"] == 45
+    assert unclaimed_sidecar["label"] == "unclaimed_changes"
+    assert unclaimed_sidecar["count"] == 45
+    assert unclaimed_sidecar["items"] == changed_paths
+    assert unclaimed_sidecar["semantic_bulk_operation_summary"]["path_count"] == 45
+
+
+def test_validate_execution_evidence_caps_large_advisories_without_plan_dir(tmp_path: Path) -> None:
+    project_dir = tmp_path / "project"
+    _init_git_repo(project_dir)
+
+    claimed_paths = [f"claimed/ghost_{index:02d}.py" for index in range(45)]
+    changed_paths = [f"changed/file_{index:02d}.py" for index in range(45)]
+    for path in changed_paths:
+        file_path = project_dir / path
+        file_path.parent.mkdir(parents=True, exist_ok=True)
+        file_path.write_text("before = True\n", encoding="utf-8")
+    _run_git(project_dir, "add", ".")
+    _run_git(project_dir, "commit", "-m", "baseline")
+    for path in changed_paths:
+        (project_dir / path).write_text("after = True\n", encoding="utf-8")
+
+    finalize_data = {
+        "tasks": [
+            {
+                "id": "T1",
+                "status": "done",
+                "files_changed": claimed_paths,
+                "commands_run": [],
+                "executor_notes": "Checked git status against the task claim list.",
+            }
+        ],
+        "sense_checks": [],
+    }
+
+    cwd = Path.cwd()
+    result = validate_execution_evidence(finalize_data, project_dir, artifact_prefix="execution_audit_regression")
+
+    phantom_finding = next(
+        finding for finding in result["findings"] if "not present in git status" in finding
+    )
+    unclaimed_finding = next(
+        finding for finding in result["findings"] if "not claimed by any task" in finding
+    )
+    assert "45 paths (showing 40):" in phantom_finding
+    assert "45 paths (showing 40):" in unclaimed_finding
+    assert "ArtifactRef" not in phantom_finding
+    assert "ArtifactRef" not in unclaimed_finding
+    assert not (project_dir / "execution_audit_regression_phantom_claims.json").exists()
+    assert not (project_dir / "execution_audit_regression_unclaimed_changes.json").exists()
+    assert not (cwd / "execution_audit_regression_phantom_claims.json").exists()
+    assert not (cwd / "execution_audit_regression_unclaimed_changes.json").exists()
 
 
 def test_validate_execution_evidence_ignores_plan_artifacts_and_substantive_noop(

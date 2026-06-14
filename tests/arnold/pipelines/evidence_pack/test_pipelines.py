@@ -21,6 +21,8 @@ from arnold.pipeline.types import (
     StepResult,
     WriteRef,
 )
+from arnold.pipeline.declaration_lowering import lower_stage_declarations
+from arnold.pipeline.step_invocation import StepInvocation, StepInvocationAdapterRegistry
 from arnold.pipelines.evidence_pack.pipelines import (
     build_continuation_pipeline,
     build_initial_pipeline,
@@ -33,6 +35,17 @@ from arnold.pipelines.evidence_pack.steps import (
     ReduceStep,
 )
 from arnold.pipeline.validator import validate, Diagnostics
+
+
+class _NoopToolAdapter:
+    def invoke(self, invocation: StepInvocation) -> object:  # pragma: no cover
+        raise AssertionError("validation must resolve adapters without invoking them")
+
+
+def _registry_with_tool_adapter() -> StepInvocationAdapterRegistry:
+    registry = StepInvocationAdapterRegistry()
+    registry.register("tool", _NoopToolAdapter())
+    return registry
 
 
 # ---------------------------------------------------------------------------
@@ -61,31 +74,20 @@ class TestInitialPipelineConstruction:
         pipeline = build_initial_pipeline()
         assert pipeline.entry == "ingest"
 
-    def test_ingest_stage_has_typed_ports(self) -> None:
-        """The ingest stage declares typed Port in produces."""
+    def test_ingest_stage_has_typed_write_and_external_readref(self) -> None:
+        """The ingest stage preserves external input while writing a typed port."""
         pipeline = build_initial_pipeline()
         ingest = pipeline.stages["ingest"]
         assert isinstance(ingest, Stage)
-        assert len(ingest.produces) >= 1
-        assert ingest.produces[0].name == "evidence_pack"
-
-    def test_ingest_stage_has_readref(self) -> None:
-        """The ingest stage uses direct ReadRef imports."""
-        pipeline = build_initial_pipeline()
-        ingest = pipeline.stages["ingest"]
-        assert isinstance(ingest, Stage)
-        assert len(ingest.reads) >= 1
         assert isinstance(ingest.reads[0], ReadRef)
         assert ingest.reads[0].name == "evidence_pack"
-
-    def test_ingest_stage_has_writeref(self) -> None:
-        """The ingest stage uses direct WriteRef imports."""
-        pipeline = build_initial_pipeline()
-        ingest = pipeline.stages["ingest"]
-        assert isinstance(ingest, Stage)
-        assert len(ingest.writes) >= 1
-        assert isinstance(ingest.writes[0], WriteRef)
+        assert ingest.reads[0].external is True
+        assert isinstance(ingest.writes[0], Port)
         assert ingest.writes[0].name == "evidence_pack"
+        lowered = lower_stage_declarations(ingest)
+        assert lowered.legacy_reads == ingest.reads
+        assert lowered.effective_produces == ingest.produces
+        assert lowered.clean_binding is True
 
     def test_validators_is_parallel_stage(self) -> None:
         """The content_validators stage is a ParallelStage (fan-out)."""
@@ -116,13 +118,37 @@ class TestInitialPipelineConstruction:
         assert kinds == expected
 
     def test_reduce_stage_consumes_typed_portrefs(self) -> None:
-        """The reduce stage consumes typed PortRef bindings."""
+        """The reduce stage authors internal inputs through typed reads."""
         pipeline = build_initial_pipeline()
         reduce_stage = pipeline.stages["reduce"]
         assert isinstance(reduce_stage, Stage)
-        port_names = {ref.port_name for ref in reduce_stage.consumes}
+        assert all(isinstance(ref, PortRef) for ref in reduce_stage.reads)
+        port_names = {ref.port_name for ref in reduce_stage.reads}
         assert "evidence_pack" in port_names
         assert "checkpoints" in port_names
+        assert lower_stage_declarations(reduce_stage).clean_binding is True
+
+    def test_internal_crossings_use_typed_reads_writes(self) -> None:
+        """Cleanly lowerable internal crossings are authored through reads/writes."""
+        pipeline = build_initial_pipeline()
+        for name in ("content_validators", "reduce", "human_review", "emit_attestation"):
+            stage = pipeline.stages[name]
+            assert all(isinstance(ref, PortRef) for ref in stage.reads)
+            if name != "human_review":
+                assert all(isinstance(port, Port) for port in stage.writes)
+            assert lower_stage_declarations(stage).clean_binding is True
+
+    def test_initial_pipeline_derives_binding_map(self) -> None:
+        pipeline = build_initial_pipeline()
+        assert pipeline.binding_map
+        assert pipeline.binding_map[("content_validators", "evidence_pack")] == (
+            "ingest",
+            "evidence_pack",
+        )
+        assert pipeline.binding_map[("reduce", "checkpoints")] == (
+            "content_validators",
+            "checkpoints",
+        )
 
     def test_human_review_stage_present(self) -> None:
         """The human_review stage exists in the initial pipeline."""
@@ -135,11 +161,43 @@ class TestInitialPipelineConstruction:
         assert "emit_attestation" in pipeline.stages
 
     def test_validator_validate_passes(self) -> None:
-        """The initial pipeline passes validator.validate without defects."""
+        """The initial pipeline validates when its tool adapter kind is registered."""
         pipeline = build_initial_pipeline()
-        diag = validate(pipeline)
+        diag = validate(pipeline, adapter_registry=_registry_with_tool_adapter())
         assert isinstance(diag, Diagnostics)
         assert diag.defects == [], f"Validator defects: {diag.defects}"
+
+    def test_invocation_examples_include_model_and_tool_shapes(self) -> None:
+        """Evidence-pack metadata demonstrates model and future tool invocation shapes."""
+        pipeline = build_initial_pipeline()
+        validators = pipeline.stages["content_validators"]
+        reduce_stage = pipeline.stages["reduce"]
+
+        assert validators.invocation is not None
+        assert validators.invocation.kind == "tool"
+        assert validators.invocation.metadata["adapter_config"] == {
+            "tool": "evidence-pack-checkpoint-validator",
+            "mode": "local-deterministic",
+        }
+        assert reduce_stage.invocation is not None
+        assert reduce_stage.invocation.kind == "model"
+        assert reduce_stage.invocation.metadata["adapter_config"] == {
+            "model": "evidence-pack-verdict-summarizer",
+            "mode": "metadata-only",
+        }
+        assert isinstance(validators, ParallelStage)
+        assert all(isinstance(step, ContentValidatorStep) for step in validators.steps)
+
+    def test_unregistered_tool_invocation_fails_closed(self) -> None:
+        """Default validation resolves invocation kinds and rejects unknown tool adapters."""
+        pipeline = build_initial_pipeline()
+        diag = validate(pipeline)
+        assert any(
+            issue.code == "invocation.unknown_adapter"
+            and issue.stage == "content_validators"
+            and issue.details["invocation_kind"] == "tool"
+            for issue in diag.issues
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -188,14 +246,15 @@ class TestContinuationPipelineConstruction:
         review = pipeline.stages["human_review"]
         assert isinstance(review, Stage)
         assert len(review.consumes) == 0
+        assert lower_stage_declarations(review).effective_consumes == ()
 
     def test_emit_attestation_has_produces(self) -> None:
-        """The emit_attestation stage declares typed Port produces."""
+        """The emit_attestation stage declares typed Port writes."""
         pipeline = build_continuation_pipeline()
         emit = pipeline.stages["emit_attestation"]
         assert isinstance(emit, Stage)
-        assert len(emit.produces) >= 1
-        assert emit.produces[0].name == "attestation"
+        assert isinstance(emit.writes[0], Port)
+        assert emit.writes[0].name == "attestation"
 
     def test_validator_validate_passes(self) -> None:
         """The continuation pipeline passes validator.validate without defects."""

@@ -15,7 +15,7 @@ from unittest.mock import patch
 import pytest
 
 from arnold.pipelines.megaplan._pipeline import registry
-from arnold.pipelines.megaplan._pipeline.discovery.manifest import Manifest
+from arnold.pipeline.discovery.manifest import Manifest
 
 
 # ── Expected metadata from megaplan/pipelines/planning/__init__.py ──────

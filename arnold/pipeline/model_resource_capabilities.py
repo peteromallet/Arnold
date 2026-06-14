@@ -15,6 +15,10 @@ from arnold.pipeline.step_invocation import StepInvocation
 MODEL_RESOURCE_CAPABILITIES: frozenset[str] = frozenset(
     {"model:text", "model:vision", "decoder:image"}
 )
+CAPABILITY_ALIASES: Mapping[str, str] = {
+    "requires-vision-model": "model:vision",
+    "requires-image-decoder": "decoder:image",
+}
 
 _EXPLICIT_CAPABILITY_FIELDS = (
     "capabilities",
@@ -42,6 +46,7 @@ class CapabilityProof:
     """Fail-closed result for one stage's authored capability requirements."""
 
     required_capabilities: tuple[str, ...]
+    normalized_required_capabilities: tuple[str, ...]
     proven_capabilities: tuple[str, ...]
     unsatisfied_capabilities: tuple[str, ...]
     unknown_required_capabilities: tuple[str, ...]
@@ -98,14 +103,17 @@ def prove_invocation_capabilities(invocation: StepInvocation | None) -> tuple[Ca
 def prove_stage_required_capabilities(stage: Any, pipeline: Any | None = None) -> CapabilityProof:
     """Return fail-closed proof state for one stage's required capabilities."""
     required_capabilities = tuple(getattr(stage, "required_capabilities", ()) or ())
+    normalized_required = tuple(
+        normalize_required_capability(capability) for capability in required_capabilities
+    )
     known_required = tuple(
         capability
-        for capability in required_capabilities
+        for capability in normalized_required
         if capability in MODEL_RESOURCE_CAPABILITIES
     )
     unknown_required = tuple(
         capability
-        for capability in required_capabilities
+        for capability in normalized_required
         if capability not in MODEL_RESOURCE_CAPABILITIES
     )
 
@@ -143,12 +151,17 @@ def prove_stage_required_capabilities(stage: Any, pipeline: Any | None = None) -
 
     return CapabilityProof(
         required_capabilities=required_capabilities,
+        normalized_required_capabilities=normalized_required,
         proven_capabilities=proven,
         unsatisfied_capabilities=unsatisfied,
         unknown_required_capabilities=unknown_required,
         unknown_provided_capabilities=tuple(dict.fromkeys(unknown_provided)),
         evidence=deduped_evidence,
     )
+
+
+def normalize_required_capability(capability: str) -> str:
+    return CAPABILITY_ALIASES.get(capability, capability)
 
 
 def _ordered_capabilities(evidence: tuple[CapabilityEvidence, ...]) -> tuple[str, ...]:

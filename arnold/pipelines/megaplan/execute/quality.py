@@ -6,111 +6,26 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
 
-from arnold.pipelines.megaplan._core.io import atomic_write_json, sha256_file
+from arnold.pipelines.megaplan._core.io import atomic_write_json
 from arnold.pipelines.megaplan.loop.git import (
     _collect_git_status_paths_with_nested_repos,
     _parse_git_status_paths,
+)
+from arnold.pipelines.megaplan.orchestration.advisory_projection import (
+    ADVISORY_PATH_PROJECTION_LIMIT,
+    _project_advisory_path_list,
+    summarize_path_list_for_prose,
 )
 from arnold.pipelines.megaplan.audits.quality_gates import run_quality_checks
 
 
 AUTO_ATTRIBUTION_PATH_LIST_LIMIT = 8
-ADVISORY_PATH_PROJECTION_LIMIT = 40
-BULK_OPERATION_SAMPLE_LIMIT = 5
 
 
 @dataclass
 class AttributionResult:
     records: list[dict[str, Any]]
     recursive_snapshot: dict[str, str] | None
-
-
-def _artifact_ref_for_json_file(plan_dir: Path, name: str) -> dict[str, Any]:
-    path = plan_dir / name
-    return {
-        "plan_id": plan_dir.name,
-        "name": name,
-        "kind": "json",
-        "role": "full_advisory_path_set",
-        "size_bytes": path.stat().st_size,
-        "sha256": sha256_file(path),
-    }
-
-
-def _semantic_bulk_operation_summary(values: list[str]) -> dict[str, Any] | None:
-    """Summarize only path sets that are mechanically uniform by inspection.
-
-    This deliberately does not infer intent from content. It collapses only the
-    narrow case where every changed path sits under one directory and shares one
-    file suffix, leaving mixed diffs as explicit path-list projections.
-    """
-    if len(values) <= ADVISORY_PATH_PROJECTION_LIMIT:
-        return None
-    normalized = [Path(value) for value in values if value.strip()]
-    if len(normalized) != len(values):
-        return None
-    suffixes = {path.suffix for path in normalized}
-    if len(suffixes) != 1:
-        return None
-    parents = {path.parent.as_posix() for path in normalized}
-    if len(parents) != 1:
-        return None
-    parent = next(iter(parents))
-    if parent in {"", "."}:
-        return None
-    suffix = next(iter(suffixes))
-    sample_paths = list(values[:BULK_OPERATION_SAMPLE_LIMIT])
-    return {
-        "kind": "semantic_bulk_operation_summary",
-        "operation": "uniform_path_set",
-        "confidence": "conservative_path_shape_only",
-        "path_count": len(values),
-        "common_directory": parent,
-        "file_extension": suffix,
-        "sample_paths": sample_paths,
-        "sampled_deviations": [],
-        "fallback": "mixed diffs are left as capped path projections plus full_set_artifact_ref",
-        "live_tree_verification": [
-            f"git status --short -- {parent}",
-            f"find {parent} -type f -name '*{suffix}' | sort | head -n 20",
-            "Inspect the full_set_artifact_ref JSON before relying on the summary.",
-        ],
-    }
-
-
-def _project_advisory_path_list(
-    values: list[str],
-    *,
-    plan_dir: Path,
-    artifact_name: str,
-    label: str,
-    item_limit: int = ADVISORY_PATH_PROJECTION_LIMIT,
-) -> dict[str, Any] | list[str]:
-    """Return a bounded inline path projection, preserving full data in a sidecar.
-
-    The returned shape is intentionally JSON-plain but ArtifactRef-compatible:
-    prompts and durable summaries get a fixed-size ``items`` list plus a
-    ``full_set_artifact_ref`` pointing at the complete path set.
-    """
-    if len(values) <= item_limit:
-        return list(values)
-    bulk_summary = _semantic_bulk_operation_summary(values)
-    payload = {
-        "label": label,
-        "count": len(values),
-        "items": list(values),
-    }
-    if bulk_summary is not None:
-        payload["semantic_bulk_operation_summary"] = bulk_summary
-    atomic_write_json(plan_dir / artifact_name, payload, _plan_dir=plan_dir)
-    projection: dict[str, Any] = {
-        "items": list(values[:item_limit]),
-        "omitted_count": len(values) - item_limit,
-        "full_set_artifact_ref": _artifact_ref_for_json_file(plan_dir, artifact_name),
-    }
-    if bulk_summary is not None:
-        projection["semantic_bulk_operation_summary"] = bulk_summary
-    return projection
 
 
 def project_advisory_path_sets(
@@ -627,6 +542,7 @@ def _observe_git_changes(
     batch_number: int,
     batches_total: int,
     capture_git_status_snapshot_fn: Callable[[Path], tuple[dict[str, str], str | None]],
+    plan_dir: Path | None = None,
 ) -> list[str]:
     issues: list[str] = []
     if before_error is not None:
@@ -649,13 +565,23 @@ def _observe_git_changes(
         if phantom_claims:
             issues.append(
                 "Advisory observation mismatch: executor claimed files not observed in git status/content hash delta: "
-                + ", ".join(phantom_claims)
+                + summarize_path_list_for_prose(
+                    phantom_claims,
+                    plan_dir=plan_dir,
+                    artifact_prefix=f"advisory_obs_b{batch_number}",
+                    label="phantom_claims",
+                )
             )
         unclaimed_changes = sorted(observed_paths - claimed_paths)
         if unclaimed_changes:
             issues.append(
                 "Advisory observation mismatch: git status/content hash delta found unclaimed files: "
-                + ", ".join(unclaimed_changes)
+                + summarize_path_list_for_prose(
+                    unclaimed_changes,
+                    plan_dir=plan_dir,
+                    artifact_prefix=f"advisory_obs_b{batch_number}",
+                    label="unclaimed_changes",
+                )
             )
     return issues
 

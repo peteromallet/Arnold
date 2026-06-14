@@ -12,7 +12,7 @@ from arnold.pipelines.megaplan._pipeline.behavioral_manifest import (
     static_behavioral_manifest_for_pipeline,
 )
 from arnold.pipelines.megaplan._pipeline import registry
-from arnold.pipelines.megaplan._pipeline.discovery.manifest import Manifest
+from arnold.pipeline.discovery.manifest import Manifest
 
 
 WELL_FORMED = '''\

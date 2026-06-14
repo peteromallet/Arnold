@@ -435,6 +435,35 @@ class TestEvidenceWording:
             "Human-Review UX section must be marked out-of-scope"
         )
 
+    def test_author_runtime_section_lists_c4_enforcement_loci(
+        self, seam_matrix_text: str
+    ):
+        """The Author⇄Runtime row must name the C4 enforcement surfaces."""
+        lines = seam_matrix_text.splitlines()
+        start = _find_section(lines, "Author⇄Runtime")
+        assert start >= 0, "Missing Author⇄Runtime section"
+
+        section_end = len(lines)
+        for i in range(start + 1, len(lines)):
+            if lines[i].strip().startswith("## "):
+                section_end = i
+                break
+        section_text = "\n".join(lines[start:section_end])
+
+        required_loci = {
+            "arnold/pipeline/declaration_lowering.py",
+            "arnold/pipeline/executor.py",
+            "_enforce_typed_step_io_handoff",
+            "arnold/pipeline/step_io_handoff.py",
+            "arnold/pipeline/c4_static_checks.py",
+            "arnold/pipeline/_cli_check.py",
+            "arnold/pipeline/model_resource_capabilities.py",
+            "requires-vision-model",
+            "requires-image-decoder",
+        }
+        missing = sorted(token for token in required_loci if token not in section_text)
+        assert not missing, f"Author⇄Runtime C4 loci missing from matrix: {missing}"
+
 
 # ---------------------------------------------------------------------------
 # Tests: SHAPE-not-MEANING wording

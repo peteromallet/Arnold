@@ -225,7 +225,7 @@ def _handle_honcho_conclude(args: dict, **kw) -> str:
 
 # ── Registration ──
 
-from tools.registry import registry
+from arnold.agent.tools.registry import registry
 
 registry.register(
     name="honcho_profile",

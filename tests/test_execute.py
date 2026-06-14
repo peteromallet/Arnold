@@ -33,6 +33,7 @@ from arnold.pipelines.megaplan.execute.quality import (
     _check_done_task_evidence_by_kind,
     expand_projected_path_list,
     project_advisory_path_sets,
+    summarize_path_list_for_prose,
 )
 from arnold.pipelines.megaplan.types import CliError
 from arnold.pipelines.megaplan.workers import WorkerResult
@@ -6278,3 +6279,59 @@ def test_handle_execute_auto_loop_uses_valid_calibration_suggestion(
         }
     ]
     assert response["step"] == "execute"
+
+
+# ---------------------------------------------------------------------------
+# T11 / SC8: summarize_path_list_for_prose — 337-file fixture
+# ---------------------------------------------------------------------------
+
+
+def test_summarize_path_list_for_prose_337_file_fixture(tmp_path: Path) -> None:
+    """337-file fixture produces bounded prose entries and an ArtifactRef sidecar.
+
+    SC8: prose entries are < 4000 chars, contain 'paths (showing', and
+    an ArtifactRef sidecar is written under plan_dir.
+    """
+    from arnold.pipelines.megaplan.execute.quality import ADVISORY_PATH_PROJECTION_LIMIT
+
+    paths = [f"src/module_{i:03d}.py" for i in range(337)]
+    prose = summarize_path_list_for_prose(
+        paths,
+        plan_dir=tmp_path,
+        artifact_prefix="advisory_obs_b1",
+        label="phantom_claims",
+    )
+
+    # Must be bounded
+    assert len(prose) < 4000, f"prose entry too long: {len(prose)} chars"
+    # Must contain the 'paths (showing K)' marker
+    assert "paths (showing" in prose, f"missing 'paths (showing' in: {prose[:200]}"
+    # Must reference the sidecar artifact
+    assert "ArtifactRef" in prose
+    # Must show that the full count is mentioned
+    assert "337" in prose
+    # Sidecar must be written to plan_dir
+    sidecar = tmp_path / "advisory_obs_b1_phantom_claims.json"
+    assert sidecar.exists(), f"sidecar not written to {sidecar}"
+    import json
+    full = json.loads(sidecar.read_text())
+    assert full["count"] == 337
+    assert len(full["items"]) == 337
+
+
+def test_summarize_path_list_for_prose_small_list_returns_plain_csv(tmp_path: Path) -> None:
+    """Lists within the projection limit are returned inline without truncation."""
+    paths = [f"src/file_{i}.py" for i in range(5)]
+    prose = summarize_path_list_for_prose(
+        paths,
+        plan_dir=tmp_path,
+        artifact_prefix="advisory_obs_b1",
+        label="unclaimed_changes",
+    )
+    # Small list: just a comma-joined string, no 'paths (showing' marker
+    assert "paths (showing" not in prose
+    for p in paths:
+        assert p in prose
+    # No sidecar written for small lists
+    sidecar = tmp_path / "advisory_obs_b1_unclaimed_changes.json"
+    assert not sidecar.exists()

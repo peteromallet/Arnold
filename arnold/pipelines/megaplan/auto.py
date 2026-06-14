@@ -457,7 +457,7 @@ def _run_planning_phase(
     result = dispatch_operation_for(
         CANONICAL_BUILTIN_PIPELINE,
         OperationRequest(
-            kind=OperationKind.RUN_PHASE,
+            kind=OperationKind.EXECUTE,
             payload={
                 "phase": args[0],
                 "plan": plan,

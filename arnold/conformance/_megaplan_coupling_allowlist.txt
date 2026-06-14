@@ -1,0 +1,8 @@
+# Known generic-Arnold modules that still import Megaplan implementation code.
+# This is a ratchet baseline: remove entries as each module is decoupled.
+arnold.cli
+arnold.supervisor.model
+arnold.supervisor.outcomes
+arnold.agent.adapters._oneshot
+arnold.agent.adapters.codex
+arnold.agent.adapters.shannon

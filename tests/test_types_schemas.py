@@ -103,22 +103,9 @@ def test_parse_json_file_non_object(tmp_path: Path) -> None:
         parse_json_file(path)
 
 
-def test_validate_payload_plan_is_retired() -> None:
-    from arnold.pipelines.megaplan.workers._impl import validate_payload
-    with pytest.raises(megaplan.CliError, match="retired for plan"):
-        validate_payload("plan", {"plan": "x", "questions": [], "success_criteria": [], "assumptions": []})
-
-
-def test_validate_payload_plan_retirement_precedes_missing_keys_checks() -> None:
-    from arnold.pipelines.megaplan.workers._impl import validate_payload
-    with pytest.raises(megaplan.CliError, match="retired for plan"):
-        validate_payload("plan", {"plan": "x"})
-
-
-def test_validate_payload_unknown_step_noop() -> None:
-    from arnold.pipelines.megaplan.workers._impl import validate_payload
-    # Unknown step should not raise
-    validate_payload("nonexistent_step", {})
+def test_validate_payload_is_not_importable_from_impl() -> None:
+    with pytest.raises(ImportError):
+        exec("from arnold.pipelines.megaplan.workers._impl import validate_payload", {})
 
 
 def test_extract_session_id_jsonl_thread_id() -> None:

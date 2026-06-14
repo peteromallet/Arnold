@@ -179,14 +179,14 @@ class TestSmsRequirements:
 
 class TestSmsToolset:
     def test_hermes_sms_toolset_exists(self):
-        from toolsets import get_toolset
+        from arnold.agent.toolsets import get_toolset
 
         ts = get_toolset("hermes-sms")
         assert ts is not None
         assert "tools" in ts
 
     def test_hermes_sms_in_gateway_includes(self):
-        from toolsets import get_toolset
+        from arnold.agent.toolsets import get_toolset
 
         gw = get_toolset("hermes-gateway")
         assert gw is not None

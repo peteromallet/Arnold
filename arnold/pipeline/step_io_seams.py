@@ -5,6 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Mapping
 
+from arnold.pipeline.declaration_lowering import lower_stage_declarations
+
 
 _SEAM_SPLIT = "::"
 _PORT_SPLIT = "<="
@@ -157,18 +159,18 @@ def _stage_for(pipeline: Any, step_id: str) -> Any:
 
 
 def _stage_produces(stage: Any) -> tuple[Any, ...]:
-    produces = getattr(stage, "produces", None)
-    if produces:
-        return tuple(produces)
+    lowered = lower_stage_declarations(stage)
+    if lowered.effective_produces:
+        return tuple(lowered.effective_produces)
     step = getattr(stage, "step", None)
     step_produces = getattr(step, "produces", None)
     return tuple(step_produces) if step_produces else ()
 
 
 def _stage_consumes(stage: Any) -> tuple[Any, ...]:
-    consumes = getattr(stage, "consumes", None)
-    if consumes:
-        return tuple(consumes)
+    lowered = lower_stage_declarations(stage)
+    if lowered.effective_consumes:
+        return tuple(lowered.effective_consumes)
     step = getattr(stage, "step", None)
     step_consumes = getattr(step, "consumes", None)
     return tuple(step_consumes) if step_consumes else ()

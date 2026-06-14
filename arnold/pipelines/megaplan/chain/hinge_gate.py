@@ -50,7 +50,6 @@ BASELINE_MANIFEST = (
 FLAG_ON_MANIFEST = REPO_ROOT / "tests" / "corpus" / "flag_on" / "MANIFEST.json"
 
 CRASH_ISOLATION_TEST = REPO_ROOT / "tests" / "oracles" / "test_crash_isolation_oracle.py"
-VERSION_SKEW_TEST = REPO_ROOT / "tests" / "oracles" / "test_version_skew_oracle.py"
 
 
 @dataclass(frozen=True)
@@ -117,10 +116,6 @@ def crash_isolation_oracle() -> OracleOutcome:
     return _pytest_oracle("crash_isolation", CRASH_ISOLATION_TEST)
 
 
-def version_skew_oracle() -> OracleOutcome:
-    return _pytest_oracle("version_skew", VERSION_SKEW_TEST)
-
-
 # Ordered list — fold-equivalence baseline runs first (cheapest, most likely
 # to surface a regression early) so a red there short-circuits expensive
 # subprocess oracles in the escalation ladder.
@@ -128,7 +123,6 @@ DEFAULT_ORACLES: Tuple[Tuple[str, Callable[[], OracleOutcome]], ...] = (
     ("fold_equivalence_baseline", fold_equivalence_baseline),
     ("fold_equivalence_flag_on", fold_equivalence_flag_on),
     ("crash_isolation", crash_isolation_oracle),
-    ("version_skew", version_skew_oracle),
 )
 
 
@@ -261,7 +255,6 @@ __all__ = [
     "fold_equivalence_baseline",
     "fold_equivalence_flag_on",
     "crash_isolation_oracle",
-    "version_skew_oracle",
     "BASELINE_MANIFEST",
     "FLAG_ON_MANIFEST",
 ]

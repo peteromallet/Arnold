@@ -20,7 +20,7 @@ from typing import Any, Optional, Tuple
 
 from arnold.pipelines.megaplan.control_interface import read_valid_targets
 from arnold.pipelines.megaplan.observability.events import EventKind, read_events
-from arnold.pipelines.megaplan.run_outcome import RunOutcome
+from arnold.runtime.outcome import RunOutcome
 
 # Default phase timeout (overridable from state)
 _DEFAULT_PHASE_TIMEOUT_SECONDS = 3600

@@ -22,7 +22,8 @@ from arnold.pipelines.megaplan.planning.state import (
     STATE_FAILED,
     STATE_FINALIZED,
 )
-from arnold.pipeline.step_io_contract import StepIOContractContext, StepIOOperation
+from arnold.pipeline.step_io_contract import StepIOOperation
+from arnold.pipelines.megaplan._pipeline.schema_registry_adapter import create_step_io_contract_context
 from arnold.pipelines.megaplan.store import PlanRepository, write_plan_artifact_json
 from arnold.pipelines.megaplan.model_seam import audit_step_payload
 from arnold.pipelines.megaplan._core import (
@@ -296,7 +297,10 @@ def handle_execute(root: Path, args: argparse.Namespace) -> StepResponse:
             audit_step_payload("review", stub_review)
             write_plan_artifact_json(
                 plan_dir, "review.json", stub_review,
-                contract_context=StepIOContractContext(operation=StepIOOperation.WRITE),
+                contract_context=create_step_io_contract_context(
+                    operation=StepIOOperation.WRITE,
+                    explicit_root=plan_dir,
+                ),
             )
             artifacts = response.get("artifacts")
             if isinstance(artifacts, list) and "review.json" not in artifacts:

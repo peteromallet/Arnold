@@ -943,3 +943,151 @@ class TestWeightedVoteContractReduction:
         assert isinstance(entry["suspension"], dict)
         assert entry["suspension"]["kind"] == "human"
         assert entry["suspension"]["resume_cursor"] == "meta_cur"
+
+
+# ---------------------------------------------------------------------------
+# Fan-out extension seams — lock unsupported policies/scopes
+# ---------------------------------------------------------------------------
+
+
+class TestMajorityVoteFanOutSeams:
+    """Lock fan-out extension seams: unsupported ReducePolicy values and
+    non-None suspension_scope must propagate NotImplementedError through
+    majority_vote, and the shipped default must remain MAX_WINS with no
+    suspension_scope.
+    """
+
+    # -- Unsupported reduce policies ---------------------------------------
+
+    def test_quorum_policy_propagates_not_implemented_error(self) -> None:
+        """majority_vote(reduce_policy=QUORUM) raises NotImplementedError
+        when child contracts trigger the reduce_contract_results path."""
+        join = arnold_majority_vote(reduce_policy=ReducePolicy.QUORUM)
+        results = [
+            _make_result_with_contract("approve", ContractStatus.COMPLETED),
+            _make_result_with_contract("approve", ContractStatus.COMPLETED),
+        ]
+        with pytest.raises(NotImplementedError, match="reduce_policy='quorum'"):
+            join(results, _ctx())
+
+    def test_best_effort_policy_propagates_not_implemented_error(self) -> None:
+        """majority_vote(reduce_policy=BEST_EFFORT) raises NotImplementedError."""
+        join = arnold_majority_vote(reduce_policy=ReducePolicy.BEST_EFFORT)
+        results = [
+            _make_result_with_contract("a", ContractStatus.COMPLETED),
+        ]
+        with pytest.raises(NotImplementedError, match="reduce_policy='best_effort'"):
+            join(results, _ctx())
+
+    def test_budget_policy_propagates_not_implemented_error(self) -> None:
+        """majority_vote(reduce_policy=BUDGET) raises NotImplementedError."""
+        join = arnold_majority_vote(reduce_policy=ReducePolicy.BUDGET)
+        results = [
+            _make_result_with_contract("a", ContractStatus.COMPLETED),
+        ]
+        with pytest.raises(NotImplementedError, match="reduce_policy='budget'"):
+            join(results, _ctx())
+
+    def test_saturation_policy_propagates_not_implemented_error(self) -> None:
+        """majority_vote(reduce_policy=SATURATION) raises NotImplementedError."""
+        join = arnold_majority_vote(reduce_policy=ReducePolicy.SATURATION)
+        results = [
+            _make_result_with_contract("a", ContractStatus.COMPLETED),
+        ]
+        with pytest.raises(NotImplementedError, match="reduce_policy='saturation'"):
+            join(results, _ctx())
+
+    # -- Unsupported suspension_scope --------------------------------------
+
+    def test_suspension_scope_fan_out_propagates_not_implemented_error(self) -> None:
+        """majority_vote(suspension_scope='fan-out') raises NotImplementedError
+        when child contracts trigger the reduce_contract_results path."""
+        join = arnold_majority_vote(suspension_scope="fan-out")
+        results = [
+            _make_result_with_contract("approve", ContractStatus.COMPLETED),
+            _make_result_with_contract("approve", ContractStatus.COMPLETED),
+        ]
+        with pytest.raises(
+            NotImplementedError,
+            match="suspension_scope is reserved for a later milestone",
+        ):
+            join(results, _ctx())
+
+    def test_suspension_scope_any_non_none_propagates_not_implemented_error(self) -> None:
+        """Any non-None suspension_scope (not just 'fan-out') raises NotImplementedError."""
+        join = arnold_majority_vote(suspension_scope="batch")
+        results = [
+            _make_result_with_contract("a", ContractStatus.COMPLETED),
+        ]
+        with pytest.raises(
+            NotImplementedError,
+            match="suspension_scope is reserved for a later milestone",
+        ):
+            join(results, _ctx())
+
+    # -- Shipped default ---------------------------------------------------
+
+    def test_default_policy_is_max_wins_no_suspension_scope(self) -> None:
+        """When majority_vote is called with no arguments, the shipped default
+        is ReducePolicy.MAX_WINS with suspension_scope=None, and contracts
+        reduce successfully."""
+        join = arnold_majority_vote()  # all defaults
+        results = [
+            _make_result_with_contract("approve", ContractStatus.COMPLETED),
+            _make_result_with_contract("approve", ContractStatus.COMPLETED),
+        ]
+        out = join(results, _ctx())
+        assert out.contract_result is not None
+        assert out.contract_result.payload.get("reduce_policy") == "max_wins"
+        # suspension_scope is not stored in the payload — it's only a gate param
+        assert out.contract_result.status == ContractStatus.COMPLETED
+        assert out.verdict is not None
+        assert out.verdict.recommendation == "approve"
+
+    def test_explicit_max_wins_with_none_scope_succeeds(self) -> None:
+        """Explicit MAX_WINS with suspension_scope=None behaves identically
+        to the default and does not raise."""
+        join = arnold_majority_vote(
+            reduce_policy=ReducePolicy.MAX_WINS,
+            suspension_scope=None,
+        )
+        results = [
+            _make_result_with_contract("a", ContractStatus.FAILED),
+            _make_result_with_contract("a", ContractStatus.SUSPENDED,
+                                       suspension=_make_suspension(child_id="c1")),
+        ]
+        out = join(results, _ctx())
+        assert out.contract_result is not None
+        assert out.contract_result.payload.get("reduce_policy") == "max_wins"
+        # Failed beats suspended per the status lattice
+        assert out.contract_result.status == ContractStatus.FAILED
+
+    # -- No-contract backward compat: params don't affect non-contract path -
+
+    def test_quorum_policy_no_contracts_still_creates_join(self) -> None:
+        """majority_vote(reduce_policy=QUORUM) does not raise at construction
+        time, and the NotImplementedError only surfaces when contracts are
+        actually reduced.  Without contracts the join behaves normally."""
+        join = arnold_majority_vote(reduce_policy=ReducePolicy.QUORUM)
+        results = [
+            _make_result("approve"),
+            _make_result("approve"),
+        ]
+        # No contracts → reduce_contract_results is never called
+        out = join(results, _ctx())
+        assert out.verdict is not None
+        assert out.verdict.recommendation == "approve"
+        assert out.contract_result is None
+
+    def test_suspension_scope_no_contracts_still_creates_join(self) -> None:
+        """majority_vote(suspension_scope='fan-out') does not raise at
+        construction time; the error only surfaces when contracts are reduced."""
+        join = arnold_majority_vote(suspension_scope="fan-out")
+        results = [
+            _make_result("reject"),
+            _make_result("reject"),
+        ]
+        out = join(results, _ctx())
+        assert out.verdict is not None
+        assert out.verdict.recommendation == "reject"
+        assert out.contract_result is None

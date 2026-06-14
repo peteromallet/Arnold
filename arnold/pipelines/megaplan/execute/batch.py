@@ -68,7 +68,6 @@ from arnold.pipelines.megaplan.execute.timeout import (
 from arnold.pipelines.megaplan.model_seam import (
     ModelTier,
     capture_step_output,
-    render_step_message,
 )
 from arnold.pipelines.megaplan.orchestration.execution_evidence import (
     validate_execution_evidence,
@@ -87,7 +86,7 @@ from arnold.pipelines.megaplan.types import (
     PlanState,
     StepResponse,
 )
-from arnold.pipeline import StepInvocation
+from arnold.pipeline import StepInvocation, get_default_adapter_registry
 from arnold.pipelines.megaplan.planning.state import (
     STATE_BLOCKED,
     STATE_EXECUTED,
@@ -495,7 +494,8 @@ def _render_execute_prompt_for_dispatch(
         model=model,
         resolved_model=resolved_model,
     )
-    rendered = render_step_message(
+    registry = get_default_adapter_registry()
+    rendered = registry.invoke(
         StepInvocation(
             kind="model",
             metadata={
@@ -515,6 +515,7 @@ def _capture_execute_payload(
     resolved_model: str | None,
     payload: dict[str, Any],
 ) -> dict[str, Any]:
+    # Capture is a direct generic call; registry is render-side only.
     payload = _normalize_execute_capture_payload(payload)
     outcome = capture_step_output(
         StepInvocation(
@@ -850,6 +851,7 @@ def _run_and_merge_batch(
                 batch_number=batch_number,
                 batches_total=batches_total,
                 capture_git_status_snapshot_fn=observation_snapshot_fn,
+                plan_dir=plan_dir,
             )
         )
     if is_prose_mode(state):
@@ -868,7 +870,14 @@ def _run_and_merge_batch(
             issues=deviations,
             should_classify=lambda task: task.get("id") in batch_task_id_set,
         )
-    execution_audit = validate_execution_evidence(finalize_data, project_dir, mode=plan_mode, state=state)
+    execution_audit = validate_execution_evidence(
+        finalize_data,
+        project_dir,
+        mode=plan_mode,
+        state=state,
+        plan_dir=plan_dir,
+        artifact_prefix=f"execution_audit_batch_{batch_number}",
+    )
     if attribution_result.records:
         execution_audit["auto_attribution"] = list(attribution_result.records)
     if execution_audit["skipped"]:
@@ -2202,6 +2211,8 @@ def handle_execute_auto_loop(
         project_dir,
         mode=state["config"].get("mode", "code"),
         state=state,
+        plan_dir=plan_dir,
+        artifact_prefix="execution_audit_aggregate",
     )
     deviations = list(aggregate_payload.get("deviations", []))
     if timeout_recovery is not None:

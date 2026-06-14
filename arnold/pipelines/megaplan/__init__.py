@@ -30,7 +30,7 @@ description: str = (
     "revise, finalize, execute, review, and tiebreaker."
 )
 default_profile: str | None = None
-supported_modes: tuple[str, ...] = ("code", "doc", "creative", "joke")
+supported_modes: tuple[str, ...] = ("code", "doc", "creative", "joke", "plan")
 recommended_profiles: tuple[str, ...] = ()
 driver: tuple[str, str] = ("megaplan", "planning")
 entrypoint: str = "build_pipeline"
@@ -201,3 +201,38 @@ def __getattr__(name: str) -> Any:
         globals()[name] = value
         return value
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
+# Register megaplan-specific content types with the generic Arnold registry.
+# These are opinionated types that belong to the Megaplan plugin, not the
+# neutral Arnold substrate.
+def _register_megaplan_content_types() -> None:
+    from arnold.pipeline.types import CONTENT_TYPES
+
+    _MEGAPLAN_CONTENT_TYPES = (
+        "application/x-evaluand-record+json",
+        "application/x-routing-key+json",
+        "application/x-verdict+json",
+    )
+    for _ct in _MEGAPLAN_CONTENT_TYPES:
+        if _ct not in CONTENT_TYPES:
+            CONTENT_TYPES.register(_ct, {"content_type": _ct})
+
+
+_register_megaplan_content_types()
+
+
+def _install_model_adapter_once() -> None:
+    """Import megaplan model_seam first (registers hooks) then wire the adapter."""
+    import arnold.pipelines.megaplan.model_seam as _ms  # noqa: F401 — side-effect: registers hooks
+    from arnold.pipeline.step_invocation import get_default_adapter_registry
+    from arnold.pipelines.megaplan.model_seam import install_model_step_adapter
+
+    install_model_step_adapter(get_default_adapter_registry())
+
+
+_model_adapter_installed: bool = False
+
+if not _model_adapter_installed:
+    _install_model_adapter_once()
+    _model_adapter_installed = True

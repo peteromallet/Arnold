@@ -16,7 +16,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Iterable, Mapping
 
-from arnold.pipelines.megaplan._pipeline.discovery.manifest import (
+from arnold.pipeline.discovery.manifest import (
     Manifest,
     ManifestError,
     read_manifest,

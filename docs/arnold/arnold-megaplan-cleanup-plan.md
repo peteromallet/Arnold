@@ -1183,3 +1183,54 @@ The cleanup is done when:
 - `arnold pipeline check` catches missing prompts, invalid decisions, broken edge targets, and invalid profile keys before runtime.
 - Generic runtime tests still pass if `arnold/pipelines/megaplan/` is temporarily removed.
 - Megaplan tests are plugin tests, not platform tests.
+
+## M7 Outcome — Megaplan As The Flagship Arnold App
+
+M7 converged Megaplan into a regular Arnold pipeline package and decontaminated the
+generic Arnold substrate of planning-flavored vocabulary. The work spanned three
+interconnected tracks: vocabulary decontamination, shim deletion, and manifest
+finalization.
+
+### Completed
+
+| # | Item | Detail |
+|---|---|---|
+| C1 | `CrossCuttingEnvelope` alias deleted | Zero production callers; `RunEnvelope` is canonical. Removed from `arnold/runtime/envelope.py`. |
+| C2 | `arnold/cli/forwarder.py` deleted | Pure passthrough to `arnold.cli.main()`. `megaplan` console-script entry removed from `pyproject.toml`. |
+| C3 | `routing.py` "Tier N" comments → "Priority N" | 4 cosmetic-only lines; zero behavioral impact. |
+| C4 | `TrustTier` → `TrustGrade` rename | `arnold/pipeline/discovery/trust.py` enum renamed; all call sites updated. `TrustClass` (Evidence-First, types.py:603) untouched. |
+| C5 | `OperationKind.RUN_PHASE` → `EXECUTE` | Symbol-only rename; wire value `"run_phase"` preserved for state-replay compatibility. 15 call sites updated. |
+| C6 | Megaplan content-types migrated out of `_BUILTIN_CONTENT_TYPES` | 4 megaplan-specific MIME types moved to plugin-app `CONTENT_TYPES.register()` call; 3 genuinely generic types stay. |
+| C7 | `Pipeline.binding_map` made injectable | `PipelineBuilder.build()` accepts opt-in `derive_bindings`; non-typed-port pipelines never see a derived `binding_map`. |
+| C8 | `plan_dir` kwarg → `state_dir` rename | Generic envelope kwarg renamed; `plan_state_lock` function name preserved per SD2. All megaplan call sites updated. |
+| C9 | Oracle traces recorded, `CompatibilityMode.LEGACY` deleted | Fresh NATIVE oracle traces in `tests/oracle/fixtures/manifest.json`; LEGACY fallback and `CompatibilityMode` enum removed per oracle-backed proof. |
+| C10 | `_legacy_subprocess/` package deleted | Full legacy snapshot removed behind the NATIVE oracle gate. `_FORBIDDEN_PATTERNS` tuple and `scoped_legacy_audit()` removed. |
+| C11 | Agent shim audit completed | Full inventory of 30+ importlib shims under `arnold/agent/` recorded in `docs/arnold/m7-agent-shim-audit.md`. No non-empty shim deleted per SD5. |
+| C12 | Dual manifest deduplicated | `pipelines/planning/__init__.py` converted to thin re-export; `"plan"` added to canonical `supported_modes`. Registry emits exactly one Megaplan plugin. |
+| C13 | M3a compatibility bridge deleted | `_pipeline/discovery/manifest.py` (37-line bridge) deleted; all consumers migrated. `_pipeline/registry.py` retained as megaplan-owned policy authority per SD3. |
+| C14 | Docs updated | `docs/pipelines.md` rewritten to describe generic Arnold substrate + Megaplan as consumer plugin. Two successor tickets filed. |
+
+### Deferred (explicit — not forgotten)
+
+| # | Item | Deferred to | Detail |
+|---|---|---|---|
+| D1 | `SupervisorVariantKind.CHAIN` = `"chain"` | Ticket A (Typed Step-IO Envelope) | Planning-flavored supervisor variant name in generic model. |
+| D2 | `RunRecord.plan_id` field | Ticket A | Planning-identity field on generic supervisor record. |
+| D3 | `RunRecord.last_phase` field | Ticket A | Megaplan phase name on generic record. |
+| D4 | `RunRecord.tier_escalations_used` field | Ticket A | Robustness-tier counter on generic record. |
+| D5 | `RunRecord.escalation_tier_pin` field | Ticket A | Tier pin on generic record. |
+| D6 | `RunRecord.pr_number` field | Ticket A | Chain PR number on generic record. |
+| D7 | `RunRecord.pr_state` field | Ticket A | Chain PR state on generic record. |
+| D8 | `NormalizedOutcome.plan` field | Ticket A | Planning name on generic outcome. |
+| D9 | `NormalizedOutcome.last_phase` field | Ticket A | Phase name on generic outcome. |
+| D10 | `NormalizedOutcome.tier_escalations_used` field | Ticket A | Tier counter on generic outcome. |
+| D11 | `OperationKind.OVERRIDE_LIST` enum member | Ticket A | Override-list operation kind — deferred pending Typed Step-IO carrier types. |
+| D12 | `OperationKind.OVERRIDE_APPLY` enum member | Ticket A | Override-apply operation kind — deferred pending Typed Step-IO carrier types. |
+| D13 | `OperationKind.PROFILE_VALIDATE` enum member | Ticket A | Profile-validate operation kind — deferred pending Typed Step-IO carrier types. |
+| D14 | `OperationKind.RESUME` enum member | Ticket A | Resume operation kind — deferred pending Typed Step-IO carrier types. |
+| D15 | 15+ planning keys in `OperationRequest.payload` / `StepContext.state` / `hook_extensions` | Ticket A | By-convention dict keys (`phase`, `plan_dir`, `tier_spec`, `success_criteria`, …) crossing the generic control-plane seam as untyped megaplan dicts. |
+| D16 | Step 9 oracle traces use un-renamed names | Ticket A | Oracle traces recorded with planning-flavored names; may need re-recording when the Typed Step-IO Envelope epic lands. |
+| D17 | Agent shim deletion | Ticket B (Agent Runtime Extraction) | 30+ importlib shims under `arnold/agent/` bridging to `arnold.pipelines.megaplan.agent/`; full audit at `docs/arnold/m7-agent-shim-audit.md`. |
+| D18 | Agent real-module relocation | Ticket B | `toolsets.py`, `run_agent.py`, `contracts.py`, `hermes_time.py`, `utils.py`, `providers/*` — real implementations under generic `arnold.agent/` namespace need relocation to megaplan agent package. |
+| D19 | Empty `__init__.py` package cleanup | Ticket B | 6 empty `__init__.py` files under `arnold/agent/` already staged as 0-byte; deletion belongs to agent extraction epic. |
+| D20 | Deeper supervisor data-model restructuring | Ticket A | Field-level renaming of planning-flavored supervisor fields to plugin-supplied vocabulary — addressed holistically by the Typed Step-IO Envelope epic. |

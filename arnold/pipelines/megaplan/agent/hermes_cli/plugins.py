@@ -125,7 +125,7 @@ class PluginContext:
         emoji: str = "",
     ) -> None:
         """Register a tool in the global registry **and** track it as plugin-provided."""
-        from tools.registry import registry
+        from arnold.agent.tools.registry import registry
 
         registry.register(
             name=name,
@@ -467,7 +467,7 @@ def get_plugin_toolsets() -> List[tuple]:
         return []
 
     try:
-        from tools.registry import registry
+        from arnold.agent.tools.registry import registry
     except Exception:
         return []
 

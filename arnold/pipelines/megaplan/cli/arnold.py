@@ -60,6 +60,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _megaplan_main(["run", *rest])
     if command == "pipelines":
         return _handle_pipelines(rest)
+    if command == "pipeline":
+        from arnold.pipeline._cli_check import run as _run_pipeline_cli
+
+        return _run_pipeline_cli(rest)
     if command == "auto":
         return _handle_auto(rest)
     if command == "override":

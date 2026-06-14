@@ -1298,7 +1298,7 @@ def _sync_mcp_toolsets(server_names: Optional[List[str]] = None) -> None:
 
     Skips server names that collide with built-in toolsets.
     """
-    from toolsets import TOOLSETS
+    from arnold.agent.toolsets import TOOLSETS
 
     if server_names is None:
         server_names = list(_load_mcp_config().keys())
@@ -1494,8 +1494,8 @@ async def _discover_and_register_server(name: str, config: dict) -> List[str]:
 
     Returns list of registered tool names.
     """
-    from tools.registry import registry
-    from toolsets import create_custom_toolset
+    from arnold.agent.tools.registry import registry
+    from arnold.agent.toolsets import create_custom_toolset
 
     connect_timeout = config.get("connect_timeout", _DEFAULT_CONNECT_TIMEOUT)
     server = await asyncio.wait_for(

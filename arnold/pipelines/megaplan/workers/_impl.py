@@ -64,11 +64,13 @@ from arnold.pipelines.megaplan.prompts import (
 )
 from arnold.pipeline import StepInvocation
 from arnold.pipelines.megaplan.model_seam import (
+    ModelBudgetError,
     ModelTier,
     ModelStructuralAuditError,
     audit_step_payload,
     capture_step_output,
     render_prompt_for_dispatch,
+    render_step_message,
     schema_audits_step_payload,
 )
 from arnold.pipelines.megaplan.runtime.process import TmuxSession, kill_group, spawn
@@ -85,30 +87,14 @@ from arnold.pipelines.megaplan.runtime.execution_environment import (
 from arnold.pipelines.megaplan.workers._mock_payloads import _EXECUTE_STEPS, _build_mock_payload
 
 _CROSS_CALL_PERSISTENT_STEPS = _EXECUTE_STEPS
-_CODEX_TEMPLATE_WRITE_STEPS = {"critique", "review"}
 _MUTATING_WORKER_STEPS = {"execute", "revise", "loop_execute"}
 
 # Shared mapping from step name to schema filename, used by both
 # run_claude_step and run_codex_step.
-STEP_SCHEMA_FILENAMES: dict[str, str] = {
-    "plan": "plan.json",
-    "prep": "prep.json",
-    "prep-triage": "prep_triage.json",
-    "prep-research": "prep_research_finding.json",
-    "prep-distill": "prep.json",
-    "revise": "revise.json",
-    "critique": "critique.json",
-    "critique_evaluator": "critique_evaluator.json",
-    "feedback": "feedback.json",
-    "gate": "gate.json",
-    "finalize": "finalize.json",
-    "execute": "execution.json",
-    "loop_plan": "loop_plan.json",
-    "loop_execute": "loop_execute.json",
-    "review": "review.json",
-    "tiebreaker_researcher": "tiebreaker_researcher.json",
-    "tiebreaker_challenger": "tiebreaker_challenger.json",
-}
+# Built from the authoritative StepContract registry.
+from arnold.pipelines.megaplan.step_contracts import build_step_schema_filenames
+
+STEP_SCHEMA_FILENAMES: dict[str, str] = build_step_schema_filenames()
 
 # Derive required keys per step from SCHEMAS so they aren't duplicated.
 _STEP_REQUIRED_KEYS: dict[str, list[str]] = {
@@ -1876,20 +1862,6 @@ def _normalize_step_payload_for_audit(step: str, payload: dict[str, Any]) -> dic
     return clean_payload
 
 
-def validate_payload(step: str, payload: dict[str, Any]) -> None:
-    if step in _RETIRED_VALIDATE_PAYLOAD_STEPS:
-        raise CliError(
-            "parse_error",
-            f"Legacy validate_payload() is retired for {step}; use schema-backed capture/audit instead.",
-        )
-    required = _STEP_REQUIRED_KEYS.get(step)
-    if required is None:
-        return
-    missing = [key for key in required if key not in payload]
-    if missing:
-        raise CliError("parse_error", f"{step} output missing required keys: {', '.join(missing)}")
-
-
 def _mock_result(
     payload: dict[str, Any],
     *,
@@ -2647,6 +2619,18 @@ def run_codex_step(
         repair_raw = output_raw or raw
         if parse_error is not None and not repair_attempted:
             repair_prompt = _build_json_repair_prompt(parse_error, repair_raw)
+            # _pre_dispatch_budget_check sentinel: budget guard for dispatch
+            try:
+                render_step_message(StepInvocation(kind="model", metadata={
+                    "prompt": repair_prompt,
+                    "model": model,
+                    "normalized_model": model,
+                    "validation_step": step,
+                    "tier": (seam_tier.value if isinstance(seam_tier, ModelTier) else ModelTier.NON_ENFORCED.value),
+                    "worker": "codex",
+                }))
+            except ModelBudgetError:
+                raise
             return run_codex_step(
                 step,
                 state,
@@ -3121,6 +3105,148 @@ def resolve_agent_mode(step: str, args: argparse.Namespace, *, home: Path | None
     )
 
 
+# ---------------------------------------------------------------------------
+# ArnoldDispatcher helper closures (flag-ON path, Step 5b)
+#
+# These functions are injected as per-call closure adapters inside the
+# MEGAPLAN_USE_AGENT_DISPATCHER=1 branch of run_step_with_worker.  They
+# replicate the inner one-shot retry semantics from the flag-OFF codex and
+# shannon branches so CliError propagates unchanged to the outer
+# auth/connection fallback loop.
+# ---------------------------------------------------------------------------
+
+
+def _codex_to_agent_result(
+    req: Any,
+    *,
+    step: str,
+    state: PlanState,
+    plan_dir: Path,
+    root: Path,
+    args: argparse.Namespace,
+    worker_options: dict[str, Any] | None,
+    prompt_override: str | None,
+    prompt_kwargs: dict[str, Any] | None,
+    output_path: Path | None,
+    effective_refreshed: bool,
+) -> Any:
+    """Call run_codex_step and project WorkerResult → AgentResult."""
+    mode = req.mode
+    resolved_model = req.resolved_model
+    effort = req.effort
+    read_only = req.read_only
+    if os.getenv(MOCK_ENV_VAR) != "1":
+        assert resolved_model is not None and resolved_model != "", (
+            "run_step_with_worker about to invoke run_codex_step via "
+            "ArnoldDispatcher with empty resolved_model. "
+            "AgentMode.resolved_model should hold e.g. 'gpt-5.5'. "
+            "See /tmp/codex_wedge_diagnostic.md."
+        )
+    attempted_retry = False
+    eff_fresh = effective_refreshed
+    while True:
+        try:
+            _w = run_codex_step(
+                step,
+                state,
+                plan_dir,
+                root=root,
+                persistent=(mode == "persistent"),
+                fresh=eff_fresh,
+                json_trace=(step == "execute"),
+                prompt_override=prompt_override,
+                prompt_kwargs=prompt_kwargs,
+                effort=effort,
+                model=resolved_model,
+                read_only=read_only,
+                output_path=output_path,
+            )
+            return _w.to_agent_result()
+        except CliError as error:
+            session_id = error.extra.get("session_id")
+            if (
+                attempted_retry
+                or step in _EXECUTE_STEPS
+                or error.code
+                not in {
+                    "worker_timeout",
+                    "connection_error",
+                    "codex_pre_first_byte_stall",
+                    "worker_error",
+                }
+            ):
+                raise
+            attempted_retry = True
+            if mode == "persistent" and isinstance(session_id, str) and session_id:
+                apply_session_update(
+                    state,
+                    step,
+                    req.agent,
+                    session_id,
+                    mode=mode,
+                    refreshed=eff_fresh,
+                    model=resolved_model,
+                )
+                eff_fresh = step not in _CROSS_CALL_PERSISTENT_STEPS
+            continue
+
+
+def _shannon_to_agent_result(
+    req: Any,
+    *,
+    step: str,
+    state: PlanState,
+    plan_dir: Path,
+    root: Path,
+    args: argparse.Namespace,
+    worker_options: dict[str, Any] | None,
+    prompt_override: str | None,
+    prompt_kwargs: dict[str, Any] | None,
+    output_path: Path | None,
+    effective_refreshed: bool,
+) -> Any:
+    """Call run_shannon_step and project WorkerResult → AgentResult."""
+    from arnold.pipelines.megaplan.workers.shannon import run_shannon_step
+
+    mode = req.mode
+    resolved_model = req.resolved_model
+    effort = req.effort
+    read_only = req.read_only
+    shannon_kwargs: dict[str, Any] = dict(
+        root=root,
+        prompt_override=prompt_override,
+        prompt_kwargs=prompt_kwargs,
+        effort=effort,
+        model=resolved_model,
+        read_only=read_only,
+        output_path=output_path,
+    )
+    if req.agent == "claude":
+        shannon_kwargs["session_agent"] = "claude"
+    attempted_retry = False
+    eff_fresh = effective_refreshed
+    while True:
+        try:
+            _w = run_shannon_step(
+                step,
+                state,
+                plan_dir,
+                fresh=eff_fresh,
+                **shannon_kwargs,
+            )
+            return _w.to_agent_result()
+        except CliError as error:
+            if (
+                attempted_retry
+                or step in _EXECUTE_STEPS
+                or error.code not in {"worker_stall", "worker_timeout", "connection_error"}
+            ):
+                raise
+            attempted_retry = True
+            eff_fresh = True
+            continue
+
+
 def run_step_with_worker(
     step: str,
     state: PlanState,
@@ -3166,127 +3292,199 @@ def run_step_with_worker(
     while True:
         attempted_agents.add(agent)
         try:
-            if agent == "hermes":
-                # Deferred import to avoid circular import (hermes_worker imports from workers)
-                from arnold.pipelines.megaplan.workers.hermes import run_hermes_step
-                worker = run_hermes_step(
-                    step,
-                    state,
-                    plan_dir,
-                    root=root,
-                    fresh=effective_refreshed,
-                    model=model,
-                    effort=effort,
-                    prompt_override=prompt_override,
-                    output_path=output_path,
-                    worker_options=worker_options,
+            if os.getenv("MEGAPLAN_USE_AGENT_DISPATCHER") != "1":
+                if agent == "hermes":
+                    # Deferred import to avoid circular import (hermes_worker imports from workers)
+                    from arnold.pipelines.megaplan.workers.hermes import run_hermes_step
+                    worker = run_hermes_step(
+                        step,
+                        state,
+                        plan_dir,
+                        root=root,
+                        fresh=effective_refreshed,
+                        model=model,
+                        effort=effort,
+                        prompt_override=prompt_override,
+                        output_path=output_path,
+                        worker_options=worker_options,
+                    )
+                elif agent in ("claude", "shannon"):
+                    # Both the ``claude`` agent (Claude via the shannon CLI, e.g.
+                    # the ``partnered`` profile) and the explicit ``shannon`` agent
+                    # run through run_shannon_step. A stalled SSE stream now surfaces
+                    # promptly as a retryable ``worker_stall`` (idle-output watchdog
+                    # in run_command) instead of hanging until the coarse phase
+                    # wall-clock ``worker_timeout``. Give it the same bounded one-shot
+                    # retry the codex branch grants transient failures so a single
+                    # stall retries (fresh session) rather than failing the plan.
+                    from arnold.pipelines.megaplan.workers.shannon import run_shannon_step
+                    shannon_kwargs: dict[str, Any] = dict(
+                        root=root,
+                        prompt_override=prompt_override,
+                        prompt_kwargs=prompt_kwargs,
+                        effort=effort,
+                        model=resolved_model,
+                        read_only=read_only,
+                        output_path=output_path,
+                    )
+                    if agent == "claude":
+                        shannon_kwargs["session_agent"] = "claude"
+                    attempted_retry = False
+                    while True:
+                        try:
+                            worker = run_shannon_step(
+                                step,
+                                state,
+                                plan_dir,
+                                fresh=effective_refreshed,
+                                **shannon_kwargs,
+                            )
+                            break
+                        except CliError as error:
+                            if (
+                                attempted_retry
+                                or step in _EXECUTE_STEPS
+                                or error.code not in {"worker_stall", "worker_timeout", "connection_error"}
+                            ):
+                                raise
+                            attempted_retry = True
+                            # Retry on a fresh session so a wedged stream is not
+                            # resumed back into the same stall.
+                            effective_refreshed = True
+                            continue
+                else:
+                    # Defensive guard: codex must receive an explicit model. The
+                    # diagnostic in /tmp/codex_wedge_diagnostic.md shows that when
+                    # ``resolved_model`` silently becomes ``None`` (e.g. via a
+                    # 4-tuple ``resolved=`` that drops the AgentMode's
+                    # ``resolved_model`` field), the codex CLI launches with no
+                    # ``-c model=...`` and hangs at startup. Fail loud instead.
+                    if os.getenv(MOCK_ENV_VAR) != "1":
+                        assert resolved_model is not None and resolved_model != "", (
+                            "run_step_with_worker about to invoke run_codex_step "
+                            "with empty resolved_model. AgentMode.resolved_model "
+                            "should hold e.g. 'gpt-5.5'. Upstream callers using a "
+                            "4-tuple ``resolved=`` drop this field — pass the "
+                            "AgentMode instance instead. See "
+                            "/tmp/codex_wedge_diagnostic.md."
+                        )
+                    attempted_retry = False
+                    while True:
+                        try:
+                            worker = run_codex_step(
+                                step,
+                                state,
+                                plan_dir,
+                                root=root,
+                                persistent=(mode == "persistent"),
+                                fresh=effective_refreshed,
+                                json_trace=(step == "execute"),
+                                prompt_override=prompt_override,
+                                prompt_kwargs=prompt_kwargs,
+                                effort=effort,
+                                model=resolved_model,
+                                read_only=read_only,
+                                output_path=output_path,
+                            )
+                            break
+                        except CliError as error:
+                            session_id = error.extra.get("session_id")
+                            if (
+                                attempted_retry
+                                or step in _EXECUTE_STEPS
+                                or error.code
+                                not in {
+                                    "worker_timeout",
+                                    "connection_error",
+                                    "codex_pre_first_byte_stall",
+                                    "worker_error",
+                                }
+                            ):
+                                raise
+                            attempted_retry = True
+                            if mode == "persistent" and isinstance(session_id, str) and session_id:
+                                apply_session_update(
+                                    state,
+                                    step,
+                                    agent,
+                                    session_id,
+                                    mode=mode,
+                                    refreshed=effective_refreshed,
+                                    model=resolved_model,
+                                )
+                                effective_refreshed = step not in _CROSS_CALL_PERSISTENT_STEPS
+                            continue
+            else:
+                # Flag-ON path: route all agents through ArnoldDispatcher via
+                # per-call closure registrations.  The outer auth/connection
+                # fallback (except CliError below) still wraps everything; the
+                # inner per-backend one-shot retry lives inside the closures.
+                from arnold.agent import ArnoldDispatcher
+                from arnold.agent.adapters.deepseek import DeepSeekAdapter as _DeepSeekAdapter
+                from arnold.agent.contracts import AgentRequest as _AgentRequest
+                _dispatcher = ArnoldDispatcher()
+                _dispatcher.register("hermes", _DeepSeekAdapter())
+                _dispatcher.register(
+                    "codex",
+                    lambda req: _codex_to_agent_result(
+                        req,
+                        step=step,
+                        state=state,
+                        plan_dir=plan_dir,
+                        root=root,
+                        args=args,
+                        worker_options=worker_options,
+                        prompt_override=prompt_override,
+                        prompt_kwargs=prompt_kwargs,
+                        output_path=output_path,
+                        effective_refreshed=effective_refreshed,
+                    ),
                 )
-            elif agent in ("claude", "shannon"):
-                # Both the ``claude`` agent (Claude via the shannon CLI, e.g.
-                # the ``partnered`` profile) and the explicit ``shannon`` agent
-                # run through run_shannon_step. A stalled SSE stream now surfaces
-                # promptly as a retryable ``worker_stall`` (idle-output watchdog
-                # in run_command) instead of hanging until the coarse phase
-                # wall-clock ``worker_timeout``. Give it the same bounded one-shot
-                # retry the codex branch grants transient failures so a single
-                # stall retries (fresh session) rather than failing the plan.
-                from arnold.pipelines.megaplan.workers.shannon import run_shannon_step
-                shannon_kwargs: dict[str, Any] = dict(
+                _shannon_closure = lambda req: _shannon_to_agent_result(
+                    req,
+                    step=step,
+                    state=state,
+                    plan_dir=plan_dir,
                     root=root,
+                    args=args,
+                    worker_options=worker_options,
                     prompt_override=prompt_override,
                     prompt_kwargs=prompt_kwargs,
-                    effort=effort,
-                    model=resolved_model,
-                    read_only=read_only,
                     output_path=output_path,
+                    effective_refreshed=effective_refreshed,
                 )
-                if agent == "claude":
-                    shannon_kwargs["session_agent"] = "claude"
-                attempted_retry = False
-                while True:
-                    try:
-                        worker = run_shannon_step(
-                            step,
-                            state,
-                            plan_dir,
-                            fresh=effective_refreshed,
-                            **shannon_kwargs,
-                        )
-                        break
-                    except CliError as error:
-                        if (
-                            attempted_retry
-                            or step in _EXECUTE_STEPS
-                            or error.code not in {"worker_stall", "worker_timeout", "connection_error"}
-                        ):
-                            raise
-                        attempted_retry = True
-                        # Retry on a fresh session so a wedged stream is not
-                        # resumed back into the same stall.
-                        effective_refreshed = True
-                        continue
-            else:
-                # Defensive guard: codex must receive an explicit model. The
-                # diagnostic in /tmp/codex_wedge_diagnostic.md shows that when
-                # ``resolved_model`` silently becomes ``None`` (e.g. via a
-                # 4-tuple ``resolved=`` that drops the AgentMode's
-                # ``resolved_model`` field), the codex CLI launches with no
-                # ``-c model=...`` and hangs at startup. Fail loud instead.
-                if os.getenv(MOCK_ENV_VAR) != "1":
-                    assert resolved_model is not None and resolved_model != "", (
-                        "run_step_with_worker about to invoke run_codex_step "
-                        "with empty resolved_model. AgentMode.resolved_model "
-                        "should hold e.g. 'gpt-5.5'. Upstream callers using a "
-                        "4-tuple ``resolved=`` drop this field — pass the "
-                        "AgentMode instance instead. See "
-                        "/tmp/codex_wedge_diagnostic.md."
+                _dispatcher.register("claude", _shannon_closure)
+                _dispatcher.register("shannon", _shannon_closure)
+                if agent == "hermes":
+                    _rendered = render_prompt_for_dispatch(
+                        "hermes",
+                        step,
+                        state,
+                        plan_dir,
+                        root=root,
+                        model=model,
+                        prompt_override=prompt_override,
+                        **(prompt_kwargs or {}),
                     )
-                attempted_retry = False
-                while True:
-                    try:
-                        worker = run_codex_step(
-                            step,
-                            state,
-                            plan_dir,
-                            root=root,
-                            persistent=(mode == "persistent"),
-                            fresh=effective_refreshed,
-                            json_trace=(step == "execute"),
-                            prompt_override=prompt_override,
-                            prompt_kwargs=prompt_kwargs,
-                            effort=effort,
-                            model=resolved_model,
-                            read_only=read_only,
-                            output_path=output_path,
-                        )
-                        break
-                    except CliError as error:
-                        session_id = error.extra.get("session_id")
-                        if (
-                            attempted_retry
-                            or step in _EXECUTE_STEPS
-                            or error.code
-                            not in {
-                                "worker_timeout",
-                                "connection_error",
-                                "codex_pre_first_byte_stall",
-                                "worker_error",
-                            }
-                        ):
-                            raise
-                        attempted_retry = True
-                        if mode == "persistent" and isinstance(session_id, str) and session_id:
-                            apply_session_update(
-                                state,
-                                step,
-                                agent,
-                                session_id,
-                                mode=mode,
-                                refreshed=effective_refreshed,
-                                model=resolved_model,
-                            )
-                            effective_refreshed = step not in _CROSS_CALL_PERSISTENT_STEPS
-                        continue
+                    _prompt = _rendered.prompt
+                else:
+                    _prompt = None
+                _request = _AgentRequest(
+                    agent=agent,
+                    mode=mode,
+                    model=model,
+                    resolved_model=resolved_model,
+                    effort=effort,
+                    read_only=read_only,
+                    prompt=_prompt,
+                    system_prompt=None,
+                    metadata={
+                        "step": step,
+                        "plan_dir": str(plan_dir),
+                        **(worker_options or {}),
+                    },
+                )
+                worker = WorkerResult.from_agent_result(_dispatcher.dispatch(_request))
             if record_routing and (step != "execute" or ledger_step_label is not None):
                 actual_model = getattr(worker, "model_actual", None)
                 if actual_model is None and agent == "codex":

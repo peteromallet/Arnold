@@ -142,6 +142,12 @@ policy, budget authority, parallel safety) is configured via neutral contracts.
 | Component | File:Line | Role |
 |-----------|-----------|------|
 | `PipelineBuilder` | `arnold/pipeline/builder.py:19-171` | Public authoring API: `add_stage`, `add_parallel_stage`, `add_caller_supplied_edges`, `attach_resource_bundles` |
+| Typed declaration lowering | `arnold/pipeline/declaration_lowering.py:1` | Shared lowered view for public `Stage.reads=(PortRef(...),)` and `Stage.writes=(Port(...),)` author declarations |
+| Runtime typed handoff enforcement | `arnold/pipeline/executor.py:797` | `_enforce_typed_step_io_handoff` blocks invalid typed payloads before state merge and before consumers run |
+| Step-IO handoff evaluator | `arnold/pipeline/step_io_handoff.py:60` | Classifies producer payloads and resolves Author⇄Runtime policy outcomes for typed crossings |
+| Static C4 contract checks | `arnold/pipeline/c4_static_checks.py:1` | Pre-run declaration, schema-version, structural, invocation, and capability checks over lowered author declarations |
+| Contract-aware CLI | `arnold/pipeline/_cli_check.py:1` | `arnold pipeline check --module dotted.path:factory` loads real authored pipelines and renders hard findings |
+| Capability alias normalization | `arnold/pipeline/model_resource_capabilities.py:1` | Maps author-facing `requires-vision-model` and `requires-image-decoder` aliases into the closed runtime capability vocabulary |
 | `PipelineRegistry` | `arnold/pipeline/registry.py` | Named pipeline registration and discovery |
 | Profile loading | `arnold/pipeline/profiles.py` | TOML profile parsing, agent-spec shape validation, layer merging |
 | `StepIOPolicy` | `arnold/pipeline/step_io_policy.py` | Author-supplied per-operation policies: block/allow/warn/shadow |
@@ -156,6 +162,12 @@ policy, budget authority, parallel safety) is configured via neutral contracts.
 | Test File | What It Proves |
 |-----------|---------------|
 | `tests/arnold/pipeline/test_pipeline_id_registry.py` (26 tests, T13/T15) | Aggregate duplicate detection (cross-file active stable IDs, previous IDs, seam IDs, active-vs-previous collisions), default discovery, per-file drift, three-file aggregate |
+| `tests/arnold/pipeline/test_declaration_lowering.py` | Public typed `reads`/`writes` lower into effective consumes/produces with deterministic drift diagnostics |
+| `tests/arnold/pipeline/test_builder.py` | `PipelineBuilder.build(derive_bindings=True)` derives neutral binding-map entries from the lowered declaration view |
+| `tests/arnold/pipeline/test_executor.py` | Runtime handoff enforcement rejects wrong typed payloads before state merge and before consumers run |
+| `tests/arnold/pipeline/test_c4_static_checks.py` | Static C4 checks resolve lowered binding-map edges, schema availability, structural subsets, invocation shape, and capability aliases |
+| `tests/arnold/pipeline/test_cli_pipeline_check.py` | `arnold pipeline check --module dotted.path:factory` validates real pipeline factories with clean and failing reports |
+| `tests/arnold/pipeline/test_model_resource_capabilities.py` | Author-facing capability aliases normalize to the closed canonical vocabulary while unknown names fail closed |
 | `tests/arnold/pipeline/test_profiles.py` | Profile loading and validation |
 | `tests/arnold/pipeline/test_schema_registry.py` | Schema registry read/write/version-acceptance |
 | `tests/arnold/pipeline/test_registry.py` | PipelineRegistry discovery |
@@ -364,7 +376,7 @@ Evidence-First control plane or a future milestone.
 | Step⇄Step | implemented | `arnold/pipeline/types.py`, `step_io_contract.py`, `step_io_seams.py`, `step_io_handoff.py`, `builder.py`, `executor.py` | 50+ tests across test_step_io_seams, test_pipelines, test_end_to_end, test_evidence_pack_expressibility |
 | Step⇄Model | implemented | `model_seam.py:851-1722`, `step_invocation.py`, 10 worker capture sites, 7 handler audit sites | test_model_seam.py (50+), T2 (9), T3 (14), T12 (11), outbound coverage catalog |
 | Step⇄State | implemented | `state.py`, `types.py` (StepContext/StepResult), `executor.py` (apply_delta) | test_executor.py (35), test_executor_parallel.py, test_end_to_end.py (7) |
-| Author⇄Runtime | implemented | `builder.py`, `profiles.py`, `step_io_policy.py`, `pipeline_id_registry.py`, `check_pipeline_id_registry.py` | test_pipeline_id_registry.py (26), test_pipelines.py (24), test_profiles.py, test_schema_registry.py |
+| Author⇄Runtime | implemented | `builder.py`, `declaration_lowering.py:1`, `executor.py:797`, `step_io_handoff.py:60`, `c4_static_checks.py:1`, `_cli_check.py:1`, `model_resource_capabilities.py:1`, `profiles.py`, `step_io_policy.py`, `pipeline_id_registry.py`, `check_pipeline_id_registry.py` | test_pipeline_id_registry.py (26), test_declaration_lowering.py, test_builder.py, test_executor.py, test_c4_static_checks.py, test_cli_pipeline_check.py, test_model_resource_capabilities.py, test_pipelines.py (24), test_profiles.py, test_schema_registry.py |
 | Engine⇄World | implemented | `executor.py`, `runtime/envelope.py`, `audit_policy.py`, `content_validation.py`, evidence_pack `steps.py` | test_executor.py (35), T4, T5 (25), test_end_to_end.py (7) |
 | Control-flow forks | implemented | `routing.py`, `contract_reduce.py`, `executor.py` (parallel fan-out) | test_executor.py (35), test_contract_reduce.py, T3 (14), T12 (11) |
 | Named Artifact Suspend/Continuation | implemented | evidence_pack `steps.py`, `verifier.py`, `pipelines.py` | test_end_to_end.py (7) — all assertions via named persisted JSON artifacts only |

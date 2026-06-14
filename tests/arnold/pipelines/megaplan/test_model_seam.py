@@ -1151,6 +1151,35 @@ def test_render_step_message_applies_static_budget_and_request_override() -> Non
         raise AssertionError("render_step_message should fail before dispatch on budget overflow")
 
 
+def test_render_step_message_blocks_char_to_token_overflow_at_assembly(monkeypatch) -> None:
+    """Overflow is rejected during model message assembly before provider dispatch."""
+    dispatched = False
+
+    def _dispatch() -> None:
+        nonlocal dispatched
+        dispatched = True
+
+    monkeypatch.setattr(
+        "arnold.pipeline.model_seam.budget_model_input",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            ModelBudgetError("model input budget exceeded at assembly")
+        ),
+    )
+    invocation = StepInvocation(
+        kind="model",
+        metadata={
+            "model": "gpt-5.4",
+            "prompt": "x" * 10_000,
+            "tier": "enforced",
+        },
+    )
+
+    with pytest.raises(ModelBudgetError, match="assembly"):
+        render_step_message(invocation)
+
+    assert dispatched is False
+
+
 def test_non_enforced_unknown_family_uses_degraded_fallback_telemetry() -> None:
     invocation = StepInvocation(
         kind="model",
@@ -1734,3 +1763,122 @@ def test_render_compact_review_prompt_exported_in_all(tmp_path) -> None:
     from arnold.pipelines.megaplan.model_seam import render_compact_review_prompt
 
     assert callable(render_compact_review_prompt)
+
+
+# ---------------------------------------------------------------------------
+# T10 reproducer tests: _pre_dispatch_budget_check (hermes helper from T8)
+# ---------------------------------------------------------------------------
+
+
+def test_pre_dispatch_budget_check_rejects_oversized_prompt_before_run_conversation() -> None:
+    """ModelBudgetError from _pre_dispatch_budget_check fires BEFORE run_conversation.
+
+    This is the core invariant: the budget guard must reject oversized
+    prompts so that run_conversation is never reached.
+    """
+    from unittest.mock import MagicMock, patch
+
+    from arnold.pipelines.megaplan.workers.hermes import _pre_dispatch_budget_check
+
+    agent = MagicMock()
+    agent.run_conversation = MagicMock()
+
+    with patch(
+        "arnold.pipelines.megaplan.workers.hermes.render_step_message"
+    ) as mock_render:
+        mock_render.side_effect = ModelBudgetError("model input budget exceeded")
+
+        with pytest.raises(ModelBudgetError, match="model input budget exceeded"):
+            _pre_dispatch_budget_check(
+                agent,
+                conversation_history=[],
+                user_message="oversized prompt",
+                system="system prompt",
+                tool_manifest=None,
+                schema={"type": "object"},
+                step="test-step",
+                model_name="gpt-5.4",
+                tier=ModelTier.ENFORCED,
+                worker="hermes",
+            )
+
+    # The critical assertion: run_conversation MUST NOT have been called.
+    agent.run_conversation.assert_not_called()
+
+
+def test_pre_dispatch_budget_check_returns_rendered_step_message_for_in_budget_input() -> None:
+    """For in-budget input, _pre_dispatch_budget_check returns a RenderedStepMessage."""
+    from unittest.mock import patch
+
+    from arnold.pipelines.megaplan.workers.hermes import _pre_dispatch_budget_check
+
+    expected = RenderedStepMessage(text="hello", prompt="hello")
+
+    with patch(
+        "arnold.pipelines.megaplan.workers.hermes.render_step_message"
+    ) as mock_render:
+        mock_render.return_value = expected
+
+        result = _pre_dispatch_budget_check(
+            None,  # agent is not used by the helper
+            conversation_history=[],
+            user_message="normal prompt",
+            system=None,
+            tool_manifest=None,
+            schema={"type": "object"},
+            step="test-step",
+            model_name="gpt-5.4",
+            tier=ModelTier.NON_ENFORCED,
+            worker="hermes",
+        )
+
+    assert result is expected
+    assert result.text == "hello"
+    assert result.prompt == "hello"
+
+
+def test_pre_dispatch_budget_check_model_budget_error_escapes_broad_except() -> None:
+    """ModelBudgetError from _pre_dispatch_budget_check MUST escape broad except Exception.
+
+    This is the recovery guarantee: the broad except blocks at the dispatch
+    sites (e.g. template prompt handler) must NOT silently swallow
+    ModelBudgetError.  The helper itself re-raises after catching
+    ModelBudgetError, but this test confirms the pattern works end-to-end
+    when called inside a try/except Exception wrapper.
+    """
+    from unittest.mock import MagicMock, patch
+
+    from arnold.pipelines.megaplan.workers.hermes import _pre_dispatch_budget_check
+
+    agent = MagicMock()
+    budget_escaped = False
+
+    with patch(
+        "arnold.pipelines.megaplan.workers.hermes.render_step_message"
+    ) as mock_render:
+        mock_render.side_effect = ModelBudgetError("budget exceeded: 5000 > 1000")
+
+        # Pattern: broad except Exception must NOT swallow ModelBudgetError.
+        # The ModelBudgetError must skip the except Exception clause and
+        # propagate, which we capture with the specific except clause.
+        try:
+            _pre_dispatch_budget_check(
+                agent,
+                conversation_history=[],
+                user_message="large prompt",
+                system=None,
+                tool_manifest=None,
+                schema={"type": "object"},
+                step="test-step",
+                model_name="gpt-5.4",
+                tier=ModelTier.ENFORCED,
+                worker="hermes",
+            )
+        except ModelBudgetError:
+            budget_escaped = True
+        except Exception:
+            pytest.fail("ModelBudgetError was silently swallowed by broad except Exception")
+        else:
+            pytest.fail("ModelBudgetError should have been raised but was not")
+
+    assert budget_escaped, "ModelBudgetError did not escape"

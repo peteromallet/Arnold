@@ -9,7 +9,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import Enum
-from pathlib import Path
 from typing import Any, Mapping
 
 from arnold.pipeline.contract_validation import (
@@ -19,7 +18,6 @@ from arnold.pipeline.contract_validation import (
 from arnold.pipeline.schema_registry import (
     ContractSchemaRegistry,
     SchemaRegistryError,
-    create_contract_schema_registry,
     normalize_schema_version,
 )
 
@@ -43,15 +41,10 @@ class StepIOContractContext:
 
     operation: StepIOOperation | str
     registry: ContractSchemaRegistry | None = None
-    registry_root: str | Path | None = None
     fail_closed_on_write: bool = True
 
     def resolve_registry(self) -> ContractSchemaRegistry | None:
-        if self.registry is not None:
-            return self.registry
-        if self.registry_root is None:
-            return create_contract_schema_registry()
-        return create_contract_schema_registry(self.registry_root)
+        return self.registry
 
 
 @dataclass(frozen=True)
@@ -203,6 +196,28 @@ def classify_step_io_contract(
         envelope=envelope,
         diagnostics=diagnostics,
         block_reason="typed artifact payload failed schema validation",
+    )
+
+
+def make_warn_diagnostic(decision: StepIOContractDecision) -> StepIODiagnostic:
+    """Build a distinct ``warn_violation_detected`` diagnostic from *decision*.
+
+    Surfaces a stable code consumers can grep without joining on ``mode``.
+    Reuses the primary diagnostic's message/pointers when available so the
+    warn record stays as informative as the underlying schema violation.
+    """
+
+    primary = decision.diagnostics[0] if decision.diagnostics else None
+    message = (
+        (primary.message if primary is not None else "")
+        or decision.block_reason
+        or "step IO violation surfaced under warn"
+    )
+    return StepIODiagnostic(
+        code="warn_violation_detected",
+        message=message,
+        payload_pointer=primary.payload_pointer if primary is not None else "",
+        schema_pointer=primary.schema_pointer if primary is not None else "",
     )
 
 

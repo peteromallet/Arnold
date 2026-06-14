@@ -1,12 +1,27 @@
 from __future__ import annotations
 
+from argparse import Namespace
+import json
+from types import SimpleNamespace
 from pathlib import Path
 import re
+from typing import Any, Mapping
 
+import pytest
+
+from arnold.pipeline import ContractResult, ContractStatus
 from arnold.pipeline.contract_validation import ValidationDiagnostic
 from arnold.pipeline.schema_registry import ContractSchemaRegistry
-from arnold.pipeline.types import CONTRACT_RESULT_SCHEMA_VERSION
-from arnold.pipelines.megaplan._pipeline.types import PipelineVerdict, StepResult
+from arnold.pipeline.types import CONTRACT_RESULT_SCHEMA_VERSION, Port, PortRef
+from arnold.pipelines.megaplan._core.state import write_plan_state
+from arnold.pipelines.megaplan._pipeline.executor import _EnforcementBinding, _evaluate_cursor_handoff
+from arnold.pipelines.megaplan._pipeline.types import (
+    Pipeline,
+    PipelineVerdict,
+    Stage,
+    StepContext,
+    StepResult,
+)
 from arnold.pipelines.megaplan.pipeline_contracts import (
     CONTENT_TYPE_JSON,
     PlanningPayloadBuildError,
@@ -20,6 +35,7 @@ from arnold.pipelines.megaplan.pipeline_contracts import (
     register_production_planning_contracts,
     with_stage_payload_result,
 )
+from arnold.pipelines.megaplan.stages.inprocess_step import InProcessHandlerStep
 
 
 SHA256_VERSION_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
@@ -116,6 +132,66 @@ def test_port_helpers_declare_logical_type_and_accepted_hash_range(tmp_path) -> 
     assert consumer.content_type == CONTENT_TYPE_JSON
     assert consumer.logical_type == contract.logical_type
     assert consumer.accepted_version_range == contract.accepted_range
+
+
+def test_megaplan_cursor_handoff_resolves_lowered_typed_ports_without_bypass(
+    tmp_path, monkeypatch
+) -> None:
+    registry = ContractSchemaRegistry(tmp_path)
+    contract = register_production_planning_contracts(registry)[
+        PRODUCTION_PLANNING_LOGICAL_TYPES[0]
+    ]
+    payload = _by_reference_payload(contract.logical_type)
+    contract_result = produce_payload_result(contract, payload)
+    producer_port = contract.producer_port("prep_payload")
+    consumer_port = contract.consumer_port("prep_payload")
+    pipeline = Pipeline(
+        stages={
+            "prep": Stage(
+                name="prep",
+                step=object(),
+                writes=(producer_port,),
+            ),
+            "plan": Stage(
+                name="plan",
+                step=object(),
+                reads=(consumer_port,),
+            ),
+        },
+        entry="prep",
+        binding_map={("plan", "prep_payload"): ("prep", "prep_payload")},
+    )
+    result = StepResult(next="plan", contract_result=contract_result)
+    captured: dict[str, object] = {}
+
+    from arnold.pipeline import step_io_handoff as handoff_module
+
+    original = handoff_module.evaluate_step_io_handoff
+
+    def _capture(value, **kwargs):
+        captured["value"] = value
+        captured["producer_port"] = kwargs.get("producer_port")
+        captured["consumer_port_decl"] = kwargs.get("consumer_port_decl")
+        handoff = original(value, **kwargs)
+        captured["handoff"] = handoff
+        return handoff
+
+    monkeypatch.setattr(handoff_module, "evaluate_step_io_handoff", _capture)
+
+    _evaluate_cursor_handoff(
+        pipeline=pipeline,
+        binding=_EnforcementBinding(binding_map=pipeline.binding_map),
+        producer_stage=pipeline.stages["prep"],
+        consumer_stage=pipeline.stages["plan"],
+        result=result,
+        ctx=SimpleNamespace(plan_dir=tmp_path, state={}),
+        artifact_root=tmp_path,
+    )
+
+    assert captured["value"] is contract_result
+    assert captured["producer_port"] == producer_port
+    assert captured["consumer_port_decl"] == consumer_port
+    assert captured["handoff"].decision.classification.value == "typed_valid"
 
 
 def test_consume_helper_rejects_unaccepted_registered_hash(tmp_path) -> None:
@@ -263,3 +339,204 @@ def test_stage_payload_builder_rejects_producer_port_schema_hash_drift(tmp_path)
         assert "max_version does not match payload schema hash" in str(exc)
     else:  # pragma: no cover - assertion clarity
         raise AssertionError("expected PlanningPayloadBuildError")
+
+
+def test_cursor_handoff_passes_contract_carrier_and_preserves_metadata(tmp_path, monkeypatch) -> None:
+    registry = ContractSchemaRegistry(tmp_path)
+    contract = register_production_planning_contracts(registry)[PRODUCTION_PLANNING_LOGICAL_TYPES[0]]
+    producer_port = contract.producer_port("prep_payload")
+    consumer_port = contract.consumer_port("prep_payload")
+    payload = _by_reference_payload(contract.logical_type)
+    contract_result = ContractResult(
+        status=ContractStatus.COMPLETED,
+        authority_level="typed",
+        schema_version=CONTRACT_RESULT_SCHEMA_VERSION,
+        payload={
+            "logical_type": contract.logical_type,
+            "schema_version": contract.schema_version,
+            "payload": payload,
+        },
+    )
+    pipeline = Pipeline(
+        stages={
+            "prep": Stage(
+                name="prep",
+                step=object(),
+                produces=(producer_port,),
+            ),
+            "plan": Stage(
+                name="plan",
+                step=object(),
+                consumes=(consumer_port,),
+            ),
+        },
+        entry="prep",
+        binding_map={("plan", "prep_payload"): ("prep", "prep_payload")},
+    )
+    result = StepResult(next="plan", contract_result=contract_result)
+    captured: dict[str, object] = {}
+
+    from arnold.pipeline import step_io_handoff as handoff_module
+
+    original = handoff_module.evaluate_step_io_handoff
+
+    def _capture(value, **kwargs):
+        captured["value"] = value
+        handoff = original(value, **kwargs)
+        captured["handoff"] = handoff
+        return handoff
+
+    monkeypatch.setattr(handoff_module, "evaluate_step_io_handoff", _capture)
+
+    _evaluate_cursor_handoff(
+        pipeline=pipeline,
+        binding=_EnforcementBinding(binding_map=pipeline.binding_map),
+        producer_stage=pipeline.stages["prep"],
+        consumer_stage=pipeline.stages["plan"],
+        result=result,
+        ctx=SimpleNamespace(plan_dir=tmp_path, state={}),
+        artifact_root=tmp_path,
+    )
+
+    assert captured["value"] is contract_result
+    handoff = captured["handoff"]
+    assert handoff.contract_result is contract_result
+    assert handoff.decision.classification.value == "typed_valid"
+    assert handoff.decision.envelope is not None
+    assert handoff.decision.envelope.payload == payload
+    assert handoff.contract_result.authority_level == "typed"
+    assert handoff.contract_result.schema_version == CONTRACT_RESULT_SCHEMA_VERSION
+
+
+@pytest.mark.parametrize(
+    ("stage_name", "artifact_name", "logical_type", "next_state", "response"),
+    (
+        ("prep", "prep.json", PRODUCTION_PLANNING_LOGICAL_TYPES[0], "prepped", {}),
+        (
+            "critique",
+            "critique_output.json",
+            PRODUCTION_PLANNING_LOGICAL_TYPES[2],
+            "critiqued",
+            {},
+        ),
+        (
+            "gate",
+            "gate.json",
+            PRODUCTION_PLANNING_LOGICAL_TYPES[3],
+            "gated",
+            {"recommendation": "PROCEED"},
+        ),
+        ("execute", "execution.json", PRODUCTION_PLANNING_LOGICAL_TYPES[6], "executed", {}),
+        ("review", "review.json", PRODUCTION_PLANNING_LOGICAL_TYPES[7], "reviewed", {}),
+    ),
+)
+def test_migrated_stage_outputs_are_carrier_only_at_cursor_seam(
+    tmp_path,
+    monkeypatch,
+    stage_name: str,
+    artifact_name: str,
+    logical_type: str,
+    next_state: str,
+    response: Mapping[str, Any],
+) -> None:
+    plan_name = f"{stage_name}-plan"
+    plan_dir = tmp_path / ".megaplan" / "plans" / plan_name
+    plan_dir.mkdir(parents=True)
+    (plan_dir / "state.json").write_text(
+        json.dumps({"name": plan_name, "current_state": "ready"}),
+        encoding="utf-8",
+    )
+
+    def _handler(root: Path, args: Namespace) -> Mapping[str, Any]:
+        run_plan_dir = root / ".megaplan" / "plans" / args.plan
+        (run_plan_dir / artifact_name).write_text(
+            json.dumps({"stage": stage_name, "ok": True}),
+            encoding="utf-8",
+        )
+        write_plan_state(
+            run_plan_dir,
+            mode="executor-key-merge",
+            state={"current_state": next_state},
+            executor_owned_keys=["current_state"],
+        )
+        return response
+
+    registry = ContractSchemaRegistry(tmp_path)
+    contracts = register_production_planning_contracts(registry)
+    contract = contracts[logical_type]
+    producer_port = contract.producer_port(f"{stage_name}_payload")
+    consumer_port = contract.consumer_port(f"{stage_name}_payload")
+    step = InProcessHandlerStep(
+        name=stage_name,
+        kind="produce",
+        handler=_handler,
+        produces=(producer_port,),
+    )
+    result = step.run(
+        StepContext(
+            plan_dir=plan_dir,
+            state={"name": plan_name},
+            profile={"root": tmp_path, "project_dir": tmp_path},
+            mode="test",
+            inputs={},
+        )
+    )
+
+    assert artifact_name not in result.outputs
+    assert result.contract_result is not None
+    payload, diagnostics = consume_payload_result(
+        registry,
+        contract,
+        result.contract_result,
+    )
+    assert diagnostics == ()
+    assert payload is not None
+    assert payload["logical_type"] == logical_type
+    assert payload["metadata"]["output_keys"] == [artifact_name]
+    assert [ref["name"] for ref in payload["artifact_refs"]] == [artifact_name]
+    assert payload["artifact_refs"][0]["digest"].startswith("sha256:")
+
+    pipeline = Pipeline(
+        stages={
+            stage_name: Stage(
+                name=stage_name,
+                step=object(),
+                produces=(producer_port,),
+            ),
+            "downstream": Stage(
+                name="downstream",
+                step=object(),
+                consumes=(consumer_port,),
+            ),
+        },
+        entry=stage_name,
+        binding_map={("downstream", f"{stage_name}_payload"): (stage_name, f"{stage_name}_payload")},
+    )
+    captured: dict[str, object] = {}
+
+    from arnold.pipeline import step_io_handoff as handoff_module
+
+    original = handoff_module.evaluate_step_io_handoff
+
+    def _capture(value, **kwargs):
+        captured["value"] = value
+        handoff = original(value, **kwargs)
+        captured["handoff"] = handoff
+        return handoff
+
+    monkeypatch.setattr(handoff_module, "evaluate_step_io_handoff", _capture)
+
+    _evaluate_cursor_handoff(
+        pipeline=pipeline,
+        binding=_EnforcementBinding(binding_map=pipeline.binding_map),
+        producer_stage=pipeline.stages[stage_name],
+        consumer_stage=pipeline.stages["downstream"],
+        result=result,
+        ctx=SimpleNamespace(plan_dir=plan_dir, state={}),
+        artifact_root=tmp_path,
+    )
+
+    assert captured["value"] is result.contract_result
+    handoff = captured["handoff"]
+    assert handoff.contract_result is result.contract_result
+    assert handoff.decision.classification.value == "typed_valid"

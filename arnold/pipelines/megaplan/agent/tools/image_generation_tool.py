@@ -511,7 +511,7 @@ if __name__ == "__main__":
 # ---------------------------------------------------------------------------
 # Registry
 # ---------------------------------------------------------------------------
-from tools.registry import registry
+from arnold.agent.tools.registry import registry
 
 IMAGE_GENERATE_SCHEMA = {
     "name": "image_generate",

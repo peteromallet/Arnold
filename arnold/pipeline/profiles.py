@@ -16,7 +16,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any, Callable, Iterable
 import tomllib
 
 _DEFAULT_PREMIUM_AGENTS = frozenset({"claude", "codex"})
@@ -106,6 +106,7 @@ def _split_profile_dict(
     raw_profile: Any,
     *,
     metadata_keys: frozenset[str] = frozenset(),
+    passthrough_keys: frozenset[str] = frozenset(),
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     if not isinstance(raw_profile, dict):
         raise ProfileLoadError(
@@ -114,7 +115,7 @@ def _split_profile_dict(
         )
     flattened: dict[str, Any] = {}
     metadata: dict[str, Any] = {}
-    _flatten_stage_entries(raw_profile, "", flattened, metadata, metadata_keys)
+    _flatten_stage_entries(raw_profile, "", flattened, metadata, metadata_keys, passthrough_keys)
     return flattened, metadata
 
 
@@ -124,6 +125,7 @@ def _flatten_stage_entries(
     flattened: dict[str, Any],
     metadata: dict[str, Any],
     metadata_keys: frozenset[str],
+    passthrough_keys: frozenset[str] = frozenset(),
 ) -> None:
     for key, value in raw_profile.items():
         text_key = str(key)
@@ -132,7 +134,12 @@ def _flatten_stage_entries(
             continue
         full_key = f"{prefix}.{text_key}" if prefix else text_key
         if isinstance(value, dict):
-            _flatten_stage_entries(value, full_key, flattened, metadata, metadata_keys)
+            # Short-circuit: if this key is registered for dict-value passthrough,
+            # place the entire dict as-is instead of recursing.
+            if full_key in passthrough_keys:
+                flattened[full_key] = value
+            else:
+                _flatten_stage_entries(value, full_key, flattened, metadata, metadata_keys, passthrough_keys)
         else:
             flattened[full_key] = value
 
@@ -153,8 +160,17 @@ def validate_declared_stage_keys(
     *,
     declared_stage_keys: frozenset[str],
     known_agents: frozenset[str] | None = None,
+    stage_value_validators: dict[str, Callable[[Any], str]] | None = None,
 ) -> dict[str, str]:
-    """Validate stage keys and generic agent-spec shapes."""
+    """Validate stage keys and generic agent-spec shapes.
+
+    When *stage_value_validators* is provided, keys whose declared stage
+    matches a registered validator may carry a ``dict`` value (instead of a
+    string agent spec).  The validator callable receives the raw dict and
+    must return a validated string representation.  Keys without a
+    registered validator must still carry a string agent spec.
+    """
+    validators = stage_value_validators or {}
     validated: dict[str, str] = {}
     for key, raw_spec in stage_map.items():
         declared_stage = _declared_stage_for_key(key, declared_stage_keys)
@@ -166,6 +182,19 @@ def validate_declared_stage_keys(
                 "unknown declared stage prefix "
                 f"'{key.split('.', 1)[0]}'. Valid stages: {', '.join(sorted(declared_stage_keys))}",
             )
+        validator = validators.get(declared_stage) if validators else None
+        if validator is not None and isinstance(raw_spec, dict):
+            # Dict-value passthrough: hand the raw dict to the registered validator.
+            try:
+                validated[str(key)] = validator(raw_spec)
+            except Exception as exc:
+                _raise_invalid_profile(
+                    path,
+                    profile_name,
+                    key,
+                    f"stage value validator rejected dict value for '{key}': {exc}",
+                )
+            continue
         if not isinstance(raw_spec, str):
             _raise_invalid_profile(
                 path,
@@ -188,6 +217,7 @@ def parse_profiles_doc(
     declared_stage_keys: frozenset[str],
     known_agents: frozenset[str] | None = None,
     metadata_keys: frozenset[str] = frozenset(),
+    stage_value_validators: dict[str, Callable[[Any], str]] | None = None,
 ) -> tuple[dict[str, dict[str, str]], dict[str, dict[str, Any]]]:
     """Return ``(profile_maps, profile_metadata)`` for one TOML document."""
     try:
@@ -211,6 +241,8 @@ def parse_profiles_doc(
             f"Invalid profile file {path}: [profiles] must be a TOML table",
         )
 
+    passthrough_keys: frozenset[str] = frozenset(stage_value_validators) if stage_value_validators else frozenset()
+
     profiles: dict[str, dict[str, str]] = {}
     metadata: dict[str, dict[str, Any]] = {}
     for profile_name, raw_profile in raw_profiles.items():
@@ -219,6 +251,7 @@ def parse_profiles_doc(
             str(profile_name),
             raw_profile,
             metadata_keys=metadata_keys,
+            passthrough_keys=passthrough_keys,
         )
         profiles[str(profile_name)] = validate_declared_stage_keys(
             path,
@@ -226,6 +259,7 @@ def parse_profiles_doc(
             stage_map,
             declared_stage_keys=declared_stage_keys,
             known_agents=known_agents,
+            stage_value_validators=stage_value_validators,
         )
         if raw_metadata:
             metadata[str(profile_name)] = dict(raw_metadata)
@@ -238,6 +272,7 @@ def _load_profiles_file(
     declared_stage_keys: frozenset[str],
     known_agents: frozenset[str] | None = None,
     metadata_keys: frozenset[str] = frozenset(),
+    stage_value_validators: dict[str, Callable[[Any], str]] | None = None,
 ) -> tuple[dict[str, dict[str, str]], dict[str, dict[str, Any]]]:
     try:
         content = path.read_text(encoding="utf-8")
@@ -251,6 +286,7 @@ def _load_profiles_file(
         declared_stage_keys=declared_stage_keys,
         known_agents=known_agents,
         metadata_keys=metadata_keys,
+        stage_value_validators=stage_value_validators,
     )
 
 
@@ -266,6 +302,7 @@ def load_profile_sources(
     declared_stage_keys: frozenset[str],
     known_agents: frozenset[str] | None = None,
     metadata_keys: frozenset[str] = frozenset(),
+    stage_value_validators: dict[str, Callable[[Any], str]] | None = None,
 ) -> list[tuple[str, str, dict[str, str]]]:
     """Load profile sources in built-in, user, then project order."""
     sources: list[tuple[str, str, dict[str, str]]] = []
@@ -281,6 +318,7 @@ def load_profile_sources(
                 declared_stage_keys=declared_stage_keys,
                 known_agents=known_agents,
                 metadata_keys=metadata_keys,
+                stage_value_validators=stage_value_validators,
             )
             for profile_name, stage_map in profile_maps.items():
                 sources.append((source_label, profile_name, dict(stage_map)))
@@ -304,6 +342,7 @@ def load_profiles(
     declared_stage_keys: frozenset[str],
     known_agents: frozenset[str] | None = None,
     metadata_keys: frozenset[str] = frozenset(),
+    stage_value_validators: dict[str, Callable[[Any], str]] | None = None,
 ) -> dict[str, dict[str, str]]:
     return merge_profile_layers(
         load_profile_sources(
@@ -313,6 +352,7 @@ def load_profiles(
             declared_stage_keys=declared_stage_keys,
             known_agents=known_agents,
             metadata_keys=metadata_keys,
+            stage_value_validators=stage_value_validators,
         )
     )
 
@@ -325,6 +365,7 @@ def load_profile_metadata(
     declared_stage_keys: frozenset[str],
     known_agents: frozenset[str] | None = None,
     metadata_keys: frozenset[str] = frozenset(),
+    stage_value_validators: dict[str, Callable[[Any], str]] | None = None,
 ) -> dict[str, dict[str, Any]]:
     metadata: dict[str, dict[str, Any]] = {}
     ordered_paths = (
@@ -339,6 +380,7 @@ def load_profile_metadata(
                 declared_stage_keys=declared_stage_keys,
                 known_agents=known_agents,
                 metadata_keys=metadata_keys,
+                stage_value_validators=stage_value_validators,
             )
             for profile_name, profile_metadata in file_metadata.items():
                 metadata[profile_name] = dict(profile_metadata)

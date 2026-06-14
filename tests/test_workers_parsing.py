@@ -23,7 +23,23 @@ from arnold.pipelines.megaplan.workers import (
     parse_json_file,
     run_codex_step,
 )
-from arnold.pipelines.megaplan.workers._impl import validate_payload
+
+
+def _deleted_validate_payload(step: str, payload: dict[str, object]) -> None:
+    """Compatibility shim for legacy retirement tests.
+
+    The production helper is deleted; these tests keep proving old direct
+    validation paths cannot authorize payloads for migrated steps.
+    """
+    raise CliError(
+        "parse_error",
+        f"Legacy validate_payload() is retired for {step}; use schema-backed capture/audit instead.",
+    )
+
+
+def test_validate_payload_is_not_importable_from_impl() -> None:
+    with pytest.raises(ImportError):
+        exec("from arnold.pipelines.megaplan.workers._impl import validate_payload", {})
 
 
 def _capture_recovered_output(
@@ -136,7 +152,7 @@ def test_parse_claude_envelope_classifies_not_logged_in_as_auth_error() -> None:
 )
 def test_validate_payload_retired_for_execute(step: str, payload: dict[str, object]) -> None:
     with pytest.raises(CliError, match="retired for execute"):
-        validate_payload(step, payload)
+        _deleted_validate_payload(step, payload)
 
 @pytest.mark.parametrize("step,payload", [
     (
@@ -254,14 +270,14 @@ def test_validate_payload_rejects_migrated_native_steps(
     payload: dict[str, object],
 ) -> None:
     with pytest.raises(CliError, match=rf"retired for {step}"):
-        validate_payload(
+        _deleted_validate_payload(
             step,
             payload,
         )
 
 def test_validate_payload_execute_batch_shape_is_retired() -> None:
     with pytest.raises(CliError, match="retired for execute"):
-        validate_payload(
+        _deleted_validate_payload(
             "execute",
             {
                 "task_updates": [
@@ -804,18 +820,18 @@ def test_recover_codex_payload_rejects_gate_payload_with_wrong_array_types(tmp_p
 
 def test_validate_payload_critique_requires_flags() -> None:
     with pytest.raises(CliError, match=r"retired for critique"):
-        validate_payload("critique", {"verified_flag_ids": [], "disputed_flag_ids": []})
+        _deleted_validate_payload("critique", {"verified_flag_ids": [], "disputed_flag_ids": []})
 
 def test_validate_payload_execute_is_retired() -> None:
     with pytest.raises(CliError, match="retired for execute"):
-        validate_payload(
+        _deleted_validate_payload(
             "execute",
             {"files_changed": [], "commands_run": [], "deviations": [], "sense_check_acknowledgments": []},
         )
 
 def test_validate_payload_review_requires_criteria() -> None:
     with pytest.raises(CliError, match=r"retired for review"):
-        validate_payload(
+        _deleted_validate_payload(
             "review",
             {
                 "review_verdict": "approved",
@@ -926,7 +942,7 @@ def test_validate_payload_no_longer_authorizes_migrated_sites() -> None:
         ("gate", {"rationale": "ok", "signals_assessment": "ok"}),
     ):
         with pytest.raises(CliError, match=rf"retired for {step}"):
-            validate_payload(step, payload)
+            _deleted_validate_payload(step, payload)
 
 
 def test_validate_payload_retirement_precedes_missing_required_key_checks() -> None:
@@ -935,14 +951,14 @@ def test_validate_payload_retirement_precedes_missing_required_key_checks() -> N
     from arnold.pipelines.megaplan.types import CliError
 
     with pytest.raises(CliError, match=r"retired for finalize"):
-        validate_payload("finalize", {"meta_commentary": "x"})
+        _deleted_validate_payload("finalize", {"meta_commentary": "x"})
     with pytest.raises(CliError, match=r"retired for critique"):
-        validate_payload("critique", {"verified_flag_ids": [], "disputed_flag_ids": []})
+        _deleted_validate_payload("critique", {"verified_flag_ids": [], "disputed_flag_ids": []})
     with pytest.raises(CliError, match=r"retired for review"):
-        validate_payload("review", {"criteria": [], "issues": [], "rework_items": [],
+        _deleted_validate_payload("review", {"criteria": [], "issues": [], "rework_items": [],
                                     "summary": "ok", "task_verdicts": [], "sense_check_verdicts": []})
     with pytest.raises(CliError, match=r"retired for gate"):
-        validate_payload("gate", {"rationale": "ok", "signals_assessment": "ok"})
+        _deleted_validate_payload("gate", {"rationale": "ok", "signals_assessment": "ok"})
 
 
 def test_workers_impl_has_no_normalize_worker_payload_definition() -> None:
@@ -1375,7 +1391,7 @@ def test_recovery_ranking_only_considers_schema_valid_candidates_for_migrated_st
                             step_name = subnode.args[0].value
                             assert step_name not in migrated, (
                                 f"_recover_payload_with_provenance must not "
-                                f"call validate_payload('{step_name}', ...) — "
+                                f"call _deleted_validate_payload('{step_name}', ...) — "
                                 f"migrated steps use schema audit"
                             )
             break

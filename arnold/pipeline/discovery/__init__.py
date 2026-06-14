@@ -8,7 +8,7 @@ non-executing path enumeration).  The core primitives are:
 * :class:`ManifestError` — loud rejection when manifest reading fails.
 * :func:`read_manifest` — parse a pipeline module's source to extract
   metadata constants.
-* :class:`TrustTier` — path-derived trust classification.
+* :class:`TrustGrade` — path-derived trust classification.
 * :func:`classify` — derive trust tier from a module file path.
 
 Every Megaplan opinion (scan roots, known capabilities, blessed
@@ -24,7 +24,7 @@ from arnold.pipeline.discovery.manifest import (
     read_manifest,
 )
 from arnold.pipeline.discovery.trust import (
-    TrustTier,
+    TrustGrade,
     classify,
     derive_tenant_id,
 )
@@ -35,7 +35,7 @@ __all__ = [
     "Manifest",
     "ManifestError",
     "read_manifest",
-    "TrustTier",
+    "TrustGrade",
     "classify",
     "derive_tenant_id",
 ]

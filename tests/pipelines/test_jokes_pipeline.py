@@ -11,7 +11,7 @@ from unittest.mock import patch
 from arnold.pipeline import Pipeline, Stage, StepContext, run_pipeline
 from arnold.runtime.envelope import RuntimeEnvelope
 from arnold.pipelines.megaplan._pipeline import registry
-from arnold.pipelines.megaplan._pipeline.discovery.manifest import Manifest, read_manifest
+from arnold.pipeline.discovery.manifest import Manifest, read_manifest
 
 
 PIPELINE_INIT = (

@@ -75,7 +75,7 @@ def get_tool_emoji(tool_name: str, default: str = "⚡") -> str:
             return override
     # 2. Registry default
     try:
-        from tools.registry import registry
+        from arnold.agent.tools.registry import registry
         emoji = registry.get_emoji(tool_name, default="")
         if emoji:
             return emoji

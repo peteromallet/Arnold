@@ -8,21 +8,27 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from arnold.pipeline.artifact_io import (
+    ArtifactIOBlocked,
+    validate_artifact_io,
+)
 from arnold.pipeline.step_io_contract import (
     StepIOContractContext,
     StepIOEnvelope,
     StepIOOperation,
-    decide_step_io_read,
-    decide_step_io_write,
+    decide_step_io_read,  # re-exported for back-compat monkeypatching
+    decide_step_io_write,  # re-exported for back-compat monkeypatching
     is_step_io_envelope,
 )
-from arnold.pipeline.step_io_policy import (
+from arnold.pipeline.step_io_policy import (  # re-exported for back-compat monkeypatching
     decision_blocks_read,
     decision_blocks_write,
-    policy_for_envelope,
-    resolve_step_io_policy,
 )
-from arnold.pipeline.step_io_telemetry import TELEMETRY_FILENAME, emit_decision_telemetry
+from arnold.pipeline.step_io_telemetry import emit_decision_telemetry  # re-exported for back-compat
+from arnold.pipelines.megaplan._pipeline.schema_registry_adapter import (
+    create_step_io_contract_context,
+)
+from arnold.pipeline.step_io_telemetry import TELEMETRY_FILENAME
 from arnold.pipelines.megaplan._core.io import (
     atomic_write_bytes,
     atomic_write_json,
@@ -33,6 +39,10 @@ from arnold.pipelines.megaplan._core.io import (
     read_json,
 )
 from arnold.pipelines.megaplan._core.state import write_plan_state
+from arnold.pipelines.megaplan._pipeline.step_io_policy_adapter import (
+    megaplan_policy_for_envelope,
+    resolve_megaplan_step_io_policy,
+)
 from arnold.pipelines.megaplan.orchestration.feedback import load_feedback
 from arnold.pipelines.megaplan.schemas import Plan, PlanArtifact
 from arnold.pipelines.megaplan.store.base import ProgressEventInput
@@ -192,30 +202,27 @@ class PlanRepository:
         if not path.exists():
             return None
         value = read_json(path)
-        if not is_step_io_envelope(value):
+        if contract_context is None and not is_step_io_envelope(value):
             return value
-        envelope = StepIOEnvelope.from_json(value)
-        policy = policy_for_envelope(envelope, plan_dir=self.plan_dir, binding=contract_binding)
-        if not policy.enabled:
-            return value
-        decision = decide_step_io_read(
-            value,
-            contract_context
-            or StepIOContractContext(
-                operation=StepIOOperation.READ,
-                registry_root=self.plan_dir,
-            ),
+        envelope = StepIOEnvelope.from_json(value) if is_step_io_envelope(value) else None
+        policy = megaplan_policy_for_envelope(
+            envelope,
+            plan_dir=self.plan_dir,
+            binding=contract_binding,
         )
-        emit_decision_telemetry(
-            decision=decision,
+        context = contract_context or create_step_io_contract_context(
+            operation=StepIOOperation.READ,
+            explicit_root=self.plan_dir,
+        )
+        result = validate_artifact_io(
+            value,
+            operation=StepIOOperation.READ,
             policy=policy,
+            contract_context=context,
             artifact=Path(name).as_posix(),
-            operation=StepIOOperation.READ.value,
             telemetry_path=self.plan_dir / TELEMETRY_FILENAME,
         )
-        if decision_blocks_read(decision, policy):
-            raise ValueError(f"typed artifact read blocked: {decision.block_reason}")
-        return decision.value
+        return result.value
 
     def write_artifact_bytes(self, name: str | Path, data: bytes) -> Path:
         path = self._resolve_artifact_path(name)
@@ -243,10 +250,11 @@ class PlanRepository:
             # that enforce mode can block legacy payloads until they are upgraded
             # to typed envelopes.  The binding (when available) supplies the
             # actual typed status of both sides of the seam.
-            policy = resolve_step_io_policy(
+            policy = resolve_megaplan_step_io_policy(
                 plan_dir=self.plan_dir,
                 binding=contract_binding,
                 producer_typed=True,
+                read_lenient_escape=False,
             )
             if policy.enforces:
                 raise ValueError(
@@ -256,27 +264,24 @@ class PlanRepository:
             # shadow / warn / off: legacy payloads pass through unchanged
         if is_step_io_envelope(data):
             envelope = StepIOEnvelope.from_json(data)
-            policy = policy_for_envelope(envelope, plan_dir=self.plan_dir, binding=contract_binding)
-            if not policy.enabled:
-                atomic_write_json(path, data)
-                return path
-            decision = decide_step_io_write(
-                data,
-                contract_context
-                or StepIOContractContext(
-                    operation=StepIOOperation.WRITE,
-                    registry_root=self.plan_dir,
-                ),
+            policy = megaplan_policy_for_envelope(
+                envelope,
+                plan_dir=self.plan_dir,
+                binding=contract_binding,
+                read_lenient_escape=False,
             )
-            emit_decision_telemetry(
-                decision=decision,
+            context = contract_context or create_step_io_contract_context(
+                operation=StepIOOperation.WRITE,
+                explicit_root=self.plan_dir,
+            )
+            validate_artifact_io(
+                data,
+                operation=StepIOOperation.WRITE,
                 policy=policy,
+                contract_context=context,
                 artifact=Path(name).as_posix(),
-                operation=StepIOOperation.WRITE.value,
                 telemetry_path=self.plan_dir / TELEMETRY_FILENAME,
             )
-            if decision_blocks_write(decision, policy):
-                raise ValueError(f"typed artifact write blocked: {decision.block_reason}")
         atomic_write_json(path, data)
         return path
 

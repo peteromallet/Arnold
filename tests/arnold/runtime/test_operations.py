@@ -17,7 +17,7 @@ class TestOperationKindEnumeration:
         # projection, resume, override list/apply, profile validation.
         kinds = {k for k in OperationKind}
         assert kinds == {
-            OperationKind.RUN_PHASE,
+            OperationKind.EXECUTE,
             OperationKind.STATUS_PROJECTION,
             OperationKind.RESUME,
             OperationKind.OVERRIDE_LIST,

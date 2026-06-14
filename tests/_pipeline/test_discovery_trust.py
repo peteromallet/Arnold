@@ -9,7 +9,7 @@ import pytest
 from arnold.pipelines.megaplan._pipeline.discovery.trust import (
     BLESSED_ALLOWLIST,
     KNOWN_CAPABILITIES,
-    TrustTier,
+    TrustGrade,
     check_capabilities,
     classify,
     derive_tenant_id,
@@ -37,55 +37,55 @@ def _make_out_of_tree_path(tmp_path: Path) -> Path:
 
 
 # ---------------------------------------------------------------------------
-# TrustTier.AUTO_EXEC — in-tree classification
+# TrustGrade.AUTO_EXEC — in-tree classification
 # ---------------------------------------------------------------------------
 
 
 def test_in_tree_package_is_auto_exec(tmp_path: Path) -> None:
     path = _make_in_tree_path(tmp_path)
-    assert classify(path) is TrustTier.AUTO_EXEC
+    assert classify(path) is TrustGrade.AUTO_EXEC
 
 
 def test_in_tree_sibling_py_is_auto_exec(tmp_path: Path) -> None:
     p = tmp_path / "megaplan" / "pipelines" / "simple.py"
     p.parent.mkdir(parents=True, exist_ok=True)
     p.touch()
-    assert classify(p) is TrustTier.AUTO_EXEC
+    assert classify(p) is TrustGrade.AUTO_EXEC
 
 
 # ---------------------------------------------------------------------------
-# TrustTier.QUARANTINED — out-of-tree classification
+# TrustGrade.QUARANTINED — out-of-tree classification
 # ---------------------------------------------------------------------------
 
 
 def test_out_of_tree_path_is_quarantined(tmp_path: Path) -> None:
     path = _make_out_of_tree_path(tmp_path)
-    assert classify(path) is TrustTier.QUARANTINED
+    assert classify(path) is TrustGrade.QUARANTINED
 
 
 def test_unrelated_path_is_quarantined(tmp_path: Path) -> None:
     p = tmp_path / "other" / "pipeline.py"
     p.parent.mkdir(parents=True, exist_ok=True)
     p.touch()
-    assert classify(p) is TrustTier.QUARANTINED
+    assert classify(p) is TrustGrade.QUARANTINED
 
 
 # ---------------------------------------------------------------------------
-# TrustTier.BLESSED — allowlist promotion
+# TrustGrade.BLESSED — allowlist promotion
 # ---------------------------------------------------------------------------
 
 
 def test_blessed_allowlist_promotes_out_of_tree(tmp_path: Path) -> None:
     path = _make_out_of_tree_path(tmp_path)
     resolved = str(path.resolve())
-    assert classify(path, blessed_allowlist=(resolved,)) is TrustTier.BLESSED
+    assert classify(path, blessed_allowlist=(resolved,)) is TrustGrade.BLESSED
 
 
 def test_blessed_allowlist_also_works_for_in_tree(tmp_path: Path) -> None:
     """An in-tree path explicitly blessed stays BLESSED (allowlist wins first)."""
     path = _make_in_tree_path(tmp_path)
     resolved = str(path.resolve())
-    assert classify(path, blessed_allowlist=(resolved,)) is TrustTier.BLESSED
+    assert classify(path, blessed_allowlist=(resolved,)) is TrustGrade.BLESSED
 
 
 def test_empty_blessed_allowlist_default(tmp_path: Path) -> None:
@@ -97,7 +97,7 @@ def test_blessed_allowlist_not_matched_falls_through(tmp_path: Path) -> None:
     """A path NOT in the allowlist falls through to path-derived tier."""
     path = _make_out_of_tree_path(tmp_path)
     # Different path string in allowlist — should not match.
-    assert classify(path, blessed_allowlist=("/some/other/path.py",)) is TrustTier.QUARANTINED
+    assert classify(path, blessed_allowlist=("/some/other/path.py",)) is TrustGrade.QUARANTINED
 
 
 # ---------------------------------------------------------------------------
@@ -127,14 +127,14 @@ def test_known_capabilities_is_frozenset() -> None:
 
 
 # ---------------------------------------------------------------------------
-# TrustTier enum sanity
+# TrustGrade enum sanity
 # ---------------------------------------------------------------------------
 
 
 def test_trust_tier_values() -> None:
-    assert TrustTier.AUTO_EXEC.value == "auto_exec"
-    assert TrustTier.QUARANTINED.value == "quarantined"
-    assert TrustTier.BLESSED.value == "blessed"
+    assert TrustGrade.AUTO_EXEC.value == "auto_exec"
+    assert TrustGrade.QUARANTINED.value == "quarantined"
+    assert TrustGrade.BLESSED.value == "blessed"
 
 
 def test_derive_tenant_id_is_stable_for_name_and_resolved_path(tmp_path: Path) -> None:

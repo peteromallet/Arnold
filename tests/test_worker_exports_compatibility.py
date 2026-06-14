@@ -160,35 +160,10 @@ class TestT1CallSiteInventory:
                 {},
             )
 
-    def test_validate_payload_remains_internal_only(self) -> None:
-        """Legacy helper stays internal while exported worker validation is retired."""
-        from arnold.pipelines.megaplan.workers._impl import validate_payload
-        from arnold.pipelines.megaplan.types import CliError
-
-        assert callable(validate_payload)
-
-        for step, payload in (
-            (
-                "revise",
-                {
-                    "plan": "x",
-                    "changes_summary": "y",
-                    "flags_addressed": [],
-                    "assumptions": [],
-                    "success_criteria": [],
-                    "questions": [],
-                },
-            ),
-            (
-                "execute",
-                {
-                    "task_updates": [{"task_id": "T1", "status": "done"}],
-                    "sense_check_acknowledgments": [],
-                },
-            ),
-        ):
-            with pytest.raises(CliError, match=rf"retired for {step}"):
-                validate_payload(step, payload)
+    def test_validate_payload_is_not_importable_from_impl(self) -> None:
+        """The orphan legacy helper is deleted from the implementation module."""
+        with pytest.raises(ImportError):
+            exec("from arnold.pipelines.megaplan.workers._impl import validate_payload", {})
 
     def test_worker_recovery_helpers_are_deleted(self) -> None:
         """Codex recovery now lives behind model_seam capture only."""

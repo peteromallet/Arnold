@@ -2,7 +2,7 @@
 
 import json
 
-from tools.registry import ToolRegistry
+from arnold.agent.tools.registry import ToolRegistry
 
 
 def _dummy_handler(args, **kwargs):

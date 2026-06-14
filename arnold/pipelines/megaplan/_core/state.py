@@ -149,11 +149,11 @@ def _validate_persisted_phase_models(plan_dir: Path, state: Any) -> None:
         phase, spec = entry.split("=", 1)
         try:
             parse_agent_spec(spec)
-        except CliError as exc:
+        except (CliError, ValueError) as exc:
             raise CliError(
                 "corrupt_phase_model",
                 f"Plan '{plan_dir.name}' has a malformed persisted routing pin "
-                f"for phase '{phase}': {spec!r}. {exc.message} "
+                f"for phase '{phase}': {spec!r}. {str(exc)} "
                 f"Fix it with `megaplan override set-model --phase {phase} "
                 f"--model <model>` (or `set-vendor`) before resuming.",
             ) from exc
@@ -423,15 +423,11 @@ def plan_state_lock_path(plan_dir: Path) -> Path:
 @contextmanager
 def plan_state_lock(plan_dir: Path) -> Iterator[None]:
     """Serialize short read/modify/write cycles for ``state.json``."""
+    from arnold.runtime.state_persistence import plan_state_lock as _rt_plan_state_lock
 
     lock_path = plan_state_lock_path(plan_dir)
-    lock_path.parent.mkdir(parents=True, exist_ok=True)
-    with lock_path.open("a+", encoding="utf-8") as handle:
-        fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
-        try:
-            yield
-        finally:
-            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+    with _rt_plan_state_lock(lock_path):
+        yield
 
 
 #: Reserved top-level keys that are passed through ``write_plan_state`` without

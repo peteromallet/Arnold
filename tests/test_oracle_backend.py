@@ -16,8 +16,8 @@ import inspect
 
 import pytest
 
-from arnold.pipelines.megaplan.orchestration import oracle
-from arnold.pipelines.megaplan.orchestration.oracle import OracleResult
+from arnold.runtime import oracle
+from arnold.runtime.oracle import OracleResult
 
 
 def test_oracle_run_true_returns_exit_zero():

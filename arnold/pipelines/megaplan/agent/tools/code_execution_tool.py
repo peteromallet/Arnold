@@ -743,7 +743,7 @@ EXECUTE_CODE_SCHEMA = build_execute_code_schema()
 
 
 # --- Registry ---
-from tools.registry import registry
+from arnold.agent.tools.registry import registry
 
 registry.register(
     name="execute_code",

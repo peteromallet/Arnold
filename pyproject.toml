@@ -60,7 +60,6 @@ db = [
 agent = []
 [project.scripts]
 arnold = "arnold.cli:cli_entry"
-megaplan = "arnold.cli.forwarder:megaplan_entry"
 
 [tool.uv]
 # The hermes/agent backend's packages are now core [project].dependencies, so a
@@ -84,6 +83,8 @@ exclude = [
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+pythonpath = ["."]
+addopts = "--import-mode=importlib"
 python_files = ["test_*.py", "editorial_*.py"]
 markers = [
     "asyncio: async tests, primarily for the vendored agent runtime",

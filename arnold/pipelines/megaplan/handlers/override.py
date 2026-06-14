@@ -57,7 +57,8 @@ from arnold.pipelines.megaplan._core import (
     workflow_next,
 )
 from arnold.pipelines.megaplan._core import topology as _topology
-from arnold.pipelines.megaplan.control_interface import ControlTransition, RunStateView, apply_transition
+from arnold.control.interface import ControlTransition, RunStateView
+from arnold.pipelines.megaplan.control_interface import apply_transition
 from arnold.pipelines.megaplan.blocker_recovery import command_blocker_details, evaluate_blocker_recovery
 from arnold.pipelines.megaplan.orchestration.gate_checks import (
     build_gate_artifact,

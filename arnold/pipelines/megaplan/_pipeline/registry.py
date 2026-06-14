@@ -1,6 +1,4 @@
-"""Pipeline registry — feed in pipelines by name.
-
-M3a compatibility bridge; delete in M7.
+"""Pipeline registry — megaplan-owned policy authority.
 
 The neutral Arnold registry core lives at :mod:`arnold.pipeline.registry`.
 This module supplies Megaplan-specific defaults (scan roots, legacy
@@ -53,14 +51,14 @@ from arnold.runtime.operations import (
     OperationRequest,
     OperationResult,
 )
-from arnold.pipelines.megaplan._pipeline.discovery.manifest import (
+from arnold.pipeline.discovery.manifest import (
     Manifest,
     ManifestError,
     read_manifest,
 )
 from arnold.pipelines.megaplan._pipeline.discovery.trust import (
     BLESSED_ALLOWLIST,
-    TrustTier,
+    TrustGrade,
     classify,
     derive_tenant_id,
 )
@@ -88,8 +86,6 @@ def make_megaplan_registry() -> ArnoldPipelineRegistry:
     operations; Megaplan-specific methods (``operation_registry_for``,
     ``override_catalog_for``, ``read_skill_md``, quota reservation) are
     layered on top by the module-level :class:`PipelineRegistry` bridge.
-
-    M3a compatibility bridge; delete in M7.
     """
     from pathlib import Path
 
@@ -190,7 +186,7 @@ def _package_prefix_for_module_file(module_file: Path) -> str | None:
 
 def _load_trusted_pipeline_module(module_file: Path) -> Any | None:
     tier = classify(module_file, blessed_allowlist=BLESSED_ALLOWLIST)
-    if tier not in (TrustTier.AUTO_EXEC, TrustTier.BLESSED):
+    if tier not in (TrustGrade.AUTO_EXEC, TrustGrade.BLESSED):
         return None
     return _load_module_from_path(
         module_file,
@@ -416,7 +412,7 @@ class PipelineRegistry:
             module_file = self._module_files.get(builder_name)
             if module_file is not None:
                 tier = classify(module_file, blessed_allowlist=BLESSED_ALLOWLIST)
-                if tier not in (TrustTier.AUTO_EXEC, TrustTier.BLESSED):
+                if tier not in (TrustGrade.AUTO_EXEC, TrustGrade.BLESSED):
                     warnings.warn(
                         f"pipeline {name!r} at {module_file!s} is QUARANTINED "
                         f"(trust_tier={tier.value}); refusing to exec_module. "
@@ -702,7 +698,7 @@ def _require_payload_int(
 
 
 def phase_tuple_from_operation_result(result: OperationResult) -> tuple[int, str, str]:
-    """Bridge a ``RUN_PHASE`` result back to the legacy tuple contract."""
+    """Bridge an ``EXECUTE`` result back to the legacy tuple contract."""
 
     payload = _bridge_payload(result, bridge_name="phase_tuple_from_operation_result")
     return (
@@ -1022,7 +1018,7 @@ def _module_metadata(module: Any, *, source_path: Path | None = None) -> dict[st
         meta["recommended_profiles"] = tuple(recommended_profiles)
     if source_path is not None:
         tier = classify(source_path, blessed_allowlist=BLESSED_ALLOWLIST)
-        if tier in (TrustTier.AUTO_EXEC, TrustTier.BLESSED):
+        if tier in (TrustGrade.AUTO_EXEC, TrustGrade.BLESSED):
             supported = _supported_operation_names(
                 _operation_registry_from_module(module)
             )

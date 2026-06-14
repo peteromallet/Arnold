@@ -25,7 +25,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Any, Mapping
 
-from arnold.pipeline.types import (
+from arnold.pipeline import (
     CONTRACT_RESULT_SCHEMA_VERSION,
     ContractResult,
     ContractStatus,

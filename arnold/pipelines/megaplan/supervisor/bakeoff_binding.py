@@ -13,7 +13,7 @@ from collections.abc import Mapping
 from typing import Any
 
 from arnold.pipelines.megaplan.bakeoff.state import BakeoffPhase
-from arnold.pipelines.megaplan.control_interface import (
+from arnold.control.interface import (
     CONTROL_TARGET_ABORT,
     ControlTargetRef,
     ControlTransition,
@@ -21,7 +21,7 @@ from arnold.pipelines.megaplan.control_interface import (
     ControlTransitionResult,
     RunStateView,
 )
-from arnold.pipelines.megaplan.run_outcome import RunOutcome
+from arnold.runtime.outcome import RunOutcome
 
 
 BAKEOFF_TARGET_RUN_PROFILES = "run-profiles"
