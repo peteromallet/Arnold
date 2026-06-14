@@ -263,8 +263,11 @@ def _is_retryable_external_error(phase: str, external_error: object | None) -> b
         getattr(external_error, "provider_error_code", "") or ""
     ).lower()
     error_layer = str(getattr(external_error, "error_layer", "") or "").lower()
+    source = str(getattr(external_error, "source", "") or "").lower()
     message = str(getattr(external_error, "message", "") or "").lower()
 
+    if source == "host_turn_cap" and error_kind == "rate_limit":
+        return True
     if error_kind in EXTERNAL_PERMANENT_ERROR_KINDS:
         return False
     if retry_after_s is not None:

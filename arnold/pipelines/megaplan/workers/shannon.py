@@ -69,7 +69,7 @@ from arnold.pipelines.megaplan.model_seam import (
     render_step_message,
 )
 from arnold.pipelines.megaplan.prompts import create_claude_prompt
-from arnold.pipelines.megaplan.schemas import get_execution_schema_key
+from arnold.pipelines.megaplan.schemas import SCHEMAS, get_execution_schema_key
 from arnold.pipelines.megaplan.workers._impl import (
     STEP_SCHEMA_FILENAMES,
     WorkerResult,
@@ -88,6 +88,17 @@ from arnold.pipelines.megaplan.workers._impl import (
 )
 from arnold.pipelines.megaplan.runtime.execution_environment import resolve_execution_environment
 from arnold.pipelines.megaplan.workers._projection_caps import shannon_projection_capabilities
+from arnold.pipelines.megaplan.workers import shannon_session as _shannon_session
+from arnold.pipelines.megaplan.workers.shannon_session import (
+    SessionPlan,
+    Turn,
+    _SHANNON_READINESS_PROMPTS,
+    _seeded_rng_for_run,
+    _serialize_session_plan,
+    _shannon_run_nonce,
+    plan_session as _shared_plan_session,
+)
+from arnold.pipelines.megaplan.workers.turn_cap import acquire_turn_slot
 
 
 # Sentinel marker the vendored fork carries on line 2 of index.ts. Mirrors
@@ -346,115 +357,6 @@ class ShannonConfig:
         )
 
 
-# ---------------------------------------------------------------------------
-# Readiness handshake
-# ---------------------------------------------------------------------------
-
-
-_SHANNON_READINESS_PROMPTS = (
-    "Hey, I just opened this agent window. Say ready when you are good to go.",
-    "Hi, checking that this new agent tab is awake. A quick ready is enough.",
-    "Hello. I am about to send the actual brief. Tell me when you are ready.",
-    "Hey there, this is just a quick warmup message. Say all set when you are.",
-    "Hi, making sure this new session is live. Just say yep when you can take the brief.",
-    "Hey, I am getting this agent window started. Let me know when you are ready.",
-    "Hello, I will send the task in a moment. Say good to go when you are set.",
-    "Hi, just checking that you are loaded in. Answer with ready when you are.",
-    "Hey, new session check before I paste the work. Say send it when ready.",
-    "Hello, this is a quick hello before the real request. Just confirm you are ready.",
-    "Hey, can you confirm this window is ready? A short yes is fine.",
-    "Hi, I am opening a fresh agent session. Say all good when you are set.",
-    "Hello, I am going to hand you a brief next. Tell me when you are ready.",
-    "Hey, quick startup check. Say ready when you can continue.",
-    "Hi, making sure the agent is ready before the task. Give me a quick okay.",
-    "Hey, I just spun up this session. Say ready whenever you are.",
-    "Hello, checking in before I send the work. A quick all set is fine.",
-    "Hi, this is the little pre-task ping. Just answer when you are ready.",
-    "Hey, waiting for this new agent window to settle. Say settled when it has.",
-    "Hello, I am about to send instructions. Confirm when you can receive them.",
-    "Hi, quick check that you are here. Say here when you are ready.",
-    "Hey, I opened this session for a task. Let me know when you are set.",
-    "Hello, the actual brief is coming next. Say ready for it when you are.",
-    "Hi, just making sure the session started cleanly. Send a quick okay.",
-    "Hey, before I send the real prompt, tell me you are ready.",
-    "Hello, new agent window is up. Say good to go when you are.",
-    "Hi, I am checking this session before sending the brief. Confirm you are ready.",
-    "Hey, this is just a starter message. Say all set when you are.",
-    "Hello, can you let me know you are ready? Any short confirmation works.",
-    "Hi, I will send the request after you answer. Say ready when ready.",
-    "Hey, quick agent-window check. Tell me when you can start.",
-    "Hello, I am waiting for the new session to be usable. Say usable when it is.",
-    "Hi, this is just to wake up the session. Give me a quick yep.",
-    "Hey, I am opening with a small check first. Let me know when you are ready.",
-    "Hello, please confirm you are ready for the brief. Keep it short.",
-    "Hi, new window looks open. Say ready when it is actually ready.",
-    "Hey, I have a task to send after this. Say all set when you are.",
-    "Hello, just testing the session before the brief. A quick ready is fine.",
-    "Hi, I am here with the next task shortly. Tell me when you are ready.",
-    "Hey, let me know this agent window is responsive. Say yep if it is.",
-    "Hello, I am going to pass you the real request next. Say send it when ready.",
-    "Hi, quick first message for the new session. Say ready when you are set.",
-    "Hey, checking that this session can accept input. Confirm when it can.",
-    "Hello, please answer with any short ready check once this window is ready.",
-    "Hi, I just launched this agent. Say good when you are good.",
-    "Hey, the task is coming in the next message. Tell me when you are ready.",
-    "Hello, warmup first, brief second. Say all set when you are.",
-    "Hi, making sure this fresh session is working. A quick okay works.",
-    "Hey, I am about to give you work. Say ready when you are set.",
-    "Hello, this is just a quick session check. Reply with a short confirmation.",
-    "Hi, new agent session here. Say ready for the brief when you can take it.",
-    "Hey, checking the room before I send the actual request. Say good when ready.",
-    "Hello, I need this session ready before the brief. Confirm when it is.",
-    "Hi, I am waiting on this agent window to be ready. Say ready when ready.",
-    "Hey, simple startup ping. A quick yep is enough.",
-    "Hello, I will paste the task after this. Say send it when ready.",
-    "Hi, can you confirm the session is ready? Just say yes if it is.",
-    "Hey, first message in a new agent window. Say all set when you are.",
-    "Hello, the actual instructions will follow. Give me a short ready check.",
-    "Hi, just making sure you are not still starting up. Say ready when you are done.",
-    "Hey, I am checking that this new window is alive. Say alive when ready.",
-    "Hello, please get ready for the brief. Tell me when you are ready.",
-    "Hi, this is only the handshake message. Say all set when you are.",
-    "Hey, quick check before I send the actual prompt. A short okay is fine.",
-    "Hello, I opened a new session for the next task. Confirm when ready.",
-    "Hi, I am going to send the brief once you answer. Say ready when ready.",
-    "Hey, confirm you are ready and I will send the work. Any short yes works.",
-    "Hello, just starting this agent window. Say good to go when you are good.",
-    "Hi, I am giving the session a second before the task. Let me know when ready.",
-    "Hey, this is a preflight hello. Say set when you are set.",
-    "Hello, checking that you can respond before the real ask. Say yep if you can.",
-    "Hi, I have the task queued up. Tell me when you are ready.",
-    "Hey, new Claude window check. Say ready when you are ready.",
-    "Hello, I am about to hand over the brief. Say send it when ready.",
-    "Hi, please confirm this session is ready to work. A quick ready works.",
-    "Hey, I am waiting for the agent to be ready. Say all good when it is.",
-    "Hello, this is just the opener for a new session. Say ready when ready.",
-    "Hi, I will send details once you confirm. Say set when you are set.",
-    "Hey, making sure the window is responsive first. Give me a quick yep.",
-    "Hello, the real message comes next. Tell me when you are ready.",
-    "Hi, I am doing a quick startup check. A short ready is enough.",
-    "Hey, I just opened this for a task. Say good to go when you are set.",
-    "Hello, please answer with ready when this session can take the brief.",
-    "Hi, quick handshake before the request. Say all set when ready.",
-    "Hey, I need to know you are ready before I send the task. Just confirm.",
-    "Hello, checking this new agent window before the brief. Say okay when ready.",
-    "Hi, I am about to send the work over. Say good when you are good.",
-    "Hey, just confirming this session is usable. Tell me when it is.",
-    "Hello, I will send the main request after your reply. Say send it when ready.",
-    "Hi, new session opened. Say ready for the brief when you are.",
-    "Hey, small opening message before the task. A quick yep works.",
-    "Hello, please confirm you are up and ready. Keep it short.",
-    "Hi, I am checking that this agent has started. Say started when it has.",
-    "Hey, the next message will have the actual brief. Say ready when ready.",
-    "Hello, first I need a ready check. Say all set when you are set.",
-    "Hi, just a quick new-window hello. Tell me when ready.",
-    "Hey, I am about to send you the real prompt. Say send it when ready.",
-    "Hello, making sure we are connected before the task. A short yes works.",
-    "Hi, please let me know this session is ready. Say ready when ready.",
-    "Hey, ready check before I pass over the brief. Say good to go when ready.",
-)
-
-
 def _env_truthy(name: str) -> bool | None:
     raw = os.getenv(name)
     if raw is None:
@@ -574,133 +476,6 @@ def _select_session_strategy(
     return "compact" if random.random() < cfg.session_compact_probability else "clear"
 
 
-# ---------------------------------------------------------------------------
-# Pure session plan (value types + planner)
-# ---------------------------------------------------------------------------
-#
-# T6: ``plan_session`` is the pure, rng-seeded session planner. It owns every
-# strategy/handshake/context-op decision and produces a fully-described
-# :class:`SessionPlan`. Purity invariants (validated by tests):
-#
-#   * No I/O whatsoever — no subprocess, no time, no os.environ, no _impl
-#     imports. Randomness comes from the injected ``rng`` only; the
-#     module-global ``random`` is never touched inside ``plan_session``.
-#   * Deterministic given ``rng``: same seed → identical SessionPlan.
-#
-# The bridge in ``run_shannon_step`` consumes ``plan.main`` through a thin
-# adapter that maps Turn → (command, stdin, timeout, expect). Pre-turns are
-# emitted as data only; later sprints (T6b) will route them through a single
-# turn-runner. The vendored Shannon fork always supports slash-commands, so
-# the prior ``slash_supported`` parameter is gone.
-
-
-@dataclasses.dataclass(frozen=True)
-class Turn:
-    """A single Shannon invocation described as data (no commands yet).
-
-    ``body`` is the user content for this turn (``/clear``, ``/compact``, a
-    readiness prompt, or "" for the main turn whose body is the caller's
-    real phase prompt). ``delivery`` is ``"argv"`` for ``-p`` launchers or
-    ``"stdin"`` for the native-style stream-json prompt handoff. ``expect``
-    annotates what the consumer should look for in the response — currently
-    "envelope", "non_empty", "completion", or "rotation". ``pre_sleep_s`` is
-    pre-computed by the injected rng (e.g. ``rng.uniform(lo, hi)``) so the
-    consumer just calls ``time.sleep(turn.pre_sleep_s)`` — sampling stays out
-    of the I/O path.
-    """
-
-    session_id: str
-    resume: bool
-    body: str
-    delivery: str
-    expect: str
-    timeout: int
-    pre_sleep_s: float
-
-
-@dataclasses.dataclass(frozen=True)
-class SessionPlan:
-    """The full plan for one ``run_shannon_step`` invocation.
-
-    ``kind`` is the chosen strategy (``"new"`` | ``"resume"`` | ``"clear"`` |
-    ``"compact"``). ``session_id`` is the id the main turn will run under
-    (the freshly generated id for ``new``, the stored id for everything
-    else). ``pre_turns`` are the handshake / context-op turns in execution
-    order. ``voice`` is a structural-tell knob (T9) carried for the bridge.
-    """
-
-    kind: str
-    session_id: str
-    pre_turns: tuple[Turn, ...]
-    main: Turn
-    voice: str
-
-
-def _serialize_session_plan(plan: SessionPlan) -> dict[str, Any]:
-    """Serialize ``plan`` into the ``shannon_plan`` receipt field.
-
-    Records the rolled strategy kind, the chosen session id, the structural
-    voice, and for every pre-turn the *kind* (handshake / context-op label
-    derived from ``expect``) and the pre-rolled human-likeness delay so a
-    forensic replay can verify exact reproducibility from the seed.
-    """
-    pre_turn_records: list[dict[str, Any]] = []
-    for pt in plan.pre_turns:
-        if pt.expect == "non_empty":
-            pt_kind = "handshake"
-        elif pt.body.startswith("/clear"):
-            pt_kind = "clear"
-        elif pt.body.startswith("/compact"):
-            pt_kind = "compact"
-        else:
-            pt_kind = "context_op"
-        pre_turn_records.append({
-            "kind": pt_kind,
-            "session_id": pt.session_id,
-            "pre_sleep_s": pt.pre_sleep_s,
-        })
-    return {
-        "kind": plan.kind,
-        "session_id": plan.session_id,
-        "voice": plan.voice,
-        "pre_turns": pre_turn_records,
-        "main": {
-            "delivery": plan.main.delivery,
-            "resume": plan.main.resume,
-            "pre_sleep_s": plan.main.pre_sleep_s,
-        },
-    }
-
-
-def _rng_session_id(rng: random.Random) -> str:
-    """Build a deterministic UUIDv4 from the injected rng.
-
-    ``uuid.uuid4()`` would pull entropy from ``os.urandom`` (I/O), which
-    breaks ``plan_session`` purity and reproducibility. We instead reuse the
-    rng's bytes and stamp the standard v4 version + variant nibbles so the
-    Claude CLI and Shannon (which only care about UUID shape, not provenance)
-    accept it as a session id.
-    """
-    b = bytearray(rng.randbytes(16))
-    b[6] = (b[6] & 0x0F) | 0x40  # version 4
-    b[8] = (b[8] & 0x3F) | 0x80  # variant 10xx
-    return str(uuid.UUID(bytes=bytes(b)))
-
-
-def _rng_uniform_or_zero(rng: random.Random, low: float, high: float) -> float:
-    """``rng.uniform`` with the same guard rails as the prior delay samplers.
-
-    Mirrors :func:`_sample_handshake_delay` / :func:`_sample_context_op_delay`:
-    a non-positive upper bound yields 0; an inverted range collapses to the
-    upper bound; otherwise sample uniformly. Pure (no time, no global random).
-    """
-    if high <= 0:
-        return 0.0
-    if low > high:
-        low = high
-    return rng.uniform(low, high)
-
-
 def plan_session(
     step: str,
     *,
@@ -709,155 +484,32 @@ def plan_session(
     cfg: ShannonConfig,
     rng: random.Random,
 ) -> SessionPlan:
-    """Pure, rng-seeded planner for a Shannon run.
+    """Compatibility wrapper around the shared pure session planner.
 
-    Drops ``slash_supported`` (the vendored fork always supports
-    ``/clear``/``/compact``). The legacy ``_select_session_strategy`` logic is
-    preserved verbatim — only the mechanism changes:
-
-    * randomness flows through the injected ``rng`` (never the module-global
-      ``random``);
-    * pre-turn delays are pre-sampled here, so the consumer just
-      ``time.sleep(turn.pre_sleep_s)``;
-    * new session ids are derived from the rng (never ``uuid.uuid4()``,
-      which would call ``os.urandom`` and break purity).
-
-    Determinism is the point: a given (rng-state) input produces an identical
-    :class:`SessionPlan`. T7/T8 will seed the caller's rng from
-    ``(plan_id, step, iteration)`` and persist that seed for forensic replay.
+    Existing tests and downstream callers have historically monkeypatched
+    ``megaplan.workers.shannon._SHANNON_READINESS_PROMPTS``. Keep that surface
+    working while the implementation lives in ``shannon_session``.
     """
-    has_session = stored_id is not None
-    explicit_fresh = fresh if step == "execute" else False
-
-    # ── strategy selection (mirrors _select_session_strategy verbatim) ──
-    if not has_session:
-        kind = "new"
-    elif not cfg.session_roulette_enabled:
-        kind = "resume" if (step == "execute" and not explicit_fresh) else "new"
-    elif explicit_fresh:
-        kind = "new"
-    else:
-        kind = (
-            "compact"
-            if rng.random() < cfg.session_compact_probability
-            else "clear"
+    original_prompts = _shannon_session._SHANNON_READINESS_PROMPTS
+    if _SHANNON_READINESS_PROMPTS is original_prompts:
+        return _shared_plan_session(
+            step,
+            stored_id=stored_id,
+            fresh=fresh,
+            cfg=cfg,
+            rng=rng,
         )
-
-    # ── main turn session id (derive from rng for "new"; reuse otherwise) ──
-    if kind == "new":
-        main_session_id = _rng_session_id(rng)
-        main_resume = False
-    else:
-        # ``has_session`` is True on every non-"new" branch, so stored_id is
-        # guaranteed non-None here.
-        assert stored_id is not None
-        main_session_id = stored_id
-        main_resume = True
-
-    # ── pre-turns in execution order: handshake, then context-op ──
-    pre_turns: list[Turn] = []
-    # Pre-sample the main turn's pre-sleep so a handshake landing leaves a
-    # human-like beat before the real work turn. Zero when no handshake fires.
-    main_pre_sleep = 0.0
-
-    if kind == "new":
-        # Handshake roll. ``cfg.readiness_probe_enabled(session_agent)`` is a
-        # deployment-time gate (not a roll) and lives at the consumption site
-        # — plan_session has no ``session_agent`` input and doesn't gate on
-        # it; it decides only whether the probability roll fires.
-        handshake_roll = rng.random()
-        if cfg.readiness_probe_forced or handshake_roll < cfg.handshake_probability:
-            handshake_sleep = _rng_uniform_or_zero(
-                rng,
-                cfg.handshake_delay_min_seconds,
-                cfg.handshake_delay_max_seconds,
-            )
-            readiness_prompt = rng.choice(_SHANNON_READINESS_PROMPTS)
-            pre_turns.append(
-                Turn(
-                    session_id=main_session_id,
-                    resume=False,
-                    body=readiness_prompt,
-                    delivery="argv",
-                    expect="non_empty",
-                    timeout=cfg.readiness_timeout_seconds,
-                    pre_sleep_s=handshake_sleep,
-                )
-            )
-            # The handshake turn creates the session via ``--session-id``; the
-            # main work turn then resumes it.
-            main_resume = True
-            main_pre_sleep = _rng_uniform_or_zero(
-                rng,
-                cfg.handshake_delay_min_seconds,
-                cfg.handshake_delay_max_seconds,
-            )
-    elif kind in ("clear", "compact"):
-        op_sleep = _rng_uniform_or_zero(
-            rng,
-            cfg.context_op_delay_min_seconds,
-            cfg.context_op_delay_max_seconds,
+    _shannon_session._SHANNON_READINESS_PROMPTS = _SHANNON_READINESS_PROMPTS
+    try:
+        return _shared_plan_session(
+            step,
+            stored_id=stored_id,
+            fresh=fresh,
+            cfg=cfg,
+            rng=rng,
         )
-        slash = "/clear" if kind == "clear" else "/compact"
-        pre_turns.append(
-            Turn(
-                session_id=main_session_id,  # == stored_id on this branch
-                resume=True,
-                body=slash,
-                delivery="argv",
-                expect="rotation" if kind == "clear" else "completion",
-                timeout=cfg.context_op_timeout_seconds,
-                pre_sleep_s=op_sleep,
-            )
-        )
-
-    main = Turn(
-        session_id=main_session_id,
-        resume=main_resume,
-        body="",  # the caller substitutes the real phase prompt
-        delivery="argv",  # caller overrides to "stdin" for the native-style main turn
-        expect="envelope",
-        timeout=cfg.execute_timeout_seconds,
-        pre_sleep_s=main_pre_sleep,
-    )
-
-    return SessionPlan(
-        kind=kind,
-        session_id=main_session_id,
-        pre_turns=tuple(pre_turns),
-        main=main,
-        voice=cfg.voice,
-    )
-
-
-def _shannon_run_nonce(state: PlanState, step: str) -> int:
-    """Advance and return a per-state Shannon run nonce for retry-safe new sessions."""
-    iteration = int(state.get("iteration", 0) or 0)
-    meta = state.setdefault("meta", {})
-    nonces = meta.setdefault("shannon_run_nonces", {})
-    if not isinstance(nonces, dict):
-        nonces = {}
-        meta["shannon_run_nonces"] = nonces
-    key = f"{step}:{iteration}"
-    current = int(nonces.get(key, 0) or 0) + 1
-    nonces[key] = current
-    return current
-
-
-def _seeded_rng_for_run(state: PlanState, step: str, *, nonce: int = 0) -> random.Random:
-    """Per-(plan, step, iteration) seeded rng for ``plan_session``.
-
-    Pinning randomness to (plan_id, step, iteration, nonce) keeps rolls
-    inspectable while avoiding a poisonous collision after a failed "new"
-    Shannon session. Without the nonce, retries reuse the same session id and
-    can keep timing out against the previous transcript/session state.
-    """
-    plan_id = str(state.get("name", ""))
-    iteration = int(state.get("iteration", 0) or 0)
-    seed_bytes = hashlib.sha256(
-        f"{plan_id}|{step}|{iteration}|{nonce}".encode("utf-8")
-    ).digest()
-    return random.Random(int.from_bytes(seed_bytes[:8], "big"))
+    finally:
+        _shannon_session._SHANNON_READINESS_PROMPTS = original_prompts
 
 
 # ---------------------------------------------------------------------------
@@ -901,6 +553,7 @@ class TurnContext:
     env: dict[str, str]
     work_dir: Path
     plan_dir: Path
+    step: str
     run_dir: Path
     claude_config_dir: str | None
     tmux_session: TmuxSession
@@ -1064,23 +717,29 @@ def run_turn(turn: Turn, ctx: TurnContext) -> TurnResult:
         run_env = {**ctx.env, **typed_env}
 
     try:
-        result = run_command(
-            launch_command,
-            cwd=ctx.work_dir,
-            stdin_text=stdin_text,
-            env=run_env,
-            timeout=turn.timeout,
-            activity_callback=_activity_callback_for_state(ctx.state, ctx.plan_dir),
-            idle_timeout=_worker_stream_idle_timeout_seconds(),
-            liveness_probe=_make_shannon_liveness_probe(
-                ctx.tmux_session,
-                turn.session_id,
-                ctx.work_dir,
-                claude_config_dir=ctx.claude_config_dir,
-                home=ctx.env.get("HOME"),
-            ),
-            tmux_session=ctx.tmux_session,
-        )
+        with acquire_turn_slot(
+            engine="claude",
+            channel="shannon_tmux",
+            step=ctx.step,
+            plan=ctx.plan_dir,
+        ):
+            result = run_command(
+                launch_command,
+                cwd=ctx.work_dir,
+                stdin_text=stdin_text,
+                env=run_env,
+                timeout=turn.timeout,
+                activity_callback=_activity_callback_for_state(ctx.state, ctx.plan_dir),
+                idle_timeout=_worker_stream_idle_timeout_seconds(),
+                liveness_probe=_make_shannon_liveness_probe(
+                    ctx.tmux_session,
+                    turn.session_id,
+                    ctx.work_dir,
+                    claude_config_dir=ctx.claude_config_dir,
+                    home=ctx.env.get("HOME"),
+                ),
+                tmux_session=ctx.tmux_session,
+            )
     except CliError as error:
         if error.code in {"worker_stall", "worker_timeout", "connection_error"}:
             error.extra["session_id"] = turn.session_id
@@ -2069,8 +1728,28 @@ def run_shannon_step(
             extra={"sessions": e.sessions, "pids": e.pids},
         ) from e
 
-    session_key = session_key_for(step, session_agent, model=model)
+    auth_metadata = {
+        "worker_channel": "tmux",
+        "auth_channel": "subscription",
+    }
+    session_key = session_key_for(
+        step,
+        session_agent,
+        model=model,
+        worker_channel=auth_metadata["worker_channel"],
+        auth_channel=auth_metadata["auth_channel"],
+        auth_metadata=auth_metadata,
+    )
     session = state["sessions"].get(session_key, {})
+    if not session:
+        stream_prefix = session_key_for(
+            step,
+            session_agent,
+            worker_channel="shannon_stream",
+            auth_channel="subscription",
+        )
+        if any(str(key).startswith(stream_prefix) for key in state["sessions"]):
+            fresh = True
     stored_session_id: str | None = session.get("id")
     # The id currently persisted in state["sessions"]. A /clear op rotates the
     # live id mid-run, so the stall/timeout handler must clear the entry whose
@@ -2085,7 +1764,7 @@ def run_shannon_step(
         if step == "execute"
         else STEP_SCHEMA_FILENAMES[step]
     )
-    schema = read_json(schemas_root(root) / schema_name)
+    schema = SCHEMAS.get(schema_name) or read_json(schemas_root(root) / schema_name)
     schema_text = json.dumps(schema)
     try:
         rendered_step = render_prompt_for_dispatch(
@@ -2256,6 +1935,7 @@ def run_shannon_step(
         env=env,
         work_dir=work_dir,
         plan_dir=plan_dir,
+        step=step,
         run_dir=run_dir,
         claude_config_dir=str(claude_config_dir) if claude_config_dir is not None else None,
         tmux_session=tmux_session,
@@ -2482,6 +2162,10 @@ def run_shannon_step(
     if not read_only:
         _verify_engine_after_mutating_worker(step, state, root, execution_env)
 
+    shannon_plan = _serialize_session_plan(plan)
+    shannon_plan["worker_channel"] = auth_metadata["worker_channel"]
+    shannon_plan["auth_channel"] = auth_metadata["auth_channel"]
+    shannon_plan["auth_metadata"] = auth_metadata
     return WorkerResult(
         payload=payload,
         raw_output=raw,
@@ -2493,5 +2177,8 @@ def run_shannon_step(
         prompt_tokens=_extract_claude_usage(envelope)[0],
         completion_tokens=_extract_claude_usage(envelope)[1],
         total_tokens=sum(_extract_claude_usage(envelope)),
-        shannon_plan=_serialize_session_plan(plan),
+        shannon_plan=shannon_plan,
+        worker_channel=auth_metadata["worker_channel"],
+        auth_channel=auth_metadata["auth_channel"],
+        auth_metadata=auth_metadata,
     )

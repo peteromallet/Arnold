@@ -19,6 +19,7 @@ from arnold.pipelines.megaplan.model_seam import ModelStructuralAuditError, audi
 from arnold.pipelines.megaplan.types import FLAG_BLOCKING_STATUSES, CliError, PlanState, StepResponse
 from arnold.pipelines.megaplan.planning.state import STATE_BLOCKED, STATE_CRITIQUED, STATE_GATED, STATE_PLANNED
 from arnold.pipelines.megaplan.workers import WorkerResult
+from arnold.pipelines.megaplan.workers.result_metadata import prefer_retry_rate_limit
 from arnold.pipelines.megaplan._core import (
     add_or_increment_debt,
     atomic_write_json,
@@ -626,6 +627,7 @@ def _merge_gate_worker_attempt(base: WorkerResult, retry: WorkerResult) -> Worke
     base.prompt_tokens += retry.prompt_tokens
     base.completion_tokens += retry.completion_tokens
     base.total_tokens += retry.total_tokens
+    base.rate_limit = prefer_retry_rate_limit(base.rate_limit, retry.rate_limit)
     return base
 
 def _merge_resolution_tradeoffs_into_payload(gate_summary: dict[str, Any], worker_payload: dict[str, Any]) -> None:

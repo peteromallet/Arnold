@@ -98,4 +98,7 @@ def build_receipt(
         "metrics": metrics,
         "scope_drift_severity": drift.severity if phase == "execute" and drift is not None else None,
         "shannon_plan": getattr(worker, "shannon_plan", None),
+        "worker_channel": getattr(worker, "worker_channel", None),
+        "auth_channel": getattr(worker, "auth_channel", None),
+        "auth_metadata": getattr(worker, "auth_metadata", None),
     }

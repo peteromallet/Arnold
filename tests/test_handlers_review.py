@@ -12,6 +12,7 @@ from arnold.pipelines.megaplan.handlers.review import (
     _prepare_review_payload,
     _review_infrastructure_failure,
     _synthesize_review_rework_items,
+    _wrap_parallel_review_worker,
 )
 from arnold.pipelines.megaplan.orchestration.transition_policy import (
     TRANSITION_DECISION_REVIEW_DONE_FILENAME,
@@ -336,6 +337,27 @@ def _finalize_review_for_test(tmp_path: Path, plan_dir: Path, state: dict, paylo
         refreshed=False,
         robustness="full",
     )
+
+
+def test_parallel_review_worker_wrapper_preserves_rate_limit_exactly() -> None:
+    parallel_result = WorkerResult(
+        payload={"criteria_payload": {"review_verdict": "approved"}},
+        raw_output="parallel",
+        duration_ms=12,
+        cost_usd=0.25,
+        session_id="parallel-session",
+        prompt_tokens=3,
+        completion_tokens=4,
+        total_tokens=7,
+        rate_limit={"values": [{"provider": "review", "remaining": 2}]},
+    )
+
+    wrapped = _wrap_parallel_review_worker({"review_verdict": "approved"}, parallel_result)
+
+    assert wrapped.payload == {"review_verdict": "approved"}
+    assert wrapped.rate_limit == parallel_result.rate_limit
+    assert wrapped.prompt_tokens == 3
+    assert wrapped.session_id is None
 
 
 def test_review_does_not_mutate_finalize_json(tmp_path: Path) -> None:

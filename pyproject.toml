@@ -88,6 +88,7 @@ addopts = "--import-mode=importlib"
 python_files = ["test_*.py", "editorial_*.py"]
 markers = [
     "asyncio: async tests, primarily for the vendored agent runtime",
+    "conformance: opt-in live conformance tests that require external authenticated CLIs",
     "integration: integration tests that may exercise external process boundaries",
     "slow: tests that require Docker or other external runtime dependencies",
     "crash_isolation: tests verifying crash isolation between subprocess drivers",

@@ -120,6 +120,47 @@ def test_watchdog_does_not_fire_on_healthy_active_stream() -> None:
     assert "chunk 9" in result.stdout
 
 
+def test_activity_guard_failure_kills_group_and_preserves_partial_output() -> None:
+    """A stream-aware guard can fail fast from reader-thread activity while
+    ``run_command`` still owns process-group termination and captured output.
+    """
+
+    def _permission_guard(kind: str, detail: str) -> None:
+        if kind == "stdout" and "awaiting-permission" in detail:
+            raise CliError(
+                "worker_stall",
+                "Claude stream entered an unexpected permission prompt.",
+                extra={"reason": "permission_denied"},
+            )
+
+    script = (
+        "import sys, time\n"
+        "print('stdout-before-denial', flush=True)\n"
+        "print('stderr-before-denial', file=sys.stderr, flush=True)\n"
+        "time.sleep(0.2)\n"
+        "print('awaiting-permission', flush=True)\n"
+        "time.sleep(30)\n"
+    )
+
+    start = time.monotonic()
+    with pytest.raises(CliError) as excinfo:
+        run_command(
+            [sys.executable, "-c", script],
+            cwd=Path.cwd(),
+            timeout=60,
+            activity_guard=_permission_guard,
+        )
+    elapsed = time.monotonic() - start
+
+    assert excinfo.value.code == "worker_stall"
+    assert excinfo.value.extra["reason"] == "permission_denied"
+    raw_output = excinfo.value.extra.get("raw_output", "")
+    assert "stdout-before-denial" in raw_output
+    assert "awaiting-permission" in raw_output
+    assert "stderr-before-denial" in raw_output
+    assert elapsed < 10.0, f"guard failure did not abort promptly (took {elapsed:.2f}s)"
+
+
 def test_heartbeat_alone_does_not_keep_a_silent_stream_alive() -> None:
     """The liveness heartbeat must NOT reset the idle-output bound: a silent
     process still trips the watchdog even though heartbeats keep firing. This is
@@ -227,6 +268,92 @@ def test_liveness_probe_still_kills_genuinely_hung_buffered_worker() -> None:
     # Killed shortly after the idle bound, NOT after the 30s sleep or 60s budget.
     assert elapsed < 10.0, f"hung worker not killed promptly (took {elapsed:.2f}s)"
     assert probe_calls[0] >= 1, "probe was never consulted before the kill"
+
+
+def test_progress_liveness_probe_keeps_confirmed_progress_alive() -> None:
+    """Confirmed progress can keep a stdout-silent stream alive beyond the raw
+    idle bound. This is the native stream contract for transcript-mtime progress.
+    """
+    probe_calls = [0]
+
+    def _progressing() -> str:
+        probe_calls[0] += 1
+        return "progressing"
+
+    script = "import time; time.sleep(3)"
+
+    result = run_command(
+        [sys.executable, "-c", script],
+        cwd=Path.cwd(),
+        timeout=30,
+        activity_callback=lambda *a: None,
+        idle_timeout=0.5,
+        progress_liveness_probe=_progressing,
+        progress_liveness_grace_timeout=1.0,
+    )
+
+    assert result.returncode == 0
+    assert probe_calls[0] >= 2
+
+
+@pytest.mark.parametrize("state", ["alive_only", "unknown"])
+def test_progress_liveness_probe_bounds_alive_only_and_unknown(state: str) -> None:
+    """Alive-only and unknown probes may defer a kill briefly, but unlike
+    confirmed progress they are capped by the stream grace bound.
+    """
+    probe_calls = [0]
+
+    def _bounded_state() -> str:
+        probe_calls[0] += 1
+        return state
+
+    script = "import time; time.sleep(30)"
+
+    start = time.monotonic()
+    with pytest.raises(CliError) as excinfo:
+        run_command(
+            [sys.executable, "-c", script],
+            cwd=Path.cwd(),
+            timeout=60,
+            activity_callback=lambda *a: None,
+            idle_timeout=0.5,
+            progress_liveness_probe=_bounded_state,
+            progress_liveness_grace_timeout=1.0,
+        )
+    elapsed = time.monotonic() - start
+
+    assert excinfo.value.code == "worker_stall"
+    assert elapsed < 10.0, f"{state} probe was not capped promptly ({elapsed:.2f}s)"
+    assert probe_calls[0] >= 1
+
+
+def test_progress_liveness_probe_stalled_kills_buffered_worker() -> None:
+    """An explicit stalled progress state follows the centralized worker_stall
+    path just like the legacy boolean False probe.
+    """
+    probe_calls = [0]
+
+    def _stalled() -> str:
+        probe_calls[0] += 1
+        return "stalled"
+
+    script = "import time; time.sleep(30)"
+
+    start = time.monotonic()
+    with pytest.raises(CliError) as excinfo:
+        run_command(
+            [sys.executable, "-c", script],
+            cwd=Path.cwd(),
+            timeout=60,
+            activity_callback=lambda *a: None,
+            idle_timeout=0.5,
+            progress_liveness_probe=_stalled,
+        )
+    elapsed = time.monotonic() - start
+
+    assert excinfo.value.code == "worker_stall"
+    assert elapsed < 10.0, f"stalled probe was not killed promptly ({elapsed:.2f}s)"
+    assert probe_calls[0] >= 1
 
 
 def test_liveness_probe_exception_is_treated_as_progress() -> None:

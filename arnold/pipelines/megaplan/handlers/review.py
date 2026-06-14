@@ -695,6 +695,23 @@ def _format_review_success_summary(criteria: list[dict[str, Any]]) -> str:
     return f"Review complete: {passed}/{total} success criteria passed."
 
 
+def _wrap_parallel_review_worker(
+    merged_payload: dict[str, Any],
+    parallel_result: WorkerResult,
+) -> WorkerResult:
+    return WorkerResult(
+        payload=merged_payload,
+        raw_output=parallel_result.raw_output,
+        duration_ms=parallel_result.duration_ms,
+        cost_usd=parallel_result.cost_usd,
+        session_id=None,
+        prompt_tokens=parallel_result.prompt_tokens,
+        completion_tokens=parallel_result.completion_tokens,
+        total_tokens=parallel_result.total_tokens,
+        rate_limit=parallel_result.rate_limit,
+    )
+
+
 _EXPECTED_BY_CHECK_ID = {
     "coverage": "Extend the fix so every concrete failing example, symptom, or 'X should Y' statement in the issue is addressed by at least one diff line.",
     "placement": "Move the fix upstream to where the bad state is first introduced, or extend it to cover any alternate entry points identified in the finding.",
@@ -1287,16 +1304,7 @@ def handle_review(root: Path, args: argparse.Namespace) -> StepResponse:
                     ),
                 )
                 _pkg.update_flags_after_review(plan_dir, merged_payload, iteration=state["iteration"])
-                worker = WorkerResult(
-                    payload=merged_payload,
-                    raw_output=parallel_result.raw_output,
-                    duration_ms=parallel_result.duration_ms,
-                    cost_usd=parallel_result.cost_usd,
-                    session_id=None,
-                    prompt_tokens=parallel_result.prompt_tokens,
-                    completion_tokens=parallel_result.completion_tokens,
-                    total_tokens=parallel_result.total_tokens,
-                )
+                worker = _wrap_parallel_review_worker(merged_payload, parallel_result)
                 agent, mode, refreshed = "hermes", "persistent", True
             except CliError as error:
                 clear_active_step(state, run_id=run_id)

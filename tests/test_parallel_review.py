@@ -201,14 +201,26 @@ def test_run_parallel_review_merges_check_results_in_original_order(
             ordered_results.append(
                 kwargs["parse_result"](
                     index,
-                    WorkerUnitResult(payload=payload, raw_output="{}", duration_ms=1, cost_usd=0.25),
+                    WorkerUnitResult(
+                        payload=payload,
+                        raw_output="{}",
+                        duration_ms=1,
+                        cost_usd=0.25,
+                        rate_limit={"provider": f"check-{index}", "remaining": index},
+                    ),
                     unit,
                 )
             )
         side_results = [
             kwargs["parse_side_result"](
                 0,
-                WorkerUnitResult(payload=criteria_payload, raw_output="{}", duration_ms=1, cost_usd=0.5),
+                WorkerUnitResult(
+                    payload=criteria_payload,
+                    raw_output="{}",
+                    duration_ms=1,
+                    cost_usd=0.5,
+                    rate_limit={"provider": "criteria", "remaining": 11},
+                ),
                 side_units[0],
             )
         ]
@@ -242,6 +254,12 @@ def test_run_parallel_review_merges_check_results_in_original_order(
     assert result.prompt_tokens == 21
     assert result.completion_tokens == 13
     assert result.total_tokens == 34
+    assert result.rate_limit == {
+        "values": [
+            {"provider": f"check-{index}", "remaining": index}
+            for index in range(len(checks))
+        ] + [{"provider": "criteria", "remaining": 11}]
+    }
     assert prompt_calls[0][1] == [{"id": "PRECHECK-1"}]
     assert prompt_calls[0][2][0]["id"] == "FLAG-ADDRESSED"
 
@@ -271,11 +289,12 @@ def test_review_worker_path_parse_hook_cleans_payload_and_extracts_flags(tmp_pat
         prompt_tokens=11,
         completion_tokens=7,
         total_tokens=18,
+        rate_limit={"provider": "check", "remaining": 5},
     )
 
     parsed = _parse_parallel_review_result(0, WorkerUnitResult.from_worker_result(worker_result, unit), unit)
 
-    index, check_payload, verified_ids, disputed_ids, cost_usd, pt, ct, tt = parsed
+    index, check_payload, verified_ids, disputed_ids, cost_usd, pt, ct, tt, rate_limit = parsed
     assert index == 0
     assert check_payload == {
         "id": check.id,
@@ -292,6 +311,7 @@ def test_review_worker_path_parse_hook_cleans_payload_and_extracts_flags(tmp_pat
     assert verified_ids == ["FLAG-VERIFIED"]
     assert disputed_ids == ["FLAG-DISPUTED"]
     assert (cost_usd, pt, ct, tt) == (0.33, 11, 7, 18)
+    assert rate_limit == {"provider": "check", "remaining": 5}
     assert unit.extra["worker_options"]["template_path"].endswith(f"review_check_{check.id}.json")
     assert unit.extra["worker_options"]["session_db_path"].endswith(f"review_{check.id}.db")
 

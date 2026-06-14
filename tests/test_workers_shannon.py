@@ -13,6 +13,7 @@ import pytest
 from arnold.pipelines.megaplan.model_seam import RenderedStepMessage
 from arnold.pipelines.megaplan.types import CliError
 from arnold.pipelines.megaplan.workers import WorkerResult, resolve_agent_mode, session_key_for
+from arnold.pipelines.megaplan.workers.turn_cap import HOST_TURN_CAP_SOURCE, acquire_turn_slot
 from tests._workers_helpers import FakeShutil, _mock_state
 
 
@@ -25,6 +26,7 @@ def _assume_shannon_patched(monkeypatch: pytest.MonkeyPatch) -> None:
     # Also sanitise any leaked MEGAPLAN_SHANNON_SESSION_ROULETTE from a crashed
     # prior run so tests that expect the default (enabled) are not misled.
     monkeypatch.delenv("MEGAPLAN_SHANNON_SESSION_ROULETTE", raising=False)
+    monkeypatch.delenv("MEGAPLAN_SHANNON_CLAUDE_CONFIG_MODE", raising=False)
     return
 
 
@@ -67,6 +69,60 @@ def test_is_shannon_available_missing_bun() -> None:
     fake = FakeShutil("tmux", "claude")
     assert is_shannon_available(shutil_ref=fake) is False
 
+def test_shannon_stream_worker_enabled_respects_env_and_rollout_gate(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from arnold.pipelines.megaplan._core.io import _shannon_stream_worker_enabled
+    from arnold.pipelines.megaplan.types import DEFAULTS
+
+    monkeypatch.delenv("MEGAPLAN_SHANNON_STREAM_WORKER", raising=False)
+    assert _shannon_stream_worker_enabled() is False
+    assert _shannon_stream_worker_enabled(root=tmp_path, plan_id="plan-shadow") is False
+
+    for raw in ("1", "true", "on", "yes", " TRUE "):
+        monkeypatch.setenv("MEGAPLAN_SHANNON_STREAM_WORKER", raw)
+        assert _shannon_stream_worker_enabled() is True
+
+    gate_path = tmp_path / ".megaplan" / "bakeoffs" / "plan-shadow" / "channel_shadow.json"
+    gate_path.parent.mkdir(parents=True)
+    gate_path.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "experiment_id": "plan-shadow",
+                "real_parity_success_count": 5,
+                "records": [],
+                "gate": {
+                    "greenlight": True,
+                    "threshold": 5,
+                    "real_parity_success_count": 5,
+                    "real_parity_failure_count": 0,
+                    "channel_pair": {
+                        "primary_worker_channel": "shannon_tmux",
+                        "primary_auth_channel": "subscription",
+                        "shadow_worker_channel": "shannon_stream",
+                        "shadow_auth_channel": "subscription",
+                    },
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.delenv("MEGAPLAN_SHANNON_STREAM_WORKER", raising=False)
+    assert _shannon_stream_worker_enabled(root=tmp_path, plan_id="plan-shadow") is True
+
+    for raw in ("0", "false", "off", "no", " FALSE "):
+        monkeypatch.setenv("MEGAPLAN_SHANNON_STREAM_WORKER", raw)
+        assert _shannon_stream_worker_enabled(root=tmp_path, plan_id="plan-shadow") is False
+    assert not any("shannon_stream" in key for key in DEFAULTS)
+
+def test_is_claude_stream_available_requires_only_claude() -> None:
+    from arnold.pipelines.megaplan._core.io import is_claude_stream_available
+
+    assert is_claude_stream_available(shutil_ref=FakeShutil("claude")) is True
+    assert is_claude_stream_available(shutil_ref=FakeShutil("bun", "tmux")) is False
+
 def test_shannon_missing_deps_lists_missing() -> None:
     from arnold.pipelines.megaplan._core.io import shannon_missing_deps
     fake = FakeShutil("claude")  # missing bun and tmux
@@ -102,6 +158,19 @@ def test_is_agent_available_shannon_agrees_with_is_shannon_available() -> None:
         patch("arnold.pipelines.megaplan._core.shutil", FakeShutil("claude")),
     ):
         assert _is_agent_available("shannon") is False
+
+def test_is_agent_available_stream_flag_accepts_claude_only(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from arnold.pipelines.megaplan.workers import _is_agent_available
+
+    monkeypatch.setenv("MEGAPLAN_SHANNON_STREAM_WORKER", "yes")
+    with patch("arnold.pipelines.megaplan._core.io.shutil", FakeShutil("claude")):
+        assert _is_agent_available("shannon") is True
+        assert _is_agent_available("claude") is True
+    with patch("arnold.pipelines.megaplan._core.io.shutil", FakeShutil("bun", "tmux")):
+        assert _is_agent_available("shannon") is False
+        assert _is_agent_available("claude") is False
 
 def test_is_agent_available_claude_routes_through_shannon_deps() -> None:
     """The public 'claude' agent now means Shannon-backed Claude."""
@@ -264,6 +333,24 @@ def test_session_key_for_shannon_steps() -> None:
     assert session_key_for("execute", "shannon") == "shannon_executor"
     assert session_key_for("review", "shannon") == "shannon_reviewer"
     assert session_key_for("finalize", "shannon") == "shannon_finalizer"
+    assert (
+        session_key_for(
+            "execute",
+            "shannon",
+            worker_channel="tmux",
+            auth_channel="subscription",
+        )
+        == "shannon_executor"
+    )
+    assert (
+        session_key_for(
+            "execute",
+            "shannon",
+            worker_channel="shannon_stream",
+            auth_channel="subscription",
+        )
+        == "shannon_executor_stream_json_subscription"
+    )
 
 def test_parse_shannon_output_structured_output() -> None:
     from arnold.pipelines.megaplan.workers.shannon import _parse_shannon_output
@@ -1898,6 +1985,140 @@ def test_run_shannon_execute_repairs_structural_audit_failure_once(
     assert "sess-struct" in calls[1]
 
 
+def test_run_turn_pre_sleep_does_not_hold_host_turn_slot(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from arnold.pipelines.megaplan.runtime.process import TmuxSession
+    from arnold.pipelines.megaplan.workers import CommandResult
+    from arnold.pipelines.megaplan.workers.shannon import TurnContext, run_turn
+    from arnold.pipelines.megaplan.workers.shannon_session import Turn
+
+    lock_dir = tmp_path / "turn-cap"
+    monkeypatch.setenv("MEGAPLAN_WORKER_TURN_CAP", "1")
+    monkeypatch.setenv("MEGAPLAN_WORKER_TURN_CAP_DIR", str(lock_dir))
+    plan_dir, state = _mock_state(tmp_path)
+    sleep_checked = False
+    subprocess_checked = False
+
+    def fake_sleep(seconds: float) -> None:
+        nonlocal sleep_checked
+        assert seconds == 1.25
+        with acquire_turn_slot(
+            engine="claude",
+            channel="probe",
+            step="sleep",
+            plan=plan_dir,
+            cap=1,
+            lock_dir=lock_dir,
+        ):
+            sleep_checked = True
+
+    def fake_run_command(command, **kwargs):
+        nonlocal subprocess_checked
+        with pytest.raises(CliError) as exc_info:
+            with acquire_turn_slot(
+                engine="claude",
+                channel="probe",
+                step="subprocess",
+                plan=plan_dir,
+                cap=1,
+                lock_dir=lock_dir,
+            ):
+                pass
+        assert exc_info.value.code == "rate_limit"
+        assert exc_info.value.extra["source"] == HOST_TURN_CAP_SOURCE
+        subprocess_checked = True
+        return CommandResult(
+            command=command,
+            cwd=Path(kwargs["cwd"]),
+            returncode=0,
+            stdout='{"type":"result","session_id":"sid"}',
+            stderr="",
+            duration_ms=7,
+        )
+
+    monkeypatch.setattr("arnold.pipelines.megaplan.workers.shannon.time.sleep", fake_sleep)
+    monkeypatch.setattr("arnold.pipelines.megaplan.workers.shannon.run_command", fake_run_command)
+
+    ctx = TurnContext(
+        base_flags=["bun", "shannon"],
+        shannon_prefix=[],
+        env={},
+        work_dir=tmp_path,
+        plan_dir=plan_dir,
+        step="execute",
+        run_dir=tmp_path / "run",
+        claude_config_dir=None,
+        tmux_session=TmuxSession("megaplan-test-slot"),
+        state=state,
+    )
+    result = run_turn(
+        Turn(
+            session_id="sid",
+            resume=False,
+            body="hello",
+            delivery="argv",
+            expect="envelope",
+            timeout=30,
+            pre_sleep_s=1.25,
+        ),
+        ctx,
+    )
+
+    assert sleep_checked is True
+    assert subprocess_checked is True
+    assert result.returncode == 0
+
+
+def test_run_turn_refuses_when_host_turn_cap_full(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from arnold.pipelines.megaplan.runtime.process import TmuxSession
+    from arnold.pipelines.megaplan.workers.shannon import TurnContext, run_turn
+    from arnold.pipelines.megaplan.workers.shannon_session import Turn
+
+    lock_dir = tmp_path / "turn-cap"
+    monkeypatch.setenv("MEGAPLAN_WORKER_TURN_CAP", "1")
+    monkeypatch.setenv("MEGAPLAN_WORKER_TURN_CAP_DIR", str(lock_dir))
+    plan_dir, state = _mock_state(tmp_path)
+    monkeypatch.setattr(
+        "arnold.pipelines.megaplan.workers.shannon.run_command",
+        lambda *args, **kwargs: pytest.fail("run_command must not launch when cap is full"),
+    )
+    ctx = TurnContext(
+        base_flags=["bun", "shannon"],
+        shannon_prefix=[],
+        env={},
+        work_dir=tmp_path,
+        plan_dir=plan_dir,
+        step="execute",
+        run_dir=tmp_path / "run",
+        claude_config_dir=None,
+        tmux_session=TmuxSession("megaplan-test-full"),
+        state=state,
+    )
+
+    with acquire_turn_slot(engine="codex", step="other", plan=plan_dir, cap=1, lock_dir=lock_dir):
+        with pytest.raises(CliError) as exc_info:
+            run_turn(
+                Turn(
+                    session_id="sid",
+                    resume=False,
+                    body="hello",
+                    delivery="argv",
+                    expect="envelope",
+                    timeout=30,
+                    pre_sleep_s=0.0,
+                ),
+                ctx,
+            )
+
+    assert exc_info.value.code == "rate_limit"
+    assert exc_info.value.extra["source"] == HOST_TURN_CAP_SOURCE
+
+
 def test_shannon_accepted_in_agent_choice_surfaces() -> None:
     """All --agent choice surfaces accept 'shannon'."""
     from arnold.pipelines.megaplan.profiles import KNOWN_AGENTS
@@ -2282,6 +2503,46 @@ def test_session_roulette_disabled_restores_legacy(
     assert rc.call_count == 1
     command = rc.call_args.args[0]
     assert command[command.index("--resume") + 1] == "sess-keep"
+
+
+def test_run_shannon_step_does_not_resume_stream_session(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from arnold.pipelines.megaplan._core import ensure_runtime_layout
+    from arnold.pipelines.megaplan.workers.shannon import run_shannon_step
+    from arnold.pipelines.megaplan.workers import CommandResult
+
+    ensure_runtime_layout(tmp_path)
+    monkeypatch.setenv("MEGAPLAN_SHANNON_SESSION_ROULETTE", "0")
+    plan_dir, state = _mock_state(tmp_path)
+    stream_key = session_key_for(
+        "execute",
+        "shannon",
+        worker_channel="shannon_stream",
+        auth_channel="subscription",
+    )
+    state["sessions"][stream_key] = {
+        "id": "stream-session",
+        "mode": "persistent",
+        "created_at": "2026-03-20T00:00:00Z",
+        "last_used_at": "2026-03-20T00:00:00Z",
+        "refreshed": False,
+    }
+    fake_result = CommandResult(
+        command=[], cwd=tmp_path, returncode=0,
+        stdout=_execute_result_json(), stderr="", duration_ms=12,
+    )
+    with patch("arnold.pipelines.megaplan.workers.shannon.run_command", return_value=fake_result) as rc:
+        run_shannon_step(
+            "execute", state, plan_dir, root=tmp_path, fresh=False,
+            prompt_override="batch",
+        )
+
+    command = rc.call_args.args[0]
+    if "--resume" in command:
+        assert command[command.index("--resume") + 1] != "stream-session"
+    else:
+        assert command[command.index("--session-id") + 1] != "stream-session"
 
 
 def test_session_strategy_clear_resumes_rotated_session(
@@ -2919,6 +3180,7 @@ def _make_turn_ctx(tmp_path: Path, *, shannon_prefix: list[str] | None = None,
         env=dict(env) if env is not None else {"FOO": "bar"},
         work_dir=work_dir,
         plan_dir=plan_dir,
+        step="execute",
         run_dir=plan_dir / ".megaplan" / "runs" / "t7-plan" / "execute" / "shannon",
         claude_config_dir=str(plan_dir / ".megaplan" / "runs" / "t7-plan" / "execute" / "shannon" / "claude_config"),
         tmux_session=TmuxSession("t7-test-session"),
