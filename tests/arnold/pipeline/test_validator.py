@@ -22,7 +22,7 @@ from typing import Any
 import pytest
 
 from arnold.pipeline.builder import PipelineBuilder
-from arnold.pipeline.types import Edge, Pipeline, Port, PortRef, ReadRef, Stage, StepContext, StepResult, WriteRef
+from arnold.pipeline.types import Edge, ParallelStage, Pipeline, Port, PortRef, ReadRef, Stage, StepContext, StepResult, WriteRef
 from arnold.pipeline.step_invocation import (
     StepInvocation,
     StepInvocationAdapterRegistry,
@@ -34,11 +34,11 @@ from arnold.pipeline.validator import (
     MISSING_BINDING_CODE,
     UNKNOWN_ADAPTER_CODE,
     UNSATISFIED_CAPABILITY_CODE,
+    _decision_enum_from_suspension_schema,
     _step_prompt_key,
     contract_diagnostic_code,
     validate,
     validate_dataflow_paths,
-    validate_resource_dependencies,
 )
 
 
@@ -175,6 +175,367 @@ class TestDeterministicOrdering:
         assert len(prompt_defects) >= 2, f"expected >=2 prompt_key defects, got: {prompt_defects}"
         assert prompt_defects[0].startswith("stage 'aaa'"), prompt_defects[0]
         assert prompt_defects[1].startswith("stage 'zzz'"), prompt_defects[1]
+
+
+# ── Decision-route validation ─────────────────────────────────────────────
+
+
+class TestDecisionRouteValidation:
+    """T4: Focused decision-route validator tests covering route targets,
+    terminal None routes, absent routes, metadata-only stages, and
+    ParallelStage behaviour."""
+
+    # ── Valid route targets ──────────────────────────────────────────
+
+    def test_valid_route_targets_match_edge_labels(self) -> None:
+        """Decision routes whose targets match outgoing edge labels pass."""
+        stage = Stage(
+            name="review",
+            step=_PromptStep(name="review"),
+            edges=(
+                Edge(label="next", target="next_stage"),
+                Edge(label="halt", target="halt"),
+            ),
+            decision_routes={"approved": "next", "rejected": "halt"},
+        )
+        diag = validate(_pipeline(stages={"review": stage}, entry="review"))
+        route_defects = [d for d in diag.defects if "decision_route" in d]
+        assert route_defects == [], f"expected no route defects, got: {route_defects}"
+
+    # ── Unknown non-None route target ───────────────────────────────
+
+    def test_unknown_route_target_flagged_with_details(self) -> None:
+        """A decision_route targeting an edge label that does not exist is flagged."""
+        stage = Stage(
+            name="review",
+            step=_PromptStep(name="review"),
+            edges=(
+                Edge(label="next", target="next_stage"),
+                Edge(label="halt", target="halt"),
+            ),
+            decision_routes={"approved": "unknown_label"},
+        )
+        diag = validate(_pipeline(stages={"review": stage}, entry="review"))
+        _assert_issue(
+            diag,
+            code="decision_route_target_unknown",
+            stage="review",
+            detail_items={
+                "decision_key": "approved",
+                "route_target": "unknown_label",
+                "available_edge_labels": ["halt", "next"],
+            },
+            message_contains="targets unknown edge label",
+        )
+
+    # ── Terminal None routes ─────────────────────────────────────────
+
+    def test_terminal_none_route_passes(self) -> None:
+        """A decision_route with value None (terminal decision) passes validation."""
+        stage = Stage(
+            name="review",
+            step=_PromptStep(name="review"),
+            edges=(
+                Edge(label="next", target="next_stage"),
+                Edge(label="halt", target="halt"),
+            ),
+            decision_routes={"approved": "next", "abort": None},
+        )
+        diag = validate(_pipeline(stages={"review": stage}, entry="review"))
+        route_defects = [d for d in diag.defects if "decision_route" in d]
+        assert route_defects == [], f"None route should pass: {route_defects}"
+
+    # ── Absent / empty decision_routes ───────────────────────────────
+
+    def test_no_decision_routes_passes(self) -> None:
+        """A stage with empty decision_routes dict passes silently."""
+        stage = Stage(
+            name="review",
+            step=_PromptStep(name="review"),
+            edges=(
+                Edge(label="next", target="next_stage"),
+                Edge(label="halt", target="halt"),
+            ),
+            decision_routes={},
+        )
+        diag = validate(_pipeline(stages={"review": stage}, entry="review"))
+        route_defects = [d for d in diag.defects if "decision_route" in d]
+        assert route_defects == [], f"empty decision_routes should pass: {route_defects}"
+
+    def test_default_decision_routes_empty_dict_passes(self) -> None:
+        """A stage with the default decision_routes (empty dict, from dataclass default) passes silently."""
+        # Stage created without explicit decision_routes gets default empty dict
+        stage = Stage(
+            name="review",
+            step=_PromptStep(name="review"),
+            edges=(
+                Edge(label="next", target="next_stage"),
+                Edge(label="halt", target="halt"),
+            ),
+        )
+        assert stage.decision_routes == {}
+        diag = validate(_pipeline(stages={"review": stage}, entry="review"))
+        route_defects = [d for d in diag.defects if "decision_route" in d]
+        assert route_defects == [], f"default empty decision_routes should pass: {route_defects}"
+
+    # ── Metadata-only / non-suspending stage ─────────────────────────
+
+    def test_metadata_only_stage_valid_targets_no_schema(self) -> None:
+        """Stage with decision_routes but no suspension_schema passes route validation."""
+        stage = Stage(
+            name="review",
+            step=_PromptStep(name="review"),
+            edges=(
+                Edge(label="next", target="next_stage"),
+                Edge(label="halt", target="halt"),
+            ),
+            decision_routes={"proceed": "next", "stop": "halt"},
+            suspension_schema=None,
+        )
+        diag = validate(_pipeline(stages={"review": stage}, entry="review"))
+        route_defects = [d for d in diag.defects if "decision_route" in d]
+        assert route_defects == [], f"valid targets without schema: {route_defects}"
+
+    # ── ParallelStage cheap behaviour ────────────────────────────────
+
+    def test_parallel_stage_decision_routes(self) -> None:
+        """ParallelStage with valid decision_routes passes validation."""
+
+        def _join(results: list, ctx: Any) -> StepResult:
+            return StepResult(next="halt")
+
+        pstage = ParallelStage(
+            name="fanout",
+            steps=(_PromptStep(name="fanout"),),
+            join=_join,
+            edges=(
+                Edge(label="next", target="next_stage"),
+                Edge(label="halt", target="halt"),
+            ),
+            decision_routes={"ok": "next", "fail": "halt"},
+        )
+        diag = validate(_pipeline(stages={"fanout": pstage}, entry="fanout"))
+        route_defects = [d for d in diag.defects if "decision_route" in d]
+        assert route_defects == [], f"ParallelStage routes: {route_defects}"
+
+    def test_parallel_stage_bad_route_flagged(self) -> None:
+        """ParallelStage with an unknown route target is flagged."""
+
+        def _join(results: list, ctx: Any) -> StepResult:
+            return StepResult(next="halt")
+
+        pstage = ParallelStage(
+            name="fanout",
+            steps=(_PromptStep(name="fanout"),),
+            join=_join,
+            edges=(
+                Edge(label="next", target="next_stage"),
+                Edge(label="halt", target="halt"),
+            ),
+            decision_routes={"ok": "bad_label"},
+        )
+        diag = validate(_pipeline(stages={"fanout": pstage}, entry="fanout"))
+        _assert_issue(
+            diag,
+            code="decision_route_target_unknown",
+            stage="fanout",
+            detail_items={
+                "decision_key": "ok",
+                "route_target": "bad_label",
+                "available_edge_labels": ["halt", "next"],
+            },
+            message_contains="targets unknown edge label",
+        )
+
+
+# ── Simple-schema and JSON Schema compatibility ───────────────────────────
+
+
+class TestDecisionRouteSchemaCompatibility:
+    """T4: Schema compatibility tests for decision-route validation.
+    Covers simple key-value maps, JSON Schema choice.enum, and ambiguous
+    schemas that should be silently ignored."""
+
+    def test_simple_schema_outside_route_key_still_passes_route_validation(self) -> None:
+        """Decision key not in simple KV schema still passes route-target validation
+        when its route_target matches an edge label."""
+        stage = Stage(
+            name="review",
+            step=_PromptStep(name="review"),
+            edges=(
+                Edge(label="next", target="next_stage"),
+                Edge(label="halt", target="halt"),
+            ),
+            decision_routes={
+                "approved": "next",
+                "rejected": "halt",
+                "pending": "next",  # not in schema but valid route
+            },
+            suspension_schema={"approved": "str", "rejected": "str"},
+        )
+        diag = validate(_pipeline(stages={"review": stage}, entry="review"))
+        route_target_defects = [
+            d for d in diag.defects if "decision_route_target_unknown" in d
+        ]
+        assert route_target_defects == [], (
+            f"outside-schema key should not break route validation: {route_target_defects}"
+        )
+
+    def test_simple_schema_x_extension_excluded_from_enum(self) -> None:
+        """Schema with x- extension key is not treated as a simple KV enum."""
+        enum = _decision_enum_from_suspension_schema(
+            {"approved": "str", "x-arnold-resume": "bool"}
+        )
+        assert enum is None, f"x- key should exclude schema, got {enum!r}"
+
+    def test_json_schema_choice_enum_compatible(self) -> None:
+        """Stage with JSON Schema choice.enum and matching routes passes validation."""
+        stage = Stage(
+            name="review",
+            step=_PromptStep(name="review"),
+            edges=(
+                Edge(label="next", target="next_stage"),
+                Edge(label="halt", target="halt"),
+            ),
+            decision_routes={"selected": "next", "declined": "halt"},
+            suspension_schema={
+                "type": "object",
+                "properties": {
+                    "choice": {
+                        "type": "string",
+                        "enum": ["selected", "declined"],
+                    }
+                },
+            },
+        )
+        diag = validate(_pipeline(stages={"review": stage}, entry="review"))
+        route_defects = [d for d in diag.defects if "decision_route" in d]
+        assert route_defects == [], f"JSON Schema choice.enum: {route_defects}"
+
+    def test_json_schema_other_property_enum_ignored(self) -> None:
+        """Enum on a non-choice property is silently ignored (no false positives)."""
+        stage = Stage(
+            name="review",
+            step=_PromptStep(name="review"),
+            edges=(
+                Edge(label="next", target="next_stage"),
+                Edge(label="halt", target="halt"),
+            ),
+            decision_routes={"go": "next"},
+            suspension_schema={
+                "type": "object",
+                "properties": {
+                    "note": {
+                        "type": "string",
+                        "enum": ["hello", "world"],
+                    }
+                },
+            },
+        )
+        diag = validate(_pipeline(stages={"review": stage}, entry="review"))
+        route_defects = [d for d in diag.defects if "decision_route" in d]
+        assert route_defects == [], (
+            f"unrelated property enum should not cause defects: {route_defects}"
+        )
+
+    def test_ambiguous_schema_ignored_no_false_positives(self) -> None:
+        """Loose/ambiguous suspension_schema is silently skipped."""
+        stage = Stage(
+            name="review",
+            step=_PromptStep(name="review"),
+            edges=(
+                Edge(label="next", target="next_stage"),
+                Edge(label="halt", target="halt"),
+            ),
+            decision_routes={"go": "next"},
+            suspension_schema={
+                "type": "object",
+                "properties": {
+                    "note": {"type": "string"},
+                },
+            },
+        )
+        diag = validate(_pipeline(stages={"review": stage}, entry="review"))
+        route_defects = [d for d in diag.defects if "decision_route" in d]
+        assert route_defects == [], (
+            f"ambiguous schema should not cause defects: {route_defects}"
+        )
+
+
+# ── Suspension-schema enum extraction unit tests ──────────────────────────
+
+
+class TestSuspensionSchemaEnumExtraction:
+    """T4: Unit tests for _decision_enum_from_suspension_schema helper."""
+
+    def test_simple_kv_map_extracts_keys(self) -> None:
+        """Simple string key/value map returns frozenset of keys."""
+        result = _decision_enum_from_suspension_schema(
+            {"approved": "str", "rejected": "str"}
+        )
+        assert result == frozenset({"approved", "rejected"})
+
+    def test_simple_kv_map_non_string_value_returns_none(self) -> None:
+        """Any non-string value disqualifies the simple KV map."""
+        result = _decision_enum_from_suspension_schema(
+            {"approved": "str", "count": 42}
+        )
+        assert result is None
+
+    def test_json_schema_choice_enum_extraction(self) -> None:
+        """properties.choice.enum is extracted from valid JSON Schema shape."""
+        result = _decision_enum_from_suspension_schema({
+            "type": "object",
+            "properties": {
+                "choice": {
+                    "type": "string",
+                    "enum": ["proceed", "retry", "abort"],
+                }
+            },
+        })
+        assert result == frozenset({"proceed", "retry", "abort"})
+
+    def test_json_schema_empty_enum_returns_none(self) -> None:
+        """An empty choice.enum returns None."""
+        result = _decision_enum_from_suspension_schema({
+            "type": "object",
+            "properties": {
+                "choice": {
+                    "type": "string",
+                    "enum": [],
+                }
+            },
+        })
+        assert result is None
+
+    def test_json_schema_non_string_choice_type_returns_none(self) -> None:
+        """choice.type != 'string' returns None."""
+        result = _decision_enum_from_suspension_schema({
+            "type": "object",
+            "properties": {
+                "choice": {
+                    "type": "integer",
+                    "enum": [1, 2, 3],
+                }
+            },
+        })
+        assert result is None
+
+    def test_none_schema_returns_none(self) -> None:
+        """None input returns None."""
+        assert _decision_enum_from_suspension_schema(None) is None
+
+    def test_non_mapping_schema_returns_none(self) -> None:
+        """Non-Mapping input returns None."""
+        assert _decision_enum_from_suspension_schema("not a mapping") is None
+
+    def test_x_extension_only_schema_returns_none(self) -> None:
+        """Schema with only x- extension keys returns None."""
+        assert _decision_enum_from_suspension_schema({"x-arnold-resume": "str"}) is None
+
+    def test_empty_dict_returns_none(self) -> None:
+        """Empty dict returns None."""
+        assert _decision_enum_from_suspension_schema({}) is None
 
 
 # ── Full integration tests ─────────────────────────────────────────────────

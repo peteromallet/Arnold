@@ -123,25 +123,31 @@ content type declared on a producing port.
 
 | content_type | schema_sha256 |
 | --- | --- |
+| application/x-astrid-timeline | 910065449e15a116f873cfdd08adffa70baad910c0ae70d0059b7efa865dd3c5 |
 | application/x-evaluand-record+json | 41e8baf38e205a533cd32fc65204aeef28fd685ca4a38587bdde09bf1dfe95fc |
 | application/x-fanout-results+json | 19663a02cff4b115bb0fcf6d41c4ef5bcb021fbf65ebfeae09756f8b8b83d721 |
 | application/x-git-diff | 3be30e684bcc8910867e5b222bda78f845acec4a1e5f8ae4965c8c03211d3765 |
 | application/x-routing-key+json | 554b679b7485e0b5b4259e44782493d6173a1cbacab752b971aa6999da0d585c |
 | application/x-verdict+json | c7286b1c7bee27a49c1ef632ab8f0624a3df16051e8a809c02a5bdc604f54560 |
+| audio/wav | 6728ebbad1351c6e1113453564b398de3d1b9c4ae7f51f0f2434d6b9b0e3eac0 |
 | image/png | 25372230efe3fabc582b1e1444f21ece5077786a8cefcc6fcc25a59e25556ec8 |
 | text/markdown | 5600d1618be629635191ff0aa5c4282327e870a1290da6f9c2319ef69b934e58 |
+| video/mp4 | e805e721029bfddd9b3a37c35cf845ea2e47215d2fea1964cb8e063d1938b9ac |
 
 ### Legal Content-Type Coercions
 
 | from | to | kind |
 | --- | --- | --- |
+| application/x-astrid-timeline | application/x-astrid-timeline | identity |
 | application/x-evaluand-record+json | application/x-evaluand-record+json | identity |
 | application/x-fanout-results+json | application/x-fanout-results+json | identity |
 | application/x-git-diff | application/x-git-diff | identity |
 | application/x-routing-key+json | application/x-routing-key+json | identity |
 | application/x-verdict+json | application/x-verdict+json | identity |
+| audio/wav | audio/wav | identity |
 | image/png | image/png | identity |
 | text/markdown | text/markdown | identity |
+| video/mp4 | video/mp4 | identity |
 
 ## Checker Defect Surfaces
 
@@ -275,11 +281,11 @@ content type declared on a producing port.
 
 | vocabulary | value | source |
 | --- | --- | --- |
-| RunOutcome | awaiting_human | arnold/pipelines/megaplan/run_outcome.py |
-| RunOutcome | blocked | arnold/pipelines/megaplan/run_outcome.py |
-| RunOutcome | escalated | arnold/pipelines/megaplan/run_outcome.py |
-| RunOutcome | failed | arnold/pipelines/megaplan/run_outcome.py |
-| RunOutcome | succeeded | arnold/pipelines/megaplan/run_outcome.py |
+| RunOutcome | awaiting_human | arnold/runtime/outcome.py |
+| RunOutcome | blocked | arnold/runtime/outcome.py |
+| RunOutcome | escalated | arnold/runtime/outcome.py |
+| RunOutcome | failed | arnold/runtime/outcome.py |
+| RunOutcome | succeeded | arnold/runtime/outcome.py |
 | ControlTarget | abort | arnold/pipelines/megaplan/control_interface.py |
 | ControlTarget | force-advance | arnold/pipelines/megaplan/control_interface.py |
 | ControlTarget | re-route | arnold/pipelines/megaplan/control_interface.py |
