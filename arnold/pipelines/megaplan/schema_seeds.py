@@ -6,12 +6,12 @@ from copy import deepcopy
 from typing import Any
 
 from arnold.pipelines.megaplan.schemas import SCHEMAS
-from arnold.pipelines.megaplan.workers import STEP_SCHEMA_FILENAMES
+from arnold.pipelines.megaplan.step_contracts import build_step_schema_filenames
 
 
 def _step_schema_clones() -> dict[str, dict[str, Any]]:
     schemas: dict[str, dict[str, Any]] = {}
-    for step, filename in STEP_SCHEMA_FILENAMES.items():
+    for step, filename in build_step_schema_filenames().items():
         schema = deepcopy(SCHEMAS[filename])
         required = schema.get("required")
         if isinstance(required, list):

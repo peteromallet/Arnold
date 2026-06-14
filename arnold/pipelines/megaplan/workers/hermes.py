@@ -1170,12 +1170,7 @@ def run_hermes_step(
     # Build prompt — megaplan prompts embed the JSON schema, but some models
     # ignore formatting instructions buried in long prompts.  Append a clear
     # reminder so the final response is valid JSON, not markdown.
-    prompt_text = prompt_override or create_hermes_prompt(
-        step,
-        state,
-        plan_dir,
-        root=root,
-    )
+    prompt_text = prompt_override
     rendered_step = render_prompt_for_dispatch(
         "hermes",
         step,

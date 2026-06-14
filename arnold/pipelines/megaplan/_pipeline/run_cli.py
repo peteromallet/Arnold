@@ -170,7 +170,7 @@ def _run_pipeline(args: argparse.Namespace) -> int:
     stage via :func:`with_entry`.
     """
 
-    from arnold.pipelines.megaplan._pipeline.executor import run_pipeline
+    from arnold.pipelines.megaplan._pipeline._bridge import run_pipeline_dispatch
     from arnold.pipelines.megaplan._pipeline.registry import (
         pipeline_metadata,
     )
@@ -340,7 +340,7 @@ def _run_pipeline(args: argparse.Namespace) -> int:
         pass
 
     try:
-        result = run_pipeline(pipeline, ctx, artifact_root=plan_dir)
+        result = run_pipeline_dispatch(pipeline, ctx, artifact_root=plan_dir, pipeline_key=pipeline_name)
     except Exception as exc:  # noqa: BLE001 — CLI surface
         print(f"Error running pipeline: {exc}", file=sys.stderr)
         return 1

@@ -8,6 +8,9 @@ entrypoint, and keep human/agent-facing guidance in `SKILL.md`.
 Generated details for manifest fields, discovery facts, dispositions, schemas,
 and CLI inventories are maintained in
 [`docs/reference/arnold-projections.md`](../reference/arnold-projections.md).
+The authoritative field-level contract (with per-field types, required/recommended
+status, and reference-package coverage) is at
+[`package-authoring-contract.md`](package-authoring-contract.md).
 This page describes the authoring contract around those facts.
 
 ## Layout
@@ -115,6 +118,11 @@ are real replay constraints. Do not read process environment or secret values
 inside package metadata to make a Capsule look more complete.
 
 ## Compatibility Policy
+
+**Canonical surface**: `arnold pipelines <subcommand>` is the canonical Arnold
+CLI. `megaplan pipelines <subcommand>` is the legacy compatibility path; it
+continues to work but new authoring guidance and conformance checks target the
+Arnold namespace.
 
 Forward-compatible projection schemas ignore unknown keys, but package modules
 should not rely on that to smuggle behavior through undocumented metadata. Add

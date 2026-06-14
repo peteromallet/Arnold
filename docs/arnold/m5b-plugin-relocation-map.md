@@ -2,7 +2,7 @@
 
 > **Status:** Settled (derived from M-1 `docs/arnold/package-disposition.yaml`)
 > **Canonical plugin root:** `arnold/pipelines/megaplan/`
-> **Last updated:** 2026-06-05 (T20 audit test relocation)
+> **Last updated:** 2026-06-13 (M5 branch retirement and compatibility cutover)
 
 ## Overview
 

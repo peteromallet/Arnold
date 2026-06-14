@@ -290,6 +290,8 @@ def _capture_payload(
 def audit_step_payload(step: str, payload: Mapping[str, Any]) -> None:
     """Validate a recovered payload against its registered StepContract schema."""
 
+    if step not in STEP_CONTRACTS:
+        raise ValueError(f"Unknown Megaplan step contract: {step}")
     invocation = contract_to_invocation(STEP_CONTRACTS[step])
     contract = ContractResult(
         payload={

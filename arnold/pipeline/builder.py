@@ -33,7 +33,7 @@ class PipelineBuilder:
     :attr:`resource_bundles` for downstream resolution.
     """
 
-    def __init__(self, name: str, description: str = "") -> None:
+    def __init__(self, name: str = "pipeline", description: str = "") -> None:
         self.name: str = name
         self.description: str = description
 
@@ -100,6 +100,24 @@ class PipelineBuilder:
                 for tgt in targets
             )
             self._stages[src_name] = replace(stage, edges=stage.edges + new_edges)
+        return self
+
+    def add_edge(self, edge: Edge) -> "PipelineBuilder":
+        """Attach an explicit edge to its source stage when present."""
+        source = getattr(edge, "source", None)
+        if not source or source not in self._stages:
+            return self
+        stage = self._stages[source]
+        if not any(
+            existing.label == edge.label and existing.target == edge.target
+            for existing in stage.edges
+        ):
+            self._stages[source] = replace(stage, edges=stage.edges + (edge,))
+        return self
+
+    def set_entry_stage(self, stage_name: str) -> "PipelineBuilder":
+        """Set the pipeline entry stage by name."""
+        self._entry = stage_name
         return self
 
     # ── resource bundles ──────────────────────────────────────────────

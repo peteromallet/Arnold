@@ -18,8 +18,10 @@ from arnold.pipeline.step_io_policy import CONTRACT_MODE_ENFORCE, resolve_step_i
 from arnold.pipeline.types import HumanSuspension
 
 
-_RESERVED_KEY = "x-arnold-resume"
-_NESTED_DECLARATION_KEY = "reverify_produces"
+RESUME_REVERIFY_EXTENSION_KEY = "x-arnold-resume"
+RESUME_REVERIFY_DECLARATION_KEY = "reverify_produces"
+_RESERVED_KEY = RESUME_REVERIFY_EXTENSION_KEY
+_NESTED_DECLARATION_KEY = RESUME_REVERIFY_DECLARATION_KEY
 _DEFAULT_INVALID_POLICY = "resuspend"
 _MEDIA_CONTENT_TYPES = frozenset(
     {

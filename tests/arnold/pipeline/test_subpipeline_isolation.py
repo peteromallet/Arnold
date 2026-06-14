@@ -65,6 +65,17 @@ class _IsolatedChildPipeline:
         }
 
 
+class _DuckParentContext:
+    """Non-dataclass context with package-owned attributes."""
+
+    def __init__(self, *, artifact_root: str, state: Mapping[str, Any]) -> None:
+        self.artifact_root = artifact_root
+        self.state = state
+        self.inputs = {}
+        self.capability_scope = {"network": False}
+        self.package_runtime = object()
+
+
 # ── Tests ────────────────────────────────────────────────────────────────
 
 
@@ -344,6 +355,44 @@ class TestRunSubpipelineIsolation:
         d1 = promote(r1, {})
         d2 = promote(r2, {})
         assert d1 == d2  # Same child produces same final_state
+
+    def test_duck_context_preserves_package_owned_attributes(
+        self, tmp_path: Path
+    ) -> None:
+        """Child contexts inherit arbitrary non-dataclass parent attributes."""
+        parent_root = tmp_path / "parent_duck"
+        parent_root.mkdir()
+        ctx = _DuckParentContext(
+            artifact_root=str(parent_root),
+            state={"parent_key": "parent_value"},
+        )
+        captured: dict[str, Any] = {}
+
+        def runner(
+            _pipeline: Any,
+            child_ctx: Any,
+            child_root: Path | None,
+        ) -> ChildRunResult:
+            captured["ctx"] = child_ctx
+            captured["child_root"] = child_root
+            return ChildRunResult(status="completed")
+
+        invocation = SubpipelineInvocation(
+            child_pipeline=_IsolatedChildPipeline(),
+            input_map={"parent_key": "child_key"},
+            artifact_subdir="duck_child",
+        )
+
+        result = run_subpipeline(invocation, ctx, runner=runner)
+
+        assert result.status == "completed"
+        child_ctx = captured["ctx"]
+        assert child_ctx is not ctx
+        assert child_ctx.artifact_root == str(parent_root / "duck_child")
+        assert child_ctx.inputs == {"child_key": "parent_value"}
+        assert child_ctx.capability_scope == {"network": False}
+        assert child_ctx.package_runtime is ctx.package_runtime
+        assert captured["child_root"] == parent_root / "duck_child"
 
 
 # ── Boundary verification ────────────────────────────────────────────────

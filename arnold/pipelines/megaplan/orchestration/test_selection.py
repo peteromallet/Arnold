@@ -305,6 +305,9 @@ def compute_default_blast_radius(
     return result
 
 
+compute_test_blast_radius = compute_default_blast_radius
+
+
 def merge_blast_radius_floor(
     floor: dict[str, Any] | None,
     candidate: dict[str, Any] | None,

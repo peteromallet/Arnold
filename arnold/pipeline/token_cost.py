@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from decimal import Decimal
-from typing import Any, Dict, Optional
+from typing import Any, Callable, Dict, Optional
 
 from arnold.pipeline.cost_types import CanonicalUsage, CostResult, CostSource, CostStatus
 
@@ -394,8 +394,14 @@ def get_pricing_entry(
     provider: Optional[str] = None,
     base_url: Optional[str] = None,
     api_key: Optional[str] = None,
+    pricing_rows: Optional[Dict[tuple[str, str], PricingEntry]] = None,
+    model_metadata_fetcher: Optional[Callable[[], Dict[str, Dict[str, Any]]]] = None,
 ) -> Optional[PricingEntry]:
     route = resolve_billing_route(model_name, provider=provider, base_url=base_url)
+    if pricing_rows is not None:
+        custom = pricing_rows.get((route.provider, route.model))
+        if custom is not None:
+            return custom
     if route.billing_mode == "subscription_included":
         return PricingEntry(
             input_cost_per_million=_ZERO,
@@ -406,6 +412,13 @@ def get_pricing_entry(
             pricing_version="included-route",
         )
     if route.provider == "openrouter":
+        if model_metadata_fetcher is not None:
+            return _pricing_entry_from_metadata(
+                model_metadata_fetcher(),
+                route.model,
+                source_url="https://openrouter.ai/docs/api/api-reference/models/get-models",
+                pricing_version="openrouter-models-api",
+            )
         return _openrouter_pricing_entry(route)
     if route.base_url:
         entry = _pricing_entry_from_metadata(
@@ -487,6 +500,7 @@ def estimate_usage_cost(
     provider: Optional[str] = None,
     base_url: Optional[str] = None,
     api_key: Optional[str] = None,
+    pricing_rows: Optional[Dict[tuple[str, str], PricingEntry]] = None,
 ) -> CostResult:
     route = resolve_billing_route(model_name, provider=provider, base_url=base_url)
     if route.billing_mode == "subscription_included":
@@ -498,7 +512,13 @@ def estimate_usage_cost(
             pricing_version="included-route",
         )
 
-    entry = get_pricing_entry(model_name, provider=provider, base_url=base_url, api_key=api_key)
+    entry = get_pricing_entry(
+        model_name,
+        provider=provider,
+        base_url=base_url,
+        api_key=api_key,
+        pricing_rows=pricing_rows,
+    )
     if not entry:
         return CostResult(amount_usd=None, status="unknown", source="none", label="n/a")
 
@@ -564,6 +584,7 @@ def has_known_pricing(
     provider: Optional[str] = None,
     base_url: Optional[str] = None,
     api_key: Optional[str] = None,
+    pricing_rows: Optional[Dict[tuple[str, str], PricingEntry]] = None,
 ) -> bool:
     """Check whether we have pricing data for this model+route.
 
@@ -573,7 +594,13 @@ def has_known_pricing(
     route = resolve_billing_route(model_name, provider=provider, base_url=base_url)
     if route.billing_mode == "subscription_included":
         return True
-    entry = get_pricing_entry(model_name, provider=provider, base_url=base_url, api_key=api_key)
+    entry = get_pricing_entry(
+        model_name,
+        provider=provider,
+        base_url=base_url,
+        api_key=api_key,
+        pricing_rows=pricing_rows,
+    )
     return entry is not None
 
 
@@ -582,13 +609,20 @@ def get_pricing(
     provider: Optional[str] = None,
     base_url: Optional[str] = None,
     api_key: Optional[str] = None,
+    pricing_rows: Optional[Dict[tuple[str, str], PricingEntry]] = None,
 ) -> Dict[str, float]:
     """Backward-compatible thin wrapper for legacy callers.
 
     Returns only non-cache input/output fields when a pricing entry exists.
     Unknown routes return zeroes.
     """
-    entry = get_pricing_entry(model_name, provider=provider, base_url=base_url, api_key=api_key)
+    entry = get_pricing_entry(
+        model_name,
+        provider=provider,
+        base_url=base_url,
+        api_key=api_key,
+        pricing_rows=pricing_rows,
+    )
     if not entry:
         return {"input": 0.0, "output": 0.0}
     return {
@@ -605,6 +639,7 @@ def estimate_cost_usd(
     provider: Optional[str] = None,
     base_url: Optional[str] = None,
     api_key: Optional[str] = None,
+    pricing_rows: Optional[Dict[tuple[str, str], PricingEntry]] = None,
 ) -> float:
     """Backward-compatible helper for legacy callers.
 
@@ -617,6 +652,7 @@ def estimate_cost_usd(
         provider=provider,
         base_url=base_url,
         api_key=api_key,
+        pricing_rows=pricing_rows,
     )
     return float(result.amount_usd or _ZERO)
 

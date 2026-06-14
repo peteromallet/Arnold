@@ -24,6 +24,7 @@ No ``megaplan`` imports.  No forbidden vocabulary literals.
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Sequence
 
 from arnold.conformance import ConformanceCheckResult, ConformanceSuiteResult
@@ -36,6 +37,11 @@ from arnold.conformance.checks import (
     check_contract_result_schema_round_trip,
     check_contract_result_schema_version_skew,
     check_generic_arnold_megaplan_coupling,
+    check_import_coupling,
+    check_never_port_artifacts,
+    check_package_name_staleness,
+    check_public_workflow_layering,
+    check_semantic_coupling,
 )
 from arnold.conformance.join import run_join_conformance_suite
 from arnold.conformance.routing import run_routing_conformance_suite
@@ -45,6 +51,8 @@ from arnold.pipeline.step_invocation import (
     StepInvocationAdapterRegistry,
 )
 from arnold.pipeline.types import ContractResult, Pipeline
+
+_CHECK_ALLOWLIST_PATH = Path(__file__).resolve().parent / "_allowlist.txt"
 
 
 # ---------------------------------------------------------------------------
@@ -59,7 +67,7 @@ def run_conformance_suite(
     adapter_smoke_kinds: Sequence[tuple[str, StepInvocation]] | None = None,
     adapter_round_trip_kinds: Sequence[str] | None = None,
     sample_contracts: Sequence[ContractResult] | None = None,
-    hooks: ExecutorHooks | None = None,
+    hooks: ExecutorHooks | Sequence[ExecutorHooks] | None = None,
     suite_id: str = "ar1-conformance",
 ) -> ConformanceSuiteResult:
     """Run Arnold conformance-check domains and aggregate into one result.
@@ -157,17 +165,66 @@ def run_conformance_suite(
     # ------------------------------------------------------------------
     # Domain 4 — Join delegation
     # ------------------------------------------------------------------
-    results.extend(run_join_conformance_suite(hooks))
+    hook_targets: Sequence[ExecutorHooks | None]
+    if hooks is None:
+        hook_targets = (None,)
+    elif isinstance(hooks, Sequence):
+        hook_targets = hooks
+    else:
+        hook_targets = (hooks,)
+    for hook_target in hook_targets:
+        results.extend(run_join_conformance_suite(hook_target))
 
     # ------------------------------------------------------------------
     # Domain 5 — Generic Arnold anti-coupling ratchet
     # ------------------------------------------------------------------
     results.append(check_generic_arnold_megaplan_coupling())
+    allowlist = _read_check_allowlist(_CHECK_ALLOWLIST_PATH)
+    results.append(check_import_coupling(allowlist=allowlist["import-coupling"]))
+    results.append(
+        check_package_name_staleness(
+            allowlist=allowlist["package-name-staleness"]
+        )
+    )
+    results.append(
+        check_semantic_coupling(allowlist=allowlist["semantic-coupling"])
+    )
+    results.append(
+        check_public_workflow_layering(
+            allowlist=allowlist["public-workflow-layering"]
+        )
+    )
+    results.append(
+        check_never_port_artifacts(allowlist=allowlist["never-port-artifacts"])
+    )
 
     return ConformanceSuiteResult(
         suite_id=suite_id,
         checks=tuple(results),
     )
+
+
+def _read_check_allowlist(path: Path) -> dict[str, set[str]]:
+    allowlist: dict[str, set[str]] = {
+        "import-coupling": set(),
+        "package-name-staleness": set(),
+        "semantic-coupling": set(),
+        "public-workflow-layering": set(),
+        "never-port-artifacts": set(),
+    }
+    if not path.exists():
+        return allowlist
+    for raw_line in path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.split("#", 1)[0].strip()
+        if not line:
+            continue
+        parts = line.split(maxsplit=1)
+        if len(parts) != 2:
+            continue
+        check_id, item = parts
+        if check_id in allowlist:
+            allowlist[check_id].add(item)
+    return allowlist
 
 
 __all__ = [

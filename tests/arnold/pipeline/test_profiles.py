@@ -14,6 +14,7 @@ from arnold.pipeline.profiles import (
     load_profile_sources,
     parse_agent_spec_shape,
     resolve_default_profile,
+    validate_declared_stage_keys,
 )
 
 
@@ -201,6 +202,65 @@ class TestGenericProfileLoading:
                 built_in_paths=(built_in,),
                 declared_stage_keys=frozenset({"draft", "review"}),
                 known_agents=frozenset({"claude", "codex", "hermes"}),
+            )
+
+    def test_structured_stage_values_require_explicit_validator(self) -> None:
+        with pytest.raises(ProfileLoadError, match="expected a string agent spec"):
+            validate_declared_stage_keys(
+                "profiles.toml",
+                "structured",
+                {"plan": {"agent": "claude", "model": "sonnet"}},
+                declared_stage_keys=frozenset({"plan", "review"}),
+                known_agents=frozenset({"claude", "codex"}),
+            )
+
+    def test_structured_stage_validator_normalizes_dict_value(self, tmp_path: Path) -> None:
+        built_in = tmp_path / "built-in.toml"
+        _write_profiles(
+            built_in,
+            """
+            [profiles.structured]
+            plan = { agent = "claude", model = "sonnet" }
+            review = "codex"
+            """,
+        )
+
+        def normalize_plan(raw: object) -> str:
+            assert isinstance(raw, dict)
+            return f"{raw['agent']}:{raw['model']}"
+
+        loaded = load_profiles(
+            built_in_paths=(built_in,),
+            declared_stage_keys=frozenset({"plan", "review"}),
+            known_agents=frozenset({"claude", "codex"}),
+            stage_value_validators={"plan": normalize_plan},
+        )
+
+        assert loaded["structured"] == {
+            "plan": "claude:sonnet",
+            "review": "codex",
+        }
+
+    def test_structured_stage_validator_errors_are_profile_errors(self, tmp_path: Path) -> None:
+        built_in = tmp_path / "built-in.toml"
+        _write_profiles(
+            built_in,
+            """
+            [profiles.bad]
+            plan = { agent = "claude" }
+            review = "codex"
+            """,
+        )
+
+        def reject(_raw: object) -> str:
+            raise ValueError("missing model")
+
+        with pytest.raises(ProfileLoadError, match="missing model"):
+            load_profiles(
+                built_in_paths=(built_in,),
+                declared_stage_keys=frozenset({"plan", "review"}),
+                known_agents=frozenset({"claude", "codex"}),
+                stage_value_validators={"plan": reject},
             )
 
 

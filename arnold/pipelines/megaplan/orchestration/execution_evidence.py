@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import subprocess
 from typing import Any
 
 from arnold.pipelines.megaplan.types import PlanState
@@ -28,6 +29,7 @@ def validate_execution_evidence(
     state: PlanState | None = None,
     plan_dir: Path | None = None,
     artifact_prefix: str = "execution_audit",
+    base_ref: str | None = None,
 ) -> dict[str, Any]:
     if is_prose_mode(state or {"config": {"mode": mode}}):
         return _validate_execution_evidence_doc(finalize_data, project_dir)
@@ -36,7 +38,29 @@ def validate_execution_evidence(
         project_dir,
         plan_dir=plan_dir,
         artifact_prefix=artifact_prefix,
+        base_ref=base_ref,
     )
+
+
+def _evidence_window(project_dir: Path, base_ref: str | None = None) -> dict[str, Any]:
+    def _rev_parse(ref: str) -> str | None:
+        completed = subprocess.run(
+            ["git", "rev-parse", ref],
+            cwd=project_dir,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        if completed.returncode != 0:
+            return None
+        return completed.stdout.strip() or None
+
+    return {
+        "source": "declared" if base_ref else "heuristic_merge_base",
+        "base_ref": base_ref,
+        "base_sha": _rev_parse(base_ref) if base_ref else None,
+        "head_sha": _rev_parse("HEAD"),
+    }
 
 
 def _summarize_advisory_paths(
@@ -140,6 +164,7 @@ def _validate_execution_evidence_code(
     *,
     plan_dir: Path | None = None,
     artifact_prefix: str = "execution_audit",
+    base_ref: str | None = None,
 ) -> dict[str, Any]:
     findings: list[str] = []
     files_claimed = sorted(
@@ -160,6 +185,7 @@ def _validate_execution_evidence_code(
             "files_claimed": files_claimed,
             "skipped": True,
             "reason": "Project directory is not a git repository.",
+            "evidence_window": _evidence_window(project_dir, base_ref),
         }
 
     files_in_diff_set, status_error = _collect_git_status_paths_with_nested_repos(
@@ -178,6 +204,7 @@ def _validate_execution_evidence_code(
             "files_claimed": files_claimed,
             "skipped": True,
             "reason": status_error,
+            "evidence_window": _evidence_window(project_dir, base_ref),
         }
 
     files_in_diff = sorted(
@@ -294,4 +321,5 @@ def _validate_execution_evidence_code(
         "files_claimed": files_claimed,
         "skipped": False,
         "reason": "",
+        "evidence_window": _evidence_window(project_dir, base_ref),
     }

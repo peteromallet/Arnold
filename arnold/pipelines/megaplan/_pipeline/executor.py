@@ -49,6 +49,45 @@ Contract notes:
     edges match via ``label == 'override <action>'``. The escalate-policy
     fallback is applied when the resolver raises ``RoutingError`` for an
     ``escalate`` decision with no matching edge.
+
+.. rubric:: Migration note — ``run_pipeline`` is NOT replaced by the bridge in M1
+
+This standalone executor module is **not deleted** in the M1 sprint. The
+:func:`run_pipeline` function remains the active entry point for all
+non-``demo_judges`` pipelines. See ``_BRIDGE_CALLERS.md`` in this directory
+for the complete call-survey checklist.
+
+The standalone ``run_pipeline`` stays in place because:
+
+(a) **Dispatcher allowlist.** The bridge dispatcher
+    (:func:`run_pipeline_dispatch`) routes only ``demo_judges`` to the
+    bridged path via a hard-coded ``_BRIDGED_PIPELINES = {'demo_judges'}``
+    allowlist. All other pipeline keys fall through to this legacy executor
+    unchanged.
+
+(b) **``run_pipeline_with_policy`` + 19+ callers remain on legacy.**
+    The ``policy``-based entry point and its callers (``registry.py``,
+    ``tests/test_pipeline_runtime_e2e.py``, ``tests/test_auto_pipeline_runtime.py``,
+    and ~16 other test modules) stay on the standalone executor for M1.
+    Bridging ``run_pipeline_with_policy`` requires porting the policy
+    lifecycle (stall, cost-cap, escalate) through the hooks surface,
+    which is deferred.
+
+(c) **CLI resume remains on legacy.**
+    ``megaplan/cli/__init__.py:1339`` (``_resume_human_gate``) is
+    intentionally left on the legacy executor. Resume authority is
+    package-local and not redesigned in M1.
+
+(d) **``_materialize_stage_step``-dependent pipelines aren't bridge-compatible.**
+    Pipelines such as ``creative`` and ``epic_blitz`` rely on
+    :func:`_materialize_stage_step` (``executor.py:709-721``) which injects
+    stage-level ``StepInvocation`` metadata at runtime. The bridge
+    (``_BridgeStep`` in ``_bridge.py``) does not yet honor this injection,
+    so these pipelines **cannot** be dispatched through the bridge in M1.
+
+**Deletion gate:** Every entry in ``_BRIDGE_CALLERS.md`` §"Intentionally left
+on legacy" must move to §"Repointed" before this module can be deleted. See
+that file for the per-caller tracking.
 """
 
 from __future__ import annotations
