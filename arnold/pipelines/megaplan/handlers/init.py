@@ -226,6 +226,12 @@ def _build_state_config(
     if completion_contract_mode is None:
         completion_contract_mode = get_effective("execution", "completion_contract_mode")
 
+    # Full-suite backstop mode: CLI flag > get_effective.
+    # Snapshotted here so chain gates do not re-read live environment.
+    full_suite_backstop_mode = getattr(args, "full_suite_backstop_mode", None)
+    if full_suite_backstop_mode is None:
+        full_suite_backstop_mode = get_effective("execution", "full_suite_backstop_mode")
+
     # Test command the harness invokes: CLI flag > get_effective.
     test_command = getattr(args, "test_command", None)
     if test_command is None:
@@ -249,6 +255,7 @@ def _build_state_config(
         "max_tasks_per_batch": max_tasks_per_batch,
         "agent": "hermes" if getattr(args, "hermes", None) is not None else "",
         "completion_contract_mode": completion_contract_mode,
+        "full_suite_backstop_mode": full_suite_backstop_mode,
         "test_command": test_command,
         "test_baseline_timeout": test_baseline_timeout,
     }

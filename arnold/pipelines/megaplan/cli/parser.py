@@ -304,6 +304,15 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Named preset from profiles.toml; see 'megaplan config profiles list'.",
     )
+    init_parser.add_argument(
+        "--full-suite-backstop-mode",
+        choices=["off", "shadow", "enforce"],
+        default=None,
+        help=(
+            "Control the full-suite milestone-advance backstop: off disables it, "
+            "shadow records only, enforce blocks on computed full-suite failures."
+        ),
+    )
     _add_vendor_critic_args(init_parser)
     _add_workflow_shape_args(init_parser)
     _add_execute_tier_cap_arg(init_parser)
