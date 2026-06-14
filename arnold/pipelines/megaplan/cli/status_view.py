@@ -29,6 +29,7 @@ from arnold.pipelines.megaplan.blocker_recovery import (
 )
 from arnold.pipelines.megaplan.orchestration.phase_result import (
     BlockedTask,
+    Deviation,
     read_phase_result,
 )
 from arnold.pipelines.megaplan.control_interface import read_valid_targets
@@ -340,6 +341,26 @@ def _build_blocker_recovery_context(
     state: dict[str, Any],
 ) -> dict[str, Any]:
     phase_blocked_tasks, deviations = _phase_result_recovery_inputs(plan_dir)
+    baseline_deviation_by_task: dict[str, Deviation] = {}
+    if phase_blocked_tasks:
+        from megaplan.execute.batch import baseline_unavailable_checkpoint_deviations
+
+        baseline_deviations = baseline_unavailable_checkpoint_deviations(
+            finalize_data,
+            [blocked.task_id for blocked in phase_blocked_tasks],
+        )
+        baseline_deviation_by_task = {
+            deviation.task_id: deviation
+            for deviation in baseline_deviations
+            if deviation.task_id is not None
+        }
+        if baseline_deviations:
+            deviations = deviations + baseline_deviations
+            phase_blocked_tasks = tuple(
+                blocked
+                for blocked in phase_blocked_tasks
+                if blocked.task_id not in baseline_deviation_by_task
+            )
     prereq_blocked_tasks = phase_blocked_tasks + _synthetic_prerequisite_blocked_tasks(
         finalize_data,
         phase_blocked_tasks,

@@ -391,6 +391,456 @@ def test_handle_config_use_profile_unknown_profile_raises(
 
 
 # ---------------------------------------------------------------------------
+# Project-scoped config layer (T2)
+# ---------------------------------------------------------------------------
+
+
+def _write_project_toml(project_dir: Path, content: str) -> Path:
+    """Write a project TOML config file and return its path."""
+    cfg_dir = project_dir / ".megaplan"
+    cfg_dir.mkdir(parents=True, exist_ok=True)
+    cfg_path = cfg_dir / "config.toml"
+    cfg_path.write_text(content, encoding="utf-8")
+    return cfg_path
+
+
+class TestProjectConfigDefaultsOnly:
+    """Default-only behavior: no files, no project_dir → DEFAULTS."""
+
+    def test_no_config_and_no_project_dir_returns_default(
+        self, isolated_config_dir: Path
+    ) -> None:
+        assert not (isolated_config_dir / "config.json").exists()
+        result = get_effective("execution", "worker_timeout_seconds")
+        assert result == DEFAULTS["execution.worker_timeout_seconds"]
+
+    def test_no_config_default_key_from_another_section(
+        self, isolated_config_dir: Path
+    ) -> None:
+        assert not (isolated_config_dir / "config.json").exists()
+        result = get_effective("orchestration", "mode")
+        assert result == DEFAULTS["orchestration.mode"]
+
+
+class TestGlobalOverDefault:
+    """Global JSON overrides DEFAULTS."""
+
+    def test_global_overrides_default_numeric(
+        self, isolated_config_dir: Path
+    ) -> None:
+        isolated_config_dir.mkdir(parents=True, exist_ok=True)
+        (isolated_config_dir / "config.json").write_text(
+            json.dumps({"execution": {"worker_timeout_seconds": 9999}}),
+            encoding="utf-8",
+        )
+        result = get_effective("execution", "worker_timeout_seconds")
+        assert result == 9999
+
+    def test_global_overrides_default_string(
+        self, isolated_config_dir: Path
+    ) -> None:
+        isolated_config_dir.mkdir(parents=True, exist_ok=True)
+        (isolated_config_dir / "config.json").write_text(
+            json.dumps({"orchestration": {"mode": "inline"}}),
+            encoding="utf-8",
+        )
+        result = get_effective("orchestration", "mode")
+        assert result == "inline"
+
+    def test_global_overrides_default_bool(
+        self, isolated_config_dir: Path
+    ) -> None:
+        isolated_config_dir.mkdir(parents=True, exist_ok=True)
+        (isolated_config_dir / "config.json").write_text(
+            json.dumps({"execution": {"auto_approve": True}}),
+            encoding="utf-8",
+        )
+        result = get_effective("execution", "auto_approve")
+        assert result is True
+
+
+class TestProjectOverGlobal:
+    """Project TOML overrides global JSON."""
+
+    def test_project_overrides_global_numeric(
+        self, isolated_config_dir: Path, tmp_path: Path
+    ) -> None:
+        isolated_config_dir.mkdir(parents=True, exist_ok=True)
+        (isolated_config_dir / "config.json").write_text(
+            json.dumps({"execution": {"worker_timeout_seconds": 9999}}),
+            encoding="utf-8",
+        )
+        project = tmp_path / "project"
+        project.mkdir()
+        _write_project_toml(
+            project,
+            '[execution]\nworker_timeout_seconds = 42\n',
+        )
+        result = get_effective(
+            "execution", "worker_timeout_seconds", project_dir=project
+        )
+        assert result == 42
+
+    def test_project_overrides_global_string(
+        self, isolated_config_dir: Path, tmp_path: Path
+    ) -> None:
+        isolated_config_dir.mkdir(parents=True, exist_ok=True)
+        (isolated_config_dir / "config.json").write_text(
+            json.dumps({"orchestration": {"mode": "inline"}}),
+            encoding="utf-8",
+        )
+        project = tmp_path / "project"
+        project.mkdir()
+        _write_project_toml(
+            project,
+            '[orchestration]\nmode = "subagent"\n',
+        )
+        result = get_effective(
+            "orchestration", "mode", project_dir=project
+        )
+        assert result == "subagent"
+
+    def test_project_overrides_global_bool(
+        self, isolated_config_dir: Path, tmp_path: Path
+    ) -> None:
+        isolated_config_dir.mkdir(parents=True, exist_ok=True)
+        (isolated_config_dir / "config.json").write_text(
+            json.dumps({"execution": {"auto_approve": False}}),
+            encoding="utf-8",
+        )
+        project = tmp_path / "project"
+        project.mkdir()
+        _write_project_toml(
+            project,
+            '[execution]\nauto_approve = true\n',
+        )
+        result = get_effective(
+            "execution", "auto_approve", project_dir=project
+        )
+        assert result is True
+
+    def test_project_only_key_without_global(
+        self, isolated_config_dir: Path, tmp_path: Path
+    ) -> None:
+        """Key set only in project TOML, absent from global JSON → project wins."""
+        assert not (isolated_config_dir / "config.json").exists()
+        project = tmp_path / "project"
+        project.mkdir()
+        _write_project_toml(
+            project,
+            '[execution]\nworker_timeout_seconds = 555\n',
+        )
+        result = get_effective(
+            "execution", "worker_timeout_seconds", project_dir=project
+        )
+        assert result == 555
+
+
+class TestAbsentProjectConfigParity:
+    """When project_dir is set but no config.toml exists, global/DEFAULTS is used."""
+
+    def test_absent_project_file_falls_back_to_global(
+        self, isolated_config_dir: Path, tmp_path: Path
+    ) -> None:
+        isolated_config_dir.mkdir(parents=True, exist_ok=True)
+        (isolated_config_dir / "config.json").write_text(
+            json.dumps({"execution": {"worker_timeout_seconds": 8888}}),
+            encoding="utf-8",
+        )
+        project = tmp_path / "project"
+        project.mkdir()
+        # No .megaplan/config.toml in project
+        assert not (project / ".megaplan" / "config.toml").exists()
+        result = get_effective(
+            "execution", "worker_timeout_seconds", project_dir=project
+        )
+        assert result == 8888
+
+    def test_absent_project_file_falls_back_to_defaults(
+        self, isolated_config_dir: Path, tmp_path: Path
+    ) -> None:
+        assert not (isolated_config_dir / "config.json").exists()
+        project = tmp_path / "project"
+        project.mkdir()
+        result = get_effective(
+            "execution", "worker_timeout_seconds", project_dir=project
+        )
+        assert result == DEFAULTS["execution.worker_timeout_seconds"]
+
+    def test_absent_project_file_parity_with_no_project_dir(
+        self, isolated_config_dir: Path, tmp_path: Path
+    ) -> None:
+        """With no global config and no project TOML, project_dir vs no project_dir
+        return the same DEFAULTS value."""
+        assert not (isolated_config_dir / "config.json").exists()
+        project = tmp_path / "project"
+        project.mkdir()
+        without = get_effective("execution", "worker_timeout_seconds")
+        with_proj = get_effective(
+            "execution", "worker_timeout_seconds", project_dir=project
+        )
+        assert without == with_proj
+        assert without == DEFAULTS["execution.worker_timeout_seconds"]
+
+
+class TestSameProcessIndependence:
+    """Two project roots with different TOML values are independent."""
+
+    def test_two_project_roots_independent_values(
+        self, isolated_config_dir: Path, tmp_path: Path
+    ) -> None:
+        isolated_config_dir.mkdir(parents=True, exist_ok=True)
+        (isolated_config_dir / "config.json").write_text(
+            json.dumps({"execution": {"worker_timeout_seconds": 100}}),
+            encoding="utf-8",
+        )
+        project_a = tmp_path / "project_a"
+        project_b = tmp_path / "project_b"
+        project_a.mkdir()
+        project_b.mkdir()
+        _write_project_toml(
+            project_a,
+            '[execution]\nworker_timeout_seconds = 200\n',
+        )
+        _write_project_toml(
+            project_b,
+            '[execution]\nworker_timeout_seconds = 300\n',
+        )
+        a_val = get_effective(
+            "execution", "worker_timeout_seconds", project_dir=project_a
+        )
+        b_val = get_effective(
+            "execution", "worker_timeout_seconds", project_dir=project_b
+        )
+        assert a_val == 200
+        assert b_val == 300
+
+    def test_two_project_roots_one_without_toml(
+        self, isolated_config_dir: Path, tmp_path: Path
+    ) -> None:
+        isolated_config_dir.mkdir(parents=True, exist_ok=True)
+        (isolated_config_dir / "config.json").write_text(
+            json.dumps({"execution": {"worker_timeout_seconds": 100}}),
+            encoding="utf-8",
+        )
+        project_a = tmp_path / "project_a"
+        project_b = tmp_path / "project_b"
+        project_a.mkdir()
+        project_b.mkdir()
+        _write_project_toml(
+            project_a,
+            '[execution]\nworker_timeout_seconds = 200\n',
+        )
+        # project_b has no config.toml
+        a_val = get_effective(
+            "execution", "worker_timeout_seconds", project_dir=project_a
+        )
+        b_val = get_effective(
+            "execution", "worker_timeout_seconds", project_dir=project_b
+        )
+        assert a_val == 200
+        assert b_val == 100  # falls back to global
+
+    def test_project_dir_supplied_only_sometimes(
+        self, isolated_config_dir: Path, tmp_path: Path
+    ) -> None:
+        """When project_dir is omitted, global/DEFAULTS is used even if other
+        calls use project_dir."""
+        isolated_config_dir.mkdir(parents=True, exist_ok=True)
+        (isolated_config_dir / "config.json").write_text(
+            json.dumps({"execution": {"worker_timeout_seconds": 100}}),
+            encoding="utf-8",
+        )
+        project = tmp_path / "project"
+        project.mkdir()
+        _write_project_toml(
+            project,
+            '[execution]\nworker_timeout_seconds = 999\n',
+        )
+        with_proj = get_effective(
+            "execution", "worker_timeout_seconds", project_dir=project
+        )
+        without_proj = get_effective("execution", "worker_timeout_seconds")
+        assert with_proj == 999
+        assert without_proj == 100
+
+
+class TestProjectOnlyExplicitness:
+    """setting_is_explicit treats project-only keys as explicit."""
+
+    def test_project_only_key_is_explicit(
+        self, isolated_config_dir: Path, tmp_path: Path
+    ) -> None:
+        assert not (isolated_config_dir / "config.json").exists()
+        project = tmp_path / "project"
+        project.mkdir()
+        _write_project_toml(
+            project,
+            '[execution]\nworker_timeout_seconds = 123\n',
+        )
+        assert setting_is_explicit(
+            "execution", "worker_timeout_seconds", project_dir=project
+        ) is True
+
+    def test_project_and_global_key_is_explicit(
+        self, isolated_config_dir: Path, tmp_path: Path
+    ) -> None:
+        isolated_config_dir.mkdir(parents=True, exist_ok=True)
+        (isolated_config_dir / "config.json").write_text(
+            json.dumps({"execution": {"worker_timeout_seconds": 456}}),
+            encoding="utf-8",
+        )
+        project = tmp_path / "project"
+        project.mkdir()
+        _write_project_toml(
+            project,
+            '[execution]\nworker_timeout_seconds = 789\n',
+        )
+        assert setting_is_explicit(
+            "execution", "worker_timeout_seconds", project_dir=project
+        ) is True
+
+    def test_no_project_global_only_explicit(
+        self, isolated_config_dir: Path, tmp_path: Path
+    ) -> None:
+        isolated_config_dir.mkdir(parents=True, exist_ok=True)
+        (isolated_config_dir / "config.json").write_text(
+            json.dumps({"execution": {"worker_timeout_seconds": 456}}),
+            encoding="utf-8",
+        )
+        project = tmp_path / "project"
+        project.mkdir()
+        # No project TOML
+        # setting_is_explicit without project_dir should still see the global key
+        assert setting_is_explicit(
+            "execution", "worker_timeout_seconds"
+        ) is True
+
+    def test_no_config_not_explicit(
+        self, isolated_config_dir: Path, tmp_path: Path
+    ) -> None:
+        assert not (isolated_config_dir / "config.json").exists()
+        project = tmp_path / "project"
+        project.mkdir()
+        assert setting_is_explicit(
+            "execution", "worker_timeout_seconds", project_dir=project
+        ) is False
+
+    def test_project_key_not_overridden_by_missing_global(
+        self, isolated_config_dir: Path, tmp_path: Path
+    ) -> None:
+        """If a key is in project TOML but absent from global JSON, it's still explicit."""
+        assert not (isolated_config_dir / "config.json").exists()
+        project = tmp_path / "project"
+        project.mkdir()
+        _write_project_toml(
+            project,
+            '[execution]\nstrict_notes = true\n',
+        )
+        # Global has no strict_notes
+        assert setting_is_explicit(
+            "execution", "strict_notes", project_dir=project
+        ) is True
+
+
+class TestMalformedProjectTomlWarnAndIgnore:
+    """Malformed project TOML triggers a warning and returns empty config."""
+
+    def test_malformed_toml_returns_empty_and_warns(
+        self, isolated_config_dir: Path, tmp_path: Path, capsys
+    ) -> None:
+        isolated_config_dir.mkdir(parents=True, exist_ok=True)
+        (isolated_config_dir / "config.json").write_text(
+            json.dumps({"execution": {"worker_timeout_seconds": 500}}),
+            encoding="utf-8",
+        )
+        project = tmp_path / "project"
+        project.mkdir()
+        _write_project_toml(
+            project,
+            'this is not valid toml {{{[[[',
+        )
+        # Capture stderr for the warning
+        result = get_effective(
+            "execution", "worker_timeout_seconds", project_dir=project
+        )
+        assert result == 500  # falls back to global
+        captured = capsys.readouterr()
+        assert "warning" in captured.err.lower()
+        assert "malformed" in captured.err.lower()
+
+    def test_malformed_toml_falls_back_to_defaults_when_no_global(
+        self, isolated_config_dir: Path, tmp_path: Path, capsys
+    ) -> None:
+        assert not (isolated_config_dir / "config.json").exists()
+        project = tmp_path / "project"
+        project.mkdir()
+        _write_project_toml(
+            project,
+            '{{{ broken',
+        )
+        result = get_effective(
+            "execution", "worker_timeout_seconds", project_dir=project
+        )
+        assert result == DEFAULTS["execution.worker_timeout_seconds"]
+        captured = capsys.readouterr()
+        assert "warning" in captured.err.lower()
+
+    def test_malformed_toml_explicitness_returns_false(
+        self, isolated_config_dir: Path, tmp_path: Path, capsys
+    ) -> None:
+        assert not (isolated_config_dir / "config.json").exists()
+        project = tmp_path / "project"
+        project.mkdir()
+        _write_project_toml(
+            project,
+            '}}} garbage',
+        )
+        result = setting_is_explicit(
+            "execution", "worker_timeout_seconds", project_dir=project
+        )
+        assert result is False
+        captured = capsys.readouterr()
+        assert "warning" in captured.err.lower()
+
+    def test_empty_toml_file_is_not_malformed(
+        self, isolated_config_dir: Path, tmp_path: Path
+    ) -> None:
+        isolated_config_dir.mkdir(parents=True, exist_ok=True)
+        (isolated_config_dir / "config.json").write_text(
+            json.dumps({"execution": {"worker_timeout_seconds": 700}}),
+            encoding="utf-8",
+        )
+        project = tmp_path / "project"
+        project.mkdir()
+        _write_project_toml(project, "")
+        result = get_effective(
+            "execution", "worker_timeout_seconds", project_dir=project
+        )
+        assert result == 700  # empty file not malformed, falls back to global
+
+    def test_valid_toml_without_requested_section_falls_back(
+        self, isolated_config_dir: Path, tmp_path: Path
+    ) -> None:
+        """A valid project TOML without the requested section falls back to global."""
+        isolated_config_dir.mkdir(parents=True, exist_ok=True)
+        (isolated_config_dir / "config.json").write_text(
+            json.dumps({"execution": {"worker_timeout_seconds": 600}}),
+            encoding="utf-8",
+        )
+        project = tmp_path / "project"
+        project.mkdir()
+        _write_project_toml(
+            project,
+            '[other]\nkey = "value"\n',
+        )
+        result = get_effective(
+            "execution", "worker_timeout_seconds", project_dir=project
+        )
+        assert result == 600  # no execution section in project TOML → fallback
+
+
+# ---------------------------------------------------------------------------
 # Shannon config validation
 # ---------------------------------------------------------------------------
 

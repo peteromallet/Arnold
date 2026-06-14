@@ -174,7 +174,8 @@ def test_force_proceed_off_default_unchanged(plan_fixture: PlanFixture) -> None:
 def test_set_model_round_trip_persists_phase_model(plan_fixture: PlanFixture) -> None:
     """set-model writes state.config.phase_model and a subsequent read sees the new spec."""
     megaplan.handle_plan(plan_fixture.root, plan_fixture.make_args(plan=plan_fixture.plan_name))
-    # Set model for the critique phase (defaults to codex)
+    # Set model for the critique phase; the implicit premium default now
+    # resolves through the effective vendor before persistence.
     response = megaplan.handle_override(
         plan_fixture.root,
         plan_fixture.make_args(
@@ -193,15 +194,15 @@ def test_set_model_round_trip_persists_phase_model(plan_fixture: PlanFixture) ->
     # Read back state and confirm phase_model is persisted
     state = load_state(plan_fixture.plan_dir)
     phase_models = state["config"].get("phase_model") or []
-    assert any("critique=codex:gpt-5.3-codex:high" in pm for pm in phase_models), \
-        f"Expected critique=codex:gpt-5.3-codex:high in {phase_models}"
+    assert any("critique=claude:gpt-5.3-codex:high" in pm for pm in phase_models), \
+        f"Expected critique=claude:gpt-5.3-codex:high in {phase_models}"
     # Override meta entry is recorded
     overrides = state.get("meta", {}).get("overrides", [])
     model_overrides = [o for o in overrides if o.get("action") == "set-model"]
     assert len(model_overrides) >= 1
     latest = model_overrides[-1]
     assert latest["phase"] == "critique"
-    assert latest["new_spec"] == "codex:gpt-5.3-codex:high"
+    assert latest["new_spec"] == "claude:gpt-5.3-codex:high"
     assert latest["reason"] == "test set-model round trip"
 
 
@@ -227,6 +228,57 @@ def test_set_model_accepts_full_premium_agent_spec(plan_fixture: PlanFixture) ->
     assert "critique=codex:claude:sonnet" not in (state["config"].get("phase_model") or [])
 
 
+def test_set_model_uses_concrete_default_vendor_for_unpinned_premium_phase(
+    plan_fixture: PlanFixture,
+) -> None:
+    """set-model should resolve symbolic defaults before inferring the phase agent."""
+    megaplan.handle_plan(plan_fixture.root, plan_fixture.make_args(plan=plan_fixture.plan_name))
+
+    response = megaplan.handle_override(
+        plan_fixture.root,
+        plan_fixture.make_args(
+            plan=plan_fixture.plan_name,
+            override_action="set-model",
+            phase="plan",
+            model="claude-opus-4-7",
+            reason="pin default premium phase",
+        ),
+    )
+
+    assert response["success"] is True
+    assert response["new_spec"] == "claude:claude-opus-4-7"
+    state = load_state(plan_fixture.plan_dir)
+    assert "plan=claude:claude-opus-4-7" in (state["config"].get("phase_model") or [])
+
+
+def test_set_model_infers_codex_from_profile_vendor_expansion(
+    bootstrap_fixture: tuple[Path, Path],
+) -> None:
+    root, project_dir = bootstrap_fixture
+    args = make_args_factory(project_dir)
+    init_response = megaplan.handle_init(root, args(vendor="codex"))
+    plan_name = init_response["plan"]
+    plan_dir = megaplan.plans_root(root) / plan_name
+
+    megaplan.handle_plan(root, args(plan=plan_name))
+
+    response = megaplan.handle_override(
+        root,
+        args(
+            plan=plan_name,
+            override_action="set-model",
+            phase="plan",
+            model="gpt-5.5",
+            reason="pin codex vendor plan phase",
+        ),
+    )
+
+    assert response["success"] is True
+    assert response["new_spec"] == "codex:gpt-5.5"
+    state = load_state(plan_dir)
+    assert "plan=codex:gpt-5.5" in (state["config"].get("phase_model") or [])
+
+
 def test_set_model_rejects_non_premium_full_agent_spec(plan_fixture: PlanFixture) -> None:
     """set-model is for claude/codex specs, not hermes or shannon model strings."""
     megaplan.handle_plan(plan_fixture.root, plan_fixture.make_args(plan=plan_fixture.plan_name))
@@ -250,18 +302,7 @@ def test_set_model_rejects_non_premium_full_agent_spec(plan_fixture: PlanFixture
 def test_set_model_rejects_shannon_phase(plan_fixture: PlanFixture) -> None:
     """set-model rejects phases inferred as shannon via phase_model override."""
     megaplan.handle_plan(plan_fixture.root, plan_fixture.make_args(plan=plan_fixture.plan_name))
-    # First, set a phase_model entry that makes 'prep' use shannon
-    megaplan.handle_override(
-        plan_fixture.root,
-        plan_fixture.make_args(
-            plan=plan_fixture.plan_name,
-            override_action="set-model",
-            phase="prep",
-            model="claude-opus-4-7",
-            reason="make prep use claude first",
-        ),
-    )
-    # Now directly write a shannon entry into phase_model to simulate a shannon phase
+    # Directly write a shannon entry into phase_model to simulate a shannon phase
     state = load_state(plan_fixture.plan_dir)
     state["config"]["phase_model"] = ["prep=shannon"]
     import json

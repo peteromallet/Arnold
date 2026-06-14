@@ -6,6 +6,7 @@ import textwrap
 from pathlib import Path
 
 import pytest
+import megaplan.prompts as prompt_module
 
 from arnold.pipelines.megaplan.types import PlanState
 from arnold.pipelines.megaplan._core import (
@@ -17,9 +18,7 @@ from arnold.pipelines.megaplan._core import (
     json_dump,
     latest_plan_meta_path,
     latest_plan_path,
-    load_debt_registry,
     read_json,
-    resolve_debt,
     save_debt_registry,
     save_flag_registry,
 )
@@ -28,6 +27,7 @@ from arnold.pipelines.megaplan.prompts.review import (
     _settled_decisions_block,
     _settled_decisions_instruction,
     parallel_criteria_review_prompt,
+    single_check_review_prompt,
 )
 from arnold.pipelines.megaplan.prompts.tiebreaker_challenger import challenger_prompt
 from arnold.pipelines.megaplan.prompts.tiebreaker_researcher import researcher_prompt
@@ -338,6 +338,7 @@ def _baseline_codex_review_prompt_snapshot(state: PlanState, plan_dir: Path) -> 
     execution = read_json(plan_dir / "execution.json")
     gate = _gate_summary_or_skipped(plan_dir)
     finalize_data = read_json(plan_dir / "finalize.json")
+    projected_review = project_review_context(finalize_data, execution)
     settled_decisions_block = _settled_decisions_block(gate)
     settled_decisions_instruction = _settled_decisions_instruction(gate)
     diff_summary = collect_git_diff_summary(project_dir)
@@ -345,12 +346,12 @@ def _baseline_codex_review_prompt_snapshot(state: PlanState, plan_dir: Path) -> 
     if audit_path.exists():
         audit_block = textwrap.dedent(
             f"""
-            Execution audit (`execution_audit.json`):
-            {json_dump(read_json(audit_path)).strip()}
+            Execution audit source of truth (`execution_audit.json`, prompt projection only):
+            {json_dump(project_execution_audit_context(read_json(audit_path))).strip()}
             """
         ).strip()
     else:
-        audit_block = "Execution audit (`execution_audit.json`): not present. Skip that artifact gracefully and rely on `finalize.json`, `execution.json`, and the git diff."
+        audit_block = "Execution audit source of truth (`execution_audit.json`): not present. Skip that artifact gracefully and rely on `finalize.json`, `execution.json`, the approved plan, and the git diff."
     return textwrap.dedent(
         f"""
         Review the implementation against the success criteria.
@@ -363,8 +364,8 @@ def _baseline_codex_review_prompt_snapshot(state: PlanState, plan_dir: Path) -> 
         Approved plan:
         {latest_plan}
 
-        Execution tracking state (`finalize.json`):
-        {json_dump(finalize_data).strip()}
+        Review execution context (`finalize.json` + `execution.json`, prompt projection only):
+        {json_dump(projected_review).strip()}
 
         Plan metadata:
         {json_dump(latest_meta).strip()}
@@ -374,9 +375,6 @@ def _baseline_codex_review_prompt_snapshot(state: PlanState, plan_dir: Path) -> 
 
         {settled_decisions_block}
 
-        Execution summary:
-        {json_dump(execution).strip()}
-
         {audit_block}
 
         Git diff summary:
@@ -385,13 +383,15 @@ def _baseline_codex_review_prompt_snapshot(state: PlanState, plan_dir: Path) -> 
         Requirements:
         - Verify each success criterion explicitly.
         - Trust executor evidence by default. Dig deeper only where the git diff, `execution_audit.json`, or vague notes make the claim ambiguous.
+        - Use repository tools to inspect relevant files and run focused verification commands when behavior or tests are part of a criterion; include concrete repository-backed evidence for every criterion verdict.
         - Each criterion has a `priority` (`must`, `should`, or `info`). Apply these rules:
-          - `must` criteria are hard gates. A `must` criterion that fails means `needs_rework`.
+          - `must` criteria are hard gates only when backed by a deterministic runnable check that failed on the pre-execute baseline and still fails after execution. Ungrounded prose concerns are advisory.
           - `should` criteria are quality targets. If the spirit is met but the letter is not, mark `pass` with evidence explaining the gap. Only mark `fail` if the intent was clearly missed. A `should` failure alone does NOT require `needs_rework`.
           - `info` criteria are for human reference. Mark them `waived` with a note — do not evaluate them.
           - If a criterion has `requires` capabilities that are not satisfiable by container workers (e.g., `drive_browser`, `subjective_judgment`), mark it `deferred_human` — NOT `fail` or `waived`. Deferred-human criteria do NOT count toward `needs_rework`.
           - If a criterion (any priority) cannot be verified in this context (e.g., requires manual testing or runtime observation), mark it `waived` with an explanation.
-        - Set `review_verdict` to `needs_rework` only when at least one `must` criterion fails or actual implementation work is incomplete. Use `approved` when all `must` criteria pass, even if some `should` criteria are flagged.
+        - Set `review_verdict` to `needs_rework` only for a rework item with `deterministic_check: {{"command": "...", "baseline_status": "failed", "post_status": "failed"}}`. Use `approved` for prose-only concerns; record those as advisory issues instead.
+        - Set `review_completion_status` to `"incomplete"` when you could not inspect the repository or run verification commands; otherwise set it to `"complete"`.
         {settled_decisions_instruction}
         - baseline_test_failures in finalize.json lists tests that were already failing before execution. Do not flag these as rework items unless the executor introduced new failures in those same tests.
         - Cross-reference each task's `files_changed` and `commands_run` against the git diff and any audit findings.
@@ -400,6 +400,7 @@ def _baseline_codex_review_prompt_snapshot(state: PlanState, plan_dir: Path) -> 
         ```json
         {{
           "review_verdict": "approved",
+          "review_completion_status": "complete",
           "criteria": [
             {{
               "name": "All existing tests pass",
@@ -443,10 +444,11 @@ def _baseline_codex_review_prompt_snapshot(state: PlanState, plan_dir: Path) -> 
           - `issue`: what is wrong
           - `expected`: what correct behavior looks like
           - `actual`: what was observed
-          - `evidence_file` (optional): file path supporting the finding
+          - `evidence_file`: file path supporting the finding
           - `flag_id`: critique/review flag ID when applicable, otherwise `null`
           - `source`: short machine-readable source tag when applicable, otherwise `null`
-        - `issues` must still be populated as a flat one-line-per-item summary derived from `rework_items` (for backward compatibility). When approved, both `issues` and `rework_items` should be empty arrays.
+          - `deterministic_check` (required for blocking rework): object with `command`, `baseline_status`, and `post_status`
+        - `issues` must still be populated as a flat one-line-per-item summary derived from `rework_items` (for backward compatibility). When approved, blocking `rework_items` should be empty; prose-only concerns may be summarized in `issues`.
         - When the work needs another execute pass, keep the same shape and change only `review_verdict` to `needs_rework`; make `issues`, `rework_items`, `summary`, and task verdicts specific enough for the executor to act on directly.
         """
     ).strip()
@@ -471,6 +473,58 @@ def test_claude_prep_prompt_includes_nested_harness_guard(tmp_path: Path) -> Non
 
     assert "already running inside the megaplan harness" in prompt
     assert "Do NOT invoke the `megaplan` CLI" in prompt
+
+
+def test_create_prompt_forwards_projection_capabilities_to_execute(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    plan_dir, state = _scaffold(tmp_path)
+    calls: list[object] = []
+    caps = PromptProjectionCapabilities.conservative()
+
+    def _fake_execute(
+        _state: PlanState,
+        _plan_dir: Path,
+        root: Path | None = None,
+        projection_capabilities: PromptProjectionCapabilities | None = None,
+    ) -> str:
+        calls.append((root, projection_capabilities))
+        return "execute"
+
+    monkeypatch.setitem(prompt_module._CODEX_PROMPT_BUILDERS, "execute", _fake_execute)
+
+    prompt = create_codex_prompt(
+        "execute",
+        state,
+        plan_dir,
+        root=tmp_path,
+        projection_capabilities=caps,
+    )
+
+    assert prompt.endswith("execute")
+    assert calls == [(tmp_path, caps)]
+
+
+def test_create_prompt_filters_projection_capabilities_for_non_execute_root_builder(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    plan_dir, state = _scaffold(tmp_path)
+    calls: list[Path | None] = []
+
+    def _fake_gate(_state: PlanState, _plan_dir: Path, root: Path | None = None) -> str:
+        calls.append(root)
+        return "gate"
+
+    monkeypatch.setitem(prompt_module._CODEX_PROMPT_BUILDERS, "gate", _fake_gate)
+
+    prompt = create_codex_prompt(
+        "gate",
+        state,
+        plan_dir,
+        root=tmp_path,
+        projection_capabilities=PromptProjectionCapabilities.conservative(),
+    )
+
+    assert prompt.endswith("gate")
+    assert calls == [tmp_path]
 
 
 def _write_debt_registry(tmp_path: Path, entries: list[dict[str, object]]) -> None:
@@ -1253,15 +1307,20 @@ def test_execute_prompt_omits_debt_watch_items(tmp_path: Path) -> None:
     assert "flagged 3 times across 2 plans" not in prompt
 
 
-def test_resolved_debt_no_longer_appears_in_subsequent_prompts(tmp_path: Path) -> None:
+def test_execute_batch_prompt_omits_debt_watch_items(tmp_path: Path) -> None:
     plan_dir, state = _scaffold(tmp_path)
-    _write_debt_registry(tmp_path, [_debt_entry()])
+    _write_debt_registry(
+        tmp_path,
+        [
+            _debt_entry(
+                concern="timeout recovery: retry backoff remains brittle",
+                occurrence_count=3,
+                plan_ids=["plan-a", "plan-b"],
+            )
+        ],
+    )
 
-    before_prompt = create_claude_prompt("execute", state, plan_dir, root=tmp_path)
-    registry = load_debt_registry(tmp_path)
-    resolve_debt(registry, "DEBT-001", "plan-fixed")
-    save_debt_registry(tmp_path, registry)
-    after_prompt = create_claude_prompt("execute", state, plan_dir, root=tmp_path)
+    prompt = _execute_batch_prompt(state, plan_dir, ["T1"], set(), root=tmp_path)
 
     assert "retry backoff remains brittle" not in before_prompt
     assert "retry backoff remains brittle" not in after_prompt
@@ -1554,6 +1613,117 @@ def test_execute_batch_prompt_handles_first_batch_without_prior_deviations(tmp_p
     assert "None" in prompt
 
 
+def test_execute_prompt_projects_finalize_and_review_context_for_capability_limited_workers(
+    tmp_path: Path,
+) -> None:
+    plan_dir, state = _scaffold(tmp_path)
+    long_note = "long-note " * 120
+    atomic_write_json(
+        plan_dir / "finalize.json",
+        _build_mock_payload(
+            "finalize",
+            state,
+            plan_dir,
+            tasks=[
+                {
+                    "id": "T1",
+                    "description": "Keep this active task description readable in the projected execute prompt.",
+                    "depends_on": [],
+                    "status": "pending",
+                    "executor_notes": long_note,
+                    "files_changed": [],
+                    "commands_run": [],
+                    "evidence_files": [],
+                    "reviewer_verdict": "",
+                }
+            ],
+            sense_checks=[
+                {
+                    "id": "SC1",
+                    "task_id": "T1",
+                    "question": "Does the projected execute prompt keep the active task readable?",
+                    "executor_note": "",
+                    "verdict": "",
+                }
+            ],
+            meta_commentary="meta " * 400,
+        ),
+    )
+    atomic_write_json(
+        plan_dir / "review.json",
+        {
+            "review_verdict": "needs_rework",
+            "issues": ["Prompt is oversized."],
+            "rework_items": [
+                {
+                    "task_id": "T1",
+                    "issue": "Prompt leaks plan-dir evidence paths.",
+                    "expected": "Path should be gated when the worker cannot read the plan dir.",
+                    "actual": "Raw review ledger included the evidence path.",
+                    "evidence_file": str(plan_dir / ".megaplan" / "review.json"),
+                }
+            ],
+            "criteria": [],
+            "summary": "Needs prompt projection.",
+        },
+    )
+
+    prompt = _execute_prompt(
+        state,
+        plan_dir,
+        projection_capabilities=PromptProjectionCapabilities(
+            can_read_plan_dir=False,
+            can_read_project_dir=True,
+            has_file_tools=True,
+            checkpoint_write_access=False,
+        ),
+    )
+
+    assert "Execution tracking source of truth (`finalize.json`, prompt projection only):" in prompt
+    assert "Previous review findings to address on this execution pass (`review.json`, prompt projection only):" in prompt
+    assert "Keep this active task description readable" in prompt
+    assert long_note not in prompt
+    assert "<gated: worker cannot read this path>" in prompt
+    assert "Do NOT attempt checkpoint writes for this run." in prompt
+
+
+def test_execute_batch_prompt_preserves_scope_strings_and_gates_checkpoint_writes(
+    tmp_path: Path,
+) -> None:
+    plan_dir, state = _scaffold(tmp_path)
+    prompt = _execute_batch_prompt(
+        state,
+        plan_dir,
+        ["T1"],
+        set(),
+        projection_capabilities=PromptProjectionCapabilities(
+            can_read_plan_dir=False,
+            can_read_project_dir=True,
+            has_file_tools=True,
+            checkpoint_write_access=False,
+        ),
+        rework_context={
+            "rework_items": [
+                {
+                    "task_id": "T1",
+                    "issue": "Leaked artifact path.",
+                    "expected": "Gate inaccessible plan-dir files.",
+                    "actual": "Prompt exposed a review artifact path.",
+                    "evidence_file": str(plan_dir / ".megaplan" / "review.json"),
+                }
+            ],
+            "issues": ["Leaked artifact path."],
+            "criteria": [],
+        },
+    )
+
+    assert "Only produce `task_updates` for these tasks: [T1]" in prompt
+    assert "Only produce `sense_check_acknowledgments` for these sense checks: [SC1]" in prompt
+    assert "This worker cannot write" in prompt
+    assert "<gated: worker cannot read this path>" in prompt
+    assert "if `" + str(plan_dir / "execution_batch_1.json") + "` is writable" not in prompt
+
+
 def test_review_prompt_gracefully_handles_missing_audit(tmp_path: Path) -> None:
     plan_dir, state = _scaffold(tmp_path)
     prompt = create_claude_prompt("review", state, plan_dir)
@@ -1672,6 +1842,134 @@ def test_parallel_criteria_review_prompt_uses_issue_anchored_context_only(
     assert "Keep the parser fix source-local." in prompt
 
 
+def test_parallel_criteria_review_prompt_large_diff_uses_summary_not_full_patch(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    plan_dir, state = _scaffold(tmp_path)
+    full_patch = (
+        "diff --git a/app.py b/app.py\n"
+        "--- a/app.py\n"
+        "+++ b/app.py\n"
+        "+FULL_PATCH_SENTINEL\n"
+        + ("+" + "x" * 100 + "\n") * (LARGE_REVIEW_DIFF_MAX_BYTES // 50)
+    )
+    monkeypatch.setattr(
+        "megaplan.prompts.review.collect_git_diff_patch",
+        lambda project_dir, base_ref=None: full_patch,
+    )
+    monkeypatch.setattr(
+        "megaplan.prompts.review.collect_git_diff_summary",
+        lambda project_dir, base_ref=None: "M app.py",
+    )
+
+    prompt = parallel_criteria_review_prompt(
+        state, plan_dir, tmp_path, plan_dir / "review_criteria_verdict.json"
+    )
+
+    assert "Large git diff mode:" in prompt
+    assert "Git diff summary:\nM app.py" in prompt
+    assert "Changed files:\n- app.py" in prompt
+    assert "review_completion_status" in prompt
+    assert "FULL_PATCH_SENTINEL" not in prompt
+    assert "Full git diff:" not in prompt
+
+
+def test_single_check_review_prompt_large_diff_requires_tool_backed_checks(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    plan_dir, state = _scaffold(tmp_path)
+    full_patch = (
+        "diff --git a/large.py b/large.py\n"
+        "--- a/large.py\n"
+        "+++ b/large.py\n"
+        "+FULL_PATCH_SENTINEL\n"
+        + ("+" + "y" * 100 + "\n") * (LARGE_REVIEW_DIFF_MAX_BYTES // 50)
+    )
+    monkeypatch.setattr(
+        "megaplan.prompts.review.collect_git_diff_patch",
+        lambda project_dir, base_ref=None: full_patch,
+    )
+    monkeypatch.setattr(
+        "megaplan.prompts.review.collect_git_diff_summary",
+        lambda project_dir, base_ref=None: "M large.py",
+    )
+
+    prompt = single_check_review_prompt(
+        state,
+        plan_dir,
+        tmp_path,
+        {"id": "coverage", "question": "Covered?", "guidance": "Check coverage."},
+        plan_dir / "review_coverage.json",
+        [],
+    )
+
+    assert "Use your tools to inspect the workspace" in prompt
+    assert "evidence_file" in prompt
+    assert "Approved plan:" in prompt
+    assert "Review execution context (`finalize.json` + `execution.json`, prompt projection only):" in prompt
+    assert "FULL_PATCH_SENTINEL" not in prompt
+    assert "Full git diff:" not in prompt
+
+
+def test_review_prompt_uses_milestone_base_sha_for_diff_collection(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    plan_dir, state = _scaffold(tmp_path)
+    state["meta"]["chain_policy"] = {"milestone_base_sha": "abc123base"}
+    seen: dict[str, str | None] = {}
+
+    def fake_patch(project_dir: Path, base_ref: str | None = None) -> str:
+        seen["patch_base"] = base_ref
+        return "diff --git a/app.py b/app.py\n--- a/app.py\n+++ b/app.py\n+print('patched')\n"
+
+    monkeypatch.setattr("megaplan.prompts.review.collect_git_diff_patch", fake_patch)
+
+    prompt = parallel_criteria_review_prompt(
+        state, plan_dir, tmp_path, plan_dir / "review_criteria_verdict.json"
+    )
+
+    assert seen["patch_base"] == "abc123base"
+    assert "diff --git a/app.py b/app.py" in prompt
+
+
+def test_compact_review_prompt_degrades_oversized_review_to_usable_verdict_prompt(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    plan_dir, state = _scaffold(tmp_path)
+    full_patch = (
+        "diff --git a/huge.py b/huge.py\n"
+        "--- a/huge.py\n"
+        "+++ b/huge.py\n"
+        "+FULL_PATCH_SENTINEL\n"
+        + ("+" + "z" * 100 + "\n") * (LARGE_REVIEW_DIFF_MAX_BYTES // 20)
+    )
+    monkeypatch.setattr(
+        "megaplan.prompts.review.collect_git_diff_patch",
+        lambda project_dir, base_ref=None: full_patch,
+    )
+    monkeypatch.setattr(
+        "megaplan.prompts.review.collect_git_diff_summary",
+        lambda project_dir, base_ref=None: "M huge.py",
+    )
+
+    prompt = compact_review_prompt(
+        state,
+        plan_dir,
+        tmp_path,
+        prompt_size_error={"prompt_size": 175460, "max_chars": 150000},
+    )
+
+    assert "Normal review prompt overflow:" in prompt
+    assert "still produce a usable `review_verdict`" in prompt
+    assert "Large git diff mode:" in prompt
+    assert "Git diff summary:\nM huge.py" in prompt
+    assert "FULL_PATCH_SENTINEL" not in prompt
+
+
 def test_plan_prompt_includes_notes_when_present(tmp_path: Path) -> None:
     plan_dir, state = _scaffold(tmp_path)
     state["meta"]["notes"] = [{"note": "Keep it simple", "timestamp": "2026-03-20T00:00:00Z"}]
@@ -1772,6 +2070,228 @@ def test_unsupported_codex_step_raises(tmp_path: Path) -> None:
     plan_dir, state = _scaffold(tmp_path)
     with pytest.raises(Exception):
         create_codex_prompt("clarify", state, plan_dir)
+
+
+# ---------------------------------------------------------------------------
+# T15: Synthetic projection and prompt-size coverage
+# ---------------------------------------------------------------------------
+
+
+def test_execute_prompt_projects_large_ledger_inactive_sentinels_omitted(
+    tmp_path: Path,
+) -> None:
+    """Execute prompt (non-batch) bounds large notes while keeping active descriptions."""
+    plan_dir, state = _scaffold(tmp_path)
+    long_note = "BLOAT-EXECUTOR-NOTE " * 200
+    long_meta = "META-BLOAT " * 600
+
+    atomic_write_json(
+        plan_dir / "finalize.json",
+        _build_mock_payload(
+            "finalize",
+            state,
+            plan_dir,
+            tasks=[
+                {
+                    "id": "T1",
+                    "description": "INACTIVE-SENTINEL-T1",
+                    "depends_on": [],
+                    "status": "pending",
+                    "kind": "code",
+                    "complexity": 2,
+                    "executor_notes": long_note,
+                    "complexity_justification": "Simple.",
+                    "files_changed": ["src/sentinel_1.py"],
+                    "commands_run": [],
+                    "evidence_files": [],
+                    "reviewer_verdict": "",
+                },
+                {
+                    "id": "T2",
+                    "description": "Active task: implement the core feature",
+                    "depends_on": [],
+                    "status": "pending",
+                    "kind": "code",
+                    "complexity": 3,
+                    "executor_notes": long_note,
+                    "complexity_justification": "Complex due to integration.",
+                    "files_changed": ["src/core.py"],
+                    "commands_run": ["pytest tests/test_core.py"],
+                    "evidence_files": [],
+                    "reviewer_verdict": "",
+                },
+            ],
+            sense_checks=[
+                {
+                    "id": "SC1",
+                    "task_id": "T2",
+                    "question": "Does the core feature work?",
+                    "executor_note": long_note,
+                    "verdict": "",
+                }
+            ],
+            meta_commentary=long_meta,
+        ),
+    )
+
+    prompt = _execute_prompt(state, plan_dir, root=tmp_path)
+
+    # Long raw strings must be bounded (projected to ~600 chars)
+    assert long_note not in prompt
+    assert long_meta not in prompt
+
+    # Both task descriptions preserved (non-batch execute shows all tasks)
+    assert "Active task: implement the core feature" in prompt
+
+    # Projection label present
+    assert "prompt projection only" in prompt
+
+    # Evidence preserved for active task
+    assert "src/core.py" in prompt
+
+    # Both T1 and T2 rendered (non-batch shows all tasks)
+    assert "T1" in prompt
+    assert "T2" in prompt
+
+
+def test_execute_prompt_preserves_exact_scoping_strings(tmp_path: Path) -> None:
+    """Non-batch execute prompt preserves exact source-of-truth and scoping strings."""
+    plan_dir, state = _scaffold(tmp_path)
+    atomic_write_json(
+        plan_dir / "finalize.json",
+        _build_mock_payload(
+            "finalize",
+            state,
+            plan_dir,
+            tasks=[
+                {
+                    "id": "T1",
+                    "description": "Implement the plan",
+                    "depends_on": [],
+                    "status": "pending",
+                    "kind": "code",
+                    "complexity": 2,
+                    "executor_notes": "",
+                    "files_changed": [],
+                    "commands_run": [],
+                    "evidence_files": [],
+                    "reviewer_verdict": "",
+                }
+            ],
+            sense_checks=[
+                {
+                    "id": "SC1",
+                    "task_id": "T1",
+                    "question": "Done?",
+                    "executor_note": "",
+                    "verdict": "",
+                }
+            ],
+        ),
+    )
+
+    prompt = _execute_prompt(state, plan_dir, root=tmp_path)
+
+    # Exact scoping strings
+    assert "Execution tracking source of truth (`finalize.json`, prompt projection only):" in prompt
+    assert "Absolute checkpoint path for best-effort progress checkpoints (NOT `finalize.json`):" in prompt
+    assert "Plan metadata:" in prompt
+    assert "Gate summary:" in prompt
+    assert "Robustness level:" in prompt
+
+
+def test_execute_prompt_no_artifact_references_for_no_file_tools(
+    tmp_path: Path,
+) -> None:
+    """With conservative capabilities, prompt renders without checkpoint-write references."""
+    plan_dir, state = _scaffold(tmp_path)
+    atomic_write_json(
+        plan_dir / "finalize.json",
+        _build_mock_payload(
+            "finalize",
+            state,
+            plan_dir,
+            tasks=[
+                {
+                    "id": "T1",
+                    "description": "Implement feature",
+                    "depends_on": [],
+                    "status": "pending",
+                    "kind": "code",
+                    "complexity": 2,
+                    "executor_notes": "",
+                    "files_changed": ["src/module.py"],
+                    "commands_run": ["pytest"],
+                    "evidence_files": [],
+                    "reviewer_verdict": "",
+                }
+            ],
+            sense_checks=[],
+        ),
+    )
+
+    caps = PromptProjectionCapabilities.conservative()
+    prompt = _execute_prompt(
+        state, plan_dir, root=tmp_path, projection_capabilities=caps
+    )
+
+    assert len(prompt) > 0
+    assert "T1" in prompt
+
+    # With conservative caps (no checkpoint write), the prompt indicates
+    # the worker should not attempt checkpoint writes
+    assert "Do NOT attempt checkpoint writes" in prompt
+
+
+def test_execute_prompt_budget_assertion(tmp_path: Path) -> None:
+    """Non-batch execute prompt with bloated data stays under 40,000 characters."""
+    plan_dir, state = _scaffold(tmp_path)
+    long_note = "EXECUTOR-BLOAT " * 100
+    long_meta = "META " * 400
+
+    tasks = []
+    for i in range(1, 16):
+        tasks.append({
+            "id": f"T{i}",
+            "description": f"Task {i} description",
+            "depends_on": [],
+            "status": "done" if i < 15 else "pending",
+            "kind": "code",
+            "complexity": 2,
+            "executor_notes": long_note,
+            "complexity_justification": "Simple task.",
+            "files_changed": [f"src/file_{i}.py"],
+            "commands_run": [],
+            "evidence_files": [],
+            "reviewer_verdict": "",
+        })
+
+    atomic_write_json(
+        plan_dir / "finalize.json",
+        _build_mock_payload(
+            "finalize",
+            state,
+            plan_dir,
+            tasks=tasks,
+            sense_checks=[
+                {
+                    "id": f"SC{i}",
+                    "task_id": f"T{i}",
+                    "question": f"Verify T{i}",
+                    "executor_note": "",
+                    "verdict": "",
+                }
+                for i in range(1, 16)
+            ],
+            meta_commentary=long_meta,
+        ),
+    )
+
+    prompt = _execute_prompt(state, plan_dir, root=tmp_path)
+
+    # Prompt must stay well under 40k chars
+    assert len(prompt) < 40_000, f"Prompt size {len(prompt)} exceeds budget"
+    assert long_note not in prompt
 
 
 # ---------------------------------------------------------------------------
@@ -2146,6 +2666,221 @@ def test_review_doc_and_joke_json_examples_differ(tmp_path: Path) -> None:
     # ---- Summary example differs ----
     assert '"summary": "Approved. All must criteria pass."' in doc_prompt
     assert '"summary": "Approved. The scene meets the brief and the primary criterion."' in joke_prompt
+
+
+def test_review_doc_prompt_projects_large_ledger(tmp_path: Path) -> None:
+    """_review_doc_prompt bounds ledger sections without removing inline document/plan content."""
+    plan_dir, state = _scaffold_doc_review(tmp_path)
+    long_note = "BLARGH-EXECUTOR-NOTE " * 120
+    long_justification = "complexity-justification " * 80
+    long_meta = "meta-commentary " * 400
+    long_finding = "AUDIT-FINDING-LONG " * 120
+
+    # Overwrite finalize.json with bloated fields
+    atomic_write_json(
+        plan_dir / "finalize.json",
+        {
+            "tasks": [
+                {
+                    "id": "T1",
+                    "description": "Write the document",
+                    "depends_on": [],
+                    "status": "done",
+                    "kind": "code",
+                    "complexity": 3,
+                    "executor_notes": long_note,
+                    "complexity_justification": long_justification,
+                    "files_changed": ["output.md"],
+                    "commands_run": [],
+                    "evidence_files": [],
+                    "reviewer_verdict": "",
+                }
+            ],
+            "sense_checks": [
+                {
+                    "id": "SC1",
+                    "task_id": "T1",
+                    "question": "Does the output exist?",
+                    "executor_note": long_note,
+                    "verdict": "",
+                }
+            ],
+            "meta_commentary": long_meta,
+        },
+    )
+    # Overwrite execution.json with bloated task updates
+    atomic_write_json(
+        plan_dir / "execution.json",
+        {
+            "output": "done",
+            "deviations": [],
+            "files_changed": ["output.md"],
+            "commands_run": [],
+            "task_updates": [
+                {
+                    "task_id": "T1",
+                    "status": "done",
+                    "executor_notes": long_note,
+                    "files_changed": ["output.md"],
+                    "commands_run": [],
+                }
+            ],
+            "sense_check_acknowledgments": [
+                {"sense_check_id": "SC1", "executor_note": long_note}
+            ],
+        },
+    )
+    # Add execution_audit.json with bloated findings
+    atomic_write_json(
+        plan_dir / "execution_audit.json",
+        {
+            "findings": [long_finding, "short finding"],
+            "files_in_diff": [f"doc/section_{i}.md" for i in range(60)],
+            "files_claimed": [f"doc/claimed_{i}.md" for i in range(60)],
+            "skipped": False,
+            "reason": "",
+        },
+    )
+
+    prompt = _review_doc_prompt(
+        state,
+        plan_dir,
+        review_intro="Review the document critically against user intent and observable success criteria.",
+        criteria_guidance="Judge against the success criteria, not plan elegance.",
+        task_guidance="Review each task by cross-referencing the executor's per-task `sections_written` against the output document.",
+        sense_check_guidance="Review every sense check explicitly.",
+    )
+
+    # Inline content must be preserved
+    assert "Approved plan:" in prompt
+    assert "# Doc Plan" in prompt
+    assert "Output document content:" in prompt
+    assert "# Final Document" in prompt
+    assert "All sections present." in prompt
+    assert "Document covers all planned sections" in prompt
+
+    # Projected context label must be present
+    assert "Review execution context (`finalize.json` + `execution.json`, prompt projection only):" in prompt
+
+    # Audit block must be present
+    assert "Execution audit source of truth (`execution_audit.json`, prompt projection only):" in prompt
+
+    # Bloated raw full strings must be absent (bounded by projection)
+    assert long_note not in prompt
+    assert long_finding not in prompt
+    assert long_meta not in prompt
+
+    # Capped file lists: 40th file in, 41st file out
+    assert '"doc/section_39.md"' in prompt
+    assert '"doc/section_40.md"' not in prompt
+
+
+def test_review_joke_prompt_projects_large_ledger(tmp_path: Path) -> None:
+    """_review_joke_prompt bounds ledger sections without removing inline scene/primary-criterion content."""
+    plan_dir, state = _scaffold_joke_review(tmp_path)
+    long_note = "JOKE-EXECUTOR-NOTE " * 120
+    long_justification = "complexity-justification " * 80
+    long_meta = "meta-commentary " * 400
+    long_finding = "SCENE-AUDIT-FINDING " * 120
+
+    # Overwrite finalize.json with bloated fields
+    atomic_write_json(
+        plan_dir / "finalize.json",
+        {
+            "tasks": [
+                {
+                    "id": "T1",
+                    "description": "Write the scene",
+                    "depends_on": [],
+                    "status": "done",
+                    "kind": "creative",
+                    "complexity": 3,
+                    "executor_notes": long_note,
+                    "complexity_justification": long_justification,
+                    "files_changed": ["scenes/scene.md"],
+                    "commands_run": [],
+                    "evidence_files": [],
+                    "reviewer_verdict": "",
+                }
+            ],
+            "sense_checks": [
+                {
+                    "id": "SC1",
+                    "task_id": "T1",
+                    "question": "Does the scene exist?",
+                    "executor_note": long_note,
+                    "verdict": "",
+                }
+            ],
+            "meta_commentary": long_meta,
+        },
+    )
+    # Overwrite execution.json with bloated task updates
+    atomic_write_json(
+        plan_dir / "execution.json",
+        {
+            "output": "done",
+            "deviations": [],
+            "files_changed": ["scenes/scene.md"],
+            "commands_run": [],
+            "task_updates": [
+                {
+                    "task_id": "T1",
+                    "status": "done",
+                    "executor_notes": long_note,
+                    "files_changed": ["scenes/scene.md"],
+                    "commands_run": [],
+                }
+            ],
+            "sense_check_acknowledgments": [
+                {"sense_check_id": "SC1", "executor_note": long_note}
+            ],
+        },
+    )
+    # Add execution_audit.json with bloated findings
+    atomic_write_json(
+        plan_dir / "execution_audit.json",
+        {
+            "findings": [long_finding, "short finding"],
+            "files_in_diff": [f"scenes/beat_{i}.md" for i in range(60)],
+            "files_claimed": [f"scenes/claimed_{i}.md" for i in range(60)],
+            "skipped": False,
+            "reason": "",
+        },
+    )
+
+    prompt = _review_joke_prompt(
+        state,
+        plan_dir,
+        review_intro="Review the scene critically against the brief, the declared primary criterion, and the approved scene canvas.",
+        criteria_guidance="Judge first against the declared primary criterion, then against the remaining success criteria and scene-canvas commitments.",
+        task_guidance="Review each task by cross-referencing the executor's per-task `sections_written` against the output scene prose.",
+        sense_check_guidance="Review every sense check explicitly.",
+    )
+
+    # Inline content must be preserved
+    assert "Approved scene canvas:" in prompt
+    assert "# Scene Canvas: Umbrella Return" in prompt
+    assert "Primary criterion:" in prompt
+    assert "weirdest coherent" in prompt
+    assert "Output scene content:" in prompt
+    assert "The umbrella refuses to be returned." in prompt
+    assert "Scene serves the declared primary criterion" in prompt
+
+    # Projected context label must be present
+    assert "Review execution context (`finalize.json` + `execution.json`, prompt projection only):" in prompt
+
+    # Audit block must be present
+    assert "Execution audit source of truth (`execution_audit.json`, prompt projection only):" in prompt
+
+    # Bloated raw full strings must be absent (bounded by projection)
+    assert long_note not in prompt
+    assert long_finding not in prompt
+    assert long_meta not in prompt
+
+    # Capped file lists: 40th file in, 41st file out
+    assert '"scenes/beat_39.md"' in prompt
+    assert '"scenes/beat_40.md"' not in prompt
 
 
 def test_finalize_prompt_has_harness_verification_framing(tmp_path: Path) -> None:

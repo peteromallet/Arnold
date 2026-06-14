@@ -399,6 +399,21 @@
               "action": "_StoreAction",
               "choices": null,
               "const": null,
+              "default": null,
+              "dest": "project_dir",
+              "help": null,
+              "metavar": null,
+              "nargs": null,
+              "option_strings": [
+                "--project-dir"
+              ],
+              "required": false,
+              "type": null
+            },
+            {
+              "action": "_StoreAction",
+              "choices": null,
+              "const": null,
               "default": 5,
               "dest": "stall_threshold",
               "help": "Exit if the plan state doesn't change for this many iterations AND no new review.json has been written (default 5). Use --max-review-rework-cycles for the rework-loop limit — execute rework can span many iterations with state pinned at 'finalized', which is not a real stall.",
@@ -1578,6 +1593,21 @@
                   "choices": null,
                   "const": true,
                   "default": false,
+                  "dest": "fresh",
+                  "help": "Discard this spec's persisted chain state and milestone branches before starting. With --no-push, remote branch deletion is skipped.",
+                  "metavar": null,
+                  "nargs": "0",
+                  "option_strings": [
+                    "--fresh"
+                  ],
+                  "required": false,
+                  "type": null
+                },
+                {
+                  "action": "_StoreTrueAction",
+                  "choices": null,
+                  "const": true,
+                  "default": false,
                   "dest": "one",
                   "help": "Drive at most one pending milestone, persist progress, then stop cleanly.",
                   "metavar": null,
@@ -2243,6 +2273,21 @@
               "option_strings": [
                 "--help",
                 "-h"
+              ],
+              "required": false,
+              "type": null
+            },
+            {
+              "action": "_StoreAction",
+              "choices": null,
+              "const": null,
+              "default": null,
+              "dest": "project_dir",
+              "help": null,
+              "metavar": null,
+              "nargs": null,
+              "option_strings": [
+                "--project-dir"
               ],
               "required": false,
               "type": null
@@ -3440,6 +3485,21 @@
               "choices": null,
               "const": null,
               "default": null,
+              "dest": "project_dir",
+              "help": null,
+              "metavar": null,
+              "nargs": null,
+              "option_strings": [
+                "--project-dir"
+              ],
+              "required": false,
+              "type": null
+            },
+            {
+              "action": "_StoreAction",
+              "choices": null,
+              "const": null,
+              "default": null,
               "dest": "plan",
               "help": null,
               "metavar": null,
@@ -3786,6 +3846,21 @@
               "type": null
             },
             {
+              "action": "_StoreAction",
+              "choices": null,
+              "const": null,
+              "default": null,
+              "dest": "project_dir",
+              "help": null,
+              "metavar": null,
+              "nargs": null,
+              "option_strings": [
+                "--project-dir"
+              ],
+              "required": false,
+              "type": null
+            },
+            {
               "action": "_StoreTrueAction",
               "choices": null,
               "const": true,
@@ -3973,6 +4048,21 @@
               "option_strings": [
                 "--help",
                 "-h"
+              ],
+              "required": false,
+              "type": null
+            },
+            {
+              "action": "_StoreAction",
+              "choices": null,
+              "const": null,
+              "default": null,
+              "dest": "project_dir",
+              "help": null,
+              "metavar": null,
+              "nargs": null,
+              "option_strings": [
+                "--project-dir"
               ],
               "required": false,
               "type": null
@@ -4212,6 +4302,21 @@
               "option_strings": [
                 "--help",
                 "-h"
+              ],
+              "required": false,
+              "type": null
+            },
+            {
+              "action": "_StoreAction",
+              "choices": null,
+              "const": null,
+              "default": null,
+              "dest": "project_dir",
+              "help": null,
+              "metavar": null,
+              "nargs": null,
+              "option_strings": [
+                "--project-dir"
               ],
               "required": false,
               "type": null
@@ -4885,6 +4990,27 @@
               ],
               "required": false,
               "type": null
+            },
+            {
+              "action": "_StoreAction",
+              "choices": [
+                1,
+                2,
+                3,
+                4,
+                5
+              ],
+              "const": null,
+              "default": null,
+              "dest": "max_execute_tier",
+              "help": "Cap tier-routed execute lookup at N (1-5). A complexity above N routes as tier N; unset means no cap.",
+              "metavar": "N",
+              "nargs": null,
+              "option_strings": [
+                "--max-execute-tier"
+              ],
+              "required": false,
+              "type": "int"
             },
             {
               "action": "_StoreTrueAction",
@@ -6082,6 +6208,21 @@
               "action": "_StoreAction",
               "choices": null,
               "const": null,
+              "default": null,
+              "dest": "project_dir",
+              "help": null,
+              "metavar": null,
+              "nargs": null,
+              "option_strings": [
+                "--project-dir"
+              ],
+              "required": false,
+              "type": null
+            },
+            {
+              "action": "_StoreAction",
+              "choices": null,
+              "const": null,
               "default": "",
               "dest": "reason",
               "help": null,
@@ -6432,6 +6573,21 @@
               "choices": null,
               "const": null,
               "default": null,
+              "dest": "project_dir",
+              "help": null,
+              "metavar": null,
+              "nargs": null,
+              "option_strings": [
+                "--project-dir"
+              ],
+              "required": false,
+              "type": null
+            },
+            {
+              "action": "_StoreAction",
+              "choices": null,
+              "const": null,
+              "default": null,
               "dest": "plan",
               "help": null,
               "metavar": null,
@@ -6662,6 +6818,21 @@
               "option_strings": [
                 "--help",
                 "-h"
+              ],
+              "required": false,
+              "type": null
+            },
+            {
+              "action": "_StoreAction",
+              "choices": null,
+              "const": null,
+              "default": null,
+              "dest": "project_dir",
+              "help": null,
+              "metavar": null,
+              "nargs": null,
+              "option_strings": [
+                "--project-dir"
               ],
               "required": false,
               "type": null
@@ -6916,6 +7087,21 @@
               "option_strings": [
                 "--help",
                 "-h"
+              ],
+              "required": false,
+              "type": null
+            },
+            {
+              "action": "_StoreAction",
+              "choices": null,
+              "const": null,
+              "default": null,
+              "dest": "project_dir",
+              "help": null,
+              "metavar": null,
+              "nargs": null,
+              "option_strings": [
+                "--project-dir"
               ],
               "required": false,
               "type": null
@@ -7238,6 +7424,21 @@
               "choices": null,
               "const": null,
               "default": null,
+              "dest": "project_dir",
+              "help": null,
+              "metavar": null,
+              "nargs": null,
+              "option_strings": [
+                "--project-dir"
+              ],
+              "required": false,
+              "type": null
+            },
+            {
+              "action": "_StoreAction",
+              "choices": null,
+              "const": null,
+              "default": null,
               "dest": "choice",
               "help": "For YAML pipelines paused at human_gate: the choice to resume with (e.g. continue, stop)",
               "metavar": null,
@@ -7267,6 +7468,21 @@
               "option_strings": [
                 "--help",
                 "-h"
+              ],
+              "required": false,
+              "type": null
+            },
+            {
+              "action": "_StoreAction",
+              "choices": null,
+              "const": null,
+              "default": null,
+              "dest": "project_dir",
+              "help": null,
+              "metavar": null,
+              "nargs": null,
+              "option_strings": [
+                "--project-dir"
               ],
               "required": false,
               "type": null
@@ -7521,6 +7737,21 @@
               "option_strings": [
                 "--help",
                 "-h"
+              ],
+              "required": false,
+              "type": null
+            },
+            {
+              "action": "_StoreAction",
+              "choices": null,
+              "const": null,
+              "default": null,
+              "dest": "project_dir",
+              "help": null,
+              "metavar": null,
+              "nargs": null,
+              "option_strings": [
+                "--project-dir"
               ],
               "required": false,
               "type": null
@@ -8077,6 +8308,21 @@
               "option_strings": [
                 "--help",
                 "-h"
+              ],
+              "required": false,
+              "type": null
+            },
+            {
+              "action": "_StoreAction",
+              "choices": null,
+              "const": null,
+              "default": null,
+              "dest": "project_dir",
+              "help": null,
+              "metavar": null,
+              "nargs": null,
+              "option_strings": [
+                "--project-dir"
               ],
               "required": false,
               "type": null
@@ -10509,6 +10755,21 @@
               "option_strings": [
                 "--help",
                 "-h"
+              ],
+              "required": false,
+              "type": null
+            },
+            {
+              "action": "_StoreAction",
+              "choices": null,
+              "const": null,
+              "default": null,
+              "dest": "project_dir",
+              "help": null,
+              "metavar": null,
+              "nargs": null,
+              "option_strings": [
+                "--project-dir"
               ],
               "required": false,
               "type": null

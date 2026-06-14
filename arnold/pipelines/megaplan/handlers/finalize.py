@@ -708,15 +708,36 @@ def _capture_test_baseline(project_dir: Path, config: dict[str, Any]) -> dict[st
             "baseline_test_command": "pytest --tb=no -q --no-header -rA",
         }
 
-    # Configurable timeout -- read from config, validate as positive int, default 900s.
+    # Two caps govern baseline capture (see suite_runner._wait_for_process):
+    #
+    #   * IDLE timeout (primary) -- a true hang detector keyed on test output.
+    #     While the suite's log keeps growing it is making progress and is left
+    #     alone; only a log that goes SILENT for `idle` seconds is treated as
+    #     wedged. This is independent of suite size, so it never needs re-tuning
+    #     as the suite grows -- the failure mode that produced this null baseline
+    #     (a 10k-test suite that legitimately runs past a fixed wall-clock cap)
+    #     simply cannot recur, because a moving suite is never silent.
+    #   * ABSOLUTE ceiling (last resort) -- a generous runaway guard. On timeout
+    #     the capture emits a POISON value (baseline_test_failures=None) which
+    #     breaks the downstream no-new-failures checkpoint, so a FALSE trip is
+    #     expensive; with the idle detector doing the real work this ceiling
+    #     should essentially never trip for a healthy suite. Default 3600s.
+    #
+    # Override ABSOLUTE ceiling via MEGAPLAN_TEST_BASELINE_TIMEOUT_S (env) or
+    # test_baseline_timeout (config); IDLE via MEGAPLAN_TEST_BASELINE_IDLE_TIMEOUT_S
+    # (env) or test_baseline_idle_timeout (config).
     raw_timeout = config.get("test_baseline_timeout")
+    if raw_timeout is None:
+        _env_timeout = os.getenv("MEGAPLAN_TEST_BASELINE_TIMEOUT_S")
+        if _env_timeout:
+            raw_timeout = _env_timeout
     try:
         if raw_timeout is not None:
             timeout = int(raw_timeout)
             if timeout <= 0:
                 raise ValueError(f"test_baseline_timeout must be a positive int, got {raw_timeout!r}")
         else:
-            timeout = 900
+            timeout = 3600
     except (ValueError, TypeError):
         return {
             "baseline_test_failures": None,
@@ -726,6 +747,22 @@ def _capture_test_baseline(project_dir: Path, config: dict[str, Any]) -> dict[st
                 "must be a positive integer."
             ),
         }
+
+    raw_idle = config.get("test_baseline_idle_timeout")
+    if raw_idle is None:
+        _env_idle = os.getenv("MEGAPLAN_TEST_BASELINE_IDLE_TIMEOUT_S")
+        if _env_idle:
+            raw_idle = _env_idle
+    # Default 300s: pytest -q emits a progress char only *after* each test, so the
+    # idle gap equals the slowest single test. 300s tolerates a slow integration
+    # test (subprocess/LLM spawn) while still catching a genuinely wedged (infinite)
+    # suite; a false idle-trip re-poisons the baseline, so err generous.
+    try:
+        idle_seconds = int(raw_idle) if raw_idle is not None else 300
+        if idle_seconds <= 0:
+            idle_seconds = 300
+    except (ValueError, TypeError):
+        idle_seconds = 300
 
     import time as _time_mod
     from arnold.pipelines.megaplan.orchestration.suite_runner import append_suite_run, run_suite
@@ -773,13 +810,21 @@ def _capture_test_baseline(project_dir: Path, config: dict[str, Any]) -> dict[st
     # The set identity holds — the same failing tests are reported.
 
     if result.status == "timeout":
+        if getattr(result, "timeout_reason", None) == "idle":
+            note = (
+                f"Baseline test capture stalled: no test output for {idle_seconds}s "
+                f"(suite appears wedged, not merely slow) while running: {result.command}"
+            )
+        else:
+            note = (
+                f"Baseline test capture hit the absolute {timeout}s ceiling "
+                f"(suite still producing output but never finished) while running: "
+                f"{result.command}"
+            )
         return {
             "baseline_test_failures": None,
             "baseline_test_command": result.command,
-            "baseline_test_note": (
-                f"Baseline test capture timed out after {timeout} seconds "
-                f"while running: {result.command}"
-            ),
+            "baseline_test_note": note,
         }
     if result.status == "runner_error":
         return {

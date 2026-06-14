@@ -16,6 +16,7 @@ import os
 import signal
 import subprocess
 import time
+from pathlib import Path
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -141,6 +142,23 @@ def spawn(*args: Any, **kw: Any) -> subprocess.Popen:
     kw.setdefault("start_new_session", True)
     _strip_setsid_collision(kw)
     return subprocess.Popen(*args, **kw)
+
+
+def megaplan_engine_root() -> Path:
+    """Return the source root for the currently running megaplan package."""
+    import megaplan
+
+    return Path(megaplan.__file__).resolve().parent.parent
+
+
+def megaplan_engine_env(base_env: dict[str, str] | None = None) -> dict[str, str]:
+    """Return an env that resolves ``python -m megaplan`` from this engine."""
+    root = str(megaplan_engine_root())
+    env = dict(os.environ if base_env is None else base_env)
+    current = env.get("PYTHONPATH")
+    parts = [part for part in (current or "").split(os.pathsep) if part]
+    env["PYTHONPATH"] = os.pathsep.join([root, *[part for part in parts if part != root]])
+    return env
 
 
 async def spawn_async(*args: Any, **kw: Any) -> asyncio.subprocess.Process:
@@ -293,6 +311,17 @@ class TmuxSession:
                 self.name,
                 result.returncode,
             )
+        try:
+            subprocess.run(
+                ["tmux", "-L", self.socket, "kill-server"],
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+        except FileNotFoundError:
+            pass
+
+        # Reap the private server so no idle daemon lingers (exit-empty off).
         try:
             subprocess.run(
                 ["tmux", "-L", self.socket, "kill-server"],

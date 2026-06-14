@@ -6,6 +6,7 @@ import hashlib
 import json
 import os
 import shutil
+import subprocess
 import sys
 from datetime import datetime, timezone
 from importlib import resources
@@ -1917,6 +1918,86 @@ def _setup_init_worktree(args: argparse.Namespace) -> None:
         )
 
 
+def _reset_chain_worktree_target(
+    invoking_repo: Path,
+    target: Path,
+    branch: str,
+    *,
+    worktree_registered: Callable[[Path, Path], bool],
+) -> None:
+    """Clear the named chain worktree target for an explicit --fresh start."""
+    if not (target.exists() or worktree_registered(invoking_repo, target)):
+        return
+    if worktree_registered(invoking_repo, target):
+        proc = subprocess.run(
+            ["git", "worktree", "remove", "--force", str(target)],
+            cwd=str(invoking_repo),
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if proc.returncode != 0:
+            raise CliError(
+                "worktree_reset_failed",
+                (
+                    f"refusing --fresh worktree reset: could not remove registered "
+                    f"worktree at {target}: {(proc.stderr or proc.stdout).strip()}"
+                ),
+            )
+    if target.exists():
+        shutil.rmtree(target)
+    proc = subprocess.run(
+        ["git", "show-ref", "--verify", "--quiet", f"refs/heads/{branch}"],
+        cwd=str(invoking_repo),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if proc.returncode == 0:
+        delete = subprocess.run(
+            ["git", "branch", "-D", branch],
+            cwd=str(invoking_repo),
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if delete.returncode != 0:
+            raise CliError(
+                "worktree_reset_failed",
+                (
+                    f"refusing --fresh worktree reset: could not delete local "
+                    f"branch {branch!r}: {(delete.stderr or delete.stdout).strip()}"
+                ),
+            )
+
+
+def _chain_worktree_base_ref(args: argparse.Namespace) -> str:
+    """Resolve the git ref to fork the chain's shared worktree from.
+
+    Explicit ``--worktree-from`` always wins. Otherwise default to the chain
+    spec's ``base_branch`` — NOT the invoking ``HEAD``. The chain runs every
+    milestone off ``base_branch`` (``git checkout -B <milestone> <base_branch>``),
+    so forking the worktree from a stale invoking HEAD makes any carried-untracked
+    file that is *tracked* on ``base_branch`` collide on that checkout
+    ("untracked working tree files would be overwritten"; ticket 01KTQ35AB8).
+    Forking from ``base_branch`` lands the carried dirt on top of the base the
+    chain actually uses, so the checkout is a no-op base and never collides.
+    Falls back to ``HEAD`` if the spec is absent or unreadable.
+    """
+    explicit = getattr(args, "worktree_from", None)
+    if explicit:
+        return explicit
+    spec_path = getattr(args, "spec", None)
+    if spec_path:
+        try:
+            from megaplan.chain import load_spec
+
+            return load_spec(Path(spec_path)).base_branch
+        except CliError:
+            pass
+    return "HEAD"
+
+
 def _setup_chain_worktree(args: argparse.Namespace) -> None:
     """Create a shared worktree for ``megaplan chain`` and reroot the command.
 
@@ -1979,6 +2060,13 @@ def _setup_chain_worktree(args: argparse.Namespace) -> None:
     ensure_no_inprogress_op(invoking_repo)
 
     target = (Path.home() / "Documents" / ".megaplan-worktrees" / name).resolve()
+    if bool(getattr(args, "fresh", False)):
+        _reset_chain_worktree_target(
+            invoking_repo,
+            target,
+            name,
+            worktree_registered=worktree_registered,
+        )
     if target.exists():
         raise CliError(
             "worktree_target_exists",
@@ -1997,7 +2085,7 @@ def _setup_chain_worktree(args: argparse.Namespace) -> None:
             "pick a different --in-worktree name",
         )
 
-    base_ref = getattr(args, "worktree_from", None) or "HEAD"
+    base_ref = _chain_worktree_base_ref(args)
     base_sha = resolve_ref(invoking_repo, base_ref)
     create_named_worktree(invoking_repo, target, base_sha, name)
 

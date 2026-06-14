@@ -394,6 +394,12 @@ def test_run_hermes_step_uses_worker_options_and_preserves_minimax_fallback(
         def interrupt(self, _reason=None):
             return None
 
+        def set_response_format(self, *_args, **_kwargs):
+            return None
+
+        def set_response_format(self, *_args, **_kwargs):
+            return None
+
     def _fake_parse_agent_output(agent, result, **kwargs):
         parse_calls.append(kwargs.get("output_path"))
         return {"checks": []}, result.get("final_response", "")

@@ -224,8 +224,78 @@ def test_get_worker_capabilities_default_fallback() -> None:
     state = {"config": {}}
     caps = get_worker_capabilities(state)
     assert len(caps) > 0
+    assert "premium" not in caps
+    assert "claude" in caps
     for agent_caps in caps.values():
         assert agent_caps == set(DEFAULT_CONTAINER_CAPABILITIES)
+
+
+def test_get_worker_capabilities_vendor_fallback_uses_codex_not_symbolic_premium() -> None:
+    state = {"config": {"vendor": "codex"}}
+    caps = get_worker_capabilities(state)
+    assert "premium" not in caps
+    assert "codex" in caps
+    assert "claude" not in caps
+
+
+# ---------------------------------------------------------------------------
+# T20: Capability tests — no bogus "premium" worker, concrete premium
+#      workers (Claude/Codex) still represented with correct capabilities
+# ---------------------------------------------------------------------------
+
+
+def test_default_fallback_exact_agents_no_premium_leakage() -> None:
+    """Default fallback must contain exactly claude + hermes, never premium."""
+    state = {"config": {}}
+    caps = get_worker_capabilities(state)
+    # No symbolic premium worker anywhere.
+    assert "premium" not in caps
+    # Default vendor is claude, so claude must be present alongside hermes.
+    assert set(caps.keys()) == {"claude", "hermes"}
+    # Every agent must have the full container capabilities.
+    for agent_caps in caps.values():
+        assert agent_caps == set(DEFAULT_CONTAINER_CAPABILITIES)
+
+
+def test_codex_vendor_fallback_exact_agents_no_premium_leakage() -> None:
+    """Codex-vendor fallback must contain exactly codex + hermes, never premium or claude."""
+    state = {"config": {"vendor": "codex"}}
+    caps = get_worker_capabilities(state)
+    # No symbolic premium worker, and claude must not leak in.
+    assert "premium" not in caps
+    assert "claude" not in caps
+    assert set(caps.keys()) == {"codex", "hermes"}
+    for agent_caps in caps.values():
+        assert agent_caps == set(DEFAULT_CONTAINER_CAPABILITIES)
+
+
+def test_claude_vendor_fallback_exact_agents_no_premium_leakage() -> None:
+    """Explicit claude-vendor fallback must contain exactly claude + hermes, never premium or codex."""
+    state = {"config": {"vendor": "claude"}}
+    caps = get_worker_capabilities(state)
+    assert "premium" not in caps
+    assert "codex" not in caps
+    assert set(caps.keys()) == {"claude", "hermes"}
+    for agent_caps in caps.values():
+        assert agent_caps == set(DEFAULT_CONTAINER_CAPABILITIES)
+
+
+def test_explicit_workers_config_never_leaks_premium_from_defaults() -> None:
+    """When explicit workers are configured, premium must not leak in from defaults."""
+    state = {
+        "config": {
+            "workers": {
+                "custom-agent": {"verifies": ["run_tests"]},
+            }
+        }
+    }
+    caps = get_worker_capabilities(state)
+    assert "premium" not in caps
+    assert "claude" not in caps
+    assert "codex" not in caps
+    assert "hermes" not in caps
+    assert set(caps.keys()) == {"custom-agent"}
+    assert caps["custom-agent"] == {"run_tests"}
 
 
 def test_union_verifies_merges_all() -> None:

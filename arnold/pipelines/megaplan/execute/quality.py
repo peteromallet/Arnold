@@ -281,6 +281,8 @@ def _auto_attribute_unclaimed_paths(
     batch_task_ids: list[str],
     issues: list[str],
     capture_recursive_snapshot_fn: Callable[[Path], tuple[dict[str, str], str | None]],
+    carry_forward_paths: set[str] | None = None,
+    base_ref: str | None = None,
 ) -> AttributionResult:
     batch_id_set = set(batch_task_ids)
     tasks = finalize_data.get("tasks") or []
@@ -355,6 +357,14 @@ def _auto_attribute_unclaimed_paths(
         return AttributionResult(records=[], recursive_snapshot=None)
 
     git_paths = {path for path in snapshot if not path.endswith("/")}
+    if base_ref is not None:
+        from megaplan.loop.git import _collect_committed_range_paths
+        try:
+            window_paths = _collect_committed_range_paths(project_dir, base_ref=base_ref)
+        except Exception:
+            window_paths = None
+        if window_paths is not None:
+            git_paths = {p for p in git_paths if p in window_paths}
     claimed = {
         _normalize_execute_claimed_path(path, project_dir)
         for task in tasks
@@ -362,6 +372,13 @@ def _auto_attribute_unclaimed_paths(
         if isinstance(path, str) and path.strip()
     }
     unclaimed_paths = sorted(git_paths - claimed)
+    # Carry-forward paths are inherited from a prior milestone — never auto-attributed.
+    if carry_forward_paths:
+        unclaimed_paths = [
+            p for p in unclaimed_paths
+            if p not in carry_forward_paths
+            and _normalize_execute_claimed_path(p, project_dir) not in carry_forward_paths
+        ]
     if not unclaimed_paths:
         return AttributionResult(records=[], recursive_snapshot=snapshot)
 
@@ -435,6 +452,7 @@ def _run_git_status_snapshot(
     *,
     untracked_mode: str,
     claimed_paths: set[str] | None = None,
+    base_ref: str | None = None,
 ) -> tuple[dict[str, str], str | None]:
     if not (project_dir / ".git").exists():
         return {}, "Project directory is not a git repository."
@@ -468,28 +486,42 @@ def _run_git_status_snapshot(
                 f"git status failed: {process.stderr.strip() or process.stdout.strip()}",
             )
         paths = _parse_git_status_paths(process.stdout)
+    if base_ref is not None:
+        from megaplan.loop.git import _collect_committed_range_paths
+        try:
+            window_paths = _collect_committed_range_paths(project_dir, base_ref=base_ref)
+        except Exception:
+            window_paths = None
+        if window_paths is not None:
+            paths = {p for p in paths if p in window_paths}
     return {path: _repo_path_hash(project_dir, path) for path in paths}, None
 
 
 def _capture_git_status_snapshot(
     project_dir: Path,
     claimed_paths: set[str] | None = None,
+    *,
+    base_ref: str | None = None,
 ) -> tuple[dict[str, str], str | None]:
     return _run_git_status_snapshot(
         project_dir,
         untracked_mode="normal",
         claimed_paths=claimed_paths,
+        base_ref=base_ref,
     )
 
 
 def _capture_git_status_snapshot_recursive(
     project_dir: Path,
     claimed_paths: set[str] | None = None,
+    *,
+    base_ref: str | None = None,
 ) -> tuple[dict[str, str], str | None]:
     return _run_git_status_snapshot(
         project_dir,
         untracked_mode="all",
         claimed_paths=claimed_paths,
+        base_ref=base_ref,
     )
 
 
@@ -544,6 +576,9 @@ def _observe_git_changes(
     capture_git_status_snapshot_fn: Callable[[Path], tuple[dict[str, str], str | None]],
     plan_dir: Path | None = None,
 ) -> list[str]:
+    # Resolve milestone_base_sha → base_ref when caller uses the chain_policy
+    # naming convention (tests pass milestone_base_sha directly).
+    _base_ref = base_ref or milestone_base_sha
     issues: list[str] = []
     if before_error is not None:
         issues.append(
@@ -560,6 +595,14 @@ def _observe_git_changes(
             before_snapshot=before_snapshot,
             after_snapshot=after_snapshot,
         )
+        if _base_ref is not None:
+            from megaplan.loop.git import _collect_committed_range_paths
+            try:
+                window_paths = _collect_committed_range_paths(project_dir, base_ref=_base_ref)
+            except Exception:
+                window_paths = None
+            if window_paths is not None:
+                observed_paths = {p for p in observed_paths if p in window_paths}
         claimed_paths = _collect_execute_claimed_paths(payload, project_dir)
         phantom_claims = sorted(claimed_paths - observed_paths)
         if phantom_claims:
@@ -573,6 +616,18 @@ def _observe_git_changes(
                 )
             )
         unclaimed_changes = sorted(observed_paths - claimed_paths)
+        # Carry-forward paths are inherited from a prior milestone — exclude
+        # them from the unclaimed advisory and report them separately.
+        _cf = carry_forward_paths or set()
+        if _cf:
+            cf_found = sorted(p for p in unclaimed_changes if p in _cf)
+            unclaimed_changes = sorted(p for p in unclaimed_changes if p not in _cf)
+            if cf_found:
+                issues.append(
+                    "Advisory carry-forward observation: files inherited from a prior "
+                    "milestone (carry-forward) observed in working tree: "
+                    + ", ".join(cf_found)
+                )
         if unclaimed_changes:
             issues.append(
                 "Advisory observation mismatch: git status/content hash delta found unclaimed files: "
@@ -593,6 +648,7 @@ def _collect_quality_deviations(
     before_line_counts: dict[str, int],
     quality_config: dict[str, Any],
     capture_git_status_snapshot_fn: Callable[[Path], tuple[dict[str, str], str | None]],
+    base_ref: str | None = None,
 ) -> list[str]:
     try:
         after_snapshot, after_error = capture_git_status_snapshot_fn(project_dir)
@@ -611,6 +667,14 @@ def _collect_quality_deviations(
         before_snapshot=before_snapshot,
         after_snapshot=after_snapshot,
     )
+    if base_ref is not None:
+        from megaplan.loop.git import _collect_committed_range_paths
+        try:
+            window_paths = _collect_committed_range_paths(project_dir, base_ref=base_ref)
+        except Exception:
+            window_paths = None
+        if window_paths is not None:
+            changed_paths = {p for p in changed_paths if p in window_paths}
     return run_quality_checks(
         project_dir,
         changed_paths=changed_paths,

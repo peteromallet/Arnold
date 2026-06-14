@@ -556,6 +556,102 @@ def test_run_codex_step_uses_prompt_override_without_builder(tmp_path: Path) -> 
                     prompt_override="custom prompt",
                 )
 
+
+def test_run_codex_step_checks_final_prompt_before_run_command(
+    tmp_path: Path,
+) -> None:
+    from megaplan._core import ensure_runtime_layout
+    from megaplan.workers import run_codex_step
+
+    ensure_runtime_layout(tmp_path)
+    plan_dir, state = _mock_state(tmp_path)
+
+    def fake_check_prompt_size(prompt_text: str, *, phase: str) -> None:
+        assert phase == "execute"
+        assert prompt_text == "custom execute prompt"
+        raise CliError("prompt_oversized", "too large")
+
+    with (
+        patch("megaplan.workers._impl.check_prompt_size", side_effect=fake_check_prompt_size),
+        patch(
+            "megaplan.workers._impl.run_command",
+            side_effect=AssertionError("run_command should not be reached"),
+        ),
+    ):
+        with pytest.raises(CliError, match="too large"):
+            run_codex_step(
+                "execute",
+                state,
+                plan_dir,
+                root=tmp_path,
+                persistent=False,
+                fresh=True,
+                prompt_override="custom execute prompt",
+            )
+
+
+def test_run_codex_review_oversize_uses_compact_prompt_and_produces_verdict(
+    tmp_path: Path,
+) -> None:
+    from megaplan._core import ensure_runtime_layout
+    from megaplan.workers import run_codex_step
+
+    ensure_runtime_layout(tmp_path)
+    plan_dir, state = _mock_state(tmp_path)
+    state["current_state"] = "executed"
+    captured: dict[str, str] = {}
+    review_payload = {
+        "review_verdict": "approved",
+        "review_completion_status": "complete",
+        "criteria": [{"name": "criterion", "priority": "must", "pass": "pass", "evidence": "checked"}],
+        "issues": [],
+        "rework_items": [],
+        "summary": "Approved via compact review prompt.",
+        "task_verdicts": [],
+        "sense_check_verdicts": [],
+    }
+
+    def fake_check_prompt_size(prompt_text: str, *, phase: str) -> None:
+        assert phase == "review"
+        if prompt_text == "X" * 175_460:
+            raise CliError(
+                "prompt_oversized",
+                "too large",
+                extra={"prompt_size": 175_460, "max_chars": 150_000},
+            )
+
+    def fake_run_command(command: list[str], **kwargs: object) -> CommandResult:
+        captured["stdin_text"] = str(kwargs["stdin_text"])
+        output_idx = command.index("-o") + 1
+        Path(command[output_idx]).write_text(json.dumps(review_payload), encoding="utf-8")
+        return CommandResult(
+            command=command,
+            cwd=tmp_path,
+            returncode=0,
+            stdout="",
+            stderr="",
+            duration_ms=10,
+        )
+
+    with (
+        patch("megaplan.workers._impl.create_codex_prompt", return_value="X" * 175_460),
+        patch("megaplan.workers._impl.check_prompt_size", side_effect=fake_check_prompt_size),
+        patch("megaplan.workers._impl.run_command", side_effect=fake_run_command),
+    ):
+        result = run_codex_step(
+            "review",
+            state,
+            plan_dir,
+            root=tmp_path,
+            persistent=False,
+            fresh=True,
+        )
+
+    assert result.payload["review_verdict"] == "approved"
+    assert "Normal review prompt overflow:" in captured["stdin_text"]
+    assert "still produce a usable `review_verdict`" in captured["stdin_text"]
+
+
 def test_run_step_with_worker_passes_prompt_override(tmp_path: Path) -> None:
     from arnold.pipelines.megaplan.types import AgentMode
     from arnold.pipelines.megaplan.workers import run_step_with_worker
@@ -1411,6 +1507,7 @@ def test_run_codex_step_execute_resume_omits_add_dir_for_current_codex_cli(tmp_p
     from arnold.pipelines.megaplan.workers import CommandResult, run_codex_step
 
     ensure_runtime_layout(tmp_path)
+    monkeypatch.setenv("MEGAPLAN_CODEX_EXECUTE_PERSIST_SESSION", "1")
     plan_dir, state = _mock_state(tmp_path)
     state["sessions"]["codex_executor"] = {
         "id": "execute-session-2",
@@ -1848,6 +1945,7 @@ def test_run_codex_step_resumed_session_retries_fresh_on_poisoned_output(
         }
     }
     monkeypatch.setenv("MEGAPLAN_TRUSTED_CONTAINER", "1")
+    monkeypatch.setenv("MEGAPLAN_CODEX_EXECUTE_PERSIST_SESSION", "1")
 
     poisoned_raw = (
         "bwrap: Creating new namespace failed: Permission denied\n"

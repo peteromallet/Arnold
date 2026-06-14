@@ -23,6 +23,15 @@ from arnold.pipelines.megaplan.workers import WorkerResult
 from tests.conftest import make_args_factory
 
 
+@pytest.fixture(autouse=True)
+def _isolate_user_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    config_path = tmp_path / "user-config"
+    monkeypatch.setattr(
+        "megaplan._core.user_config.config_dir",
+        lambda home=None: config_path,
+    )
+
+
 def _make_args(plan_name: str | None, project_dir: Path, **overrides: Any) -> Namespace:
     defaults: dict[str, Any] = {
         "plan": plan_name,

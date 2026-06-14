@@ -26,9 +26,17 @@ Key division of labor (`megaplan/handlers/critique.py:207-216`):
   them. It runs on its own routing slot (`critique_evaluator`, declared per
   profile, default depth `medium`), not escalated off the critic slot.
 - **The critic model comes from the profile's `critique` slot.** `partnered`
-  routes critique to cheap DeepSeek; `premium` to Claude; `apex` to Codex. The
+  routes critique to cheap DeepSeek; the profile `premium` (the named tier)
+  routes critique to Claude; `apex` to Codex. The
   only override is the operator pin `execution.critic_model`, which forces every
   farmed-out critic to a fixed model while the evaluator still picks the lenses.
+
+The `critique_evaluator` slot is a vendor-neutral premium slot: it uses the
+symbolic agent spec `premium` (e.g., `premium:low`) in unlocked profiles and
+`DEFAULT_AGENT_ROUTING`, and resolves to the operator's selected vendor
+(`--vendor claude` or `--vendor codex`) at runtime. See
+[docs/configuration.md#agent-routing](configuration.md#agent-routing) for the
+full routing precedence.
 
 This is megaplan's "cheapest capable model per task" philosophy applied to
 critique: premium-grade *judgment* goes into deciding and directing the

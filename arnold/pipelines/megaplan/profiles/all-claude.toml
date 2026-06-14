@@ -1,4 +1,4 @@
-# `all-claude` — single-vendor Claude end to end, for users who have ONLY
+# `all-claude` — Claude end to end (not vendor_locked; --vendor codex works), for users who have ONLY
 # Anthropic credentials (no DeepSeek / Fireworks / Codex keys). This is the
 # Claude-only counterpart to `solo`: where the tiered profiles (solo /
 # directed / partnered / …) push cheap work to DeepSeek, `all-claude` keeps

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import subprocess
 from pathlib import Path
 import subprocess
 from typing import Any
@@ -187,6 +188,14 @@ def _validate_execution_evidence_code(
             "reason": "Project directory is not a git repository.",
             "evidence_window": _evidence_window(project_dir, base_ref),
         }
+
+    head_sha = _git_rev_parse_head(project_dir)
+    base_sha = _resolve_ref_sha(project_dir, base_ref) if base_ref is not None else None
+    evidence_window: dict[str, Any] = {
+        "base_sha": base_sha,
+        "head_sha": head_sha,
+        "source": "declared" if base_ref is not None else "heuristic_merge_base",
+    }
 
     files_in_diff_set, status_error = _collect_git_status_paths_with_nested_repos(
         project_dir,

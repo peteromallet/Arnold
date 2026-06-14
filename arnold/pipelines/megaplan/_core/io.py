@@ -8,6 +8,7 @@ import os
 import re
 import shutil
 import struct
+import sys
 import tempfile
 import time
 from base64 import b64decode, b64encode
@@ -872,6 +873,42 @@ def render_final_md(finalize_data: dict[str, Any], *, phase: str = "finalize") -
 # Config helpers
 # ---------------------------------------------------------------------------
 
+def project_config_path(project_dir: Path) -> Path:
+    """Return the expected path to the project-scoped TOML config file."""
+    return project_dir / ".megaplan" / "config.toml"
+
+
+def load_project_config(project_dir: Path) -> dict[str, Any]:
+    """Load the project-scoped ``.megaplan/config.toml`` file.
+
+    Returns an empty dict when the file does not exist, ``tomllib`` is
+    unavailable, or the file is malformed (warn-and-ignore semantics).
+    Does not cache — every call reads the file afresh so the function is
+    concurrency-safe and does not carry process-global project state.
+    """
+    path = project_config_path(project_dir)
+    if not path.is_file():
+        return {}
+    if tomllib is None:
+        print(
+            f"megaplan: warning: cannot read project config at {path}: "
+            f"tomllib/tomli not available (Python 3.11+ required for built-in tomllib)",
+            file=sys.stderr,
+        )
+        return {}
+    try:
+        data = tomllib.loads(path.read_text(encoding="utf-8"))
+    except (tomllib.TOMLDecodeError, ValueError, OSError) as exc:
+        print(
+            f"megaplan: warning: ignoring malformed project config at {path}: {exc}",
+            file=sys.stderr,
+        )
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    return data
+
+
 def config_dir(home: Path | None = None) -> Path:
     if home is None:
         xdg = os.environ.get("XDG_CONFIG_HOME")
@@ -902,7 +939,13 @@ def save_config(config: dict[str, Any], home: Path | None = None) -> Path:
     return path
 
 
-def get_effective(section: str, key: str) -> Any:
+def get_effective(
+    section: str,
+    key: str,
+    *,
+    home: Path | None = None,
+    project_dir: Path | None = None,
+) -> Any:
     from arnold.pipelines.megaplan.types import DEFAULTS
 
     default_key = f"{section}.{key}"
@@ -916,20 +959,39 @@ def get_effective(section: str, key: str) -> Any:
         from arnold.pipelines.megaplan._core.config_resolver import ConfigResolver
 
         return ConfigResolver().effective(section, key)
-    config = load_config()
+    config = load_config(home)
     section_config = config.get(section)
     if isinstance(section_config, dict) and key in section_config:
-        return section_config[key]
-    return DEFAULTS[default_key]
+        value = section_config[key]
+    else:
+        value = DEFAULTS[default_key]
+
+    if project_dir is not None:
+        project_config = load_project_config(project_dir)
+        project_section = project_config.get(section)
+        if isinstance(project_section, dict) and key in project_section:
+            return project_section[key]
+
+    return value
 
 
-def setting_is_explicit(section: str, key: str, *, home: Path | None = None) -> bool:
-    """Return True iff ``section.key`` is explicitly present in the user config.
+def setting_is_explicit(
+    section: str,
+    key: str,
+    *,
+    home: Path | None = None,
+    project_dir: Path | None = None,
+) -> bool:
+    """Return True iff ``section.key`` is explicitly set in user or project config.
 
-    Distinguishes a user-set value (even if it equals the default) from the
-    fallback to ``DEFAULTS``. Used so a profile-level default (e.g.
-    ``adaptive_critique``) can win over the global default *only* when the
-    user has not pinned the value themselves.
+    Distinguishes a user-set or project-set value (even if it equals the
+    default) from the fallback to ``DEFAULTS``. Used so a profile-level
+    default (e.g.  ``adaptive_critique``) can win over the global default
+    *only* when the user has not pinned the value themselves.
+
+    When *project_dir* is passed, a key that is present ONLY in the project
+    TOML (and absent from the global JSON config) is still counted as
+    explicit — a project config entry is a deliberate operator pin.
     """
     # M4 T13: flag-gated delegation. Flag-OFF retains existing behaviour.
     from arnold.pipelines.megaplan._pipeline.flags import unified_config_on
@@ -940,7 +1002,14 @@ def setting_is_explicit(section: str, key: str, *, home: Path | None = None) -> 
         return ConfigResolver().explicit_at(section, key) is not None
     config = load_config(home)
     section_config = config.get(section)
-    return isinstance(section_config, dict) and key in section_config
+    if isinstance(section_config, dict) and key in section_config:
+        return True
+    if project_dir is not None:
+        project_config = load_project_config(project_dir)
+        project_section = project_config.get(section)
+        if isinstance(project_section, dict) and key in project_section:
+            return True
+    return False
 
 
 # Absolute path to the megaplan-vendored Shannon fork. Kept in sync with

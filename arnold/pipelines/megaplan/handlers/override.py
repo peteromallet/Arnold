@@ -565,6 +565,62 @@ def _handle_routed_override(
     )
 
 
+def _resolved_default_phase_spec(phase: str, state: PlanState, root: Path) -> str:
+    """Return the concrete default routing spec for *phase*."""
+    from megaplan.profiles import effective_premium_vendor
+
+    raw_spec = DEFAULT_AGENT_ROUTING.get(phase, "")
+    if not raw_spec:
+        return raw_spec
+    project_dir = Path(state.get("config", {}).get("project_dir", str(root)))
+    config = dict(state.get("config", {}))
+    config.setdefault("project_dir", str(project_dir))
+    resolved = resolve_premium_placeholder_spec(
+        raw_spec,
+        effective_premium_vendor(config=config),
+    )
+    return format_agent_spec(resolved)
+
+
+def _resolved_default_phase_agent(phase: str, state: PlanState, root: Path) -> str:
+    """Return the concrete default routing agent for *phase*."""
+    default_spec = _resolved_default_phase_spec(phase, state, root)
+    return parse_agent_spec(default_spec).agent if default_spec else ""
+
+
+def _resolved_profile_phase_spec(phase: str, state: PlanState, root: Path) -> str:
+    """Return the concrete expanded profile spec for *phase*, if any."""
+    from megaplan.profiles import apply_profile_expansion
+
+    profile_name = state.get("config", {}).get("profile")
+    if not profile_name:
+        return ""
+
+    project_dir = Path(state.get("config", {}).get("project_dir", str(root)))
+    args = argparse.Namespace(
+        profile=profile_name,
+        phase_model=[],
+        vendor=state.get("config", {}).get("vendor"),
+        critic=state.get("config", {}).get("critic"),
+        depth=state.get("config", {}).get("depth"),
+        deepseek_provider=state.get("config", {}).get("deepseek_provider"),
+        agent=None,
+        hermes=None,
+        _profile_applied=False,
+    )
+    try:
+        apply_profile_expansion(args, project_dir, state=state)
+    except Exception:
+        return ""
+
+    for pm in args.phase_model or []:
+        if isinstance(pm, str) and "=" in pm:
+            pm_phase, pm_spec = pm.split("=", 1)
+            if pm_phase == phase:
+                return pm_spec
+    return ""
+
+
 def _last_gate_is_agent_availability_preflight_block(state: PlanState) -> bool:
     last_gate = state.get("last_gate") or {}
     if not isinstance(last_gate, dict):
@@ -1569,7 +1625,7 @@ def _override_set_vendor(root: Path, plan_dir: Path, state: PlanState, args: arg
             found = True
             break
     if not found:
-        previous_spec = current_spec or DEFAULT_AGENT_ROUTING.get(phase, "")
+        previous_spec = current_spec or _resolved_default_phase_spec(phase, state, root)
         phase_models.append(f"{phase}={new_spec}")
     state["config"]["phase_model"] = phase_models
 

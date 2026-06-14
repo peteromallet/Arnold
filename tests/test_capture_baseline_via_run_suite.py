@@ -107,7 +107,8 @@ def test_capture_baseline_via_run_suite_timeout(
         mock_run.assert_called_once()
 
     assert result["baseline_test_failures"] is None
-    assert "timed out" in result["baseline_test_note"].lower()
+    # No idle attribution on the fake result → ceiling-hit note referencing 60s.
+    assert "ceiling" in result["baseline_test_note"].lower()
     assert "60" in result["baseline_test_note"]
     assert result["baseline_test_command"] == fake_result.command
 

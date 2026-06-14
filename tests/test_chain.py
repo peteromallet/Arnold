@@ -111,13 +111,13 @@ def _write_authoritative_execution_batch(root: Path, plan: str, state: str = "do
     return plan_dir
 
 
-def _git(repo: Path, *args: str) -> subprocess.CompletedProcess[str]:
+def _git(repo: Path, *args: str, check: bool = True) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         ["git", *args],
         cwd=str(repo),
         capture_output=True,
         text=True,
-        check=True,
+        check=check,
     )
 
 
@@ -261,6 +261,34 @@ def test_load_spec_defaults_base_branch_to_main(tmp_path: Path) -> None:
     spec_path = _write_spec(tmp_path, {"milestones": [{"label": "m1", "idea": str(idea)}]})
 
     assert load_spec(spec_path).base_branch == "main"
+
+
+def test_load_spec_rejects_unknown_base_key_with_hint(tmp_path: Path) -> None:
+    idea = _touch_idea(tmp_path, "m1.txt")
+    spec_path = _write_spec(
+        tmp_path,
+        {"base": "setup/cloud", "milestones": [{"label": "m1", "idea": str(idea)}]},
+    )
+
+    with pytest.raises(CliError) as excinfo:
+        load_spec(spec_path)
+
+    assert excinfo.value.code == "invalid_spec"
+    assert "did you mean `base_branch`" in excinfo.value.message
+
+
+def test_load_spec_rejects_unknown_top_level_key(tmp_path: Path) -> None:
+    idea = _touch_idea(tmp_path, "m1.txt")
+    spec_path = _write_spec(
+        tmp_path,
+        {"milestones": [{"label": "m1", "idea": str(idea)}], "surprise": True},
+    )
+
+    with pytest.raises(CliError) as excinfo:
+        load_spec(spec_path)
+
+    assert excinfo.value.code == "invalid_spec"
+    assert "`surprise`" in excinfo.value.message
 
 
 @pytest.mark.parametrize("value", ["", "   ", 42, ["main"]])
@@ -931,6 +959,7 @@ def test_save_and_load_chain_state_roundtrip(tmp_path: Path) -> None:
     state = ChainState(
         current_milestone_index=2,
         current_plan_name="foo-20260415",
+        current_milestone_base_sha="abc123base",
         last_state="done",
         pr_number=42,
         pr_state="open",
@@ -944,6 +973,7 @@ def test_save_and_load_chain_state_roundtrip(tmp_path: Path) -> None:
     loaded = load_chain_state(spec_path)
     assert loaded.current_milestone_index == 2
     assert loaded.current_plan_name == "foo-20260415"
+    assert loaded.current_milestone_base_sha == "abc123base"
     assert loaded.last_state == "done"
     assert loaded.pr_number == 42
     assert loaded.pr_state == "open"
@@ -995,6 +1025,7 @@ def test_chain_state_from_dict_handles_old_json_missing_sync_fields() -> None:
     assert state.pr_number == 42
     assert state.pr_state == "OPEN"
     assert len(state.completed) == 1
+    assert state.current_milestone_base_sha is None
     # New fields default cleanly.
     assert state.branch_head is None
     assert state.pr_head is None
@@ -1279,11 +1310,13 @@ def test_chain_start_invokes_driver(
         *,
         no_git_refresh: bool = False,
         no_push: bool = False,
+        fresh: bool = False,
         one: bool = False,
         writer=None,
     ):
         del writer
         del no_push
+        del fresh
         del one
         calls.append((spec_path_arg, root, no_git_refresh))
         return {"status": "done", "reason": "", "chain_state": {}, "events": []}
@@ -1329,6 +1362,7 @@ def test_chain_start_routes_to_supervisor_only_when_flag_on(
         *,
         no_git_refresh: bool = False,
         no_push: bool = False,
+        fresh: bool = False,
         one: bool = False,
     ) -> dict[str, object]:
         calls.append(("legacy", spec_path_arg, root, no_git_refresh, no_push, one))
@@ -3069,6 +3103,7 @@ def test_initialized_plan_receives_chain_policy_metadata(
     assert cp["review_policy"]["clean_milestone_pr"] == "manual"
     assert cp["source"] == "chain_yaml"
     assert cp["milestone_label"] == "m1"
+    assert cp["milestone_base_sha"] == "abc123base"
 
 
 def test_initialized_plan_respects_runtime_override_source(

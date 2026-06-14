@@ -315,6 +315,15 @@ def run_parallel_critique(
     # ------------------------------------------------------------------
     # Build one WorkerUnit per check
     # ------------------------------------------------------------------
+    # Each unit runs in its OWN process and opens a hermes SessionDB. The
+    # step+agent session_key collapses to a single shared db path
+    # (state_hermes_critic.db), so without an override every concurrent worker
+    # writes the SAME SQLite file → "database is locked". Give each check its
+    # own session db (the legacy _run_check path did this); the override is
+    # plumbed through WorkerUnit.extra["worker_options"]["session_db_path"]
+    # (worker_fanout.py) → run_hermes_step db_override (hermes.py).
+    from megaplan.workers.hermes import _worker_db_path
+
     units: list[WorkerUnit] = []
     for _idx, _check in enumerate(checks):
         _resolved = _check.get("_resolved_agent_mode")

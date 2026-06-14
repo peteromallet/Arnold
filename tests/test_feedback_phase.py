@@ -5,7 +5,7 @@ Covers:
     (b) Template — render_template with prefilled populates ai_* lines
     (c) Parser — round-trips ai_* fields, regression test for regex non-overlap
     (d) Prompt builder — build_feedback_prompt mentions every stage, marks absent
-    (e) Routing — profile loading, apply_vendor_rewrite leaves feedback at claude:low
+    (e) Routing — profile loading, apply_vendor_rewrite funnels premium feedback by vendor
     (f) Handler happy path — mock worker returns valid JSON → populated feedback.md
     (g) Handler malformed output — invalid JSON → empty template, state DONE, no exception
     (h) Handler --force merge — preserves user fields, overwrites ai_*
@@ -17,8 +17,6 @@ Covers:
 from __future__ import annotations
 
 import json
-import os
-import subprocess
 import textwrap
 from argparse import Namespace
 from pathlib import Path
@@ -30,7 +28,6 @@ import arnold.pipelines.megaplan as megaplan
 from arnold.pipelines.megaplan._core import (
     STATE_DONE,
     STATE_REVIEWED,
-    load_plan,
     save_state,
 )
 from arnold.pipelines.megaplan.orchestration.feedback import (
@@ -693,11 +690,41 @@ class TestRouting:
             "critique": "codex",
             "execute": "codex",
             "review": "codex",
-            "feedback": "claude:low",
+            "feedback": "hermes:glm-5.1",
         }
         rewritten = apply_vendor_rewrite(profile, "codex")
         assert rewritten["feedback"] == "codex:low"
         assert rewritten["plan"] == "codex"
+
+    def test_builtin_profiles_vendor_rewrite_funnels_premium_feedback(self) -> None:
+        """Built-in premium feedback follows --vendor like other premium slots."""
+        from megaplan.profiles import apply_vendor_rewrite, load_profile_sources
+        from megaplan.types import parse_agent_spec
+
+        builtin_sources = [
+            (name, profile)
+            for src, name, profile in load_profile_sources()
+            if src == "built-in"
+        ]
+
+        for name, profile in builtin_sources:
+            rewritten = apply_vendor_rewrite(profile, "codex")
+            raw_feedback = profile.get("feedback")
+            if raw_feedback is None:
+                assert "feedback" not in rewritten
+                continue
+            raw_agent = parse_agent_spec(raw_feedback).agent
+
+            if raw_agent in {"premium", "claude", "codex"}:
+                assert rewritten["feedback"].startswith("codex"), (
+                    f"{name} premium feedback should resolve to codex under "
+                    f"--vendor codex; got {rewritten['feedback']!r}"
+                )
+            else:
+                assert rewritten["feedback"] == raw_feedback, (
+                    f"{name} concrete feedback should be preserved; got "
+                    f"{rewritten['feedback']!r} from {raw_feedback!r}"
+                )
 
     def test_vendor_rewrite_claude_vendor_for_claude_profile(self) -> None:
         """apply_vendor_rewrite('claude') on a claude profile leaves feedback."""
@@ -744,8 +771,6 @@ class TestRouting:
         from arnold.pipelines.megaplan.profiles import apply_vendor_rewrite
 
         # all-claude.toml has bare feedback = "claude" (no effort suffix).
-        # This test proves that behavior is intentional: bare values are
-        # preserved as-is during vendor rewrite.
         profile: dict[str, str] = {
             "plan": "claude",
             "critique": "claude",
@@ -771,6 +796,10 @@ class TestRouting:
         rewritten = apply_vendor_rewrite(profile, "claude")
         assert "feedback" not in rewritten
         assert rewritten["plan"] == "claude"
+
+        rewritten_codex = apply_vendor_rewrite(profile, "codex")
+        assert "feedback" not in rewritten_codex
+        assert rewritten_codex["plan"] == "codex"
 
     def test_default_agent_routing_has_feedback(self) -> None:
         """DEFAULT_AGENT_ROUTING includes 'feedback' key."""

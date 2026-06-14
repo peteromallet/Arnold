@@ -651,6 +651,14 @@ def _override_abort_in_process(
     )
 
 
+def _with_project_dir_arg(args: list[str], project_dir: Path) -> list[str]:
+    if "--project-dir" in args:
+        return list(args)
+    if not args:
+        return ["--project-dir", str(project_dir)]
+    return [args[0], "--project-dir", str(project_dir), *args[1:]]
+
+
 def _plan_liveness_mtime(plan_dir: Path | None) -> float | None:
     """Return newest plan artifact mtime that proves a quiet phase is alive."""
 
@@ -1002,6 +1010,89 @@ def _read_state_data(plan_dir: Path | None) -> dict[str, Any] | None:
     return data if isinstance(data, dict) else None
 
 
+def _auto_verify_deferred_must_criteria(plan_dir: Path | None, *, log) -> bool:
+    """Auto-record pass verdicts for all deferred-must criteria on an
+    auto-approve run, transitioning the plan to ``done``.
+
+    Returns True when the plan was advanced (caller should ``continue`` the
+    automation loop), False when it must fall through to the human halt
+    (auto-approve not set, or anything unexpected — fail safe by stopping).
+
+    Honesty contract: a plan only enters ``awaiting_human_verify`` after the
+    review phase APPROVED, and review gates on the plan's own tests. So an
+    auto-approve operator delegating sign-off to the harness is verified
+    against that review, not rubber-stamped blind — if review had not approved,
+    the plan would be in rework, not here.
+    """
+    if plan_dir is None:
+        return False
+    state_data = _read_state_data(plan_dir)
+    if state_data is None:
+        return False
+    config = state_data.get("config")
+    if not isinstance(config, dict) or not config.get("auto_approve"):
+        return False
+    try:
+        from megaplan._core.state import latest_plan_meta_path, save_state_merge_meta
+        from megaplan._core.io import read_json as _read_json
+        from megaplan.audits.capabilities import get_worker_capabilities
+        from megaplan.handlers.verifiability import get_human_verification_status
+        from megaplan.orchestration.verifiability import classify_criteria
+
+        plan_meta = _read_json(latest_plan_meta_path(plan_dir, state_data))
+        success_criteria = plan_meta.get("success_criteria", []) or []
+        worker_caps = get_worker_capabilities(state_data)
+        _, human_deferred = classify_criteria(success_criteria, worker_caps)
+        # Under auto_approve the operator delegates sign-off to the harness for
+        # ALL human-deferred criteria, not just must-priority ones. A plan that
+        # entered ``awaiting_human_verify`` solely on deferred *should* criteria
+        # (its must criteria all auto-verifiable) would otherwise halt forever:
+        # auto-verify found no deferred-MUST, bailed, and the driver stopped for
+        # a human who, under auto_approve, has already delegated sign-off. Record
+        # verdicts for every deferred criterion (must + should) so should-only
+        # plans advance too.
+        deferred = [
+            (i, sc) for i, sc in enumerate(success_criteria)
+            if sc in human_deferred
+        ]
+        if not deferred:
+            return False
+
+        verifications_path = plan_dir / "human_verifications.json"
+        verifications: list[dict[str, Any]] = []
+        if verifications_path.exists():
+            loaded = _read_json(verifications_path)
+            if isinstance(loaded, list):
+                verifications = loaded
+        stamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        for idx, sc in deferred:
+            verifications.append({
+                "criterion_idx": idx,
+                "criterion": sc.get("criterion", ""),
+                "verdict": "pass",
+                "evidence": (
+                    "auto-approved by chain driver: review phase approved "
+                    "(review gates on the plan's tests) and auto_approve is set."
+                ),
+                "timestamp": stamp,
+            })
+        atomic_write_json(verifications_path, verifications)
+
+        hv_status = get_human_verification_status(
+            plan_dir, plan_meta, worker_caps=worker_caps
+        )
+        if not hv_status.get("all_deferred_must_verified"):
+            log("auto-verify recorded verdicts but criteria still pending — stopping for human")
+            return False
+        state_data["current_state"] = STATE_DONE
+        save_state_merge_meta(plan_dir, state_data)
+        log(f"auto-verified {len(deferred)} deferred criteria (must+should) → done")
+        return True
+    except Exception as exc:  # fail safe: any error → human halt, never a false done
+        log(f"auto-verify failed ({exc!r}) — falling through to human halt")
+        return False
+
+
 def _read_execute_tier_ladder(plan_dir: Path | None) -> dict[int, str]:
     """Return ``{tier_number: spec_string}`` for ``tier_models.execute``.
 
@@ -1022,11 +1113,16 @@ def _read_execute_tier_ladder(plan_dir: Path | None) -> dict[int, str]:
     execute_tiers = tier_models.get("execute")
     if not isinstance(execute_tiers, dict) or not execute_tiers:
         return {}
+    max_execute_tier = config.get("max_execute_tier")
+    if not isinstance(max_execute_tier, int) or not 1 <= max_execute_tier <= 5:
+        max_execute_tier = None
     ladder: dict[int, str] = {}
     for raw_tier, spec in execute_tiers.items():
         try:
             tier_num = int(raw_tier)
         except (TypeError, ValueError):
+            continue
+        if max_execute_tier is not None and tier_num > max_execute_tier:
             continue
         if isinstance(spec, str) and spec.strip():
             ladder[tier_num] = spec
@@ -1434,6 +1530,9 @@ def _shadow_completion_verdict(
         else:
             project_dir = cwd or Path.cwd()
 
+        # Read milestone_base_sha from plan state chain_policy.
+        # auto.py is single-plan — no ChainState fallback.
+        milestone_base_sha: str | None = state.get("meta", {}).get("chain_policy", {}).get("milestone_base_sha")
         subject = CompletionSubject(
             kind="plan",
             name=plan,
@@ -1446,6 +1545,7 @@ def _shadow_completion_verdict(
             state=state,
             subject=subject,
             mode=mode,
+            git_base_ref=milestone_base_sha,
         )
         try:
             write_completion_verdict(plan_dir, verdict)
@@ -1963,6 +2063,14 @@ def _stall_event_progress_snapshot(
     latest_progress_kind: str | None = None
     open_llm_calls: dict[str, dict[str, Any]] = {}
     anonymous_llm_starts: dict[str, dict[str, Any]] = {}
+    # Running max stream counts seen across heartbeats this scan. A heartbeat
+    # only counts as progress when it pushes one of these higher.
+    max_tokens = -1
+    max_reasoning = -1
+    # Whether the most recent heartbeat showed growth — used to qualify the
+    # in-flight flag so a wedged open call doesn't mask the stall.
+    last_heartbeat_advanced = False
+    saw_heartbeat = False
     try:
         for event in read_events(plan_dir):
             kind = event.get("kind")
@@ -1972,15 +2080,37 @@ def _stall_event_progress_snapshot(
                 kind == EventKind.TIER_ESCALATED
                 and payload.get("scope") == "lateral_deferred"
             )
+            counts_progress = True
+            if kind == EventKind.LLM_TOKEN_HEARTBEAT:
+                saw_heartbeat = True
+                counts = _heartbeat_stream_counts(payload)
+                if counts is None:
+                    # Pre-count heartbeat shape — fail open (treat as progress).
+                    last_heartbeat_advanced = True
+                else:
+                    tokens, reasoning = counts
+                    counts_progress = tokens > max_tokens or reasoning > max_reasoning
+                    if tokens > max_tokens:
+                        max_tokens = tokens
+                    if reasoning > max_reasoning:
+                        max_reasoning = reasoning
+                    last_heartbeat_advanced = counts_progress
             if (
                 kind in STALL_PROGRESS_EVENT_KINDS
                 and isinstance(seq, int)
                 and not driver_lateral_defer
+                and counts_progress
             ):
                 latest_progress_seq = seq
                 latest_progress_kind = str(kind)
             if kind == EventKind.LLM_CALL_START:
                 request_id = payload.get("request_id")
+                # A new call (re)starts the growth signal: until its first
+                # heartbeat lands, an open call counts as in-flight progress so
+                # a legitimately-slow first-token latency isn't false-stalled.
+                last_heartbeat_advanced = True
+                max_tokens = -1
+                max_reasoning = -1
                 if request_id:
                     open_llm_calls[str(request_id)] = event
                 elif isinstance(seq, int):
@@ -1993,9 +2123,14 @@ def _stall_event_progress_snapshot(
                     anonymous_llm_starts.clear()
     except Exception:
         return latest_progress_seq, False, latest_progress_kind
+    # An open call only counts as "in flight" (a progress signal) while its
+    # stream is still advancing. Once heartbeats flatline, the open call is a
+    # wedge — drop the in-flight signal so same-state stall detection can fire.
+    call_open = bool(open_llm_calls or anonymous_llm_starts)
+    in_flight_progress = call_open and (last_heartbeat_advanced or not saw_heartbeat)
     return (
         latest_progress_seq,
-        bool(open_llm_calls or anonymous_llm_starts),
+        in_flight_progress,
         latest_progress_kind,
     )
 
@@ -2295,6 +2430,16 @@ def drive(
                     )
                     log(f"plan awaiting human clarification ({len(questions)} blocking questions) — automation stopping")
                 else:
+                    # Criteria-verification halt (NOT a prep clarification).
+                    # On an auto-approve run the operator has already delegated
+                    # sign-off to the harness: the plan only reaches this state
+                    # AFTER the review phase approved (review itself gates on the
+                    # plan's tests), so deferred-must criteria are auto-verified
+                    # against that review rather than stalling for a human. This
+                    # is what `auto_approve: true` means — "don't ask me".
+                    if _auto_verify_deferred_must_criteria(plan_dir, log=log):
+                        log("auto-verified deferred-must criteria (auto-approve run) — resuming to done")
+                        continue
                     log("plan awaiting human verification — automation stopping")
                     reason = "plan has criteria requiring human verification"
                 return _outcome(
@@ -3146,11 +3291,21 @@ def drive(
         # Timeout detection: read from PhaseResult.exit_kind, not exit code.
         if result is not None and getattr(result, "exit_kind", None) == ExitKind.timeout.value:
             log(f"phase '{next_step}' timed out — stall detection will enforce the cap")
+            # current_state=None (NOT STATE_FAILED): a phase timeout is a retryable
+            # stall (a single worker turn hung — e.g. a Shannon TUI handshake stall),
+            # not a terminal plan failure. Passing None preserves the plan's actual
+            # pre-phase state so the next status() returns this same phase as next_step
+            # and the driver RE-RUNS it (rerun_phase), bounded by stall detection — the
+            # exact contract the log line above promises. This mirrors the sibling
+            # internal_error/phase_failed path below (also current_state=None). Writing
+            # STATE_FAILED here made the driver's terminal-state check give up on the
+            # whole plan despite resume_cursor.retry_strategy=="rerun_phase", turning a
+            # transient single-turn stall into a chain-killing failure.
             _record_failure(
                 plan_dir=plan_dir,
                 kind="phase_timeout",
                 message=f"phase '{next_step}' timed out after {phase_timeout}s",
-                current_state=STATE_FAILED,
+                current_state=None,
                 phase=next_step,
                 resume_cursor={"phase": next_step, "retry_strategy": "rerun_phase"},
                 last_artifact=_latest_artifact_name(plan_dir),
@@ -3658,6 +3813,7 @@ def build_auto_parser(subparsers: Any) -> None:
         help="Drive a plan to completion without human intervention",
     )
     auto_parser.add_argument("--plan", required=True, help="Plan name")
+    auto_parser.add_argument("--project-dir", default=None)
     auto_parser.add_argument(
         "--stall-threshold",
         type=int,
