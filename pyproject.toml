@@ -1,0 +1,100 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "arnold"
+version = "0.23.0"
+description = "Arnold — AI agent harness for coordinating Claude and GPT to make and execute extremely robust plans, with Megaplan as the flagship planning pipeline plugin"
+requires-python = ">=3.11"
+license = { text = "OSNL-0.2" }
+authors = [
+    { name = "Peter O'Malley" },
+]
+keywords = ["ai", "planning", "orchestration", "claude", "codex", "arnold", "megaplan"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "Topic :: Software Development :: Quality Assurance",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+dependencies = [
+    "pyyaml>=6.0",
+    "pydantic>=2.0",
+    "python-ulid>=3.0",
+    "psutil>=5.9",
+    # --- Hermes/agent backend (core) ---------------------------------------
+    # The hermes/agent runtime backs prep research, critique, fanout, and the
+    # agentic phases. It is NOT optional: the canonical prep models route to
+    # `hermes:deepseek:...` for every run, so a chain that does prep WILL import
+    # this backend. Historically these lived in the `[agent]` optional extra
+    # plus a `[tool.uv] default-extras = ["agent"]` hint, but some uv versions
+    # silently ignore `default-extras`, producing a fresh install that imports
+    # fine until prep iteration N fails with a confusing `agent_deps_missing`.
+    # Moving them into core makes `pip install -e .` / `uv pip install -e .`
+    # ALWAYS ship a working backend. (The `[agent]` extra below is kept as a
+    # back-compat alias for callers that still reference it.)
+    "openai",
+    "anthropic>=0.39.0",
+    "python-dotenv",
+    "fire",
+    "httpx",
+    "rich",
+    "requests",
+    "prompt_toolkit",
+    "firecrawl-py",
+    "fal-client",
+    "edge-tts",
+    "faster-whisper>=1.0.0",
+    "PyJWT[crypto]",
+]
+
+[project.optional-dependencies]
+db = [
+    "psycopg[binary]>=3.1",
+]
+# Back-compat alias: the agent backend's packages are now core dependencies
+# (see [project].dependencies). This extra is retained so existing install
+# commands / docs that say `pip install '.[agent]'` keep working as a no-op.
+agent = []
+[project.scripts]
+arnold = "arnold.cli:cli_entry"
+
+[tool.uv]
+# The hermes/agent backend's packages are now core [project].dependencies, so a
+# plain `uv pip install -e .` / `uv sync` always ships a working backend. We no
+# longer rely on `default-extras` (some uv versions silently ignore it, which is
+# what produced the confusing mid-prep `agent_deps_missing` failures).
+
+[tool.hatch.build]
+exclude = [
+    "arnold/pipelines/megaplan/cloud/_reference/**",
+    "arnold/pipelines/megaplan/agent/pyproject.toml",
+    "arnold/pipelines/megaplan/agent/auto_improve/iterations/**",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["arnold"]
+exclude = [
+    "arnold/pipelines/megaplan/cloud/_reference/**",
+    "arnold/pipelines/megaplan/agent/pyproject.toml",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+addopts = "--import-mode=importlib"
+python_files = ["test_*.py", "editorial_*.py"]
+markers = [
+    "asyncio: async tests, primarily for the vendored agent runtime",
+    "conformance: opt-in live conformance tests that require external authenticated CLIs",
+    "integration: integration tests that may exercise external process boundaries",
+    "slow: tests that require Docker or other external runtime dependencies",
+    "crash_isolation: tests verifying crash isolation between subprocess drivers",
+    "version_skew: tests verifying compatibility across version skew scenarios",
+    "hinge_gate: gate test for the M3 hinge (R1 authority flip)",
+    "substrate_swap: M4 oracle tests that must remain green under substrate substitution (lease/budget/journal swap)",
+    "replay_oracle: M5c replay tests that capture legacy control outputs and opt into routed parity action by action",
+    "m8_benchmark: M8 acceptance-gate benchmark tests (opt-in, width-32 thresholds)",
+]
