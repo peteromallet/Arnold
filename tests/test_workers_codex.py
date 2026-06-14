@@ -2044,6 +2044,107 @@ def test_codex_step_extracts_token_usage_from_session_jsonl(
     assert result.total_tokens == 66607 + 1089 + 230
     assert result.session_id == session_id
 
+
+def test_run_codex_execute_emits_llm_events_to_plan_journal(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from arnold.pipelines.megaplan._core import ensure_runtime_layout
+    from arnold.pipelines.megaplan.observability.events import EventKind
+    from arnold.pipelines.megaplan.workers import CommandResult, run_codex_step
+
+    ensure_runtime_layout(tmp_path)
+    plan_dir, state = _mock_state(tmp_path)
+
+    codex_home = tmp_path / "codex_home_events"
+    monkeypatch.setenv("CODEX_HOME", str(codex_home))
+    codex_home.mkdir(parents=True, exist_ok=True)
+    (codex_home / "config.toml").write_text('model = "gpt-5.5"\n', encoding="utf-8")
+
+    session_id = "execute-events-session-0001"
+    total_usage = {
+        "input_tokens": 1200,
+        "cached_input_tokens": 200,
+        "output_tokens": 300,
+        "reasoning_output_tokens": 50,
+        "total_tokens": 1550,
+    }
+    _write_codex_rollout(codex_home, session_id, total_usage)
+
+    execution_payload = _build_mock_payload(
+        "execute",
+        state,
+        plan_dir,
+        output="codex execute completed",
+    )
+
+    captured: dict[str, list[str]] = {}
+
+    def fake_run_command(command: list[str], **kwargs: object) -> CommandResult:
+        captured["command"] = command
+        output_idx = command.index("-o") + 1
+        Path(command[output_idx]).write_text(json.dumps(execution_payload), encoding="utf-8")
+        return CommandResult(
+            command=command,
+            cwd=tmp_path,
+            returncode=0,
+            stdout=f'{{"type":"thread.started","thread_id":"{session_id}"}}\n',
+            stderr="",
+            duration_ms=300,
+        )
+
+    with patch(
+        "arnold.pipelines.megaplan.workers._impl.run_command",
+        side_effect=fake_run_command,
+    ):
+        result = run_codex_step(
+            "execute",
+            state,
+            plan_dir,
+            root=tmp_path,
+            persistent=False,
+            fresh=True,
+            json_trace=True,
+            model="gpt-5.5",
+        )
+
+    assert result.payload == execution_payload
+    assert "--json" in captured["command"]
+
+    events = [
+        json.loads(line)
+        for line in (plan_dir / "events.ndjson").read_text(encoding="utf-8").splitlines()
+    ]
+    assert [event["kind"] for event in events] == [
+        EventKind.LLM_CALL_START,
+        EventKind.LLM_CALL_END,
+        EventKind.COST_RECORDED,
+    ]
+    assert all(event["phase"] == "execute" for event in events)
+    assert all("ts_rel_init_s" in event for event in events)
+
+    start_payload = events[0]["payload"]
+    assert start_payload["provider"] == "codex"
+    assert start_payload["model"] == "gpt-5.5"
+    assert start_payload["prompt_hash"]
+    assert start_payload["streaming"] is True
+    assert start_payload["request_id"] is None
+
+    end_payload = events[1]["payload"]
+    assert end_payload == {
+        "tokens_in": 1200,
+        "tokens_out": 350,
+        "request_id": session_id,
+        "model": "gpt-5.5",
+    }
+
+    expected_cost = ((1200 - 200) * 5.00 + 200 * 0.50 + 350 * 30.00) / 1_000_000
+    cost_payload = events[2]["payload"]
+    assert cost_payload["request_id"] == session_id
+    assert cost_payload["cost_usd"] == pytest.approx(expected_cost)
+    assert cost_payload["provider"] == "codex"
+    assert cost_payload["model"] == "gpt-5.5"
+
+
 def test_codex_step_handles_missing_session_jsonl_gracefully(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
