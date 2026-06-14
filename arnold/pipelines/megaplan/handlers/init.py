@@ -482,7 +482,7 @@ def handle_init(root: Path, args: argparse.Namespace) -> StepResponse:
         state["config"]["with_feedback"] = True
     # Resolve prep_clarify: CLI > [defaults] > True.
     # Only written to config when False to keep state lean (absent == True).
-    if not args.prep_clarify:
+    if not getattr(args, "prep_clarify", True):
         state["config"]["prep_clarify"] = False
     else:
         from arnold.pipelines.megaplan._core.user_config import default_prep_clarify
