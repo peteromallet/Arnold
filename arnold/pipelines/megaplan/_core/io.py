@@ -258,7 +258,9 @@ def atomic_write_bytes(path: Path, content: bytes) -> None:
 
 
 def atomic_write_text(path: Path, content: str, *, _plan_dir: Path | None = None) -> None:
-    atomic_write_bytes(path, content.encode("utf-8"))
+    from arnold.runtime.state_persistence import atomic_write_bytes as _rt_atomic_write_bytes
+
+    _rt_atomic_write_bytes(path, content.encode("utf-8"))
     if _plan_dir is not None:
         try:
             from arnold.pipelines.megaplan.observability.events import emit, EventKind

@@ -25,6 +25,7 @@ from __future__ import annotations
 import ast
 import inspect
 import os
+import re
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -37,6 +38,18 @@ import pytest
 # ---------------------------------------------------------------------------
 
 _PIPELINE_PKG = Path(__file__).resolve().parent.parent.parent / "arnold" / "pipeline"
+_ARNOLD_ROOT = _PIPELINE_PKG.parent
+_GENERIC_PACKAGE_ROOTS: tuple[Path, ...] = tuple(
+    root
+    for root in (
+        _ARNOLD_ROOT / "pipeline",
+        _ARNOLD_ROOT / "runtime",
+        _ARNOLD_ROOT / "control",
+        _ARNOLD_ROOT / "supervisor",
+    )
+    if root.exists()
+)
+_EVIDENCE_PACK_ROOT = _ARNOLD_ROOT / "pipelines" / "evidence_pack"
 
 FORBIDDEN_POLICY_IMPORT_ROOTS = (
     "megaplan",
@@ -44,6 +57,12 @@ FORBIDDEN_POLICY_IMPORT_ROOTS = (
 )
 FORBIDDEN_STRING_LITERALS = frozenset(
     {"planning", "proceed", "iterate", "tiebreaker", "escalate"}
+)
+FORBIDDEN_RAW_SOURCE_PATTERNS = (
+    ".megaplan",
+    "MEGAPLAN_",
+    "GateRecommendation",
+    "megaplan.pipeline-manifest.v1",
 )
 
 
@@ -89,21 +108,46 @@ def _ast_import_violations(file_path: Path) -> list[str]:
     return violations
 
 
-def _ast_string_literal_violations(file_path: Path) -> list[str]:
-    """Return violations for forbidden string literals found in AST constants."""
+def _ast_string_literal_violations(
+    file_path: Path,
+    literal_set: frozenset[str] = FORBIDDEN_STRING_LITERALS,
+) -> list[str]:
+    """Return violations for forbidden string literals found in AST constants.
+
+    *literal_set* defaults to ``FORBIDDEN_STRING_LITERALS`` so existing
+    tree-wide gate tests are unchanged.  Per-module tests that need the
+    full 15-item policy-literal set pass ``_FORBIDDEN_POLICY_LITERALS``.
+    """
     violations: list[str] = []
     try:
         tree = ast.parse(file_path.read_text(), filename=str(file_path))
     except SyntaxError:
-        return violations  # already reported by _ast_import_violations
+        return violations
 
     for node in ast.walk(tree):
         if isinstance(node, ast.Constant) and isinstance(node.value, str):
-            if node.value in FORBIDDEN_STRING_LITERALS:
+            if node.value in literal_set:
                 violations.append(
                     f"{file_path}:{node.lineno}: forbidden string literal — "
                     f"'{node.value}'"
                 )
+    return violations
+
+
+def _raw_source_token_violations(file_path: Path) -> list[str]:
+    """Return violations for forbidden raw-source tokens and regex patterns."""
+    violations: list[str] = []
+    source = file_path.read_text()
+    for lineno, line in enumerate(source.splitlines(), start=1):
+        for token in FORBIDDEN_RAW_SOURCE_PATTERNS:
+            if token in line:
+                violations.append(
+                    f"{file_path}:{lineno}: forbidden raw-source token — {token!r}"
+                )
+        for match in re.finditer(r"\bSTATE_[A-Z0-9_]+\b", line):
+            violations.append(
+                f"{file_path}:{lineno}: forbidden raw-source token — {match.group(0)!r}"
+            )
     return violations
 
 
@@ -117,8 +161,9 @@ class TestStaticGateForbiddenImports:
 
     def test_no_megaplan_imports_in_pipeline_sources(self) -> None:
         violations: list[str] = []
-        for source_file in _python_source_files(_PIPELINE_PKG):
-            violations.extend(_ast_import_violations(source_file))
+        for package_root in _GENERIC_PACKAGE_ROOTS:
+            for source_file in _python_source_files(package_root):
+                violations.extend(_ast_import_violations(source_file))
         if violations:
             pytest.fail(
                 f"{len(violations)} forbidden policy import(s) found:\n"
@@ -132,10 +177,11 @@ class TestStaticGateForbiddenStringLiterals:
     def test_no_planning_string_literal(self) -> None:
         """The string literal ``'planning'`` must not appear in pipeline sources."""
         violations: list[str] = []
-        for source_file in _python_source_files(_PIPELINE_PKG):
-            for v in _ast_string_literal_violations(source_file):
-                if "planning" in v:
-                    violations.append(v)
+        for package_root in _GENERIC_PACKAGE_ROOTS:
+            for source_file in _python_source_files(package_root):
+                for v in _ast_string_literal_violations(source_file):
+                    if "planning" in v:
+                        violations.append(v)
         if violations:
             pytest.fail(
                 f"'planning' literal(s) found:\n"
@@ -146,15 +192,45 @@ class TestStaticGateForbiddenStringLiterals:
         """Literals 'proceed', 'iterate', 'tiebreaker', 'escalate' are forbidden."""
         gate_literals = {"proceed", "iterate", "tiebreaker", "escalate"}
         violations: list[str] = []
-        for source_file in _python_source_files(_PIPELINE_PKG):
-            for v in _ast_string_literal_violations(source_file):
-                for literal in gate_literals:
-                    if f"'{literal}'" in v:
-                        violations.append(v)
-                        break
+        for package_root in _GENERIC_PACKAGE_ROOTS:
+            for source_file in _python_source_files(package_root):
+                for v in _ast_string_literal_violations(source_file):
+                    for literal in gate_literals:
+                        if f"'{literal}'" in v:
+                            violations.append(v)
+                            break
         if violations:
             pytest.fail(
                 f"Gate recommendation literal(s) found:\n"
+                + "\n".join(f"  • {v}" for v in violations)
+            )
+
+
+class TestStaticGateForbiddenRawSourceTokens:
+    """No generic source file may carry Megaplan-owned raw-source tokens."""
+
+    def test_no_forbidden_raw_source_tokens_in_generic_packages(self) -> None:
+        violations: list[str] = []
+        for package_root in _GENERIC_PACKAGE_ROOTS:
+            for source_file in _python_source_files(package_root):
+                violations.extend(_raw_source_token_violations(source_file))
+        if violations:
+            pytest.fail(
+                f"{len(violations)} forbidden raw-source token(s) found:\n"
+                + "\n".join(f"  • {v}" for v in violations)
+            )
+
+
+class TestEvidencePackIsolation:
+    """Evidence-pack must remain independent from Megaplan-owned packages."""
+
+    def test_evidence_pack_has_no_megaplan_imports(self) -> None:
+        violations: list[str] = []
+        for source_file in _python_source_files(_EVIDENCE_PACK_ROOT):
+            violations.extend(_ast_import_violations(source_file))
+        if violations:
+            pytest.fail(
+                f"evidence_pack has {len(violations)} forbidden import(s):\n"
                 + "\n".join(f"  • {v}" for v in violations)
             )
 
@@ -237,12 +313,9 @@ class TestNewModuleNoForbiddenPolicyLiterals:
     """Each new Arnold module must contain zero forbidden Megaplan policy literals."""
 
     def test_validator_has_no_policy_literals(self) -> None:
-        violations: list[str] = []
-        for v in _ast_string_literal_violations(_new_module_path("validator.py")):
-            for literal in _FORBIDDEN_POLICY_LITERALS:
-                if f"'{literal}'" in v or f'"{literal}"' in v:
-                    violations.append(v)
-                    break
+        violations = _ast_string_literal_violations(
+            _new_module_path("validator.py"), literal_set=_FORBIDDEN_POLICY_LITERALS
+        )
         if violations:
             pytest.fail(
                 f"validator.py has {len(violations)} forbidden policy literal(s):\n"
@@ -250,14 +323,10 @@ class TestNewModuleNoForbiddenPolicyLiterals:
             )
 
     def test_pattern_dynamic_has_no_policy_literals(self) -> None:
-        violations: list[str] = []
-        for v in _ast_string_literal_violations(
-            _new_module_path("pattern_dynamic.py")
-        ):
-            for literal in _FORBIDDEN_POLICY_LITERALS:
-                if f"'{literal}'" in v or f'"{literal}"' in v:
-                    violations.append(v)
-                    break
+        violations = _ast_string_literal_violations(
+            _new_module_path("pattern_dynamic.py"),
+            literal_set=_FORBIDDEN_POLICY_LITERALS,
+        )
         if violations:
             pytest.fail(
                 f"pattern_dynamic.py has {len(violations)} "
@@ -266,12 +335,9 @@ class TestNewModuleNoForbiddenPolicyLiterals:
             )
 
     def test_subpipeline_has_no_policy_literals(self) -> None:
-        violations: list[str] = []
-        for v in _ast_string_literal_violations(_new_module_path("subpipeline.py")):
-            for literal in _FORBIDDEN_POLICY_LITERALS:
-                if f"'{literal}'" in v or f'"{literal}"' in v:
-                    violations.append(v)
-                    break
+        violations = _ast_string_literal_violations(
+            _new_module_path("subpipeline.py"), literal_set=_FORBIDDEN_POLICY_LITERALS
+        )
         if violations:
             pytest.fail(
                 f"subpipeline.py has {len(violations)} "

@@ -11,6 +11,9 @@ from typing import Any, Mapping, Protocol
 
 from pydantic import BaseModel, ValidationError
 
+from arnold.pipeline import StepInvocation
+from arnold.pipelines.megaplan.model_seam import ModelBudgetError, ModelTier, render_step_message
+
 from .config import ResidentConfig
 from .tool_schemas import ToolCallAuditRecord, ToolResult
 from .tool_registry import ToolRegistry
@@ -179,6 +182,18 @@ class OpenAICompatibleAgentRunner(DispatchProtocol):
 
         for step_index in range(1, self.max_tool_calls + 2):
             model_name = _request_model_name(request, self.config.model_name)
+            # _pre_dispatch_budget_check sentinel: budget guard for dispatch
+            try:
+                render_step_message(StepInvocation(kind="model", metadata={
+                    **request.model_seam_metadata,
+                    "model": model_name,
+                    "normalized_model": model_name,
+                    "history": messages,
+                    "tier": ModelTier.NON_ENFORCED.value,
+                    "worker": "resident",
+                }))
+            except ModelBudgetError:
+                raise
             response = await asyncio.wait_for(
                 client.chat.completions.create(
                     model=model_name,

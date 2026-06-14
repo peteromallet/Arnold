@@ -224,6 +224,8 @@ def _report_evidence_requirements(ctx: _PolicyContext, spec: PolicySettingSpec) 
     audit = validate_execution_evidence(
         dict(ctx.finalize_data),
         ctx.project_dir,
+        plan_dir=ctx.plan_dir,
+        artifact_prefix="execution_audit_policy_settings",
         mode=_policy_mode(ctx),
         state=dict(ctx.state) if isinstance(ctx.state, Mapping) else None,
     )

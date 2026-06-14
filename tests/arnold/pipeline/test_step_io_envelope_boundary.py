@@ -20,7 +20,6 @@ from arnold.pipeline.schema_registry import (
     ContractSchemaRegistry,
     SchemaRegistryError,
     accepts_version,
-    create_contract_schema_registry,
 )
 from arnold.pipeline.step_io_contract import (
     StepIOClassification,

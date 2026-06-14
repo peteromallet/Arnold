@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Any
 
 from arnold.pipeline import (
+    CAPABILITY_ALIASES,
     MODEL_RESOURCE_CAPABILITIES,
     Pipeline,
     Stage,
@@ -28,6 +29,10 @@ def test_closed_vocabulary_is_limited_to_m7_model_resource_capabilities() -> Non
     assert MODEL_RESOURCE_CAPABILITIES == frozenset(
         {"model:text", "model:vision", "decoder:image"}
     )
+    assert CAPABILITY_ALIASES == {
+        "requires-vision-model": "model:vision",
+        "requires-image-decoder": "decoder:image",
+    }
 
 
 def test_invocation_proves_text_and_vision_from_model_adapter_payload() -> None:
@@ -117,3 +122,37 @@ def test_stage_attr_metadata_proves_capabilities_without_invocation_guessing() -
     assert proof.ok
     assert proof.proven_capabilities == ("model:vision",)
     assert proof.unknown_provided_capabilities == ("unknown:cap",)
+
+
+def test_required_capability_aliases_normalize_before_proof() -> None:
+    stage = Stage(
+        name="image-review",
+        step=_StubStep(),
+        invocation=StepInvocation.model(
+            adapter_config={"media": [{"mime_type": "image/png", "descriptor": "diagram"}]}
+        ),
+        required_capabilities=("requires-vision-model",),
+    )
+
+    proof = prove_stage_required_capabilities(stage)
+
+    assert proof.ok
+    assert proof.required_capabilities == ("requires-vision-model",)
+    assert proof.normalized_required_capabilities == ("model:vision",)
+    assert proof.proven_capabilities == ("model:vision",)
+
+
+def test_unknown_required_capability_stays_closed_after_normalization() -> None:
+    stage = Stage(
+        name="audio-review",
+        step=_StubStep(),
+        invocation=StepInvocation.model(adapter_config={"message": "review"}),
+        required_capabilities=("requires-audio-model",),
+    )
+
+    proof = prove_stage_required_capabilities(stage)
+
+    assert not proof.ok
+    assert proof.required_capabilities == ("requires-audio-model",)
+    assert proof.normalized_required_capabilities == ("requires-audio-model",)
+    assert proof.unknown_required_capabilities == ("requires-audio-model",)

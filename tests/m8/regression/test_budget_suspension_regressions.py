@@ -112,6 +112,24 @@ def test_render_step_message_budgets_named_model() -> None:
     )
 
 
+def test_render_step_message_blocks_budget_overflow_at_assembly() -> None:
+    """A declared input budget overflow is rejected before model dispatch."""
+    invocation = StepInvocation(
+        kind="model",
+        metadata={
+            "tier": "enforced",
+            "worker": "codex",
+            "model": "gpt-5.4",
+            "normalized_model": "gpt-5.4",
+            "prompt": "x" * 80,
+            "max_input_tokens": 10,
+        },
+    )
+
+    with pytest.raises(ModelBudgetError, match="budget exceeded"):
+        render_step_message(invocation)
+
+
 # ---------------------------------------------------------------------------
 # suspension propagation under MAX_WINS
 # ---------------------------------------------------------------------------

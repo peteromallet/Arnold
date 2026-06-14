@@ -18,21 +18,38 @@ from arnold.pipelines.megaplan._pipeline.types import (
 
 
 class TestBuiltinsPresent:
-    """The seven builtin content types must be registered at import time."""
+    """The ten builtin content types must be registered at import time.
+
+    The seven Arnold builtins are joined by three Megaplan-specific types
+    registered via the bridge side-effect in ``arnold.pipelines.megaplan``.
+    """
+
+    # The three media builtins added by AR1:
+    MEDIA_BUILTINS = frozenset(
+        {
+            "video/mp4",
+            "audio/wav",
+            "application/x-astrid-timeline",
+        }
+    )
 
     BUILTIN_NAMES = frozenset(
         {
             "text/markdown",
             "image/png",
             "application/x-git-diff",
-            "application/x-verdict+json",
-            "application/x-routing-key+json",
             "application/x-fanout-results+json",
+            "video/mp4",
+            "audio/wav",
+            "application/x-astrid-timeline",
+            # Megaplan bridge side-effect types:
             "application/x-evaluand-record+json",
+            "application/x-routing-key+json",
+            "application/x-verdict+json",
         }
     )
 
-    def test_all_seven_builtins_registered(self) -> None:
+    def test_all_ten_builtins_registered(self) -> None:
         registered = set(CONTENT_TYPES.names())
         assert registered == self.BUILTIN_NAMES
 
@@ -42,6 +59,23 @@ class TestBuiltinsPresent:
             digest = CONTENT_TYPES.get(name)
             assert isinstance(digest, str)
             assert len(digest) == 64  # SHA-256 hex digest
+
+    def test_media_builtins_present(self) -> None:
+        """The three AR1 media builtins are registered and queryable."""
+        for name in sorted(self.MEDIA_BUILTINS):
+            assert name in CONTENT_TYPES
+            digest = CONTENT_TYPES.get(name)
+            assert isinstance(digest, str)
+            assert len(digest) == 64
+            assert all(c in "0123456789abcdef" for c in digest)
+
+    def test_media_digests_deterministic(self) -> None:
+        """Each media builtin produces the same digest on every lookup."""
+        for name in sorted(self.MEDIA_BUILTINS):
+            first = CONTENT_TYPES.get(name)
+            second = CONTENT_TYPES.get(name)
+            assert first == second
+            assert len(first) == 64
 
 
 # ── Duplicate registration raises ────────────────────────────────────────

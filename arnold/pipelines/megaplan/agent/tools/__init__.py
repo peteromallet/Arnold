@@ -15,13 +15,21 @@ The tools are imported into model_tools.py which provides a unified interface
 for the AI agent to access all capabilities.
 """
 
-# Export all tools for easy importing
-from .web_tools import (
-    web_search_tool,
-    web_extract_tool,
-    web_crawl_tool,
-    check_firecrawl_api_key
-)
+import importlib as _importlib
+
+# ---------------------------------------------------------------------------
+# Lazy helpers for shimmed modules to avoid circular imports.
+# Modules whose SSoT lives in arnold.agent.tools.* are accessed lazily
+# when megaplan.__init__.py eagerly imports this package.
+# ---------------------------------------------------------------------------
+
+def _lazy_web_tools_attr(name):
+    mod = _importlib.import_module("arnold.agent.tools.web_tools")
+    return getattr(mod, name)
+
+def _lazy_file_tools_attr(name):
+    mod = _importlib.import_module("arnold.agent.tools.file_tools")
+    return getattr(mod, name)
 
 # Primary terminal tool (mini-swe-agent backend: local/docker/singularity/modal/daytona)
 from .terminal_tool import (
@@ -109,16 +117,6 @@ from .rl_training_tool import (
     get_missing_keys,
 )
 
-# File manipulation tools (read, write, patch, search)
-from .file_tools import (
-    read_file_tool,
-    write_file_tool,
-    patch_tool,
-    search_tool,
-    get_file_tools,
-    clear_file_ops_cache,
-)
-
 # Text-to-speech tools (Edge TTS / ElevenLabs / OpenAI)
 from .tts_tool import (
     text_to_speech_tool,
@@ -160,8 +158,38 @@ def check_file_requirements():
     from .terminal_tool import check_terminal_requirements
     return check_terminal_requirements()
 
+
+# ---------------------------------------------------------------------------
+# Module-level __getattr__ for lazy exports from shimmed modules
+# ---------------------------------------------------------------------------
+
+_LAZY_WEB_ATTRS = frozenset({
+    'web_search_tool',
+    'web_extract_tool',
+    'web_crawl_tool',
+    'check_firecrawl_api_key',
+})
+
+_LAZY_FILE_ATTRS = frozenset({
+    'read_file_tool',
+    'write_file_tool',
+    'patch_tool',
+    'search_tool',
+    'get_file_tools',
+    'clear_file_ops_cache',
+})
+
+
+def __getattr__(name):
+    if name in _LAZY_WEB_ATTRS:
+        return _lazy_web_tools_attr(name)
+    if name in _LAZY_FILE_ATTRS:
+        return _lazy_file_tools_attr(name)
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
 __all__ = [
-    # Web tools
+    # Web tools (lazy)
     'web_search_tool',
     'web_extract_tool',
     'web_crawl_tool',
@@ -230,7 +258,7 @@ __all__ = [
     'rl_test_inference',
     'check_rl_api_keys',
     'get_missing_keys',
-    # File manipulation tools
+    # File manipulation tools (lazy)
     'read_file_tool',
     'write_file_tool',
     'patch_tool',
@@ -259,4 +287,3 @@ __all__ = [
     'check_delegate_requirements',
     'DELEGATE_TASK_SCHEMA',
 ]
-

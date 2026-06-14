@@ -2,7 +2,7 @@
 
 import pytest
 
-from toolsets import (
+from arnold.agent.toolsets import (
     TOOLSETS,
     get_toolset,
     resolve_toolset,

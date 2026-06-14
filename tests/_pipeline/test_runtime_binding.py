@@ -16,12 +16,12 @@ from dataclasses import dataclass, field
 import pytest
 
 from arnold.pipeline import ContractResult
-from arnold.pipeline.step_io_policy import STEP_IO_POLICY_ENV
 from arnold.pipelines.megaplan._pipeline.contracts import PortBindError
 from arnold.pipelines.megaplan._pipeline.executor import (
     _prepare_enforcement_binding,
     run_pipeline,
 )
+from arnold.pipelines.megaplan._pipeline.step_io_policy_adapter import STEP_IO_POLICY_ENV
 from arnold.pipelines.megaplan._pipeline.step_helpers import resolve_inputs
 from arnold.pipelines.megaplan._pipeline.types import (
     Edge,

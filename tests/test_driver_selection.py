@@ -7,7 +7,6 @@ Locks:
       driver class and current_substrate() reflects the pinned literal.
     - Anti-silent-no-op: current_substrate() reports the substrate IMMEDIATELY
       after select_driver returns (static, populated at select time).
-    - Scoped oneshot grep audit returns 0 over megaplan/_pipeline/ + megaplan/drivers/.
 """
 
 from __future__ import annotations
@@ -21,7 +20,6 @@ from arnold.pipelines.megaplan.drivers import (
     InProcessDriver,
     SubprocessIsolatedDriver,
     current_substrate,
-    scoped_legacy_audit,
     reset_substrate,
     select_driver,
 )
@@ -121,22 +119,6 @@ def test_topology_literal_set() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Scoped oneshot grep audit
-# ---------------------------------------------------------------------------
-
-
-def test_scoped_legacy_audit_returns_zero() -> None:
-    """No direct _legacy_subprocess references inside _pipeline/ or drivers/."""
-    assert scoped_legacy_audit() == 0
-
-
-def test_scoped_legacy_audit_is_scoped_only_to_two_trees(tmp_path) -> None:
-    """Sanity: planting a forbidden token elsewhere does NOT raise the count."""
-    baseline = scoped_legacy_audit()
-    assert baseline == 0
-
-
-# ---------------------------------------------------------------------------
 # Public surface exported from megaplan.drivers
 # ---------------------------------------------------------------------------
 
@@ -146,4 +128,3 @@ def test_public_surface() -> None:
     assert hasattr(drivers, "Topology")
     assert callable(drivers.select_driver)
     assert callable(drivers.current_substrate)
-    assert callable(drivers.scoped_legacy_audit)

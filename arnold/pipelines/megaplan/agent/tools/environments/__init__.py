@@ -1,13 +1,9 @@
-"""Hermes execution environment backends.
+"""Shim: arnold.pipelines.megaplan.agent.tools.environments → arnold.agent.tools.environments.
 
-Each backend provides the same interface (BaseEnvironment ABC) for running
-shell commands in a specific execution context: local, Docker, Singularity,
-SSH, Modal, or Daytona.
-
-The terminal_tool.py factory (_create_environment) selects the backend
-based on the TERMINAL_ENV configuration.
+Submodule shims (base.py, local.py, etc.) use sys.modules replacement
+to ensure identity with the SSoT. This __init__.py re-exports the same
+symbols that the SSoT __init__.py exports.
 """
-
-from tools.environments.base import BaseEnvironment
+from arnold.agent.tools.environments.base import BaseEnvironment
 
 __all__ = ["BaseEnvironment"]

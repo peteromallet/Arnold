@@ -6,8 +6,11 @@ from pathlib import Path
 
 import pytest
 
-from arnold.pipeline import TELEMETRY_FILENAME, step_io_policy_path
+from arnold.pipeline import TELEMETRY_FILENAME
+from arnold.pipeline.schema_registry import ContractSchemaRegistry
+from arnold.pipeline.step_io_contract import StepIOEnvelope
 from arnold.pipelines.megaplan.schemas import Plan
+from arnold.pipelines.megaplan._pipeline.step_io_policy_adapter import megaplan_step_io_policy_path
 from arnold.pipelines.megaplan.store import FileStore, PlanRepository, write_plan_artifact_json
 from arnold.pipelines.megaplan._core.io import orphan_plans_root
 
@@ -129,7 +132,7 @@ def test_plan_repository_load_state_bypasses_step_io_validation(tmp_path: Path) 
         ),
         encoding="utf-8",
     )
-    policy_path = step_io_policy_path(plan_dir)
+    policy_path = megaplan_step_io_policy_path(plan_dir)
     policy_path.parent.mkdir(parents=True, exist_ok=True)
     policy_path.write_text(
         json.dumps({"configured_mode": "enforce", "effective_mode": "enforce"}),
@@ -139,6 +142,62 @@ def test_plan_repository_load_state_bypasses_step_io_validation(tmp_path: Path) 
     loaded = PlanRepository.from_plan_dir(plan_dir).load_state()
 
     assert loaded == state
+    assert not (plan_dir / TELEMETRY_FILENAME).exists()
+
+
+def test_plan_repository_persists_step_io_envelope_via_megaplan_adapters(tmp_path: Path) -> None:
+    project = tmp_path / "project"
+    plan_dir = project / ".megaplan" / "plans" / "plan"
+    plan_dir.mkdir(parents=True)
+    (project / ".contract_schemas").mkdir()
+    (plan_dir / "state.json").write_text(
+        json.dumps(
+            {
+                "name": "plan",
+                "idea": "idea",
+                "current_state": "initialized",
+                "iteration": 1,
+                "created_at": "2026-05-03T00:00:00Z",
+                "config": {},
+                "sessions": {},
+                "plan_versions": [],
+                "history": [],
+                "meta": {},
+                "last_gate": {},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    policy_path = megaplan_step_io_policy_path(plan_dir)
+    policy_path.parent.mkdir(parents=True, exist_ok=True)
+    policy_path.write_text(
+        json.dumps({"configured_mode": "enforce", "effective_mode": "enforce"}),
+        encoding="utf-8",
+    )
+
+    schema_version = ContractSchemaRegistry(project).register(
+        "review",
+        {
+            "type": "object",
+            "required": ["answer"],
+            "properties": {"answer": {"type": "integer"}},
+            "additionalProperties": False,
+        },
+    )
+
+    envelope = StepIOEnvelope(
+        logical_type="review",
+        schema_version=schema_version,
+        payload={"answer": 7},
+    ).to_json()
+
+    repo = PlanRepository.from_plan_dir(plan_dir)
+    out = repo.write_artifact_json("review.json", envelope)
+
+    assert out == plan_dir / "review.json"
+    assert json.loads(out.read_text(encoding="utf-8")) == envelope
+    assert repo.read_artifact_json("review.json") == {"answer": 7}
     assert not (plan_dir / TELEMETRY_FILENAME).exists()
 
 

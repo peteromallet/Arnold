@@ -32,7 +32,7 @@ from arnold.pipelines.megaplan.orchestration.phase_result import (
     read_phase_result,
 )
 from arnold.pipelines.megaplan.control_interface import read_valid_targets
-from arnold.pipelines.megaplan.run_outcome import RunOutcome
+from arnold.runtime.outcome import RunOutcome
 
 def _parse_utc_timestamp(timestamp: str | None) -> datetime | None:
     if not isinstance(timestamp, str) or not timestamp:

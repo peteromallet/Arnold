@@ -21,7 +21,6 @@ from arnold.pipelines.megaplan.workers._impl import (
     _check_mock_safe,
     _json_decode_error_for_raw,
     _repair_worker_json_once,
-    validate_payload,
     mock_worker_output,
     session_key_for,
 )
@@ -29,10 +28,50 @@ from arnold.pipelines.megaplan._core import creative_form_id, read_json, schemas
 from arnold.pipelines.megaplan.forms.provocations import select_active_checks
 from arnold.pipeline import StepInvocation
 from arnold.pipelines.megaplan.model_seam import (
+    ModelBudgetError,
     ModelTier,
     capture_step_output,
     render_prompt_for_dispatch,
+    render_step_message,
 )
+
+
+def _pre_dispatch_budget_check(
+    agent,
+    *,
+    conversation_history,
+    user_message,
+    system,
+    tool_manifest,
+    schema,
+    step,
+    model_name,
+    tier,
+    worker,
+):
+    """Pre-dispatch combined-input budget guard.
+
+    Builds a StepInvocation populating the text-budget fields and routes through
+    render_step_message; ModelBudgetError must propagate so an oversized prompt
+    cannot reach the provider.
+    """
+    metadata = {
+        "system": system,
+        "history": conversation_history,
+        "prompt": user_message,
+        "tools": tool_manifest,
+        "schema": schema,
+        "worker": worker,
+        "model": model_name,
+        "normalized_model": model_name,
+        "validation_step": step,
+        "tier": tier.value if isinstance(tier, ModelTier) else tier,
+    }
+    invocation = StepInvocation(kind="model", metadata=metadata)
+    try:
+        return render_step_message(invocation)
+    except ModelBudgetError:
+        raise
 
 
 def _sanitize_db_name(identifier: str) -> str:
@@ -795,6 +834,19 @@ def parse_agent_output(
                 "and output it as your response. Output ONLY the raw JSON, nothing else.\n\n"
                 + template
             )
+            # _pre_dispatch_budget_check sentinel: budget guard for dispatch
+            _pre_dispatch_budget_check(
+                agent,
+                conversation_history=messages,
+                user_message=summary_prompt,
+                system=None,
+                tool_manifest=None,
+                schema=schema,
+                step=step,
+                model_name=getattr(agent, "model", None),
+                tier=ModelTier.NON_ENFORCED,
+                worker="hermes",
+            )
             summary_result = agent.run_conversation(
                 user_message=summary_prompt,
                 conversation_history=messages,
@@ -804,6 +856,8 @@ def parse_agent_output(
             messages = summary_result.get("messages", messages)
             if raw_output.strip():
                 print(f"[hermes-worker] Got JSON from template prompt ({len(raw_output)} chars)", file=sys.stderr)
+        except ModelBudgetError:
+            raise
         except Exception as exc:
             print(f"[hermes-worker] Template prompt failed: {exc}", file=sys.stderr)
 
@@ -897,6 +951,19 @@ def parse_agent_output(
                 + template
             )
             print(f"[hermes-worker] Attempting summary prompt to extract JSON from investigation", file=sys.stderr)
+            # _pre_dispatch_budget_check sentinel: budget guard for dispatch
+            _pre_dispatch_budget_check(
+                agent,
+                conversation_history=messages,
+                user_message=summary_prompt,
+                system=None,
+                tool_manifest=None,
+                schema=schema,
+                step=step,
+                model_name=getattr(agent, "model", None),
+                tier=ModelTier.NON_ENFORCED,
+                worker="hermes",
+            )
             summary_result = agent.run_conversation(
                 user_message=summary_prompt,
                 conversation_history=messages,
@@ -907,6 +974,8 @@ def parse_agent_output(
                 payload = _parse_json_response(summary_output)
                 if payload is not None:
                     print(f"[hermes-worker] Got JSON from summary prompt ({len(summary_output)} chars)", file=sys.stderr)
+        except ModelBudgetError:
+            raise
         except Exception as exc:
             print(f"[hermes-worker] Summary prompt failed: {exc}", file=sys.stderr)
 
@@ -914,6 +983,19 @@ def parse_agent_output(
         repair_result_holder: dict[str, object] = {}
 
         def _repair_call(repair_prompt: str) -> str:
+            # _pre_dispatch_budget_check sentinel: budget guard for dispatch
+            _pre_dispatch_budget_check(
+                agent,
+                conversation_history=messages,
+                user_message=repair_prompt,
+                system=None,
+                tool_manifest=None,
+                schema=schema,
+                step=step,
+                model_name=getattr(agent, "model", None),
+                tier=ModelTier.NON_ENFORCED,
+                worker="hermes",
+            )
             repair_result = agent.run_conversation(
                 user_message=repair_prompt,
                 conversation_history=messages,
@@ -1389,6 +1471,19 @@ def run_hermes_step(
                     extra={"raw_output": ""},
                 )
 
+            # _pre_dispatch_budget_check sentinel: budget guard for dispatch
+            _pre_dispatch_budget_check(
+                current_agent,
+                conversation_history=conversation_history,
+                user_message=prompt,
+                system=None,
+                tool_manifest=list(toolsets) if toolsets else None,
+                schema=schema,
+                step=step,
+                model_name=effective_resolved_model or resolved_model or current_model,
+                tier=seam_tier,
+                worker="hermes",
+            )
             try:
                 with watchdog_ctx:
                     current_result = current_agent.run_conversation(

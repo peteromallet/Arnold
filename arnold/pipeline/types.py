@@ -28,9 +28,9 @@ and cross-cutting state, while ``ContractResult`` is a per-step / per-seam
 **result**.
 
 The evidence-by-reference type is named :class:`EvidenceArtifactRef` (not
-``ArtifactRef``) to avoid a collision with the Pydantic ``ArtifactRef`` row
-in ``arnold/pipelines/megaplan/store/base.py:147``; the two types are
-semantically different (one is a megaplan storage row, the other a neutral
+``ArtifactRef``) to avoid a collision with downstream storage-row types
+that also use the ``ArtifactRef`` name; the two kinds of type are
+semantically different (one is a storage row, the other a neutral
 evidence pointer) and keeping distinct names eliminates any import-collision
 risk.
 
@@ -52,6 +52,7 @@ from enum import Enum
 from typing import TYPE_CHECKING, Any, Callable, Literal, Mapping, Protocol, TypeAlias, runtime_checkable
 
 from arnold.pipeline.schema_registry import AcceptedVersionRange
+from arnold.runtime.envelope import RunContext
 
 if TYPE_CHECKING:  # pragma: no cover - typing-only import
     from arnold.pipeline.step_invocation import StepInvocation
@@ -128,6 +129,9 @@ class StepContext:
     resource_handles: Mapping[str, Any] = field(default_factory=dict)
     mode: str = "default"
     inputs: Mapping[str, Any] = field(default_factory=dict)
+    hook_extensions: Mapping[str, Any] = field(default_factory=dict)
+    envelope: RunContext | None = None
+    contract_results: Mapping[str, "ContractResult"] | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -156,6 +160,7 @@ class StepResult:
     next: str = "halt"
     state_patch: Mapping[str, Any] = field(default_factory=dict)
     contract_result: ContractResult | None = None
+    hook_metadata: Mapping[str, Any] = field(default_factory=dict)
 
 
 # ---------------------------------------------------------------------------
@@ -210,8 +215,8 @@ class Stage:
     edges: tuple[Edge, ...] = ()
     decision_vocabulary: frozenset[str] = field(default_factory=frozenset)
     override_vocabulary: frozenset[str] = field(default_factory=frozenset)
-    reads: tuple["ReadRef", ...] = field(default_factory=tuple)
-    writes: tuple["WriteRef", ...] = field(default_factory=tuple)
+    reads: tuple["ReadRef | PortRef", ...] = field(default_factory=tuple)
+    writes: tuple["WriteRef | Port", ...] = field(default_factory=tuple)
     produces: tuple["Port", ...] = field(default_factory=tuple)
     consumes: tuple["PortRef", ...] = field(default_factory=tuple)
     invocation: "StepInvocation | None" = None
@@ -241,8 +246,8 @@ class ParallelStage:
     max_workers: int | None = None
     decision_vocabulary: frozenset[str] = field(default_factory=frozenset)
     override_vocabulary: frozenset[str] = field(default_factory=frozenset)
-    reads: tuple["ReadRef", ...] = field(default_factory=tuple)
-    writes: tuple["WriteRef", ...] = field(default_factory=tuple)
+    reads: tuple["ReadRef | PortRef", ...] = field(default_factory=tuple)
+    writes: tuple["WriteRef | Port", ...] = field(default_factory=tuple)
     produces: tuple["Port", ...] = field(default_factory=tuple)
     consumes: tuple["PortRef", ...] = field(default_factory=tuple)
     invocation: "StepInvocation | None" = None
@@ -262,9 +267,15 @@ class Pipeline:
     ``stages`` maps stage names to ``Stage`` or ``ParallelStage`` values.
     ``entry`` is the name of the stage where execution begins.
 
+    ``binding_map`` is an optional pre-computed producer→consumer port
+    lookup populated by ``PipelineBuilder(derive_bindings=True)``; it is
+    neutral (no Megaplan dependency) and feeds the step-IO seam resolver.
+    Leaving it ``None`` keeps the legacy two-argument ``Pipeline(stages,
+    entry)`` construction valid for callers that don't need typed-seam
+    routing.
+
     Notable omissions from the Megaplan counterpart:
     * No ``overlays`` — overlays are a Megaplan opinion.
-    * No ``binding_map`` — typed-port binding is a Megaplan concern.
     * No ``builder()`` or ``run_phase()`` classmethods — those belong to
       the opinionated runtime.
     """
@@ -273,6 +284,15 @@ class Pipeline:
     entry: str
     binding_map: dict | None = None
     resource_bundles: tuple[Any, ...] = field(default_factory=tuple)
+
+    @property
+    def stages_by_name(self) -> Mapping[str, "Stage | ParallelStage"]:
+        """Name-keyed index of stages (alias for ``stages``).
+
+        Provided as an explicit lookup API for the canonical executor and
+        downstream adapter code.  Equivalent to ``pipeline.stages``.
+        """
+        return self.stages
 
 
 # ---------------------------------------------------------------------------
@@ -479,10 +499,10 @@ _BUILTIN_CONTENT_TYPES: frozenset[str] = frozenset(
         "text/markdown",
         "image/png",
         "application/x-git-diff",
-        "application/x-verdict+json",
-        "application/x-routing-key+json",
         "application/x-fanout-results+json",
-        "application/x-evaluand-record+json",
+        "video/mp4",
+        "audio/wav",
+        "application/x-astrid-timeline",
     }
 )
 
@@ -540,7 +560,7 @@ class EvidenceArtifactRef:
     """Reference to an evidence artifact stored elsewhere.
 
     Named ``EvidenceArtifactRef`` (not ``ArtifactRef``) to avoid collision
-    with ``arnold.pipelines.megaplan.store.base.ArtifactRef``.
+    with downstream storage-row ``ArtifactRef`` types.
     """
 
     uri: str
@@ -577,13 +597,36 @@ class ContractStatus(str, Enum):
     FAILED = "failed"
 
 
+class EvidenceStatus(str, Enum):
+    """Canonical status of one evidence class for a subject."""
+
+    satisfied = "satisfied"
+    unsatisfied = "unsatisfied"
+    unknown = "unknown"
+    not_applicable = "not_applicable"
+    waived = "waived"
+
+
+class TrustClass(str, Enum):
+    """How much interpretation a record represents."""
+
+    claim = "claim"
+    evidence = "evidence"
+    judgment = "judgment"
+    routing = "routing"
+
+
 @dataclass(frozen=True)
-class Suspension:
+class HumanSuspension:
     """Typed interaction envelope for ``status == SUSPENDED``.
 
-    All baked fields are present; only ``kind="human"`` semantics are
+    All 11 baked fields are present; only ``kind="human"`` semantics are
     implemented downstream in this milestone — other ``kind`` values
     (``"render-job"`` / ``"quota"`` / ``"upload"``) are reserved.
+
+    Renamed from ``Suspension``; the alias ``Suspension = HumanSuspension``
+    preserves every existing constructor, ``isinstance`` check,
+    :meth:`from_json` classmethod, and type annotation byte-identically.
     """
 
     kind: str
@@ -614,7 +657,7 @@ class Suspension:
         }
 
     @classmethod
-    def from_json(cls, data: Mapping[str, Any]) -> "Suspension":
+    def from_json(cls, data: Mapping[str, Any]) -> "HumanSuspension":
         refs = tuple(
             EvidenceArtifactRef.from_json(r)
             for r in (data.get("display_refs") or ())
@@ -632,6 +675,11 @@ class Suspension:
             on_timeout=data.get("on_timeout"),
             default_action=data.get("default_action"),
         )
+
+
+# Backward-compatible alias — every constructor, isinstance check,
+# from_json classmethod, and type annotation resolves byte-identically.
+Suspension = HumanSuspension
 
 
 @dataclass(frozen=True)

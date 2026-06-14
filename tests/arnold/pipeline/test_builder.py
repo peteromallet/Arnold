@@ -5,6 +5,7 @@ from __future__ import annotations
 import pytest
 
 from arnold.pipeline.builder import PipelineBuilder
+from arnold.pipeline.declaration_lowering import lower_stage_declarations
 from arnold.pipeline.types import (
     Edge,
     ParallelStage,
@@ -117,9 +118,91 @@ class TestNeutralBuilder:
             )
         )
 
-        p = b.build()
+        p = b.build(derive_bindings=True)
 
         assert p.binding_map == {("sink", "draft"): ("src", "draft")}
+
+    @pytest.mark.parametrize(
+        ("producer_kwargs", "consumer_kwargs", "expected_produces", "expected_consumes"),
+        [
+            (
+                {"produces": (Port(name="draft", content_type="text/markdown"),)},
+                {
+                    "consumes": (
+                        PortRef(port_name="draft", content_type="text/markdown"),
+                    )
+                },
+                (Port(name="draft", content_type="text/markdown"),),
+                (PortRef(port_name="draft", content_type="text/markdown"),),
+            ),
+            (
+                {"writes": (Port(name="draft", content_type="text/markdown"),)},
+                {
+                    "reads": (
+                        PortRef(port_name="draft", content_type="text/markdown"),
+                    )
+                },
+                (Port(name="draft", content_type="text/markdown"),),
+                (PortRef(port_name="draft", content_type="text/markdown"),),
+            ),
+            (
+                {
+                    "writes": (Port(name="draft", content_type="text/markdown"),),
+                    "produces": (Port(name="draft", content_type="text/markdown"),),
+                },
+                {
+                    "reads": (
+                        PortRef(port_name="draft", content_type="text/markdown"),
+                    ),
+                    "consumes": (
+                        PortRef(port_name="draft", content_type="text/markdown"),
+                    ),
+                },
+                (Port(name="draft", content_type="text/markdown"),),
+                (PortRef(port_name="draft", content_type="text/markdown"),),
+            ),
+        ],
+    )
+    def test_build_derives_binding_map_from_effective_lowered_declarations_when_opted_in(
+        self,
+        producer_kwargs,
+        consumer_kwargs,
+        expected_produces,
+        expected_consumes,
+    ):
+        producer = Stage(
+            name="src",
+            step=_TrivialStep("src"),
+            edges=(Edge(label="done", target="sink"),),
+            **producer_kwargs,
+        )
+        consumer = Stage(
+            name="sink",
+            step=_TrivialStep("sink"),
+            edges=(),
+            **consumer_kwargs,
+        )
+
+        assert (
+            lower_stage_declarations(producer).effective_produces
+            == expected_produces
+        )
+        assert (
+            lower_stage_declarations(consumer).effective_consumes
+            == expected_consumes
+        )
+
+        legacy_builder = PipelineBuilder("test", "effective authoring pipeline")
+        legacy_builder.add_stage(producer)
+        legacy_builder.add_stage(consumer)
+        assert legacy_builder.build().binding_map is None
+
+        derived_builder = PipelineBuilder("test", "effective authoring pipeline")
+        derived_builder.add_stage(producer)
+        derived_builder.add_stage(consumer)
+        assert derived_builder.build(derive_bindings=True).binding_map == {
+            ("sink", "draft"): ("src", "draft")
+        }
 
     def test_build_skips_binding_map_when_declarations_drift(self):
         b = PipelineBuilder("test", "drifted authoring pipeline")

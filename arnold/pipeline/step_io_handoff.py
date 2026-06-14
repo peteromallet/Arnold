@@ -21,6 +21,7 @@ from arnold.pipeline.step_io_contract import (
     StepIOOperation,
     decide_step_io_read,
     decide_step_io_write,
+    make_warn_diagnostic,
 )
 from arnold.pipeline.step_io_policy import (
     StepIOPolicy,
@@ -34,6 +35,7 @@ from arnold.pipeline.runtime_contract_diagnostics import (
 )
 from arnold.pipeline.step_io_seams import SeamResolution, resolve_seam_from_binding_map
 from arnold.pipeline.step_io_telemetry import StepIOViolationRecord, emit_decision_telemetry
+from arnold.pipeline.types import ContractResult
 
 
 @dataclass(frozen=True)
@@ -47,6 +49,8 @@ class StepIOHandoffResult:
     allow_write: bool
     telemetry_record: StepIOViolationRecord | None = None
     author_diagnostic: RuntimeContractDiagnostic | None = None
+    contract_result: ContractResult | None = None
+    warn_diagnostic: StepIODiagnostic | None = None
 
     @property
     def blocks_read(self) -> bool:
@@ -70,8 +74,10 @@ def evaluate_step_io_handoff(
     producer_port: Any = None,
     consumer_port_decl: Any = None,
     configured_mode: Any = None,
-    plan_dir: str | Path | None = None,
-    state_config: Mapping[str, Any] | None = None,
+    policy: StepIOPolicy | None = None,
+    policy_data: Mapping[str, Any] | None = None,
+    policy_path: str | Path | None = None,
+    read_lenient_escape: bool = False,
     artifact: str = "step_io",
     telemetry_path: str | Path | None = None,
     producer_stage: str = "",
@@ -90,15 +96,22 @@ def evaluate_step_io_handoff(
         consumer_step=consumer_step,
         consumer_port=consumer_port,
     )
-    envelope = StepIOEnvelope.from_json(value) if isinstance(value, Mapping) else None
-    policy = resolve_step_io_policy(
-        configured_mode=configured_mode,
-        plan_dir=plan_dir,
-        state_config=state_config,
-        binding=seam,
-        producer_typed=seam.producer_typed,
-        consumer_typed=seam.consumer_typed,
+    contract_result, value = _project_contract_result_handoff_value(
+        value,
+        producer_port=producer_port,
+        context=context,
     )
+    envelope = StepIOEnvelope.from_json(value) if isinstance(value, Mapping) else None
+    if policy is None:
+        policy = resolve_step_io_policy(
+            configured_mode=configured_mode,
+            policy_data=policy_data,
+            policy_path=policy_path,
+            binding=seam,
+            producer_typed=seam.producer_typed,
+            consumer_typed=seam.consumer_typed,
+            read_lenient_escape=read_lenient_escape,
+        )
 
     if envelope is not None and not seam.binding_found:
         decision = _binding_unavailable_decision(value=value, envelope=envelope, reason=seam.reason)
@@ -130,7 +143,13 @@ def evaluate_step_io_handoff(
             operation=op.value,
             telemetry_path=telemetry_path,
             seam=str(seam.seam_id) if seam.seam_id is not None else "step_io",
+            pipeline_id=seam.seam_id.pipeline_id if seam.seam_id is not None else None,
+            producer_step=seam.seam_id.producer_step if seam.seam_id is not None else None,
+            producer_port=seam.seam_id.producer_port if seam.seam_id is not None else None,
+            consumer_step=seam.seam_id.consumer_step if seam.seam_id is not None else None,
+            consumer_port=seam.seam_id.consumer_port if seam.seam_id is not None else None,
             envelope=envelope,
+            surface_warn=True,
         )
     author_diagnostic = diagnostic_from_step_io(
         decision=decision,
@@ -140,6 +159,14 @@ def evaluate_step_io_handoff(
         producer_port=producer_port,
         consumer_port=consumer_port_decl,
     )
+    warn_diagnostic = (
+        make_warn_diagnostic(decision)
+        if policy.warns and decision.classification not in (
+            StepIOClassification.TYPED_VALID,
+            StepIOClassification.LEGACY_UNKNOWN,
+        )
+        else None
+    )
     return StepIOHandoffResult(
         decision=decision,
         policy=policy,
@@ -148,7 +175,50 @@ def evaluate_step_io_handoff(
         allow_write=allow_write,
         telemetry_record=record,
         author_diagnostic=author_diagnostic,
+        contract_result=contract_result,
+        warn_diagnostic=warn_diagnostic,
     )
+
+
+def _project_contract_result_handoff_value(
+    value: Any,
+    *,
+    producer_port: Any,
+    context: StepIOContractContext | None,
+) -> tuple[ContractResult | None, Any]:
+    """Project a ``ContractResult`` carrier into the value classified at the seam.
+
+    Existing typed envelopes carried in ``ContractResult.payload`` are passed
+    through unchanged. Raw payloads are projected into a typed envelope using
+    the producer logical type and latest logical schema version. The
+    ``ContractResult.schema_version`` remains structural carrier metadata and
+    is not used as the logical envelope schema version.
+    """
+
+    if not isinstance(value, ContractResult):
+        return None, value
+    if (
+        isinstance(value.payload, Mapping)
+        and StepIOEnvelope.from_json(value.payload) is not None
+    ):
+        return value, value.payload
+    logical_type = getattr(producer_port, "logical_type", None)
+    if not logical_type:
+        return value, value
+    registry = context.resolve_registry() if context is not None else None
+    if registry is None:
+        return value, value
+    try:
+        schema_version = registry.latest(logical_type)
+    except Exception:
+        return value, value
+    if not schema_version:
+        return value, value
+    return value, {
+        "logical_type": logical_type,
+        "schema_version": schema_version,
+        "payload": value.payload,
+    }
 
 
 def _resolve_seam(

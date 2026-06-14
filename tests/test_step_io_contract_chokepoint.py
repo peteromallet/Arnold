@@ -6,9 +6,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+import pytest
+
 from arnold.pipeline import (
     ContractSchemaRegistry,
-    STEP_IO_READ_LENIENT_ENV,
     StepIOClassification,
     StepIOContractContext,
     StepIOContractDecision,
@@ -17,20 +18,25 @@ from arnold.pipeline import (
     decide_step_io_read,
     decide_step_io_write,
     decision_blocks_read,
-    load_step_io_policy,
     read_violation_records,
     resolve_step_io_policy,
-    step_io_read_lenient_escape_on,
-    step_io_policy_path,
     validate_payload_against_schema,
-    write_step_io_policy,
 )
+from arnold.pipeline.artifact_io import ArtifactIOBlocked, validate_artifact_io
 from arnold.pipelines.megaplan.orchestration.completion_contract import (
     ArtifactRef,
     EvidenceRef,
     EvidenceStatus,
     TrustClass,
     normalize_contract_mode,
+)
+from arnold.pipelines.megaplan._pipeline.step_io_policy_adapter import (
+    STEP_IO_READ_LENIENT_ENV,
+    load_megaplan_step_io_policy,
+    megaplan_step_io_policy_path,
+    megaplan_step_io_read_lenient_escape_on,
+    resolve_megaplan_step_io_policy,
+    write_megaplan_step_io_policy,
 )
 from arnold.pipelines.megaplan.store import PlanRepository
 from arnold.pipelines.megaplan.store import plan_repository as plan_repository_module
@@ -157,11 +163,11 @@ def test_step_io_policy_reuses_completion_mode_normalization_and_persists(tmp_pa
         producer_typed=True,
         consumer_typed=True,
     )
-    out = write_step_io_policy(plan_dir, persisted)
-    assert out == step_io_policy_path(plan_dir)
-    assert load_step_io_policy(plan_dir)["effective_mode"] == "warn"
+    out = write_megaplan_step_io_policy(plan_dir, persisted)
+    assert out == megaplan_step_io_policy_path(plan_dir)
+    assert load_megaplan_step_io_policy(plan_dir)["effective_mode"] == "warn"
 
-    loaded = resolve_step_io_policy(plan_dir=plan_dir, binding=_Binding(True, True))
+    loaded = resolve_megaplan_step_io_policy(plan_dir=plan_dir, binding=_Binding(True, True))
     assert loaded.configured_mode == "warn"
     assert loaded.effective_mode == "warn"
 
@@ -211,7 +217,7 @@ def test_step_io_read_lenient_escape_flag_forces_shadow_without_weakening_writes
             "additionalProperties": False,
         },
     )
-    write_step_io_policy(
+    write_megaplan_step_io_policy(
         plan_dir,
         resolve_step_io_policy(
             configured_mode="enforce",
@@ -228,8 +234,8 @@ def test_step_io_read_lenient_escape_flag_forces_shadow_without_weakening_writes
 
     monkeypatch.setenv(STEP_IO_READ_LENIENT_ENV, "1")
 
-    assert step_io_read_lenient_escape_on() is True
-    escaped_policy = resolve_step_io_policy(
+    assert megaplan_step_io_read_lenient_escape_on() is True
+    escaped_policy = resolve_megaplan_step_io_policy(
         configured_mode="enforce",
         producer_typed=True,
         consumer_typed=True,
@@ -292,7 +298,7 @@ def test_plan_repository_off_mode_skips_registry_policy_work_for_typed_envelopes
         producer_typed=True,
         consumer_typed=True,
     )
-    write_step_io_policy(plan_dir, policy)
+    write_megaplan_step_io_policy(plan_dir, policy)
 
     typed_envelope = {
         "logical_type": "review",
@@ -416,7 +422,7 @@ def test_plan_repository_typed_invalid_read_shadows_with_payload_and_telemetry(t
             "additionalProperties": False,
         },
     )
-    write_step_io_policy(
+    write_megaplan_step_io_policy(
         plan_dir,
         resolve_step_io_policy(
             configured_mode="shadow",
@@ -456,7 +462,7 @@ def test_plan_repository_typed_invalid_read_blocks_in_enforce_and_emits_telemetr
             "additionalProperties": False,
         },
     )
-    write_step_io_policy(
+    write_megaplan_step_io_policy(
         plan_dir,
         resolve_step_io_policy(
             configured_mode="enforce",
@@ -497,7 +503,7 @@ def test_plan_repository_schema_unavailable_read_is_shadow_lenient(tmp_path) -> 
     _write_minimal_state(plan_dir)
     repo = PlanRepository.from_plan_dir(plan_dir)
 
-    write_step_io_policy(
+    write_megaplan_step_io_policy(
         plan_dir,
         resolve_step_io_policy(
             configured_mode="shadow",
@@ -533,7 +539,7 @@ def test_plan_repository_typed_invalid_write_rejects_before_persisting_bytes(tmp
             "additionalProperties": False,
         },
     )
-    write_step_io_policy(
+    write_megaplan_step_io_policy(
         plan_dir,
         resolve_step_io_policy(
             configured_mode="enforce",
@@ -573,7 +579,7 @@ def test_plan_repository_schema_unavailable_write_rejects_without_creating_file(
     _write_minimal_state(plan_dir)
     repo = PlanRepository.from_plan_dir(plan_dir)
 
-    write_step_io_policy(
+    write_megaplan_step_io_policy(
         plan_dir,
         resolve_step_io_policy(
             configured_mode="enforce",
@@ -614,6 +620,110 @@ def test_plan_repository_legacy_untyped_write_still_succeeds(tmp_path) -> None:
         "logical_type": "review",
         "payload": {"answer": "freeform"},
     }
+
+
+def test_validate_artifact_io_read_lenient_passes_through_invalid_typed_payload(tmp_path) -> None:
+    registry = ContractSchemaRegistry(tmp_path)
+    version = registry.register(
+        "review",
+        {
+            "type": "object",
+            "required": ["answer"],
+            "properties": {"answer": {"type": "integer"}},
+            "additionalProperties": False,
+        },
+    )
+    result = validate_artifact_io(
+        {
+            "logical_type": "review",
+            "schema_version": version,
+            "payload": {"answer": "wrong"},
+        },
+        operation=StepIOOperation.READ,
+        policy=resolve_step_io_policy(
+            configured_mode="warn",
+            producer_typed=True,
+            consumer_typed=True,
+        ),
+        contract_context=StepIOContractContext(operation=StepIOOperation.READ, registry=registry),
+    )
+
+    assert result.classification is StepIOClassification.TYPED_INVALID
+    assert result.blocked is False
+    assert result.value == {"answer": "wrong"}
+
+
+def test_validate_artifact_io_write_strict_blocks_invalid_typed_payload(tmp_path) -> None:
+    registry = ContractSchemaRegistry(tmp_path)
+    version = registry.register(
+        "review",
+        {
+            "type": "object",
+            "required": ["answer"],
+            "properties": {"answer": {"type": "integer"}},
+            "additionalProperties": False,
+        },
+    )
+
+    with pytest.raises(ArtifactIOBlocked, match="typed artifact write blocked") as excinfo:
+        validate_artifact_io(
+            {
+                "logical_type": "review",
+                "schema_version": version,
+                "payload": {"answer": "wrong"},
+            },
+            operation=StepIOOperation.WRITE,
+            policy=resolve_step_io_policy(
+                configured_mode="enforce",
+                producer_typed=True,
+                consumer_typed=True,
+            ),
+            contract_context=StepIOContractContext(operation=StepIOOperation.WRITE, registry=registry),
+        )
+
+    assert excinfo.value.result is not None
+    assert excinfo.value.result.blocked is True
+    assert excinfo.value.decision is not None
+    assert excinfo.value.decision.classification is StepIOClassification.TYPED_INVALID
+
+
+def test_validate_artifact_io_warn_mode_surfaces_warn_diagnostic_in_telemetry(tmp_path) -> None:
+    registry = ContractSchemaRegistry(tmp_path)
+    version = registry.register(
+        "review",
+        {
+            "type": "object",
+            "required": ["answer"],
+            "properties": {"answer": {"type": "integer"}},
+            "additionalProperties": False,
+        },
+    )
+    telemetry_path = tmp_path / TELEMETRY_FILENAME
+    result = validate_artifact_io(
+        {
+            "logical_type": "review",
+            "schema_version": version,
+            "payload": {"answer": "wrong"},
+        },
+        operation=StepIOOperation.WRITE,
+        policy=resolve_step_io_policy(
+            configured_mode="warn",
+            producer_typed=True,
+            consumer_typed=True,
+        ),
+        contract_context=StepIOContractContext(operation=StepIOOperation.WRITE, registry=registry),
+        telemetry_path=telemetry_path,
+    )
+
+    assert result.blocked is False
+    assert result.warn_diagnostic is not None
+    assert result.warn_diagnostic.code == "warn_violation_detected"
+    assert result.telemetry_record is not None
+    assert result.telemetry_record.diagnostic_details[0]["code"] == "warn_violation_detected"
+    assert (
+        read_violation_records(telemetry_path)[0]["diagnostic_details"][0]["code"]
+        == "warn_violation_detected"
+    )
 
 
 def test_contract_cli_mode_set_is_honored_by_later_repository_call_and_violations_json(
@@ -728,7 +838,7 @@ def test_contract_cli_self_validate_refuses_vacuous_markers_and_gates_enforce_pr
     ) == 0
     out = json.loads(capsys.readouterr().out)
     assert out["typed_artifacts"] == ["typed-valid.json"]
-    assert load_step_io_policy(plan_dir)["self_validation"]["validated"] is True
+    assert load_megaplan_step_io_policy(plan_dir)["self_validation"]["validated"] is True
 
     assert megaplan_cli_main(
         ["contract", "--project-dir", str(root), "mode", "set", "enforce", "--plan", "plan"]
@@ -1130,7 +1240,7 @@ _LEGACY_PAYLOADS: dict[str, dict[str, Any]] = {
 
 
 def _write_policy(plan_dir: Path, mode: str, *, producer_typed: bool = True, consumer_typed: bool = True) -> None:
-    write_step_io_policy(
+    write_megaplan_step_io_policy(
         plan_dir,
         resolve_step_io_policy(
             configured_mode=mode,

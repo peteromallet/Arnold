@@ -292,96 +292,10 @@ def extract_green_suite_info(verdict: "CompletionVerdict") -> tuple[dict[str, An
 
 
 # ---------------------------------------------------------------------------
-# Suite delta — nodeid-level diff between baseline and verification
+# Suite delta — re-exported from arnold.pipeline.suite_delta
 # ---------------------------------------------------------------------------
 
-
-@dataclass(frozen=True)
-class SuiteDelta:
-    """Computed diff between a baseline and a verification suite run.
-
-    All nodeid sets are tuples of strings.  When *computable* is ``False``
-    the nodeid fields are empty and callers MUST treat the delta as
-    unavailable (e.g. after a collection-parse failure).
-    """
-
-    computable: bool
-    newly_failing: tuple[str, ...]
-    newly_passing: tuple[str, ...]
-    still_red: tuple[str, ...]
-    still_green: tuple[str, ...]
-    deleted_tests: tuple[str, ...]
-    added_tests: tuple[str, ...]
-    flakes: tuple[str, ...]
-    tests_collected: int
-    duration: float
-    flake_retry_skipped: bool = False
-    flake_retry_reason: str = ""
-
-    def to_dict(self) -> dict[str, Any]:
-        return {
-            "computable": self.computable,
-            "newly_failing": list(self.newly_failing),
-            "newly_passing": list(self.newly_passing),
-            "still_red": list(self.still_red),
-            "still_green": list(self.still_green),
-            "deleted_tests": list(self.deleted_tests),
-            "added_tests": list(self.added_tests),
-            "flakes": list(self.flakes),
-            "tests_collected": self.tests_collected,
-            "duration": self.duration,
-            "flake_retry_skipped": self.flake_retry_skipped,
-            "flake_retry_reason": self.flake_retry_reason,
-        }
-
-
-def compute_delta(
-    baseline: "SuiteRunResult",
-    verification: "SuiteRunResult",
-) -> SuiteDelta:
-    """Compute the nodeid-level diff between *baseline* and *verification*.
-
-    Uses the documented set expressions.  ``newly_passing`` is explicitly
-    intersected with ``verification_collected`` so deleted tests can NEVER
-    surface as passing.
-    """
-    baseline_fail: set[str] = set(baseline.failures)
-    verification_fail: set[str] = set(verification.failures)
-    baseline_collected: set[str] = set(baseline.collected_ids)
-    verification_collected: set[str] = set(verification.collected_ids)
-
-    newly_failing = tuple(
-        sorted((verification_fail - baseline_fail) & verification_collected)
-    )
-    newly_passing = tuple(
-        sorted((baseline_fail - verification_fail) & verification_collected)
-    )
-    still_red = tuple(
-        sorted(baseline_fail & verification_fail & verification_collected)
-    )
-    still_green = tuple(
-        sorted(
-            (baseline_collected & verification_collected)
-            - baseline_fail
-            - verification_fail
-        )
-    )
-    deleted_tests = tuple(sorted(baseline_collected - verification_collected))
-    added_tests = tuple(sorted(verification_collected - baseline_collected))
-
-    return SuiteDelta(
-        computable=True,
-        newly_failing=newly_failing,
-        newly_passing=newly_passing,
-        still_red=still_red,
-        still_green=still_green,
-        deleted_tests=deleted_tests,
-        added_tests=added_tests,
-        flakes=(),
-        tests_collected=len(verification_collected),
-        duration=verification.duration,
-    )
-
+from arnold.pipeline.suite_delta import SuiteDelta, SuiteRunProtocol, compute_delta  # noqa: F401
 
 # ---------------------------------------------------------------------------
 # Evidence context + provider protocol
@@ -641,7 +555,11 @@ class LandedDiffProvider:
 
         try:
             result = validate_execution_evidence(
-                finalize, ctx.project_dir, state=ctx.state
+                finalize,
+                ctx.project_dir,
+                plan_dir=ctx.plan_dir,
+                artifact_prefix="execution_audit_completion_contract",
+                state=ctx.state,
             )
         except Exception as exc:
             return _provider_evidence_ref(

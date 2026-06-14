@@ -6,6 +6,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any, Protocol, runtime_checkable
 
+from arnold.agent.contracts import AgentDispatcher
 from arnold.pipelines.megaplan.agent_runtime.contracts import AgentRequest, AgentResult
 
 
@@ -16,11 +17,6 @@ class CommandResult:
     stderr: str = ""
     duration_ms: int = 0
     metadata: dict[str, Any] = field(default_factory=dict)
-
-
-@runtime_checkable
-class AgentDispatcher(Protocol):
-    def dispatch(self, request: AgentRequest) -> AgentResult: ...
 
 
 @runtime_checkable

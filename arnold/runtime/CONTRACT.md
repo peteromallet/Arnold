@@ -47,31 +47,33 @@ req = OperationRequest(
 
 ## 2. RuntimeEnvelope — Fields, schema\_version, and JSON Shape
 
-`RuntimeEnvelope` and `CrossCuttingEnvelope` live in
-`arnold.runtime.envelope`.  Both are `frozen=True` dataclasses.
+`RuntimeEnvelope`, `RunEnvelope`
+live in `arnold.runtime.envelope`.  All three are `frozen=True` dataclasses.
 
 ### 2.1 RuntimeEnvelope fields
 
 | Field                         | Type                        | Notes                                              |
 |-------------------------------|-----------------------------|----------------------------------------------------|
-| `schema_version`              | `ClassVar[int] = 1`         | Pinnable without instantiation.                    |
+| `schema_version`              | `ClassVar[int] = 2`         | Pinnable without instantiation.                    |
 | `plugin_id`                   | `str`                       | Identifies the plugin.                             |
 | `manifest_hash`               | `str`                       | Hash of the plugin manifest; used for trust gating.|
 | `plugin_state_schema_version` | `int`                       | Plugin-owned state schema version.                 |
 | `run_id`                      | `str`                       | Unique run identifier.                             |
 | `artifact_root`               | `str`                       | Base path for run artifacts.                       |
 | `resume_cursor`               | `ResumeCursorRef \| None`   | Opaque cursor; `None` for fresh runs.              |
-| `trust_state`                 | `str`                       | Defaults to `"unknown"`.                           |
+| `trust_state`                 | `str`                       | Defaults to `\"unknown\"`.                           |
 | `created_at`                  | `str`                       | ISO-8601 timestamp string.                         |
-| `cross_cutting`               | `CrossCuttingEnvelope`      | Composed cross-cutting sub-record.                 |
+| `cross_cutting`               | `RunEnvelope`               | Composed cross-cutting sub-record.                 |
 
-`lease_id`, `fencing_token`, and `capacity_grant` are **intentionally
-absent** (SD3): those are M3 capacity-grant hinge concerns.
+`lease_id`, `fencing_token`, and `capacity_grant` are carried inside
+the composed :class:`RunEnvelope`, not as top-level fields on
+:class:`RuntimeEnvelope`.  The M3 capacity-grant hinge semantics are
+delivered through the RunEnvelope semilattice (join, fencing, capacity).
 
 `RUNTIME_ENVELOPE_SCHEMA_VERSION` is also exported at module level so
 importers can pin the integer without instantiating.
 
-### 2.2 CrossCuttingEnvelope fields
+### 2.2 RunEnvelope fields (canonical cross-cutting carrier)
 
 | Field           | Type                   | Notes                              |
 |-----------------|------------------------|------------------------------------|
@@ -83,7 +85,7 @@ importers can pin the integer without instantiating.
 | `retry_budget`  | `Mapping[str, Any]`    | Opaque retry-budget blob.          |
 | `error_class`   | `str \| None`          | Runtime-neutral error class label. |
 
-### 2.3 JSON shape
+### RunEnvelope
 
 `RuntimeEnvelope.to_json()` emits sorted-key JSON.
 `RuntimeEnvelope.from_json()` is the inverse; it rejects a persisted
@@ -91,7 +93,7 @@ importers can pin the integer without instantiating.
 
 ```json
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "plugin_id": "my-plugin",
   "manifest_hash": "sha256-abc...",
   "plugin_state_schema_version": 0,
@@ -101,13 +103,16 @@ importers can pin the integer without instantiating.
   "trust_state": "unknown",
   "created_at": "2026-06-02T00:00:00Z",
   "cross_cutting": {
-    "cancellation": null,
-    "cost": {},
-    "deadline": null,
-    "error_class": null,
+    "taint": "clean",
+    "cost": 0.0,
     "lineage": [],
-    "retry_budget": {},
-    "taint": []
+    "deadline": null,
+    "cancellation": false,
+    "retry_budget": 3,
+    "error_class": null,
+    "lease_id": null,
+    "fencing_token": null,
+    "capacity_grant": 0
   }
 }
 ```
@@ -235,18 +240,18 @@ only canonical deadline for runtime comparisons.  Arnold batch runners
 and timeout supervisors compare `time.time()` against
 `deadline_epoch_s` — a numeric, epoch-seconds value.
 
-`CrossCuttingEnvelope.deadline: str | None` is **metadata only**.  It
-carries an ISO-8601 string for human-readability and audit trails but
-is **never parsed** by Arnold batch runners or timeout supervisors
-(SD1).
+`RunEnvelope.deadline: float | None` is **metadata only**.  It
+carries a POSIX timestamp for the envelope semilattice but is
+**never used for deadline enforcement** by Arnold batch runners or
+timeout supervisors — those use `deadline_epoch_s` exclusively (SD1).
 
 **`GloballyAggregatedSettings.cancellation: bool`** is the canonical
 cancellation request.  Arnold batch runners check this boolean to
 decide whether to stop processing new units.
 
-`CrossCuttingEnvelope.cancellation: str | None` is **opaque metadata**
-(token/reason string).  It carries context for humans and audit trails
-but is never evaluated by Arnold mechanics (SD2).
+`RunEnvelope.cancellation: bool` is **opaque metadata**
+carried through the envelope semilattice.  It is never evaluated by
+Arnold mechanics for cancellation enforcement (SD2).
 
 ### 4.6 Negative vs expired deadlines (SD3)
 
@@ -504,7 +509,7 @@ M5b code may depend on them freely — they carry no Megaplan defaults.
 | 11 | Subprocess driver deadline capping             | `megaplan/drivers/subprocess_isolated.py`| Accepts `batch_settings` (`BatchRuntimeSettings`); computes          |
 |    |                                                |                                         | `min(wall_cap, wall_timeout_s, deadline_remaining_s)` at run time.  |
 | 12 | Operation registry & run envelope              | `arnold.runtime.operations`             | `OperationKind`, `OperationRequest`/`OperationResult`,               |
-|    |                                                | `arnold.runtime.envelope`               | `RuntimeEnvelope`, `CrossCuttingEnvelope` — all neutral carriers.   |
+|    |                                                | `arnold.runtime.envelope`               | `RuntimeEnvelope`, `RunEnvelope` — all neutral carriers.   |
 | 13 | StepwiseDriver Protocol                        | `arnold.runtime.driver`                 | `StepwiseDriver`, `ISOLATION_MODES`, `AdvanceOutcome`,               |
 |    |                                                |                                         | `CheckpointOutcome` — driver contract for M5b to implement.         |
 | 14 | Legacy-resume migration                        | `arnold.runtime.resume`                 | `migrate_legacy_resume()` — pure function; callers own persistence. |

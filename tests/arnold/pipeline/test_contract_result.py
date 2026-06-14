@@ -18,6 +18,7 @@ from arnold.pipeline.types import (
     ContractStatus,
     EvidenceArtifactRef,
     Freshness,
+    HumanSuspension,
     Provenance,
     Suspension,
     register_schema,
@@ -660,3 +661,627 @@ class TestContractResultStatuses:
         cr = ContractResult(status=ContractStatus.COMPLETED, suspension=None)
         j = cr.to_json()
         assert j["suspension"] is None
+
+
+# ---------------------------------------------------------------------------
+# T1: Contract boundary regression tests — x-arnold-resume round-trip
+#     and dataclass field-name stability
+# ---------------------------------------------------------------------------
+
+
+class TestXArnoldResumeRoundTrip:
+    """Prove resume_input_schema['x-arnold-resume'] survives to_json/from_json."""
+
+    def test_x_arnold_resume_preserved_exactly(self) -> None:
+        """x-arnold-resume payload round-trips exactly through HumanSuspension."""
+        resume_payload: dict[str, Any] = {
+            "produces": {"scan_report": "s3://bucket/scan-1.json"},
+            "cursor": {"step": "scan-step", "iteration": 3},
+            "reverify": True,
+        }
+        sus = HumanSuspension(
+            kind="human",
+            prompt="Re-verify?",
+            resume_input_schema={"x-arnold-resume": resume_payload},
+        )
+        rt = HumanSuspension.from_json(sus.to_json())
+        assert rt.resume_input_schema == {"x-arnold-resume": resume_payload}
+        assert rt.resume_input_schema["x-arnold-resume"] == resume_payload
+        # Verify nested equality
+        assert rt.resume_input_schema["x-arnold-resume"]["produces"] == resume_payload["produces"]
+        assert rt.resume_input_schema["x-arnold-resume"]["cursor"] == resume_payload["cursor"]
+        assert rt.resume_input_schema["x-arnold-resume"]["reverify"] is True
+
+    def test_x_arnold_resume_preserved_with_other_keys(self) -> None:
+        """x-arnold-resume coexists with other resume_input_schema keys."""
+        resume_payload: dict[str, Any] = {"step_id": "verify-1", "token": "abc123"}
+        sus = HumanSuspension(
+            kind="human",
+            prompt="Approve?",
+            resume_input_schema={
+                "yes": "bool",
+                "x-arnold-resume": resume_payload,
+                "comment": "str",
+            },
+        )
+        rt = HumanSuspension.from_json(sus.to_json())
+        assert rt.resume_input_schema == {
+            "yes": "bool",
+            "x-arnold-resume": resume_payload,
+            "comment": "str",
+        }
+        assert rt.resume_input_schema["x-arnold-resume"] == resume_payload
+
+    def test_x_arnold_resume_survives_via_contract_result(self) -> None:
+        """x-arnold-resume round-trips through ContractResult embedding."""
+        resume_payload: dict[str, Any] = {"artifacts": ["file:///tmp/a.pdf"]}
+        sus = HumanSuspension(
+            kind="human",
+            prompt="Check artifacts?",
+            resume_input_schema={"x-arnold-resume": resume_payload},
+        )
+        cr = ContractResult(
+            status=ContractStatus.SUSPENDED,
+            suspension=sus,
+            payload={"phase": "verify"},
+        )
+        rt = ContractResult.from_json(cr.to_json())
+        assert rt.status == ContractStatus.SUSPENDED
+        assert rt.suspension is not None
+        assert rt.suspension.resume_input_schema == {"x-arnold-resume": resume_payload}
+        assert rt.suspension.resume_input_schema["x-arnold-resume"] == resume_payload
+
+    def test_x_arnold_resume_absent_round_trips_normally(self) -> None:
+        """When x-arnold-resume is absent, normal round-trip still works."""
+        sus = HumanSuspension(
+            kind="human",
+            prompt="Proceed?",
+            resume_input_schema={"allow": "bool", "reason": "str"},
+        )
+        rt = HumanSuspension.from_json(sus.to_json())
+        assert rt.resume_input_schema == {"allow": "bool", "reason": "str"}
+        assert "x-arnold-resume" not in rt.resume_input_schema
+
+    def test_x_arnold_resume_nested_dicts_and_lists(self) -> None:
+        """x-arnold-resume survives with nested dicts/lists/json types."""
+        resume_payload: dict[str, Any] = {
+            "nested": {"a": [1, 2, 3], "b": {"deep": True}},
+            "list_of_strings": ["x", "y", "z"],
+            "null_val": None,
+        }
+        sus = HumanSuspension(
+            kind="human",
+            prompt="Complex payload?",
+            resume_input_schema={"x-arnold-resume": resume_payload},
+        )
+        rt = HumanSuspension.from_json(sus.to_json())
+        assert rt.resume_input_schema["x-arnold-resume"] == resume_payload
+        assert rt.resume_input_schema["x-arnold-resume"]["nested"]["b"]["deep"] is True
+        assert rt.resume_input_schema["x-arnold-resume"]["null_val"] is None
+
+
+class TestDataclassFieldNames:
+    """Prove HumanSuspension and ContractResult field names are stable."""
+
+    def test_human_suspension_field_names(self) -> None:
+        """HumanSuspension field names must exactly match the expected set."""
+        from dataclasses import fields as _fields
+        actual = frozenset(f.name for f in _fields(HumanSuspension))
+        expected = frozenset({
+            "kind",
+            "awaitable",
+            "prompt",
+            "display_refs",
+            "resume_input_schema",
+            "resume_cursor",
+            "thread_ref",
+            "actor",
+            "deadline",
+            "on_timeout",
+            "default_action",
+        })
+        assert actual == expected, f"Unexpected fields: {actual ^ expected}"
+
+    def test_contract_result_field_names(self) -> None:
+        """ContractResult field names must exactly match the expected set."""
+        from dataclasses import fields as _fields
+        actual = frozenset(f.name for f in _fields(ContractResult))
+        expected = frozenset({
+            "payload",
+            "status",
+            "schema_version",
+            "suspension",
+            "evidence_refs",
+            "authority_level",
+            "provenance",
+            "freshness",
+        })
+        assert actual == expected, f"Unexpected fields: {actual ^ expected}"
+
+    def test_suspension_alias_resolves_to_human_suspension(self) -> None:
+        """Suspension alias is byte-identical to HumanSuspension."""
+        assert Suspension is HumanSuspension
+        # Ensure they have the same fields
+        from dataclasses import fields as _fields
+        assert frozenset(f.name for f in _fields(Suspension)) == frozenset(
+            f.name for f in _fields(HumanSuspension)
+        )
+
+    def test_human_suspension_field_order_stable(self) -> None:
+        """Field declaration order is part of the contract; it must not change."""
+        from dataclasses import fields as _fields
+        actual = tuple(f.name for f in _fields(HumanSuspension))
+        expected = (
+            "kind",
+            "awaitable",
+            "prompt",
+            "display_refs",
+            "resume_input_schema",
+            "resume_cursor",
+            "thread_ref",
+            "actor",
+            "deadline",
+            "on_timeout",
+            "default_action",
+        )
+        assert actual == expected, f"Field order changed: {actual}"
+
+    def test_contract_result_field_order_stable(self) -> None:
+        """Field declaration order is part of the contract; it must not change."""
+        from dataclasses import fields as _fields
+        actual = tuple(f.name for f in _fields(ContractResult))
+        expected = (
+            "payload",
+            "status",
+            "schema_version",
+            "suspension",
+            "evidence_refs",
+            "authority_level",
+            "provenance",
+            "freshness",
+        )
+        assert actual == expected, f"Field order changed: {actual}"
+
+
+# ---------------------------------------------------------------------------
+# T3: Declaration-bearing human gate producer tests — generic/neutral path
+# ---------------------------------------------------------------------------
+
+
+class TestBuildResumeReverifySchema:
+    """Tests for the neutral build_resume_reverify_schema() helper."""
+
+    def test_no_args_returns_empty_dict(self) -> None:
+        """When no declaration fields are supplied, returns empty dict (no-declaration parity)."""
+        from arnold.pipeline.steps.human_gate import build_resume_reverify_schema
+
+        result = build_resume_reverify_schema()
+        assert result == {}
+
+    def test_all_none_args_returns_empty_dict(self) -> None:
+        """Explicit None values produce empty dict, same as absent args."""
+        from arnold.pipeline.steps.human_gate import build_resume_reverify_schema
+
+        result = build_resume_reverify_schema(
+            port=None, content_type=None, artifact_path=None, artifact_ref=None,
+        )
+        assert result == {}
+
+    def test_port_only_produces_declaration(self) -> None:
+        """Providing port alone produces x-arnold-resume with port + default invalid_policy."""
+        from arnold.pipeline.steps.human_gate import build_resume_reverify_schema
+
+        result = build_resume_reverify_schema(port="scan_output")
+        assert result == {
+            "x-arnold-resume": {
+                "port": "scan_output",
+                "invalid_policy": "resuspend",
+            }
+        }
+
+    def test_content_type_only_produces_declaration(self) -> None:
+        """Providing content_type alone produces x-arnold-resume with content_type + default invalid_policy."""
+        from arnold.pipeline.steps.human_gate import build_resume_reverify_schema
+
+        result = build_resume_reverify_schema(content_type="text/markdown")
+        assert result == {
+            "x-arnold-resume": {
+                "content_type": "text/markdown",
+                "invalid_policy": "resuspend",
+            }
+        }
+
+    def test_artifact_path_only_produces_declaration(self) -> None:
+        """Providing artifact_path alone produces x-arnold-resume with artifact_path + default invalid_policy."""
+        from arnold.pipeline.steps.human_gate import build_resume_reverify_schema
+
+        result = build_resume_reverify_schema(artifact_path="/tmp/scan/v1.md")
+        assert result == {
+            "x-arnold-resume": {
+                "artifact_path": "/tmp/scan/v1.md",
+                "invalid_policy": "resuspend",
+            }
+        }
+
+    def test_artifact_ref_only_produces_declaration(self) -> None:
+        """Providing artifact_ref alone produces x-arnold-resume with artifact_ref + default invalid_policy."""
+        from arnold.pipeline.steps.human_gate import build_resume_reverify_schema
+
+        ref = {"uri": "s3://bkt/file.md", "content_type": "text/markdown"}
+        result = build_resume_reverify_schema(artifact_ref=ref)
+        assert result == {
+            "x-arnold-resume": {
+                "artifact_ref": ref,
+                "invalid_policy": "resuspend",
+            }
+        }
+
+    def test_all_fields_produces_full_declaration(self) -> None:
+        """All declaration fields + custom invalid_policy produce complete x-arnold-resume."""
+        from arnold.pipeline.steps.human_gate import build_resume_reverify_schema
+
+        result = build_resume_reverify_schema(
+            port="report_port",
+            content_type="application/json",
+            artifact_path="/tmp/report/v3.json",
+            artifact_ref={"name": "report", "uri": "s3://bkt/report.json"},
+            invalid_policy="reject",
+        )
+        assert result == {
+            "x-arnold-resume": {
+                "port": "report_port",
+                "content_type": "application/json",
+                "artifact_path": "/tmp/report/v3.json",
+                "artifact_ref": {"name": "report", "uri": "s3://bkt/report.json"},
+                "invalid_policy": "reject",
+            }
+        }
+
+    def test_empty_string_port_still_produces_declaration(self) -> None:
+        """Empty string for port is still a provided value — produces declaration."""
+        from arnold.pipeline.steps.human_gate import build_resume_reverify_schema
+
+        result = build_resume_reverify_schema(port="")
+        assert "x-arnold-resume" in result
+        assert result["x-arnold-resume"]["port"] == ""
+
+    def test_invalid_policy_default_is_resuspend(self) -> None:
+        """Default invalid_policy is 'resuspend' when not overridden."""
+        from arnold.pipeline.steps.human_gate import build_resume_reverify_schema
+
+        result = build_resume_reverify_schema(port="p")
+        assert result["x-arnold-resume"]["invalid_policy"] == "resuspend"
+
+    def test_result_is_megaplan_free(self) -> None:
+        """build_resume_reverify_schema does not import megaplan at runtime."""
+        import sys
+
+        # Ensure no megaplan module is pulled in by this import
+        before = {k for k in sys.modules if "megaplan" in k.lower()}
+        from arnold.pipeline.steps.human_gate import build_resume_reverify_schema  # noqa: F811
+        after = {k for k in sys.modules if "megaplan" in k.lower()}
+        leaked = after - before
+        assert not leaked, f"megaplan modules leaked on import: {leaked}"
+
+        # Invoke the function to confirm it doesn't trigger megaplan imports
+        result = build_resume_reverify_schema(port="test")
+        assert "x-arnold-resume" in result
+
+
+class TestHumanGateCheckpointResumeInputSchema:
+    """Checkpoint round-trip for resume_input_schema through the generic
+    write_human_gate_checkpoint → read_human_gate_checkpoint →
+    make_human_suspension pipeline."""
+
+    def test_resume_input_schema_round_trips_through_checkpoint(self, tmp_path: Path):
+        """resume_input_schema written via write_human_gate_checkpoint is read back exactly."""
+        from arnold.pipeline.steps.human_gate import (
+            build_resume_reverify_schema,
+            make_human_suspension,
+            read_human_gate_checkpoint,
+            write_human_gate_checkpoint,
+        )
+
+        checkpoint_path = tmp_path / "awaiting_user.json"
+        resume_schema = build_resume_reverify_schema(
+            port="scan_out", content_type="text/markdown", artifact_path="/tmp/v1.md",
+        )
+
+        written = write_human_gate_checkpoint(
+            checkpoint_path,
+            pipeline="test-pipe",
+            version=1,
+            artifact_stage="scan",
+            prompt="Review?",
+            resume_input_schema=resume_schema,
+            stage="decide",
+            choices=["yes", "no"],
+        )
+
+        assert written["resume_input_schema"] == resume_schema
+
+        read = read_human_gate_checkpoint(checkpoint_path)
+        assert read is not None
+        assert read["resume_input_schema"] == resume_schema
+
+        suspension = make_human_suspension(read)
+        assert suspension.resume_input_schema == resume_schema
+        assert suspension.resume_input_schema["x-arnold-resume"]["port"] == "scan_out"
+
+    def test_empty_resume_input_schema_not_embedded(self, tmp_path: Path):
+        """When resume_input_schema is empty/None, it is NOT written to checkpoint."""
+        from arnold.pipeline.steps.human_gate import (
+            make_human_suspension,
+            read_human_gate_checkpoint,
+            write_human_gate_checkpoint,
+        )
+
+        checkpoint_path = tmp_path / "awaiting_user.json"
+
+        # Empty dict
+        written = write_human_gate_checkpoint(
+            checkpoint_path,
+            pipeline="test-pipe",
+            version=1,
+            artifact_stage="scan",
+            prompt="Review?",
+            resume_input_schema={},
+            stage="decide",
+            choices=["yes"],
+        )
+        assert "resume_input_schema" not in written
+
+        read = read_human_gate_checkpoint(checkpoint_path)
+        assert read is not None
+        assert "resume_input_schema" not in read
+
+        suspension = make_human_suspension(read)
+        assert suspension.resume_input_schema == {}
+
+        # None
+        checkpoint_path2 = tmp_path / "awaiting_user2.json"
+        written2 = write_human_gate_checkpoint(
+            checkpoint_path2,
+            pipeline="test-pipe",
+            version=1,
+            artifact_stage="scan",
+            prompt="Review?",
+            resume_input_schema=None,
+            stage="decide",
+            choices=["yes"],
+        )
+        assert "resume_input_schema" not in written2
+
+    def test_resume_input_schema_coexists_with_other_checkpoint_keys(self, tmp_path: Path):
+        """resume_input_schema in checkpoint coexists with all standard keys."""
+        from arnold.pipeline.steps.human_gate import (
+            build_resume_reverify_schema,
+            read_human_gate_checkpoint,
+            write_human_gate_checkpoint,
+        )
+
+        checkpoint_path = tmp_path / "awaiting_user.json"
+        resume_schema = build_resume_reverify_schema(port="p1")
+
+        write_human_gate_checkpoint(
+            checkpoint_path,
+            pipeline="pipeline-x",
+            version=2,
+            artifact_stage="verify",
+            prompt="Check this",
+            display_refs=(),
+            resume_input_schema=resume_schema,
+            stage="human_gate",
+            choices=["ok", "reject"],
+            message="Paused waiting for human.",
+        )
+
+        read = read_human_gate_checkpoint(checkpoint_path)
+        assert read is not None
+        assert read["pipeline"] == "pipeline-x"
+        assert read["version"] == 2
+        assert read["stage"] == "human_gate"
+        assert read["artifact_stage"] == "verify"
+        assert read["choices"] == ["ok", "reject"]
+        assert read["resume_input_schema"] == resume_schema
+
+    def test_resume_input_schema_survives_write_read_without_declaration(self, tmp_path: Path):
+        """A non-x-arnold-resume resume_input_schema also round-trips through checkpoint."""
+        from arnold.pipeline.steps.human_gate import (
+            make_human_suspension,
+            read_human_gate_checkpoint,
+            write_human_gate_checkpoint,
+        )
+
+        checkpoint_path = tmp_path / "awaiting_user.json"
+        schema = {"yes": "bool", "reason": "str"}
+
+        write_human_gate_checkpoint(
+            checkpoint_path,
+            pipeline="p",
+            version=1,
+            artifact_stage="a",
+            prompt="?",
+            resume_input_schema=schema,
+            stage="g",
+            choices=["yes", "no"],
+        )
+
+        read = read_human_gate_checkpoint(checkpoint_path)
+        assert read is not None
+        assert read["resume_input_schema"] == schema
+
+        suspension = make_human_suspension(read)
+        assert suspension.resume_input_schema == schema
+
+    def test_make_human_suspension_defaults_schema_to_empty_dict(self) -> None:
+        """When checkpoint has no resume_input_schema, make_human_suspension returns empty dict."""
+        from arnold.pipeline.steps.human_gate import make_human_suspension
+
+        checkpoint: dict[str, Any] = {
+            "pipeline": "test",
+            "version": 1,
+            "prompt": "Go?",
+            "display_refs": [],
+            "stage": "decide",
+        }
+        suspension = make_human_suspension(checkpoint)
+        assert suspension.resume_input_schema == {}
+
+    def test_make_human_suspension_with_non_dict_schema_defaults_to_empty(self) -> None:
+        """When resume_input_schema is not a dict, make_human_suspension defaults to {}."""
+        from arnold.pipeline.steps.human_gate import make_human_suspension
+
+        checkpoint: dict[str, Any] = {
+            "pipeline": "test",
+            "version": 1,
+            "prompt": "Go?",
+            "display_refs": [],
+            "resume_input_schema": "not-a-dict",
+        }
+        suspension = make_human_suspension(checkpoint)
+        assert suspension.resume_input_schema == {}
+
+    def test_human_suspension_to_json_from_json_preserves_x_arnold_resume_from_checkpoint(
+        self, tmp_path: Path,
+    ) -> None:
+        """Full pipeline: build schema → write checkpoint → read → make suspension →
+        to_json → from_json preserves x-arnold-resume exactly."""
+        from arnold.pipeline.steps.human_gate import (
+            build_resume_reverify_schema,
+            make_human_suspension,
+            read_human_gate_checkpoint,
+            write_human_gate_checkpoint,
+        )
+        from arnold.pipeline.types import HumanSuspension
+
+        checkpoint_path = tmp_path / "awaiting_user.json"
+        resume_schema = build_resume_reverify_schema(
+            port="out", content_type="text/plain", artifact_path="/tmp/x.md",
+        )
+
+        write_human_gate_checkpoint(
+            checkpoint_path,
+            pipeline="p",
+            version=1,
+            artifact_stage="a",
+            resume_input_schema=resume_schema,
+            stage="g",
+            choices=["ok"],
+        )
+
+        read = read_human_gate_checkpoint(checkpoint_path)
+        assert read is not None
+        suspension = make_human_suspension(read, resume_cursor="c-1")
+
+        # to_json/from_json round-trip
+        rt = HumanSuspension.from_json(suspension.to_json())
+        assert rt.resume_input_schema == resume_schema
+        assert rt.resume_cursor == "c-1"
+        assert rt.resume_input_schema["x-arnold-resume"]["port"] == "out"
+
+    def test_write_human_gate_checkpoint_returns_dict(self, tmp_path: Path) -> None:
+        """write_human_gate_checkpoint returns the written checkpoint dict."""
+        from arnold.pipeline.steps.human_gate import write_human_gate_checkpoint
+
+        checkpoint_path = tmp_path / "awaiting_user.json"
+        result = write_human_gate_checkpoint(
+            checkpoint_path,
+            pipeline="p",
+            version=1,
+            artifact_stage="a",
+            stage="s",
+            choices=["c"],
+        )
+        assert isinstance(result, dict)
+        assert result["pipeline"] == "p"
+        assert checkpoint_path.exists()
+
+
+class TestHumanGateCheckpointNoDeclaration:
+    """No-declaration parity: behavior unchanged when x-arnold-resume is absent."""
+
+    def test_checkpoint_without_resume_input_schema_matches_legacy_shape(self, tmp_path: Path):
+        """When no resume_input_schema passed, checkpoint shape is identical to pre-T2 behavior."""
+        from arnold.pipeline.steps.human_gate import (
+            read_human_gate_checkpoint,
+            write_human_gate_checkpoint,
+        )
+
+        checkpoint_path = tmp_path / "awaiting_user.json"
+        write_human_gate_checkpoint(
+            checkpoint_path,
+            pipeline="legacy-pipe",
+            version=3,
+            artifact_stage="review",
+            prompt="Approve?",
+            stage="human_decide",
+            choices=["yes", "no"],
+            message="Review the artifact.",
+        )
+
+        read = read_human_gate_checkpoint(checkpoint_path)
+        assert read is not None
+        # No declaration key present
+        assert "resume_input_schema" not in read
+        # All standard keys present
+        assert read["pipeline"] == "legacy-pipe"
+        assert read["version"] == 3
+        assert read["artifact_stage"] == "review"
+        assert read["stage"] == "human_decide"
+        assert read["choices"] == ["yes", "no"]
+
+    def test_read_human_gate_checkpoint_returns_none_for_missing_file(self, tmp_path: Path):
+        """read_human_gate_checkpoint returns None when file doesn't exist."""
+        from arnold.pipeline.steps.human_gate import read_human_gate_checkpoint
+
+        result = read_human_gate_checkpoint(tmp_path / "nonexistent.json")
+        assert result is None
+
+    def test_read_human_gate_checkpoint_returns_none_for_malformed_json(self, tmp_path: Path):
+        """read_human_gate_checkpoint returns None for malformed JSON."""
+        from arnold.pipeline.steps.human_gate import read_human_gate_checkpoint
+
+        (tmp_path / "bad.json").write_text("{not valid json")
+        result = read_human_gate_checkpoint(tmp_path / "bad.json")
+        assert result is None
+
+    def test_read_human_gate_checkpoint_returns_none_for_non_dict(self, tmp_path: Path):
+        """read_human_gate_checkpoint returns None when file contains a list instead of dict."""
+        from arnold.pipeline.steps.human_gate import read_human_gate_checkpoint
+
+        (tmp_path / "list.json").write_text("[1, 2, 3]")
+        result = read_human_gate_checkpoint(tmp_path / "list.json")
+        assert result is None
+
+    def test_cleanup_behavior_unchanged_when_declaration_absent(self, tmp_path: Path):
+        """Cleanup (file deletion) works identically with or without declaration.
+        The read/delete logic is independent of resume_input_schema presence."""
+        import json
+
+        from arnold.pipeline.steps.human_gate import read_human_gate_checkpoint
+
+        # Write a checkpoint WITHOUT declaration (legacy shape)
+        checkpoint_path = tmp_path / "awaiting_user.json"
+        checkpoint_path.write_text(json.dumps({
+            "pipeline": "test",
+            "version": 1,
+            "stage": "decide",
+            "artifact_stage": "review",
+            "choices": ["ok"],
+            "message": "...",
+            "_resume_choice": "ok",
+        }))
+
+        # Read should succeed
+        read = read_human_gate_checkpoint(checkpoint_path)
+        assert read is not None
+        assert read["_resume_choice"] == "ok"
+        assert "resume_input_schema" not in read
+
+        # Cleanup: delete (simulating resume cleanup)
+        checkpoint_path.unlink()
+        assert not checkpoint_path.exists()
+
+        # Re-read after cleanup returns None
+        assert read_human_gate_checkpoint(checkpoint_path) is None

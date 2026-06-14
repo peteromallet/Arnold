@@ -36,6 +36,17 @@ from arnold.pipeline.types import (
     ReduceResult,
     Suspension,
 )
+from arnold.pipeline.step_invocation import (
+    StepInvocation as RuntimeStepInvocation,
+    StepInvocationAdapterRegistry,
+)
+from arnold.pipeline.validator import validate
+from arnold.pipelines.evidence_pack.pipelines import build_initial_pipeline
+
+
+class _NoopRuntimeToolAdapter:
+    def invoke(self, invocation: RuntimeStepInvocation) -> object:  # pragma: no cover
+        raise AssertionError("validation must not invoke evidence-pack adapters")
 
 
 # ---------------------------------------------------------------------------
@@ -151,6 +162,61 @@ class TestStepInvocationShapes:
         assert inv.produces[0].content_type == "application/json"
         assert len(inv.artifacts) == 1
         assert inv.artifacts[0].content_type == "application/json"
+
+    def test_runtime_invocation_uses_same_adapter_config_shape_for_model_and_tool(self) -> None:
+        """Production StepInvocation supports future tool shape without construction-time lookup."""
+        model = RuntimeStepInvocation.with_adapter_config(
+            kind="model",
+            adapter_config={"model": "gpt-5.4", "prompt": "summarize evidence"},
+        )
+        tool = RuntimeStepInvocation.with_adapter_config(
+            kind="tool",
+            adapter_config={"command": "scan", "artifact": "pack.json"},
+        )
+
+        assert model.kind == "model"
+        assert tool.kind == "tool"
+        assert model.metadata["adapter_config"]["model"] == "gpt-5.4"
+        assert tool.metadata["adapter_config"]["command"] == "scan"
+
+        registry = StepInvocationAdapterRegistry()
+        with pytest.raises(KeyError, match="unknown adapter kind 'tool'"):
+            registry.resolve(tool.kind)
+
+    def test_evidence_pack_pipeline_authors_model_and_tool_invocation_metadata(self) -> None:
+        """Evidence-pack stages can carry invocation metadata without live adapter calls."""
+        pipeline = build_initial_pipeline()
+        validators = pipeline.stages["content_validators"]
+        reduce_stage = pipeline.stages["reduce"]
+
+        assert validators.invocation == RuntimeStepInvocation.with_adapter_config(
+            kind="tool",
+            adapter_config={
+                "tool": "evidence-pack-checkpoint-validator",
+                "mode": "local-deterministic",
+            },
+        )
+        assert reduce_stage.invocation == RuntimeStepInvocation.with_adapter_config(
+            kind="model",
+            adapter_config={
+                "model": "evidence-pack-verdict-summarizer",
+                "mode": "metadata-only",
+            },
+        )
+
+        registry = StepInvocationAdapterRegistry()
+        registry.register("tool", _NoopRuntimeToolAdapter())
+        assert validate(pipeline, adapter_registry=registry).defects == []
+
+    def test_evidence_pack_tool_invocation_fails_closed_without_adapter(self) -> None:
+        """The future tool shape remains fail-closed until an adapter is registered."""
+        diag = validate(build_initial_pipeline())
+        assert any(
+            issue.code == "invocation.unknown_adapter"
+            and issue.stage == "content_validators"
+            and issue.details["invocation_kind"] == "tool"
+            for issue in diag.issues
+        )
 
     def test_multi_content_type_artifacts(self) -> None:
         """By-reference artifacts of different content types."""

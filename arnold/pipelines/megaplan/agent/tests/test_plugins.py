@@ -270,7 +270,7 @@ class TestPluginContext:
 
         assert "plugin_echo" in mgr._plugin_tool_names
 
-        from tools.registry import registry
+        from arnold.agent.tools.registry import registry
         assert "plugin_echo" in registry._tools
 
 

@@ -15,7 +15,7 @@ from arnold.pipeline.discovery.manifest import (  # noqa: F401
 )
 from arnold.pipeline.discovery.trust import (  # noqa: F401
     BLESSED_ALLOWLIST,
-    TrustTier,
+    TrustGrade,
     classify,
 )
 
@@ -41,7 +41,7 @@ __all__ = [
     "Manifest",
     "ManifestError",
     "read_manifest",
-    "TrustTier",
+    "TrustGrade",
     "BLESSED_ALLOWLIST",
     "KNOWN_CAPABILITIES",
     "classify",

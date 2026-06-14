@@ -870,15 +870,19 @@ def handle_contract(root: Path, args: argparse.Namespace) -> StepResponse:
 
     from arnold.pipeline import (
         TELEMETRY_FILENAME,
-        StepIOContractContext,
         StepIOOperation,
-        has_step_io_self_validation_marker,
         is_step_io_envelope,
-        load_step_io_policy,
-        record_step_io_self_validation_marker,
         read_violation_records,
-        resolve_step_io_policy,
-        write_step_io_policy,
+    )
+    from arnold.pipelines.megaplan._pipeline.schema_registry_adapter import (
+        create_step_io_contract_context,
+    )
+    from arnold.pipelines.megaplan._pipeline.step_io_policy_adapter import (
+        has_megaplan_step_io_self_validation_marker,
+        load_megaplan_step_io_policy,
+        record_megaplan_step_io_self_validation_marker,
+        resolve_megaplan_step_io_policy,
+        write_megaplan_step_io_policy,
     )
     from arnold.pipelines.megaplan.store import PlanRepository
 
@@ -887,17 +891,17 @@ def handle_contract(root: Path, args: argparse.Namespace) -> StepResponse:
         mode_action = getattr(args, "mode_action", None)
         if mode_action == "set":
             plan_dir = resolve_plan_dir(root, args.plan)
-            if args.mode == "enforce" and not has_step_io_self_validation_marker(plan_dir):
+            if args.mode == "enforce" and not has_megaplan_step_io_self_validation_marker(plan_dir):
                 raise CliError(
                     "contract_self_validation_required",
                     "contract mode enforce requires a successful contract self-validate marker",
                 )
-            policy = resolve_step_io_policy(
+            policy = resolve_megaplan_step_io_policy(
                 configured_mode=args.mode,
                 producer_typed=True,
                 consumer_typed=True,
             )
-            path = write_step_io_policy(plan_dir, policy)
+            path = write_megaplan_step_io_policy(plan_dir, policy)
             return {
                 "success": True,
                 "step": "contract",
@@ -919,7 +923,7 @@ def handle_contract(root: Path, args: argparse.Namespace) -> StepResponse:
                 "policies": [
                     {
                         "plan": repo.plan_name,
-                        "policy": load_step_io_policy(repo.plan_dir),
+                        "policy": load_megaplan_step_io_policy(repo.plan_dir),
                     }
                     for repo in repos
                 ],
@@ -966,17 +970,17 @@ def handle_contract(root: Path, args: argparse.Namespace) -> StepResponse:
             repo.write_artifact_json(
                 temp_name,
                 raw,
-                contract_context=StepIOContractContext(
+                contract_context=create_step_io_contract_context(
                     operation=StepIOOperation.WRITE,
-                    registry_root=plan_dir,
+                    explicit_root=plan_dir,
                 ),
                 contract_binding={"producer_typed": True, "consumer_typed": True},
             )
             repo.read_artifact_json(
                 temp_name,
-                contract_context=StepIOContractContext(
+                contract_context=create_step_io_contract_context(
                     operation=StepIOOperation.READ,
-                    registry_root=plan_dir,
+                    explicit_root=plan_dir,
                 ),
                 contract_binding={"producer_typed": True, "consumer_typed": True},
             )
@@ -987,7 +991,7 @@ def handle_contract(root: Path, args: argparse.Namespace) -> StepResponse:
                 "contract_self_validation_no_typed_artifacts",
                 "contract self-validate requires at least one typed artifact round trip",
             )
-        marker_path = record_step_io_self_validation_marker(
+        marker_path = record_megaplan_step_io_self_validation_marker(
             plan_dir,
             typed_artifacts=typed_artifacts,
         )
@@ -1270,13 +1274,25 @@ def handle_migrate_local_plans(root: Path, args: argparse.Namespace) -> StepResp
 
 
 def handle_resume(root: Path, args: argparse.Namespace) -> StepResponse:
-    # Check for awaiting_user.json first (pipeline human_gate pause).
-    # When present, enter the human-gate resume flow consuming --choice.
-    # When absent, fall through to existing state.json::resume_cursor recovery.
     from arnold.pipelines.megaplan._core.io import find_plan_dir
+    from arnold.pipelines.megaplan._pipeline.resume import extract_typed_resume_metadata
 
     plan_dir = find_plan_dir(root, args.plan)
-    if plan_dir is not None and (plan_dir / "awaiting_user.json").exists():
+    typed_meta = (
+        extract_typed_resume_metadata(plan_dir) if plan_dir is not None else None
+    )
+    typed_human_gate = (
+        typed_meta is not None
+        and isinstance(typed_meta.pipeline, str)
+        and bool(typed_meta.pipeline)
+        and isinstance(typed_meta.phase, str)
+        and bool(typed_meta.phase)
+        and isinstance(typed_meta.choices, list)
+        and bool(typed_meta.choices)
+    )
+    if plan_dir is not None and (
+        typed_human_gate or (plan_dir / "awaiting_user.json").exists()
+    ):
         return _resume_human_gate(root, plan_dir, args)
 
     store = None
@@ -1307,12 +1323,81 @@ def _resume_human_gate(root: Path, plan_dir: Path, args: argparse.Namespace) -> 
     then re-enters the pipeline at the paused stage.
     """
     awaiting_path = plan_dir / "awaiting_user.json"
-    try:
-        data = json.loads(awaiting_path.read_text())
-    except (json.JSONDecodeError, OSError) as exc:
-        raise CliError(
-            "bad_awaiting_user", f"Cannot read awaiting_user.json: {exc}"
-        ) from exc
+    from arnold.pipelines.megaplan._pipeline.resume import extract_typed_resume_metadata
+
+    typed_meta = extract_typed_resume_metadata(plan_dir)
+
+    def _read_awaiting_user_checkpoint(*, strict: bool) -> dict[str, Any]:
+        try:
+            raw = json.loads(awaiting_path.read_text())
+        except (json.JSONDecodeError, OSError) as exc:
+            if strict:
+                raise CliError(
+                    "bad_awaiting_user", f"Cannot read awaiting_user.json: {exc}"
+                ) from exc
+            return {}
+        if not isinstance(raw, dict):
+            if strict:
+                raise CliError(
+                    "bad_awaiting_user", "awaiting_user.json must contain a JSON object"
+                )
+            return {}
+        return dict(raw)
+
+    def _typed_checkpoint_data() -> dict[str, Any] | None:
+        if typed_meta is None:
+            return None
+        if (
+            not isinstance(typed_meta.pipeline, str)
+            or not typed_meta.pipeline
+            or not isinstance(typed_meta.phase, str)
+            or not typed_meta.phase
+            or not isinstance(typed_meta.choices, list)
+            or not typed_meta.choices
+        ):
+            return None
+        suspension = getattr(typed_meta.contract, "suspension", None)
+        if suspension is None:
+            return None
+        payload = getattr(typed_meta.contract, "payload", None)
+        data: dict[str, Any] = {}
+        if isinstance(payload, dict):
+            awaiting = payload.get("awaiting_user")
+            if isinstance(awaiting, dict):
+                data.update(awaiting)
+        data.update(
+            {
+                "pipeline": typed_meta.pipeline,
+                "stage": typed_meta.phase,
+                "choices": [str(choice) for choice in typed_meta.choices],
+                "message": str(
+                    getattr(suspension, "prompt", None)
+                    or f"Pipeline '{typed_meta.pipeline}' paused at stage '{typed_meta.phase}'."
+                ),
+            }
+        )
+        prompt = getattr(suspension, "prompt", None)
+        if isinstance(prompt, str) and prompt:
+            data["prompt"] = prompt
+        if typed_meta.resume_input_schema:
+            data["resume_input_schema"] = dict(typed_meta.resume_input_schema)
+        display_refs = getattr(suspension, "display_refs", ())
+        if isinstance(display_refs, (list, tuple)) and display_refs:
+            serialized_refs: list[dict[str, Any]] = []
+            for ref in display_refs:
+                to_json = getattr(ref, "to_json", None)
+                if callable(to_json):
+                    serialized_refs.append(to_json())
+            if serialized_refs:
+                data["display_refs"] = serialized_refs
+        return data
+
+    typed_data = _typed_checkpoint_data()
+    if typed_data is not None:
+        data = _read_awaiting_user_checkpoint(strict=False)
+        data.update(typed_data)
+    else:
+        data = _read_awaiting_user_checkpoint(strict=True)
 
     pipeline_name = data.get("pipeline")
     if not pipeline_name:
@@ -1365,9 +1450,12 @@ def _resume_human_gate(root: Path, plan_dir: Path, args: argparse.Namespace) -> 
         except json.JSONDecodeError:
             pass
 
-    # Clear pause flags so the executor doesn't immediately halt again.
+    # Clear pause state before execution so repeated resumes do not reuse
+    # stale typed or legacy suspension metadata.
     state.pop("_pipeline_paused", None)
     state.pop("_pipeline_paused_stage", None)
+    state.pop("contract_result", None)
+    save_state(plan_dir, state)
 
     ctx = StepContext(
         plan_dir=plan_dir,

@@ -679,7 +679,7 @@ def _check_send_message():
 
 
 # --- Registry ---
-from tools.registry import registry
+from arnold.agent.tools.registry import registry
 
 registry.register(
     name="send_message",

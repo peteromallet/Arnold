@@ -56,8 +56,13 @@ def _bundle(prompt_dir: str | Path) -> PipelineResourceBundle:
 class TestNeutralAgentStep:
     """Neutral AgentStep uses artifact_root and writes versioned output."""
 
+    def _artifact_path(self, result: StepResult) -> Path:
+        """Extract the artifact path from the contract_result payload."""
+        assert result.contract_result is not None
+        return Path(result.contract_result.payload["artifact_path"])
+
     def test_writes_versioned_artifact(self, tmp_path: Path) -> None:
-        """AgentStep writes <artifact_root>/<name>/<label>/v1.md."""
+        """AgentStep writes <artifact_root>/<name>/<label>/v1.md via contract_result."""
         step = AgentStep(
             name="draft",
             _prompt_source="Write a story.",
@@ -66,8 +71,9 @@ class TestNeutralAgentStep:
         result = step.run(ctx)
 
         assert isinstance(result, StepResult)
-        assert "draft" in result.outputs
-        output_path = Path(result.outputs["draft"])
+        assert result.outputs == {}
+        assert result.contract_result is not None
+        output_path = self._artifact_path(result)
         assert output_path.exists()
         # Expected layout: <tmp>/draft/markdown/v1.md
         expected_dir = tmp_path / "draft" / "markdown"
@@ -85,8 +91,8 @@ class TestNeutralAgentStep:
         result1 = step.run(ctx)
         result2 = step.run(ctx)
 
-        v1 = Path(result1.outputs["draft"])
-        v2 = Path(result2.outputs["draft"])
+        v1 = self._artifact_path(result1)
+        v2 = self._artifact_path(result2)
         assert v1.name == "v1.md"
         assert v2.name == "v2.md"
 
@@ -104,7 +110,7 @@ class TestNeutralAgentStep:
         ctx = _make_ctx(tmp_path)
         result = step.run(ctx)
 
-        output_path = Path(result.outputs["draft"])
+        output_path = self._artifact_path(result)
         assert output_path.read_text() == "processed draft"
 
     def test_no_plan_dir_on_context(self, tmp_path: Path) -> None:
@@ -133,7 +139,7 @@ class TestNeutralAgentStep:
         ctx = _make_ctx(tmp_path, inputs={"text": "hello world"})
         result = step.run(ctx)
 
-        output_path = Path(result.outputs["summary"])
+        output_path = self._artifact_path(result)
         content = output_path.read_text()
         assert "hello world" in content
 
@@ -147,7 +153,7 @@ class TestNeutralAgentStep:
         ctx = _make_ctx(tmp_path, inputs={"num": 42})
         result = step.run(ctx)
 
-        output_path = Path(result.outputs["count"])
+        output_path = self._artifact_path(result)
         assert "42" in output_path.read_text()
 
     def test_returns_done_next_label(self, tmp_path: Path) -> None:
@@ -162,7 +168,7 @@ class TestNeutralAgentStep:
         step = AgentStep(name="draft")
         ctx = _make_ctx(tmp_path)
         result = step.run(ctx)
-        output_path = Path(result.outputs["draft"])
+        output_path = self._artifact_path(result)
         assert "no prompt source" in output_path.read_text()
 
     def test_satisfies_step_protocol(self) -> None:
@@ -183,7 +189,7 @@ class TestNeutralAgentStep:
         ctx = _make_ctx(tmp_path)
         result = step.run(ctx)
 
-        output_path = Path(result.outputs["report"])
+        output_path = self._artifact_path(result)
         assert output_path.suffix == ".json"
         assert output_path.parent.name == "json"
 

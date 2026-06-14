@@ -32,7 +32,6 @@ _FLAG_OFF_TARGETS = (
     REPO_ROOT / "tests" / "test_driver_subprocess_isolated.py",
     REPO_ROOT / "tests" / "test_driver_selection.py",
     REPO_ROOT / "tests" / "test_supervise_subprocess_regression.py",
-    REPO_ROOT / "tests" / "test_legacy_subprocess_snapshot.py",
     REPO_ROOT / "tests" / "test_unified_dispatch_flag.py",
     # M4 — Steps 1-14 additions
     REPO_ROOT / "tests" / "test_run_envelope.py",
@@ -145,7 +144,6 @@ _FLAG_ON_TARGETS = (
     REPO_ROOT / "tests" / "test_flag_on_corpus_fixtures.py",
     REPO_ROOT / "tests" / "test_hinge_gate_chain.py",
     REPO_ROOT / "tests" / "oracles" / "test_crash_isolation_oracle.py",
-    REPO_ROOT / "tests" / "oracles" / "test_version_skew_oracle.py",
     REPO_ROOT / "tests" / "test_hinge_fold_equivalence.py",
     REPO_ROOT / "tests" / "test_workflow_topology_parity_gate.py",
     REPO_ROOT / "tests" / "test_r1_authority_flip.py",

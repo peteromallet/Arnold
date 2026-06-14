@@ -513,19 +513,8 @@ def test_finalize_schema_audit_is_validation_authority() -> None:
     validate_payload only checks key presence, not types. Schema audit
     rejects wrong types. This proves the migration is complete.
     """
-    from arnold.pipelines.megaplan.workers._impl import validate_payload
-
-    with pytest.raises(CliError, match="Legacy validate_payload\\(\\) is retired for finalize"):
-        validate_payload(
-            "finalize",
-            {
-                "tasks": [],
-                "watch_items": [],
-                "sense_checks": [],
-                "user_actions": [],
-                "meta_commentary": "ok",
-            },
-        )
+    with pytest.raises(ImportError):
+        exec("from arnold.pipelines.megaplan.workers._impl import validate_payload", {})
 
     # Schema audit is now the only structural validation authority.
     with pytest.raises(ModelStructuralAuditError) as exc_info:

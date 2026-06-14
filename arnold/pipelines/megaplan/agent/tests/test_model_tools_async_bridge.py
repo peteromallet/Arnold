@@ -229,7 +229,7 @@ class TestVisionDispatchLoopSafety:
         """After dispatching vision_analyze via the registry, the event
         loop must remain open so cached async clients don't crash on GC."""
         from model_tools import _run_async, _get_tool_loop
-        from tools.registry import registry
+        from arnold.agent.tools.registry import registry
 
         fake_response = _mock_vision_response()
 
@@ -273,7 +273,7 @@ class TestVisionDispatchLoopSafety:
         and share the same loop (simulates 'first call fails, second
         works' from the issue report)."""
         from model_tools import _get_tool_loop
-        from tools.registry import registry
+        from arnold.agent.tools.registry import registry
 
         fake_response = _mock_vision_response()
 

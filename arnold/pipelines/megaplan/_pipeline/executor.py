@@ -330,12 +330,200 @@ def _persist_suspension_cursor(
     state: dict[str, Any],
     executor_owned_keys: set[str],
     contract_result: Any | None,
+    artifact_root: str | Path,
+    stage: str,
 ) -> None:
     cursor = _resume_cursor_for_contract(contract_result)
     if cursor is None:
         return
+    # Ensure composite cursors carry a top-level ``phase`` so that
+    # suspension-aware fan-out consumers can discover the origin stage
+    # without inspecting every child payload.
+    if isinstance(cursor, dict) and cursor.get("kind") == "composite_suspension" and "phase" not in cursor:
+        cursor["phase"] = stage
     state["resume_cursor"] = cursor
     executor_owned_keys.add("resume_cursor")
+    if isinstance(cursor, dict) and cursor.get("kind") == "composite_suspension":
+        from arnold.pipeline.resume import persist_composite_resume_cursor
+        # Broaden durable metadata forwarding to exactly the approved
+        # allow-list: phase, pipeline, pipeline_manifest_hash,
+        # pending_suspensions, and shared_* keys.  Child cursor payloads
+        # are forwarded unchanged.
+        persist_composite_resume_cursor(
+            artifact_root,
+            children=cursor.get("children", {}),
+            pending_suspensions=cursor.get("pending_suspensions", []),
+            phase=cursor.get("phase"),
+            pipeline=cursor.get("pipeline"),
+            pipeline_manifest_hash=cursor.get("pipeline_manifest_hash"),
+            **{
+                key: value
+                for key, value in cursor.items()
+                if key.startswith("shared_")
+            },
+        )
+
+
+def _persist_terminal_suspended_contract_result(
+    *,
+    state: dict[str, Any],
+    executor_owned_keys: set[str],
+    contract_result: Any | None,
+) -> None:
+    if not _is_suspended_contract(contract_result):
+        return
+    state["contract_result"] = _contract_result_json(contract_result)
+    executor_owned_keys.add("contract_result")
+
+
+def _load_json_object(path: str | Path | None) -> dict[str, Any]:
+    if path is None:
+        raise AssertionError("resume re-verification succeeded without an artifact path")
+    data = json.loads(Path(path).read_text(encoding="utf-8"))
+    if not isinstance(data, Mapping):
+        raise AssertionError("resume re-verification payload must be a JSON object")
+    return dict(data)
+
+
+def _resume_reverify_suspension(contract_result: Any | None) -> Any | None:
+    if contract_result is None:
+        return None
+    payload = getattr(contract_result, "payload", None)
+    if not isinstance(payload, Mapping):
+        return None
+    suspension_payload = payload.get("resume_reverify_suspension")
+    if not isinstance(suspension_payload, Mapping):
+        return None
+
+    from arnold.pipeline import HumanSuspension
+
+    return HumanSuspension.from_json(suspension_payload)
+
+
+def _resume_reverify_checkpoint(contract_result: Any | None) -> dict[str, Any] | None:
+    if contract_result is None:
+        return None
+    payload = getattr(contract_result, "payload", None)
+    if not isinstance(payload, Mapping):
+        return None
+    checkpoint = payload.get("resume_reverify_checkpoint")
+    return dict(checkpoint) if isinstance(checkpoint, Mapping) else None
+
+
+def _resume_reverify_invalid_result(
+    *,
+    result: StepResult,
+    suspension: Any,
+    diagnostic: Mapping[str, Any] | None,
+) -> StepResult:
+    from arnold.pipeline import ContractResult, ContractStatus
+
+    return dataclasses.replace(
+        result,
+        outputs={},
+        state_patch={},
+        contract_result=ContractResult(
+            status=ContractStatus.SUSPENDED,
+            suspension=suspension,
+            payload=(
+                {"resume_reverify_diagnostic": dict(diagnostic)}
+                if isinstance(diagnostic, Mapping)
+                else {}
+            ),
+        ),
+    )
+
+
+def _resume_reverify_valid_result(
+    *,
+    result: StepResult,
+    port: str,
+    authoritative_payload: Mapping[str, Any],
+) -> StepResult:
+    from arnold.pipeline import ContractResult, ContractStatus
+
+    existing_contract = result.contract_result
+    payload = {}
+    if existing_contract is not None and isinstance(getattr(existing_contract, "payload", None), Mapping):
+        payload = dict(existing_contract.payload)
+    payload.pop("resume_reverify_suspension", None)
+    payload[port] = dict(authoritative_payload)
+
+    if existing_contract is None:
+        contract_result = ContractResult(
+            status=ContractStatus.COMPLETED,
+            payload=payload,
+        )
+    else:
+        contract_result = dataclasses.replace(
+            existing_contract,
+            status=ContractStatus.COMPLETED,
+            suspension=None,
+            payload=payload,
+        )
+    return dataclasses.replace(result, contract_result=contract_result)
+
+
+def _apply_resume_reverification(
+    *,
+    result: StepResult,
+    stage_name: str,
+    ctx: StepContext,
+    artifact_root: Path,
+) -> StepResult:
+    """Rewrite declaration-bearing human-gate resumes before any merge surface."""
+
+    suspension = _resume_reverify_suspension(result.contract_result)
+    if suspension is None:
+        return result
+
+    from arnold.pipeline.executor import StepIOEnforcementError
+    from arnold.pipeline.resume_validation import reverify_resume_produces
+    from arnold.pipelines.megaplan._pipeline.schema_registry_adapter import (
+        create_contract_schema_registry,
+    )
+
+    verified = reverify_resume_produces(
+        suspension,
+        artifact_root=artifact_root,
+        schema_registry=create_contract_schema_registry(ctx.plan_dir),
+        producer_stage=stage_name,
+    )
+    if verified.outcome == "no_op":
+        return result
+
+    if verified.outcome == "invalid":
+        if (
+            verified.declaration is not None
+            and verified.declaration.invalid_policy == "fail"
+        ):
+            detail = "resume re-verification failed"
+            if isinstance(verified.diagnostic, Mapping):
+                detail = str(verified.diagnostic.get("detail") or detail)
+            raise StepIOEnforcementError(
+                detail,
+                author_diagnostic=verified.diagnostic,
+            )
+        checkpoint = _resume_reverify_checkpoint(result.contract_result)
+        if checkpoint is not None:
+            _atomic_write_json(ctx.plan_dir / "awaiting_user.json", checkpoint)
+        return _resume_reverify_invalid_result(
+            result=result,
+            suspension=suspension,
+            diagnostic=verified.diagnostic,
+        )
+
+    declaration = verified.declaration
+    port = str(getattr(declaration, "port", None) or stage_name)
+    rewritten = _resume_reverify_valid_result(
+        result=result,
+        port=port,
+        authoritative_payload=_load_json_object(verified.resolved_artifact_path),
+    )
+    awaiting_path = ctx.plan_dir / "awaiting_user.json"
+    if awaiting_path.exists():
+        awaiting_path.unlink()
+    return rewritten
 
 
 def _record_error(
@@ -384,10 +572,12 @@ def _emit_binding_unavailable_telemetry(
             StepIOContractDecision,
             StepIODiagnostic,
         )
-        from arnold.pipeline.step_io_policy import resolve_step_io_policy
         from arnold.pipeline.step_io_telemetry import (
             TELEMETRY_FILENAME,
             emit_decision_telemetry,
+        )
+        from arnold.pipelines.megaplan._pipeline.step_io_policy_adapter import (
+            resolve_megaplan_step_io_policy,
         )
 
         detail = str(diagnostics.get("error_kind", "binding unavailable"))
@@ -406,7 +596,7 @@ def _emit_binding_unavailable_telemetry(
         )
         emit_decision_telemetry(
             decision=decision,
-            policy=resolve_step_io_policy(
+            policy=resolve_megaplan_step_io_policy(
                 configured_mode=None,
                 producer_typed=True,
                 consumer_typed=True,
@@ -469,6 +659,11 @@ def _port_name(port: Any) -> str:
 
 
 def _stage_produces(stage: Any) -> tuple[Any, ...]:
+    from arnold.pipeline.declaration_lowering import lower_stage_declarations
+
+    lowered = lower_stage_declarations(stage)
+    if lowered.effective_produces:
+        return tuple(lowered.effective_produces)
     produces = getattr(stage, "produces", None)
     if produces:
         return tuple(produces)
@@ -478,6 +673,11 @@ def _stage_produces(stage: Any) -> tuple[Any, ...]:
 
 
 def _stage_consumes(stage: Any) -> tuple[Any, ...]:
+    from arnold.pipeline.declaration_lowering import lower_stage_declarations
+
+    lowered = lower_stage_declarations(stage)
+    if lowered.effective_consumes:
+        return tuple(lowered.effective_consumes)
     consumes = getattr(stage, "consumes", None)
     if consumes:
         return tuple(consumes)
@@ -494,10 +694,7 @@ def _step_io_handoff_value(result: StepResult) -> Any | None:
     contract_result = getattr(result, "contract_result", None)
     if contract_result is None:
         return None
-    payload = getattr(contract_result, "payload", None)
-    if isinstance(payload, Mapping):
-        return dict(payload)
-    return payload
+    return contract_result
 
 
 def _evaluate_cursor_handoff(
@@ -518,10 +715,16 @@ def _evaluate_cursor_handoff(
     if not consumer_ports:
         return
 
-    from arnold.pipeline.step_io_contract import StepIOContractContext, StepIOOperation
+    from arnold.pipeline.step_io_contract import StepIOOperation
     from arnold.pipeline.step_io_handoff import evaluate_step_io_handoff
-    from arnold.pipeline.step_io_seams import SeamResolution
+    from arnold.pipeline.step_io_seams import SeamResolution, resolve_seam_from_binding_map
     from arnold.pipeline.step_io_telemetry import TELEMETRY_FILENAME
+    from arnold.pipelines.megaplan._pipeline.schema_registry_adapter import (
+        create_step_io_contract_context,
+    )
+    from arnold.pipelines.megaplan._pipeline.step_io_policy_adapter import (
+        resolve_megaplan_step_io_policy,
+    )
 
     for consumer_port in consumer_ports:
         consumer_port_name = _port_name(consumer_port)
@@ -551,12 +754,28 @@ def _evaluate_cursor_handoff(
                 reason=reason,
             )
         else:
-            seam = None
+            seam = resolve_seam_from_binding_map(
+                pipeline,
+                pipeline_id=getattr(pipeline, "name", "pipeline"),
+                consumer_step=consumer_stage.name,
+                consumer_port=consumer_port_name,
+            )
 
+        state_config = ctx.state if isinstance(ctx.state, Mapping) else None
         handoff = evaluate_step_io_handoff(
             value,
             operation=StepIOOperation.WRITE,
-            context=StepIOContractContext(operation=StepIOOperation.WRITE),
+            context=create_step_io_contract_context(
+                operation=StepIOOperation.WRITE,
+                explicit_root=ctx.plan_dir,
+            ),
+            policy=resolve_megaplan_step_io_policy(
+                plan_dir=ctx.plan_dir,
+                state_config=state_config,
+                binding=seam,
+                producer_typed=seam.producer_typed,
+                consumer_typed=seam.consumer_typed,
+            ),
             pipeline=pipeline,
             pipeline_id=getattr(pipeline, "name", "pipeline"),
             consumer_step=consumer_stage.name,
@@ -564,8 +783,6 @@ def _evaluate_cursor_handoff(
             seam=seam,
             producer_port=producer_port,
             consumer_port_decl=consumer_port,
-            plan_dir=ctx.plan_dir,
-            state_config=state if isinstance((state := ctx.state), Mapping) else None,
             artifact=f"{producer_stage.name}.contract_result",
             telemetry_path=artifact_root / TELEMETRY_FILENAME,
             producer_stage=producer_stage.name,
@@ -915,6 +1132,12 @@ def run_pipeline(
         _activation = _act_transition(_activation, _LS.SUCCEEDED)
 
         _verify_outputs(node.name, result.outputs)
+        result = _apply_resume_reverification(
+            result=result,
+            stage_name=node.name,
+            ctx=ctx,
+            artifact_root=artifact_root,
+        )
         latest_contract_result = result.contract_result
 
         patch = dict(result.state_patch)
@@ -943,13 +1166,20 @@ def run_pipeline(
         if _gov_s is not None:
             _gov_s.fold_shard_spend(envelope)
 
-        if latest_contract_result is None:
+        if latest_contract_result is None and state.get("_pipeline_paused"):
             latest_contract_result = _legacy_awaiting_user_contract(
                 plan_dir=ctx.plan_dir,
                 state=state,
                 stage_name=node.name,
             )
         _persist_suspension_cursor(
+            state=state,
+            executor_owned_keys=executor_owned_keys,
+            contract_result=latest_contract_result,
+            artifact_root=artifact_root,
+            stage=node.name,
+        )
+        _persist_terminal_suspended_contract_result(
             state=state,
             executor_owned_keys=executor_owned_keys,
             contract_result=latest_contract_result,
@@ -988,10 +1218,14 @@ def run_pipeline(
                 )
 
         if _is_suspended_contract(latest_contract_result):
+            _suspension_kind = getattr(
+                getattr(latest_contract_result, "suspension", None), "kind", None
+            )
+            _halt_reason = "awaiting_user" if _suspension_kind == "human" else "suspended"
             return _terminal_result(
                 state=state,
                 final_stage=node.name,
-                halt_reason="awaiting_user" if state.get("_pipeline_paused") else "suspended",
+                halt_reason=_halt_reason,
                 envelope=envelope,
                 contract_result=latest_contract_result,
             )

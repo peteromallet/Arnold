@@ -121,11 +121,11 @@ class TestBrowserConsoleToolsetWiring:
     """browser_console must be reachable via toolset resolution."""
 
     def test_in_browser_toolset(self):
-        from toolsets import TOOLSETS
+        from arnold.agent.toolsets import TOOLSETS
         assert "browser_console" in TOOLSETS["browser"]["tools"]
 
     def test_in_hermes_core_tools(self):
-        from toolsets import _HERMES_CORE_TOOLS
+        from arnold.agent.toolsets import _HERMES_CORE_TOOLS
         assert "browser_console" in _HERMES_CORE_TOOLS
 
     def test_in_legacy_toolset_map(self):
@@ -133,7 +133,7 @@ class TestBrowserConsoleToolsetWiring:
         assert "browser_console" in _LEGACY_TOOLSET_MAP["browser_tools"]
 
     def test_in_registry(self):
-        from tools.registry import registry
+        from arnold.agent.tools.registry import registry
         from tools import browser_tool  # noqa: F401
         assert "browser_console" in registry._tools
 

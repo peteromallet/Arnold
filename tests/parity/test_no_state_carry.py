@@ -16,7 +16,6 @@ STATE_OWNER_OR_ADAPTER_FILES = frozenset(
         "arnold/pipelines/megaplan/_core/state.py",
         "arnold/pipelines/megaplan/_core/workflow.py",
         "arnold/pipelines/megaplan/_core/workflow_data.py",
-        "arnold/pipelines/megaplan/_legacy_subprocess/__init__.py",
         "arnold/pipelines/megaplan/auto.py",
         "arnold/pipelines/megaplan/chain/__init__.py",
         "arnold/pipelines/megaplan/cli/__init__.py",

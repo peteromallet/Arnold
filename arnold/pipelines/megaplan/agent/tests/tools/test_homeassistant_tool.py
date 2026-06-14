@@ -342,7 +342,7 @@ class TestGetHeaders:
 
 class TestRegistration:
     def test_tools_registered_in_registry(self):
-        from tools.registry import registry
+        from arnold.agent.tools.registry import registry
 
         names = registry.get_all_tool_names()
         assert "ha_list_entities" in names
@@ -350,7 +350,7 @@ class TestRegistration:
         assert "ha_call_service" in names
 
     def test_tools_in_homeassistant_toolset(self):
-        from tools.registry import registry
+        from arnold.agent.tools.registry import registry
 
         toolset_map = registry.get_tool_to_toolset_map()
         for tool in ("ha_list_entities", "ha_get_state", "ha_call_service"):
@@ -358,7 +358,7 @@ class TestRegistration:
 
     def test_check_fn_gates_availability(self, monkeypatch):
         """Registry should exclude HA tools when HASS_TOKEN is not set."""
-        from tools.registry import registry
+        from arnold.agent.tools.registry import registry
 
         monkeypatch.delenv("HASS_TOKEN", raising=False)
         defs = registry.get_definitions({"ha_list_entities", "ha_get_state", "ha_call_service"})
@@ -366,7 +366,7 @@ class TestRegistration:
 
     def test_check_fn_includes_when_token_set(self, monkeypatch):
         """Registry should include HA tools when HASS_TOKEN is set."""
-        from tools.registry import registry
+        from arnold.agent.tools.registry import registry
 
         monkeypatch.setenv("HASS_TOKEN", "test-token")
         defs = registry.get_definitions({"ha_list_entities", "ha_get_state", "ha_call_service"})

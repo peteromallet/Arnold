@@ -3085,3 +3085,352 @@ class TestDeadRetryCode:
             f"Expected 2 occurrences of 'if retry_count >= max_retries:' "
             f"but found {occurrences}"
         )
+
+
+# ── T12: Synthetic tool-call media usage side channel ──────────────────────
+
+class TestSyntheticToolSideChannel:
+    """Tests proving synthetic agent-loop tool-call media usage is registered
+    through the side channel without changing tool message content or existing
+    string result behavior."""
+
+    # ── helpers ──────────────────────────────────────────────────────────
+
+    @staticmethod
+    def _make_media_usage(unit="image", count=1, dimensions=None):
+        from run_agent import MediaUsage
+        return MediaUsage(unit=unit, count=count, dimensions=dimensions or {})
+
+    @staticmethod
+    def _make_envelope(result_str, media_usage=()):
+        from run_agent import ToolInvocationEnvelope
+        return ToolInvocationEnvelope(result=result_str, media_usage=media_usage)
+
+    # ── _unwrap_tool_invocation_result ───────────────────────────────────
+
+    def test_unwrap_plain_string_returns_it_unchanged(self, agent):
+        """Plain strings pass through unchanged; no media usage recorded."""
+        result = agent._unwrap_tool_invocation_result("hello world", tool_call_id="call-1")
+        assert result == "hello world"
+        assert agent.get_tool_call_media_usage("call-1") == ()
+
+    def test_unwrap_envelope_returns_result_field(self, agent):
+        """Envelope → result field returned as the tool message content."""
+        usage = self._make_media_usage("image", 3)
+        envelope = self._make_envelope("generated image ok", media_usage=(usage,))
+        result = agent._unwrap_tool_invocation_result(envelope, tool_call_id="call-2")
+        assert result == "generated image ok"
+        assert result is envelope.result
+
+    def test_unwrap_envelope_records_media_usage(self, agent):
+        """Envelope with media_usage → media usage stored under tool_call_id."""
+        usage = self._make_media_usage("image", 3)
+        envelope = self._make_envelope("ok", media_usage=(usage,))
+        agent._unwrap_tool_invocation_result(envelope, tool_call_id="call-3")
+        stored = agent.get_tool_call_media_usage("call-3")
+        assert len(stored) == 1
+        assert stored[0].unit == "image"
+        assert stored[0].count == 3
+
+    def test_unwrap_envelope_no_tool_call_id_still_returns_string(self, agent):
+        """Even without a tool_call_id, the string result is returned."""
+        usage = self._make_media_usage("image", 1)
+        envelope = self._make_envelope("result", media_usage=(usage,))
+        result = agent._unwrap_tool_invocation_result(envelope, tool_call_id=None)
+        assert result == "result"
+
+    def test_unwrap_envelope_no_tool_call_id_no_media_stored(self, agent):
+        """When tool_call_id is None, media usage is NOT stored anywhere."""
+        usage = self._make_media_usage("image", 1)
+        envelope = self._make_envelope("result", media_usage=(usage,))
+        agent._unwrap_tool_invocation_result(envelope, tool_call_id=None)
+        # No storage side-effects when no key
+        assert agent._tool_call_media_usage == {}
+
+    def test_unwrap_envelope_empty_media_usage(self, agent):
+        """Envelope with empty media_usage tuple → no media stored."""
+        envelope = self._make_envelope("ok", media_usage=())
+        result = agent._unwrap_tool_invocation_result(envelope, tool_call_id="call-e1")
+        assert result == "ok"
+        assert agent.get_tool_call_media_usage("call-e1") == ()
+
+    # ── _record_tool_call_media_usage ────────────────────────────────────
+
+    def test_record_none_tool_call_id_is_noop(self, agent):
+        """None tool_call_id → early return, nothing stored."""
+        usage = self._make_media_usage("song", 1)
+        agent._record_tool_call_media_usage(None, (usage,))
+        assert agent._tool_call_media_usage == {}
+
+    def test_record_none_media_usage_is_noop(self, agent):
+        """None media_usage → nothing stored."""
+        agent._record_tool_call_media_usage("call-r1", None)
+        assert agent._tool_call_media_usage == {}
+
+    def test_record_empty_media_usage_is_noop(self, agent):
+        """Empty tuple media_usage → nothing stored."""
+        agent._record_tool_call_media_usage("call-r2", ())
+        assert agent._tool_call_media_usage == {}
+
+    def test_record_single_media_usage(self, agent):
+        """Single MediaUsage → stored as a tuple."""
+        usage = self._make_media_usage("image", 2)
+        agent._record_tool_call_media_usage("call-r3", usage)
+        stored = agent._tool_call_media_usage["call-r3"]
+        assert isinstance(stored, tuple)
+        assert len(stored) == 1
+        assert stored[0].unit == "image"
+        assert stored[0].count == 2
+
+    def test_record_list_of_media_usage(self, agent):
+        """List of MediaUsage → converted to tuple and stored."""
+        u1 = self._make_media_usage("image", 1)
+        u2 = self._make_media_usage("song", 2)
+        agent._record_tool_call_media_usage("call-r4", [u1, u2])
+        stored = agent._tool_call_media_usage["call-r4"]
+        assert len(stored) == 2
+        assert stored[0].unit == "image"
+        assert stored[1].unit == "song"
+
+    def test_record_overwrites_previous_entry(self, agent):
+        """A second record for the same ID overwrites the first."""
+        u1 = self._make_media_usage("image", 1)
+        u2 = self._make_media_usage("song", 5)
+        agent._record_tool_call_media_usage("call-r5", (u1,))
+        agent._record_tool_call_media_usage("call-r5", (u2,))
+        stored = agent._tool_call_media_usage["call-r5"]
+        assert len(stored) == 1
+        assert stored[0].unit == "song"
+        assert stored[0].count == 5
+
+    # ── get_tool_call_media_usage ───────────────────────────────────────
+
+    def test_get_unknown_id_returns_empty_tuple(self, agent):
+        """Unknown tool_call_id → empty tuple (never None)."""
+        result = agent.get_tool_call_media_usage("nonexistent")
+        assert result == ()
+        assert isinstance(result, tuple)
+
+    def test_get_known_id_returns_stored_usage(self, agent):
+        """Known tool_call_id → the stored tuple."""
+        usage = self._make_media_usage("video_second", 30)
+        agent._record_tool_call_media_usage("call-g1", (usage,))
+        result = agent.get_tool_call_media_usage("call-g1")
+        assert len(result) == 1
+        assert result[0].unit == "video_second"
+        assert result[0].count == 30
+
+    def test_get_after_clear_session_state_resets(self, agent):
+        """After reset_session_state(), previously stored media is gone."""
+        usage = self._make_media_usage("image", 1)
+        agent._record_tool_call_media_usage("call-g2", (usage,))
+        agent.reset_session_state()
+        assert agent.get_tool_call_media_usage("call-g2") == ()
+
+    # ── register_synthetic_tool_handler ─────────────────────────────────
+
+    def test_register_adds_handler(self, agent):
+        """Handler is stored and later retrieved via _invoke_tool."""
+        def fake_handler(args, task_id, tool_call_id, agent):
+            return "fake-result"
+        agent.register_synthetic_tool_handler("fake_tool", fake_handler)
+        assert agent._synthetic_tool_handlers["fake_tool"] is fake_handler
+
+    def test_register_adds_to_valid_tool_names(self, agent):
+        """Registering a synthetic handler adds the tool name to valid_tool_names."""
+        def fake_handler(args, task_id, tool_call_id, agent):
+            return "ok"
+        agent.register_synthetic_tool_handler("my_media_tool", fake_handler)
+        assert "my_media_tool" in agent.valid_tool_names
+
+    def test_register_adds_tool_definition_when_missing(self, agent):
+        """When the tool name isn't already in self.tools, a definition is appended."""
+        original_len = len(agent.tools)
+        def fake_handler(args, task_id, tool_call_id, agent):
+            return "ok"
+        agent.register_synthetic_tool_handler("brand_new_tool", fake_handler,
+                                               description="A brand new tool")
+        assert len(agent.tools) == original_len + 1
+        last_tool = agent.tools[-1]
+        assert last_tool["function"]["name"] == "brand_new_tool"
+        assert last_tool["function"]["description"] == "A brand new tool"
+
+    def test_register_does_not_duplicate_existing_tool(self, agent):
+        """If the tool name already exists in self.tools, no duplicate is added."""
+        original_len = len(agent.tools)
+        def fake_handler(args, task_id, tool_call_id, agent):
+            return "ok"
+        # "web_search" is already in agent.tools from the fixture
+        agent.register_synthetic_tool_handler("web_search", fake_handler)
+        assert len(agent.tools) == original_len
+
+    # ── _invoke_tool with synthetic handler ─────────────────────────────
+
+    def test_invoke_synthetic_plain_string_result(self, agent):
+        """Synthetic handler returning plain string → string returned, no media."""
+        def handler(args, task_id, tool_call_id, agent):
+            return "plain string result"
+        agent.register_synthetic_tool_handler("synth_plain", handler)
+        result = agent._invoke_tool("synth_plain", {}, "task-1", tool_call_id="call-s1")
+        assert result == "plain string result"
+        assert agent.get_tool_call_media_usage("call-s1") == ()
+
+    def test_invoke_synthetic_envelope_with_media(self, agent):
+        """Synthetic handler returning ToolInvocationEnvelope with media_usage
+        → string result returned as tool message content, media usage stored."""
+        def handler(args, task_id, tool_call_id, agent):
+            return ToolInvocationEnvelope(
+                result="image generated: img_001.png",
+                media_usage=(MediaUsage(unit="image", count=1, dimensions={"size": "1024x1024"}),),
+            )
+        from run_agent import ToolInvocationEnvelope, MediaUsage
+        agent.register_synthetic_tool_handler("synth_image", handler)
+
+        result = agent._invoke_tool("synth_image", {"prompt": "cat"}, "task-2",
+                                    tool_call_id="call-s2")
+
+        # Tool message content is exactly the string, not the envelope
+        assert result == "image generated: img_001.png"
+        assert not isinstance(result, ToolInvocationEnvelope)
+
+        # Media usage is registered
+        stored = agent.get_tool_call_media_usage("call-s2")
+        assert len(stored) == 1
+        assert stored[0].unit == "image"
+        assert stored[0].count == 1
+        assert stored[0].dimensions == {"size": "1024x1024"}
+
+    def test_invoke_synthetic_envelope_with_multiple_media(self, agent):
+        """Synthetic handler returning multiple media_usage items → all stored."""
+        def handler(args, task_id, tool_call_id, agent):
+            from run_agent import ToolInvocationEnvelope, MediaUsage
+            return ToolInvocationEnvelope(
+                result="generated 2 images and a song",
+                media_usage=(
+                    MediaUsage(unit="image", count=2),
+                    MediaUsage(unit="song", count=1),
+                ),
+            )
+        agent.register_synthetic_tool_handler("synth_multi", handler)
+        result = agent._invoke_tool("synth_multi", {}, "task-3", tool_call_id="call-s3")
+        assert result == "generated 2 images and a song"
+
+        stored = agent.get_tool_call_media_usage("call-s3")
+        assert len(stored) == 2
+        assert stored[0].unit == "image"
+        assert stored[0].count == 2
+        assert stored[1].unit == "song"
+        assert stored[1].count == 1
+
+    def test_invoke_synthetic_envelope_empty_media(self, agent):
+        """Synthetic handler returning envelope with empty media_usage → no media stored."""
+        def handler(args, task_id, tool_call_id, agent):
+            from run_agent import ToolInvocationEnvelope
+            return ToolInvocationEnvelope(result="done", media_usage=())
+        agent.register_synthetic_tool_handler("synth_empty", handler)
+        result = agent._invoke_tool("synth_empty", {}, "task-4", tool_call_id="call-s4")
+        assert result == "done"
+        assert agent.get_tool_call_media_usage("call-s4") == ()
+
+    def test_invoke_synthetic_preserves_non_string_result(self, agent):
+        """Synthetic handler returning non-string is passed through (no envelope check)."""
+        def handler(args, task_id, tool_call_id, agent):
+            return 42  # Not a string, not an envelope
+        agent.register_synthetic_tool_handler("synth_int", handler)
+        result = agent._invoke_tool("synth_int", {}, "task-5", tool_call_id="call-s5")
+        # _unwrap_tool_invocation_result only unwraps ToolInvocationEnvelope;
+        # other types pass through as-is.
+        assert result == 42
+        assert agent.get_tool_call_media_usage("call-s5") == ()
+
+    # ── Existing string result behavior unchanged ───────────────────────
+
+    def test_invoke_non_synthetic_tool_still_works(self, agent):
+        """Non-synthetic tools (routed via handle_function_call) are unaffected."""
+        with patch("run_agent.handle_function_call", return_value="search result") as mock_hfc:
+            result = agent._invoke_tool("web_search", {"q": "test"}, "task-6",
+                                        tool_call_id="call-ns1")
+        assert result == "search result"
+        # No side-channel pollution for non-synthetic tools
+        assert agent.get_tool_call_media_usage("call-ns1") == ()
+        mock_hfc.assert_called_once()
+
+    def test_invoke_synthetic_does_not_affect_other_tool_calls(self, agent):
+        """Media from one synthetic call is isolated from other tool calls."""
+        def media_handler(args, task_id, tool_call_id, agent):
+            from run_agent import ToolInvocationEnvelope, MediaUsage
+            return ToolInvocationEnvelope(
+                result="media done",
+                media_usage=(MediaUsage(unit="image", count=1),),
+            )
+        agent.register_synthetic_tool_handler("synth_iso", media_handler)
+
+        # Call synthetic tool
+        agent._invoke_tool("synth_iso", {}, "task-7", tool_call_id="call-iso-1")
+        # Call non-synthetic tool
+        with patch("run_agent.handle_function_call", return_value="plain"):
+            agent._invoke_tool("web_search", {"q": "x"}, "task-7", tool_call_id="call-iso-2")
+
+        assert len(agent.get_tool_call_media_usage("call-iso-1")) == 1
+        assert agent.get_tool_call_media_usage("call-iso-2") == ()
+
+    def test_invoke_multiple_synthetic_calls_each_isolated(self, agent):
+        """Each synthetic call's media usage is stored under its own tool_call_id."""
+        def make_handler(unit, result_str):
+            def handler(args, task_id, tool_call_id, agent):
+                from run_agent import ToolInvocationEnvelope, MediaUsage
+                return ToolInvocationEnvelope(
+                    result=result_str,
+                    media_usage=(MediaUsage(unit=unit, count=1),),
+                )
+            return handler
+
+        agent.register_synthetic_tool_handler("synth_a", make_handler("image", "img"))
+        agent.register_synthetic_tool_handler("synth_b", make_handler("song", "song"))
+
+        agent._invoke_tool("synth_a", {}, "task-8", tool_call_id="call-a")
+        agent._invoke_tool("synth_b", {}, "task-8", tool_call_id="call-b")
+
+        assert agent.get_tool_call_media_usage("call-a")[0].unit == "image"
+        assert agent.get_tool_call_media_usage("call-b")[0].unit == "song"
+        # No cross-contamination
+        assert agent.get_tool_call_media_usage("call-a")[0].unit != \
+               agent.get_tool_call_media_usage("call-b")[0].unit
+
+    def test_tool_message_content_exactly_string_result(self, agent):
+        """SC12: The emitted tool message content is exactly the string result,
+        not the envelope object or any mutated form."""
+        expected = "exact content string 123!@#"
+
+        def handler(args, task_id, tool_call_id, agent):
+            from run_agent import ToolInvocationEnvelope, MediaUsage
+            return ToolInvocationEnvelope(
+                result=expected,
+                media_usage=(MediaUsage(unit="image", count=5),),
+            )
+        agent.register_synthetic_tool_handler("synth_exact", handler)
+        result = agent._invoke_tool("synth_exact", {}, "task-9", tool_call_id="call-exact")
+
+        # Content identity: the same string object, not a copy
+        assert result is expected
+        # Content equality: same value
+        assert result == "exact content string 123!@#"
+        # Length preserved
+        assert len(result) == len(expected)
+        # Type preserved
+        assert type(result) is str
+
+    # ── Decimal count normalization in stored media ─────────────────────
+
+    def test_media_usage_count_preserved_in_storage(self, agent):
+        """MediaUsage.count is preserved exactly as provided (no truncation)."""
+        def handler(args, task_id, tool_call_id, agent):
+            from run_agent import ToolInvocationEnvelope, MediaUsage
+            return ToolInvocationEnvelope(
+                result="ok",
+                media_usage=(MediaUsage(unit="video_second", count=7.5),),
+            )
+        agent.register_synthetic_tool_handler("synth_float", handler)
+        agent._invoke_tool("synth_float", {}, "task-10", tool_call_id="call-float")
+        stored = agent.get_tool_call_media_usage("call-float")
+        assert stored[0].count == 7.5

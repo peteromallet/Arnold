@@ -23,7 +23,7 @@ from arnold.pipelines.megaplan._core import (
     unresolved_significant_flags,
 )
 from arnold.pipelines.megaplan._pipeline.types import StateDelta
-from arnold.pipelines.megaplan.control_interface import (
+from arnold.control.interface import (
     CONTROL_TARGET_ABORT,
     CONTROL_TARGET_FORCE_ADVANCE,
     CONTROL_TARGET_RECOVER_FROM_STUCK,
@@ -34,7 +34,7 @@ from arnold.pipelines.megaplan.control_interface import (
     ControlTransitionResult,
     RunStateView,
 )
-from arnold.pipelines.megaplan.run_outcome import RunOutcome
+from arnold.runtime.outcome import RunOutcome
 from arnold.pipelines.megaplan.profiles import effective_premium_vendor
 from arnold.pipelines.megaplan.profiles.policy import DEFAULT_AGENT_ROUTING, ROBUSTNESS_ACCEPTED, normalize_robustness
 from arnold.pipelines.megaplan.types import (

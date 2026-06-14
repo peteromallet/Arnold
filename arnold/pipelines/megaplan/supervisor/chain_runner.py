@@ -18,8 +18,8 @@ from typing import Any, Mapping
 from arnold.pipelines.megaplan._core import read_json, resolve_plan_dir
 from arnold.pipelines.megaplan._core.state import write_plan_state
 from arnold.pipelines.megaplan.chain import spec as chain_spec
-from arnold.pipelines.megaplan.control_interface import ControlBinding, RunStateView
-from arnold.pipelines.megaplan.run_outcome import RunOutcome
+from arnold.control.interface import ControlBinding, RunStateView
+from arnold.runtime.outcome import RunOutcome
 from arnold.pipelines.megaplan.supervisor.driver import (
     DefaultRunDriver,
     PackRunner,

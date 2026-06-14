@@ -107,12 +107,14 @@ def test_explicit_suspended_contract_returns_terminal_suspension_and_persists_re
     result = run_pipeline(pipeline, _ctx(tmp_path), artifact_root=tmp_path)
 
     assert result["status"] == "suspended"
-    assert result["halt_reason"] == "suspended"
+    assert result["halt_reason"] == "awaiting_user"
     assert result["contract_result"]["status"] == "suspended"
+    assert result["state"]["contract_result"] == result["contract_result"]
     assert result["state"]["resume_cursor"] == {
         "phase": "review",
         "retry_strategy": "fresh",
     }
+    assert _state_json(tmp_path)["contract_result"] == result["contract_result"]
     assert _state_json(tmp_path)["resume_cursor"] == {
         "phase": "review",
         "retry_strategy": "fresh",
@@ -151,7 +153,7 @@ def test_suspended_contract_takes_precedence_over_next_proceed_and_skips_routing
     result = run_pipeline(pipeline, _ctx(tmp_path), artifact_root=tmp_path)
 
     assert result["final_stage"] == "gate"
-    assert result["halt_reason"] == "suspended"
+    assert result["halt_reason"] == "awaiting_user"
     assert downstream.calls == 0
 
 
@@ -317,8 +319,10 @@ def test_legacy_awaiting_user_bridge_handles_valid_missing_and_malformed_sidecar
     assert result["contract_result"]["payload"]["awaiting_user"] == (
         awaiting_payload if isinstance(awaiting_payload, dict) else {}
     )
+    assert result["state"]["contract_result"] == result["contract_result"]
     schema = result["contract_result"]["suspension"]["resume_input_schema"]
     assert schema["properties"]["choice"]["enum"] == expected_choices
+    assert _state_json(tmp_path)["contract_result"] == result["contract_result"]
     assert result["state"]["resume_cursor"] == expected_cursor
     assert _state_json(tmp_path)["resume_cursor"] == expected_cursor
 
@@ -357,6 +361,7 @@ def test_failed_contract_surfaces_pending_suspensions_and_persists_composite_cur
     assert result["state"]["resume_cursor"] == {
         "kind": "composite_suspension",
         "version": 1,
+        "phase": "fanout_join",
         "children": {
             "worker_a": {"phase": "execute", "attempt": 2},
             "worker_b": {"phase": "critique", "attempt": 1},
@@ -412,7 +417,7 @@ def test_parallel_join_omitted_contract_reduces_suspended_child_and_preserves_jo
     result = run_pipeline(pipeline, _ctx(tmp_path), artifact_root=tmp_path)
 
     assert result["final_stage"] == "panel"
-    assert result["halt_reason"] == "suspended"
+    assert result["halt_reason"] == "awaiting_user"
     assert result["state"]["joined"] is True
     assert result["contract_result"]["status"] == "suspended"
     payload = result["contract_result"]["payload"]
@@ -490,7 +495,7 @@ def test_parallel_join_composes_suspension_before_governor_fold_and_preserves_en
     result = run_pipeline(pipeline, _ctx(tmp_path), artifact_root=tmp_path)
 
     assert result["final_stage"] == "panel"
-    assert result["halt_reason"] == "suspended"
+    assert result["halt_reason"] == "awaiting_user"
     assert joined_envelope in governor.seen
     assert governor.seen[-1] == joined_envelope
     assert result["envelope"] == joined_envelope

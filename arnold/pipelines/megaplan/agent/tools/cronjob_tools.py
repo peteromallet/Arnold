@@ -430,7 +430,7 @@ def get_cronjob_tool_definitions():
 
 
 # --- Registry ---
-from tools.registry import registry
+from arnold.agent.tools.registry import registry
 
 registry.register(
     name="cronjob",

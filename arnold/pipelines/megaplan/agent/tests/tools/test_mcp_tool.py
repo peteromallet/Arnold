@@ -263,7 +263,7 @@ class TestToolHandler:
 class TestDiscoverAndRegister:
     def test_tools_registered_in_registry(self):
         """_discover_and_register_server registers tools with correct names."""
-        from tools.registry import ToolRegistry
+        from arnold.agent.tools.registry import ToolRegistry
         from tools.mcp_tool import _discover_and_register_server, _servers, MCPServerTask
 
         mock_registry = ToolRegistry()
@@ -320,7 +320,7 @@ class TestDiscoverAndRegister:
 
     def test_schema_format_correct(self):
         """Registered schemas have the correct format."""
-        from tools.registry import ToolRegistry
+        from arnold.agent.tools.registry import ToolRegistry
         from tools.mcp_tool import _discover_and_register_server, _servers, MCPServerTask
 
         mock_registry = ToolRegistry()
@@ -1444,7 +1444,7 @@ class TestUtilityToolRegistration:
 
     def test_utility_tools_registered(self):
         """_discover_and_register_server registers all 4 utility tools."""
-        from tools.registry import ToolRegistry
+        from arnold.agent.tools.registry import ToolRegistry
         from tools.mcp_tool import _discover_and_register_server, _servers, MCPServerTask
 
         mock_registry = ToolRegistry()
@@ -1480,7 +1480,7 @@ class TestUtilityToolRegistration:
 
     def test_utility_tools_in_same_toolset(self):
         """Utility tools belong to the same mcp-{server} toolset."""
-        from tools.registry import ToolRegistry
+        from arnold.agent.tools.registry import ToolRegistry
         from tools.mcp_tool import _discover_and_register_server, _servers, MCPServerTask
 
         mock_registry = ToolRegistry()
@@ -1509,7 +1509,7 @@ class TestUtilityToolRegistration:
 
     def test_utility_tools_have_check_fn(self):
         """Utility tools have a working check_fn."""
-        from tools.registry import ToolRegistry
+        from arnold.agent.tools.registry import ToolRegistry
         from tools.mcp_tool import _discover_and_register_server, _servers, MCPServerTask
 
         mock_registry = ToolRegistry()
@@ -2536,7 +2536,7 @@ class TestMCPSelectiveToolLoading:
         return server
 
     def _run_discover(self, name, tool_names, config, session=None):
-        from tools.registry import ToolRegistry
+        from arnold.agent.tools.registry import ToolRegistry
         from tools.mcp_tool import _discover_and_register_server, _servers
 
         mock_registry = ToolRegistry()
@@ -2657,7 +2657,7 @@ class TestMCPSelectiveToolLoading:
 
     def test_existing_tool_names_reflect_registered_subset(self):
         from tools.mcp_tool import _existing_tool_names, _servers, _discover_and_register_server
-        from tools.registry import ToolRegistry
+        from arnold.agent.tools.registry import ToolRegistry
 
         mock_registry = ToolRegistry()
         server = self._make_server(
@@ -2688,7 +2688,7 @@ class TestMCPSelectiveToolLoading:
             _servers.pop("ink_existing", None)
 
     def test_no_toolset_created_when_everything_is_filtered_out(self):
-        from tools.registry import ToolRegistry
+        from arnold.agent.tools.registry import ToolRegistry
         from tools.mcp_tool import _discover_and_register_server, _servers
 
         mock_registry = ToolRegistry()

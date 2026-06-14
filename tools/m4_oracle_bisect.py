@@ -17,7 +17,7 @@ from __future__ import annotations
 import sys
 from typing import Sequence
 
-from arnold.pipelines.megaplan.orchestration.oracle import OracleResult, run as oracle_run
+from arnold.runtime.oracle import OracleResult, run as oracle_run
 
 
 GOOD = "\x1b[34mBLUE/good\x1b[0m"  # blue

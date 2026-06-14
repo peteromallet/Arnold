@@ -5,17 +5,17 @@ Wires every M3 hinge gate in the mandated order and produces a single
 emitted ONLY when every gate passes; any red gate produces an unlabelled
 result so the milestone commit is never falsely stamped.
 
-Gate order (locked by T33 contract — extended T43 for M5d):
+Gate order (locked by T33 contract — extended T43 for M5d, T6 for M5):
 
-1. parity              — workflow-topology parity gate (T10)
-2. fold_baseline       — fold-equivalence oracle, baseline MANIFEST (T26)
-3. fold_flag_on        — fold-equivalence oracle, flag-ON MANIFEST (T26)
-4. crash_isolation     — subprocess crash-isolation oracle (T28)
-5. version_skew        — A/B version-skew oracle (T29)
-6. cloud_smoke         — cloud phase_command shim (T17)
-7. acceptance_toy      — N-queens backtrack-solver acceptance toy (T31)
-8. dual_green          — dual-green strangler guard (T32)
-9. supervisor_purity   — M5d supervisor AST purity gate (T43)
+ 1. parity              — workflow-topology parity gate (T10)
+ 2. fold_baseline       — fold-equivalence oracle, baseline MANIFEST (T26)
+ 3. fold_flag_on        — fold-equivalence oracle, flag-ON MANIFEST (T26)
+ 4. crash_isolation     — subprocess crash-isolation oracle (T28)
+ 5. cloud_smoke         — cloud phase_command shim (T17)
+ 7. acceptance_toy      — N-queens backtrack-solver acceptance toy (T31)
+ 8. dual_green          — dual-green strangler guard (T32)
+ 9. supervisor_purity   — M5d supervisor AST purity gate (T43)
+10. oracle_acceptance   — oracle acceptance gate (M5, file-path aggregation)
 
 Old-path retention (T43 doc)::
   The legacy chain orchestrator (megaplan/chain/__init__.py) and bakeoff
@@ -42,6 +42,7 @@ Public surface:
 * ``assert_program_md``     — stub-survival guard for PROGRAM.md.
 * ``GATE_ORDER``            — ordered tuple of (gate_name, callable) pairs.
 * ``gate_supervisor_purity`` — M5d supervisor AST purity gate (T43).
+* ``gate_oracle_acceptance`` — M5 oracle acceptance gate (file-path aggregation).
 """
 
 from __future__ import annotations
@@ -72,9 +73,6 @@ _FLAG_ON_MANIFEST = (
 _CRASH_ISOLATION_TEST = (
     REPO_ROOT / "tests" / "oracles" / "test_crash_isolation_oracle.py"
 )
-_VERSION_SKEW_TEST = (
-    REPO_ROOT / "tests" / "oracles" / "test_version_skew_oracle.py"
-)
 _CLOUD_SMOKE_TEST = (
     REPO_ROOT / "tests" / "cloud" / "test_phase_command_shim.py"
 )
@@ -84,6 +82,33 @@ _ACCEPTANCE_TOY_TEST = (
 
 _PROGRAM_MD = (
     REPO_ROOT / "briefs" / "validation" / "sequencing" / "PROGRAM.md"
+)
+
+# ---------------------------------------------------------------------------
+# Oracle acceptance gate targets (file-path aggregation — SD1)
+# ---------------------------------------------------------------------------
+
+_ORACLE_ACCEPTANCE_TARGETS: Tuple[Path, ...] = (
+    # Parity-class oracles (tests/oracles/ + tests/oracle/)
+    REPO_ROOT / "tests" / "oracles" / "test_replay_oracle.py",
+    REPO_ROOT / "tests" / "oracles" / "test_crash_isolation_oracle.py",
+    REPO_ROOT / "tests" / "oracles" / "test_budget_authority_oracle.py",
+    REPO_ROOT / "tests" / "oracles" / "test_capacity_lease_two_tenant_oracle.py",
+    REPO_ROOT / "tests" / "oracles" / "test_effect_ledger_replay_oracle.py",
+    REPO_ROOT / "tests" / "oracles" / "test_evaluand_transaction_boundary_oracle.py",
+    REPO_ROOT / "tests" / "oracles" / "test_journal_join_key_oracle.py",
+    REPO_ROOT / "tests" / "oracles" / "test_calibration_loop_oracle.py",
+    REPO_ROOT / "tests" / "oracles" / "test_evaluand_replay_oracle.py",
+    REPO_ROOT / "tests" / "oracle" / "test_dual_run_oracle.py",
+    REPO_ROOT / "tests" / "oracle" / "test_m5d_substrate_swap.py",
+    # Phase-2 extraction-adjacent caller suites (SD2)
+    REPO_ROOT / "tests" / "test_oracle_backend.py",
+    REPO_ROOT / "tests" / "test_evidence_contract.py",
+    REPO_ROOT / "tests" / "test_green_suite_delta.py",
+    REPO_ROOT / "tests" / "test_completion_contract.py",
+    REPO_ROOT / "tests" / "test_authority_readers.py",
+    REPO_ROOT / "tests" / "arnold" / "pipeline" / "test_types_enums_identity.py",
+    REPO_ROOT / "tests" / "characterization" / "test_pipeline_golden.py",
 )
 
 HINGE_GATE_GREEN_STAMP = "[HINGE GATE: GREEN]"
@@ -180,10 +205,6 @@ def gate_crash_isolation() -> GateOutcome:
     return _pytest_gate("crash_isolation", _CRASH_ISOLATION_TEST)
 
 
-def gate_version_skew() -> GateOutcome:
-    """A/B version-skew oracle (T29)."""
-    return _pytest_gate("version_skew", _VERSION_SKEW_TEST)
-
 
 def gate_cloud_smoke() -> GateOutcome:
     """Cloud phase_command shim (T17)."""
@@ -231,6 +252,34 @@ def gate_supervisor_purity() -> GateOutcome:
     return GateOutcome(name="supervisor_purity", ok=False, detail=detail)
 
 
+def gate_oracle_acceptance() -> GateOutcome:
+    """Oracle acceptance gate (M5) — file-path aggregation per SD1.
+
+    Runs all oracle tests AND Phase-2 extraction-adjacent caller suites
+    in a single pytest invocation.  Marker expressions are intentionally
+    NOT used because ``crash_isolation``/``version_skew`` markers are
+    registered but unapplied — a marker expression would silently skip
+    three of five parity classes.
+    """
+    missing = [p for p in _ORACLE_ACCEPTANCE_TARGETS if not p.exists()]
+    if missing:
+        return GateOutcome(
+            name="oracle_acceptance", ok=False,
+            detail=f"missing targets: {', '.join(str(m) for m in missing)}",
+        )
+    proc = subprocess.run(
+        [sys.executable, "-m", "pytest", "-q", "--tb=short"]
+        + [str(p) for p in _ORACLE_ACCEPTANCE_TARGETS],
+        cwd=str(REPO_ROOT),
+        capture_output=True,
+        text=True,
+    )
+    if proc.returncode == 0:
+        return GateOutcome(name="oracle_acceptance", ok=True, detail="pytest ok")
+    tail = "\n".join((proc.stdout + proc.stderr).strip().splitlines()[-10:])
+    return GateOutcome(name="oracle_acceptance", ok=False, detail=f"rc={proc.returncode}: {tail}")
+
+
 # ---------------------------------------------------------------------------
 # Ordered gate list (T33 contract extended by T43 — do not reorder)
 # ---------------------------------------------------------------------------
@@ -241,11 +290,11 @@ GATE_ORDER: Tuple[Tuple[str, Callable[[], GateOutcome]], ...] = (
     ("fold_baseline", gate_fold_baseline),
     ("fold_flag_on", gate_fold_flag_on),
     ("crash_isolation", gate_crash_isolation),
-    ("version_skew", gate_version_skew),
     ("cloud_smoke", gate_cloud_smoke),
     ("acceptance_toy", gate_acceptance_toy),
     ("dual_green", gate_dual_green),
     ("supervisor_purity", gate_supervisor_purity),
+    ("oracle_acceptance", gate_oracle_acceptance),
 )
 
 
@@ -320,9 +369,9 @@ __all__ = [
     "gate_fold_baseline",
     "gate_fold_flag_on",
     "gate_crash_isolation",
-    "gate_version_skew",
     "gate_cloud_smoke",
     "gate_acceptance_toy",
     "gate_dual_green",
     "gate_supervisor_purity",
+    "gate_oracle_acceptance",
 ]

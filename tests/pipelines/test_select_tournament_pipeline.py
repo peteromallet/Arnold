@@ -12,7 +12,7 @@ from arnold.pipelines.megaplan._pipeline.behavioral_manifest import (
     runtime_topology_projection_for_pipeline,
 )
 from arnold.pipelines.megaplan._pipeline import registry
-from arnold.pipelines.megaplan._pipeline.discovery.manifest import Manifest, read_manifest
+from arnold.pipeline.discovery.manifest import Manifest, read_manifest
 from arnold.pipelines.megaplan._pipeline.executor import run_pipeline
 from arnold.pipelines.megaplan._pipeline.types import Pipeline, ParallelStage, PortRef, Stage, StepContext
 

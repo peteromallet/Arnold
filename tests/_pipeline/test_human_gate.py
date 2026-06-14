@@ -14,13 +14,19 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
+from arnold.pipeline import ContractSchemaRegistry
+from arnold.pipeline.executor import StepIOEnforcementError
 from arnold.pipelines.megaplan._pipeline.executor import run_pipeline
 from arnold.pipelines.megaplan._pipeline.resume import check_awaiting_user, with_entry
 from arnold.pipelines.megaplan._pipeline.steps.human_gate import HumanDecisionStep
 from arnold.pipelines.megaplan._pipeline.types import (
+    Edge,
     Pipeline,
     Stage,
     StepContext,
+    StepResult,
 )
 
 
@@ -82,6 +88,102 @@ def _make_iteration_worker():
         return f"iteration {state['calls']}"
 
     return worker, state
+
+
+def _answer_registry(root: Path) -> ContractSchemaRegistry:
+    registry = ContractSchemaRegistry(root)
+    registry.register(
+        "answer",
+        {
+            "type": "object",
+            "required": ["value"],
+            "properties": {"value": {"type": "integer"}},
+            "additionalProperties": False,
+        },
+    )
+    return registry
+
+
+def _answer_envelope(
+    registry: ContractSchemaRegistry,
+    payload: dict[str, int | str],
+) -> dict[str, object]:
+    version = registry.latest("answer")
+    assert version is not None
+    return {
+        "logical_type": "answer",
+        "schema_version": version,
+        "payload": dict(payload),
+    }
+
+
+def _set_disk_resume_choice(plan_dir: Path, choice: str) -> str:
+    awaiting_path = plan_dir / "awaiting_user.json"
+    awaiting = json.loads(awaiting_path.read_text())
+    awaiting["_resume_choice"] = choice
+    serialized = json.dumps(awaiting, sort_keys=True)
+    awaiting_path.write_text(serialized)
+    return serialized
+
+
+def _prepare_resume_state(plan_dir: Path, *, resume_cursor: dict[str, object]) -> dict[str, object]:
+    state = json.loads((plan_dir / "state.json").read_text())
+    state.pop("_pipeline_paused", None)
+    state.pop("_pipeline_paused_stage", None)
+    state["resume_cursor"] = dict(resume_cursor)
+    (plan_dir / "state.json").write_text(json.dumps(state))
+    return state
+
+
+class _JsonArtifactStep:
+    def __init__(self, name: str, payload: dict[str, object]) -> None:
+        self.name = name
+        self.kind = "produce"
+        self.payload = payload
+        self.calls = 0
+
+    def run(self, ctx: StepContext):  # noqa: ANN001
+        self.calls += 1
+        stage_dir = ctx.plan_dir / self.name
+        stage_dir.mkdir(parents=True, exist_ok=True)
+        artifact_path = stage_dir / "v1.json"
+        artifact_path.write_text(json.dumps(self.payload), encoding="utf-8")
+        return StepResult(outputs={"artifact": artifact_path}, next="done")
+
+
+def _build_resume_reverify_pipeline(
+    *,
+    payload: dict[str, object],
+    declare_resume: bool = True,
+    invalid_policy: str = "resuspend",
+) -> Pipeline:
+    write_step = _JsonArtifactStep("write", payload)
+    decide_step = HumanDecisionStep(
+        name="decide",
+        kind="decide",
+        _artifact_stage="write",
+        _choices=["approve"],
+        _pipeline_name="resume-reverify-pipe",
+        _pipeline_version=1,
+        _port="answer_port" if declare_resume else None,
+        _content_type="application/json" if declare_resume else None,
+        _invalid_policy=invalid_policy,
+    )
+    return Pipeline(
+        stages={
+            "write": Stage(
+                name="write",
+                step=write_step,
+                edges=(Edge(label="done", target="decide"),),
+            ),
+            "decide": Stage(
+                name="decide",
+                step=decide_step,
+                edges=(Edge(label="approve", target="halt"),),
+            ),
+        },
+        entry="write",
+    )
 
 
 # ── HumanDecisionStep direct tests ─────────────────────────────────────
@@ -590,3 +692,767 @@ class TestStateSnapshotThroughPauseResume:
         state_data2 = json.loads((plan_dir / "state.json").read_text())
         assert state_data2.get("_pipeline_name") == "identity-preserve"
         assert state_data2.get("_pipeline_version") == 3
+
+
+# ---------------------------------------------------------------------------
+# T3: Declaration-bearing human gate producer behavior — Megaplan path
+# ---------------------------------------------------------------------------
+
+
+class TestHumanDecisionStepDeclarationBearing:
+    """HumanDecisionStep with declaration fields (_port, _content_type,
+    _artifact_ref, _invalid_policy) embeds x-arnold-resume in the
+    checkpoint's resume_input_schema on pause."""
+
+    def test_pause_with_port_embeds_resume_input_schema(self, tmp_path: Path):
+        """When _port is set, awaiting_user.json carries resume_input_schema with x-arnold-resume."""
+        artifact_dir = tmp_path / "revise"
+        artifact_dir.mkdir()
+        (artifact_dir / "v1.md").write_text("content")
+
+        step = HumanDecisionStep(
+            name="decide",
+            kind="decide",
+            _artifact_stage="revise",
+            _choices=["ok", "reject"],
+            _pipeline_name="pipe",
+            _pipeline_version=1,
+            _port="report_port",
+        )
+        ctx = _minimal_ctx(tmp_path)
+        result = step.run(ctx)
+
+        assert result.next == "halt"
+        awaiting_path = tmp_path / "awaiting_user.json"
+        assert awaiting_path.exists()
+        data = json.loads(awaiting_path.read_text())
+
+        assert "resume_input_schema" in data
+        assert "x-arnold-resume" in data["resume_input_schema"]
+        assert data["resume_input_schema"]["x-arnold-resume"]["port"] == "report_port"
+        assert data["resume_input_schema"]["x-arnold-resume"]["invalid_policy"] == "resuspend"
+
+    def test_pause_with_content_type_embeds_resume_input_schema(self, tmp_path: Path):
+        """When _content_type is set, checkpoint carries content_type in x-arnold-resume."""
+        artifact_dir = tmp_path / "revise"
+        artifact_dir.mkdir()
+        (artifact_dir / "v1.md").write_text("content")
+
+        step = HumanDecisionStep(
+            name="decide",
+            kind="decide",
+            _artifact_stage="revise",
+            _choices=["ok"],
+            _pipeline_name="pipe",
+            _pipeline_version=1,
+            _content_type="application/json",
+        )
+        ctx = _minimal_ctx(tmp_path)
+        step.run(ctx)
+
+        data = json.loads((tmp_path / "awaiting_user.json").read_text())
+        assert data["resume_input_schema"]["x-arnold-resume"]["content_type"] == "application/json"
+
+    def test_pause_with_artifact_ref_embeds_ref_in_schema(self, tmp_path: Path):
+        """When _artifact_ref is set, checkpoint carries the ref dict in x-arnold-resume."""
+        artifact_dir = tmp_path / "revise"
+        artifact_dir.mkdir()
+        (artifact_dir / "v1.md").write_text("content")
+
+        ref = {"name": "my_artifact", "uri": "s3://bkt/file.md"}
+        step = HumanDecisionStep(
+            name="decide",
+            kind="decide",
+            _artifact_stage="revise",
+            _choices=["ok"],
+            _pipeline_name="pipe",
+            _pipeline_version=1,
+            _artifact_ref=ref,
+        )
+        ctx = _minimal_ctx(tmp_path)
+        step.run(ctx)
+
+        data = json.loads((tmp_path / "awaiting_user.json").read_text())
+        assert data["resume_input_schema"]["x-arnold-resume"]["artifact_ref"] == ref
+
+    def test_pause_with_all_declaration_fields(self, tmp_path: Path):
+        """All declaration fields together produce a complete x-arnold-resume declaration."""
+        artifact_dir = tmp_path / "revise"
+        artifact_dir.mkdir()
+        (artifact_dir / "v1.md").write_text("content")
+
+        ref = {"name": "r", "content_type": "text/plain"}
+        step = HumanDecisionStep(
+            name="decide",
+            kind="decide",
+            _artifact_stage="revise",
+            _choices=["ok"],
+            _pipeline_name="pipe",
+            _pipeline_version=1,
+            _port="out_port",
+            _content_type="text/markdown",
+            _artifact_ref=ref,
+            _invalid_policy="reject",
+        )
+        ctx = _minimal_ctx(tmp_path)
+        step.run(ctx)
+
+        data = json.loads((tmp_path / "awaiting_user.json").read_text())
+        declaration = data["resume_input_schema"]["x-arnold-resume"]
+        assert declaration["port"] == "out_port"
+        assert declaration["content_type"] == "text/markdown"
+        assert declaration["artifact_ref"] == ref
+        assert declaration["invalid_policy"] == "reject"
+        assert "artifact_path" in declaration  # resolved by latest_artifact
+
+    def test_pause_with_custom_invalid_policy(self, tmp_path: Path):
+        """Custom invalid_policy is embedded in the checkpoint declaration."""
+        artifact_dir = tmp_path / "revise"
+        artifact_dir.mkdir()
+        (artifact_dir / "v1.md").write_text("content")
+
+        step = HumanDecisionStep(
+            name="decide",
+            kind="decide",
+            _artifact_stage="revise",
+            _choices=["ok"],
+            _pipeline_name="pipe",
+            _pipeline_version=1,
+            _port="p",
+            _invalid_policy="continue",
+        )
+        ctx = _minimal_ctx(tmp_path)
+        step.run(ctx)
+
+        data = json.loads((tmp_path / "awaiting_user.json").read_text())
+        assert data["resume_input_schema"]["x-arnold-resume"]["invalid_policy"] == "continue"
+
+    def test_contract_result_has_suspension_with_resume_input_schema(self, tmp_path: Path):
+        """When declaration fields are set, the StepResult.contract_result carries a
+        SUSPENDED status with a suspension containing resume_input_schema."""
+        artifact_dir = tmp_path / "revise"
+        artifact_dir.mkdir()
+        (artifact_dir / "v1.md").write_text("content")
+
+        step = HumanDecisionStep(
+            name="decide",
+            kind="decide",
+            _artifact_stage="revise",
+            _choices=["ok"],
+            _pipeline_name="pipe",
+            _pipeline_version=1,
+            _port="scan_port",
+            _content_type="text/markdown",
+        )
+        ctx = _minimal_ctx(tmp_path)
+        result = step.run(ctx)
+
+        assert result.contract_result is not None
+        assert result.contract_result.status.value == "suspended"
+        assert result.contract_result.suspension is not None
+        assert "x-arnold-resume" in result.contract_result.suspension.resume_input_schema
+        decl = result.contract_result.suspension.resume_input_schema["x-arnold-resume"]
+        assert decl["port"] == "scan_port"
+        assert decl["content_type"] == "text/markdown"
+
+
+class TestHumanDecisionStepNoDeclaration:
+    """No-declaration parity for HumanDecisionStep: absent declaration fields
+    produce identical behavior to pre-T2."""
+
+    def test_pause_without_declaration_fields_no_resume_input_schema_in_checkpoint(self, tmp_path: Path):
+        """When no declaration fields are set, checkpoint has no resume_input_schema key."""
+        artifact_dir = tmp_path / "revise"
+        artifact_dir.mkdir()
+        (artifact_dir / "v1.md").write_text("content")
+
+        step = HumanDecisionStep(
+            name="decide",
+            kind="decide",
+            _artifact_stage="revise",
+            _choices=["ok"],
+            _pipeline_name="pipe",
+            _pipeline_version=1,
+            # No _port, _content_type, _artifact_ref — bare human gate
+        )
+        ctx = _minimal_ctx(tmp_path)
+        step.run(ctx)
+
+        data = json.loads((tmp_path / "awaiting_user.json").read_text())
+        assert "resume_input_schema" not in data
+
+    def test_pause_without_declaration_fields_contract_result_has_empty_schema(self, tmp_path: Path):
+        """Without declaration, the contract_result suspension has empty resume_input_schema."""
+        artifact_dir = tmp_path / "revise"
+        artifact_dir.mkdir()
+        (artifact_dir / "v1.md").write_text("content")
+
+        step = HumanDecisionStep(
+            name="decide",
+            kind="decide",
+            _artifact_stage="revise",
+            _choices=["ok"],
+            _pipeline_name="pipe",
+            _pipeline_version=1,
+        )
+        ctx = _minimal_ctx(tmp_path)
+        result = step.run(ctx)
+
+        assert result.contract_result is not None
+        assert result.contract_result.status.value == "suspended"
+        assert result.contract_result.suspension is not None
+        assert result.contract_result.suspension.resume_input_schema == {}
+
+    def test_no_extra_contract_payload_when_declaration_absent(self, tmp_path: Path):
+        """Contract result payload is identical with or without declaration.
+        The payload contains only the standard fields."""
+        artifact_dir = tmp_path / "revise"
+        artifact_dir.mkdir()
+        (artifact_dir / "v1.md").write_text("content")
+
+        # Without declaration
+        step_no_decl = HumanDecisionStep(
+            name="decide",
+            kind="decide",
+            _artifact_stage="revise",
+            _choices=["ok"],
+            _pipeline_name="pipe",
+            _pipeline_version=1,
+        )
+        ctx1 = _minimal_ctx(tmp_path)
+        result_no_decl = step_no_decl.run(ctx1)
+
+        # With declaration
+        (tmp_path / "awaiting_user.json").unlink()  # clean up from previous
+        step_with_decl = HumanDecisionStep(
+            name="decide",
+            kind="decide",
+            _artifact_stage="revise",
+            _choices=["ok"],
+            _pipeline_name="pipe",
+            _pipeline_version=1,
+            _port="p1",
+        )
+        ctx2 = _minimal_ctx(tmp_path / "sub")
+        (tmp_path / "sub").mkdir(parents=True, exist_ok=True)
+        (tmp_path / "sub" / "revise").mkdir(parents=True, exist_ok=True)
+        (tmp_path / "sub" / "revise" / "v1.md").write_text("content")
+        result_with_decl = step_with_decl.run(ctx2)
+
+        # Both have SUSPENDED status and halt next
+        assert result_no_decl.contract_result is not None
+        assert result_with_decl.contract_result is not None
+        assert result_no_decl.contract_result.status == result_with_decl.contract_result.status
+        assert result_no_decl.next == result_with_decl.next == "halt"
+
+    def test_resume_cleanup_unchanged_when_declaration_absent(self, tmp_path: Path):
+        """Resume cleanup (file deletion) works identically when declaration absent."""
+        # Pause without declaration
+        artifact_dir = tmp_path / "revise"
+        artifact_dir.mkdir()
+        (artifact_dir / "v1.md").write_text("content")
+
+        step = HumanDecisionStep(
+            name="decide",
+            kind="decide",
+            _artifact_stage="revise",
+            _choices=["ok"],
+            _pipeline_name="pipe",
+            _pipeline_version=1,
+        )
+        ctx = _minimal_ctx(tmp_path)
+        step.run(ctx)
+        assert (tmp_path / "awaiting_user.json").exists()
+
+        # Now resume: set _resume_choice on disk
+        data = json.loads((tmp_path / "awaiting_user.json").read_text())
+        data["_resume_choice"] = "ok"
+        (tmp_path / "awaiting_user.json").write_text(json.dumps(data))
+
+        step2 = HumanDecisionStep(
+            name="decide",
+            kind="decide",
+            _artifact_stage="revise",
+            _choices=["ok"],
+            _pipeline_name="pipe",
+            _pipeline_version=1,
+        )
+        result = step2.run(ctx)
+        assert result.next == "ok"
+        assert not (tmp_path / "awaiting_user.json").exists(), "Cleanup should delete the file"
+
+    def test_resume_cleanup_with_declaration_present(self, tmp_path: Path):
+        """Resume cleanup works correctly even when declaration was embedded in checkpoint."""
+        artifact_dir = tmp_path / "revise"
+        artifact_dir.mkdir()
+        (artifact_dir / "v1.md").write_text("content")
+
+        # Pause with declaration
+        step = HumanDecisionStep(
+            name="decide",
+            kind="decide",
+            _artifact_stage="revise",
+            _choices=["ok"],
+            _pipeline_name="pipe",
+            _pipeline_version=1,
+            _port="p1",
+            _content_type="text/plain",
+        )
+        ctx = _minimal_ctx(tmp_path)
+        step.run(ctx)
+        assert (tmp_path / "awaiting_user.json").exists()
+
+        # Verify declaration present
+        data = json.loads((tmp_path / "awaiting_user.json").read_text())
+        assert "resume_input_schema" in data
+        assert "x-arnold-resume" in data["resume_input_schema"]
+
+        # Set resume choice on disk
+        data["_resume_choice"] = "ok"
+        (tmp_path / "awaiting_user.json").write_text(json.dumps(data))
+
+        # Resume
+        step2 = HumanDecisionStep(
+            name="decide",
+            kind="decide",
+            _artifact_stage="revise",
+            _choices=["ok"],
+            _pipeline_name="pipe",
+            _pipeline_version=1,
+            _port="p1",
+            _content_type="text/plain",
+        )
+        result = step2.run(ctx)
+        assert result.next == "ok"
+        assert not (tmp_path / "awaiting_user.json").exists(), "Cleanup should still delete the file"
+
+
+class TestHumanDecisionStepReSuspendDeclaration:
+    """Resume→loop-back→re-suspend with declaration: awaiting_user.json stays
+    available for re-verification on every loop iteration."""
+
+    def test_loop_back_with_declaration_rewrites_awaiting_user_with_schema(self, tmp_path: Path):
+        """After a resume choice loops back to a producer, the next pause
+        re-writes awaiting_user.json with the declaration intact."""
+        artifact_dir = tmp_path / "revise"
+        artifact_dir.mkdir()
+        (artifact_dir / "v1.md").write_text("original")
+
+        # First pause — with declaration
+        step = HumanDecisionStep(
+            name="decide",
+            kind="decide",
+            _artifact_stage="revise",
+            _choices=["again", "stop"],
+            _pipeline_name="pipe",
+            _pipeline_version=1,
+            _port="p",
+            _content_type="text/markdown",
+        )
+        ctx = _minimal_ctx(tmp_path)
+        step.run(ctx)
+
+        data1 = json.loads((tmp_path / "awaiting_user.json").read_text())
+        assert "resume_input_schema" in data1
+
+        # Simulate resume: inject choice onto disk
+        data1["_resume_choice"] = "again"
+        (tmp_path / "awaiting_user.json").write_text(json.dumps(data1))
+
+        # Simulate a new artifact version being produced by upstream
+        (artifact_dir / "v2.md").write_text("revised")
+
+        # Resume — step cleans up, returns "again"
+        step2 = HumanDecisionStep(
+            name="decide",
+            kind="decide",
+            _artifact_stage="revise",
+            _choices=["again", "stop"],
+            _pipeline_name="pipe",
+            _pipeline_version=1,
+            _port="p",
+            _content_type="text/markdown",
+        )
+        result = step2.run(ctx)
+        assert result.next == "again"
+        assert not (tmp_path / "awaiting_user.json").exists()  # Cleaned up
+
+        # Now emulate loop-back: step runs again as if upstream just finished
+        # This time no _resume_choice on instance, and no on-disk file → pause
+        (artifact_dir / "v3.md").write_text("fresh content after loop")
+        step3 = HumanDecisionStep(
+            name="decide",
+            kind="decide",
+            _artifact_stage="revise",
+            _choices=["again", "stop"],
+            _pipeline_name="pipe",
+            _pipeline_version=1,
+            _port="p",
+            _content_type="text/markdown",
+        )
+        result3 = step3.run(ctx)
+        assert result3.next == "halt"
+        assert (tmp_path / "awaiting_user.json").exists()
+
+        # Declaration is present in the re-written checkpoint
+        data3 = json.loads((tmp_path / "awaiting_user.json").read_text())
+        assert "resume_input_schema" in data3
+        assert data3["resume_input_schema"]["x-arnold-resume"]["port"] == "p"
+
+    def test_loop_back_without_declaration_does_not_add_schema(self, tmp_path: Path):
+        """Loop-back without declaration never adds resume_input_schema."""
+        artifact_dir = tmp_path / "revise"
+        artifact_dir.mkdir()
+        (artifact_dir / "v1.md").write_text("original")
+
+        step = HumanDecisionStep(
+            name="decide",
+            kind="decide",
+            _artifact_stage="revise",
+            _choices=["again", "stop"],
+            _pipeline_name="pipe",
+            _pipeline_version=1,
+            # No declaration fields
+        )
+        ctx = _minimal_ctx(tmp_path)
+        step.run(ctx)
+
+        data1 = json.loads((tmp_path / "awaiting_user.json").read_text())
+        assert "resume_input_schema" not in data1
+
+        # Resume with "again"
+        data1["_resume_choice"] = "again"
+        (tmp_path / "awaiting_user.json").write_text(json.dumps(data1))
+        (artifact_dir / "v2.md").write_text("revised")
+
+        step2 = HumanDecisionStep(
+            name="decide",
+            kind="decide",
+            _artifact_stage="revise",
+            _choices=["again", "stop"],
+            _pipeline_name="pipe",
+            _pipeline_version=1,
+        )
+        result = step2.run(ctx)
+        assert result.next == "again"
+        assert not (tmp_path / "awaiting_user.json").exists()
+
+        # Loop back: re-pause
+        (artifact_dir / "v3.md").write_text("fresh")
+        step3 = HumanDecisionStep(
+            name="decide",
+            kind="decide",
+            _artifact_stage="revise",
+            _choices=["again", "stop"],
+            _pipeline_name="pipe",
+            _pipeline_version=1,
+        )
+        result3 = step3.run(ctx)
+        assert result3.next == "halt"
+        assert (tmp_path / "awaiting_user.json").exists()
+        data3 = json.loads((tmp_path / "awaiting_user.json").read_text())
+        assert "resume_input_schema" not in data3
+
+    def test_single_use_resume_choice_prevents_infinite_loop(self, tmp_path: Path):
+        """After resume clears _resume_choice (set via object.__setattr__), a second
+        invocation without a new choice pauses again instead of resuming forever."""
+        artifact_dir = tmp_path / "revise"
+        artifact_dir.mkdir()
+        (artifact_dir / "v1.md").write_text("content")
+
+        step = HumanDecisionStep(
+            name="decide",
+            kind="decide",
+            _artifact_stage="revise",
+            _choices=["again"],
+            _pipeline_name="pipe",
+            _pipeline_version=1,
+            _port="p",
+        )
+        ctx = _minimal_ctx(tmp_path)
+
+        # First run: pause (no choice)
+        result1 = step.run(ctx)
+        assert result1.next == "halt"
+
+        # Inject resume choice onto disk
+        data = json.loads((tmp_path / "awaiting_user.json").read_text())
+        data["_resume_choice"] = "again"
+        (tmp_path / "awaiting_user.json").write_text(json.dumps(data))
+
+        # Second run: resume — clears _resume_choice, returns "again", deletes file
+        step2 = HumanDecisionStep(
+            name="decide",
+            kind="decide",
+            _artifact_stage="revise",
+            _choices=["again"],
+            _pipeline_name="pipe",
+            _pipeline_version=1,
+            _port="p",
+        )
+        result2 = step2.run(ctx)
+        assert result2.next == "again"
+        assert not (tmp_path / "awaiting_user.json").exists()
+        # instance-level _resume_choice was cleared
+        assert step2._resume_choice is None
+
+        # Third run: no file, no instance choice → pause again (not infinite loop)
+        (artifact_dir / "v2.md").write_text("new")
+        result3 = step2.run(ctx)
+        assert result3.next == "halt"
+        assert (tmp_path / "awaiting_user.json").exists()
+
+
+class TestMegaplanResumeReverify:
+    def test_valid_edit_completes_and_invalid_edit_resuspends_until_fixed(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        registry = _answer_registry(tmp_path)
+        pipeline = _build_resume_reverify_pipeline(
+            payload=_answer_envelope(registry, {"value": 1}),
+        )
+        ctx = _minimal_ctx(tmp_path)
+
+        paused = run_pipeline(pipeline, ctx, artifact_root=tmp_path)
+        assert paused["halt_reason"] == "awaiting_user"
+        artifact_path = tmp_path / "write" / "v1.json"
+        artifact_path.write_text(
+            json.dumps(_answer_envelope(registry, {"value": "oops"})),
+            encoding="utf-8",
+        )
+        original_awaiting = _set_disk_resume_choice(tmp_path, "approve")
+        resume_cursor = {"stage": "decide", "attempt": 1}
+        resume_state = _prepare_resume_state(tmp_path, resume_cursor=resume_cursor)
+
+        invalid = run_pipeline(
+            with_entry(pipeline, "decide"),
+            StepContext(
+                plan_dir=tmp_path,
+                state=resume_state,
+                profile={},
+                mode="test",
+                inputs={},
+            ),
+            artifact_root=tmp_path,
+        )
+
+        assert invalid["halt_reason"] == "awaiting_user"
+        assert invalid["state"]["resume_cursor"] == resume_cursor
+        assert invalid["contract_result"]["status"] == "suspended"
+        assert invalid["contract_result"]["payload"]["resume_reverify_diagnostic"]["code"] == (
+            "typed_contract_blocked"
+        )
+        assert "answer_port" not in invalid["state"]
+        assert json.loads((tmp_path / "awaiting_user.json").read_text()) == json.loads(original_awaiting)
+        assert json.loads((tmp_path / "state.json").read_text()) == invalid["state"]
+
+        artifact_path.write_text(
+            json.dumps(_answer_envelope(registry, {"value": 99})),
+            encoding="utf-8",
+        )
+        completed = run_pipeline(
+            with_entry(pipeline, "decide"),
+            StepContext(
+                plan_dir=tmp_path,
+                state=invalid["state"],
+                profile={},
+                mode="test",
+                inputs={},
+            ),
+            artifact_root=tmp_path,
+        )
+
+        assert completed.get("halt_reason") != "awaiting_user"
+        assert completed["final_stage"] == "decide"
+        assert completed["contract_result"]["status"] == "completed"
+        assert completed["contract_result"]["payload"]["answer_port"] == _answer_envelope(
+            registry,
+            {"value": 99},
+        )
+        assert not (tmp_path / "awaiting_user.json").exists()
+
+    def test_invalid_policy_fail_raises_before_merge_and_preserves_prior_cursor(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        registry = _answer_registry(tmp_path)
+        pipeline = _build_resume_reverify_pipeline(
+            payload=_answer_envelope(registry, {"value": 1}),
+            invalid_policy="fail",
+        )
+        ctx = _minimal_ctx(tmp_path)
+
+        paused = run_pipeline(pipeline, ctx, artifact_root=tmp_path)
+        assert paused["halt_reason"] == "awaiting_user"
+        (tmp_path / "write" / "v1.json").write_text(
+            json.dumps(_answer_envelope(registry, {"value": "oops"})),
+            encoding="utf-8",
+        )
+        _set_disk_resume_choice(tmp_path, "approve")
+        resume_cursor = {"stage": "decide", "attempt": 7}
+        resume_state = _prepare_resume_state(tmp_path, resume_cursor=resume_cursor)
+        expected_state_json = json.loads((tmp_path / "state.json").read_text())
+
+        with pytest.raises(StepIOEnforcementError, match="Typed contract violation"):
+            run_pipeline(
+                with_entry(pipeline, "decide"),
+                StepContext(
+                    plan_dir=tmp_path,
+                    state=resume_state,
+                    profile={},
+                    mode="test",
+                    inputs={},
+                ),
+                artifact_root=tmp_path,
+            )
+
+        assert json.loads((tmp_path / "state.json").read_text()) == expected_state_json
+        assert json.loads((tmp_path / "state.json").read_text())["resume_cursor"] == resume_cursor
+        assert not (tmp_path / "awaiting_user.json").exists()
+
+    def test_no_declaration_resume_path_remains_unchanged(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        pipeline = _build_resume_reverify_pipeline(
+            payload={"legacy": True},
+            declare_resume=False,
+        )
+        ctx = _minimal_ctx(tmp_path)
+
+        paused = run_pipeline(pipeline, ctx, artifact_root=tmp_path)
+        assert paused["halt_reason"] == "awaiting_user"
+        _set_disk_resume_choice(tmp_path, "approve")
+        resume_state = _prepare_resume_state(
+            tmp_path,
+            resume_cursor={"stage": "decide", "legacy": True},
+        )
+
+        completed = run_pipeline(
+            with_entry(pipeline, "decide"),
+            StepContext(
+                plan_dir=tmp_path,
+                state=resume_state,
+                profile={},
+                mode="test",
+                inputs={},
+            ),
+            artifact_root=tmp_path,
+        )
+
+        assert completed["final_stage"] == "decide"
+        assert completed["contract_result"] is None
+        assert not (tmp_path / "awaiting_user.json").exists()
+
+
+class TestBuilderHumanGateDeclaration:
+    """PipelineBuilder.human_gate() passes declaration fields through to
+    the constructed HumanDecisionStep."""
+
+    def test_builder_passes_port_to_step(self):
+        """Builder.human_gate(port=...) sets _port on the step."""
+        from arnold.pipelines.megaplan._pipeline.builder import PipelineBuilder
+
+        builder = PipelineBuilder("test", pipeline_version=1)
+        builder.human_gate(
+            "decide",
+            artifact="write",
+            options=["ok", "reject"],
+            edges={"ok": "halt", "reject": "halt"},
+            port="my_port",
+        )
+        pipeline = builder.build()
+        stage = pipeline.stages["decide"]
+        step = stage.step
+        assert step._port == "my_port"
+
+    def test_builder_passes_content_type_to_step(self):
+        """Builder.human_gate(content_type=...) sets _content_type on the step."""
+        from arnold.pipelines.megaplan._pipeline.builder import PipelineBuilder
+
+        builder = PipelineBuilder("test", pipeline_version=1)
+        builder.human_gate(
+            "decide",
+            artifact="write",
+            options=["ok"],
+            edges={"ok": "halt"},
+            content_type="text/markdown",
+        )
+        pipeline = builder.build()
+        step = pipeline.stages["decide"].step
+        assert step._content_type == "text/markdown"
+
+    def test_builder_passes_artifact_ref_to_step(self):
+        """Builder.human_gate(artifact_ref=...) sets _artifact_ref on the step."""
+        from arnold.pipelines.megaplan._pipeline.builder import PipelineBuilder
+
+        ref = {"uri": "s3://bkt/file.md", "name": "f"}
+        builder = PipelineBuilder("test", pipeline_version=1)
+        builder.human_gate(
+            "decide",
+            artifact="write",
+            options=["ok"],
+            edges={"ok": "halt"},
+            artifact_ref=ref,
+        )
+        pipeline = builder.build()
+        step = pipeline.stages["decide"].step
+        assert step._artifact_ref == ref
+
+    def test_builder_passes_invalid_policy_to_step(self):
+        """Builder.human_gate(invalid_policy=...) sets _invalid_policy on the step."""
+        from arnold.pipelines.megaplan._pipeline.builder import PipelineBuilder
+
+        builder = PipelineBuilder("test", pipeline_version=1)
+        builder.human_gate(
+            "decide",
+            artifact="write",
+            options=["ok"],
+            edges={"ok": "halt"},
+            invalid_policy="continue",
+        )
+        pipeline = builder.build()
+        step = pipeline.stages["decide"].step
+        assert step._invalid_policy == "continue"
+
+    def test_builder_defaults_declaration_fields_to_none(self):
+        """Without declaration args, _port, _content_type, _artifact_ref default to None."""
+        from arnold.pipelines.megaplan._pipeline.builder import PipelineBuilder
+
+        builder = PipelineBuilder("test", pipeline_version=1)
+        builder.human_gate(
+            "decide",
+            artifact="write",
+            options=["ok"],
+            edges={"ok": "halt"},
+        )
+        pipeline = builder.build()
+        step = pipeline.stages["decide"].step
+        assert step._port is None
+        assert step._content_type is None
+        assert step._artifact_ref is None
+        assert step._invalid_policy == "resuspend"
+
+    def test_builder_human_gate_includes_stage_with_edges(self):
+        """Builder.human_gate constructs a valid Stage with edges and the step wired."""
+        from arnold.pipelines.megaplan._pipeline.builder import PipelineBuilder
+
+        builder = PipelineBuilder("test", pipeline_version=1)
+        builder.human_gate(
+            "decide",
+            artifact="write",
+            options=["yes", "no", "maybe"],
+            edges={"yes": "next_stage", "no": "halt", "maybe": "other"},
+            port="out",
+            content_type="text/plain",
+        )
+        pipeline = builder.build()
+        stage = pipeline.stages["decide"]
+        assert len(stage.edges) == 3
+        edge_labels = {e.label for e in stage.edges}
+        assert edge_labels == {"yes", "no", "maybe"}
+        edge_targets = {e.target for e in stage.edges}
+        assert edge_targets == {"next_stage", "halt", "other"}
+        assert stage.step._port == "out"
+        assert stage.step._content_type == "text/plain"

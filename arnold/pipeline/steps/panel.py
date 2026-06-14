@@ -20,6 +20,8 @@ from typing import Any, Callable
 
 from arnold.pipeline.artifacts import artifact_dir, next_version
 from arnold.pipeline.resources import PromptSource, resolve_prompt
+from arnold.pipeline.media_cost import normalize_usage_extraction
+from arnold.pipeline.step_invocation import unwrap_step_invocation_result
 from arnold.pipeline.types import StepContext, StepResult
 
 WorkerFn = Callable[..., str]
@@ -50,6 +52,7 @@ class PanelReviewerStep:
     _reviewer_id: str = ""
     _worker: WorkerFn | None = None
     _mode: str = ""
+    _usage_extractor: Callable[..., dict[str, Any]] | None = None
 
     produces: tuple = field(default_factory=tuple)
     consumes: tuple = field(default_factory=tuple)
@@ -87,9 +90,10 @@ class PanelReviewerStep:
         output_path = out_dir / f"v{version}.md"
 
         # 5. Call worker or produce placeholder
+        worker_result: Any = None
         if self._worker is not None:
             worker_inputs = {k: str(v) for k, v in inputs.items()}
-            result_text = self._worker(
+            worker_result = self._worker(
                 prompt=rendered,
                 step_name=self.name,
                 pipeline_name=self._pipeline_name,
@@ -98,12 +102,40 @@ class PanelReviewerStep:
             )
         else:
             # No worker: write the resolved + interpolated prompt as output.
-            result_text = rendered
+            worker_result = rendered
 
+        # 5a. Unwrap any StepInvocationResult envelope — plain returns pass
+        #     through unchanged with empty media_usage.
+        payload, media_usage = unwrap_step_invocation_result(worker_result)
+        result_text = str(payload)
         output_path.write_text(result_text, encoding="utf-8")
+
+        state_patch: dict[str, Any] = {}
+        extracted_media_usage: tuple = ()
+        if self._usage_extractor is not None:
+            try:
+                extracted = self._usage_extractor(
+                    step_name=self.name,
+                    reviewer_id=self._reviewer_id,
+                    result_text=result_text,
+                )
+                sp, extracted_media_usage = normalize_usage_extraction(extracted)
+                state_patch.update(sp)
+            except Exception:
+                pass  # best-effort: never fail the step due to usage extraction
+
+        # 5b. Merge envelope media_usage with extractor media_usage,
+        #     and attach only when non-empty.
+        all_media_usage = tuple(media_usage) + tuple(extracted_media_usage)
+        hook_metadata: dict[str, Any] = {}
+        if all_media_usage:
+            hook_metadata["media_usage"] = all_media_usage
+
         return StepResult(
             outputs={self._reviewer_id: str(output_path)},
             next="halt",
+            state_patch=state_patch,
+            hook_metadata=hook_metadata,
         )
 
     # ------------------------------------------------------------------

@@ -33,7 +33,9 @@ from arnold.pipelines.megaplan._core import (
     sha256_file,
 )
 from arnold.pipelines.megaplan.observability.evaluand import read_evaluand_events
-from arnold.pipeline.step_io_contract import StepIOContractContext, StepIOOperation
+from arnold.pipeline.contract_validation import validate_payload_against_schema
+from arnold.pipeline.step_io_contract import StepIOOperation
+from arnold.pipelines.megaplan._pipeline.schema_registry_adapter import create_step_io_contract_context
 from arnold.pipelines.megaplan.orchestration.plan_contracts import normalize_contract_payload
 from arnold.pipelines.megaplan.store import write_plan_artifact_json
 
@@ -232,7 +234,57 @@ def _apply_programmatic_coverage(payload: dict[str, Any], plan_dir: Path, state:
     }
 
 
+# Input-time JSON Schema for the finalize payload before _write_finalize_artifacts
+# mutates it.  Only schema-expressible constraints (types, required fields,
+# nested item shape) live here; non-empty-after-strip, range checks, bool-vs-int
+# rejection, status="pending", verification-pattern detection, and U-prefixed
+# plan_steps_covered rules are enforced by _finalize_semantic_postcheck.
+_FINALIZE_INPUT_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "required": ["tasks", "sense_checks", "watch_items"],
+    "properties": {
+        "tasks": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "required": [
+                    "id",
+                    "description",
+                    "status",
+                    "complexity",
+                    "complexity_justification",
+                ],
+                "properties": {
+                    "id": {"type": "string"},
+                    "description": {"type": "string"},
+                    "status": {"type": "string"},
+                    "complexity": {"type": "integer"},
+                    "complexity_justification": {"type": "string"},
+                },
+            },
+        },
+        "sense_checks": {"type": "array"},
+        "watch_items": {"type": "array"},
+        "user_actions": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "required": ["id", "description", "phase"],
+                "properties": {
+                    "id": {"type": "string"},
+                    "description": {"type": "string"},
+                    "phase": {"type": "string"},
+                },
+            },
+        },
+    },
+}
+
+
 def _validate_finalize_payload(plan_dir: Path, state: PlanState, worker: WorkerResult) -> None:
+    """Thin wrapper: route schema-expressible checks through the C1 chokepoint
+    (``validate_payload_against_schema``) then delegate residual semantic checks
+    to :func:`_finalize_semantic_postcheck`."""
     payload = worker.payload
 
     def _reject(message: str) -> None:
@@ -242,40 +294,69 @@ def _validate_finalize_payload(plan_dir: Path, state: PlanState, worker: WorkerR
             code="invalid_finalize", message=message,
         )
 
+    # Pre-strip nullable optional task fields so downstream schema validation
+    # and write-time enforcement see a clean shape.  Done before schema
+    # validation so a None-valued optional doesn't bounce as a type error.
+    raw_tasks = payload.get("tasks")
+    if isinstance(raw_tasks, list):
+        for task in raw_tasks:
+            if not isinstance(task, dict):
+                continue
+            for optional_object_field in ("stance", "stop_signal"):
+                if task.get(optional_object_field) is None:
+                    task.pop(optional_object_field, None)
+
+    # Schema-expressible checks: top-level required arrays, task/user_action
+    # field types, required-field presence.  Routed through the C1 chokepoint.
+    result = validate_payload_against_schema(payload, _FINALIZE_INPUT_SCHEMA)
+    if result.diagnostics:
+        diag = result.diagnostics[0]
+        _reject(f"Finalize payload failed schema validation at {diag.payload_pointer!r}: {diag.message}")
+
+    # Residual semantic checks the schema subset cannot express.
+    _finalize_semantic_postcheck(plan_dir, state, worker, _reject)
+
+
+def _finalize_semantic_postcheck(
+    plan_dir: Path,
+    state: PlanState,
+    worker: WorkerResult,
+    _reject,
+) -> None:
+    """Residual semantic checks not expressible in the C1 schema subset.
+
+    Enforces: non-empty tasks list; non-empty-after-strip strings on tasks and
+    user_actions; integer-not-bool complexity in 1..5; status == "pending";
+    phase enum membership; re-run-until-pass scrubber (strict mode); and
+    U-prefixed plan_steps_covered coverage rules.
+    """
+    payload = worker.payload
+
     tasks = payload.get("tasks")
     if not isinstance(tasks, list) or not tasks:
         _reject("Finalize output must include a non-empty `tasks` list.")
-    for task in tasks:
-        if not isinstance(task, dict):
-            continue
-        for optional_object_field in ("stance", "stop_signal"):
-            if task.get(optional_object_field) is None:
-                task.pop(optional_object_field, None)
-    if not isinstance(payload.get("sense_checks"), list):
-        _reject("Finalize output must include a `sense_checks` list.")
-    if not isinstance(payload.get("watch_items"), list):
-        _reject("Finalize output must include a `watch_items` list.")
+
     user_actions = payload.get("user_actions", [])
-    if not isinstance(user_actions, list):
-        _reject("Finalize output `user_actions` must be a list when present.")
     user_actions_by_id: dict[str, dict[str, Any]] = {}
-    for index, action in enumerate(user_actions, start=1):
-        aid = action.get("id", index) if isinstance(action, dict) else index
-        if not isinstance(action, dict):
-            _reject(f"Finalize user_action {index} must be an object.")
-        if not isinstance(action.get("id"), str) or not action["id"].strip():
-            _reject(f"Finalize user_action {index} is missing a non-empty `id`.")
-        if not isinstance(action.get("description"), str) or not action["description"].strip():
-            _reject(f"Finalize user_action {aid} is missing a non-empty `description`.")
-        if action.get("phase") not in {"before_execute", "after_execute"}:
-            _reject(
-                f"Finalize user_action {aid} must use phase `before_execute` or `after_execute`."
-            )
-        user_actions_by_id[action["id"]] = action
+    if isinstance(user_actions, list):
+        for index, action in enumerate(user_actions, start=1):
+            if not isinstance(action, dict):
+                continue
+            aid = action.get("id", index)
+            if not isinstance(action.get("id"), str) or not action["id"].strip():
+                _reject(f"Finalize user_action {index} is missing a non-empty `id`.")
+            if not isinstance(action.get("description"), str) or not action["description"].strip():
+                _reject(f"Finalize user_action {aid} is missing a non-empty `description`.")
+            if action.get("phase") not in {"before_execute", "after_execute"}:
+                _reject(
+                    f"Finalize user_action {aid} must use phase `before_execute` or `after_execute`."
+                )
+            user_actions_by_id[action["id"]] = action
+
     for index, task in enumerate(tasks, start=1):
-        tid = task.get("id", index) if isinstance(task, dict) else index
         if not isinstance(task, dict):
             _reject(f"Finalize task {index} must be an object.")
+        tid = task.get("id", index)
         if not isinstance(task.get("id"), str) or not task["id"].strip():
             _reject(f"Finalize task {index} is missing a non-empty `id`.")
         if not isinstance(task.get("description"), str) or not task["description"].strip():
@@ -283,7 +364,11 @@ def _validate_finalize_payload(plan_dir: Path, state: PlanState, worker: WorkerR
         if task.get("status") != "pending":
             _reject(f"Finalize task {tid} must start with status `pending`.")
         complexity = task.get("complexity")
-        if not isinstance(complexity, int) or isinstance(complexity, bool) or not 1 <= complexity <= 5:
+        if (
+            not isinstance(complexity, int)
+            or isinstance(complexity, bool)
+            or not 1 <= complexity <= 5
+        ):
             _reject(
                 f"Finalize task {tid} must include an integer `complexity` score in 1..5 "
                 f"(got {complexity!r}). Adjudicate it against the rubric — do not omit or guess."
@@ -294,19 +379,21 @@ def _validate_finalize_payload(plan_dir: Path, state: PlanState, worker: WorkerR
                 f"Finalize task {tid} is missing a non-empty `complexity_justification`. "
                 "Every complexity score must be argued from the task's concrete files/risk."
             )
+
     if (
         state["config"].get("mode", "code") == "code"
         and _strict_finalize_validation_enabled()
     ):
-        # Negatively assert: no re-run-until-pass task may survive in the payload.
-        # The harness owns the authoritative verification — the LLM must not author
-        # a task that loops the suite.
+        # Negatively assert: no re-run-until-pass task may survive in the
+        # payload.  The harness owns authoritative verification — the LLM must
+        # not author a task that loops the suite.
         for task in tasks:
             if isinstance(task, dict) and _task_matches_verification_pattern(task):
                 _reject(
                     "Finalize output contains a re-run-until-pass task. "
                     "The harness owns test verification — do NOT author a re-run-until-pass task."
                 )
+
     validation = payload.get("validation")
     if isinstance(validation, dict):
         for index, entry in enumerate(validation.get("plan_steps_covered", []), start=1):
@@ -920,7 +1007,10 @@ def _write_finalize_artifacts(plan_dir: Path, payload: dict[str, Any], state: Pl
     atomic_write_json(plan_dir / "contract.json", contract_payload)
     write_plan_artifact_json(
         plan_dir, "finalize.json", payload,
-        contract_context=StepIOContractContext(operation=StepIOOperation.WRITE),
+        contract_context=create_step_io_contract_context(
+            operation=StepIOOperation.WRITE,
+            explicit_root=plan_dir,
+        ),
     )
     atomic_write_json(plan_dir / "finalize_snapshot.json", payload)
     atomic_write_text(plan_dir / "user_actions.md", _render_user_actions_md(payload))

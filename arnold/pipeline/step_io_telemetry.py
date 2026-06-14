@@ -22,6 +22,7 @@ from arnold.pipeline.step_io_contract import (
     StepIOClassification,
     StepIOContractDecision,
     StepIOEnvelope,
+    make_warn_diagnostic,
 )
 from arnold.pipeline.step_io_policy import StepIOPolicy
 
@@ -39,6 +40,11 @@ class StepIOViolationRecord:
 
     timestamp: str
     seam: str
+    pipeline_id: str | None
+    producer_step: str | None
+    producer_port: str | None
+    consumer_step: str | None
+    consumer_port: str | None
     mode: str
     artifact: str
     operation: str
@@ -58,6 +64,11 @@ class StepIOViolationRecord:
         artifact: str,
         operation: str,
         seam: str = "step_io",
+        pipeline_id: str | None = None,
+        producer_step: str | None = None,
+        producer_port: str | None = None,
+        consumer_step: str | None = None,
+        consumer_port: str | None = None,
         envelope: StepIOEnvelope | None = None,
     ) -> StepIOViolationRecord:
         """Build a violation record from a contract decision and policy."""
@@ -65,6 +76,11 @@ class StepIOViolationRecord:
         return cls(
             timestamp=datetime.now(timezone.utc).isoformat(),
             seam=seam,
+            pipeline_id=pipeline_id,
+            producer_step=producer_step,
+            producer_port=producer_port,
+            consumer_step=consumer_step,
+            consumer_port=consumer_port,
             mode=policy.effective_mode,
             artifact=artifact,
             operation=operation,
@@ -99,7 +115,13 @@ def emit_decision_telemetry(
     operation: str,
     telemetry_path: str | Path,
     seam: str = "step_io",
+    pipeline_id: str | None = None,
+    producer_step: str | None = None,
+    producer_port: str | None = None,
+    consumer_step: str | None = None,
+    consumer_port: str | None = None,
     envelope: StepIOEnvelope | None = None,
+    surface_warn: bool = False,
 ) -> StepIOViolationRecord | None:
     """Emit a JSONL telemetry record for a non-ok contract decision.
 
@@ -118,8 +140,41 @@ def emit_decision_telemetry(
         artifact=artifact,
         operation=operation,
         seam=seam,
+        pipeline_id=pipeline_id,
+        producer_step=producer_step,
+        producer_port=producer_port,
+        consumer_step=consumer_step,
+        consumer_port=consumer_port,
         envelope=envelope,
     )
+    if surface_warn and policy.warns and _is_violation_classification(decision.classification):
+        warn_diag = make_warn_diagnostic(decision)
+        record = StepIOViolationRecord(
+            timestamp=record.timestamp,
+            seam=record.seam,
+            pipeline_id=record.pipeline_id,
+            producer_step=record.producer_step,
+            producer_port=record.producer_port,
+            consumer_step=record.consumer_step,
+            consumer_port=record.consumer_port,
+            mode=record.mode,
+            artifact=record.artifact,
+            operation=record.operation,
+            logical_type=record.logical_type,
+            schema_version=record.schema_version,
+            classification=record.classification,
+            diagnostic_details=[
+                {
+                    "code": warn_diag.code,
+                    "message": warn_diag.message,
+                    "payload_pointer": warn_diag.payload_pointer,
+                    "schema_pointer": warn_diag.schema_pointer,
+                },
+                *record.diagnostic_details,
+            ],
+            block_reason=record.block_reason,
+            record_schema_version=record.record_schema_version,
+        )
     append_violation_record(telemetry_path, record)
     return record
 

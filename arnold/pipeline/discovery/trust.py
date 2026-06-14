@@ -1,8 +1,8 @@
-"""Path-derived trust-tier evaluator for pipeline discovery.
+"""Path-derived trust-grade evaluator for pipeline discovery.
 
-Trust tiers are computed from the filesystem origin of a pipeline module —
+Trust grades are computed from the filesystem origin of a pipeline module —
 never from module-level constants or user-supplied metadata.  The three
-tiers:
+grades:
 
 - ``AUTO_EXEC``   — in-tree package under a recognised prefix subtree;
                     auto-executes on selection.
@@ -35,11 +35,11 @@ BLESSED_ALLOWLIST: tuple[str, ...] = ()
 
 
 # ---------------------------------------------------------------------------
-# TrustTier
+# TrustGrade
 # ---------------------------------------------------------------------------
 
 
-class TrustTier(enum.Enum):
+class TrustGrade(enum.Enum):
     """Trust classification for a discovered pipeline module."""
 
     AUTO_EXEC = "auto_exec"
@@ -57,8 +57,8 @@ def classify(
     *,
     blessed_allowlist: tuple[str, ...] = BLESSED_ALLOWLIST,
     in_tree_path_fragment: str | None = None,
-) -> TrustTier:
-    """Return the trust tier for *module_path*.
+) -> TrustGrade:
+    """Return the trust grade for *module_path*.
 
     Classification order:
 
@@ -74,7 +74,7 @@ def classify(
     resolved = str(module_path.resolve())
 
     if resolved in blessed_allowlist:
-        return TrustTier.BLESSED
+        return TrustGrade.BLESSED
 
     if in_tree_path_fragment is not None:
         normalised = resolved.replace("\\", "/")
@@ -82,9 +82,9 @@ def classify(
         if fragment_with_sep in normalised or normalised.endswith(
             "/" + in_tree_path_fragment
         ):
-            return TrustTier.AUTO_EXEC
+            return TrustGrade.AUTO_EXEC
 
-    return TrustTier.QUARANTINED
+    return TrustGrade.QUARANTINED
 
 
 def derive_tenant_id(cli_name: str, module_path: Path) -> str:

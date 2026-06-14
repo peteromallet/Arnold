@@ -7,7 +7,6 @@ caller should act on that classification for one typed seam.
 from __future__ import annotations
 
 import json
-import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Mapping
@@ -20,8 +19,6 @@ from arnold.pipeline.step_io_contract import (
 
 STEP_IO_POLICY_DIRNAME = "policies"
 STEP_IO_POLICY_FILENAME = "step_io_contract_modes.json"
-STEP_IO_POLICY_ENV = "MEGAPLAN_STEP_IO_CONTRACT_MODE"
-STEP_IO_READ_LENIENT_ENV = "MEGAPLAN_STEP_IO_CONTRACTS_OFF"
 SELF_VALIDATION_KEY = "self_validation"
 CONTRACT_MODE_OFF = "off"
 CONTRACT_MODE_SHADOW = "shadow"
@@ -91,26 +88,25 @@ def is_step_io_enforcement_eligible(
 def resolve_step_io_policy(
     *,
     configured_mode: Any = None,
-    plan_dir: str | Path | None = None,
-    state_config: Mapping[str, Any] | None = None,
+    policy_data: Mapping[str, Any] | None = None,
+    policy_path: str | Path | None = None,
     binding: Any = None,
     producer_typed: bool | None = None,
     consumer_typed: bool | None = None,
+    read_lenient_escape: bool = False,
 ) -> StepIOPolicy:
     """Resolve configured and effective step-IO policy.
 
-    Precedence is explicit ``configured_mode``, persisted policy file,
-    ``state_config["step_io_contract_mode"]``, environment override, then the
-    shared contract default from ``normalize_contract_mode(None)``.
+    Precedence is explicit ``configured_mode``, explicit policy data, explicit
+    policy file, then the shared contract default from
+    ``normalize_contract_mode(None)``.
     """
 
     raw_mode = configured_mode
-    if raw_mode is None and plan_dir is not None:
-        raw_mode = load_step_io_policy(plan_dir).get("configured_mode")
-    if raw_mode is None and state_config is not None:
-        raw_mode = state_config.get("step_io_contract_mode")
-    if raw_mode is None:
-        raw_mode = os.getenv(STEP_IO_POLICY_ENV)
+    if raw_mode is None and policy_data is not None:
+        raw_mode = policy_data.get("configured_mode")
+    if raw_mode is None and policy_path is not None:
+        raw_mode = load_step_io_policy(policy_path=policy_path).get("configured_mode")
 
     configured = normalize_contract_mode(raw_mode)
     producer, consumer, reason = _resolve_typed_sides(
@@ -127,9 +123,9 @@ def resolve_step_io_policy(
     if configured in {CONTRACT_MODE_WARN, CONTRACT_MODE_ENFORCE} and not eligible:
         effective = CONTRACT_MODE_SHADOW
         reason = reason or "typed declarations are required on both sides"
-    if step_io_read_lenient_escape_on() and effective != CONTRACT_MODE_OFF:
+    if read_lenient_escape and effective != CONTRACT_MODE_OFF:
         effective = CONTRACT_MODE_SHADOW
-        reason = reason or f"{STEP_IO_READ_LENIENT_ENV}=1 forces read-lenient mode"
+        reason = reason or "read-lenient mode requested"
 
     return StepIOPolicy(
         configured_mode=configured,
@@ -141,11 +137,21 @@ def resolve_step_io_policy(
     )
 
 
-def load_step_io_policy(plan_dir: str | Path) -> dict[str, Any]:
-    """Load a persisted policy file, returning an empty mapping when absent."""
+def load_step_io_policy(
+    policy_path: str | Path | None = None,
+    *,
+    policy_data: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Load explicit policy data or a policy file, returning an empty mapping when absent."""
 
-    path = step_io_policy_path(plan_dir)
+    if policy_data is not None:
+        return dict(policy_data)
+    if policy_path is None:
+        return {}
+    path = Path(policy_path)
     if not path.exists():
+        return {}
+    elif path.is_dir():
         return {}
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
@@ -154,11 +160,11 @@ def load_step_io_policy(plan_dir: str | Path) -> dict[str, Any]:
     return dict(data) if isinstance(data, dict) else {}
 
 
-def write_step_io_policy(plan_dir: str | Path, policy: StepIOPolicy) -> Path:
-    """Persist a resolved policy under the project-level policy directory."""
+def write_step_io_policy(policy_path: str | Path, policy: StepIOPolicy) -> Path:
+    """Persist a resolved policy to an explicit file path."""
 
-    path = step_io_policy_path(plan_dir)
-    existing = load_step_io_policy(plan_dir)
+    path = Path(policy_path)
+    existing = load_step_io_policy(policy_path)
     data = policy.to_json()
     if isinstance(existing.get(SELF_VALIDATION_KEY), dict):
         data[SELF_VALIDATION_KEY] = existing[SELF_VALIDATION_KEY]
@@ -170,10 +176,10 @@ def write_step_io_policy(plan_dir: str | Path, policy: StepIOPolicy) -> Path:
     return path
 
 
-def has_step_io_self_validation_marker(plan_dir: str | Path) -> bool:
+def has_step_io_self_validation_marker(marker_path: str | Path) -> bool:
     """Return whether at least one typed artifact round trip succeeded."""
 
-    marker = load_step_io_policy(plan_dir).get(SELF_VALIDATION_KEY)
+    marker = load_step_io_policy(marker_path).get(SELF_VALIDATION_KEY)
     if not isinstance(marker, Mapping):
         return False
     artifacts = marker.get("typed_artifacts")
@@ -181,7 +187,7 @@ def has_step_io_self_validation_marker(plan_dir: str | Path) -> bool:
 
 
 def record_step_io_self_validation_marker(
-    plan_dir: str | Path,
+    marker_path: str | Path,
     *,
     typed_artifacts: list[str],
 ) -> Path:
@@ -189,8 +195,8 @@ def record_step_io_self_validation_marker(
 
     if not typed_artifacts:
         raise ValueError("self-validation marker requires at least one typed artifact")
-    path = step_io_policy_path(plan_dir)
-    data = load_step_io_policy(plan_dir)
+    path = Path(marker_path)
+    data = load_step_io_policy(marker_path)
     data[SELF_VALIDATION_KEY] = {
         "validated": True,
         "typed_artifacts": sorted(set(typed_artifacts)),
@@ -198,16 +204,6 @@ def record_step_io_self_validation_marker(
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(data, sort_keys=True, indent=2) + "\n", encoding="utf-8")
     return path
-
-
-def step_io_policy_path(plan_dir: str | Path) -> Path:
-    """Return the project-level step-IO policy path for a plan directory."""
-
-    plan_path = Path(plan_dir)
-    for parent in [plan_path, *plan_path.parents]:
-        if parent.name == "plans" and parent.parent.name == ".megaplan":
-            return parent.parent / STEP_IO_POLICY_DIRNAME / STEP_IO_POLICY_FILENAME
-    return plan_path / ".megaplan" / STEP_IO_POLICY_DIRNAME / STEP_IO_POLICY_FILENAME
 
 
 def decision_blocks_read(
@@ -242,24 +238,52 @@ def decision_blocks_write(
     }
 
 
+def effective_blocks_read(
+    decision: StepIOContractDecision,
+    policy: StepIOPolicy,
+) -> bool:
+    """Return True only when *policy* enforces AND the read decision blocks.
+
+    Additive helper that gives warn mode distinct non-blocking semantics
+    without modifying ``decision_blocks_read`` (DC8: mode-ladder preserved).
+    """
+
+    return policy.enforces and decision_blocks_read(decision, policy)
+
+
+def effective_blocks_write(
+    decision: StepIOContractDecision,
+    policy: StepIOPolicy,
+) -> bool:
+    """Return True only when *policy* enforces AND the write decision blocks.
+
+    Additive helper that gives warn mode distinct non-blocking semantics
+    without modifying ``decision_blocks_write`` (DC8: mode-ladder preserved).
+    """
+
+    return policy.enforces and decision_blocks_write(decision, policy)
+
+
 def policy_for_envelope(
     envelope: StepIOEnvelope | None,
     *,
     configured_mode: Any = None,
-    plan_dir: str | Path | None = None,
-    state_config: Mapping[str, Any] | None = None,
+    policy_data: Mapping[str, Any] | None = None,
+    policy_path: str | Path | None = None,
     binding: Any = None,
+    read_lenient_escape: bool = False,
 ) -> StepIOPolicy:
     """Resolve policy with a typed-producer fallback from the artifact envelope."""
 
     producer_typed = envelope is not None
     return resolve_step_io_policy(
         configured_mode=configured_mode,
-        plan_dir=plan_dir,
-        state_config=state_config,
+        policy_data=policy_data,
+        policy_path=policy_path,
         binding=binding,
         producer_typed=producer_typed,
         consumer_typed=_binding_consumer_typed(binding),
+        read_lenient_escape=read_lenient_escape,
     )
 
 
@@ -300,9 +324,3 @@ def _binding_bool(binding: Any, *names: str) -> bool | None:
         if hasattr(binding, name):
             return bool(getattr(binding, name))
     return None
-
-
-def step_io_read_lenient_escape_on() -> bool:
-    """Return whether global read-lenient escape mode is enabled."""
-
-    return os.getenv(STEP_IO_READ_LENIENT_ENV) == "1"

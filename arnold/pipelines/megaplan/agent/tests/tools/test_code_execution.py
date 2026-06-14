@@ -334,7 +334,7 @@ class TestStubSchemaDrift(unittest.TestCase):
         from tools.code_execution_tool import _TOOL_STUBS
 
         # Import the registry and trigger tool registration
-        from tools.registry import registry
+        from arnold.agent.tools.registry import registry
         import tools.file_tools  # noqa: F401 - registers read_file, write_file, patch, search_files
         import tools.web_tools  # noqa: F401 - registers web_search, web_extract
 

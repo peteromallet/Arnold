@@ -12,10 +12,13 @@ from arnold.runtime.driver import (
     ISOLATION_MODES,
     AdvanceOutcome,
     CheckpointOutcome,
+    PipelineStepwiseDriver,
     StepwiseDriver,
 )
 from arnold.runtime.envelope import RuntimeEnvelope
 from arnold.runtime.resume import ResumeCursorRef
+from arnold.pipeline.hooks import NullExecutorHooks
+from arnold.pipeline.types import Edge, Pipeline, Stage, StepContext, StepResult
 
 
 # ---------------------------------------------------------------------------
@@ -45,6 +48,33 @@ class _FakeDriver:
         cursor: ResumeCursorRef,
     ) -> RuntimeEnvelope:
         return envelope
+
+
+class _RecordingStep:
+    name = "record"
+    kind = "test"
+
+    def __init__(self, key: str, *, next_label: str = "next") -> None:
+        self.key = key
+        self.next_label = next_label
+
+    def run(self, ctx: StepContext) -> StepResult:
+        seen = tuple(ctx.state.get("seen", ()))
+        return StepResult(
+            outputs={self.key: True},
+            state_patch={"seen": (*seen, self.key)},
+            next=self.next_label,
+        )
+
+
+class _SuspendAfterStepHook(NullExecutorHooks):
+    def should_suspend(
+        self,
+        stage,
+        state,
+        result,
+    ) -> tuple[bool, str | None]:
+        return stage.name == "first", "operator"
 
 
 # ---------------------------------------------------------------------------
@@ -191,3 +221,105 @@ class TestStepwiseDriverProtocol:
         assert hasattr(StepwiseDriver, "__protocol_attrs__") or isinstance(
             _FakeDriver(), StepwiseDriver
         )
+
+
+class TestPipelineStepwiseDriver:
+    def test_driver_exports_from_runtime_package(self) -> None:
+        from arnold.runtime import PipelineStepwiseDriver as ExportedDriver
+        from arnold.runtime import StepwiseDriver as ExportedProtocol
+
+        assert ExportedDriver is PipelineStepwiseDriver
+        assert ExportedProtocol is StepwiseDriver
+
+    def test_concrete_pipeline_driver_satisfies_protocol(self) -> None:
+        pipeline = Pipeline(
+            entry="only",
+            stages={"only": Stage("only", _RecordingStep("only", next_label="halt"))},
+        )
+        assert isinstance(PipelineStepwiseDriver(pipeline), StepwiseDriver)
+
+    def test_advance_runs_one_stage_at_a_time(self) -> None:
+        pipeline = Pipeline(
+            entry="first",
+            stages={
+                "first": Stage(
+                    "first",
+                    _RecordingStep("first"),
+                    edges=(Edge("next", "second"),),
+                ),
+                "second": Stage(
+                    "second",
+                    _RecordingStep("second", next_label="halt"),
+                ),
+            },
+        )
+        driver = PipelineStepwiseDriver(pipeline)
+        env = RuntimeEnvelope(plugin_id="p", run_id="r-1")
+
+        first = driver.advance(env)
+        assert first.kind == "advanced"
+        assert first.payload["current_stage"] == "second"
+        assert first.payload["state"]["first"] is True
+        assert first.payload["state"]["seen"] == ("first",)
+
+        second = driver.advance(env)
+        assert second.kind == "halted"
+        assert second.payload["current_stage"] is None
+        assert second.payload["state"]["second"] is True
+        assert second.payload["state"]["seen"] == ("first", "second")
+
+    def test_advance_surfaces_suspension_as_awaiting(self) -> None:
+        pipeline = Pipeline(
+            entry="first",
+            stages={
+                "first": Stage(
+                    "first",
+                    _RecordingStep("first"),
+                    edges=(Edge("next", "second"),),
+                ),
+                "second": Stage(
+                    "second",
+                    _RecordingStep("second", next_label="halt"),
+                ),
+            },
+        )
+        driver = PipelineStepwiseDriver(pipeline, hooks=_SuspendAfterStepHook())
+
+        outcome = driver.advance(RuntimeEnvelope(plugin_id="p", run_id="r-1"))
+
+        assert outcome.kind == "awaiting"
+        assert outcome.payload["stage"] == "first"
+        assert outcome.payload["halt_reason"] == "operator"
+        assert driver.current_stage == "first"
+
+    def test_resume_sets_stage_and_state_from_cursor(self) -> None:
+        pipeline = Pipeline(
+            entry="first",
+            stages={
+                "first": Stage(
+                    "first",
+                    _RecordingStep("first"),
+                    edges=(Edge("next", "second"),),
+                ),
+                "second": Stage(
+                    "second",
+                    _RecordingStep("second", next_label="halt"),
+                ),
+            },
+        )
+        driver = PipelineStepwiseDriver(pipeline)
+        env = RuntimeEnvelope(plugin_id="p", run_id="r-1")
+
+        returned = driver.resume(
+            env,
+            ResumeCursorRef(
+                plugin_id="p",
+                run_id="r-1",
+                cursor={"stage": "second", "state": {"seen": ("resumed",)}},
+            ),
+        )
+        assert returned.resume_cursor is not None
+
+        outcome = driver.advance(env)
+        assert outcome.kind == "halted"
+        assert outcome.payload["state"]["seen"] == ("resumed", "second")

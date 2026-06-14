@@ -1,7 +1,7 @@
 """Tests for megaplan/chain/ci_hook.py (T33 / Step 28).
 
 Verifies:
-- GATE_ORDER contains all 8 mandated gates in the correct order.
+- GATE_ORDER contains all 10 mandated gates in the correct order.
 - run_chain_ci collects all outcomes (no short-circuit on red).
 - commit_label() returns HINGE_GATE_GREEN_STAMP iff all gates pass.
 - A single red gate produces empty commit_label.
@@ -9,7 +9,7 @@ Verifies:
 - assert_program_md() ensures PROGRAM.md exists with the M3 Entry section.
 - PROGRAM.md stub-survival: re-creates from template when missing.
 - assert_program_md() is idempotent (no duplicate M3 Entry sections).
-- All 8 real gates are importable and callable (import-level smoke).
+- All 10 real gates are importable and callable (import-level smoke).
 - ChainCIResult.failures returns only red outcomes.
 - Green result: all gates ok -> passed=True -> commit_label non-empty.
 """
@@ -47,6 +47,7 @@ _GATE_NAMES_EXPECTED = [
     "acceptance_toy",
     "dual_green",
     "supervisor_purity",
+    "oracle_acceptance",
 ]
 
 
@@ -67,8 +68,8 @@ def _all_green_gates():
 # ---------------------------------------------------------------------------
 
 
-def test_gate_order_has_9_gates():
-    assert len(GATE_ORDER) == 9
+def test_gate_order_has_10_gates():
+    assert len(GATE_ORDER) == 10
 
 
 def test_gate_order_names_match():
@@ -89,7 +90,7 @@ def test_gate_order_all_callable():
 def test_run_chain_ci_all_green_passes():
     result = run_chain_ci(gates=_all_green_gates())
     assert result.passed is True
-    assert len(result.gate_outcomes) == 9
+    assert len(result.gate_outcomes) == 10
     assert all(g.ok for g in result.gate_outcomes)
 
 
@@ -99,14 +100,14 @@ def test_run_chain_ci_no_short_circuit_on_red():
     rest_green = [(name, lambda n=name: _make_green(n)) for name in _GATE_NAMES_EXPECTED[1:]]
     result = run_chain_ci(gates=first_red + rest_green)
     assert result.passed is False
-    assert len(result.gate_outcomes) == 9  # all 9 collected
+    assert len(result.gate_outcomes) == 10  # all 10 collected
 
 
 def test_run_chain_ci_collects_all_failures():
     gates = [(name, lambda n=name: _make_red(n)) for name in _GATE_NAMES_EXPECTED]
     result = run_chain_ci(gates=gates)
     assert not result.passed
-    assert len(result.failures) == 9
+    assert len(result.failures) == 10
 
 
 def test_run_chain_ci_partial_red():
@@ -245,6 +246,7 @@ def test_failures_property_empty_when_all_green():
     "gate_acceptance_toy",
     "gate_dual_green",
     "gate_supervisor_purity",
+    "gate_oracle_acceptance",
 ])
 def test_gate_callable_importable(gate_name):
     mod = importlib.import_module("arnold.pipelines.megaplan.chain.ci_hook")

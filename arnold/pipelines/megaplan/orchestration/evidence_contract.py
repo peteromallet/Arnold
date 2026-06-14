@@ -17,7 +17,6 @@ diagnostic detail.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from enum import Enum
 from typing import Any
 
 EVIDENCE_CONTRACT_SCHEMA = "megaplan.evidence_contract"
@@ -33,15 +32,7 @@ TRANSITION_DECISION_SCHEMA = "megaplan.transition_decision"
 TRANSITION_DECISION_SCHEMA_VERSION = 1
 
 
-class EvidenceStatus(str, Enum):
-    """Canonical status of one evidence class for a subject."""
-
-    satisfied = "satisfied"
-    unsatisfied = "unsatisfied"
-    unknown = "unknown"
-    not_applicable = "not_applicable"
-    waived = "waived"
-
+from arnold.pipeline.types import EvidenceStatus, TrustClass
 
 LEGACY_EVIDENCE_STATUS_ALIASES: dict[str, EvidenceStatus] = {
     "not_evaluated": EvidenceStatus.unknown,
@@ -49,15 +40,6 @@ LEGACY_EVIDENCE_STATUS_ALIASES: dict[str, EvidenceStatus] = {
 }
 
 CANONICAL_EVIDENCE_STATUSES: frozenset[str] = frozenset(status.value for status in EvidenceStatus)
-
-
-class TrustClass(str, Enum):
-    """How much interpretation a record represents."""
-
-    claim = "claim"
-    evidence = "evidence"
-    judgment = "judgment"
-    routing = "routing"
 
 
 @dataclass(frozen=True)

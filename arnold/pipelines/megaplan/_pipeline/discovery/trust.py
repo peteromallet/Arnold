@@ -14,7 +14,7 @@ from pathlib import Path
 # M3a compatibility bridge; delete in M7
 from arnold.pipeline.discovery.trust import (  # noqa: F401
     BLESSED_ALLOWLIST,
-    TrustTier,
+    TrustGrade,
     derive_tenant_id,
 )
 from arnold.pipeline.discovery.trust import classify as _arnold_classify
@@ -36,8 +36,8 @@ def classify(
     module_path: Path,
     *,
     blessed_allowlist: tuple[str, ...] = BLESSED_ALLOWLIST,
-) -> TrustTier:
-    """Return the trust tier for *module_path*.
+) -> TrustGrade:
+    """Return the trust grade for *module_path*.
 
     Megaplan bridge: delegates to the neutral Arnold classifier with
     each in-tree path fragment.  The first matching fragment wins.
@@ -50,7 +50,7 @@ def classify(
             blessed_allowlist=blessed_allowlist,
             in_tree_path_fragment=fragment,
         )
-        if tier != TrustTier.QUARANTINED:
+        if tier != TrustGrade.QUARANTINED:
             return tier
     return _arnold_classify(
         module_path,

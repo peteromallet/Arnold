@@ -226,10 +226,3 @@ def test_subprocess_isolated_driver_still_importable() -> None:
     )
     assert drv.name == "test"
     assert drv.argv == ["python", "-c", "print('hello')"]
-
-
-def test_scoped_legacy_audit_returns_zero() -> None:
-    """The renamed scoped_legacy_audit still returns 0."""
-    from arnold.pipelines.megaplan.drivers import scoped_legacy_audit
-
-    assert scoped_legacy_audit() == 0

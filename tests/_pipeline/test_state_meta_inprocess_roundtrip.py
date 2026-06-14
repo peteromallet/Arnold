@@ -89,6 +89,26 @@ def _fake_execute_handler(root: Path, args: Namespace) -> Mapping[str, Any]:
     return {}
 
 
+def _fake_execute_handler_with_untyped_artifacts(
+    root: Path, args: Namespace,
+) -> Mapping[str, Any]:
+    plan_dir = root / ".megaplan" / "plans" / args.plan
+    execution_json = plan_dir / "execution.json"
+    review_json = plan_dir / "review.json"
+    plan_v2 = plan_dir / "plan_v2.md"
+    execution_json.write_text('{"status":"ok"}', encoding="utf-8")
+    review_json.write_text('{"verdict":"pass"}', encoding="utf-8")
+    plan_v2.write_text("# plan v2\n", encoding="utf-8")
+    state = json.loads((plan_dir / "state.json").read_text(encoding="utf-8"))
+    state["current_state"] = "executed"
+    state["plan_versions"] = [
+        {"version": 1, "file": "plan_v1.md"},
+        {"version": 2, "file": "plan_v2.md"},
+    ]
+    (plan_dir / "state.json").write_text(json.dumps(state), encoding="utf-8")
+    return {}
+
+
 def test_inprocess_handler_attaches_contract_result_and_preserves_legacy_fields(
     tmp_path: Path,
 ) -> None:
@@ -115,7 +135,7 @@ def test_inprocess_handler_attaches_contract_result_and_preserves_legacy_fields(
 
     result = step.run(ctx)
 
-    assert result.outputs == {"execution.json": plan_dir / "execution.json"}
+    assert result.outputs == {}
     assert result.state_patch == {"current_state": "executed"}
     assert result.next == "review"
     assert result.contract_result is not None
@@ -128,3 +148,59 @@ def test_inprocess_handler_attaches_contract_result_and_preserves_legacy_fields(
     assert payload["logical_type"] == LOGICAL_EXECUTE_PAYLOAD
     assert payload["metadata"]["output_keys"] == ["execution.json"]
     assert payload["metadata"]["state_patch_keys"] == ["current_state"]
+    assert [ref["name"] for ref in payload["artifact_refs"]] == ["execution.json"]
+
+
+def test_inprocess_handler_strips_only_step_duplicate_loose_outputs_after_contract_capture(
+    tmp_path: Path,
+) -> None:
+    plan_name = "p3"
+    plan_dir = tmp_path / ".megaplan" / "plans" / plan_name
+    plan_dir.mkdir(parents=True)
+    (plan_dir / "plan_v1.md").write_text("# plan v1\n", encoding="utf-8")
+    (plan_dir / "state.json").write_text(
+        json.dumps(
+            {
+                "name": plan_name,
+                "current_state": "finalized",
+                "plan_versions": [{"version": 1, "file": "plan_v1.md"}],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    step = InProcessHandlerStep(
+        name="execute",
+        kind="produce",
+        handler=_fake_execute_handler_with_untyped_artifacts,
+    )
+    ctx = StepContext(
+        plan_dir=plan_dir,
+        state={"name": plan_name},
+        profile={"root": tmp_path, "project_dir": tmp_path},
+        mode="test",
+        inputs={},
+    )
+
+    result = step.run(ctx)
+
+    assert result.outputs == {
+        "plan_version:plan_v2.md": plan_dir / "plan_v2.md",
+        "review.json": plan_dir / "review.json",
+    }
+    registry = ContractSchemaRegistry(tmp_path / "registry-2")
+    contracts = register_production_planning_contracts(registry)
+    contract = contracts[LOGICAL_EXECUTE_PAYLOAD]
+    payload, diagnostics = consume_payload_result(registry, contract, result.contract_result)
+    assert diagnostics == ()
+    assert payload is not None
+    assert payload["metadata"]["output_keys"] == [
+        "plan_version:plan_v2.md",
+        "execution.json",
+        "review.json",
+    ]
+    assert [ref["name"] for ref in payload["artifact_refs"]] == [
+        "plan_version:plan_v2.md",
+        "execution.json",
+        "review.json",
+    ]

@@ -116,10 +116,14 @@ class PipelineBuilder:
 
     # ── build ─────────────────────────────────────────────────────────
 
-    def build(self) -> Pipeline:
+    def build(self, *, derive_bindings: bool = False) -> Pipeline:
         """Assemble and return the frozen :class:`Pipeline`.
 
         Raises :class:`ValueError` if no stages have been added.
+
+        ``derive_bindings=True`` computes the typed-port binding map from
+        declared ports; the default ``False`` leaves ``binding_map=None``
+        (binding derivation is a Megaplan opinion, not a generic concern).
         """
         if self._entry is None:
             raise ValueError(
@@ -134,7 +138,7 @@ class PipelineBuilder:
         return Pipeline(
             stages=dict(self._stages),
             entry=self._entry,
-            binding_map=derive_binding_map(dict(self._stages), edges),
+            binding_map=derive_binding_map(dict(self._stages), edges) if derive_bindings else None,
             resource_bundles=tuple(self.resource_bundles),
         )
 

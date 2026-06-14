@@ -15,7 +15,7 @@ boundary — and its stall / cost / context-retry policy in
 from __future__ import annotations
 
 from argparse import Namespace
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Callable, Mapping
 
@@ -111,7 +111,16 @@ class InProcessHandlerStep:
         producer_port = _producer_port_for_step(self)
         if producer_port is None:
             return result
-        return with_stage_payload_result(result, producer_port=producer_port)
+        typed_result = with_stage_payload_result(result, producer_port=producer_port)
+        duplicate_keys = _duplicate_loose_handoff_output_keys(self.name, typed_result.outputs)
+        if not duplicate_keys:
+            return typed_result
+        filtered_outputs = {
+            key: value
+            for key, value in typed_result.outputs.items()
+            if key not in duplicate_keys
+        }
+        return replace(typed_result, outputs=filtered_outputs)
 
 
 def _resolve_root(ctx: StepContext) -> Path:
@@ -245,6 +254,33 @@ def _collect_outputs(
             if not before_present:
                 outputs[candidate] = path
     return outputs
+
+
+def _duplicate_loose_handoff_output_keys(
+    step_name: str, outputs: Mapping[str, Any]
+) -> frozenset[str]:
+    """Return legacy loose-output keys duplicated by the typed stage carrier.
+
+    The filter is intentionally conservative: it only removes the one
+    step-specific loose handoff artifact already represented by the typed
+    ``contract_result``. ``plan_version:*`` keys and unrelated files remain on
+    ``StepResult.outputs`` for legacy callers.
+    """
+
+    duplicate_key_by_step = {
+        "prep": "prep.json",
+        "critique": "critique_output.json",
+        "gate": "gate.json",
+        "finalize": "finalize.json",
+        "execute": "execution.json",
+        "review": "review.json",
+    }
+    duplicate_key = duplicate_key_by_step.get(step_name)
+    if duplicate_key is None or duplicate_key not in outputs:
+        return frozenset()
+    if duplicate_key.startswith("plan_version:"):
+        return frozenset()
+    return frozenset({duplicate_key})
 
 
 def _producer_port_for_step(step: InProcessHandlerStep):

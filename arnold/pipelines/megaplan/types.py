@@ -2,8 +2,13 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal, NotRequired, TypedDict
+
+from arnold.runtime.errors import ArnoldError
+
+# Re-export AgentSpec, format_agent_spec, and parse_agent_spec from the SSoT
+# so that identity holds across the megaplan/arnold.agent boundary.
+from arnold.agent.contracts import AgentMode, AgentSpec, format_agent_spec, parse_agent_spec
 
 if TYPE_CHECKING:
     from arnold.pipelines.megaplan.planning.state import PlanCurrentState
@@ -362,44 +367,6 @@ def resolve_premium_placeholder_spec(spec: str | "AgentSpec", vendor: str) -> "A
     )
 
 
-def _validate_premium_placeholder_spec(
-    spec: str,
-    *,
-    model: str | None,
-    effort: str | None,
-) -> None:
-    """Reject malformed symbolic premium placeholder specs."""
-    if model is not None:
-        raise CliError(
-            "invalid_agent_spec",
-            f"Invalid premium agent spec {spec!r}: symbolic premium specs do not "
-            "accept model pins; use 'premium' or 'premium:<effort>'.",
-        )
-    if effort is not None and effort not in _PREMIUM_EFFORT_TOKENS:
-        raise CliError(
-            "invalid_agent_spec",
-            f"Invalid premium agent spec {spec!r}: effort token {effort!r} is not "
-            f"valid ({', '.join(sorted(_PREMIUM_EFFORT_TOKENS))}).",
-        )
-
-
-def _is_claude_model_name(name: str) -> bool:
-    """True if *name* names a Claude model.
-
-    Accepts the full pins used across profiles/tier_models/tests
-    (``claude-sonnet-4-6``, ``claude-opus-4-7``), the shorthand model
-    pins (``sonnet-4.6``, ``sonnet``, ``opus``), and any
-    ``anthropic/claude-*`` / ``claude/`` form.
-    """
-    lowered = name.lower()
-    return (
-        "claude" in lowered
-        or "sonnet" in lowered
-        or "opus" in lowered
-        or "haiku" in lowered
-    )
-
-
 def _is_codex_model_name(name: str) -> bool:
     """True if *name* names a Codex / GPT-5.x model.
 
@@ -410,193 +377,13 @@ def _is_codex_model_name(name: str) -> bool:
     return lowered.startswith("gpt-5") or "/gpt-5" in lowered or "codex" in lowered
 
 
-_PREMIUM_MODEL_PREDICATES = {
-    "claude": _is_claude_model_name,
-    "codex": _is_codex_model_name,
-}
-
-
-def _validate_premium_spec(agent: str, model: str | None, effort: str | None, spec: str) -> None:
-    """Reject semantically-malformed premium (claude/codex) specs.
-
-    The grammar is syntactically closed but historically semantically open:
-    ANY token was accepted in the model/effort slot. This is the single
-    chokepoint that closes it. A premium spec must be one of:
-
-    * bare agent (``codex``)
-    * ``agent:effort`` (effort in that agent's valid set)
-    * ``agent:model`` (model in that agent's family)
-    * ``agent:model:effort`` (both valid)
-
-    A token that is NEITHER a valid effort NOR a recognised model for that
-    agent raises ``CliError`` naming the offending spec. This is what turns
-    ``codex:claude:sonnet`` (model='claude', effort='sonnet') from a silent
-    mis-parse into a loud failure.
-    """
-    valid_efforts = _VALID_PREMIUM_EFFORTS[agent]
-    model_ok = _PREMIUM_MODEL_PREDICATES[agent]
-
-    if effort is not None and effort not in valid_efforts:
-        raise CliError(
-            "invalid_agent_spec",
-            f"Invalid {agent} agent spec {spec!r}: effort token {effort!r} is not a "
-            f"valid {agent} effort ({', '.join(sorted(valid_efforts))}) "
-            f"and the spec is not a recognised {agent} model.",
-        )
-    if model is not None and not model_ok(model):
-        raise CliError(
-            "invalid_agent_spec",
-            f"Invalid {agent} agent spec {spec!r}: {model!r} is neither a valid "
-            f"{agent} effort ({', '.join(sorted(valid_efforts))}) nor a recognised "
-            f"{agent} model. A {agent} spec must be a bare agent, "
-            f"{agent}:<effort>, or {agent}:<model>[:<effort>].",
-        )
-
-
-@dataclass(frozen=True, slots=True)
-class AgentSpec:
-    """Parsed representation of an agent spec string.
-
-    Supports unpacking as ``(agent, model)`` and equality comparison with
-    plain tuples for backward compatibility with callers that predate
-    the three-part ``claude/codex`` model syntax.
-    """
-
-    agent: str
-    model: str | None = None
-    effort: str | None = None
-
-    def __iter__(self):
-        """Backward compat: ``agent, model = spec`` ignores effort."""
-        return iter((self.agent, self.model))
-
-    def __eq__(self, other):
-        if isinstance(other, AgentSpec):
-            return (
-                self.agent == other.agent
-                and self.model == other.model
-                and self.effort == other.effort
-            )
-        if isinstance(other, tuple):
-            return (self.agent, self.model) == other
-        return NotImplemented
-
-    def __hash__(self):
-        return hash((self.agent, self.model, self.effort))
-
-    def __repr__(self):
-        parts = [f"agent={self.agent!r}"]
-        if self.model is not None:
-            parts.append(f"model={self.model!r}")
-        if self.effort is not None:
-            parts.append(f"effort={self.effort!r}")
-        return f"AgentSpec({', '.join(parts)})"
-
-
-def parse_agent_spec(spec: str) -> AgentSpec:
-    """Parse an agent spec string into an :class:`AgentSpec`.
-
-    Spec syntax ::
-
-        <agent>[:<model>][:<effort>]
-
-    For **claude** and **codex** (premium agents), the first post-colon
-    token is checked against reserved effort tokens; if it matches, the
-    spec is treated as the legacy effort-only shape.  Otherwise it is
-    treated as a model name, with an optional second ``:<effort>``
-    segment.
-
-    For **hermes** and **shannon**, the entire string after the first
-    colon is the model — colons in the model name are preserved
-    unchanged.
-
-    Examples
-    --------
-
-    >>> parse_agent_spec("claude")
-    AgentSpec(agent='claude', model=None, effort=None)
-    >>> parse_agent_spec("claude:low")
-    AgentSpec(agent='claude', model=None, effort='low')
-    >>> parse_agent_spec("claude:sonnet-4.6:medium")
-    AgentSpec(agent='claude', model='sonnet-4.6', effort='medium')
-    >>> parse_agent_spec("codex:gpt-5.3-codex:high")
-    AgentSpec(agent='codex', model='gpt-5.3-codex', effort='high')
-    >>> parse_agent_spec("hermes:fireworks:accounts/foo")
-    AgentSpec(agent='hermes', model='fireworks:accounts/foo', effort=None)
-    """
-    if ":" not in spec:
-        return AgentSpec(agent=spec)
-
-    agent, rest = spec.split(":", 1)
-
-    if agent == PREMIUM_AGENT:
-        if ":" in rest:
-            model, effort = rest.split(":", 1)
-            if not effort:
-                effort = None
-            _validate_premium_placeholder_spec(spec, model=model, effort=effort)
-            return AgentSpec(agent=agent, model=model, effort=effort)
-        if rest in _PREMIUM_EFFORT_TOKENS:
-            _validate_premium_placeholder_spec(spec, model=None, effort=rest)
-            return AgentSpec(agent=agent, effort=rest)
-        _validate_premium_placeholder_spec(spec, model=rest, effort=None)
-
-    # Non-premium agents (hermes, shannon): everything after the first
-    # colon is the model — colons in the model string are preserved.
-    if agent not in _PREMIUM_VENDORS:
-        return AgentSpec(agent=agent, model=rest)
-
-    # Premium agents (claude, codex): disambiguate effort vs model.
-    # If the first token after ':' is a reserved effort token, treat
-    # this as the legacy effort-only shape (claude:low, codex:high, etc.).
-    if rest in _PREMIUM_EFFORT_TOKENS:
-        _validate_premium_spec(agent, None, rest, spec)
-        return AgentSpec(agent=agent, effort=rest)
-
-    # Everything after the first colon could be <model> or <model>:<effort>.
-    if ":" in rest:
-        model, effort = rest.split(":", 1)
-        # Effort may be empty string if spec ends with colon; normalize to None.
-        if not effort:
-            effort = None
-        _validate_premium_spec(agent, model, effort, spec)
-        return AgentSpec(agent=agent, model=model, effort=effort)
-
-    # Single token that is not a reserved effort token → model-only.
-    _validate_premium_spec(agent, rest, None, spec)
-    return AgentSpec(agent=agent, model=rest)
-
-
-def format_agent_spec(spec: AgentSpec) -> str:
-    """Format an :class:`AgentSpec` back to its canonical string form.
-
-    >>> format_agent_spec(AgentSpec("claude"))
-    'claude'
-    >>> format_agent_spec(AgentSpec("claude", effort="low"))
-    'claude:low'
-    >>> format_agent_spec(AgentSpec("codex", model="gpt-5.3-codex", effort="high"))
-    'codex:gpt-5.3-codex:high'
-    >>> format_agent_spec(AgentSpec("hermes", model="fireworks:accounts/foo"))
-    'hermes:fireworks:accounts/foo'
-    """
-    if spec.model is not None:
-        base = f"{spec.agent}:{spec.model}"
-    elif spec.effort is not None:
-        base = f"{spec.agent}:{spec.effort}"
-    else:
-        base = spec.agent
-
-    if spec.model is not None and spec.effort is not None:
-        base = f"{base}:{spec.effort}"
-
-    return base
 
 
 # ---------------------------------------------------------------------------
 # Exception
 # ---------------------------------------------------------------------------
 
-class CliError(Exception):
+class CliError(ArnoldError):
     def __init__(
         self,
         code: str,
@@ -606,12 +393,9 @@ class CliError(Exception):
         extra: dict[str, Any] | None = None,
         exit_code: int = 1,
     ) -> None:
-        super().__init__(message)
-        self.code = code
-        self.message = message
+        super().__init__(code, message, exit_code=exit_code)
         self.valid_next = valid_next or []
         self.extra = extra or {}
-        self.exit_code = exit_code
 
 
 _ROBUSTNESS_ACCEPTED = (
@@ -636,55 +420,6 @@ def legacy_agent_model(spec: AgentSpec) -> tuple[str, str | None]:
     but this helper bridges the gap.
     """
     return (spec.agent, spec.model)
-
-
-@dataclass(frozen=True, slots=True)
-class AgentMode:
-    """Resolved agent mode returned by :func:`resolve_agent_mode`.
-
-    Replaces the old ``(agent, mode, refreshed, model)`` tuple with
-    explicit named fields plus resolved model defaults.
-
-    Supports positional unpacking for backward compatibility during
-    migration, but new callers should use named accessors.
-    """
-
-    agent: str
-    mode: str
-    refreshed: bool
-    model: str | None = None
-    effort: str | None = None
-    resolved_model: str | None = None
-
-    def __iter__(self):
-        """Backward-compat: unpack as (agent, mode, refreshed, model)."""
-        return iter((self.agent, self.mode, self.refreshed, self.model))
-
-    def __eq__(self, other):
-        if isinstance(other, AgentMode):
-            return (
-                self.agent == other.agent
-                and self.mode == other.mode
-                and self.refreshed == other.refreshed
-                and self.model == other.model
-                and self.effort == other.effort
-                and self.resolved_model == other.resolved_model
-            )
-        if isinstance(other, tuple):
-            return (self.agent, self.mode, self.refreshed, self.model) == other
-        return NotImplemented
-
-    def __hash__(self):
-        return hash(
-            (self.agent, self.mode, self.refreshed, self.model, self.effort, self.resolved_model)
-        )
-
-    def __repr__(self):
-        return (
-            f"AgentMode(agent={self.agent!r}, mode={self.mode!r}, "
-            f"refreshed={self.refreshed}, model={self.model!r}, "
-            f"effort={self.effort!r}, resolved_model={self.resolved_model!r})"
-        )
 
 
 def resolved_default_model_for_agent(agent: str) -> str | None:

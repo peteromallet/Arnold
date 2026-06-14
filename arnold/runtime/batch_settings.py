@@ -2,8 +2,8 @@
 
 Provides :func:`build_batch_runtime_settings` which normalizes
 resolved runtime settings into a :class:`~arnold.runtime.batch.BatchRuntimeSettings`
-carrier.  The normalizer never parses ``CrossCuttingEnvelope.deadline``
-or ``CrossCuttingEnvelope.cancellation`` — those are envelope metadata
+carrier.  The normalizer never parses ``RunEnvelope.deadline``
+or ``RunEnvelope.cancellation`` — those are envelope metadata
 only (SD1, SD2).
 
 Boundary discipline

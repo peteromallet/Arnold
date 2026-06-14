@@ -14,7 +14,7 @@ def test_planning_operation_registry_supports_all_six_operation_kinds() -> None:
 
     assert registry.supported_operations() == frozenset(
         {
-            OperationKind.RUN_PHASE,
+            OperationKind.EXECUTE,
             OperationKind.STATUS_PROJECTION,
             OperationKind.RESUME,
             OperationKind.OVERRIDE_LIST,
@@ -60,7 +60,7 @@ def test_run_phase_dispatch_returns_exit_code_stdout_and_stderr(monkeypatch) -> 
 
     result = registry.dispatch(
         OperationRequest(
-            kind=OperationKind.RUN_PHASE,
+            kind=OperationKind.EXECUTE,
             payload={
                 "phase": "plan",
                 "plan": "demo-plan",
@@ -101,7 +101,7 @@ def test_run_phase_dispatch_ignores_unknown_carrier_keys(monkeypatch) -> None:
 
     result = registry.dispatch(
         OperationRequest(
-            kind=OperationKind.RUN_PHASE,
+            kind=OperationKind.EXECUTE,
             payload={
                 "phase": "review",
                 "plan": "demo-plan",

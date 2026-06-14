@@ -20,55 +20,21 @@ ContextVar so the resolved ``run_id`` is consistent across journals
 Both backends defer ``run_id`` resolution to the EventWriter's existing
 :func:`_resolve_run_id` so a single seat in ContextVar lights up both
 journals simultaneously.
+
+.. note::
+
+   ``EventEnvelope`` and ``EventSink`` are re-exported from
+   ``arnold.runtime.event_journal`` (M8 extraction).  ``NdjsonBackend``
+   and ``StoreBackend`` remain here because they carry megaplan-specific
+   ``_envelope_ctx`` / ``record_epic_event`` wiring.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Optional, Protocol
+from typing import Any, Optional
 
-
-@dataclass(frozen=True)
-class EventEnvelope:
-    """The envelope an EventSink emits.
-
-    Pinned JSON Schema (for documentation; backends serialize differently):
-
-        {
-          "type": "object",
-          "properties": {
-            "kind":            {"type": "string"},
-            "payload":         {"type": "object"},
-            "scope":           {"type": ["string", "null"]},
-            "phase":           {"type": ["string", "null"]},
-            "idempotency_key": {"type": ["string", "null"]},
-            "schema_version":  {"const": 1}
-          },
-          "required": ["kind", "payload", "schema_version"]
-        }
-    """
-
-    kind: str
-    payload: dict = field(default_factory=dict)
-    scope: Optional[str] = None
-    phase: Optional[str] = None
-    idempotency_key: Optional[str] = None
-    schema_version: int = 1
-
-
-class EventSink(Protocol):
-    """Single-method emit surface every observability backend implements."""
-
-    def emit(
-        self,
-        kind: str,
-        *,
-        payload: Optional[dict] = None,
-        scope: Optional[str] = None,
-        phase: Optional[str] = None,
-        idempotency_key: Optional[str] = None,
-    ) -> Any:  # pragma: no cover — Protocol
-        ...
+# Re-export the runtime-owned pure-data types.
+from arnold.runtime.event_journal import EventEnvelope, EventSink  # noqa: F401
 
 
 class NdjsonBackend:

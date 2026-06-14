@@ -7,8 +7,9 @@ assignments, and verifies the by-convention ``SKILL.md`` sibling exists.
 
 The *identity_schema* parameter controls the schema identity string
 embedded in the manifest hash.  The Arnold default is
-``"arnold.pipeline-manifest.v1"``; Megaplan consumers pass
-``"megaplan.pipeline-manifest.v1"`` through the bridge.
+``"arnold.pipeline-manifest.v1"``; external consumers (e.g. Megaplan)
+pass a contextual identity string such as
+``"vendor.pipeline-manifest.v1"`` through the bridge.
 """
 
 from __future__ import annotations
@@ -191,8 +192,9 @@ def _manifest_hash(
     The *identity_schema* parameter is embedded in the hash payload so
     that the same module scanned with different schema identities
     produces different hashes.  Arnold consumers use the neutral
-    ``"arnold.pipeline-manifest.v1"``; Megaplan consumers pass
-    ``"megaplan.pipeline-manifest.v1"`` through the bridge.
+    ``"arnold.pipeline-manifest.v1"``; external consumers (e.g. Megaplan)
+    pass a contextual identity string such as
+    ``"vendor.pipeline-manifest.v1"`` through the bridge.
     """
     payload = {
         "identity_schema": identity_schema,
@@ -230,8 +232,8 @@ def read_manifest(
     ``ast.literal_eval``.  A by-convention sibling ``SKILL.md`` is required.
 
     *identity_schema* controls the schema identity embedded in the manifest
-    hash.  Pass ``"megaplan.pipeline-manifest.v1"`` for Megaplan
-    compatibility.
+    hash.  Pass a contextual identity string such as
+    ``"vendor.pipeline-manifest.v1"`` for downstream compatibility.
 
     Returns a :class:`Manifest` on success, or a :class:`ManifestError` on
     any rejection (malformed Python, missing required field, wrong type,

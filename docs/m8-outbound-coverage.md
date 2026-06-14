@@ -26,6 +26,8 @@ existing ratchet cross-references, and closure argument when applicable.
 | 6 | `arnold/pipelines/evidence_pack/steps.py:221` | `run` (ContentValidatorStep) | Checkpoint payload (Mapping) | Tested via `tests/arnold/pipelines/evidence_pack/test_steps.py` | Checkpoint schema validation | `CHECKPOINT_SCHEMA` |
 | 7 | `arnold/pipelines/evidence_pack/steps.py:446` | `run` (ReduceStep) | Verdict payload (Mapping) | Tested via `tests/arnold/pipelines/evidence_pack/test_steps.py` | Verdict schema validation | `VERDICT_SCHEMA` |
 | 8 | `arnold/pipelines/evidence_pack/steps.py:714` | `run` (EmitAttestationStep) | Attestation payload (Mapping) | Tested via `tests/arnold/pipelines/evidence_pack/test_steps.py` | Attestation schema validation | `ATTESTATION_SCHEMA` |
+| 9 | `arnold/pipeline/model_seam.py:1008` | `_audit_capture_payload` | Step payload (Mapping) | Tested via `tests/arnold/pipeline/test_steps.py` pipeline model-seam capture tests | Generalized pipeline capture audit gate | `schema` resolved from invocation metadata |
+| 10 | `arnold/pipelines/megaplan/handlers/finalize.py` | `_validate_finalize_payload` | Finalize worker payload (Mapping) | Tested via `tests/test_handlers_finalize.py` and `tests/test_calibration_routing.py` | C4 finalize input-time chokepoint binding — schema-expressible checks delegated here; residual semantic checks remain in `_finalize_semantic_postcheck` | `_FINALIZE_INPUT_SCHEMA` (module-level input-time schema subset) |
 
 ### Test Call Sites
 
@@ -91,6 +93,7 @@ Delegates to `_audit_capture_payload` → `validate_payload_against_schema`.
 | 8 | `arnold/pipelines/megaplan/workers/_impl.py:2396` | `run_codex_step` | Model output (str \| Mapping) | Same as above | Codex fallback capture | `invocation`, `model_output` |
 | 9 | `arnold/pipelines/megaplan/workers/_impl.py:2590` | `run_codex_prep_step` | Model output (str \| Mapping) | Same as above | Codex resume capture | `invocation`, `model_output` |
 | 10 | `arnold/pipelines/megaplan/_pipeline/steps/agent.py:112` | `run` (AgentStep) | Model output (str \| Mapping) | Tested via pipeline integration tests | Agent step capture chokepoint | `worker_invocation`, `worker_output` |
+| 11 | `arnold/pipeline/model_seam.py:929` | `capture_step_output` | Repaired output (str \| Mapping) | Self-recursion for repair retry — same path as megaplan variant | Generalized pipeline capture retry | `repaired_invocation`, `repaired_output` |
 
 ### Test Call Sites
 
@@ -125,10 +128,23 @@ For other steps, performs legacy required-keys validation only.
 
 | Function | Production Sites | Test Sites | Orphans | Status |
 |----------|-----------------|------------|---------|--------|
-| `validate_payload_against_schema` | 8 | 9 | 0 | Covered |
+| `validate_payload_against_schema` | 10 | 9 | 0 | Covered |
 | `audit_step_payload` | 10 | 2 | 0 | Covered |
-| `capture_step_output` | 10 | 7 | 0 | Covered |
+| `capture_step_output` | 11 | 7 | 0 | Covered |
 | `validate_payload` | 1 | 0 | 1 | **FAIL** — live orphan |
+
+### Known Residual Functions
+
+These functions perform output validation outside the primary C1 chokepoints
+(`validate_payload_against_schema`, `audit_step_payload`, `capture_step_output`).
+They are explicitly tracked and must remain a closed set — any addition requires
+updating both this doc and `KNOWN_RESIDUAL_FUNCTIONS` in
+`tests/m8/test_outbound_coverage_catalog.py`.
+
+| Function | Module | Reason |
+|----------|--------|--------|
+| `_validate_finalize_payload` | `arnold/pipelines/megaplan/handlers/finalize.py` | Thin wrapper: delegates schema-expressible checks to `validate_payload_against_schema`; calls `_finalize_semantic_postcheck` for residual semantic constraints not expressible in JSON Schema. |
+| `_finalize_semantic_postcheck` | `arnold/pipelines/megaplan/handlers/finalize.py` | Semantic post-check for finalize payload constraints that cannot be expressed in JSON Schema (e.g., cross-field consistency, domain-specific invariants). Called by `_validate_finalize_payload`. |
 
 ### Orphan Analysis: `validate_payload`
 

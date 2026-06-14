@@ -14,10 +14,6 @@ from typing import Any, Mapping
 
 SCHEMA_VERSION_PREFIX = "sha256:"
 _SHA256_RE = re.compile(r"^(?:sha256:)?([0-9a-fA-F]{64})$")
-_PLAN_DIR_MARKER = (".megaplan", "plans")
-MEGAPLAN_CONTRACT_SCHEMA_ROOT = "MEGAPLAN_CONTRACT_SCHEMA_ROOT"
-
-
 class SchemaRegistryError(ValueError):
     """Raised when schema registry state is invalid or inconsistent."""
 
@@ -56,51 +52,6 @@ def normalize_schema_version(schema_version: str) -> str:
     if not match:
         raise SchemaRegistryError(f"invalid schema version {schema_version!r}")
     return f"{SCHEMA_VERSION_PREFIX}{match.group(1).lower()}"
-
-
-def resolve_contract_schema_project_root(
-    explicit_root: str | os.PathLike[str] | None = None,
-) -> Path | None:
-    """Resolve the project root for contract schemas.
-
-    Precedence:
-    1. explicit context root supplied by the caller
-    2. ``MEGAPLAN_CONTRACT_SCHEMA_ROOT`` environment override
-    3. project root derived from a ``.megaplan/plans/<plan>`` path
-    """
-
-    if explicit_root is not None:
-        resolved = Path(explicit_root).expanduser().resolve()
-        return derive_project_root_from_plan_dir(resolved) or resolved
-
-    env_root = os.getenv(MEGAPLAN_CONTRACT_SCHEMA_ROOT)
-    if env_root:
-        return Path(env_root).expanduser().resolve()
-
-    return None
-
-
-def derive_project_root_from_plan_dir(path: str | os.PathLike[str]) -> Path | None:
-    """Return the project root when *path* sits under ``.megaplan/plans/<plan>``."""
-
-    resolved = Path(path).expanduser().resolve()
-    for candidate in (resolved, *resolved.parents):
-        parent = candidate.parent
-        grandparent = parent.parent
-        if parent.name == _PLAN_DIR_MARKER[1] and grandparent.name == _PLAN_DIR_MARKER[0]:
-            return grandparent.parent
-    return None
-
-
-def create_contract_schema_registry(
-    explicit_root: str | os.PathLike[str] | None = None,
-) -> ContractSchemaRegistry | None:
-    """Create a registry from the resolved project root, if one is available."""
-
-    project_root = resolve_contract_schema_project_root(explicit_root)
-    if project_root is None:
-        return None
-    return ContractSchemaRegistry(project_root)
 
 
 class ContractSchemaRegistry:

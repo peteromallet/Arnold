@@ -1,23 +1,17 @@
-"""Byte-identicality regression: extracted `_supervise_subprocess` vs the
-verbatim legacy snapshot in `megaplan._legacy_subprocess`.
+"""Regression tests for extracted `_supervise_subprocess` supervision contract.
 
-Asserts equality on exit code, stdout, stderr, and kill timing (within
-100ms) for a deterministic scenario. The legacy helper spawns its own
-subprocess; the new helper takes a pre-spawned `proc` argument. To make
-the comparison apples-to-apples we drive both with the same `python -c`
-script and the same supervision parameters.
+Asserts behavior on exit code, stdout, stderr, and kill timing for
+deterministic scenarios using the extracted helper.
 """
 from __future__ import annotations
 
 import subprocess
 import sys
 import time
-from pathlib import Path
 
 import pytest
 
 from arnold.pipelines.megaplan.auto import _supervise_subprocess, WatcherState
-from arnold.pipelines.megaplan._legacy_subprocess import legacy_supervise_subprocess
 from arnold.pipelines.megaplan.runtime.process import spawn
 
 
@@ -35,17 +29,6 @@ def _spawn_python(script: str):
         env=None,
     )
 
-
-def _legacy_via_python(script: str, *, timeout=None, idle_timeout=None):
-    """Run legacy supervisor on a `python -c` script (mirrors the extracted
-    helper's input), bypassing `legacy_supervise_subprocess`'s hardcoded
-    `megaplan` argv."""
-    proc = _spawn_python(script)
-    # Reuse the new helper as a structural mirror, BUT first verify the
-    # legacy module exposes the watcher loop. The watcher block in legacy
-    # and new is byte-identical (see _legacy_subprocess docstring), so a
-    # direct subprocess comparison through the new helper validates parity.
-    return _supervise_subprocess(proc, None, idle_timeout, timeout, args=[])
 
 
 def test_supervise_success_byte_identical_to_legacy_module_exports():
@@ -98,41 +81,6 @@ def test_supervise_idle_timeout_kills_when_silent():
     assert state.kill_monotonic is not None
     assert elapsed - idle_cap < 0.3
 
-
-def test_supervise_legacy_module_kill_timing_parity():
-    """Compare the legacy-module spawn+watch path (which uses the
-    `megaplan` argv) and our extracted helper on a sleep script. Both
-    must hit the wall cap within 100ms of each other."""
-    wall_cap = 0.4
-
-    # New helper, driven on python -c sleep
-    proc_new = _spawn_python(SCRIPT_SLEEP)
-    t0 = time.monotonic()
-    rc_new, _o, _e, _s = _supervise_subprocess(proc_new, None, None, wall_cap)
-    new_elapsed = time.monotonic() - t0
-
-    # Legacy module — spawns `python -m arnold.pipelines.megaplan <bogus>`; we just want
-    # to measure its kill timing on a wall_cap. It will exit quickly
-    # (unknown subcommand) OR get timeout-killed; either way we cap the
-    # comparison at the supervisor exit, not the script semantics.
-    t1 = time.monotonic()
-    rc_legacy, _ol, _el = legacy_supervise_subprocess(
-        ["nonexistent-subcommand-for-timing-test"],
-        timeout=wall_cap,
-    )
-    legacy_elapsed = time.monotonic() - t1
-
-    assert rc_new == 124
-    # legacy may exit fast with unknown-cmd error (<wall_cap) OR hit timeout
-    if rc_legacy == 124:
-        # Both timed out: kill-timing parity required within 100ms
-        assert abs(new_elapsed - legacy_elapsed) < 0.1 + 0.3, (
-            f"kill timing diverged: new={new_elapsed:.3f}s legacy={legacy_elapsed:.3f}s"
-        )
-    else:
-        # legacy exited fast on its own — accept; the loop never reached
-        # the timeout branch, so kill-timing parity is trivially preserved.
-        assert legacy_elapsed < wall_cap + 0.3
 
 
 def test_watcher_state_buffers_capture_streams():

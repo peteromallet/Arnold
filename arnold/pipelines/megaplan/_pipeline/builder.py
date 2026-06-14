@@ -275,6 +275,10 @@ class PipelineBuilder(_BasePipelineBuilder):
         writes: Sequence[WriteDecl] = (),
         invocation: StepInvocation | None = None,
         required_capabilities: Sequence[str] = (),
+        port: str | None = None,
+        content_type: str | None = None,
+        artifact_ref: dict | None = None,
+        invalid_policy: str = "resuspend",
     ) -> "PipelineBuilder":
         """Add a human-pause gate. ``artifact`` names the stage whose
         latest versioned output the human reviews; ``options`` are the
@@ -283,7 +287,15 @@ class PipelineBuilder(_BasePipelineBuilder):
         Constructs a :class:`HumanDecisionStep` with the existing private
         fields (``_choices`` / ``_artifact_stage`` / ``_pipeline_name``
         / ``_pipeline_version`` / ``_resume_choice``) and the enclosing
-        :class:`Stage` with one outgoing :class:`Edge` per option."""
+        :class:`Stage` with one outgoing :class:`Edge` per option.
+
+        When *port* / *content_type* / *artifact_ref* are supplied the
+        builder configures the step to embed an ``x-arnold-resume``
+        declaration in the checkpoint's ``resume_input_schema`` so the
+        consumer can re-verify the artifact on resume.  *invalid_policy*
+        controls what happens when re-verification fails (default
+        ``"resuspend"``).
+        """
         step = HumanDecisionStep(
             name=stage_name,
             kind="decide",
@@ -294,6 +306,10 @@ class PipelineBuilder(_BasePipelineBuilder):
             _pipeline_name=self.name,
             _pipeline_version=self._pipeline_version,
             _resume_choice=None,
+            _port=port,
+            _content_type=content_type,
+            _artifact_ref=artifact_ref,
+            _invalid_policy=invalid_policy,
         )
         stage_edges: tuple[Edge, ...] = tuple(
             Edge(label=option, target=edges[option]) for option in options

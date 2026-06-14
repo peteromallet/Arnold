@@ -44,7 +44,7 @@ class OperationKind(str, Enum):
     phase names, override actions, or gate labels.
     """
 
-    RUN_PHASE = "run_phase"
+    EXECUTE = "run_phase"
     STATUS_PROJECTION = "status_projection"
     RESUME = "resume"
     OVERRIDE_LIST = "override_list"

@@ -28,7 +28,7 @@ from arnold.pipelines.megaplan._pipeline.behavioral_manifest import (
     UnresolvedDynamicInput,
 )
 from arnold.pipelines.megaplan._pipeline import contracts, validator
-from arnold.pipelines.megaplan._pipeline.discovery import manifest as discovery_manifest
+from arnold.pipeline.discovery import manifest as discovery_manifest
 from arnold.pipelines.megaplan._pipeline import judge_manifest, judge_manifest_discovery
 from arnold.pipelines.megaplan._pipeline.types import (
     CONTENT_TYPES,

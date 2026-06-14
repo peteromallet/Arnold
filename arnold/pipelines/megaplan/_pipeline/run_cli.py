@@ -595,7 +595,7 @@ def _runtime_identity_block(
     plan_dir: Path,
 ) -> dict[str, Any]:
     from arnold.pipelines.megaplan._pipeline.registry import canonical_pipeline_name
-    from arnold.pipelines.megaplan._pipeline.discovery.manifest import ManifestError, read_manifest
+    from arnold.pipeline.discovery.manifest import ManifestError, read_manifest
     from arnold.pipelines.megaplan.types import CliError
 
     plugin_id = canonical_pipeline_name(pipeline_name)

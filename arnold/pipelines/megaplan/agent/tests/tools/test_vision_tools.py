@@ -449,7 +449,7 @@ class TestTildeExpansion:
 
 class TestVisionRegistration:
     def test_vision_analyze_registered(self):
-        from tools.registry import registry
+        from arnold.agent.tools.registry import registry
 
         entry = registry._tools.get("vision_analyze")
         assert entry is not None
@@ -457,7 +457,7 @@ class TestVisionRegistration:
         assert entry.is_async is True
 
     def test_schema_has_required_fields(self):
-        from tools.registry import registry
+        from arnold.agent.tools.registry import registry
 
         entry = registry._tools.get("vision_analyze")
         schema = entry.schema
@@ -468,7 +468,7 @@ class TestVisionRegistration:
         assert "question" in props
 
     def test_handler_is_callable(self):
-        from tools.registry import registry
+        from arnold.agent.tools.registry import registry
 
         entry = registry._tools.get("vision_analyze")
         assert callable(entry.handler)

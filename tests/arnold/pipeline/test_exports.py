@@ -164,6 +164,24 @@ class TestBridgeImports:
         assert ReduceResult is not None
         assert SelectionResult is not None
 
+    def test_bridge_import_side_effect_ten_names(self) -> None:
+        """Importing the Megaplan bridge registers exactly 10 content types."""
+        from arnold.pipelines.megaplan._pipeline.types import CONTENT_TYPES
+
+        names = CONTENT_TYPES.names()
+        assert len(names) == 10, f"expected 10 names, got {len(names)}: {names}"
+
+        # The three AR1 media builtins must be present.
+        media = {"video/mp4", "audio/wav", "application/x-astrid-timeline"}
+        assert media.issubset(set(names)), f"missing media builtins: {media - set(names)}"
+
+        # Every builtin must produce a deterministic 64-character hex digest.
+        for name in names:
+            digest = CONTENT_TYPES.get(name)
+            assert isinstance(digest, str)
+            assert len(digest) == 64
+            assert all(c in "0123456789abcdef" for c in digest)
+
     def test_megaplan_pipeline_bridge_imports(self) -> None:
         """Core types still importable from megaplan._pipeline."""
         from arnold.pipelines.megaplan._pipeline import (

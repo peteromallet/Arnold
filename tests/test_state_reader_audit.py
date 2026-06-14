@@ -52,9 +52,6 @@ CACHE_TOLERANT_FILES = {
 
 DORMANT_FILES = {
     "arnold/pipelines/megaplan/auto.py",
-    # _legacy_subprocess is the frozen pre-T25 snapshot of auto.py's
-    # supervisor loop; its reads are dormant by construction.
-    "arnold/pipelines/megaplan/_legacy_subprocess/__init__.py",
 }
 
 # state_store.py is the new R1 backend module — its reads are routed via

@@ -39,7 +39,8 @@ from arnold.pipelines.megaplan.planning.state import (
     STATE_FINALIZED,
     STATE_REVIEWED,
 )
-from arnold.pipeline.step_io_contract import StepIOContractContext, StepIOOperation
+from arnold.pipeline.step_io_contract import StepIOOperation
+from arnold.pipelines.megaplan._pipeline.schema_registry_adapter import create_step_io_contract_context
 from arnold.pipelines.megaplan.store import write_plan_artifact_json
 from arnold.pipelines.megaplan.workers import (
     WorkerResult,
@@ -913,7 +914,10 @@ def _finalize_review_outcome(
     }
     write_plan_artifact_json(
         plan_dir, "review.json", worker.payload,
-        contract_context=StepIOContractContext(operation=StepIOOperation.WRITE),
+        contract_context=create_step_io_contract_context(
+            operation=StepIOOperation.WRITE,
+            explicit_root=plan_dir,
+        ),
     )
     policy_decision = _persist_review_done_transition_decision(
         plan_dir=plan_dir,
@@ -941,7 +945,10 @@ def _finalize_review_outcome(
         }
         write_plan_artifact_json(
             plan_dir, "review.json", worker.payload,
-            contract_context=StepIOContractContext(operation=StepIOOperation.WRITE),
+            contract_context=create_step_io_contract_context(
+                operation=StepIOOperation.WRITE,
+                explicit_root=plan_dir,
+            ),
         )
         state["current_state"] = STATE_EXECUTED
         clear_active_step(state)
@@ -1175,7 +1182,10 @@ def handle_review(root: Path, args: argparse.Namespace) -> StepResponse:
                 _pkg.update_flags_after_review(plan_dir, worker.payload, iteration=state["iteration"])
             write_plan_artifact_json(
                 plan_dir, "review.json", worker.payload,
-                contract_context=StepIOContractContext(operation=StepIOOperation.WRITE),
+                contract_context=create_step_io_contract_context(
+                    operation=StepIOOperation.WRITE,
+                    explicit_root=plan_dir,
+                ),
             )
         else:
             rev_resolved = _pkg.resolve_agent_mode("review", args)
@@ -1207,7 +1217,10 @@ def handle_review(root: Path, args: argparse.Namespace) -> StepResponse:
                 )
                 write_plan_artifact_json(
                     plan_dir, "review.json", worker.payload,
-                    contract_context=StepIOContractContext(operation=StepIOOperation.WRITE),
+                    contract_context=create_step_io_contract_context(
+                        operation=StepIOOperation.WRITE,
+                        explicit_root=plan_dir,
+                    ),
                 )
                 return _finalize_review_outcome(
                     root=root,
@@ -1268,7 +1281,10 @@ def handle_review(root: Path, args: argparse.Namespace) -> StepResponse:
                 )
                 write_plan_artifact_json(
                     plan_dir, "review.json", merged_payload,
-                    contract_context=StepIOContractContext(operation=StepIOOperation.WRITE),
+                    contract_context=create_step_io_contract_context(
+                        operation=StepIOOperation.WRITE,
+                        explicit_root=plan_dir,
+                    ),
                 )
                 _pkg.update_flags_after_review(plan_dir, merged_payload, iteration=state["iteration"])
                 worker = WorkerResult(

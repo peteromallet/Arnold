@@ -121,6 +121,7 @@ def _run_check(
     from arnold.pipelines.megaplan._core import with_429_openrouter_fallback as _with_429_fallback
     from arnold.pipelines.megaplan.workers.hermes import (
         _import_hermes_runtime,
+        _pre_dispatch_budget_check,
         _streaming_run_kwargs,
         _toolsets_for_phase,
         _worker_db_path,
@@ -181,6 +182,19 @@ def _run_check(
         # streaming response is reassembled into the same shape non-streaming
         # would return — downstream code is unchanged.
         run_kwargs = _streaming_run_kwargs(current_model or model, agent_max_tokens)
+        # _pre_dispatch_budget_check sentinel: budget guard for dispatch
+        _pre_dispatch_budget_check(
+            current_agent,
+            conversation_history=None,
+            user_message=prompt,
+            system=None,
+            tool_manifest=None,
+            schema=schema,
+            step="critique",
+            model_name=getattr(current_agent, "model", current_model or model),
+            tier=ModelTier.NON_ENFORCED,
+            worker="hermes",
+        )
         current_result = current_agent.run_conversation(
             user_message=prompt,
             **run_kwargs,

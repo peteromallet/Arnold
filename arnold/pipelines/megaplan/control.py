@@ -26,7 +26,8 @@ from arnold.pipelines.megaplan._core import save_state, slugify
 from arnold.pipelines.megaplan._core.workflow import resume_plan
 from arnold.pipelines.megaplan._pipeline.flags import control_interface_routing_on
 from arnold.pipelines.megaplan.auto import drive as drive_auto
-from arnold.pipelines.megaplan.control_interface import ControlTransition, RunStateView, apply_transition
+from arnold.control.interface import ControlTransition, RunStateView
+from arnold.pipelines.megaplan.control_interface import apply_transition
 from arnold.pipelines.megaplan.handlers import handle_init, handle_override
 from arnold.pipelines.megaplan.orchestration.progress import ProgressContext, ProgressEmitter
 from arnold.pipelines.megaplan.schemas import ControlMessage, Sprint
@@ -40,6 +41,8 @@ GATE_CONTROL_INTENTS = {"approve_gate", "reject_gate"}
 
 @dataclass(frozen=True)
 class ControlTarget:
+    """Megaplan control-message target, distinct from arnold.control.interface.ControlTarget."""
+
     intent: str
     target_id: str
     project_root: Path

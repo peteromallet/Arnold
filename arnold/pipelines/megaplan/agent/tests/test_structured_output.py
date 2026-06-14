@@ -4,7 +4,7 @@ import pytest
 
 from model_tools import get_tool_definitions
 from run_agent import AIAgent
-from toolsets import resolve_toolset
+from arnold.agent.toolsets import resolve_toolset
 
 
 def _sample_schema() -> dict:

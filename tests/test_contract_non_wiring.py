@@ -10,7 +10,11 @@ import pytest
 from arnold.pipelines.megaplan import model_seam
 from arnold.pipelines.megaplan.store import PlanRepository
 from arnold.pipelines.megaplan.types import CliError
-from arnold.pipelines.megaplan.workers._impl import validate_payload
+
+
+def _assert_validate_payload_not_importable() -> None:
+    with pytest.raises(ImportError):
+        exec("from arnold.pipelines.megaplan.workers._impl import validate_payload", {})
 
 
 def test_loop_plan_native_audit_rejects_wrong_spec_updates_type() -> None:
@@ -36,25 +40,16 @@ def test_loop_plan_native_audit_requires_spec_updates() -> None:
         )
 
 
-def test_validate_payload_unknown_steps_remain_noop() -> None:
-    validate_payload("totally_new_step", {"anything": "goes"})
+def test_validate_payload_unknown_steps_are_not_authorized_by_orphan_path() -> None:
+    _assert_validate_payload_not_importable()
 
 
 def test_validate_payload_execute_batch_shape_is_retired() -> None:
-    with pytest.raises(CliError, match="retired for execute"):
-        validate_payload(
-            "execute",
-            {
-                "task_updates": "still only checked for presence",
-                "sense_check_acknowledgments": None,
-                "unexpected": ["extra keys still ignored"],
-            },
-        )
+    _assert_validate_payload_not_importable()
 
 
 def test_validate_payload_execute_is_retired_for_any_payload() -> None:
-    with pytest.raises(CliError, match="retired for execute"):
-        validate_payload("execute", {"output": "missing batch bookkeeping"})
+    _assert_validate_payload_not_importable()
 
 
 @pytest.mark.parametrize(
@@ -97,8 +92,7 @@ def test_validate_payload_execute_is_retired_for_any_payload() -> None:
     ],
 )
 def test_validate_payload_rejects_migrated_step_names(step: str, payload: dict[str, object]) -> None:
-    with pytest.raises(CliError, match=rf"retired for {step}"):
-        validate_payload(step, payload)
+    _assert_validate_payload_not_importable()
 
 
 def test_plan_repository_read_artifact_json_remains_plain_json_read(tmp_path) -> None:

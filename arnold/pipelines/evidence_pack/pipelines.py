@@ -21,18 +21,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from arnold.pipeline.builder import PipelineBuilder
-from arnold.pipeline.declaration_lowering import derive_binding_map
-from arnold.pipeline.types import (
-    Edge,
-    ParallelStage,
-    Pipeline,
-    Port,
-    PortRef,
-    ReadRef,
-    Stage,
-    WriteRef,
-)
+from arnold.pipeline import ParallelStage, Pipeline, PipelineBuilder, Port, PortRef, ReadRef, Stage, WriteRef
+from arnold.pipeline.step_invocation import StepInvocation
 
 from arnold.pipelines.evidence_pack.steps import (
     ContentValidatorStep,
@@ -49,21 +39,16 @@ from arnold.pipelines.evidence_pack.steps import (
 EVIDENCE_PACK_READ = ReadRef(name="evidence_pack", external=True)
 """Read-ref for the externally-supplied evidence-pack JSON artifact."""
 
-EVIDENCE_PACK_WRITE = WriteRef(name="evidence_pack")
-"""Write-ref for the validated evidence-pack output."""
-
-CHECKPOINT_READS = (ReadRef(name="checkpoint"),)
-CHECKPOINT_WRITES = (WriteRef(name="checkpoint"),)
-
-VERDICT_READ = ReadRef(name="verdict")
-VERDICT_WRITE = WriteRef(name="verdict")
-
-_CP_PORT = Port(name="content_validator", content_type="application/json")
-_CP_PORT_REF = PortRef(port_name="content_validator", content_type="application/json")
-_REDUCE_PORT = Port(name="reduce", content_type="application/json")
-_VERDICT_PORT = Port(name="verdict", content_type="application/json")
+EVIDENCE_PACK_PORT = Port(name="evidence_pack", content_type="application/json")
+EVIDENCE_PACK_PORT_REF = PortRef(port_name="evidence_pack", content_type="application/json")
+CHECKPOINTS_PORT = Port(name="checkpoints", content_type="application/json", cardinality="collection")
+CHECKPOINTS_PORT_REF = PortRef(
+    port_name="checkpoints", content_type="application/json", cardinality="collection"
+)
+CHECKPOINT_WRITE = WriteRef(name="checkpoint")
+VERDICT_PORT = Port(name="verdict", content_type="application/json")
 _VERDICT_PORT_REF = PortRef(port_name="verdict", content_type="application/json")
-_ATTEST_PORT = Port(name="attestation", content_type="application/json")
+ATTESTATION_PORT = Port(name="attestation", content_type="application/json")
 
 # ---------------------------------------------------------------------------
 # Initial pipeline
@@ -94,11 +79,9 @@ def build_initial_pipeline(name: str = "evidence_pack_verifier") -> Pipeline:
         name="ingest",
         step=ingest_step,
         reads=(EVIDENCE_PACK_READ,),
-        writes=(EVIDENCE_PACK_WRITE,),
+        writes=(EVIDENCE_PACK_PORT,),
         consumes=(),
-        produces=(
-            Port(name="evidence_pack", content_type="application/json"),
-        ),
+        produces=(EVIDENCE_PACK_PORT,),
     )
     builder.add_stage(ingest_stage, emit_label="validators")
 
@@ -125,7 +108,7 @@ def build_initial_pipeline(name: str = "evidence_pack_verifier") -> Pipeline:
         executor routes to the reduce stage, regardless of individual
         validator outcomes (the reduce stage handles aggregation).
         """
-        from arnold.pipeline.types import ContractStatus, StepResult
+        from arnold.pipeline import ContractStatus, StepResult
 
         outputs: dict[str, Any] = {}
         for r in results:
@@ -141,14 +124,17 @@ def build_initial_pipeline(name: str = "evidence_pack_verifier") -> Pipeline:
         name="content_validators",
         steps=validator_steps,
         join=_join_validators,
-        reads=(ReadRef(name="evidence_pack"),),
-        writes=CHECKPOINT_WRITES,
-        consumes=(
-            PortRef(port_name="evidence_pack", content_type="application/json"),
+        invocation=StepInvocation.with_adapter_config(
+            kind="tool",
+            adapter_config={
+                "tool": "evidence-pack-checkpoint-validator",
+                "mode": "local-deterministic",
+            },
         ),
-        produces=(
-            Port(name="checkpoints", content_type="application/json", cardinality="collection"),
-        ),
+        reads=(EVIDENCE_PACK_PORT_REF,),
+        writes=(CHECKPOINTS_PORT,),
+        consumes=(EVIDENCE_PACK_PORT_REF,),
+        produces=(CHECKPOINTS_PORT,),
     )
     builder.add_parallel_stage(validators_stage, emit_label="completed")
 
@@ -157,15 +143,17 @@ def build_initial_pipeline(name: str = "evidence_pack_verifier") -> Pipeline:
     reduce_stage = Stage(
         name="reduce",
         step=reduce_step,
-        reads=(VERDICT_READ,),
-        writes=(VERDICT_WRITE,),
-        consumes=(
-            PortRef(port_name="evidence_pack", content_type="application/json"),
-            PortRef(port_name="checkpoints", content_type="application/json", cardinality="collection"),
+        invocation=StepInvocation.with_adapter_config(
+            kind="model",
+            adapter_config={
+                "model": "evidence-pack-verdict-summarizer",
+                "mode": "metadata-only",
+            },
         ),
-        produces=(
-            Port(name="verdict", content_type="application/json"),
-        ),
+        reads=(EVIDENCE_PACK_PORT_REF, CHECKPOINTS_PORT_REF),
+        writes=(VERDICT_PORT,),
+        consumes=(EVIDENCE_PACK_PORT_REF, CHECKPOINTS_PORT_REF),
+        produces=(VERDICT_PORT,),
     )
     builder.add_stage(reduce_stage, emit_label="human_review")
 
@@ -174,12 +162,9 @@ def build_initial_pipeline(name: str = "evidence_pack_verifier") -> Pipeline:
     review_stage = Stage(
         name="human_review",
         step=human_review_step,
-        reads=(VERDICT_READ,),
-        writes=(CHECKPOINT_WRITES[0],),
-        consumes=(
-            PortRef(port_name="evidence_pack", content_type="application/json"),
-            PortRef(port_name="verdict", content_type="application/json"),
-        ),
+        reads=(EVIDENCE_PACK_PORT_REF, _VERDICT_PORT_REF),
+        writes=(CHECKPOINT_WRITE,),
+        consumes=(EVIDENCE_PACK_PORT_REF, _VERDICT_PORT_REF),
         produces=(),
     )
     builder.add_stage(review_stage, emit_label="completed")
@@ -189,19 +174,14 @@ def build_initial_pipeline(name: str = "evidence_pack_verifier") -> Pipeline:
     emit_stage = Stage(
         name="emit_attestation",
         step=emit_step,
-        reads=(ReadRef(name="attestation"),),
-        writes=(WriteRef(name="attestation"),),
-        consumes=(
-            PortRef(port_name="evidence_pack", content_type="application/json"),
-            PortRef(port_name="verdict", content_type="application/json"),
-        ),
-        produces=(
-            Port(name="attestation", content_type="application/json"),
-        ),
+        reads=(EVIDENCE_PACK_PORT_REF, _VERDICT_PORT_REF),
+        writes=(ATTESTATION_PORT,),
+        consumes=(EVIDENCE_PACK_PORT_REF, _VERDICT_PORT_REF),
+        produces=(ATTESTATION_PORT,),
     )
     builder.add_stage(emit_stage)
 
-    return builder.build()
+    return builder.build(derive_bindings=True)
 
 
 # ---------------------------------------------------------------------------
@@ -240,7 +220,7 @@ def build_continuation_pipeline(name: str = "evidence_pack_continuation") -> Pip
         name="human_review",
         step=human_review_step,
         reads=(CONTINUATION_VERDICT_READ, CONTINUATION_EVIDENCE_PACK_READ),
-        writes=CHECKPOINT_WRITES,
+        writes=(CHECKPOINT_WRITE,),
     )
     builder.add_stage(review_stage, emit_label="emit")
 
@@ -249,12 +229,10 @@ def build_continuation_pipeline(name: str = "evidence_pack_continuation") -> Pip
     emit_stage = Stage(
         name="emit_attestation",
         step=emit_step,
-        reads=(ReadRef(name="attestation"), CONTINUATION_EVIDENCE_PACK_READ, CONTINUATION_VERDICT_READ),
-        writes=(WriteRef(name="attestation"),),
-        produces=(
-            Port(name="attestation", content_type="application/json"),
-        ),
+        reads=(CONTINUATION_EVIDENCE_PACK_READ, CONTINUATION_VERDICT_READ),
+        writes=(ATTESTATION_PORT,),
+        produces=(ATTESTATION_PORT,),
     )
     builder.add_stage(emit_stage)
 
-    return builder.build()
+    return builder.build(derive_bindings=True)

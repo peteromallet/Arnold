@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import argparse
 import json
 from pathlib import Path
 
 import pytest
 
+import arnold.pipelines.megaplan.cli as megaplan_cli
 from arnold.pipelines.megaplan._core.workflow import resume_plan
 from arnold.pipelines.megaplan._pipeline.resume import (
     COMPOSITE_SUSPENSION_CURSOR_VERSION,
@@ -115,6 +117,143 @@ def test_resume_later_phase_blocks_on_incomplete_execute_authority_before_rewrit
     assert exc_info.value.extra["reason"] == "execute_authority_unknown"
     assert state["current_state"] == "blocked"
     assert state["resume_cursor"]["phase"] == "review"
+
+
+def test_resume_plan_prefers_state_resume_cursor_over_typed_contract(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from arnold.pipeline import ContractResult, ContractStatus, Suspension
+
+    _stub_megaplan_resume(monkeypatch)
+    plan_dir = _write_resume_plan(
+        tmp_path,
+        "resume-state-over-typed",
+        phase="critique",
+    )
+    state = json.loads((plan_dir / "state.json").read_text(encoding="utf-8"))
+    state["resume_cursor"] = {"phase": "critique", "retry_strategy": "state-first"}
+    state["contract_result"] = ContractResult(
+        status=ContractStatus.SUSPENDED,
+        suspension=Suspension(
+            kind="human",
+            prompt="Typed fallback",
+            resume_cursor=json.dumps({"phase": "execute", "retry_strategy": "typed"}),
+        ),
+    ).to_json()
+    (plan_dir / "state.json").write_text(json.dumps(state), encoding="utf-8")
+
+    result = resume_plan(tmp_path, "resume-state-over-typed")
+
+    assert result["success"] is True
+    assert result["phase"] == "critique"
+
+
+def test_resume_plan_prefers_typed_contract_over_awaiting_user_and_normalizes_envelope_cursor(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from arnold.pipeline import ContractResult, ContractStatus, Suspension
+    from arnold.runtime.envelope import RuntimeEnvelope
+
+    _stub_megaplan_resume(monkeypatch)
+    plan_dir = _write_resume_plan(
+        tmp_path,
+        "resume-typed-over-awaiting",
+        phase="critique",
+    )
+    state = json.loads((plan_dir / "state.json").read_text(encoding="utf-8"))
+    state.pop("resume_cursor", None)
+    state["_pipeline_paused_stage"] = "critique"
+    state["contract_result"] = ContractResult(
+        status=ContractStatus.SUSPENDED,
+        suspension=Suspension(
+            kind="human",
+            prompt="Typed prompt",
+            thread_ref="typed-pipeline",
+            resume_cursor=json.dumps({"retry_strategy": "typed"}),
+        ),
+    ).to_json()
+    (plan_dir / "state.json").write_text(json.dumps(state), encoding="utf-8")
+    (plan_dir / "awaiting_user.json").write_text(
+        json.dumps(
+            {
+                "message": "Legacy prompt",
+                "pipeline": "legacy-pipeline",
+                "choices": ["legacy"],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    result = resume_plan(tmp_path, "resume-typed-over-awaiting")
+
+    assert result["success"] is True
+    assert result["phase"] == "critique"
+    persisted = json.loads((plan_dir / "state.json").read_text(encoding="utf-8"))
+    envelope = RuntimeEnvelope.from_json(json.dumps(persisted["runtime_envelope"]))
+    assert envelope.resume_cursor is not None
+    assert envelope.resume_cursor.cursor["phase"] == "critique"
+    assert envelope.resume_cursor.cursor["retry_strategy"] == "typed"
+
+
+def test_resume_plan_uses_composite_cursor_file_before_awaiting_user(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from arnold.pipeline.resume import persist_composite_resume_cursor
+
+    _stub_megaplan_resume(monkeypatch)
+    plan_dir = _write_resume_plan(
+        tmp_path,
+        "resume-composite-before-awaiting",
+        phase="critique",
+    )
+    state = json.loads((plan_dir / "state.json").read_text(encoding="utf-8"))
+    state.pop("resume_cursor", None)
+    (plan_dir / "state.json").write_text(json.dumps(state), encoding="utf-8")
+    persist_composite_resume_cursor(
+        plan_dir,
+        children={"child-a": {"token": 1}},
+        phase="critique",
+    )
+    (plan_dir / "awaiting_user.json").write_text(
+        json.dumps({"message": "Legacy prompt", "pipeline": "legacy-pipeline"}),
+        encoding="utf-8",
+    )
+
+    result = resume_plan(tmp_path, "resume-composite-before-awaiting")
+
+    assert result["success"] is True
+    assert result["phase"] == "critique"
+
+
+def test_resume_plan_rejects_phase_less_composite_cursor(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from arnold.pipeline.resume import persist_composite_resume_cursor
+
+    _stub_megaplan_resume(monkeypatch)
+    plan_dir = _write_resume_plan(
+        tmp_path,
+        "resume-phase-less-composite",
+        phase="review",
+    )
+    state = json.loads((plan_dir / "state.json").read_text(encoding="utf-8"))
+    state.pop("resume_cursor", None)
+    state.pop("_pipeline_paused_stage", None)
+    (plan_dir / "state.json").write_text(json.dumps(state), encoding="utf-8")
+    persist_composite_resume_cursor(
+        plan_dir,
+        children={"child-a": {"token": 1}},
+    )
+
+    with pytest.raises(CliError) as exc_info:
+        resume_plan(tmp_path, "resume-phase-less-composite")
+
+    assert exc_info.value.code == "invalid_resume_cursor"
+    assert exc_info.value.extra["resume_cursor"]["kind"] == COMPOSITE_SUSPENSION_KIND
 
 
 def test_with_payload_returns_immutable_copy() -> None:
@@ -608,3 +747,1000 @@ def test_legacy_save_guard_fires_only_for_composite_kind(tmp_path: Path) -> None
     cursor = ResumeCursor.load(tmp_path)
     assert cursor is not None
     assert cursor.stage == "critique"
+
+
+# ---------------------------------------------------------------------------
+# Composite resume cursor fallback: recover from composite_resume_cursor.json
+# when state.json::resume_cursor is absent
+# ---------------------------------------------------------------------------
+
+
+def _write_composite_json(plan_dir: Path, **kwargs: object) -> Path:
+    """Write a ``composite_resume_cursor.json`` directly via the generic layer."""
+    from arnold.pipeline.resume import persist_composite_resume_cursor
+
+    return persist_composite_resume_cursor(plan_dir, **kwargs)  # type: ignore[arg-type]
+
+
+def _composite_json_payload(
+    children: dict[str, object] | None = None,
+    **extra: object,
+) -> dict[str, object]:
+    payload: dict[str, object] = {
+        "kind": COMPOSITE_SUSPENSION_KIND,
+        "version": COMPOSITE_SUSPENSION_CURSOR_VERSION,
+        "children": children or {},
+    }
+    payload.update(extra)
+    return payload
+
+
+def test_load_composite_from_json_when_state_missing(tmp_path: Path) -> None:
+    """``load_composite_resume_cursor`` recovers from ``composite_resume_cursor.json``
+    when ``state.json`` does not exist at all."""
+    _write_composite_json(
+        tmp_path,
+        children={"child_a": {"suspended": True, "label": "a"}},
+        version=COMPOSITE_SUSPENSION_CURSOR_VERSION,
+        pending_suspensions=[{"child_id": "child_a", "suspension": {"kind": "human"}}],
+    )
+    # No state.json exists
+    assert not (tmp_path / "state.json").exists()
+    cursor = load_composite_resume_cursor(tmp_path)
+    assert cursor is not None
+    assert cursor["children"] == {"child_a": {"suspended": True, "label": "a"}}
+    assert cursor["version"] == COMPOSITE_SUSPENSION_CURSOR_VERSION
+    assert cursor["pending_suspensions"] == [
+        {"child_id": "child_a", "suspension": {"kind": "human"}}
+    ]
+
+
+def test_load_composite_from_json_when_state_has_no_cursor(tmp_path: Path) -> None:
+    """``load_composite_resume_cursor`` recovers from ``composite_resume_cursor.json``
+    when ``state.json`` exists but has no ``resume_cursor`` key."""
+    _write_state_json(tmp_path, {"current_state": "planned"})
+    _write_composite_json(
+        tmp_path,
+        children={"child_b": {"suspended": False}},
+    )
+    cursor = load_composite_resume_cursor(tmp_path)
+    assert cursor is not None
+    assert cursor["children"] == {"child_b": {"suspended": False}}
+
+
+def test_load_composite_from_json_when_state_has_legacy_cursor(tmp_path: Path) -> None:
+    """``load_composite_resume_cursor`` recovers from ``composite_resume_cursor.json``
+    when ``state.json::resume_cursor`` is a legacy (non-composite) cursor."""
+    _write_state_json(tmp_path, {"resume_cursor": {"phase": "critique"}})
+    _write_composite_json(
+        tmp_path,
+        children={"child_c": {"suspended": True}},
+    )
+    cursor = load_composite_resume_cursor(tmp_path)
+    assert cursor is not None
+    assert cursor["children"] == {"child_c": {"suspended": True}}
+    # Legacy cursor is unaffected
+    legacy = ResumeCursor.load(tmp_path)
+    assert legacy is not None
+    assert legacy.stage == "critique"
+
+
+def test_load_composite_from_json_returns_none_when_neither_source(tmp_path: Path) -> None:
+    """``load_composite_resume_cursor`` returns None when neither
+    ``state.json::resume_cursor`` nor ``composite_resume_cursor.json`` exists."""
+    assert load_composite_resume_cursor(tmp_path) is None
+
+
+def test_load_composite_state_json_wins_over_json_file(tmp_path: Path) -> None:
+    """When both ``state.json::resume_cursor`` and ``composite_resume_cursor.json``
+    contain composite cursors, ``state.json::resume_cursor`` takes precedence."""
+    _write_state_json(
+        tmp_path,
+        {
+            "resume_cursor": _composite_payload(
+                children={"primary": {"suspended": True, "source": "state"}},
+            ),
+        },
+    )
+    _write_composite_json(
+        tmp_path,
+        children={"secondary": {"suspended": False, "source": "json"}},
+    )
+    cursor = load_composite_resume_cursor(tmp_path)
+    assert cursor is not None
+    assert cursor["children"] == {"primary": {"suspended": True, "source": "state"}}
+    assert "secondary" not in cursor["children"]
+
+
+# ---- Targeted child extraction through fallback ----
+
+
+def test_extract_child_from_json_fallback(tmp_path: Path) -> None:
+    """``extract_composite_child_resume_cursor`` recovers individual children
+    from ``composite_resume_cursor.json`` when ``state.json`` is absent."""
+    _write_composite_json(
+        tmp_path,
+        children={"child_a": {"suspended": True}, "child_b": {"suspended": False}},
+    )
+    result = extract_composite_child_resume_cursor(tmp_path, "child_a")
+    assert result == {"suspended": True}
+    result_b = extract_composite_child_resume_cursor(tmp_path, "child_b")
+    assert result_b == {"suspended": False}
+
+
+def test_extract_all_children_from_json_fallback(tmp_path: Path) -> None:
+    """``extract_all_composite_child_resume_cursors`` recovers all children
+    from ``composite_resume_cursor.json`` when ``state.json`` is absent."""
+    children = {"a": {"x": 10}, "b": {"y": 20}, "c": {"z": 30}}
+    _write_composite_json(tmp_path, children=children)
+    result = extract_all_composite_child_resume_cursors(tmp_path)
+    assert result == children
+
+
+# ---- Pending suspension metadata recovery from composite_resume_cursor.json ----
+
+
+def test_pending_suspensions_recovered_from_json_fallback(tmp_path: Path) -> None:
+    """``load_composite_resume_cursor`` recovers ``pending_suspensions``
+    from ``composite_resume_cursor.json`` when ``state.json`` is absent."""
+    pending = [
+        {
+            "child_id": "agent_1",
+            "suspension": {
+                "kind": "human",
+                "prompt": "Approve deployment?",
+                "awaitable": "gate-1",
+            },
+        }
+    ]
+    _write_composite_json(
+        tmp_path,
+        children={"agent_1": {"suspended": True}},
+        pending_suspensions=pending,
+    )
+    cursor = load_composite_resume_cursor(tmp_path)
+    assert cursor is not None
+    assert cursor["pending_suspensions"] == pending
+    assert cursor["pending_suspensions"][0]["child_id"] == "agent_1"
+    assert cursor["pending_suspensions"][0]["suspension"]["kind"] == "human"
+
+
+def test_extract_child_resume_target_pending_suspensions(tmp_path: Path) -> None:
+    """``extract_composite_child_resume_target`` recovers a child target including
+    pending suspension metadata from ``composite_resume_cursor.json`` fallback."""
+    from arnold.pipelines.megaplan._pipeline.resume import (
+        extract_composite_child_resume_target,
+    )
+
+    pending = [
+        {
+            "child_id": "agent_1",
+            "suspension": {
+                "kind": "human",
+                "prompt": "Approve deployment?",
+                "awaitable": "gate-1",
+            },
+        }
+    ]
+    _write_composite_json(
+        tmp_path,
+        children={"agent_1": {"suspended": True, "thread_ref": "th-42"}},
+        pending_suspensions=pending,
+    )
+    target = extract_composite_child_resume_target(tmp_path, "agent_1")
+    assert target is not None
+    assert target.child_id == "agent_1"
+    assert target.cursor == {"suspended": True, "thread_ref": "th-42"}
+    assert target.pending_suspension == pending[0]
+    assert target.suspension.kind == "human"
+
+
+# ---- Dual-write: save_composite_resume_cursor persists both surfaces ----
+
+
+def test_save_composite_writes_both_state_and_json(tmp_path: Path) -> None:
+    """``save_composite_resume_cursor`` writes both ``state.json::resume_cursor``
+    and ``composite_resume_cursor.json``."""
+    save_composite_resume_cursor(
+        tmp_path,
+        children={"child_a": {"suspended": True}},
+        pending_suspensions=[{"child_id": "child_a", "suspension": {"kind": "human"}}],
+    )
+    # state.json should contain the cursor
+    assert (tmp_path / "state.json").exists()
+    state_data = json.loads((tmp_path / "state.json").read_text())
+    assert state_data["resume_cursor"]["kind"] == COMPOSITE_SUSPENSION_KIND
+    assert state_data["resume_cursor"]["children"] == {"child_a": {"suspended": True}}
+
+    # composite_resume_cursor.json should also exist and match
+    assert (tmp_path / "composite_resume_cursor.json").exists()
+    composite_data = json.loads(
+        (tmp_path / "composite_resume_cursor.json").read_text()
+    )
+    assert composite_data["kind"] == COMPOSITE_SUSPENSION_KIND
+    assert composite_data["children"] == {"child_a": {"suspended": True}}
+    assert composite_data["pending_suspensions"] == [
+        {"child_id": "child_a", "suspension": {"kind": "human"}}
+    ]
+
+
+def test_save_composite_json_self_consistent(tmp_path: Path) -> None:
+    """After ``save_composite_resume_cursor``, the JSON file is self-consistent
+    and can be independently reloaded with the same data."""
+    children = {
+        "w1": {"suspended": True, "actor": "claude"},
+        "w2": {"suspended": False},
+    }
+    pending = [
+        {"child_id": "w1", "suspension": {"kind": "human", "prompt": "ok?"}},
+    ]
+    save_composite_resume_cursor(
+        tmp_path,
+        children=children,
+        pending_suspensions=pending,
+        shared_awaitable="gate-main",
+    )
+
+    # Delete state.json to simulate state loss / manual reset
+    (tmp_path / "state.json").unlink()
+
+    # The composite_resume_cursor.json should still be recoverable
+    cursor = load_composite_resume_cursor(tmp_path)
+    assert cursor is not None
+    assert cursor["children"] == children
+    assert cursor["pending_suspensions"] == pending
+    assert cursor["shared_awaitable"] == "gate-main"
+
+
+def test_save_composite_json_survives_state_absence(tmp_path: Path) -> None:
+    """After dual-write, all extraction helpers work from ``composite_resume_cursor.json``
+    alone when ``state.json`` is deleted."""
+    from arnold.pipelines.megaplan._pipeline.resume import (
+        extract_composite_child_resume_target,
+    )
+
+    children = {
+        "c1": {"suspended": True, "thread_ref": "th-1"},
+        "c2": {"suspended": False},
+    }
+    pending = [
+        {
+            "child_id": "c1",
+            "suspension": {
+                "kind": "human",
+                "prompt": "Continue?",
+                "awaitable": "gate-abc",
+            },
+        },
+    ]
+    save_composite_resume_cursor(
+        tmp_path,
+        children=children,
+        pending_suspensions=pending,
+    )
+
+    # Simulate state.json loss
+    (tmp_path / "state.json").unlink()
+    assert not (tmp_path / "state.json").exists()
+
+    # All extraction helpers should still work
+    cursor = load_composite_resume_cursor(tmp_path)
+    assert cursor is not None
+
+    child = extract_composite_child_resume_cursor(tmp_path, "c1")
+    assert child == {"suspended": True, "thread_ref": "th-1"}
+
+    all_children = extract_all_composite_child_resume_cursors(tmp_path)
+    assert all_children == children
+
+    target = extract_composite_child_resume_target(tmp_path, "c1")
+    assert target is not None
+    assert target.cursor == {"suspended": True, "thread_ref": "th-1"}
+    assert target.suspension.kind == "human"
+    assert target.suspension.awaitable == "gate-abc"
+
+
+def test_save_composite_children_keys_round_trip_through_json(tmp_path: Path) -> None:
+    """Child keys survive the dual-write round-trip through
+    ``composite_resume_cursor.json``."""
+    children_with_int_keys = {1: "a", 2: "b"}
+    save_composite_resume_cursor(tmp_path, children=children_with_int_keys)
+
+    # Wipe state.json
+    (tmp_path / "state.json").unlink()
+
+    result = extract_all_composite_child_resume_cursors(tmp_path)
+    assert set(result.keys()) == {"1", "2"}
+
+
+# ---------------------------------------------------------------------------
+# C3: Typed suspended-contract extraction tests
+# ---------------------------------------------------------------------------
+
+
+def test_extract_suspended_contract_result_returns_contract(tmp_path: Path) -> None:
+    from arnold.pipeline import ContractResult, ContractStatus, Suspension
+
+    from arnold.pipelines.megaplan._pipeline.resume import (
+        extract_suspended_contract_result,
+    )
+
+    contract = ContractResult(
+        status=ContractStatus.SUSPENDED,
+        suspension=Suspension(
+            kind="human",
+            awaitable="user",
+            prompt="Need approval",
+            resume_cursor=json.dumps({"phase": "review", "retry_strategy": "fresh"}),
+        ),
+    )
+    (tmp_path / "state.json").write_text(
+        json.dumps({"contract_result": contract.to_json()})
+    )
+
+    extracted = extract_suspended_contract_result(tmp_path)
+    assert extracted is not None
+    assert extracted.status is ContractStatus.SUSPENDED
+    assert extracted.suspension is not None
+    assert extracted.suspension.kind == "human"
+    assert extracted.suspension.awaitable == "user"
+
+
+def test_extract_suspended_contract_result_none_for_missing_key(tmp_path: Path) -> None:
+    from arnold.pipelines.megaplan._pipeline.resume import (
+        extract_suspended_contract_result,
+    )
+
+    (tmp_path / "state.json").write_text(json.dumps({"other_key": "value"}))
+    assert extract_suspended_contract_result(tmp_path) is None
+
+
+def test_extract_suspended_contract_result_none_for_missing_file(tmp_path: Path) -> None:
+    from arnold.pipelines.megaplan._pipeline.resume import (
+        extract_suspended_contract_result,
+    )
+
+    assert extract_suspended_contract_result(tmp_path) is None
+
+
+def test_extract_suspended_contract_result_none_for_malformed_json(tmp_path: Path) -> None:
+    from arnold.pipelines.megaplan._pipeline.resume import (
+        extract_suspended_contract_result,
+    )
+
+    (tmp_path / "state.json").write_text("not json")
+    assert extract_suspended_contract_result(tmp_path) is None
+
+
+def test_extract_suspended_contract_result_none_for_completed(tmp_path: Path) -> None:
+    from arnold.pipeline import ContractResult, ContractStatus
+
+    from arnold.pipelines.megaplan._pipeline.resume import (
+        extract_suspended_contract_result,
+    )
+
+    contract = ContractResult(status=ContractStatus.COMPLETED)
+    (tmp_path / "state.json").write_text(
+        json.dumps({"contract_result": contract.to_json()})
+    )
+    assert extract_suspended_contract_result(tmp_path) is None
+
+
+def test_extract_suspended_contract_result_none_for_failed(tmp_path: Path) -> None:
+    from arnold.pipeline import ContractResult, ContractStatus
+
+    from arnold.pipelines.megaplan._pipeline.resume import (
+        extract_suspended_contract_result,
+    )
+
+    contract = ContractResult(status=ContractStatus.FAILED)
+    (tmp_path / "state.json").write_text(
+        json.dumps({"contract_result": contract.to_json()})
+    )
+    assert extract_suspended_contract_result(tmp_path) is None
+
+
+def test_extract_suspended_contract_result_none_for_schema_version_mismatch(
+    tmp_path: Path,
+) -> None:
+    from arnold.pipeline import ContractResult, ContractStatus, Suspension
+
+    from arnold.pipelines.megaplan._pipeline.resume import (
+        extract_suspended_contract_result,
+    )
+
+    contract = ContractResult(
+        status=ContractStatus.SUSPENDED,
+        suspension=Suspension(kind="human", prompt="Test"),
+    )
+    raw = contract.to_json()
+    # Corrupt the schema_version
+    raw["schema_version"] = "v99-nonexistent"
+    (tmp_path / "state.json").write_text(
+        json.dumps({"contract_result": raw})
+    )
+    assert extract_suspended_contract_result(tmp_path) is None
+
+
+def test_extract_suspended_contract_result_none_for_suspended_without_suspension(
+    tmp_path: Path,
+) -> None:
+    from arnold.pipeline import ContractResult, ContractStatus
+
+    from arnold.pipelines.megaplan._pipeline.resume import (
+        extract_suspended_contract_result,
+    )
+
+    # Suspended status but no suspension object
+    raw = {
+        "status": "suspended",
+        "suspension": None,
+        "payload": {},
+        "schema_version": ContractResult().schema_version,
+    }
+    (tmp_path / "state.json").write_text(
+        json.dumps({"contract_result": raw})
+    )
+    assert extract_suspended_contract_result(tmp_path) is None
+
+
+def test_extract_typed_resume_metadata_phase_and_pipeline(tmp_path: Path) -> None:
+    from arnold.pipeline import ContractResult, ContractStatus, Suspension
+
+    from arnold.pipelines.megaplan._pipeline.resume import (
+        extract_typed_resume_metadata,
+    )
+
+    contract = ContractResult(
+        status=ContractStatus.SUSPENDED,
+        suspension=Suspension(
+            kind="human",
+            awaitable="user",
+            prompt="Need approval",
+            thread_ref="pipeline-abc",
+            resume_cursor=json.dumps({"phase": "review", "retry_strategy": "fresh"}),
+        ),
+    )
+    (tmp_path / "state.json").write_text(
+        json.dumps({"contract_result": contract.to_json()})
+    )
+
+    meta = extract_typed_resume_metadata(tmp_path)
+    assert meta is not None
+    assert meta.phase == "review"
+    assert meta.pipeline == "pipeline-abc"
+    assert meta.suspension_kind == "human"
+    assert meta.awaitable == "user"
+    assert isinstance(meta.cursor_data, dict)
+    assert meta.cursor_data["phase"] == "review"
+    assert meta.cursor_data["retry_strategy"] == "fresh"
+
+
+def test_extract_typed_resume_metadata_none_when_no_suspended_contract(
+    tmp_path: Path,
+) -> None:
+    from arnold.pipelines.megaplan._pipeline.resume import (
+        extract_typed_resume_metadata,
+    )
+
+    (tmp_path / "state.json").write_text(json.dumps({}))
+    assert extract_typed_resume_metadata(tmp_path) is None
+
+
+def test_extract_typed_resume_metadata_choices_from_schema(tmp_path: Path) -> None:
+    from arnold.pipeline import ContractResult, ContractStatus, Suspension
+
+    from arnold.pipelines.megaplan._pipeline.resume import (
+        extract_typed_resume_metadata,
+    )
+
+    contract = ContractResult(
+        status=ContractStatus.SUSPENDED,
+        suspension=Suspension(
+            kind="human",
+            awaitable="user",
+            prompt="Choose action",
+            resume_cursor=json.dumps({"phase": "gate"}),
+            resume_input_schema={
+                "type": "object",
+                "properties": {
+                    "choice": {
+                        "type": "string",
+                        "enum": ["approve", "reject", "retry"],
+                    }
+                },
+                "required": ["choice"],
+            },
+        ),
+    )
+    (tmp_path / "state.json").write_text(
+        json.dumps({"contract_result": contract.to_json()})
+    )
+
+    meta = extract_typed_resume_metadata(tmp_path)
+    assert meta is not None
+    assert meta.phase == "gate"
+    assert meta.choices == ["approve", "reject", "retry"]
+    assert meta.resume_input_schema == contract.suspension.resume_input_schema
+
+
+def test_extract_typed_resume_metadata_opaque_cursor_preserved(tmp_path: Path) -> None:
+    from arnold.pipeline import ContractResult, ContractStatus, Suspension
+
+    from arnold.pipelines.megaplan._pipeline.resume import (
+        extract_typed_resume_metadata,
+    )
+
+    # Non-JSON cursor (opaque string)
+    contract = ContractResult(
+        status=ContractStatus.SUSPENDED,
+        suspension=Suspension(
+            kind="human",
+            awaitable="user",
+            prompt="Need action",
+            resume_cursor="opaque-cursor-data-not-json",
+        ),
+    )
+    (tmp_path / "state.json").write_text(
+        json.dumps({"contract_result": contract.to_json()})
+    )
+
+    meta = extract_typed_resume_metadata(tmp_path)
+    assert meta is not None
+    # phase should be None since the cursor isn't JSON
+    assert meta.phase is None
+    # cursor_data should be the opaque string preserved
+    assert meta.cursor_data == "opaque-cursor-data-not-json"
+
+
+def test_extract_typed_resume_metadata_none_cursor(tmp_path: Path) -> None:
+    from arnold.pipeline import ContractResult, ContractStatus, Suspension
+
+    from arnold.pipelines.megaplan._pipeline.resume import (
+        extract_typed_resume_metadata,
+    )
+
+    contract = ContractResult(
+        status=ContractStatus.SUSPENDED,
+        suspension=Suspension(
+            kind="human",
+            awaitable="user",
+            prompt="Need action",
+            resume_cursor=None,
+        ),
+    )
+    (tmp_path / "state.json").write_text(
+        json.dumps({"contract_result": contract.to_json()})
+    )
+
+    meta = extract_typed_resume_metadata(tmp_path)
+    assert meta is not None
+    assert meta.phase is None
+    assert meta.cursor_data is None
+
+
+def test_typed_state_wins_over_conflicting_awaiting_user(tmp_path: Path) -> None:
+    """Typed suspended contract_result takes precedence over conflicting
+    awaiting_user.json — the extraction helpers return typed data even when
+    a legacy sidecar file is also present."""
+    from arnold.pipeline import ContractResult, ContractStatus, Suspension
+
+    from arnold.pipelines.megaplan._pipeline.resume import (
+        check_awaiting_user,
+        extract_suspended_contract_result,
+        extract_typed_resume_metadata,
+    )
+
+    contract = ContractResult(
+        status=ContractStatus.SUSPENDED,
+        suspension=Suspension(
+            kind="human",
+            awaitable="user",
+            prompt="Typed prompt",
+            thread_ref="typed-pipeline",
+            resume_cursor=json.dumps({"phase": "typed-stage", "source": "contract"}),
+        ),
+    )
+    (tmp_path / "state.json").write_text(
+        json.dumps({"contract_result": contract.to_json()})
+    )
+
+    # Also write a conflicting awaiting_user.json
+    (tmp_path / "awaiting_user.json").write_text(
+        json.dumps(
+            {
+                "message": "Legacy prompt",
+                "pipeline": "legacy-pipeline",
+                "choices": ["legacy-a", "legacy-b"],
+            }
+        )
+    )
+
+    # awaiting_user.json is still detectable
+    awaiting = check_awaiting_user(tmp_path)
+    assert awaiting is not None
+    assert awaiting["message"] == "Legacy prompt"
+
+    # But typed extraction helpers return contract data — callers should
+    # prefer this over the sidecar
+    extracted = extract_suspended_contract_result(tmp_path)
+    assert extracted is not None
+    assert extracted.suspension.prompt == "Typed prompt"
+    assert extracted.suspension.thread_ref == "typed-pipeline"
+
+    meta = extract_typed_resume_metadata(tmp_path)
+    assert meta is not None
+    assert meta.phase == "typed-stage"
+    assert meta.pipeline == "typed-pipeline"
+
+
+def test_malformed_typed_state_falls_back(tmp_path: Path) -> None:
+    """When contract_result is present but malformed (e.g. missing required
+    fields), the extraction helpers return None so callers can fall through
+    to legacy sources like awaiting_user.json."""
+    from arnold.pipelines.megaplan._pipeline.resume import (
+        extract_suspended_contract_result,
+        extract_typed_resume_metadata,
+    )
+
+    # Malformed: has contract_result key but the dict is not a valid
+    # ContractResult (missing status, etc.)
+    (tmp_path / "state.json").write_text(
+        json.dumps({"contract_result": {"garbage": True}})
+    )
+
+    assert extract_suspended_contract_result(tmp_path) is None
+    assert extract_typed_resume_metadata(tmp_path) is None
+
+
+def test_non_suspended_typed_state_falls_back(tmp_path: Path) -> None:
+    """When contract_result exists but is completed (not suspended), the
+    extraction helpers return None, allowing fallback to other sources."""
+    from arnold.pipeline import ContractResult, ContractStatus
+
+    from arnold.pipelines.megaplan._pipeline.resume import (
+        extract_suspended_contract_result,
+        extract_typed_resume_metadata,
+    )
+
+    contract = ContractResult(status=ContractStatus.COMPLETED)
+    (tmp_path / "state.json").write_text(
+        json.dumps({"contract_result": contract.to_json()})
+    )
+
+    assert extract_suspended_contract_result(tmp_path) is None
+    assert extract_typed_resume_metadata(tmp_path) is None
+
+
+def test_decode_json_cursor_preserves_opaque(tmp_path: Path) -> None:
+    from arnold.pipelines.megaplan._pipeline.resume import _decode_json_cursor
+
+    # JSON string
+    assert _decode_json_cursor('{"key": "value"}') == {"key": "value"}
+
+    # Opaque non-JSON string
+    assert _decode_json_cursor("not-json") == "not-json"
+
+    # None
+    assert _decode_json_cursor(None) is None
+
+    # Non-string (should be passed through)
+    assert _decode_json_cursor(42) == 42
+
+
+def test_resume_human_gate_prefers_typed_state_over_conflicting_sidecar(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from arnold.pipeline import ContractResult, ContractStatus, Suspension
+
+    typed_contract = ContractResult(
+        status=ContractStatus.SUSPENDED,
+        suspension=Suspension(
+            kind="human",
+            awaitable="user",
+            prompt="Typed prompt",
+            thread_ref="typed-pipeline",
+            resume_input_schema={
+                "type": "object",
+                "properties": {"choice": {"type": "string", "enum": ["typed-yes", "typed-no"]}},
+                "required": ["choice"],
+                "additionalProperties": False,
+            },
+            resume_cursor=json.dumps({"phase": "typed-stage", "retry_strategy": "typed"}),
+        ),
+        payload={"awaiting_user": {"artifact_stage": "draft", "artifact_path": "draft/v1.md"}},
+    )
+    plan_dir = tmp_path / "plan"
+    plan_dir.mkdir()
+    (plan_dir / "state.json").write_text(
+        json.dumps(
+            {
+                "contract_result": typed_contract.to_json(),
+                "_pipeline_paused": True,
+                "_pipeline_paused_stage": "legacy-stage",
+                "mode": "code",
+            }
+        ),
+        encoding="utf-8",
+    )
+    (plan_dir / "awaiting_user.json").write_text(
+        json.dumps(
+            {
+                "pipeline": "legacy-pipeline",
+                "stage": "legacy-stage",
+                "choices": ["legacy-only"],
+                "message": "Legacy prompt",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    pipeline = Pipeline(
+        stages={"typed-stage": Stage(name="typed-stage", step=_Noop())},
+        entry="typed-stage",
+    )
+    captured: dict[str, object] = {}
+
+    def fake_run_pipeline(resumed_pipeline, ctx, artifact_root):  # noqa: ANN001
+        captured["entry"] = resumed_pipeline.entry
+        captured["state"] = dict(ctx.state)
+        captured["disk_state"] = json.loads(
+            (plan_dir / "state.json").read_text(encoding="utf-8")
+        )
+        captured["artifact_root"] = artifact_root
+        captured["awaiting_user"] = json.loads(
+            (plan_dir / "awaiting_user.json").read_text(encoding="utf-8")
+        )
+        return {"success": True, "phase": resumed_pipeline.entry}
+
+    monkeypatch.setattr(
+        "arnold.pipelines.megaplan._pipeline.registry.get_pipeline",
+        lambda name: pipeline if name == "typed-pipeline" else None,
+    )
+    monkeypatch.setattr(
+        "arnold.pipelines.megaplan._pipeline.executor.run_pipeline",
+        fake_run_pipeline,
+    )
+
+    result = megaplan_cli._resume_human_gate(
+        tmp_path,
+        plan_dir,
+        argparse.Namespace(choice="typed-yes"),
+    )
+
+    assert result == {"success": True, "phase": "typed-stage"}
+    assert captured["entry"] == "typed-stage"
+    assert captured["artifact_root"] == plan_dir
+    assert captured["state"]["mode"] == "code"
+    assert "_pipeline_paused" not in captured["state"]
+    assert "_pipeline_paused_stage" not in captured["state"]
+    assert "contract_result" not in captured["state"]
+    assert "_pipeline_paused" not in captured["disk_state"]
+    assert "_pipeline_paused_stage" not in captured["disk_state"]
+    assert "contract_result" not in captured["disk_state"]
+    assert captured["awaiting_user"] == {
+        "artifact_path": "draft/v1.md",
+        "artifact_stage": "draft",
+        "pipeline": "typed-pipeline",
+        "stage": "typed-stage",
+        "choices": ["typed-yes", "typed-no"],
+        "message": "Typed prompt",
+        "prompt": "Typed prompt",
+        "resume_input_schema": {
+            "type": "object",
+            "properties": {"choice": {"type": "string", "enum": ["typed-yes", "typed-no"]}},
+            "required": ["choice"],
+            "additionalProperties": False,
+        },
+        "_resume_choice": "typed-yes",
+    }
+    assert not (plan_dir / "awaiting_user.json").exists()
+
+
+def test_handle_resume_legacy_sidecar_only_still_routes_human_gate(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    plan_dir = tmp_path / "plan"
+    plan_dir.mkdir()
+    (plan_dir / "state.json").write_text(
+        json.dumps(
+            {
+                "_pipeline_paused": True,
+                "_pipeline_paused_stage": "legacy-stage",
+                "mode": "code",
+            }
+        ),
+        encoding="utf-8",
+    )
+    (plan_dir / "awaiting_user.json").write_text(
+        json.dumps(
+            {
+                "pipeline": "legacy-pipeline",
+                "stage": "legacy-stage",
+                "choices": ["continue"],
+                "message": "Legacy prompt",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    pipeline = Pipeline(
+        stages={"legacy-stage": Stage(name="legacy-stage", step=_Noop())},
+        entry="legacy-stage",
+    )
+    captured: dict[str, object] = {}
+
+    def fake_run_pipeline(resumed_pipeline, ctx, artifact_root):  # noqa: ANN001
+        captured["entry"] = resumed_pipeline.entry
+        captured["state"] = dict(ctx.state)
+        captured["awaiting_user"] = json.loads(
+            (plan_dir / "awaiting_user.json").read_text(encoding="utf-8")
+        )
+        return {"success": True, "phase": resumed_pipeline.entry}
+
+    monkeypatch.setattr(
+        "arnold.pipelines.megaplan._core.io.find_plan_dir",
+        lambda root, requested_name: plan_dir,
+    )
+    monkeypatch.setattr(
+        "arnold.pipelines.megaplan._pipeline.registry.get_pipeline",
+        lambda name: pipeline if name == "legacy-pipeline" else None,
+    )
+    monkeypatch.setattr(
+        "arnold.pipelines.megaplan._pipeline.executor.run_pipeline",
+        fake_run_pipeline,
+    )
+    monkeypatch.setattr(
+        "arnold.pipelines.megaplan.cli.resume_plan",
+        lambda *_args, **_kwargs: pytest.fail("resume_plan should not run for sidecar human-gate resumes"),
+    )
+
+    result = megaplan_cli.handle_resume(
+        tmp_path,
+        argparse.Namespace(plan="plan", choice="continue", actor=None, backend=None),
+    )
+
+    assert result == {"success": True, "phase": "legacy-stage"}
+    assert captured["entry"] == "legacy-stage"
+    assert captured["state"] == {"mode": "code"}
+    assert captured["awaiting_user"] == {
+        "pipeline": "legacy-pipeline",
+        "stage": "legacy-stage",
+        "choices": ["continue"],
+        "message": "Legacy prompt",
+        "_resume_choice": "continue",
+    }
+    assert not (plan_dir / "awaiting_user.json").exists()
+
+
+def test_handle_resume_routes_typed_only_human_gate_without_sidecar(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from arnold.pipeline import ContractResult, ContractStatus, Suspension
+
+    plan_dir = tmp_path / "plan"
+    plan_dir.mkdir()
+    typed_contract = ContractResult(
+        status=ContractStatus.SUSPENDED,
+        suspension=Suspension(
+            kind="human",
+            awaitable="user",
+            prompt="Choose",
+            thread_ref="typed-pipeline",
+            resume_input_schema={
+                "type": "object",
+                "properties": {"choice": {"type": "string", "enum": ["continue", "stop"]}},
+                "required": ["choice"],
+                "additionalProperties": False,
+            },
+            resume_cursor=json.dumps({"phase": "gate"}),
+        ),
+    )
+    (plan_dir / "state.json").write_text(
+        json.dumps({"contract_result": typed_contract.to_json()}),
+        encoding="utf-8",
+    )
+
+    pipeline = Pipeline(stages={"gate": Stage(name="gate", step=_Noop())}, entry="gate")
+    captured: dict[str, object] = {}
+
+    def fake_run_pipeline(resumed_pipeline, ctx, artifact_root):  # noqa: ANN001
+        captured["entry"] = resumed_pipeline.entry
+        captured["awaiting_user"] = json.loads(
+            (plan_dir / "awaiting_user.json").read_text(encoding="utf-8")
+        )
+        return {"success": True, "phase": resumed_pipeline.entry}
+
+    monkeypatch.setattr(
+        "arnold.pipelines.megaplan._core.io.find_plan_dir",
+        lambda root, requested_name: plan_dir,
+    )
+    monkeypatch.setattr(
+        "arnold.pipelines.megaplan._pipeline.registry.get_pipeline",
+        lambda name: pipeline if name == "typed-pipeline" else None,
+    )
+    monkeypatch.setattr(
+        "arnold.pipelines.megaplan._pipeline.executor.run_pipeline",
+        fake_run_pipeline,
+    )
+    monkeypatch.setattr(
+        "arnold.pipelines.megaplan.cli.resume_plan",
+        lambda *_args, **_kwargs: pytest.fail("resume_plan should not run for typed human-gate resumes"),
+    )
+
+    result = megaplan_cli.handle_resume(
+        tmp_path,
+        argparse.Namespace(plan="plan", choice="continue", actor=None, backend=None),
+    )
+
+    assert result == {"success": True, "phase": "gate"}
+    assert captured["entry"] == "gate"
+    assert captured["awaiting_user"] == {
+        "pipeline": "typed-pipeline",
+        "stage": "gate",
+        "choices": ["continue", "stop"],
+        "message": "Choose",
+        "prompt": "Choose",
+        "resume_input_schema": {
+            "type": "object",
+            "properties": {"choice": {"type": "string", "enum": ["continue", "stop"]}},
+            "required": ["choice"],
+            "additionalProperties": False,
+        },
+        "_resume_choice": "continue",
+    }
+    assert not (plan_dir / "awaiting_user.json").exists()
+
+
+def test_handle_resume_routes_typed_programmatic_resume_to_resume_plan(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from arnold.pipeline import ContractResult, ContractStatus, Suspension
+
+    plan_dir = tmp_path / "plan"
+    plan_dir.mkdir()
+    typed_contract = ContractResult(
+        status=ContractStatus.SUSPENDED,
+        suspension=Suspension(
+            kind="human",
+            awaitable="user",
+            prompt="Programmatic resume",
+            thread_ref="typed-pipeline",
+            resume_input_schema={},
+            resume_cursor=json.dumps({"phase": "execute", "retry_strategy": "typed"}),
+        ),
+    )
+    (plan_dir / "state.json").write_text(
+        json.dumps({"contract_result": typed_contract.to_json()}),
+        encoding="utf-8",
+    )
+
+    captured: dict[str, object] = {}
+
+    monkeypatch.setattr(
+        "arnold.pipelines.megaplan._core.io.find_plan_dir",
+        lambda root, requested_name: plan_dir,
+    )
+    monkeypatch.setattr(
+        "arnold.pipelines.megaplan.cli._resume_human_gate",
+        lambda *_args, **_kwargs: pytest.fail("_resume_human_gate should not run without typed choices or sidecar"),
+    )
+    monkeypatch.setattr(
+        "arnold.pipelines.megaplan.cli.resume_plan",
+        lambda root, plan, store=None: captured.update(
+            {"root": root, "plan": plan, "store": store}
+        )
+        or {"success": True, "phase": "execute"},
+    )
+
+    result = megaplan_cli.handle_resume(
+        tmp_path,
+        argparse.Namespace(plan="plan", choice=None, actor=None, backend=None),
+    )
+
+    assert result == {"success": True, "phase": "execute"}
+    assert captured == {"root": tmp_path, "plan": "plan", "store": None}

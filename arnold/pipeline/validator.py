@@ -370,12 +370,19 @@ def validate_control_flow(
 
 
 def validate(
-    pipeline: Any, options: ValidationOptions | None = None
+    pipeline: Any,
+    options: ValidationOptions | None = None,
+    *,
+    adapter_registry: StepInvocationAdapterRegistry | None = None,
 ) -> Diagnostics:
     """Run the full graph-shape validation over *pipeline*.
 
     Delegates to :func:`validate_control_flow`, :func:`validate_dataflow_paths`,
     and :func:`validate_resource_dependencies`.
+
+    When *adapter_registry* is ``None`` a fresh fail-closed default registry
+    is constructed so existing callers get the same reserved-``model``-only
+    behaviour.
 
     Returns a :class:`Diagnostics` whose ``defects`` list is empty iff
     every check passes.
@@ -385,7 +392,9 @@ def validate(
     # control-flow defects exist so callers get the full picture.
     df_diag = validate_dataflow_paths(pipeline, options)
     diag.extend(df_diag)
-    invocation_diag = validate_invocation_requirements(pipeline)
+    invocation_diag = validate_invocation_requirements(
+        pipeline, adapter_registry=adapter_registry
+    )
     diag.extend(invocation_diag)
     # Merge prompt/resource defects
     res_diag = validate_resource_dependencies(pipeline, options)
@@ -407,11 +416,21 @@ def _capability_evidence_details(proof: Any) -> list[dict[str, Any]]:
     ]
 
 
-def validate_invocation_requirements(pipeline: Any) -> Diagnostics:
-    """Validate invocation kinds and fail-closed required capabilities."""
+def validate_invocation_requirements(
+    pipeline: Any,
+    *,
+    adapter_registry: StepInvocationAdapterRegistry | None = None,
+) -> Diagnostics:
+    """Validate invocation kinds and fail-closed required capabilities.
+
+    When *adapter_registry* is ``None`` a fresh fail-closed default registry
+    is constructed so existing callers get the same reserved-``model``-only
+    behaviour.  Callers that supply a non-model registry can prove that
+    non-``model`` invocation kinds pass validation.
+    """
     diag = Diagnostics()
     stages: Mapping[str, Any] = getattr(pipeline, "stages", {}) or {}
-    registry = StepInvocationAdapterRegistry()
+    registry = adapter_registry if adapter_registry is not None else StepInvocationAdapterRegistry()
 
     for stage_name in sorted(stages):
         stage = stages[stage_name]

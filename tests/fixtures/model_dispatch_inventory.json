@@ -11,12 +11,13 @@
     "arnold/pipelines/megaplan/prompts/tiebreaker_orchestrator.py",
     "arnold/pipelines/megaplan/orchestration/tiebreaker.py",
     "arnold/pipelines/megaplan/_core/worker_fanout.py",
-    "arnold/pipelines/megaplan/review/parallel.py"
+    "arnold/pipelines/megaplan/review/parallel.py",
+    "arnold/pipeline/model_seam.py"
   ],
   "inventory_only_files": [
-    "arnold/pipelines/megaplan/agent/run_agent.py",
     "arnold/pipelines/megaplan/agent_runtime/contracts.py",
-    "arnold/pipelines/megaplan/resident/agent_loop.py"
+    "arnold/pipelines/megaplan/resident/agent_loop.py",
+    "arnold/agent/run_agent.py"
   ],
   "inventory": [
     {
@@ -105,7 +106,7 @@
     },
     {
       "path": "arnold/pipelines/megaplan/model_seam.py",
-      "anchor": "return dict(recovered.payload), (\"model_step_output\", f\"codex_recovery:{recovered.provenance}\")",
+      "anchor": "return dict(recovered.payload), (",
       "classification": "owned_dispatch"
     },
     {
@@ -164,7 +165,10 @@
     {
       "path": "arnold/pipelines/megaplan/orchestration/parallel_critique.py",
       "anchor": "current_result = current_agent.run_conversation(",
-      "classification": "owned_dispatch"
+      "classification": "owned_dispatch",
+      "required_guards": [
+        "# _pre_dispatch_budget_check sentinel: budget guard for dispatch"
+      ]
     },
     {
       "path": "arnold/pipelines/megaplan/prompts/tiebreaker_orchestrator.py",
@@ -222,14 +226,17 @@
       "classification": "owned_dispatch"
     },
     {
-      "path": "arnold/pipelines/megaplan/agent/run_agent.py",
+      "path": "arnold/agent/run_agent.py",
       "anchor": "def run_conversation(",
       "classification": "owned_dispatch"
     },
     {
       "path": "arnold/pipelines/megaplan/resident/agent_loop.py",
       "anchor": "client.chat.completions.create(",
-      "classification": "owned_dispatch"
+      "classification": "owned_dispatch",
+      "required_guards": [
+        "# _pre_dispatch_budget_check sentinel: budget guard for dispatch"
+      ]
     },
     {
       "path": "arnold/pipelines/megaplan/review/parallel.py",
@@ -251,12 +258,12 @@
     },
     {
       "path": "arnold/pipelines/megaplan/agent_runtime/contracts.py",
-      "anchor": "class _DispatchesAgentRequests(Protocol):",
+      "anchor": "_DispatchesAgentRequests,",
       "classification": "future_no_dispatch"
     },
     {
       "path": "arnold/pipelines/megaplan/agent_runtime/contracts.py",
-      "anchor": "``run_step_with_worker(read_only=True, output_path=<caller-owned>)``.",
+      "anchor": "from arnold.agent.contracts import (",
       "classification": "future_no_dispatch"
     },
     {
@@ -268,6 +275,14 @@
       "path": "arnold/pipelines/megaplan/resident/agent_loop.py",
       "anchor": "class FakeAgentRunner:",
       "classification": "test_fake"
+    },
+    {
+      "path": "arnold/pipelines/megaplan/workers/hermes.py",
+      "anchor": "prompt_text = prompt_override or create_hermes_prompt(",
+      "classification": "owned_dispatch",
+      "required_guards": [
+        "rendered_step = render_prompt_for_dispatch("
+      ]
     }
   ]
 }

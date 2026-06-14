@@ -644,7 +644,7 @@ SKILL_MANAGE_SCHEMA = {
 
 
 # --- Registry ---
-from tools.registry import registry
+from arnold.agent.tools.registry import registry
 
 registry.register(
     name="skill_manage",

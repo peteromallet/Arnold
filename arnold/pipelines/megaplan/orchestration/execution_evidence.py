@@ -9,6 +9,7 @@ from arnold.pipelines.megaplan.types import PlanState
 from arnold.pipelines.megaplan._core import is_prose_mode
 from arnold.pipelines.megaplan.loop.git import _collect_git_status_paths_with_nested_repos, _normalize_repo_path
 
+from .advisory_projection import ADVISORY_PATH_PROJECTION_LIMIT, summarize_path_list_for_prose
 from .rubber_stamp import _is_perfunctory_ack, is_rubber_stamp
 
 
@@ -25,10 +26,38 @@ def validate_execution_evidence(
     *,
     mode: str = "code",
     state: PlanState | None = None,
+    plan_dir: Path | None = None,
+    artifact_prefix: str = "execution_audit",
 ) -> dict[str, Any]:
     if is_prose_mode(state or {"config": {"mode": mode}}):
         return _validate_execution_evidence_doc(finalize_data, project_dir)
-    return _validate_execution_evidence_code(finalize_data, project_dir)
+    return _validate_execution_evidence_code(
+        finalize_data,
+        project_dir,
+        plan_dir=plan_dir,
+        artifact_prefix=artifact_prefix,
+    )
+
+
+def _summarize_advisory_paths(
+    paths: list[str],
+    *,
+    plan_dir: Path | None,
+    artifact_prefix: str,
+    label: str,
+) -> str:
+    if plan_dir is None:
+        item_limit = ADVISORY_PATH_PROJECTION_LIMIT
+        if len(paths) <= item_limit:
+            return ", ".join(paths)
+        shown = ", ".join(paths[:item_limit])
+        return f"{len(paths)} paths (showing {item_limit}): {shown}"
+    return summarize_path_list_for_prose(
+        paths,
+        plan_dir=plan_dir,
+        artifact_prefix=artifact_prefix,
+        label=label,
+    )
 
 
 def _validate_execution_evidence_doc(finalize_data: dict[str, Any], project_dir: Path) -> dict[str, Any]:
@@ -105,7 +134,13 @@ def _validate_execution_evidence_doc(finalize_data: dict[str, Any], project_dir:
     }
 
 
-def _validate_execution_evidence_code(finalize_data: dict[str, Any], project_dir: Path) -> dict[str, Any]:
+def _validate_execution_evidence_code(
+    finalize_data: dict[str, Any],
+    project_dir: Path,
+    *,
+    plan_dir: Path | None = None,
+    artifact_prefix: str = "execution_audit",
+) -> dict[str, Any]:
     findings: list[str] = []
     files_claimed = sorted(
         {
@@ -162,7 +197,12 @@ def _validate_execution_evidence_code(finalize_data: dict[str, Any], project_dir
     if phantom_claims:
         findings.append(
             "Executor claimed changed files not present in git status: "
-            + ", ".join(phantom_claims)
+            + _summarize_advisory_paths(
+                phantom_claims,
+                plan_dir=plan_dir,
+                artifact_prefix=artifact_prefix,
+                label="phantom_claims",
+            )
         )
 
     def _dir_is_claimed(diff_path: str) -> bool:
@@ -177,7 +217,12 @@ def _validate_execution_evidence_code(finalize_data: dict[str, Any], project_dir
     if unclaimed_changes:
         findings.append(
             "Git status shows changed files not claimed by any task: "
-            + ", ".join(unclaimed_changes)
+            + _summarize_advisory_paths(
+                unclaimed_changes,
+                plan_dir=plan_dir,
+                artifact_prefix=artifact_prefix,
+                label="unclaimed_changes",
+            )
         )
 
     for sense_check in finalize_data.get("sense_checks", []):

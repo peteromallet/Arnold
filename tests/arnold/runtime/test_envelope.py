@@ -8,7 +8,7 @@ import pytest
 
 from arnold.runtime.envelope import (
     RUNTIME_ENVELOPE_SCHEMA_VERSION,
-    CrossCuttingEnvelope,
+    RunEnvelope,
     RuntimeEnvelope,
 )
 from arnold.runtime.resume import (
@@ -25,11 +25,6 @@ class TestRuntimeEnvelopeShape:
         with pytest.raises(FrozenInstanceError):
             env.plugin_id = "mutated"  # type: ignore[misc]
 
-    def test_cross_cutting_envelope_is_frozen(self) -> None:
-        cc = CrossCuttingEnvelope()
-        with pytest.raises(FrozenInstanceError):
-            cc.deadline = "2030-01-01T00:00:00Z"  # type: ignore[misc]
-
     def test_schema_version_is_int_class_constant(self) -> None:
         assert isinstance(RuntimeEnvelope.schema_version, int)
         assert RuntimeEnvelope.schema_version == RUNTIME_ENVELOPE_SCHEMA_VERSION
@@ -41,39 +36,22 @@ class TestRuntimeEnvelopeShape:
         assert env.trust_state == TRUST_UNKNOWN
         assert TRUST_UNKNOWN == "unknown"
 
-    def test_no_lease_fencing_capacity_grant_on_runtime_envelope(self) -> None:
+    def test_lease_fencing_capacity_grant_present_on_cross_cutting(self) -> None:
         env = RuntimeEnvelope()
-        for forbidden in ("lease_id", "fencing_token", "capacity_grant"):
-            assert not hasattr(env, forbidden), (
-                f"RuntimeEnvelope must not carry {forbidden!r} in M2a "
-                "— that field is M3 hinge scope."
+        cc = env.cross_cutting
+        for field in ("lease_id", "fencing_token", "capacity_grant"):
+            assert hasattr(cc, field), (
+                f"RuntimeEnvelope.cross_cutting (RunEnvelope) must carry {field!r} "
+                "— M3 hinge fields are now live on the composed RunEnvelope."
             )
 
-    def test_no_lease_fencing_capacity_grant_on_cross_cutting_envelope(self) -> None:
-        cc = CrossCuttingEnvelope()
-        for forbidden in ("lease_id", "fencing_token", "capacity_grant"):
-            assert not hasattr(cc, forbidden), (
-                f"CrossCuttingEnvelope must not carry {forbidden!r} in M2a "
-                "— that field is M3 hinge scope."
+    def test_lease_fencing_capacity_grant_present_on_run_envelope(self) -> None:
+        env = RunEnvelope()
+        for field in ("lease_id", "fencing_token", "capacity_grant"):
+            assert hasattr(env, field), (
+                f"RunEnvelope must carry {field!r} "
+                "— M3 hinge fields are now live on RunEnvelope."
             )
-
-    def test_cross_cutting_fields_mirror_existing_run_envelope_shape(self) -> None:
-        # Structural-mirror assertion: the seven cross-cutting fields the
-        # brief enumerates exist on the M2a Arnold sub-record.
-        cc = CrossCuttingEnvelope()
-        for f in (
-            "taint",
-            "cost",
-            "lineage",
-            "deadline",
-            "cancellation",
-            "retry_budget",
-            "error_class",
-        ):
-            assert hasattr(cc, f), (
-                f"CrossCuttingEnvelope missing structural field {f!r}"
-            )
-
 
 class TestRuntimeEnvelopeJsonRoundTrip:
     def test_round_trip_equality_default(self) -> None:
@@ -95,14 +73,17 @@ class TestRuntimeEnvelopeJsonRoundTrip:
             ),
             trust_state=TRUST_TRUSTED,
             created_at="2026-06-02T15:32:00Z",
-            cross_cutting=CrossCuttingEnvelope(
-                taint=("sensitive", "user-data"),
-                cost={"usd": 0.12},
+            cross_cutting=RunEnvelope(
+                taint="tainted",
+                cost=0.12,
                 lineage=("plan-9", "epoch-2"),
-                deadline="2026-06-02T16:00:00Z",
-                cancellation="user-cancel",
-                retry_budget={"remaining": 3},
+                deadline=1717339200.0,
+                cancellation=True,
+                retry_budget=3,
                 error_class=None,
+                lease_id="lease-1",
+                fencing_token=42,
+                capacity_grant=5,
             ),
         )
         round_tripped = RuntimeEnvelope.from_json(env.to_json())
@@ -131,3 +112,6 @@ class TestRuntimeEnvelopeJsonRoundTrip:
         bad = '{"schema_version": 9999, "plugin_id": "p", "run_id": "r"}'
         with pytest.raises(ValueError):
             RuntimeEnvelope.from_json(bad)
+
+
+

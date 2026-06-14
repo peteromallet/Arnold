@@ -1,30 +1,9 @@
-"""SDK-owned run outcome vocabulary and reducer mappings."""
+"""Compatibility shim for Megaplan batch-outcome projections."""
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from enum import StrEnum
-
+from arnold.runtime.outcome import RunOutcome, RunResultMetadata
 from arnold.pipelines.megaplan.execute._binding.reducer import BatchOutcome
-
-
-class RunOutcome(StrEnum):
-    """Domain-neutral run outcome vocabulary shared by control-plane callers."""
-
-    SUCCEEDED = "succeeded"
-    FAILED = "failed"
-    ESCALATED = "escalated"
-    BLOCKED = "blocked"
-    AWAITING_HUMAN = "awaiting_human"
-
-
-@dataclass(frozen=True)
-class RunResultMetadata:
-    """Structured metadata attached to a classified run outcome."""
-
-    outcome: RunOutcome
-    blocking_reason: str | None = None
-    source: str | None = None
 
 
 _BATCH_OUTCOME_METADATA: dict[BatchOutcome, RunResultMetadata] = {

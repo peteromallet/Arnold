@@ -13,12 +13,12 @@ from arnold.runtime.operations import (
     OperationRequest,
     OperationResult,
 )
-from arnold.pipelines.megaplan.control_interface import (
+from arnold.control.interface import (
     ControlTransition,
     ControlTransitionRequest,
     RunStateView,
-    apply_transition,
 )
+from arnold.pipelines.megaplan.control_interface import apply_transition
 from arnold.pipelines.megaplan.planning.control_binding import (
     planning_control_binding,
     planning_run_state_view,
@@ -28,7 +28,7 @@ from arnold.pipelines.megaplan.types import CliError
 
 SUPPORTED_OPERATIONS = frozenset(
     {
-        OperationKind.RUN_PHASE,
+        OperationKind.EXECUTE,
         OperationKind.STATUS_PROJECTION,
         OperationKind.RESUME,
         OperationKind.OVERRIDE_LIST,
@@ -166,7 +166,7 @@ class PlanningOperationRegistry(OperationRegistry):
 
     def dispatch(self, request: OperationRequest) -> OperationResult:
         handler = {
-            OperationKind.RUN_PHASE: self._dispatch_run_phase,
+            OperationKind.EXECUTE: self._dispatch_run_phase,
             OperationKind.STATUS_PROJECTION: self._dispatch_status_projection,
             OperationKind.RESUME: self._dispatch_resume,
             OperationKind.OVERRIDE_LIST: self._dispatch_override_list,

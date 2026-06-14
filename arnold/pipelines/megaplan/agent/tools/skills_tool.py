@@ -77,7 +77,7 @@ from typing import Dict, Any, List, Optional, Set, Tuple
 
 import yaml
 from hermes_cli.config import load_env, _ENV_VAR_NAME_RE
-from tools.registry import registry
+from arnold.agent.tools.registry import registry
 
 logger = logging.getLogger(__name__)
 

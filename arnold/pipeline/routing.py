@@ -33,7 +33,7 @@ def resolve_edge(
     verdict: "PipelineVerdict | None",
     edges: "tuple[Edge, ...]",
 ) -> "Edge | None":
-    """Resolve the next edge using the 4-tier dispatch priority.
+    """Resolve the next edge using the 4-priority dispatch.
 
     Dispatch order:
 
@@ -78,11 +78,11 @@ def resolve_edge(
             stage's declared vocabulary, or when no matching edge is
             found for a non-halt dispatch signal.
     """
-    # ── Tier 1: halt short-circuit ──────────────────────────────────
+    # ── Priority 1: halt short-circuit ──────────────────────────────
     if result.next == "halt":
         return None
 
-    # ── Tier 2: override dispatch ────────────────────────────────────
+    # ── Priority 2: override dispatch ────────────────────────────────
     if verdict is not None and verdict.override is not None:
         override_action = verdict.override
 
@@ -107,7 +107,7 @@ def resolve_edge(
             f"label={target_label!r} was found"
         )
 
-    # ── Tier 3: decision dispatch ────────────────────────────────────
+    # ── Priority 3: decision dispatch ────────────────────────────────
     if verdict is not None and verdict.recommendation is not None:
         decision_key = verdict.recommendation
 
@@ -131,7 +131,7 @@ def resolve_edge(
             f"with label={decision_key!r} was found"
         )
 
-    # ── Tier 4: normal label match ───────────────────────────────────
+    # ── Priority 4: normal label match ───────────────────────────────
     for edge in edges:
         if edge.kind == "normal" and edge.label == result.next:
             return edge
