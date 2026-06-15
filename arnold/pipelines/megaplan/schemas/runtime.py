@@ -1147,16 +1147,25 @@ def _preserve_explicit_required(path: tuple[str, ...]) -> bool:
     )
 
 
+def _is_object_schema_type(value: Any) -> bool:
+    return value == "object" or (isinstance(value, list) and "object" in value)
+
+
 def strict_schema(schema: Any, _path: tuple[str, ...] = ()) -> Any:
     if isinstance(schema, dict):
         updated = {key: strict_schema(value, _path + (key,)) for key, value in schema.items()}
         preserve_explicit_required = bool(updated.pop("x-preserve-explicit-required", False))
-        if updated.get("type") == "object":
+        if _is_object_schema_type(updated.get("type")):
             updated.setdefault("additionalProperties", False)
-            if "properties" in updated and not (
-                preserve_explicit_required or _preserve_explicit_required(_path)
-            ):
-                updated["required"] = list(updated["properties"].keys())
+            if "properties" in updated:
+                property_keys = list(updated["properties"].keys())
+                if preserve_explicit_required or _preserve_explicit_required(_path):
+                    required = list(updated.get("required", []))
+                    updated["required"] = required + [
+                        key for key in property_keys if key not in required
+                    ]
+                else:
+                    updated["required"] = property_keys
         return updated
     if isinstance(schema, list):
         return [strict_schema(item, _path) for item in schema]
