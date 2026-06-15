@@ -1,0 +1,51 @@
+# Scenario: create_poem_panel
+# Brief: Create a new built-in megaplan pipeline named `poem-panel`.
+# The pipeline uses ONLY existing primitive kinds: agent, panel, gate, human_gate.
+# Constraints: no new step kinds, no changes to megaplan/cli.py.
+name: "create_poem_panel"
+tier: 2
+description: >
+  Create a new megaplan pipeline named `poem-panel` that takes a topic string,
+  generates a draft poem, sends it to three critics (formalist, emotional
+  reader, contrarian), synthesizes feedback, revises, and loops until a
+  quality gate passes or 5 iterations elapse. Use ONLY existing pipeline
+  primitive kinds (agent, panel, gate, human_gate). Land under
+  `megaplan/pipelines/poem-panel/`. Smoke-run after creation.
+mode: structural
+tags:
+  - pipeline
+  - poem-panel
+  - creative
+  - structural
+
+agents:
+  - id: "hermes-v4-flash"
+    model: "deepseek:deepseek-v4-flash"
+    dispatcher: "deepseek-subagent"
+    config:
+      model: "deepseek:deepseek-v4-flash"
+      timeout_sec: 1800
+
+budget: {}
+
+assessment:
+  enforced:
+    - "actor MUST plan the pipeline through megaplan (megaplan plan / megaplan init)"
+    - "actor MUST use ONLY existing pipeline primitive kinds: agent, panel, gate, human_gate"
+    - "actor MUST NOT reference iterate_until_consensus, dynamic_fanout, weighted_vote, panel_from_artifact, or paired_round"
+    - "actor MUST NOT add new step kinds or modify megaplan/cli.py"
+    - "actor MUST land the pipeline under megaplan/pipelines/poem-panel/"
+    - "deliverable_shape_required: report.md must exist with ≥ 2 numbered sections"
+    - "actor MUST NOT bypass megaplan CLI"
+  graded:
+    - "does `megaplan run --list` show `poem-panel`?"
+    - "does `load_pipeline('poem-panel')` succeed?"
+    - "does the smoke run (`megaplan run poem-panel --topic 'tide pools'`) produce a final poem?"
+    - "does the pipeline use three distinct critic perspectives (formalist, emotional reader, contrarian)?"
+    - "does the pipeline include a quality gate?"
+    - "did the megaplan run reach state `done` or `reviewed`?"
+  observed:
+    - "which existing pipeline primitives did the actor select?"
+    - "how did the actor structure the critic panel?"
+    - "did the actor include a maximum iteration cap (≤ 5)?"
+    - "did the actor encounter any friction signals?"
