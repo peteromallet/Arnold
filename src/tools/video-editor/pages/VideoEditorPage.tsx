@@ -775,6 +775,14 @@ export default function VideoEditorPage() {
                 <CardTitle>Unable to reach the local bridge</CardTitle>
                 <CardDescription>{bridgeHealth.error.message}</CardDescription>
               </CardHeader>
+              <CardContent>
+                <p className="text-sm text-muted-foreground">
+                  Make sure Astrid is running locally:
+                </p>
+                <code className="mt-2 block rounded bg-muted px-2 py-1 text-xs">
+                  cd ../Astrid && astrid serve --port 17333
+                </code>
+              </CardContent>
             </Card>
           </div>
         ) : bridgeProjects.error ? (
@@ -784,6 +792,14 @@ export default function VideoEditorPage() {
                 <CardTitle>Unable to reach the local bridge</CardTitle>
                 <CardDescription>{bridgeProjects.error.message}</CardDescription>
               </CardHeader>
+              <CardContent>
+                <p className="text-sm text-muted-foreground">
+                  Make sure Astrid is running locally:
+                </p>
+                <code className="mt-2 block rounded bg-muted px-2 py-1 text-xs">
+                  cd ../Astrid && astrid serve --port 17333
+                </code>
+              </CardContent>
             </Card>
           </div>
         ) : bridgeTimelines.error ? (
