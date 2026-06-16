@@ -50,17 +50,42 @@ def _check_credential(env_var: str) -> bool:
 
 def _resolve_concrete_slot_spec(spec: str, *, vendor: str | None = None) -> str:
     """Resolve symbolic premium placeholders to concrete specs for preflight."""
-    from arnold.pipelines.megaplan.profiles import effective_premium_vendor
+    from arnold.pipelines.megaplan.profiles import (
+        DIRECT_DEEPSEEK_V4_PRO_SPEC,
+        FIREWORKS_DEEPSEEK_V4_PRO_SPEC,
+        effective_premium_vendor,
+    )
     from arnold.pipelines.megaplan.types import (
         format_agent_spec,
         is_premium_placeholder_spec,
+        parse_agent_spec,
         resolve_premium_placeholder_spec,
     )
 
     if not is_premium_placeholder_spec(spec):
         return spec
     resolved_vendor = effective_premium_vendor(argparse.Namespace(vendor=vendor))
-    return format_agent_spec(resolve_premium_placeholder_spec(spec, resolved_vendor))
+    concrete_spec = format_agent_spec(resolve_premium_placeholder_spec(spec, resolved_vendor))
+    if vendor is not None:
+        return concrete_spec
+    parsed = parse_agent_spec(concrete_spec)
+    if parsed.agent not in {"claude", "codex"}:
+        return concrete_spec
+
+    current_env = "ANTHROPIC_API_KEY" if parsed.agent == "claude" else "OPENAI_API_KEY"
+    if _check_credential(current_env):
+        return concrete_spec
+
+    other_vendor = "codex" if parsed.agent == "claude" else "claude"
+    other_env = "OPENAI_API_KEY" if other_vendor == "codex" else "ANTHROPIC_API_KEY"
+    if _check_credential(other_env):
+        return format_agent_spec(resolve_premium_placeholder_spec(spec, other_vendor))
+
+    if _check_credential("DEEPSEEK_API_KEY"):
+        return DIRECT_DEEPSEEK_V4_PRO_SPEC
+    if _check_credential("FIREWORKS_API_KEY"):
+        return FIREWORKS_DEEPSEEK_V4_PRO_SPEC
+    return concrete_spec
 
 
 # Slots that are opt-in / non-blocking and so must NOT hard-fail preflight.
