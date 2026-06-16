@@ -69,10 +69,6 @@ from arnold.pipelines.megaplan.orchestration.gate_checks import (
 from arnold.pipelines.megaplan.orchestration.gate_signals import build_gate_signals
 from arnold.pipelines.megaplan.blocker_recovery import command_blocker_details, evaluate_blocker_recovery
 from arnold.pipelines.megaplan.orchestration.phase_result import read_phase_result
-from arnold.pipelines.megaplan.runtime.execution_environment import (
-    append_engine_overlap_waiver,
-    resolve_execution_environment,
-)
 
 
 def _write_gate_json(plan_dir: Path, payload: dict[str, Any]) -> str:
@@ -724,6 +720,11 @@ def _replace_phase_model(
         phase_models.append(f"{phase}={new_spec}")
     next_config = dict(config) if isinstance(config, Mapping) else {}
     next_config["phase_model"] = phase_models
+    tier_models = next_config.get("tier_models")
+    if isinstance(tier_models, Mapping) and phase in tier_models:
+        next_tier_models = dict(tier_models)
+        next_tier_models.pop(phase, None)
+        next_config["tier_models"] = next_tier_models
     return next_config, previous_spec
 
 
@@ -950,116 +951,6 @@ class PlanningControlBinding:
                 state_deltas=(
                     _replace_delta(state, "current_state", STATE_GATED),
                     _replace_delta(state, "last_gate", {}),
-                    _replace_delta(state, "meta", next_meta),
-                ),
-            )
-
-        if action == "waive-engine-overlap":
-            reason = transition.payload.get("reason")
-            if not isinstance(reason, str) or not reason.strip():
-                raise CliError("invalid_args", "override waive-engine-overlap requires --reason")
-            timestamp = now_utc()
-            env = resolve_execution_environment(root=_root_dir(state, transition), state=state)  # type: ignore[arg-type]
-            current_meta = state.get("meta")
-            next_meta, waiver = append_engine_overlap_waiver(
-                dict(current_meta) if isinstance(current_meta, Mapping) else {},
-                env,
-                reason=reason,
-                phase=transition.payload.get("phase") if isinstance(transition.payload.get("phase"), str) else None,
-                source=transition.payload.get("source") if isinstance(transition.payload.get("source"), str) else "user",
-                timestamp=timestamp,
-                expires_after_runs=(
-                    transition.payload.get("expires_after_runs")
-                    if isinstance(transition.payload.get("expires_after_runs"), int)
-                    else None
-                ),
-                target_root=(
-                    transition.payload.get("target_root")
-                    if isinstance(transition.payload.get("target_root"), str)
-                    else None
-                ),
-            )
-            overrides = list(next_meta.get("overrides", []))
-            overrides.append(
-                {
-                    "action": "waive-engine-overlap",
-                    "timestamp": timestamp,
-                    "reason": reason,
-                    "phase": transition.payload.get("phase"),
-                    "waiver_id": waiver["id"],
-                    "scope": waiver["scope"],
-                    "expires_after_runs": waiver.get("expires_after_runs"),
-                }
-            )
-            next_meta["overrides"] = overrides
-            return ControlTransitionResult(
-                accepted=True,
-                mutated=True,
-                reason="waive-engine-overlap",
-                artifacts={"waiver_id": waiver["id"], "waiver": waiver},
-                state_deltas=(
-                    _replace_delta(state, "meta", next_meta),
-                ),
-            )
-
-        if action == "refresh-engine-pin":
-            reason = transition.payload.get("reason")
-            if not isinstance(reason, str) or not reason.strip():
-                raise CliError("invalid_args", "override refresh-engine-pin requires --reason")
-            timestamp = now_utc()
-            env = resolve_execution_environment(root=_root_dir(state, transition), state=state)  # type: ignore[arg-type]
-            current_meta = state.get("meta")
-            next_meta: dict[str, Any] = dict(current_meta) if isinstance(current_meta, Mapping) else {}
-            previous = next_meta.get("engine_isolation")
-            previous_identity = previous if isinstance(previous, Mapping) else {}
-            refresh_id = f"engine-pin-refresh-{timestamp.replace(':', '').replace('.', '-')}"
-            next_meta["engine_isolation"] = {
-                "schema_version": 1,
-                "pinned": True,
-                "created_phase": previous_identity.get("created_phase", "override:refresh-engine-pin"),
-                "last_observed_phase": "override:refresh-engine-pin",
-                **env.to_dict(),
-            }
-            refreshes = list(next_meta.get("engine_pin_refreshes") or [])
-            refreshes.append(
-                {
-                    "id": refresh_id,
-                    "action": "refresh-engine-pin",
-                    "timestamp": timestamp,
-                    "reason": reason,
-                    "phase": transition.payload.get("phase"),
-                    "previous": {
-                        "engine_root": previous_identity.get("engine_root"),
-                        "engine_commit": previous_identity.get("engine_commit"),
-                        "engine_signature": previous_identity.get("engine_signature"),
-                        "engine_dirty": previous_identity.get("engine_dirty"),
-                    },
-                    "current": {
-                        "engine_root": str(env.engine_root),
-                        "engine_commit": env.engine_commit,
-                        "engine_signature": env.engine_signature,
-                        "engine_dirty": env.engine_dirty,
-                    },
-                }
-            )
-            next_meta["engine_pin_refreshes"] = refreshes
-            overrides = list(next_meta.get("overrides", []))
-            overrides.append(
-                {
-                    "action": "refresh-engine-pin",
-                    "timestamp": timestamp,
-                    "reason": reason,
-                    "phase": transition.payload.get("phase"),
-                    "refresh_id": refresh_id,
-                }
-            )
-            next_meta["overrides"] = overrides
-            return ControlTransitionResult(
-                accepted=True,
-                mutated=True,
-                reason="refresh-engine-pin",
-                artifacts={"refresh_id": refresh_id},
-                state_deltas=(
                     _replace_delta(state, "meta", next_meta),
                 ),
             )

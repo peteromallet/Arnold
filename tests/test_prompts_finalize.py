@@ -83,6 +83,14 @@ def test_finalize_has_no_hermes_file_toolset() -> None:
 
 def test_prep_related_hermes_toolsets_stay_read_only() -> None:
     for phase in ("prep", "prep-triage", "prep-research", "prep-distill"):
-        assert _toolsets_for_phase(phase) == ["file-readonly", "web"]
+        assert _toolsets_for_phase(phase) == ["file-readonly"]
 
+    assert _toolsets_for_phase("revise") == ["file"]
+
+
+def test_hermes_web_toolsets_are_explicit_opt_in(monkeypatch) -> None:
+    monkeypatch.setenv("MEGAPLAN_HERMES_WEB_TOOLS", "1")
+
+    assert _toolsets_for_phase("prep") == ["file-readonly", "web"]
     assert _toolsets_for_phase("revise") == ["file", "web"]
+    assert _toolsets_for_phase("execute") == ["terminal", "file", "web"]

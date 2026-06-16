@@ -1036,10 +1036,21 @@ def _plan_terminal_completion_is_authoritative(root: Path, plan_name: str) -> tu
 def _finalize_records_missing_authority_fields(
     task_records: list[dict[str, Any]],
 ) -> list[str]:
+    from arnold.pipelines.megaplan.orchestration.rubber_stamp import is_rubber_stamp
+
     missing: list[str] = []
     for task in task_records:
         task_id = str(task.get("task_id") or task.get("id") or "?")
         if any(task.get(field) for field in ("files_changed", "commands_run", "evidence_files", "sections_written", "evidence")):
+            continue
+        kind = task.get("kind")
+        notes = task.get("executor_notes")
+        if (
+            kind in {"audit", "research"}
+            and isinstance(notes, str)
+            and len(notes.strip()) >= 100
+            and not is_rubber_stamp(notes, strict=True)
+        ):
             continue
         if task.get("status") in {"waived", "not_applicable"}:
             continue
@@ -1359,6 +1370,12 @@ def _handle_outcome(
     if status == "awaiting_human":
         writer(
             f"[chain] plan {outcome.plan} paused awaiting human action: "
+            f"{outcome.reason}\n"
+        )
+        return "stop"
+    if status == "infrastructure_error":
+        writer(
+            f"[chain] plan {outcome.plan} stopped on infrastructure error: "
             f"{outcome.reason}\n"
         )
         return "stop"

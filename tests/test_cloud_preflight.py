@@ -99,6 +99,7 @@ def test_cloud_chain_no_profile_claude_vendor_requires_only_anthropic(
     monkeypatch,
 ) -> None:
     monkeypatch.setattr("arnold.pipelines.megaplan.profiles._resolve_default_vendor", lambda: "codex")
+    monkeypatch.setattr("arnold.pipelines.megaplan.profiles.policy._resolve_default_vendor", lambda: "codex")
     chain_spec = ChainSpec(
         milestones=[MilestoneSpec(label="m1", idea="idea.txt", vendor="claude")],
     )
@@ -119,6 +120,7 @@ def test_cloud_chain_default_fallback_resolves_symbolic_defaults_to_config_vendo
     monkeypatch,
 ) -> None:
     monkeypatch.setattr("arnold.pipelines.megaplan.profiles._resolve_default_vendor", lambda: "codex")
+    monkeypatch.setattr("arnold.pipelines.megaplan.profiles.policy._resolve_default_vendor", lambda: "codex")
     chain_spec = ChainSpec(
         milestones=[MilestoneSpec(label="m1", idea="idea.txt")],
     )
@@ -183,6 +185,28 @@ def test_cloud_chain_dependency_resolution_reports_direct_deepseek_env_hint() ->
         "env_hints": ["DEEPSEEK_API_KEY"],
     } in result["provider_requirements"]
     assert "DEEPSEEK_API_KEY" in result["env_hints"]
+
+
+def test_cloud_chain_dependency_resolution_reports_mimo_env_hint() -> None:
+    chain_spec = ChainSpec(
+        milestones=[
+            MilestoneSpec(
+                label="m1",
+                idea="idea.txt",
+                phase_model=["execute=hermes:mimo:mimo-v2.5-pro-ultraspeed"],
+            )
+        ],
+    )
+
+    result = resolve_cloud_chain_runtime_dependencies(chain_spec)
+
+    assert {
+        "agent": "hermes",
+        "provider": "mimo",
+        "model": "mimo-v2.5-pro-ultraspeed",
+        "env_hints": ["MIMO_API_KEY"],
+    } in result["provider_requirements"]
+    assert "MIMO_API_KEY" in result["env_hints"]
 
 
 def test_cloud_chain_codex_vendor_premium_profile_requires_only_openai(

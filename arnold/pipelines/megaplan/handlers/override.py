@@ -42,6 +42,7 @@ from arnold.pipelines.megaplan.runtime.execution_environment import (
 )
 from arnold.pipelines.megaplan._core import (
     add_or_increment_debt,
+    append_history,
     extract_subsystem_tag,
     find_command,
     infer_next_steps,
@@ -53,6 +54,7 @@ from arnold.pipelines.megaplan._core import (
     read_json,
     save_debt_registry,
     save_state_merge_meta,
+    sha256_file,
     unresolved_significant_flags,
     workflow_next,
 )
@@ -67,12 +69,12 @@ from arnold.pipelines.megaplan.orchestration.gate_checks import (
     run_gate_checks,
 )
 from arnold.pipelines.megaplan.orchestration.gate_signals import build_gate_signals
-from arnold.pipelines.megaplan.orchestration.phase_result import read_phase_result
-from arnold.pipelines.megaplan.runtime.execution_environment import (
-    append_engine_overlap_waiver,
-    resolve_execution_environment,
+from arnold.pipelines.megaplan.orchestration.phase_result import (
+    ExitKind,
+    PhaseResult,
+    atomic_write_phase_result,
+    read_phase_result,
 )
-
 from .shared import _append_to_meta, _attach_next_step_runtime, _warn_best_effort_emit_failure, _write_gate_json
 
 
@@ -82,8 +84,6 @@ _ROUTED_OVERRIDE_ACTIONS = frozenset(
         "add-note",
         "abort",
         "force-proceed",
-        "waive-engine-overlap",
-        "refresh-engine-pin",
         "recover-blocked",
         "replan",
         "resume-clarify",
@@ -154,48 +154,6 @@ def _routed_override_response(
                 "debt_entries_added",
                 latest_override.get("debt_entries_added", 0),
             ),
-        }
-        _attach_next_step_runtime(response)
-        return response
-    if action == "waive-engine-overlap":
-        meta = state.get("meta")
-        overrides = meta.get("overrides", []) if isinstance(meta, dict) else []
-        latest_override = next(
-            (
-                entry
-                for entry in reversed(overrides)
-                if isinstance(entry, dict) and entry.get("action") == "waive-engine-overlap"
-            ),
-            {},
-        )
-        response = {
-            "success": True,
-            "step": "override",
-            "summary": "Recorded engine-overlap waiver.",
-            "next_step": next_steps[0] if next_steps else None,
-            "state": state["current_state"],
-            "waiver_id": latest_override.get("waiver_id"),
-        }
-        _attach_next_step_runtime(response)
-        return response
-    if action == "refresh-engine-pin":
-        meta = state.get("meta")
-        overrides = meta.get("overrides", []) if isinstance(meta, dict) else []
-        latest_override = next(
-            (
-                entry
-                for entry in reversed(overrides)
-                if isinstance(entry, dict) and entry.get("action") == "refresh-engine-pin"
-            ),
-            {},
-        )
-        response = {
-            "success": True,
-            "step": "override",
-            "summary": "Refreshed pinned Megaplan engine identity.",
-            "next_step": next_steps[0] if next_steps else None,
-            "state": state["current_state"],
-            "refresh_id": latest_override.get("refresh_id"),
         }
         _attach_next_step_runtime(response)
         return response
@@ -378,28 +336,6 @@ def _emit_routed_override_events(
                 payload={"action": "force-proceed", "reason": args.reason},
             )
             return
-        if action == "waive-engine-overlap":
-            meta = state.get("meta")
-            overrides = meta.get("overrides", []) if isinstance(meta, dict) else []
-            latest_override = next(
-                (
-                    entry
-                    for entry in reversed(overrides)
-                    if isinstance(entry, dict) and entry.get("action") == "waive-engine-overlap"
-                ),
-                {},
-            )
-            emit(
-                EventKind.OVERRIDE_APPLIED,
-                plan_dir=plan_dir,
-                payload={
-                    "action": "waive-engine-overlap",
-                    "reason": latest_override.get("reason"),
-                    "waiver_id": latest_override.get("waiver_id"),
-                    "phase": latest_override.get("phase"),
-                },
-            )
-            return
         if action == "set-robustness":
             meta = state.get("meta")
             overrides = meta.get("overrides", []) if isinstance(meta, dict) else []
@@ -473,14 +409,6 @@ def _emit_routed_override_events(
             _warn_best_effort_emit_failure(
                 "M3A_WARN_EMIT_OVERRIDE_FORCE_PROCEED",
                 action="override-force-proceed",
-                plan_dir=plan_dir,
-                event_kind="override_applied",
-            )
-            return
-        if action == "waive-engine-overlap":
-            _warn_best_effort_emit_failure(
-                "M3A_WARN_EMIT_OVERRIDE_ENGINE_OVERLAP_WAIVER",
-                action="override-waive-engine-overlap",
                 plan_dir=plan_dir,
                 event_kind="override_applied",
             )
@@ -767,6 +695,187 @@ def _override_abort(
     }
 
 
+def _execution_adoption_summary(plan_dir: Path) -> dict[str, Any]:
+    execution_path = plan_dir / "execution.json"
+    finalize_path = plan_dir / "finalize.json"
+    if not execution_path.exists():
+        raise CliError(
+            "incomplete_execution_artifact",
+            "adopt-execution requires execution.json to exist",
+            extra={"missing": ["execution.json"]},
+        )
+    if not finalize_path.exists():
+        raise CliError(
+            "incomplete_execution_artifact",
+            "adopt-execution requires finalize.json to exist",
+            extra={"missing": ["finalize.json"]},
+        )
+
+    execution = read_json(execution_path)
+    finalize = read_json(finalize_path)
+    if not isinstance(execution, dict) or not isinstance(finalize, dict):
+        raise CliError(
+            "incomplete_execution_artifact",
+            "adopt-execution requires object execution.json and finalize.json payloads",
+        )
+
+    finalize_tasks = [task for task in finalize.get("tasks", []) if isinstance(task, dict)]
+    task_ids = {
+        str(task.get("id"))
+        for task in finalize_tasks
+        if isinstance(task.get("id"), str) and task.get("id")
+    }
+    updates = [
+        update
+        for update in execution.get("task_updates", [])
+        if isinstance(update, dict)
+    ]
+    updates_by_id: dict[str, dict[str, Any]] = {}
+    blocked_task_ids: set[str] = set()
+    for update in updates:
+        task_id = update.get("task_id") or update.get("id")
+        if not isinstance(task_id, str) or not task_id:
+            continue
+        updates_by_id[task_id] = update
+        if update.get("status") == "blocked":
+            blocked_task_ids.add(task_id)
+
+    missing_task_updates = sorted(task_ids - set(updates_by_id))
+    incomplete_task_updates = sorted(
+        task_id
+        for task_id in task_ids & set(updates_by_id)
+        if updates_by_id[task_id].get("status") != "done"
+    )
+    incomplete_finalize_tasks = sorted(
+        str(task.get("id"))
+        for task in finalize_tasks
+        if isinstance(task.get("id"), str) and task.get("status") != "done"
+    )
+    blocked_task_ids.update(
+        str(task.get("id"))
+        for task in finalize_tasks
+        if isinstance(task.get("id"), str) and task.get("status") == "blocked"
+    )
+
+    finalize_checks = [
+        check for check in finalize.get("sense_checks", []) if isinstance(check, dict)
+    ]
+    sense_check_ids = {
+        str(check.get("id"))
+        for check in finalize_checks
+        if isinstance(check.get("id"), str) and check.get("id")
+    }
+    ack_ids: set[str] = set()
+    for ack in execution.get("sense_check_acknowledgments", []):
+        if not isinstance(ack, dict):
+            continue
+        check_id = ack.get("sense_check_id") or ack.get("id")
+        if isinstance(check_id, str) and check_id:
+            ack_ids.add(check_id)
+    missing_sense_check_acknowledgments = sorted(sense_check_ids - ack_ids)
+
+    failures = {
+        "missing_task_updates": missing_task_updates,
+        "incomplete_task_updates": incomplete_task_updates,
+        "incomplete_finalize_tasks": incomplete_finalize_tasks,
+        "blocked_task_ids": sorted(blocked_task_ids),
+        "missing_sense_check_acknowledgments": missing_sense_check_acknowledgments,
+    }
+    failures = {key: value for key, value in failures.items() if value}
+    if failures:
+        raise CliError(
+            "incomplete_execution_artifact",
+            "adopt-execution refused because execution.json is not complete",
+            extra=failures,
+        )
+
+    return {
+        "task_count": len(task_ids),
+        "sense_check_count": len(sense_check_ids),
+        "execution_hash": sha256_file(execution_path),
+        "finalize_hash": sha256_file(finalize_path),
+    }
+
+
+def _override_adopt_execution(
+    root: Path, plan_dir: Path, state: PlanState, args: argparse.Namespace
+) -> StepResponse:
+    previous_state = state["current_state"]
+    summary = _execution_adoption_summary(plan_dir)
+    reason = args.reason or "Adopted complete execution artifact after post-worker recovery."
+    timestamp = now_utc()
+
+    state["current_state"] = STATE_EXECUTED
+    state.pop("resume_cursor", None)
+    state.pop("active_step", None)
+    adoption_record = {
+        "action": "adopt-execution",
+        "timestamp": timestamp,
+        "reason": reason,
+        "from_state": previous_state,
+        "to_state": STATE_EXECUTED,
+        **summary,
+    }
+    _append_to_meta(state, "overrides", adoption_record)
+    append_history(
+        state,
+        {
+            "step": "execute",
+            "timestamp": timestamp,
+            "duration_ms": 0,
+            "cost_usd": 0.0,
+            "result": "success",
+            "output_file": "execution.json",
+            "artifact_hash": summary["execution_hash"],
+            "finalize_hash": summary["finalize_hash"],
+            "message": f"adopted complete execution artifact via override: {reason}",
+        },
+    )
+    save_state_merge_meta(plan_dir, state)
+
+    existing_phase_result = read_phase_result(plan_dir)
+    invocation_id = (
+        existing_phase_result.invocation_id
+        if existing_phase_result is not None and existing_phase_result.phase == "execute"
+        else f"adopt-execution:{timestamp}"
+    )
+    artifacts = ["execution.json", "finalize.json"]
+    for optional_name in ("execution_audit.json", "final.md"):
+        if (plan_dir / optional_name).exists():
+            artifacts.append(optional_name)
+    atomic_write_phase_result(
+        plan_dir,
+        PhaseResult(
+            phase="execute",
+            invocation_id=invocation_id,
+            exit_kind=ExitKind.success.value,
+            artifacts_written=tuple(artifacts),
+            cli_provenance={
+                "command": "override adopt-execution",
+                "reason": reason,
+                "previous_state": previous_state,
+                "adopted": True,
+                **summary,
+            },
+        ),
+    )
+
+    response: StepResponse = {
+        "success": True,
+        "step": "override",
+        "action": "adopt-execution",
+        "summary": (
+            "Adopted complete execution.json and promoted plan state to executed "
+            f"({summary['task_count']} tasks, {summary['sense_check_count']} sense checks)."
+        ),
+        "state": STATE_EXECUTED,
+        "previous_state": previous_state,
+        "next_step": "review",
+    }
+    _attach_next_step_runtime(response)
+    return response
+
+
 def _override_force_proceed(
     root: Path, plan_dir: Path, state: PlanState, args: argparse.Namespace
 ) -> StepResponse:
@@ -906,142 +1015,6 @@ def _override_force_proceed(
         "state": STATE_GATED,
         "orchestrator_guidance": gate["orchestrator_guidance"],
         "debt_entries_added": len(unresolved_flags),
-    }
-    _attach_next_step_runtime(response)
-    return response
-
-
-def _override_waive_engine_overlap(
-    root: Path, plan_dir: Path, state: PlanState, args: argparse.Namespace
-) -> StepResponse:
-    reason = getattr(args, "reason", None)
-    if not isinstance(reason, str) or not reason.strip():
-        raise CliError("invalid_args", "override waive-engine-overlap requires --reason")
-    timestamp = now_utc()
-    env = resolve_execution_environment(root=root, state=state)
-    meta = state.get("meta")
-    next_meta, waiver = append_engine_overlap_waiver(
-        meta if isinstance(meta, dict) else {},
-        env,
-        reason=reason,
-        phase=getattr(args, "phase", None),
-        source=getattr(args, "source", None) or "user",
-        timestamp=timestamp,
-        expires_after_runs=getattr(args, "expires_after_runs", None),
-        target_root=getattr(args, "target_root", None),
-    )
-    state["meta"] = next_meta
-    _append_to_meta(
-        state,
-        "overrides",
-        {
-            "action": "waive-engine-overlap",
-            "timestamp": timestamp,
-            "reason": reason,
-            "phase": getattr(args, "phase", None),
-            "waiver_id": waiver["id"],
-            "scope": waiver["scope"],
-            "expires_after_runs": waiver.get("expires_after_runs"),
-        },
-    )
-    save_state_merge_meta(plan_dir, state)
-    try:
-        from arnold.pipelines.megaplan.observability.events import emit, EventKind
-
-        emit(
-            EventKind.OVERRIDE_APPLIED,
-            plan_dir=plan_dir,
-            payload={
-                "action": "waive-engine-overlap",
-                "reason": reason,
-                "waiver_id": waiver["id"],
-                "phase": getattr(args, "phase", None),
-            },
-        )
-    except Exception:
-        _warn_best_effort_emit_failure(
-            "M3A_WARN_EMIT_OVERRIDE_ENGINE_OVERLAP_WAIVER",
-            action="override-waive-engine-overlap",
-            plan_dir=plan_dir,
-            event_kind="override_applied",
-        )
-    next_steps = infer_next_steps(state)
-    response: StepResponse = {
-        "success": True,
-        "step": "override",
-        "summary": "Recorded engine-overlap waiver.",
-        "next_step": next_steps[0] if next_steps else None,
-        "state": state["current_state"],
-        "waiver_id": waiver["id"],
-    }
-    _attach_next_step_runtime(response)
-    return response
-
-
-def _override_refresh_engine_pin(
-    root: Path, plan_dir: Path, state: PlanState, args: argparse.Namespace
-) -> StepResponse:
-    reason = getattr(args, "reason", None)
-    if not isinstance(reason, str) or not reason.strip():
-        raise CliError("invalid_args", "override refresh-engine-pin requires --reason")
-    timestamp = now_utc()
-    env = resolve_execution_environment(root=root, state=state)
-    meta = state.get("meta")
-    next_meta: dict[str, Any] = dict(meta) if isinstance(meta, dict) else {}
-    previous = next_meta.get("engine_isolation")
-    previous_identity = previous if isinstance(previous, dict) else {}
-    refresh_id = f"engine-pin-refresh-{timestamp.replace(':', '').replace('.', '-')}"
-    next_meta["engine_isolation"] = {
-        "schema_version": 1,
-        "pinned": True,
-        "created_phase": previous_identity.get("created_phase", f"override:refresh-engine-pin"),
-        "last_observed_phase": "override:refresh-engine-pin",
-        **env.to_dict(),
-    }
-    refreshes = list(next_meta.get("engine_pin_refreshes") or [])
-    refreshes.append(
-        {
-            "id": refresh_id,
-            "action": "refresh-engine-pin",
-            "timestamp": timestamp,
-            "reason": reason,
-            "phase": getattr(args, "phase", None),
-            "previous": {
-                "engine_root": previous_identity.get("engine_root"),
-                "engine_commit": previous_identity.get("engine_commit"),
-                "engine_signature": previous_identity.get("engine_signature"),
-                "engine_dirty": previous_identity.get("engine_dirty"),
-            },
-            "current": {
-                "engine_root": str(env.engine_root),
-                "engine_commit": env.engine_commit,
-                "engine_signature": env.engine_signature,
-                "engine_dirty": env.engine_dirty,
-            },
-        }
-    )
-    next_meta["engine_pin_refreshes"] = refreshes
-    state["meta"] = next_meta
-    _append_to_meta(
-        state,
-        "overrides",
-        {
-            "action": "refresh-engine-pin",
-            "timestamp": timestamp,
-            "reason": reason,
-            "phase": getattr(args, "phase", None),
-            "refresh_id": refresh_id,
-        },
-    )
-    save_state_merge_meta(plan_dir, state)
-    next_steps = infer_next_steps(state)
-    response: StepResponse = {
-        "success": True,
-        "step": "override",
-        "summary": "Refreshed pinned Megaplan engine identity.",
-        "next_step": next_steps[0] if next_steps else None,
-        "state": state["current_state"],
-        "refresh_id": refresh_id,
     }
     _attach_next_step_runtime(response)
     return response
@@ -1499,6 +1472,11 @@ def _override_set_model(root: Path, plan_dir: Path, state: PlanState, args: argp
         phase_models.append(f"{phase}={new_spec}")
 
     state["config"]["phase_model"] = phase_models
+    tier_models = state["config"].get("tier_models")
+    if isinstance(tier_models, dict) and phase in tier_models:
+        next_tier_models = dict(tier_models)
+        next_tier_models.pop(phase, None)
+        state["config"]["tier_models"] = next_tier_models
 
     # Append override meta entry
     _append_to_meta(
@@ -1749,9 +1727,8 @@ _OVERRIDE_ACTIONS: dict[
 ] = {
     "add-note": _override_add_note,
     "abort": _override_abort,
+    "adopt-execution": _override_adopt_execution,
     "force-proceed": _override_force_proceed,
-    "waive-engine-overlap": _override_waive_engine_overlap,
-    "refresh-engine-pin": _override_refresh_engine_pin,
     "replan": _override_replan,
     "recover-blocked": _override_recover_blocked,
     "resume-clarify": _override_resume_clarify,
@@ -1765,7 +1742,7 @@ _OVERRIDE_ACTIONS: dict[
 def handle_override(root: Path, args: argparse.Namespace) -> StepResponse:
     plan_dir, state = load_plan(root, args.plan)
     action = args.override_action
-    if action == "refresh-engine-pin":
+    if action in {"adopt-execution"}:
         pass
     elif action in {"force-proceed", "recover-blocked", "resume-clarify"}:
         preflight_mutating_phase(root=root, state=state, phase=f"override:{action}")

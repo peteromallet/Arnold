@@ -549,6 +549,40 @@ def test_auto_attribute_clean_worktree_keeps_missing_evidence(tmp_path: Path) ->
     assert _missing_code_task_evidence(finalize_data["tasks"]) == ["T1"]
 
 
+def test_auto_attribute_ignores_harness_generated_logs(tmp_path: Path) -> None:
+    finalize_data = {
+        "tasks": [
+            {"id": "T1", "status": "done", "files_changed": [], "commands_run": []}
+        ]
+    }
+    payload = {
+        "files_changed": [],
+        "task_updates": [{"task_id": "T1", "files_changed": [], "commands_run": []}],
+    }
+    deviations: list[str] = []
+
+    result = _auto_attribute_unclaimed_paths(
+        project_dir=tmp_path,
+        finalize_data=finalize_data,
+        payload=payload,
+        batch_task_ids=["T1"],
+        issues=deviations,
+        capture_recursive_snapshot_fn=lambda _p: (
+            {
+                ".megaplan/run-logs/auto.log": "<hash>",
+                ".megaplan/system_logs/log_1.json": "<hash>",
+            },
+            None,
+        ),
+    )
+
+    assert finalize_data["tasks"][0]["files_changed"] == []
+    assert payload["task_updates"][0]["files_changed"] == []
+    assert payload["files_changed"] == []
+    assert deviations == []
+    assert result.records == []
+
+
 def test_auto_attribute_backfills_single_done_task_from_batch_metadata(tmp_path: Path) -> None:
     finalize_data = {
         "tasks": [
@@ -950,7 +984,8 @@ def _stub_auto_attribute_git_snapshots(
             (scope_snapshot or {"newpkg/": "<dir-marker>"}, None),
         ]
     )
-    _snapshot_fn = lambda *_: next(snapshots)
+    def _snapshot_fn(*_args: object, **_kwargs: object):
+        return next(snapshots)
     monkeypatch.setattr(
         megaplan.execute.batch,
         "_capture_git_status_snapshot",
@@ -964,7 +999,7 @@ def _stub_auto_attribute_git_snapshots(
     monkeypatch.setattr(
         megaplan.execute.batch,
         "_capture_git_status_snapshot_recursive",
-        lambda *_: ({"newpkg/file.py": "<hash>"}, None),
+        lambda *_args, **_kwargs: ({"newpkg/file.py": "<hash>"}, None),
     )
 
 
@@ -1122,12 +1157,12 @@ def test_auto_loop_aggregates_worker_rate_limits_neutrally_for_receipt(
     monkeypatch.setattr(
         megaplan.execute.batch,
         "_capture_git_status_snapshot",
-        lambda *_: ({}, None),
+        lambda *_args, **_kwargs: ({}, None),
     )
     monkeypatch.setattr(
         megaplan.execute.aggregation,
         "_capture_git_status_snapshot",
-        lambda *_: ({}, None),
+        lambda *_args, **_kwargs: ({}, None),
     )
     captured_rate_limits: list[dict[str, object] | None] = []
     real_build_receipt = megaplan.execute.batch.build_receipt
@@ -1581,7 +1616,7 @@ def test_execute_preflight_refusal_happens_before_worker_dispatch(
     worker_called = False
 
     def refusing_preflight(*_args: object, **_kwargs: object) -> None:
-        raise megaplan.CliError("engine_pin_drift", "refused before worker dispatch")
+        raise megaplan.CliError("engine_write_isolation_unverified", "refused before worker dispatch")
 
     def worker_should_not_run(*_args: object, **_kwargs: object) -> WorkerResult:
         nonlocal worker_called
@@ -1597,7 +1632,7 @@ def test_execute_preflight_refusal_happens_before_worker_dispatch(
             plan_fixture.make_args(plan=plan_fixture.plan_name, confirm_destructive=True, user_approved=True),
         )
 
-    assert excinfo.value.code == "engine_pin_drift"
+    assert excinfo.value.code == "engine_write_isolation_unverified"
     assert worker_called is False
 
 
@@ -2569,8 +2604,8 @@ def test_execute_multi_batch_happy_path_aggregates_results(
         ({"batch1.py": "hash-1", "batch2.py": "hash-2"}, None),
         ({"batch1.py": "hash-1", "batch2.py": "hash-2"}, None),
     ])
-    monkeypatch.setattr(megaplan.execute.batch, "_capture_git_status_snapshot", lambda *_: next(snapshots))
-    monkeypatch.setattr(megaplan.execute.aggregation, "_capture_git_status_snapshot", lambda *_: next(snapshots))
+    monkeypatch.setattr(megaplan.execute.batch, "_capture_git_status_snapshot", lambda *_args, **_kwargs: next(snapshots))
+    monkeypatch.setattr(megaplan.execute.aggregation, "_capture_git_status_snapshot", lambda *_args, **_kwargs: next(snapshots))
 
     def batched_worker(step: str, state: dict, plan_dir: Path, args: Namespace, *, root: Path, resolved=None, prompt_override: str | None = None):
         assert prompt_override is not None
@@ -2668,8 +2703,8 @@ def test_execute_multi_batch_timeout_preserves_prior_batches(
         ({"batch1.py": "hash-1"}, None),
         ({"batch1.py": "hash-1"}, None),
     ])
-    monkeypatch.setattr(megaplan.execute.batch, "_capture_git_status_snapshot", lambda *_: next(snapshots))
-    monkeypatch.setattr(megaplan.execute.aggregation, "_capture_git_status_snapshot", lambda *_: next(snapshots))
+    monkeypatch.setattr(megaplan.execute.batch, "_capture_git_status_snapshot", lambda *_args, **_kwargs: next(snapshots))
+    monkeypatch.setattr(megaplan.execute.aggregation, "_capture_git_status_snapshot", lambda *_args, **_kwargs: next(snapshots))
 
     def timed_worker(step: str, state: dict, plan_dir: Path, args: Namespace, *, root: Path, resolved=None, prompt_override: str | None = None):
         assert prompt_override is not None
@@ -2807,8 +2842,8 @@ def test_execute_multi_batch_observation_allows_cross_batch_reedit_and_flags_pha
         ({"megaplan/handlers.py": "hash-2"}, None),
         ({"megaplan/handlers.py": "hash-2"}, None),
     ])
-    monkeypatch.setattr(megaplan.execute.batch, "_capture_git_status_snapshot", lambda *_: next(snapshots))
-    monkeypatch.setattr(megaplan.execute.aggregation, "_capture_git_status_snapshot", lambda *_: next(snapshots))
+    monkeypatch.setattr(megaplan.execute.batch, "_capture_git_status_snapshot", lambda *_args, **_kwargs: next(snapshots))
+    monkeypatch.setattr(megaplan.execute.aggregation, "_capture_git_status_snapshot", lambda *_args, **_kwargs: next(snapshots))
 
     def observation_worker(step: str, state: dict, plan_dir: Path, args: Namespace, *, root: Path, resolved=None, prompt_override: str | None = None):
         assert prompt_override is not None
@@ -3002,8 +3037,8 @@ def test_batch_1_on_two_batch_plan_stays_finalized(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _setup_two_batch_plan(plan_fixture)
-    monkeypatch.setattr(megaplan.execute.batch, "_capture_git_status_snapshot", lambda *_: ({}, None))
-    monkeypatch.setattr(megaplan.execute.aggregation, "_capture_git_status_snapshot", lambda *_: ({}, None))
+    monkeypatch.setattr(megaplan.execute.batch, "_capture_git_status_snapshot", lambda *_args, **_kwargs: ({}, None))
+    monkeypatch.setattr(megaplan.execute.aggregation, "_capture_git_status_snapshot", lambda *_args, **_kwargs: ({}, None))
     monkeypatch.setattr(megaplan.workers, "run_step_with_worker", _batch_worker)
 
     make_args = plan_fixture.make_args
@@ -3029,8 +3064,8 @@ def test_batch_timeout_reads_execution_batch_n_json(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _setup_two_batch_plan(plan_fixture)
-    monkeypatch.setattr(megaplan.execute.batch, "_capture_git_status_snapshot", lambda *_: ({}, None))
-    monkeypatch.setattr(megaplan.execute.aggregation, "_capture_git_status_snapshot", lambda *_: ({}, None))
+    monkeypatch.setattr(megaplan.execute.batch, "_capture_git_status_snapshot", lambda *_args, **_kwargs: ({}, None))
+    monkeypatch.setattr(megaplan.execute.aggregation, "_capture_git_status_snapshot", lambda *_args, **_kwargs: ({}, None))
 
     checkpoint_payload = {
         "task_updates": [
@@ -3080,8 +3115,8 @@ def test_batch_timeout_checkpoint_uses_model_seam_capture_recovery(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _setup_two_batch_plan(plan_fixture)
-    monkeypatch.setattr(megaplan.execute.batch, "_capture_git_status_snapshot", lambda *_: ({}, None))
-    monkeypatch.setattr(megaplan.execute.aggregation, "_capture_git_status_snapshot", lambda *_: ({}, None))
+    monkeypatch.setattr(megaplan.execute.batch, "_capture_git_status_snapshot", lambda *_args, **_kwargs: ({}, None))
+    monkeypatch.setattr(megaplan.execute.aggregation, "_capture_git_status_snapshot", lambda *_args, **_kwargs: ({}, None))
 
     checkpoint_payload = {
         "task_updates": [
@@ -3139,8 +3174,8 @@ def test_batch_2_after_batch_1_transitions_to_executed(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _setup_two_batch_plan(plan_fixture)
-    monkeypatch.setattr(megaplan.execute.batch, "_capture_git_status_snapshot", lambda *_: ({}, None))
-    monkeypatch.setattr(megaplan.execute.aggregation, "_capture_git_status_snapshot", lambda *_: ({}, None))
+    monkeypatch.setattr(megaplan.execute.batch, "_capture_git_status_snapshot", lambda *_args, **_kwargs: ({}, None))
+    monkeypatch.setattr(megaplan.execute.aggregation, "_capture_git_status_snapshot", lambda *_args, **_kwargs: ({}, None))
     monkeypatch.setattr(megaplan.workers, "run_step_with_worker", _batch_worker)
 
     make_args = plan_fixture.make_args
@@ -3170,8 +3205,8 @@ def test_batch_2_halts_on_corrupt_prior_execution_batch(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _setup_two_batch_plan(plan_fixture)
-    monkeypatch.setattr(megaplan.execute.batch, "_capture_git_status_snapshot", lambda *_: ({}, None))
-    monkeypatch.setattr(megaplan.execute.aggregation, "_capture_git_status_snapshot", lambda *_: ({}, None))
+    monkeypatch.setattr(megaplan.execute.batch, "_capture_git_status_snapshot", lambda *_args, **_kwargs: ({}, None))
+    monkeypatch.setattr(megaplan.execute.aggregation, "_capture_git_status_snapshot", lambda *_args, **_kwargs: ({}, None))
     monkeypatch.setattr(megaplan.workers, "run_step_with_worker", _batch_worker)
 
     megaplan.handle_execute(
@@ -3209,8 +3244,8 @@ def test_execute_quality_advisories_flow_into_batch_artifacts_aggregate_and_next
         ({"batch1.txt": "after-1", "batch2.txt": "after-2"}, None),
         ({"batch1.txt": "after-1", "batch2.txt": "after-2"}, None),
     ])
-    monkeypatch.setattr(megaplan.execute.batch, "_capture_git_status_snapshot", lambda *_: next(snapshots))
-    monkeypatch.setattr(megaplan.execute.aggregation, "_capture_git_status_snapshot", lambda *_: next(snapshots))
+    monkeypatch.setattr(megaplan.execute.batch, "_capture_git_status_snapshot", lambda *_args, **_kwargs: next(snapshots))
+    monkeypatch.setattr(megaplan.execute.aggregation, "_capture_git_status_snapshot", lambda *_args, **_kwargs: next(snapshots))
     monkeypatch.setattr(megaplan.execute.batch, "load_config", lambda *_: {})
 
     seen_prompts: list[str | None] = []
@@ -3303,8 +3338,8 @@ def test_execute_quality_config_disable_suppresses_file_growth_deviation_end_to_
         ({"notes.txt": "after-1"}, None),
         ({"notes.txt": "after-1"}, None),
     ])
-    monkeypatch.setattr(megaplan.execute.batch, "_capture_git_status_snapshot", lambda *_: next(snapshots))
-    monkeypatch.setattr(megaplan.execute.aggregation, "_capture_git_status_snapshot", lambda *_: next(snapshots))
+    monkeypatch.setattr(megaplan.execute.batch, "_capture_git_status_snapshot", lambda *_args, **_kwargs: next(snapshots))
+    monkeypatch.setattr(megaplan.execute.aggregation, "_capture_git_status_snapshot", lambda *_args, **_kwargs: next(snapshots))
     monkeypatch.setattr(
         megaplan.execute.batch,
         "load_config",
@@ -3426,8 +3461,8 @@ def test_batch_1_on_single_batch_plan_transitions_to_executed(
     (plan_fixture.plan_dir / "finalize.json").write_text(
         json.dumps(finalize_data, indent=2) + "\n", encoding="utf-8"
     )
-    monkeypatch.setattr(megaplan.execute.batch, "_capture_git_status_snapshot", lambda *_: ({}, None))
-    monkeypatch.setattr(megaplan.execute.aggregation, "_capture_git_status_snapshot", lambda *_: ({}, None))
+    monkeypatch.setattr(megaplan.execute.batch, "_capture_git_status_snapshot", lambda *_args, **_kwargs: ({}, None))
+    monkeypatch.setattr(megaplan.execute.aggregation, "_capture_git_status_snapshot", lambda *_args, **_kwargs: ({}, None))
 
     def single_batch_worker(
         step, state, plan_dir, args, *, root=None, resolved=None, prompt_override=None
@@ -3475,12 +3510,12 @@ def test_one_batch_receipt_worker_preserves_rate_limit_without_receipt_field(
     monkeypatch.setattr(
         megaplan.execute.batch,
         "_capture_git_status_snapshot",
-        lambda *_: ({}, None),
+        lambda *_args, **_kwargs: ({}, None),
     )
     monkeypatch.setattr(
         megaplan.execute.aggregation,
         "_capture_git_status_snapshot",
-        lambda *_: ({}, None),
+        lambda *_args, **_kwargs: ({}, None),
     )
     captured_rate_limits: list[dict[str, object] | None] = []
     real_build_receipt = megaplan.execute.batch.build_receipt
@@ -3564,8 +3599,8 @@ def test_light_batch_1_on_single_batch_plan_transitions_to_done(
     (plan_fixture.plan_dir / "finalize.json").write_text(
         json.dumps(finalize_data, indent=2) + "\n", encoding="utf-8"
     )
-    monkeypatch.setattr(megaplan.execute.batch, "_capture_git_status_snapshot", lambda *_: ({}, None))
-    monkeypatch.setattr(megaplan.execute.aggregation, "_capture_git_status_snapshot", lambda *_: ({}, None))
+    monkeypatch.setattr(megaplan.execute.batch, "_capture_git_status_snapshot", lambda *_args, **_kwargs: ({}, None))
+    monkeypatch.setattr(megaplan.execute.aggregation, "_capture_git_status_snapshot", lambda *_args, **_kwargs: ({}, None))
 
     def single_batch_worker(step, state, plan_dir, args, *, root=None, resolved=None, prompt_override=None):
         payload = {
@@ -3622,8 +3657,8 @@ def test_bare_batch_1_on_single_batch_plan_transitions_to_done_without_review_ar
     (plan_fixture.plan_dir / "finalize.json").write_text(
         json.dumps(finalize_data, indent=2) + "\n", encoding="utf-8"
     )
-    monkeypatch.setattr(megaplan.execute.batch, "_capture_git_status_snapshot", lambda *_: ({}, None))
-    monkeypatch.setattr(megaplan.execute.aggregation, "_capture_git_status_snapshot", lambda *_: ({}, None))
+    monkeypatch.setattr(megaplan.execute.batch, "_capture_git_status_snapshot", lambda *_args, **_kwargs: ({}, None))
+    monkeypatch.setattr(megaplan.execute.aggregation, "_capture_git_status_snapshot", lambda *_args, **_kwargs: ({}, None))
 
     def single_batch_worker(step, state, plan_dir, args, *, root=None, resolved=None, prompt_override=None):
         payload = {
@@ -3663,8 +3698,8 @@ def test_batch_1_incomplete_tracking_returns_blocked(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _setup_two_batch_plan(plan_fixture)
-    monkeypatch.setattr(megaplan.execute.batch, "_capture_git_status_snapshot", lambda *_: ({}, None))
-    monkeypatch.setattr(megaplan.execute.aggregation, "_capture_git_status_snapshot", lambda *_: ({}, None))
+    monkeypatch.setattr(megaplan.execute.batch, "_capture_git_status_snapshot", lambda *_args, **_kwargs: ({}, None))
+    monkeypatch.setattr(megaplan.execute.aggregation, "_capture_git_status_snapshot", lambda *_args, **_kwargs: ({}, None))
 
     def incomplete_batch_worker(step, state, plan_dir, args, *, root=None, resolved=None, prompt_override=None):
         assert prompt_override is not None
@@ -4151,7 +4186,7 @@ def test_execute_auto_loop_resets_blocked_tasks_when_flag_set(
     )
 
     monkeypatch.setattr(
-        megaplan.execute.batch, "_capture_git_status_snapshot", lambda *_: ({}, None)
+        megaplan.execute.batch, "_capture_git_status_snapshot", lambda *_args, **_kwargs: ({}, None)
     )
     monkeypatch.setattr(megaplan.workers, "run_step_with_worker", _batch_worker)
 
@@ -4202,7 +4237,7 @@ def test_execute_auto_loop_defers_interim_baseline_checkpoint_when_baseline_miss
     )
 
     monkeypatch.setattr(
-        megaplan.execute.batch, "_capture_git_status_snapshot", lambda *_: ({}, None)
+        megaplan.execute.batch, "_capture_git_status_snapshot", lambda *_args, **_kwargs: ({}, None)
     )
     monkeypatch.setattr(
         megaplan.workers, "run_step_with_worker", _single_remaining_t2_worker
@@ -4254,7 +4289,7 @@ def test_baseline_checkpoint_not_deferred_before_dependencies_complete(
     )
 
     monkeypatch.setattr(
-        megaplan.execute.batch, "_capture_git_status_snapshot", lambda *_: ({}, None)
+        megaplan.execute.batch, "_capture_git_status_snapshot", lambda *_args, **_kwargs: ({}, None)
     )
     monkeypatch.setattr(megaplan.workers, "run_step_with_worker", _batch_worker)
 
@@ -4298,7 +4333,7 @@ def test_retry_blocked_tasks_defers_baseline_checkpoint_instead_of_rerunning_loo
     )
 
     monkeypatch.setattr(
-        megaplan.execute.batch, "_capture_git_status_snapshot", lambda *_: ({}, None)
+        megaplan.execute.batch, "_capture_git_status_snapshot", lambda *_args, **_kwargs: ({}, None)
     )
     monkeypatch.setattr(
         megaplan.workers, "run_step_with_worker", _single_remaining_t2_worker
@@ -4322,7 +4357,7 @@ def test_retry_blocked_tasks_defers_baseline_checkpoint_instead_of_rerunning_loo
     assert finalize_after["tasks"][1]["status"] == "done"
 
 
-def test_retry_blocked_does_not_rerun_final_no_baseline_checkpoint(
+def test_retry_blocked_defers_final_no_baseline_checkpoint_without_rerunning(
     plan_fixture: PlanFixture,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -4375,14 +4410,132 @@ def test_retry_blocked_does_not_rerun_final_no_baseline_checkpoint(
     from arnold.pipelines.megaplan.orchestration.phase_result import read_phase_result
 
     pr = read_phase_result(plan_fixture.plan_dir)
+    finalize_after = read_json(plan_fixture.plan_dir / "finalize.json")
 
-    assert response["success"] is False
-    assert "baseline_test_failures=null" in response["summary"]
-    assert "blocked_task_ids" not in response
+    assert response["success"] is True
+    assert finalize_after["tasks"][1]["status"] == "skipped"
+    assert finalize_after["tasks"][1]["reviewer_verdict"] == "deferred_baseline_unavailable"
+    assert finalize_after["tasks"][1]["commands_run"] == []
+    assert "baseline_test_failures is null" in finalize_after["tasks"][1]["executor_notes"]
     assert pr is not None
-    assert pr.exit_kind == "blocked_by_quality"
-    assert pr.blocked_tasks == ()
-    assert pr.deviations[0].blocker_id == "quality:T2:baseline-unavailable-no-new-failures-checkpoint"
+    assert pr.exit_kind == "success"
+
+
+def test_execute_defers_repeated_no_baseline_checkpoints_without_pending_tail(
+    plan_fixture: PlanFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _setup_two_batch_plan(plan_fixture)
+    finalize_data = read_json(plan_fixture.plan_dir / "finalize.json")
+    finalize_data["baseline_test_failures"] = None
+    finalize_data["tasks"] = [
+        {
+            "id": "T1",
+            "description": "Implementation one",
+            "depends_on": [],
+            "status": "done",
+            "executor_notes": "done",
+            "files_changed": ["one.py"],
+            "commands_run": ["true"],
+            "evidence_files": [],
+            "reviewer_verdict": "",
+        },
+        {
+            "id": "T2",
+            "description": "Implementation two",
+            "depends_on": ["T1"],
+            "status": "done",
+            "executor_notes": "done",
+            "files_changed": ["two.py"],
+            "commands_run": ["true"],
+            "evidence_files": [],
+            "reviewer_verdict": "",
+        },
+        {
+            "id": "T3",
+            "description": "Implementation three",
+            "depends_on": ["T2"],
+            "status": "done",
+            "executor_notes": "done",
+            "files_changed": ["three.py"],
+            "commands_run": ["true"],
+            "evidence_files": [],
+            "reviewer_verdict": "",
+        },
+        {
+            "id": "T4",
+            "description": "Introduce no new failures vs the recorded baseline; do not loop the suite.",
+            "depends_on": ["T3"],
+            "status": "pending",
+            "executor_notes": "",
+            "files_changed": [],
+            "commands_run": [],
+            "evidence_files": [],
+            "reviewer_verdict": "",
+        },
+        {
+            "id": "T5",
+            "description": "Introduce no new failures vs the recorded baseline; do not loop the suite.",
+            "depends_on": ["T4"],
+            "status": "pending",
+            "executor_notes": "",
+            "files_changed": [],
+            "commands_run": [],
+            "evidence_files": [],
+            "reviewer_verdict": "",
+        },
+        {
+            "id": "T6",
+            "description": "Introduce no new failures vs the recorded baseline; do not loop the suite.",
+            "depends_on": ["T5"],
+            "status": "pending",
+            "executor_notes": "",
+            "files_changed": [],
+            "commands_run": [],
+            "evidence_files": [],
+            "reviewer_verdict": "",
+        },
+    ]
+    finalize_data["sense_checks"] = []
+    (plan_fixture.plan_dir / "finalize.json").write_text(
+        json.dumps(finalize_data, indent=2) + "\n", encoding="utf-8"
+    )
+
+    def worker_should_not_run(*_args, **_kwargs):
+        raise AssertionError("baseline-unavailable verification checkpoints are not runnable work")
+
+    monkeypatch.setattr(megaplan.workers, "run_step_with_worker", worker_should_not_run)
+
+    response = megaplan.handle_execute(
+        plan_fixture.root,
+        plan_fixture.make_args(
+            plan=plan_fixture.plan_name,
+            confirm_destructive=True,
+            user_approved=True,
+            retry_blocked_tasks=True,
+        ),
+    )
+    from arnold.pipelines.megaplan.orchestration.phase_result import read_phase_result
+
+    finalize_after = read_json(plan_fixture.plan_dir / "finalize.json")
+    pr = read_phase_result(plan_fixture.plan_dir)
+
+    assert response["success"] is True
+    statuses = {task["id"]: task["status"] for task in finalize_after["tasks"]}
+    assert statuses == {
+        "T1": "done",
+        "T2": "done",
+        "T3": "done",
+        "T4": "skipped",
+        "T5": "skipped",
+        "T6": "skipped",
+    }
+    assert all(
+        task.get("reviewer_verdict") == "deferred_baseline_unavailable"
+        for task in finalize_after["tasks"][3:]
+    )
+    assert pr is not None
+    assert pr.exit_kind == "success"
 
 
 def test_status_reclassifies_stale_no_baseline_checkpoint_prereq_block(
@@ -4468,8 +4621,8 @@ def test_execute_auto_loop_stops_when_batch_creates_blocked_task(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _setup_two_batch_plan(plan_fixture)
-    monkeypatch.setattr(megaplan.execute.batch, "_capture_git_status_snapshot", lambda *_: ({}, None))
-    monkeypatch.setattr(megaplan.execute.aggregation, "_capture_git_status_snapshot", lambda *_: ({}, None))
+    monkeypatch.setattr(megaplan.execute.batch, "_capture_git_status_snapshot", lambda *_args, **_kwargs: ({}, None))
+    monkeypatch.setattr(megaplan.execute.aggregation, "_capture_git_status_snapshot", lambda *_args, **_kwargs: ({}, None))
     calls: list[str] = []
 
     def blocking_worker(step, state, plan_dir, args, *, root=None, resolved=None, prompt_override=None):
@@ -4546,7 +4699,7 @@ def test_blocked_task_counts_as_tracked_in_batch_coverage(
     """
     _setup_two_batch_plan(plan_fixture)
     monkeypatch.setattr(
-        megaplan.execute.batch, "_capture_git_status_snapshot", lambda *_: ({}, None)
+        megaplan.execute.batch, "_capture_git_status_snapshot", lambda *_args, **_kwargs: ({}, None)
     )
 
     def blocking_worker(step, state, plan_dir, args, *, root=None, resolved=None, prompt_override=None):
@@ -4606,7 +4759,7 @@ def test_completed_status_counts_as_tracked_in_batch_coverage(
     """
     _setup_two_batch_plan(plan_fixture)
     monkeypatch.setattr(
-        megaplan.execute.batch, "_capture_git_status_snapshot", lambda *_: ({}, None)
+        megaplan.execute.batch, "_capture_git_status_snapshot", lambda *_args, **_kwargs: ({}, None)
     )
 
     def completed_worker(step, state, plan_dir, args, *, root=None, resolved=None, prompt_override=None):
@@ -6010,12 +6163,12 @@ def test_auto_loop_freshness_forced_on_model_change(
     monkeypatch.setattr(
         megaplan.execute.batch,
         "_capture_git_status_snapshot",
-        lambda *_: ({}, None),
+        lambda *_args, **_kwargs: ({}, None),
     )
     monkeypatch.setattr(
         megaplan.execute.batch,
         "_capture_git_status_snapshot_recursive",
-        lambda *_: ({}, None),
+        lambda *_args, **_kwargs: ({}, None),
     )
 
     tier_spec_resolutions: list[tuple[str, str, str | None]] = []
@@ -6126,12 +6279,12 @@ def test_auto_loop_same_model_no_extra_refresh(
     monkeypatch.setattr(
         megaplan.execute.batch,
         "_capture_git_status_snapshot",
-        lambda *_: ({}, None),
+        lambda *_args, **_kwargs: ({}, None),
     )
     monkeypatch.setattr(
         megaplan.execute.batch,
         "_capture_git_status_snapshot_recursive",
-        lambda *_: ({}, None),
+        lambda *_args, **_kwargs: ({}, None),
     )
 
     # All batches resolve to the same model.
@@ -6231,12 +6384,12 @@ def test_auto_loop_batch_to_tier_observability(
     monkeypatch.setattr(
         megaplan.execute.batch,
         "_capture_git_status_snapshot",
-        lambda *_: ({}, None),
+        lambda *_args, **_kwargs: ({}, None),
     )
     monkeypatch.setattr(
         megaplan.execute.batch,
         "_capture_git_status_snapshot_recursive",
-        lambda *_: ({}, None),
+        lambda *_args, **_kwargs: ({}, None),
     )
 
     # Map tier specs predictably.
@@ -6479,7 +6632,7 @@ def test_handle_execute_auto_loop_deterministic_characterization(
     monkeypatch.setattr(
         megaplan.execute.batch,
         "_capture_git_status_snapshot",
-        lambda *_: ({}, None),
+        lambda *_args, **_kwargs: ({}, None),
     )
 
     def _fake_run_and_merge(**kwargs):
@@ -6562,7 +6715,7 @@ def test_execute_auto_loop_reruns_raw_done_task_without_corroborating_evidence(
     (plan_fixture.plan_dir / "finalize.json").write_text(
         json.dumps(finalize_data, indent=2) + "\n", encoding="utf-8"
     )
-    monkeypatch.setattr(megaplan.execute.batch, "_capture_git_status_snapshot", lambda *_: ({}, None))
+    monkeypatch.setattr(megaplan.execute.batch, "_capture_git_status_snapshot", lambda *_args, **_kwargs: ({}, None))
 
     observed_batches: list[list[str]] = []
 
@@ -6643,7 +6796,7 @@ def test_execute_auto_loop_does_not_unlock_dependency_from_raw_done_missing_outp
     (plan_fixture.plan_dir / "finalize.json").write_text(
         json.dumps(finalize_data, indent=2) + "\n", encoding="utf-8"
     )
-    monkeypatch.setattr(megaplan.execute.batch, "_capture_git_status_snapshot", lambda *_: ({}, None))
+    monkeypatch.setattr(megaplan.execute.batch, "_capture_git_status_snapshot", lambda *_args, **_kwargs: ({}, None))
 
     observed_batches: list[list[str]] = []
     prompt_overrides: list[str | None] = []
@@ -6757,7 +6910,7 @@ def test_execute_auto_loop_does_not_unlock_dependency_from_raw_done_stale_eviden
         + "\n",
         encoding="utf-8",
     )
-    monkeypatch.setattr(megaplan.execute.batch, "_capture_git_status_snapshot", lambda *_: ({}, None))
+    monkeypatch.setattr(megaplan.execute.batch, "_capture_git_status_snapshot", lambda *_args, **_kwargs: ({}, None))
     monkeypatch.setattr(
         megaplan.execute.batch,
         "_best_effort_git_head",
@@ -6824,12 +6977,12 @@ def test_handle_execute_auto_loop_uses_valid_calibration_suggestion(
     monkeypatch.setattr(
         megaplan.execute.batch,
         "_capture_git_status_snapshot",
-        lambda *_: ({}, None),
+        lambda *_args, **_kwargs: ({}, None),
     )
     monkeypatch.setattr(
         megaplan.execute.batch,
         "_capture_git_status_snapshot_recursive",
-        lambda *_: ({}, None),
+        lambda *_args, **_kwargs: ({}, None),
     )
     monkeypatch.setattr(
         megaplan.execute.batch,

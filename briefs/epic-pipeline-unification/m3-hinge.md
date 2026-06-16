@@ -171,7 +171,7 @@ hinge gate:
 - **The Capacity-Lease is built before a second real tenant exists.** Fork-bomb +
   simulated-clock-skew + two-tenant oracles stand in as a synthetic adversary; the alternative
   (unbanning concurrency at M3 with no Governor) is a fork-bomb against the live wallet.
-- **No editable-install dogfood; pinned engine** (M0; MEMORY `dogfood_engine_shadow`). The epic
+- **No editable-install dogfood; separate external driver** (M0; MEMORY `dogfood_engine_shadow`). The epic
   runs the toggle OFF; the in-process path soaks on THROWAWAY plans only.
 - **Back-compat.** `iterate_until`, `SubloopStep`, `write_plan_state` modes, executor edge
   dispatch, and `workflow_next`'s signature all keep working (`extra="ignore"`, no removed

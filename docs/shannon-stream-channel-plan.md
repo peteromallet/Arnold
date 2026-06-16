@@ -66,8 +66,8 @@ the channel; the relay is shelved as a documented fallback.**
 5. **Tell the truth about the boundary.** The safety boundary is the **OS user** (and, under root,
    drop-to-unprivileged), *not* the worktree — because `bypassPermissions` ignores cwd and the megaplan
    sandbox isn't installed on the Claude path. Either install it on the new path or document this plainly.
-6. **Additive, reversible, dogfood-safe.** Build the new worker alongside the old, flag-gated, against a
-   frozen engine pin — the running engine never depends on half-built code until cutover.
+6. **Additive, reversible, dogfood-safe.** Build the new worker alongside the old, flag-gated, from a
+   separate known-good driver checkout — the running engine never depends on half-built code until cutover.
 
 ---
 
@@ -169,8 +169,8 @@ or document the OS-user boundary plainly).
 
 ## 6. Build-safety (the dogfood trap)
 
-This is megaplan rewriting its own execution path. Build against a **frozen engine pin off a clean
-branch**, and scaffold `ShannonStreamWorker` **additively** alongside the old worker, flag-gated, so the
+This is megaplan rewriting its own execution path. Build against a **separate known-good driver checkout
+off a clean branch**, and scaffold `ShannonStreamWorker` **additively** alongside the old worker, flag-gated, so the
 running engine never depends on half-built code until the step-5 cutover.
 
 ---

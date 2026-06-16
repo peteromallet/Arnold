@@ -223,6 +223,135 @@ class DriverOutcome:
         )
 
 
+NON_RETRYABLE_INFRASTRUCTURE_ERROR_CODES = frozenset(
+    {
+        "engine_write_isolation_unverified",
+    }
+)
+
+
+def _extract_cli_error_payload(stdout: str, stderr: str) -> dict[str, Any] | None:
+    """Return the structured CliError payload emitted by phase subprocesses.
+
+    Handles three output shapes:
+    1. Full-stream JSON (entire stdout/stderr is a single JSON object)
+    2. Single-line JSON at end of stream (one JSON line per line)
+    3. Multi-line pretty-printed JSON preceded by tool logs (e.g. ``[tool] …``,
+       ``[done] …``, then a multi-line JSON object) — finds the last complete
+       JSON object by scanning balanced ``{…}`` blocks from the end.
+    """
+
+    for stream in (stderr, stdout):
+        text_stream = (stream or "").strip()
+        if not text_stream:
+            continue
+
+        # Shape 1: full-stream JSON
+        if text_stream.startswith("{"):
+            try:
+                payload = json.loads(text_stream)
+            except json.JSONDecodeError:
+                pass
+            else:
+                if _is_cli_error_payload(payload):
+                    return payload
+
+        # Shape 2: single-line JSON (scan lines in reverse)
+        for line in reversed((stream or "").splitlines()):
+            text = line.strip()
+            if not text.startswith("{"):
+                continue
+            try:
+                payload = json.loads(text)
+            except json.JSONDecodeError:
+                continue
+            if _is_cli_error_payload(payload):
+                return payload
+
+        # Shape 3: pretty-printed multi-line JSON after tool logs.
+        # Find the last balanced {…} block and try to parse it.
+        payload = _extract_last_json_object(text_stream)
+        if payload is not None and _is_cli_error_payload(payload):
+            return payload
+
+    return None
+
+
+def _is_cli_error_payload(payload: Any) -> bool:
+    """Return True when *payload* looks like a structured CliError dict."""
+    return (
+        isinstance(payload, dict)
+        and payload.get("success") is False
+        and isinstance(payload.get("error"), str)
+    )
+
+
+def _extract_last_json_object(text: str) -> dict[str, Any] | None:
+    """Find the last balanced JSON object (``{…}``) in *text*.
+
+    Scans backwards to find a closing ``}``, then walks forward to find the
+    matching opening ``{``, and attempts to parse the substring as JSON.
+    Returns None when no balanced JSON object is found or parsing fails.
+    """
+    # Find the last '}' that is not inside a string.
+    close = _find_last_unquoted_brace(text, "}")
+    if close is None:
+        return None
+    # Walk backward from close to find the matching '{'.
+    depth = 0
+    for i in range(close, -1, -1):
+        ch = text[i]
+        if ch == "}" and not _inside_string(text, i):
+            depth += 1
+        elif ch == "{" and not _inside_string(text, i):
+            depth -= 1
+            if depth == 0:
+                candidate = text[i:close + 1]
+                try:
+                    return json.loads(candidate)
+                except json.JSONDecodeError:
+                    return None
+    return None
+
+
+def _find_last_unquoted_brace(text: str, brace: str) -> int | None:
+    """Return the index of the last *brace* that is not inside a JSON string."""
+    for i in range(len(text) - 1, -1, -1):
+        if text[i] == brace and not _inside_string(text, i):
+            return i
+    return None
+
+
+def _inside_string(text: str, pos: int) -> bool:
+    """Return True when *pos* is inside a JSON string literal.
+
+    Uses a simple state-machine that counts unescaped ``\"`` characters
+    scanning from position 0 up to *pos*.
+    """
+    in_string = False
+    i = 0
+    while i < pos:
+        ch = text[i]
+        if ch == "\\" and in_string:
+            i += 2  # skip escaped char
+            continue
+        if ch == '"':
+            in_string = not in_string
+        i += 1
+    return in_string
+
+
+def _non_retryable_infrastructure_error_payload(
+    stdout: str, stderr: str
+) -> dict[str, Any] | None:
+    payload = _extract_cli_error_payload(stdout, stderr)
+    if payload is None:
+        return None
+    if payload.get("error") not in NON_RETRYABLE_INFRASTRUCTURE_ERROR_CODES:
+        return None
+    return payload
+
+
 def _non_negative_int(value: str) -> int:
     try:
         parsed = int(value)
@@ -651,6 +780,38 @@ def _override_abort_in_process(
     )
 
 
+def _override_adopt_execution_in_process(
+    *,
+    root: Path,
+    plan: str,
+    reason: str,
+) -> tuple[int, str, str]:
+    try:
+        from arnold.pipelines.megaplan._core.io import json_dump
+        from arnold.pipelines.megaplan.handlers.override import handle_override
+
+        response = handle_override(
+            root,
+            argparse.Namespace(
+                override_action="adopt-execution",
+                plan=plan,
+                reason=reason,
+            ),
+        )
+        return 0, json_dump(response), ""
+    except CliError as error:
+        payload: dict[str, Any] = {
+            "success": False,
+            "error": error.code,
+            "message": error.message,
+        }
+        if error.extra:
+            payload["details"] = dict(error.extra)
+        return error.exit_code, "", json.dumps(payload)
+    except Exception as error:  # noqa: BLE001 - match CLI failure surface.
+        return 1, "", f"{type(error).__name__}: {error}"
+
+
 def _with_project_dir_arg(args: list[str], project_dir: Path) -> list[str]:
     if "--project-dir" in args:
         return list(args)
@@ -818,6 +979,33 @@ def _phase_command(
             "megaplan auto: recover blocked plan after blocker resolution",
         ]
     return shlex.split(next_step)
+
+
+def _failure_resume_cursor_for_step(
+    next_step: str,
+    *,
+    plan_dir: Path | None,
+) -> dict[str, str]:
+    """Return the cursor to persist when an auto-dispatched command fails.
+
+    Recovery helper commands are not resumable phases themselves. If
+    ``recover-blocked`` fails, preserving the original blocked phase cursor lets
+    the operator or a later auto iteration recover the work that actually
+    blocked instead of wedging on ``phase='recover-blocked'``.
+    """
+
+    if next_step == "recover-blocked" and plan_dir is not None:
+        try:
+            state_payload = json.loads((plan_dir / "state.json").read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError, UnicodeDecodeError, ValueError):
+            state_payload = {}
+        if isinstance(state_payload, dict):
+            cursor = state_payload.get("resume_cursor")
+            if isinstance(cursor, dict):
+                phase = cursor.get("phase")
+                if isinstance(phase, str) and phase and phase != "recover-blocked":
+                    return dict(cursor)
+    return {"phase": next_step, "retry_strategy": "rerun_phase"}
 
 
 def _resolve_plan_dir(plan: str, cwd: Path | None) -> Path | None:
@@ -1730,6 +1918,47 @@ def _recover_execute_callback_failure_state(plan_dir: Path | None) -> bool:
         return False
 
 
+def _recover_completed_execute_artifacts_after_failure(plan_dir: Path | None) -> bool:
+    """Advance a finalized plan when execute artifacts are already complete.
+
+    A streaming worker can fail after writing every ``execution_batch_N.json``
+    and the aggregate ``execution.json`` but before clearing ``active_step`` or
+    moving state from finalized -> executed. On resume, rerunning execute would
+    redo completed work. Delegate the completeness decision to the same
+    adopt-execution validator used by the explicit override path so auto does
+    not grow a second, drifting definition of "complete".
+    """
+
+    if plan_dir is None:
+        return False
+    state_path = plan_dir / "state.json"
+    try:
+        state_data = json.loads(state_path.read_text(encoding="utf-8"))
+    except (FileNotFoundError, json.JSONDecodeError, OSError, UnicodeDecodeError, ValueError):
+        return False
+    if not isinstance(state_data, dict):
+        return False
+    if state_data.get("current_state") != STATE_FINALIZED:
+        return False
+    active_step = state_data.get("active_step")
+    if isinstance(active_step, dict):
+        active_phase = active_phase_name(active_step)
+        if active_phase and active_phase != "execute":
+            return False
+    if not (plan_dir / "execution.json").exists():
+        return False
+    try:
+        root = plan_dir.parents[2]
+    except IndexError:
+        return False
+    code, _out, _err = _override_adopt_execution_in_process(
+        root=root,
+        plan=plan_dir.name,
+        reason="megaplan auto: adopted complete execution artifact after worker failure",
+    )
+    return code == 0
+
+
 def _finalize_tasks(plan_dir: Path | None) -> tuple[dict[str, Any], ...]:
     if plan_dir is None:
         return ()
@@ -1837,7 +2066,7 @@ _PHASE_OUTPUT_QUARANTINE: dict[str, tuple[str, ...]] = {
     "gate": ("gate_output.json",),
     "finalize": ("finalize_output.json",),
     "review": ("review_output.json",),
-    "execute": ("execute_output.json",),
+    "execute": ("execute_output.json", "execute_batch_*_output.json"),
 }
 
 
@@ -1852,40 +2081,46 @@ def _quarantine_phase_outputs(plan_dir: Path, step: str) -> list[str]:
     if not artifacts:
         return quarantined
     for name in artifacts:
-        source = plan_dir / name
-        if not source.exists():
-            continue
-        # Treat zero-byte AND structurally-empty payloads as corpses worth
-        # quarantining. An output file that holds a complete payload is
-        # rare in this orphan path, but we leave it alone — the handler's
-        # own recover logic will accept or reject it normally.
-        try:
-            text = source.read_text(encoding="utf-8")
-        except OSError:
-            continue
-        stripped = text.strip()
-        if stripped not in ("", "{}", "[]"):
+        sources = (
+            sorted(plan_dir.glob(name))
+            if any(ch in name for ch in "*?[")
+            else [plan_dir / name]
+        )
+        for source in sources:
+            if not source.exists():
+                continue
+            artifact_name = source.name
+            # Treat zero-byte AND structurally-empty payloads as corpses worth
+            # quarantining. An output file that holds a complete payload is
+            # rare in this orphan path, but we leave it alone — the handler's
+            # own recover logic will accept or reject it normally.
             try:
-                payload = json.loads(stripped)
-            except (json.JSONDecodeError, ValueError):
-                _warn_read_fallback(
-                    "M3A_WARN_QUARANTINE_READ",
-                    path=source,
-                    reason="corrupt_json",
-                )
-                payload = None
-            # Non-empty parseable dicts/lists are left in place — only the
-            # genuinely-empty corpses are quarantined.
-            if isinstance(payload, dict) and payload:
+                text = source.read_text(encoding="utf-8")
+            except OSError:
                 continue
-            if isinstance(payload, list) and payload:
+            stripped = text.strip()
+            if stripped not in ("", "{}", "[]"):
+                try:
+                    payload = json.loads(stripped)
+                except (json.JSONDecodeError, ValueError):
+                    _warn_read_fallback(
+                        "M3A_WARN_QUARANTINE_READ",
+                        path=source,
+                        reason="corrupt_json",
+                    )
+                    payload = None
+                # Non-empty parseable dicts/lists are left in place — only the
+                # genuinely-empty corpses are quarantined.
+                if isinstance(payload, dict) and payload:
+                    continue
+                if isinstance(payload, list) and payload:
+                    continue
+            target = plan_dir / f"{artifact_name}.orphaned"
+            try:
+                source.replace(target)
+            except OSError:
                 continue
-        target = plan_dir / f"{name}.orphaned"
-        try:
-            source.replace(target)
-        except OSError:
-            continue
-        quarantined.append(name)
+            quarantined.append(artifact_name)
     return quarantined
 
 
@@ -2050,6 +2285,22 @@ def _active_step_progress_signature(
         str(last_activity_at),
         str(active_step.get("last_activity_kind") or ""),
     )
+
+
+def _heartbeat_stream_counts(payload: Mapping[str, Any]) -> tuple[int, int] | None:
+    token_value = payload.get("tokens_emitted_so_far", payload.get("tokens_emitted"))
+    reasoning_value = payload.get(
+        "reasoning_emitted_so_far",
+        payload.get("reasoning_emitted"),
+    )
+    if token_value is None and reasoning_value is None:
+        return None
+    try:
+        tokens = int(token_value or 0)
+        reasoning = int(reasoning_value or 0)
+    except (TypeError, ValueError):
+        return None
+    return max(tokens, 0), max(reasoning, 0)
 
 
 def _stall_event_progress_snapshot(
@@ -2408,6 +2659,28 @@ def drive(
         if state == STATE_FAILED and _recover_execute_callback_failure_state(plan_dir):
             log("recovered execute state after phase-complete callback failure; resuming")
             continue
+        status_active_step = status.get("active_step")
+        status_active_phase = (
+            active_phase_name(status_active_step)
+            if isinstance(status_active_step, dict)
+            else None
+        )
+        if (
+            state == STATE_FINALIZED
+            and (next_step == "execute" or status_active_phase == "execute")
+        ):
+            if _recover_completed_execute_artifacts_after_failure(plan_dir):
+                message = "reconciled complete execution.json after worker failure"
+                log("recovered completed execute artifacts after worker failure; resuming from executed")
+                events.append({"msg": message, "phase": "execute", "plan": plan})
+                continue
+            events.append(
+                {
+                    "msg": "execute artifact reconciliation did not validate; rerunning execute",
+                    "phase": "execute",
+                    "plan": plan,
+                }
+            )
 
         # Terminal: plan reached a final state (or automation-terminal).
         if state in AUTOMATION_TERMINAL_STATES and not (state == STATE_BLOCKED and valid_next):
@@ -3383,6 +3656,56 @@ def drive(
                     "suggested_recovery_commands": [resume_command],
                 },
             )
+        infra_payload = _non_retryable_infrastructure_error_payload(out, err)
+        if (
+            result is not None
+            and getattr(result, "exit_kind", None) == ExitKind.internal_error.value
+            and infra_payload is not None
+        ):
+            error_code = str(infra_payload.get("error") or "infrastructure_error")
+            message = str(infra_payload.get("message") or error_code)
+            details = infra_payload.get("details")
+            log(
+                f"phase '{next_step}' refused by infrastructure preflight "
+                f"{error_code}: {message}"
+            )
+            _record_failure(
+                plan_dir=plan_dir,
+                kind="infrastructure_error",
+                message=message,
+                current_state=None,
+                phase=next_step,
+                resume_cursor={"phase": next_step, "retry_strategy": "operator_action"},
+                last_artifact=_latest_artifact_name(plan_dir),
+                suggested_action=(
+                    "Resolve the Megaplan engine isolation failure before resuming. "
+                    "Use the recorded details to run with a verified isolation provider "
+                    "or separate the engine and target writable roots."
+                ),
+                metadata={
+                    "error": error_code,
+                    "details": details if isinstance(details, dict) else {},
+                    "exit_code": code,
+                    "iteration": iteration,
+                },
+            )
+            events.append(
+                {
+                    "msg": "infrastructure preflight refused phase",
+                    "phase": next_step,
+                    "error": error_code,
+                    "message": message,
+                    "details": details if isinstance(details, dict) else {},
+                }
+            )
+            return _outcome(
+                "infrastructure_error",
+                final_state=state,
+                iterations=iteration,
+                reason=f"{error_code}: {message}",
+                last_phase=next_step,
+                blocking_reasons=[error_code],
+            )
         elif result is not None and getattr(result, "exit_kind", None) in {
             ExitKind.internal_error.value,
             ExitKind.malformed_model_output.value,
@@ -3399,6 +3722,18 @@ def drive(
             # iteration's status() will see the lock released.
             if "plan_locked" in ((err or "") + (out or "")):
                 log(f"phase '{next_step}' hit plan_locked — transient contention, retrying next iteration")
+            elif (
+                next_step == "execute"
+                and _recover_completed_execute_artifacts_after_failure(plan_dir)
+            ):
+                log("phase 'execute' failed after writing complete artifacts — recovered to executed")
+                events.append(
+                    {
+                        "msg": "reconciled complete execution.json after worker failure",
+                        "phase": "execute",
+                        "plan": plan,
+                    }
+                )
             else:
                 _record_failure(
                     plan_dir=plan_dir,
@@ -3421,7 +3756,7 @@ def drive(
                 message=f"command '{next_step}' exited {code}",
                 current_state=None,
                 phase=next_step,
-                resume_cursor={"phase": next_step, "retry_strategy": "rerun_phase"},
+                resume_cursor=_failure_resume_cursor_for_step(next_step, plan_dir=plan_dir),
                 last_artifact=_latest_artifact_name(plan_dir),
                 suggested_action="Inspect command output and resume from the failed phase.",
                 metadata={"exit_code": code, "stderr": err.strip(), "stdout": out.strip()[-400:], "iteration": iteration},
@@ -4025,7 +4360,7 @@ def run_auto(root: Path, args: argparse.Namespace) -> int:
     sys.stdout.write(outcome_json + "\n")
     # Exit codes: 0 done/aborted/cancelled/paused, 1 failed/unknown,
     # 2 stalled, 3 escalated, 4 iteration cap, 5 blocked, 6 cost cap exceeded,
-    # 7 context retry exhausted, 8 worker_blocked.
+    # 7 context retry exhausted, 8 worker_blocked, 9 infrastructure/preflight.
     if outcome.status == "done":
         return 0
     if outcome.status in {"aborted", "cancelled", "paused"}:
@@ -4044,4 +4379,6 @@ def run_auto(root: Path, args: argparse.Namespace) -> int:
         return 7
     if outcome.status == "worker_blocked":
         return 8
+    if outcome.status == "infrastructure_error":
+        return 9
     return 1

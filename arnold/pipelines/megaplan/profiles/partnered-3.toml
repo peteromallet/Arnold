@@ -1,33 +1,33 @@
-# `partnered-3` keeps the partnered shape, but GLM 5.2 via the Zhipu direct
-# API replaces the premium-model slots. DeepSeek still handles the same
-# mechanical phases as partnered.
+# `partnered-3` keeps the partnered shape, but Kimi K2.7 Code via the
+# Moonshot direct API replaces the premium-model slots. DeepSeek still handles
+# the same mechanical phases as partnered.
 [profiles.partnered-3]
 adaptive_critique     = true
-plan                  = "hermes:zhipu:glm-5.2"
+plan                  = "hermes:kimi:kimi-k2.7-code"
 prep                  = "hermes:fireworks:accounts/fireworks/models/deepseek-v4-pro"
 critique              = "hermes:fireworks:accounts/fireworks/models/deepseek-v4-pro"
-critique_evaluator    = "hermes:zhipu:glm-5.2"
-revise                = "hermes:zhipu:glm-5.2"
+critique_evaluator    = "hermes:kimi:kimi-k2.7-code"
+revise                = "hermes:kimi:kimi-k2.7-code"
 gate                  = "hermes:fireworks:accounts/fireworks/models/deepseek-v4-pro"
-finalize              = "hermes:zhipu:glm-5.2"
+finalize              = "hermes:kimi:kimi-k2.7-code"
 execute               = "hermes:fireworks:accounts/fireworks/models/deepseek-v4-pro"
-feedback              = "hermes:zhipu:glm-5.2"
-loop_plan             = "hermes:zhipu:glm-5.2"
+feedback              = "hermes:kimi:kimi-k2.7-code"
+loop_plan             = "hermes:kimi:kimi-k2.7-code"
 loop_execute          = "hermes:fireworks:accounts/fireworks/models/deepseek-v4-pro"
-review                = "hermes:zhipu:glm-5.2"
-tiebreaker_researcher = "hermes:zhipu:glm-5.2"
-tiebreaker_challenger = "hermes:zhipu:glm-5.2"
+review                = "hermes:kimi:kimi-k2.7-code"
+tiebreaker_researcher = "hermes:kimi:kimi-k2.7-code"
+tiebreaker_challenger = "hermes:kimi:kimi-k2.7-code"
 
 [profiles.partnered-3.tier_models.execute]
 1 = "hermes:deepseek:deepseek-v4-flash"
 2 = "hermes:fireworks:accounts/fireworks/models/deepseek-v4-pro"
 3 = "hermes:fireworks:accounts/fireworks/models/deepseek-v4-pro"
-4 = "codex:gpt-5.4"
-5 = "codex:gpt-5.5"
+4 = "hermes:kimi:kimi-k2.7-code"
+5 = "hermes:kimi:kimi-k2.7-code"
 
 [profiles.partnered-3.tier_models.critique]
 1 = "hermes:deepseek:deepseek-v4-flash"
 2 = "hermes:fireworks:accounts/fireworks/models/deepseek-v4-pro"
 3 = "hermes:fireworks:accounts/fireworks/models/deepseek-v4-pro"
-4 = "hermes:zhipu:glm-5.2"
-5 = "hermes:zhipu:glm-5.2"
+4 = "hermes:kimi:kimi-k2.7-code"
+5 = "hermes:kimi:kimi-k2.7-code"

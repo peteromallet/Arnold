@@ -1364,6 +1364,9 @@ def test_finalize_prompt_handles_tiny_without_gate(tmp_path: Path) -> None:
     assert "No gate phase ran for this robustness level" in prompt
     assert "emit exactly one task" in prompt
     assert "tasks" in prompt
+    assert "Do NOT include a top-level `plan`" in prompt
+    assert "must not run tests" in prompt
+    assert "The FINAL task MUST run tests" not in prompt
 
 
 def test_execute_prompts_handle_tiny_without_gate(tmp_path: Path) -> None:
@@ -2962,6 +2965,296 @@ def test_execute_batch_prompt_has_harness_framing_no_loop(tmp_path: Path) -> Non
     banned = ["re-run until", "never stop", "until they pass"]
     for phrase in banned:
         assert phrase not in prompt, f"Banned phrase '{phrase}' found in execute batch prompt"
+
+
+# ---------------------------------------------------------------------------
+# T3: Scratch template builders — filenames, top-level keys, ID prepopulation
+# ---------------------------------------------------------------------------
+
+
+def test_write_gate_template_filename_and_keys(tmp_path: Path) -> None:
+    """`_write_gate_template` writes ``gate_output.json`` with the expected top-level keys."""
+    from arnold.pipelines.megaplan.model_seam import audit_step_payload
+    from arnold.pipelines.megaplan.prompts.gate import _write_gate_template
+
+    plan_dir, state = _scaffold(tmp_path)
+    output_path = _write_gate_template(plan_dir, state)
+
+    assert output_path.name == "gate_output.json", f"Unexpected filename: {output_path.name}"
+    assert output_path.exists()
+
+    data = read_json(output_path)
+    expected_keys = {
+        "recommendation", "rationale", "signals_assessment", "warnings",
+        "flag_resolutions", "accepted_tradeoffs", "settled_decisions",
+    }
+    assert set(data.keys()) == expected_keys, f"Keys mismatch: {set(data.keys())}"
+    assert data["recommendation"] == ""
+    assert data["rationale"] == ""
+    assert data["signals_assessment"] == ""
+    assert data["warnings"] == []
+    assert data["flag_resolutions"] == []
+    assert data["accepted_tradeoffs"] == [
+        {
+            "flag_id": "",
+            "concern": "",
+            "subsystem": "",
+            "rationale": "",
+        }
+    ]
+    assert data["settled_decisions"] == []
+    populated = dict(data)
+    populated["recommendation"] = "PROCEED"
+    populated["rationale"] = "Proceed with the accepted tradeoff."
+    populated["signals_assessment"] = "Stable score and passing preflight."
+    audit_step_payload("gate", populated)
+
+
+def test_gate_prompt_lists_known_flag_ids_outside_template(tmp_path: Path) -> None:
+    """`_gate_prompt` provides flag IDs as prompt context, not template fields."""
+    from arnold.pipelines.megaplan.prompts.gate import _gate_prompt
+    from arnold.pipelines.megaplan.prompts.gate import _write_gate_template
+
+    plan_dir, state = _scaffold(tmp_path)
+    prompt = _gate_prompt(state, plan_dir, root=tmp_path)
+    output_path = _write_gate_template(plan_dir, state)
+
+    data = read_json(output_path)
+    assert "Valid flag IDs are:" in prompt
+    assert "FLAG-001" in prompt
+    assert "known_flag_ids" not in data
+
+
+def test_gate_prompt_forbids_template_only_and_nested_tradeoff_fields(tmp_path: Path) -> None:
+    """The gate prompt explicitly forbids fields that made scratch output fail audit."""
+    from arnold.pipelines.megaplan.prompts.gate import _gate_prompt
+
+    plan_dir, state = _scaffold(tmp_path)
+    prompt = _gate_prompt(state, plan_dir, root=tmp_path)
+
+    assert "Each `accepted_tradeoffs` entry must be an object" in prompt
+    assert "known_flag_ids" in prompt
+    assert "nested `tradeoff` fields" in prompt
+
+
+def test_write_gate_template_no_flag_registry_still_canonical(tmp_path: Path) -> None:
+    """`_write_gate_template` does not add non-canonical helper fields without a registry."""
+    from arnold.pipelines.megaplan.prompts.gate import _write_gate_template
+
+    plan_dir = tmp_path / "plan_no_flags"
+    project_dir = tmp_path / "project_no_flags"
+    plan_dir.mkdir()
+    project_dir.mkdir()
+    (project_dir / ".git").mkdir()
+    state = _state(project_dir, iteration=1)
+    atomic_write_text(plan_dir / "plan_v1.md", "# Plan\\nDo the thing.\\n")
+    atomic_write_json(plan_dir / "plan_v1.meta.json", {})
+
+    output_path = _write_gate_template(plan_dir, state)
+    data = read_json(output_path)
+    assert "known_flag_ids" not in data
+
+
+def test_write_finalize_template_filename_and_keys(tmp_path: Path) -> None:
+    """`_write_finalize_template` writes ``finalize_output.json`` with the expected top-level keys."""
+    from arnold.pipelines.megaplan.prompts.finalize import _write_finalize_template
+
+    plan_dir, state = _scaffold(tmp_path)
+    output_path = _write_finalize_template(plan_dir, state)
+
+    assert output_path.name == "finalize_output.json", f"Unexpected filename: {output_path.name}"
+    assert output_path.exists()
+
+    data = read_json(output_path)
+    expected_keys = {"tasks", "user_actions", "sense_checks", "watch_items", "meta_commentary"}
+    assert set(data.keys()) == expected_keys, f"Keys mismatch: {set(data.keys())}"
+    assert data["tasks"] == []
+    assert data["user_actions"] == []
+    assert data["sense_checks"] == []
+    assert data["watch_items"] == []
+    assert data["meta_commentary"] == ""
+
+
+def test_write_critique_evaluator_template_filename_and_keys(tmp_path: Path) -> None:
+    """`_write_critique_evaluator_template` writes ``critique_evaluator_output.json`` with expected keys."""
+    from arnold.pipelines.megaplan.prompts.critique_evaluator import _write_critique_evaluator_template
+
+    plan_dir = tmp_path / "plan"
+    project_dir = tmp_path / "project"
+    plan_dir.mkdir()
+    project_dir.mkdir()
+    (project_dir / ".git").mkdir()
+    state = _state(project_dir, iteration=1)
+    atomic_write_text(plan_dir / "plan_v1.md", "# Plan\\nDo the thing.\\n")
+    atomic_write_json(plan_dir / "plan_v1.meta.json", {})
+
+    output_path = _write_critique_evaluator_template(plan_dir, state)
+
+    assert output_path.name == "critique_evaluator_output.json", f"Unexpected filename: {output_path.name}"
+    assert output_path.exists()
+
+    data = read_json(output_path)
+    expected_keys = {"selections", "skipped", "evaluator_model", "flag_verifications"}
+    assert set(data.keys()) == expected_keys, f"Keys mismatch: {set(data.keys())}"
+    assert data["selections"] == []
+    assert data["evaluator_model"] == ""
+    assert data["flag_verifications"] == []
+
+
+def test_write_critique_evaluator_template_skipped_prepopulation(tmp_path: Path) -> None:
+    """`_write_critique_evaluator_template` pre-populates ``skipped`` with all CRITIQUE_CHECKS IDs."""
+    from arnold.pipelines.megaplan.prompts.critique_evaluator import _write_critique_evaluator_template
+    from arnold.pipelines.megaplan.audits.robustness import CRITIQUE_CHECKS
+
+    plan_dir = tmp_path / "plan"
+    project_dir = tmp_path / "project"
+    plan_dir.mkdir()
+    project_dir.mkdir()
+    (project_dir / ".git").mkdir()
+    state = _state(project_dir, iteration=1)
+    atomic_write_text(plan_dir / "plan_v1.md", "# Plan\\nDo the thing.\\n")
+    atomic_write_json(plan_dir / "plan_v1.meta.json", {})
+
+    output_path = _write_critique_evaluator_template(plan_dir, state)
+    data = read_json(output_path)
+
+    all_check_ids = {check["id"] for check in CRITIQUE_CHECKS}
+    skipped_ids = {entry["check_id"] for entry in data["skipped"]}
+    assert skipped_ids == all_check_ids, f"Skipped IDs mismatch: {skipped_ids} vs {all_check_ids}"
+
+    # Every skipped entry must have an empty ``why``
+    for entry in data["skipped"]:
+        assert entry["why"] == "", f"Expected empty why for {entry['check_id']}"
+
+
+def test_write_execute_template_filename_and_keys(tmp_path: Path) -> None:
+    """`_write_execute_template` writes ``execute_output.json`` with expected top-level keys."""
+    from arnold.pipelines.megaplan.prompts.execute import _write_execute_template
+
+    plan_dir, state = _scaffold(tmp_path)
+    output_path = _write_execute_template(plan_dir, state)
+
+    assert output_path.name == "execute_output.json", f"Unexpected filename: {output_path.name}"
+    assert output_path.exists()
+
+    data = read_json(output_path)
+    expected_keys = {"output", "files_changed", "commands_run", "deviations", "task_updates", "sense_check_acknowledgments"}
+    assert set(data.keys()) == expected_keys, f"Keys mismatch: {set(data.keys())}"
+    assert data["output"] == ""
+    assert data["files_changed"] == []
+    assert data["commands_run"] == []
+    assert data["deviations"] == []
+
+
+def test_write_execute_template_id_prepopulation(tmp_path: Path) -> None:
+    """`_write_execute_template` pre-populates task IDs and sense-check IDs from ``finalize.json``."""
+    from arnold.pipelines.megaplan.prompts.execute import _write_execute_template
+
+    plan_dir, state = _scaffold(tmp_path)
+    # _scaffold writes finalize.json with T1 and SC1
+    output_path = _write_execute_template(plan_dir, state)
+
+    data = read_json(output_path)
+
+    task_ids = [t["task_id"] for t in data["task_updates"]]
+    assert "T1" in task_ids, f"Expected T1 in task_updates, got {task_ids}"
+
+    sc_ids = [s["sense_check_id"] for s in data["sense_check_acknowledgments"]]
+    assert "SC1" in sc_ids, f"Expected SC1 in sense_check_acknowledgments, got {sc_ids}"
+
+    # Verify prepopulated task entry has the right shape
+    t1 = next(t for t in data["task_updates"] if t["task_id"] == "T1")
+    assert t1["status"] == "pending"
+    assert t1["executor_notes"] == ""
+    assert t1["files_changed"] == []
+    assert t1["commands_run"] == []
+
+    # Verify prepopulated sense-check entry has the right shape
+    sc1 = next(s for s in data["sense_check_acknowledgments"] if s["sense_check_id"] == "SC1")
+    assert sc1["executor_note"] == ""
+
+
+def test_write_execute_template_no_finalize_json(tmp_path: Path) -> None:
+    """`_write_execute_template` returns empty arrays when ``finalize.json`` is absent."""
+    from arnold.pipelines.megaplan.prompts.execute import _write_execute_template
+
+    plan_dir = tmp_path / "plan_no_finalize"
+    project_dir = tmp_path / "project_no_finalize"
+    plan_dir.mkdir()
+    project_dir.mkdir()
+    (project_dir / ".git").mkdir()
+    state = _state(project_dir, iteration=1)
+    atomic_write_text(plan_dir / "plan_v1.md", "# Plan\\nDo the thing.\\n")
+    atomic_write_json(plan_dir / "plan_v1.meta.json", {})
+
+    output_path = _write_execute_template(plan_dir, state)
+    data = read_json(output_path)
+
+    assert data["task_updates"] == []
+    assert data["sense_check_acknowledgments"] == []
+
+
+def test_write_execute_batch_template_scopes_ids(tmp_path: Path) -> None:
+    from arnold.pipelines.megaplan.prompts.execute import _write_execute_batch_template
+
+    plan_dir, _state = _scaffold(tmp_path)
+
+    output_path = _write_execute_batch_template(
+        plan_dir,
+        2,
+        ["T2", "T3"],
+        ["SC2"],
+    )
+
+    assert output_path.name == "execute_batch_2_output.json"
+    data = read_json(output_path)
+    assert data["output"] == ""
+    assert data["files_changed"] == []
+    assert data["commands_run"] == []
+    assert data["deviations"] == []
+    assert data["task_updates"] == [
+        {
+            "task_id": "T2",
+            "status": "pending",
+            "executor_notes": "",
+            "files_changed": [],
+            "commands_run": [],
+            "auto_attributed_files": False,
+        },
+        {
+            "task_id": "T3",
+            "status": "pending",
+            "executor_notes": "",
+            "files_changed": [],
+            "commands_run": [],
+            "auto_attributed_files": False,
+        },
+    ]
+    assert data["sense_check_acknowledgments"] == [
+        {"sense_check_id": "SC2", "executor_note": ""}
+    ]
+
+
+def test_execute_batch_prompt_includes_prefilled_batch_template(tmp_path: Path) -> None:
+    from arnold.pipelines.megaplan.prompts.execute import _write_execute_batch_template
+
+    plan_dir, state = _scaffold(tmp_path)
+    template_path = _write_execute_batch_template(plan_dir, 1, ["T1"], ["SC1"])
+
+    prompt = _execute_batch_prompt(
+        state,
+        plan_dir,
+        ["T1"],
+        set(),
+        batch_template_path=template_path,
+    )
+
+    assert "Fill in the following template and return it as your JSON response." in prompt
+    assert str(template_path) in prompt
+    assert "Batch JSON response template:" in prompt
+    assert '"task_id": "T1"' in prompt
+    assert '"sense_check_id": "SC1"' in prompt
+    assert '"auto_attributed_files": false' in prompt
 
 
 def test_plan_template_has_no_megaplan_path_references() -> None:

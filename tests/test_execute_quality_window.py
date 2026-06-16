@@ -52,6 +52,30 @@ def test_observe_git_changes_no_filtering_without_carry_forward(tmp_path: Path) 
     assert any("new_file.py" in i for i in issues)
 
 
+def test_observe_git_changes_ignores_harness_generated_logs(tmp_path: Path) -> None:
+    before: dict[str, str] = {}
+    after: dict[str, str] = {
+        ".megaplan/run-logs/auto.log": "hash1",
+        ".megaplan/system_logs/log_1.json": "hash2",
+    }
+    payload: dict[str, Any] = {"files_changed": []}
+
+    def capture_fn(p: Path):  # type: ignore[override]
+        return after, None
+
+    issues = _observe_git_changes(
+        project_dir=tmp_path,
+        payload=payload,
+        before_snapshot=before,
+        before_error=None,
+        batch_number=1,
+        batches_total=1,
+        capture_git_status_snapshot_fn=capture_fn,
+    )
+
+    assert issues == []
+
+
 def test_observe_git_changes_carry_forward_excluded_from_unclaimed(tmp_path: Path) -> None:
     before: dict[str, str] = {}
     after: dict[str, str] = {"carried.py": "hash_cf", "new_file.py": "hash1"}

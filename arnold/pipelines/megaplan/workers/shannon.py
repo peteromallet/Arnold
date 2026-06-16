@@ -164,6 +164,34 @@ def _assert_vendored_shannon_sentinel() -> None:
     _shannon_vendor_sentinel_ok = True
 
 
+_TMUX_DIED_MARKERS = (
+    "no server running",
+    "no current client",
+    "no current target",
+    "can't find session",
+    "session not found",
+    "lost server",
+)
+
+
+def _matched_tmux_died_marker(raw: str) -> str:
+    """Return the first tmux death marker found in raw output, or ''."""
+    if not raw:
+        return ""
+    lowered = raw.lower()
+    if "tmux" not in lowered and "capture-pane" not in lowered:
+        return ""
+    for marker in _TMUX_DIED_MARKERS:
+        if marker in raw:
+            return marker
+    return ""
+
+
+def _raw_indicates_tmux_died(raw: str) -> bool:
+    """Return True when raw Shannon output shows a dead tmux server/session."""
+    return bool(_matched_tmux_died_marker(raw))
+
+
 def _raw_contains_success_result(raw: str) -> bool:
     """Return True when Shannon/Claude JSON output includes a success result."""
     if not raw.strip():

@@ -80,7 +80,6 @@ from arnold.pipelines.megaplan.runtime.execution_environment import (
     ExecutionEnvironment,
     classify_path_overlap,
     isolation_cli_error,
-    latest_engine_overlap_waiver,
 )
 
 
@@ -194,6 +193,12 @@ DEFAULT_WORKER_STREAM_IDLE_TIMEOUT_SECONDS = 300.0
 # clock, so this only fires on a genuinely stdout-silent turn. It is RESET by
 # real output, so it is NOT an absolute cap — see the next one.
 DEFAULT_PROBE_RESCUE_CAP_SECONDS = 600.0
+
+# Hard absolute per-turn backstop. This is intentionally much larger than the
+# idle/probe rescue caps: it only bounds a genuinely runaway turn that keeps at
+# least one liveness channel hot forever.
+DEFAULT_TURN_HARD_CAP_SECONDS = 5400.0
+
 DEFAULT_CODEX_EXECUTOR_SESSION_HEADROOM_TOKENS = 1_000_000
 CODEX_EXECUTOR_SESSION_HEADROOM_ENV = "MEGAPLAN_CODEX_EXECUTOR_SESSION_HEADROOM_TOKENS"
 
@@ -560,7 +565,13 @@ def _guard_mutating_worker_launch(step: str, state: PlanState, root: Path) -> No
         step=step,
         timing="before_worker",
         env=env,
-        proof=proof.to_dict() if hasattr(proof, "to_dict") else {"provider": type(proof).__name__},
+        proof=(
+            proof
+            if isinstance(proof, dict)
+            else proof.to_dict()
+            if hasattr(proof, "to_dict")
+            else {"provider": type(proof).__name__}
+        ),
     )
 
 
@@ -571,7 +582,7 @@ def _record_engine_verification(
     timing: str,
     env: ExecutionEnvironment,
     proof: dict[str, Any] | None = None,
-) -> None:
+) -> dict[str, Any]:
     meta = state.setdefault("meta", {})
     if not isinstance(meta, dict):
         meta = {}
@@ -584,13 +595,11 @@ def _record_engine_verification(
         "phase": step,
         "timing": timing,
         "engine_root": str(env.engine_root),
-        "engine_commit": env.engine_commit,
-        "engine_signature": env.engine_signature,
-        "engine_dirty": env.engine_dirty,
     }
     if proof is not None:
         record["proof"] = proof
     verifications.append(record)
+    return record
 
 
 def _verify_engine_after_mutating_worker(
@@ -599,6 +608,7 @@ def _verify_engine_after_mutating_worker(
     root: Path,
     before_env: ExecutionEnvironment,
 ) -> None:
+    del before_env
     if step not in _MUTATING_WORKER_STEPS:
         return
     after_env = resolve_execution_environment(root=root, state=state)
@@ -608,27 +618,6 @@ def _verify_engine_after_mutating_worker(
         timing="after_worker",
         env=after_env,
     )
-    drift: dict[str, dict[str, Any]] = {}
-    for key, before, after in (
-        ("engine_root", str(before_env.engine_root), str(after_env.engine_root)),
-        ("engine_commit", before_env.engine_commit, after_env.engine_commit),
-        ("engine_signature", before_env.engine_signature, after_env.engine_signature),
-    ):
-        if before != after:
-            drift[key] = {"pinned": before, "observed": after}
-    if drift:
-        raise isolation_cli_error(
-            "engine_mutated_during_worker",
-            "engine identity changed during mutating worker execution",
-            env=after_env,
-            extra={
-                "phase": step,
-                "drift": drift,
-                "pinned_engine_root": str(before_env.engine_root),
-                "pinned_engine_commit": before_env.engine_commit,
-                "pinned_engine_signature": before_env.engine_signature,
-            },
-        )
 
 
 def warn_if_work_dir_differs_from_project_dir(state: PlanState) -> None:
@@ -1450,7 +1439,7 @@ def _codex_writable_roots(
     *,
     phase: str | None = None,
 ) -> list[str]:
-    """Return Codex writable roots after engine-overlap filtering.
+    """Return Codex writable roots after engine root filtering.
 
     The target work dir is always present. Auto/configured extra roots are
     accepted only when they are disjoint from the engine root.
@@ -1485,24 +1474,6 @@ def _codex_writable_roots(
         if overlap != "disjoint":
             if source == "auto" and not (root / ".git").exists():
                 continue
-            waiver = latest_engine_overlap_waiver(state.get("meta") if isinstance(state, dict) else None)
-            scope = waiver.get("scope") if isinstance(waiver, dict) else None
-            identity = waiver.get("engine_identity") if isinstance(waiver, dict) else None
-            waiver_allows_phase = (
-                isinstance(waiver, dict)
-                and waiver.get("action") == "waive-engine-overlap"
-                and (phase is None or waiver.get("consumed_by_phase") == phase)
-                and isinstance(scope, dict)
-                and scope.get("target_root") == str(env.target_root)
-                and scope.get("work_dir") == str(env.work_dir)
-                and scope.get("engine_root") == str(env.engine_root)
-                and isinstance(identity, dict)
-                and identity.get("engine_signature") == env.engine_signature
-                and identity.get("engine_commit") == env.engine_commit
-            )
-            if waiver_allows_phase:
-                filtered.append(root_str)
-                continue
             raise isolation_cli_error(
                 "codex_writable_root_overlaps_engine",
                 "Codex writable root overlaps the engine root; refusing engine-writable sandbox",
@@ -1511,7 +1482,6 @@ def _codex_writable_roots(
                     "writable_root": root_str,
                     "writable_root_source": source,
                     "overlap": overlap,
-                    "latest_engine_overlap_waiver_id": waiver.get("id") if isinstance(waiver, dict) else None,
                 },
             )
         filtered.append(root_str)
@@ -1537,15 +1507,11 @@ def _codex_sandbox_fingerprint(work_dir: Path | str, state: PlanState, env: Exec
     ``MEGAPLAN_TRUSTED_CONTAINER=1`` *after* a session was created and
     codex keeps using the locked-in (broken) sandbox forever.
     """
-    waiver = latest_engine_overlap_waiver(state.get("meta") if isinstance(state, dict) else None)
     payload = {
         "trusted_container": _trusted_container(),
         "work_dir": str(Path(work_dir).resolve()),
         "writable_roots": [] if _trusted_container() else _codex_writable_roots(work_dir, state, env),
         "engine_root": str(env.engine_root),
-        "engine_signature": env.engine_signature,
-        "engine_commit": env.engine_commit,
-        "latest_engine_overlap_waiver_id": waiver.get("id") if isinstance(waiver, dict) else None,
     }
     return hashlib.sha256(json.dumps(payload, sort_keys=True).encode("utf-8")).hexdigest()[:16]
 
@@ -3626,7 +3592,7 @@ def resolve_agent_mode(step: str, args: argparse.Namespace, *, home: Path | None
             if agent == "hermes":
                 raise CliError(
                     "agent_deps_missing",
-                    "hermes backend requires the bundled runtime packages: pip install megaplan-harness (or pip install -e . in a source checkout; '[agent]' is only a no-op compatibility extra).",
+                    "hermes backend requires the bundled runtime packages: pip install arnold (or pip install -e . in a source checkout; '[agent]' is only a no-op compatibility extra).",
                 )
             if agent == "shannon":
                 from arnold.pipelines.megaplan._core.io import shannon_missing_deps
@@ -3650,14 +3616,14 @@ def resolve_agent_mode(step: str, args: argparse.Namespace, *, home: Path | None
         if agent == "hermes":
             raise CliError(
                 "agent_deps_missing",
-                "hermes backend requires the bundled runtime packages: pip install megaplan-harness (or pip install -e . in a source checkout; '[agent]' is only a no-op compatibility extra).",
+                "hermes backend requires the bundled runtime packages: pip install arnold (or pip install -e . in a source checkout; '[agent]' is only a no-op compatibility extra).",
             )
         # Try fallback
         available = detect_available_agents()
         if not available:
             raise CliError(
                 "agent_not_found",
-                "No supported agents found. Install claude or codex, or install megaplan-harness (or pip install -e . in a source checkout) for hermes. The legacy '[agent]' extra is only a no-op compatibility alias.",
+                "No supported agents found. Install claude or codex, or install arnold (or pip install -e . in a source checkout) for hermes. The legacy '[agent]' extra is only a no-op compatibility alias.",
             )
         fallback = available[0]
         args._agent_fallback = {

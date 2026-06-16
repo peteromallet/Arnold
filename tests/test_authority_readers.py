@@ -136,6 +136,68 @@ def test_corroborated_completed_task_ids_legacy_done_without_evidence_is_unknown
     assert emitted[-1]["payload"]["diagnostics"]["raw_terminal_status"] == "done"
 
 
+def test_corroborated_completed_task_ids_accepts_substantive_audit_notes(tmp_path):
+    notes = (
+        "Verified the control-flow contract by inspecting validator.py and types.py: "
+        "decision_routes are read via getattr, non-None route values are checked "
+        "against outgoing labels, and suspension_schema remains available on both "
+        "stage types for schema-key conformance."
+    )
+    task = {"id": "T1", "status": "done", "kind": "audit"}
+    _write_json(
+        tmp_path / "execution_batch_1.json",
+        {
+            "task_updates": [
+                {
+                    "task_id": "T1",
+                    "status": "done",
+                    "kind": "audit",
+                    "executor_notes": notes,
+                    "files_changed": [],
+                    "commands_run": [],
+                }
+            ]
+        },
+    )
+
+    decisions: dict[str, AuthorityDecision] = {}
+    completed = corroborated_completed_task_ids([task], plan_dir=tmp_path, decisions=decisions)
+
+    assert completed == {"T1"}
+    assert decisions["T1"].status == EvidenceStatus.satisfied
+    assert decisions["T1"].evidence[0].kind == "task_executor_notes"
+
+
+def test_corroborated_completed_task_ids_rejects_code_task_with_notes_only(tmp_path):
+    notes = (
+        "Verified behavior carefully and wrote detailed notes, but this code task "
+        "does not include changed files or commands that can corroborate the claim."
+    )
+    task = {"id": "T1", "status": "done", "kind": "code"}
+    _write_json(
+        tmp_path / "execution_batch_1.json",
+        {
+            "task_updates": [
+                {
+                    "task_id": "T1",
+                    "status": "done",
+                    "kind": "code",
+                    "executor_notes": notes,
+                    "files_changed": [],
+                    "commands_run": [],
+                }
+            ]
+        },
+    )
+
+    decisions: dict[str, AuthorityDecision] = {}
+    completed = corroborated_completed_task_ids([task], plan_dir=tmp_path, decisions=decisions)
+
+    assert completed == set()
+    assert decisions["T1"].status == EvidenceStatus.unknown
+    assert decisions["T1"].would_block_reasons == ("missing_linked_evidence",)
+
+
 def test_corroborated_completed_task_ids_skipped_with_waiver_is_authoritative(tmp_path):
     task = {"id": "T1", "status": "skipped"}
     _write_json(

@@ -106,7 +106,7 @@ def _critique_schema() -> dict:
 # ---------------------------------------------------------------------------
 
 
-def test_provider_requires_streaming_for_high_token_fireworks_and_direct_deepseek() -> None:
+def test_provider_requires_streaming_for_high_token_fireworks_and_direct_providers() -> None:
     # Fireworks + > 4096 → must stream
     assert _provider_requires_streaming("fireworks:accounts/fireworks/models/kimi-k2p6", 8192) is True
     assert _provider_requires_streaming("fireworks:foo", 4097) is True
@@ -116,9 +116,11 @@ def test_provider_requires_streaming_for_high_token_fireworks_and_direct_deepsee
     assert _provider_requires_streaming("fireworks:foo", 4096) is False
     assert _provider_requires_streaming("fireworks:foo", None) is False
 
-    # Direct DeepSeek mirrors the Fireworks high-token streaming path.
+    # Direct providers mirror the Fireworks high-token streaming path.
     assert _provider_requires_streaming("deepseek:deepseek-v4-pro", 16384) is True
     assert _provider_requires_streaming("deepseek:deepseek-v4-pro", 4096) is False
+    assert _provider_requires_streaming("kimi:kimi-k2.7-code", 16384) is True
+    assert _provider_requires_streaming("kimi:kimi-k2.7-code", 4096) is False
 
     # Other providers don't need this even at very high max_tokens
     assert _provider_requires_streaming("openrouter/anthropic/claude", 16384) is False
@@ -134,8 +136,9 @@ def test_streaming_run_kwargs_returns_callback_only_when_required() -> None:
     assert "stream_callback" in kwargs
     assert isinstance(kwargs["stream_callback"], _StreamTracker)
 
-    # Direct DeepSeek high max_tokens mirrors Fireworks.
+    # Direct high-token providers mirror Fireworks.
     assert "stream_callback" in _streaming_run_kwargs("deepseek:deepseek-v4-pro", 8192)
+    assert "stream_callback" in _streaming_run_kwargs("kimi:kimi-k2.7-code", 8192)
 
     # Other provider → empty kwargs (no streaming forced)
     assert _streaming_run_kwargs("openrouter/anthropic/claude", 16384) == {}
