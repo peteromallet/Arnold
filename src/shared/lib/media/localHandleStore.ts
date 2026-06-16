@@ -12,6 +12,15 @@ export interface PersistedLocalMediaHandle {
   getFile?: () => Promise<File>;
 }
 
+export interface PersistedLocalFileHandle extends PersistedLocalMediaHandle {
+  kind: 'file';
+  getFile: () => Promise<File>;
+}
+
+export interface PersistedLocalDirectoryHandle extends PersistedLocalMediaHandle {
+  kind: 'directory';
+}
+
 function openDatabase(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
     const request = indexedDB.open(DATABASE_NAME, DATABASE_VERSION);
@@ -92,4 +101,28 @@ export async function ensurePermission(
   }
 
   return handle.requestPermission({ mode });
+}
+
+export async function saveFileHandle(id: string, handle: PersistedLocalFileHandle): Promise<void> {
+  await saveHandle(id, handle);
+}
+
+export async function getFileHandle(id: string): Promise<PersistedLocalFileHandle | null> {
+  const handle = await loadHandle(id);
+  if (handle?.kind === 'file' && typeof handle.getFile === 'function') {
+    return handle as PersistedLocalFileHandle;
+  }
+  return null;
+}
+
+export async function saveDirectoryHandle(id: string, handle: PersistedLocalDirectoryHandle): Promise<void> {
+  await saveHandle(id, handle);
+}
+
+export async function getDirectoryHandle(id: string): Promise<PersistedLocalDirectoryHandle | null> {
+  const handle = await loadHandle(id);
+  if (handle?.kind === 'directory') {
+    return handle as PersistedLocalDirectoryHandle;
+  }
+  return null;
 }

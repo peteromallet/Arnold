@@ -65,6 +65,7 @@ export async function extractAssetRegistryEntry(
       duration: metadata.duration_seconds,
       resolution: `${metadata.width}x${metadata.height}`,
       fps: metadata.frame_rate,
+      origin: 'immutable-public',
     };
   }
 
@@ -74,6 +75,7 @@ export async function extractAssetRegistryEntry(
       file: storagePath,
       type: file.type,
       resolution: `${metadata.width}x${metadata.height}`,
+      origin: 'immutable-public',
     };
   }
 
@@ -83,6 +85,7 @@ export async function extractAssetRegistryEntry(
       file: storagePath,
       type: file.type,
       duration: metadata.duration,
+      origin: 'immutable-public',
     };
   }
 
@@ -99,6 +102,7 @@ export async function extractAssetRegistryEntry(
         duration: metadata.duration_seconds,
         resolution: `${metadata.width}x${metadata.height}`,
         fps: metadata.frame_rate,
+        origin: 'immutable-public',
       };
     } catch {
       // Fall through to the generic entry when metadata extraction fails.
@@ -112,6 +116,7 @@ export async function extractAssetRegistryEntry(
         file: storagePath,
         type: file.type || AUDIO_EXTENSION_TYPES[extension],
         duration: metadata.duration,
+        origin: 'immutable-public',
       };
     } catch {
       // Fall through to the generic entry when metadata extraction fails.
@@ -121,5 +126,6 @@ export async function extractAssetRegistryEntry(
   return {
     file: storagePath,
     type: file.type || 'application/octet-stream',
+    origin: 'immutable-public',
   };
 }

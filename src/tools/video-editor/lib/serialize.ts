@@ -6,6 +6,7 @@ import type {
 } from '@/tools/video-editor/types/index.ts';
 import {
   assertValidTimelineConfigSnapshot,
+  cloneAppExtension,
   sanitizeTimelineClipSnapshot,
   sanitizeTrackDefinitionSnapshot,
 } from './timeline-domain.ts';
@@ -35,7 +36,7 @@ export const serializeForDisk = (
   // Sprint 2: optional carry-through of schema-lift top-level fields. Callers
   // that don't pass these keep the prior behavior; existing timelines without
   // them stay unchanged.
-  extras?: Pick<TimelineConfig, 'theme' | 'theme_overrides' | 'generation_defaults'>,
+  extras?: Pick<TimelineConfig, 'theme' | 'theme_overrides' | 'generation_defaults' | 'app'>,
 ): TimelineConfig => {
   const resolvedExtras = extras ?? resolved;
   const serialized: TimelineConfig = {
@@ -56,6 +57,9 @@ export const serializeForDisk = (
   }
   if (resolvedExtras.generation_defaults !== undefined) {
     serialized.generation_defaults = resolvedExtras.generation_defaults;
+  }
+  if (resolvedExtras.app !== undefined) {
+    serialized.app = cloneAppExtension(resolvedExtras.app);
   }
 
   validateSerializedConfig(serialized);

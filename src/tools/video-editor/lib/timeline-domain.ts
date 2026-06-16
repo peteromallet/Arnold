@@ -69,7 +69,7 @@ export class TimelineDomainError extends Error {
   }
 }
 
-type TimelineExtras = Pick<TimelineConfig, 'theme' | 'theme_overrides' | 'generation_defaults'>;
+type TimelineExtras = Pick<TimelineConfig, 'theme' | 'theme_overrides' | 'generation_defaults' | 'app'>;
 type LegacyPinnedGroupChild = { clipId: string; offset?: number; duration?: number };
 type LegacyPinnedShotGroup = PinnedShotGroup & {
   start?: number;
@@ -141,6 +141,7 @@ export const TIMELINE_CLIP_FIELDS = [
   'clip_order',
   'source_uuid',
   'generation',
+  'app',
 ] as const;
 
 export type TimelineClipField = (typeof TIMELINE_CLIP_FIELDS)[number];
@@ -155,6 +156,7 @@ export const TRACK_DEFINITION_FIELDS = [
   'volume',
   'muted',
   'blendMode',
+  'app',
 ] as const;
 
 export type TrackDefinitionField = (typeof TRACK_DEFINITION_FIELDS)[number];
@@ -167,14 +169,21 @@ const ALLOWED_TOP_LEVEL_KEYS = new Set([
   'theme',
   'theme_overrides',
   'generation_defaults',
+  'app',
 ]);
 
 const ASSET_REGISTRY_ENTRY_FIELDS = [
   'file',
+  'url',
+  'etag',
+  'content_sha256',
+  'url_expires_at',
   'type',
   'duration',
   'resolution',
   'fps',
+  'origin',
+  'derivedFrom',
   'generationId',
   'variantId',
   'thumbnailUrl',
@@ -185,10 +194,37 @@ const roundTimelineValue = (value: number, digits = TIMELINE_TIME_PRECISION): nu
   return Math.round(value * factor) / factor;
 };
 
+const cloneAppValue = (value: unknown): unknown => {
+  if (Array.isArray(value)) {
+    return value.map(cloneAppValue);
+  }
+
+  if (value !== null && typeof value === 'object') {
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>).map(([key, childValue]) => [key, cloneAppValue(childValue)]),
+    );
+  }
+
+  return value;
+};
+
+export const cloneAppExtension = (app: Record<string, unknown>): Record<string, unknown> => {
+  if (typeof structuredClone === 'function') {
+    try {
+      return structuredClone(app) as Record<string, unknown>;
+    } catch {
+      // Fall back to JSON-shaped structural passthrough for non-cloneable values.
+    }
+  }
+
+  return cloneAppValue(app) as Record<string, unknown>;
+};
+
 const cloneTimelineExtras = (config: TimelineConfig): TimelineExtras => ({
   ...(config.theme !== undefined ? { theme: config.theme } : {}),
   ...(config.theme_overrides !== undefined ? { theme_overrides: config.theme_overrides } : {}),
   ...(config.generation_defaults !== undefined ? { generation_defaults: config.generation_defaults } : {}),
+  ...(config.app !== undefined ? { app: cloneAppExtension(config.app) } : {}),
 });
 
 const clonePinnedShotImageSnapshots = (
@@ -766,7 +802,7 @@ export const sanitizeTimelineClipSnapshot = (clip: TimelineClip): TimelineClip =
 
     const value = clip[field];
     if (value !== undefined) {
-      serializedClip[field] = value;
+      serializedClip[field] = field === 'app' ? cloneAppExtension(value) : value;
     }
   }
 
@@ -787,7 +823,7 @@ export const sanitizeTrackDefinitionSnapshot = (track: TrackDefinition): TrackDe
 
     const value = track[field];
     if (value !== undefined) {
-      serializedTrack[field] = value;
+      serializedTrack[field] = field === 'app' ? cloneAppExtension(value) : value;
     }
   }
 

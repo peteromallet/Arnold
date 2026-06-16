@@ -497,6 +497,22 @@ describe('useTimelineHistory', () => {
     );
   });
 
+  it('skips checkpoint persistence when provider persistence is disabled', async () => {
+    const saveCheckpoint = vi.fn(async () => 'checkpoint-read-only');
+    const testCase = setup({
+      providerOverrides: {
+        persistenceEnabled: false,
+        saveCheckpoint,
+      },
+    });
+
+    await act(async () => {
+      await testCase.result.current.createManualCheckpoint('Read only');
+    });
+
+    expect(saveCheckpoint).not.toHaveBeenCalled();
+  });
+
   it('jumpToCheckpoint restores the checkpoint config and clears both stacks', async () => {
     const checkpointConfig = makeConfig(7);
     const checkpoint: Checkpoint = {

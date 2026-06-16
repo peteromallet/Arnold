@@ -1,6 +1,10 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useRef } from 'react';
-import type { DataProvider, LoadedTimeline } from '@/tools/video-editor/data/DataProvider.ts';
+import {
+  isDataProviderPersistenceEnabled,
+  type DataProvider,
+  type LoadedTimeline,
+} from '@/tools/video-editor/data/DataProvider.ts';
 import type { TimelineConfig } from '@/tools/video-editor/types/index.ts';
 
 export const timelineQueryKey = (timelineId: string | null | undefined) => ['timeline', timelineId] as const;
@@ -22,6 +26,9 @@ export function useTimeline(provider: DataProvider | null, timelineId: string | 
 
   const saveTimeline = useMutation({
     mutationFn: async (config: TimelineConfig) => {
+      if (!isDataProviderPersistenceEnabled(provider)) {
+        return { config, configVersion: configVersionRef.current };
+      }
       const nextVersion = await provider!.saveTimeline(
         timelineId!,
         config,

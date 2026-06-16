@@ -4,6 +4,7 @@ import { isInteractionActive, onInteractionEnd, type InteractionStateRef } from 
 import { TimelineEventBus } from '@/tools/video-editor/hooks/useTimelineEventBus.ts';
 import type { TimelineStoreApi } from '@/tools/video-editor/hooks/timelineStore.ts';
 import {
+  isDataProviderPersistenceEnabled,
   isTimelineNotFoundError,
   isTimelineVersionConflictError,
   type DataProvider,
@@ -70,6 +71,7 @@ export function useTimelinePersistence({
   lastSavedSignatureRef,
   interactionStateRef,
 }: UseTimelinePersistenceOptions): UseTimelinePersistenceResult {
+  const persistenceEnabled = isDataProviderPersistenceEnabled(provider);
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const conflictRetryRef = useRef(0);
   const pendingSaveRef = useRef<{ data: TimelineData; seq: number } | null>(null);
@@ -319,6 +321,19 @@ export function useTimelinePersistence({
   ]);
 
   const scheduleSave = useCallback<ScheduleSaveFn>((nextData, options) => {
+    if (!persistenceEnabled) {
+      if (saveTimer.current) {
+        clearTimeout(saveTimer.current);
+        saveTimer.current = null;
+      }
+      pendingSaveRef.current = null;
+      deferredSaveRef.current = null;
+      if (!options?.preserveStatus) {
+        setSaveStatus('saved');
+      }
+      return;
+    }
+
     if (!options?.preserveStatus) {
       setSaveStatus('dirty');
     }
@@ -350,7 +365,7 @@ export function useTimelinePersistence({
       conflictRetryRef.current = 0;
       void doSave(nextData, editSeqRef.current);
     }, 500);
-  }, [doSave, editSeqRef, getInteractionStateRef]);
+  }, [doSave, editSeqRef, getInteractionStateRef, persistenceEnabled]);
 
   // When a gesture ends, flush the latest deferred payload (if any) through
   // the normal scheduleSave path, which will now proceed past the gate.

@@ -9,6 +9,7 @@ import {
   type ShotDropData,
 } from '@/shared/lib/dnd/dragDrop';
 import { useExternalDrop } from './useExternalDrop';
+import { AstridBridgeDataProvider } from '@/tools/video-editor/data/AstridBridgeDataProvider';
 
 const mockUseShots = vi.fn(() => ({
   shots: undefined,
@@ -21,6 +22,16 @@ const mockUseFinalVideoAvailable = vi.fn(() => ({
   dismissFinalVideo: vi.fn(),
 }));
 const mockExtractVideoMetadataFromUrl = vi.fn();
+const mockToastError = vi.fn();
+const mockRuntime = {
+  provider: { persistenceEnabled: true },
+  toast: {
+    error: mockToastError,
+    success: vi.fn(),
+    warning: vi.fn(),
+    info: vi.fn(),
+  },
+};
 
 vi.mock('@/shared/contexts/ShotsContext', () => ({
   useShots: () => mockUseShots(),
@@ -32,6 +43,10 @@ vi.mock('@/tools/video-editor/hooks/useFinalVideoAvailable', () => ({
 
 vi.mock('@/shared/lib/media/videoMetadata', () => ({
   extractVideoMetadataFromUrl: (...args: unknown[]) => mockExtractVideoMetadataFromUrl(...args),
+}));
+
+vi.mock('@/tools/video-editor/contexts/DataProviderContext.tsx', () => ({
+  useVideoEditorRuntime: () => mockRuntime,
 }));
 
 function createStoredDragPayload(items: GenerationDropData[]) {
@@ -157,6 +172,8 @@ afterEach(() => {
     dismissFinalVideo: vi.fn(),
   });
   mockExtractVideoMetadataFromUrl.mockReset();
+  mockToastError.mockReset();
+  mockRuntime.provider = { persistenceEnabled: true };
 });
 
 describe('useExternalDrop', () => {
@@ -224,6 +241,105 @@ describe('useExternalDrop', () => {
 
     expect(event.preventDefault).toHaveBeenCalled();
     expect(event.currentTarget.dataset.dragOver).toBe('true');
+  });
+
+  it('does not clear drop state when dragleave bubbles from a child element still inside the wrapper', () => {
+    const dataRef = { current: null } as React.MutableRefObject<DropTestData | null>;
+    const pendingOpsRef = { current: 0 } as React.MutableRefObject<number>;
+    const wrapper = document.createElement('div');
+    wrapper.className = 'timeline-wrapper';
+    const child = document.createElement('div');
+    wrapper.appendChild(child);
+
+    const coordinator = {
+      update: vi.fn(),
+      showSecondaryGhosts: vi.fn(),
+      end: vi.fn(),
+      lastPosition: null,
+      lastPlan: null,
+      editAreaRef: { current: null },
+    };
+
+    const { result } = renderHook(() => useExternalDrop({
+      dataRef,
+      timelineId: 'timeline-1',
+      pendingOpsRef,
+      scale: 1,
+      scaleWidth: 1,
+      selectedTrackId: null,
+      applyEdit: vi.fn(),
+      patchRegistry: vi.fn(),
+      registerAsset: vi.fn(),
+      uploadAsset: vi.fn(),
+      invalidateAssetRegistry: vi.fn(),
+      assetResolver: { resolveAssetUrl: vi.fn() },
+      coordinator,
+      registerGenerationAsset: vi.fn(),
+      uploadImageGeneration: vi.fn(),
+      uploadVideoGeneration: vi.fn(),
+      handleAssetDrop: vi.fn(),
+      shots: mockUseShots().shots,
+      finalVideoMap: mockUseFinalVideoAvailable().finalVideoMap,
+    }));
+
+    const dragLeaveEvent = {
+      currentTarget: wrapper,
+      relatedTarget: child,
+    } as unknown as React.DragEvent<HTMLDivElement>;
+
+    result.current.onTimelineDragLeave(dragLeaveEvent);
+
+    expect(coordinator.end).not.toHaveBeenCalled();
+  });
+
+  it('clears drop state when dragleave leaves the wrapper entirely', () => {
+    const dataRef = { current: null } as React.MutableRefObject<DropTestData | null>;
+    const pendingOpsRef = { current: 0 } as React.MutableRefObject<number>;
+    const wrapper = document.createElement('div');
+    wrapper.className = 'timeline-wrapper';
+    wrapper.dataset.dragOver = 'true';
+    const outside = document.createElement('div');
+
+    const coordinator = {
+      update: vi.fn(),
+      showSecondaryGhosts: vi.fn(),
+      end: vi.fn(),
+      lastPosition: null,
+      lastPlan: null,
+      editAreaRef: { current: null },
+    };
+
+    const { result } = renderHook(() => useExternalDrop({
+      dataRef,
+      timelineId: 'timeline-1',
+      pendingOpsRef,
+      scale: 1,
+      scaleWidth: 1,
+      selectedTrackId: null,
+      applyEdit: vi.fn(),
+      patchRegistry: vi.fn(),
+      registerAsset: vi.fn(),
+      uploadAsset: vi.fn(),
+      invalidateAssetRegistry: vi.fn(),
+      assetResolver: { resolveAssetUrl: vi.fn() },
+      coordinator,
+      registerGenerationAsset: vi.fn(),
+      uploadImageGeneration: vi.fn(),
+      uploadVideoGeneration: vi.fn(),
+      handleAssetDrop: vi.fn(),
+      shots: mockUseShots().shots,
+      finalVideoMap: mockUseFinalVideoAvailable().finalVideoMap,
+    }));
+
+    const dragLeaveEvent = {
+      currentTarget: wrapper,
+      relatedTarget: outside,
+    } as unknown as React.DragEvent<HTMLDivElement>;
+
+    result.current.onTimelineDragLeave(dragLeaveEvent);
+
+    expect(coordinator.end).toHaveBeenCalled();
+    expect(wrapper.dataset.dragOver).toBeUndefined();
   });
 
   it('drops multi-generation payloads sequentially and checks the multi payload before the single payload', async () => {
@@ -510,6 +626,191 @@ describe('useExternalDrop', () => {
 
     expect(consoleError).toHaveBeenCalledWith('[drop] Upload failed:', expect.any(Error));
     expect(applyEdit).toHaveBeenCalled();
+  });
+
+  it('uses the local bridge direct asset flow without mutating the timeline before bytes and registry succeed', async () => {
+    mockRuntime.provider = Object.create(AstridBridgeDataProvider.prototype) as AstridBridgeDataProvider;
+
+    const dataRef = {
+      current: makeDropTestData({
+        tracks: [{ id: 'V1', kind: 'visual', label: 'V1' }],
+        rows: [{ id: 'V1', actions: [] }],
+        clipOrder: { V1: [] },
+        registry: { assets: {} as Record<string, { file: string; type?: string; duration?: number }> },
+      }),
+    } as React.MutableRefObject<DropTestData>;
+    const pendingOpsRef = { current: 0 } as React.MutableRefObject<number>;
+    const upload = deferred<{
+      assetId: string;
+      entry: {
+        file: string;
+        type: string;
+        duration: number;
+      };
+    }>();
+    const uploadAsset = vi.fn(async () => upload.promise);
+    const patchRegistry = vi.fn((assetId: string, entry: { file: string; type?: string; duration?: number }) => {
+      dataRef.current.registry.assets[assetId] = entry;
+    });
+    const handleAssetDrop = vi.fn();
+    const resolveAssetUrl = vi.fn(async (file: string) => `http://127.0.0.1:17333/${file}`);
+
+    const coordinator = {
+      update: vi.fn(),
+      showSecondaryGhosts: vi.fn(),
+      end: vi.fn(),
+      lastPosition: {
+        time: 12,
+        rowIndex: 0,
+        trackId: 'V1',
+        trackKind: 'visual',
+        trackName: 'V1',
+        isNewTrack: false,
+        isNewTrackTop: false,
+        isReject: false,
+        newTrackKind: null,
+        screenCoords: {
+          rowTop: 0,
+          rowLeft: 0,
+          rowWidth: 0,
+          rowHeight: 0,
+          clipLeft: 0,
+          clipWidth: 0,
+          ghostCenter: 0,
+        },
+      },
+      editAreaRef: { current: null },
+    };
+
+    const { result } = renderHook(() => useExternalDrop({
+      dataRef,
+      pendingOpsRef,
+      scale: 1,
+      scaleWidth: 1,
+      selectedTrackId: null,
+      applyEdit: vi.fn(),
+      patchRegistry,
+      uploadAsset,
+      invalidateAssetRegistry: vi.fn(),
+      resolveAssetUrl,
+      coordinator,
+      registerGenerationAsset: vi.fn(),
+      uploadImageGeneration: vi.fn(),
+      uploadVideoGeneration: vi.fn(),
+      handleAssetDrop,
+      shots: mockUseShots().shots,
+      finalVideoMap: mockUseFinalVideoAvailable().finalVideoMap,
+    }));
+
+    const event = createFileDropEvent([
+      new File(['video'], 'clip.mp4', { type: 'video/mp4' }),
+    ]);
+
+    const dropPromise = act(async () => {
+      await result.current.onTimelineDrop(event);
+    });
+
+    expect(uploadAsset).toHaveBeenCalledTimes(1);
+    expect(patchRegistry).not.toHaveBeenCalled();
+    expect(handleAssetDrop).not.toHaveBeenCalled();
+
+    upload.resolve({
+      assetId: 'asset-local',
+      entry: {
+        file: 'local-drops/clip.mp4',
+        type: 'video/mp4',
+        duration: 8,
+      },
+    });
+    await dropPromise;
+
+    expect(uploadAsset).toHaveBeenCalledTimes(1);
+    expect(patchRegistry).toHaveBeenCalledWith('asset-local', {
+      file: 'local-drops/clip.mp4',
+      type: 'video/mp4',
+      duration: 8,
+    }, 'http://127.0.0.1:17333/local-drops/clip.mp4');
+    expect(handleAssetDrop).toHaveBeenCalledWith('asset-local', 'V1', 12, false, false);
+    expect(pendingOpsRef.current).toBe(0);
+  });
+
+  it('shows a toast and leaves timeline state unchanged when local asset drop is unsupported', async () => {
+    mockRuntime.provider = Object.create(AstridBridgeDataProvider.prototype) as AstridBridgeDataProvider;
+
+    const initialData = makeDropTestData({
+      tracks: [{ id: 'V1', kind: 'visual', label: 'V1' }],
+      rows: [{ id: 'V1', actions: [] }],
+      clipOrder: { V1: [] },
+      registry: { assets: {} as Record<string, { file: string; type?: string; duration?: number }> },
+    });
+    const dataRef = {
+      current: initialData,
+    } as React.MutableRefObject<DropTestData>;
+    const uploadAsset = vi.fn(async () => {
+      throw new Error('Local asset drop requires a browser with File System Access support');
+    });
+    const patchRegistry = vi.fn();
+    const handleAssetDrop = vi.fn();
+
+    const coordinator = {
+      update: vi.fn(),
+      showSecondaryGhosts: vi.fn(),
+      end: vi.fn(),
+      lastPosition: {
+        time: 12,
+        rowIndex: 0,
+        trackId: 'V1',
+        trackKind: 'visual',
+        trackName: 'V1',
+        isNewTrack: false,
+        isNewTrackTop: false,
+        isReject: false,
+        newTrackKind: null,
+        screenCoords: {
+          rowTop: 0,
+          rowLeft: 0,
+          rowWidth: 0,
+          rowHeight: 0,
+          clipLeft: 0,
+          clipWidth: 0,
+          ghostCenter: 0,
+        },
+      },
+      editAreaRef: { current: null },
+    };
+
+    const { result } = renderHook(() => useExternalDrop({
+      dataRef,
+      pendingOpsRef: { current: 0 },
+      scale: 1,
+      scaleWidth: 1,
+      selectedTrackId: null,
+      applyEdit: vi.fn(),
+      patchRegistry,
+      uploadAsset,
+      invalidateAssetRegistry: vi.fn(),
+      resolveAssetUrl: vi.fn(),
+      coordinator,
+      registerGenerationAsset: vi.fn(),
+      uploadImageGeneration: vi.fn(),
+      uploadVideoGeneration: vi.fn(),
+      handleAssetDrop,
+      shots: mockUseShots().shots,
+      finalVideoMap: mockUseFinalVideoAvailable().finalVideoMap,
+    }));
+
+    await act(async () => {
+      await result.current.onTimelineDrop(createFileDropEvent([
+        new File(['video'], 'clip.mp4', { type: 'video/mp4' }),
+      ]));
+    });
+
+    expect(patchRegistry).not.toHaveBeenCalled();
+    expect(handleAssetDrop).not.toHaveBeenCalled();
+    expect(dataRef.current).toBe(initialData);
+    expect(mockToastError).toHaveBeenCalledWith('Failed to save asset', {
+      description: 'Local asset drop requires a browser with File System Access support',
+    });
   });
 
   it('drops a shot as one rows edit with group start plus ordered children from loop state and never calls handleAssetDrop', async () => {
@@ -995,6 +1296,94 @@ describe('useExternalDrop', () => {
       start: 12,
       end: 17,
     }));
+  });
+
+  it('routes file drops through the generation-upload skeleton path when the provider is not AstridBridge', async () => {
+    // Provider is NOT AstridBridgeDataProvider — directAssetUploadAllFiles should be false
+    mockRuntime.provider = { persistenceEnabled: true };
+
+    const dataRef = {
+      current: makeDropTestData({
+        tracks: [{ id: 'V1', kind: 'visual', label: 'V1' }],
+        rows: [{ id: 'V1', actions: [] }],
+        clipOrder: { V1: [] },
+        registry: { assets: {} },
+      }),
+    } as React.MutableRefObject<DropTestData>;
+    const pendingOpsRef = { current: 0 } as React.MutableRefObject<number>;
+    const applyEdit = vi.fn();
+    const uploadVideoGeneration = vi.fn(async () => ({
+      generationId: 'gen-vid',
+      variantType: 'video' as const,
+      imageUrl: 'https://cdn.example/uploaded.mp4',
+      thumbUrl: 'https://cdn.example/thumb.jpg',
+      metadata: { content_type: 'video/mp4', original_filename: 'clip.mp4' },
+    }));
+    const registerGenerationAsset = vi.fn((gen: { generationId: string }) => `asset-${gen.generationId}`);
+    const handleAssetDrop = vi.fn();
+
+    const coordinator = {
+      update: vi.fn(),
+      showSecondaryGhosts: vi.fn(),
+      end: vi.fn(),
+      lastPosition: {
+        time: 12,
+        rowIndex: 0,
+        trackId: 'V1',
+        trackKind: 'visual',
+        trackName: 'V1',
+        isNewTrack: false,
+        isNewTrackTop: false,
+        isReject: false,
+        newTrackKind: null,
+        screenCoords: { rowTop: 0, rowLeft: 0, rowWidth: 0, rowHeight: 0, clipLeft: 0, clipWidth: 0, ghostCenter: 0 },
+      },
+      editAreaRef: { current: null },
+    };
+
+    const { result } = renderHook(() => useExternalDrop({
+      dataRef,
+      pendingOpsRef,
+      scale: 1,
+      scaleWidth: 1,
+      selectedTrackId: null,
+      applyEdit,
+      patchRegistry: vi.fn(),
+      uploadAsset: vi.fn(),
+      invalidateAssetRegistry: vi.fn(),
+      resolveAssetUrl: vi.fn(),
+      coordinator,
+      registerGenerationAsset,
+      uploadImageGeneration: vi.fn(),
+      uploadVideoGeneration,
+      handleAssetDrop,
+      shots: mockUseShots().shots,
+      finalVideoMap: mockUseFinalVideoAvailable().finalVideoMap,
+    }));
+
+    const event = createFileDropEvent([
+      new File(['video'], 'clip.mp4', { type: 'video/mp4' }),
+    ]);
+
+    await act(async () => {
+      await result.current.onTimelineDrop(event);
+    });
+
+    // Non-Astrid path: skeleton clip is placed synchronously first (applyEdit with save:false)
+    const skeletonCalls = applyEdit.mock.calls.filter(
+      ([_mutation, opts]: [unknown, unknown]) =>
+        opts && typeof opts === 'object' && (opts as Record<string, unknown>).save === false,
+    );
+    expect(skeletonCalls.length).toBeGreaterThanOrEqual(1);
+    const skeletonMutation = skeletonCalls[0]![0] as { type: string; metaUpdates: Record<string, { asset: string }> };
+    expect(skeletonMutation.type).toBe('rows');
+    const skeletonKey = Object.keys(skeletonMutation.metaUpdates)[0];
+    expect(skeletonKey).toBeDefined();
+    expect(skeletonMutation.metaUpdates[skeletonKey].asset).toContain('uploading:');
+
+    // Then the async generation upload fires
+    expect(uploadVideoGeneration).toHaveBeenCalledTimes(1);
+    expect(uploadVideoGeneration).toHaveBeenCalledWith(expect.objectContaining({ name: 'clip.mp4' }));
   });
 
   it('does not create a new track or patch assets when final video registration planning fails', async () => {

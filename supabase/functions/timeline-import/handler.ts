@@ -8,6 +8,11 @@ import {
   type AssetRegistry,
   type TimelineConfig,
 } from "../../../src/tools/video-editor/index.ts";
+import {
+  appendTimelineConfigViaService,
+  createTimelineViaService,
+  ReighAppendServiceError,
+} from "../_shared/reighAppendService.ts";
 import { validateTimelinePayload } from "./validate.ts";
 import type {
   TimelineImportBody,
@@ -174,10 +179,10 @@ export async function handleTimelineImport(
       };
     }
     return await insertNewTimeline({
-      supabaseAdmin,
       logger,
       projectId,
       timelineId,
+      userId,
       timelineConfig: canonicalized.config,
       assetRegistry: canonicalized.assetRegistry,
     });
@@ -198,7 +203,6 @@ export async function handleTimelineImport(
   const versionToSend = expectedVersion ?? existing.config_version;
 
   return await callVersionedRpc({
-    supabaseAdmin,
     logger,
     timelineId,
     timelineConfig: canonicalized.config,
@@ -209,10 +213,10 @@ export async function handleTimelineImport(
 }
 
 interface InsertNewTimelineInput {
-  supabaseAdmin: SupabaseClient;
   logger: Logger;
   projectId: string;
   timelineId: string;
+  userId: string;
   timelineConfig: TimelineConfig;
   assetRegistry: AssetRegistry | null;
 }
@@ -220,37 +224,41 @@ interface InsertNewTimelineInput {
 async function insertNewTimeline(
   input: InsertNewTimelineInput,
 ): Promise<HandleTimelineImportResult> {
-  const { supabaseAdmin, logger, projectId, timelineId, timelineConfig, assetRegistry } = input;
-  const { data, error } = await supabaseAdmin
-    .from("timelines")
-    .insert({
-      id: timelineId,
-      project_id: projectId,
+  const { logger, projectId, timelineId, timelineConfig, assetRegistry } = input;
+  try {
+    const configVersion = await createTimelineViaService({
+      projectId,
+      timelineId,
+      userId: input.userId,
       config: timelineConfig,
-      asset_registry: assetRegistry ?? { assets: {} },
-      config_version: 1,
-    })
-    .select("config_version")
-    .single();
-  if (error) {
-    logger.error("timeline insert failed", { error: error.message });
+      assetRegistry,
+      actor: { type: "agent", id: "timeline-import" },
+      source: "supabase_config",
+      name: "Imported timeline",
+    });
+    return {
+      status: 201,
+      body: {
+        ok: true,
+        config_version: configVersion,
+        created: true,
+      },
+    };
+  } catch (error) {
+    const message = error instanceof ReighAppendServiceError
+      ? error.detail ?? error.message
+      : error instanceof Error
+      ? error.message
+      : String(error);
+    logger.error("timeline create via append service failed", { error: message });
     return {
       status: 500,
-      body: { ok: false, error: "timeline insert failed", details: error.message },
+      body: { ok: false, error: "timeline insert failed", details: message },
     };
   }
-  return {
-    status: 201,
-    body: {
-      ok: true,
-      config_version: typeof data?.config_version === "number" ? data.config_version : 1,
-      created: true,
-    },
-  };
 }
 
 interface CallVersionedRpcInput {
-  supabaseAdmin: SupabaseClient;
   logger: Logger;
   timelineId: string;
   timelineConfig: TimelineConfig;
@@ -263,7 +271,6 @@ async function callVersionedRpc(
   input: CallVersionedRpcInput,
 ): Promise<HandleTimelineImportResult> {
   const {
-    supabaseAdmin,
     logger,
     timelineId,
     timelineConfig,
@@ -271,39 +278,35 @@ async function callVersionedRpc(
     expectedVersion,
     currentVersion,
   } = input;
-  const useAssetVariant = assetRegistry !== null;
-  const rpcName = useAssetVariant
-    ? "update_timeline_versioned"
-    : "update_timeline_config_versioned";
-  const params = useAssetVariant
-    ? {
-      p_timeline_id: timelineId,
-      p_expected_version: expectedVersion,
-      p_config: timelineConfig,
-      p_asset_registry: assetRegistry,
-    }
-    : {
-      p_timeline_id: timelineId,
-      p_expected_version: expectedVersion,
-      p_config: timelineConfig,
+  try {
+    const configVersion = await appendTimelineConfigViaService({
+      timelineId,
+      expectedVersion,
+      config: timelineConfig,
+      assetRegistry,
+      actor: { type: "agent", id: "timeline-import" },
+      source: "supabase_config",
+    });
+    return {
+      status: 200,
+      body: { ok: true, config_version: configVersion, created: false },
     };
-  const { data, error } = await supabaseAdmin.rpc(rpcName as never, params as never);
-  if (error) {
-    logger.error("versioned rpc failed", { error: error.message, rpc: rpcName });
+  } catch (error) {
+    if (error instanceof ReighAppendServiceError && error.status === 409) {
+      return {
+        status: 409,
+        body: { ok: false, error: "version_mismatch", current_version: currentVersion },
+      };
+    }
+    const message = error instanceof ReighAppendServiceError
+      ? error.detail ?? error.message
+      : error instanceof Error
+      ? error.message
+      : String(error);
+    logger.error("append service update failed", { error: message });
     return {
       status: 500,
-      body: { ok: false, error: "rpc failed", details: error.message },
+      body: { ok: false, error: "rpc failed", details: message },
     };
   }
-  const rows = (data ?? []) as Array<{ config_version: number }>;
-  if (rows.length === 0) {
-    return {
-      status: 409,
-      body: { ok: false, error: "version_mismatch", current_version: currentVersion },
-    };
-  }
-  return {
-    status: 200,
-    body: { ok: true, config_version: rows[0].config_version, created: false },
-  };
 }

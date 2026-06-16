@@ -626,6 +626,42 @@ describe('VideoEditorProvider', () => {
     expect(useResolvedEffectCatalogMock).toHaveBeenCalledWith('user-1', injectedCatalog);
   });
 
+  it('lifts save status changes through the provider boundary', () => {
+    const provider: DataProvider = {
+      loadTimeline: vi.fn(),
+      saveTimeline: vi.fn(),
+      loadAssetRegistry: vi.fn(),
+      resolveAssetUrl: vi.fn(),
+    };
+    const queryClient = new QueryClient({
+      defaultOptions: {
+        queries: {
+          retry: false,
+        },
+      },
+    });
+    const onSaveStatusChange = vi.fn();
+
+    render(
+      <MemoryRouter>
+        <QueryClientProvider client={queryClient}>
+          <AgentChatProvider>
+            <VideoEditorProvider
+              dataProvider={provider}
+              timelineId="timeline-1"
+              userId="user-1"
+              onSaveStatusChange={onSaveStatusChange}
+            >
+              <Consumer />
+            </VideoEditorProvider>
+          </AgentChatProvider>
+        </QueryClientProvider>
+      </MemoryRouter>,
+    );
+
+    expect(onSaveStatusChange).toHaveBeenCalledWith('saved');
+  });
+
   it('lets editor timeline replacement update selection while preserving gallery attachments', () => {
     userSelectGalleryItem({
       id: 'gallery-1',

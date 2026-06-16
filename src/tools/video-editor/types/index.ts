@@ -78,6 +78,7 @@ export type TrackDefinition = {
   volume?: number;
   muted?: boolean;
   blendMode?: TrackBlendMode;
+  app?: Record<string, unknown>;
 };
 
 export type ClipEntrance = {
@@ -151,6 +152,7 @@ export type TimelineClip = {
   clip_order?: number;
   source_uuid?: string;
   generation?: Record<string, unknown>;
+  app?: Record<string, unknown>;
 };
 
 export type TimelineOutput = {
@@ -235,14 +237,25 @@ export type TimelineConfig = {
   theme?: string;
   theme_overrides?: ThemeOverrides;
   generation_defaults?: GenerationDefaults;
+  app?: Record<string, unknown>;
 };
 
 export type AssetRegistryEntry = {
   file: string;
+  url?: string;
+  etag?: string;
+  content_sha256?: string;
+  url_expires_at?: string;
   type?: string;
   duration?: number;
   resolution?: string;
   fps?: number;
+  origin?: 'immutable-public' | 'refreshable-from-generation' | 'opaque-foreign';
+  derivedFrom?: {
+    assetId?: string;
+    content_sha256?: string;
+    role: 'thumbnail' | 'proxy' | 'render-output';
+  };
   generationId?: string;
   variantId?: string;
   thumbnailUrl?: string;
@@ -268,6 +281,7 @@ export type ResolvedTimelineConfig = {
   theme?: string;
   theme_overrides?: ThemeOverrides;
   generation_defaults?: GenerationDefaults;
+  app?: Record<string, unknown>;
 };
 
 export type TimelineCompositionProps = {

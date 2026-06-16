@@ -4,6 +4,10 @@ import {
   type TimelineClip,
   type TimelineConfig,
 } from "../../../src/tools/video-editor/index.ts";
+import {
+  appendTimelineConfigViaService,
+  ReighAppendServiceError,
+} from "../_shared/reighAppendService.ts";
 import { isRecord, isSessionStatus, normalizeTimelineRow } from "./llm/messages.ts";
 import type {
   AgentProjectImageSettings,
@@ -718,31 +722,24 @@ export async function saveTimelineConfigVersioned(
 ): Promise<number | null> {
   for (let attempt = 0; attempt <= retries; attempt++) {
     try {
-      const { data, error } = await supabaseAdmin
-        .rpc("update_timeline_config_versioned", {
-          p_timeline_id: timelineId,
-          p_expected_version: expectedVersion,
-          p_config: config,
-        })
-        .maybeSingle();
-
-      if (error) {
-        // Connection errors are retryable
-        if (attempt < retries && (error.message.includes("connection") || error.message.includes("reset") || error.message.includes("SendRequest"))) {
-          console.warn(`[agent] DB save failed (attempt ${attempt + 1}), retrying: ${error.message}`);
-          await new Promise((r) => setTimeout(r, 500 * (attempt + 1)));
-          continue;
-        }
-        throw new Error(`Failed to save timeline config: ${error.message}`);
-      }
-
-      const nextVersion = (data as { config_version?: unknown } | null)?.config_version;
-      return typeof nextVersion === "number" ? nextVersion : null;
+      return await appendTimelineConfigViaService({
+        timelineId,
+        expectedVersion,
+        config,
+        actor: { type: "agent", id: "ai-timeline-agent" },
+        source: "editor_save",
+      });
     } catch (err: unknown) {
+      if (err instanceof ReighAppendServiceError && err.status === 409) {
+        return null;
+      }
       if (attempt < retries && err instanceof Error && (err.message.includes("connection") || err.message.includes("reset") || err.message.includes("SendRequest"))) {
         console.warn(`[agent] DB save threw (attempt ${attempt + 1}), retrying: ${err.message}`);
         await new Promise((r) => setTimeout(r, 500 * (attempt + 1)));
         continue;
+      }
+      if (err instanceof Error) {
+        throw new Error(`Failed to save timeline config: ${err.message}`);
       }
       throw err;
     }

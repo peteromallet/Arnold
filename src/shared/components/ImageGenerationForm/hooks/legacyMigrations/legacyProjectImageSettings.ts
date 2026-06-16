@@ -9,7 +9,7 @@ export const LEGACY_PROJECT_IMAGE_SETTINGS_SUNSET = {
   removeBy: '2026-05-31',
 } as const;
 
-const LEGACY_PROJECT_IMAGE_SETTINGS_FIELDS = [
+export const LEGACY_PROJECT_IMAGE_SETTINGS_FIELDS = [
   'selectedLorasByTextModel',
   'selectedReferenceId',
   'styleReferenceImage',
@@ -54,20 +54,38 @@ export function getLegacyProjectImageSettingsFields(
   );
 }
 
+export function stripLegacyProjectImageSettings<
+  T extends ProjectImageSettingsInput | null | undefined,
+>(
+  settings: T,
+  now: Date = new Date()
+): T {
+  const activeLegacyFields = getLegacyProjectImageSettingsFields(settings);
+  if (activeLegacyFields.length === 0) {
+    return settings;
+  }
+
+  if (now.getTime() <= LEGACY_PROJECT_IMAGE_SETTINGS_REMOVE_BY_MS) {
+    return settings;
+  }
+
+  if (import.meta.env.DEV) {
+    console.warn(
+      `Stripping project-image-settings legacy fields past sunset (${LEGACY_PROJECT_IMAGE_SETTINGS_SUNSET.removeBy}): ${activeLegacyFields.join(', ')}`
+    );
+  }
+
+  const cleaned = { ...settings } as ProjectImageSettingsInput;
+  for (const field of activeLegacyFields) {
+    delete cleaned[field];
+  }
+
+  return cleaned as T;
+}
+
 export function enforceLegacyProjectImageSettingsSunset(
   settings: ProjectImageSettingsInput | null | undefined,
   now: Date = new Date()
 ): void {
-  const activeLegacyFields = getLegacyProjectImageSettingsFields(settings);
-  if (activeLegacyFields.length === 0) {
-    return;
-  }
-
-  if (now.getTime() <= LEGACY_PROJECT_IMAGE_SETTINGS_REMOVE_BY_MS) {
-    return;
-  }
-
-  throw new Error(
-    `project-image-settings legacy fields are past sunset (${LEGACY_PROJECT_IMAGE_SETTINGS_SUNSET.removeBy}): ${activeLegacyFields.join(', ')}`
-  );
+  stripLegacyProjectImageSettings(settings, now);
 }

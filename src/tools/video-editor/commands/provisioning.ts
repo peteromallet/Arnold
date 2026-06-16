@@ -121,7 +121,9 @@ export const buildExternalTimelineAssetEntry = (
 ): AssetRegistryEntry => {
   const entry: AssetRegistryEntry = {
     file: source.url,
+    url: source.url,
     type: source.mimeType ?? getFallbackMimeType(source.mediaType),
+    origin: source.generationId ? 'refreshable-from-generation' : 'opaque-foreign',
     ...(source.generationId ? { generationId: source.generationId } : {}),
     ...(typeof source.durationSeconds === 'number' ? { duration: source.durationSeconds } : {}),
     ...(source.thumbnailUrl ? { thumbnailUrl: source.thumbnailUrl } : {}),

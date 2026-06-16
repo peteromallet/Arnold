@@ -432,7 +432,13 @@ export function useTimelineState(): UseTimelineStateResult {
   const queryClient = useQueryClient();
   const isMobile = useIsMobile();
   const isTablet = useIsTablet();
-  const playback = useTimelinePlayback();
+  // Shared gate observed by drag/resize writers and read by save/persistence/poll.
+  const interactionStateRef = useRef(createInteractionState());
+  const storeRef = useRef<ReturnType<typeof createTimelineStore> | null>(null);
+  if (storeRef.current === null) {
+    storeRef.current = createTimelineStore();
+  }
+  const playback = useTimelinePlayback(storeRef.current);
   const preferences = useEditorPreferences(runtime.timelineId);
   const resolveAssetUrl = useCallback(async (file: string) => {
     if (runtime.assetResolver) {
@@ -442,12 +448,6 @@ export function useTimelineState(): UseTimelineStateResult {
     return await runtime.provider.resolveAssetUrl(file);
   }, [runtime.assetResolver, runtime.provider]);
   const queries = useTimelineQueries(runtime.provider, runtime.timelineId, resolveAssetUrl);
-  // Shared gate observed by drag/resize writers and read by save/persistence/poll.
-  const interactionStateRef = useRef(createInteractionState());
-  const storeRef = useRef<ReturnType<typeof createTimelineStore> | null>(null);
-  if (storeRef.current === null) {
-    storeRef.current = createTimelineStore();
-  }
   const deviceClass = useMemo(
     () => resolveTimelineDeviceClass({ isMobile, isTablet }),
     [isMobile, isTablet],

@@ -7,6 +7,7 @@ import {
 } from 'react';
 import { createPortal } from 'react-dom';
 import type { GhostRect } from '@/tools/video-editor/lib/multi-drag-utils.ts';
+import { VIDEO_EDITOR_THEME_VARS } from '@/tools/video-editor/lib/themeTokens.ts';
 
 export interface DropIndicatorPosition {
   rowTop: number;
@@ -104,7 +105,7 @@ export const DropIndicator = forwardRef<DropIndicatorHandle, DropIndicatorProps>
   }
 
   return createPortal(
-    <>
+    <div style={VIDEO_EDITOR_THEME_VARS}>
       {showNewTrackEdge && (
         <div
           className="drop-indicator-new-track-edge"
@@ -168,7 +169,7 @@ export const DropIndicator = forwardRef<DropIndicatorHandle, DropIndicatorProps>
           }}
         />
       ))}
-    </>,
+    </div>,
     document.body,
   );
 });
