@@ -254,36 +254,50 @@ export class AstridBridgeDataProvider implements DataProvider {
 
   async resolveAssetUrl(file: string): Promise<string> {
     const candidate = file.trim();
+    console.log('[AstridBridgeDataProvider.resolveAssetUrl] input:', file, 'localTimelineFiles:', this.localTimelineFiles !== null);
     if (!candidate) {
       throw new Error('Cannot resolve asset URL for an empty file path');
     }
     if (isHttpUrl(candidate)) {
+      console.log('[AstridBridgeDataProvider.resolveAssetUrl] returning HTTP URL:', candidate);
       return candidate;
     }
 
     if (this.localTimelineFiles !== null) {
-      return this.resolveLocalAssetUrl(candidate);
+      const resolved = await this.resolveLocalAssetUrl(candidate);
+      console.log('[AstridBridgeDataProvider.resolveAssetUrl] resolved local URL:', resolved);
+      return resolved;
     }
 
     const assetKey = this.fileToAssetKey.get(candidate);
     if (!assetKey) {
+      console.log('[AstridBridgeDataProvider.resolveAssetUrl] no assetKey, returning raw:', candidate);
       return candidate;
     }
-    return this.buildAssetUrl(assetKey);
+    const url = this.buildAssetUrl(assetKey);
+    console.log('[AstridBridgeDataProvider.resolveAssetUrl] returning bridge URL:', url);
+    return url;
   }
 
   async onResolve(request: AssetResolveRequest): Promise<string> {
+    console.log('[AstridBridgeDataProvider.onResolve] request:', request);
     const assetKey = this.getPreferredAssetKey(request);
     if (this.localTimelineFiles !== null) {
       const file = request.entry?.file ?? (assetKey ? this.assetKeyToFile.get(assetKey) : undefined) ?? request.file;
       if (file && !isHttpUrl(file)) {
-        return this.resolveLocalAssetUrl(file);
+        const resolved = await this.resolveLocalAssetUrl(file);
+        console.log('[AstridBridgeDataProvider.onResolve] resolved local URL:', resolved);
+        return resolved;
       }
     }
     if (assetKey) {
-      return this.buildAssetUrl(assetKey);
+      const url = this.buildAssetUrl(assetKey);
+      console.log('[AstridBridgeDataProvider.onResolve] returning bridge URL:', url);
+      return url;
     }
-    return this.resolveAssetUrl(request.file);
+    const resolved = await this.resolveAssetUrl(request.file);
+    console.log('[AstridBridgeDataProvider.onResolve] falling back to resolveAssetUrl:', resolved);
+    return resolved;
   }
 
   async saveTimeline(

@@ -5,6 +5,7 @@ import { realtimeEventProcessor } from '@/shared/realtime/RealtimeEventProcessor
 import { TASK_STATUS } from '@/types/tasks.ts';
 import { useVideoEditorRuntime } from '@/tools/video-editor/contexts/DataProviderContext.tsx';
 import type { ResolvedAssetRegistryEntry } from '@/tools/video-editor/types/index.ts';
+import { isUuid } from '@/shared/lib/uuid.ts';
 
 interface UseActiveTaskClipsArgs {
   registry: Record<string, ResolvedAssetRegistryEntry> | undefined;
@@ -177,13 +178,14 @@ export function useActiveTaskClips({ registry }: UseActiveTaskClipsArgs): UseAct
   const { data: activeTasks = [] } = useQuery({
     queryKey: activeTaskClipsQueryKey(selectedProjectId),
     queryFn: async () => {
+      console.log('[useActiveTaskClips] fetching for projectId:', selectedProjectId, 'isUuid:', isUuid(selectedProjectId));
       if (!selectedProjectId) {
         return [];
       }
 
       return fetchActiveTasks(selectedProjectId);
     },
-    enabled: !!selectedProjectId,
+    enabled: !!selectedProjectId && isUuid(selectedProjectId),
     refetchInterval: 5000,
     staleTime: 0,
     gcTime: 10000,

@@ -10,6 +10,7 @@ import { useQuery } from '@tanstack/react-query';
 import { getSupabaseClient as supabase } from '@/integrations/supabase/client';
 import { finalVideoQueryKeys } from '@/shared/lib/queryKeys/finalVideos';
 import { getDurationSecondsFromFinalVideoParams } from '@/tools/video-editor/lib/finalVideoAssets';
+import { isUuid } from '@/shared/lib/uuid.ts';
 
 export interface ShotFinalVideo {
   id: string;
@@ -20,9 +21,15 @@ export interface ShotFinalVideo {
 }
 
 export function useShotFinalVideos(projectId: string | null) {
+  const isUuidProjectId = isUuid(projectId);
+  if (projectId && !isUuidProjectId) {
+    console.warn('[useShotFinalVideos] skipping Supabase query for non-UUID projectId:', projectId);
+  }
+
   const { data: rawData, isLoading } = useQuery({
     queryKey: finalVideoQueryKeys.byProject(projectId!),
     queryFn: async () => {
+      console.log('[useShotFinalVideos] fetching for projectId:', projectId, 'isUuid:', isUuid(projectId));
       const { data, error } = await supabase().from('shot_final_videos')
         .select('*')
         .eq('project_id', projectId!)
@@ -35,7 +42,7 @@ export function useShotFinalVideos(projectId: string | null) {
       }
       return data || [];
     },
-    enabled: !!projectId,
+    enabled: !!projectId && isUuidProjectId,
     staleTime: 30_000,
   });
 

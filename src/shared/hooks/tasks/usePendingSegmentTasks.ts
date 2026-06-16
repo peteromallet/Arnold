@@ -11,6 +11,7 @@ import { useQuery } from '@tanstack/react-query';
 import { getSupabaseClient as supabase } from '@/integrations/supabase/client';
 import { TASK_STATUS } from '@/types/tasks';
 import { taskQueryKeys } from '@/shared/lib/queryKeys/tasks';
+import { isUuid } from '@/shared/lib/uuid.ts';
 
 interface PendingSegmentTask {
   id: string;
@@ -58,6 +59,11 @@ export function usePendingSegmentTasks(
   shotId: string | null,
   projectId: string | null
 ): UsePendingSegmentTasksReturn {
+  const isUuidProjectId = isUuid(projectId);
+  if (projectId && !isUuidProjectId) {
+    console.warn('[usePendingSegmentTasks] skipping Supabase query for non-UUID projectId:', projectId);
+  }
+
   // Track optimistic pending IDs with timestamps (for immediate UI feedback before task is detected)
   // Map of pairShotGenerationId -> timestamp when added
   const [optimisticPending, setOptimisticPending] = useState<Map<string, number>>(new Map());
@@ -69,6 +75,7 @@ export function usePendingSegmentTasks(
   const { data: pendingTasks, isLoading } = useQuery({
     queryKey: [...taskQueryKeys.pendingSegment(shotId!), projectId],
     queryFn: async () => {
+      console.log('[usePendingSegmentTasks] fetching for shotId:', shotId, 'projectId:', projectId, 'isUuid:', isUuid(projectId));
       if (!shotId || !projectId) return [];
 
       // Query tasks that are Queued or In Progress
@@ -98,7 +105,7 @@ export function usePendingSegmentTasks(
 
       return tasks;
     },
-    enabled: !!shotId && !!projectId,
+    enabled: !!shotId && !!projectId && isUuidProjectId,
     // Poll frequently to catch status changes
     refetchInterval: 3000,
     // Mark as stale immediately so invalidations trigger refetch
