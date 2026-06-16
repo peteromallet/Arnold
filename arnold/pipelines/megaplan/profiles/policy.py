@@ -50,7 +50,7 @@ PROFILE_METADATA_KEYS = frozenset({
 SYSTEM_DEFAULT_PROFILE = "partnered"
 VALID_CRITIC_CHOICES = ("kimi", "cross")
 VALID_DEPTH_CHOICES = ("minimal", "low", "medium", "high", "xhigh", "max")
-VALID_DEEPSEEK_PROVIDER_CHOICES = ("fireworks", "direct")
+VALID_DEEPSEEK_PROVIDER_CHOICES = ("direct",)
 DEFAULT_DEEPSEEK_PROVIDER = "direct"
 KIMI_SPEC = "hermes:fireworks:accounts/fireworks/models/kimi-k2p6"
 FIREWORKS_DEEPSEEK_V4_PRO_SPEC = "hermes:fireworks:accounts/fireworks/models/deepseek-v4-pro"
@@ -530,10 +530,8 @@ def apply_depth_rewrite(
 
 
 def _swap_deepseek_provider_spec(spec: str, provider: str) -> str:
-    if provider == "direct" and spec == FIREWORKS_DEEPSEEK_V4_PRO_SPEC:
+    if spec == FIREWORKS_DEEPSEEK_V4_PRO_SPEC:
         return DIRECT_DEEPSEEK_V4_PRO_SPEC
-    if provider == "fireworks" and spec == DIRECT_DEEPSEEK_V4_PRO_SPEC:
-        return FIREWORKS_DEEPSEEK_V4_PRO_SPEC
     return spec
 
 

@@ -672,7 +672,7 @@
               "metavar": null,
               "nargs": "REMAINDER",
               "option_strings": [],
-              "required": false,
+              "required": true,
               "type": null
             }
           ],
@@ -1125,7 +1125,7 @@
                   "metavar": null,
                   "nargs": "*",
                   "option_strings": [],
-                  "required": false,
+                  "required": true,
                   "type": null
                 }
               ],
@@ -1729,7 +1729,7 @@
               "metavar": null,
               "nargs": "REMAINDER",
               "option_strings": [],
-              "required": false,
+              "required": true,
               "type": null
             }
           ],
@@ -2471,13 +2471,12 @@
             {
               "action": "_StoreAction",
               "choices": [
-                "fireworks",
                 "direct"
               ],
               "const": null,
               "default": null,
               "dest": "deepseek_provider",
-              "help": "Choose the provider for canonical DeepSeek v4-pro profile slots. 'fireworks' uses hermes:fireworks:accounts/fireworks/models/deepseek-v4-pro; 'direct' uses hermes:deepseek:deepseek-v4-pro and DEEPSEEK_API_KEY. Defaults to 'direct'. Non-DeepSeek slots are untouched.",
+              "help": "Choose the provider for canonical DeepSeek v4-pro profile slots. Only 'direct' is supported; it uses hermes:deepseek:deepseek-v4-pro and DEEPSEEK_API_KEY. Defaults to 'direct'. Non-DeepSeek slots are untouched.",
               "metavar": null,
               "nargs": null,
               "option_strings": [
@@ -3674,13 +3673,12 @@
             {
               "action": "_StoreAction",
               "choices": [
-                "fireworks",
                 "direct"
               ],
               "const": null,
               "default": null,
               "dest": "deepseek_provider",
-              "help": "Choose the provider for canonical DeepSeek v4-pro profile slots. 'fireworks' uses hermes:fireworks:accounts/fireworks/models/deepseek-v4-pro; 'direct' uses hermes:deepseek:deepseek-v4-pro and DEEPSEEK_API_KEY. Defaults to 'direct'. Non-DeepSeek slots are untouched.",
+              "help": "Choose the provider for canonical DeepSeek v4-pro profile slots. Only 'direct' is supported; it uses hermes:deepseek:deepseek-v4-pro and DEEPSEEK_API_KEY. Defaults to 'direct'. Non-DeepSeek slots are untouched.",
               "metavar": null,
               "nargs": null,
               "option_strings": [
@@ -4246,13 +4244,12 @@
             {
               "action": "_StoreAction",
               "choices": [
-                "fireworks",
                 "direct"
               ],
               "const": null,
               "default": null,
               "dest": "deepseek_provider",
-              "help": "Choose the provider for canonical DeepSeek v4-pro profile slots. 'fireworks' uses hermes:fireworks:accounts/fireworks/models/deepseek-v4-pro; 'direct' uses hermes:deepseek:deepseek-v4-pro and DEEPSEEK_API_KEY. Defaults to 'direct'. Non-DeepSeek slots are untouched.",
+              "help": "Choose the provider for canonical DeepSeek v4-pro profile slots. Only 'direct' is supported; it uses hermes:deepseek:deepseek-v4-pro and DEEPSEEK_API_KEY. Defaults to 'direct'. Non-DeepSeek slots are untouched.",
               "metavar": null,
               "nargs": null,
               "option_strings": [
@@ -4500,13 +4497,12 @@
             {
               "action": "_StoreAction",
               "choices": [
-                "fireworks",
                 "direct"
               ],
               "const": null,
               "default": null,
               "dest": "deepseek_provider",
-              "help": "Choose the provider for canonical DeepSeek v4-pro profile slots. 'fireworks' uses hermes:fireworks:accounts/fireworks/models/deepseek-v4-pro; 'direct' uses hermes:deepseek:deepseek-v4-pro and DEEPSEEK_API_KEY. Defaults to 'direct'. Non-DeepSeek slots are untouched.",
+              "help": "Choose the provider for canonical DeepSeek v4-pro profile slots. Only 'direct' is supported; it uses hermes:deepseek:deepseek-v4-pro and DEEPSEEK_API_KEY. Defaults to 'direct'. Non-DeepSeek slots are untouched.",
               "metavar": null,
               "nargs": null,
               "option_strings": [
@@ -5033,13 +5029,12 @@
             {
               "action": "_StoreAction",
               "choices": [
-                "fireworks",
                 "direct"
               ],
               "const": null,
               "default": null,
               "dest": "deepseek_provider",
-              "help": "Choose the provider for canonical DeepSeek v4-pro profile slots. 'fireworks' uses hermes:fireworks:accounts/fireworks/models/deepseek-v4-pro; 'direct' uses hermes:deepseek:deepseek-v4-pro and DEEPSEEK_API_KEY. Defaults to 'direct'. Non-DeepSeek slots are untouched.",
+              "help": "Choose the provider for canonical DeepSeek v4-pro profile slots. Only 'direct' is supported; it uses hermes:deepseek:deepseek-v4-pro and DEEPSEEK_API_KEY. Defaults to 'direct'. Non-DeepSeek slots are untouched.",
               "metavar": null,
               "nargs": null,
               "option_strings": [
@@ -5595,13 +5590,12 @@
             {
               "action": "_StoreAction",
               "choices": [
-                "fireworks",
                 "direct"
               ],
               "const": null,
               "default": null,
               "dest": "deepseek_provider",
-              "help": "Choose the provider for canonical DeepSeek v4-pro profile slots. 'fireworks' uses hermes:fireworks:accounts/fireworks/models/deepseek-v4-pro; 'direct' uses hermes:deepseek:deepseek-v4-pro and DEEPSEEK_API_KEY. Defaults to 'direct'. Non-DeepSeek slots are untouched.",
+              "help": "Choose the provider for canonical DeepSeek v4-pro profile slots. Only 'direct' is supported; it uses hermes:deepseek:deepseek-v4-pro and DEEPSEEK_API_KEY. Defaults to 'direct'. Non-DeepSeek slots are untouched.",
               "metavar": null,
               "nargs": null,
               "option_strings": [
@@ -5945,13 +5939,12 @@
             {
               "action": "_StoreAction",
               "choices": [
-                "fireworks",
                 "direct"
               ],
               "const": null,
               "default": null,
               "dest": "deepseek_provider",
-              "help": "Choose the provider for canonical DeepSeek v4-pro profile slots. 'fireworks' uses hermes:fireworks:accounts/fireworks/models/deepseek-v4-pro; 'direct' uses hermes:deepseek:deepseek-v4-pro and DEEPSEEK_API_KEY. Defaults to 'direct'. Non-DeepSeek slots are untouched.",
+              "help": "Choose the provider for canonical DeepSeek v4-pro profile slots. Only 'direct' is supported; it uses hermes:deepseek:deepseek-v4-pro and DEEPSEEK_API_KEY. Defaults to 'direct'. Non-DeepSeek slots are untouched.",
               "metavar": null,
               "nargs": null,
               "option_strings": [
@@ -6791,13 +6784,12 @@
             {
               "action": "_StoreAction",
               "choices": [
-                "fireworks",
                 "direct"
               ],
               "const": null,
               "default": null,
               "dest": "deepseek_provider",
-              "help": "Choose the provider for canonical DeepSeek v4-pro profile slots. 'fireworks' uses hermes:fireworks:accounts/fireworks/models/deepseek-v4-pro; 'direct' uses hermes:deepseek:deepseek-v4-pro and DEEPSEEK_API_KEY. Defaults to 'direct'. Non-DeepSeek slots are untouched.",
+              "help": "Choose the provider for canonical DeepSeek v4-pro profile slots. Only 'direct' is supported; it uses hermes:deepseek:deepseek-v4-pro and DEEPSEEK_API_KEY. Defaults to 'direct'. Non-DeepSeek slots are untouched.",
               "metavar": null,
               "nargs": null,
               "option_strings": [
@@ -7045,13 +7037,12 @@
             {
               "action": "_StoreAction",
               "choices": [
-                "fireworks",
                 "direct"
               ],
               "const": null,
               "default": null,
               "dest": "deepseek_provider",
-              "help": "Choose the provider for canonical DeepSeek v4-pro profile slots. 'fireworks' uses hermes:fireworks:accounts/fireworks/models/deepseek-v4-pro; 'direct' uses hermes:deepseek:deepseek-v4-pro and DEEPSEEK_API_KEY. Defaults to 'direct'. Non-DeepSeek slots are untouched.",
+              "help": "Choose the provider for canonical DeepSeek v4-pro profile slots. Only 'direct' is supported; it uses hermes:deepseek:deepseek-v4-pro and DEEPSEEK_API_KEY. Defaults to 'direct'. Non-DeepSeek slots are untouched.",
               "metavar": null,
               "nargs": null,
               "option_strings": [
@@ -7431,7 +7422,7 @@
               "metavar": null,
               "nargs": "REMAINDER",
               "option_strings": [],
-              "required": false,
+              "required": true,
               "type": null
             }
           ],
@@ -7680,13 +7671,12 @@
             {
               "action": "_StoreAction",
               "choices": [
-                "fireworks",
                 "direct"
               ],
               "const": null,
               "default": null,
               "dest": "deepseek_provider",
-              "help": "Choose the provider for canonical DeepSeek v4-pro profile slots. 'fireworks' uses hermes:fireworks:accounts/fireworks/models/deepseek-v4-pro; 'direct' uses hermes:deepseek:deepseek-v4-pro and DEEPSEEK_API_KEY. Defaults to 'direct'. Non-DeepSeek slots are untouched.",
+              "help": "Choose the provider for canonical DeepSeek v4-pro profile slots. Only 'direct' is supported; it uses hermes:deepseek:deepseek-v4-pro and DEEPSEEK_API_KEY. Defaults to 'direct'. Non-DeepSeek slots are untouched.",
               "metavar": null,
               "nargs": null,
               "option_strings": [
@@ -7949,13 +7939,12 @@
             {
               "action": "_StoreAction",
               "choices": [
-                "fireworks",
                 "direct"
               ],
               "const": null,
               "default": null,
               "dest": "deepseek_provider",
-              "help": "Choose the provider for canonical DeepSeek v4-pro profile slots. 'fireworks' uses hermes:fireworks:accounts/fireworks/models/deepseek-v4-pro; 'direct' uses hermes:deepseek:deepseek-v4-pro and DEEPSEEK_API_KEY. Defaults to 'direct'. Non-DeepSeek slots are untouched.",
+              "help": "Choose the provider for canonical DeepSeek v4-pro profile slots. Only 'direct' is supported; it uses hermes:deepseek:deepseek-v4-pro and DEEPSEEK_API_KEY. Defaults to 'direct'. Non-DeepSeek slots are untouched.",
               "metavar": null,
               "nargs": null,
               "option_strings": [
@@ -9380,7 +9369,7 @@
                   "metavar": null,
                   "nargs": "*",
                   "option_strings": [],
-                  "required": false,
+                  "required": true,
                   "type": null
                 }
               ],
@@ -10229,13 +10218,12 @@
             {
               "action": "_StoreAction",
               "choices": [
-                "fireworks",
                 "direct"
               ],
               "const": null,
               "default": null,
               "dest": "deepseek_provider",
-              "help": "Choose the provider for canonical DeepSeek v4-pro profile slots. 'fireworks' uses hermes:fireworks:accounts/fireworks/models/deepseek-v4-pro; 'direct' uses hermes:deepseek:deepseek-v4-pro and DEEPSEEK_API_KEY. Defaults to 'direct'. Non-DeepSeek slots are untouched.",
+              "help": "Choose the provider for canonical DeepSeek v4-pro profile slots. Only 'direct' is supported; it uses hermes:deepseek:deepseek-v4-pro and DEEPSEEK_API_KEY. Defaults to 'direct'. Non-DeepSeek slots are untouched.",
               "metavar": null,
               "nargs": null,
               "option_strings": [

@@ -350,7 +350,7 @@ def test_all_deepseek_pro_profile_defaults_to_direct_deepseek_v4_pro(
     assert model == "deepseek:deepseek-v4-pro"
 
 
-def test_all_deepseek_pro_profile_can_explicitly_use_fireworks_deepseek_v4_pro(
+def test_all_deepseek_pro_profile_rejects_fireworks_deepseek_provider(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -361,13 +361,9 @@ def test_all_deepseek_pro_profile_can_explicitly_use_fireworks_deepseek_v4_pro(
     )
 
     args = _worker_args(profile="all-deepseek-pro", deepseek_provider="fireworks")
-    apply_profile_expansion(args, None)
-
-    with patch("arnold.pipelines.megaplan.workers._impl._is_agent_available", return_value=True):
-        agent, _mode, _refreshed, model = resolve_agent_mode("execute", args)
-
-    assert agent == "hermes"
-    assert model == "fireworks:accounts/fireworks/models/deepseek-v4-pro"
+    with pytest.raises(CliError) as excinfo:
+        apply_profile_expansion(args, None)
+    assert excinfo.value.code == "invalid_deepseek_provider"
 
 
 @pytest.mark.parametrize(
@@ -376,7 +372,7 @@ def test_all_deepseek_pro_profile_can_explicitly_use_fireworks_deepseek_v4_pro(
         ("all-deepseek-flash", "deepseek:deepseek-v4-flash"),
         (
             "all-fireworks-deepseek",
-            "fireworks:accounts/fireworks/models/deepseek-v3p2",
+            "deepseek:deepseek-v4-pro",
         ),
     ],
 )
@@ -624,7 +620,7 @@ def test_default_agent_routing_prep_is_hermes_flat_phase_models_preserved(
         ),
         (
             "all-fireworks-deepseek",
-            "hermes:fireworks:accounts/fireworks/models/deepseek-v3p2",
+            "hermes:deepseek:deepseek-v4-pro",
             CANONICAL_PREP_MODELS,
             {"triage": True, "fanout": True, "distill": True},
             False,
@@ -895,7 +891,7 @@ def test_vendor_claude_routes_explicit_codex_prep_models_to_claude(
         ("triage", "codex:gpt-5.4"),
         ("triage", "codex"),
         ("distill", "hermes:deepseek:deepseek-v4-pro"),
-        ("fanout", "hermes:fireworks:accounts/fireworks/models/deepseek-v4-flash"),
+        ("fanout", "hermes:deepseek:deepseek-v4-flash"),
     ],
 )
 def test_validate_prep_stage_provider_accepts_read_only_agents(stage: str, spec: str) -> None:
@@ -1166,28 +1162,28 @@ def test_vendor_codex_preserves_effort_tier(
         """
         [profiles.medium-claude]
         plan = "claude:medium"
-        prep = "hermes:fireworks:accounts/fireworks/models/deepseek-v4-pro"
+        prep = "hermes:deepseek:deepseek-v4-pro"
         critique = "codex:medium"
         revise = "claude:medium"
         gate = "claude:medium"
-        finalize = "hermes:fireworks:accounts/fireworks/models/deepseek-v4-pro"
-        execute = "hermes:fireworks:accounts/fireworks/models/deepseek-v4-pro"
+        finalize = "hermes:deepseek:deepseek-v4-pro"
+        execute = "hermes:deepseek:deepseek-v4-pro"
         loop_plan = "claude:medium"
-        loop_execute = "hermes:fireworks:accounts/fireworks/models/deepseek-v4-pro"
+        loop_execute = "hermes:deepseek:deepseek-v4-pro"
         review = "codex:medium"
         tiebreaker_researcher = "claude:medium"
         tiebreaker_challenger = "codex:medium"
 
         [profiles.medium-codex]
         plan = "codex:medium"
-        prep = "hermes:fireworks:accounts/fireworks/models/deepseek-v4-pro"
+        prep = "hermes:deepseek:deepseek-v4-pro"
         critique = "claude:medium"
         revise = "codex:medium"
         gate = "codex:medium"
-        finalize = "hermes:fireworks:accounts/fireworks/models/deepseek-v4-pro"
-        execute = "hermes:fireworks:accounts/fireworks/models/deepseek-v4-pro"
+        finalize = "hermes:deepseek:deepseek-v4-pro"
+        execute = "hermes:deepseek:deepseek-v4-pro"
         loop_plan = "codex:medium"
-        loop_execute = "hermes:fireworks:accounts/fireworks/models/deepseek-v4-pro"
+        loop_execute = "hermes:deepseek:deepseek-v4-pro"
         review = "claude:medium"
         tiebreaker_researcher = "codex:medium"
         tiebreaker_challenger = "claude:medium"
@@ -1505,14 +1501,14 @@ def _write_medium_claude_profile(tmp_path: Path) -> None:
         """
         [profiles.medium-claude]
         plan = "claude:medium"
-        prep = "hermes:fireworks:accounts/fireworks/models/deepseek-v4-pro"
+        prep = "hermes:deepseek:deepseek-v4-pro"
         critique = "codex:medium"
         revise = "claude:medium"
         gate = "claude:medium"
-        finalize = "hermes:fireworks:accounts/fireworks/models/deepseek-v4-pro"
-        execute = "hermes:fireworks:accounts/fireworks/models/deepseek-v4-pro"
+        finalize = "hermes:deepseek:deepseek-v4-pro"
+        execute = "hermes:deepseek:deepseek-v4-pro"
         loop_plan = "claude:medium"
-        loop_execute = "hermes:fireworks:accounts/fireworks/models/deepseek-v4-pro"
+        loop_execute = "hermes:deepseek:deepseek-v4-pro"
         review = "codex:medium"
         tiebreaker_researcher = "claude:medium"
         tiebreaker_challenger = "codex:medium"
@@ -1727,7 +1723,7 @@ def test_unknown_metadata_key_is_rejected(
 # ---------------------------------------------------------------------------
 
 
-DEEPSEEK = "hermes:fireworks:accounts/fireworks/models/deepseek-v4-pro"
+DEEPSEEK = "hermes:deepseek:deepseek-v4-pro"
 DEEPSEEK_DIRECT = "hermes:deepseek:deepseek-v4-pro"
 KIMI = "hermes:fireworks:accounts/fireworks/models/kimi-k2p6"
 
@@ -1916,7 +1912,7 @@ def test_partnered_vendor_codex_execute_keeps_codex_tiers_with_cli_auth_only(
     """No OpenAI/Anthropic env keys must not degrade Codex-reachable execute tiers."""
     _isolate_user_config(tmp_path, monkeypatch)
     _clear_model_credentials(monkeypatch)
-    monkeypatch.setenv("FIREWORKS_API_KEY", "fw-test")
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "deepseek-test")
     monkeypatch.setattr(
         profiles_policy,
         "_premium_cli_route_available",
@@ -1926,7 +1922,6 @@ def test_partnered_vendor_codex_execute_keeps_codex_tiers_with_cli_auth_only(
     args = _worker_args(
         profile="partnered",
         vendor="codex",
-        deepseek_provider="fireworks",
     )
     with caplog.at_level(logging.WARNING, logger="megaplan"):
         apply_profile_expansion(args, None)
@@ -3089,17 +3084,17 @@ def test_vendor_rewrite_tier_and_prep_models_share_premium_swap_logic() -> None:
 
 
 def test_deepseek_provider_rewrite_propagates_to_tier_entries() -> None:
-    """--deepseek-provider direct swaps canonical Fireworks DeepSeek specs in tier entries."""
+    """DeepSeek provider rewrite keeps tier entries on direct DeepSeek."""
     from arnold.pipelines.megaplan.profiles import apply_deepseek_provider_rewrite
 
-    FIREWORKS_DS = "hermes:fireworks:accounts/fireworks/models/deepseek-v4-pro"
-    tier_models = {"execute": {1: FIREWORKS_DS, 5: "claude:high"}}
-    profile = {"plan": FIREWORKS_DS}
+    direct_deepseek = "hermes:deepseek:deepseek-v4-pro"
+    tier_models = {"execute": {1: direct_deepseek, 5: "claude:high"}}
+    profile = {"plan": direct_deepseek}
 
     _result = apply_deepseek_provider_rewrite(profile, "direct", tier_models=tier_models)
 
-    # DeepSeek tier swapped to direct
-    assert "deepseek:deepseek-v4-pro" in tier_models["execute"][1]
+    # DeepSeek tier swapped to direct.
+    assert tier_models["execute"][1] == "hermes:deepseek:deepseek-v4-pro"
     # Premium tier unchanged
     assert tier_models["execute"][5] == "claude:high"
 
@@ -3327,7 +3322,7 @@ def test_apply_vendor_rewrite_preserves_non_premium_slots_unchanged() -> None:
 
     profile = {
         "plan": "premium:low",
-        "prep": "hermes:fireworks:accounts/fireworks/models/deepseek-v4-pro",
+        "prep": "hermes:deepseek:deepseek-v4-pro",
         "critique": "shannon:claude-opus-4-7",
         "revise": "premium:medium",
         "gate": "hermes:deepseek:deepseek-v4-flash",
@@ -3344,7 +3339,7 @@ def test_apply_vendor_rewrite_preserves_non_premium_slots_unchanged() -> None:
     assert rewritten["feedback"] == "codex:low"
 
     # Non-premium slots pass through unchanged.
-    assert rewritten["prep"] == "hermes:fireworks:accounts/fireworks/models/deepseek-v4-pro"
+    assert rewritten["prep"] == "hermes:deepseek:deepseek-v4-pro"
     assert rewritten["critique"] == "shannon:claude-opus-4-7"
     assert rewritten["gate"] == "hermes:deepseek:deepseek-v4-flash"
     assert rewritten["finalize"] == "hermes:deepseek:deepseek-v4-pro"
@@ -3533,7 +3528,7 @@ def test_deepseek_provider_rewrite_tier_models_none_does_not_crash() -> None:
     from arnold.pipelines.megaplan.profiles import apply_deepseek_provider_rewrite
 
     result = apply_deepseek_provider_rewrite(
-        {"plan": "hermes:fireworks:accounts/fireworks/models/deepseek-v4-pro"}, "direct"
+        {"plan": "hermes:deepseek:deepseek-v4-pro"}, "direct"
     )
     assert "deepseek:deepseek-v4-pro" in result["plan"]
 
@@ -3710,9 +3705,7 @@ def test_deepseek_provider_rewrite_applies_to_critique_tiers_same_as_execute(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """``--deepseek-provider direct`` rewrites the canonical Fireworks
-    DeepSeek V4 Pro spec in *both* ``tier_models.execute`` and
-    ``tier_models.critique`` identically."""
+    """DeepSeek tier maps resolve directly for execute and critique."""
     _isolate_user_config(tmp_path, monkeypatch)
 
     args = _worker_args(profile="partnered", deepseek_provider="direct")
@@ -3722,18 +3715,15 @@ def test_deepseek_provider_rewrite_applies_to_critique_tiers_same_as_execute(
     assert tier_models is not None
 
     direct = "hermes:deepseek:deepseek-v4-pro"
-    fireworks = "hermes:fireworks:accounts/fireworks/models/deepseek-v4-pro"
-
     for phase in ("execute", "critique"):
         tiers = tier_models[phase]
-        # Tier 1 is flash, unaffected by the provider swap (it was never fireworks).
+        # Tier 1 is flash, unaffected by the direct-pro tier policy.
         assert "flash" in tiers[1], f"{phase} tier 1 is flash, should be unchanged"
-        # Tiers 2-3 were hermes:fireworks:…deepseek-v4-pro and become direct.
         assert tiers[2] == direct, (
-            f"{phase} tier 2 should be {direct!r} after provider swap, got {tiers[2]!r}"
+            f"{phase} tier 2 should be {direct!r}, got {tiers[2]!r}"
         )
         assert tiers[3] == direct, (
-            f"{phase} tier 3 should be {direct!r} after provider swap, got {tiers[3]!r}"
+            f"{phase} tier 3 should be {direct!r}, got {tiers[3]!r}"
         )
 
     # The maps must be byte-identical post-rewrite.

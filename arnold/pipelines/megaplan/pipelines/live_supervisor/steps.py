@@ -348,10 +348,6 @@ def _is_terminal_state(state: dict[str, Any]) -> bool:
     return state.get("status") in terminal
 
 
-def _has_stale_lock(findings: tuple[Any, ...]) -> bool:
-    return any(f.check == "stale_lock" for f in findings)
-
-
 def _select_repair_recommendation(
     incident: Incident,
     category: HealthCategory,

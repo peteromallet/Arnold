@@ -35,33 +35,33 @@
 #     relative to the resolved vendor.
 #   * `--phase-model execute=...` — disables tier routing entirely; the
 #     explicit spec wins for every batch.
-#   * `--deepseek-provider direct` — flips hermes:fireworks:… DeepSeek specs
-#     to hermes:deepseek:… (tiers 1-3).
+#   * `--deepseek-provider direct` — keeps DeepSeek specs on the official
+#     DeepSeek API (tiers 1-3).
 [profiles.variable]
 plan                  = "premium:low"
-prep                  = "hermes:fireworks:accounts/fireworks/models/deepseek-v4-pro"
+prep                  = "hermes:deepseek:deepseek-v4-pro"
 critique              = "premium:low"
 revise                = "premium:low"
-gate                  = "hermes:fireworks:accounts/fireworks/models/deepseek-v4-pro"
+gate                  = "hermes:deepseek:deepseek-v4-pro"
 finalize              = "premium:medium"
 execute               = "hermes:deepseek:deepseek-v4-flash"
 feedback              = "premium:low"
 loop_plan             = "premium:low"
-loop_execute          = "hermes:fireworks:accounts/fireworks/models/deepseek-v4-pro"
+loop_execute          = "hermes:deepseek:deepseek-v4-pro"
 review                = "premium:low"
 tiebreaker_researcher = "premium:low"
 tiebreaker_challenger = "premium:low"
 
 [profiles.variable.tier_models.execute]
 1 = "hermes:deepseek:deepseek-v4-flash"
-2 = "hermes:fireworks:accounts/fireworks/models/deepseek-v4-pro"
-3 = "hermes:fireworks:accounts/fireworks/models/deepseek-v4-pro"
+2 = "hermes:deepseek:deepseek-v4-pro"
+3 = "hermes:deepseek:deepseek-v4-pro"
 4 = "premium:low"
 5 = "premium"
 
 [profiles.variable.tier_models.critique]
 1 = "hermes:deepseek:deepseek-v4-flash"
-2 = "hermes:fireworks:accounts/fireworks/models/deepseek-v4-pro"
-3 = "hermes:fireworks:accounts/fireworks/models/deepseek-v4-pro"
+2 = "hermes:deepseek:deepseek-v4-pro"
+3 = "hermes:deepseek:deepseek-v4-pro"
 4 = "premium:low"
 5 = "premium"
