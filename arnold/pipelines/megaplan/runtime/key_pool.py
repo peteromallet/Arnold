@@ -16,6 +16,7 @@ from arnold.agent.providers.pool import (  # noqa: F401
     KeyEntry,
     KeyPool,
     minimax_openrouter_model,
+    resolve_kimi_base_url,
     _DEFAULT_BASE_URLS,
     _ENV_ALIASES,
     _PROVIDER_BASE_URL_VARS,
@@ -155,6 +156,20 @@ def _is_deepseek_model_name(name: str) -> bool:
     return lowered.startswith("deepseek-") or lowered.startswith("deepseek/")
 
 
+def _fireworks_deepseek_model_name(name: str) -> str | None:
+    """Return the bare DeepSeek model from a Fireworks model id, if present."""
+
+    lowered = name.lower()
+    marker = "/models/"
+    candidate = name
+    if marker in lowered:
+        candidate = name[lowered.rfind(marker) + len(marker):]
+    candidate = candidate.strip("/")
+    if _is_deepseek_model_name(candidate):
+        return candidate
+    return None
+
+
 def _raise_codex_via_openrouter_blocked(reason: str) -> None:
     """Refuse to silently route codex/gpt-5.x through OpenRouter.
 
@@ -202,12 +217,13 @@ def _raise_generic_openrouter_blocked(reason: str) -> None:
             + " "
             "To use OpenRouter, prefix the model with ``openrouter:``. "
             "To use a native provider, use the appropriate prefix "
-            "(``deepseek:``, ``fireworks:``, ``google:``, ``zhipu:``, "
-            "``minimax:``, ``mimo:``) or the ``hermes:`` agent."
+            "(``deepseek:``, ``fireworks:``, ``google:``, ``kimi:``, "
+            "``zhipu:``, ``minimax:``, ``mimo:``) or the ``hermes:`` agent."
         ),
         valid_next=[
             "rerun with --hermes openrouter:<model>",
             "rerun with --hermes deepseek:<model>",
+            "rerun with --hermes kimi:<model>",
             "rerun with --hermes mimo:<model>",
             "rerun with --agent claude / --agent codex / --agent shannon",
         ],
@@ -234,6 +250,15 @@ def resolve_model(model: str | None) -> tuple[str, dict[str, str]]:
         resolved_model = resolved_model[len("zhipu:"):]
         agent_kwargs["base_url"] = _get_api_credential(_PROVIDER_BASE_URL_VARS["zhipu"]) or _DEFAULT_BASE_URLS["zhipu"]
         agent_kwargs["api_key"] = acquire_key("zhipu")
+    elif resolved_model.startswith("kimi:"):
+        resolved_model = resolved_model[len("kimi:"):]
+        kimi_key = acquire_key("kimi")
+        agent_kwargs["api_key"] = kimi_key
+        agent_kwargs["base_url"] = resolve_kimi_base_url(
+            kimi_key,
+            _DEFAULT_BASE_URLS["kimi"],
+            _get_api_credential(_PROVIDER_BASE_URL_VARS["kimi"]),
+        )
     elif resolved_model.startswith("google:"):
         resolved_model = resolved_model[len("google:"):]
         agent_kwargs["base_url"] = _DEFAULT_BASE_URLS["google"]
@@ -244,6 +269,15 @@ def resolve_model(model: str | None) -> tuple[str, dict[str, str]]:
         agent_kwargs["api_key"] = acquire_key("deepseek")
     elif resolved_model.startswith("fireworks:"):
         resolved_model = resolved_model[len("fireworks:"):]
+        direct_deepseek_model = _fireworks_deepseek_model_name(resolved_model)
+        if direct_deepseek_model is not None:
+            resolved_model = direct_deepseek_model
+            agent_kwargs["base_url"] = (
+                _get_api_credential(_PROVIDER_BASE_URL_VARS["deepseek"])
+                or _DEFAULT_BASE_URLS["deepseek"]
+            )
+            agent_kwargs["api_key"] = acquire_key("deepseek")
+            return resolved_model, agent_kwargs
         agent_kwargs["base_url"] = _get_api_credential(_PROVIDER_BASE_URL_VARS["fireworks"]) or _DEFAULT_BASE_URLS["fireworks"]
         agent_kwargs["api_key"] = acquire_key("fireworks")
     elif resolved_model.startswith("mimo:"):

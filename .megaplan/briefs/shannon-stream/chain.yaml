@@ -10,10 +10,10 @@
 #     so the running engine keeps executing the OLD tmux path through M1-M3.
 #   - keep tmux: it is NOT retired in this epic.
 #
-# ENGINE-PIN (open question — confirm before start): if `chain start` runs the WORKTREE's megaplan as the
-# engine, M1's edits to the shared dispatch could affect the running driver. Mitigation in place: M1 is
-# behavior-preserving + green-suite-gated and the new path is flag-off. If a frozen engine pin is
-# available, prefer running the chain from a frozen good-SHA engine checkout against this worktree.
+# DRIVER CHECKOUT (open question — confirm before start): if `chain start` runs the WORKTREE's megaplan as
+# the engine, M1's edits to the shared dispatch could affect the running driver. Mitigation in place: M1 is
+# behavior-preserving + green-suite-gated and the new path is flag-off. Prefer running the chain from a
+# separate known-good engine checkout against this worktree.
 
 base_branch: shannon-stream-epic   # fresh branch off main holding the committed briefs+doc; milestones merge here, off main, for a clean reviewable diff.
 

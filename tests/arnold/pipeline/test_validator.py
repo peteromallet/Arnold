@@ -356,9 +356,9 @@ class TestDecisionRouteSchemaCompatibility:
     Covers simple key-value maps, JSON Schema choice.enum, and ambiguous
     schemas that should be silently ignored."""
 
-    def test_simple_schema_outside_route_key_still_passes_route_validation(self) -> None:
-        """Decision key not in simple KV schema still passes route-target validation
-        when its route_target matches an edge label."""
+    def test_simple_schema_outside_route_key_flagged(self) -> None:
+        """Decision key not in simple KV schema triggers schema_key_unknown even when
+        its route_target matches an edge label."""
         stage = Stage(
             name="review",
             step=_PromptStep(name="review"),
@@ -374,11 +374,118 @@ class TestDecisionRouteSchemaCompatibility:
             suspension_schema={"approved": "str", "rejected": "str"},
         )
         diag = validate(_pipeline(stages={"review": stage}, entry="review"))
+        # Route-target validation still passes for the outside-schema key
         route_target_defects = [
             d for d in diag.defects if "decision_route_target_unknown" in d
         ]
         assert route_target_defects == [], (
-            f"outside-schema key should not break route validation: {route_target_defects}"
+            f"outside-schema key should not break route-target validation: {route_target_defects}"
+        )
+        # Schema-key conformance flags the unknown schema key
+        _assert_issue(
+            diag,
+            code="decision_route_schema_key_unknown",
+            stage="review",
+            detail_items={
+                "decision_key": "pending",
+                "schema_enum": ["approved", "rejected"],
+            },
+            message_contains="is not in the suspension-schema enum",
+        )
+
+    def test_simple_schema_missing_route_key_flagged(self) -> None:
+        """Schema key missing from decision_routes triggers schema_key_missing."""
+        stage = Stage(
+            name="review",
+            step=_PromptStep(name="review"),
+            edges=(
+                Edge(label="next", target="next_stage"),
+                Edge(label="halt", target="halt"),
+            ),
+            decision_routes={"approved": "next"},
+            suspension_schema={"approved": "str", "rejected": "str"},
+        )
+        diag = validate(_pipeline(stages={"review": stage}, entry="review"))
+        _assert_issue(
+            diag,
+            code="decision_route_schema_key_missing",
+            stage="review",
+            detail_items={
+                "decision_key": "rejected",
+                "schema_enum": ["approved", "rejected"],
+            },
+            message_contains="is missing from decision_routes",
+        )
+
+    def test_simple_schema_valid_matching_route_map(self) -> None:
+        """Decision routes that exactly match a recognized simple-KV schema
+        produce no schema-key defects."""
+        stage = Stage(
+            name="review",
+            step=_PromptStep(name="review"),
+            edges=(
+                Edge(label="next", target="next_stage"),
+                Edge(label="halt", target="halt"),
+            ),
+            decision_routes={"approved": "next", "rejected": "halt"},
+            suspension_schema={"approved": "str", "rejected": "str"},
+        )
+        diag = validate(_pipeline(stages={"review": stage}, entry="review"))
+        route_defects = [d for d in diag.defects if "decision_route" in d]
+        assert route_defects == [], (
+            f"exact schema match should have no route defects: {route_defects}"
+        )
+
+    def test_terminal_none_routes_with_recognized_schema(self) -> None:
+        """None terminal route targets with a recognized simple-KV schema
+        pass schema-key conformance (None is not a schema key)."""
+        stage = Stage(
+            name="review",
+            step=_PromptStep(name="review"),
+            edges=(
+                Edge(label="next", target="next_stage"),
+                Edge(label="halt", target="halt"),
+            ),
+            decision_routes={
+                "approved": "next",
+                "rejected": "halt",
+                "abort": None,
+            },
+            suspension_schema={"approved": "str", "rejected": "str"},
+        )
+        diag = validate(_pipeline(stages={"review": stage}, entry="review"))
+        # "abort" is not in the schema enum — it should be flagged
+        _assert_issue(
+            diag,
+            code="decision_route_schema_key_unknown",
+            stage="review",
+            detail_items={
+                "decision_key": "abort",
+                "schema_enum": ["approved", "rejected"],
+            },
+            message_contains="is not in the suspension-schema enum",
+        )
+        # But no missing keys — "approved" and "rejected" are both covered
+        missing = [d for d in diag.defects if "decision_route_schema_key_missing" in d]
+        assert missing == [], f"no missing keys expected: {missing}"
+
+    def test_suspension_schema_no_decision_routes_passes(self) -> None:
+        """Stage with a recognized suspension_schema but no decision_routes
+        passes silently (backward compatibility)."""
+        stage = Stage(
+            name="review",
+            step=_PromptStep(name="review"),
+            edges=(
+                Edge(label="next", target="next_stage"),
+                Edge(label="halt", target="halt"),
+            ),
+            decision_routes={},
+            suspension_schema={"approved": "str", "rejected": "str"},
+        )
+        diag = validate(_pipeline(stages={"review": stage}, entry="review"))
+        route_defects = [d for d in diag.defects if "decision_route" in d]
+        assert route_defects == [], (
+            f"no decision_routes with recognized schema should pass: {route_defects}"
         )
 
     def test_simple_schema_x_extension_excluded_from_enum(self) -> None:

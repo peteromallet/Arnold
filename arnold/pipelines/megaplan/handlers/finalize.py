@@ -4,6 +4,7 @@ import argparse
 import logging
 import os
 import re
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -42,6 +43,7 @@ from arnold.pipelines.megaplan.orchestration.test_selection import (
     resolve_baseline_test_selection,
 )
 from arnold.pipelines.megaplan.store import write_plan_artifact_json
+from arnold.pipelines.megaplan.execute.quality import capture_uncommitted_baseline
 
 from .shared import _finish_step, _raise_step_validation_error, _run_worker
 
@@ -817,7 +819,7 @@ def _capture_test_baseline(project_dir: Path, config: dict[str, Any]) -> dict[st
             )
         else:
             note = (
-                f"Baseline test capture hit the absolute {timeout}s ceiling "
+                f"Baseline test capture timed out after hitting the absolute {timeout}s ceiling "
                 f"(suite still producing output but never finished) while running: "
                 f"{result.command}"
             )
@@ -1224,6 +1226,37 @@ def _write_finalize_artifacts(plan_dir: Path, payload: dict[str, Any], state: Pl
     atomic_write_text(plan_dir / "final.md", render_final_md(payload))
     return sha256_file(plan_dir / "finalize.json")
 
+
+def _ensure_execution_baseline(state: PlanState) -> None:
+    meta = state.setdefault("meta", {})
+    if isinstance(meta.get("execution_baseline"), dict):
+        return
+    project_dir = Path(state["config"]["project_dir"])
+    try:
+        baseline = capture_uncommitted_baseline(project_dir)
+    except Exception as exc:
+        meta["execution_baseline_warning"] = (
+            f"Failed to capture execution baseline: {exc}"
+        )
+        LOGGER.warning("Failed to capture execution baseline", exc_info=True)
+        return
+    meta["execution_baseline"] = baseline
+    count = len(baseline.get("paths", {})) if isinstance(baseline.get("paths"), dict) else 0
+    print(
+        f"Captured execution baseline: {count} pre-existing uncommitted paths. "
+        "Unchanged paths will be excluded from ownership audits.",
+        file=sys.stderr,
+    )
+
+# ── T8: Finalize-scoped scratch promotion known keys ────────────────────
+# The model produces only these keys in the scratch template; the handler
+# computes validation/provides/assumes/baseline afterward.
+_FINALIZE_SCRATCH_KNOWN_KEYS: frozenset[str] = frozenset(
+    {"tasks", "user_actions", "sense_checks", "watch_items", "meta_commentary"}
+)
+# ────────────────────────────────────────────────────────────────────────
+
+
 def handle_finalize(root: Path, args: argparse.Namespace) -> StepResponse:
     with load_plan_locked(root, args.plan, step="finalize") as (plan_dir, state):
         allowed_states = {STATE_GATED}
@@ -1231,9 +1264,51 @@ def handle_finalize(root: Path, args: argparse.Namespace) -> StepResponse:
         if robustness == "bare" or (is_creative_mode(state) and robustness == "light"):
             allowed_states.add(STATE_PLANNED)
         require_state(state, "finalize", allowed_states)
+
+        from arnold.pipelines.megaplan.handlers.structured_output import (
+            require_scratch_filename_for_phase,
+        )
+
+        scratch_filename = require_scratch_filename_for_phase("finalize")
+        seed_json: str | None = None
+        try:
+            from arnold.pipelines.megaplan.prompts.finalize import _write_finalize_template
+
+            seed_path = _write_finalize_template(plan_dir, state)
+            seed_json = seed_path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            seed_json = None
+
         worker, agent, mode, refreshed = _run_worker("finalize", state, plan_dir, args, root=root)
+
+        # ── T8: Scratch promotion ──────────────────────────────────
+        # Prefer valid filled finalize_output.json over worker.payload;
+        # fall back to worker.payload when scratch is missing/unmodified;
+        # fail hard on modified invalid scratch when file-fill was
+        # instructed (hermes agent).
+        from arnold.pipelines.megaplan.handlers.structured_output import (
+            promote_scratch,
+        )
+
+        # Only the Hermes agent can receive file-fill instructions;
+        # Shannon/Codex workers use inline JSON and should never
+        # hard-fail on a modified invalid scratch.
+        file_fill_instructed = agent == "hermes"
+
+        _, promoted_payload = promote_scratch(
+            plan_dir,
+            scratch_filename,
+            _FINALIZE_SCRATCH_KNOWN_KEYS,
+            worker,
+            seed_json=seed_json,
+            file_fill_instructed=file_fill_instructed,
+        )
+        worker.payload = promoted_payload
+        # ────────────────────────────────────────────────────────────
+
         _validate_finalize_payload(plan_dir, state, worker)
         artifact_hash = _write_finalize_artifacts(plan_dir, worker.payload, state)
+        _ensure_execution_baseline(state)
         state["current_state"] = STATE_FINALIZED
         return _finish_step(
             plan_dir, state, args,

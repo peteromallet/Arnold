@@ -2174,7 +2174,7 @@ def test_run_chain_refuses_preflight_before_init_or_drive(tmp_path: Path, monkey
     calls: list[str] = []
 
     def refuse(*_args, **_kwargs):
-        raise CliError("engine_pin_drift", "refuse before chain mutation")
+        raise CliError("engine_write_isolation_unverified", "refuse before chain mutation")
 
     def should_not_run(*_args, **_kwargs):
         calls.append("ran")
@@ -2187,7 +2187,7 @@ def test_run_chain_refuses_preflight_before_init_or_drive(tmp_path: Path, monkey
     with pytest.raises(CliError) as excinfo:
         run_chain(spec_path, tmp_path, writer=lambda _m: None)
 
-    assert excinfo.value.code == "engine_pin_drift"
+    assert excinfo.value.code == "engine_write_isolation_unverified"
     assert calls == []
 
 
@@ -3345,3 +3345,55 @@ def test_latest_execution_batch_completion_requires_finalize_authority(
     assert all_done is False
     assert "finalize.json has non-authoritative tasks" in reason
     assert "T1" in reason
+
+
+def test_latest_execution_batch_completion_accepts_audit_notes_authority(
+    tmp_path: Path,
+) -> None:
+    plan_dir = tmp_path / ".megaplan" / "plans" / "plan"
+    plan_dir.mkdir(parents=True)
+    notes = (
+        "Verified the read-only contract by inspecting validator.py and types.py: "
+        "decision_routes are read with getattr, non-None route values are checked "
+        "against outgoing edge labels, and both stage types expose suspension_schema "
+        "plus decision_routes for schema conformance."
+    )
+    (plan_dir / "execution_batch_1.json").write_text(
+        json.dumps(
+            {
+                "task_updates": [
+                    {
+                        "task_id": "T1",
+                        "status": "done",
+                        "kind": "audit",
+                        "executor_notes": notes,
+                        "files_changed": [],
+                        "commands_run": [],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    (plan_dir / "finalize.json").write_text(
+        json.dumps(
+            {
+                "tasks": [
+                    {
+                        "id": "T1",
+                        "status": "done",
+                        "kind": "audit",
+                        "executor_notes": notes,
+                        "files_changed": [],
+                        "commands_run": [],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    all_done, reason = chain_module._latest_execution_batch_all_tasks_done(plan_dir)
+
+    assert all_done is True
+    assert reason == "execution_batch_1.json"

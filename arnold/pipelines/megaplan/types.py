@@ -30,6 +30,7 @@ DriverOutcomeStatus = Literal[
     "cost_cap_exceeded",
     "context_retry_exhausted",
     "worker_blocked",
+    "infrastructure_error",
     "human_required",
     "awaiting_human",
     "tiebreaker_pending",

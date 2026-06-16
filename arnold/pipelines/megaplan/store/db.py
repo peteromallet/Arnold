@@ -23,7 +23,7 @@ except ImportError as _e:
     _Jsonb = None  # type: ignore[assignment]
     _psycopg_import_error = ImportError(
         "psycopg is required for DBStore. "
-        "Install with: pip install 'megaplan-harness[db]'"
+        "Install with: pip install 'arnold[db]'"
     )
     _psycopg_import_error.__cause__ = _e
 

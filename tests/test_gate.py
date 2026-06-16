@@ -2024,3 +2024,284 @@ def test_cap_with_cosmetic_only_routes_to_finalize_via_status_path(
     assert status["state"] == megaplan.STATE_GATED
     assert status.get("next_step") == "finalize"
     assert "revise" not in (status.get("valid_next") or [])
+
+
+# ── T10: Gate reprompt regression tests ────────────────────────────────────
+
+
+def test_gate_reprompt_reuses_same_scratch_path(
+    plan_fixture: PlanFixture, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Reprompt does NOT rebuild the full base prompt, preserving the
+    filled gate_output.json from the first attempt so the model can see and
+    completely replace it."""
+    from arnold.pipelines.megaplan.handlers.shared import _build_gate_prompt_override
+
+    megaplan.handle_plan(plan_fixture.root, plan_fixture.make_args(plan=plan_fixture.plan_name))
+    megaplan.handle_critique(plan_fixture.root, plan_fixture.make_args(plan=plan_fixture.plan_name))
+
+    state = load_state(plan_fixture.plan_dir)
+
+    # Write a filled gate_output.json to simulate the first attempt having
+    # completed successfully.
+    first_fill = {
+        "recommendation": "PROCEED",
+        "rationale": "First attempt rationale.",
+        "signals_assessment": "Stable.",
+        "warnings": [],
+        "flag_resolutions": [],
+        "accepted_tradeoffs": [],
+        "settled_decisions": [],
+    }
+    scratch = plan_fixture.plan_dir / "gate_output.json"
+    scratch.write_text(json.dumps(first_fill, indent=2), encoding="utf-8")
+
+    reprompt = _build_gate_prompt_override(
+        "hermes", state, plan_fixture.plan_dir,
+        root=plan_fixture.root,
+        missing_flag_ids=["flag-1", "flag-2"],
+    )
+
+    # The reprompt must NOT rebuild the full base prompt (which would call
+    # _write_gate_template and overwrite gate_output.json).
+    # Evidence: the reprompt references the scratch file path explicitly and
+    # does NOT contain the full gate prompt body (plan text, metadata, etc.).
+    assert str(scratch) in reprompt
+    assert "GATE REPROMPT" in reprompt
+    assert "COMPLETE REPLACEMENT" in reprompt
+    assert "gate.json" in reprompt  # warns against writing to gate.json
+    # Must NOT contain full-plan content that the base prompt includes.
+    assert "Unresolved significant flags:" not in reprompt
+    assert "Gate signals:" not in reprompt
+    # The scratch file must still contain the first fill content (not
+    # overwritten by an empty template).
+    after = json.loads(scratch.read_text(encoding="utf-8"))
+    assert after == first_fill
+
+
+def test_gate_scratch_promotion_strips_unknown_keys(
+    plan_fixture: PlanFixture,
+) -> None:
+    """Scratch promotion strips unknown top-level keys (including
+    template-only fields like known_flag_ids) from gate_output.json."""
+    from arnold.pipelines.megaplan.handlers.structured_output import promote_scratch
+    from arnold.pipelines.megaplan.handlers.gate import _GATE_SCRATCH_KNOWN_KEYS
+
+    megaplan.handle_plan(plan_fixture.root, plan_fixture.make_args(plan=plan_fixture.plan_name))
+
+    # Write a scratch file with unknown keys that the model might inject.
+    scratch_payload = {
+        "recommendation": "PROCEED",
+        "rationale": "Looks good.",
+        "signals_assessment": "Stable.",
+        "warnings": [],
+        "flag_resolutions": [],
+        "accepted_tradeoffs": [],
+        "settled_decisions": [],
+        "_scratch_note": "model commentary",
+        "_scratch_timestamp": "2026-01-01T00:00:00Z",
+        "known_flag_ids": ["flag-1", "flag-2"],
+        "_extra_unknown": 42,
+    }
+    scratch = plan_fixture.plan_dir / "gate_output.json"
+    seed = json.dumps({"recommendation": "", "rationale": "", "signals_assessment": "",
+                        "warnings": [], "flag_resolutions": [], "accepted_tradeoffs": [],
+                        "settled_decisions": [], "known_flag_ids": []}, indent=2)
+    scratch.write_text(json.dumps(scratch_payload, indent=2), encoding="utf-8")
+
+    dummy_worker = WorkerResult(
+        payload={},
+        raw_output="{}",
+        duration_ms=0,
+        cost_usd=0.0,
+        session_id="dummy",
+    )
+
+    _, promoted = promote_scratch(
+        plan_fixture.plan_dir,
+        "gate_output.json",
+        _GATE_SCRATCH_KNOWN_KEYS,
+        dummy_worker,
+        seed_json=seed,
+        file_fill_instructed=True,
+    )
+
+    # Unknown keys must be stripped from the promoted payload.
+    assert "_scratch_note" not in promoted
+    assert "_scratch_timestamp" not in promoted
+    assert "_extra_unknown" not in promoted
+    assert "known_flag_ids" not in promoted
+    # Known keys must be preserved.
+    assert promoted["recommendation"] == "PROCEED"
+    assert promoted["rationale"] == "Looks good."
+    assert promoted["signals_assessment"] == "Stable."
+    assert promoted["warnings"] == []
+    assert promoted["flag_resolutions"] == []
+    assert promoted["accepted_tradeoffs"] == []
+    assert promoted["settled_decisions"] == []
+
+
+def test_gate_schema_audit_normalizes_common_tradeoff_shape_drift() -> None:
+    from arnold.pipelines.megaplan.model_seam import audit_step_payload
+
+    payload = {
+        "recommendation": "PROCEED",
+        "rationale": "Proceed with explicit accepted tradeoffs.",
+        "signals_assessment": "Stable.",
+        "warnings": [],
+        "flag_resolutions": [
+            {
+                "flag_id": "correctness-1",
+                "action": "accept_tradeoff",
+                "evidence": "",
+                "rationale": "Compatibility concern accepted.",
+            },
+            {
+                "flag_id": "correctness-2",
+                "action": "accept_tradeoff",
+                "evidence": "",
+                "rationale": "Typed API mitigates malformed input.",
+            },
+            {
+                "flag_id": "correctness-3",
+                "action": "accept_tradeoff",
+                "evidence": "",
+                "rationale": "The stricter contract is intentional.",
+            },
+        ],
+        "accepted_tradeoffs": [
+            "Empty decision_routes with a recognized schema skips conformance.",
+            {
+                "flag_id": "correctness-2",
+                "tradeoff": "Helper does not validate every key type.",
+            },
+            {
+                "concern": "Permissive extra-key behavior intentionally changes.",
+                "tradeoff": "Old tolerance no longer applies to recognized schemas.",
+            },
+        ],
+        "settled_decisions": [],
+        "known_flag_ids": ["correctness-1", "correctness-2", "correctness-3"],
+    }
+
+    audit_step_payload("gate", payload)
+
+
+def test_gate_reprompt_ignores_direct_gate_json_writes(
+    plan_fixture: PlanFixture, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The handler reads only gate_output.json; direct writes to gate.json
+    by the model are silently ignored."""
+    megaplan.handle_plan(plan_fixture.root, plan_fixture.make_args(plan=plan_fixture.plan_name))
+    megaplan.handle_critique(plan_fixture.root, plan_fixture.make_args(plan=plan_fixture.plan_name))
+    flags = ensure_blocking_flags(plan_fixture.plan_dir, 1)
+
+    first_attempt = make_gate_worker_result(
+        recommendation="PROCEED",
+        rationale="All good.",
+        signals_assessment="ok",
+        flag_resolutions=[
+            {"flag_id": flags[0]["id"], "action": "dispute",
+             "evidence": "plan_v1.md Phase 1 Step 2 requires this exact behavior as documented in the spec.", "rationale": ""}
+        ],
+        session_id="gate-ignore-direct-1",
+    )
+
+    call_counter = {"count": 0}
+    monkeypatch.setattr(
+        megaplan.workers,
+        "run_step_with_worker",
+        make_worker_sequence(
+            [(first_attempt, "hermes", "persistent", False)],
+            call_counter,
+        ),
+    )
+
+    # Pre-write a fake gate.json that the handler must ignore.
+    fake_gate = {
+        "recommendation": "ESCALATE",
+        "rationale": "This should be ignored.",
+        "signals_assessment": "fake",
+        "warnings": ["fake"],
+        "passed": False,
+        "preflight_results": {},
+        "unresolved_flags": [],
+        "criteria_check": {},
+        "orchestrator_guidance": "fake guidance",
+        "signals": {},
+        "addressed_flags": [],
+    }
+    (plan_fixture.plan_dir / "gate.json").write_text(
+        json.dumps(fake_gate, indent=2), encoding="utf-8"
+    )
+
+    response = megaplan.handle_gate(plan_fixture.root, plan_fixture.make_args(plan=plan_fixture.plan_name))
+
+    # The handler should produce gate.json from build_gate_artifact, not from
+    # the pre-written fake.
+    gate = read_json(plan_fixture.plan_dir / "gate.json")
+    assert gate["recommendation"] != "ESCALATE"
+    assert "This should be ignored" not in str(gate.get("rationale", ""))
+    assert "fake guidance" not in str(gate.get("orchestrator_guidance", ""))
+    # The response should reflect the actual worker output.
+    assert response["recommendation"] == "PROCEED"
+
+
+def test_gate_reprompt_preserves_downgrade_after_second_attempt(
+    plan_fixture: PlanFixture, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """When the reprompt also fails to resolve all blocking flags, the
+    auto-downgrade to ITERATE still fires and the rationale includes the
+    downgrade annotation."""
+    megaplan.handle_plan(plan_fixture.root, plan_fixture.make_args(plan=plan_fixture.plan_name))
+    megaplan.handle_critique(plan_fixture.root, plan_fixture.make_args(plan=plan_fixture.plan_name))
+    flags = ensure_blocking_flags(plan_fixture.plan_dir, 5)
+
+    first_attempt = make_gate_worker_result(
+        recommendation="PROCEED",
+        rationale="Three resolved, two remain.",
+        signals_assessment="ok",
+        flag_resolutions=[
+            {"flag_id": flags[i]["id"], "action": "dispute",
+             "evidence": f"plan_v1.md:{i} covers this.", "rationale": ""}
+            for i in range(3)
+        ],
+        session_id="gate-downgrade-1",
+    )
+    second_attempt = make_gate_worker_result(
+        recommendation="PROCEED",
+        rationale="Still only three resolved.",
+        signals_assessment="ok",
+        flag_resolutions=[
+            {"flag_id": flags[i]["id"], "action": "dispute",
+             "evidence": f"plan_v1.md:{i} covers this.", "rationale": ""}
+            for i in range(3)
+        ],
+        session_id="gate-downgrade-2",
+    )
+
+    call_counter = {"count": 0}
+    monkeypatch.setattr(
+        megaplan.workers,
+        "run_step_with_worker",
+        make_worker_sequence(
+            [
+                (first_attempt, "hermes", "persistent", False),
+                (second_attempt, "hermes", "persistent", False),
+            ],
+            call_counter,
+        ),
+    )
+
+    response = megaplan.handle_gate(plan_fixture.root, plan_fixture.make_args(plan=plan_fixture.plan_name))
+    carry = read_json(plan_fixture.plan_dir / "gate_carry.json")
+
+    assert call_counter["count"] == 2
+    assert response["reprompted"] is True
+    assert response["recommendation"] == "ITERATE"
+    assert response["next_step"] == "revise"
+    assert "[Auto-downgraded from PROCEED:" in response["rationale"]
+    assert carry["recommendation"] == "ITERATE"
+    # Verify the downgrade annotation is present in the final gate.json rationale.
+    gate = read_json(plan_fixture.plan_dir / "gate.json")
+    assert "[Auto-downgraded from PROCEED:" in gate["rationale"]

@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import hashlib
+import os
 import subprocess
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
 
@@ -17,6 +19,7 @@ from arnold.pipelines.megaplan.orchestration.advisory_projection import (
     summarize_path_list_for_prose,
 )
 from arnold.pipelines.megaplan.audits.quality_gates import run_quality_checks
+from arnold.pipelines.megaplan.types import MOCK_ENV_VAR
 
 
 AUTO_ATTRIBUTION_PATH_LIST_LIMIT = 8
@@ -273,6 +276,15 @@ def _format_auto_attributed_paths(paths: list[str]) -> str:
     return ", ".join(displayed)
 
 
+def _is_harness_generated_path(path: str) -> bool:
+    normalized = path.replace("\\", "/")
+    if normalized.startswith("./"):
+        normalized = normalized[2:]
+    return normalized.startswith(".megaplan/run-logs/") or normalized.startswith(
+        ".megaplan/system_logs/"
+    )
+
+
 def _auto_attribute_unclaimed_paths(
     *,
     project_dir: Path,
@@ -283,6 +295,7 @@ def _auto_attribute_unclaimed_paths(
     capture_recursive_snapshot_fn: Callable[[Path], tuple[dict[str, str], str | None]],
     carry_forward_paths: set[str] | None = None,
     base_ref: str | None = None,
+    state: dict[str, Any] | None = None,
 ) -> AttributionResult:
     batch_id_set = set(batch_task_ids)
     tasks = finalize_data.get("tasks") or []
@@ -356,7 +369,11 @@ def _auto_attribute_unclaimed_paths(
     if error is not None:
         return AttributionResult(records=[], recursive_snapshot=None)
 
-    git_paths = {path for path in snapshot if not path.endswith("/")}
+    git_paths = {
+        path
+        for path in snapshot
+        if not path.endswith("/") and not _is_harness_generated_path(path)
+    }
     if base_ref is not None:
         from arnold.pipelines.megaplan.loop.git import _collect_committed_range_paths
         try:
@@ -371,7 +388,9 @@ def _auto_attribute_unclaimed_paths(
         for path in (task.get("files_changed") or [])
         if isinstance(path, str) and path.strip()
     }
-    unclaimed_paths = sorted(git_paths - claimed)
+    unclaimed_paths = sorted(
+        git_paths - claimed - unchanged_baseline_uncommitted_paths(project_dir, state or {})
+    )
     # Carry-forward paths are inherited from a prior milestone — never auto-attributed.
     if carry_forward_paths:
         unclaimed_paths = [
@@ -445,6 +464,58 @@ def _repo_path_hash(project_dir: Path, relative_path: str) -> str:
     if target.is_dir():
         return "<directory>"
     return hashlib.sha256(target.read_bytes()).hexdigest()
+
+
+def _git_head(project_dir: Path) -> str:
+    process = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=str(project_dir),
+        text=True,
+        capture_output=True,
+        timeout=30,
+    )
+    if process.returncode != 0:
+        raise RuntimeError(
+            "git rev-parse HEAD failed: "
+            + (process.stderr.strip() or process.stdout.strip())
+        )
+    return process.stdout.strip()
+
+
+def capture_uncommitted_baseline(project_dir: Path) -> dict[str, Any]:
+    if os.getenv(MOCK_ENV_VAR) == "1":
+        return {
+            "captured_at": "1970-01-01T00:00:00+00:00",
+            "head": "<mock>",
+            "paths": {},
+        }
+    snapshot, error = _capture_git_status_snapshot_recursive(project_dir)
+    if error is not None:
+        raise RuntimeError(error)
+    return {
+        "captured_at": datetime.now(timezone.utc).isoformat(),
+        "head": _git_head(project_dir),
+        "paths": dict(sorted(snapshot.items())),
+    }
+
+
+def unchanged_baseline_uncommitted_paths(project_dir: Path, state: dict[str, Any]) -> set[str]:
+    meta = state.get("meta") if isinstance(state, dict) else None
+    baseline = (
+        meta.get("execution_baseline")
+        if isinstance(meta, dict) and isinstance(meta.get("execution_baseline"), dict)
+        else None
+    )
+    paths = baseline.get("paths") if isinstance(baseline, dict) else None
+    if not isinstance(paths, dict):
+        return set()
+    unchanged: set[str] = set()
+    for path, baseline_hash in paths.items():
+        if not isinstance(path, str) or not isinstance(baseline_hash, str):
+            continue
+        if _repo_path_hash(project_dir, path) == baseline_hash:
+            unchanged.add(path)
+    return unchanged
 
 
 def _run_git_status_snapshot(
@@ -575,6 +646,10 @@ def _observe_git_changes(
     batches_total: int,
     capture_git_status_snapshot_fn: Callable[[Path], tuple[dict[str, str], str | None]],
     plan_dir: Path | None = None,
+    carry_forward_paths: set[str] | None = None,
+    base_ref: str | None = None,
+    milestone_base_sha: str | None = None,
+    state: dict[str, Any] | None = None,
 ) -> list[str]:
     # Resolve milestone_base_sha → base_ref when caller uses the chain_policy
     # naming convention (tests pass milestone_base_sha directly).
@@ -595,6 +670,9 @@ def _observe_git_changes(
             before_snapshot=before_snapshot,
             after_snapshot=after_snapshot,
         )
+        observed_paths = {
+            path for path in observed_paths if not _is_harness_generated_path(path)
+        }
         if _base_ref is not None:
             from arnold.pipelines.megaplan.loop.git import _collect_committed_range_paths
             try:
@@ -615,7 +693,10 @@ def _observe_git_changes(
                     label="phantom_claims",
                 )
             )
-        unclaimed_changes = sorted(observed_paths - claimed_paths)
+        unchanged_baseline_paths = unchanged_baseline_uncommitted_paths(
+            project_dir, state or {}
+        )
+        unclaimed_changes = sorted(observed_paths - claimed_paths - unchanged_baseline_paths)
         # Carry-forward paths are inherited from a prior milestone — exclude
         # them from the unclaimed advisory and report them separately.
         _cf = carry_forward_paths or set()
@@ -649,6 +730,7 @@ def _collect_quality_deviations(
     quality_config: dict[str, Any],
     capture_git_status_snapshot_fn: Callable[[Path], tuple[dict[str, str], str | None]],
     base_ref: str | None = None,
+    state: dict[str, Any] | None = None,
 ) -> list[str]:
     try:
         after_snapshot, after_error = capture_git_status_snapshot_fn(project_dir)
@@ -675,6 +757,9 @@ def _collect_quality_deviations(
             window_paths = None
         if window_paths is not None:
             changed_paths = {p for p in changed_paths if p in window_paths}
+    changed_paths = changed_paths - unchanged_baseline_uncommitted_paths(
+        project_dir, state or {}
+    )
     return run_quality_checks(
         project_dir,
         changed_paths=changed_paths,

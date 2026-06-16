@@ -1092,6 +1092,8 @@ def _review_prompt(
         extra_sections += f"\n\n{flag_reverify_block}"
     if pre_check_block:
         extra_sections += f"\n\n{pre_check_block}"
+    output_path = _write_review_template(plan_dir, state)
+
     return textwrap.dedent(
         f"""
         {review_intro}
@@ -1118,6 +1120,11 @@ def _review_prompt(
         {audit_block}
 
         {_review_evidence_block(plan_dir)}
+
+        Your output template is at: {output_path}
+        Read this file first — it contains the expected JSON structure with pre-populated `task_verdicts`, `sense_check_verdicts`, and `criteria`.
+        Fill the JSON structure with your results and write the file back.
+        If you cannot use file tools, return the populated JSON structure inline as your response instead.
 
         Git diff summary:
         {diff_summary}

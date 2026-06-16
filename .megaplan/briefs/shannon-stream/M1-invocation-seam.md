@@ -22,7 +22,7 @@ consume only neutral fields; add a one-shot regression characterizing today's di
 - The contract is an **interface, not a transport** — engines keep their native paths; nothing is forced
   through a file handshake. (Hermes = HTTP, Codex = `codex exec`, Shannon = tmux today / stream-json in M2.)
 - `rate_limit` is a **typed optional field on `WorkerResult`**, not a side-channel.
-- The **retry path is the ONLY place allowed to branch on engine identity** (Shannon self-cleans its
+- The **retry path is the ONLY place allowed to branch on worker kind** (Shannon self-cleans its
   session; Codex records the stale session explicitly). A future engine must self-clean like Shannon, not
   grow a third retry arm. Add a comment marking this as a deliberate, contained concession.
 - `session_id` stays an **opaque string**; no cross-engine session-migration logic.
@@ -30,7 +30,7 @@ consume only neutral fields; add a one-shot regression characterizing today's di
 
 ## Open questions (planner resolves)
 - Is `shannon_plan` (the one engine-branded `WorkerResult` field) ever branched-on by a caller to infer
-  engine identity? If so, neutralize the inference; the field name may stay if treated as opaque.
+  worker kind? If so, neutralize the inference; the field name may stay if treated as opaque.
 - Does the **observability vendor-classifier** (re-derives `claude`/`codex`/`deepseek` from model-name
   substrings) sit outside the execution seam? Confirm it is reporting-only and that nothing in the
   execution/admission path infers vendor from a model name.

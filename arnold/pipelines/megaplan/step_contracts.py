@@ -13,11 +13,17 @@ Import contract
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Literal, Mapping
+from typing import Any, Literal, Mapping, TYPE_CHECKING
 
 from arnold.pipeline import StepInvocation
 from arnold.pipelines.megaplan._compatibility import CompatibilityMode
 from arnold.pipelines.megaplan.types import PREMIUM_AGENT
+
+if TYPE_CHECKING:
+    from arnold.pipelines.megaplan.template_registry import (
+        TemplateBuilder,
+        TemplateRegistration,
+    )
 
 # ---------------------------------------------------------------------------
 # Core dataclass
@@ -44,6 +50,24 @@ class StepContract:
     default_routing: str | None = None
     prompt_key: str | None = None
     slot: str | None = None
+
+    # ------------------------------------------------------------------
+    # Template registry helpers
+    # ------------------------------------------------------------------
+
+    @property
+    def template_registration(self) -> TemplateRegistration | None:
+        """Return the :class:`TemplateRegistration` for this contract, or ``None``."""
+        from arnold.pipelines.megaplan.template_registry import get_template_registration
+
+        return get_template_registration(self.phase_identity)
+
+    @property
+    def template_builder(self) -> TemplateBuilder | None:
+        """Return the :data:`TemplateBuilder` for this contract, or ``None``."""
+        from arnold.pipelines.megaplan.template_registry import get_template_builder
+
+        return get_template_builder(self.phase_identity)
 
 
 # ---------------------------------------------------------------------------

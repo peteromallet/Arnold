@@ -41,8 +41,6 @@ _OVERRIDE_CATALOG: dict[str, dict[str, Any]] = {
     "add-note": {"kind": "annotation"},
     "abort": {"kind": "termination"},
     "force-proceed": {"kind": "transition"},
-    "waive-engine-overlap": {"kind": "security-waiver"},
-    "refresh-engine-pin": {"kind": "security-waiver"},
     "recover-blocked": {"kind": "recovery"},
     "replan": {"kind": "transition"},
     "resume-clarify": {"kind": "recovery"},

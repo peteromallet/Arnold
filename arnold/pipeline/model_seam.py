@@ -92,6 +92,7 @@ class ModelFamily(str, Enum):
     DEEPSEEK = "deepseek"
     KIMI = "kimi"
     GLM = "glm"
+    MIMO = "mimo"
 
 
 class ModelBudgetError(ValueError):
@@ -452,12 +453,16 @@ _FAMILY_BUDGET_DEFAULTS: dict[ModelFamily, ModelBudgetDefaults] = {
     ModelFamily.GLM: ModelBudgetDefaults(
         max_input_tokens=120_000, tokenizer_source="hf:auto"
     ),
+    ModelFamily.MIMO: ModelBudgetDefaults(
+        max_input_tokens=120_000, tokenizer_source="hf:auto"
+    ),
 }
 
 _HF_TOKENIZERS: dict[ModelFamily, str] = {
     ModelFamily.DEEPSEEK: "deepseek-ai/DeepSeek-V3",
     ModelFamily.KIMI: "moonshotai/Kimi-K2-Thinking",
     ModelFamily.GLM: "zai-org/GLM-4.5",
+    ModelFamily.MIMO: "deepseek-ai/DeepSeek-V3",
 }
 _TOKENIZER_CACHE: dict[str, Any] = {}
 
@@ -489,6 +494,8 @@ def classify_model_family(model: str) -> ModelFamily:
         return ModelFamily.KIMI
     if lowered.startswith(("glm-", "glm/")):
         return ModelFamily.GLM
+    if lowered.startswith(("mimo-", "mimo/")):
+        return ModelFamily.MIMO
     raise ModelBudgetError(f"unknown normalized model family: {model!r}")
 
 
@@ -502,8 +509,9 @@ def budget_model_input(
     """Estimate and enforce the static input budget for an assembled message."""
 
     enforced = tier is ModelTier.ENFORCED
+    budget_model = _canonical_budget_model_name(model or "")
     try:
-        family = classify_model_family(model or "")
+        family = classify_model_family(budget_model)
     except ModelBudgetError:
         if enforced:
             raise
@@ -528,6 +536,41 @@ def budget_model_input(
         max_input_tokens=max_input_tokens or defaults.max_input_tokens,
         tokenizer_source=source,
     )
+
+
+def _canonical_budget_model_name(model: str) -> str:
+    """Return a provider-neutral model id for budget family classification.
+
+    Provider resolvers can return transport-specific IDs such as
+    ``accounts/fireworks/models/deepseek-v4-pro``. Those are valid dispatch
+    model names, but budget classification cares about the underlying model
+    family, not the provider path.
+
+    Also strips hermes-style ``provider:`` prefixes (e.g. ``deepseek:``,
+    ``fireworks:``, ``mimo:``) that ``resolve_model`` in ``key_pool`` normally
+    removes before dispatch, but which can reach the budget seam when
+    fanout callers pass the raw ``resolved_model`` from ``AgentMode``
+    directly without an intervening ``resolve_model`` call.
+    """
+
+    name = model.strip()
+    lowered = name.lower()
+    marker = "/models/"
+    if marker in lowered:
+        candidate = name[lowered.rfind(marker) + len(marker):].strip("/")
+        if candidate:
+            return candidate
+    # Strip hermes-style provider: prefix (resolved_model may still carry it).
+    _HERMES_PROVIDER_COLON_PREFIXES = (
+        "deepseek:", "fireworks:", "mimo:", "openrouter:",
+        "minimax:", "zhipu:", "google:",
+    )
+    if ":" in name and lowered.startswith(_HERMES_PROVIDER_COLON_PREFIXES):
+        _, _, candidate = name.partition(":")
+        candidate = candidate.strip()
+        if candidate:
+            return candidate
+    return name
 
 
 def _checked_budget(

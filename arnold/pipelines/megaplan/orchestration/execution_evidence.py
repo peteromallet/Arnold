@@ -8,6 +8,7 @@ from typing import Any
 
 from arnold.pipelines.megaplan.types import PlanState
 from arnold.pipelines.megaplan._core import is_prose_mode
+from arnold.pipelines.megaplan.execute.quality import unchanged_baseline_uncommitted_paths
 from arnold.pipelines.megaplan.loop.git import _collect_git_status_paths_with_nested_repos, _normalize_repo_path
 
 from .advisory_projection import ADVISORY_PATH_PROJECTION_LIMIT, summarize_path_list_for_prose
@@ -39,6 +40,7 @@ def validate_execution_evidence(
         plan_dir=plan_dir,
         artifact_prefix=artifact_prefix,
         base_ref=base_ref,
+        state=state,
     )
 
 
@@ -201,6 +203,7 @@ def _validate_execution_evidence_code(
     plan_dir: Path | None = None,
     artifact_prefix: str = "execution_audit",
     base_ref: str | None = None,
+    state: PlanState | None = None,
 ) -> dict[str, Any]:
     findings: list[str] = []
     files_claimed = sorted(
@@ -290,6 +293,9 @@ def _validate_execution_evidence_code(
         return any(claimed.startswith(diff_path) for claimed in claimed_set)
 
     unclaimed_source = authority_set if declared_authoritative else diff_set
+    unclaimed_source = unclaimed_source - unchanged_baseline_uncommitted_paths(
+        project_dir, state or {}
+    )
     unclaimed_changes = sorted(
         diff_path for diff_path in unclaimed_source
         if diff_path not in claimed_set and not _dir_is_claimed(diff_path)

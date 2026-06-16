@@ -241,7 +241,7 @@ that calls these and supplies content; no planning mechanism remains in `_pipeli
 - Parity gate stays green and honestly labelled (control-flow/artifact parity on the happy path). Add the
   a3 §4.4 parity test: `workflow_next` over the new graph-backed projection equals the legacy dict-backed
   impl across {5 robustness} × {with_prep,with_feedback} × {all states} × {all gate recommendations}.
-- Don't dogfood off an editable install (pinned engine); schema report-only until the last step
+- Don't dogfood off an editable install (use a separate external driver); schema report-only until the last step
   (`project_dogfood_engine_shadow_and_openrouter.md`).
 - Preserve what `auto.py`'s subprocess loop buys (context-exhaustion retry, per-phase idle-timeout kill,
   worktree isolation) — these are the m3 `process` driver's job; m5 must not regress them while extracting.

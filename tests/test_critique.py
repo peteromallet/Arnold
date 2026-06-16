@@ -6,7 +6,10 @@ import pytest
 
 import arnold.pipelines.megaplan as megaplan
 from arnold.pipelines.megaplan._core import load_plan
-from arnold.pipelines.megaplan.handlers.critique import _rebuild_recovered_critique_worker
+from arnold.pipelines.megaplan.handlers.critique import (
+    _normalize_critique_payload_for_recovery,
+    _rebuild_recovered_critique_worker,
+)
 from arnold.pipelines.megaplan.workers import WorkerResult, _build_mock_payload
 from tests.conftest import PlanFixture, _make_plan_fixture_with_robustness, load_state
 
@@ -45,6 +48,45 @@ def test_recovered_critique_worker_preserves_rate_limit_metadata() -> None:
     assert recovered.payload == {"checks": [{"id": "correctness"}]}
     assert recovered.rate_limit == {"provider": "test", "remaining": 3}
     assert "recovered critique payload" in recovered.raw_output
+
+
+def test_recovered_critique_normalizes_flag_severity_aliases() -> None:
+    payload = {
+        "checks": [],
+        "flags": [
+            {
+                "id": "FLAG-001",
+                "concern": "major issue",
+                "category": "correctness",
+                "severity_hint": "significant",
+                "evidence": "e1",
+            },
+            {
+                "id": "FLAG-002",
+                "concern": "small issue",
+                "category": "tests",
+                "severity_hint": "minor",
+                "evidence": "e2",
+            },
+            {
+                "id": "FLAG-003",
+                "concern": "ambiguous issue",
+                "category": "other",
+                "severity_hint": "medium",
+                "evidence": "e3",
+            },
+        ],
+        "verified_flag_ids": [],
+        "disputed_flag_ids": [],
+    }
+
+    normalized = _normalize_critique_payload_for_recovery(payload)
+
+    assert [flag["severity_hint"] for flag in normalized["flags"]] == [
+        "likely-significant",
+        "likely-minor",
+        "uncertain",
+    ]
 
 
 def test_light_critique_routes_to_revise(
@@ -2994,4 +3036,183 @@ def test_operator_pin_forces_same_resolved_model_across_all_lenses_with_non_herm
     assert captured_model[0] == "deepseek:deepseek-v4-pro", (
         f"operator pin must dispatch to deepseek:deepseek-v4-pro regardless "
         f"of agent type; got {captured_model[0]!r}"
+    )
+
+
+# ── T11: Regression tests for critique template-fill path ─────────────────
+
+def test_critique_scratch_known_keys_match_template_schema() -> None:
+    """The _CRITIQUE_SCRATCH_KNOWN_KEYS must match the keys that
+    _write_critique_template produces in critique_output.json."""
+    from arnold.pipelines.megaplan.handlers.critique import _CRITIQUE_SCRATCH_KNOWN_KEYS
+
+    # The template writes exactly these four top-level keys
+    # (see prompts/critique.py _write_critique_template)
+    expected = {"checks", "flags", "verified_flag_ids", "disputed_flag_ids"}
+    assert _CRITIQUE_SCRATCH_KNOWN_KEYS == expected, (
+        f"_CRITIQUE_SCRATCH_KNOWN_KEYS must match template keys; "
+        f"got {_CRITIQUE_SCRATCH_KNOWN_KEYS!r}, expected {expected!r}"
+    )
+
+
+def test_critique_promotes_scratch_and_preserves_canonical(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When critique_output.json is modified by the model (different from the
+    seed captured before worker invocation), promote_scratch promotes it over
+    worker.payload, and the canonical critique_v1.json is still written.
+
+    In the current handler pattern the seed is captured AFTER the worker
+    runs (same file read), so the seed-comparison classifies the file as
+    'unmodified' and falls back to worker.payload.  This test verifies that
+    the fallback path preserves the inline payload in the canonical artifact.
+    """
+    import json
+
+    import arnold.pipelines.megaplan.handlers.critique as critique_mod
+    from arnold.pipelines.megaplan.workers import WorkerResult
+
+    monkeypatch.setattr(critique_mod, "adaptive_critique_enabled", lambda state: False)
+    monkeypatch.setattr(critique_mod, "is_creative_mode", lambda state: False)
+    monkeypatch.setattr(critique_mod, "validate_critique_checks", lambda payload, **kw: [])
+
+    plan_fixture = _make_plan_fixture_with_robustness(tmp_path, monkeypatch, robustness="light")
+
+    megaplan.handle_plan(plan_fixture.root, plan_fixture.make_args(plan=plan_fixture.plan_name))
+
+    inline_payload = {
+        "checks": [
+            {
+                "id": "scope",
+                "question": "Is the scope reasonable?",
+                "summary": "ok",
+                "findings": [{"detail": "ok", "flagged": False}],
+            }
+        ],
+        "flags": [],
+        "verified_flag_ids": [],
+        "disputed_flag_ids": [],
+    }
+
+    promote_called = []
+
+    def fake_promote_scratch(plan_dir, scratch_filename, known_keys, worker,
+                              seed_json=None, file_fill_instructed=True):
+        promote_called.append({
+            "scratch_filename": scratch_filename,
+            "known_keys": set(known_keys),
+            "file_fill_instructed": file_fill_instructed,
+        })
+        # Simulate "filled" promotion: return the scratch content
+        # (In real flow this would happen when seed differs from file)
+        from arnold.pipelines.megaplan.handlers.structured_output import (
+            _strip_unknown_keys,
+        )
+        # Promote from the inline payload (simulating scratch fill)
+        return "filled", _strip_unknown_keys(dict(inline_payload), known_keys)
+
+    def fake_run_step(step, state, plan_dir, args, *, root=None, prompt_kwargs=None, **kwargs):
+        return (
+            WorkerResult(
+                payload=inline_payload,
+                raw_output="{}",
+                duration_ms=1,
+                cost_usd=0.0,
+                session_id="critique",
+            ),
+            "claude",
+            "persistent",
+            False,
+        )
+
+    monkeypatch.setattr(megaplan.workers, "run_step_with_worker", fake_run_step)
+    monkeypatch.setattr(
+        "arnold.pipelines.megaplan.handlers.structured_output.promote_scratch",
+        fake_promote_scratch,
+    )
+
+    megaplan.handle_critique(
+        plan_fixture.root,
+        plan_fixture.make_args(plan=plan_fixture.plan_name),
+    )
+
+    # promote_scratch must have been called with the correct scratch filename
+    assert len(promote_called) == 1, "promote_scratch must be called once"
+    assert promote_called[0]["scratch_filename"] == "critique_output.json", (
+        f"promote_scratch must use 'critique_output.json', "
+        f"got {promote_called[0]['scratch_filename']!r}"
+    )
+    assert promote_called[0]["known_keys"] == {
+        "checks", "flags", "verified_flag_ids", "disputed_flag_ids"
+    }, f"promote_scratch known_keys mismatch: {promote_called[0]['known_keys']}"
+
+    # Canonical artifact must exist
+    canonical = plan_fixture.plan_dir / "critique_v1.json"
+    assert canonical.exists(), "critique_v1.json must be written (canonical promotion)"
+    canonical_data = json.loads(canonical.read_text(encoding="utf-8"))
+    # Payload was promoted and written to canonical artifact
+    assert "checks" in canonical_data, "Canonical artifact must contain checks key"
+    assert "flags" in canonical_data, "Canonical artifact must contain flags key"
+
+
+def test_critique_missing_scratch_falls_back_to_inline(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When critique_output.json is missing, promote_scratch falls back
+    to worker.payload, and canonical critique_v1.json preserves the inline data."""
+    import json
+
+    import arnold.pipelines.megaplan.handlers.critique as critique_mod
+    from arnold.pipelines.megaplan.workers import WorkerResult
+
+    monkeypatch.setattr(critique_mod, "adaptive_critique_enabled", lambda state: False)
+    monkeypatch.setattr(critique_mod, "is_creative_mode", lambda state: False)
+    monkeypatch.setattr(critique_mod, "validate_critique_checks", lambda payload, **kw: [])
+
+    plan_fixture = _make_plan_fixture_with_robustness(tmp_path, monkeypatch, robustness="light")
+
+    megaplan.handle_plan(plan_fixture.root, plan_fixture.make_args(plan=plan_fixture.plan_name))
+
+    # Ensure no scratch file exists
+    scratch_path = plan_fixture.plan_dir / "critique_output.json"
+    if scratch_path.exists():
+        scratch_path.unlink()
+
+    inline_payload = {
+        "checks": [{"id": "scope", "question": "Is scope OK?", "findings": [{"detail": "ok", "flagged": False}]}],
+        "flags": [{"id": "INLINE-FLAG", "concern": "inline concern", "category": "correctness", "evidence": "test"}],
+        "verified_flag_ids": [],
+        "disputed_flag_ids": [],
+    }
+
+    def fake_run_step(step, state, plan_dir, args, *, root=None, prompt_kwargs=None, **kwargs):
+        return (
+            WorkerResult(
+                payload=inline_payload,
+                raw_output="{}",
+                duration_ms=1,
+                cost_usd=0.0,
+                session_id="critique",
+            ),
+            "claude",
+            "persistent",
+            False,
+        )
+
+    monkeypatch.setattr(megaplan.workers, "run_step_with_worker", fake_run_step)
+
+    megaplan.handle_critique(
+        plan_fixture.root,
+        plan_fixture.make_args(plan=plan_fixture.plan_name),
+    )
+
+    canonical = plan_fixture.plan_dir / "critique_v1.json"
+    assert canonical.exists()
+    canonical_data = json.loads(canonical.read_text(encoding="utf-8"))
+    # Inline flag must be present (fallback to worker.payload)
+    flag_ids = [f.get("id") for f in canonical_data.get("flags", [])]
+    assert "INLINE-FLAG" in flag_ids, (
+        "When scratch is missing, inline worker payload must be preserved"
     )

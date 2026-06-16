@@ -344,6 +344,8 @@ def _critique_evaluator_prompt(
         ]
         verify_section = "\n".join(verify_lines) + "\n\n"
 
+    output_path = _write_critique_evaluator_template(plan_dir, state)
+
     return textwrap.dedent(
         f"""\
         You are the Critique Evaluator. Your job is to decide which critique
@@ -364,6 +366,11 @@ def _critique_evaluator_prompt(
         {json_dump(latest_meta).strip()}
 
         {intent_block}
+
+        Your output template is at: {output_path}
+        Read this file first — it contains the expected JSON structure with all known check IDs pre-populated in `skipped`.
+        Move checks you are firing to `selections`, fill `why` for the rest, and write the file back.
+        If you cannot use file tools, return the populated JSON structure inline as your response instead.
 
         {prep_section}{differential_section}{verify_section}## Critique Lens Catalog ({len(CRITIQUE_CHECKS)} lenses)
 
@@ -456,3 +463,34 @@ def _critique_evaluator_prompt(
         write generic cop-outs.
         """
     ).strip()
+
+
+def _write_critique_evaluator_template(
+    plan_dir: Path,
+    state: PlanState,
+) -> Path:
+    """Write the critique evaluator output template file and return its path.
+
+    Pre-populates ``skipped`` with every known check id from
+    :data:`CRITIQUE_CHECKS` so the model moves selections to
+    ``selections`` and fills ``why`` for the rest.  This is the
+    same ID-prepopulation pattern used by review and critique
+    templates.
+    """
+    import json
+
+    all_check_ids = [check["id"] for check in CRITIQUE_CHECKS]
+    skipped: list[dict[str, str]] = [
+        {"check_id": cid, "why": ""} for cid in all_check_ids
+    ]
+
+    template: dict[str, object] = {
+        "selections": [],
+        "skipped": skipped,
+        "evaluator_model": "",
+        "flag_verifications": [],
+    }
+
+    output_path = plan_dir / "critique_evaluator_output.json"
+    output_path.write_text(json.dumps(template, indent=2), encoding="utf-8")
+    return output_path

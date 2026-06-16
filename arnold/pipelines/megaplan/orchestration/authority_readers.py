@@ -36,6 +36,7 @@ from arnold.pipelines.megaplan.orchestration.evidence_contract import (
     EvidenceStatus,
     TrustClass,
 )
+from arnold.pipelines.megaplan.orchestration.rubber_stamp import is_rubber_stamp
 from arnold.pipelines.megaplan.orchestration.task_satisfaction import (
     TaskSatisfactionResult,
     is_task_satisfied,
@@ -73,6 +74,7 @@ AUTHORITATIVE_TASK_STATUSES = frozenset(
 
 AUTHORITY_DIVERGENCE_LEDGER = "authority_divergence.jsonl"
 _TERMINAL_AUTHORITY_CLAIMS = frozenset({"done", "skipped", "waived", "not_applicable"})
+_AUDIT_RESEARCH_NOTES_MIN_LEN = 100
 
 
 @dataclass(frozen=True)
@@ -372,6 +374,34 @@ def _evidence_from_task_record(
                     code_hash=_optional_str(record.get("code_hash")),
                 )
             )
+    kind = _optional_str(record.get("kind"))
+    notes = _optional_str(record.get("executor_notes"))
+    if (
+        not refs
+        and kind in {"audit", "research"}
+        and notes is not None
+        and len(notes.strip()) >= _AUDIT_RESEARCH_NOTES_MIN_LEN
+        and not is_rubber_stamp(notes, strict=True)
+    ):
+        refs.append(
+            EvidenceRef(
+                kind="task_executor_notes",
+                status=EvidenceStatus.satisfied,
+                summary=f"Substantive {kind} notes reported for {task_id}",
+                details={
+                    "task_id": task_id,
+                    "kind": kind,
+                    "executor_notes_length": len(notes.strip()),
+                    "head_sha": _optional_str(record.get("head_sha") or record.get("head")),
+                    "code_hash": _optional_str(record.get("code_hash")),
+                },
+                trust_class=TrustClass.evidence,
+                artifact=ArtifactRef(path=_relative_artifact_path(artifact_path, root)),
+                source=artifact_path.name,
+                subject=task_id,
+                code_hash=_optional_str(record.get("code_hash")),
+            )
+        )
     if not refs and _optional_str(record.get("status")) in {"waived", "not_applicable"}:
         status = EvidenceStatus(_optional_str(record.get("status")))
         refs.append(

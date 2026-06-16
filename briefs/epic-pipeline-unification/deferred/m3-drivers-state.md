@@ -176,7 +176,7 @@ Three real, separately-testable SDK pieces, plus a gate:
   cross-process safe via `fcntl.flock` (a2 §4); snapshot/restore write under that same
   `plan_state_lock`. The `budget` is a per-RUN resource, in-process only (a2 §1-2) — NOT a
   cross-tenant quota broker (that is M4's `key_broker`/`rate_broker`). Do not over-claim it.
-- **No editable-install dogfood; pinned engine** (EPIC cross-cutting + MEMORY).
+- **No editable-install dogfood; separate external driver** (EPIC cross-cutting + MEMORY).
 - **Back-compat.** `iterate_until`, `SubloopStep`, `write_plan_state` modes, the executor edge
   dispatch, and `workflow_next`'s signature all keep working for existing callers
   (`extra="ignore"`, no removed modes). The realizer, loop node, process substrate, and reversible

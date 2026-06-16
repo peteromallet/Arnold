@@ -10,7 +10,10 @@ import pytest
 import yaml
 from unittest.mock import patch
 
-from arnold.pipelines.megaplan.auto import DriverOutcome
+from arnold.pipelines.megaplan.auto import (
+    DriverOutcome,
+    _non_retryable_infrastructure_error_payload,
+)
 from arnold.pipelines.megaplan import chain as chain_module 
 from arnold.pipelines.megaplan.chain import (
     ChainState,
@@ -284,6 +287,88 @@ def test_authority_divergence_blocked_outcome_does_not_advance_milestone(tmp_pat
     assert state.completed == []
     assert state.retry_counts["m1"] == 1
     assert any("ended blocked" in message for message in messages)
+
+
+def test_engine_write_isolation_error_is_non_retryable_infrastructure_error() -> None:
+    payload = {
+        "success": False,
+        "error": "engine_write_isolation_unverified",
+        "message": "engine write isolation is not verified; same-user chmod is not accepted as M0 proof",
+        "details": {
+            "phase": "execute",
+            "proof": {
+                "provider": "none",
+                "engine_write_denied": False,
+                "target_write_allowed": False,
+                "diagnostic": "same_user_chmod_is_diagnostic_only_not_m0_proof",
+            },
+        },
+    }
+
+    classified = _non_retryable_infrastructure_error_payload("", json.dumps(payload, indent=2))
+
+    assert classified == payload
+
+
+def test_infrastructure_error_stops_without_retry_or_authority_divergence(tmp_path: Path) -> None:
+    idea = _touch_idea(tmp_path, "m1.txt", "idea")
+    spec_path = _write_spec(
+        tmp_path,
+        {
+            "milestones": [{"label": "m1", "idea": str(idea)}],
+            "on_failure": {
+                "retry": "retry_milestone",
+                "escalate": "bump_profile",
+                "abort": "stop_chain",
+            },
+        },
+    )
+    messages: list[str] = []
+
+    def fake_init(root, idea_path, **_kw):
+        del idea_path
+        plan_dir = root / ".megaplan" / "plans" / "plan-m1"
+        plan_dir.mkdir(parents=True)
+        (plan_dir / "state.json").write_text(
+            json.dumps(
+                {
+                    "name": "plan-m1",
+                    "current_state": "finalized",
+                    "iteration": 1,
+                    "config": {"project_dir": str(root)},
+                    "meta": {},
+                }
+            ),
+            encoding="utf-8",
+        )
+        return "plan-m1"
+
+    def fake_drive(root, plan, spec, *, on_phase_complete=None, writer):
+        del root, spec, on_phase_complete, writer
+        return DriverOutcome(
+            status="infrastructure_error",
+            plan=plan,
+            final_state="finalized",
+            iterations=1,
+            reason="engine_write_isolation_unverified: engine write isolation is not verified",
+            last_phase="execute",
+            blocking_reasons=["engine_write_isolation_unverified"],
+        )
+
+    with patch("arnold.pipelines.megaplan.chain._init_plan", side_effect=fake_init), patch(
+        "arnold.pipelines.megaplan.chain._drive_plan", side_effect=fake_drive
+    ), patch("arnold.pipelines.megaplan.chain._refresh_base_branch", lambda *a, **k: None):
+        result = run_chain(spec_path, tmp_path, writer=messages.append)
+
+    saved = load_chain_state(spec_path)
+    assert result["status"] == "stopped"
+    assert result["reason"] == "milestone m1 ended infrastructure_error"
+    assert saved.last_state == "infrastructure_error"
+    assert saved.retry_counts == {}
+    assert saved.profile_bumps == {}
+    assert saved.completed == []
+    assert not any("terminal outcome lacks authority" in message for message in messages)
+    assert "authority" not in result["reason"]
 
 
 def test_ladder_does_not_infinite_loop_on_deterministic_failure(tmp_path: Path) -> None:

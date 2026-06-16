@@ -1,9 +1,9 @@
-base_branch: arnold-generalized-pipeline
+base_branch: main
 
 milestones:
   - label: m0-boundary-lock
     idea: .megaplan/briefs/aggressive-generalized-pipeline-migration/m0-boundary-lock.md
-    profile: partnered
+    profile: partnered-5
     vendor: claude
     robustness: thorough
     depth: high
@@ -11,7 +11,7 @@ milestones:
 
   - label: m1-neutral-outcome-control
     idea: .megaplan/briefs/aggressive-generalized-pipeline-migration/m1-neutral-outcome-control.md
-    profile: partnered
+    profile: partnered-5
     vendor: claude
     robustness: thorough
     depth: high
@@ -19,7 +19,7 @@ milestones:
 
   - label: m2-step-contract-registry
     idea: .megaplan/briefs/aggressive-generalized-pipeline-migration/m2-step-contract-registry.md
-    profile: partnered
+    profile: partnered-5
     vendor: claude
     robustness: thorough
     depth: high
@@ -27,7 +27,7 @@ milestones:
 
   - label: m3-executor-convergence
     idea: .megaplan/briefs/aggressive-generalized-pipeline-migration/m3-executor-convergence.md
-    profile: partnered
+    profile: partnered-5
     vendor: claude
     robustness: thorough
     depth: high
@@ -35,7 +35,7 @@ milestones:
 
   - label: m4-supervisor-extraction
     idea: .megaplan/briefs/aggressive-generalized-pipeline-migration/m4-supervisor-extraction.md
-    profile: partnered
+    profile: partnered-5
     vendor: claude
     robustness: thorough
     depth: high
@@ -43,7 +43,7 @@ milestones:
 
   - label: m5-oracle-gated-strangler
     idea: .megaplan/briefs/aggressive-generalized-pipeline-migration/m5-oracle-gated-strangler.md
-    profile: partnered
+    profile: partnered-5
     vendor: claude
     robustness: thorough
     depth: high
@@ -51,7 +51,7 @@ milestones:
 
   - label: m6-runtime-foundation
     idea: .megaplan/briefs/aggressive-generalized-pipeline-migration/m6-runtime-foundation.md
-    profile: partnered
+    profile: partnered-5
     vendor: claude
     robustness: thorough
     depth: high
@@ -59,7 +59,7 @@ milestones:
 
   - label: m7-agent-runtime-extraction
     idea: .megaplan/briefs/aggressive-generalized-pipeline-migration/m7-agent-runtime-extraction.md
-    profile: partnered
+    profile: partnered-5
     vendor: claude
     robustness: thorough
     depth: high
@@ -68,7 +68,7 @@ milestones:
 
   - label: m8-state-lifecycle-runtime
     idea: .megaplan/briefs/aggressive-generalized-pipeline-migration/m8-state-lifecycle-runtime.md
-    profile: partnered
+    profile: partnered-5
     vendor: claude
     robustness: thorough
     depth: high
@@ -77,7 +77,7 @@ milestones:
 
   - label: m9-deliberation-pipeline
     idea: .megaplan/briefs/aggressive-generalized-pipeline-migration/m9-deliberation-pipeline.md
-    profile: partnered
+    profile: partnered-5
     vendor: claude
     robustness: thorough
     depth: high
@@ -88,7 +88,8 @@ milestones:
 
   - label: m10-megaplan-flagship-app
     idea: .megaplan/briefs/aggressive-generalized-pipeline-migration/m7-megaplan-flagship-app.md
-    profile: partnered
+    profile: partnered-5
+    branch: megaplan/m10-megaplan-flagship-app
     vendor: claude
     robustness: thorough
     depth: high
@@ -96,7 +97,8 @@ milestones:
 
   - label: m11-unified-agent-dispatcher
     idea: .megaplan/briefs/aggressive-generalized-pipeline-migration/m11-unified-agent-dispatcher.md
-    profile: partnered
+    profile: partnered-5
+    branch: megaplan/m11-unified-agent-dispatcher
     vendor: claude
     robustness: thorough
     depth: high

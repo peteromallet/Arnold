@@ -59,6 +59,14 @@ from .tiebreaker import _build_tiebreaker_reprompt
 log = logging.getLogger("megaplan")
 _ORIGINAL_VALIDATE_CRITIQUE_CHECKS = validate_critique_checks
 
+# ── T11: Critique-scoped scratch promotion known keys ──────────────────────
+# The model produces only these keys in the scratch template; unknown
+# top-level keys injected by the model are stripped before promotion.
+_CRITIQUE_SCRATCH_KNOWN_KEYS: frozenset[str] = frozenset(
+    {"checks", "flags", "verified_flag_ids", "disputed_flag_ids"}
+)
+# ────────────────────────────────────────────────────────────────────────────
+
 
 def _critique_check_validator() -> Any:
     pkg_validator = getattr(_pkg, "validate_critique_checks", validate_critique_checks)
@@ -271,7 +279,7 @@ def handle_critique(root: Path, args: argparse.Namespace) -> StepResponse:
             _eval_last_exc: Exception | None = None
             for _eval_attempt in range(1, _MAX_EVAL_ATTEMPTS + 1):
                 try:
-                    eval_worker, _, _, _ = _pkg._run_worker(
+                    eval_worker, eval_agent, _, _ = _pkg._run_worker(
                         "critique_evaluator",
                         state,
                         plan_dir,
@@ -295,6 +303,44 @@ def handle_critique(root: Path, args: argparse.Namespace) -> StepResponse:
                         (plan_dir / "critique_evaluator_raw.txt").write_text(
                             _raw_eval, encoding="utf-8"
                         )
+                    # ── T9: Scratch promotion ──────────────────────────
+                    # Prefer valid filled critique_evaluator_output.json
+                    # over worker.payload; fall back to worker.payload when
+                    # scratch is missing/unmodified; fail hard on modified
+                    # invalid scratch when file-fill was instructed (hermes
+                    # agent).  Raw debug captures above are unaffected.
+                    from arnold.pipelines.megaplan.handlers.structured_output import (
+                        promote_scratch,
+                        require_scratch_filename_for_phase,
+                    )
+
+                    _EVAL_KNOWN_KEYS: frozenset[str] = frozenset({
+                        "selections",
+                        "skipped",
+                        "evaluator_model",
+                        "flag_verifications",
+                    })
+                    _scratch_filename = require_scratch_filename_for_phase("critique_evaluator")
+                    _seed_path = plan_dir / _scratch_filename
+                    _seed_json: str | None = None
+                    if _seed_path.exists():
+                        try:
+                            _seed_json = _seed_path.read_text(encoding="utf-8")
+                        except (OSError, UnicodeDecodeError):
+                            _seed_json = None
+
+                    _file_fill_instructed = eval_agent == "hermes"
+
+                    _, _promoted = promote_scratch(
+                        plan_dir,
+                        _scratch_filename,
+                        _EVAL_KNOWN_KEYS,
+                        eval_worker,
+                        seed_json=_seed_json,
+                        file_fill_instructed=_file_fill_instructed,
+                    )
+                    eval_worker.payload = _promoted
+                    # ────────────────────────────────────────────────────
                     _vendor = state["config"].get("vendor")
                     _eval_warnings = validate_evaluator_verdict(
                         eval_worker.payload,
@@ -555,6 +601,40 @@ def handle_critique(root: Path, args: argparse.Namespace) -> StepResponse:
                 resolved=resolved,
                 prompt_kwargs={"active_checks": list(active_checks), "expected_ids": expected_ids, "revise_context": _revise_ctx, "selection_why": _selection_why} if adaptive_path else None,
             )
+
+        # ── T11: Scratch promotion for critique ─────────────────────
+        # Prefer valid filled critique_output.json over worker.payload;
+        # fall back to worker.payload when scratch is missing/unmodified;
+        # fail hard on modified invalid scratch when file-fill was
+        # instructed (hermes agent).  Canonical promotion to
+        # critique_v{iteration}.json is preserved unchanged below.
+        from arnold.pipelines.megaplan.handlers.structured_output import (
+            promote_scratch,
+            require_scratch_filename_for_phase,
+        )
+
+        _scratch_filename = require_scratch_filename_for_phase("critique")
+        _seed_path = plan_dir / _scratch_filename
+        _seed_json: str | None = None
+        if _seed_path.exists():
+            try:
+                _seed_json = _seed_path.read_text(encoding="utf-8")
+            except (OSError, UnicodeDecodeError):
+                _seed_json = None
+
+        _file_fill_instructed = agent == "hermes"
+
+        _, _promoted = promote_scratch(
+            plan_dir,
+            _scratch_filename,
+            _CRITIQUE_SCRATCH_KNOWN_KEYS,
+            worker,
+            seed_json=_seed_json,
+            file_fill_instructed=_file_fill_instructed,
+        )
+        worker.payload = _promoted
+        # ────────────────────────────────────────────────────────────
+
         try:
             audit_step_payload("critique", worker.payload)
         except ModelStructuralAuditError as error:
@@ -594,6 +674,7 @@ def handle_critique(root: Path, args: argparse.Namespace) -> StepResponse:
                 _raise_step_validation_error(plan_dir=plan_dir, state=state, step="critique", iteration=iteration, worker=worker, code="invalid_critique", message="Critique output failed check validation: " + ", ".join(invalid_checks))
             _append_to_meta(state, "critique_validation_warnings", {"iteration": iteration, "invalid_checks": invalid_checks})
             worker = _rebuild_recovered_critique_worker(worker, recovered_payload, invalid_checks)
+        worker.payload = _filter_critique_payload_to_expected_checks(worker.payload, expected_ids=expected_ids)
 
         unverifiable_checks = annotate_unverifiable_checks(
             worker.payload,
@@ -716,14 +797,50 @@ def _recover_valid_critique_output(plan_dir: Path, *, expected_ids: list[str]) -
     invalid_checks = _critique_check_validator()(payload, expected_ids=expected_ids)
     if invalid_checks:
         return None
-    return payload
+    return _filter_critique_payload_to_expected_checks(payload, expected_ids=expected_ids)
 
 
-def _normalize_critique_payload_for_recovery(payload: dict[str, Any]) -> dict[str, Any]:
+def _filter_critique_payload_to_expected_checks(
+    payload: dict[str, Any],
+    *,
+    expected_ids: list[str],
+) -> dict[str, Any]:
     checks = payload.get("checks")
     if not isinstance(checks, list):
         return payload
+    expected = set(expected_ids)
+    filtered_checks = [
+        check
+        for check in checks
+        if not isinstance(check, dict) or check.get("id") in expected
+    ]
+    if len(filtered_checks) == len(checks):
+        return payload
+    filtered_payload = dict(payload)
+    filtered_payload["checks"] = filtered_checks
+    return filtered_payload
+
+
+def _normalize_critique_payload_for_recovery(payload: dict[str, Any]) -> dict[str, Any]:
     changed = False
+    clean_payload = dict(payload)
+
+    flags = payload.get("flags")
+    if isinstance(flags, list):
+        clean_flags: list[Any] = []
+        for flag in flags:
+            if not isinstance(flag, dict):
+                clean_flags.append(flag)
+                continue
+            clean_flag = _normalize_critique_recovery_flag(flag)
+            if clean_flag != flag:
+                changed = True
+            clean_flags.append(clean_flag)
+        clean_payload["flags"] = clean_flags
+
+    checks = payload.get("checks")
+    if not isinstance(checks, list):
+        return clean_payload if changed else payload
     clean_checks: list[Any] = []
     for check in checks:
         if not isinstance(check, dict):
@@ -751,9 +868,32 @@ def _normalize_critique_payload_for_recovery(payload: dict[str, Any]) -> dict[st
         clean_checks.append(check)
     if not changed:
         return payload
-    clean_payload = dict(payload)
     clean_payload["checks"] = clean_checks
     return clean_payload
+
+
+def _normalize_critique_recovery_flag(flag: dict[str, Any]) -> dict[str, Any]:
+    severity_hint = flag.get("severity_hint")
+    if not isinstance(severity_hint, str):
+        if severity_hint is None:
+            canonical = "uncertain"
+        else:
+            return flag
+    else:
+        normalized = severity_hint.strip().lower()
+        if normalized in {"likely-significant", "high", "significant", "major", "critical"}:
+            canonical = "likely-significant"
+        elif normalized in {"likely-minor", "low", "minor", "trivial", "cosmetic"}:
+            canonical = "likely-minor"
+        elif normalized in {"uncertain", "medium", "moderate", "unknown", ""}:
+            canonical = "uncertain"
+        else:
+            return flag
+    if canonical == severity_hint:
+        return flag
+    clean_flag = dict(flag)
+    clean_flag["severity_hint"] = canonical
+    return clean_flag
 
 
 def handle_revise(root: Path, args: argparse.Namespace) -> StepResponse:

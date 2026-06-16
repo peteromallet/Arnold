@@ -120,7 +120,7 @@ def test_load_spec_parses_megaplan_source_fields(tmp_path: Path) -> None:
     payload["megaplan"] = {
         "ref": "feature/cloud-refresh",
         "repo": "https://github.com/peteromallet/arnold.git",
-        "install_spec": "megaplan-harness[agent] @ git+https://github.com/peteromallet/arnold.git",
+        "install_spec": "arnold[agent] @ git+https://github.com/peteromallet/arnold.git",
         "src_path": "/workspace/custom/arnold",
     }
 
@@ -129,7 +129,7 @@ def test_load_spec_parses_megaplan_source_fields(tmp_path: Path) -> None:
     assert spec.megaplan == MegaplanSpec(
         ref="feature/cloud-refresh",
         repo="https://github.com/peteromallet/arnold.git",
-        install_spec="megaplan-harness[agent] @ git+https://github.com/peteromallet/arnold.git",
+        install_spec="arnold[agent] @ git+https://github.com/peteromallet/arnold.git",
         src_path="/workspace/custom/arnold",
     )
 
