@@ -22,7 +22,7 @@ milestones:
     critic: kimi                # kimi | cross
     with_prep: true
     with_feedback: true
-    deepseek_provider: fireworks # fireworks | direct
+    deepseek_provider: direct
   - label: m1a
     idea: .megaplan/briefs/foundation-store/M1a-settings-store.txt
     branch: megaplan/m1a-settings-store

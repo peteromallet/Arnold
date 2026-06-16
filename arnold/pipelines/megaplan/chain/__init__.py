@@ -27,7 +27,7 @@ Spec format (YAML)::
         prep_direction: |               # optional steering for the prep phase
           focus on the worker shutdown path and how cancel signals propagate
           to inflight tasks; skip CLI plumbing.
-        deepseek_provider: fireworks
+        deepseek_provider: direct
       - label: m1a
         idea: /workspace/ideas/M1a-settings-store.txt
     on_failure:

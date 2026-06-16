@@ -231,7 +231,7 @@ The invocation has three layers: three flags for the dials, four modifiers for o
 
 - **`--vendor claude|codex`** — vendor override where the selected profile exposes premium vendor slots. Defaults to `[defaults].vendor` in `~/.config/megaplan/config.toml` (or `claude` if unset).
 - **`--critic cross`** — overrides the critique+review pair to the other premium vendor relative to `--vendor`, when supported by the selected profile.
-- **`--deepseek-provider fireworks|direct`** — swaps canonical DeepSeek v4-pro slots between Fireworks and DeepSeek's direct API. Defaults to `direct`; use `fireworks` as the explicit secondary/fallback route.
+- **`--deepseek-provider direct`** — keeps canonical DeepSeek v4-pro slots on DeepSeek's direct API. Defaults to `direct`; Fireworks is not a supported DeepSeek route.
 - **`--with-prep`** — force the `prep` research phase into the workflow regardless of `--robustness`. Off by default; no-op at `thorough`/`extreme`. See "Optional phases" above.
 - **`--prep-direction "…"`** — steering text shown to the prep worker (when prep runs) as a "User direction for prep" section. Points prep at specific files / subsystems / questions to explore. Can also be set or replaced later with `python -m arnold.pipelines.megaplan prep --direction "…"` before the phase runs. No-op if prep is skipped. See "Optional phases" above.
 - **`--with-feedback`** — force the `feedback` phase into the workflow regardless of `--robustness`. Scaffolds `feedback.md` (a per-stage ratings template) between `review` and `done`, then completes the plan non-interactively. Off by default. See "Optional phases" above.

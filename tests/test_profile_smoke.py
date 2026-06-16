@@ -30,7 +30,7 @@ from arnold.pipelines.megaplan.profiles import apply_profile_expansion
 from arnold.pipelines.megaplan.planning.state import STATE_INITIALIZED
 
 
-DEEPSEEK = "hermes:fireworks:accounts/fireworks/models/deepseek-v4-pro"
+DEEPSEEK = "hermes:deepseek:deepseek-v4-pro"
 DEEPSEEK_DIRECT = "hermes:deepseek:deepseek-v4-pro"
 KIMI = "hermes:fireworks:accounts/fireworks/models/kimi-k2p6"
 

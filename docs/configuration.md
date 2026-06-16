@@ -107,7 +107,7 @@ Provider keys live in `~/.hermes/.env` (dotenv format, one `KEY=value` per line)
 | `ANTHROPIC_API_KEY` | Claude (premium plan / review / hard execute) |
 | `OPENAI_API_KEY` | Codex / GPT (premium plan / review / hard execute) |
 | `DEEPSEEK_API_KEY` | DeepSeek v4-pro / flash (cheap phases) |
-| `FIREWORKS_API_KEY` | Fireworks-hosted DeepSeek (alternative cheap provider) |
+| `FIREWORKS_API_KEY` | Fireworks-hosted non-DeepSeek models, if explicitly configured |
 | `OPENROUTER_API_KEY` | OpenRouter (Kimi / GLM / other open models) |
 | `GITHUB_TOKEN` | Push, private-clone, and PR operations |
 | `CLAUDE_CODE_REFRESH_TOKEN` | Claude Code agent session refresh |

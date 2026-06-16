@@ -60,12 +60,11 @@ def _add_vendor_critic_args(parser: argparse.ArgumentParser) -> None:
     )
     parser.add_argument(
         "--deepseek-provider",
-        choices=["fireworks", "direct"],
+        choices=["direct"],
         default=None,
         help="Choose the provider for canonical DeepSeek v4-pro profile slots. "
-        "'fireworks' uses hermes:fireworks:accounts/fireworks/models/deepseek-v4-pro; "
-        "'direct' uses hermes:deepseek:deepseek-v4-pro and DEEPSEEK_API_KEY. "
-        "Defaults to 'direct'. Non-DeepSeek slots are untouched.",
+        "Only 'direct' is supported; it uses hermes:deepseek:deepseek-v4-pro "
+        "and DEEPSEEK_API_KEY. Defaults to 'direct'. Non-DeepSeek slots are untouched.",
     )
 
 
