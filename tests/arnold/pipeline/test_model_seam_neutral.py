@@ -7,6 +7,7 @@ from arnold.pipeline.model_seam import (
     AuditStatus,
     BudgetStatus,
     ModelBudgetError,
+    ModelFamily,
     ModelStructuralAuditError,
     ModelTier,
     TerminalStatus,
@@ -61,6 +62,21 @@ def test_render_step_message_enforced_unknown_family_fails_closed() -> None:
 
     with pytest.raises(ModelBudgetError, match="unknown normalized model family"):
         render_step_message(invocation)
+
+
+def test_render_step_message_accepts_mimo_model_family() -> None:
+    invocation = StepInvocation.model(
+        metadata={
+            "tier": "enforced",
+            "model": "mimo-v2.5-pro-ultraspeed",
+            "prompt": "hello",
+        }
+    )
+
+    rendered = render_step_message(invocation)
+
+    assert rendered.budget is not None
+    assert rendered.budget.family is ModelFamily.MIMO
 
 
 def test_install_model_step_adapter_replaces_reserved_placeholder() -> None:
@@ -162,3 +178,32 @@ def test_capture_step_output_uses_registered_hooks() -> None:
 def test_classify_model_family_rejects_provider_prefixed_model_names() -> None:
     with pytest.raises(ModelBudgetError, match="provider-prefixed"):
         classify_model_family("anthropic/claude-sonnet")
+
+
+def test_canonical_budget_strips_hermes_colon_prefixes() -> None:
+    """``_canonical_budget_model_name`` strips ``deepseek:`` etc. so the
+    budget seam never sees a provider-prefixed model from a fanout path that
+    passed ``resolved_model`` directly (regression for ModelBudgetError)."""
+    from arnold.pipeline.model_seam import budget_model_input, ModelTier
+
+    # Should NOT raise — the colon prefix is stripped before classify.
+    budget = budget_model_input(
+        "test prompt",
+        model="deepseek:deepseek-v4-pro",
+        tier=ModelTier.NON_ENFORCED,
+    )
+    assert budget.family is ModelFamily.DEEPSEEK
+
+    budget = budget_model_input(
+        "test prompt",
+        model="mimo:mimo-v2.5-pro",
+        tier=ModelTier.NON_ENFORCED,
+    )
+    assert budget.family is ModelFamily.MIMO
+
+    budget = budget_model_input(
+        "test prompt",
+        model="fireworks:accounts/fireworks/models/deepseek-v4-pro",
+        tier=ModelTier.NON_ENFORCED,
+    )
+    assert budget.family is ModelFamily.DEEPSEEK

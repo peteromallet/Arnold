@@ -32,10 +32,12 @@ from .execute import (
     _execute_prompt,
     _execute_rerun_guidance,
     _execute_review_block,
+    _write_execute_batch_template,
+    _write_execute_template,
 )
 from .feedback import build_feedback_prompt
-from .finalize import _finalize_prompt
-from .gate import _collect_critique_summaries, _flag_summary, _gate_prompt
+from .finalize import _finalize_prompt, _write_finalize_template
+from .gate import _collect_critique_summaries, _flag_summary, _gate_prompt, _write_gate_template
 
 
 def _feedback_prompt(state: PlanState, plan_dir: Path) -> str:
@@ -62,7 +64,7 @@ from .review import (
     _write_review_template,
     ensure_review_evidence_for_prompt,
 )
-from .critique_evaluator import _critique_evaluator_prompt
+from .critique_evaluator import _critique_evaluator_prompt, _write_critique_evaluator_template
 from .review_doc import _review_doc_prompt
 from .review_joke import _review_joke_prompt
 from ._projection import PromptProjectionCapabilities
@@ -179,6 +181,7 @@ def _execute_batch_prompt(
     root: Path | None = None,
     rework_context: dict[str, object] | None = None,
     projection_capabilities: PromptProjectionCapabilities | None = None,
+    batch_template_path: Path | None = None,
 ) -> str:
     mode = state.get("config", {}).get("mode", "code")
     if mode == "doc":
@@ -207,6 +210,7 @@ def _execute_batch_prompt(
         root=root,
         rework_context=rework_context,
         projection_capabilities=projection_capabilities,
+        batch_template_path=batch_template_path,
     )
 
 
@@ -464,6 +468,11 @@ __all__ = [
     "_settled_decisions_block",
     "_settled_decisions_instruction",
     "_write_review_template",
+    "_write_critique_evaluator_template",
+    "_write_execute_batch_template",
+    "_write_execute_template",
+    "_write_finalize_template",
+    "_write_gate_template",
     "create_claude_prompt",
     "create_claude_prompt_components",
     "create_codex_prompt",

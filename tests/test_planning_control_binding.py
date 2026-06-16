@@ -105,6 +105,47 @@ def test_forward_projection_tracks_robustness_prep_and_feedback_variants() -> No
         assert all(target.metadata["kind"] == "workflow_step" for target in targets)
 
 
+def test_set_model_transition_removes_matching_tier_model_phase(tmp_path: Path) -> None:
+    write_plan_state(
+        tmp_path,
+        mode="replace",
+        state=_state(
+            config={
+                "project_dir": "/tmp/project",
+                "phase_model": ["execute=hermes:deepseek:deepseek-v4-pro"],
+                "tier_models": {
+                    "execute": {
+                        "1": "hermes:deepseek:deepseek-v4-flash",
+                        "2": "hermes:deepseek:deepseek-v4-pro",
+                    },
+                    "critique": {
+                        "1": "hermes:deepseek:deepseek-v4-flash",
+                    },
+                },
+            },
+            meta={"overrides": []},
+        ),
+    )
+
+    result = apply_transition(
+        _read(tmp_path),
+        ControlTransitionRequest(
+            action="override",
+            target_id="set-model",
+            params={"phase": "execute", "model": "codex:gpt-5.5"},
+            reason="pin execute to codex",
+        ),
+        binding="planning",
+        plan_dir=tmp_path,
+    )
+
+    assert result.accepted is True
+    state = _read(tmp_path)
+    assert "execute=codex:gpt-5.5" in state["config"]["phase_model"]
+    assert "execute" not in state["config"]["tier_models"]
+    assert "critique" in state["config"]["tier_models"]
+
+
 def test_blocked_recovery_uses_resume_cursor_phase_predecessor() -> None:
     state = _state(
         current_state=STATE_BLOCKED,

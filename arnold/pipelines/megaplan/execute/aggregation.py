@@ -16,6 +16,7 @@ from arnold.pipelines.megaplan.execute.quality import (
     _capture_git_status_snapshot_recursive,
     _collect_execute_claimed_paths,
     _normalize_execute_claimed_path,
+    unchanged_baseline_uncommitted_paths,
     expand_projected_path_list,
     project_advisory_path_sets,
 )
@@ -227,6 +228,36 @@ def _compute_execute_scope_drift(
     state: PlanState | None = None,
     plan_dir: Path | None = None,
 ):
+    milestone_base_sha: str | None = None
+    carry_forward_paths: set[str] = set()
+    if state is not None and isinstance(state, dict):
+        meta = state.get("meta") if isinstance(state.get("meta"), dict) else {}
+        chain_policy = (
+            meta.get("chain_policy")
+            if isinstance(meta, dict) and isinstance(meta.get("chain_policy"), dict)
+            else {}
+        )
+        raw_base = chain_policy.get("milestone_base_sha") if isinstance(chain_policy, dict) else None
+        if isinstance(raw_base, str) and raw_base.strip():
+            milestone_base_sha = raw_base.strip()
+        raw_carry_forward = (
+            chain_policy.get("carry_forward_manifest")
+            if isinstance(chain_policy, dict)
+            else None
+        )
+        if isinstance(raw_carry_forward, dict):
+            carry_forward_paths = {
+                _normalize_execute_claimed_path(path, project_dir)
+                for path in raw_carry_forward
+                if isinstance(path, str) and path.strip()
+            }
+        elif isinstance(raw_carry_forward, list):
+            carry_forward_paths = {
+                _normalize_execute_claimed_path(path, project_dir)
+                for path in raw_carry_forward
+                if isinstance(path, str) and path.strip()
+            }
+
     # This call's own claims drive the per-call ``files_missing`` (fabrication)
     # signal; the per-batch union below only widens ``files_claimed`` so prior
     # batches' writes aren't flagged as unclaimed additions.
@@ -286,6 +317,9 @@ def _compute_execute_scope_drift(
     # from scope drift entirely (non-blocking by definition).
     if carry_forward_paths:
         files_in_diff = files_in_diff - carry_forward_paths
+    files_in_diff = files_in_diff - unchanged_baseline_uncommitted_paths(
+        project_dir, state or {}
+    )
 
     loc_by_file = collect_loc_by_file(project_dir, files_in_diff)
     return compute_scope_drift(

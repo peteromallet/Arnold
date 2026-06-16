@@ -601,6 +601,7 @@ def test_review_schema_requires_task_and_sense_check_verdicts() -> None:
     assert "evidence_file" in rework_item["properties"]
     assert "flag_id" in rework_item["properties"]
     assert "source" in rework_item["properties"]
+    assert "target" in rework_item["properties"]
     assert set(rework_item["required"]) == {
         "task_id",
         "issue",
@@ -609,10 +610,12 @@ def test_review_schema_requires_task_and_sense_check_verdicts() -> None:
         "evidence_file",
         "flag_id",
         "source",
+        "target",
         "deterministic_check",
     }
     assert rework_item["properties"]["flag_id"]["type"] == ["string", "null"]
     assert rework_item["properties"]["source"]["type"] == ["string", "null"]
+    assert rework_item["properties"]["target"]["type"] == ["object", "null"]
     assert rework_item["properties"]["deterministic_check"]["type"] == ["object", "null"]
 
 
@@ -668,6 +671,7 @@ def test_review_schema_accepts_parallel_mode_extensions_in_both_copies() -> None
                 "evidence_file": "pkg/module.py",
                 "flag_id": None,
                 "source": "review_coverage",
+                "target": {"kind": "task", "task_id": "T1", "task_ids": [], "id": None},
                 "deterministic_check": _deterministic_check(),
             }
         ],
@@ -700,6 +704,7 @@ def test_review_schema_accepts_optional_rework_item_flag_id() -> None:
             "evidence_file": "megaplan/prompts/review.py",
             "flag_id": "FLAG-001",
             "source": "review_flag_reverify",
+            "target": None,
             "deterministic_check": None,
         }
     ]
@@ -722,7 +727,36 @@ def test_review_schema_still_accepts_rework_items_without_flag_id() -> None:
             "evidence_file": "megaplan/handlers.py",
             "flag_id": None,
             "source": None,
+            "target": None,
             "deterministic_check": None,
+        }
+    ]
+    disk_schema = _review_disk_schema()
+
+    assert list(Draft7Validator(SCHEMAS["review.json"]).iter_errors(payload)) == []
+    assert list(Draft7Validator(disk_schema).iter_errors(payload)) == []
+
+
+def test_review_schema_accepts_typed_rework_target_from_prompt() -> None:
+    payload = _minimal_review_payload()
+    payload["review_verdict"] = "needs_rework"
+    payload["issues"] = ["Task-scoped issue remains."]
+    payload["rework_items"] = [
+        {
+            "target": {"kind": "task", "task_id": "T4"},
+            "task_id": "T4",
+            "issue": "Task-scoped issue remains.",
+            "expected": "The task-specific deterministic check passes.",
+            "actual": "The task-specific deterministic check fails.",
+            "evidence_file": "tests/core/integrations/test_arnold_authoring.py",
+            "flag_id": None,
+            "source": "review_diff_inspection",
+            "deterministic_check": {
+                "command": "python -m pytest tests/core/integrations/test_arnold_authoring.py --collect-only -q",
+                "baseline_status": "failed",
+                "post_status": "failed",
+                "evidence_file": None,
+            },
         }
     ]
     disk_schema = _review_disk_schema()

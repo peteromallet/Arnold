@@ -529,6 +529,29 @@ def test_capture_step_output_normalizes_receipt_shaped_execute_batch_fields() ->
     ]
 
 
+def test_capture_step_output_strips_execute_batch_marker() -> None:
+    invocation = StepInvocation(
+        kind="model",
+        metadata={
+            "tier": "enforced",
+            "worker": "codex",
+            "compatibility_validation_step": "execute",
+        },
+    )
+
+    outcome = capture_step_output(
+        invocation,
+        {
+            "batch": 1,
+            "task_updates": [{"task_id": "T1", "status": "done"}],
+            "sense_check_acknowledgments": [],
+        },
+    )
+
+    assert outcome.telemetry.audit_result is AuditStatus.PASSED
+    assert "batch" not in outcome.legacy_payload
+
+
 def test_capture_step_output_uses_finalize_schema_for_wrong_typed_named_payload() -> None:
     invocation = StepInvocation(
         kind="model",
@@ -1232,6 +1255,24 @@ def test_model_family_classification_separates_claude_and_codex() -> None:
 
     assert codex_budget.tokenizer_source == "tiktoken:o200k_base"
     assert claude_budget.tokenizer_source == "claude_conservative_estimate"
+
+
+def test_budget_model_input_classifies_provider_resolved_fireworks_model_paths() -> None:
+    deepseek_budget = budget_model_input(
+        "hello",
+        model="accounts/fireworks/models/deepseek-v4-pro",
+        tier=ModelTier.NON_ENFORCED,
+    )
+    kimi_budget = budget_model_input(
+        "hello",
+        model="accounts/fireworks/models/kimi-k2p6",
+        tier=ModelTier.NON_ENFORCED,
+    )
+
+    assert deepseek_budget.family is ModelFamily.DEEPSEEK
+    assert deepseek_budget.max_input_tokens == 120_000
+    assert kimi_budget.family is ModelFamily.KIMI
+    assert kimi_budget.max_input_tokens == 120_000
 
 
 def test_render_step_message_applies_static_budget_and_request_override() -> None:
@@ -2131,3 +2172,307 @@ def test_pre_dispatch_budget_check_model_budget_error_escapes_broad_except() -> 
             pytest.fail("ModelBudgetError should have been raised but was not")
 
     assert budget_escaped, "ModelBudgetError did not escape"
+
+
+# ---------------------------------------------------------------------------
+# T13: Recovery and schema-validity tests around {step}_output.json discovery
+#   - gate_output.json, finalize_output.json, critique_evaluator_output.json
+#   - Verify promoted artifacts are schema-valid and reject unknown keys.
+# ---------------------------------------------------------------------------
+
+
+def test_recovery_discovers_gate_output_json_and_promotes_schema_valid_payload(
+    tmp_path,
+) -> None:
+    """gate_output.json is discovered via capture_recovery and promoted when valid."""
+    plan_dir = tmp_path / "plan"
+    plan_dir.mkdir()
+    output_path = tmp_path / "unused.json"
+
+    valid_gate_payload = {
+        "recommendation": "PROCEED",
+        "rationale": "All checks passed.",
+        "signals_assessment": "Signals are green.",
+        "warnings": [],
+        "settled_decisions": [],
+        "flag_resolutions": [],
+        "accepted_tradeoffs": [],
+    }
+    (plan_dir / "gate_output.json").write_text(
+        json.dumps(valid_gate_payload), encoding="utf-8"
+    )
+
+    invocation = StepInvocation(
+        kind="model",
+        metadata={
+            "capture_recovery": {
+                "step": "gate",
+                "plan_dir": str(plan_dir),
+                "output_path": str(output_path),
+            },
+        },
+    )
+
+    outcome = capture_step_output(invocation, "{not json")
+
+    assert outcome.legacy_payload == valid_gate_payload
+    assert outcome.telemetry.audit_result is AuditStatus.PASSED
+    assert outcome.contract_result.provenance.sources == (
+        "model_step_output",
+        "codex_recovery:output_file",
+    )
+
+
+def test_recovery_rejects_gate_output_json_with_unknown_top_level_keys(
+    tmp_path,
+) -> None:
+    """gate_output.json with hallucinated keys fails the structural audit."""
+    plan_dir = tmp_path / "plan"
+    plan_dir.mkdir()
+    output_path = tmp_path / "unused.json"
+
+    invalid_gate_payload = {
+        "recommendation": "PROCEED",
+        "rationale": "All checks passed.",
+        "signals_assessment": "Signals are green.",
+        "warnings": [],
+        "settled_decisions": [],
+        "flag_resolutions": [],
+        "accepted_tradeoffs": [],
+        "hallucinated_extra": True,  # unknown key
+    }
+    (plan_dir / "gate_output.json").write_text(
+        json.dumps(invalid_gate_payload), encoding="utf-8"
+    )
+
+    invocation = StepInvocation(
+        kind="model",
+        metadata={
+            "capture_recovery": {
+                "step": "gate",
+                "plan_dir": str(plan_dir),
+                "output_path": str(output_path),
+            },
+        },
+    )
+
+    with pytest.raises(model_seam.ModelStructuralAuditError, match="additional_property"):
+        capture_step_output(invocation, "{not json")
+
+
+def test_recovery_discovers_finalize_output_json_and_promotes_schema_valid_payload(
+    tmp_path,
+) -> None:
+    """finalize_output.json is discovered via capture_recovery and promoted when valid."""
+    plan_dir = tmp_path / "plan"
+    plan_dir.mkdir()
+    output_path = tmp_path / "unused.json"
+
+    valid_finalize_payload = {
+        "tasks": [
+            {
+                "id": "T1",
+                "description": "Do the work.",
+                "depends_on": [],
+                "status": "pending",
+                "kind": "code",
+                "executor_notes": "",
+                "files_changed": [],
+                "commands_run": [],
+                "auto_attributed_files": None,
+                "evidence_files": [],
+                "reviewer_verdict": "",
+                "complexity": 1,
+                "complexity_justification": "Small focused task.",
+            }
+        ],
+        "watch_items": [],
+        "sense_checks": [],
+        "user_actions": [],
+        "meta_commentary": "",
+        "validation": {
+            "plan_steps_covered": [],
+            "orphan_tasks": [],
+            "completeness_notes": "",
+            "coverage_complete": True,
+        },
+    }
+    (plan_dir / "finalize_output.json").write_text(
+        json.dumps(valid_finalize_payload), encoding="utf-8"
+    )
+
+    invocation = StepInvocation(
+        kind="model",
+        metadata={
+            "capture_recovery": {
+                "step": "finalize",
+                "plan_dir": str(plan_dir),
+                "output_path": str(output_path),
+            },
+        },
+    )
+
+    outcome = capture_step_output(invocation, "{not json")
+
+    assert outcome.legacy_payload == valid_finalize_payload
+    assert outcome.telemetry.audit_result is AuditStatus.PASSED
+    assert outcome.contract_result.provenance.sources == (
+        "model_step_output",
+        "codex_recovery:output_file",
+    )
+
+
+def test_recovery_rejects_finalize_output_json_with_unknown_top_level_keys(
+    tmp_path,
+) -> None:
+    """finalize_output.json with hallucinated keys fails the structural audit."""
+    plan_dir = tmp_path / "plan"
+    plan_dir.mkdir()
+    output_path = tmp_path / "unused.json"
+
+    invalid_finalize_payload = {
+        "tasks": [
+            {
+                "id": "T1",
+                "description": "Do the work.",
+                "depends_on": [],
+                "status": "pending",
+                "kind": "code",
+                "executor_notes": "",
+                "files_changed": [],
+                "commands_run": [],
+                "auto_attributed_files": None,
+                "evidence_files": [],
+                "reviewer_verdict": "",
+                "complexity": 1,
+                "complexity_justification": "Small focused task.",
+            }
+        ],
+        "watch_items": [],
+        "sense_checks": [],
+        "user_actions": [],
+        "meta_commentary": "",
+        "validation": {
+            "plan_steps_covered": [],
+            "orphan_tasks": [],
+            "completeness_notes": "",
+            "coverage_complete": True,
+        },
+        "confidence": 0.99,  # unknown key
+    }
+    (plan_dir / "finalize_output.json").write_text(
+        json.dumps(invalid_finalize_payload), encoding="utf-8"
+    )
+
+    invocation = StepInvocation(
+        kind="model",
+        metadata={
+            "capture_recovery": {
+                "step": "finalize",
+                "plan_dir": str(plan_dir),
+                "output_path": str(output_path),
+            },
+        },
+    )
+
+    with pytest.raises(model_seam.ModelStructuralAuditError, match="additional_property"):
+        capture_step_output(invocation, "{not json")
+
+
+def test_recovery_discovers_critique_evaluator_output_json_and_promotes_schema_valid_payload(
+    tmp_path,
+) -> None:
+    """critique_evaluator_output.json is discovered via capture_recovery and promoted."""
+    plan_dir = tmp_path / "plan"
+    plan_dir.mkdir()
+    output_path = tmp_path / "unused.json"
+
+    valid_ce_payload = {
+        "selections": [
+            {
+                "check_id": "correctness",
+                "complexity": 4,
+                "complexity_justification": "Correctness is the highest-risk lens.",
+            }
+        ],
+        "skipped": [],
+        "evaluator_model": "zhipu:glm-5.2",
+        "flag_verifications": [
+            {
+                "flag_id": "FLAG-001",
+                "lens": "correctness",
+                "outcome": "verified",
+                "rationale": "Diff shows the requested fix.",
+            }
+        ],
+    }
+    (plan_dir / "critique_evaluator_output.json").write_text(
+        json.dumps(valid_ce_payload), encoding="utf-8"
+    )
+
+    invocation = StepInvocation(
+        kind="model",
+        metadata={
+            "capture_recovery": {
+                "step": "critique_evaluator",
+                "plan_dir": str(plan_dir),
+                "output_path": str(output_path),
+            },
+        },
+    )
+
+    outcome = capture_step_output(invocation, "{not json")
+
+    assert outcome.legacy_payload == valid_ce_payload
+    assert outcome.telemetry.audit_result is AuditStatus.PASSED
+    assert outcome.contract_result.provenance.sources == (
+        "model_step_output",
+        "codex_recovery:output_file",
+    )
+
+
+def test_recovery_rejects_critique_evaluator_output_json_with_unknown_top_level_keys(
+    tmp_path,
+) -> None:
+    """critique_evaluator_output.json with hallucinated keys fails structural audit."""
+    plan_dir = tmp_path / "plan"
+    plan_dir.mkdir()
+    output_path = tmp_path / "unused.json"
+
+    invalid_ce_payload = {
+        "selections": [
+            {
+                "check_id": "correctness",
+                "complexity": 4,
+                "complexity_justification": "Correctness is the highest-risk lens.",
+            }
+        ],
+        "skipped": [],
+        "evaluator_model": "zhipu:glm-5.2",
+        "flag_verifications": [
+            {
+                "flag_id": "FLAG-001",
+                "lens": "correctness",
+                "outcome": "verified",
+                "rationale": "Diff shows the requested fix.",
+            }
+        ],
+        "model_confidence": 0.95,  # unknown key
+    }
+    (plan_dir / "critique_evaluator_output.json").write_text(
+        json.dumps(invalid_ce_payload), encoding="utf-8"
+    )
+
+    invocation = StepInvocation(
+        kind="model",
+        metadata={
+            "capture_recovery": {
+                "step": "critique_evaluator",
+                "plan_dir": str(plan_dir),
+                "output_path": str(output_path),
+            },
+        },
+    )
+
+    with pytest.raises(model_seam.ModelStructuralAuditError, match="additional_property"):
+        capture_step_output(invocation, "{not json")

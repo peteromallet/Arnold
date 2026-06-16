@@ -434,7 +434,7 @@ def main() -> None:
         "--project-dir",
         required=True,
         type=Path,
-        help="Path to the project root (e.g. /private/tmp/arnold-target)",
+        help="Path to the project root (e.g. /Users/peteromalley/Documents/megaplan)",
     )
     parser.add_argument(
         "--spec",

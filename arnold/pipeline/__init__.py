@@ -245,9 +245,18 @@ from arnold.pipeline.types import (
     register_schema,
 )
 
+
+# Re-exports from arnold.runtime for downstream consumers
+from arnold.runtime.envelope import RuntimeEnvelope
+from arnold.runtime.resume import ResumeCursorRef
+from arnold.runtime.driver import AdvanceOutcome, CheckpointOutcome
+from arnold.pipeline.driver import StepwiseDriver
+
 __all__ = [
     "AcceptedVersionRange",
     "account_media_cost_from_result",
+    "AdvanceOutcome",
+    "CheckpointOutcome",
     "AuditMode",
     "AuditPolicyHook",
     "BillingRoute",
@@ -300,8 +309,10 @@ __all__ = [
     "Provenance",
     "ReduceResult",
     "ReadRef",
+    "ResumeCursorRef",
     "RoutingKey",
     "ReducePolicy",
+    "RuntimeEnvelope",
     "SelectionResult",
     "Stage",
     "StateDelta",
@@ -322,6 +333,7 @@ __all__ = [
     "StepInvocationResult",
     "StepContext",
     "StepResult",
+    "StepwiseDriver",
     "Suspension",
     "SchemaRegistryError",
     "SeamId",

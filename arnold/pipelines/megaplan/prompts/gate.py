@@ -101,6 +101,8 @@ def _gate_prompt(
                 "Critique check summary:\n        "
                 + "\n        ".join(check_lines)
             )
+    output_path = _write_gate_template(plan_dir, state)
+
     return textwrap.dedent(
         f"""
         You are the gatekeeper for the megaplan workflow. Make the continuation decision directly.
@@ -133,6 +135,12 @@ def _gate_prompt(
         Robustness level:
         {robustness}
 
+        Your output template is at: {output_path}
+        Read this file first — it contains the expected JSON structure.
+        Fill the JSON structure with your results and write the file back.
+        Valid flag IDs are: {json_dump([flag["id"] for flag in open_flags]).strip()}
+        If you cannot use file tools, return the populated JSON structure inline as your response instead.
+
         Requirements:
         - Decide exactly one of: PROCEED, ITERATE, ESCALATE, TIEBREAKER.
         - Use the weighted score, flag details (including `evidence`), plan delta, recurring critiques, and preflight results as judgment context.
@@ -157,7 +165,8 @@ def _gate_prompt(
         - Schema requirement: every `flag_resolutions` entry must include both `evidence` and `rationale`. Use `""` for the field that does not apply to that action.
 
         If there are no blocking flags, return `flag_resolutions: []`.
-        Always return `accepted_tradeoffs`; use `[]` when none apply.
+        Always return `accepted_tradeoffs`; use `[]` when none apply. Each `accepted_tradeoffs` entry must be an object with exactly `flag_id`, `concern`, `subsystem`, and `rationale`.
+        Do not add fields outside the template. In particular, do not add `known_flag_ids`, `_scratch_note`, `_scratch_timestamp`, or nested `tradeoff` fields.
 
         Populate `settled_decisions` with design choices that should carry into review without re-litigation. Return typed objects, never bare strings: `[{{"id": "SD1", "decision": "...", "rationale": "..."}}]`. Return `[]` when there are none.
 
@@ -216,3 +225,32 @@ def _flag_summary(registry: FlagRegistry) -> list[dict[str, object]]:
         }
         for f in registry["flags"]
     ]
+
+
+def _write_gate_template(
+    plan_dir: Path,
+    state: PlanState,
+) -> Path:
+    """Write the gate output template file and return its path."""
+    import json
+
+    template: dict[str, object] = {
+        "recommendation": "",
+        "rationale": "",
+        "signals_assessment": "",
+        "warnings": [],
+        "flag_resolutions": [],
+        "accepted_tradeoffs": [
+            {
+                "flag_id": "",
+                "concern": "",
+                "subsystem": "",
+                "rationale": "",
+            }
+        ],
+        "settled_decisions": [],
+    }
+
+    output_path = plan_dir / "gate_output.json"
+    output_path.write_text(json.dumps(template, indent=2), encoding="utf-8")
+    return output_path

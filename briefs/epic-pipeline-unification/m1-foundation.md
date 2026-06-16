@@ -159,7 +159,7 @@ conversion lands against a green, non-regressing baseline (REGISTER §3 M1, DC#1
 
 ## Constraints
 - Don't dogfood off an editable install; pin the engine for any validation run (EPIC L314; memory
-  `dogfood_engine_shadow`). M0 supplies the pinned engine; M1 runs under it.
+  `dogfood_engine_shadow`). M0 supplies the separate external driver; M1 runs under it.
 - Schema + WAL + R7 + Effect fields are **report-only / forgiving / unenforced**, never fail-closed (EPIC
   L172–173, L315; SYNTHESIS principle #10 "before the first real act"; PROGRAM L91 "state.json still
   authoritative").

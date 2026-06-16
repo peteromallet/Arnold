@@ -379,6 +379,40 @@ def validate_control_flow(
                         },
                     )
 
+            # ── suspension-schema decision enum conformance ───────────
+            schema_enum = _decision_enum_from_suspension_schema(
+                getattr(stage, "suspension_schema", None)
+            )
+            if schema_enum is not None:
+                route_keys = set(decision_routes.keys())
+                # Extra keys: present in decision_routes but not in schema enum
+                extra = route_keys - schema_enum
+                for key in sorted(extra):
+                    diag.add_defect(
+                        f"stage {stage_name!r}: decision_route key {key!r} "
+                        f"is not in the suspension-schema enum "
+                        f"{sorted(schema_enum)}",
+                        code="decision_route_schema_key_unknown",
+                        stage=stage_name,
+                        details={
+                            "decision_key": key,
+                            "schema_enum": sorted(schema_enum),
+                        },
+                    )
+                # Missing keys: in schema enum but not in decision_routes
+                missing = schema_enum - route_keys
+                for key in sorted(missing):
+                    diag.add_defect(
+                        f"stage {stage_name!r}: suspension-schema choice "
+                        f"{key!r} is missing from decision_routes",
+                        code="decision_route_schema_key_missing",
+                        stage=stage_name,
+                        details={
+                            "decision_key": key,
+                            "schema_enum": sorted(schema_enum),
+                        },
+                    )
+
         # ── decision vocabulary check ────────────────────────────────
         if decision_edges:
             vocab = _stage_decision_vocabulary(stage, options)

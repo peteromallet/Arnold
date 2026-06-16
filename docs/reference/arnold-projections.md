@@ -197,6 +197,7 @@ content type declared on a producing port.
 | chain | override | arnold/pipelines/megaplan/cli/parser.py |
 | chain | start | arnold/pipelines/megaplan/cli/parser.py |
 | chain | status | arnold/pipelines/megaplan/cli/parser.py |
+| chain | verify | arnold/pipelines/megaplan/cli/parser.py |
 | config | profiles | arnold/pipelines/megaplan/cli/parser.py |
 | config | reset | arnold/pipelines/megaplan/cli/parser.py |
 | config | set | arnold/pipelines/megaplan/cli/parser.py |

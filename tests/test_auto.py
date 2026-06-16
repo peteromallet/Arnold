@@ -50,6 +50,62 @@ def _write_uncorroborated_done_task(plan_dir: Path, task_id: str = "T1") -> None
     )
 
 
+def test_recover_completed_execute_artifacts_after_worker_failure(tmp_path: Path) -> None:
+    plan = "execute-complete-after-stall"
+    plan_dir = _make_plan_dir(tmp_path, plan)
+    (plan_dir / "state.json").write_text(
+        json.dumps(
+            {
+                "name": plan,
+                "current_state": "finalized",
+                "active_step": {"phase": "execute", "last_activity_kind": "llm_stream"},
+                "history": [],
+                "meta": {"overrides": []},
+            }
+        ),
+        encoding="utf-8",
+    )
+    (plan_dir / "finalize.json").write_text(
+        json.dumps(
+            {
+                "tasks": [
+                    {
+                        "id": "T1",
+                        "status": "done",
+                        "files_changed": ["arnold/example.py"],
+                        "commands_run": ["python -m pytest tests/test_example.py"],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    batch_payload = {
+        "output": "Batch 1 complete.",
+        "files_changed": ["arnold/example.py"],
+        "commands_run": [],
+        "deviations": [],
+        "task_updates": [
+            {
+                "task_id": "T1",
+                "status": "done",
+                "executor_notes": "Implemented.",
+                "files_changed": ["arnold/example.py"],
+                "commands_run": ["python -m pytest tests/test_example.py"],
+            }
+        ],
+        "sense_check_acknowledgments": [],
+    }
+    (plan_dir / "execution_batch_1.json").write_text(json.dumps(batch_payload), encoding="utf-8")
+    (plan_dir / "execution.json").write_text(json.dumps(batch_payload), encoding="utf-8")
+
+    assert auto._recover_completed_execute_artifacts_after_failure(plan_dir) is True
+
+    state = json.loads((plan_dir / "state.json").read_text(encoding="utf-8"))
+    assert state["current_state"] == "executed"
+    assert "active_step" not in state
+
+
 def test_format_phase_heartbeat_includes_plan_step_and_progress(tmp_path: Path) -> None:
     plan_dir = _make_plan_dir(tmp_path, "heartbeat-plan")
     (plan_dir / "state.json").write_text(
@@ -117,6 +173,188 @@ def _execute_status(plan: str, state: str = "finalized") -> dict:
         "next_step": "execute",
         "valid_next": ["execute"],
     }
+
+
+def _write_complete_execution_artifacts(plan_dir: Path, *, complete: bool = True) -> None:
+    (plan_dir / "finalize.json").write_text(
+        json.dumps(
+            {
+                "tasks": [
+                    {
+                        "id": "T1",
+                        "status": "done",
+                        "files_changed": ["t1.py"],
+                        "commands_run": ["pytest -q tests/test_t1.py"],
+                    },
+                    {
+                        "id": "T2",
+                        "status": "done",
+                        "files_changed": ["t2.py"],
+                        "commands_run": ["pytest -q tests/test_t2.py"],
+                    },
+                ],
+                "sense_checks": [
+                    {"id": "SC1", "task_id": "T1"},
+                    {"id": "SC2", "task_id": "T2"},
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    task_updates = [
+        {
+            "task_id": "T1",
+            "status": "done",
+            "files_changed": ["t1.py"],
+            "commands_run": ["pytest -q tests/test_t1.py"],
+        },
+        {
+            "task_id": "T2",
+            "status": "done",
+            "files_changed": ["t2.py"],
+            "commands_run": ["pytest -q tests/test_t2.py"],
+        },
+    ]
+    if not complete:
+        task_updates.pop()
+    (plan_dir / "execution.json").write_text(
+        json.dumps(
+            {
+                "output": "done",
+                "task_updates": task_updates,
+                "sense_check_acknowledgments": [
+                    {"sense_check_id": "SC1", "executor_note": "ok"},
+                    {"sense_check_id": "SC2", "executor_note": "ok"},
+                ],
+                "deviations": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+
+def test_auto_adopts_complete_execution_artifact_before_rerunning_stale_execute(
+    tmp_path: Path,
+) -> None:
+    plan = "stale-execute-complete-artifacts"
+    plan_dir = _make_plan_dir(tmp_path, plan)
+    _write_complete_execution_artifacts(plan_dir)
+    state_path = plan_dir / "state.json"
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    state["history"] = [
+        {
+            "step": "execute",
+            "result": "error",
+            "message": "Hermes worker stalled on step 'execute': no stream progress for 601s.",
+        }
+    ]
+    state["active_step"] = None
+    state_path.write_text(json.dumps(state), encoding="utf-8")
+
+    run_calls: list[list[str]] = []
+
+    def fake_status(plan_name: str, cwd=None, timeout=60):
+        current = json.loads(state_path.read_text(encoding="utf-8"))
+        current_state = current["current_state"]
+        if current_state == "finalized":
+            response = _execute_status(plan_name, state="finalized")
+            response["progress"] = {
+                "tasks_total": 2,
+                "tasks_done": 2,
+                "tasks_skipped": 0,
+                "tasks_pending": 0,
+                "tasks_blocked": 0,
+                "batches_total": 2,
+                "batches_completed": 2,
+                "summary": (
+                    "Execution progress: 2/2 tasks tracked, 2/2 batches completed. "
+                    "Progress reflects per-batch artifacts (latest execution_batch_*.json overlay)."
+                ),
+            }
+            return response
+        if current_state == "executed":
+            return _phase_status(plan_name, state="executed", next_step="review")
+        return _done_status(plan_name)
+
+    def fake_run(args, cwd=None, timeout=None, idle_timeout=None,
+                 progress_env=None, liveness_plan_dir=None):
+        run_calls.append(list(args))
+        if args[0] == "review":
+            current = json.loads((plan_dir / "state.json").read_text(encoding="utf-8"))
+            current["current_state"] = "done"
+            (plan_dir / "state.json").write_text(json.dumps(current), encoding="utf-8")
+        return 0, "{}", ""
+
+    with patch.object(auto, "_status", side_effect=fake_status), \
+         patch.object(auto, "_run_planning_phase", side_effect=fake_run):
+        outcome = drive(
+            plan,
+            cwd=tmp_path,
+            max_iterations=5,
+            stall_threshold=10,
+            poll_sleep=0,
+            writer=lambda _m: None,
+        )
+
+    assert outcome.status == "done"
+    assert run_calls == [["review", "--plan", plan]]
+    reloaded = json.loads(state_path.read_text(encoding="utf-8"))
+    execute_history = [
+        entry for entry in reloaded["history"]
+        if isinstance(entry, dict) and entry.get("step") == "execute"
+    ]
+    assert execute_history[-1]["result"] == "success"
+    assert "adopted complete execution artifact" in execute_history[-1]["message"]
+    assert any(
+        "recovered completed execute artifacts after worker failure" in event.get("msg", "")
+        for event in outcome.events
+    )
+
+
+def test_auto_does_not_adopt_incomplete_execution_artifact(
+    tmp_path: Path,
+) -> None:
+    plan = "stale-execute-incomplete-artifact"
+    plan_dir = _make_plan_dir(tmp_path, plan)
+    _write_complete_execution_artifacts(plan_dir, complete=False)
+    run_calls: list[list[str]] = []
+
+    def fake_status(plan_name: str, cwd=None, timeout=60):
+        return _execute_status(plan_name, state="finalized")
+
+    def fake_run(args, cwd=None, timeout=None, idle_timeout=None,
+                 progress_env=None, liveness_plan_dir=None):
+        run_calls.append(list(args))
+        return 0, "{}", ""
+
+    with patch.object(auto, "_status", side_effect=fake_status), \
+         patch.object(auto, "_run_planning_phase", side_effect=fake_run):
+        outcome = drive(
+            plan,
+            cwd=tmp_path,
+            max_iterations=1,
+            stall_threshold=10,
+            poll_sleep=0,
+            writer=lambda _m: None,
+        )
+
+    assert run_calls == [
+        [
+            "execute",
+            "--confirm-destructive",
+            "--user-approved",
+            "--retry-blocked-tasks",
+            "--plan",
+            plan,
+        ]
+    ]
+    reloaded = json.loads((plan_dir / "state.json").read_text(encoding="utf-8"))
+    assert reloaded["current_state"] == "finalized"
+    assert not any(
+        entry.get("message", "").startswith("adopted complete execution artifact")
+        for entry in reloaded.get("history", [])
+        if isinstance(entry, dict)
+    )
 
 
 def _phase_status(plan: str, state: str = "planning", next_step: str = "prep") -> dict:
@@ -1737,6 +1975,53 @@ def test_phase_failure_persists_failure_before_next_status(tmp_path: Path) -> No
     assert state_data["latest_failure"]["phase"] == "prep"
     assert state_data["latest_failure"]["metadata"]["exit_code"] == 7
     assert state_data["resume_cursor"] == {"phase": "prep", "retry_strategy": "rerun_phase"}
+
+
+def test_recover_blocked_failure_preserves_original_resume_cursor(tmp_path: Path) -> None:
+    plan = "recover-blocked-preserves-cursor"
+    plan_dir = _make_plan_dir(tmp_path, plan)
+    original_cursor = {"phase": "execute", "retry_strategy": "rerun_phase"}
+    (plan_dir / "state.json").write_text(
+        json.dumps(
+            {
+                "name": plan,
+                "current_state": "blocked",
+                "resume_cursor": original_cursor,
+            }
+        ),
+        encoding="utf-8",
+    )
+    statuses = [
+        {
+            "success": True,
+            "plan": plan,
+            "state": "blocked",
+            "next_step": "recover-blocked",
+            "valid_next": ["recover-blocked"],
+        },
+        {
+            "success": True,
+            "plan": plan,
+            "state": "blocked",
+            "next_step": None,
+            "valid_next": [],
+        },
+    ]
+
+    def fake_status(plan_name: str, cwd=None, timeout=60):
+        return statuses.pop(0)
+
+    def fake_run(args, cwd=None, timeout=None):
+        return 1, "", "recovery still blocked"
+
+    with patch.object(auto, "_status", side_effect=fake_status), \
+         patch.object(auto, "_run_planning_phase", side_effect=fake_run):
+        outcome = drive(plan, cwd=tmp_path, poll_sleep=0, writer=lambda _m: None)
+
+    state_data = json.loads((plan_dir / "state.json").read_text(encoding="utf-8"))
+    assert outcome.status == "blocked"
+    assert state_data["latest_failure"]["phase"] == "recover-blocked"
+    assert state_data["resume_cursor"] == original_cursor
 
 
 def test_cli_rejects_negative_max_context_retries() -> None:
@@ -4021,3 +4306,78 @@ def test_failure_streak_resets_on_progress(tmp_path: Path) -> None:
     # reaches the escalate threshold — no escalation occurs.
     assert not any("--phase-model" in c for c in seen_cmds), seen_cmds
     assert outcome.tier_escalations_used == 0
+
+
+# --------------------------------------------------------------------------- #
+# _extract_cli_error_payload regression tests
+# --------------------------------------------------------------------------- #
+
+
+def test_extract_cli_error_payload_extracts_full_stream_json() -> None:
+    payload = auto._extract_cli_error_payload(
+        stdout='{"success": false, "error": "engine_write_isolation_unverified", "message": "not isolated"}',
+        stderr="",
+    )
+    assert payload is not None
+    assert payload["success"] is False
+    assert payload["error"] == "engine_write_isolation_unverified"
+
+
+def test_extract_cli_error_payload_extracts_single_line_json_from_stderr() -> None:
+    payload = auto._extract_cli_error_payload(
+        stdout="",
+        stderr='some log line\n{"success": false, "error": "engine_write_isolation_unverified"}',
+    )
+    assert payload is not None
+    assert payload["error"] == "engine_write_isolation_unverified"
+
+
+def test_extract_cli_error_payload_returns_none_for_non_error_json() -> None:
+    payload = auto._extract_cli_error_payload(
+        stdout='{"result": "ok"}',
+        stderr="",
+    )
+    assert payload is None
+
+
+def test_extract_cli_error_payload_extracts_pretty_json_after_tool_logs() -> None:
+    stdout = (
+        "[tool] running task T1...\n"
+        "[done] finished\n"
+        "{\n"
+        '  "success": false,\n'
+        '  "error": "engine_write_isolation_unverified",\n'
+        '  "message": "engine write isolation is not verified",\n'
+        '  "details": {"phase": "execute", "provider": "none"}\n'
+        "}\n"
+    )
+    payload = auto._extract_cli_error_payload(stdout=stdout, stderr="")
+    assert payload is not None
+    assert payload["error"] == "engine_write_isolation_unverified"
+    assert payload["details"]["provider"] == "none"
+
+
+def test_extract_cli_error_payload_extracts_nested_json_after_tool_logs() -> None:
+    stdout = (
+        "[tool] ...\n"
+        "[tool] more\n"
+        "{\n"
+        '  "success": false,\n'
+        '  "error": "engine_write_isolation_unverified",\n'
+        '  "details": {\n'
+        '    "proof": {"provider": "none", "engine_write_denied": false}\n'
+        "  }\n"
+        "}\n"
+    )
+    payload = auto._extract_cli_error_payload(stdout=stdout, stderr="")
+    assert payload is not None
+    assert payload["error"] == "engine_write_isolation_unverified"
+    assert payload["details"]["proof"]["provider"] == "none"
+
+
+def test_extract_cli_error_payload_returns_none_when_no_error_json_found() -> None:
+    payload = auto._extract_cli_error_payload(
+        stdout="[tool] done\nall good",
+        stderr="",
+    )
+    assert payload is None

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import textwrap
 import re
+import json
 from pathlib import Path
 from typing import Any
 
@@ -552,6 +553,7 @@ def _execute_batch_prompt(
     root: Path | None = None,
     rework_context: dict[str, Any] | None = None,
     projection_capabilities: PromptProjectionCapabilities | None = None,
+    batch_template_path: Path | None = None,
 ) -> str:
     completed = set(completed_task_ids or set())
     finalize_data = read_json(plan_dir / "finalize.json")
@@ -603,6 +605,24 @@ def _execute_batch_prompt(
     )
     batch_total = len(global_batches) or 1
     checkpoint_path = str(batch_artifact_path(plan_dir, batch_number))
+    if batch_template_path is None:
+        batch_template_path = plan_dir / f"execute_batch_{batch_number}_output.json"
+        if not batch_template_path.exists():
+            _write_execute_batch_template(
+                plan_dir,
+                batch_number,
+                batch_task_ids,
+                batch_sense_check_ids,
+            )
+    try:
+        batch_template = batch_template_path.read_text(encoding="utf-8")
+    except OSError:
+        batch_template = json_dump(
+            _execute_batch_template_payload(
+                batch_task_ids,
+                batch_sense_check_ids,
+            )
+        ).strip()
     prior_batch_deviations = "None"
     if batch_number > 1:
         prior_batch_artifact = batch_artifact_path(plan_dir, batch_number - 1)
@@ -651,6 +671,11 @@ def _execute_batch_prompt(
     )
     if rework_targeting_block:
         rework_targeting_block = f"\n\n{rework_targeting_block}"
+    template_reference = (
+        f"Template file already written for reference: {batch_template_path}"
+        if projection_capabilities is None or projection_capabilities.can_read_plan_dir
+        else "Template contents are embedded below for workers without plan-directory file access."
+    )
     return textwrap.dedent(
         f"""
         Execute the approved plan in the repository.
@@ -690,16 +715,127 @@ def _execute_batch_prompt(
         Requirements:
         - Execute only the actionable tasks in this batch.
         - Treat completed tasks as dependency context, not new work.
-    - Return structured JSON only.
-    - Only produce `task_updates` for these tasks: [{", ".join(batch_task_ids)}]
-    - Only produce `sense_check_acknowledgments` for these sense checks: [{", ".join(batch_sense_check_ids)}]
-    - Do not include updates for tasks or sense checks outside this batch.
-    - Some prior file lists may be capped prompt projections with `items`, `omitted_count`, and `full_set_artifact_ref`; use the artifact reference when you need the full set.
-    - Keep `executor_notes` verification-focused.
+        - Return structured JSON only.
+        - Fill in the following template and return it as your JSON response. Only update the entries for this batch's tasks/sense checks.
+        - {template_reference}
+        - Only produce `task_updates` for these tasks: [{", ".join(batch_task_ids)}]
+        - Only produce `sense_check_acknowledgments` for these sense checks: [{", ".join(batch_sense_check_ids)}]
+        - Do not include updates for tasks or sense checks outside this batch.
+        - Some prior file lists may be capped prompt projections with `items`, `omitted_count`, and `full_set_artifact_ref`; use the artifact reference when you need the full set.
+        - Keep `executor_notes` verification-focused.
         - {_checkpoint_summary_requirement(checkpoint_path, projection_capabilities)}
         - When verifying changes, run the entire test file or module, not individual test functions. Individual tests miss regressions.
         - Run tests ONCE, in the FOREGROUND, and wait for them to finish (you have a large time budget). Do NOT background a long test run and poll it in a loop. Slowness is NOT a stall — never relaunch a test command because it "seems stuck"; duplicate concurrent runs contend for CPU and make everything slower. Never run more than one heavy test invocation at a time. Prefer scoping to the changed files; run the full suite only when the task explicitly requires it, and then exactly once.
         - finalize.json includes baseline_test_failures — a list of test IDs that were already failing before your changes. If a test fails and its ID appears in baseline_test_failures, it is pre-existing — do not scope-creep into fixing it. If baseline_test_failures is null, the baseline could not be captured; use your judgment but err on the side of assuming failures are regressions. A mechanical post-execute suite run by the harness — not you — is the authoritative regression check. Run tests for your own fix loop if needed, then stop; do not loop the suite to make pre-existing failures pass.
         - If this batch includes the final verification task, write a short script that reproduces the exact bug described in the task, run it to confirm the fix resolves it, then delete the script.
+
+        Batch JSON response template:
+        ```json
+        {batch_template.strip()}
+        ```
         """
     ).strip()
+
+
+def _execute_batch_template_payload(
+    batch_task_ids: list[str],
+    batch_sense_check_ids: list[str],
+) -> dict[str, object]:
+    return {
+        "output": "",
+        "files_changed": [],
+        "commands_run": [],
+        "deviations": [],
+        "task_updates": [
+            {
+                "task_id": task_id,
+                "status": "pending",
+                "executor_notes": "",
+                "files_changed": [],
+                "commands_run": [],
+                "auto_attributed_files": False,
+            }
+            for task_id in batch_task_ids
+        ],
+        "sense_check_acknowledgments": [
+            {
+                "sense_check_id": sense_check_id,
+                "executor_note": "",
+            }
+            for sense_check_id in batch_sense_check_ids
+        ],
+    }
+
+
+def _write_execute_batch_template(
+    plan_dir: Path,
+    batch_number: int,
+    batch_task_ids: list[str],
+    batch_sense_check_ids: list[str],
+) -> Path:
+    """Write the batch-scoped execute output template and return its path."""
+    output_path = plan_dir / f"execute_batch_{batch_number}_output.json"
+    output_path.write_text(
+        json.dumps(
+            _execute_batch_template_payload(batch_task_ids, batch_sense_check_ids),
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+    return output_path
+
+
+def _write_execute_template(
+    plan_dir: Path,
+    state: PlanState,
+) -> Path:
+    """Write the execute output template file and return its path.
+
+    Execute output is assembled from multiple batch outputs
+    (``batch_assembly`` mode).  This builder exists for parity and
+    documentation: it pre-populates ``task_updates`` and
+    ``sense_check_acknowledgments`` with the actual task IDs and
+    sense-check IDs from ``finalize.json`` so that downstream
+    assembly code can merge batch outputs by ID.  Handlers do NOT
+    route through single-file scratch promotion for execute.
+    """
+    task_updates: list[dict[str, object]] = []
+    sense_check_acknowledgments: list[dict[str, object]] = []
+
+    finalize_path = plan_dir / "finalize.json"
+    if finalize_path.exists():
+        try:
+            finalize_data = read_json(finalize_path)
+            if isinstance(finalize_data, dict):
+                for task in finalize_data.get("tasks", []):
+                    task_id = task.get("id", "")
+                    if task_id:
+                        task_updates.append({
+                            "task_id": task_id,
+                            "status": "pending",
+                            "executor_notes": "",
+                            "files_changed": [],
+                            "commands_run": [],
+                        })
+                for sc in finalize_data.get("sense_checks", []):
+                    sc_id = sc.get("id", "")
+                    if sc_id:
+                        sense_check_acknowledgments.append({
+                            "sense_check_id": sc_id,
+                            "executor_note": "",
+                        })
+        except Exception:
+            pass
+
+    template: dict[str, object] = {
+        "output": "",
+        "files_changed": [],
+        "commands_run": [],
+        "deviations": [],
+        "task_updates": task_updates,
+        "sense_check_acknowledgments": sense_check_acknowledgments,
+    }
+
+    output_path = plan_dir / "execute_output.json"
+    output_path.write_text(json.dumps(template, indent=2), encoding="utf-8")
+    return output_path

@@ -173,7 +173,7 @@ M2's `GateRecommendation` gate). The three phase↔state maps collapse to ONE re
   never indefinitely parks; `STATE_TIEBREAKER_PENDING` auto-invokes `tiebreaker-run`. Escalation ladder (REGISTER
   §3 chain.yaml): retry ×2 → bump profile/robustness one tier → `stop_chain` + auto-ticket. No park on a human.
 - Back-compat: `extra="ignore"`; `handle_*` `__all__` shims; preserve `MEGAPLAN_*`; keep planning state names valid
-  in profiles. Don't dogfood off an editable install (pinned engine); schema report-only until the last milestone.
+  in profiles. Don't dogfood off an editable install (use a separate external driver); schema report-only until the last milestone.
 
 ## Done criteria (testable; incl. the oracle gate)
 

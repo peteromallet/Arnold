@@ -27,6 +27,7 @@ _RELOAD_TTL_SECONDS = 60.0
 
 _PROVIDER_KEY_VARS = {
     "zhipu": "ZHIPU_API_KEY",
+    "kimi": "KIMI_API_KEY",
     "minimax": "MINIMAX_API_KEY",
     "mimo": "MIMO_API_KEY",
     "openrouter": "OPENROUTER_API_KEY",
@@ -37,12 +38,15 @@ _PROVIDER_KEY_VARS = {
 _ENV_ALIASES = {
     "ZHIPU_API_KEY": ("ZHIPU_API_KEY", "GLM_API_KEY"),
     "ZHIPU_BASE_URL": ("ZHIPU_BASE_URL", "GLM_BASE_URL"),
+    "KIMI_API_KEY": ("KIMI_API_KEY", "MOONSHOT_API_KEY"),
+    "KIMI_BASE_URL": ("KIMI_BASE_URL", "MOONSHOT_BASE_URL"),
     "GEMINI_API_KEY": ("GEMINI_API_KEY", "GOOGLE_API_KEY"),
     "FIREWORKS_API_KEY": ("FIREWORKS_API_KEY", "FIREWORKS_AI_API_KEY"),
     "FIREWORKS_BASE_URL": ("FIREWORKS_BASE_URL", "FIREWORKS_AI_BASE_URL"),
 }
 _PROVIDER_BASE_URL_VARS = {
     "zhipu": "ZHIPU_BASE_URL",
+    "kimi": "KIMI_BASE_URL",
     "minimax": "MINIMAX_BASE_URL",
     "mimo": "MIMO_BASE_URL",
     "deepseek": "DEEPSEEK_BASE_URL",
@@ -50,6 +54,7 @@ _PROVIDER_BASE_URL_VARS = {
 }
 _DEFAULT_BASE_URLS = {
     "zhipu": "https://open.bigmodel.cn/api/paas/v4",
+    "kimi": "https://api.moonshot.ai/v1",
     "minimax": "https://api.minimax.io/v1",
     "mimo": "https://api.xiaomimimo.com/v1",
     "openrouter": "https://openrouter.ai/api/v1",
@@ -57,6 +62,21 @@ _DEFAULT_BASE_URLS = {
     "deepseek": "https://api.deepseek.com",
     "fireworks": "https://api.fireworks.ai/inference/v1",
 }
+KIMI_CODE_BASE_URL = "https://api.kimi.com/coding/v1"
+
+
+def resolve_kimi_base_url(api_key: str, default_url: str, env_override: str) -> str:
+    """Return the correct Kimi base URL for legacy Moonshot vs Kimi coding keys.
+
+    Kimi coding keys use the ``sk-kimi-`` prefix and are rejected by the legacy
+    Moonshot endpoint.  An explicit KIMI_BASE_URL/MOONSHOT_BASE_URL override
+    still wins.
+    """
+    if env_override:
+        return env_override
+    if api_key.startswith("sk-kimi-"):
+        return KIMI_CODE_BASE_URL
+    return default_url
 
 # Direct API model name → OpenRouter model ID
 _MINIMAX_OR_MODEL_MAP = {

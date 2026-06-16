@@ -3862,6 +3862,48 @@ execute = "claude:medium"
     }, f"critique tiers modified unexpectedly: {tier_models['critique']!r}"
 
 
+def test_persisted_phase_model_execute_override_suppresses_execute_tiers(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Persisted ``state.config.phase_model`` pins suppress matching tier tables.
+
+    Regression guard for auto/resume flows: those pins are merged after profile
+    expansion starts, so they must still disable per-tier execute routing.
+    """
+    _isolate_user_config(tmp_path, monkeypatch)
+
+    project_dir = tmp_path / "project"
+    project_dir.mkdir()
+    profiles_path = project_dir / ".megaplan" / "profiles.toml"
+    profiles_path.parent.mkdir(parents=True, exist_ok=True)
+    profiles_path.write_text("""\
+[profiles.dual-tier]
+plan = "claude:low"
+execute = "claude:medium"
+
+[profiles.dual-tier.tier_models.execute]
+1 = "hermes:deepseek-flash"
+4 = "claude:medium"
+5 = "claude:high"
+
+[profiles.dual-tier.tier_models.critique]
+1 = "hermes:deepseek-flash"
+4 = "claude:sonnet"
+5 = "claude:opus"
+""", encoding="utf-8")
+
+    args = _worker_args(profile="dual-tier")
+    state = {"config": {"phase_model": ["execute=codex:gpt-5.5"]}}
+    apply_profile_expansion(args, project_dir, state=state)
+
+    tier_models = getattr(args, "tier_models", None)
+    assert tier_models is not None, "critique tier table should remain after expansion"
+    assert "execute" not in tier_models
+    assert "critique" in tier_models
+    assert "execute=codex:gpt-5.5" in args.phase_model
+
+
 def test_phase_model_critique_override_suppresses_only_critique_tiers(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -4563,3 +4605,37 @@ def test_variable_codex_deepseek_tiers_match_partnered_convention(
     for t in (2, 3):
         assert "deepseek" in execute_tiers[t]
         assert "v4-pro" in execute_tiers[t]
+
+
+
+@pytest.mark.parametrize("profile_name", ["partnered-3", "partnered-4"])
+def test_partnered_kimi_profiles_use_kimi_k2_7_code_direct_api(
+    profile_name: str,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """partnered-3/4 premium slots route to the Moonshot direct API, not GLM."""
+    _isolate_user_config(tmp_path, monkeypatch)
+
+    args = _worker_args(profile=profile_name)
+    apply_profile_expansion(args, None)
+
+    with patch("arnold.pipelines.megaplan.workers._impl._is_agent_available", return_value=True):
+        # Premium cognitive phases should be on Kimi direct API.
+        for phase in ("plan", "critique_evaluator", "review", "feedback", "loop_plan"):
+            agent, _mode, _refreshed, model = resolve_agent_mode(phase, args)
+            assert agent == "hermes", (
+                f"{profile_name}.{phase} should use hermes, got {agent!r}"
+            )
+            assert model == "kimi:kimi-k2.7-code", (
+                f"{profile_name}.{phase} should route to Kimi K2.7 Code, got {model!r}"
+            )
+
+    # Tier 4/5 critique should also hit Kimi.
+    tier_models = getattr(args, "tier_models", {})
+    critique_tiers = tier_models.get("critique", {})
+    for tier in (4, 5):
+        assert critique_tiers.get(tier) == "hermes:kimi:kimi-k2.7-code", (
+            f"{profile_name} critique tier {tier} should be hermes:kimi:kimi-k2.7-code, "
+            f"got {critique_tiers.get(tier)!r}"
+        )

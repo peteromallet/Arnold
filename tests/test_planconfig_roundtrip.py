@@ -205,6 +205,39 @@ def test_build_state_config_includes_all_three_fields() -> None:
     assert config["full_suite_backstop_mode"] in ("off", "shadow", "enforce")
 
 
+def test_build_state_config_hermes_model_pins_all_unpinned_phases() -> None:
+    args = Namespace(
+        project_dir="/tmp/proj",
+        hermes="mimo:mimo-v2.5-pro-ultraspeed",
+        profile=None,
+        vendor=None,
+        critic=None,
+        depth=None,
+        deepseek_provider=None,
+        with_prep=False,
+        with_feedback=False,
+        prep_direction=None,
+        phase_model=["review=claude:low"],
+    )
+
+    config, *_ = _build_state_config(
+        args,
+        project_dir=Path("/tmp/proj"),
+        pipeline=None,
+        mode="code",
+        raw_form=None,
+        normalized_output_path=None,
+        normalized_primary_criterion=None,
+        from_doc_rel=None,
+    )
+
+    phase_models = config["phase_model"]
+    assert "review=claude:low" in phase_models
+    assert "plan=hermes:mimo:mimo-v2.5-pro-ultraspeed" in phase_models
+    assert "execute=hermes:mimo:mimo-v2.5-pro-ultraspeed" in phase_models
+    assert "review=hermes:mimo:mimo-v2.5-pro-ultraspeed" not in phase_models
+
+
 def test_build_state_config_cli_wins_over_get_effective() -> None:
     """CLI-supplied values are used even when get_effective returns something else."""
     args = Namespace(

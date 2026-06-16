@@ -672,7 +672,7 @@
               "metavar": null,
               "nargs": "REMAINDER",
               "option_strings": [],
-              "required": true,
+              "required": false,
               "type": null
             }
           ],
@@ -1125,7 +1125,7 @@
                   "metavar": null,
                   "nargs": "*",
                   "option_strings": [],
-                  "required": true,
+                  "required": false,
                   "type": null
                 }
               ],
@@ -1729,7 +1729,7 @@
               "metavar": null,
               "nargs": "REMAINDER",
               "option_strings": [],
-              "required": true,
+              "required": false,
               "type": null
             }
           ],
@@ -6454,9 +6454,8 @@
               "action": "_StoreAction",
               "choices": [
                 "abort",
+                "adopt-execution",
                 "force-proceed",
-                "waive-engine-overlap",
-                "refresh-engine-pin",
                 "add-note",
                 "replan",
                 "recover-blocked",
@@ -7432,7 +7431,7 @@
               "metavar": null,
               "nargs": "REMAINDER",
               "option_strings": [],
-              "required": true,
+              "required": false,
               "type": null
             }
           ],
@@ -9381,7 +9380,7 @@
                   "metavar": null,
                   "nargs": "*",
                   "option_strings": [],
-                  "required": true,
+                  "required": false,
                   "type": null
                 }
               ],

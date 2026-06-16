@@ -1012,3 +1012,150 @@ def test_execution_merge_config_includes_blocked_status() -> None:
         "execution._merge_batch_results must include 'blocked' in the task_updates "
         "status enum so workers can report poisoned-environment outcomes."
     )
+
+
+# ── T11: Regression tests for review template-fill path ────────────────────
+
+def test_review_scratch_known_keys_match_template_schema() -> None:
+    """The _REVIEW_SCRATCH_KNOWN_KEYS must match the keys that
+    _write_review_template produces in review_output.json."""
+    from arnold.pipelines.megaplan.handlers.review import _REVIEW_SCRATCH_KNOWN_KEYS
+
+    expected = {
+        "review_verdict",
+        "review_completion_status",
+        "criteria",
+        "issues",
+        "rework_items",
+        "summary",
+        "task_verdicts",
+        "sense_check_verdicts",
+    }
+    assert _REVIEW_SCRATCH_KNOWN_KEYS == expected, (
+        f"_REVIEW_SCRATCH_KNOWN_KEYS must match template keys; "
+        f"got {_REVIEW_SCRATCH_KNOWN_KEYS!r}, expected {expected!r}"
+    )
+
+
+def test_review_promotes_scratch_and_preserves_canonical(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Verifies that the review handler calls promote_scratch with the
+    correct scratch filename and known keys, and that the canonical
+    review.json artifact is still written.
+
+    Uses direct state manipulation to set up the 'executed' state so the
+    test does not depend on successful pipeline completion.
+    """
+    import json
+
+    from arnold.pipelines.megaplan.workers import WorkerResult
+    from tests.conftest import _make_plan_fixture_with_robustness
+
+    plan_fixture = _make_plan_fixture_with_robustness(
+        tmp_path, monkeypatch, robustness="full"
+    )
+
+    megaplan.handle_plan(plan_fixture.root, plan_fixture.make_args(plan=plan_fixture.plan_name))
+    megaplan.handle_critique(
+        plan_fixture.root, plan_fixture.make_args(plan=plan_fixture.plan_name)
+    )
+
+    # Directly set state to 'executed' so review can run without full pipeline
+    state_path = plan_fixture.plan_dir / "state.json"
+    state_data = json.loads(state_path.read_text(encoding="utf-8"))
+    state_data["current_state"] = "executed"
+    # Ensure finalize.json exists (needed by review handler)
+    if not (plan_fixture.plan_dir / "finalize.json").exists():
+        (plan_fixture.plan_dir / "finalize.json").write_text(
+            json.dumps({"tasks": [], "sense_checks": []}), encoding="utf-8"
+        )
+    if not (plan_fixture.plan_dir / "execution.json").exists():
+        (plan_fixture.plan_dir / "execution.json").write_text(
+            json.dumps({"batches": [], "task_updates": []}), encoding="utf-8"
+        )
+    state_path.write_text(json.dumps(state_data, indent=2), encoding="utf-8")
+
+    promote_called = []
+
+    def fake_promote_scratch(plan_dir, scratch_filename, known_keys, worker,
+                              seed_json=None, file_fill_instructed=True):
+        promote_called.append({
+            "scratch_filename": scratch_filename,
+            "known_keys": set(known_keys),
+            "file_fill_instructed": file_fill_instructed,
+        })
+        from arnold.pipelines.megaplan.handlers.structured_output import (
+            _strip_unknown_keys,
+        )
+        return "filled", _strip_unknown_keys(dict(worker.payload), known_keys)
+
+    inline_payload = {
+        "review_verdict": "approved",
+        "review_completion_status": "complete",
+        "criteria": [
+            {
+                "criterion": "Test passes",
+                "name": "test_criterion",
+                "priority": "must",
+                "pass": "pass",
+                "evidence": "All tests pass.",
+            }
+        ],
+        "issues": [],
+        "rework_items": [],
+        "summary": "All good.",
+        "task_verdicts": [],
+        "sense_check_verdicts": [],
+    }
+
+    def fake_run_step(step, state, plan_dir, args, *, root=None, resolved=None,
+                      prompt_override=None, prompt_kwargs=None, read_only=False):
+        if step == "review":
+            return (
+                WorkerResult(
+                    payload=inline_payload,
+                    raw_output="{}",
+                    duration_ms=1,
+                    cost_usd=0.0,
+                    session_id="review",
+                ),
+                "claude",
+                "persistent",
+                False,
+            )
+        raise AssertionError(f"unexpected step: {step}")
+
+    monkeypatch.setattr(megaplan.workers, "run_step_with_worker", fake_run_step)
+    monkeypatch.setattr(
+        "arnold.pipelines.megaplan.handlers.structured_output.promote_scratch",
+        fake_promote_scratch,
+    )
+
+    megaplan.handle_review(
+        plan_fixture.root,
+        plan_fixture.make_args(plan=plan_fixture.plan_name),
+    )
+
+    # promote_scratch must have been called with the correct scratch filename
+    assert len(promote_called) == 1, "promote_scratch must be called once"
+    assert promote_called[0]["scratch_filename"] == "review_output.json", (
+        f"promote_scratch must use 'review_output.json', "
+        f"got {promote_called[0]['scratch_filename']!r}"
+    )
+    expected_keys = {
+        "review_verdict", "review_completion_status", "criteria",
+        "issues", "rework_items", "summary", "task_verdicts", "sense_check_verdicts",
+    }
+    assert promote_called[0]["known_keys"] == expected_keys, (
+        f"promote_scratch known_keys mismatch: {promote_called[0]['known_keys']}"
+    )
+
+    # Canonical artifact must exist
+    canonical = plan_fixture.plan_dir / "review.json"
+    assert canonical.exists(), "review.json must be written (canonical promotion)"
+    canonical_data = json.loads(canonical.read_text(encoding="utf-8"))
+    assert "review_verdict" in canonical_data, (
+        "Canonical review.json must contain review_verdict"
+    )

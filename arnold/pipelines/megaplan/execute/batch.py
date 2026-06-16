@@ -73,11 +73,15 @@ from arnold.pipelines.megaplan.model_seam import (
 from arnold.pipelines.megaplan.orchestration.execution_evidence import (
     validate_execution_evidence,
 )
+from arnold.pipelines.megaplan.orchestration.phase_result import Deviation
 from arnold.pipelines.megaplan.orchestration.authority_readers import (
     scheduler_completed_ids,
 )
 from arnold.pipelines.megaplan.calibration import query_route_if_enabled
-from arnold.pipelines.megaplan.prompts import _execute_batch_prompt
+from arnold.pipelines.megaplan.prompts import (
+    _execute_batch_prompt,
+    _write_execute_batch_template,
+)
 from arnold.pipelines.megaplan.receipts import build_receipt
 from arnold.pipelines.megaplan.receipts.extractors import execute_metrics
 from arnold.pipelines.megaplan.receipts.writer import write_receipt
@@ -884,6 +888,7 @@ def _run_and_merge_batch(
                 quality_config=quality_config,
                 capture_git_status_snapshot_fn=capture_git_status_snapshot_fn,
                 base_ref=_milestone_base_sha,
+                state=state,
             )
         )
     merged_count, total_batch_tasks, acknowledged_count, total_batch_checks = (
@@ -908,6 +913,7 @@ def _run_and_merge_batch(
             capture_recursive_snapshot_fn=_capture_git_status_snapshot_recursive,
             carry_forward_paths=_carry_forward_paths,
             base_ref=_milestone_base_sha,
+            state=state,
         )
         observation_snapshot_fn = capture_git_status_snapshot_fn
         if (
@@ -926,6 +932,9 @@ def _run_and_merge_batch(
                 batches_total=batches_total,
                 capture_git_status_snapshot_fn=observation_snapshot_fn,
                 plan_dir=plan_dir,
+                carry_forward_paths=_carry_forward_paths,
+                base_ref=_milestone_base_sha,
+                state=state,
             )
         )
     if is_prose_mode(state):
@@ -951,6 +960,7 @@ def _run_and_merge_batch(
         state=state,
         plan_dir=plan_dir,
         artifact_prefix=f"execution_audit_batch_{batch_number}",
+        base_ref=_milestone_base_sha,
     )
     if attribution_result.records:
         execution_audit["auto_attribution"] = list(attribution_result.records)
@@ -1114,8 +1124,19 @@ def handle_execute_one_batch(
     batch_task_ids = global_batches[batch_number - 1]
     active_task_ids = set(batch_task_ids)
     batch_sense_check_ids = _active_sense_check_ids(finalize_data, active_task_ids)
+    batch_template_path = _write_execute_batch_template(
+        plan_dir,
+        batch_number,
+        batch_task_ids,
+        batch_sense_check_ids,
+    )
     batch_prompt = _execute_batch_prompt(
-        state, plan_dir, batch_task_ids, completed_ids, root=root
+        state,
+        plan_dir,
+        batch_task_ids,
+        completed_ids,
+        root=root,
+        batch_template_path=batch_template_path,
     )
 
     # Per-batch tier resolution: when tier_map is provided, select the model
@@ -1643,15 +1664,14 @@ def _deviation_dicts(deviations: Iterable[Deviation]) -> list[dict[str, Any]]:
 def _defer_baseline_unavailable_checkpoints(
     finalize_data: dict[str, Any],
 ) -> list[str]:
-    """Skip interim baseline-dependent checkpoints when no baseline exists.
+    """Skip baseline-dependent checkpoints when no baseline exists.
 
     A task whose contract is "introduce no new failures vs the recorded
-    baseline" is not actionable when baseline capture failed. If such a task is
-    placed before later implementation tasks, running it only produces an
-    indeterminate block and prevents the consumer fixes that may make the suite
-    meaningful. Defer only interim checkpoints; a final checkpoint with no
-    downstream work remains runnable/blocking so the operator still gets an
-    end-of-run signal.
+    baseline" is not actionable when baseline capture failed. Running it only
+    produces an indeterminate block: there is no recorded baseline to compare
+    against, and the harness-owned final verification/review remains the
+    authoritative end-of-run signal. Mark all such checkpoints non-runnable so
+    they cannot remain as permanently pending executable work.
     """
     if finalize_data.get("baseline_test_failures") is not None:
         return []
@@ -1672,15 +1692,13 @@ def _defer_baseline_unavailable_checkpoints(
             continue
         if not _is_baseline_dependent_verification_task(task):
             continue
-        if not _has_downstream_runnable_tasks(tasks, checkpoint_index=index):
-            continue
 
         prior_notes = str(task.get("executor_notes") or "").strip()
         defer_note = (
             "Deferred by harness: baseline_test_failures is null, so this "
-            "interim no-new-failures checkpoint cannot compare against a "
-            "recorded baseline. Continuing to downstream implementation tasks; "
-            "the final verification/review phase remains authoritative."
+            "no-new-failures checkpoint cannot compare against a recorded "
+            "baseline. The harness-owned final verification/review phase "
+            "remains authoritative."
         )
         task["status"] = "skipped"
         task["executor_notes"] = (
@@ -2117,6 +2135,13 @@ def handle_execute_auto_loop(
         plan_dir=plan_dir,
         root=root,
     )
+    completed_task_ids |= {
+        task["id"]
+        for task in tasks
+        if isinstance(task, dict)
+        and task.get("status") == "skipped"
+        and isinstance(task.get("id"), str)
+    }
     blocked_task_ids = {
         task["id"]
         for task in tasks
@@ -2126,7 +2151,7 @@ def handle_execute_auto_loop(
         task
         for task in tasks
         if isinstance(task.get("id"), str)
-        and task.get("status") != "blocked"
+        and task.get("status") not in {"blocked", "skipped"}
         and task.get("id") not in completed_task_ids
     ]
     review_data: dict[str, Any] = {}
@@ -2315,6 +2340,7 @@ def handle_execute_auto_loop(
             _attach_next_step_runtime(response)
             return response
 
+    baseline_deviations = []
     pending_batches = compute_task_batches(
         pending_tasks, completed_ids=completed_task_ids
     )
@@ -2344,16 +2370,21 @@ def handle_execute_auto_loop(
     global_batch_lookup = {
         tuple(batch): index + 1 for index, batch in enumerate(global_batches)
     }
+    no_pending_execution = not pending_tasks and not rework_mode
     batches_to_run = (
         [review_rework_task_ids]
         if rework_mode
-        else ([all_task_ids] if single_batch_mode else split_batches)
+        else ([] if no_pending_execution else ([all_task_ids] if single_batch_mode else split_batches))
     )
     total_batches = len(batches_to_run) or 1
     active_task_ids = set(
         review_rework_task_ids
         if rework_mode
-        else (all_task_ids if single_batch_mode else [task["id"] for task in pending_tasks])
+        else (
+            all_task_ids
+            if no_pending_execution or single_batch_mode
+            else [task["id"] for task in pending_tasks]
+        )
     )
     active_sense_check_ids = set(
         all_sense_check_ids
@@ -2388,6 +2419,26 @@ def handle_execute_auto_loop(
     batch_to_tier: list[dict[str, Any]] = []
 
     for batch_index, batch_task_ids in enumerate(batches_to_run, start=1):
+        batch_number_for_artifact = (
+            1
+            if single_batch_mode
+            else global_batch_lookup.get(tuple(batch_task_ids), batch_index)
+        )
+        batch_sense_check_ids = (
+            all_sense_check_ids
+            if single_batch_mode
+            else _active_sense_check_ids(finalize_data, set(batch_task_ids))
+        )
+        batch_template_path = (
+            None
+            if single_batch_mode
+            else _write_execute_batch_template(
+                plan_dir,
+                batch_number_for_artifact,
+                batch_task_ids,
+                batch_sense_check_ids,
+            )
+        )
         batch_prompt = (
             None
             if single_batch_mode
@@ -2402,17 +2453,8 @@ def handle_execute_auto_loop(
                     if rework_mode
                     else None
                 ),
+                batch_template_path=batch_template_path,
             )
-        )
-        batch_number_for_artifact = (
-            1
-            if single_batch_mode
-            else global_batch_lookup.get(tuple(batch_task_ids), batch_index)
-        )
-        batch_sense_check_ids = (
-            all_sense_check_ids
-            if single_batch_mode
-            else _active_sense_check_ids(finalize_data, set(batch_task_ids))
         )
         batches_total_for_observation = total_batches
 
@@ -2656,6 +2698,18 @@ def handle_execute_auto_loop(
         atomic_write_text(plan_dir / "execution_trace.jsonl", "".join(trace_chunks))
 
     finalize_data = read_json(plan_dir / "finalize.json")
+    deferred_checkpoint_ids = _defer_baseline_unavailable_checkpoints(finalize_data)
+    if deferred_checkpoint_ids:
+        log.info(
+            "deferred baseline-unavailable verification checkpoint(s): %s",
+            ", ".join(deferred_checkpoint_ids),
+        )
+    _chain_policy = (state.get("meta") or {}).get("chain_policy")
+    _milestone_base_sha = (
+        _chain_policy.get("milestone_base_sha")
+        if isinstance(_chain_policy, dict)
+        else None
+    )
     execution_audit = validate_execution_evidence(
         finalize_data,
         project_dir,
@@ -2663,6 +2717,7 @@ def handle_execute_auto_loop(
         state=state,
         plan_dir=plan_dir,
         artifact_prefix="execution_audit_aggregate",
+        base_ref=_milestone_base_sha,
     )
     deviations = list(aggregate_payload.get("deviations", []))
     if timeout_recovery is not None:
@@ -2741,19 +2796,6 @@ def handle_execute_auto_loop(
             else None
         ),
     )
-    deferred_checkpoint_ids = _defer_baseline_unavailable_checkpoints(finalize_data)
-    if deferred_checkpoint_ids:
-        atomic_write_json(plan_dir / "finalize.json", finalize_data)
-        tracking_note = _format_execute_tracking_note(
-            merged_count=tracked_tasks,
-            total_tasks=total_tasks,
-            acknowledged_count=acknowledged_checks,
-            total_checks=total_checks,
-        )
-        log.info(
-            "deferred baseline-unavailable interim verification checkpoint(s): %s",
-            ", ".join(deferred_checkpoint_ids),
-        )
     active_blocked_task_ids = {
         task["id"]
         for task in finalize_data.get("tasks", [])
@@ -2765,6 +2807,7 @@ def handle_execute_auto_loop(
         finalize_data, active_blocked_task_ids
     )
     active_blocked_task_ids -= baseline_unavailable_blocked_ids
+    prereq_blocked_task_ids = set(active_blocked_task_ids)
     blocked_task_reason = _blocked_task_reason(active_blocked_task_ids)
     if blocked_task_reason:
         blocking_reasons.append(blocked_task_reason)

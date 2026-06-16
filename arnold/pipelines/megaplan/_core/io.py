@@ -15,6 +15,14 @@ from base64 import b64decode, b64encode
 from pathlib import Path
 from typing import Any, Iterable, Literal, Mapping, Sequence
 
+try:  # Python 3.11+
+    import tomllib  # type: ignore[import-not-found]
+except ModuleNotFoundError:  # pragma: no cover - Python <3.11 fallback
+    try:
+        import tomli as tomllib  # type: ignore[import-not-found]
+    except ModuleNotFoundError:  # pragma: no cover
+        tomllib = None  # type: ignore[assignment]
+
 from arnold.pipelines.megaplan.schemas import SCHEMAS, strict_schema
 from arnold.pipelines.megaplan.profiles.policy import KNOWN_AGENTS
 

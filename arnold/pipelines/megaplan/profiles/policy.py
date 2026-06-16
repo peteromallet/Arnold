@@ -794,8 +794,14 @@ def apply_profile_expansion(
     if getattr(args, "_profile_applied", False):
         return args
 
+    preexpanded_tier_models = bool(getattr(args, "tier_models", None))
     cli_phase_models = list(getattr(args, "phase_model", None) or [])
-    cli_steps = {pm.split("=", 1)[0] for pm in cli_phase_models if "=" in pm}
+    raw_cli_steps = {pm.split("=", 1)[0] for pm in cli_phase_models if "=" in pm}
+    if preexpanded_tier_models:
+        live_steps = getattr(args, "_live_phase_model_steps", set())
+        cli_steps = set(live_steps) if isinstance(live_steps, set) else set()
+    else:
+        cli_steps = raw_cli_steps
     args._live_phase_model_steps = set(cli_steps)
 
     phase_models = list(cli_phase_models)
@@ -985,6 +991,17 @@ def apply_profile_expansion(
             else:
                 phase_models.append(pm)
                 cli_steps.add(step)
+
+    # Persisted phase_model pins are merged after profile tier tables are
+    # resolved, so they must suppress the matching tier table here too. Without
+    # this, a stored execute=codex:... pin can still leave tier_models.execute
+    # active and route lower-complexity batches through a profile default.
+    tier_models_after_persisted = getattr(args, "tier_models", None)
+    if tier_models_after_persisted:
+        for phase in ("execute", "critique"):
+            if phase in cli_steps:
+                tier_models_after_persisted.pop(phase, None)
+        args.tier_models = tier_models_after_persisted or None
 
     args.phase_model = phase_models
     args._profile_applied = True

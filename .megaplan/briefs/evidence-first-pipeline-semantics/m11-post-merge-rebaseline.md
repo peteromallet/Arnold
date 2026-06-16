@@ -17,7 +17,7 @@ IN:
 - Run the contamination/dogfood-shadow regression and require isolation refusal or recorded local-dev waiver before mutation.
 - Run the phantom-dependency regression and require authority readers to resolve divergence down before dependent work starts.
 - Run the frozen-config regression and require resumed routing to recompute from pinned inputs and current capability, emitting `routing_resolution_decision`.
-- Produce a post-merge regression report with commit SHA, driver engine pin, target head, command evidence, and links to relevant decisions/waivers.
+- Produce a post-merge regression report with commit SHA, driver engine root, target head, command evidence, and links to relevant decisions.
 - Document any remaining legacy/prose/human-deferred behavior as explicit residual risk, not as silent pass.
 
 OUT:
@@ -25,7 +25,7 @@ OUT:
 - Do not add new feature scope after merge.
 - Do not re-plan the epic from scratch.
 - Do not accept reviewer prose as proof when command/evidence artifacts are available.
-- Do not leave the rebuilt driver engine ambiguous or unpinned.
+- Do not leave the rebuilt driver engine location ambiguous.
 
 ## Locked Decisions
 
@@ -44,17 +44,17 @@ OUT:
 
 - Keep the rebaseline focused on the motivating failures, not a full new audit.
 - Avoid mutating unrelated plan dirs or workspaces.
-- Make results reproducible from the recorded merged commit and driver engine pin.
+- Make results reproducible from the recorded merged commit and driver engine root.
 - Preserve manual merge policy; this milestone proves the merged result after the human merge.
 
 ## Done Criteria
 
-1. The frozen driver engine is rebuilt or refreshed from the merged result and its pin is recorded.
+1. The driver engine is rebuilt or refreshed from the merged result and its root is recorded.
 2. The silent model degrade regression produces capability evidence and a loud gate result.
 3. The contamination regression proves engine/target isolation or an explicit recorded local-dev waiver.
 4. The phantom-dependency regression proves uncorroborated done resolves down and does not unblock dependent work.
 5. The frozen-config regression proves routing recomputes from pinned inputs and emits `routing_resolution_decision`.
-6. A post-merge regression report records commit SHA, driver engine pin, target head, command evidence, decisions/waivers, and residual risks.
+6. A post-merge regression report records commit SHA, driver engine root, target head, command evidence, decisions, and residual risks.
 7. Tests or scripted scenarios are repeatable and documented.
 
 ## Touchpoints
@@ -74,4 +74,3 @@ OUT:
 - Depth: `low`
 
 Rationale: this is validation and packaging rather than new architecture. The work is bounded, but it needs enough rigor to prove the epic closes the exact failures that motivated it.
-

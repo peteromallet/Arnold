@@ -31,6 +31,7 @@ def _finalize_prompt(state: PlanState, plan_dir: Path, root: Path | None = None)
             f"""
             - Each task represents a document section or group of sections to author.
             - Task objects use `sections_written` (array of section IDs) instead of `files_changed`/`commands_run`.
+            - Return the task DAG JSON only. Do NOT include a top-level `plan`, `final_plan`, `document`, or prose draft field.
             - Do NOT include `files_changed` or `commands_run` in task descriptions — the executor writes to a single output file.
             - Do NOT include `baseline_test_failures` or `baseline_test_command` — there are no tests for doc mode.
             - The FINAL task should be a review/polish pass over the assembled document, not a test run.
@@ -60,6 +61,16 @@ def _finalize_prompt(state: PlanState, plan_dir: Path, root: Path | None = None)
             - `user_actions` must be `[]` in doc, joke, and creative modes. These modes must not emit human-only user_actions.
             """
         ).strip()
+    if is_prose_mode(state):
+        final_task_guidance = (
+            "- The FINAL task MUST review/polish the assembled prose artifact; it must not run tests."
+        )
+    else:
+        final_task_guidance = (
+            "- The FINAL task MUST run tests; harness validation will reject finalize output without it."
+        )
+    output_path = _write_finalize_template(plan_dir, state)
+
     return textwrap.dedent(
         f"""
         You are DECOMPOSING the approved plan below into an ordered task DAG. The plan has been
@@ -80,6 +91,11 @@ def _finalize_prompt(state: PlanState, plan_dir: Path, root: Path | None = None)
         Gate summary:
         {json_dump(gate).strip()}
 
+        Your output template is at: {output_path}
+        Read this file first — it contains the expected JSON structure (tasks, user_actions, sense_checks, watch_items, meta_commentary).
+        Fill the JSON structure with your results and write the file back.
+        If you cannot use file tools, return the populated JSON structure inline as your response instead.
+
         Requirements:
         - Produce structured JSON only.
         - For each `## Step N:` in the plan, emit 1-N tasks.
@@ -94,7 +110,7 @@ def _finalize_prompt(state: PlanState, plan_dir: Path, root: Path | None = None)
           2. Bundle context-related light work. Several c=2/c=3 tasks touching the same files or contracts batch well together.
           3. Never emit more than 5 actionable parallel siblings. If a step legitimately fans out wider, linearize via `depends_on` so the runtime batcher sees at most 5 at a time.
         - Do not include `validation` or `coverage_complete` fields - the harness computes those.
-        - The FINAL task MUST run tests; harness validation will reject finalize output without it.
+        {final_task_guidance}
         - `tasks` must be an ordered array of task objects. Every task object must include:
           - `id`: short stable task ID like `T1`
           - `description`: concrete work item
@@ -159,3 +175,29 @@ def _finalize_prompt(state: PlanState, plan_dir: Path, root: Path | None = None)
         - {task_field_guidance}
         """
     ).strip()
+
+
+def _write_finalize_template(
+    plan_dir: Path,
+    state: PlanState,
+) -> Path:
+    """Write the finalize output template file and return its path.
+
+    The template provides the expected top-level keys with empty
+    collections so the model only has to populate them.  No ID
+    prepopulation is needed — the model generates task and
+    sense-check IDs from the approved plan.
+    """
+    import json
+
+    template: dict[str, object] = {
+        "tasks": [],
+        "user_actions": [],
+        "sense_checks": [],
+        "watch_items": [],
+        "meta_commentary": "",
+    }
+
+    output_path = plan_dir / "finalize_output.json"
+    output_path.write_text(json.dumps(template, indent=2), encoding="utf-8")
+    return output_path

@@ -12,7 +12,7 @@ from arnold.pipelines.megaplan.runtime.execution_environment import (
     persist_plan_isolation_evidence,
 )
 from arnold.pipelines.megaplan.forms import available_form_ids
-from arnold.pipelines.megaplan.profiles import apply_profile_expansion, load_profile_metadata
+from arnold.pipelines.megaplan.profiles import DEFAULT_AGENT_ROUTING, apply_profile_expansion, load_profile_metadata
 from arnold.pipelines.megaplan.profiles import ROBUSTNESS_LEVELS, normalize_robustness
 from arnold.pipelines.megaplan.types import CliError, PlanState, StepResponse
 from arnold.pipelines.megaplan.planning.state import STATE_INITIALIZED
@@ -292,6 +292,20 @@ def _build_state_config(
     if from_doc_rel is not None:
         config["from_doc"] = from_doc_rel
     phase_models = list(getattr(args, "phase_model", None) or [])
+    hermes_model = getattr(args, "hermes", None)
+    if isinstance(hermes_model, str) and hermes_model.strip():
+        pinned_phases = {
+            entry.split("=", 1)[0]
+            for entry in phase_models
+            if isinstance(entry, str) and "=" in entry
+        }
+        hermes_model = hermes_model.strip()
+        hermes_spec = hermes_model if hermes_model.startswith("hermes:") else f"hermes:{hermes_model}"
+        phase_models.extend(
+            f"{phase}={hermes_spec}"
+            for phase in DEFAULT_AGENT_ROUTING
+            if phase not in pinned_phases
+        )
     if phase_models:
         config["phase_model"] = phase_models
 

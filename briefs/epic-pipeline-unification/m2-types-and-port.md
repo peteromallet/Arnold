@@ -225,7 +225,7 @@ ships only the type + the Port surfacing.
   `Step` Protocol additively so `AgentStep`/`PanelReviewerStep` satisfy `produces`/`consumes` via defaults.
 - **Back-compat shims:** `JoinFn`/`PromoteFn` are public aliases consumed by `pattern_topology.py`,
   `pattern_dynamic.py`, `subloop.py`, `planning.py`, tests — update all in lockstep; no half-typed alias.
-- Don't dogfood off an editable install — run on M0's pinned engine (EPIC:178; MEMORY dogfood-engine-shadow).
+- Don't dogfood off an editable install — run on M0's separate external driver (EPIC:178; MEMORY dogfood-engine-shadow).
 
 ## Done criteria (testable, incl. the milestone's oracle gate)
 

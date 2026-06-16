@@ -58,8 +58,6 @@ db = [
 # (see [project].dependencies). This extra is retained so existing install
 # commands / docs that say `pip install '.[agent]'` keep working as a no-op.
 agent = []
-[project.scripts]
-arnold = "arnold.cli:cli_entry"
 
 [tool.uv]
 # The hermes/agent backend's packages are now core [project].dependencies, so a

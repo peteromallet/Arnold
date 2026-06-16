@@ -695,6 +695,23 @@ def _prior_unresolved_flag_ids(plan_dir: Path, current_iteration: int) -> set[st
         return set()
 
 
+# ── T10: Gate-scoped scratch promotion known keys ──────────────────────────
+# The model produces only these keys in the scratch template; unknown
+# top-level keys injected by the model are stripped before promotion.
+_GATE_SCRATCH_KNOWN_KEYS: frozenset[str] = frozenset(
+    {
+        "recommendation",
+        "rationale",
+        "signals_assessment",
+        "warnings",
+        "flag_resolutions",
+        "accepted_tradeoffs",
+        "settled_decisions",
+    }
+)
+# ────────────────────────────────────────────────────────────────────────────
+
+
 def handle_gate(root: Path, args: argparse.Namespace) -> StepResponse:
     with load_plan_locked(root, args.plan, step="gate") as (plan_dir, state):
         post_revise_gate = _post_revise_gate_allowed(state, plan_dir)
@@ -714,6 +731,39 @@ def handle_gate(root: Path, args: argparse.Namespace) -> StepResponse:
             root=root,
             resolved=resolved,
         )
+
+        # ── T10: Scratch promotion (first attempt) ──────────────────
+        # Prefer valid filled gate_output.json over worker.payload;
+        # fall back to worker.payload when scratch is missing/unmodified;
+        # fail hard on modified invalid scratch when file-fill was
+        # instructed (hermes agent).
+        from arnold.pipelines.megaplan.handlers.structured_output import (
+            promote_scratch,
+            require_scratch_filename_for_phase,
+        )
+
+        _scratch_filename = require_scratch_filename_for_phase("gate")
+        _seed_path = plan_dir / _scratch_filename
+        _seed_json: str | None = None
+        if _seed_path.exists():
+            try:
+                _seed_json = _seed_path.read_text(encoding="utf-8")
+            except (OSError, UnicodeDecodeError):
+                _seed_json = None
+
+        _file_fill_instructed = agent == "hermes"
+
+        _, _promoted = promote_scratch(
+            plan_dir,
+            _scratch_filename,
+            _GATE_SCRATCH_KNOWN_KEYS,
+            worker,
+            seed_json=_seed_json,
+            file_fill_instructed=_file_fill_instructed,
+        )
+        worker.payload = _promoted
+        # ────────────────────────────────────────────────────────────
+
         gate_payload = worker.payload
         try:
             audit_step_payload("gate", gate_payload)
@@ -774,6 +824,31 @@ def handle_gate(root: Path, args: argparse.Namespace) -> StepResponse:
                 resolved=resolved,
                 prompt_override=reprompt_prompt,
             )
+
+            # ── T10: Scratch promotion (reprompt) ───────────────────
+            # Same promotion semantics as the first attempt: prefer
+            # filled gate_output.json, fall back to worker.payload when
+            # missing/unmodified, fail hard on modified invalid scratch
+            # under file-fill instruction.
+            _retry_seed_path = plan_dir / _scratch_filename
+            _retry_seed_json: str | None = None
+            if _retry_seed_path.exists():
+                try:
+                    _retry_seed_json = _retry_seed_path.read_text(encoding="utf-8")
+                except (OSError, UnicodeDecodeError):
+                    _retry_seed_json = None
+
+            _, _retry_promoted = promote_scratch(
+                plan_dir,
+                _scratch_filename,
+                _GATE_SCRATCH_KNOWN_KEYS,
+                retry_worker,
+                seed_json=_retry_seed_json,
+                file_fill_instructed=_file_fill_instructed,
+            )
+            retry_worker.payload = _retry_promoted
+            # ────────────────────────────────────────────────────────
+
             worker = _merge_gate_worker_attempt(worker, retry_worker)
             gate_payload = worker.payload
             try:

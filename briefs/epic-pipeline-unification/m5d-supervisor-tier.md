@@ -143,7 +143,7 @@ it does not name planning's transitions.
 - **Autonomy ladder, never a human park** (REGISTER §74, §75, §73): escalate = retry → bump profile/robustness
   one tier → `stop_chain` + auto-ticket; blocked = bounded recover-from-stuck ladder → escalate/abort;
   awaiting-PR-merge = auto-merge-on-green. The standing backstop is `stop_chain` + auto-filed megaplan-ticket.
-- **Don't dogfood off an editable install; pinned engine; parity gate honestly labelled** (happy-path
+- **Don't dogfood off an editable install; separate external driver; parity gate honestly labelled** (happy-path
   control-flow/artifact parity, not "drift provably zero").
 
 ## Done criteria (testable — incl. the milestone's oracle gate)

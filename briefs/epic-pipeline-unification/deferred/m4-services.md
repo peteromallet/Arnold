@@ -57,7 +57,7 @@
 ## Constraints
 
 - **Back-compat (EPIC cross-cutting):** `extra="ignore"`, name aliases, preserve 26 `MEGAPLAN_*`, keep planning phase names valid. Single-process key-pool + budget behaviour byte-identical when no shared ledger. The 14 planning-named dispatch callers and auto.py's three retry loops resolve to the same behaviour through the new `RecoveryPolicy` binding (characterization-replay against recorded runs).
-- **Parity gate stays green & honestly labelled** (control-flow/artifact parity on the happy path). Schema validation report-only until the last milestone; don't dogfood off an editable install (pinned engine).
+- **Parity gate stays green & honestly labelled** (control-flow/artifact parity on the happy path). Schema validation report-only until the last milestone; don't dogfood off an editable install (use a separate external driver).
 - **Liveness is the highest-severity slice** (a4): hermes has no subprocess watchdog, so the service MUST guarantee `active_step`+sink for hermes or hermes loses all stall protection.
 - **The policy spine is the highest-leverage slice** (Theme C, Top-risk #4): without it the fourth tool reaches into planning or reinvents retry/budget/observability — the exact reinvention the SDK exists to abolish. The three owners must land together; a partial spine (e.g. `RecoveryPolicy` without the budget authority) leaves money with no single live owner.
 - **Do not regress the blessed escape hatches:** the `prompt_override` path (a6) and the in-process pool fallback (a2).

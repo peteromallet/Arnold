@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import hashlib
+import html
 import json
 import os
 import sys
 import threading
 import time
 from pathlib import Path
+from types import SimpleNamespace
 from typing import TextIO
 
 import re
@@ -26,7 +28,6 @@ from arnold.pipelines.megaplan.workers._impl import (
     session_key_for,
 )
 from arnold.pipelines.megaplan._core import creative_form_id, read_json, schemas_root, touch_active_step
-from arnold.pipelines.megaplan.forms.provocations import select_active_checks
 from arnold.pipeline import StepInvocation
 from arnold.pipelines.megaplan.model_seam import (
     ModelBudgetError,
@@ -141,18 +142,187 @@ def _import_hermes_runtime():
 
         raise CliError(
             "agent_deps_missing",
-            "hermes backend requires the bundled runtime packages: pip install megaplan-harness (or pip install -e . in a source checkout; '[agent]' is only a no-op compatibility extra).",
+            "hermes backend requires the bundled runtime packages: pip install arnold (or pip install -e . in a source checkout; '[agent]' is only a no-op compatibility extra).",
         ) from exc
+    _install_content_tool_call_normalizer(AIAgent)
     return AIAgent, SessionDB
 
 
+_CONTENT_TOOL_NAMES = frozenset({"read_file", "search_files", "web_extract", "fetch_url", "web_search"})
+_CONTENT_TOOL_ALIASES = {"fetch_url": "web_extract"}
+_CONTENT_ARG_ALIASES = {
+    "read_file": {"filePath": "path", "filepath": "path"},
+}
+
+
+def _coerce_xml_tool_value(raw: str) -> object:
+    text = html.unescape(raw).strip()
+    if re.fullmatch(r"-?\d+", text):
+        try:
+            return int(text)
+        except ValueError:
+            return text
+    if re.fullmatch(r"-?(?:\d+\.\d*|\d*\.\d+)", text):
+        try:
+            return float(text)
+        except ValueError:
+            return text
+    lowered = text.lower()
+    if lowered == "true":
+        return True
+    if lowered == "false":
+        return False
+    if lowered in {"null", "none"}:
+        return None
+    return text
+
+
+def _make_content_tool_call(name: str, args: dict[str, object], index: int) -> SimpleNamespace:
+    normalized_name = _CONTENT_TOOL_ALIASES.get(name, name)
+    for old_key, new_key in _CONTENT_ARG_ALIASES.get(normalized_name, {}).items():
+        if old_key in args and new_key not in args:
+            args[new_key] = args.pop(old_key)
+    return SimpleNamespace(
+        id=f"call_content_xml_{index}",
+        type="function",
+        function=SimpleNamespace(
+            name=normalized_name,
+            arguments=json.dumps(args, ensure_ascii=False),
+        ),
+    )
+
+
+def _parse_dsml_content_tool_calls(content: str) -> list[SimpleNamespace]:
+    calls: list[SimpleNamespace] = []
+    invoke_pattern = re.compile(
+        r"<[^<>\s]*invoke\b[^<>]*\bname=[\"'](?P<name>[^\"']+)[\"'][^<>]*>"
+        r"(?P<body>.*?)"
+        r"</[^<>\s]*invoke>",
+        re.DOTALL,
+    )
+    param_pattern = re.compile(
+        r"<[^<>\s]*parameter\b(?P<attrs>[^<>]*)>"
+        r"(?P<value>.*?)"
+        r"</[^<>\s]*parameter>",
+        re.DOTALL,
+    )
+    name_pattern = re.compile(r"\bname=[\"'](?P<name>[^\"']+)[\"']")
+
+    for match in invoke_pattern.finditer(content):
+        name = match.group("name").strip()
+        if name not in _CONTENT_TOOL_NAMES:
+            continue
+        args: dict[str, object] = {}
+        for param in param_pattern.finditer(match.group("body")):
+            name_match = name_pattern.search(param.group("attrs"))
+            if not name_match:
+                continue
+            args[name_match.group("name")] = _coerce_xml_tool_value(param.group("value"))
+        calls.append(_make_content_tool_call(name, args, len(calls)))
+    return calls
+
+
+def _parse_plain_xml_content_tool_calls(content: str) -> list[SimpleNamespace]:
+    calls: list[SimpleNamespace] = []
+    tool_pattern = re.compile(
+        r"<(?P<name>read_file|search_files|web_extract|fetch_url|web_search)\b[^>]*>"
+        r"(?P<body>.*?)"
+        r"</(?P=name)>",
+        re.DOTALL,
+    )
+    child_pattern = re.compile(
+        r"<(?P<key>[A-Za-z_][A-Za-z0-9_-]*)\b[^>]*>"
+        r"(?P<value>.*?)"
+        r"</(?P=key)>",
+        re.DOTALL,
+    )
+
+    for match in tool_pattern.finditer(content):
+        args = {
+            child.group("key"): _coerce_xml_tool_value(child.group("value"))
+            for child in child_pattern.finditer(match.group("body"))
+        }
+        calls.append(_make_content_tool_call(match.group("name"), args, len(calls)))
+    return calls
+
+
+def _content_xml_tool_calls(content: object) -> list[SimpleNamespace]:
+    if not isinstance(content, str) or "<" not in content:
+        return []
+    return _parse_dsml_content_tool_calls(content) or _parse_plain_xml_content_tool_calls(content)
+
+
+def _strip_content_xml_tool_calls(content: str) -> str | None:
+    stripped = re.sub(
+        r"<[^<>\s]*tool_calls\b[^<>]*>.*?</[^<>\s]*tool_calls>",
+        "",
+        content,
+        flags=re.DOTALL,
+    )
+    stripped = re.sub(
+        r"<[^<>\s]*invoke\b[^<>]*\bname=[\"'](?:read_file|search_files|web_extract|fetch_url|web_search)[\"'][^<>]*>"
+        r".*?</[^<>\s]*invoke>",
+        "",
+        stripped,
+        flags=re.DOTALL,
+    )
+    stripped = re.sub(
+        r"<(?:read_file|search_files|web_extract|fetch_url|web_search)\b[^>]*>.*?</(?:read_file|search_files|web_extract|fetch_url|web_search)>",
+        "",
+        stripped,
+        flags=re.DOTALL,
+    ).strip()
+    return stripped or None
+
+
+def _normalize_response_content_tool_calls(response) -> None:
+    """Promote DeepSeek/Kimi XML content tool calls to OpenAI-style objects."""
+    choices = getattr(response, "choices", None)
+    if not choices:
+        return
+    message = getattr(choices[0], "message", None)
+    if message is None or getattr(message, "tool_calls", None):
+        return
+    parsed = _content_xml_tool_calls(getattr(message, "content", None))
+    if not parsed:
+        return
+    message.tool_calls = parsed
+    message.content = _strip_content_xml_tool_calls(message.content or "")
+    try:
+        choices[0].finish_reason = "tool_calls"
+    except Exception:
+        pass
+
+
+def _install_content_tool_call_normalizer(AIAgent) -> None:
+    if getattr(AIAgent, "_megaplan_content_tool_call_normalizer", False):
+        return
+
+    original_api_call = AIAgent._interruptible_api_call
+    original_streaming_api_call = AIAgent._interruptible_streaming_api_call
+
+    def _api_call_with_content_tool_calls(self, api_kwargs: dict):
+        response = original_api_call(self, api_kwargs)
+        _normalize_response_content_tool_calls(response)
+        return response
+
+    def _streaming_api_call_with_content_tool_calls(self, api_kwargs: dict, *, on_first_delta: callable = None):
+        response = original_streaming_api_call(self, api_kwargs, on_first_delta=on_first_delta)
+        _normalize_response_content_tool_calls(response)
+        return response
+
+    AIAgent._interruptible_api_call = _api_call_with_content_tool_calls
+    AIAgent._interruptible_streaming_api_call = _streaming_api_call_with_content_tool_calls
+    AIAgent._megaplan_content_tool_call_normalizer = True
+
+
 # Fireworks rejects requests with `max_tokens > 4096` unless `stream=true`.
-# Direct DeepSeek accepts high-token non-streaming calls, but streaming keeps
-# the transport closer to the Fireworks path and avoids quiet long-poll gaps.
+# Direct DeepSeek and Kimi accept high-token non-streaming calls, but streaming
+# keeps the transport observable and avoids quiet long-poll gaps.
 # Streaming lives entirely inside the worker; downstream callers never see
 # streaming semantics.
 _HIGH_TOKEN_STREAM_MAX_TOKENS = 4096
-_HIGH_TOKEN_STREAM_PROVIDERS = ("fireworks:", "deepseek:")
+_HIGH_TOKEN_STREAM_PROVIDERS = ("fireworks:", "deepseek:", "kimi:")
 
 
 def _no_op_stream(_text: str) -> None:
@@ -688,12 +858,15 @@ def _reasoning_config_for_model(
 def _toolsets_for_phase(phase: str) -> list[str] | None:
     """Return toolsets for a given megaplan phase.
 
-    Execute phase gets full terminal + file + web access.
-    Planning and critique phases get file + web (verify APIs against docs).
-    Prep orchestration stays read-only even when it needs file/web research.
+    Execute phase gets terminal + file access.
+    Planning and critique phases get local file access by default.
+    Prep orchestration stays read-only.
+    Web tools are opt-in because local-code plans otherwise tend to waste turns
+    trying Firecrawl or ``web_extract(file://...)`` instead of reading the repo.
     Gate and review get file only (judgment, not investigation).
     Finalize is a pure compiler and uses structured JSON response format without tools.
     """
+    web_toolsets = ["web"] if _web_tools_enabled_for_hermes() else []
     prep_readonly_phases = {
         "prep",
         "prep-triage",
@@ -704,16 +877,24 @@ def _toolsets_for_phase(phase: str) -> list[str] | None:
         "prep_distill",
     }
     if phase == "execute":
-        return ["terminal", "file", "web"]
+        return ["terminal", "file", *web_toolsets]
     if phase in prep_readonly_phases:
-        return ["file-readonly", "web"]
+        return ["file-readonly", *web_toolsets]
     if phase in ("plan", "critique", "revise"):
-        return ["file", "web"]
+        return ["file", *web_toolsets]
     if phase == "finalize":
         return None
     return ["file"]
 
 
+def _web_tools_enabled_for_hermes() -> bool:
+    raw = os.getenv("MEGAPLAN_HERMES_WEB_TOOLS", "")
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
+# Legacy template-phase constants preserved for backward-compatible fallback in
+# deferred/unregistered phases. The authoritative template dispatch now reads
+# TemplateRegistration.mode from the central registry (T7).
 _TEMPLATE_FILE_PHASES = {"finalize", "review", "prep"}
 _CUSTOM_TEMPLATE_PHASES = {"critique", "review"}
 
@@ -1121,6 +1302,14 @@ def parse_agent_output(
 
 def clean_parsed_payload(payload: dict, schema: dict, step: str) -> None:
     """Normalize a parsed Hermes payload before validation."""
+    # Some providers flatten the single plan success criterion to top-level
+    # fields even when the schema asks for success_criteria[]. Normalize that
+    # common shape without weakening the plan schema for unrelated keys.
+    if step == "plan":
+        _normalize_flattened_plan_success_criterion(payload)
+    if step == "execute":
+        _strip_execute_bookkeeping_fields(payload)
+
     # Strip guide-only fields from critique checks (guidance/prior_findings
     # are in the template file to help the model, but not part of the schema)
     if step == "critique" and isinstance(payload.get("checks"), list):
@@ -1136,6 +1325,39 @@ def clean_parsed_payload(payload: dict, schema: dict, step: str) -> None:
     # Normalize field aliases in nested arrays (e.g. critique flags use
     # "summary" instead of "concern", "detail" instead of "evidence").
     _normalize_nested_aliases(payload, schema)
+
+
+def _normalize_flattened_plan_success_criterion(payload: dict) -> None:
+    has_flattened_criterion = any(
+        key in payload for key in ("criterion", "priority", "requires")
+    )
+    if not has_flattened_criterion:
+        return
+
+    criterion = payload.pop("criterion", None)
+    priority = payload.pop("priority", None)
+    requires = payload.pop("requires", None)
+    if not isinstance(criterion, str) or not criterion.strip():
+        return
+
+    entry = {
+        "criterion": criterion.strip(),
+        "priority": priority if priority in {"must", "should", "info"} else "must",
+        "requires": requires if isinstance(requires, list) else [],
+    }
+    existing = payload.get("success_criteria")
+    if isinstance(existing, list):
+        existing.insert(0, entry)
+    else:
+        payload["success_criteria"] = [entry]
+
+
+def _strip_execute_bookkeeping_fields(payload: dict) -> None:
+    # Executors sometimes include batch-level progress fields in the final
+    # envelope. They are useful while working but are not part of execution.json.
+    payload.pop("batch_id", None)
+    payload.pop("status", None)
+    payload.pop("batch_status", None)
 
 
 def _resolve_hermes_cost(result: dict) -> tuple[float, int, int, int]:
@@ -1265,10 +1487,15 @@ def run_hermes_step(
         prompt_override=prompt_text,
     )
     prompt = rendered_step.prompt
-    # Add web search guidance for phases that have it
-    if step in ("plan", "critique", "revise"):
+    # Add web search guidance only when the web toolset is actually enabled.
+    # Local project files must be read with file tools; web_extract cannot
+    # process file:// URLs or absolute local paths reliably.
+    has_web_tools = bool(toolsets and "web" in toolsets)
+    if has_web_tools and step in ("plan", "critique", "revise"):
         prompt += (
             "\n\nWEB SEARCH: You have web_search and web_extract tools. "
+            "Use file tools for local repository paths; do not use web_extract "
+            "for file:// URLs or absolute local filesystem paths. "
             "If the task involves a framework API you're not certain about — "
             "for example a specific Next.js feature, a particular import path, "
             "or a config flag that might have changed between versions — "
@@ -1277,61 +1504,114 @@ def run_hermes_step(
         )
     elif step == "execute":
         prompt += (
-            "\n\nWEB SEARCH: You have web_search available. "
-            "If you encounter an API you're not sure about while coding, "
-            "search before writing — a quick lookup is cheaper than a build failure."
+            "\n\nLOCAL FILES: Use file and terminal tools for local repository paths. "
+        )
+        if has_web_tools:
+            prompt += (
+                "\n\nWEB SEARCH: You have web_search available. "
+                "If you encounter an API you're not sure about while coding, "
+                "search before writing — a quick lookup is cheaper than a build failure."
+            )
+        prompt += (
             "\n\nIMPORTANT: Do NOT rename, modify, or delete EVAL.ts or any test files. "
             "They are used for scoring after execution and must remain unchanged."
         )
 
-    # Critique and review: use custom template writers that pre-populate IDs.
-    # Other template-file phases: hermes_worker writes a generic template.
-    if step == "critique":
-        output_path = output_path or template_seed_path or (plan_dir / "critique_output.json")
-    elif step == "review":
-        if output_path is None:
-            output_path = template_seed_path
-        if output_path is None or (
-            template_seed_text is None and not output_path.exists()
-        ):
-            from arnold.pipelines.megaplan.prompts.review import _write_review_template
-            output_path = _write_review_template(plan_dir, state)
-        prompt += (
-            f"\n\nOUTPUT FILE: {output_path}\n"
-            "This file is your ONLY output. It contains a JSON template PRE-POPULATED with "
-            "the task IDs and sense-check IDs you must review.\n"
-            "Workflow:\n"
-            "1. Read the file to see all the task IDs and sense-check IDs\n"
-            "2. Investigate each task — cross-reference executor claims against the git diff\n"
-            "3. Fill in every reviewer_verdict, evidence_files, verdict, criteria, and summary\n"
-            "4. Write the completed JSON back to the file\n\n"
-            "CRITICAL: You MUST fill in ALL task_verdicts and sense_check_verdicts entries. "
-            "Do NOT leave reviewer_verdict or verdict fields empty. "
-            "Do NOT put your results in a text response. The file is the only output that matters."
-        )
-    elif step in _TEMPLATE_FILE_PHASES and toolsets:
-        output_path = output_path or template_seed_path or (plan_dir / f"{step}_output.json")
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-        output_path.write_text(
-            template_seed_text if template_seed_text is not None else _build_output_template(step, schema),
-            encoding="utf-8",
-        )
-        prompt += (
-            f"\n\nOUTPUT FILE: {output_path}\n"
-            "This file is your ONLY output. It contains a JSON template with the structure to fill in.\n"
-            "Workflow:\n"
-            "1. Start by reading the file to see the structure\n"
-            "2. Do your work\n"
-            "3. Read the file, add your results, write it back\n\n"
-            "Do NOT put your results in a text response. The file is the only output that matters."
-        )
-    else:
+    # ── Template dispatch via central registry (T7) ─────────────────────
+    # Replaces the historical hardcoded if/elif chain with authoritative
+    # TemplateRegistration.mode lookup so file_fill semantics are data-driven
+    # rather than step-specific conditional.
+    from arnold.pipelines.megaplan.template_registry import get_template_registration
+
+    reg = get_template_registration(step)
+    reg_mode = reg.mode if reg else None
+    has_file_tool = bool(toolsets and "file" in toolsets)
+
+    def _append_file_fill_instructions(fpath: Path, *, pre_populated: bool = False) -> None:
+        """Append strict scratch-file fill instructions to *prompt*."""
+        lines = [f"\n\nOUTPUT FILE: {fpath}"]
+        if pre_populated:
+            lines.append(
+                "This file is your ONLY output. It contains a JSON template PRE-POPULATED with "
+                "the task IDs and sense-check IDs you must review."
+            )
+            lines.append(
+                "Workflow:\n"
+                "1. Read the file to see all the task IDs and sense-check IDs\n"
+                "2. Investigate each task — cross-reference executor claims against the git diff\n"
+                "3. Fill in every reviewer_verdict, evidence_files, verdict, criteria, and summary\n"
+                "4. Write the completed JSON back to the file\n\n"
+                "CRITICAL: You MUST fill in ALL task_verdicts and sense_check_verdicts entries. "
+                "Do NOT leave reviewer_verdict or verdict fields empty. "
+                "Do NOT put your results in a text response. The file is the only output that matters."
+            )
+        else:
+            lines.append(
+                "This file is your ONLY output. It contains a JSON template with the structure to fill in.\n"
+                "Workflow:\n"
+                "1. Start by reading the file to see the structure\n"
+                "2. Do your work\n"
+                "3. Read the file, add your results, write it back\n\n"
+                "Do NOT put your results in a text response. The file is the only output that matters."
+            )
+        nonlocal prompt
+        prompt += "\n".join(lines)
+
+    def _append_inline_json() -> None:
+        """Append inline structured-JSON instructions to *prompt*."""
+        nonlocal prompt
         template = _schema_template(schema)
         prompt += (
             "\n\nIMPORTANT: Your final response MUST be a single valid JSON object. "
             "Do NOT use markdown. Do NOT wrap in code fences. Output ONLY raw JSON "
             "matching this template:\n\n" + template
         )
+
+    if reg_mode == "file_fill":
+        # ── file_fill: create scratch file for EVERY file_fill phase ─
+        scratch = reg.scratch_filename
+        output_path = output_path or template_seed_path or (plan_dir / scratch)
+        if template_seed_text is not None and output_path.parent != plan_dir:
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            output_path.write_text(template_seed_text, encoding="utf-8")
+        elif reg.builder is not None and not output_path.exists():
+            output_path = reg.builder(plan_dir, state)
+        else:
+            # Generic fallback for registered file_fill phases without a seed.
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            if not output_path.exists():
+                output_path.write_text(
+                    template_seed_text if template_seed_text is not None
+                    else _build_output_template(step, schema),
+                    encoding="utf-8",
+                )
+
+        if has_file_tool:
+            _append_file_fill_instructions(
+                output_path, pre_populated=reg.pre_populated
+            )
+        else:
+            # No file tools — still created the scratch (SD3 parity), but
+            # give inline instructions since the worker cannot fill files.
+            _append_inline_json()
+    elif reg_mode in ("deferred", None):
+        # ── deferred / unknown: preserve pre-T7 behaviour ────────────
+        if step in _TEMPLATE_FILE_PHASES and toolsets:
+            output_path = output_path or template_seed_path or (plan_dir / f"{step}_output.json")
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            output_path.write_text(
+                template_seed_text if template_seed_text is not None
+                else _build_output_template(step, schema),
+                encoding="utf-8",
+            )
+            _append_file_fill_instructions(output_path)
+        else:
+            _append_inline_json()
+    else:
+        # ── markdown_exempt, subloop_exempt, batch_assembly ──────────
+        # No structured-output template.  The prompt already carries any
+        # needed instructions from create_hermes_prompt / prompt_override.
+        pass
 
     try:
         check_prompt_size(prompt, phase=step)
@@ -1364,10 +1644,14 @@ def run_hermes_step(
             )
         check_prompt_size(prompt, phase=step)
 
+    # Belt-and-suspenders: ensure the seed template is on disk for file_fill
+    # phases even when the dispatch block above couldn't write it (e.g. because
+    # output_path.parent == plan_dir and the path already existed).  Uses
+    # registry lookup instead of hardcoded step membership (T7).
     if (
         output_path is not None
         and template_seed_text is not None
-        and step in {"critique", "review"}
+        and reg_mode == "file_fill"
     ):
         output_path.parent.mkdir(parents=True, exist_ok=True)
         output_path.write_text(template_seed_text, encoding="utf-8")
@@ -1442,19 +1726,17 @@ def run_hermes_step(
             current_output_path.parent.mkdir(parents=True, exist_ok=True)
             current_output_path.write_text(template_seed_text, encoding="utf-8")
             return current_output_path
-        if step == "critique":
-            from arnold.pipelines.megaplan._core import configured_robustness
-            from arnold.pipelines.megaplan.prompts import _write_critique_template
-
-            robustness = configured_robustness(state)
-            return _write_critique_template(
-                plan_dir,
-                state,
-                select_active_checks(state, robustness, plan_dir=plan_dir),
-            )
-        if step == "review":
-            from arnold.pipelines.megaplan.prompts.review import _write_review_template
-            return _write_review_template(plan_dir, state)
+        # ── Registry-aware rewrite for fallback/retry paths (T7) ──────
+        # Use central registry to decide which template writer to invoke
+        # when a retry (e.g. MiniMax→OpenRouter) needs a fresh seed.
+        from arnold.pipelines.megaplan.template_registry import get_template_registration
+        _retry_reg = get_template_registration(step)
+        if (
+            _retry_reg is not None
+            and _retry_reg.mode == "file_fill"
+            and _retry_reg.builder is not None
+        ):
+            return _retry_reg.builder(plan_dir, state)
         current_output_path.write_text(
             _build_output_template(step, schema),
             encoding="utf-8",
@@ -1772,6 +2054,9 @@ def run_hermes_step(
                     cooldown = 3600 if "Limit Exhausted" in exc_str else 120
                     report_429("zhipu", agent_kwargs.get("api_key", ""), cooldown_secs=cooldown)
                     print(f"[hermes-worker] Z.AI key cooled down for {cooldown}s", file=activity_stderr)
+                elif model and model.startswith("kimi:"):
+                    report_429("kimi", agent_kwargs.get("api_key", ""), cooldown_secs=120)
+                    print(f"[hermes-worker] Kimi key cooled down for 120s", file=activity_stderr)
                 elif model and model.startswith("deepseek:"):
                     report_429("deepseek", agent_kwargs.get("api_key", ""), cooldown_secs=120)
                 elif model and model.startswith("fireworks:"):

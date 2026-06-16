@@ -96,6 +96,23 @@ judges the *work product*.  Do not rename or conflate them.
 
 log = logging.getLogger(__name__)
 
+# ── T11: Review-scoped scratch promotion known keys ───────────────────────
+# The model produces only these keys in the scratch template; unknown
+# top-level keys injected by the model are stripped before promotion.
+_REVIEW_SCRATCH_KNOWN_KEYS: frozenset[str] = frozenset(
+    {
+        "review_verdict",
+        "review_completion_status",
+        "criteria",
+        "issues",
+        "rework_items",
+        "summary",
+        "task_verdicts",
+        "sense_check_verdicts",
+    }
+)
+# ────────────────────────────────────────────────────────────────────────────
+
 
 def _build_review_blocked_message(
     *,
@@ -1277,6 +1294,40 @@ def handle_review(root: Path, args: argparse.Namespace) -> StepResponse:
                 prompt_kwargs=prompt_kwargs,
                 read_only=True,
             )
+
+            # ── T11: Scratch promotion for review (single-worker) ──
+            # Prefer valid filled review_output.json over worker.payload;
+            # fall back to worker.payload when scratch is missing/unmodified;
+            # fail hard on modified invalid scratch when file-fill was
+            # instructed (hermes agent).  Canonical promotion to
+            # review.json is preserved unchanged below.
+            from arnold.pipelines.megaplan.handlers.structured_output import (
+                promote_scratch,
+                require_scratch_filename_for_phase,
+            )
+
+            _scratch_filename = require_scratch_filename_for_phase("review")
+            _seed_path = plan_dir / _scratch_filename
+            _seed_json: str | None = None
+            if _seed_path.exists():
+                try:
+                    _seed_json = _seed_path.read_text(encoding="utf-8")
+                except (OSError, UnicodeDecodeError):
+                    _seed_json = None
+
+            _file_fill_instructed = agent == "hermes"
+
+            _, _promoted = promote_scratch(
+                plan_dir,
+                _scratch_filename,
+                _REVIEW_SCRATCH_KNOWN_KEYS,
+                worker,
+                seed_json=_seed_json,
+                file_fill_instructed=_file_fill_instructed,
+            )
+            worker.payload = _promoted
+            # ──────────────────────────────────────────────────────────
+
             _audit_review_payload_or_raise(
                 plan_dir=plan_dir,
                 state=state,
@@ -1314,6 +1365,35 @@ def handle_review(root: Path, args: argparse.Namespace) -> StepResponse:
                     resolved=(agent_type, mode, refreshed, model),
                     read_only=True,
                 )
+
+                # ── T11: Scratch promotion for review (single-worker, extreme) ──
+                from arnold.pipelines.megaplan.handlers.structured_output import (
+                    promote_scratch,
+                    require_scratch_filename_for_phase,
+                )
+
+                _scratch_filename = require_scratch_filename_for_phase("review")
+                _seed_path = plan_dir / _scratch_filename
+                _seed_json: str | None = None
+                if _seed_path.exists():
+                    try:
+                        _seed_json = _seed_path.read_text(encoding="utf-8")
+                    except (OSError, UnicodeDecodeError):
+                        _seed_json = None
+
+                _file_fill_instructed = agent == "hermes"
+
+                _, _promoted = promote_scratch(
+                    plan_dir,
+                    _scratch_filename,
+                    _REVIEW_SCRATCH_KNOWN_KEYS,
+                    worker,
+                    seed_json=_seed_json,
+                    file_fill_instructed=_file_fill_instructed,
+                )
+                worker.payload = _promoted
+                # ──────────────────────────────────────────────────────────────
+
                 _audit_review_payload_or_raise(
                     plan_dir=plan_dir,
                     state=state,

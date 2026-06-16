@@ -16,6 +16,19 @@ for the AI agent to access all capabilities.
 """
 
 import importlib as _importlib
+import importlib.machinery as _machinery
+from pathlib import Path as _Path
+import sys as _sys
+import types as _types
+
+if "tools" not in _sys.modules:
+    _package = _types.ModuleType("tools")
+    _package.__package__ = "tools"
+    _package.__path__ = [str(_Path(__file__).resolve().parent)]
+    _spec = _machinery.ModuleSpec("tools", loader=None, is_package=True)
+    _spec.submodule_search_locations = _package.__path__
+    _package.__spec__ = _spec
+    _sys.modules["tools"] = _package
 
 # ---------------------------------------------------------------------------
 # Lazy helpers for shimmed modules to avoid circular imports.

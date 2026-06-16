@@ -21,17 +21,17 @@ MEMORY `project_dogfood_engine_shadow_and_openrouter`; `validation/human-blocker
 
 ## Outcome
 
-The epic can self-host **safely**. The code *executing* the build is a **pinned, frozen external engine in
+The epic can self-host **safely**. The code *executing* the build is a **separate external driver checkout in
 its own venv** (the OPERATOR PRE-STEP, not this milestone) — never the working tree it is mutating — so no
 merged milestone ever changes the driver mid-flight (the p3 H1/H2/H3 deadlock class is structurally
 impossible). This milestone lands **no organ and no reshaper**; it is pure in-repo risk-removal — the
-harness/oracle code the pinned engine and every later milestone consume. It delivers, all default-OFF /
+harness/oracle code the external driver and every later milestone consume. It delivers, all default-OFF /
 report-only so they cannot perturb the live driver:
 
 1. **A schema-version validator in report-only / accept-missing-as-v0 mode** — so when M1 stamps
    `schema_version`, an old writer can never deadlock a new reader (p3 H1). This milestone ships the
    validator *plumbing*; M1 ships the *stamp*. The fail-closed flip is deferred to after the epic.
-2. **The standing dual-run rig + oracle harnesses** — (a) the OLD frozen engine drives a throwaway
+2. **The standing dual-run rig + oracle harnesses** — (a) the OLD external driver drives a throwaway
    1-milestone plan end-to-end (OLD-alive); (b) a planning-shaped throwaway plan runs on whatever NEW
    pieces exist (NEW-alive); (c) a **behavioral-replay oracle harness** that compares NEW-path traces
    against recorded REAL-run traces (incl. recovery/escalate/blocked, not just happy path); (d) a
@@ -42,10 +42,10 @@ report-only so they cannot perturb the live driver:
 
 ## Scope (work items tied to current file:line)
 
-> **W1 (pinned-engine launcher) MOVED OUT — it is the OPERATOR PRE-STEP, not this milestone.** Building the
-> frozen venv from `main@t0-sha`, launching `megaplan chain` from that interpreter against the worktree as
-> target with `--no-git-refresh`, and verifying `megaplan.__file__` resolves to the pinned copy are done by
-> the human before `chain start` (a milestone cannot pin the engine driving it). See
+> **W1 (external-driver launcher) MOVED OUT — it is the OPERATOR PRE-STEP, not this milestone.** Building the
+> driver venv from `main@t0-sha`, launching `megaplan chain` from that interpreter against the worktree as
+> target with `--no-git-refresh`, and verifying `megaplan.__file__` resolves to the external copy are done by
+> the human before `chain start` (a milestone cannot replace the driver running it). See
 > `pipeline-unification-EPIC.md` §"⚠️ PRE-LAUNCH — operator pre-step". The `--no-git-refresh` plumbing is
 > **already present** (`chain/__init__.py` `no_git_refresh`; honored by `git_ops._refresh_base_branch`); the
 > operator passes it on the `chain start` invocation. This milestone's scope is W2–W6 below.
@@ -60,7 +60,7 @@ M0 only proves the *reader* tolerates both stamped and unstamped state. This is 
 p3 H1 ("the old writer perpetually removes the field the new reader demands").
 
 **W3 — Dual-run rig (OLD-alive + NEW-alive harness).** A standing test/harness that on demand:
-(a) boots the frozen OLD engine and drives a throwaway 1-milestone plan to a terminal state
+(a) boots the external OLD driver and drives a throwaway 1-milestone plan to a terminal state
 (OLD-alive); (b) drives a planning-shaped throwaway plan on the current tree behind a default-OFF flag
 (NEW-alive — in M0 the NEW path == the OLD path, so this asserts the rig works, baselining for M1+).
 Both run on **throwaway** plans in a temp dir, never on the epic-driving chain. Reuse the existing
@@ -91,8 +91,8 @@ bounded escalation ladder (REGISTER §3 chain.yaml ladder), never parks on a per
 
 ## Locked decisions
 
-- **Pinned external engine in its own venv, not the editable tree.** The deliverable IS the driver; this
-  is the one case where dogfooding the live tree is actively unsafe (p3 verdict). Frozen engine + target
+- **Separate external driver in its own venv, not the editable tree.** The deliverable IS the driver; this
+  is the one case where dogfooding the live tree is actively unsafe (p3 verdict). External driver + target
   worktree + `--no-git-refresh`.
 - **Schema validator ships report-only / accept-missing-as-v0; fail-closed deferred behind a default-OFF
   flag flipped only after the epic completes.** (p3 rec #2; REGISTER M1 "`schema_version` JSON-path,
@@ -105,12 +105,12 @@ bounded escalation ladder (REGISTER §3 chain.yaml ladder), never parks on a per
 - **Replay corpus MUST include recovery/escalate/blocked-retry traces** (load-bearing per PROGRAM risk
   #2), not just happy-path.
 - **The subprocess seam stays alive** (it survives through M3, retired only at M6); M0 does not touch it
-  beyond verifying it resolves the pinned engine.
+  beyond verifying it resolves the external driver.
 
 ## Open questions (each RESOLVED to its default)
 
 - **Pin by git-sha or PyPI tag?** → **git-sha of the current `main` HEAD at t0**, installed into a venv
-  (`pip install 'megaplan-harness @ git+file://...@<sha>'` or a copied checkout). Most reversible, no
+  (`pip install 'arnold @ git+file://...@<sha>'` or a copied checkout). Most reversible, no
   release ceremony. (Default; `must_ask_peter=false`.)
 - **Where does the validator read `schema_version` from?** → **a JSON-path field on the state dict**
   (state.json / chain_state.json); a DB column is deferred (REGISTER M1). Accept-missing-as-v0.
@@ -128,7 +128,7 @@ bounded escalation ladder (REGISTER §3 chain.yaml ladder), never parks on a per
 ## Constraints
 
 - **Never `git pull` merged milestone code into the running engine's source.** `--no-git-refresh` ON for
-  the whole epic; milestone merges land at the review-merge seam and the pinned engine is re-launched
+  the whole epic; milestone merges land at the review-merge seam and the external driver is re-launched
   deliberately, never stomped under the live process (p3 H4).
 - **Report-only validator must never raise** for the duration of the epic; the fail-closed flag stays
   unset.
@@ -136,14 +136,14 @@ bounded escalation ladder (REGISTER §3 chain.yaml ladder), never parks on a per
   not touch or perturb the epic-driving chain's state.
 - **Back-compat:** the validator accepts every state file the current tree writes today (no
   `schema_version` present) — verified against the existing fixture corpus and a clean live run.
-- **Bare-model-name safety (MEMORY):** the pinned-engine harness must inherit the
+- **Bare-model-name safety (MEMORY):** the external-driver harness must inherit the
   no-silent-OpenRouter-routing fix; a bare `deepseek-*` resolves to direct `api.deepseek.com`, never
   OpenRouter unless `openrouter:`-prefixed.
 
 ## Done criteria (testable, incl. the oracle gate)
 
-1. **Pinned-engine probe (W1):** a phase subprocess launched by the harness asserts
-   `megaplan.__file__` resolves under the **pinned venv**, not the editable target tree; the assertion
+1. **External-driver probe (W1):** a phase subprocess launched by the harness asserts
+   `megaplan.__file__` resolves under the **external driver venv**, not the editable target tree; the assertion
    fails loud if it points at the worktree. (Defeats p3 H3 / dogfood-shadow.)
 2. **`--no-git-refresh` verified ON (W1):** an integration check confirms the epic chain runs with
    `no_git_refresh=True` and that `_refresh_base_branch` is skipped (no `git pull` against the engine
@@ -152,7 +152,7 @@ bounded escalation ladder (REGISTER §3 chain.yaml ladder), never parks on a per
    passes; (b) state WITH an unknown/newer `schema_version` logs a structured report event and STILL
    loads; (c) NOTHING raises while `MEGAPLAN_SCHEMA_FAIL_CLOSED` is unset; (d) the flag set to true makes
    (b) raise (proving the deferred fail-closed path exists but is off).
-4. **OLD-alive (W3):** the frozen engine drives a throwaway 1-milestone plan to a terminal state in CI.
+4. **OLD-alive (W3):** the external driver drives a throwaway 1-milestone plan to a terminal state in CI.
 5. **NEW-alive (W3):** a planning-shaped throwaway plan completes behind the default-OFF flag (in M0 the
    NEW path == OLD path; the assertion is "the rig works").
 6. **Behavioral-replay oracle harness (W4) — THE MILESTONE ORACLE GATE:** replaying the recorded corpus
@@ -169,7 +169,7 @@ bounded escalation ladder (REGISTER §3 chain.yaml ladder), never parks on a per
 
 ## Touchpoints
 
-- `megaplan/auto.py:238,266,287` (`_run_megaplan` subprocess seam — verify it resolves the pinned engine;
+- `megaplan/auto.py:238,266,287` (`_run_megaplan` subprocess seam — verify it resolves the external driver;
   do NOT modify the seam).
 - `megaplan/chain/__init__.py:1242,1382,1386,1713,1746,1915,1922` (`no_git_refresh` plumbing — wire ON +
   verify) and `:477,550,567` (`ChainState.from_dict` / `load_chain_state` / `save_chain_state` — add the

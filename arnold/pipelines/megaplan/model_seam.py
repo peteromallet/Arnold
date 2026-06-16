@@ -364,6 +364,8 @@ def _normalize_native_capture_payload(
         return _normalize_execute_capture_payload(payload)
     if step == "critique":
         return _normalize_critique_capture_payload(payload)
+    if step == "gate":
+        return _normalize_gate_capture_payload(payload)
     if step == "critique_evaluator":
         return _normalize_critique_evaluator_capture_payload(payload)
     if step == "prep-distill":
@@ -387,6 +389,7 @@ def _normalize_execute_capture_payload(payload: dict[str, Any]) -> dict[str, Any
     from arnold.pipelines.megaplan.execute.status_constants import normalize_execute_task_status
 
     normalized = dict(payload)
+    normalized.pop("batch", None)
     task_updates: list[Any] = []
     for item in normalized.get("task_updates") or []:
         if not isinstance(item, Mapping):
@@ -634,6 +637,73 @@ def _normalize_critique_flag(flag: Mapping[str, Any]) -> dict[str, Any]:
         normalized["severity_hint"] = "likely-minor"
     elif severity_hint in {"medium", "moderate", "unknown", None, ""}:
         normalized["severity_hint"] = "uncertain"
+    return normalized
+
+
+def _normalize_gate_capture_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    normalized = dict(payload)
+    normalized.pop("known_flag_ids", None)
+
+    resolutions = [
+        item
+        for item in normalized.get("flag_resolutions", [])
+        if isinstance(item, Mapping)
+    ]
+    accept_tradeoff_resolutions = [
+        item for item in resolutions if item.get("action") == "accept_tradeoff"
+    ]
+
+    tradeoffs: list[Any] = []
+    for index, item in enumerate(_as_sequence(normalized.get("accepted_tradeoffs"))):
+        resolution = (
+            accept_tradeoff_resolutions[index]
+            if index < len(accept_tradeoff_resolutions)
+            else {}
+        )
+        if isinstance(item, str):
+            text = item.strip()
+            if not text:
+                continue
+            tradeoffs.append(
+                {
+                    "flag_id": _optional_str(resolution.get("flag_id")) or f"accepted-tradeoff-{index + 1}",
+                    "concern": text,
+                    "subsystem": "",
+                    "rationale": _optional_str(resolution.get("rationale")) or "",
+                }
+            )
+            continue
+        if not isinstance(item, Mapping):
+            tradeoffs.append(item)
+            continue
+        tradeoff = dict(item)
+        tradeoff_text = _optional_str(tradeoff.pop("tradeoff", None))
+        if "flag_id" not in tradeoff:
+            tradeoff["flag_id"] = _optional_str(resolution.get("flag_id")) or f"accepted-tradeoff-{index + 1}"
+        if "concern" not in tradeoff:
+            tradeoff["concern"] = (
+                _optional_str(tradeoff.get("concern_brief"))
+                or tradeoff_text
+                or _optional_str(resolution.get("rationale"))
+                or ""
+            )
+        if "subsystem" not in tradeoff:
+            tradeoff["subsystem"] = ""
+        if "rationale" not in tradeoff:
+            tradeoff["rationale"] = (
+                _optional_str(tradeoff.get("rationale_brief"))
+                or _optional_str(resolution.get("rationale"))
+                or tradeoff_text
+                or ""
+            )
+        tradeoffs.append(
+            {
+                key: tradeoff[key]
+                for key in ("flag_id", "concern", "subsystem", "rationale")
+                if key in tradeoff
+            }
+        )
+    normalized["accepted_tradeoffs"] = tradeoffs
     return normalized
 
 
@@ -946,6 +1016,7 @@ def assert_all_compatibility_modes_native() -> None:
 def _register_hooks() -> None:
     register_native_normalizer("review", _normalize_review_capture_payload)
     register_native_normalizer("execute", _normalize_execute_capture_payload)
+    register_native_normalizer("gate", _normalize_gate_capture_payload)
     register_native_normalizer("critique", _normalize_critique_capture_payload)
     register_native_normalizer(
         "critique_evaluator", _normalize_critique_evaluator_capture_payload

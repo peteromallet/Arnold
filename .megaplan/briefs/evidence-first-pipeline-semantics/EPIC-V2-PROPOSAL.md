@@ -38,7 +38,7 @@ go async/per-milestone and robustness-gated (cost). Concurrency/TOCTOU disciplin
 authority-increasing path.
 
 **Validate against itself.** A post-merge re-baseline deliverable rebuilds the
-frozen engine from the merged result, so the epic is tested against the very
+driver engine from the merged result, so the epic is tested against the very
 failure class that motivated it.
 
 Net: ~same milestone count as v1, reshaped prevention-first, smaller per-milestone,

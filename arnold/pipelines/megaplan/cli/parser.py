@@ -973,9 +973,8 @@ def build_parser() -> argparse.ArgumentParser:
         "override_action",
         choices=[
             "abort",
+            "adopt-execution",
             "force-proceed",
-            "waive-engine-overlap",
-            "refresh-engine-pin",
             "add-note",
             "replan",
             "recover-blocked",

@@ -283,6 +283,349 @@ def test_finalize_native_mode_is_compatibility_native() -> None:
 
 
 # ---------------------------------------------------------------------------
+# T8: finalize scratch promotion tests
+# ---------------------------------------------------------------------------
+
+_SCRATCH_PAYLOAD: dict = {
+    "tasks": [
+        {
+            "id": "T1",
+            "description": "Scratch-promoted task.",
+            "depends_on": [],
+            "status": "pending",
+            "complexity": 3,
+            "complexity_justification": "Scratch file task.",
+            "executor_notes": "",
+            "files_changed": [],
+            "commands_run": [],
+            "evidence_files": [],
+            "reviewer_verdict": "",
+        }
+    ],
+    "watch_items": ["watch scratch"],
+    "sense_checks": [],
+    "user_actions": [],
+    "meta_commentary": "from scratch",
+}
+
+_INLINE_PAYLOAD: dict = {
+    "tasks": [
+        {
+            "id": "T2",
+            "description": "Inline fallback task.",
+            "depends_on": [],
+            "status": "pending",
+            "complexity": 1,
+            "complexity_justification": "Inline fallback.",
+            "executor_notes": "",
+            "files_changed": [],
+            "commands_run": [],
+            "evidence_files": [],
+            "reviewer_verdict": "",
+        }
+    ],
+    "watch_items": ["watch inline"],
+    "sense_checks": [],
+    "user_actions": [],
+    "meta_commentary": "from inline",
+}
+
+
+def _make_worker(payload: dict[str, Any] | None = None) -> WorkerResult:
+    return WorkerResult(
+        payload=payload or dict(_INLINE_PAYLOAD),
+        raw_output="test",
+        duration_ms=1,
+        cost_usd=0.0,
+        session_id="scratch-test",
+    )
+
+
+def _write_seed(plan_dir: Path, content: dict[str, Any] | None = None) -> str:
+    """Write a seed template and return its JSON text."""
+    import json
+    seed = content if content is not None else {
+        "tasks": [],
+        "user_actions": [],
+        "sense_checks": [],
+        "watch_items": [],
+        "meta_commentary": "",
+    }
+    text = json.dumps(seed, indent=2)
+    (plan_dir / "finalize_output.json").write_text(text, encoding="utf-8")
+    return text
+
+
+def _write_filled_scratch(plan_dir: Path, content: dict[str, Any]) -> None:
+    """Write a filled (different from seed) scratch file."""
+    import json
+    (plan_dir / "finalize_output.json").write_text(
+        json.dumps(content, indent=2), encoding="utf-8"
+    )
+
+
+def _known_keys() -> frozenset[str]:
+    return frozenset({"tasks", "user_actions", "sense_checks", "watch_items", "meta_commentary"})
+
+
+def test_promote_scratch_prefers_filled_over_worker_payload(tmp_path: Path) -> None:
+    """T8: Valid filled scratch must be preferred over worker.payload."""
+    from arnold.pipelines.megaplan.handlers.structured_output import promote_scratch
+
+    plan_dir = tmp_path / "plan"
+    plan_dir.mkdir()
+    seed_json = _write_seed(plan_dir)
+    _write_filled_scratch(plan_dir, dict(_SCRATCH_PAYLOAD))
+    worker = _make_worker()
+
+    status, payload = promote_scratch(
+        plan_dir,
+        "finalize_output.json",
+        _known_keys(),
+        worker,
+        seed_json=seed_json,
+        file_fill_instructed=True,
+    )
+
+    assert status == "filled"
+    assert payload["tasks"][0]["id"] == "T1"  # scratch wins
+    assert payload["meta_commentary"] == "from scratch"
+
+
+def test_promote_scratch_falls_back_on_missing_scratch(tmp_path: Path) -> None:
+    """T8: Missing scratch file must fall back to worker.payload."""
+    from arnold.pipelines.megaplan.handlers.structured_output import promote_scratch
+
+    plan_dir = tmp_path / "plan"
+    plan_dir.mkdir()
+    # No seed, no scratch file
+    worker = _make_worker()
+
+    status, payload = promote_scratch(
+        plan_dir,
+        "finalize_output.json",
+        _known_keys(),
+        worker,
+        seed_json=None,
+        file_fill_instructed=True,
+    )
+
+    assert status == "missing"
+    assert payload["tasks"][0]["id"] == "T2"  # inline fallback
+    assert payload["meta_commentary"] == "from inline"
+
+
+def test_promote_scratch_falls_back_on_unmodified_scratch(tmp_path: Path) -> None:
+    """T8: Unmodified scratch (byte-identical to seed) must fall back to worker.payload."""
+    from arnold.pipelines.megaplan.handlers.structured_output import promote_scratch
+
+    plan_dir = tmp_path / "plan"
+    plan_dir.mkdir()
+    seed_json = _write_seed(plan_dir)
+    # Scratch file is byte-identical to seed — the model did not fill it.
+    worker = _make_worker()
+
+    status, payload = promote_scratch(
+        plan_dir,
+        "finalize_output.json",
+        _known_keys(),
+        worker,
+        seed_json=seed_json,
+        file_fill_instructed=True,
+    )
+
+    assert status == "unmodified"
+    assert payload["tasks"][0]["id"] == "T2"  # inline fallback
+    assert payload["meta_commentary"] == "from inline"
+
+
+def test_promote_scratch_fails_hard_on_modified_invalid_with_file_fill(
+    tmp_path: Path,
+) -> None:
+    """T8: Modified-but-invalid scratch + file_fill_instructed=True → ValueError."""
+    from arnold.pipelines.megaplan.handlers.structured_output import promote_scratch
+
+    plan_dir = tmp_path / "plan"
+    plan_dir.mkdir()
+    seed_json = _write_seed(plan_dir)
+    # Write invalid JSON that differs from seed
+    (plan_dir / "finalize_output.json").write_text("not valid json {{{", encoding="utf-8")
+    worker = _make_worker()
+
+    with pytest.raises(ValueError, match="does not contain valid JSON"):
+        promote_scratch(
+            plan_dir,
+            "finalize_output.json",
+            _known_keys(),
+            worker,
+            seed_json=seed_json,
+            file_fill_instructed=True,
+        )
+
+
+def test_promote_scratch_falls_back_on_modified_invalid_without_file_fill(
+    tmp_path: Path,
+) -> None:
+    """T8: Modified-but-invalid scratch + file_fill_instructed=False → fallback."""
+    from arnold.pipelines.megaplan.handlers.structured_output import promote_scratch
+
+    plan_dir = tmp_path / "plan"
+    plan_dir.mkdir()
+    seed_json = _write_seed(plan_dir)
+    (plan_dir / "finalize_output.json").write_text("not valid json {{{", encoding="utf-8")
+    worker = _make_worker()
+
+    status, payload = promote_scratch(
+        plan_dir,
+        "finalize_output.json",
+        _known_keys(),
+        worker,
+        seed_json=seed_json,
+        file_fill_instructed=False,
+    )
+
+    assert status == "invalid"
+    assert payload["tasks"][0]["id"] == "T2"  # inline fallback
+
+
+def test_promote_scratch_strips_unknown_keys(tmp_path: Path) -> None:
+    """T8: Unknown top-level keys must be stripped from promoted scratch."""
+    from arnold.pipelines.megaplan.handlers.structured_output import promote_scratch
+
+    plan_dir = tmp_path / "plan"
+    plan_dir.mkdir()
+    seed_json = _write_seed(plan_dir)
+    filled = dict(_SCRATCH_PAYLOAD)
+    filled["extra_hallucinated"] = "should-be-stripped"
+    filled["another_bogus"] = 42
+    _write_filled_scratch(plan_dir, filled)
+    worker = _make_worker()
+
+    status, payload = promote_scratch(
+        plan_dir,
+        "finalize_output.json",
+        _known_keys(),
+        worker,
+        seed_json=seed_json,
+        file_fill_instructed=True,
+    )
+
+    assert status == "filled"
+    assert "extra_hallucinated" not in payload
+    assert "another_bogus" not in payload
+    assert payload["tasks"][0]["id"] == "T1"  # scratch content preserved
+
+
+def test_handle_finalize_scratch_promotion_integration(
+    plan_fixture: PlanFixture, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """T8: handle_finalize (mock) creates canonical artifacts; scratch promotion
+    is wired and the seed file is written by the prompt builder.
+
+    In mock mode the seed is always written by _finalize_prompt (via
+    render_prompt_for_dispatch), so the scratch is unmodified and the
+    handler falls back to worker.payload.  We verify the promotion
+    wiring does not break the existing artifact pipeline."""
+    import json
+    from arnold.pipelines.megaplan._core import atomic_write_json
+    from arnold.pipelines.megaplan.handlers.finalize import handle_finalize
+
+    monkeypatch.setenv("MEGAPLAN_MOCK_WORKERS", "1")
+    state = load_state(plan_fixture.plan_dir)
+    state["config"]["mode"] = "code"
+    state["config"]["project_dir"] = str(plan_fixture.project_dir)
+    state["plan_versions"] = [{"version": 1, "file": "plan_v1.md", "hash": "sha256:test"}]
+    state["current_state"] = "gated"
+    # Persist the modified state so load_plan_locked picks it up
+    atomic_write_json(plan_fixture.plan_dir / "state.json", state)
+    (plan_fixture.plan_dir / "plan_v1.md").write_text(
+        "## Step 1: Implement feature\nShip the feature.\n",
+        encoding="utf-8",
+    )
+
+    import argparse
+    args = argparse.Namespace()
+    args.plan = plan_fixture.plan_dir.name
+    args.profile = None
+    args.mode = None
+    args.robustness = None
+    args.auto_approve = False
+    args.phase_model = None
+    args.agent = None
+    args.refresh = False
+    args.write = True
+
+    response = handle_finalize(plan_fixture.root, args)
+
+    assert response["success"] is True
+    assert response["step"] == "finalize"
+
+    # Canonical artifacts exist — scratch promotion is wired and the
+    # handler fell back to worker.payload (mock mode seed may or may not
+    # be written by render_prompt_for_dispatch).
+    assert (plan_fixture.plan_dir / "finalize.json").exists()
+    assert (plan_fixture.plan_dir / "contract.json").exists()
+    assert (plan_fixture.plan_dir / "final.md").exists()
+    assert (plan_fixture.plan_dir / "user_actions.md").exists()
+
+    finalize_json = read_json(plan_fixture.plan_dir / "finalize.json")
+    assert "tasks" in finalize_json
+    assert "sense_checks" in finalize_json
+    assert "watch_items" in finalize_json
+    # The mock worker payload (inline JSON) was promoted via fallback
+    assert isinstance(finalize_json["tasks"], list)
+
+
+def test_handle_finalize_prefers_worker_filled_scratch_over_inline_payload(
+    plan_fixture: PlanFixture, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A valid worker-filled finalize_output.json beats stale inline JSON."""
+    import argparse
+    from arnold.pipelines.megaplan._core import atomic_write_json
+    from arnold.pipelines.megaplan.handlers import finalize as finalize_handler
+
+    state = load_state(plan_fixture.plan_dir)
+    state["config"]["mode"] = "code"
+    state["config"]["project_dir"] = str(plan_fixture.project_dir)
+    state["plan_versions"] = [{"version": 1, "file": "plan_v1.md", "hash": "sha256:test"}]
+    state["current_state"] = "gated"
+    atomic_write_json(plan_fixture.plan_dir / "state.json", state)
+    (plan_fixture.plan_dir / "plan_v1.md").write_text(
+        "## Step 1: Implement feature\nShip the feature.\n",
+        encoding="utf-8",
+    )
+
+    scratch_payload = _payload("Implement feature")
+    inline_payload = _payload("Stale inline worker self-report")
+    inline_payload["tasks"][0]["status"] = "done"
+
+    def fake_run_worker(*_args, **_kwargs):
+        _write_filled_scratch(plan_fixture.plan_dir, scratch_payload)
+        return _make_worker(inline_payload), "codex", "persistent", False
+
+    monkeypatch.setattr(finalize_handler, "_run_worker", fake_run_worker)
+
+    args = argparse.Namespace(
+        plan=plan_fixture.plan_dir.name,
+        profile=None,
+        mode=None,
+        robustness=None,
+        auto_approve=False,
+        phase_model=None,
+        agent=None,
+        refresh=False,
+        write=True,
+    )
+
+    response = finalize_handler.handle_finalize(plan_fixture.root, args)
+
+    assert response["success"] is True
+    finalize_json = read_json(plan_fixture.plan_dir / "finalize.json")
+    assert finalize_json["tasks"][0]["description"] == "Implement feature"
+    assert finalize_json["tasks"][0]["status"] == "pending"
+
+
+# ---------------------------------------------------------------------------
 # T9: finalize artifact regression tests
 # ---------------------------------------------------------------------------
 

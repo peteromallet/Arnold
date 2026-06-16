@@ -838,7 +838,6 @@ def write_plan_state(
 _DEFAULT_MERGE_FIELDS: tuple[str, ...] = (
     "notes",
     "overrides",
-    "engine_overlap_waivers",
     "user_action_resolutions",
     "quality_gate_resolutions",
 )
@@ -892,20 +891,6 @@ def _override_merge_key(entry: Any) -> tuple[str, str, str]:
         waiver_id = str(waiver_id)
     digest = hashlib.sha256((note + "|" + reason + "|" + waiver_id).encode("utf-8")).hexdigest()[:16]
     return (timestamp, action, digest)
-
-
-def _engine_overlap_waiver_merge_key(entry: Any) -> tuple[str, str]:
-    """Stable de-dup key for ``meta.engine_overlap_waivers`` records."""
-    if not isinstance(entry, dict):
-        encoded = json.dumps(entry, sort_keys=True, default=str).encode("utf-8")
-        return ("", hashlib.sha256(encoded).hexdigest()[:16])
-    waiver_id = entry.get("id", "")
-    timestamp = entry.get("timestamp") or entry.get("created_at") or ""
-    if not isinstance(waiver_id, str):
-        waiver_id = str(waiver_id)
-    if not isinstance(timestamp, str):
-        timestamp = str(timestamp)
-    return (waiver_id, timestamp)
 
 
 def _resolution_merge_key(entry: Any) -> tuple[str, str, str, str]:
@@ -975,7 +960,6 @@ def _quality_resolution_merge_key(entry: Any) -> tuple[str, str, str, str]:
 _FIELD_KEY_FUNCS: dict[str, Any] = {
     "notes": _note_merge_key,
     "overrides": _override_merge_key,
-    "engine_overlap_waivers": _engine_overlap_waiver_merge_key,
     "user_action_resolutions": _resolution_merge_key,
     "quality_gate_resolutions": _quality_resolution_merge_key,
 }

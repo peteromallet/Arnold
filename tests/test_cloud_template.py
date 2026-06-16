@@ -139,7 +139,10 @@ def test_render_entrypoint_apikey_codex_auth_opt_out_omits_chatgpt_forcing() -> 
 def test_render_entrypoint_resolves_symbolic_default_routing_to_codex_vendor(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr("arnold.pipelines.megaplan.profiles._resolve_default_vendor", lambda: "codex")
+    monkeypatch.setattr(
+        "arnold.pipelines.megaplan.cloud.template.effective_premium_vendor",
+        lambda: "codex",
+    )
     spec = replace(_spec("idle"), agents={})
 
     rendered = render_entrypoint(spec)
@@ -147,19 +150,25 @@ def test_render_entrypoint_resolves_symbolic_default_routing_to_codex_vendor(
     routing_lines = [
         line.strip()
         for line in rendered.splitlines()
-        if "megaplan config set agents." in line
+        if "arnold config set agents." in line
     ]
     assert routing_lines
     assert not any(" premium" in line for line in routing_lines)
-    assert "megaplan config set agents.plan codex" in rendered
-    assert "megaplan config set agents.feedback codex:low" in rendered
-    assert "megaplan config set agents.review codex" in rendered
+    assert any(line.startswith("arnold config set agents.plan codex ") for line in routing_lines)
+    assert any(
+        line.startswith("arnold config set agents.feedback codex:low ")
+        for line in routing_lines
+    )
+    assert any(line.startswith("arnold config set agents.review codex ") for line in routing_lines)
 
 
 def test_render_entrypoint_resolves_symbolic_default_routing_to_claude_vendor(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr("arnold.pipelines.megaplan.profiles._resolve_default_vendor", lambda: "claude")
+    monkeypatch.setattr(
+        "arnold.pipelines.megaplan.cloud.template.effective_premium_vendor",
+        lambda: "claude",
+    )
     spec = replace(_spec("idle"), agents={})
 
     rendered = render_entrypoint(spec)
@@ -167,13 +176,16 @@ def test_render_entrypoint_resolves_symbolic_default_routing_to_claude_vendor(
     routing_lines = [
         line.strip()
         for line in rendered.splitlines()
-        if "megaplan config set agents." in line
+        if "arnold config set agents." in line
     ]
     assert routing_lines
     assert not any(" premium" in line for line in routing_lines)
-    assert "megaplan config set agents.plan claude" in rendered
-    assert "megaplan config set agents.feedback claude:low" in rendered
-    assert "megaplan config set agents.review claude" in rendered
+    assert any(line.startswith("arnold config set agents.plan claude ") for line in routing_lines)
+    assert any(
+        line.startswith("arnold config set agents.feedback claude:low ")
+        for line in routing_lines
+    )
+    assert any(line.startswith("arnold config set agents.review claude ") for line in routing_lines)
 
 
 def test_render_entrypoint_wires_megaplan_repo_refresh_install() -> None:

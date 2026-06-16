@@ -271,24 +271,48 @@ def _build_gate_prompt_override(
     root: Path,
     missing_flag_ids: list[str],
 ) -> str:
-    if agent_type == "claude":
-        base_prompt = create_claude_prompt("gate", state, plan_dir, root=root)
-    elif agent_type == "hermes":
-        base_prompt = create_hermes_prompt("gate", state, plan_dir, root=root)
-    else:
-        base_prompt = create_codex_prompt("gate", state, plan_dir, root=root)
+    """Build a targeted gate reprompt that is scratch-file-aware.
+
+    Does NOT rebuild the full base gate prompt (which would call
+    ``_write_gate_template`` and overwrite the model's filled
+    ``gate_output.json`` from the first attempt).  Instead, the reprompt
+    references the **same** scratch path, instructs the model to read and
+    **completely replace** its contents, and warns against writing to
+    ``gate.json`` directly.
+    """
+    from arnold.pipelines.megaplan.prompts import _NESTED_HARNESS_GUARD
+
+    scratch_path = plan_dir / "gate_output.json"
     missing_flags = ", ".join(missing_flag_ids)
-    addendum = (
-        "Gate retry for the same iteration.\n"
-        "Your previous response recommended PROCEED but left blocking flags unresolved.\n"
-        f"Missing blocking flag IDs: {missing_flags}.\n"
-        "Return a complete gate response. If you recommend PROCEED, you MUST include "
-        "`flag_resolutions` entries for every blocking flag. For addressed-but-unverified "
-        "flags, the action MUST be `verify_fixed` with concrete evidence from the revised "
-        "plan; `dispute` and `accept_tradeoff` do not clear addressed flags. If you cannot "
-        "resolve every blocking flag, return ITERATE or ESCALATE instead."
+    reprompt_body = (
+        "GATE REPROMPT — SAME ITERATION, SAME SCRATCH FILE\n\n"
+        "Your previous gate response recommended PROCEED but left blocking "
+        "flags unresolved.  The scratch file at the path below still contains "
+        "your prior attempt.\n\n"
+        f"SCRATCH FILE: {scratch_path}\n\n"
+        "WORKFLOW:\n"
+        "1. Read the scratch file to see the template and your previous "
+        "response.\n"
+        "2. Produce a COMPLETE REPLACEMENT response — do NOT append or "
+        "patch the existing content.  Every field must be filled fresh.\n"
+        "3. Write the complete replacement JSON back to the SAME scratch "
+        "file.\n\n"
+        f"Missing blocking flag IDs that must be resolved: {missing_flags}\n\n"
+        "REQUIREMENTS:\n"
+        "- Return a complete gate response.  If you recommend PROCEED, you "
+        "MUST include ``flag_resolutions`` entries for every blocking flag.\n"
+        "- For addressed-but-unverified flags, the action MUST be "
+        "``verify_fixed`` with concrete evidence from the revised plan; "
+        "``dispute`` and ``accept_tradeoff`` do not clear addressed flags.\n"
+        "- If you cannot resolve every blocking flag, return ITERATE or "
+        "ESCALATE instead.\n"
+        "- Write ONLY to the scratch file above.  Do NOT write to "
+        "``gate.json`` or any other path — those are ignored by the "
+        "harness.\n"
+        "- If you cannot use file tools, return the populated JSON "
+        "structure inline as your response instead."
     )
-    return f"{base_prompt}\n\n{addendum}"
+    return f"{_NESTED_HARNESS_GUARD}\n\n{reprompt_body}"
 
 
 # ---------------------------------------------------------------------------

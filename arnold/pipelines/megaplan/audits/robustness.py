@@ -295,6 +295,7 @@ def validate_critique_checks(
 ) -> list[str]:
     raw_checks = payload.get("checks") if isinstance(payload, dict) else payload
     expected = get_check_ids() if expected_ids is None else list(expected_ids)
+    allow_extra_canonical_ids = expected_ids is not None
     if not isinstance(raw_checks, list):
         return expected
 
@@ -317,6 +318,8 @@ def validate_critique_checks(
                 invalid_unknown_ids.add(check_id)
             continue
         if check_id not in expected_set:
+            if allow_extra_canonical_ids and check_id in _CHECK_BY_ID:
+                continue
             invalid_unknown_ids.add(check_id)
             continue
         if seen_counts[check_id] > 1:
