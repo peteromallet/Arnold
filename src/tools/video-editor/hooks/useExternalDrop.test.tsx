@@ -243,6 +243,105 @@ describe('useExternalDrop', () => {
     expect(event.currentTarget.dataset.dragOver).toBe('true');
   });
 
+  it('does not clear drop state when dragleave bubbles from a child element still inside the wrapper', () => {
+    const dataRef = { current: null } as React.MutableRefObject<DropTestData | null>;
+    const pendingOpsRef = { current: 0 } as React.MutableRefObject<number>;
+    const wrapper = document.createElement('div');
+    wrapper.className = 'timeline-wrapper';
+    const child = document.createElement('div');
+    wrapper.appendChild(child);
+
+    const coordinator = {
+      update: vi.fn(),
+      showSecondaryGhosts: vi.fn(),
+      end: vi.fn(),
+      lastPosition: null,
+      lastPlan: null,
+      editAreaRef: { current: null },
+    };
+
+    const { result } = renderHook(() => useExternalDrop({
+      dataRef,
+      timelineId: 'timeline-1',
+      pendingOpsRef,
+      scale: 1,
+      scaleWidth: 1,
+      selectedTrackId: null,
+      applyEdit: vi.fn(),
+      patchRegistry: vi.fn(),
+      registerAsset: vi.fn(),
+      uploadAsset: vi.fn(),
+      invalidateAssetRegistry: vi.fn(),
+      assetResolver: { resolveAssetUrl: vi.fn() },
+      coordinator,
+      registerGenerationAsset: vi.fn(),
+      uploadImageGeneration: vi.fn(),
+      uploadVideoGeneration: vi.fn(),
+      handleAssetDrop: vi.fn(),
+      shots: mockUseShots().shots,
+      finalVideoMap: mockUseFinalVideoAvailable().finalVideoMap,
+    }));
+
+    const dragLeaveEvent = {
+      currentTarget: wrapper,
+      relatedTarget: child,
+    } as unknown as React.DragEvent<HTMLDivElement>;
+
+    result.current.onTimelineDragLeave(dragLeaveEvent);
+
+    expect(coordinator.end).not.toHaveBeenCalled();
+  });
+
+  it('clears drop state when dragleave leaves the wrapper entirely', () => {
+    const dataRef = { current: null } as React.MutableRefObject<DropTestData | null>;
+    const pendingOpsRef = { current: 0 } as React.MutableRefObject<number>;
+    const wrapper = document.createElement('div');
+    wrapper.className = 'timeline-wrapper';
+    wrapper.dataset.dragOver = 'true';
+    const outside = document.createElement('div');
+
+    const coordinator = {
+      update: vi.fn(),
+      showSecondaryGhosts: vi.fn(),
+      end: vi.fn(),
+      lastPosition: null,
+      lastPlan: null,
+      editAreaRef: { current: null },
+    };
+
+    const { result } = renderHook(() => useExternalDrop({
+      dataRef,
+      timelineId: 'timeline-1',
+      pendingOpsRef,
+      scale: 1,
+      scaleWidth: 1,
+      selectedTrackId: null,
+      applyEdit: vi.fn(),
+      patchRegistry: vi.fn(),
+      registerAsset: vi.fn(),
+      uploadAsset: vi.fn(),
+      invalidateAssetRegistry: vi.fn(),
+      assetResolver: { resolveAssetUrl: vi.fn() },
+      coordinator,
+      registerGenerationAsset: vi.fn(),
+      uploadImageGeneration: vi.fn(),
+      uploadVideoGeneration: vi.fn(),
+      handleAssetDrop: vi.fn(),
+      shots: mockUseShots().shots,
+      finalVideoMap: mockUseFinalVideoAvailable().finalVideoMap,
+    }));
+
+    const dragLeaveEvent = {
+      currentTarget: wrapper,
+      relatedTarget: outside,
+    } as unknown as React.DragEvent<HTMLDivElement>;
+
+    result.current.onTimelineDragLeave(dragLeaveEvent);
+
+    expect(coordinator.end).toHaveBeenCalled();
+    expect(wrapper.dataset.dragOver).toBeUndefined();
+  });
+
   it('drops multi-generation payloads sequentially and checks the multi payload before the single payload', async () => {
     const dataRef = {
       current: makeDropTestData({

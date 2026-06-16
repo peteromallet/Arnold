@@ -526,6 +526,12 @@ export function useExternalDrop({
   }, [coordinator]);
 
   const onTimelineDragLeave = useCallback((event: React.DragEvent<HTMLDivElement>) => {
+    const relatedTarget = event.relatedTarget as Node | null;
+    // Ignore dragleave events that bubble up from child elements when the drag
+    // is still inside the timeline wrapper; only clear state when actually leaving.
+    if (relatedTarget && event.currentTarget.contains(relatedTarget)) {
+      return;
+    }
     delete event.currentTarget.dataset.dragOver;
     clearExternalDragState();
   }, [clearExternalDragState]);
