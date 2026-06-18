@@ -329,6 +329,7 @@ if os.environ.get("VIBECOMFY_HEADLESS") != "1":
 
         @_PromptServer.instance.routes.post("/vibecomfy/roundtrip")
         async def roundtrip_route(request):  # type: ignore[no-untyped-def]
+            _LOGGER.info("/vibecomfy/roundtrip request")
             try:
                 payload = await request.json()
             except Exception as exc:
@@ -343,6 +344,7 @@ if os.environ.get("VIBECOMFY_HEADLESS") != "1":
 
         @_PromptServer.instance.routes.post("/vibecomfy/agent-executor")
         async def agent_executor_route(request):  # type: ignore[no-untyped-def]
+            _LOGGER.info("/vibecomfy/agent-executor request")
             try:
                 payload = await request.json()
             except Exception as exc:
@@ -361,6 +363,7 @@ if os.environ.get("VIBECOMFY_HEADLESS") != "1":
                 )
             client_id = payload.get("client_id") if isinstance(payload.get("client_id"), str) and payload.get("client_id").strip() else None
             result = await asyncio.to_thread(_handle_agent_executor, payload, client_id=client_id)
+            _LOGGER.info("/vibecomfy/agent-executor result ok=%s stage=%s", result.get("ok"), result.get("stage"))
             if result.get("ok") is False:
                 status = 500 if result.get("stage") == "route" else 400
                 return _web.json_response(result, status=status)
@@ -368,6 +371,7 @@ if os.environ.get("VIBECOMFY_HEADLESS") != "1":
 
         @_PromptServer.instance.routes.post("/vibecomfy/agent-edit/rating")
         async def agent_edit_rating_route(request):  # type: ignore[no-untyped-def]
+            _LOGGER.info("/vibecomfy/agent-edit/rating request")
             try:
                 payload = await request.json()
             except Exception as exc:
@@ -401,6 +405,7 @@ if os.environ.get("VIBECOMFY_HEADLESS") != "1":
 
         @_PromptServer.instance.routes.post("/vibecomfy/agent/credentials")
         async def agent_credentials_route(request):  # type: ignore[no-untyped-def]
+            _LOGGER.info("/vibecomfy/agent/credentials request")
             try:
                 payload = await request.json()
             except Exception as exc:
@@ -419,6 +424,7 @@ if os.environ.get("VIBECOMFY_HEADLESS") != "1":
 
         # Also register the agent edit route on the global PromptServer instance
         register_agent_edit_routes(_PromptServer.instance)
+        _LOGGER.info("vibecomfy agent routes module loaded and all routes registered.")
 
-    except ImportError:
-        pass
+    except ImportError as _routes_import_exc:
+        _LOGGER.warning("vibecomfy agent routes module could not register server routes: %s", _routes_import_exc)

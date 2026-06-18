@@ -673,6 +673,7 @@ def _load_arnold_runtime() -> Any:
         "hermes_agent",
         "arnold",
     ]
+    LOGGER.info("Loading Arnold/Hermes runtime; candidates=%s", [c for c in candidates if c])
     errors: list[str] = []
     for candidate in candidates:
         if not candidate:
@@ -683,11 +684,13 @@ def _load_arnold_runtime() -> Any:
             errors.append(f"{candidate}: {exc}")
             continue
         if _runtime_has_execution_entrypoint(runtime):
+            LOGGER.info("Arnold/Hermes runtime loaded from %s", candidate)
             return runtime
         errors.append(
             f"{candidate}: imported but does not expose run_model_turn, "
             "run_agent_turn_batch, run_agent_turn, or run"
         )
+    LOGGER.warning("Arnold/Hermes runtime unavailable: %s", "; ".join(errors))
     raise ProviderError(
         "Arnold/Hermes runtime is unavailable. Install/configure Arnold or set "
         "VIBECOMFY_ARNOLD_RUNTIME_MODULE. Import attempts: " + "; ".join(errors)
@@ -1153,9 +1156,14 @@ def run_model_turn(
 
 def readiness(*, route: str | None = None, model: str | None = None) -> dict[str, Any]:
     route_descriptor, selected_route, selected_model = _resolve_route_and_model(route, model)
+    LOGGER.info(
+        "readiness(route=%r, model=%r) -> selected_route=%r selected_model=%r",
+        route, model, selected_route, selected_model,
+    )
     try:
         runtime = _load_arnold_runtime()
     except ProviderError as exc:
+        LOGGER.info("readiness runtime unavailable: %s", exc)
         return {
             **_provider_status_metadata(
                 route_descriptor=route_descriptor,
@@ -1185,7 +1193,7 @@ def readiness(*, route: str | None = None, model: str | None = None) -> dict[str
     if explicit_ready is None:
         explicit_ready = raw_status.get("ok")
 
-    return {
+    result = {
         **_normalize_readiness_payload(
             raw_status,
             provider_available=True,
@@ -1202,6 +1210,8 @@ def readiness(*, route: str | None = None, model: str | None = None) -> dict[str
             provider_available=True,
         ),
     }
+    LOGGER.info("readiness result ready=%s route=%s", result.get("ready"), result.get("route"))
+    return result
 
 
 def get_agent_status(*, route: str | None = None, model: str | None = None) -> dict[str, Any]:

@@ -129,6 +129,15 @@ export {
 
 console.log("[vibecomfy] vibecomfy_roundtrip.js module evaluated");
 
+if (typeof window !== "undefined") {
+  window.addEventListener("error", (event) => {
+    console.error("[vibecomfy] global error", event.error?.stack || event.message, event.filename, event.lineno);
+  });
+  window.addEventListener("unhandledrejection", (event) => {
+    console.error("[vibecomfy] unhandled rejection", event.reason?.stack || event.reason);
+  });
+}
+
 // ── VibeComfy Contract (S2 — Durable Frontend Panel) ─────────────────────
 // This file captures the frontend↔backend contract before feature work.
 // Backend contract authority: vibecomfy/comfy_nodes/agent_contracts.py.
@@ -2925,15 +2934,18 @@ async function refreshAgentStatus(panel, { quiet = false } = {}) {
     const statusUrl = buildStatusUrl(route, model);
     console.log("[vibecomfy] refreshAgentStatus fetching", statusUrl, "current route value:", panel.fields.route.value);
     const res = await fetch(statusUrl);
+    console.log("[vibecomfy] refreshAgentStatus response status", res.status, "content-type", res.headers.get("content-type"));
     let status = null;
+    let rawText = "";
     try {
-      status = await res.json();
+      rawText = await res.text();
+      status = JSON.parse(rawText);
       console.log("[vibecomfy] refreshAgentStatus parsed status", status);
     } catch (error) {
       if (Number.isFinite(requestEpoch) && panel.state.statusRequestEpoch !== requestEpoch) {
         return;
       }
-      console.warn("[vibecomfy] malformed /vibecomfy/agent/status payload", error);
+      console.warn("[vibecomfy] malformed /vibecomfy/agent/status payload", error, "raw text:", rawText.substring(0, 500));
       panel.state.statusSnapshot = null;
       panel.state.routeStatus = {
         kind: ROUTE_STATUS_KIND.MALFORMED,
@@ -2953,9 +2965,11 @@ async function refreshAgentStatus(panel, { quiet = false } = {}) {
       return;
     }
     if (Number.isFinite(requestEpoch) && panel.state.statusRequestEpoch !== requestEpoch) {
+      console.log("[vibecomfy] refreshAgentStatus stale epoch, dropping response");
       return;
     }
     if (!res.ok) {
+      console.error("[vibecomfy] refreshAgentStatus HTTP error", res.status);
       throw new Error(`HTTP ${res.status}`);
     }
     clearAgentStatusRetry(panel);
@@ -3048,6 +3062,7 @@ async function refreshAgentStatus(panel, { quiet = false } = {}) {
   const statusDirtySections = Array.isArray(panel?.state?.chatMessages) && panel.state.chatMessages.length
     ? [...SETTINGS_STATUS_RENDER_SECTIONS, RENDER_SECTIONS.META, RENDER_SECTIONS.THREAD]
     : SETTINGS_STATUS_RENDER_SECTIONS;
+  console.log("[vibecomfy] refreshAgentStatus final routeStatus=", panel.state.routeStatus?.kind, "settingsMessage=", panel.state.settingsMessage);
   markAgentPanelDirtyAfterCommit(panel, statusDirtySections, "status");
 }
 
@@ -10495,6 +10510,13 @@ app.registerExtension({
   },
   async setup() {
     console.log("[vibecomfy] extension setup() running");
+    try {
+      const pingRes = await fetch("/vibecomfy/ping");
+      const pingBody = await pingRes.text();
+      console.log("[vibecomfy] /vibecomfy/ping response", pingRes.status, pingBody);
+    } catch (pingErr) {
+      console.error("[vibecomfy] /vibecomfy/ping failed", pingErr);
+    }
     configureDiagnosticsDeps({
       el,
       button,

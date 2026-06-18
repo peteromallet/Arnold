@@ -62,6 +62,7 @@ export function submitReadinessState(panel, deps = {}) {
   const routeStatus = typeof routeStatusState === "function"
     ? routeStatusState(panel)
     : { kind: ROUTE_STATUS_KIND?.LOADING };
+  console.log("[vibecomfy] submitReadinessState routeStatus.kind=", routeStatus?.kind, "statusSnapshot.ready=", panel?.state?.statusSnapshot?.ready);
   if (routeStatus.kind === ROUTE_STATUS_KIND?.LOADING) {
     return {
       ready: false,
@@ -99,6 +100,7 @@ export function submitReadinessState(panel, deps = {}) {
     };
   }
   if (status.ready === true) {
+    console.log("[vibecomfy] submitReadinessState ready=true");
     return { ready: true, reason: "ready", message: "" };
   }
   const statusMessage =
@@ -106,6 +108,7 @@ export function submitReadinessState(panel, deps = {}) {
     || (typeof status.message === "string" && status.message.trim())
     || (typeof status.reason === "string" && status.reason.trim())
     || "";
+  console.log("[vibecomfy] submitReadinessState not ready, reason=", statusMessage);
   return {
     ready: false,
     reason: status.ready === false ? "not_ready" : "missing_ready",

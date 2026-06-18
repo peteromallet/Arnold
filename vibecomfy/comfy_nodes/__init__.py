@@ -20,10 +20,13 @@ unset VIBECOMFY_CODE_DYNAMIC_IO or set it to any value other than "1".
 """
 from __future__ import annotations
 
+import logging
 import os
 import sys
 from pathlib import Path
 from typing import Any
+
+_LOGGER = logging.getLogger(__name__)
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(_REPO_ROOT) not in sys.path:
@@ -55,6 +58,7 @@ if _WEB_DIST_DIR.is_dir():
     if _best is not None:
         _WEB_DIRECTORY = f"./web_dist/{_best[1]}"
 WEB_DIRECTORY = _WEB_DIRECTORY
+_LOGGER.info("VibeComfy custom node loading. WEB_DIRECTORY=%s", WEB_DIRECTORY)
 
 def _ensure_comfyui_root_on_path() -> None:
     """Make sure the running ComfyUI root is on sys.path.
@@ -70,14 +74,20 @@ def _ensure_comfyui_root_on_path() -> None:
         if (candidate / "server.py").is_file() and (candidate / "nodes.py").is_file():
             path_str = str(candidate)
             if path_str not in sys.path:
+                _LOGGER.info("Adding ComfyUI root to sys.path: %s", path_str)
                 sys.path.insert(0, path_str)
-            break
+            else:
+                _LOGGER.info("ComfyUI root already on sys.path: %s", path_str)
+            return
+    _LOGGER.warning("Could not locate ComfyUI root (no server.py + nodes.py found).")
 
 
 _ensure_comfyui_root_on_path()
 
 try:
     from server import PromptServer
+
+    _LOGGER.info("PromptServer imported; registering VibeComfy routes.")
 
     @PromptServer.instance.routes.get("/vibecomfy/ping")
     async def _vibecomfy_ping(request):  # type: ignore[no-untyped-def]
@@ -87,14 +97,14 @@ try:
 
     from .agent import routes  # noqa: F401
 
-except ImportError as _route_import_exc:
-    import warnings
+    _LOGGER.info("VibeComfy routes registered successfully.")
 
-    warnings.warn(
-        f"Could not register VibeComfy agent routes ({_route_import_exc}); "
+except ImportError as _route_import_exc:
+    _LOGGER.warning(
+        "Could not register VibeComfy agent routes (%s); "
         "the ComfyUI server may not be available. "
         "POST /vibecomfy/agent-executor and /vibecomfy/agent/status will not be served.",
-        stacklevel=2,
+        _route_import_exc,
     )
 
 
