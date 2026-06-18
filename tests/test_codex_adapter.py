@@ -47,6 +47,7 @@ def _fake_worker_result(**overrides):
         prompt_tokens=11,
         completion_tokens=3,
         total_tokens=14,
+        rate_limit={"provider": "codex", "remaining": 42},
     )
     base.update(overrides)
     return WorkerResult(**base)
@@ -79,6 +80,7 @@ def test_codex_adapter_projects_worker_result_to_agent_result() -> None:
     assert result.tokens.completion_tokens == 3
     assert result.tokens.total_tokens == 14
     assert result.duration_ms == 1234
+    assert result.rate_limit == {"provider": "codex", "remaining": 42}
     # Provenance carries the request triple.
     assert result.provenance is not None
     assert result.provenance.agent == "codex"
@@ -108,6 +110,7 @@ def test_codex_adapter_synthesizes_oneshot_context() -> None:
     assert captured["kwargs"]["read_only"] is True
     assert captured["kwargs"]["model"] == "gpt-5.5"
     assert captured["kwargs"]["effort"] == "low"
+    assert captured["kwargs"]["free_text"] is True
     # system_prompt is folded into the override prompt.
     assert "You are a calculator." in captured["kwargs"]["prompt_override"]
     assert "What is 2 + 2?" in captured["kwargs"]["prompt_override"]

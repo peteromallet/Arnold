@@ -227,5 +227,6 @@ def project_worker_result(request: AgentRequest, worker_result: Any) -> Any:
         completion_tokens=int(getattr(agent_result, "completion_tokens", 0) or 0),
         total_tokens=int(getattr(agent_result, "total_tokens", 0) or 0),
         shannon_plan=getattr(agent_result, "shannon_plan", None),
+        rate_limit=getattr(agent_result, "rate_limit", None),
         provenance=provenance,
     )

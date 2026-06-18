@@ -60,5 +60,6 @@ class CodexAdapter:
                 model=ctx["model"],
                 read_only=ctx["read_only"],
                 output_path=ctx["output_path"],
+                free_text=ctx["free_text"],
             )
             return _oneshot.project_worker_result(request, worker_result)
