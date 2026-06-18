@@ -1,0 +1,57 @@
+{
+  "id": "log_6779a4484c43",
+  "level": "debug",
+  "category": "system",
+  "event_type": "authority_divergence",
+  "message": "authority_divergence emitted",
+  "details": {
+    "event": {
+      "seq": 11273,
+      "schema_version": 1,
+      "ts_utc": "2026-06-18T14:34:31.806859+00:00",
+      "ts_rel_init_s": 15536.090335,
+      "kind": "authority_divergence",
+      "phase": "execute",
+      "payload": {
+        "diagnostic_version": 1,
+        "task_id": "T2",
+        "raw_terminal_status": "done",
+        "authority_status": "unknown",
+        "authoritative": false,
+        "reason": "stale_evidence:missing_head:task_commands_run",
+        "missing_outputs": [],
+        "stale_evidence": [
+          "missing_head:task_commands_run",
+          "missing_head:task_commands_run"
+        ],
+        "would_block_reasons": [
+          "stale_evidence:missing_head:task_commands_run"
+        ],
+        "error": null,
+        "diagnostics": {
+          "task_id": "T2",
+          "declared_outputs": {
+            "commands_run": [
+              "pytest tests/arnold/pipeline/native/test_runtime.py tests/arnold/pipeline/native/test_megaplan_hooks.py tests/arnold/pipeline/native/test_megaplan_native_toy.py -v --tb=line -c pyproject.toml"
+            ]
+          },
+          "linked_evidence_count": 2,
+          "evidence_count": 60,
+          "normalization": "iterable",
+          "status": "unknown",
+          "evidence_sources": [
+            "plan_artifacts"
+          ],
+          "loaded_evidence_count": 60,
+          "raw_terminal_status": "done"
+        },
+        "ts_utc": "2026-06-18T14:34:31.806481+00:00"
+      },
+      "transaction_id": "7dbb074b4385f2d3",
+      "store_method": "log_system_event"
+    }
+  },
+  "turn_id": null,
+  "epic_id": "milestone-3-megaplan-specific-20260618-1213",
+  "occurred_at": "2026-06-18T14:34:31.806905Z"
+}

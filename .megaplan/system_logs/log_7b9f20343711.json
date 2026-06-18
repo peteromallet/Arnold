@@ -1,0 +1,50 @@
+{
+  "id": "log_7b9f20343711",
+  "level": "debug",
+  "category": "system",
+  "event_type": "authority_divergence",
+  "message": "authority_divergence emitted",
+  "details": {
+    "event": {
+      "seq": 11288,
+      "schema_version": 1,
+      "ts_utc": "2026-06-18T14:34:42.446996+00:00",
+      "ts_rel_init_s": 15546.730472,
+      "kind": "authority_divergence",
+      "phase": "execute",
+      "payload": {
+        "diagnostic_version": 1,
+        "task_id": "T17",
+        "raw_terminal_status": "skipped",
+        "authority_status": "unknown",
+        "authoritative": false,
+        "reason": "missing_linked_evidence",
+        "missing_outputs": [],
+        "stale_evidence": [],
+        "would_block_reasons": [
+          "missing_linked_evidence"
+        ],
+        "error": null,
+        "diagnostics": {
+          "task_id": "T17",
+          "declared_outputs": {},
+          "linked_evidence_count": 0,
+          "evidence_count": 60,
+          "normalization": "iterable",
+          "status": "unknown",
+          "evidence_sources": [
+            "plan_artifacts"
+          ],
+          "loaded_evidence_count": 60,
+          "raw_terminal_status": "skipped"
+        },
+        "ts_utc": "2026-06-18T14:34:42.446636+00:00"
+      },
+      "transaction_id": "3d37c61db59f5785",
+      "store_method": "log_system_event"
+    }
+  },
+  "turn_id": null,
+  "epic_id": "milestone-3-megaplan-specific-20260618-1213",
+  "occurred_at": "2026-06-18T14:34:42.447042Z"
+}
