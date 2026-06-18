@@ -19,7 +19,8 @@
 
     "baseUrl": ".",
     "paths": {
-      "@/*": ["./src/*"]
+      "@/*": ["./src/*"],
+      "@reigh/editor-sdk": ["./src/sdk"],
     }
   },
   "include": ["src"],

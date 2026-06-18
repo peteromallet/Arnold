@@ -28,6 +28,7 @@
     "bun:install": "bun install",
     "test": "npm run check:no-smoke-tests && vitest run --config config/testing/vitest.config.ts",
     "test:contracts": "vitest run --config config/testing/vitest.config.ts src/**/**/*.contract.test.ts src/**/**/clientContracts.test.ts src/shared/lib/__tests__/qualityCheck.contract.test.ts",
+    "test:sdk-boundary": "vitest run --config config/testing/vitest.boundary.config.ts",
     "test:arch": "npm run check:shots-shim-usage && npm run check:core-shim-usage && npm run check:video-editor-sdk-imports && npm run check:error-runtime-alias-usage && npm run check:fat-contexts && npm run check:contracts && npm run check:contract-surface-map",
     "test:edge": "npm run test:edge:unit && npm run test:edge:smoke",
     "test:edge:unit": "vitest run --config config/testing/vitest.edge.config.ts",

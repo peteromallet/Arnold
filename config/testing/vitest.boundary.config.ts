@@ -40,7 +40,7 @@ export default defineConfig({
       '@banodoco/timeline-composition/registry.generated': resolvedTimelineCompositionRegistryPath,
       '@banodoco/timeline-composition/theme-api': resolvedTimelineCompositionThemeApiPath,
       '@banodoco/timeline-composition': path.resolve(projectRoot, 'node_modules/@banodoco/timeline-composition'),
-      '@banodoco/timeline-schema': path.resolve(projectRoot, 'src/test/shims/banodoco/timeline-schema.ts'),
+      '@banodoco/timeline-schema': path.resolve(projectRoot, 'node_modules/@banodoco/timeline-schema/typescript/dist/src/index.js'),
       // Sprint 5: workspace-primitive aliases for the linked packages.
       // The composition package's animations.generated / transitions.generated
       // / effects.generated import via these aliases. Reigh's bundler needs
@@ -75,7 +75,7 @@ export default defineConfig({
   test: {
     globals: true,
     environment: 'jsdom',
-    include: ['src/**/*.test.{ts,tsx}'],
+    include: ['src/sdk/__tests__/*.test.{ts,tsx}'],
     exclude: ['supabase/functions/**'],
     setupFiles: [path.resolve(projectRoot, 'src/test/setup.ts')],
   },

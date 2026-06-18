@@ -36,7 +36,7 @@ export default defineConfig(() => {
   );
   const timelineSchemaPath = path.resolve(
     __dirname,
-    "../../node_modules/@banodoco/timeline-schema/dist/index.js",
+    "../../node_modules/@banodoco/timeline-schema/typescript/dist/src/index.js",
   );
   const timelineSchemaFallbackPath = path.resolve(
     __dirname,
@@ -72,6 +72,7 @@ export default defineConfig(() => {
     resolve: {
       alias: {
         "@": path.resolve(__dirname, "../../src"),
+        "@reigh/editor-sdk": path.resolve(__dirname, "../../src/sdk"),
         // Sprint 5: deduplicate React / Remotion / @banodoco/* across the
         // linked timeline-composition + timeline-theme-* packages so a
         // single React runtime drives the @remotion/player preview.
