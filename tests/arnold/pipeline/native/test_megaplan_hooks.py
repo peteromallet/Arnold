@@ -1366,6 +1366,59 @@ class TestControlOverrideRuntimeIntegration:
             f"not to then_target (pc=2). state={result.state}"
         )
 
+    def test_control_override_falls_back_to_generic_override_branch(self) -> None:
+        """Control overrides can drive older decision graphs with one override edge."""
+        from arnold.pipeline.native import (
+            NativeInstruction,
+            NativeProgram,
+            run_native_pipeline,
+        )
+        from arnold.pipelines.megaplan.native_hooks import MegaplanNativeHooks
+
+        def decision_func(ctx):
+            return "normal"
+
+        def override_phase(ctx):
+            ctx["state"]["branch"] = "override"
+            return {"branch": "override"}
+
+        def normal_phase(ctx):
+            ctx["state"]["branch"] = "normal"
+            return {"branch": "normal"}
+
+        instrs: list[NativeInstruction] = [
+            NativeInstruction(
+                op="decision", name="gate", pc=0,
+                func=decision_func,
+                branches={"override": 1, "normal": 2},
+            ),
+            NativeInstruction(
+                op="phase", name="override_target", pc=1,
+                func=override_phase, next_pc=3,
+            ),
+            NativeInstruction(
+                op="phase", name="normal_target", pc=2,
+                func=normal_phase, next_pc=3,
+            ),
+            NativeInstruction(op="halt", name="end", pc=3, func=None),
+        ]
+        program = NativeProgram(
+            name="test_generic_override_branch",
+            instructions=tuple(instrs),
+        )
+
+        result = run_native_pipeline(
+            program,
+            initial_state={
+                "meta": {
+                    "overrides": [{"action": "abort", "reason": "test"}],
+                },
+            },
+            hooks=MegaplanNativeHooks(),
+        )
+
+        assert result.state.get("branch") == "override"
+
     def test_decision_beats_normal_when_no_override(self) -> None:
         """When no control override is present, the decision body runs normally.
 

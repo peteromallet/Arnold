@@ -1,0 +1,66 @@
+{
+  "id": "log_e4fdbd6bce89",
+  "level": "debug",
+  "category": "system",
+  "event_type": "authority_divergence",
+  "message": "authority_divergence emitted",
+  "details": {
+    "event": {
+      "seq": 10598,
+      "schema_version": 1,
+      "ts_utc": "2026-06-18T14:10:34.662246+00:00",
+      "ts_rel_init_s": 14098.945722,
+      "kind": "authority_divergence",
+      "phase": "execute",
+      "payload": {
+        "diagnostic_version": 1,
+        "task_id": "T4",
+        "raw_terminal_status": "done",
+        "authority_status": "unknown",
+        "authoritative": false,
+        "reason": "stale_evidence:missing_head:task_commands_run",
+        "missing_outputs": [],
+        "stale_evidence": [
+          "missing_head:task_commands_run",
+          "missing_head:task_commands_run",
+          "missing_head:task_commands_run",
+          "missing_head:task_commands_run",
+          "missing_head:task_commands_run",
+          "missing_head:task_commands_run",
+          "missing_head:task_commands_run",
+          "missing_head:task_commands_run"
+        ],
+        "would_block_reasons": [
+          "stale_evidence:missing_head:task_commands_run"
+        ],
+        "error": null,
+        "diagnostics": {
+          "task_id": "T4",
+          "declared_outputs": {
+            "commands_run": [
+              "sed -n '1,220p' arnold/pipelines/megaplan/native_hooks.py",
+              "sed -n '1,120p' arnold/pipeline/native/megaplan_hooks.py",
+              "sed -n '1,160p' arnold/pipeline/native/__init__.py",
+              "rg -n \"MegaplanNativeRuntimeHooks|MegaplanNativeHooks|__all__\" arnold/pipelines/megaplan/native_hooks.py arnold/pipeline/native/megaplan_hooks.py arnold/pipeline/native/__init__.py"
+            ]
+          },
+          "linked_evidence_count": 8,
+          "evidence_count": 68,
+          "normalization": "iterable",
+          "status": "unknown",
+          "evidence_sources": [
+            "plan_artifacts"
+          ],
+          "loaded_evidence_count": 68,
+          "raw_terminal_status": "done"
+        },
+        "ts_utc": "2026-06-18T14:10:34.661877+00:00"
+      },
+      "transaction_id": "1f668a7f46549911",
+      "store_method": "log_system_event"
+    }
+  },
+  "turn_id": null,
+  "epic_id": "milestone-3-megaplan-specific-20260618-1213",
+  "occurred_at": "2026-06-18T14:10:34.662287Z"
+}

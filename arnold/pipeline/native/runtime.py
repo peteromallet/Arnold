@@ -539,11 +539,17 @@ def run_native_pipeline(
                 # Backward-compatibility for any older hook implementation.
                 control_override = ctx.pop("__control_override__", None)
             if control_override is not None:
-                # Use the override as the decision label directly.
-                # Build a synthetic result with envelope=None so the
-                # downstream envelope join is a no-op.
-                result: dict[str, Any] = {"__override_route__": control_override}
-                label = control_override
+                override_label = control_override
+                if instr.branches and control_override not in instr.branches:
+                    override_label = "override" if "override" in instr.branches else None
+                if override_label is not None:
+                    # Build a synthetic result with envelope=None so the
+                    # downstream envelope join is a no-op.
+                    result = {"__override_route__": control_override}
+                    label = override_label
+                else:
+                    result = instr.func(ctx)
+                    label = _resolve_decision_label(result)
             else:
                 result = instr.func(ctx)
 

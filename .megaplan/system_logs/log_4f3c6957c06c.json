@@ -1,0 +1,72 @@
+{
+  "id": "log_4f3c6957c06c",
+  "level": "debug",
+  "category": "system",
+  "event_type": "authority_divergence",
+  "message": "authority_divergence emitted",
+  "details": {
+    "event": {
+      "seq": 10493,
+      "schema_version": 1,
+      "ts_utc": "2026-06-18T14:00:44.056825+00:00",
+      "ts_rel_init_s": 13508.340301,
+      "kind": "authority_divergence",
+      "phase": "execute",
+      "payload": {
+        "diagnostic_version": 1,
+        "task_id": "T5",
+        "raw_terminal_status": "done",
+        "authority_status": "unknown",
+        "authoritative": false,
+        "reason": "stale_evidence:missing_head:task_files_changed",
+        "missing_outputs": [],
+        "stale_evidence": [
+          "missing_head:task_files_changed",
+          "missing_head:task_files_changed",
+          "missing_head:task_files_changed",
+          "missing_head:task_files_changed",
+          "missing_head:task_files_changed",
+          "missing_head:task_commands_run",
+          "missing_head:task_files_changed",
+          "missing_head:task_files_changed",
+          "missing_head:task_files_changed",
+          "missing_head:task_files_changed",
+          "missing_head:task_commands_run",
+          "missing_head:task_files_changed"
+        ],
+        "would_block_reasons": [
+          "stale_evidence:missing_head:task_files_changed",
+          "stale_evidence:missing_head:task_commands_run"
+        ],
+        "error": null,
+        "diagnostics": {
+          "task_id": "T5",
+          "declared_outputs": {
+            "files_changed": [
+              "arnold/pipelines/megaplan/native_hooks.py",
+              "tests/arnold/pipeline/native/test_megaplan_hooks.py"
+            ],
+            "commands_run": [
+              "pytest tests/arnold/pipeline/native/test_megaplan_hooks.py -v --tb=short"
+            ]
+          },
+          "linked_evidence_count": 12,
+          "evidence_count": 58,
+          "normalization": "iterable",
+          "status": "unknown",
+          "evidence_sources": [
+            "plan_artifacts"
+          ],
+          "loaded_evidence_count": 58,
+          "raw_terminal_status": "done"
+        },
+        "ts_utc": "2026-06-18T14:00:44.056450+00:00"
+      },
+      "transaction_id": "6c27a65d09bcae0e",
+      "store_method": "log_system_event"
+    }
+  },
+  "turn_id": null,
+  "epic_id": "milestone-3-megaplan-specific-20260618-1213",
+  "occurred_at": "2026-06-18T14:00:44.056876Z"
+}

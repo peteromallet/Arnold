@@ -1,0 +1,60 @@
+{
+  "id": "log_a15de8605b5d",
+  "level": "debug",
+  "category": "system",
+  "event_type": "authority_divergence",
+  "message": "authority_divergence emitted",
+  "details": {
+    "event": {
+      "seq": 10632,
+      "schema_version": 1,
+      "ts_utc": "2026-06-18T14:11:52.999580+00:00",
+      "ts_rel_init_s": 14177.283056,
+      "kind": "authority_divergence",
+      "phase": "execute",
+      "payload": {
+        "diagnostic_version": 1,
+        "task_id": "T14",
+        "raw_terminal_status": "done",
+        "authority_status": "unknown",
+        "authoritative": false,
+        "reason": "stale_evidence:missing_head:task_commands_run",
+        "missing_outputs": [],
+        "stale_evidence": [
+          "missing_head:task_commands_run",
+          "missing_head:task_commands_run",
+          "missing_head:task_commands_run",
+          "missing_head:task_commands_run"
+        ],
+        "would_block_reasons": [
+          "stale_evidence:missing_head:task_commands_run"
+        ],
+        "error": null,
+        "diagnostics": {
+          "task_id": "T14",
+          "declared_outputs": {
+            "commands_run": [
+              "sed -n '1,260p' tests/arnold/pipeline/native/megaplan_toy_fixture.py",
+              "rg -n \"get_megaplan_toy_pipeline|run_megaplan_toy_graph|validate\\(\" tests/arnold/pipeline/native/megaplan_toy_fixture.py"
+            ]
+          },
+          "linked_evidence_count": 4,
+          "evidence_count": 67,
+          "normalization": "iterable",
+          "status": "unknown",
+          "evidence_sources": [
+            "plan_artifacts"
+          ],
+          "loaded_evidence_count": 67,
+          "raw_terminal_status": "done"
+        },
+        "ts_utc": "2026-06-18T14:11:52.999197+00:00"
+      },
+      "transaction_id": "2cc360fcaacf51aa",
+      "store_method": "log_system_event"
+    }
+  },
+  "turn_id": null,
+  "epic_id": "milestone-3-megaplan-specific-20260618-1213",
+  "occurred_at": "2026-06-18T14:11:52.999623Z"
+}

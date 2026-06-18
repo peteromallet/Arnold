@@ -1,0 +1,59 @@
+{
+  "id": "log_d78a00f55428",
+  "level": "debug",
+  "category": "system",
+  "event_type": "authority_divergence",
+  "message": "authority_divergence emitted",
+  "details": {
+    "event": {
+      "seq": 10499,
+      "schema_version": 1,
+      "ts_utc": "2026-06-18T14:00:47.736155+00:00",
+      "ts_rel_init_s": 13512.019631,
+      "kind": "authority_divergence",
+      "phase": "execute",
+      "payload": {
+        "diagnostic_version": 1,
+        "task_id": "T11",
+        "raw_terminal_status": "done",
+        "authority_status": "unknown",
+        "authoritative": false,
+        "reason": "stale_evidence:missing_head:task_commands_run",
+        "missing_outputs": [],
+        "stale_evidence": [
+          "missing_head:task_commands_run",
+          "missing_head:task_commands_run",
+          "missing_head:task_commands_run"
+        ],
+        "would_block_reasons": [
+          "stale_evidence:missing_head:task_commands_run"
+        ],
+        "error": null,
+        "diagnostics": {
+          "task_id": "T11",
+          "declared_outputs": {
+            "commands_run": [
+              "python -c '6 completed_subloop behavioral tests: allowed keys only, deep-copy, None exclusion, empty artifacts exclusion, envelope join tuple return' - all PASS",
+              "pytest tests/arnold/pipeline/native/test_megaplan_hooks.py - 105 passed, 1 pre-existing failure"
+            ]
+          },
+          "linked_evidence_count": 3,
+          "evidence_count": 58,
+          "normalization": "iterable",
+          "status": "unknown",
+          "evidence_sources": [
+            "plan_artifacts"
+          ],
+          "loaded_evidence_count": 58,
+          "raw_terminal_status": "done"
+        },
+        "ts_utc": "2026-06-18T14:00:47.735752+00:00"
+      },
+      "transaction_id": "6599237e7244dfd3",
+      "store_method": "log_system_event"
+    }
+  },
+  "turn_id": null,
+  "epic_id": "milestone-3-megaplan-specific-20260618-1213",
+  "occurred_at": "2026-06-18T14:00:47.736198Z"
+}
