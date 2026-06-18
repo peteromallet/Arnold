@@ -470,6 +470,73 @@ class MegaplanNativeRuntimeHooks(NullNativeRuntimeHooks):
         except Exception:
             return None
 
+    # ── Completed subpipeline helper (T11) ──────────────────────────
+
+    def completed_subloop(
+        self,
+        name: str,
+        child_state: dict[str, Any],
+        recommendation: str,
+        *,
+        child_artifacts: dict[str, Any] | None = None,
+        child_envelope: Any = None,
+        resume_cursor: Any = None,
+        parent_envelope: Any = None,
+    ) -> tuple[dict[str, Any], Any]:
+        """Promote a completed child subpipeline result into parent keys.
+
+        Returns a ``(state_patch, joined_envelope)`` tuple.
+
+        **state_patch** carries exactly the allowed promotion keys:
+
+        * ``subloop:<name>:state`` — the child's final state dict
+        * ``subloop:<name>:recommendation`` — the routing recommendation
+        * ``subloop:<name>:resume_cursor`` — only when *resume_cursor* is
+          not ``None`` (suspended-child path)
+        * ``subloop:<name>:artifacts`` — when *child_artifacts* is non-empty
+
+        **joined_envelope** is produced by calling
+        :meth:`join_envelope` with *parent_envelope* and
+        *child_envelope*, so lease/fencing conflicts propagate loudly.
+
+        The caller is responsible for merging *state_patch* into parent
+        state and storing *joined_envelope* for subsequent phases.
+        This method does **not** mutate any argument.
+
+        Child state is **not** promoted wholesale — only the
+        ``subloop:<name>:*`` keys are exposed to the parent.  This
+        matches the :class:`~arnold.pipelines.megaplan._pipeline.subloop.SubloopStep`
+        contract.
+        """
+        state_patch: dict[str, Any] = {
+            f"subloop:{name}:state": dict(child_state),
+        }
+        state_patch[f"subloop:{name}:recommendation"] = recommendation
+
+        if resume_cursor is not None:
+            state_patch[f"subloop:{name}:resume_cursor"] = resume_cursor
+
+        if child_artifacts:
+            state_patch[f"subloop:{name}:artifacts"] = dict(child_artifacts)
+
+        # ── Envelope join ──────────────────────────────────────────
+        # Use a synthetic NativeInstruction so join_envelope has an instr
+        # to carry (it is only used for identity purposes by the join).
+        try:
+            from arnold.pipeline.native.ir import NativeInstruction
+
+            _instr = NativeInstruction(
+                op="phase", name=f"subloop:{name}", pc=0, func=None, next_pc=None,
+            )
+        except Exception:
+            _instr = None  # fallback: join_envelope's instr is unused in practice
+
+        joined_envelope = self.join_envelope(
+            _instr, parent_envelope, child_envelope,
+        )
+
+        return state_patch, joined_envelope
+
 
 # ── Override helper functions (T6) ────────────────────────────────────
 
