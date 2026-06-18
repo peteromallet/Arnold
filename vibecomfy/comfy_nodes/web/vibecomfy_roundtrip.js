@@ -304,6 +304,7 @@ const ROUTE_ALIASES = Object.freeze({
   auto: "auto",
   arnold: "auto",
   deepseek: "deepseek",
+  openrouter: "deepseek",
   anthropic: "anthropic",
   claude: "anthropic",
   "openai-codex": "openai-codex",
@@ -2983,25 +2984,24 @@ async function refreshAgentStatus(panel, { quiet = false } = {}) {
       });
       panel.fields.route.value = requestedRoute;
     } else {
-      populateRouteSelect(panel.fields.route, routeOptions, { selectedRoute: requestedRoute });
-      panel.fields.route.value = requestedRoute;
-      if (!routeOptions[requestedRoute]) {
-        console.warn("[vibecomfy] status payload missing descriptor for requested route", {
+      const availableRoute = routeOptions[requestedRoute]
+        ? requestedRoute
+        : (routeOptions["deepseek"] ? "deepseek" : Object.keys(routeOptions)[0] || requestedRoute);
+      populateRouteSelect(panel.fields.route, routeOptions, { selectedRoute: availableRoute });
+      panel.fields.route.value = availableRoute;
+      if (availableRoute !== requestedRoute) {
+        console.warn("[vibecomfy] status payload missing descriptor for requested route; falling back", {
           requestedRoute,
+          availableRoute,
           routeOptions,
         });
-        panel.state.routeStatus = {
-          kind: ROUTE_STATUS_KIND.MALFORMED,
-          requestedRoute,
-          model,
-        };
-        panel.state.settingsMessage = "Malformed status payload; route/model controls disabled.";
-      } else {
-        panel.state.routeStatus = {
-          kind: ROUTE_STATUS_KIND.READY,
-          requestedRoute,
-          model,
-        };
+        panel.state.settingsMessage = `Route ${requestedRoute} is unavailable; using ${availableRoute}.`;
+      }
+      panel.state.routeStatus = {
+        kind: ROUTE_STATUS_KIND.READY,
+        requestedRoute: availableRoute,
+        model,
+      };
         if (!quiet) {
           const availability = status?.provider_available === false ? "provider unavailable" : "provider ready";
           panel.state.settingsMessage = `${status?.requested_route || route} → ${status?.route || route} (${availability})`;
