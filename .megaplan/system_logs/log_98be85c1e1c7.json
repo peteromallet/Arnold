@@ -1,0 +1,66 @@
+{
+  "id": "log_98be85c1e1c7",
+  "level": "debug",
+  "category": "system",
+  "event_type": "authority_divergence",
+  "message": "authority_divergence emitted",
+  "details": {
+    "event": {
+      "seq": 9874,
+      "schema_version": 1,
+      "ts_utc": "2026-06-18T13:33:25.827553+00:00",
+      "ts_rel_init_s": 11870.111029,
+      "kind": "authority_divergence",
+      "phase": "execute",
+      "payload": {
+        "diagnostic_version": 1,
+        "task_id": "T1",
+        "raw_terminal_status": "done",
+        "authority_status": "unknown",
+        "authoritative": false,
+        "reason": "stale_evidence:missing_head:task_commands_run",
+        "missing_outputs": [],
+        "stale_evidence": [
+          "missing_head:task_commands_run",
+          "missing_head:task_commands_run",
+          "missing_head:task_commands_run",
+          "missing_head:task_commands_run",
+          "missing_head:task_commands_run",
+          "missing_head:task_commands_run",
+          "missing_head:task_commands_run",
+          "missing_head:task_commands_run",
+          "missing_head:task_commands_run",
+          "missing_head:task_commands_run"
+        ],
+        "would_block_reasons": [
+          "stale_evidence:missing_head:task_commands_run"
+        ],
+        "error": null,
+        "diagnostics": {
+          "task_id": "T1",
+          "declared_outputs": {
+            "commands_run": [
+              "python -c 'import verification: canonical + compat \u2192 identical class, alias confirmed, lazy __getattr__ confirmed' \u2014 PASS",
+              "pytest tests/arnold/pipeline/native/test_megaplan_hooks.py \u2014 105 passed, 1 pre-existing failure"
+            ]
+          },
+          "linked_evidence_count": 10,
+          "evidence_count": 78,
+          "normalization": "iterable",
+          "status": "unknown",
+          "evidence_sources": [
+            "plan_artifacts"
+          ],
+          "loaded_evidence_count": 78,
+          "raw_terminal_status": "done"
+        },
+        "ts_utc": "2026-06-18T13:33:25.826994+00:00"
+      },
+      "transaction_id": "47cdaf45722f5110",
+      "store_method": "log_system_event"
+    }
+  },
+  "turn_id": null,
+  "epic_id": "milestone-3-megaplan-specific-20260618-1213",
+  "occurred_at": "2026-06-18T13:33:25.827609Z"
+}

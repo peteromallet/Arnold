@@ -1,0 +1,60 @@
+{
+  "id": "log_b270b0dfadf0",
+  "level": "debug",
+  "category": "system",
+  "event_type": "authority_divergence",
+  "message": "authority_divergence emitted",
+  "details": {
+    "event": {
+      "seq": 10307,
+      "schema_version": 1,
+      "ts_utc": "2026-06-18T13:43:52.899962+00:00",
+      "ts_rel_init_s": 12497.183438,
+      "kind": "authority_divergence",
+      "phase": "execute",
+      "payload": {
+        "diagnostic_version": 1,
+        "task_id": "T9",
+        "raw_terminal_status": "done",
+        "authority_status": "unknown",
+        "authoritative": false,
+        "reason": "stale_evidence:missing_head:task_commands_run",
+        "missing_outputs": [],
+        "stale_evidence": [
+          "missing_head:task_commands_run",
+          "missing_head:task_commands_run",
+          "missing_head:task_commands_run",
+          "missing_head:task_commands_run"
+        ],
+        "would_block_reasons": [
+          "stale_evidence:missing_head:task_commands_run"
+        ],
+        "error": null,
+        "diagnostics": {
+          "task_id": "T9",
+          "declared_outputs": {
+            "commands_run": [
+              "python -c '@loop_guard(max_iterations=42) metadata: is_loop_guard, get_loop_guard_meta, __loop_guard_max_iterations__, NativeLoopGuard.max_iterations' - PASS",
+              "pytest tests/arnold/pipeline/native/test_compiler.py - 35/35 pass (includes TestLoopCompilation x4)"
+            ]
+          },
+          "linked_evidence_count": 4,
+          "evidence_count": 76,
+          "normalization": "iterable",
+          "status": "unknown",
+          "evidence_sources": [
+            "plan_artifacts"
+          ],
+          "loaded_evidence_count": 76,
+          "raw_terminal_status": "done"
+        },
+        "ts_utc": "2026-06-18T13:43:52.899595+00:00"
+      },
+      "transaction_id": "f2378937cf2ca955",
+      "store_method": "log_system_event"
+    }
+  },
+  "turn_id": null,
+  "epic_id": "milestone-3-megaplan-specific-20260618-1213",
+  "occurred_at": "2026-06-18T13:43:52.900003Z"
+}

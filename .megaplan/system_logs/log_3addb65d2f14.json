@@ -1,0 +1,59 @@
+{
+  "id": "log_3addb65d2f14",
+  "level": "debug",
+  "category": "system",
+  "event_type": "authority_divergence",
+  "message": "authority_divergence emitted",
+  "details": {
+    "event": {
+      "seq": 8297,
+      "schema_version": 1,
+      "ts_utc": "2026-06-18T12:59:02.717362+00:00",
+      "ts_rel_init_s": 9807.000838,
+      "kind": "authority_divergence",
+      "phase": "execute",
+      "payload": {
+        "diagnostic_version": 1,
+        "task_id": "T1",
+        "raw_terminal_status": "done",
+        "authority_status": "unknown",
+        "authoritative": false,
+        "reason": "stale_evidence:missing_head:task_commands_run",
+        "missing_outputs": [],
+        "stale_evidence": [
+          "missing_head:task_commands_run",
+          "missing_head:task_commands_run",
+          "missing_head:task_commands_run"
+        ],
+        "would_block_reasons": [
+          "stale_evidence:missing_head:task_commands_run"
+        ],
+        "error": null,
+        "diagnostics": {
+          "task_id": "T1",
+          "declared_outputs": {
+            "commands_run": [
+              "python -c \"from arnold.pipelines.megaplan.native_hooks import MegaplanNativeRuntimeHooks, MegaplanNativeHooks; from arnold.pipeline.native.megaplan_hooks import MegaplanNativeRuntimeHooks as MNRH2; assert MegaplanNativeRuntimeHooks is MNRH2; assert MegaplanNativeHooks is MegaplanNativeRuntimeHooks\" \u2014 PASS",
+              "python -m pytest tests/arnold/pipeline/native/test_megaplan_hooks.py -v --tb=short \u2014 120 passed, 2 pre-existing failures"
+            ]
+          },
+          "linked_evidence_count": 3,
+          "evidence_count": 81,
+          "normalization": "iterable",
+          "status": "unknown",
+          "evidence_sources": [
+            "plan_artifacts"
+          ],
+          "loaded_evidence_count": 81,
+          "raw_terminal_status": "done"
+        },
+        "ts_utc": "2026-06-18T12:59:02.716507+00:00"
+      },
+      "transaction_id": "0fa9e0f6a140174e",
+      "store_method": "log_system_event"
+    }
+  },
+  "turn_id": null,
+  "epic_id": "milestone-3-megaplan-specific-20260618-1213",
+  "occurred_at": "2026-06-18T12:59:02.717435Z"
+}

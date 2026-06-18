@@ -1,0 +1,75 @@
+{
+  "id": "log_9855d7e62549",
+  "level": "debug",
+  "category": "system",
+  "event_type": "authority_divergence",
+  "message": "authority_divergence emitted",
+  "details": {
+    "event": {
+      "seq": 8307,
+      "schema_version": 1,
+      "ts_utc": "2026-06-18T12:59:06.574194+00:00",
+      "ts_rel_init_s": 9810.85767,
+      "kind": "authority_divergence",
+      "phase": "execute",
+      "payload": {
+        "diagnostic_version": 1,
+        "task_id": "T11",
+        "raw_terminal_status": "done",
+        "authority_status": "unknown",
+        "authoritative": false,
+        "reason": "stale_evidence:missing_head:task_files_changed",
+        "missing_outputs": [],
+        "stale_evidence": [
+          "missing_head:task_files_changed",
+          "missing_head:task_files_changed",
+          "missing_head:task_files_changed",
+          "missing_head:task_files_changed",
+          "missing_head:task_files_changed",
+          "missing_head:task_files_changed",
+          "missing_head:task_commands_run",
+          "missing_head:task_files_changed",
+          "missing_head:task_files_changed",
+          "missing_head:task_files_changed",
+          "missing_head:task_files_changed",
+          "missing_head:task_files_changed",
+          "missing_head:task_commands_run",
+          "missing_head:task_commands_run",
+          "missing_head:task_files_changed"
+        ],
+        "would_block_reasons": [
+          "stale_evidence:missing_head:task_files_changed",
+          "stale_evidence:missing_head:task_commands_run"
+        ],
+        "error": null,
+        "diagnostics": {
+          "task_id": "T11",
+          "declared_outputs": {
+            "files_changed": [
+              "arnold/pipelines/megaplan/native_hooks.py"
+            ],
+            "commands_run": [
+              "python -c \"8 completed_subloop behavioral tests: state deep-copy, recommendation, no non-subloop key leak, resume_cursor non-None promotion, resume_cursor None skip, artifacts non-empty promotion, artifacts empty skip, child_state not mutated\" \u2014 all PASS",
+              "python -m pytest tests/arnold/pipeline/native/test_megaplan_hooks.py -v --tb=short \u2014 120 passed, 2 pre-existing failures"
+            ]
+          },
+          "linked_evidence_count": 15,
+          "evidence_count": 81,
+          "normalization": "iterable",
+          "status": "unknown",
+          "evidence_sources": [
+            "plan_artifacts"
+          ],
+          "loaded_evidence_count": 81,
+          "raw_terminal_status": "done"
+        },
+        "ts_utc": "2026-06-18T12:59:06.573821+00:00"
+      },
+      "transaction_id": "10afd77f79f78606",
+      "store_method": "log_system_event"
+    }
+  },
+  "turn_id": null,
+  "epic_id": "milestone-3-megaplan-specific-20260618-1213",
+  "occurred_at": "2026-06-18T12:59:06.574234Z"
+}

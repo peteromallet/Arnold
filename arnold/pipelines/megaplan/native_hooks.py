@@ -645,7 +645,7 @@ class MegaplanNativeRuntimeHooks(NullNativeRuntimeHooks):
                 if parent_stages is not None:
                     extra["parent_stages"] = list(parent_stages)
                 if joined_envelope is not None:
-                    extra["envelope"] = joined_envelope
+                    extra["envelope"] = joined_envelope.to_jsonable()
                 extra["parent_pc"] = parent_pc
 
                 save_composite_resume_cursor(

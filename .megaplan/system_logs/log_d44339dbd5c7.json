@@ -1,0 +1,62 @@
+{
+  "id": "log_d44339dbd5c7",
+  "level": "debug",
+  "category": "system",
+  "event_type": "authority_divergence",
+  "message": "authority_divergence emitted",
+  "details": {
+    "event": {
+      "seq": 8486,
+      "schema_version": 1,
+      "ts_utc": "2026-06-18T13:02:59.943062+00:00",
+      "ts_rel_init_s": 10044.226538,
+      "kind": "authority_divergence",
+      "phase": "execute",
+      "payload": {
+        "diagnostic_version": 1,
+        "task_id": "T1",
+        "raw_terminal_status": "done",
+        "authority_status": "unknown",
+        "authoritative": false,
+        "reason": "stale_evidence:missing_head:task_commands_run",
+        "missing_outputs": [],
+        "stale_evidence": [
+          "missing_head:task_commands_run",
+          "missing_head:task_commands_run",
+          "missing_head:task_commands_run",
+          "missing_head:task_commands_run",
+          "missing_head:task_commands_run",
+          "missing_head:task_commands_run"
+        ],
+        "would_block_reasons": [
+          "stale_evidence:missing_head:task_commands_run"
+        ],
+        "error": null,
+        "diagnostics": {
+          "task_id": "T1",
+          "declared_outputs": {
+            "commands_run": [
+              "python -c 'import resolution: canonical + compat \u2192 identical class' \u2014 PASS",
+              "pytest tests/arnold/pipeline/native/test_megaplan_hooks.py \u2014 120 passed, 2 pre-existing failures"
+            ]
+          },
+          "linked_evidence_count": 6,
+          "evidence_count": 80,
+          "normalization": "iterable",
+          "status": "unknown",
+          "evidence_sources": [
+            "plan_artifacts"
+          ],
+          "loaded_evidence_count": 80,
+          "raw_terminal_status": "done"
+        },
+        "ts_utc": "2026-06-18T13:02:59.942388+00:00"
+      },
+      "transaction_id": "433dc99c275d2463",
+      "store_method": "log_system_event"
+    }
+  },
+  "turn_id": null,
+  "epic_id": "milestone-3-megaplan-specific-20260618-1213",
+  "occurred_at": "2026-06-18T13:02:59.943121Z"
+}

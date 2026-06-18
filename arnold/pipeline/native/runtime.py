@@ -531,15 +531,18 @@ def run_native_pipeline(
             ctx = _hooks.on_step_start(instr, ctx)
 
             # ── Control override short-circuit (Megaplan T7) ──────
-            # When a hook (e.g. MegaplanNativeRuntimeHooks) sets
-            # __control_override__ in ctx, skip the decision body and
-            # route directly.  Priority: halt > override > decision > normal.
-            control_override: str | None = ctx.get("__control_override__")
+            # When a hook (e.g. MegaplanNativeRuntimeHooks) resolves a
+            # catalog-driven control override, skip the decision body and
+            # route directly. Priority: halt > override > decision > normal.
+            control_override: str | None = ctx.pop("__override_route__", None)
+            if control_override is None:
+                # Backward-compatibility for any older hook implementation.
+                control_override = ctx.pop("__control_override__", None)
             if control_override is not None:
                 # Use the override as the decision label directly.
                 # Build a synthetic result with envelope=None so the
                 # downstream envelope join is a no-op.
-                result: dict[str, Any] = {"__control_override__": control_override}
+                result: dict[str, Any] = {"__override_route__": control_override}
                 label = control_override
             else:
                 result = instr.func(ctx)

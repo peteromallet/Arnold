@@ -1,0 +1,57 @@
+{
+  "id": "log_c38af8ef6b94",
+  "level": "debug",
+  "category": "system",
+  "event_type": "authority_divergence",
+  "message": "authority_divergence emitted",
+  "details": {
+    "event": {
+      "seq": 10383,
+      "schema_version": 1,
+      "ts_utc": "2026-06-18T13:52:44.651827+00:00",
+      "ts_rel_init_s": 13028.935303,
+      "kind": "authority_divergence",
+      "phase": "execute",
+      "payload": {
+        "diagnostic_version": 1,
+        "task_id": "T2",
+        "raw_terminal_status": "done",
+        "authority_status": "unknown",
+        "authoritative": false,
+        "reason": "stale_evidence:missing_head:task_commands_run",
+        "missing_outputs": [],
+        "stale_evidence": [
+          "missing_head:task_commands_run",
+          "missing_head:task_commands_run"
+        ],
+        "would_block_reasons": [
+          "stale_evidence:missing_head:task_commands_run"
+        ],
+        "error": null,
+        "diagnostics": {
+          "task_id": "T2",
+          "declared_outputs": {
+            "commands_run": [
+              "python -m pytest tests/arnold/pipeline/native/test_runtime.py -v --tb=line - 35 passed"
+            ]
+          },
+          "linked_evidence_count": 2,
+          "evidence_count": 72,
+          "normalization": "iterable",
+          "status": "unknown",
+          "evidence_sources": [
+            "plan_artifacts"
+          ],
+          "loaded_evidence_count": 72,
+          "raw_terminal_status": "done"
+        },
+        "ts_utc": "2026-06-18T13:52:44.651455+00:00"
+      },
+      "transaction_id": "57325b6848edb449",
+      "store_method": "log_system_event"
+    }
+  },
+  "turn_id": null,
+  "epic_id": "milestone-3-megaplan-specific-20260618-1213",
+  "occurred_at": "2026-06-18T13:52:44.651871Z"
+}
