@@ -1749,6 +1749,41 @@ class TestControlOverrideRuntimeIntegration:
             f"state={result.state}"
         )
 
+    def test_unknown_override_fails_closed_at_runtime(self) -> None:
+        """Unknown overrides propagate through run_native_pipeline, not swallowed."""
+        from arnold.pipeline.native import (
+            NativeInstruction,
+            NativeProgram,
+            run_native_pipeline,
+        )
+        from arnold.pipelines.megaplan.native_hooks import (
+            MegaplanNativeHooks,
+            UnknownOverrideError,
+        )
+
+        def phase_func(ctx):
+            return {"ok": True}
+
+        program = NativeProgram(
+            name="test_unknown_override_runtime",
+            instructions=(
+                NativeInstruction(
+                    op="phase", name="step", pc=0, func=phase_func, next_pc=1
+                ),
+                NativeInstruction(op="halt", name="end", pc=1, func=None),
+            ),
+        )
+
+        hooks = MegaplanNativeHooks()
+        initial_state = {
+            "meta": {
+                "overrides": [{"action": "not-a-real-override", "reason": "test"}],
+            },
+        }
+
+        with pytest.raises(UnknownOverrideError, match="Unknown Megaplan override"):
+            run_native_pipeline(program, initial_state=initial_state, hooks=hooks)
+
 
 class TestMegaplanNativeHooksShouldHaltLoop:
     """Megaplan loop policy can halt native loops without affecting defaults."""

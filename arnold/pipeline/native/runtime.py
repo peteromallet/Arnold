@@ -381,12 +381,7 @@ def run_native_pipeline(
                 ctx["contract_results"] = dict(contract_results_published)
 
             # ── Hook: on_step_start (may rewrite ctx) ─────────────
-            try:
-                ctx = _hooks.on_step_start(instr, ctx)
-            except Exception:
-                # Hook-level validation failures (e.g. unknown overrides)
-                # must not crash the pipeline; continue with original ctx.
-                pass
+            ctx = _hooks.on_step_start(instr, ctx)
 
             # Invoke the phase
             try:
@@ -533,12 +528,7 @@ def run_native_pipeline(
                 ctx["artifact_root"] = str(artifact_root)
 
             # ── Hook: on_step_start (may rewrite ctx / inject control override) ──
-            try:
-                ctx = _hooks.on_step_start(instr, ctx)
-            except Exception:
-                # Hook-level validation failures (e.g. unknown overrides)
-                # must not crash the pipeline; continue with original ctx.
-                pass
+            ctx = _hooks.on_step_start(instr, ctx)
 
             # ── Control override short-circuit (Megaplan T7) ──────
             # When a hook (e.g. MegaplanNativeRuntimeHooks) resolves a
