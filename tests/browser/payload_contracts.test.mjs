@@ -65,7 +65,12 @@ test("normalizeAgentEditResponse — agent_edit_accept_response.json", () => {
   assert.equal(normalized.outcome.kind, "candidate");
   assert.ok(normalized.candidateGraph, "should have candidateGraph");
   assert.ok(normalized.candidate, "should have candidate");
-  assert.deepEqual(normalized.eligibility, raw.apply_eligibility);
+  assert.deepEqual(normalized.eligibility, {
+    applyable: true,
+    reason: "applyable",
+    message: "Ready to apply.",
+    warnings: [],
+  });
   assert.equal(normalized.sessionId, "session-stale-arrival");
 
   // Idempotent
