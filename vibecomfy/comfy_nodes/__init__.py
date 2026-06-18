@@ -56,6 +56,26 @@ if _WEB_DIST_DIR.is_dir():
         _WEB_DIRECTORY = f"./web_dist/{_best[1]}"
 WEB_DIRECTORY = _WEB_DIRECTORY
 
+def _ensure_comfyui_root_on_path() -> None:
+    """Make sure the running ComfyUI root is on sys.path.
+
+    Some launchers run custom nodes without putting the ComfyUI root directory on
+    PYTHONPATH.  The routes below need to import ``server.PromptServer``, so we
+    look for the directory that contains both ``server.py`` and ``nodes.py`` and
+    add it if necessary.
+    """
+    candidates: list[Path] = [Path.cwd()]
+    candidates.extend(Path(__file__).resolve().parents)
+    for candidate in candidates:
+        if (candidate / "server.py").is_file() and (candidate / "nodes.py").is_file():
+            path_str = str(candidate)
+            if path_str not in sys.path:
+                sys.path.insert(0, path_str)
+            break
+
+
+_ensure_comfyui_root_on_path()
+
 try:
     from server import PromptServer
 
@@ -67,8 +87,15 @@ try:
 
     from .agent import routes  # noqa: F401
 
-except ImportError:
-    pass
+except ImportError as _route_import_exc:
+    import warnings
+
+    warnings.warn(
+        f"Could not register VibeComfy agent routes ({_route_import_exc}); "
+        "the ComfyUI server may not be available. "
+        "POST /vibecomfy/agent-executor and /vibecomfy/agent/status will not be served.",
+        stacklevel=2,
+    )
 
 
 def _strip_conditioning_keys(conditioning: list[Any], keys: set[str]) -> list[Any]:
