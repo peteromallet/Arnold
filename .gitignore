@@ -15,6 +15,7 @@ __pycache__/
 .megaplan/epics/
 .megaplan/profiles.toml
 .megaplan/schemas/
+.megaplan/system_logs/
 .megaplan/telemetry/
 .megaplan/verification/
 .megaplan/plans/

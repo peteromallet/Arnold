@@ -34,6 +34,10 @@ _KIND_PRIORITY: dict[str, int] = {
 }
 
 
+class UnknownOverrideError(ValueError):
+    """Raised when pending Megaplan override metadata names no known override."""
+
+
 def resolve_control_override(
     control_entries: list[dict[str, Any]],
     catalog: dict[str, dict[str, Any]] | None = None,
@@ -170,7 +174,9 @@ class MegaplanNativeRuntimeHooks(NullNativeRuntimeHooks):
                 internal_action = cli_to_internal_override(action)
                 entry_meta = _catalog.get(internal_action)
                 if entry_meta is None:
-                    continue  # unknown override — silently skip
+                    raise UnknownOverrideError(
+                        f"Unknown Megaplan override: {action!r}"
+                    )
             else:
                 # Normalise CLI spelling for internal dispatch
                 internal_action = cli_to_internal_override(action)
@@ -199,12 +205,89 @@ class MegaplanNativeRuntimeHooks(NullNativeRuntimeHooks):
         if control_entries:
             resolved = resolve_control_override(control_entries, _catalog)
             if resolved is not None:
+                winner = next(
+                    (
+                        entry
+                        for entry in control_entries
+                        if entry.get("action") == resolved
+                    ),
+                    control_entries[0],
+                )
+                _emit_override_applied(
+                    self._plan_dir,
+                    resolved,
+                    {
+                        "action": winner.get("catalog_action", resolved),
+                        "internal_action": resolved,
+                        "route": resolved,
+                        "kind": winner.get("kind"),
+                        "reason": (
+                            winner.get("entry", {}).get("reason")
+                            if isinstance(winner.get("entry"), dict)
+                            else None
+                        ),
+                    },
+                )
                 ctx["__override_route__"] = resolved
 
         if modified:
             ctx["state"] = new_state
 
         return ctx
+
+    def should_halt_loop(
+        self,
+        instr: NativeInstruction,
+        state: dict[str, Any],
+        iteration: int,
+    ) -> tuple[bool, str | None]:
+        """Halt native loop bodies when explicit Megaplan loop policy requires it.
+
+        The policy is additive: with no ``loop_guards``/iteration cap metadata,
+        this hook preserves the null-hook behavior.  Policy may be supplied in
+        ``policy_data`` or state metadata/config.  The focused supported shape is:
+
+        ``{"loop_guards": {"guard_name": {"max_iterations": 3}}}``
+
+        A guard can also halt on recommendation state with
+        ``halt_on_recommendations`` and either ``recommendation`` in the guard
+        metadata or ``subloop:<guard_name>:recommendation`` in state.
+        """
+        policy = _loop_policy_for_guard(
+            instr_name=instr.name,
+            state=state,
+            policy_data=self._policy_data,
+            policy_path=self._policy_path,
+        )
+        if not policy:
+            return False, None
+
+        max_iterations = _coerce_positive_int(
+            policy.get("max_iterations")
+            or policy.get("max_loop_iterations")
+            or policy.get("iteration_limit")
+        )
+        if max_iterations is not None and iteration >= max_iterations:
+            return (
+                True,
+                f"loop_guard:{instr.name}:max_iterations:{max_iterations}",
+            )
+
+        recommendation = _loop_recommendation(instr.name, state, policy)
+        halt_recommendations = policy.get("halt_on_recommendations")
+        if isinstance(halt_recommendations, str):
+            halt_recommendations = [halt_recommendations]
+        if (
+            isinstance(recommendation, str)
+            and isinstance(halt_recommendations, list)
+            and recommendation in halt_recommendations
+        ):
+            return (
+                True,
+                f"loop_guard:{instr.name}:recommendation:{recommendation}",
+            )
+
+        return False, None
 
     def merge_state(
         self,
@@ -824,6 +907,92 @@ def _apply_config_override(
     return False
 
 
+def _coerce_positive_int(value: Any) -> int | None:
+    """Return a positive integer for simple numeric policy values."""
+    try:
+        coerced = int(value)
+    except (TypeError, ValueError):
+        return None
+    return coerced if coerced >= 0 else None
+
+
+def _load_policy_path(policy_path: str | None) -> dict[str, Any]:
+    """Best-effort JSON policy loader used only for loop guard metadata."""
+    if not policy_path:
+        return {}
+    try:
+        import json
+        from pathlib import Path
+
+        loaded = json.loads(Path(policy_path).read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+    return loaded if isinstance(loaded, dict) else {}
+
+
+def _loop_policy_for_guard(
+    *,
+    instr_name: str,
+    state: dict[str, Any],
+    policy_data: dict[str, Any] | None,
+    policy_path: str | None,
+) -> dict[str, Any]:
+    """Merge loop-guard policy from persisted policy and Megaplan state."""
+    sources: list[dict[str, Any]] = []
+    loaded_path = _load_policy_path(policy_path)
+    if loaded_path:
+        sources.append(loaded_path)
+    if isinstance(policy_data, dict):
+        sources.append(policy_data)
+    if isinstance(state, dict):
+        state_meta = state.get("_state_meta")
+        if isinstance(state_meta, dict):
+            config = state_meta.get("config")
+            if isinstance(config, dict):
+                sources.append(config)
+        config = state.get("config")
+        if isinstance(config, dict):
+            sources.append(config)
+        loop_guards = state.get("loop_guards")
+        if isinstance(loop_guards, dict):
+            sources.append({"loop_guards": loop_guards})
+
+    merged: dict[str, Any] = {}
+    for source in sources:
+        guards = source.get("loop_guards")
+        if isinstance(guards, dict):
+            guard_policy = guards.get(instr_name) or guards.get("*")
+            if isinstance(guard_policy, dict):
+                merged.update(guard_policy)
+        for key in ("max_loop_iterations", "max_iterations"):
+            if key in source and key not in merged:
+                merged[key] = source[key]
+    return merged
+
+
+def _loop_recommendation(
+    instr_name: str,
+    state: dict[str, Any],
+    policy: dict[str, Any],
+) -> str | None:
+    """Resolve recommendation metadata for a loop guard, if present."""
+    recommendation = policy.get("recommendation")
+    if isinstance(recommendation, str):
+        return recommendation
+    if not isinstance(state, dict):
+        return None
+    guard_state = state.get("loop_guards")
+    if isinstance(guard_state, dict):
+        entry = guard_state.get(instr_name)
+        if isinstance(entry, dict) and isinstance(entry.get("recommendation"), str):
+            return entry["recommendation"]
+    subloop_recommendation = state.get(f"subloop:{instr_name}:recommendation")
+    if isinstance(subloop_recommendation, str):
+        return subloop_recommendation
+    recommendation = state.get("recommendation")
+    return recommendation if isinstance(recommendation, str) else None
+
+
 # Compatibility alias — existing callers referencing ``MegaplanNativeHooks``
 # continue to resolve the canonical ``MegaplanNativeRuntimeHooks``.
 MegaplanNativeHooks = MegaplanNativeRuntimeHooks
@@ -831,4 +1000,5 @@ MegaplanNativeHooks = MegaplanNativeRuntimeHooks
 __all__ = [
     "MegaplanNativeRuntimeHooks",
     "MegaplanNativeHooks",
+    "UnknownOverrideError",
 ]

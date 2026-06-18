@@ -381,7 +381,12 @@ def run_native_pipeline(
                 ctx["contract_results"] = dict(contract_results_published)
 
             # ── Hook: on_step_start (may rewrite ctx) ─────────────
-            ctx = _hooks.on_step_start(instr, ctx)
+            try:
+                ctx = _hooks.on_step_start(instr, ctx)
+            except Exception:
+                # Hook-level validation failures (e.g. unknown overrides)
+                # must not crash the pipeline; continue with original ctx.
+                pass
 
             # Invoke the phase
             try:
@@ -528,7 +533,12 @@ def run_native_pipeline(
                 ctx["artifact_root"] = str(artifact_root)
 
             # ── Hook: on_step_start (may rewrite ctx / inject control override) ──
-            ctx = _hooks.on_step_start(instr, ctx)
+            try:
+                ctx = _hooks.on_step_start(instr, ctx)
+            except Exception:
+                # Hook-level validation failures (e.g. unknown overrides)
+                # must not crash the pipeline; continue with original ctx.
+                pass
 
             # ── Control override short-circuit (Megaplan T7) ──────
             # When a hook (e.g. MegaplanNativeRuntimeHooks) resolves a
@@ -546,12 +556,23 @@ def run_native_pipeline(
                     # Build a synthetic result with envelope=None so the
                     # downstream envelope join is a no-op.
                     result = {"__override_route__": control_override}
+                    result = _hooks.on_step_end(instr, ctx, result)
                     label = override_label
                 else:
-                    result = instr.func(ctx)
+                    try:
+                        result = instr.func(ctx)
+                    except BaseException as exc:
+                        _hooks.on_step_error(instr, ctx, exc)
+                        raise
+                    result = _hooks.on_step_end(instr, ctx, result)
                     label = _resolve_decision_label(result)
             else:
-                result = instr.func(ctx)
+                try:
+                    result = instr.func(ctx)
+                except BaseException as exc:
+                    _hooks.on_step_error(instr, ctx, exc)
+                    raise
+                result = _hooks.on_step_end(instr, ctx, result)
 
                 # Resolve branch label
                 label = _resolve_decision_label(result)

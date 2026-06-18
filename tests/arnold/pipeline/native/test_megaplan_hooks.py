@@ -672,17 +672,20 @@ class TestMegaplanNativeHooksOverrideInjection:
         # ctx should be returned (no additive mutation for control overrides)
         assert result is ctx
 
-    def test_unknown_override_silently_skipped(self) -> None:
-        """Unknown override names are silently skipped (catalog miss)."""
-        from arnold.pipelines.megaplan.native_hooks import MegaplanNativeHooks
+    def test_unknown_override_fails_closed(self) -> None:
+        """Unknown override names raise instead of being silently skipped."""
+        from arnold.pipelines.megaplan.native_hooks import (
+            MegaplanNativeHooks,
+            UnknownOverrideError,
+        )
 
         hooks = MegaplanNativeHooks()
         ctx = self._make_ctx(
             overrides=[{"action": "nonexistent-override", "note": "x"}],
         )
-        result = hooks.on_step_start(self._make_instr(), ctx)
-        # No crash — unknown override silently skipped
-        assert result is ctx
+
+        with pytest.raises(UnknownOverrideError, match="Unknown Megaplan override"):
+            hooks.on_step_start(self._make_instr(), ctx)
 
     # ── Annotation override: add-note ────────────────────────────────
 
@@ -994,6 +997,31 @@ class TestMegaplanNativeHooksOverrideInjection:
         assert state["config"]["profile"] == "thorough"
         assert state["config"]["robustness"] == "paranoid"
 
+    def test_additive_override_events_still_work(self, tmp_path) -> None:
+        """Additive overrides still emit OVERRIDE_APPLIED after fail-closed validation."""
+        import json
+
+        from arnold.pipelines.megaplan.native_hooks import MegaplanNativeHooks
+
+        plan_dir = tmp_path / "plan"
+        plan_dir.mkdir()
+        hooks = MegaplanNativeHooks(plan_dir=str(plan_dir))
+        ctx = self._make_ctx(
+            overrides=[
+                {"action": "add-note", "note": "event note", "source": "test"},
+                {"action": "set-profile", "profile": "thorough"},
+            ],
+        )
+
+        hooks.on_step_start(self._make_instr(), ctx)
+
+        events = [
+            json.loads(line)
+            for line in (plan_dir / "events.ndjson").read_text(encoding="utf-8").splitlines()
+        ]
+        payloads = [event["payload"] for event in events if event["kind"] == "override_applied"]
+        assert {"add-note", "set-profile"} <= {payload["action"] for payload in payloads}
+
 
 
 # ── T7: Control override resolver tests ──────────────────────────────
@@ -1187,6 +1215,34 @@ class TestControlOverrideIntegration:
         result = hooks.on_step_start(self._make_instr(), ctx)
         assert result.get("__override_route__") == "abort", (
             "termination override must set __override_route__ in ctx"
+        )
+
+    def test_control_override_emits_override_applied_before_route(self, tmp_path) -> None:
+        """Control override resolution emits OVERRIDE_APPLIED, not just a ctx route."""
+        import json
+
+        from arnold.pipelines.megaplan.native_hooks import MegaplanNativeHooks
+
+        plan_dir = tmp_path / "plan"
+        plan_dir.mkdir()
+        hooks = MegaplanNativeHooks(plan_dir=str(plan_dir))
+        ctx = self._make_ctx(
+            overrides=[{"action": "abort", "reason": "stop now"}],
+        )
+
+        result = hooks.on_step_start(self._make_instr(), ctx)
+
+        assert result.get("__override_route__") == "abort"
+        events = [
+            json.loads(line)
+            for line in (plan_dir / "events.ndjson").read_text(encoding="utf-8").splitlines()
+        ]
+        payloads = [event["payload"] for event in events if event["kind"] == "override_applied"]
+        assert any(
+            payload.get("action") == "abort"
+            and payload.get("route") == "abort"
+            and payload.get("kind") == "termination"
+            for payload in payloads
         )
 
     def test_transition_override_sets_ctx_flag(self) -> None:
@@ -1692,6 +1748,59 @@ class TestControlOverrideRuntimeIntegration:
             f"termination (abort) must beat transition (force-proceed). "
             f"state={result.state}"
         )
+
+
+class TestMegaplanNativeHooksShouldHaltLoop:
+    """Megaplan loop policy can halt native loops without affecting defaults."""
+
+    @staticmethod
+    def _make_instr(name: str = "review_loop"):
+        from arnold.pipeline.native.ir import NativeInstruction
+
+        return NativeInstruction(
+            op="decision", name=name, pc=0, func=None, next_pc=None,
+        )
+
+    def test_allows_continuation_without_policy(self) -> None:
+        from arnold.pipelines.megaplan.native_hooks import MegaplanNativeHooks
+
+        hooks = MegaplanNativeHooks()
+
+        assert hooks.should_halt_loop(self._make_instr(), {}, 100) == (False, None)
+
+    def test_halts_when_loop_guard_max_iterations_reached(self) -> None:
+        from arnold.pipelines.megaplan.native_hooks import MegaplanNativeHooks
+
+        hooks = MegaplanNativeHooks(
+            policy_data={
+                "loop_guards": {
+                    "review_loop": {"max_iterations": 2},
+                },
+            },
+        )
+
+        assert hooks.should_halt_loop(self._make_instr(), {}, 1) == (False, None)
+        do_halt, reason = hooks.should_halt_loop(self._make_instr(), {}, 2)
+        assert do_halt is True
+        assert reason == "loop_guard:review_loop:max_iterations:2"
+
+    def test_halts_on_configured_recommendation(self) -> None:
+        from arnold.pipelines.megaplan.native_hooks import MegaplanNativeHooks
+
+        hooks = MegaplanNativeHooks(
+            policy_data={
+                "loop_guards": {
+                    "review_loop": {
+                        "halt_on_recommendations": ["halt"],
+                    },
+                },
+            },
+        )
+        state = {"subloop:review_loop:recommendation": "halt"}
+
+        do_halt, reason = hooks.should_halt_loop(self._make_instr(), state, 0)
+        assert do_halt is True
+        assert reason == "loop_guard:review_loop:recommendation:halt"
 
 
 class TestMegaplanNativeHooksJoinEnvelope:
