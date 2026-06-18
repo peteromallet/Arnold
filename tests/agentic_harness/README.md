@@ -118,6 +118,33 @@ and `assessment.observed` must be anchored to frozen evidence files — **never*
 to narrative text in `report.md`. If a check can be satisfied by editing
 `report.md` alone, it is not an evidence-based check and must be rewritten.
 
+## M6 executor scenarios
+
+Two structural scenarios now exercise the same executor entrypoint the frontend/API
+uses (`POST /vibecomfy/agent-executor` → `vibecomfy.executor.core.run_executor`):
+
+- `explore-hotshot-xl-workflow` — research ask. The fake actor builds an
+  `ExecutorRequest` for "Hotshot XL SVD-XT workflow", calls `run_executor`, and
+  freezes `executor_result.json`, `executor_report.json`, and `research_result.json`.
+  The enforced checks require `ok=true`, `plan.research=true`, and at least one
+  source mentioning Hotshot/XL.
+- `explain-simple-workflow` — graph explanation ask. The fake actor loads the
+  fixture at `tests/fixtures/agent_edit/flat.json`, calls `run_executor`, and freezes
+  `executor_result.json`, `executor_report.json`, and `implementation_result.json`
+  (also surfaced as `graph_report.txt`). The enforced checks require
+  `plan.intent=explain_graph`, `plan.implement=true`, and a reply/report that names
+  the key nodes and edges.
+
+Run just these two scenarios:
+
+```bash
+python -m tests.agentic_harness.runner \
+  --mode structural --actor fake --tag executor-verify \
+  --name explore-hotshot-xl-workflow --name explain-simple-workflow
+```
+
+Evidence lands in `out/agentic/reports/executor-verify/`.
+
 ## Handoff for M2–M6
 
 - **M2 (discovery & limits):** Add negative scenarios proving the actor recognizes unwired
