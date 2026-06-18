@@ -268,6 +268,23 @@ class NativeTraceHooks:
     ) -> tuple[bool, str | None]:
         return self._inner.should_halt_loop(instr, state, iteration)
 
+    def on_edge_traverse(
+        self,
+        instr: NativeInstruction,
+        state: dict[str, Any],
+        label: str,
+        target_pc: int,
+    ) -> None:
+        return self._inner.on_edge_traverse(instr, state, label, target_pc)
+
+    def resolve_step_io_policy(
+        self,
+        instr: NativeInstruction,
+        state: dict[str, Any],
+        handoff_value: Any,
+    ) -> Any:
+        return self._inner.resolve_step_io_policy(instr, state, handoff_value)
+
     def on_stage_complete(
         self,
         instr: NativeInstruction,

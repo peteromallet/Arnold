@@ -537,6 +537,131 @@ class MegaplanNativeRuntimeHooks(NullNativeRuntimeHooks):
 
         return state_patch, joined_envelope
 
+    # ── Suspended subpipeline helper (T12) ────────────────────────────
+
+    def suspended_subloop(
+        self,
+        name: str,
+        child_state: dict[str, Any],
+        *,
+        child_artifacts: dict[str, Any] | None = None,
+        child_envelope: Any = None,
+        child_resume_cursor: Any = None,
+        child_frames: dict[str, Any] | None = None,
+        child_artifact_root: str | None = None,
+        parent_envelope: Any = None,
+        parent_pc: int = 0,
+        parent_loops: dict[str, int] | None = None,
+        parent_frames: dict[str, Any] | None = None,
+        parent_stages: list[str] | None = None,
+        parent_state: dict[str, Any] | None = None,
+    ) -> tuple[dict[str, Any], Any]:
+        """Lift a suspended child subpipeline into a halt and composite cursor.
+
+        Returns a ``(state_patch, joined_envelope)`` tuple, same as
+        :meth:`completed_subloop`, so the caller can merge *state_patch*
+        into parent state and store *joined_envelope*.
+
+        Side-effect: writes a composite resume cursor under
+        ``<plan_dir>/state.json::resume_cursor`` (and dual-writes
+        ``composite_resume_cursor.json``) so the parent can be resumed
+        with the child's frame stack, resume cursor, artifact root,
+        and envelope intact.
+
+        **state_patch** carries:
+
+        * ``subloop:<name>:state`` — the child's final state dict
+        * ``subloop:<name>:recommendation`` — always ``"halt"``
+        * ``subloop:<name>:resume_cursor`` — when *child_resume_cursor*
+          is not ``None``
+        * ``subloop:<name>:artifacts`` — when *child_artifacts* is non-empty
+
+        The composite cursor **children** dict includes the child's
+        resume cursor, frame stack, artifact root, and state so the
+        native runtime can restore the child on resume.  Parent fields
+        (pc, loops, frames, stages, state, envelope) are stored as
+        top-level extra keys so the parent runtime can resume from
+        the suspension point.
+
+        This method does **not** mutate any argument.
+        """
+        # ── Build state_patch (same shape as completed_subloop) ──────
+        state_patch: dict[str, Any] = {
+            f"subloop:{name}:state": dict(child_state),
+        }
+        state_patch[f"subloop:{name}:recommendation"] = "halt"
+
+        if child_resume_cursor is not None:
+            state_patch[f"subloop:{name}:resume_cursor"] = child_resume_cursor
+
+        if child_artifacts:
+            state_patch[f"subloop:{name}:artifacts"] = dict(child_artifacts)
+
+        # ── Envelope join ──────────────────────────────────────────
+        try:
+            from arnold.pipeline.native.ir import NativeInstruction
+
+            _instr = NativeInstruction(
+                op="phase", name=f"subloop:{name}", pc=0, func=None, next_pc=None,
+            )
+        except Exception:
+            _instr = None
+
+        joined_envelope = self.join_envelope(
+            _instr, parent_envelope, child_envelope,
+        )
+
+        # ── Composite cursor persistence ────────────────────────────
+        # Only persist when self._plan_dir is set (same guard as
+        # on_stage_complete).
+        if self._plan_dir is not None:
+            try:
+                from pathlib import Path
+
+                from arnold.pipelines.megaplan._pipeline.resume import (
+                    save_composite_resume_cursor,
+                )
+
+                # Build child cursor entry
+                child_cursor: dict[str, Any] = {}
+                if child_resume_cursor is not None:
+                    child_cursor["resume_cursor"] = child_resume_cursor
+                if child_frames is not None:
+                    child_cursor["frames"] = dict(child_frames)
+                if child_artifact_root is not None:
+                    child_cursor["artifact_root"] = child_artifact_root
+                child_cursor["state"] = dict(child_state)
+
+                children: dict[str, Any] = {name: child_cursor}
+
+                # Parent context as extra top-level keys
+                extra: dict[str, Any] = {}
+                if parent_state is not None:
+                    extra["parent_state"] = dict(parent_state)
+                if parent_loops is not None:
+                    extra["parent_loops"] = dict(parent_loops)
+                if parent_frames is not None:
+                    extra["parent_frames"] = dict(parent_frames)
+                if parent_stages is not None:
+                    extra["parent_stages"] = list(parent_stages)
+                if joined_envelope is not None:
+                    extra["envelope"] = joined_envelope
+                extra["parent_pc"] = parent_pc
+
+                save_composite_resume_cursor(
+                    Path(self._plan_dir),
+                    children=children,
+                    version=1,
+                    **extra,
+                )
+            except Exception:
+                # Best-effort: if persist fails, the caller still gets
+                # the state_patch and joined_envelope so the parent can
+                # halt without data loss.
+                pass
+
+        return state_patch, joined_envelope
+
 
 # ── Override helper functions (T6) ────────────────────────────────────
 

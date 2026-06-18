@@ -2986,6 +2986,778 @@ class TestMegaplanNativeHooksJoinEnvelope:
         assert j.cross_cutting.taint == "t"
 
 
+# ── Subloop promotion / suspension-lift tests (T13) ────────────────────
+
+
+class TestMegaplanNativeHooksCompletedSubloop:
+    """Focused tests for completed child promotion, artifact root
+    preservation, and child envelope join via ``completed_subloop``."""
+
+    # ── completed child promotion ──────────────────────────────────
+
+    def test_completed_subloop_returns_state_patch_and_envelope(self):
+        """``completed_subloop`` returns a (state_patch, joined_envelope) tuple."""
+        from arnold.pipelines.megaplan.native_hooks import MegaplanNativeHooks
+        hooks = MegaplanNativeHooks()
+        state_patch, env = hooks.completed_subloop(
+            "child1", {"key": "val"}, "proceed",
+        )
+        assert isinstance(state_patch, dict)
+        # envelope is None when neither parent nor child envelope given
+        assert env is None
+
+    def test_completed_subloop_promotes_state_and_recommendation(self):
+        """State patch carries ``subloop:<name>:state`` and
+        ``subloop:<name>:recommendation`` keys."""
+        from arnold.pipelines.megaplan.native_hooks import MegaplanNativeHooks
+        hooks = MegaplanNativeHooks()
+        child_state = {"result": 42, "phase": "done"}
+        state_patch, _ = hooks.completed_subloop(
+            "analyze", child_state, "force-proceed",
+        )
+        assert state_patch["subloop:analyze:state"] == child_state
+        assert state_patch["subloop:analyze:recommendation"] == "force-proceed"
+
+    def test_completed_subloop_promotes_state_copy_not_reference(self):
+        """Promoted child state is a copy, not the original dict."""
+        from arnold.pipelines.megaplan.native_hooks import MegaplanNativeHooks
+        hooks = MegaplanNativeHooks()
+        child_state = {"x": 1}
+        state_patch, _ = hooks.completed_subloop("s", child_state, "ok")
+        child_state["x"] = 99
+        assert state_patch["subloop:s:state"]["x"] == 1  # snapshot preserved
+
+    # ── artifact root preservation ──────────────────────────────────
+
+    def test_completed_subloop_includes_artifacts_when_provided(self):
+        """``subloop:<name>:artifacts`` present when child_artifacts given."""
+        from arnold.pipelines.megaplan.native_hooks import MegaplanNativeHooks
+        hooks = MegaplanNativeHooks()
+        artifacts = {"diagram": "/tmp/out.png", "log": "/tmp/run.log"}
+        state_patch, _ = hooks.completed_subloop(
+            "build", {}, "done",
+            child_artifacts=artifacts,
+        )
+        assert state_patch["subloop:build:artifacts"] == artifacts
+
+    def test_completed_subloop_omits_artifacts_when_none(self):
+        """``subloop:<name>:artifacts`` absent when child_artifacts is None."""
+        from arnold.pipelines.megaplan.native_hooks import MegaplanNativeHooks
+        hooks = MegaplanNativeHooks()
+        state_patch, _ = hooks.completed_subloop("t", {}, "ok")
+        assert "subloop:t:artifacts" not in state_patch
+
+    def test_completed_subloop_omits_artifacts_when_empty_dict(self):
+        """``subloop:<name>:artifacts`` absent when child_artifacts is empty."""
+        from arnold.pipelines.megaplan.native_hooks import MegaplanNativeHooks
+        hooks = MegaplanNativeHooks()
+        state_patch, _ = hooks.completed_subloop(
+            "e", {}, "ok", child_artifacts={},
+        )
+        assert "subloop:e:artifacts" not in state_patch
+
+    # ── resume_cursor in completed path ─────────────────────────────
+
+    def test_completed_subloop_includes_resume_cursor_when_provided(self):
+        """``subloop:<name>:resume_cursor`` present when non-None."""
+        from arnold.pipelines.megaplan.native_hooks import MegaplanNativeHooks
+        hooks = MegaplanNativeHooks()
+        cursor = {"pc": 3, "state": {"inner": 1}}
+        state_patch, _ = hooks.completed_subloop(
+            "sub", {}, "halt", resume_cursor=cursor,
+        )
+        assert state_patch["subloop:sub:resume_cursor"] == cursor
+
+    def test_completed_subloop_omits_resume_cursor_when_none(self):
+        """``subloop:<name>:resume_cursor`` absent when None."""
+        from arnold.pipelines.megaplan.native_hooks import MegaplanNativeHooks
+        hooks = MegaplanNativeHooks()
+        state_patch, _ = hooks.completed_subloop(
+            "sub", {}, "ok", resume_cursor=None,
+        )
+        assert "subloop:sub:resume_cursor" not in state_patch
+
+    # ── child envelope join ─────────────────────────────────────────
+
+    def test_completed_subloop_joins_envelopes(self):
+        """Child envelope is joined with parent envelope via join_envelope."""
+        from arnold.pipelines.megaplan.native_hooks import MegaplanNativeHooks
+        from arnold.runtime.envelope import RunEnvelope
+        hooks = MegaplanNativeHooks()
+        parent_env = RunEnvelope(taint="clean", cost=1.0)
+        child_env = RunEnvelope(taint="tainted", cost=4.0)
+        _, joined = hooks.completed_subloop(
+            "child", {}, "ok",
+            child_envelope=child_env,
+            parent_envelope=parent_env,
+        )
+        assert joined is not None
+        assert joined.cost == 5.0  # 1.0 + 4.0
+        assert joined.taint == "tainted"
+
+    def test_completed_subloop_envelope_join_preserves_identity(self):
+        """Envelope join preserves parent RuntimeEnvelope identity."""
+        from arnold.pipelines.megaplan.native_hooks import MegaplanNativeHooks
+        from arnold.runtime.envelope import RunEnvelope, RuntimeEnvelope
+        hooks = MegaplanNativeHooks()
+        parent_env = RuntimeEnvelope(
+            plugin_id="parent-p", run_id="parent-r",
+            artifact_root="/art/parent", trust_state="trusted",
+            cross_cutting=RunEnvelope(cost=2.0),
+        )
+        child_env = RuntimeEnvelope(
+            plugin_id="child-p", run_id="child-r",
+            artifact_root="/art/child", trust_state="unknown",
+            cross_cutting=RunEnvelope(cost=3.0),
+        )
+        _, joined = hooks.completed_subloop(
+            "c", {}, "ok",
+            child_envelope=child_env,
+            parent_envelope=parent_env,
+        )
+        assert isinstance(joined, RuntimeEnvelope)
+        assert joined.plugin_id == "parent-p"
+        assert joined.run_id == "parent-r"
+        assert joined.artifact_root == "/art/parent"
+        assert joined.cross_cutting.cost == 5.0
+
+    def test_completed_subloop_envelope_lease_conflict_propagates(self):
+        """LeaseIdConflict from envelope join propagates through completed_subloop."""
+        import pytest
+        from arnold.pipelines.megaplan.native_hooks import MegaplanNativeHooks
+        from arnold.runtime.envelope import LeaseIdConflict, RunEnvelope
+        hooks = MegaplanNativeHooks()
+        with pytest.raises(LeaseIdConflict):
+            hooks.completed_subloop(
+                "c", {}, "ok",
+                parent_envelope=RunEnvelope(lease_id="a"),
+                child_envelope=RunEnvelope(lease_id="b"),
+            )
+
+
+class TestMegaplanNativeHooksSuspendedSubloop:
+    """Focused tests for suspended child cursor shape, envelope
+    preservation, artifact root preservation, and resume continuation
+    via ``suspended_subloop``."""
+
+    # ── suspended child cursor shape ────────────────────────────────
+
+    def test_suspended_subloop_returns_state_patch_and_envelope(self):
+        """``suspended_subloop`` returns a (state_patch, joined_envelope) tuple."""
+        from arnold.pipelines.megaplan.native_hooks import MegaplanNativeHooks
+        hooks = MegaplanNativeHooks()
+        state_patch, env = hooks.suspended_subloop(
+            "child1", {"key": "val"},
+        )
+        assert isinstance(state_patch, dict)
+        assert env is None  # no parent/child envelope given
+
+    def test_suspended_subloop_state_patch_keys(self):
+        """State patch has correct promoted keys."""
+        from arnold.pipelines.megaplan.native_hooks import MegaplanNativeHooks
+        hooks = MegaplanNativeHooks()
+        child_state = {"phase": "analysis", "result": {"score": 0.9}}
+        child_artifacts = {"log": "/tmp/log.txt"}
+        child_cursor = {"pc": 5, "frames": {"child_frame": {}}}
+        state_patch, _ = hooks.suspended_subloop(
+            "analyze", child_state,
+            child_artifacts=child_artifacts,
+            child_resume_cursor=child_cursor,
+        )
+        assert state_patch["subloop:analyze:state"] == child_state
+        assert state_patch["subloop:analyze:recommendation"] == "halt"
+        assert state_patch["subloop:analyze:resume_cursor"] == child_cursor
+        assert state_patch["subloop:analyze:artifacts"] == child_artifacts
+
+    def test_suspended_subloop_omits_artifacts_when_none(self):
+        """Artifacts key absent when not provided."""
+        from arnold.pipelines.megaplan.native_hooks import MegaplanNativeHooks
+        hooks = MegaplanNativeHooks()
+        state_patch, _ = hooks.suspended_subloop("s", {})
+        assert "subloop:s:artifacts" not in state_patch
+
+    def test_suspended_subloop_omits_resume_cursor_when_none(self):
+        """Resume cursor key absent when None."""
+        from arnold.pipelines.megaplan.native_hooks import MegaplanNativeHooks
+        hooks = MegaplanNativeHooks()
+        state_patch, _ = hooks.suspended_subloop("s", {})
+        assert "subloop:s:resume_cursor" not in state_patch
+
+    def test_suspended_subloop_recommendation_is_always_halt(self):
+        """Recommendation is always 'halt' regardless of child state."""
+        from arnold.pipelines.megaplan.native_hooks import MegaplanNativeHooks
+        hooks = MegaplanNativeHooks()
+        for child_state in [{}, {"rec": "proceed"}, {"rec": "abort"}]:
+            state_patch, _ = hooks.suspended_subloop("s", child_state)
+            assert state_patch["subloop:s:recommendation"] == "halt"
+
+    # ── envelope preservation ───────────────────────────────────────
+
+    def test_suspended_subloop_joins_envelopes(self):
+        """Envelope join is called with parent and child envelopes."""
+        from arnold.pipelines.megaplan.native_hooks import MegaplanNativeHooks
+        from arnold.runtime.envelope import RunEnvelope
+        hooks = MegaplanNativeHooks()
+        parent_env = RunEnvelope(taint="clean", cost=1.0)
+        child_env = RunEnvelope(taint="tainted", cost=4.0)
+        _, joined = hooks.suspended_subloop(
+            "child", {},
+            child_envelope=child_env,
+            parent_envelope=parent_env,
+        )
+        assert joined is not None
+        assert joined.cost == 5.0
+        assert joined.taint == "tainted"
+
+    def test_suspended_subloop_envelope_preserves_runtime_identity(self):
+        """Parent RuntimeEnvelope identity preserved after suspended join."""
+        from arnold.pipelines.megaplan.native_hooks import MegaplanNativeHooks
+        from arnold.runtime.envelope import RunEnvelope, RuntimeEnvelope
+        hooks = MegaplanNativeHooks()
+        parent_env = RuntimeEnvelope(
+            plugin_id="p-id", run_id="r-id",
+            artifact_root="/art/root", trust_state="trusted",
+            cross_cutting=RunEnvelope(cost=1.0),
+        )
+        child_env = RunEnvelope(taint="t", cost=3.0)
+        _, joined = hooks.suspended_subloop(
+            "c", {},
+            child_envelope=child_env,
+            parent_envelope=parent_env,
+        )
+        assert isinstance(joined, RuntimeEnvelope)
+        assert joined.plugin_id == "p-id"
+        assert joined.run_id == "r-id"
+        assert joined.artifact_root == "/art/root"
+        assert joined.trust_state == "trusted"
+        assert joined.cross_cutting.cost == 4.0
+        assert joined.cross_cutting.taint == "t"
+
+    def test_suspended_subloop_lease_conflict_propagates(self):
+        """LeaseIdConflict from envelope propagates through suspended_subloop."""
+        import pytest
+        from arnold.pipelines.megaplan.native_hooks import MegaplanNativeHooks
+        from arnold.runtime.envelope import LeaseIdConflict, RunEnvelope
+        hooks = MegaplanNativeHooks()
+        with pytest.raises(LeaseIdConflict):
+            hooks.suspended_subloop(
+                "c", {},
+                parent_envelope=RunEnvelope(lease_id="a"),
+                child_envelope=RunEnvelope(lease_id="b"),
+            )
+
+    # ── artifact root preservation ──────────────────────────────────
+
+    def test_suspended_subloop_artifacts_preserved_in_state_patch(self):
+        """Child artifacts dict is preserved verbatim in state patch."""
+        from arnold.pipelines.megaplan.native_hooks import MegaplanNativeHooks
+        hooks = MegaplanNativeHooks()
+        artifacts = {"diagram": "/artifacts/d.png", "traces": "/artifacts/t.json"}
+        state_patch, _ = hooks.suspended_subloop(
+            "build", {"status": "suspended"},
+            child_artifacts=artifacts,
+        )
+        assert state_patch["subloop:build:artifacts"]["diagram"] == "/artifacts/d.png"
+        assert state_patch["subloop:build:artifacts"]["traces"] == "/artifacts/t.json"
+
+    # ── resume continuation ─────────────────────────────────────────
+
+    def test_suspended_subloop_no_persist_without_plan_dir(self):
+        """When plan_dir is None, no persistence attempted but state_patch
+        and envelope still returned."""
+        from arnold.pipelines.megaplan.native_hooks import MegaplanNativeHooks
+        hooks = MegaplanNativeHooks()  # plan_dir=None by default
+        state_patch, env = hooks.suspended_subloop(
+            "child", {"a": 1},
+            child_resume_cursor={"pc": 3},
+            parent_pc=7,
+            parent_state={"existing": "value"},
+        )
+        # state_patch is still populated
+        assert state_patch["subloop:child:state"] == {"a": 1}
+        assert state_patch["subloop:child:recommendation"] == "halt"
+        assert state_patch["subloop:child:resume_cursor"] == {"pc": 3}
+
+    def test_suspended_subloop_state_patch_is_copy(self):
+        """Promoted child state is a snapshot copy."""
+        from arnold.pipelines.megaplan.native_hooks import MegaplanNativeHooks
+        hooks = MegaplanNativeHooks()
+        child_state = {"x": 1}
+        state_patch, _ = hooks.suspended_subloop("s", child_state)
+        child_state["x"] = 99
+        assert state_patch["subloop:s:state"]["x"] == 1
+
+    def test_suspended_subloop_child_state_fully_preserved(self):
+        """Full child state dict is preserved including nested structures."""
+        from arnold.pipelines.megaplan.native_hooks import MegaplanNativeHooks
+        hooks = MegaplanNativeHooks()
+        child_state = {
+            "phase": "implementation",
+            "result": {"files": ["a.py", "b.py"], "score": 0.95},
+            "meta": {"iterations": 3, "cost": 1.5},
+        }
+        state_patch, _ = hooks.suspended_subloop("impl", child_state)
+        promoted = state_patch["subloop:impl:state"]
+        assert promoted["phase"] == "implementation"
+        assert promoted["result"]["files"] == ["a.py", "b.py"]
+        assert promoted["meta"]["iterations"] == 3
+
+    def test_suspended_subloop_accepts_all_parent_context_fields(self):
+        """All parent context fields accepted without error."""
+        from arnold.pipelines.megaplan.native_hooks import MegaplanNativeHooks
+        hooks = MegaplanNativeHooks()
+        state_patch, _ = hooks.suspended_subloop(
+            "sub", {"done": True},
+            parent_pc=12,
+            parent_loops={"main": 3},
+            parent_frames={"frame_a": {"pc": 5}},
+            parent_stages=["init", "process", "sub"],
+            parent_state={"global": "config"},
+        )
+        assert state_patch["subloop:sub:state"] == {"done": True}
+        assert state_patch["subloop:sub:recommendation"] == "halt"
+
+    def test_suspended_subloop_cursor_persistence_with_plan_dir(self):
+        """When plan_dir is set, composite resume cursor is persisted."""
+        import tempfile
+        from pathlib import Path
+        from arnold.pipelines.megaplan.native_hooks import MegaplanNativeHooks
+        from arnold.runtime.envelope import RunEnvelope
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            plan_dir = str(Path(tmpdir) / "plan")
+            Path(plan_dir).mkdir(parents=True, exist_ok=True)
+
+            hooks = MegaplanNativeHooks(plan_dir=plan_dir)
+            child_state = {"phase": "review", "items": 5}
+            child_cursor = {"pc": 3, "frames": {"review_frame": {}}}
+            parent_env = RunEnvelope(taint="clean", cost=10.0)
+            child_env = RunEnvelope(taint="clean", cost=2.0)
+
+            state_patch, joined = hooks.suspended_subloop(
+                "review_loop", child_state,
+                child_resume_cursor=child_cursor,
+                child_artifact_root="/tmp/child_artifacts",
+                child_frames={"f1": {"pc": 2}},
+                child_envelope=child_env,
+                parent_envelope=parent_env,
+                parent_pc=8,
+                parent_loops={"main": 1},
+                parent_frames={"pf": {"pc": 7}},
+                parent_stages=["alpha", "beta"],
+                parent_state={"config": {"mode": "strict"}},
+            )
+
+            # state_patch returned correctly
+            assert state_patch["subloop:review_loop:state"] == child_state
+            assert state_patch["subloop:review_loop:recommendation"] == "halt"
+            assert state_patch["subloop:review_loop:resume_cursor"] == child_cursor
+
+            # envelope joined
+            assert joined is not None
+            assert joined.cost == 12.0  # 10 + 2
+
+            # composite resume cursor file written
+            cursor_path = Path(plan_dir) / "composite_resume_cursor.json"
+            assert cursor_path.exists(), (
+                f"Composite resume cursor not found at {cursor_path}"
+            )
+
+            # Verify cursor shape
+            import json
+            cursor_data = json.loads(cursor_path.read_text())
+            assert cursor_data["version"] == 1
+            assert "children" in cursor_data
+            assert "review_loop" in cursor_data["children"]
+            child_entry = cursor_data["children"]["review_loop"]
+            assert child_entry.get("resume_cursor") == child_cursor
+            assert child_entry.get("artifact_root") == "/tmp/child_artifacts"
+            assert child_entry.get("state") == child_state
+            assert child_entry.get("frames") == {"f1": {"pc": 2}}
+
+            # parent fields stored as top-level extra keys
+            assert cursor_data.get("parent_pc") == 8
+            assert cursor_data.get("parent_state") == {"config": {"mode": "strict"}}
+            assert cursor_data.get("parent_stages") == ["alpha", "beta"]
+            assert cursor_data.get("parent_loops") == {"main": 1}
+            assert cursor_data.get("parent_frames") == {"pf": {"pc": 7}}
+
+            # envelope in extra
+            assert "envelope" in cursor_data
+
+
+# ── Subloop promotion / suspension-lift tests (T13) ────────────────────
+
+
+class TestMegaplanNativeHooksCompletedSubloop:
+    """Focused tests for completed child promotion, artifact root
+    preservation, and child envelope join via ``completed_subloop``."""
+
+    def test_completed_subloop_returns_state_patch_and_envelope(self):
+        """``completed_subloop`` returns a (state_patch, joined_envelope) tuple."""
+        from arnold.pipelines.megaplan.native_hooks import MegaplanNativeHooks
+        hooks = MegaplanNativeHooks()
+        state_patch, env = hooks.completed_subloop(
+            "child1", {"key": "val"}, "proceed",
+        )
+        assert isinstance(state_patch, dict)
+        assert env is None
+
+    def test_completed_subloop_promotes_state_and_recommendation(self):
+        """State patch carries ``subloop:<name>:state`` and
+        ``subloop:<name>:recommendation`` keys."""
+        from arnold.pipelines.megaplan.native_hooks import MegaplanNativeHooks
+        hooks = MegaplanNativeHooks()
+        child_state = {"result": 42, "phase": "done"}
+        state_patch, _ = hooks.completed_subloop(
+            "analyze", child_state, "force-proceed",
+        )
+        assert state_patch["subloop:analyze:state"] == child_state
+        assert state_patch["subloop:analyze:recommendation"] == "force-proceed"
+
+    def test_completed_subloop_promotes_state_copy_not_reference(self):
+        """Promoted child state is a copy, not the original dict."""
+        from arnold.pipelines.megaplan.native_hooks import MegaplanNativeHooks
+        hooks = MegaplanNativeHooks()
+        child_state = {"x": 1}
+        state_patch, _ = hooks.completed_subloop("s", child_state, "ok")
+        child_state["x"] = 99
+        assert state_patch["subloop:s:state"]["x"] == 1
+
+    def test_completed_subloop_includes_artifacts_when_provided(self):
+        """``subloop:<name>:artifacts`` present when child_artifacts given."""
+        from arnold.pipelines.megaplan.native_hooks import MegaplanNativeHooks
+        hooks = MegaplanNativeHooks()
+        artifacts = {"diagram": "/tmp/out.png", "log": "/tmp/run.log"}
+        state_patch, _ = hooks.completed_subloop(
+            "build", {}, "done",
+            child_artifacts=artifacts,
+        )
+        assert state_patch["subloop:build:artifacts"] == artifacts
+
+    def test_completed_subloop_omits_artifacts_when_none(self):
+        """``subloop:<name>:artifacts`` absent when child_artifacts is None."""
+        from arnold.pipelines.megaplan.native_hooks import MegaplanNativeHooks
+        hooks = MegaplanNativeHooks()
+        state_patch, _ = hooks.completed_subloop("t", {}, "ok")
+        assert "subloop:t:artifacts" not in state_patch
+
+    def test_completed_subloop_omits_artifacts_when_empty_dict(self):
+        """``subloop:<name>:artifacts`` absent when child_artifacts is empty."""
+        from arnold.pipelines.megaplan.native_hooks import MegaplanNativeHooks
+        hooks = MegaplanNativeHooks()
+        state_patch, _ = hooks.completed_subloop(
+            "e", {}, "ok", child_artifacts={},
+        )
+        assert "subloop:e:artifacts" not in state_patch
+
+    def test_completed_subloop_includes_resume_cursor_when_provided(self):
+        """``subloop:<name>:resume_cursor`` present when non-None."""
+        from arnold.pipelines.megaplan.native_hooks import MegaplanNativeHooks
+        hooks = MegaplanNativeHooks()
+        cursor = {"pc": 3, "state": {"inner": 1}}
+        state_patch, _ = hooks.completed_subloop(
+            "sub", {}, "halt", resume_cursor=cursor,
+        )
+        assert state_patch["subloop:sub:resume_cursor"] == cursor
+
+    def test_completed_subloop_omits_resume_cursor_when_none(self):
+        """``subloop:<name>:resume_cursor`` absent when None."""
+        from arnold.pipelines.megaplan.native_hooks import MegaplanNativeHooks
+        hooks = MegaplanNativeHooks()
+        state_patch, _ = hooks.completed_subloop(
+            "sub", {}, "ok", resume_cursor=None,
+        )
+        assert "subloop:sub:resume_cursor" not in state_patch
+
+    def test_completed_subloop_joins_envelopes(self):
+        """Child envelope is joined with parent envelope via join_envelope."""
+        from arnold.pipelines.megaplan.native_hooks import MegaplanNativeHooks
+        from arnold.runtime.envelope import RunEnvelope
+        hooks = MegaplanNativeHooks()
+        parent_env = RunEnvelope(taint="clean", cost=1.0)
+        child_env = RunEnvelope(taint="tainted", cost=4.0)
+        _, joined = hooks.completed_subloop(
+            "child", {}, "ok",
+            child_envelope=child_env,
+            parent_envelope=parent_env,
+        )
+        assert joined is not None
+        assert joined.cost == 5.0
+        assert joined.taint == "tainted"
+
+    def test_completed_subloop_envelope_join_preserves_identity(self):
+        """Envelope join preserves parent RuntimeEnvelope identity."""
+        from arnold.pipelines.megaplan.native_hooks import MegaplanNativeHooks
+        from arnold.runtime.envelope import RunEnvelope, RuntimeEnvelope
+        hooks = MegaplanNativeHooks()
+        parent_env = RuntimeEnvelope(
+            plugin_id="parent-p", run_id="parent-r",
+            artifact_root="/art/parent", trust_state="trusted",
+            cross_cutting=RunEnvelope(cost=2.0),
+        )
+        child_env = RuntimeEnvelope(
+            plugin_id="child-p", run_id="child-r",
+            artifact_root="/art/child", trust_state="unknown",
+            cross_cutting=RunEnvelope(cost=3.0),
+        )
+        _, joined = hooks.completed_subloop(
+            "c", {}, "ok",
+            child_envelope=child_env,
+            parent_envelope=parent_env,
+        )
+        assert isinstance(joined, RuntimeEnvelope)
+        assert joined.plugin_id == "parent-p"
+        assert joined.run_id == "parent-r"
+        assert joined.artifact_root == "/art/parent"
+        assert joined.cross_cutting.cost == 5.0
+
+    def test_completed_subloop_envelope_lease_conflict_propagates(self):
+        """LeaseIdConflict from envelope join propagates through completed_subloop."""
+        import pytest
+        from arnold.pipelines.megaplan.native_hooks import MegaplanNativeHooks
+        from arnold.runtime.envelope import LeaseIdConflict, RunEnvelope
+        hooks = MegaplanNativeHooks()
+        with pytest.raises(LeaseIdConflict):
+            hooks.completed_subloop(
+                "c", {}, "ok",
+                parent_envelope=RunEnvelope(lease_id="a"),
+                child_envelope=RunEnvelope(lease_id="b"),
+            )
+
+
+class TestMegaplanNativeHooksSuspendedSubloop:
+    """Focused tests for suspended child cursor shape, envelope
+    preservation, artifact root preservation, and resume continuation
+    via ``suspended_subloop``."""
+
+    def test_suspended_subloop_returns_state_patch_and_envelope(self):
+        """``suspended_subloop`` returns a (state_patch, joined_envelope) tuple."""
+        from arnold.pipelines.megaplan.native_hooks import MegaplanNativeHooks
+        hooks = MegaplanNativeHooks()
+        state_patch, env = hooks.suspended_subloop(
+            "child1", {"key": "val"},
+        )
+        assert isinstance(state_patch, dict)
+        assert env is None
+
+    def test_suspended_subloop_state_patch_keys(self):
+        """State patch has correct promoted keys."""
+        from arnold.pipelines.megaplan.native_hooks import MegaplanNativeHooks
+        hooks = MegaplanNativeHooks()
+        child_state = {"phase": "analysis", "result": {"score": 0.9}}
+        child_artifacts = {"log": "/tmp/log.txt"}
+        child_cursor = {"pc": 5, "frames": {"child_frame": {}}}
+        state_patch, _ = hooks.suspended_subloop(
+            "analyze", child_state,
+            child_artifacts=child_artifacts,
+            child_resume_cursor=child_cursor,
+        )
+        assert state_patch["subloop:analyze:state"] == child_state
+        assert state_patch["subloop:analyze:recommendation"] == "halt"
+        assert state_patch["subloop:analyze:resume_cursor"] == child_cursor
+        assert state_patch["subloop:analyze:artifacts"] == child_artifacts
+
+    def test_suspended_subloop_omits_artifacts_when_none(self):
+        """Artifacts key absent when not provided."""
+        from arnold.pipelines.megaplan.native_hooks import MegaplanNativeHooks
+        hooks = MegaplanNativeHooks()
+        state_patch, _ = hooks.suspended_subloop("s", {})
+        assert "subloop:s:artifacts" not in state_patch
+
+    def test_suspended_subloop_omits_resume_cursor_when_none(self):
+        """Resume cursor key absent when None."""
+        from arnold.pipelines.megaplan.native_hooks import MegaplanNativeHooks
+        hooks = MegaplanNativeHooks()
+        state_patch, _ = hooks.suspended_subloop("s", {})
+        assert "subloop:s:resume_cursor" not in state_patch
+
+    def test_suspended_subloop_recommendation_is_always_halt(self):
+        """Recommendation is always 'halt' regardless of child state."""
+        from arnold.pipelines.megaplan.native_hooks import MegaplanNativeHooks
+        hooks = MegaplanNativeHooks()
+        for child_state in [{}, {"rec": "proceed"}, {"rec": "abort"}]:
+            state_patch, _ = hooks.suspended_subloop("s", child_state)
+            assert state_patch["subloop:s:recommendation"] == "halt"
+
+    def test_suspended_subloop_joins_envelopes(self):
+        """Envelope join is called with parent and child envelopes."""
+        from arnold.pipelines.megaplan.native_hooks import MegaplanNativeHooks
+        from arnold.runtime.envelope import RunEnvelope
+        hooks = MegaplanNativeHooks()
+        parent_env = RunEnvelope(taint="clean", cost=1.0)
+        child_env = RunEnvelope(taint="tainted", cost=4.0)
+        _, joined = hooks.suspended_subloop(
+            "child", {},
+            child_envelope=child_env,
+            parent_envelope=parent_env,
+        )
+        assert joined is not None
+        assert joined.cost == 5.0
+        assert joined.taint == "tainted"
+
+    def test_suspended_subloop_envelope_preserves_runtime_identity(self):
+        """Parent RuntimeEnvelope identity preserved after suspended join."""
+        from arnold.pipelines.megaplan.native_hooks import MegaplanNativeHooks
+        from arnold.runtime.envelope import RunEnvelope, RuntimeEnvelope
+        hooks = MegaplanNativeHooks()
+        parent_env = RuntimeEnvelope(
+            plugin_id="p-id", run_id="r-id",
+            artifact_root="/art/root", trust_state="trusted",
+            cross_cutting=RunEnvelope(cost=1.0),
+        )
+        child_env = RunEnvelope(taint="t", cost=3.0)
+        _, joined = hooks.suspended_subloop(
+            "c", {},
+            child_envelope=child_env,
+            parent_envelope=parent_env,
+        )
+        assert isinstance(joined, RuntimeEnvelope)
+        assert joined.plugin_id == "p-id"
+        assert joined.run_id == "r-id"
+        assert joined.artifact_root == "/art/root"
+        assert joined.trust_state == "trusted"
+        assert joined.cross_cutting.cost == 4.0
+        assert joined.cross_cutting.taint == "t"
+
+    def test_suspended_subloop_lease_conflict_propagates(self):
+        """LeaseIdConflict from envelope propagates through suspended_subloop."""
+        import pytest
+        from arnold.pipelines.megaplan.native_hooks import MegaplanNativeHooks
+        from arnold.runtime.envelope import LeaseIdConflict, RunEnvelope
+        hooks = MegaplanNativeHooks()
+        with pytest.raises(LeaseIdConflict):
+            hooks.suspended_subloop(
+                "c", {},
+                parent_envelope=RunEnvelope(lease_id="a"),
+                child_envelope=RunEnvelope(lease_id="b"),
+            )
+
+    def test_suspended_subloop_artifacts_preserved_in_state_patch(self):
+        """Child artifacts dict is preserved verbatim in state patch."""
+        from arnold.pipelines.megaplan.native_hooks import MegaplanNativeHooks
+        hooks = MegaplanNativeHooks()
+        artifacts = {"diagram": "/artifacts/d.png", "traces": "/artifacts/t.json"}
+        state_patch, _ = hooks.suspended_subloop(
+            "build", {"status": "suspended"},
+            child_artifacts=artifacts,
+        )
+        assert state_patch["subloop:build:artifacts"]["diagram"] == "/artifacts/d.png"
+        assert state_patch["subloop:build:artifacts"]["traces"] == "/artifacts/t.json"
+
+    def test_suspended_subloop_no_persist_without_plan_dir(self):
+        """When plan_dir is None, returns state_patch without persistence."""
+        from arnold.pipelines.megaplan.native_hooks import MegaplanNativeHooks
+        hooks = MegaplanNativeHooks()
+        state_patch, env = hooks.suspended_subloop(
+            "child", {"a": 1},
+            child_resume_cursor={"pc": 3},
+            parent_pc=7,
+            parent_state={"existing": "value"},
+        )
+        assert state_patch["subloop:child:state"] == {"a": 1}
+        assert state_patch["subloop:child:recommendation"] == "halt"
+        assert state_patch["subloop:child:resume_cursor"] == {"pc": 3}
+
+    def test_suspended_subloop_state_patch_is_copy(self):
+        """Promoted child state is a snapshot copy."""
+        from arnold.pipelines.megaplan.native_hooks import MegaplanNativeHooks
+        hooks = MegaplanNativeHooks()
+        child_state = {"x": 1}
+        state_patch, _ = hooks.suspended_subloop("s", child_state)
+        child_state["x"] = 99
+        assert state_patch["subloop:s:state"]["x"] == 1
+
+    def test_suspended_subloop_child_state_fully_preserved(self):
+        """Full child state dict is preserved including nested structures."""
+        from arnold.pipelines.megaplan.native_hooks import MegaplanNativeHooks
+        hooks = MegaplanNativeHooks()
+        child_state = {
+            "phase": "implementation",
+            "result": {"files": ["a.py", "b.py"], "score": 0.95},
+            "meta": {"iterations": 3, "cost": 1.5},
+        }
+        state_patch, _ = hooks.suspended_subloop("impl", child_state)
+        promoted = state_patch["subloop:impl:state"]
+        assert promoted["phase"] == "implementation"
+        assert promoted["result"]["files"] == ["a.py", "b.py"]
+        assert promoted["meta"]["iterations"] == 3
+
+    def test_suspended_subloop_accepts_all_parent_context_fields(self):
+        """All parent context fields accepted without error."""
+        from arnold.pipelines.megaplan.native_hooks import MegaplanNativeHooks
+        hooks = MegaplanNativeHooks()
+        state_patch, _ = hooks.suspended_subloop(
+            "sub", {"done": True},
+            parent_pc=12,
+            parent_loops={"main": 3},
+            parent_frames={"frame_a": {"pc": 5}},
+            parent_stages=["init", "process", "sub"],
+            parent_state={"global": "config"},
+        )
+        assert state_patch["subloop:sub:state"] == {"done": True}
+        assert state_patch["subloop:sub:recommendation"] == "halt"
+
+    def test_suspended_subloop_cursor_persistence_with_plan_dir(self):
+        """When plan_dir is set, composite resume cursor is persisted."""
+        import json
+        import tempfile
+        from pathlib import Path
+        from arnold.pipelines.megaplan.native_hooks import MegaplanNativeHooks
+        from arnold.runtime.envelope import RunEnvelope
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            plan_dir = str(Path(tmpdir) / "plan")
+            Path(plan_dir).mkdir(parents=True, exist_ok=True)
+
+            hooks = MegaplanNativeHooks(plan_dir=plan_dir)
+            child_state = {"phase": "review", "items": 5}
+            child_cursor = {"pc": 3, "frames": {"review_frame": {}}}
+            parent_env = RunEnvelope(taint="clean", cost=10.0)
+            child_env = RunEnvelope(taint="clean", cost=2.0)
+
+            state_patch, joined = hooks.suspended_subloop(
+                "review_loop", child_state,
+                child_resume_cursor=child_cursor,
+                child_artifact_root="/tmp/child_artifacts",
+                child_frames={"f1": {"pc": 2}},
+                child_envelope=child_env,
+                parent_envelope=parent_env,
+                parent_pc=8,
+                parent_loops={"main": 1},
+                parent_frames={"pf": {"pc": 7}},
+                parent_stages=["alpha", "beta"],
+                parent_state={"config": {"mode": "strict"}},
+            )
+
+            assert state_patch["subloop:review_loop:state"] == child_state
+            assert state_patch["subloop:review_loop:recommendation"] == "halt"
+            assert state_patch["subloop:review_loop:resume_cursor"] == child_cursor
+            assert joined is not None
+            assert joined.cost == 12.0
+
+            cursor_path = Path(plan_dir) / "composite_resume_cursor.json"
+            assert cursor_path.exists(), (
+                f"Composite resume cursor not found at {cursor_path}"
+            )
+
+            cursor_data = json.loads(cursor_path.read_text())
+            assert cursor_data["version"] == 1
+            assert "children" in cursor_data
+            assert "review_loop" in cursor_data["children"]
+            child_entry = cursor_data["children"]["review_loop"]
+            assert child_entry.get("resume_cursor") == child_cursor
+            assert child_entry.get("artifact_root") == "/tmp/child_artifacts"
+            assert child_entry.get("state") == child_state
+            assert child_entry.get("frames") == {"f1": {"pc": 2}}
+            assert cursor_data.get("parent_pc") == 8
+            assert cursor_data.get("parent_state") == {"config": {"mode": "strict"}}
+            assert cursor_data.get("parent_stages") == ["alpha", "beta"]
+            assert cursor_data.get("parent_loops") == {"main": 1}
+            assert cursor_data.get("parent_frames") == {"pf": {"pc": 7}}
+            assert "envelope" in cursor_data
+
+
 # ── helper ────────────────────────────────────────────────────────────
 
 import contextlib

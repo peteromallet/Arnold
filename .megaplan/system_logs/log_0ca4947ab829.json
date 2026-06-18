@@ -1,0 +1,88 @@
+{
+  "id": "log_0ca4947ab829",
+  "level": "debug",
+  "category": "system",
+  "event_type": "authority_divergence",
+  "message": "authority_divergence emitted",
+  "details": {
+    "event": {
+      "seq": 6488,
+      "schema_version": 1,
+      "ts_utc": "2026-06-18T12:20:13.979969+00:00",
+      "ts_rel_init_s": 7478.263445,
+      "kind": "authority_divergence",
+      "phase": "execute",
+      "payload": {
+        "diagnostic_version": 1,
+        "task_id": "T3",
+        "raw_terminal_status": "done",
+        "authority_status": "unknown",
+        "authoritative": false,
+        "reason": "stale_evidence:missing_head:task_files_changed",
+        "missing_outputs": [],
+        "stale_evidence": [
+          "missing_head:task_files_changed",
+          "missing_head:task_files_changed",
+          "missing_head:task_files_changed",
+          "missing_head:task_files_changed",
+          "missing_head:task_files_changed",
+          "missing_head:task_files_changed",
+          "missing_head:task_commands_run",
+          "missing_head:task_commands_run",
+          "missing_head:task_files_changed",
+          "missing_head:task_files_changed",
+          "missing_head:task_files_changed",
+          "missing_head:task_files_changed",
+          "missing_head:task_files_changed",
+          "missing_head:task_files_changed",
+          "missing_head:task_files_changed",
+          "missing_head:task_files_changed",
+          "missing_head:task_files_changed",
+          "missing_head:task_commands_run",
+          "missing_head:task_files_changed",
+          "missing_head:task_files_changed",
+          "missing_head:task_files_changed",
+          "missing_head:task_files_changed",
+          "missing_head:task_files_changed",
+          "missing_head:task_files_changed",
+          "missing_head:task_files_changed",
+          "missing_head:task_commands_run"
+        ],
+        "would_block_reasons": [
+          "stale_evidence:missing_head:task_files_changed",
+          "stale_evidence:missing_head:task_commands_run"
+        ],
+        "error": null,
+        "diagnostics": {
+          "task_id": "T3",
+          "declared_outputs": {
+            "files_changed": [
+              "arnold/pipeline/native/hooks.py",
+              "arnold/pipeline/native/runtime.py",
+              "arnold/pipelines/megaplan/native_hooks.py",
+              "arnold/conformance/_megaplan_coupling_allowlist.txt"
+            ],
+            "commands_run": [
+              "pytest tests/arnold/pipeline/native/test_megaplan_hooks.py \u2014 105 passed, 1 pre-existing failure"
+            ]
+          },
+          "linked_evidence_count": 26,
+          "evidence_count": 62,
+          "normalization": "iterable",
+          "status": "unknown",
+          "evidence_sources": [
+            "plan_artifacts"
+          ],
+          "loaded_evidence_count": 62,
+          "raw_terminal_status": "done"
+        },
+        "ts_utc": "2026-06-18T12:20:13.979645+00:00"
+      },
+      "transaction_id": "8baa0e98202bee1a",
+      "store_method": "log_system_event"
+    }
+  },
+  "turn_id": null,
+  "epic_id": "milestone-3-megaplan-specific-20260618-1213",
+  "occurred_at": "2026-06-18T12:20:13.980004Z"
+}

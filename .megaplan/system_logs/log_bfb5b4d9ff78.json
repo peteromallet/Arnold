@@ -1,0 +1,60 @@
+{
+  "id": "log_bfb5b4d9ff78",
+  "level": "debug",
+  "category": "system",
+  "event_type": "authority_divergence",
+  "message": "authority_divergence emitted",
+  "details": {
+    "event": {
+      "seq": 5958,
+      "schema_version": 1,
+      "ts_utc": "2026-06-18T12:09:41.210893+00:00",
+      "ts_rel_init_s": 6845.494369,
+      "kind": "authority_divergence",
+      "phase": "execute",
+      "payload": {
+        "diagnostic_version": 1,
+        "task_id": "T9",
+        "raw_terminal_status": "done",
+        "authority_status": "unknown",
+        "authoritative": false,
+        "reason": "stale_evidence:missing_head:task_commands_run",
+        "missing_outputs": [],
+        "stale_evidence": [
+          "missing_head:task_commands_run",
+          "missing_head:task_commands_run",
+          "missing_head:task_commands_run",
+          "missing_head:task_commands_run"
+        ],
+        "would_block_reasons": [
+          "stale_evidence:missing_head:task_commands_run"
+        ],
+        "error": null,
+        "diagnostics": {
+          "task_id": "T9",
+          "declared_outputs": {
+            "commands_run": [
+              "python -c 'from arnold.pipeline.native.decorators import loop_guard, is_loop_guard, get_loop_guard_meta; ...' \u2014 all metadata assertions PASS",
+              "python -m pytest tests/arnold/pipeline/native/test_compiler.py -v --tb=short \u2014 35/35 pass"
+            ]
+          },
+          "linked_evidence_count": 4,
+          "evidence_count": 64,
+          "normalization": "iterable",
+          "status": "unknown",
+          "evidence_sources": [
+            "plan_artifacts"
+          ],
+          "loaded_evidence_count": 64,
+          "raw_terminal_status": "done"
+        },
+        "ts_utc": "2026-06-18T12:09:41.210565+00:00"
+      },
+      "transaction_id": "f4e578a098931d43",
+      "store_method": "log_system_event"
+    }
+  },
+  "turn_id": null,
+  "epic_id": "milestone-3-megaplan-specific-20260618-1213",
+  "occurred_at": "2026-06-18T12:09:41.210932Z"
+}
