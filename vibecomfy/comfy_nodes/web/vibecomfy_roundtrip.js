@@ -2920,10 +2920,13 @@ async function refreshAgentStatus(panel, { quiet = false } = {}) {
     // Keep the initial "loading" paint observable, then let tests/users observe
     // the completed state after the request has actually been issued.
     await nextMacrotask();
-    const res = await fetch(buildStatusUrl(route, model));
+    const statusUrl = buildStatusUrl(route, model);
+    console.log("[vibecomfy] refreshAgentStatus fetching", statusUrl, "current route value:", panel.fields.route.value);
+    const res = await fetch(statusUrl);
     let status = null;
     try {
       status = await res.json();
+      console.log("[vibecomfy] refreshAgentStatus parsed status", status);
     } catch (error) {
       if (Number.isFinite(requestEpoch) && panel.state.statusRequestEpoch !== requestEpoch) {
         return;
@@ -2957,6 +2960,7 @@ async function refreshAgentStatus(panel, { quiet = false } = {}) {
     panel.state.statusSnapshot = status;
     const requestedRoute = normalizeRoutePreference(status?.requested_route || route);
     const routeOptions = routeOptionsFromStatus(status);
+    console.log("[vibecomfy] refreshAgentStatus requestedRoute=", requestedRoute, "routeOptions keys=", Object.keys(routeOptions || {}), "res.ok=", res.ok);
     if (!status || typeof status !== "object" || Array.isArray(status)) {
       console.warn("[vibecomfy] malformed /vibecomfy/agent/status payload", status);
       panel.state.routeStatus = {
@@ -2987,6 +2991,7 @@ async function refreshAgentStatus(panel, { quiet = false } = {}) {
       const availableRoute = routeOptions[requestedRoute]
         ? requestedRoute
         : (routeOptions["deepseek"] ? "deepseek" : Object.keys(routeOptions)[0] || requestedRoute);
+      console.log("[vibecomfy] refreshAgentStatus using availableRoute=", availableRoute, "(requestedRoute=", requestedRoute, ")");
       populateRouteSelect(panel.fields.route, routeOptions, { selectedRoute: availableRoute });
       panel.fields.route.value = availableRoute;
       if (availableRoute !== requestedRoute) {
@@ -3015,6 +3020,7 @@ async function refreshAgentStatus(panel, { quiet = false } = {}) {
     if (Number.isFinite(requestEpoch) && panel.state.statusRequestEpoch !== requestEpoch) {
       return;
     }
+    console.error("[vibecomfy] refreshAgentStatus caught exception", e);
     panel.state.settingsMessage = `Status unavailable: ${String(e)}`;
     panel.state.statusSnapshot = null;
     panel.state.routeStatus = {

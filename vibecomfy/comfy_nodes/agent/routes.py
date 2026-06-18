@@ -3,9 +3,12 @@ from __future__ import annotations
 import asyncio
 import dataclasses
 import json
+import logging
 import os
 from pathlib import Path
 from typing import Any, Mapping
+
+_LOGGER = logging.getLogger(__name__)
 
 from .contracts import (
     FailureKind,
@@ -195,7 +198,12 @@ def _handle_agent_status(params: dict[str, Any] | None = None) -> dict[str, Any]
     params = params or {}
     route = params.get("route") if isinstance(params.get("route"), str) else None
     model = params.get("model") if isinstance(params.get("model"), str) else None
-    ready_payload = readiness(route=route, model=model)
+    _LOGGER.info("/vibecomfy/agent/status request route=%r model=%r", route, model)
+    try:
+        ready_payload = readiness(route=route, model=model)
+    except Exception as exc:
+        _LOGGER.exception("/vibecomfy/agent/status readiness() raised an exception")
+        raise
     ok = bool(ready_payload.get("ready"))
     status: dict[str, Any] = {
         **ready_payload,
@@ -204,6 +212,13 @@ def _handle_agent_status(params: dict[str, Any] | None = None) -> dict[str, Any]
     }
     if not ok and not status.get("provider_available") and "error" not in status:
         status["error"] = str(status.get("reason") or "Provider is unavailable.")
+    _LOGGER.info(
+        "/vibecomfy/agent/status response ready=%s route=%s requested_route=%s route_options=%s",
+        status.get("ready"),
+        status.get("route"),
+        status.get("requested_route"),
+        list(status.get("route_options", {}).keys()),
+    )
     return status
 
 
@@ -369,7 +384,20 @@ if os.environ.get("VIBECOMFY_HEADLESS") != "1":
 
         @_PromptServer.instance.routes.get("/vibecomfy/agent/status")
         async def agent_status_route(request):  # type: ignore[no-untyped-def]
-            return _web.json_response(_handle_agent_status(dict(request.query)))
+            try:
+                payload = _handle_agent_status(dict(request.query))
+                return _web.json_response(payload)
+            except Exception as exc:
+                _LOGGER.exception("/vibecomfy/agent/status route handler failed")
+                return _web.json_response(
+                    {
+                        "ok": False,
+                        "ready": False,
+                        "error": f"Status handler error: {exc}",
+                        "route_options": {},
+                    },
+                    status=500,
+                )
 
         @_PromptServer.instance.routes.post("/vibecomfy/agent/credentials")
         async def agent_credentials_route(request):  # type: ignore[no-untyped-def]
