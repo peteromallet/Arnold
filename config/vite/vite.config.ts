@@ -72,7 +72,7 @@ export default defineConfig(() => {
     resolve: {
       alias: {
         "@": path.resolve(__dirname, "../../src"),
-        "@reigh/editor-sdk": path.resolve(__dirname, "../../src/sdk"),
+        "@reigh/editor-sdk": path.resolve(__dirname, "../../src/sdk/index.ts"),
         // Sprint 5: deduplicate React / Remotion / @banodoco/* across the
         // linked timeline-composition + timeline-theme-* packages so a
         // single React runtime drives the @remotion/player preview.

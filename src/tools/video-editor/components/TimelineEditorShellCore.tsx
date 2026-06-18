@@ -39,7 +39,11 @@ import {
 import { bootDiagnostics, MemoryPressureDetector } from '@/tools/video-editor/lib/perf-diagnostics.ts';
 import { useRenderDiagnostic } from '@/tools/video-editor/hooks/usePerfDiagnostics.ts';
 import { useEditorSync } from '@/tools/video-editor/hooks/useEditorSync.ts';
-import { dispatchAppEvent } from '@/shared/lib/typedEvents.ts';
+import { dispatchAppEvent } from '@/shared/lib/typedEvents.ts'
+import {
+  ContributionErrorBoundary,
+  type ContributionErrorInfo,
+} from '@/tools/video-editor/runtime/ContributionErrorBoundary.tsx';
 
 const MIN_TIMELINE_HEIGHT = 140;
 const MIN_PREVIEW_HEIGHT = 180;
@@ -323,18 +327,84 @@ function TimelineEditorShellCoreComponent({
   const slotRenderers = useVideoEditorSlotRenderers();
   const renderContext = useVideoEditorRenderContext();
   const contributedAssetPanels = useVideoEditorAssetPanels();
-  const headerSlot = slotRenderers.header ? slotRenderers.header(renderContext) : null;
-  const toolbarSlot = slotRenderers.toolbar ? slotRenderers.toolbar(renderContext) : null;
+
+  const handleContributionError = useCallback((info: ContributionErrorInfo) => {
+    // Host-owned diagnostics sink: log to console with structured data.
+    // Future: aggregate into a diagnostics context shared across the shell.
+    if (typeof console !== 'undefined') {
+      console.warn(
+        '[TimelineEditorShellCore] Contribution error captured by boundary:',
+        info,
+      );
+    }
+  }, []);
+
+  const headerSlot = slotRenderers.header ? (
+    <ContributionErrorBoundary
+      contributionId="slot:header"
+      kind="slot"
+      label="Header"
+      onError={handleContributionError}
+    >
+      {slotRenderers.header(renderContext)}
+    </ContributionErrorBoundary>
+  ) : null;
+  const toolbarSlot = slotRenderers.toolbar ? (
+    <ContributionErrorBoundary
+      contributionId="slot:toolbar"
+      kind="slot"
+      label="Toolbar"
+      onError={handleContributionError}
+    >
+      {slotRenderers.toolbar(renderContext)}
+    </ContributionErrorBoundary>
+  ) : null;
   const assetPanelSlot = slotRenderers.assetPanel
-    ? slotRenderers.assetPanel(renderContext)
+    ? (
+      <ContributionErrorBoundary
+        contributionId="slot:assetPanel"
+        kind="slot"
+        label="Asset panel"
+        onError={handleContributionError}
+      >
+        {slotRenderers.assetPanel(renderContext)}
+      </ContributionErrorBoundary>
+    )
     : (contributedAssetPanels.length > 0 ? <VideoEditorAssetPanelSurface includeBuiltIn={false} /> : null);
   const inspectorPanelSlot = slotRenderers.inspectorPanel
-    ? slotRenderers.inspectorPanel(renderContext)
+    ? (
+      <ContributionErrorBoundary
+        contributionId="slot:inspectorPanel"
+        kind="slot"
+        label="Inspector panel"
+        onError={handleContributionError}
+      >
+        {slotRenderers.inspectorPanel(renderContext)}
+      </ContributionErrorBoundary>
+    )
     : null;
   const timelineFooterSlot = slotRenderers.timelineFooter
-    ? slotRenderers.timelineFooter(renderContext)
+    ? (
+      <ContributionErrorBoundary
+        contributionId="slot:timelineFooter"
+        kind="slot"
+        label="Timeline footer"
+        onError={handleContributionError}
+      >
+        {slotRenderers.timelineFooter(renderContext)}
+      </ContributionErrorBoundary>
+    )
     : null;
-  const statusBarSlot = slotRenderers.statusBar ? slotRenderers.statusBar(renderContext) : null;
+  const statusBarSlot = slotRenderers.statusBar ? (
+    <ContributionErrorBoundary
+      contributionId="slot:statusBar"
+      kind="slot"
+      label="Status bar"
+      onError={handleContributionError}
+    >
+      {slotRenderers.statusBar(renderContext)}
+    </ContributionErrorBoundary>
+  ) : null;
 
   const gridTemplateRows = isTimelineMaximized
     ? `${MIN_PREVIEW_HEIGHT}px auto 1fr`

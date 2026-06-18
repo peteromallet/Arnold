@@ -1,0 +1,68 @@
+{
+  "manifest": {
+    "id": "com.reigh.examples.flagship-local",
+    "version": "1.0.0",
+    "label": "Flagship Local Extension",
+    "description": "Flagship trusted-local extension example demonstrating the full M1 SDK surface: activation lifecycle, toolbar and status-bar slot UI, settings with defaults, diagnostics, chrome toast/progress scaffolding, trusted-local safety warnings, and future inactive contribution declarations (effect, transition, clipType, parser, agentTool).",
+    "apiVersion": 1,
+    "contributions": [
+      {
+        "id": "flagship-toolbar-button",
+        "kind": "slot",
+        "slot": "toolbar",
+        "order": 200,
+        "label": "Flagship toolbar"
+      },
+      {
+        "id": "flagship-status",
+        "kind": "slot",
+        "slot": "statusBar",
+        "order": 100,
+        "label": "Flagship status"
+      },
+      {
+        "id": "flagship-effect-future",
+        "kind": "effect",
+        "label": "Flagship custom effect (reserved for M3)",
+        "effectId": "com.reigh.flagship.effect.glow"
+      },
+      {
+        "id": "flagship-transition-future",
+        "kind": "transition",
+        "label": "Flagship custom transition (reserved for M3)",
+        "transitionId": "com.reigh.flagship.transition.crossfade"
+      },
+      {
+        "id": "flagship-cliptype-future",
+        "kind": "clipType",
+        "label": "Flagship custom clip type (reserved for M3)",
+        "clipTypeId": "com.reigh.flagship.cliptype.annotation"
+      },
+      {
+        "id": "flagship-parser-future",
+        "kind": "parser",
+        "label": "Flagship custom parser (reserved for M4)"
+      },
+      {
+        "id": "flagship-agent-tool-future",
+        "kind": "agentTool",
+        "label": "Flagship agent tool (reserved for M5)"
+      }
+    ],
+    "settingsDefaults": {
+      "toolbar.label": "Flagship",
+      "toolbar.enabled": true,
+      "status.showTimelineName": true,
+      "status.pollIntervalMs": 5000
+    },
+    "messages": {
+      "activation.started": "Flagship local extension v{{version}} activating…",
+      "activation.ready": "Flagship local extension v{{version}} ready.",
+      "activation.disposed": "Flagship local extension disposed.",
+      "warning.trustedLocal": "⚠️ Trusted-local extension: this extension executes with full browser-renderer privileges. Review the extension source before enabling it in a shared project.",
+      "progress.label": "Chrome progress scaffold",
+      "toast.error": "Flagship encountered an error: {{error}}",
+      "toast.info": "Flagship status update: {{message}}"
+    }
+  }
+}

@@ -16,6 +16,10 @@ import {
   useVideoEditorInspectorSections,
   useVideoEditorRenderContext,
 } from '@/tools/video-editor/runtime/useVideoEditorRenderContext.ts';
+import {
+  ContributionErrorBoundary,
+  type ContributionErrorInfo,
+} from '@/tools/video-editor/runtime/ContributionErrorBoundary.tsx';
 
 function InspectorRegistrySections({
   placement,
@@ -29,12 +33,28 @@ function InspectorRegistrySections({
     return null;
   }
 
+  const handleContributionError = (info: ContributionErrorInfo) => {
+    if (typeof console !== 'undefined') {
+      console.warn(
+        '[PropertiesPanel] Inspector section error captured by boundary:',
+        info,
+      );
+    }
+  };
+
   return (
     <div className="flex flex-col gap-3">
       {sections.map((section) => (
-        <div key={section.id} data-video-editor-inspector-section-id={section.id}>
-          {section.render(renderContext)}
-        </div>
+        <ContributionErrorBoundary
+          key={section.id}
+          contributionId={section.id}
+          kind="inspectorSection"
+          onError={handleContributionError}
+        >
+          <div data-video-editor-inspector-section-id={section.id}>
+            {section.render(renderContext)}
+          </div>
+        </ContributionErrorBoundary>
       ))}
     </div>
   );

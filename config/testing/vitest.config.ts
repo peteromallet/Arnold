@@ -25,7 +25,7 @@ export default defineConfig({
   resolve: {
     alias: {
       '@': path.resolve(projectRoot, 'src'),
-      '@reigh/editor-sdk': path.resolve(projectRoot, 'src/sdk'),
+      '@reigh/editor-sdk': path.resolve(projectRoot, 'src/sdk/index.ts'),
       'fake-indexeddb': path.resolve(projectRoot, 'vendor/fake-indexeddb/index.js'),
       // Sprint 5: deduplicate react / remotion / @banodoco/* across linked
       // packages. The timeline-theme-2rp peer-dep package lives at a

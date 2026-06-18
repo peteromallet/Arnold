@@ -3,6 +3,12 @@ import { useClientRender } from '@/tools/video-editor/hooks/useClientRender.ts';
 import type { CompositionMetadata } from '@/tools/video-editor/hooks/useDerivedTimeline.ts';
 import type { VideoEditorExporter } from '@/tools/video-editor/lib/browser-runtime.ts';
 import type { ResolvedTimelineConfig } from '@/tools/video-editor/types/index.ts';
+import type { ExtensionRuntime } from '@/tools/video-editor/runtime/extensionSurface.ts';
+import {
+  collectBuiltInKnownIds,
+  collectExtensionDeclaredIds,
+  scanExportConfig,
+} from '@/tools/video-editor/runtime/exportGuard.ts';
 
 export type RenderStatus = 'idle' | 'rendering' | 'done' | 'error';
 
@@ -46,10 +52,67 @@ function getFastRenderRouteDecision(resolvedConfig: ResolvedTimelineConfig | nul
   return { route: 'browser-remotion' as const, reason: 'pure_native_clips' };
 }
 
+function isExtensionRuntimeEmpty(extRuntime: ExtensionRuntime | undefined): boolean {
+  if (!extRuntime) return true;
+  return extRuntime.extensions.length === 0 && extRuntime.inactiveReserved.length === 0;
+}
+
+function buildExtensionContributions(extRuntime: ExtensionRuntime) {
+  const allContributions: import('@reigh/editor-sdk').ExtensionContribution[] = [];
+  for (const ext of extRuntime.extensions) {
+    const contribs = ext.manifest.contributions ?? [];
+    for (const c of contribs) {
+      allContributions.push(c);
+    }
+  }
+  return allContributions;
+}
+
+/**
+ * Create a concise render log line from export guard diagnostics.
+ * Emits a single summary line plus per-diagnostic error lines for blocking issues.
+ */
+function formatExportGuardLog(
+  guardResult: ReturnType<typeof scanExportConfig>,
+): string {
+  const lines: string[] = [];
+
+  const totalDiags = guardResult.diagnostics.length;
+  const errorCount = guardResult.diagnostics.filter((d) => d.severity === 'error').length;
+  const warningCount = guardResult.diagnostics.filter((d) => d.severity === 'warning').length;
+  const infoCount = totalDiags - errorCount - warningCount;
+
+  if (totalDiags === 0) {
+    lines.push('Export guard: no issues found.');
+    return lines.join('\n');
+  }
+
+  lines.push(
+    `Export guard: ${totalDiags} issue(s) — ${errorCount} error(s), ${warningCount} warning(s), ${infoCount} info(s).`,
+  );
+
+  // Show blocking errors first
+  for (const diag of guardResult.diagnostics) {
+    if (diag.severity === 'error') {
+      lines.push(`  [${diag.code}] ${diag.message}`);
+    }
+  }
+
+  // Then warnings
+  for (const diag of guardResult.diagnostics) {
+    if (diag.severity === 'warning') {
+      lines.push(`  [${diag.code}] ${diag.message}`);
+    }
+  }
+
+  return lines.join('\n');
+}
+
 export function useRenderState(
   resolvedConfig: ResolvedTimelineConfig | null,
   renderMetadata: CompositionMetadata | null,
   exporter?: VideoEditorExporter | null,
+  extensionRuntime?: ExtensionRuntime,
 ) {
   const [renderStatus, setRenderStatus] = useState<RenderStatus>('idle');
   const [renderLog, setRenderLog] = useState('');
@@ -87,7 +150,43 @@ export function useRenderState(
     },
   });
 
+  const runExportGuard = useCallback((): boolean => {
+    // Skip guard work for the empty extension runtime
+    if (isExtensionRuntimeEmpty(extensionRuntime)) {
+      return true; // no blocker
+    }
+
+    if (!resolvedConfig || resolvedConfig.clips.length === 0) {
+      return true; // nothing to scan
+    }
+
+    const builtIn = collectBuiltInKnownIds();
+    const allContributions = buildExtensionContributions(extensionRuntime!);
+    const extIds = collectExtensionDeclaredIds(allContributions);
+    const guardResult = scanExportConfig(resolvedConfig, builtIn, extIds);
+
+    // Emit structured diagnostics as concise render log output
+    const log = formatExportGuardLog(guardResult);
+    setRenderLog(log);
+
+    if (guardResult.hasBlockingErrors) {
+      // M1 blocker: truly unknown IDs that cannot be rendered
+      setRenderStatus('error');
+      setRenderProgress(null);
+      setRenderDirty(false);
+      return false; // blocker
+    }
+
+    // Extension-declared warnings only — preserve native routing
+    return true; // no blocker
+  }, [extensionRuntime, resolvedConfig]);
+
   const startRender = useCallback(async () => {
+    // ---- export guard: scan for unknown IDs before routing ------------------
+    if (!runExportGuard()) {
+      return; // blocked by export guard
+    }
+
     let decision = getFastRenderRouteDecision(resolvedConfig);
     if (!decision) {
       let importedDecision: {
@@ -183,7 +282,7 @@ export function useRenderState(
     }
 
     await startClientRender();
-  }, [exporter, renderMetadata?.durationInFrames, resolvedConfig, startClientRender]);
+  }, [exporter, renderMetadata?.durationInFrames, resolvedConfig, startClientRender, runExportGuard]);
 
   return {
     renderStatus,

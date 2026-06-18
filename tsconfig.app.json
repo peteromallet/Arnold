@@ -20,7 +20,7 @@
     "baseUrl": ".",
     "paths": {
       "@/*": ["./src/*"],
-      "@reigh/editor-sdk": ["./src/sdk"],
+      "@reigh/editor-sdk": ["./src/sdk/index.ts"]
     }
   },
   "include": ["src"],

@@ -10,12 +10,21 @@ import { MediaLightbox } from '@/domains/media-lightbox/MediaLightbox.tsx';
 import type { GenerationRow } from '@/domains/generation/types/index.ts';
 import { VideoEditorLightboxOverlay } from '@/tools/video-editor/components/VideoEditorLightboxOverlay.tsx';
 import { useReighShotsHost } from '@/tools/video-editor/adapters/reigh/useReighShotsHost.ts';
-import { DEFAULT_VIDEO_EDITOR_EXTENSION_RUNTIME } from '@/tools/video-editor/runtime/extensionSurface.ts';
+import {
+  DEFAULT_VIDEO_EDITOR_EXTENSION_RUNTIME,
+  normalizeExtensionRuntime,
+  type ExtensionRuntime,
+} from '@/tools/video-editor/runtime/extensionSurface.ts';
 import type { DataProvider } from '@/tools/video-editor/data/DataProvider.ts';
 import {
   DataProviderWrapper,
   useVideoEditorRuntime,
 } from '@/tools/video-editor/contexts/DataProviderContext.tsx';
+import {
+  createExtensionLifecycleHost,
+  type ExtensionLifecycleHost,
+} from '@/tools/video-editor/runtime/extensionLifecycle.ts';
+import { createExtensionContext, type ReighExtension } from '@reigh/editor-sdk';
 import { useAgentChatRegistry } from '@/shared/contexts/AgentChatContext.tsx';
 import { clearTimelineClipData, setTimelineClipData } from '@/shared/state/selectionStore.ts';
 import { useEffects } from '@/tools/video-editor/hooks/useEffects.ts';
@@ -412,6 +421,7 @@ export interface VideoEditorProviderProps {
   effectCatalog?: VideoEditorEffectCatalog | null;
   sequenceComponentCatalog?: VideoEditorSequenceComponentCatalog | null;
   onSaveStatusChange?: (status: SaveStatus) => void;
+  extensions?: readonly ReighExtension[];
   children: React.ReactNode;
 }
 
@@ -424,10 +434,35 @@ export function VideoEditorProvider({
   effectCatalog,
   sequenceComponentCatalog,
   onSaveStatusChange,
+  extensions,
   children,
 }: VideoEditorProviderProps) {
   const shotsHost = useReighShotsHost(projectId);
   const agentChatRegistry = useAgentChatRegistry();
+
+  // ---- extension normalization & lifecycle --------------------------------
+  const extensionRuntime = useMemo<ExtensionRuntime>(
+    () => normalizeExtensionRuntime(extensions ?? []),
+    [extensions],
+  );
+
+  const lifecycleHostRef = useRef<ExtensionLifecycleHost | null>(null);
+  if (!lifecycleHostRef.current) {
+    lifecycleHostRef.current = createExtensionLifecycleHost();
+  }
+
+  useEffect(() => {
+    const host = lifecycleHostRef.current!;
+    host.synchronize(extensionRuntime.extensions, createExtensionContext);
+  }, [extensionRuntime.extensions]);
+
+  useEffect(() => {
+    const host = lifecycleHostRef.current;
+    return () => {
+      host?.disposeAll();
+    };
+  }, []);
+
   const runtimeValue = useMemo(() => ({
     provider: dataProvider,
     assetResolver: {
@@ -462,8 +497,9 @@ export function VideoEditorProvider({
     timelineId,
     timelineName,
     userId,
-    extensions: DEFAULT_VIDEO_EDITOR_EXTENSION_RUNTIME,
-  }), [agentChatRegistry.register, agentChatRegistry.unregister, dataProvider, projectId, shotsHost, timelineId, timelineName, userId]);
+    extensions: extensionRuntime.config,
+    extensionRuntime,
+  }), [agentChatRegistry.register, agentChatRegistry.unregister, dataProvider, projectId, shotsHost, timelineId, timelineName, userId, extensionRuntime.config, extensionRuntime]);
 
   return (
     <DataProviderWrapper value={runtimeValue}>

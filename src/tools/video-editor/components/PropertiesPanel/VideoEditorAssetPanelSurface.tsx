@@ -8,6 +8,10 @@ import {
   useVideoEditorAssetPanels,
   useVideoEditorRenderContext,
 } from '@/tools/video-editor/runtime/useVideoEditorRenderContext.ts';
+import {
+  ContributionErrorBoundary,
+  type ContributionErrorInfo,
+} from '@/tools/video-editor/runtime/ContributionErrorBoundary.tsx';
 
 export interface VideoEditorAssetPanelSurfaceProps {
   includeBuiltIn?: boolean;
@@ -42,13 +46,29 @@ function VideoEditorAssetPanelSurfaceComponent({
     return null;
   }
 
+  const handleContributionError = (info: ContributionErrorInfo) => {
+    if (typeof console !== 'undefined') {
+      console.warn(
+        '[VideoEditorAssetPanelSurface] Panel error captured by boundary:',
+        info,
+      );
+    }
+  };
+
   return (
     <div className="flex flex-col gap-3">
       {builtInPanel}
       {assetPanels.map((panel) => (
-        <div key={panel.id} data-video-editor-panel-id={panel.id}>
-          {panel.render(renderContext)}
-        </div>
+        <ContributionErrorBoundary
+          key={panel.id}
+          contributionId={panel.id}
+          kind="panel"
+          onError={handleContributionError}
+        >
+          <div data-video-editor-panel-id={panel.id}>
+            {panel.render(renderContext)}
+          </div>
+        </ContributionErrorBoundary>
       ))}
     </div>
   );

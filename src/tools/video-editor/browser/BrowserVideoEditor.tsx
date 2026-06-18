@@ -39,6 +39,7 @@ export function BrowserVideoEditor({
   assetResolver = null,
   exporter = null,
   hostContext = null,
+  extensions,
   queryClient,
   initialEntries,
   onCreateTimeline,
@@ -58,6 +59,7 @@ export function BrowserVideoEditor({
       assetResolver={assetResolver}
       exporter={exporter}
       hostContext={hostContext}
+      extensions={extensions}
       queryClient={ownedQueryClient}
       initialEntries={initialEntries}
     >

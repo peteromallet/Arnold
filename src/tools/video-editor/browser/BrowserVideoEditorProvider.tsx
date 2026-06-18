@@ -9,6 +9,7 @@ import type {
   VideoEditorExporter,
   VideoEditorHostContext,
 } from '@/tools/video-editor/lib/browser-runtime.ts';
+import type { ReighExtension } from '@reigh/editor-sdk';
 
 export interface BrowserVideoEditorProviderProps {
   dataProvider: DataProvider;
@@ -19,6 +20,7 @@ export interface BrowserVideoEditorProviderProps {
   assetResolver?: VideoEditorAssetResolver | null;
   exporter?: VideoEditorExporter | null;
   hostContext?: VideoEditorHostContext | null;
+  extensions?: readonly ReighExtension[];
   queryClient?: QueryClient;
   initialEntries?: string[];
   children: ReactNode;
@@ -48,6 +50,7 @@ export function BrowserVideoEditorProvider({
   assetResolver = null,
   exporter = null,
   hostContext = null,
+  extensions,
   queryClient,
   initialEntries,
   children,
@@ -64,6 +67,7 @@ export function BrowserVideoEditorProvider({
           userId={userId}
           effectCatalog={effectCatalog}
           runtime={{ assetResolver, exporter, hostContext }}
+          extensions={extensions}
         >
           {children}
         </EditorRuntimeProvider>

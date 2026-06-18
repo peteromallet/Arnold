@@ -11,12 +11,8 @@
   "compilerOptions": {
     "baseUrl": ".",
     "paths": {
-      "@/*": [
-        "./src/*"
-      ],
-      "@reigh/editor-sdk": [
-        "./src/sdk"
-      ]
+      "@/*": ["./src/*"],
+      "@reigh/editor-sdk": ["./src/sdk/index.ts"]
     },
     "skipLibCheck": true,
     "allowJs": true
