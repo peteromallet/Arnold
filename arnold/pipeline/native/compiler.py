@@ -18,9 +18,11 @@ from typing import Any, Callable, Sequence
 
 from arnold.pipeline.native.decorators import (
     get_decision_meta,
+    get_loop_guard_meta,
     get_phase_meta,
     get_pipeline_meta,
     is_decision,
+    is_loop_guard,
     is_phase,
     is_pipeline,
 )
@@ -484,6 +486,10 @@ class _Compiler:
             dec_meta = get_decision_meta(func)
             name = dec_meta["name"] if dec_meta else guard_name
             vocabulary = dec_meta.get("vocabulary", frozenset()) if dec_meta else frozenset()
+        elif is_loop_guard(func):
+            loop_meta = get_loop_guard_meta(func)
+            name = loop_meta["name"] if loop_meta else guard_name
+            vocabulary = frozenset()
         elif is_phase(func):
             raise NativeCompileError(
                 f"while test target {guard_name!r} is a @phase, not a @decision or guard",
@@ -491,7 +497,7 @@ class _Compiler:
             )
         else:
             raise NativeCompileError(
-                f"while test target {guard_name!r} is not a @decision-decorated function",
+                f"while test target {guard_name!r} is not a @decision or @loop_guard-decorated function",
                 func_node,
             )
 
@@ -526,8 +532,14 @@ class _Compiler:
                 stmt,
             )
 
-        # Create loop guard
-        loop_guard = NativeLoopGuard(guard=func, body=body_func, name=name)
+        # Create loop guard — carry static policy metadata from decorator
+        max_iterations: int | None = None
+        loop_meta = get_loop_guard_meta(func) if is_loop_guard(func) else None
+        if loop_meta is not None:
+            max_iterations = loop_meta.get("max_iterations")
+        loop_guard = NativeLoopGuard(
+            guard=func, body=body_func, name=name, max_iterations=max_iterations,
+        )
         self._loop_guards.append(loop_guard)
 
         # Emit: loop header (decision-like), body lowered via normal

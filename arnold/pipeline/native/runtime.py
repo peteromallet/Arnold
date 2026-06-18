@@ -120,6 +120,8 @@ def _enforce_native_typed_handoff(
     artifact_root: str,
     schema_registry: Any = None,
     telemetry_path: str | None = None,
+    hooks: Any = None,
+    state: dict[str, Any] | None = None,
 ) -> None:
     """Enforce typed step-IO handoff for a phase with typed produces ports.
 
@@ -130,6 +132,14 @@ def _enforce_native_typed_handoff(
     ``StepIOContractContext`` when *schema_registry* is provided), and
     raises ``StepIOEnforcementError`` when the resolved policy blocks
     the write.
+
+    When *hooks* provides a ``resolve_step_io_policy`` callback that returns
+    a non-``None`` policy, that policy is forwarded to
+    ``evaluate_step_io_handoff`` as the ``policy`` argument, bypassing the
+    evaluator's default ``resolve_step_io_policy`` call.  This is the seam
+    through which Megaplan (and future slices) can inject
+    ``resolve_megaplan_step_io_policy()`` without the native package
+    importing Megaplan code.
 
     Falls through (no-op) when:
       * The phase has no typed ``produces`` ports.
@@ -163,6 +173,16 @@ def _enforce_native_typed_handoff(
     from arnold.pipeline.step_io_policy import effective_blocks_write
     from arnold.pipeline.executor import StepIOEnforcementError
 
+    # ── Resolve policy via hooks (seam for Megaplan injection) ────────
+    policy_override: Any = None
+    if hooks is not None and hasattr(hooks, "resolve_step_io_policy"):
+        policy_override = hooks.resolve_step_io_policy(
+            instr=instr,
+            state=state or {},
+            handoff_value=handoff_value,
+            schema_registry=schema_registry,
+        )
+
     # Build contract context when a schema registry is available
     context = None
     if schema_registry is not None:
@@ -177,6 +197,7 @@ def _enforce_native_typed_handoff(
             handoff_value,
             operation=StepIOOperation.WRITE,
             context=context,
+            policy=policy_override,
             producer_port=producer_port,
             consumer_port_decl=consumer_port,
             consumer_step=consumer_instr.name,
@@ -400,6 +421,8 @@ def run_native_pipeline(
                     artifact_root=artifact_root_str,
                     schema_registry=schema_registry,
                     telemetry_path=telemetry_path_str,
+                    hooks=_hooks,
+                    state=state,
                 )
 
             if outputs:
@@ -504,7 +527,25 @@ def run_native_pipeline(
             else:
                 ctx["artifact_root"] = str(artifact_root)
 
-            result = instr.func(ctx)
+            # ── Hook: on_step_start (may rewrite ctx / inject control override) ──
+            ctx = _hooks.on_step_start(instr, ctx)
+
+            # ── Control override short-circuit (Megaplan T7) ──────
+            # When a hook (e.g. MegaplanNativeRuntimeHooks) sets
+            # __control_override__ in ctx, skip the decision body and
+            # route directly.  Priority: halt > override > decision > normal.
+            control_override: str | None = ctx.get("__control_override__")
+            if control_override is not None:
+                # Use the override as the decision label directly.
+                # Build a synthetic result with envelope=None so the
+                # downstream envelope join is a no-op.
+                result: dict[str, Any] = {"__control_override__": control_override}
+                label = control_override
+            else:
+                result = instr.func(ctx)
+
+                # Resolve branch label
+                label = _resolve_decision_label(result)
 
             # ── Envelope accumulation for decisions ───────────────
             step_envelope: Any = None
@@ -513,9 +554,6 @@ def run_native_pipeline(
             elif isinstance(result, dict):
                 step_envelope = result.get("envelope")
             envelope = _hooks.join_envelope(instr, envelope, step_envelope)
-
-            # Resolve branch label
-            label = _resolve_decision_label(result)
 
             # ── Validate decision return value against declared vocabulary ──
             if instr.branches and label not in instr.branches:
@@ -552,6 +590,9 @@ def run_native_pipeline(
                             pc=pc,
                             envelope=envelope,
                         )
+
+                # ── Hook: on_edge_traverse (after non-halt target resolved) ──
+                _hooks.on_edge_traverse(instr, state, label, target_pc)
 
                 pc = target_pc
                 forward_visited.clear()

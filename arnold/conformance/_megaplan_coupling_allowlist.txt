@@ -6,3 +6,4 @@ arnold.supervisor.outcomes
 arnold.agent.adapters._oneshot
 arnold.agent.adapters.codex
 arnold.agent.adapters.shannon
+arnold.pipeline.native.megaplan_hooks

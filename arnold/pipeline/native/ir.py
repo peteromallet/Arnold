@@ -66,6 +66,10 @@ class NativeLoopGuard:
 
     The *guard* callable returns a boolean (``True`` → continue iterating).
     The *body* callable is the decorated function that runs each iteration.
+
+    Static policy metadata (e.g. *max_iterations*) is carried from the
+    ``@loop_guard`` decorator through to the runtime hooks so Megaplan
+    policy can inspect it without re-deriving it from stage names.
     """
 
     guard: Callable[..., bool] = field(compare=False, hash=False)
@@ -76,6 +80,9 @@ class NativeLoopGuard:
 
     name: str = ""
     """Optional name for diagnostics."""
+
+    max_iterations: int | None = None
+    """Optional static iteration cap from ``@loop_guard`` decorator metadata."""
 
 
 @dataclass(frozen=True)

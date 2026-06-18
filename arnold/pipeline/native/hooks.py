@@ -4,7 +4,7 @@
 slices (M3+) can inject behaviour into the native sequential walk-loop
 without the native package importing Megaplan-specific code.
 
-All 8 callbacks have documented insertion points and explicit no-op
+All callbacks have documented insertion points and explicit no-op
 defaults in ``NullNativeRuntimeHooks``.  The surface mirrors the
 graph executor's ``ExecutorHooks`` protocol where possible, adapted
 for the native runtime's dict-based context and ``NativeInstruction``
@@ -184,6 +184,58 @@ class NativeRuntimeHooks(Protocol):
         """
         ...
 
+    def on_edge_traverse(
+        self,
+        instr: NativeInstruction,
+        state: dict[str, Any],
+        label: str,
+        target_pc: int,
+    ) -> None:
+        """Insertion point: after a non-halt decision resolves a target pc.
+
+        Called immediately after a decision instruction resolves a valid
+        branch label and target program counter, but **before** the runtime
+        advances ``pc``.  Mirrors the graph executor's
+        ``ExecutorHooks.on_edge_traverse``, adapted for the native runtime's
+        dict-based context and ``NativeInstruction`` types.
+
+        Not called for halt decisions, jump instructions, or phase-to-phase
+        transitions (those are implicit sequential advances).
+
+        No-op default: does nothing.
+        """
+        ...
+
+    def resolve_step_io_policy(
+        self,
+        *,
+        instr: NativeInstruction,
+        state: dict[str, Any],
+        handoff_value: Any,
+        schema_registry: Any = None,
+    ) -> Any | None:
+        """Insertion point: before typed step-IO handoff enforcement.
+
+        Called once per phase that has typed ``produces`` ports, **before**
+        the per-consumer enforcement loop.  May return a
+        :class:`~arnold.pipeline.step_io_policy.StepIOPolicy` to drive
+        enforcement (e.g. from a Megaplan-specific resolver).  The returned
+        policy is forwarded to ``evaluate_step_io_handoff`` as the
+        ``policy`` argument, bypassing the default
+        ``resolve_step_io_policy`` call inside the evaluator.
+
+        When ``None`` is returned (the default), the generic path passes
+        ``policy=None`` to the evaluator, which triggers the default
+        ``resolve_step_io_policy`` inside ``evaluate_step_io_handoff``.
+
+        This is the seam through which Megaplan (and future slices) can
+        inject ``resolve_megaplan_step_io_policy()`` without the native
+        package importing Megaplan code.  See M3 brief Step-IO handoff.
+
+        No-op default: returns ``None``.
+        """
+        ...
+
 
 class NullNativeRuntimeHooks:
     """No-op reference implementation of :class:`NativeRuntimeHooks`.
@@ -272,3 +324,22 @@ class NullNativeRuntimeHooks:
         state: dict[str, Any],
     ) -> None:
         pass
+
+    def on_edge_traverse(
+        self,
+        instr: NativeInstruction,
+        state: dict[str, Any],
+        label: str,
+        target_pc: int,
+    ) -> None:
+        pass
+
+    def resolve_step_io_policy(
+        self,
+        *,
+        instr: NativeInstruction,
+        state: dict[str, Any],
+        handoff_value: Any,
+        schema_registry: Any = None,
+    ) -> Any | None:
+        return None

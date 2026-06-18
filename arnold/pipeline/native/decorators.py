@@ -166,6 +166,46 @@ def get_pipeline_meta(fn: Any) -> dict[str, Any] | None:
     }
 
 
+def loop_guard(
+    name: str | None = None,
+    *,
+    description: str | None = None,
+    max_iterations: int | None = None,
+) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
+    """Mark a function as a native loop guard.
+
+    Supports both ``@loop_guard`` and ``@loop_guard(...)`` usage.
+
+    Parameters
+    ----------
+    name:
+        Guard name (defaults to the function name).
+    description:
+        Optional human-readable description.
+    max_iterations:
+        Optional static cap on loop iterations (runtime policy may
+        override this).
+
+    Returns
+    -------
+    Callable
+        The decorated function with ``__loop_guard__``,
+        ``__loop_guard_name__``, ``__loop_guard_description__``,
+        and ``__loop_guard_max_iterations__`` attributes attached.
+    """
+
+    def decorator(fn: Callable[..., Any]) -> Callable[..., Any]:
+        fn.__loop_guard__ = True  # type: ignore[attr-defined]
+        fn.__loop_guard_name__ = name if isinstance(name, str) else fn.__name__  # type: ignore[attr-defined]
+        fn.__loop_guard_description__ = description  # type: ignore[attr-defined]
+        fn.__loop_guard_max_iterations__ = max_iterations  # type: ignore[attr-defined]
+        return fn
+
+    if callable(name):
+        return decorator(name)
+    return decorator
+
+
 def is_decision(fn: Any) -> bool:
     """Return ``True`` if *fn* is a ``@decision``-decorated callable."""
     return bool(getattr(fn, "__decision__", False))
@@ -180,4 +220,20 @@ def get_decision_meta(fn: Any) -> dict[str, Any] | None:
         "name": getattr(fn, "__decision_name__", fn.__name__),
         "description": getattr(fn, "__decision_description__", None),
         "vocabulary": frozenset(vocab),
+    }
+
+
+def is_loop_guard(fn: Any) -> bool:
+    """Return ``True`` if *fn* is a ``@loop_guard``-decorated callable."""
+    return bool(getattr(fn, "__loop_guard__", False))
+
+
+def get_loop_guard_meta(fn: Any) -> dict[str, Any] | None:
+    """Return loop guard metadata dict for *fn*, or ``None``."""
+    if not is_loop_guard(fn):
+        return None
+    return {
+        "name": getattr(fn, "__loop_guard_name__", fn.__name__),
+        "description": getattr(fn, "__loop_guard_description__", None),
+        "max_iterations": getattr(fn, "__loop_guard_max_iterations__", None),
     }

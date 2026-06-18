@@ -17,8 +17,67 @@ from arnold.pipeline.native.hooks import (
 )
 from arnold.pipeline.native.ir import NativeInstruction
 
+# ── Override kind constants (catalog-driven dispatch) ──────────────
+_ADDITIVE_OVERRIDE_KINDS: frozenset[str] = frozenset({"annotation", "config"})
+_CONTROL_OVERRIDE_KINDS: frozenset[str] = frozenset(
+    {"termination", "transition", "recovery"}
+)
 
-class MegaplanNativeHooks(NullNativeRuntimeHooks):
+# Priority ranking for control override kinds (lower = higher priority).
+# Resolver priority: termination (1) > transition (2) > recovery (3).
+# This mirrors the resolve_edge dispatch order in arnold.pipeline.routing:
+#   halt > override > decision > normal
+_KIND_PRIORITY: dict[str, int] = {
+    "termination": 1,
+    "transition": 2,
+    "recovery": 3,
+}
+
+
+def resolve_control_override(
+    control_entries: list[dict[str, Any]],
+    catalog: dict[str, dict[str, Any]] | None = None,
+) -> str | None:
+    """Resolve the highest-priority control override from pending entries.
+
+    Control override priority (lower = higher priority):
+        1. **termination** (e.g. ``abort``) — highest
+        2. **transition** (e.g. ``force-proceed``, ``replan``)
+        3. **recovery** (e.g. ``recover-blocked``, ``resume-clarify``)
+
+    When multiple control overrides are pending, the one with the highest
+    priority kind wins.  Within the same kind, the first entry wins
+    (stable — insertion order from ``state.meta.overrides``).
+
+    Each *control_entries* element is a dict with keys:
+        * ``action`` — internal normalised action name
+        * ``kind`` — catalog kind string
+        * ``catalog_action`` — original CLI spelling (optional)
+        * ``entry`` — the raw override entry dict (optional)
+
+    Args:
+        control_entries: List of pending control override descriptors.
+        catalog: Optional catalog dict for validation (unused; reserved
+            for future catalog-driven target resolution).
+
+    Returns:
+        The winning internal action name (e.g. ``\"abort\"``,
+        ``\"force_proceed\"``), or ``None`` when *control_entries* is empty.
+    """
+    if not control_entries:
+        return None
+
+    # Sort by kind priority (lower = higher priority), stable on tie.
+    def _priority(entry: dict[str, Any]) -> int:
+        kind: str = entry.get("kind", "")
+        return _KIND_PRIORITY.get(kind, 99)
+
+    sorted_entries = sorted(control_entries, key=_priority)
+    winner = sorted_entries[0]
+    return winner.get("action")
+
+
+class MegaplanNativeRuntimeHooks(NullNativeRuntimeHooks):
     """Megaplan-specific native runtime hooks.
 
     Extends :class:`NullNativeRuntimeHooks` with Megaplan semantics for
@@ -28,6 +87,124 @@ class MegaplanNativeHooks(NullNativeRuntimeHooks):
 
     Each callback is implemented incrementally per the M3 milestone schedule.
     """
+
+    def __init__(
+        self,
+        *,
+        plan_dir: str | None = None,
+        policy_data: dict[str, Any] | None = None,
+        policy_path: str | None = None,
+    ) -> None:
+        super().__init__()
+        self._plan_dir = plan_dir
+        self._policy_data = policy_data
+        self._policy_path = policy_path
+
+    # ── Override injection (T6 / T7) ──────────────────────────────────
+
+    def on_step_start(
+        self,
+        instr: NativeInstruction,
+        ctx: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Inject pending overrides from ``state[\"meta\"][\"overrides\"]``.
+
+        Normalises CLI spellings via
+        :func:`~arnold.pipelines.megaplan.routing.cli_to_internal_override`,
+        validates every override name against
+        :func:`~arnold.pipelines.megaplan.planning.operations.override_catalog`,
+        and dispatches by catalog ``kind``:
+
+        * **annotation** / **config** — additive mutation applied to state
+          and ``EventKind.OVERRIDE_APPLIED`` emitted.
+        * **termination** / **transition** / **recovery** — resolved via
+          :func:`resolve_control_override` and stored in
+          ``ctx[\"__override_route__\"]`` so the runtime can short-circuit
+          decision bodies.  Priority: termination > transition > recovery.
+
+        Returns *ctx* with a rewritten ``state`` when additive mutations
+        were applied, otherwise returns *ctx* unchanged.
+        """
+        state = ctx.get("state")
+        if not isinstance(state, dict):
+            return ctx
+
+        meta = state.get("meta")
+        if not isinstance(meta, dict):
+            return ctx
+
+        overrides: Any = meta.get("overrides")
+        if not isinstance(overrides, list) or not overrides:
+            return ctx
+
+        # ── Resolve catalog and normaliser ─────────────────────────
+        try:
+            from arnold.pipelines.megaplan.planning.operations import (
+                override_catalog,
+            )
+            from arnold.pipelines.megaplan.routing import (
+                cli_to_internal_override,
+            )
+
+            _catalog = override_catalog()
+        except Exception:
+            return ctx  # graceful degradation
+
+        # ── Process each pending override ───────────────────────────
+        new_state = dict(state)
+        modified = False
+        control_entries: list[dict[str, Any]] = []
+
+        for entry in overrides:
+            if not isinstance(entry, dict):
+                continue
+
+            action: Any = entry.get("action")
+            if not isinstance(action, str) or not action:
+                continue
+
+            # 1. Validate against catalog (catalog keys use CLI spellings)
+            entry_meta = _catalog.get(action)
+            if entry_meta is None:
+                # Try the internal normalised form as a fallback
+                internal_action = cli_to_internal_override(action)
+                entry_meta = _catalog.get(internal_action)
+                if entry_meta is None:
+                    continue  # unknown override — silently skip
+            else:
+                # Normalise CLI spelling for internal dispatch
+                internal_action = cli_to_internal_override(action)
+
+            kind: Any = entry_meta.get("kind")
+
+            # 2. Dispatch by catalog kind
+            if kind == "annotation":
+                modified |= _apply_annotation_override(
+                    internal_action, entry, new_state, self._plan_dir,
+                )
+            elif kind == "config":
+                modified |= _apply_config_override(
+                    internal_action, entry, new_state, self._plan_dir,
+                )
+            elif kind in _CONTROL_OVERRIDE_KINDS:
+                # Collect control overrides for resolution (T7)
+                control_entries.append({
+                    "action": internal_action,
+                    "catalog_action": action,
+                    "kind": kind,
+                    "entry": entry,
+                })
+
+        # ── Resolve control override (T7) ──────────────────────────
+        if control_entries:
+            resolved = resolve_control_override(control_entries, _catalog)
+            if resolved is not None:
+                ctx["__override_route__"] = resolved
+
+        if modified:
+            ctx["state"] = new_state
+
+        return ctx
 
     def merge_state(
         self,
@@ -100,7 +277,366 @@ class MegaplanNativeHooks(NullNativeRuntimeHooks):
             next_state.update(outputs)
             return next_state, new_owned_keys
 
+    # ── Envelope joining (T8) ─────────────────────────────────────
+
+    def join_envelope(
+        self,
+        instr: NativeInstruction,
+        current_envelope: Any,
+        step_envelope: Any,
+    ) -> Any:
+        """Join a step's envelope into the accumulated envelope.
+
+        Preserves ``trust_state``, ``resume_cursor``, identity fields
+        (``plugin_id``, ``run_id``, ``artifact_root``), and cross-cutting
+        metadata.  Rejects lease/fencing/capacity-grant conflicts by
+        letting :class:`~arnold.runtime.envelope.LeaseIdConflict` propagate
+        rather than silently dropping envelope data.
+
+        When *step_envelope* is falsy (``None``, empty dict, etc.), returns
+        *current_envelope* unchanged — matching the no-op default of
+        :class:`NullNativeRuntimeHooks`.
+
+        When both are :class:`~arnold.runtime.envelope.RunEnvelope`
+        instances, delegates to ``RunEnvelope.join()`` for the cross-cutting
+        semilattice.
+
+        When both are :class:`~arnold.runtime.envelope.RuntimeEnvelope`
+        instances, preserves the runtime identity of the current carrier and
+        joins the inner ``cross_cutting`` RunEnvelope.
+
+        Mixed ``RuntimeEnvelope`` / ``RunEnvelope`` joins are handled by
+        lifting the simpler type into the richer carrier.
+        """
+        if not step_envelope:
+            return current_envelope
+
+        if current_envelope is None:
+            return step_envelope
+
+        # ── Detect types via duck-typing ──────────────────────────
+        from arnold.runtime.envelope import (
+            EMPTY_ENVELOPE,
+            LeaseIdConflict,
+            RunEnvelope,
+            RuntimeEnvelope,
+        )
+
+        cur_is_rte = isinstance(current_envelope, RuntimeEnvelope)
+        step_is_rte = isinstance(step_envelope, RuntimeEnvelope)
+        cur_is_re = isinstance(current_envelope, RunEnvelope)
+        step_is_re = isinstance(step_envelope, RunEnvelope)
+
+        # ── Both RuntimeEnvelope: preserve carrier, join cross_cutting ──
+        if cur_is_rte and step_is_rte:
+            try:
+                joined_cc = current_envelope.cross_cutting.join(
+                    step_envelope.cross_cutting
+                )
+            except LeaseIdConflict:
+                raise  # propagate loudly
+            # Preserve identity from the current carrier; step identity
+            # is intentionally *not* merged (run_id, plugin_id are scoped
+            # to the parent run).
+            return RuntimeEnvelope(
+                plugin_id=current_envelope.plugin_id,
+                manifest_hash=current_envelope.manifest_hash,
+                plugin_state_schema_version=current_envelope.plugin_state_schema_version,
+                run_id=current_envelope.run_id,
+                artifact_root=current_envelope.artifact_root,
+                resume_cursor=current_envelope.resume_cursor,
+                trust_state=current_envelope.trust_state,
+                created_at=current_envelope.created_at,
+                cross_cutting=joined_cc,
+            )
+
+        # ── Current RuntimeEnvelope, step RunEnvelope ─────────────
+        if cur_is_rte and step_is_re:
+            try:
+                joined_cc = current_envelope.cross_cutting.join(step_envelope)
+            except LeaseIdConflict:
+                raise
+            return RuntimeEnvelope(
+                plugin_id=current_envelope.plugin_id,
+                manifest_hash=current_envelope.manifest_hash,
+                plugin_state_schema_version=current_envelope.plugin_state_schema_version,
+                run_id=current_envelope.run_id,
+                artifact_root=current_envelope.artifact_root,
+                resume_cursor=current_envelope.resume_cursor,
+                trust_state=current_envelope.trust_state,
+                created_at=current_envelope.created_at,
+                cross_cutting=joined_cc,
+            )
+
+        # ── Current RunEnvelope, step RuntimeEnvelope ─────────────
+        if cur_is_re and step_is_rte:
+            try:
+                joined_cc = current_envelope.join(
+                    step_envelope.cross_cutting
+                )
+            except LeaseIdConflict:
+                raise
+            return RuntimeEnvelope(
+                plugin_id=step_envelope.plugin_id,
+                manifest_hash=step_envelope.manifest_hash,
+                plugin_state_schema_version=step_envelope.plugin_state_schema_version,
+                run_id=step_envelope.run_id,
+                artifact_root=step_envelope.artifact_root,
+                resume_cursor=step_envelope.resume_cursor,
+                trust_state=step_envelope.trust_state,
+                created_at=step_envelope.created_at,
+                cross_cutting=joined_cc,
+            )
+
+        # ── Both RunEnvelope: pure semilattice join ───────────────
+        if cur_is_re and step_is_re:
+            try:
+                return current_envelope.join(step_envelope)
+            except LeaseIdConflict:
+                raise
+
+        # ── Fallback: unknown types — return step_envelope ────────
+        return step_envelope
+
+    def on_stage_complete(
+        self,
+        instr: NativeInstruction,
+        ctx: dict[str, Any],
+        result: Any,
+        state: dict[str, Any],
+        owned_keys: frozenset[str],
+    ) -> None:
+        """Persist state to disk in executor-key-merge mode after every stage.
+
+        Merges the executor's tracked keys with on-disk handler-written keys:
+        keys in ``owned_keys`` take the in-memory value; all other on-disk keys
+        retain their on-disk value.  Preserves unowned disk keys while
+        advancing ``_state_meta.versions`` for owned keys under typed/CAS mode.
+
+        No-op when ``_plan_dir`` is ``None`` or *state* is not a ``dict``.
+        """
+        if self._plan_dir is None or not isinstance(state, dict):
+            return
+
+        try:
+            from pathlib import Path
+
+            from arnold.pipelines.megaplan._core.state import write_plan_state
+
+            write_plan_state(
+                Path(self._plan_dir),
+                mode="executor-key-merge",
+                state=dict(state),
+                executor_owned_keys=set(owned_keys),
+            )
+        except Exception:
+            pass
+
+    def resolve_step_io_policy(
+        self,
+        *,
+        instr: NativeInstruction,
+        state: dict[str, Any],
+        handoff_value: Any,
+        schema_registry: Any = None,
+    ) -> Any | None:
+        """Resolve Megaplan Step IO policy for typed handoff enforcement.
+
+        Calls :func:`~arnold.pipelines.megaplan._pipeline.step_io_policy_adapter.resolve_megaplan_step_io_policy`
+        with state-derived configuration, plan directory, and persisted
+        policy data.  Returns the resolved :class:`StepIOPolicy` which the
+        runtime forwards to ``evaluate_step_io_handoff``.
+
+        Returns ``None`` when the Megaplan adapter is not importable
+        (graceful degradation for non-Megaplan environments).
+        """
+        try:
+            from arnold.pipelines.megaplan._pipeline.step_io_policy_adapter import (
+                resolve_megaplan_step_io_policy,
+            )
+        except Exception:
+            return None
+
+        # Extract state-driven config for policy resolution
+        state_config = state.get("_state_meta", {}).get("config", {}) if state else {}
+
+        try:
+            return resolve_megaplan_step_io_policy(
+                plan_dir=self._plan_dir,
+                state_config=state_config,
+                policy_data=self._policy_data,
+                policy_path=self._policy_path,
+            )
+        except Exception:
+            return None
+
+
+# ── Override helper functions (T6) ────────────────────────────────────
+
+
+def _now_utc() -> str:
+    """Return the current UTC time as an ISO-8601 string with ``Z`` suffix."""
+    from datetime import datetime, timezone
+
+    return (
+        datetime.now(timezone.utc)
+        .replace(microsecond=0)
+        .isoformat()
+        .replace("+00:00", "Z")
+    )
+
+
+def _emit_override_applied(
+    plan_dir: str | None,
+    action: str,
+    payload: dict[str, Any],
+) -> None:
+    """Best-effort emit of ``EventKind.OVERRIDE_APPLIED``.
+
+    When *plan_dir* is ``None``, this is a silent no-op (no event journal
+    to write to).  Emission failures are swallowed — matching the existing
+    best-effort observability pattern for override events.
+    """
+    if plan_dir is None:
+        return
+    try:
+        from pathlib import Path
+
+        from arnold.pipelines.megaplan.observability.events import (
+            EventKind,
+            emit,
+        )
+
+        emit(
+            EventKind.OVERRIDE_APPLIED,
+            plan_dir=Path(plan_dir),
+            payload=payload,
+        )
+    except Exception:
+        pass
+
+
+def _apply_annotation_override(
+    internal_action: str,
+    entry: dict[str, Any],
+    new_state: dict[str, Any],
+    plan_dir: str | None,
+) -> bool:
+    """Apply an additive annotation override (currently ``add-note``).
+
+    Returns ``True`` if *new_state* was mutated.
+    """
+    if internal_action != "add-note":
+        return False
+
+    note_text: Any = entry.get("note", "")
+    source: Any = entry.get("source", "user")
+    note_entry: dict[str, Any] = {
+        "timestamp": _now_utc(),
+        "note": note_text if isinstance(note_text, str) else str(note_text),
+        "source": source if isinstance(source, str) else "user",
+    }
+
+    new_state.setdefault("meta", {}).setdefault("notes", []).append(note_entry)
+
+    _emit_override_applied(
+        plan_dir,
+        "add-note",
+        {
+            "action": "add-note",
+            "reason": note_entry["note"],
+            "source": note_entry["source"],
+        },
+    )
+    return True
+
+
+def _apply_config_override(
+    internal_action: str,
+    entry: dict[str, Any],
+    new_state: dict[str, Any],
+    plan_dir: str | None,
+) -> bool:
+    """Apply an additive config override (set-model/set-profile/set-robustness/set-vendor).
+
+    Returns ``True`` if *new_state* was mutated.
+    """
+    config = new_state.setdefault("config", {})
+
+    if internal_action == "set-model":
+        phase: Any = entry.get("phase")
+        model: Any = entry.get("model")
+        if not isinstance(phase, str) or not phase:
+            return False
+        if not isinstance(model, str) or not model:
+            return False
+        phase_models: list[str] = list(
+            config.get("phase_model") or []
+        )
+        found = False
+        for i, pm in enumerate(phase_models):
+            if isinstance(pm, str) and "=" in pm and pm.split("=", 1)[0] == phase:
+                phase_models[i] = f"{phase}={model}"
+                found = True
+                break
+        if not found:
+            phase_models.append(f"{phase}={model}")
+        config["phase_model"] = phase_models
+
+        _emit_override_applied(
+            plan_dir,
+            "set-model",
+            {"action": "set-model", "phase": phase, "model": model},
+        )
+        return True
+
+    if internal_action == "set-profile":
+        profile: Any = entry.get("profile")
+        if not isinstance(profile, str) or not profile:
+            return False
+        config["profile"] = profile
+
+        _emit_override_applied(
+            plan_dir,
+            "set-profile",
+            {"action": "set-profile", "profile": profile},
+        )
+        return True
+
+    if internal_action == "set-robustness":
+        robustness: Any = entry.get("robustness")
+        if not isinstance(robustness, str) or not robustness:
+            return False
+        config["robustness"] = robustness
+
+        _emit_override_applied(
+            plan_dir,
+            "set-robustness",
+            {"action": "set-robustness", "robustness": robustness},
+        )
+        return True
+
+    if internal_action == "set-vendor":
+        vendor: Any = entry.get("vendor")
+        if not isinstance(vendor, str) or not vendor:
+            return False
+        config["premium_vendor"] = vendor
+
+        _emit_override_applied(
+            plan_dir,
+            "set-vendor",
+            {"action": "set-vendor", "vendor": vendor},
+        )
+        return True
+
+    return False
+
+
+# Compatibility alias — existing callers referencing ``MegaplanNativeHooks``
+# continue to resolve the canonical ``MegaplanNativeRuntimeHooks``.
+MegaplanNativeHooks = MegaplanNativeRuntimeHooks
 
 __all__ = [
+    "MegaplanNativeRuntimeHooks",
     "MegaplanNativeHooks",
 ]
