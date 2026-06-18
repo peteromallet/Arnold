@@ -1,0 +1,325 @@
+"""Tests for native pipeline checkpoint persistence.
+
+Covers:
+- Round-trip persist/read of the native cursor
+- Required native fields (pc, version) are validated on read
+- Graceful handling of missing, malformed, or non-native cursors
+- Additive shape does not break the base read_resume_cursor path
+- Top-level fields (stage, resume_cursor, stages, loops, frames, native)
+  are present and correctly typed
+"""
+
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
+import pytest
+
+from arnold.pipeline.native.checkpoint import (
+    NATIVE_CURSOR_VERSION,
+    persist_native_cursor,
+    read_native_cursor,
+)
+from arnold.pipeline.resume import (
+    RESUME_CURSOR_FILENAME,
+    read_resume_cursor,
+)
+
+
+# ── round-trip tests ──────────────────────────────────────────────────
+
+
+class TestRoundTrip:
+    """Persist a native cursor and read it back successfully."""
+
+    def test_minimal_cursor_round_trip(self, tmp_path: Path) -> None:
+        path = persist_native_cursor(
+            tmp_path,
+            stage="my_pipe__do_work__pc0",
+            pc=0,
+        )
+        assert path == tmp_path / RESUME_CURSOR_FILENAME
+        assert path.exists()
+
+        cursor = read_native_cursor(tmp_path)
+        assert cursor is not None
+        assert cursor["stage"] == "my_pipe__do_work__pc0"
+        assert cursor["resume_cursor"] is None
+        assert cursor["stages"] == []
+        assert cursor["loops"] == {}
+        assert cursor["frames"] == {}
+        assert cursor["native"] == {"pc": 0, "version": 1}
+
+    def test_full_cursor_round_trip(self, tmp_path: Path) -> None:
+        path = persist_native_cursor(
+            tmp_path,
+            stage="my_pipe__guard__pc2",
+            pc=2,
+            stages=["my_pipe__setup__pc0", "my_pipe__body__pc1"],
+            loops={"my_guard": 3},
+            frames={"my_guard": {"last_result": "again"}},
+            resume_cursor="cursor-abc",
+            version=1,
+        )
+        assert path.exists()
+
+        cursor = read_native_cursor(tmp_path)
+        assert cursor is not None
+        assert cursor["stage"] == "my_pipe__guard__pc2"
+        assert cursor["resume_cursor"] == "cursor-abc"
+        assert cursor["stages"] == ["my_pipe__setup__pc0", "my_pipe__body__pc1"]
+        assert cursor["loops"] == {"my_guard": 3}
+        assert cursor["frames"] == {"my_guard": {"last_result": "again"}}
+        assert cursor["native"] == {"pc": 2, "version": 1}
+
+    def test_file_is_valid_json(self, tmp_path: Path) -> None:
+        persist_native_cursor(
+            tmp_path,
+            stage="s",
+            pc=5,
+            stages=["a", "b"],
+            loops={"L": 1},
+            frames={"L": {"x": [1, 2]}},
+        )
+        raw = (tmp_path / RESUME_CURSOR_FILENAME).read_text(encoding="utf-8")
+        parsed = json.loads(raw)
+        assert isinstance(parsed, dict)
+        assert "native" in parsed
+        assert parsed["native"]["pc"] == 5
+
+
+# ── additive shape tests ───────────────────────────────────────────────
+
+
+class TestAdditiveShape:
+    """The native cursor must be readable by the base read_resume_cursor.
+
+    Extra keys (stages, loops, frames, native) must not prevent the
+    base reader from returning a valid dict.
+    """
+
+    def test_base_reader_accepts_native_cursor(self, tmp_path: Path) -> None:
+        persist_native_cursor(
+            tmp_path,
+            stage="s",
+            pc=7,
+            stages=["a"],
+            loops={"L": 0},
+            frames={"L": {}},
+        )
+        data = read_resume_cursor(tmp_path)
+        assert data is not None
+        assert data["stage"] == "s"
+        assert data["stages"] == ["a"]
+        assert data["loops"] == {"L": 0}
+        assert data["frames"] == {"L": {}}
+        assert data["native"] == {"pc": 7, "version": 1}
+
+    def test_native_cursor_has_all_top_level_keys(self, tmp_path: Path) -> None:
+        persist_native_cursor(
+            tmp_path,
+            stage="s",
+            pc=0,
+            stages=["x"],
+            loops={"y": 1},
+            frames={"y": {"z": True}},
+            resume_cursor="r",
+        )
+        cursor = read_native_cursor(tmp_path)
+        assert cursor is not None
+        for key in ("stage", "resume_cursor", "stages", "loops", "frames", "native"):
+            assert key in cursor, f"Missing top-level key: {key}"
+
+        native = cursor["native"]
+        assert isinstance(native, dict)
+        assert "pc" in native
+        assert "version" in native
+        assert isinstance(native["pc"], int)
+        assert isinstance(native["version"], int)
+
+
+# ── validation / rejection tests ──────────────────────────────────────
+
+
+class TestValidation:
+    """read_native_cursor rejects cursors without valid native fields."""
+
+    def test_missing_file_returns_none(self, tmp_path: Path) -> None:
+        assert read_native_cursor(tmp_path) is None
+
+    def test_non_dict_json_returns_none(self, tmp_path: Path) -> None:
+        (tmp_path / RESUME_CURSOR_FILENAME).write_text("[1, 2, 3]", encoding="utf-8")
+        assert read_native_cursor(tmp_path) is None
+
+    def test_malformed_json_returns_none(self, tmp_path: Path) -> None:
+        (tmp_path / RESUME_CURSOR_FILENAME).write_text("{", encoding="utf-8")
+        assert read_native_cursor(tmp_path) is None
+
+    def test_missing_native_key_returns_none(self, tmp_path: Path) -> None:
+        payload = {
+            "stage": "s",
+            "resume_cursor": None,
+            "stages": [],
+        }
+        (tmp_path / RESUME_CURSOR_FILENAME).write_text(
+            json.dumps(payload), encoding="utf-8"
+        )
+        assert read_native_cursor(tmp_path) is None
+
+    def test_native_not_a_dict_returns_none(self, tmp_path: Path) -> None:
+        payload = {
+            "stage": "s",
+            "resume_cursor": None,
+            "native": "not-a-dict",
+        }
+        (tmp_path / RESUME_CURSOR_FILENAME).write_text(
+            json.dumps(payload), encoding="utf-8"
+        )
+        assert read_native_cursor(tmp_path) is None
+
+    def test_native_missing_pc_returns_none(self, tmp_path: Path) -> None:
+        payload = {
+            "stage": "s",
+            "resume_cursor": None,
+            "native": {"version": 1},
+        }
+        (tmp_path / RESUME_CURSOR_FILENAME).write_text(
+            json.dumps(payload), encoding="utf-8"
+        )
+        assert read_native_cursor(tmp_path) is None
+
+    def test_native_missing_version_returns_none(self, tmp_path: Path) -> None:
+        payload = {
+            "stage": "s",
+            "resume_cursor": None,
+            "native": {"pc": 0},
+        }
+        (tmp_path / RESUME_CURSOR_FILENAME).write_text(
+            json.dumps(payload), encoding="utf-8"
+        )
+        assert read_native_cursor(tmp_path) is None
+
+    def test_native_pc_not_int_returns_none(self, tmp_path: Path) -> None:
+        payload = {
+            "stage": "s",
+            "resume_cursor": None,
+            "native": {"pc": "zero", "version": 1},
+        }
+        (tmp_path / RESUME_CURSOR_FILENAME).write_text(
+            json.dumps(payload), encoding="utf-8"
+        )
+        assert read_native_cursor(tmp_path) is None
+
+    def test_native_version_not_int_returns_none(self, tmp_path: Path) -> None:
+        payload = {
+            "stage": "s",
+            "resume_cursor": None,
+            "native": {"pc": 0, "version": "one"},
+        }
+        (tmp_path / RESUME_CURSOR_FILENAME).write_text(
+            json.dumps(payload), encoding="utf-8"
+        )
+        assert read_native_cursor(tmp_path) is None
+
+    def test_non_native_cursor_from_base_persist_returns_none(self, tmp_path: Path) -> None:
+        """A cursor persisted by the base persist_resume_cursor (no native key)
+        should be rejected by read_native_cursor."""
+        from arnold.pipeline.resume import persist_resume_cursor
+
+        persist_resume_cursor(
+            tmp_path,
+            stage="human_review",
+            resume_cursor="cursor-1",
+            reason="awaiting_human",
+        )
+        assert read_native_cursor(tmp_path) is None
+
+
+# ── edge cases ────────────────────────────────────────────────────────
+
+
+class TestEdgeCases:
+    """Edge case behaviour for persist/read native cursor."""
+
+    def test_empty_stages_loops_frames_default(self, tmp_path: Path) -> None:
+        persist_native_cursor(tmp_path, stage="s", pc=1)
+        cursor = read_native_cursor(tmp_path)
+        assert cursor is not None
+        assert cursor["stages"] == []
+        assert cursor["loops"] == {}
+        assert cursor["frames"] == {}
+
+    def test_explicit_none_stages_normalised_to_empty_list(self, tmp_path: Path) -> None:
+        # Simulate an on-disk cursor with None stages
+        payload = {
+            "stage": "s",
+            "resume_cursor": None,
+            "stages": None,
+            "loops": {},
+            "frames": {},
+            "native": {"pc": 0, "version": 1},
+        }
+        (tmp_path / RESUME_CURSOR_FILENAME).write_text(
+            json.dumps(payload), encoding="utf-8"
+        )
+        cursor = read_native_cursor(tmp_path)
+        assert cursor is not None
+        assert cursor["stages"] == []
+
+    def test_explicit_none_loops_normalised_to_empty_dict(self, tmp_path: Path) -> None:
+        payload = {
+            "stage": "s",
+            "resume_cursor": None,
+            "stages": [],
+            "loops": None,
+            "frames": {},
+            "native": {"pc": 0, "version": 1},
+        }
+        (tmp_path / RESUME_CURSOR_FILENAME).write_text(
+            json.dumps(payload), encoding="utf-8"
+        )
+        cursor = read_native_cursor(tmp_path)
+        assert cursor is not None
+        assert cursor["loops"] == {}
+
+    def test_explicit_none_frames_normalised_to_empty_dict(self, tmp_path: Path) -> None:
+        payload = {
+            "stage": "s",
+            "resume_cursor": None,
+            "stages": [],
+            "loops": {},
+            "frames": None,
+            "native": {"pc": 0, "version": 1},
+        }
+        (tmp_path / RESUME_CURSOR_FILENAME).write_text(
+            json.dumps(payload), encoding="utf-8"
+        )
+        cursor = read_native_cursor(tmp_path)
+        assert cursor is not None
+        assert cursor["frames"] == {}
+
+    def test_deeply_nested_frames_preserved(self, tmp_path: Path) -> None:
+        deep = {"a": {"b": {"c": [1, 2, 3], "d": None, "e": True}}}
+        persist_native_cursor(
+            tmp_path,
+            stage="s",
+            pc=42,
+            frames={"loop1": deep},
+        )
+        cursor = read_native_cursor(tmp_path)
+        assert cursor is not None
+        assert cursor["frames"] == {"loop1": deep}
+
+    def test_native_cursor_version_constant(self) -> None:
+        assert NATIVE_CURSOR_VERSION == 1
+
+    def test_importable_from_package(self) -> None:
+        from arnold.pipeline.native import (
+            NATIVE_CURSOR_VERSION,
+            persist_native_cursor,
+            read_native_cursor,
+        )
+        assert callable(persist_native_cursor)
+        assert callable(read_native_cursor)
+        assert NATIVE_CURSOR_VERSION == 1
