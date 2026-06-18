@@ -127,6 +127,8 @@ export {
   sanitizeSerializedGraphLinks,
 };
 
+console.log("[vibecomfy] vibecomfy_roundtrip.js module evaluated");
+
 // ── VibeComfy Contract (S2 — Durable Frontend Panel) ─────────────────────
 // This file captures the frontend↔backend contract before feature work.
 // Backend contract authority: vibecomfy/comfy_nodes/agent_contracts.py.
@@ -10492,6 +10494,7 @@ app.registerExtension({
     patchIntentNodePrototype(nodeType, nodeData);
   },
   async setup() {
+    console.log("[vibecomfy] extension setup() running");
     configureDiagnosticsDeps({
       el,
       button,
