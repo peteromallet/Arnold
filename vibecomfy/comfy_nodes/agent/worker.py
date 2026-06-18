@@ -23,9 +23,10 @@ Protocol:
 
 ``request.json`` -> {"agent_id": str, "agent_kwargs": {...},
                      "system_message": str|null, "user_message": str,
-                     "response_contract": "python"|"delta"|"batch_repl"}
+                     "response_contract": "python"|"delta"|"batch_repl"|"json"|"text"}
 ``result.json``  <- {"python": str, "message": str} or {"delta": list, "message": str} on success
-                    {"content": str} for batch_repl responses
+                    {"content": str} for batch_repl / json / text responses
+                    {"json": dict} additionally for json contract
                     {"error": str, "error_type": str} on failure
 
 ``agent_kwargs`` are the AIAgent constructor kwargs the parent resolved for the
@@ -40,9 +41,15 @@ stdout/stderr may contain agent chatter; the parent only reads ``result.json``.
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 import sys
+import time
+
+from vibecomfy.executor.profiler import profiler_log, profiler_span, short_text, utc_now_iso
+
+LOGGER = logging.getLogger(__name__)
 
 
 def _extract_json_object(text: str) -> dict:
@@ -169,40 +176,75 @@ def _dispatch_turn(
 
 
 def main() -> int:
+    if not logging.getLogger().handlers:
+        logging.basicConfig(level=logging.INFO)
     request_path, result_path = sys.argv[1], sys.argv[2]
     with open(request_path, encoding="utf-8") as fh:
         request = json.load(fh)
 
+    profiling_context = (
+        request.get("profiling_context")
+        if isinstance(request.get("profiling_context"), dict)
+        else {}
+    )
+    profiler_log(
+        LOGGER,
+        "worker.request",
+        profiling_context=profiling_context,
+        agent_id=request.get("agent_id") or "hermes",
+        response_contract=request.get("response_contract") or "python",
+        user_message_preview=short_text(request.get("user_message")),
+    )
+
+    worker_started_at = utc_now_iso()
+    worker_started_monotonic = time.monotonic()
     try:
         agent_id = request.get("agent_id") or "hermes"
-        text = _dispatch_turn(
-            agent_id=agent_id,
-            agent_kwargs=request["agent_kwargs"],
-            user_message=request["user_message"],
-            system_message=request.get("system_message"),
-        )
         response_contract = request.get("response_contract") or "python"
-        if response_contract == "batch_repl":
-            if not isinstance(text, str) or not text.strip():
-                raise ValueError("Agent returned an empty batch_repl response.")
-            out = {"content": text}
-        else:
-            payload = _extract_json_object(text or "")
-            message = payload.get("message")
-            if not isinstance(message, str):
-                message = "Applied the requested edit."
-        if response_contract == "delta":
-            delta = payload.get("delta")
-            if not isinstance(delta, list):
-                raise ValueError("Agent JSON must include a list `delta` field.")
-            out = {"delta": delta, "message": message}
-        elif response_contract == "python":
-            python = payload.get("python")
-            if not isinstance(python, str):
-                raise ValueError("Agent JSON must include a string `python` field.")
-            out = {"python": python, "message": message}
-        elif response_contract != "batch_repl":
-            raise ValueError(f"Unsupported response_contract {response_contract!r}.")
+        with profiler_span(
+            LOGGER,
+            "worker.run_turn",
+            profiling_context=profiling_context,
+            agent_id=agent_id,
+            response_contract=response_contract,
+        ) as span:
+            text = _dispatch_turn(
+                agent_id=agent_id,
+                agent_kwargs=request["agent_kwargs"],
+                user_message=request["user_message"],
+                system_message=request.get("system_message"),
+            )
+            span.update(raw_text_length=len(text or ""))
+            if response_contract == "batch_repl":
+                if not isinstance(text, str) or not text.strip():
+                    raise ValueError("Agent returned an empty batch_repl response.")
+                out = {"content": text}
+            elif response_contract == "text":
+                if not isinstance(text, str) or not text.strip():
+                    raise ValueError("Agent returned an empty text response.")
+                out = {"content": text}
+            elif response_contract == "json":
+                if not isinstance(text, str) or not text.strip():
+                    raise ValueError("Agent returned an empty json response.")
+                payload = _extract_json_object(text)
+                out = {"content": text, "json": payload}
+            elif response_contract in ("python", "delta"):
+                payload = _extract_json_object(text or "")
+                message = payload.get("message")
+                if not isinstance(message, str):
+                    message = "Applied the requested edit."
+                if response_contract == "delta":
+                    delta = payload.get("delta")
+                    if not isinstance(delta, list):
+                        raise ValueError("Agent JSON must include a list `delta` field.")
+                    out = {"delta": delta, "message": message}
+                else:  # python
+                    python = payload.get("python")
+                    if not isinstance(python, str):
+                        raise ValueError("Agent JSON must include a string `python` field.")
+                    out = {"python": python, "message": message}
+            else:
+                raise ValueError(f"Unsupported response_contract {response_contract!r}.")
     except Exception as exc:  # noqa: BLE001 - report all failures to parent
         out = {"error": str(exc), "error_type": type(exc).__name__}
         # A LookupError means no adapter is registered for the requested agent id
@@ -212,6 +254,15 @@ def main() -> int:
         # runtime-unavailable signal rather than a transient provider error.
         if isinstance(exc, (LookupError, ImportError)):
             out["runtime_unavailable"] = True
+
+    out["_profiling"] = {
+        **profiling_context,
+        "agent_id": request.get("agent_id") or "hermes",
+        "response_contract": request.get("response_contract") or "python",
+        "started_at": worker_started_at,
+        "ended_at": utc_now_iso(),
+        "elapsed_ms": max(0, int((time.monotonic() - worker_started_monotonic) * 1000)),
+    }
 
     with open(result_path, "w", encoding="utf-8") as fh:
         json.dump(out, fh)

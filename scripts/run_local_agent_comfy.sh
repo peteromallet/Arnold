@@ -8,7 +8,7 @@
 #   * ComfyUI checkout at $COMFYUI_DIR (default below).
 #   * megaplan/arnold installed into the SAME python that runs ComfyUI:
 #         pip install -e "${HOME}/Documents/megaplan"   # github.com/peteromallet/arnold
-#   * A DeepSeek key, either exported as DEEPSEEK_API_KEY or stored in
+#   * An OpenRouter key, either exported as OPENROUTER_API_KEY or stored in
 #     ~/.hermes/.env (the VibeComfy browser credential route writes it there).
 #
 # Usage:
@@ -22,6 +22,15 @@ REPO_ROOT="${REPO_ROOT:-$(cd -- "${SCRIPT_DIR}/.." && pwd)}"
 COMFYUI_DIR="${COMFYUI_DIR:-$(cd -- "${REPO_ROOT}/.." && pwd)/ComfyUI}"
 PORT="${PORT:-8190}"
 PYBIN="${PYBIN:-python}"
+
+# Resolve a relative python binary to an absolute path now, before we cd into
+# the ComfyUI directory.  If it is already absolute or not on PATH, leave it.
+if [[ "${PYBIN}" != /* ]]; then
+  _resolved_pybin="$(command -v "${PYBIN}" 2>/dev/null || true)"
+  if [[ -n "${_resolved_pybin}" ]]; then
+    PYBIN="${_resolved_pybin}"
+  fi
+fi
 
 # 1. Link this checkout's comfy_nodes as a ComfyUI custom node (idempotent).
 #    Guarded so a benign re-link (or two launches racing on the same link)
@@ -45,24 +54,24 @@ export VIBECOMFY_ARNOLD_RUNTIME_MODULE="${VIBECOMFY_ARNOLD_RUNTIME_MODULE:-vibec
 #     the path, fall back to a local checkout via PYTHONPATH, and warn loudly
 #     rather than failing late with a confusing "No module named 'megaplan'".
 MEGAPLAN_DIR="${MEGAPLAN_DIR:-${HOME}/Documents/megaplan}"
-if ! "${PYBIN}" -c "import megaplan" >/dev/null 2>&1; then
-  if [[ -d "${MEGAPLAN_DIR}/megaplan" ]]; then
+if ! "${PYBIN}" -c "import arnold" >/dev/null 2>&1; then
+  if [[ -d "${MEGAPLAN_DIR}/arnold" ]]; then
     export PYTHONPATH="${MEGAPLAN_DIR}:${PYTHONPATH}"
-    echo "  note: megaplan not installed; falling back to checkout at ${MEGAPLAN_DIR}"
+    echo "  note: arnold not installed; falling back to checkout at ${MEGAPLAN_DIR}"
   else
-    echo "  WARNING: arnold/megaplan backend not importable and no checkout at"
-    echo "           ${MEGAPLAN_DIR}. The agent-edit route will report unavailable."
+    echo "  WARNING: arnold backend not importable and no checkout at"
+    echo "           ${MEGAPLAN_DIR}. The agent routes will report unavailable."
     echo "           Install it:  pip install -e \"${REPO_ROOT}[agent]\"   (or)   pip install -e <arnold-checkout>"
   fi
 fi
 
-# 4. Surface the DeepSeek key from ~/.hermes/.env into the environment if it is
+# 4. Surface the OpenRouter key from ~/.hermes/.env into the environment if it is
 #    not already exported (the adapter also reads the file directly, but
 #    exporting makes the status route's credential_presence accurate).
-if [[ -z "${DEEPSEEK_API_KEY:-}" && -f "${HOME}/.hermes/.env" ]]; then
-  _ds_line="$(grep -E '^DEEPSEEK_API_KEY=' "${HOME}/.hermes/.env" | tail -1 || true)"
-  if [[ -n "${_ds_line}" ]]; then
-    export DEEPSEEK_API_KEY="${_ds_line#DEEPSEEK_API_KEY=}"
+if [[ -z "${OPENROUTER_API_KEY:-}" && -f "${HOME}/.hermes/.env" ]]; then
+  _or_line="$(grep -E '^OPENROUTER_API_KEY=' "${HOME}/.hermes/.env" | tail -1 || true)"
+  if [[ -n "${_or_line}" ]]; then
+    export OPENROUTER_API_KEY="${_or_line#OPENROUTER_API_KEY=}"
   fi
 fi
 
@@ -71,7 +80,7 @@ echo "  repo:    ${REPO_ROOT}"
 echo "  comfyui: ${COMFYUI_DIR}"
 echo "  port:    ${PORT}"
 echo "  runtime: ${VIBECOMFY_ARNOLD_RUNTIME_MODULE}"
-echo "  deepseek key present: $([[ -n "${DEEPSEEK_API_KEY:-}" ]] && echo yes || echo no)"
+echo "  openrouter key present: $([[ -n "${OPENROUTER_API_KEY:-}" ]] && echo yes || echo no)"
 echo
 
 cd "${COMFYUI_DIR}"

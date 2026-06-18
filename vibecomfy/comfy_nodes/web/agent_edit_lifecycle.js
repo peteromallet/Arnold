@@ -1144,7 +1144,10 @@ function _handleApplySuccess(panel, payload) {
   };
   return _obligations({
     render: true,
-    dirtySections: STATUS_AND_DEVELOPER_DIRTY_SECTIONS,
+    dirtySections: [
+      ...STATUS_AND_DEVELOPER_DIRTY_SECTIONS,
+      RENDER_SECTIONS.COMPOSER,
+    ],
     invalidateCandidate: true,
     queueGuardClear: true,
     refreshQueueGuard: true,

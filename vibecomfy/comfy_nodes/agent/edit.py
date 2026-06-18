@@ -928,8 +928,10 @@ def _format_available_node_names(rows: Any, *, max_line_chars: int = 96) -> str:
     return "\n".join(lines)
 
 
-def _format_query_output(text: str, *, max_chars: int = 4000) -> str:
+def _format_query_output(text: str, *, max_chars: int | None = 4000) -> str:
     """Bound read-only query output before it is included in agent feedback."""
+    if max_chars is None:
+        return text
     if len(text) <= max_chars:
         return text
     return text[: max(0, max_chars - 18)].rstrip() + "\n... [truncated]"
@@ -984,7 +986,13 @@ def _format_batch_report(
         statement_lines.append(line)
         query_output = statement.detail.get("query_output") if isinstance(statement.detail, dict) else None
         if isinstance(query_output, str) and query_output:
-            statement_lines.append(_format_query_output(query_output))
+            query_name = statement.detail.get("query") if isinstance(statement.detail, dict) else None
+            statement_lines.append(
+                _format_query_output(
+                    query_output,
+                    max_chars=None if query_name == "python" else 4000,
+                )
+            )
 
     diagnostic_lines = [
         f"! {diagnostic.code}: {diagnostic.message}"
@@ -2504,6 +2512,98 @@ def _stage_agent_delta(
     )
 
 
+_RESEARCH_TRIGGER_TERMS = (
+    "look up", "lookup", "research", "find out", "how does", "how do", "what is",
+    "what are", "explain how", "how can", "how to", "information about",
+)
+
+_GRAPH_EXPLAIN_TRIGGER_TERMS = (
+    "what's happening", "what is happening", "what's going on", "what is going on",
+    "explain this graph", "explain the graph", "describe this graph",
+    "describe the graph", "analyze this graph", "analyze the graph",
+    "inspect this graph", "inspect the graph", "what does this graph do",
+)
+
+
+def _task_mentions_any(task: str, terms: tuple[str, ...]) -> bool:
+    lowered = task.lower()
+    return any(term in lowered for term in terms)
+
+
+def _is_research_intent(task: str) -> bool:
+    return _task_mentions_any(task, _RESEARCH_TRIGGER_TERMS)
+
+
+def _is_graph_explain_intent(task: str) -> bool:
+    return _task_mentions_any(task, _GRAPH_EXPLAIN_TRIGGER_TERMS)
+
+
+def _build_graph_report(graph: dict[str, Any] | None) -> str:
+    if not graph:
+        return "No graph attached."
+    nodes = graph.get("nodes")
+    if not isinstance(nodes, list) or not nodes:
+        return "Empty graph (0 nodes)."
+
+    lines: list[str] = []
+    for i, node in enumerate(nodes):
+        if not isinstance(node, dict):
+            continue
+        ct = node.get("class_type") or node.get("type") or "Unknown"
+        node_id = node.get("id", i)
+        parts: list[str] = [f"[{node_id}] {ct}"]
+        widgets = node.get("widgets_values")
+        if isinstance(widgets, list) and widgets:
+            widget_parts = []
+            for j, w in enumerate(widgets[:5]):
+                if w is not None and str(w).strip():
+                    widget_parts.append(f"w{j}={str(w)[:80]}")
+            if widget_parts:
+                parts.append("values=(" + ", ".join(widget_parts) + ")")
+        inputs = node.get("inputs")
+        if isinstance(inputs, list):
+            slot_info = []
+            for inp in inputs:
+                if isinstance(inp, dict):
+                    name = inp.get("name", "?")
+                    link = inp.get("link")
+                    slot_info.append(
+                        f"{name}=linked({link})" if link is not None else f"{name}=open"
+                    )
+            if slot_info:
+                parts.append("inputs=(" + "; ".join(slot_info[:6]) + ")")
+        lines.append(" ".join(parts))
+
+    links = graph.get("links")
+    if isinstance(links, list) and links:
+        edge_lines: list[str] = []
+        for link in links[:40]:
+            if isinstance(link, dict):
+                src = link.get("origin_id", "?")
+                tgt = link.get("target_id", "?")
+                edge_lines.append(f"  {src} -> {tgt}")
+            elif isinstance(link, list) and len(link) >= 4:
+                edge_lines.append(f"  {link[1]} -> {link[3]}")
+        if edge_lines:
+            lines.append("Edges:")
+            lines.extend(edge_lines)
+
+    return f"{len(nodes)} node(s):\n" + "\n".join(lines)
+
+
+def _prefetch_research_summary(task: str) -> str:
+    try:
+        from vibecomfy.executor.research import (
+            _default_hivemind_client,
+            research as run_research_phase,
+        )
+
+        result = run_research_phase(task, hivemind_client=_default_hivemind_client)
+        return result.summary
+    except Exception as exc:
+        return f"Research lookup failed: {type(exc).__name__}: {exc}"
+
+
 def _stage_agent_batch_repl(
     state: AgentEditState,
     _context: TurnContext,
@@ -2528,6 +2628,25 @@ def _stage_agent_batch_repl(
     state.before_py_path.write_text(initial_render, encoding="utf-8")
     if isinstance(signature_catalog, str):
         state.batch_signature_catalog = signature_catalog
+
+    classification = (
+        state.request_payload.get("executor_classification")
+        if isinstance(state.request_payload, dict)
+        else None
+    )
+    intent = classification.get("intent") if isinstance(classification, dict) else ""
+    prefetch_research = intent == "research" or (
+        not intent and _is_research_intent(state.task)
+    )
+    prefetch_explain = intent == "explain_graph" or (
+        not intent and _is_graph_explain_intent(state.task)
+    )
+    prefetch_research_summary = (
+        _prefetch_research_summary(state.task) if prefetch_research else ""
+    )
+    prefetch_graph_report = (
+        _build_graph_report(state.graph) if prefetch_explain else ""
+    )
 
     max_batches = max(1, int(state.batch_max_turns or 1))
     max_consecutive_errors = max(1, int(state.batch_max_consecutive_errors or 1))
@@ -2580,6 +2699,8 @@ def _stage_agent_batch_repl(
             budget_remaining=budget_remaining,
             max_batches=max_batches,
             conversation_messages=conversation_messages if turn_number == 0 else None,
+            research_summary=prefetch_research_summary if turn_number == 0 else "",
+            graph_report=prefetch_graph_report if turn_number == 0 else "",
         )
         request_entry = {
             "turn_number": turn_number,

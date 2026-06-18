@@ -17,8 +17,8 @@ Wire it up by pointing the discovery env var at this module::
 
 Routes
 ------
-* ``deepseek``  -> DeepSeek direct (``https://api.deepseek.com``), key resolved
-  from ``DEEPSEEK_API_KEY`` or ``~/.hermes/.env`` (where the browser
+* ``openrouter``  -> OpenRouter (``https://openrouter.ai/api/v1``), key resolved
+  from ``OPENROUTER_API_KEY`` or ``~/.hermes/.env`` (where the browser
   credential route writes it). This is the canonical browser-key route.
 * ``arnold`` (also ``auto`` / ``anthropic`` / ``openai-codex`` after VibeComfy
   normalises them) -> AIAgent's own provider resolution (Claude via OpenRouter
@@ -36,30 +36,27 @@ import os
 import subprocess
 import sys
 import tempfile
+import logging
 from pathlib import Path
 from typing import Any, Mapping, Sequence
+
+from vibecomfy.executor.profiler import (
+    new_profile_id,
+    profiler_log,
+    profiler_span,
+    short_text,
+)
 
 # How long to wait for a single agent turn (subprocess) before giving up.
 _TURN_TIMEOUT_SECONDS = float(os.getenv("VIBECOMFY_AGENT_TURN_TIMEOUT", "180"))
 _WORKER_PATH = str(Path(__file__).with_name("worker.py"))
+LOGGER = logging.getLogger(__name__)
 
-# DeepSeek direct endpoint defaults (OpenAI-compatible chat-completions).
-# Use deepseek-v4-pro: the advanced, reasoning-capable variant. The legacy
-# `deepseek-chat` alias now maps to deepseek-v4-flash in NON-thinking mode — a
-# non-reasoning model that cannot plan multi-step structural graph edits and
-# spirals on read-only search() calls without ever committing an edit.
-_DEEPSEEK_MODEL = os.getenv("VIBECOMFY_DEEPSEEK_MODEL", "deepseek-v4-pro")
-_DEEPSEEK_BASE_URL = os.getenv("VIBECOMFY_DEEPSEEK_BASE_URL", "https://api.deepseek.com/v1")
-# v4-pro is a THINKING model: reasoning_tokens are billed against max_tokens.
-# With no cap (the AIAgent default), a hard edit turn's reasoning exhausts the
-# budget before any `content` is emitted — the response comes back empty, with
-# no ```batch fence, and the turn fails as MalformedModelJSON. Set the model's
-# true output ceiling so reasoning + the (small) batch block both fit. The
-# DeepSeek API reports the valid range for deepseek-v4-pro as [1, 393216]; this
-# is only a ceiling — billing is on tokens actually generated, not the cap.
-_DEEPSEEK_MAX_TOKENS = int(os.getenv("VIBECOMFY_DEEPSEEK_MAX_TOKENS", "393216"))
+_OPENROUTER_MODEL = os.getenv("VIBECOMFY_OPENROUTER_MODEL", "openrouter:deepseek/deepseek-v4-pro")
+_OPENROUTER_BASE_URL = os.getenv("VIBECOMFY_OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1")
+_OPENROUTER_MAX_TOKENS = int(os.getenv("VIBECOMFY_OPENROUTER_MAX_TOKENS", "393216"))
 
-# Arnold/Hermes (Claude etc.) default model when a non-DeepSeek route is used.
+# Arnold/Hermes (Claude etc.) default model when a non-browser-key route is used.
 _ARNOLD_MODEL = os.getenv("VIBECOMFY_ARNOLD_MODEL", "anthropic/claude-opus-4.6")
 _ARNOLD_BASE_URL = os.getenv("VIBECOMFY_ARNOLD_BASE_URL") or None
 
@@ -69,7 +66,7 @@ _HERMES_ENV_PATH = Path("~/.hermes/.env").expanduser()
 def _load_env_file_into_environ(path: Path = _HERMES_ENV_PATH) -> None:
     """Best-effort: hydrate os.environ from ~/.hermes/.env without overwriting.
 
-    The browser credential route writes ``DEEPSEEK_API_KEY=...`` here, so a
+    The browser credential route writes ``OPENROUTER_API_KEY=...`` here, so a
     ComfyUI process started without the key in its environment still picks it up.
     """
     try:
@@ -91,12 +88,12 @@ def _load_env_file_into_environ(path: Path = _HERMES_ENV_PATH) -> None:
 _load_env_file_into_environ()
 
 
-def _resolve_deepseek_key() -> str | None:
+def _resolve_openrouter_key() -> str | None:
     # Re-read the env file each call so a freshly browser-submitted key is seen
     # without restarting the server.
-    if not os.getenv("DEEPSEEK_API_KEY"):
+    if not os.getenv("OPENROUTER_API_KEY"):
         _load_env_file_into_environ()
-    return os.getenv("DEEPSEEK_API_KEY")
+    return os.getenv("OPENROUTER_API_KEY")
 
 
 def _is_runtime_unavailable(result: Mapping[str, Any]) -> bool:
@@ -122,11 +119,12 @@ def _normalize_route(route: str | None) -> str:
 
 
 # Panel route -> arnold dispatch agent id. The worker registers/dispatches under
-# this id. Only ``hermes`` (DeepSeekAdapter) is wired in the default dispatcher
-# today; ``codex`` / ``claude`` will raise LookupError until adapters are
-# registered (Step B's readiness gate keeps the panel from reaching them).
+# this id. Only ``hermes`` is wired in the default dispatcher today; ``codex`` /
+# ``claude`` will raise LookupError until adapters are registered (Step B's
+# readiness gate keeps the panel from reaching them).
 _ROUTE_TO_AGENT_ID = {
     "deepseek": "hermes",
+    "openrouter": "hermes",
     "openai-codex": "codex",
     "anthropic": "claude",
 }
@@ -149,8 +147,19 @@ def _agent_id_for_route(route: str | None) -> str:
 
 def _default_model_for_route(route: str, model: str | None) -> str:
     if model:
-        return model
-    return _DEEPSEEK_MODEL if route == "deepseek" else _ARNOLD_MODEL
+        return _strip_provider_prefix(model, "openrouter")
+    if route == "openrouter":
+        return _strip_provider_prefix(_OPENROUTER_MODEL, "openrouter")
+    return _ARNOLD_MODEL
+
+
+def _strip_provider_prefix(model: str, provider: str) -> str:
+    prefix = f"{provider}:"
+    return model.split(":", 1)[1] if model.lower().startswith(prefix) else model
+
+
+def _hermes_credential_for(route: str | None, model: str | None) -> str | None:
+    return _resolve_openrouter_key()
 
 
 def _has_arnold_credential() -> bool:
@@ -180,15 +189,14 @@ def _split_messages(messages: Sequence[Mapping[str, Any]] | None) -> tuple[str |
     return system_msg, user_msg
 
 
-def _build_agent_kwargs(agent_id: str) -> dict[str, Any]:
+def _build_agent_kwargs(agent_id: str, route: str | None = None, model: str | None = None) -> dict[str, Any]:
     """AIAgent constructor kwargs for a single, tool-free completion.
 
-    Keyed off the resolved *dispatch agent id* (not the panel route) so that the
-    DeepSeek configuration follows wherever ``hermes`` is selected — including
-    ``auto`` once it resolves to ``hermes``. For ``codex`` / ``claude`` the worker
-    dispatches through the default dispatcher and ignores ``agent_kwargs``, so we
-    pass only the tool-free single-shot flags and never the legacy ``_ARNOLD_MODEL``
-    OpenRouter hardcode (no live route uses it anymore).
+    Keyed off the resolved *dispatch agent id* (not the panel route). ``hermes``
+    is always configured for OpenRouter, including the legacy ``deepseek`` route
+    alias. For ``codex`` / ``claude`` the worker dispatches through the default
+    dispatcher and ignores ``agent_kwargs``, so we pass only the tool-free
+    single-shot flags.
     """
     common: dict[str, Any] = dict(
         max_iterations=1,
@@ -199,12 +207,14 @@ def _build_agent_kwargs(agent_id: str) -> dict[str, Any]:
         quiet_mode=True,
     )
     if agent_id == "hermes":
+        resolved_model = model or _OPENROUTER_MODEL
+        resolved_model = _strip_provider_prefix(resolved_model, "openrouter")
         return dict(
-            model=_DEEPSEEK_MODEL,
-            api_key=_resolve_deepseek_key(),
-            base_url=_DEEPSEEK_BASE_URL,
-            provider="deepseek",
-            max_tokens=_DEEPSEEK_MAX_TOKENS,
+            model=resolved_model,
+            api_key=_resolve_openrouter_key(),
+            base_url=_OPENROUTER_BASE_URL,
+            provider="openrouter",
+            max_tokens=_OPENROUTER_MAX_TOKENS,
             **common,
         )
     # codex / claude -> default dispatcher resolves everything; kwargs unused.
@@ -218,6 +228,7 @@ def _run_worker(
     *,
     response_contract: str = "python",
     agent_id: str = "hermes",
+    profiling_context: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Run one AIAgent turn in an isolated subprocess; return its result dict.
 
@@ -236,32 +247,58 @@ def _run_worker(
                     "system_message": system_msg,
                     "user_message": user_msg,
                     "response_contract": response_contract,
+                    "profiling_context": dict(profiling_context or {}),
                 },
                 fh,
             )
         env = dict(os.environ)
-        # Ensure the child can see the DeepSeek key even if only ~/.hermes/.env had it.
-        key = _resolve_deepseek_key()
-        if key:
-            env["DEEPSEEK_API_KEY"] = key
+        # Ensure the child can see freshly stored browser credentials even if
+        # only ~/.hermes/.env had them.
+        openrouter_key = _resolve_openrouter_key()
+        if openrouter_key:
+            env["OPENROUTER_API_KEY"] = openrouter_key
         # Don't leak ComfyUI's cwd/path into the child (it is what causes the
         # `utils` collision); run from a neutral directory.
         try:
-            proc = subprocess.run(
-                [sys.executable, _WORKER_PATH, req_path, res_path],
-                cwd=tmp,
-                env=env,
-                capture_output=True,
-                text=True,
-                timeout=_TURN_TIMEOUT_SECONDS,
-            )
+            with profiler_span(
+                LOGGER,
+                "runtime.worker_subprocess",
+                agent_id=agent_id,
+                response_contract=response_contract,
+                worker_path=_WORKER_PATH,
+                profiling_context=dict(profiling_context or {}),
+            ) as span:
+                proc = subprocess.run(
+                    [sys.executable, _WORKER_PATH, req_path, res_path],
+                    cwd=tmp,
+                    env=env,
+                    capture_output=True,
+                    text=True,
+                    timeout=_TURN_TIMEOUT_SECONDS,
+                )
+                span.update(
+                    returncode=proc.returncode,
+                    stdout_length=len(proc.stdout or ""),
+                    stderr_length=len(proc.stderr or ""),
+                )
         except subprocess.TimeoutExpired as exc:
             raise TimeoutError(
                 f"Agent worker timed out after {_TURN_TIMEOUT_SECONDS:g} seconds."
             ) from exc
         try:
             with open(res_path, encoding="utf-8") as fh:
-                return json.load(fh)
+                result = json.load(fh)
+                worker_profile = result.get("_profiling") if isinstance(result, dict) else None
+                profiler_log(
+                    LOGGER,
+                    "runtime.worker_result",
+                    agent_id=agent_id,
+                    response_contract=response_contract,
+                    profiling_context=dict(profiling_context or {}),
+                    worker_profile=worker_profile if isinstance(worker_profile, dict) else None,
+                    result_keys=sorted(result.keys()) if isinstance(result, dict) else None,
+                )
+                return result
         except (FileNotFoundError, json.JSONDecodeError) as exc:
             tail = (proc.stderr or proc.stdout or "")[-800:]
             raise RuntimeError(
@@ -291,14 +328,14 @@ def run_agent_turn(
             "Current scratchpad Python:\n```python\n" + (python_source or "") + "\n```"
         )
 
-    if agent_id == "hermes" and not _resolve_deepseek_key():
+    if agent_id == "hermes" and not _hermes_credential_for(route, model):
         raise PermissionError(
-            "DeepSeek route selected but no DEEPSEEK_API_KEY is available "
+            "OpenRouter route selected but no OPENROUTER_API_KEY is available "
             "(checked environment and ~/.hermes/.env). Submit a key via the "
-            "VibeComfy panel or export DEEPSEEK_API_KEY."
+            "VibeComfy panel or export OPENROUTER_API_KEY."
         )
 
-    agent_kwargs = _build_agent_kwargs(agent_id)
+    agent_kwargs = _build_agent_kwargs(agent_id, route=route, model=model)
     result = _run_worker(
         agent_kwargs,
         system_msg,
@@ -337,14 +374,14 @@ def run_agent_turn_delta(
             f"{projection}"
         )
 
-    if agent_id == "hermes" and not _resolve_deepseek_key():
+    if agent_id == "hermes" and not _hermes_credential_for(route, model):
         raise PermissionError(
-            "DeepSeek route selected but no DEEPSEEK_API_KEY is available "
+            "OpenRouter route selected but no OPENROUTER_API_KEY is available "
             "(checked environment and ~/.hermes/.env). Submit a key via the "
-            "VibeComfy panel or export DEEPSEEK_API_KEY."
+            "VibeComfy panel or export OPENROUTER_API_KEY."
         )
 
-    agent_kwargs = _build_agent_kwargs(agent_id)
+    agent_kwargs = _build_agent_kwargs(agent_id, route=route, model=model)
     result = _run_worker(
         agent_kwargs,
         system_msg,
@@ -375,14 +412,14 @@ def run_agent_turn_batch(
     if user_msg is None:
         user_msg = f"User request:\n{task}"
 
-    if agent_id == "hermes" and not _resolve_deepseek_key():
+    if agent_id == "hermes" and not _hermes_credential_for(route, model):
         raise PermissionError(
-            "DeepSeek route selected but no DEEPSEEK_API_KEY is available "
+            "OpenRouter route selected but no OPENROUTER_API_KEY is available "
             "(checked environment and ~/.hermes/.env). Submit a key via the "
-            "VibeComfy panel or export DEEPSEEK_API_KEY."
+            "VibeComfy panel or export OPENROUTER_API_KEY."
         )
 
-    agent_kwargs = _build_agent_kwargs(agent_id)
+    agent_kwargs = _build_agent_kwargs(agent_id, route=route, model=model)
     result = _run_worker(
         agent_kwargs,
         system_msg,
@@ -409,6 +446,8 @@ def _requested_route(route: str | None) -> str:
         return "anthropic"
     if requested == "codex":
         return "openai-codex"
+    if requested == "deepseek":
+        return "openrouter"
     return requested
 
 
@@ -502,8 +541,9 @@ def _codex_auth_present() -> bool:
 def readiness(*, route: str, model: str | None = None) -> dict[str, Any]:
     """Report truthful, per-route backend readiness.
 
-    Only ``deepseek`` reaches a real, registered adapter today
-    (``hermes`` -> DeepSeekAdapter). ``openai-codex`` and ``anthropic`` have no
+    Only the browser-key ``openrouter`` route reaches a real, registered adapter
+    today (``hermes`` configured for OpenRouter).
+    ``openai-codex`` and ``anthropic`` have no
     adapter registered in the default dispatcher yet, so they report
     ``ready: False`` with a clear reason — the panel must tell the truth rather
     than green-light them off an unrelated OpenRouter/Anthropic key.
@@ -511,21 +551,21 @@ def readiness(*, route: str, model: str | None = None) -> dict[str, Any]:
     backend = "arnold.pipelines.megaplan.agent.run_agent.AIAgent"
     requested = _requested_route(route)
 
-    if requested == "deepseek" or (
-        requested in {"", "auto"} and _resolve_deepseek_key()
+    if requested == "openrouter" or (
+        requested in {"", "auto"} and _resolve_openrouter_key()
     ):
-        key = _resolve_deepseek_key()
+        key = _resolve_openrouter_key()
         return {
             "ready": bool(key),
             "backend": backend,
-            "route": "deepseek",
-            "model": _default_model_for_route("deepseek", model),
-            "base_url": _DEEPSEEK_BASE_URL,
-            "deepseek_key_present": bool(key),
+            "route": "openrouter",
+            "model": _default_model_for_route("openrouter", model),
+            "base_url": _OPENROUTER_BASE_URL,
+            "openrouter_key_present": bool(key),
             "reason": (
-                "DeepSeek key resolved; ready to run agent-edit turns."
+                "OpenRouter key resolved; ready to run agent-edit turns."
                 if key
-                else "No DEEPSEEK_API_KEY in environment or ~/.hermes/.env."
+                else "No OPENROUTER_API_KEY in environment or ~/.hermes/.env."
             ),
         }
 
@@ -618,21 +658,21 @@ def readiness(*, route: str, model: str | None = None) -> dict[str, Any]:
             ),
         }
 
-    # Bare/legacy ``arnold`` (or anything else) with no DeepSeek key: fall through
-    # to the best available registered+ready backend (prefer deepseek). For
-    # ``auto`` with no DeepSeek key, that is whatever else is wired; today only
+    # Bare/legacy ``arnold`` (or anything else) with no OpenRouter key: fall through
+    # to the best available registered+ready backend (prefer OpenRouter). For
+    # ``auto`` with no OpenRouter key, that is whatever else is wired; today only
     # hermes is guaranteed, so report not-ready honestly.
     if requested in {"", "auto", "arnold"}:
-        if _adapter_registered("hermes") and _resolve_deepseek_key():
-            key = _resolve_deepseek_key()
+        if _adapter_registered("hermes") and _resolve_openrouter_key():
+            key = _resolve_openrouter_key()
             return {
                 "ready": True,
                 "backend": backend,
-                "route": "deepseek",
-                "model": _default_model_for_route("deepseek", model),
-                "base_url": _DEEPSEEK_BASE_URL,
-                "deepseek_key_present": bool(key),
-                "reason": "DeepSeek key resolved; ready to run agent-edit turns.",
+                "route": "openrouter",
+                "model": _default_model_for_route("openrouter", model),
+                "base_url": _OPENROUTER_BASE_URL,
+                "openrouter_key_present": bool(key),
+                "reason": "OpenRouter key resolved; ready to run agent-edit turns.",
             }
     return {
         "ready": False,
@@ -640,7 +680,7 @@ def readiness(*, route: str, model: str | None = None) -> dict[str, Any]:
         "route": requested or "arnold",
         "model": _default_model_for_route(_normalize_route(route), model),
         "reason": (
-            "No agent adapter is wired for this route yet; only the deepseek "
+            "No agent adapter is wired for this route yet; only the openrouter "
             "route reaches a registered backend."
         ),
     }
@@ -662,4 +702,83 @@ def get_agent_status(*, route: str, model: str | None = None) -> dict[str, Any]:
     }
 
 
-__all__ = ["run_agent_turn", "run_agent_turn_delta", "run_agent_turn_batch", "readiness", "get_agent_status"]
+
+
+def run_model_turn(
+    *,
+    task: str,
+    messages: Sequence[Mapping[str, Any]] | None = None,
+    route: str,
+    model: str | None = None,
+    response_contract: str = "json",
+    profiling_context: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Run a generic model turn through the Arnold dispatch seam.
+
+    Unlike ``run_agent_turn`` (which hardcodes ``response_contract="python"``
+    and the python/message contract) or ``run_agent_turn_batch`` (which
+    hardcodes ``response_contract="batch_repl"``), this entry point accepts
+    an arbitrary *response_contract* so the executor can request ``"json"``
+    or ``"text"`` responses.
+
+    Returns the worker result dict directly.  For ``"json"`` contracts the
+    dict contains ``{"content": <raw_text>, "json": <parsed_dict>}``; for
+    ``"text"`` it contains ``{"content": <raw_text>}``.
+    """
+    agent_id = _agent_id_for_route(route)
+    system_msg, user_msg = _split_messages(messages)
+    if user_msg is None:
+        user_msg = f"User request:\n{task}"
+    effective_profile = {
+        "model_turn_id": (
+            str(profiling_context.get("model_turn_id"))
+            if isinstance(profiling_context, Mapping) and profiling_context.get("model_turn_id")
+            else new_profile_id("model")
+        ),
+        "route": route,
+        "model": model,
+        "response_contract": response_contract,
+        **(dict(profiling_context or {})),
+    }
+
+    with profiler_span(
+        LOGGER,
+        "runtime.run_model_turn",
+        model_turn_id=effective_profile.get("model_turn_id"),
+        agent_id=agent_id,
+        route=route,
+        model=model,
+        response_contract=response_contract,
+        task_preview=short_text(task),
+    ) as span:
+        if agent_id == "hermes" and not _hermes_credential_for(route, model):
+            raise PermissionError(
+                "OpenRouter route selected but no OPENROUTER_API_KEY is available "
+                "(checked environment and ~/.hermes/.env). Submit a key via the "
+                "VibeComfy panel or export OPENROUTER_API_KEY."
+            )
+
+        agent_kwargs = _build_agent_kwargs(agent_id, route=route, model=model)
+        result = _run_worker(
+            agent_kwargs,
+            system_msg,
+            user_msg,
+            response_contract=response_contract,
+            agent_id=agent_id,
+            profiling_context=effective_profile,
+        )
+        if "error" in result:
+            err = result.get("error", "agent worker failed")
+            if result.get("error_type") in {"AuthError", "AuthenticationError", "PermissionError"}:
+                raise PermissionError(err)
+            if _is_runtime_unavailable(result):
+                raise ImportError(err)
+            raise RuntimeError(err)
+
+        span.update(
+            result_keys=sorted(result.keys()),
+            worker_profile=result.get("_profiling") if isinstance(result.get("_profiling"), dict) else None,
+        )
+        return result
+
+__all__ = ["run_agent_turn", "run_agent_turn_delta", "run_agent_turn_batch", "run_model_turn", "readiness", "get_agent_status"]

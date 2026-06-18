@@ -34,7 +34,27 @@ from vibecomfy.contracts.intent_nodes import KIND_TO_CLASS_TYPE
 
 _MAX_DYNAMIC_PORTS = 16
 
-WEB_DIRECTORY = "./web"
+# Resolve WEB_DIRECTORY to the newest cache-busted web_dist/<hash>/ copy when
+# available, falling back to ./web for development/no-build scenarios.
+_MODULE_DIR = Path(__file__).resolve().parent
+_WEB_DIST_DIR = _MODULE_DIR / "web_dist"
+_WEB_DIRECTORY = "./web"  # fallback
+if _WEB_DIST_DIR.is_dir():
+    _best: "tuple[float, str] | None" = None
+    for _entry in _WEB_DIST_DIR.iterdir():
+        if not _entry.is_dir():
+            continue
+        try:
+            _has_file = any(_p.is_file() for _p in _entry.iterdir())
+        except OSError:
+            continue
+        if _has_file:
+            _mtime = _entry.stat().st_mtime
+            if _best is None or _mtime > _best[0]:
+                _best = (_mtime, _entry.name)
+    if _best is not None:
+        _WEB_DIRECTORY = f"./web_dist/{_best[1]}"
+WEB_DIRECTORY = _WEB_DIRECTORY
 
 try:
     from server import PromptServer

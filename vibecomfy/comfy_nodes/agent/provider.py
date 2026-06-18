@@ -193,6 +193,8 @@ def build_batch_messages(
     budget_remaining: int = 12,
     max_batches: int = 12,
     conversation_messages: list[dict[str, Any]] | None = None,
+    research_summary: str = "",
+    graph_report: str = "",
 ) -> list[dict[str, str]]:
     """Build messages for the batch-REPL wire protocol.
 
@@ -219,6 +221,7 @@ def build_batch_messages(
         "- `node.mode = \"bypassed\" | \"muted\" | \"enabled\"`\n"
         "  (bypass does NOT pass input through)\n"
         "- `search(focus_types=[\"ClassName\"])` — query without applying\n"
+        "- `python()` — view full current workflow Python without applying\n"
         "- `done()` — commit after last successful edit\n\n"
         "Output rule:\n"
         "Always name the output slot: write `up.IMAGE`, never bare `up`.\n"
@@ -226,6 +229,9 @@ def build_batch_messages(
         "Known limits:\n"
         "- `attr = None` disconnects a wire (not a null literal)\n"
         "- List sockets, reorder/group, cross-subgraph: out of scope\n\n"
+        "Question / explanation mode:\n"
+        "If Research or Graph inspection appears below, answer using it and end with `done()`. "
+        "Otherwise edit the graph.\n\n"
         "Code node rule:\n"
         "For code-node, Python, PIL, or custom image-processing requests, construct "
         "exactly `vibecomfy.exec` — never `vibecomfy.code`, `ImageCode`, "
@@ -236,9 +242,8 @@ def build_batch_messages(
         "connect the decoded image through `in_0`, return `{\"image\": processed}` "
         "from `source`, and wire `out_0` to the downstream image consumer.\n\n"
         "Use the graph's real names:\n"
-        "Reference EXISTING nodes by EXACT names in Current scratchpad Python.\n"
-        "NEVER invent a\n"
-        "name or copy a name from the worked example below — those are placeholders.\n\n"
+        "Reference EXISTING nodes by EXACT names in Current scratchpad Python. "
+        "NEVER invent names or copy the worked-example placeholders.\n\n"
         "Search first (only when needed):\n"
         "The existing nodes are already shown above — do NOT search for them.\n"
         "Only `search(focus_types=[\"X\"])` for a NEW node TYPE you want to ADD when you\n"
@@ -252,11 +257,11 @@ def build_batch_messages(
         "`clarify(\"...\")` is an alternate terminal when intent is\n"
         "genuinely missing.\n\n"
         f"Budget: {budget_remaining} turn(s) remaining out of {max_batches}.\n\n"
-        "Worked example (PLACEHOLDER names — substitute your graph's real ones):\n"
-        "Add 2x upscale after the decode node, feed the existing save node:\n"
+        "Worked example (PLACEHOLDER names):\n"
+        "Add 2x upscale after decode, feed the existing save node:\n"
         "```batch\n"
-        "upscaled = ImageScaleBy(image=<decode_var>.IMAGE, scale_by=2.0, near=<decode_var>)\n"
-        "<save_var>.images = upscaled.IMAGE\n"
+        "up = ImageScaleBy(image=decode.IMAGE, scale_by=2.0)\n"
+        "save.images = up.IMAGE\n"
         "done()\n"
         "```"
     )
@@ -318,6 +323,16 @@ def build_batch_messages(
                 "\n\nNode variable index:\n"
                 f"```\n{node_variable_index}\n```"
             )
+        research_block = ""
+        if research_summary:
+            research_block = (
+                f"\n\nResearch findings (external + local corpus):\n{research_summary}"
+            )
+        graph_report_block = ""
+        if graph_report:
+            graph_report_block = (
+                f"\n\nDetailed graph inspection:\n{graph_report}"
+            )
         user = (
             f"{conversation_block}"
             f"User request:\n{task}\n\n"
@@ -328,6 +343,8 @@ def build_batch_messages(
             f"{node_index_block}"
             f"{catalog_block}"
             f"{names_block}"
+            f"{research_block}"
+            f"{graph_report_block}"
         )
     else:
         diff_block = ""
@@ -356,6 +373,16 @@ def build_batch_messages(
         report_block = ""
         if report:
             report_block = f"\n\nTeaching report from previous turn:\n{report}"
+        research_block = ""
+        if research_summary:
+            research_block = (
+                f"\n\nResearch findings (external + local corpus):\n{research_summary}"
+            )
+        graph_report_block = ""
+        if graph_report:
+            graph_report_block = (
+                f"\n\nDetailed graph inspection:\n{graph_report}"
+            )
         user = (
             f"User request:\n{task}\n"
             f"{render_block}"
@@ -363,6 +390,8 @@ def build_batch_messages(
             f"{previous_message_block}"
             f"{diff_block}"
             f"{report_block}"
+            f"{research_block}"
+            f"{graph_report_block}"
             f"\n\nBudget: {budget_remaining} turn(s) remaining out of {max_batches}."
         )
     return [{"role": "system", "content": system}, {"role": "user", "content": user}]
@@ -656,8 +685,8 @@ def _load_arnold_runtime() -> Any:
         if _runtime_has_execution_entrypoint(runtime):
             return runtime
         errors.append(
-            f"{candidate}: imported but does not expose run_agent_turn_batch, "
-            "run_agent_turn, or run"
+            f"{candidate}: imported but does not expose run_model_turn, "
+            "run_agent_turn_batch, run_agent_turn, or run"
         )
     raise ProviderError(
         "Arnold/Hermes runtime is unavailable. Install/configure Arnold or set "
@@ -668,7 +697,7 @@ def _load_arnold_runtime() -> Any:
 def _runtime_has_execution_entrypoint(runtime: Any) -> bool:
     return any(
         callable(getattr(runtime, name, None))
-        for name in ("run_agent_turn_batch", "run_agent_turn", "run")
+        for name in ("run_model_turn", "run_agent_turn_batch", "run_agent_turn", "run")
     )
 
 
@@ -1063,6 +1092,65 @@ def run_agent_turn_batch(
     raise last_malformed or MalformedModelJSON("Agent batch_repl response was malformed.")
 
 
+def run_model_turn(
+    task: str,
+    messages: list[dict[str, Any]] | None = None,
+    *,
+    route: str | None = None,
+    model: str | None = None,
+    response_contract: str = "json",
+    profiling_context: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Run a generic JSON/text model turn through the Arnold/Hermes provider.
+
+    This is the provider-level compatibility seam used by the executor's
+    classify/reply phases.  Agent-edit turns keep using the stricter
+    python/batch-specific entry points above.
+    """
+    route_descriptor = _resolve_agent_route(route)
+    selected_route = route_descriptor.normalized_route
+    dispatch_route = _runtime_dispatch_route(route_descriptor, selected_route)
+    selected_model = model or os.getenv("VIBECOMFY_AGENT_MODEL", DEFAULT_MODEL)
+    runtime = _load_arnold_runtime()
+    run_model_turn_fn: Callable[..., Any] | None = getattr(runtime, "run_model_turn", None)
+    try:
+        if callable(run_model_turn_fn):
+            response = run_model_turn_fn(
+                task=task,
+                messages=messages,
+                route=dispatch_route,
+                model=selected_model,
+                response_contract=response_contract,
+                profiling_context=profiling_context,
+            )
+        else:
+            run_fn: Callable[..., Any] | None = getattr(runtime, "run", None)
+            if not callable(run_fn):
+                raise ProviderError("Arnold/Hermes runtime does not expose run_model_turn or run.")
+            response = run_fn(
+                task=task,
+                messages=messages,
+                route=dispatch_route,
+                model=selected_model,
+                response_contract=response_contract,
+                profiling_context=profiling_context,
+            )
+    except PermissionError as exc:
+        raise AuthError(str(exc)) from exc
+    except TimeoutError:
+        raise
+    except ImportError:
+        raise
+    except (ProviderError, MalformedModelJSON, MissingRequiredField):
+        raise
+    except Exception as exc:
+        raise ProviderError(str(exc)) from exc
+
+    if not isinstance(response, Mapping):
+        raise ProviderError("Generic model turn returned a non-dict response.")
+    return dict(response)
+
+
 def readiness(*, route: str | None = None, model: str | None = None) -> dict[str, Any]:
     route_descriptor, selected_route, selected_model = _resolve_route_and_model(route, model)
     try:
@@ -1230,6 +1318,7 @@ __all__ = [
     "get_agent_status",
     "handle_credential_submission",
     "normalize_user_message",
+    "run_model_turn",
     "run_agent_turn_batch",
     "run_agent_turn_delta",
     "run_agent_turn",

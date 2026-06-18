@@ -176,6 +176,171 @@ test("VibeComfy browser canonical hash helper sorts object keys while preserving
   assert.notEqual(sha256HexUtf8(CANONICAL_HASH_PAYLOADS[0]), sha256HexUtf8(arrayOrderChanged));
 });
 
+test("submitRating validates response identity before network calls", async () => {
+  const harness = await createBrowserHarness({
+    responses: {
+      "/vibecomfy/agent-edit/rating": { body: { ok: true } },
+    },
+  });
+  try {
+    const mod = await harness.loadExtension();
+    const result = await mod.submitRating({ state: { sessionId: "", turnId: "0001" } }, { rating: 8 });
+
+    assert.equal(result.ok, false);
+    assert.equal(result.error, "validation");
+    assert.equal(harness.requests.length, 0);
+  } finally {
+    await harness.dispose();
+  }
+});
+
+test("submitRating rejects missing turn metadata before network calls", async () => {
+  const harness = await createBrowserHarness({
+    responses: {
+      "/vibecomfy/agent-edit/rating": { body: { ok: true } },
+    },
+  });
+  try {
+    const mod = await harness.loadExtension();
+    const result = await mod.submitRating({ state: { sessionId: "sess-missing-turn" } }, { rating: 8 });
+
+    assert.equal(result.ok, false);
+    assert.equal(result.error, "validation");
+    assert.match(result.detail, /Missing turn_id/);
+    assert.equal(harness.requests.length, 0);
+  } finally {
+    await harness.dispose();
+  }
+});
+
+test("submitRating posts metadata-only rating without ZIP fields", async () => {
+  const seen = [];
+  const harness = await createBrowserHarness({
+    responses: {
+      "/vibecomfy/agent-edit/rating": ({ options }) => {
+        const body = JSON.parse(options.body);
+        seen.push(body);
+        return { status: 201, body: { ok: true, rating_id: "rating-meta" } };
+      },
+    },
+  });
+  try {
+    const mod = await harness.loadExtension();
+    const result = await mod.submitRating(
+      { state: { sessionId: "sess-1", turnId: "0001" } },
+      { rating: 7, comment: "useful" },
+    );
+
+    assert.deepEqual(result, { ok: true, rating_id: "rating-meta" });
+    assert.deepEqual(seen[0], {
+      response_id: "sess-1/0001",
+      session_id: "sess-1",
+      turn_id: "0001",
+      rating: 7,
+      pack_shared: false,
+      comment: "useful",
+    });
+    assert.equal("pack_zip_base64" in seen[0], false);
+  } finally {
+    await harness.dispose();
+  }
+});
+
+test("submitRating builds, size-checks, and uploads debug pack when requested", async () => {
+  const seen = [];
+  const harness = await createBrowserHarness({
+    responses: {
+      "/vibecomfy/agent-edit/session-bundle?session_id=sess-pack": {
+        body: {
+          ok: true,
+          exists: true,
+          session_path: "out/editor_sessions/sess-pack",
+          total_bytes: 12,
+          files: [{ name: "turns/0001/response.json", text: "{\"ok\":true}\n" }],
+          skipped: [],
+        },
+      },
+      "/vibecomfy/agent-edit/rating": ({ options }) => {
+        const body = JSON.parse(options.body);
+        seen.push(body);
+        return { status: 201, body: { ok: true, rating_id: "rating-pack" } };
+      },
+    },
+  });
+  try {
+    const mod = await harness.loadExtension();
+    const panel = {
+      panelId: "panel-pack",
+      pendingDirtySections: [],
+      state: {
+        phase: "AWAITING_REVIEW",
+        sessionId: "sess-pack",
+        turnId: "0001",
+        baselineTurnId: "0000",
+        turns: [],
+        chatMessages: [],
+        routeStatus: { kind: "ready" },
+      },
+    };
+    const result = await mod.submitRating(panel, {
+      rating: 9,
+      packShared: true,
+      packComment: "debug context attached",
+    });
+
+    assert.deepEqual(result, { ok: true, rating_id: "rating-pack" });
+    assert.equal(seen[0].pack_shared, true);
+    assert.equal(seen[0].pack_comment, "debug context attached");
+    assert.match(seen[0].pack_zip_base64, /^[A-Za-z0-9+/]+=*$/);
+    const zipBytes = Buffer.from(seen[0].pack_zip_base64, "base64");
+    assert.equal(zipBytes.subarray(0, 4).toString("latin1"), "PK\u0003\u0004");
+  } finally {
+    await harness.dispose();
+  }
+});
+
+test("submitRating rejects oversized debug pack before posting rating payload", async () => {
+  const harness = await createBrowserHarness({
+    responses: {
+      "/vibecomfy/agent-edit/session-bundle?session_id=sess-pack": {
+        body: {
+          ok: true,
+          exists: true,
+          session_path: "out/editor_sessions/sess-pack",
+          total_bytes: 1024,
+          files: [{ name: "turns/0001/response.json", text: "{\"ok\":true}\n" }],
+          skipped: [],
+        },
+      },
+      "/vibecomfy/agent-edit/rating": { body: { ok: true } },
+    },
+  });
+  try {
+    const mod = await harness.loadExtension();
+    const result = await mod.submitRating(
+      {
+        panelId: "panel-pack",
+        pendingDirtySections: [],
+        state: {
+          phase: "AWAITING_REVIEW",
+          sessionId: "sess-pack",
+          turnId: "0001",
+          turns: [],
+          chatMessages: [],
+          routeStatus: { kind: "ready" },
+        },
+      },
+      { rating: 9, packShared: true, maxZipBytes: 32 },
+    );
+
+    assert.equal(result.ok, false);
+    assert.equal(result.error, "pack_too_large");
+    assert.equal(harness.requests.some((request) => request.url === "/vibecomfy/agent-edit/rating"), false);
+  } finally {
+    await harness.dispose();
+  }
+});
+
 test("VibeComfy structural graph projection ignores volatile canvas fields but keeps real edits", async () => {
   let harness;
   harness = await createBrowserHarness({
@@ -459,7 +624,7 @@ test("VibeComfy beforeRegisterNodeDef decorates intent node prototypes and degra
   }
 });
 
-test("VibeComfy agent submit sends canonical graph hash, normalized route/model fields, idempotency key, and dedupes in-flight submits", async () => {
+test("VibeComfy agent executor submit posts the live graph, renders the reply, and dedupes in-flight submits", async () => {
   const graph = {
     links: [],
     nodes: [
@@ -492,21 +657,15 @@ test("VibeComfy agent submit sends canonical graph hash, normalized route/model 
         status: 200,
         body: { system: { comfyui_frontend_package: "1.39.19" } },
       },
-      "/vibecomfy/agent-edit": async () => {
+      "/vibecomfy/agent-executor": async () => {
         await pendingResponse;
         return {
           status: 200,
           body: {
             ok: true,
+            mode: "respond",
+            reply: "executor reply rendered",
             session_id: "session-1",
-            turn_id: "0001",
-            baseline_turn_id: null,
-            graph: { nodes: [], links: [] },
-            report: { change: { content_edits: { preserved: [], edited: [], removed_named: [] } }, recovery: [] },
-            apply_allowed: true,
-            canvas_apply_allowed: true,
-            queue_allowed: false,
-            message: "candidate ready",
           },
         };
       },
@@ -534,6 +693,16 @@ test("VibeComfy agent submit sends canonical graph hash, normalized route/model 
     await harness.invokeCommand("VibeComfy.AgentEdit");
     await waitFor(() => harness.requests.some((entry) => entry.url === "/vibecomfy/agent/status?route=auto"));
 
+    const panel = extensionModule.ensureAgentPanel();
+    panel.state.chatMessages = [
+      { role: "user", text: "previous user request", local_id: "prior-user", timestamp: "2026-01-01T00:00:00.000Z" },
+      { role: "agent", text: "previous agent reply", local_id: "prior-agent", timestamp: "2026-01-01T00:00:01.000Z" },
+    ];
+    extensionModule.resetThreadRenderState(panel);
+    extensionModule.markAgentPanelDirty(panel, ["THREAD"]);
+    extensionModule.renderAgentPanel(panel, { dirtySections: ["THREAD"] });
+    assert.ok(harness.textDump().includes("previous agent reply"), "seeded prior chat should render before submit");
+
     harness.document.getElementById("vibecomfy-agent-panel-prompt").value = "tighten the prompt";
     harness.document.getElementById("vibecomfy-agent-panel-route").value = " codex ";
     harness.document.getElementById("vibecomfy-agent-panel-model").value = "  gpt-5.1  ";
@@ -542,33 +711,170 @@ test("VibeComfy agent submit sends canonical graph hash, normalized route/model 
     firstSubmit = submitButton.click();
     duplicateSubmit = submitButton.click();
 
-    await waitFor(() => harness.requests.filter((entry) => entry.url === "/vibecomfy/agent-edit").length === 1);
+    await waitFor(() => harness.requests.filter((entry) => entry.url === "/vibecomfy/agent-executor").length === 1);
+    await waitFor(() => harness.textDump().includes("tighten the prompt"));
+    const pendingText = harness.textDump();
+    assert.ok(pendingText.includes("previous user request"), "prior user message should remain visible while pending");
+    assert.ok(pendingText.includes("previous agent reply"), "prior agent message should remain visible while pending");
+    assert.ok(pendingText.includes("tighten the prompt"), "submitted user prompt should render immediately");
+    assert.ok(pendingText.includes("In progress..."), "pending agent bubble should render immediately");
+    assert.ok(pendingText.includes("Decide") && pendingText.includes("Research") && pendingText.includes("Execute") && pendingText.includes("Review"));
+    assert.doesNotMatch(pendingText, /Turn 1/, "executor pending/status chrome must not render Turn labels");
+    assert.equal(
+      harness.document.body.querySelectorAll((node) => node.className === "vibecomfy-batch-row").length,
+      0,
+      "executor pending status must not create batch turn rows",
+    );
+    assert.equal(
+      harness.document.getElementById("vibecomfy-agent-panel-region-history")?.style.display,
+      "none",
+      "executor pending status must not show the legacy below-thread activity strip",
+    );
+    assert.equal(
+      harness.document.body.querySelectorAll((node) => node.dataset?.vibecomfyChatEmpty === "1" && node.style.display !== "none").length,
+      0,
+      "chat empty-state mount should be hidden after optimistic messages",
+    );
 
-    const request = harness.requests.find((entry) => entry.url === "/vibecomfy/agent-edit");
+    const request = harness.requests.find((entry) => entry.url === "/vibecomfy/agent-executor");
     const payload = JSON.parse(request.body);
+    assert.equal(request.method, "POST");
+    assert.equal(payload.query, "tighten the prompt");
     assert.deepEqual(payload.graph, graph);
+    assert.equal(payload.profile, "default");
+    assert.equal(payload.client_id, harness.api.clientId);
     assert.equal(payload.route, "openai-codex");
     assert.equal(payload.model, "gpt-5.1");
     assert.equal(payload.client_graph_hash, sha256HexUtf8(graph));
-    assert.equal(
-      payload.client_structural_graph_hash,
-      sha256HexUtf8(extensionModule.buildStructuralGraphProjection(graph)),
-    );
+    assert.equal(payload.client_structural_graph_hash, sha256HexUtf8((await harness.loadExtension()).buildStructuralGraphProjection(graph)));
     assert.equal(payload.client_live_canvas_token, "live:rev:1");
     assert.equal("baseline_turn_id" in payload, false);
-    assert.match(
-      payload.idempotency_key,
-      /^submit:new:openai-codex:gpt-5\.1:[0-9a-f]{12}:[0-9a-f-]+$/,
-    );
+    assert.match(payload.idempotency_key, /^submit:new:openai-codex:gpt-5\.1:[0-9a-f]{12}:[0-9a-f-]+$/);
 
     releaseResponse();
     await firstSubmit;
 
-    assert.equal(harness.document.getElementById("vibecomfy-agent-panel-status")?.textContent, "Review Changes");
+    await waitFor(() => harness.textDump().includes("executor reply rendered"));
+    const finalText = harness.textDump();
+    assert.ok(finalText.includes("previous user request"), "prior user message should remain visible after reply");
+    assert.ok(finalText.includes("previous agent reply"), "prior agent message should remain visible after reply");
+    assert.ok(finalText.includes("executor reply rendered"));
+    assert.ok(finalText.indexOf("tighten the prompt") < finalText.indexOf("executor reply rendered"));
+    assert.doesNotMatch(finalText, /In progress\.\.\./, "pending bubble should be replaced by final reply");
+    assert.doesNotMatch(finalText, /Turn 1/);
+    assert.equal(
+      harness.document.body.querySelectorAll((node) => node.dataset?.vibecomfyChatEmpty === "1" && node.style.display !== "none").length,
+      0,
+      "chat empty-state mount should remain hidden after final reply",
+    );
+    assert.equal(
+      harness.document.body.querySelectorAll((node) => node.className === "vibecomfy-batch-row").length,
+      0,
+      "respond-only executor reply should not leave turn rows behind",
+    );
+    assert.equal(
+      harness.document.getElementById("vibecomfy-agent-panel-region-history")?.style.display,
+      "none",
+      "respond-only executor reply should not reveal the legacy below-thread activity strip",
+    );
     assert.equal(harness.document.getElementById("vibecomfy-agent-panel-submit")?.textContent, "Submit");
   } finally {
     releaseResponse?.();
     await Promise.allSettled([firstSubmit, duplicateSubmit].filter(Boolean));
+    await harness.dispose();
+  }
+});
+
+test("VibeComfy executor submit preserves prior chat history while pending", async () => {
+  const graph = {
+    links: [],
+    nodes: [
+      { id: 1, type: "LoadImage", properties: { vibecomfy_uid: "uid-load" } },
+    ],
+  };
+  let releaseResponse;
+  const pendingResponse = new Promise((resolve) => {
+    releaseResponse = resolve;
+  });
+
+  const harness = await createBrowserHarness({
+    graph,
+    responses: {
+      "/system_stats": {
+        status: 200,
+        body: { system: { comfyui_frontend_package: "1.39.19" } },
+      },
+      "/vibecomfy/agent-executor": async () => {
+        await pendingResponse;
+        return {
+          status: 200,
+          body: {
+            ok: true,
+            mode: "respond",
+            reply: "second executor answer",
+            session_id: "session-history",
+          },
+        };
+      },
+      "/vibecomfy/agent/status?route=auto": {
+        status: 200,
+        body: {
+          ok: true,
+          provider_available: true,
+          route: "arnold",
+          requested_route: "auto",
+          route_options: {
+            auto: { requested_route: "auto", normalized_route: "arnold", browser_api_key_allowed: false },
+            deepseek: { requested_route: "deepseek", normalized_route: "deepseek", browser_api_key_allowed: true },
+            anthropic: { requested_route: "anthropic", normalized_route: "arnold", browser_api_key_allowed: false, tos_acknowledgement_required: true },
+            "openai-codex": { requested_route: "openai-codex", normalized_route: "arnold", browser_api_key_allowed: false },
+          },
+        },
+      },
+    },
+  });
+
+  try {
+    const extensionModule = await harness.loadExtension();
+    await harness.setup();
+    await harness.invokeCommand("VibeComfy.AgentEdit");
+    await waitFor(() => harness.requests.some((entry) => entry.url === "/vibecomfy/agent/status?route=auto"));
+
+    const panel = extensionModule.ensureAgentPanel();
+    panel.state.chatMessages = [
+      { role: "user", text: "first user message", source: "agent-executor", local_id: "first-user" },
+      { role: "agent", text: "first agent answer", source: "agent-executor", local_id: "first-agent" },
+    ];
+    extensionModule.renderAgentPanel(panel, { dirtySections: ["THREAD"] });
+
+    harness.document.getElementById("vibecomfy-agent-panel-prompt").value = "second user message";
+    const submitPromise = harness.document.getElementById("vibecomfy-agent-panel-submit").click();
+    await waitFor(() => harness.requests.filter((entry) => entry.url === "/vibecomfy/agent-executor").length === 1);
+
+    const pendingText = harness.textDump();
+    assert.match(pendingText, /first user message/);
+    assert.match(pendingText, /first agent answer/);
+    assert.match(pendingText, /second user message/);
+    assert.match(pendingText, /In progress\.\.\./);
+    assert.doesNotMatch(pendingText, /Try an example/);
+    assert.doesNotMatch(pendingText, /Turn 1/);
+    assert.equal(
+      harness.document.body.querySelectorAll((node) => node.className === "vibecomfy-batch-row").length,
+      0,
+      "executor pending status must stay inside the chat bubble",
+    );
+
+    releaseResponse();
+    await submitPromise;
+    await waitFor(() => harness.textDump().includes("second executor answer"));
+    const finalText = harness.textDump();
+    assert.match(finalText, /first user message/);
+    assert.match(finalText, /first agent answer/);
+    assert.match(finalText, /second user message/);
+    assert.match(finalText, /second executor answer/);
+    assert.doesNotMatch(finalText, /Try an example/);
+  } finally {
+    releaseResponse?.();
     await harness.dispose();
   }
 });
@@ -6990,6 +7296,67 @@ test("VibeComfy removed-node overlay fills the full node box and keeps the remov
   }
 });
 
+test("VibeComfy preview diff derives removed nodes for delete-only executor candidates", async () => {
+  const graph = {
+    nodes: [
+      {
+        id: 4,
+        type: "SaveImage",
+        pos: [70, 180],
+        size: [220, 90],
+        properties: { vibecomfy_uid: "uid-remove" },
+        inputs: [],
+        outputs: [],
+      },
+      {
+        id: 5,
+        type: "PreviewImage",
+        pos: [330, 180],
+        size: [220, 90],
+        properties: { vibecomfy_uid: "uid-keep" },
+        inputs: [],
+        outputs: [],
+      },
+    ],
+    links: [],
+  };
+  const candidateGraph = {
+    nodes: [graph.nodes[1]],
+    links: [],
+  };
+  const harness = await createBrowserHarness({
+    graph,
+    responses: {
+      "/system_stats": { status: 200, body: { system: { comfyui_frontend_package: "1.39.19" } } },
+    },
+  });
+
+  try {
+    const extensionModule = await harness.loadExtension();
+    await harness.setup();
+    const diff = extensionModule.computePreviewDiff(candidateGraph, {
+      change: {
+        content_edits: {
+          removed: ["uid-remove"],
+          removed_named: [],
+          edited: [],
+          new_auto_placed: [],
+        },
+      },
+      recovery: [],
+    });
+
+    assert.deepEqual(diff.removed.map((entry) => entry.uid), ["uid-remove"]);
+    const drawOps = await harness.drawPreviewOverlay({ ...diff, _candidateGraph: candidateGraph });
+    assert.ok(
+      drawOps.some((op) => op.kind === "fillText" && op.args[0] === "\u2212 will be removed"),
+      "computed delete-only diff should render the removed-node overlay badge",
+    );
+  } finally {
+    await harness.dispose();
+  }
+});
+
 test("VibeComfy edited-node overlay reads Float32Array node sizes", async () => {
   const NODE_SIZE = [420, 110];
   const graph = {
@@ -13212,6 +13579,11 @@ test("VibeComfy chat thread mounts have containment styles to prevent horizontal
     assert.equal(chatRegion.style.minWidth, "0", "chat region should have minWidth: 0");
     assert.equal(chatRegion.style.maxWidth, "100%", "chat region should have maxWidth: 100%");
     assert.equal(chatRegion.style.overflow, "hidden", "chat region section should clip overflow");
+    assert.equal(chatRegion.style.flex, "1 0 auto", "chat region should stretch through available panel height");
+
+    const threadRegion = harness.document.getElementById("vibecomfy-agent-panel-region-thread");
+    assert.ok(threadRegion, "thread region must exist");
+    assert.equal(threadRegion.style.minHeight, "100%", "thread region should fill the thread viewport when sparse");
 
     // Messages mount must have containment
     const messagesMount = body.querySelectorAll(
@@ -13557,6 +13929,32 @@ test("diagnostic report rebuilds turn history from rehydrated chat and surfaces 
       !report.includes("Error/failure: Failure: Nothing needed changing"),
       "a noop turn must not be labeled as a failure",
     );
+
+    // ── Status diagnostics: the report header must surface agent status fields ──
+    // These flow from the diagnostics module → buildIssueReport header, proving
+    // status diagnostics survive the extraction into diagnostics_reporting.js.
+    assert.ok(
+      report.includes("Panel session id: sess123"),
+      "issue report must include the panel session id",
+    );
+    assert.ok(
+      report.includes("Panel phase: IDLE"),
+      "issue report must include the agent phase (status diagnostic)",
+    );
+    assert.ok(
+      report.includes("Message count: 2"),
+      "issue report must include the message count from rehydrated chat",
+    );
+    assert.ok(
+      report.includes("Page URL:"),
+      "issue report must include the page URL header",
+    );
+    assert.ok(
+      report.includes("Panel id:"),
+      "issue report must include the panel id header",
+    );
+    assert.ok(report.includes("Render errors:"), "issue report must include render error count");
+    assert.ok(report.includes("Last turns:"), "issue report must include the Last turns section");
   } finally {
     await harness.dispose();
   }
@@ -13634,6 +14032,24 @@ test("issue-report zip bundles the actual session artifacts (self-contained)", a
 
     // The report itself is still there...
     assert.ok(byName.has("report.txt"), "report.txt present");
+
+    // Status diagnostics: the audit envelope and debug snapshot carry agent status info.
+    assert.ok(byName.has("audit.json"), "audit.json (status envelope) present");
+    const auditText = byName.get("audit.json").text;
+    assert.ok(auditText.includes("generated_at"), "audit.json carries generation timestamp");
+    assert.ok(auditText.includes("frontend_source"), "audit.json carries frontend source marker");
+
+    // debug-snapshot.json is produced when buildAgentPanelDebugSnapshot is wired via deps.
+    if (byName.has("debug-snapshot.json")) {
+      const snapText = byName.get("debug-snapshot.json").text;
+      assert.ok(snapText.includes("phase"), "debug-snapshot includes phase (status diagnostic)");
+      assert.ok(snapText.includes("sessionId"), "debug-snapshot includes sessionId (status diagnostic)");
+    }
+
+    // report.txt must include status diagnostics (session id, phase).
+    const reportText = byName.get("report.txt").text;
+    assert.ok(reportText.includes("Panel session id: sess-bundle"), "report.txt includes session id");
+    assert.ok(reportText.includes("Panel phase: IDLE"), "report.txt includes phase status diagnostic");
     // ...and now the actual turn artifacts are bundled under session/.
     assert.ok(byName.has("session/turns/0001/messages.jsonl"), "messages.jsonl bundled");
     assert.equal(byName.get("session/turns/0001/messages.jsonl").text, "{\"message\":\"hi\"}\n");

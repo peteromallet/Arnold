@@ -16,7 +16,6 @@ FAST_PYTEST := \
 	tests/test_porting_convert.py \
 	tests/test_plugin_discovery.py \
 	tests/test_agent_acceptance.py \
-	tests/test_comfy_nodes_agent_edit.py \
 	tests/test_comfy_nodes_agent_backend_spine.py \
 	tests/test_porting_edit_apply.py \
 	tests/test_porting_edit_ops.py \

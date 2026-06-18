@@ -272,10 +272,6 @@ export function renderComposerActions(panel, deps = {}) {
     panel.buttons.newConversation.disabled =
       submitting || applying || Boolean(panel.state.inFlightRebaseline);
   }
-  panel.buttons.settingsSave.disabled =
-    submitting
-    || applying
-    || routeStatusState(panel).kind !== ROUTE_STATUS_KIND.READY;
   const providerTestInFlight = Boolean(panel.state.providerTestInFlight);
   panel.buttons.settingsTest.disabled = submitting || applying || providerTestInFlight;
   panel.buttons.settingsTest.textContent = providerTestInFlight ? "Testing..." : "Test Provider";
@@ -298,7 +294,6 @@ export function renderComposerActions(panel, deps = {}) {
   setButtonEmphasis(panel.buttons.reject, reviewing || applying, "danger");
   setButtonEmphasis(panel.buttons.undo, panel.state.undoStack.length > 0, "neutral");
   setButtonEmphasis(panel.buttons.close, true, "neutral");
-  setButtonEmphasis(panel.buttons.settingsSave, true, "neutral");
   setButtonEmphasis(panel.buttons.settingsTest, true, "neutral");
 }
 
@@ -515,7 +510,7 @@ export function renderSettings(panel, deps = {}) {
   panel.fields.model.disabled = !controlsReady;
   setVisible(panel.fields.apiKey, apiKeyVisible, "");
   panel.fields.apiKey.placeholder = apiKeyVisible
-    ? "DeepSeek API key"
+    ? "OpenRouter API key"
     : "Browser API keys are not accepted for this route";
   if (!apiKeyVisible) {
     clearCredentialInput(panel);

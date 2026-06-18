@@ -12,10 +12,12 @@ fields this harness needs.
 from __future__ import annotations
 
 import json
+from threading import Lock
 from inspect import signature
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
+from unittest import mock
 
 from vibecomfy import image, load_workflow_any, video
 from vibecomfy.blocks.save import image as save_image
@@ -975,3 +977,254 @@ def _build_run_metadata(
     if layer is not None:
         metadata.setdefault("layer", layer)
     return metadata
+
+
+# ── M6: research / explanation scenarios ─────────────────────────────────────
+
+_EXECUTOR_FAKE_LOCK = Lock()
+
+
+def build_research_hotshot_xl_evidence(
+    report_dir: Path,
+    *,
+    query: str = "Hotshot XL SVD-XT workflow",
+) -> dict[str, Any]:
+    """Write evidence that the executor runs research for Hotshot XL."""
+    from vibecomfy.executor.contracts import ClassifyDecision, ExecutorRequest
+    from vibecomfy.executor.core import run_executor
+
+    root = report_dir.resolve()
+    root.mkdir(parents=True, exist_ok=True)
+
+    request = ExecutorRequest(
+        query=query,
+        profile="default",
+        session_id="agentic-harness-hotshot-xl",
+    )
+
+    def fake_hivemind_client(_query: str, _timeout: float) -> dict[str, Any]:
+        return {
+            "results": [
+                {
+                    "class_type": "HotshotXL_SVDXT_Workflow",
+                    "title": "Hotshot XL SVD-XT workflow notes",
+                    "description": (
+                        "Hotshot XL can be inserted into an SVD-XT image-to-video "
+                        "workflow as the motion/video generation stage."
+                    ),
+                    "url": "https://example.invalid/hotshot-xl-svd-xt",
+                    "score": 0.99,
+                    "tasks": ["video", "svd-xt", "hotshot-xl"],
+                }
+            ]
+        }
+
+    def fake_classify(*_args: Any, **_kwargs: Any) -> ClassifyDecision:
+        return ClassifyDecision(
+            research=True,
+            implement=False,
+            reply=True,
+            effort="medium",
+            plan_summary="Research Hotshot XL options before answering.",
+            intent="research",
+        )
+
+    def fake_reply(
+        _query: str,
+        *,
+        research_summary: str | None = None,
+        **_kwargs: Any,
+    ) -> str:
+        return (
+            "Research ran for Hotshot XL and found an SVD-XT-oriented source. "
+            f"{research_summary or ''}"
+        ).strip()
+
+    with _EXECUTOR_FAKE_LOCK:
+        with (
+            mock.patch("vibecomfy.executor.core._default_hivemind_client", fake_hivemind_client),
+            mock.patch("vibecomfy.executor.core.run_classify_turn", side_effect=fake_classify),
+            mock.patch("vibecomfy.executor.core.run_reply_turn", side_effect=fake_reply),
+        ):
+            executor_result = run_executor(request)
+
+    executor_payload = executor_result.to_dict()
+    executor_path = root / "executor_result.json"
+    executor_path.write_text(
+        json.dumps(executor_payload, indent=2, sort_keys=True),
+        encoding="utf-8",
+    )
+    report_payload = executor_payload.get("report", {})
+    report_path = root / "executor_report.json"
+    report_path.write_text(
+        json.dumps(report_payload, indent=2, sort_keys=True),
+        encoding="utf-8",
+    )
+    result = executor_result.report.research
+    if result is None:
+        raise RuntimeError("Hotshot executor scenario did not produce research evidence.")
+    result_path = root / "research_result.json"
+    result_path.write_text(
+        json.dumps(result.to_dict(), indent=2, sort_keys=True),
+        encoding="utf-8",
+    )
+
+    _write_actions(
+        root / "actions.jsonl",
+        [
+            {
+                "op": "executor.run",
+                "query": query,
+                "profile": request.profile,
+                "plan": executor_result.report.plan.to_dict(),
+            },
+            {
+                "op": "research",
+                "via": "run_executor",
+                "query": query,
+                "source_count": len(result.sources),
+                "warning_count": len(result.warnings),
+            }
+        ],
+    )
+    (root / "stdout.txt").write_text("", encoding="utf-8")
+    (root / "stderr.txt").write_text("\n".join(result.warnings), encoding="utf-8")
+    (root / "report.md").write_text(
+        f"Ran executor query {query!r} and froze {len(result.sources)} research source(s).\n",
+        encoding="utf-8",
+    )
+    return {
+        "scenario": "explore-hotshot-xl-workflow",
+        "executor_result_path": str(executor_path),
+        "executor_report_path": str(report_path),
+        "research_result_path": str(result_path),
+        "actions_path": str(root / "actions.jsonl"),
+        "report_path": str(root / "report.md"),
+        "source_count": len(result.sources),
+    }
+
+
+def build_explain_simple_workflow_evidence(report_dir: Path) -> dict[str, Any]:
+    """Write evidence that the executor reaches the graph-explain implement path."""
+    from vibecomfy.comfy_nodes.agent.edit import _build_graph_report
+    from vibecomfy.executor.contracts import ClassifyDecision, ExecutorRequest
+    from vibecomfy.executor.core import run_executor
+
+    root = report_dir.resolve()
+    root.mkdir(parents=True, exist_ok=True)
+
+    fixture_path = (
+        Path(__file__).resolve().parents[2]
+        / "tests"
+        / "fixtures"
+        / "agent_edit"
+        / "flat.json"
+    )
+    graph = json.loads(fixture_path.read_text(encoding="utf-8"))
+    task = "What does this workflow do?"
+    request = ExecutorRequest(
+        query=task,
+        graph=graph,
+        profile="default",
+        session_id="agentic-harness-explain-simple-workflow",
+    )
+
+    def fake_classify(*_args: Any, **_kwargs: Any) -> ClassifyDecision:
+        return ClassifyDecision(
+            research=False,
+            implement=True,
+            reply=True,
+            effort="low",
+            plan_summary="Inspect the attached graph and explain its flow.",
+            intent="explain_graph",
+        )
+
+    def fake_handle_agent_edit(payload: dict[str, Any], **_kwargs: Any) -> dict[str, Any]:
+        graph_report = _build_graph_report(payload["graph"])
+        return {
+            "ok": True,
+            "graph": payload["graph"],
+            "message": graph_report,
+        }
+
+    def fake_reply(
+        _query: str,
+        *,
+        implementation_message: str | None = None,
+        **_kwargs: Any,
+    ) -> str:
+        return (
+            "This text-to-image workflow loads a checkpoint, encodes positive "
+            "and negative prompts with CLIPTextEncode, creates an EmptyLatentImage, "
+            "samples it with KSampler, decodes the latent with VAEDecode, and "
+            "sends the image to SaveImage.\n\n"
+            f"{implementation_message or ''}"
+        ).strip()
+
+    with _EXECUTOR_FAKE_LOCK:
+        with (
+            mock.patch("vibecomfy.executor.core.run_classify_turn", side_effect=fake_classify),
+            mock.patch("vibecomfy.executor.core.handle_agent_edit", side_effect=fake_handle_agent_edit),
+            mock.patch("vibecomfy.executor.core.run_reply_turn", side_effect=fake_reply),
+        ):
+            executor_result = run_executor(request)
+
+    executor_payload = executor_result.to_dict()
+    executor_path = root / "executor_result.json"
+    executor_path.write_text(
+        json.dumps(executor_payload, indent=2, sort_keys=True),
+        encoding="utf-8",
+    )
+    report_payload = executor_payload.get("report", {})
+    executor_report_path = root / "executor_report.json"
+    executor_report_path.write_text(
+        json.dumps(report_payload, indent=2, sort_keys=True),
+        encoding="utf-8",
+    )
+    implementation = executor_result.report.implementation
+    if implementation is None:
+        raise RuntimeError("Explain executor scenario did not produce implementation evidence.")
+    implementation_path = root / "implementation_result.json"
+    implementation_path.write_text(
+        json.dumps(implementation.to_dict(), indent=2, sort_keys=True),
+        encoding="utf-8",
+    )
+    report = implementation.message
+
+    report_path = root / "graph_report.txt"
+    report_path.write_text(report, encoding="utf-8")
+
+    _write_actions(
+        root / "actions.jsonl",
+        [
+            {
+                "op": "executor.run",
+                "query": task,
+                "profile": request.profile,
+                "plan": executor_result.report.plan.to_dict(),
+            },
+            {
+                "op": "explain_graph",
+                "via": "run_executor",
+                "task": task,
+                "fixture": "tests/fixtures/agent_edit/flat.json",
+                "node_count": len(graph.get("nodes", [])),
+            }
+        ],
+    )
+    (root / "stdout.txt").write_text("", encoding="utf-8")
+    (root / "stderr.txt").write_text("", encoding="utf-8")
+    (root / "report.md").write_text(
+        "Ran the executor explain_graph path for a simple text-to-image workflow.\n",
+        encoding="utf-8",
+    )
+    return {
+        "scenario": "explain-simple-workflow",
+        "executor_result_path": str(executor_path),
+        "executor_report_path": str(executor_report_path),
+        "implementation_result_path": str(implementation_path),
+        "graph_report_path": str(report_path),
+        "actions_path": str(root / "actions.jsonl"),
+        "report_path": str(root / "report.md"),
+        "node_count": len(graph.get("nodes", [])),
+    }

@@ -1,0 +1,1011 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+
+import {
+  ROUTE_STATUS_KIND,
+  getPersistedAgentProvider,
+  setPersistedAgentProvider,
+  buildStatusUrl,
+  routeStatusState,
+  routeOptionsFromStatus,
+  clearAgentStatusRetry,
+  scheduleAgentStatusRetry,
+  populateRouteSelect,
+  refreshAgentStatus,
+  syncChooseEngineGate,
+  storeOpenRouterCredential,
+  persistAgentSettings,
+  testAgentSettings,
+  configureAgentStatusDeps,
+} from "../../vibecomfy/comfy_nodes/web/agent_status_poller.js";
+
+// ── Global mocks ──────────────────────────────────────────────────────────
+
+const originalConsole = globalThis.console;
+
+let _mocksInstalled = false;
+
+function installMocks() {
+  if (_mocksInstalled) return;
+  _mocksInstalled = true;
+
+  // localStorage fake
+  const store = new Map();
+  globalThis.localStorage = {
+    getItem(key) {
+      const val = store.get(String(key));
+      return val === undefined ? null : val;
+    },
+    setItem(key, value) {
+      store.set(String(key), String(value));
+    },
+    removeItem(key) {
+      store.delete(String(key));
+    },
+    _clear() {
+      store.clear();
+    },
+    _dump() {
+      return Object.fromEntries(store);
+    },
+  };
+
+  // FakeElement for DOM mocks
+  class FakeElement {
+    constructor(tagName) {
+      this.tagName = String(tagName).toUpperCase();
+      this.children = [];
+      this.parentNode = null;
+      this.value = "";
+      this.disabled = false;
+      this.selected = false;
+      this.title = "";
+      this.textContent = "";
+      this.id = "";
+      this.ownerDocument = globalThis.document;
+    }
+    appendChild(child) {
+      if (child.parentNode) child.parentNode.removeChild(child);
+      child.parentNode = this;
+      this.children.push(child);
+      return child;
+    }
+    removeChild(child) {
+      const idx = this.children.indexOf(child);
+      if (idx >= 0) {
+        this.children.splice(idx, 1);
+        child.parentNode = null;
+      }
+      return child;
+    }
+  }
+
+  globalThis.document = {
+    createElement(tagName) {
+      return new FakeElement(tagName);
+    },
+    body: new FakeElement("body"),
+    head: new FakeElement("head"),
+  };
+  globalThis.document.body.ownerDocument = globalThis.document;
+
+  // setTimeout/clearTimeout fakes
+  const timers = [];
+  globalThis.setTimeout = (fn, ms) => {
+    const id = timers.length + 1;
+    timers.push({ id, fn, ms });
+    return id;
+  };
+  globalThis.clearTimeout = (id) => {
+    const idx = timers.findIndex((t) => t.id === id);
+    if (idx >= 0) timers.splice(idx, 1);
+  };
+  globalThis._getTimers = () => timers;
+  globalThis._flushTimers = async () => {
+    while (timers.length) {
+      const batch = timers.splice(0);
+      for (const t of batch) {
+        t.fn();
+      }
+    }
+    await Promise.resolve();
+  };
+
+  // console capture
+  const logs = { warn: [], error: [] };
+  globalThis.console = {
+    ...originalConsole,
+    warn: (...args) => logs.warn.push(args.map(String).join(" ")),
+    error: (...args) => logs.error.push(args.map(String).join(" ")),
+    _logs() { return logs; },
+  };
+}
+
+installMocks();
+
+// ── Fetch mock helpers ────────────────────────────────────────────────────
+
+function mockFetch(handler) {
+  globalThis.fetch = async (url, options) => {
+    const result = handler(url, options);
+    if (typeof result === "function") return result(url, options);
+    if (result instanceof Error) throw result;
+    return result;
+  };
+}
+
+function makeFetchResponse(body, { ok = true, status = 200 } = {}) {
+  let _jsonThrows = false;
+  let _jsonError = null;
+  return {
+    ok,
+    status,
+    async json() {
+      if (_jsonThrows) throw _jsonError || new Error("Malformed JSON");
+      return JSON.parse(JSON.stringify(body));
+    },
+    _setJsonThrows(err) {
+      _jsonThrows = true;
+      _jsonError = err || new Error("Malformed JSON");
+    },
+  };
+}
+
+// ── Panel factory ─────────────────────────────────────────────────────────
+
+function makeSelectElement(value) {
+  const el = globalThis.document.createElement("select");
+  el.value = value || "";
+  return el;
+}
+
+/**
+ * Build a representative panel object for tests.
+ *
+ * NOTES on field naming:
+ *  - `fields.route` must be a DOM-like select element (has .children, .value).
+ *  - `fields.model` is a plain { value } object.
+ *  - `fields.apiKey` (camelCase) is a plain { value } object — matches the
+ *    source code's `panel.fields.apiKey.value` read on line 602.
+ */
+function makePanel(overrides = {}) {
+  const routeValue = (overrides.fields?.route?.value) || (typeof overrides.fields?.route === "string" ? overrides.fields.route : "auto");
+  const modelValue = (overrides.fields?.model?.value) || "";
+
+  const fields = {
+    route: makeSelectElement(routeValue),
+    model: { value: modelValue },
+    apiKey: { value: "" },
+  };
+
+  // Apply field overrides (for example, set a different route value or apiKey)
+  if (overrides.fields) {
+    if (overrides.fields.route !== undefined) {
+      fields.route = overrides.fields.route.children
+        ? overrides.fields.route
+        : makeSelectElement(String(overrides.fields.route.value || overrides.fields.route || "auto"));
+    }
+    if (overrides.fields.model !== undefined) {
+      fields.model = typeof overrides.fields.model === "object" ? overrides.fields.model : { value: String(overrides.fields.model || "") };
+    }
+    if (overrides.fields.apiKey !== undefined) {
+      fields.apiKey = typeof overrides.fields.apiKey === "object" ? overrides.fields.apiKey : { value: String(overrides.fields.apiKey || "") };
+    }
+  }
+
+  const state = {
+    routeStatus: { kind: ROUTE_STATUS_KIND.LOADING },
+    statusSnapshot: null,
+    statusRetry: null,
+    statusRequestEpoch: 0,
+    settingsMessage: "",
+    settingsMessageKind: "success",
+    lastAgentStatusDiagnostic: null,
+    providerTestInFlight: false,
+    lastAutoSavedOpenRouterKey: null,
+    chatMessages: [],
+    chooseEngineRefresh: null,
+    ...(overrides.state || {}),
+  };
+
+  return {
+    fields,
+    state,
+    shell: overrides.shell !== undefined ? overrides.shell : {},
+    ...(overrides.extra || {}),
+  };
+}
+
+function makeDeps(overrides = {}) {
+  return {
+    renderAgentPanel: () => {},
+    nextMacrotask: () => Promise.resolve(),
+    markAgentPanelDirtyAfterCommit: () => {},
+    SETTINGS_STATUS_RENDER_SECTIONS: ["meta", "composer", "notice"],
+    RENDER_SECTIONS: { META: "meta", COMPOSER: "composer", NOTICE: "notice", THREAD: "thread", DEVELOPER: "developer" },
+    syncChooseEngineGate: () => {},
+    closeChooseEngineOverlay: () => {},
+    openChooseEngineOverlay: () => {},
+    refreshAgentStatus: async () => {},
+    ...overrides,
+  };
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Pure helpers
+// ═══════════════════════════════════════════════════════════════════════════
+
+test("buildStatusUrl — constructs URL with route and model", () => {
+  assert.equal(buildStatusUrl("arnold", "default"), "/vibecomfy/agent/status?route=arnold&model=default");
+  assert.equal(buildStatusUrl("openrouter", "gpt-4o"), "/vibecomfy/agent/status?route=openrouter&model=gpt-4o");
+  assert.equal(buildStatusUrl("", ""), "/vibecomfy/agent/status");
+  assert.equal(buildStatusUrl("anthropic", ""), "/vibecomfy/agent/status?route=anthropic");
+  assert.equal(buildStatusUrl("", "claude-3"), "/vibecomfy/agent/status?model=claude-3");
+});
+
+test("routeStatusState — reads panel.routeStatus", () => {
+  const panel = makePanel({ state: { routeStatus: { kind: ROUTE_STATUS_KIND.READY, requestedRoute: "auto" } } });
+  const rs = routeStatusState(panel);
+  assert.equal(rs.kind, ROUTE_STATUS_KIND.READY);
+  assert.equal(rs.requestedRoute, "auto");
+
+  assert.deepEqual(routeStatusState(null), { kind: ROUTE_STATUS_KIND.LOADING });
+  assert.deepEqual(routeStatusState({}), { kind: ROUTE_STATUS_KIND.LOADING });
+  assert.deepEqual(routeStatusState({ state: {} }), { kind: ROUTE_STATUS_KIND.LOADING });
+});
+
+test("routeOptionsFromStatus — extracts route_options safely", () => {
+  assert.equal(routeOptionsFromStatus(null), null);
+  assert.equal(routeOptionsFromStatus(undefined), null);
+  assert.equal(routeOptionsFromStatus("string"), null);
+  assert.equal(routeOptionsFromStatus(42), null);
+  assert.equal(routeOptionsFromStatus([]), null);
+  assert.equal(routeOptionsFromStatus({}), null);
+  assert.equal(routeOptionsFromStatus({ route_options: [] }), null);
+  assert.equal(routeOptionsFromStatus({ route_options: "string" }), null);
+  assert.equal(routeOptionsFromStatus({ route_options: 42 }), null);
+
+  const opts = { auto: { normalized_route: "arnold" } };
+  assert.deepEqual(routeOptionsFromStatus({ ok: true, route_options: opts }), opts);
+});
+
+test("getPersistedAgentProvider / setPersistedAgentProvider — localStorage roundtrip", () => {
+  globalThis.localStorage._clear();
+
+  assert.equal(getPersistedAgentProvider(), null);
+
+  setPersistedAgentProvider("openrouter");
+  assert.equal(getPersistedAgentProvider(), "openrouter");
+
+  setPersistedAgentProvider("deepseek"); // aliased
+  assert.equal(getPersistedAgentProvider(), "openrouter");
+
+  setPersistedAgentProvider("anthropic");
+  assert.equal(getPersistedAgentProvider(), "anthropic");
+
+  setPersistedAgentProvider("openai-codex");
+  assert.equal(getPersistedAgentProvider(), "openai-codex");
+
+  setPersistedAgentProvider("bogus");
+  assert.equal(getPersistedAgentProvider(), null);
+
+  setPersistedAgentProvider("openrouter");
+  setPersistedAgentProvider(null);
+  assert.equal(getPersistedAgentProvider(), null);
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Retry scheduling
+// ═══════════════════════════════════════════════════════════════════════════
+
+test("clearAgentStatusRetry — clears timer and state", () => {
+  const panel = makePanel({
+    state: { statusRetry: { route: "auto", model: "default", attempts: 2, exhausted: false, timerId: 42 } },
+  });
+  clearAgentStatusRetry(panel);
+  assert.equal(panel.state.statusRetry, null);
+
+  clearAgentStatusRetry(null);
+  clearAgentStatusRetry({});
+});
+
+test("scheduleAgentStatusRetry — schedules retries with backoff", () => {
+  const refreshes = [];
+  const deps = makeDeps({ refreshAgentStatus: (p, opts) => refreshes.push({ p, opts }) });
+  const panel = makePanel();
+
+  scheduleAgentStatusRetry(panel, "auto", "default", { quiet: true }, deps);
+  assert.equal(panel.state.statusRetry.attempts, 1);
+  assert.equal(panel.state.statusRetry.exhausted, false);
+  assert.ok(panel.state.statusRetry.timerId !== null);
+
+  panel.state.statusRetry = { route: "auto", model: "default", attempts: 3, exhausted: false, timerId: null };
+  scheduleAgentStatusRetry(panel, "auto", "default", { quiet: true }, deps);
+  assert.equal(panel.state.statusRetry.attempts, 3);
+  assert.equal(panel.state.statusRetry.exhausted, true);
+
+  clearAgentStatusRetry(panel);
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// populateRouteSelect
+// ═══════════════════════════════════════════════════════════════════════════
+
+test("populateRouteSelect — populates with route options", () => {
+  const selectNode = makeSelectElement("auto");
+  const routeOptions = {
+    auto: { normalized_route: "arnold" },
+    openrouter: { browser_api_key_allowed: true },
+    anthropic: { available: true },
+    "openai-codex": { available: true },
+  };
+
+  populateRouteSelect(selectNode, routeOptions, { selectedRoute: "openrouter" }, makeDeps());
+
+  assert.ok(selectNode.children.length >= 3, `got ${selectNode.children.length} children`);
+  assert.equal(selectNode.value, "openrouter");
+
+  const emptySelect = makeSelectElement("auto");
+  populateRouteSelect(emptySelect, null, { placeholderLabel: "No routes", selectedRoute: "auto" }, makeDeps());
+  assert.equal(emptySelect.children.length, 1);
+  assert.equal(emptySelect.children[0].disabled, true);
+  assert.equal(emptySelect.children[0].textContent, "No routes");
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// storeOpenRouterCredential
+// ═══════════════════════════════════════════════════════════════════════════
+
+test("storeOpenRouterCredential — stores successfully", async () => {
+  mockFetch((url, options) => {
+    if (url === "/vibecomfy/agent/credentials" && options.method === "POST") {
+      return makeFetchResponse({ stored: true });
+    }
+    return makeFetchResponse({ error: "unexpected" }, { status: 404 });
+  });
+
+  const panel = makePanel();
+  const result = await storeOpenRouterCredential(panel, "sk-test-key-123", { guidance: "store it" });
+
+  assert.equal(result.stored, true);
+  assert.equal(result.message, "Stored OpenRouter API key.");
+  assert.equal(panel.state.settingsMessage, "Stored OpenRouter API key.");
+  assert.equal(panel.state.settingsMessageKind, "success");
+  assert.equal(panel.state.lastAutoSavedOpenRouterKey, "sk-test-key-123");
+});
+
+test("storeOpenRouterCredential — handles server rejection", async () => {
+  mockFetch((url, options) => {
+    if (url === "/vibecomfy/agent/credentials" && options.method === "POST") {
+      return makeFetchResponse({ stored: false, reason: "rate-limited" });
+    }
+    return makeFetchResponse({ error: "unexpected" }, { status: 404 });
+  });
+
+  const panel = makePanel();
+  const result = await storeOpenRouterCredential(panel, "sk-bad-key", { guidance: "use a valid key" });
+
+  assert.equal(result.stored, false);
+  assert.equal(result.message, "rate-limited");
+  assert.equal(panel.state.settingsMessageKind, "error");
+});
+
+test("storeOpenRouterCredential — handles network error", async () => {
+  mockFetch(() => { throw new Error("Network failure"); });
+
+  const panel = makePanel();
+  const result = await storeOpenRouterCredential(panel, "sk-key", null);
+
+  assert.equal(result.stored, false);
+  assert.ok(result.message.includes("Credential save failed"), `got: ${result.message}`);
+  assert.equal(panel.state.settingsMessageKind, "error");
+});
+
+test("storeOpenRouterCredential — handles malformed JSON in credential response", async () => {
+  mockFetch((url) => {
+    if (url === "/vibecomfy/agent/credentials") {
+      const res = makeFetchResponse({ stored: true });
+      res._setJsonThrows(new Error("Unexpected token"));
+      return res;
+    }
+    return makeFetchResponse({ error: "unexpected" }, { status: 404 });
+  });
+
+  const panel = makePanel();
+  const result = await storeOpenRouterCredential(panel, "sk-key", null);
+
+  assert.equal(result.stored, false);
+  assert.ok(result.message.includes("Credential save failed"), `got: ${result.message}`);
+  assert.equal(panel.state.settingsMessageKind, "error");
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// refreshAgentStatus — route status state transitions
+// ═══════════════════════════════════════════════════════════════════════════
+
+test("refreshAgentStatus — LOADING → READY transition", async () => {
+  mockFetch((url) => {
+    if (url.startsWith("/vibecomfy/agent/status")) {
+      return makeFetchResponse({
+        ok: true,
+        ready: true,
+        provider_available: true,
+        route: "arnold",
+        requested_route: "auto",
+        model: "default",
+        route_options: {
+          auto: { normalized_route: "arnold", available: true },
+          openrouter: { browser_api_key_allowed: true },
+        },
+      });
+    }
+    return makeFetchResponse({ error: "unexpected" }, { status: 404 });
+  });
+
+  const panel = makePanel();
+  const deps = makeDeps();
+
+  await refreshAgentStatus(panel, { quiet: false }, deps);
+
+  assert.equal(panel.state.routeStatus.kind, ROUTE_STATUS_KIND.READY);
+  assert.equal(panel.state.routeStatus.requestedRoute, "auto");
+  assert.ok(panel.state.statusSnapshot, "should have statusSnapshot");
+  assert.equal(panel.state.statusSnapshot.route, "arnold");
+  assert.ok(panel.state.settingsMessage.includes("provider ready"), `got: ${panel.state.settingsMessage}`);
+});
+
+test("refreshAgentStatus — LOADING → UNAVAILABLE (fetch throws)", async () => {
+  mockFetch(() => { throw new Error("Connection refused"); });
+
+  const panel = makePanel();
+  const deps = makeDeps();
+
+  await refreshAgentStatus(panel, { quiet: false }, deps);
+
+  assert.equal(panel.state.routeStatus.kind, ROUTE_STATUS_KIND.UNAVAILABLE);
+  assert.equal(panel.state.statusSnapshot, null);
+  assert.ok(panel.state.settingsMessage.includes("Status unavailable"), `got: ${panel.state.settingsMessage}`);
+  assert.ok(panel.state.statusRetry, "should schedule retry");
+});
+
+test("refreshAgentStatus — LOADING → UNAVAILABLE (HTTP error status)", async () => {
+  mockFetch((url) => {
+    if (url.startsWith("/vibecomfy/agent/status")) {
+      return makeFetchResponse({ error: "down" }, { ok: false, status: 503 });
+    }
+    return makeFetchResponse({ error: "unexpected" }, { status: 404 });
+  });
+
+  const panel = makePanel();
+  const deps = makeDeps();
+
+  await refreshAgentStatus(panel, { quiet: false }, deps);
+
+  assert.equal(panel.state.routeStatus.kind, ROUTE_STATUS_KIND.UNAVAILABLE);
+  assert.equal(panel.state.statusSnapshot, null);
+});
+
+test("refreshAgentStatus — LOADING → MALFORMED (JSON parse error in .json())", async () => {
+  mockFetch((url) => {
+    if (url.startsWith("/vibecomfy/agent/status")) {
+      const res = makeFetchResponse({});
+      res._setJsonThrows(new SyntaxError("Unexpected token '<'"));
+      return res;
+    }
+    return makeFetchResponse({ error: "unexpected" }, { status: 404 });
+  });
+
+  const panel = makePanel();
+  const deps = makeDeps();
+
+  await refreshAgentStatus(panel, { quiet: false }, deps);
+
+  assert.equal(panel.state.routeStatus.kind, ROUTE_STATUS_KIND.MALFORMED);
+  assert.equal(panel.state.statusSnapshot, null);
+  assert.ok(panel.state.settingsMessage.includes("Malformed status payload"), `got: ${panel.state.settingsMessage}`);
+});
+
+test("refreshAgentStatus — LOADING → MISSING_OPTIONS (valid JSON, no route_options)", async () => {
+  mockFetch((url) => {
+    if (url.startsWith("/vibecomfy/agent/status")) {
+      return makeFetchResponse({
+        ok: true,
+        ready: true,
+        provider_available: true,
+        route: "arnold",
+        requested_route: "auto",
+        model: "default",
+      });
+    }
+    return makeFetchResponse({ error: "unexpected" }, { status: 404 });
+  });
+
+  const panel = makePanel();
+  const deps = makeDeps();
+
+  await refreshAgentStatus(panel, { quiet: false }, deps);
+
+  assert.equal(panel.state.routeStatus.kind, ROUTE_STATUS_KIND.MISSING_OPTIONS);
+  assert.equal(panel.state.routeStatus.requestedRoute, "auto");
+  assert.ok(panel.state.settingsMessage.includes("missing route options"), `got: ${panel.state.settingsMessage}`);
+});
+
+test("refreshAgentStatus — LOADING → UNAVAILABLE (ready === false)", async () => {
+  mockFetch((url) => {
+    if (url.startsWith("/vibecomfy/agent/status")) {
+      return makeFetchResponse({
+        ok: true,
+        ready: false,
+        reason: "Provider quota exceeded",
+        provider_available: false,
+        route: "arnold",
+        requested_route: "auto",
+        model: "default",
+        route_options: {
+          auto: { normalized_route: "arnold", available: false },
+        },
+      });
+    }
+    return makeFetchResponse({ error: "unexpected" }, { status: 404 });
+  });
+
+  const panel = makePanel();
+  const deps = makeDeps();
+
+  await refreshAgentStatus(panel, { quiet: false }, deps);
+
+  assert.equal(panel.state.routeStatus.kind, ROUTE_STATUS_KIND.UNAVAILABLE);
+  assert.ok(panel.state.settingsMessage.includes("Provider quota exceeded"), `got: ${panel.state.settingsMessage}`);
+});
+
+test("refreshAgentStatus — LOADING → MALFORMED (status is an array, not object)", async () => {
+  mockFetch((url) => {
+    if (url.startsWith("/vibecomfy/agent/status")) {
+      return makeFetchResponse(["unexpected", "array"]);
+    }
+    return makeFetchResponse({ error: "unexpected" }, { status: 404 });
+  });
+
+  const panel = makePanel();
+  const deps = makeDeps();
+
+  await refreshAgentStatus(panel, { quiet: false }, deps);
+
+  // Note: panel.state.statusSnapshot is set BEFORE the is-object check in refreshAgentStatus,
+  // so for array/null/scalar responses it will contain the non-object value rather than null.
+  assert.equal(panel.state.routeStatus.kind, ROUTE_STATUS_KIND.MALFORMED);
+  assert.ok(Array.isArray(panel.state.statusSnapshot), "statusSnapshot should hold the array value");
+});
+
+test("refreshAgentStatus — LOADING → MALFORMED (requested route missing from route_options)", async () => {
+  mockFetch((url) => {
+    if (url.startsWith("/vibecomfy/agent/status")) {
+      return makeFetchResponse({
+        ok: true,
+        ready: true,
+        provider_available: true,
+        route: "openrouter",
+        requested_route: "anthropic",
+        model: "claude-3",
+        route_options: {
+          openrouter: { browser_api_key_allowed: true },
+        },
+      });
+    }
+    return makeFetchResponse({ error: "unexpected" }, { status: 404 });
+  });
+
+  const panel = makePanel({ fields: { route: makeSelectElement("anthropic") } });
+  const deps = makeDeps();
+
+  await refreshAgentStatus(panel, { quiet: false }, deps);
+
+  assert.equal(panel.state.routeStatus.kind, ROUTE_STATUS_KIND.MALFORMED);
+  assert.ok(panel.state.settingsMessage.includes("Malformed"), `got: ${panel.state.settingsMessage}`);
+});
+
+test("refreshAgentStatus — quiet mode suppresses success message", async () => {
+  mockFetch((url) => {
+    if (url.startsWith("/vibecomfy/agent/status")) {
+      return makeFetchResponse({
+        ok: true,
+        ready: true,
+        provider_available: true,
+        route: "arnold",
+        requested_route: "auto",
+        model: "default",
+        route_options: {
+          auto: { normalized_route: "arnold", available: true },
+        },
+      });
+    }
+    return makeFetchResponse({ error: "unexpected" }, { status: 404 });
+  });
+
+  const panel = makePanel();
+  panel.state.settingsMessage = "";
+  const deps = makeDeps();
+
+  await refreshAgentStatus(panel, { quiet: true }, deps);
+
+  assert.equal(panel.state.routeStatus.kind, ROUTE_STATUS_KIND.READY);
+  assert.equal(panel.state.settingsMessage, "");
+});
+
+test("refreshAgentStatus — stale epoch prevents state overwrite", async () => {
+  let resolveJson;
+  const jsonPromise = new Promise((r) => { resolveJson = r; });
+
+  mockFetch((url) => {
+    if (url.startsWith("/vibecomfy/agent/status")) {
+      return {
+        ok: true,
+        status: 200,
+        async json() {
+          await jsonPromise;
+          return { ok: true, ready: true, route: "arnold", route_options: { auto: { normalized_route: "arnold" } } };
+        },
+      };
+    }
+    return makeFetchResponse({ error: "unexpected" }, { status: 404 });
+  });
+
+  const panel = makePanel();
+  panel.state.routeStatus = { kind: ROUTE_STATUS_KIND.LOADING };
+  const deps = makeDeps();
+
+  const refreshPromise = refreshAgentStatus(panel, {}, deps);
+
+  panel.state.statusRequestEpoch = 999;
+
+  resolveJson({ ok: true, ready: true, route: "arnold", route_options: { auto: { normalized_route: "arnold" } } });
+  await refreshPromise;
+
+  assert.equal(panel.state.routeStatus.kind, ROUTE_STATUS_KIND.LOADING);
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// persistAgentSettings
+// ═══════════════════════════════════════════════════════════════════════════
+
+test("persistAgentSettings — persists when READY", async () => {
+  globalThis.localStorage._clear();
+
+  const panel = makePanel({
+    fields: { route: makeSelectElement("openrouter"), model: { value: "gpt-4o" } },
+    state: {
+      routeStatus: { kind: ROUTE_STATUS_KIND.READY, requestedRoute: "openrouter", model: "gpt-4o" },
+      statusSnapshot: {
+        ok: true, route: "openrouter",
+        route_options: { openrouter: { normalized_route: "openrouter", browser_api_key_allowed: true } },
+      },
+    },
+  });
+
+  let refreshCalled = false;
+  const deps = makeDeps({ refreshAgentStatus: async () => { refreshCalled = true; } });
+
+  mockFetch(() => makeFetchResponse({ error: "unexpected" }, { status: 404 }));
+
+  await persistAgentSettings(panel, { includeCredential: false }, deps);
+
+  assert.equal(panel.state.settingsMessage, "Saved settings: openrouter / gpt-4o.");
+  assert.equal(panel.state.settingsMessageKind, "success");
+  assert.equal(getPersistedAgentProvider(), "openrouter");
+  assert.equal(refreshCalled, true);
+});
+
+test("persistAgentSettings — blocks when routeStatus is not READY", async () => {
+  const panel = makePanel({
+    fields: { route: makeSelectElement("openrouter") },
+    state: { routeStatus: { kind: ROUTE_STATUS_KIND.LOADING } },
+  });
+
+  const deps = makeDeps();
+  await persistAgentSettings(panel, {}, deps);
+
+  assert.equal(panel.state.settingsMessageKind, "error");
+  assert.ok(panel.state.settingsMessage.includes("unavailable until"), `got: ${panel.state.settingsMessage}`);
+});
+
+test("persistAgentSettings — persists with credential when includeCredential=true", async () => {
+  globalThis.localStorage._clear();
+
+  const panel = makePanel({
+    fields: { route: makeSelectElement("openrouter"), model: { value: "gpt-4o" }, apiKey: { value: "sk-new-key" } },
+    state: {
+      routeStatus: { kind: ROUTE_STATUS_KIND.READY, requestedRoute: "openrouter" },
+      statusSnapshot: {
+        ok: true, route: "openrouter",
+        route_options: { openrouter: { normalized_route: "openrouter", browser_api_key_allowed: true } },
+      },
+    },
+  });
+
+  let refreshCalled = false;
+  const deps = makeDeps({ refreshAgentStatus: async () => { refreshCalled = true; } });
+
+  mockFetch((url, options) => {
+    if (url === "/vibecomfy/agent/credentials" && options.method === "POST") {
+      return makeFetchResponse({ stored: true });
+    }
+    return makeFetchResponse({ error: "unexpected" }, { status: 404 });
+  });
+
+  await persistAgentSettings(panel, { includeCredential: true }, deps);
+
+  assert.equal(getPersistedAgentProvider(), "openrouter");
+  assert.equal(panel.state.lastAutoSavedOpenRouterKey, "sk-new-key");
+  assert.ok(panel.state.settingsMessage.includes("Stored OpenRouter API key"), `got: ${panel.state.settingsMessage}`);
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// testAgentSettings
+// ═══════════════════════════════════════════════════════════════════════════
+
+test("testAgentSettings — reports success when provider available", async () => {
+  const panel = makePanel({
+    fields: { route: makeSelectElement("openrouter"), model: { value: "gpt-4o" } },
+  });
+
+  const deps = makeDeps({
+    refreshAgentStatus: async (p) => {
+      p.state.routeStatus = { kind: ROUTE_STATUS_KIND.READY, requestedRoute: "openrouter", model: "gpt-4o" };
+      p.state.statusSnapshot = {
+        ok: true, route: "openrouter", requested_route: "openrouter",
+        model: "gpt-4o", provider_available: true,
+        route_metadata: { normalized_route: "openrouter" },
+      };
+    },
+  });
+
+  await testAgentSettings(panel, deps);
+
+  assert.equal(panel.state.providerTestInFlight, false);
+  assert.equal(panel.state.settingsMessageKind, "success");
+  assert.ok(panel.state.settingsMessage.includes("Provider test passed"), `got: ${panel.state.settingsMessage}`);
+});
+
+test("testAgentSettings — reports failure when provider unavailable", async () => {
+  const panel = makePanel({
+    fields: { route: makeSelectElement("openrouter"), model: { value: "gpt-4o" } },
+  });
+
+  const deps = makeDeps({
+    refreshAgentStatus: async (p) => {
+      p.state.routeStatus = { kind: ROUTE_STATUS_KIND.READY, requestedRoute: "openrouter" };
+      p.state.statusSnapshot = { ok: true, route: "openrouter", provider_available: false };
+    },
+  });
+
+  await testAgentSettings(panel, deps);
+
+  assert.equal(panel.state.settingsMessageKind, "error");
+  assert.ok(panel.state.settingsMessage.includes("Provider test failed"), `got: ${panel.state.settingsMessage}`);
+});
+
+test("testAgentSettings — no-op on null panel", async () => {
+  await testAgentSettings(null, makeDeps());
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// syncChooseEngineGate
+// ═══════════════════════════════════════════════════════════════════════════
+
+test("syncChooseEngineGate — closes overlay when persisted provider exists", () => {
+  globalThis.localStorage._clear();
+  setPersistedAgentProvider("openrouter");
+
+  let closeCalled = false;
+  let openCalled = false;
+  const deps = makeDeps({
+    closeChooseEngineOverlay: () => { closeCalled = true; },
+    openChooseEngineOverlay: () => { openCalled = true; },
+  });
+
+  const panel = makePanel({ shell: {} });
+  syncChooseEngineGate(panel, deps);
+
+  assert.equal(closeCalled, true);
+  assert.equal(openCalled, false);
+});
+
+test("syncChooseEngineGate — closes overlay when ready provider found via status", () => {
+  globalThis.localStorage._clear();
+
+  let closeCalled = false;
+  const deps = makeDeps({
+    closeChooseEngineOverlay: () => { closeCalled = true; },
+  });
+
+  const panel = makePanel({
+    shell: {},
+    state: {
+      routeStatus: { kind: ROUTE_STATUS_KIND.READY },
+      statusSnapshot: {
+        ok: true, route: "openrouter", provider_available: true,
+        credential_presence: { openrouter_api_key: true },
+        route_options: { openrouter: { normalized_route: "openrouter" } },
+      },
+    },
+  });
+
+  syncChooseEngineGate(panel, deps);
+
+  assert.equal(closeCalled, true);
+  assert.equal(getPersistedAgentProvider(), "openrouter");
+});
+
+test("syncChooseEngineGate — opens overlay when status not loading and no provider", () => {
+  globalThis.localStorage._clear();
+
+  let openCalled = false;
+  const deps = makeDeps({
+    openChooseEngineOverlay: () => { openCalled = true; },
+  });
+
+  const panel = makePanel({
+    shell: {},
+    state: { routeStatus: { kind: ROUTE_STATUS_KIND.UNAVAILABLE }, statusSnapshot: null },
+  });
+
+  syncChooseEngineGate(panel, deps);
+
+  assert.equal(openCalled, true);
+});
+
+test("syncChooseEngineGate — no-op when no shell", () => {
+  globalThis.localStorage._clear();
+
+  let openCalled = false;
+  const deps = makeDeps({ openChooseEngineOverlay: () => { openCalled = true; } });
+  const panel = makePanel({ shell: null, state: { routeStatus: { kind: ROUTE_STATUS_KIND.UNAVAILABLE } } });
+
+  syncChooseEngineGate(panel, deps);
+  assert.equal(openCalled, false);
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// configureAgentStatusDeps
+// ═══════════════════════════════════════════════════════════════════════════
+
+test("configureAgentStatusDeps — returns all expected keys", () => {
+  const configured = configureAgentStatusDeps(makeDeps());
+
+  const expected = [
+    "refreshAgentStatus", "routeStatusState", "populateRouteSelect",
+    "persistAgentSettings", "storeOpenRouterCredential", "testAgentSettings",
+    "syncChooseEngineGate", "scheduleAgentStatusRetry", "clearAgentStatusRetry",
+    "buildStatusUrl", "routeOptionsFromStatus", "ROUTE_STATUS_KIND",
+    "getPersistedAgentProvider", "setPersistedAgentProvider",
+  ];
+
+  for (const key of expected) {
+    assert.ok(key in configured, `missing key: "${key}"`);
+  }
+  assert.equal(typeof configured.refreshAgentStatus, "function");
+  assert.equal(configured.ROUTE_STATUS_KIND, ROUTE_STATUS_KIND);
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Malformed / invalid-contract fetch behavior (distinct from fixture shape)
+// ═══════════════════════════════════════════════════════════════════════════
+
+test("refreshAgentStatus — malformed JSON: HTML error page instead of JSON", async () => {
+  mockFetch((url) => {
+    if (url.startsWith("/vibecomfy/agent/status")) {
+      return {
+        ok: true,
+        status: 200,
+        async json() { throw new SyntaxError("Unexpected token '<', \"<!DOCTYPE \"... is not valid JSON"); },
+      };
+    }
+    return makeFetchResponse({ error: "unexpected" }, { status: 404 });
+  });
+
+  const panel = makePanel();
+  const deps = makeDeps();
+
+  await refreshAgentStatus(panel, { quiet: false }, deps);
+
+  assert.equal(panel.state.routeStatus.kind, ROUTE_STATUS_KIND.MALFORMED);
+  assert.ok(panel.state.lastAgentStatusDiagnostic, "should capture diagnostic");
+  assert.equal(panel.state.lastAgentStatusDiagnostic.ok, false);
+  assert.ok(
+    panel.state.lastAgentStatusDiagnostic.error.includes("Malformed JSON"),
+    `got: ${panel.state.lastAgentStatusDiagnostic.error}`,
+  );
+});
+
+test("refreshAgentStatus — invalid contract: status body is a string", async () => {
+  mockFetch((url) => {
+    if (url.startsWith("/vibecomfy/agent/status")) {
+      return makeFetchResponse("just a string, not an object");
+    }
+    return makeFetchResponse({ error: "unexpected" }, { status: 404 });
+  });
+
+  const panel = makePanel();
+  await refreshAgentStatus(panel, {}, makeDeps());
+
+  assert.equal(panel.state.routeStatus.kind, ROUTE_STATUS_KIND.MALFORMED);
+});
+
+test("refreshAgentStatus — invalid contract: status body is a number", async () => {
+  mockFetch((url) => {
+    if (url.startsWith("/vibecomfy/agent/status")) {
+      return makeFetchResponse(42);
+    }
+    return makeFetchResponse({ error: "unexpected" }, { status: 404 });
+  });
+
+  const panel = makePanel();
+  await refreshAgentStatus(panel, {}, makeDeps());
+
+  assert.equal(panel.state.routeStatus.kind, ROUTE_STATUS_KIND.MALFORMED);
+});
+
+test("refreshAgentStatus — invalid contract: null status body", async () => {
+  mockFetch((url) => {
+    if (url.startsWith("/vibecomfy/agent/status")) {
+      return makeFetchResponse(null);
+    }
+    return makeFetchResponse({ error: "unexpected" }, { status: 404 });
+  });
+
+  const panel = makePanel();
+  await refreshAgentStatus(panel, {}, makeDeps());
+
+  assert.equal(panel.state.routeStatus.kind, ROUTE_STATUS_KIND.MALFORMED);
+});
+
+test("refreshAgentStatus — valid JSON, completely wrong contract shape (no route_options, no ok)", async () => {
+  mockFetch((url) => {
+    if (url.startsWith("/vibecomfy/agent/status")) {
+      return makeFetchResponse({
+        data: { items: [1, 2, 3] },
+        meta: { page: 1 },
+      });
+    }
+    return makeFetchResponse({ error: "unexpected" }, { status: 404 });
+  });
+
+  const panel = makePanel();
+  await refreshAgentStatus(panel, {}, makeDeps());
+
+  assert.equal(panel.state.routeStatus.kind, ROUTE_STATUS_KIND.MISSING_OPTIONS);
+});
+
+test("refreshAgentStatus — route_options is a string (not an object)", async () => {
+  mockFetch((url) => {
+    if (url.startsWith("/vibecomfy/agent/status")) {
+      return makeFetchResponse({
+        ok: true, ready: true, route: "arnold",
+        route_options: "should-be-object",
+      });
+    }
+    return makeFetchResponse({ error: "unexpected" }, { status: 404 });
+  });
+
+  const panel = makePanel();
+  await refreshAgentStatus(panel, {}, makeDeps());
+
+  assert.equal(panel.state.routeStatus.kind, ROUTE_STATUS_KIND.MISSING_OPTIONS);
+});
+
+test("refreshAgentStatus — route_options is an array (not an object)", async () => {
+  mockFetch((url) => {
+    if (url.startsWith("/vibecomfy/agent/status")) {
+      return makeFetchResponse({
+        ok: true, ready: true, route: "arnold",
+        route_options: [{ route: "auto" }, { route: "openrouter" }],
+      });
+    }
+    return makeFetchResponse({ error: "unexpected" }, { status: 404 });
+  });
+
+  const panel = makePanel();
+  await refreshAgentStatus(panel, {}, makeDeps());
+
+  assert.equal(panel.state.routeStatus.kind, ROUTE_STATUS_KIND.MISSING_OPTIONS);
+});

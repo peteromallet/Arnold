@@ -195,6 +195,14 @@ class _DescribeMixin:
             return fmt_rows(rows)
         return rows
 
+    def python(self) -> str:
+        """Return the current workflow as agent-edit Python.
+
+        This query is side-effect-free with respect to graph edits: it does not
+        record a landed operation or consume edit budget.
+        """
+        return self.render()
+
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------

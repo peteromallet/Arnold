@@ -2,6 +2,10 @@ import { getAgentPanelRuntime } from "./panel_runtime.js";
 
 const THREAD_WINDOW_SIZE = 30;
 const THREAD_NEAR_BOTTOM_TOLERANCE_PX = 120;
+const RATING_WIDGET_CLEAR_DELAY_MS = 2400;
+const RATING_WIDGET_EXPIRY_MS = 60000;
+const RATING_PACK_SHARE_DEFAULT_LS_KEY = "vibecomfy_pack_share_default";
+const RATING_WIDGET_DISABLED_LS_KEY = "vibecomfy_rating_widget_disabled";
 
 export function collectThreadMessageEntries(panel, deps = {}) {
   const { buildSyntheticAgentMessage, messageStableKey } = deps;
@@ -91,13 +95,14 @@ function bubbleDetailSignature(msg, detailSnapshot) {
 }
 
 function bubbleRenderSignature(panel, msg, deps = {}) {
-  const { candidateActionState, detailSnapshotForMessage, messageSignature } = deps;
+  const { candidateActionState, detailSnapshotForMessage, latestAgentMessageKey, messageKey, messageSignature } = deps;
   const snapshot = typeof detailSnapshotForMessage === "function"
     ? detailSnapshotForMessage(panel, msg)
     : null;
   const actionState = typeof candidateActionState === "function"
     ? candidateActionState(panel, msg, snapshot)
     : {};
+  const responseId = ratingResponseIdForMessage(panel, msg);
   const signatureParts = [
     typeof messageSignature === "function" ? messageSignature(msg) : "",
     snapshot?.phase || "",
@@ -112,8 +117,492 @@ function bubbleRenderSignature(panel, msg, deps = {}) {
     actionState.active ? "1" : "0",
     actionState.applyDisabled ? "1" : "0",
     actionState.rejectDisabled ? "1" : "0",
+    String(messageKey || "") === String(latestAgentMessageKey || "") ? "rating-latest" : "",
+    responseId || "",
+    isRatingResponseSubmitted(panel, responseId) ? "rating-submitted" : "",
+    ratingWidgetDisabled(panel, deps) ? "rating-disabled" : "",
+    panel?.state?.turnId || "",
+    msg?.executor_pending ? "executor-pending" : "",
+    msg?.progress ? JSON.stringify(msg.progress) : "",
   ];
   return signatureParts.join("|");
+}
+
+function safeStorageGet(key) {
+  try {
+    if (typeof localStorage === "undefined" || localStorage === null) {
+      return null;
+    }
+    return localStorage.getItem(key);
+  } catch (_error) {
+    return null;
+  }
+}
+
+function safeStorageSet(key, value) {
+  try {
+    if (typeof localStorage === "undefined" || localStorage === null) {
+      return;
+    }
+    localStorage.setItem(key, value);
+  } catch (_error) {
+    // Best-effort persistence only.
+  }
+}
+
+function storageBoolean(value) {
+  return value === true || value === "1" || value === "true" || value === "yes";
+}
+
+function ratingPackShareDefault(deps = {}) {
+  if (typeof deps.getPackShareDefault === "function") {
+    return Boolean(deps.getPackShareDefault());
+  }
+  return storageBoolean(safeStorageGet(RATING_PACK_SHARE_DEFAULT_LS_KEY));
+}
+
+function persistRatingPackShareDefault(value, deps = {}) {
+  if (typeof deps.setPackShareDefault === "function") {
+    deps.setPackShareDefault(Boolean(value));
+    return;
+  }
+  safeStorageSet(RATING_PACK_SHARE_DEFAULT_LS_KEY, value ? "1" : "0");
+}
+
+function ratingWidgetDisabled(panel, deps = {}) {
+  if (typeof deps.isRatingWidgetDisabled === "function") {
+    return Boolean(deps.isRatingWidgetDisabled(panel));
+  }
+  return storageBoolean(safeStorageGet(RATING_WIDGET_DISABLED_LS_KEY));
+}
+
+function ratingTurnIdForMessage(panel, message) {
+  return (
+    (typeof message?.turn_id === "string" && message.turn_id)
+    || (typeof message?.detail_turn_id === "string" && message.detail_turn_id)
+    || (typeof panel?.state?.turnId === "string" && panel.state.turnId)
+    || null
+  );
+}
+
+function ratingResponseIdForMessage(panel, message) {
+  const sessionId = typeof panel?.state?.sessionId === "string" && panel.state.sessionId
+    ? panel.state.sessionId
+    : null;
+  const turnId = ratingTurnIdForMessage(panel, message);
+  if (!sessionId || !turnId) {
+    return null;
+  }
+  return `${sessionId}/${turnId}`;
+}
+
+function isRatingResponseSubmitted(panel, responseId) {
+  if (!responseId) {
+    return false;
+  }
+  const submitted = panel?.state?.ratingSubmittedResponseIds;
+  if (submitted instanceof Set) {
+    return submitted.has(responseId);
+  }
+  return Boolean(submitted && typeof submitted === "object" && submitted[responseId]);
+}
+
+function markRatingResponseSubmitted(panel, responseId) {
+  if (!panel?.state || !responseId) {
+    return;
+  }
+  if (!panel.state.ratingSubmittedResponseIds || typeof panel.state.ratingSubmittedResponseIds !== "object") {
+    panel.state.ratingSubmittedResponseIds = {};
+  }
+  panel.state.ratingSubmittedResponseIds[responseId] = true;
+}
+
+function renderExecutorProgressRow(msg, panel, deps = {}) {
+  const { el } = deps;
+  if (!msg?.executor_pending || typeof el !== "function") {
+    return null;
+  }
+  const progress = msg.progress && typeof msg.progress === "object"
+    ? msg.progress
+    : (panel?.state?.executorProgress && typeof panel.state.executorProgress === "object" ? panel.state.executorProgress : {});
+  const steps = [
+    ["Decide", progress.decide || "pending"],
+    ["Research", progress.research || "pending"],
+    ["Execute", progress.execute || "pending"],
+    ["Respond", progress.review || "pending"],
+  ];
+  const row = el("div");
+  Object.assign(row.style, {
+    display: "flex",
+    alignItems: "center",
+    gap: "6px",
+    marginTop: "7px",
+    flexWrap: "wrap",
+    fontSize: "10px",
+    color: "#8d93a1",
+  });
+  const colorFor = (status) => status === "active" ? "#ffd36f" : (status === "done" ? "#54c77a" : "#3b414c");
+  const textColorFor = (status) => status === "active" ? "#fff4d6" : (status === "done" ? "#d7f2e1" : "#7f8794");
+  for (let index = 0; index < steps.length; index += 1) {
+    const [label, status] = steps[index];
+    if (index > 0) {
+      const divider = el("span", "->");
+      divider.style.color = "#555c68";
+      row.appendChild(divider);
+    }
+    const step = el("span");
+    Object.assign(step.style, {
+      display: "inline-flex",
+      alignItems: "center",
+      gap: "4px",
+      color: textColorFor(status),
+      fontWeight: status === "active" ? "700" : "500",
+    });
+    const dot = el("span");
+    Object.assign(dot.style, {
+      width: "6px",
+      height: "6px",
+      borderRadius: "50%",
+      background: colorFor(status),
+      boxShadow: status === "active" ? "0 0 0 3px rgba(255, 211, 111, 0.12)" : "none",
+      flexShrink: "0",
+    });
+    step.appendChild(dot);
+    step.appendChild(el("span", label));
+    row.appendChild(step);
+  }
+  return row;
+}
+
+function ensureRatingTimers(panel) {
+  if (!panel) {
+    return {};
+  }
+  if (!panel.__vibecomfyRatingTimers || typeof panel.__vibecomfyRatingTimers !== "object") {
+    panel.__vibecomfyRatingTimers = {};
+  }
+  return panel.__vibecomfyRatingTimers;
+}
+
+function clearRatingTimer(panel, responseId) {
+  if (!panel || !responseId || !panel.__vibecomfyRatingTimers) {
+    return;
+  }
+  const existing = panel.__vibecomfyRatingTimers[responseId];
+  if (existing) {
+    clearTimeout(existing);
+    delete panel.__vibecomfyRatingTimers[responseId];
+  }
+}
+
+function scheduleRatingNoticeClear(panel, responseId, element) {
+  clearRatingTimer(panel, responseId);
+  const timers = ensureRatingTimers(panel);
+  timers[responseId] = setTimeout(() => {
+    delete timers[responseId];
+    if (!element?.isConnected) {
+      return;
+    }
+    element.textContent = "";
+    element.style.display = "none";
+  }, RATING_WIDGET_CLEAR_DELAY_MS);
+}
+
+function ensureRatingExpiryTimers(panel) {
+  if (!panel) {
+    return {};
+  }
+  if (!panel.__vibecomfyRatingExpiryTimers || typeof panel.__vibecomfyRatingExpiryTimers !== "object") {
+    panel.__vibecomfyRatingExpiryTimers = {};
+  }
+  return panel.__vibecomfyRatingExpiryTimers;
+}
+
+function clearRatingExpiryTimer(panel, responseId) {
+  if (!panel || !responseId || !panel.__vibecomfyRatingExpiryTimers) {
+    return;
+  }
+  const existing = panel.__vibecomfyRatingExpiryTimers[responseId];
+  if (existing) {
+    clearTimeout(existing);
+    delete panel.__vibecomfyRatingExpiryTimers[responseId];
+  }
+}
+
+function scheduleRatingExpiry(panel, responseId, element) {
+  clearRatingExpiryTimer(panel, responseId);
+  const timers = ensureRatingExpiryTimers(panel);
+  timers[responseId] = setTimeout(() => {
+    delete timers[responseId];
+    if (!element?.isConnected) {
+      return;
+    }
+    element.style.display = "none";
+    element.textContent = "";
+  }, RATING_WIDGET_EXPIRY_MS);
+}
+
+function latestAgentMessageKey(displayEntries) {
+  let latestKey = null;
+  for (const entry of displayEntries || []) {
+    if (entry?.msg?.role === "agent") {
+      latestKey = entry.key;
+    }
+  }
+  return latestKey;
+}
+
+function shouldRenderRatingWidget(panel, msg, messageKey, deps = {}) {
+  if (msg?.role !== "agent") {
+    return false;
+  }
+  if (String(messageKey || "") !== String(deps.latestAgentMessageKey || "")) {
+    return false;
+  }
+  if (ratingWidgetDisabled(panel, deps)) {
+    return false;
+  }
+  const turnId = ratingTurnIdForMessage(panel, msg);
+  if (!turnId || turnId !== panel?.state?.turnId) {
+    return false;
+  }
+  const responseId = ratingResponseIdForMessage(panel, msg);
+  return Boolean(responseId && !isRatingResponseSubmitted(panel, responseId));
+}
+
+export function renderRatingWidget(panel, msg, deps = {}) {
+  const { button, el, submitRating } = deps;
+  if (typeof el !== "function" || typeof submitRating !== "function") {
+    return null;
+  }
+  const responseId = ratingResponseIdForMessage(panel, msg);
+  const sessionId = typeof panel?.state?.sessionId === "string" ? panel.state.sessionId : "";
+  const turnId = ratingTurnIdForMessage(panel, msg) || "";
+  if (!responseId || !sessionId || !turnId) {
+    return null;
+  }
+
+  const root = el("div");
+  root.dataset.vibecomfyRatingWidget = "1";
+  root.dataset.vibecomfyResponseId = responseId;
+  Object.assign(root.style, {
+    alignSelf: "stretch",
+    display: "grid",
+    gap: "6px",
+    marginTop: "6px",
+    padding: "8px",
+    border: "1px solid #2d3340",
+    borderRadius: "6px",
+    background: "#12151c",
+    maxWidth: "100%",
+    minWidth: "0",
+  });
+
+  const heading = el("div", "Rate this response");
+  Object.assign(heading.style, {
+    color: "#c4ccd6",
+    fontSize: "10px",
+    fontWeight: "700",
+    textTransform: "uppercase",
+    letterSpacing: "0.06em",
+  });
+  root.appendChild(heading);
+
+  const ratingRow = el("div");
+  ratingRow.dataset.vibecomfyRatingStep = "1";
+  Object.assign(ratingRow.style, {
+    display: "grid",
+    gridTemplateColumns: "repeat(10, minmax(0, 1fr))",
+    gap: "3px",
+  });
+  root.appendChild(ratingRow);
+
+  const stepTwo = el("div");
+  stepTwo.dataset.vibecomfyRatingStep = "2";
+  Object.assign(stepTwo.style, {
+    display: "none",
+    gap: "6px",
+  });
+
+  const comment = document.createElement("textarea");
+  comment.dataset.vibecomfyRatingComment = "1";
+  comment.placeholder = "Optional note";
+  Object.assign(comment.style, {
+    width: "100%",
+    minHeight: "54px",
+    resize: "vertical",
+    boxSizing: "border-box",
+    background: "#0d0f14",
+    color: "#edf2f7",
+    border: "1px solid #343946",
+    borderRadius: "5px",
+    padding: "6px",
+    fontFamily: "monospace",
+    fontSize: "11px",
+  });
+  stepTwo.appendChild(comment);
+
+  const packRow = el("label");
+  Object.assign(packRow.style, {
+    display: "flex",
+    alignItems: "flex-start",
+    gap: "6px",
+    color: "#aeb6c4",
+    fontSize: "11px",
+  });
+  const packCheckbox = document.createElement("input");
+  packCheckbox.type = "checkbox";
+  packCheckbox.checked = ratingPackShareDefault(deps);
+  packCheckbox.dataset.vibecomfyRatingPackShared = "1";
+  packCheckbox.onchange = () => {
+    persistRatingPackShareDefault(packCheckbox.checked, deps);
+  };
+  Object.assign(packCheckbox.style, {
+    marginTop: "1px",
+    flexShrink: 0,
+  });
+  packRow.appendChild(packCheckbox);
+
+  const packLabelStack = el("div");
+  Object.assign(packLabelStack.style, {
+    display: "flex",
+    flexDirection: "column",
+    gap: "2px",
+  });
+  const packLabelPrimary = el("span", "Share my debug pack");
+  Object.assign(packLabelPrimary.style, {
+    color: "#c4ccd6",
+    fontWeight: "500",
+  });
+  const packLabelSecondary = el(
+    "span",
+    "This will share your anonymised workflow + turn publicly for us and others to learn from & improve.",
+  );
+  Object.assign(packLabelSecondary.style, {
+    color: "#8d93a1",
+    fontSize: "10px",
+    lineHeight: "1.35",
+  });
+  packLabelStack.appendChild(packLabelPrimary);
+  packLabelStack.appendChild(packLabelSecondary);
+  packRow.appendChild(packLabelStack);
+  stepTwo.appendChild(packRow);
+
+  const submitRow = el("div");
+  Object.assign(submitRow.style, {
+    display: "flex",
+    alignItems: "center",
+    gap: "6px",
+  });
+  const reportIssueButton = typeof button === "function"
+    ? button("Report issue", () => {})
+    : el("button", "Report issue");
+  reportIssueButton.dataset.vibecomfyRatingReportIssue = "1";
+  Object.assign(reportIssueButton.style, {
+    display: "none",
+    padding: "4px 8px",
+    fontSize: "11px",
+  });
+  reportIssueButton.onclick = () => {
+    if (typeof deps.showIssueModal === "function") {
+      deps.showIssueModal(panel);
+    }
+  };
+  submitRow.appendChild(reportIssueButton);
+
+  const submitButton = typeof button === "function"
+    ? button("Submit rating", () => {})
+    : el("button", "Submit rating");
+  submitButton.dataset.vibecomfyRatingSubmit = "1";
+  Object.assign(submitButton.style, {
+    padding: "4px 8px",
+    fontSize: "11px",
+  });
+  const status = el("div");
+  status.dataset.vibecomfyRatingStatus = "1";
+  Object.assign(status.style, {
+    display: "none",
+    color: "#8d93a1",
+    fontSize: "10px",
+    minWidth: "0",
+    overflowWrap: "anywhere",
+  });
+  submitRow.appendChild(submitButton);
+  submitRow.appendChild(status);
+  stepTwo.appendChild(submitRow);
+  root.appendChild(stepTwo);
+
+  let selectedRating = null;
+  const ratingButtons = [];
+  const setSelectedRating = (rating) => {
+    selectedRating = rating;
+    clearRatingExpiryTimer(panel, responseId);
+    stepTwo.style.display = "grid";
+    reportIssueButton.style.display = rating < 5 ? "inline-block" : "none";
+    for (const entry of ratingButtons) {
+      entry.button.dataset.selected = entry.rating === rating ? "1" : "0";
+      entry.button.style.background = entry.rating === rating ? "#27466f" : "#1a1d25";
+      entry.button.style.borderColor = entry.rating === rating ? "#7db6ff" : "#343946";
+      entry.button.style.color = entry.rating === rating ? "#ffffff" : "#c4ccd6";
+    }
+  };
+  for (let rating = 1; rating <= 10; rating += 1) {
+    const ratingButton = typeof button === "function"
+      ? button(String(rating), () => setSelectedRating(rating))
+      : el("button", String(rating));
+    ratingButton.dataset.vibecomfyRatingValue = String(rating);
+    ratingButton.onclick = () => setSelectedRating(rating);
+    Object.assign(ratingButton.style, {
+      minWidth: "0",
+      padding: "4px 0",
+      fontSize: "10px",
+      lineHeight: "1.2",
+      background: "#1a1d25",
+      borderColor: "#343946",
+      color: "#c4ccd6",
+    });
+    ratingButtons.push({ rating, button: ratingButton });
+    ratingRow.appendChild(ratingButton);
+  }
+
+  scheduleRatingExpiry(panel, responseId, root);
+
+  submitButton.onclick = async () => {
+    if (!selectedRating || submitButton.disabled) {
+      return;
+    }
+    clearRatingTimer(panel, responseId);
+    clearRatingExpiryTimer(panel, responseId);
+    submitButton.disabled = true;
+    status.style.display = "block";
+    status.style.color = "#8d93a1";
+    status.textContent = "Submitting...";
+    const result = await submitRating(panel, {
+      rating: selectedRating,
+      comment: comment.value || null,
+      pack_shared: packCheckbox.checked,
+      pack_comment: null,
+      response_id: responseId,
+      session_id: sessionId,
+      turn_id: turnId,
+    });
+    if (!root.isConnected) {
+      return;
+    }
+    if (result?.ok) {
+      markRatingResponseSubmitted(panel, responseId);
+      clearRatingTimer(panel, responseId);
+      clearRatingExpiryTimer(panel, responseId);
+      root.style.display = "none";
+      return;
+    }
+    submitButton.disabled = false;
+    status.style.color = "#ffb86c";
+    status.textContent = result?.detail || result?.error || "Could not submit rating.";
+    scheduleRatingNoticeClear(panel, responseId, status);
+  };
+
+  return root;
 }
 
 function appendTurnMeta(target, panel, message, snapshot = null, deps = {}) {
@@ -172,9 +661,12 @@ export function populateAgentBubbleDetail(target, panel, message, snapshot = nul
   } = deps;
   clearNode(target);
 
-  const metaSection = createBubbleDetailSection("Turn");
-  appendTurnMeta(metaSection.body, panel, message, snapshot, { appendTextLine, el });
-  target.appendChild(metaSection.section);
+  const isExecutorMessage = message?.executor_pending === true || message?.source === "agent-executor";
+  if (!isExecutorMessage) {
+    const metaSection = createBubbleDetailSection("Turn");
+    appendTurnMeta(metaSection.body, panel, message, snapshot, { appendTextLine, el });
+    target.appendChild(metaSection.section);
+  }
 
   const changeDetails = changeDetailsForMessage(panel, message, snapshot);
   if (changeDetails) {
@@ -279,6 +771,10 @@ export function renderChatBubbleNode(bubble, panel, msg, messageKey, messageInde
     lineHeight: "1.4",
     minWidth: "0",
   });
+  const progressRow = renderExecutorProgressRow(msg, panel, { el });
+  if (progressRow) {
+    text.appendChild(progressRow);
+  }
   bubble.appendChild(text);
 
   // Relative timestamp below the speech bubble, bottom-aligned to the bubble's
@@ -469,6 +965,13 @@ export function renderChatBubbleNode(bubble, panel, msg, messageKey, messageInde
   detailRow.appendChild(detailHeader);
   detailRow.appendChild(detailBody);
   bubble.appendChild(detailRow);
+
+  if (shouldRenderRatingWidget(panel, msg, messageKey, deps)) {
+    const ratingWidget = renderRatingWidget(panel, msg, deps);
+    if (ratingWidget) {
+      bubble.appendChild(ratingWidget);
+    }
+  }
 }
 
 export function reconcileChatBubbles(panel, messagesMount, displayEntries, deps = {}) {
@@ -502,6 +1005,7 @@ export function reconcileChatBubbles(panel, messagesMount, displayEntries, deps 
   const nextBubbleMap = {};
   const nextSignatures = {};
   const nextKeyOrder = [];
+  const latestAgentKey = latestAgentMessageKey(displayEntries);
 
   for (const entry of displayEntries) {
     const { msg, index, key } = entry;
@@ -510,14 +1014,22 @@ export function reconcileChatBubbles(panel, messagesMount, displayEntries, deps 
     }
     const signature = bubbleRenderSignature(panel, msg, {
       ...deps,
+      latestAgentMessageKey: latestAgentKey,
+      messageKey: key,
       messageSignature,
     });
     let bubbleEntry = priorBubbleMap[key] || null;
     if (!bubbleEntry?.node) {
       bubbleEntry = { node: el("div") };
-      renderChatBubbleNode(bubbleEntry.node, panel, msg, key, index, deps);
+      renderChatBubbleNode(bubbleEntry.node, panel, msg, key, index, {
+        ...deps,
+        latestAgentMessageKey: latestAgentKey,
+      });
     } else if (priorSignatures[key] !== signature) {
-      renderChatBubbleNode(bubbleEntry.node, panel, msg, key, index, deps);
+      renderChatBubbleNode(bubbleEntry.node, panel, msg, key, index, {
+        ...deps,
+        latestAgentMessageKey: latestAgentKey,
+      });
     }
     nextBubbleMap[key] = bubbleEntry;
     nextSignatures[key] = signature;
@@ -529,6 +1041,9 @@ export function reconcileChatBubbles(panel, messagesMount, displayEntries, deps 
     if (nextBubbleMap[key]) {
       continue;
     }
+    const responseId = ratingResponseIdForMessage(panel, bubbleEntry?.msg);
+    clearRatingTimer(panel, responseId);
+    clearRatingExpiryTimer(panel, responseId);
     if (bubbleEntry?.node?.parentNode === messagesMount) {
       messagesMount.removeChild(bubbleEntry.node);
     }
@@ -537,6 +1052,11 @@ export function reconcileChatBubbles(panel, messagesMount, displayEntries, deps 
   // `signatures` is also write-through cache state: it mirrors the last render
   // content for each mounted bubble but never outranks the current DOM tree.
   threadState.renderedKeyOrder = nextKeyOrder;
+  for (const entry of displayEntries) {
+    if (nextBubbleMap[entry.key]) {
+      nextBubbleMap[entry.key].msg = entry.msg;
+    }
+  }
   threadState.bubbleMap = nextBubbleMap;
   threadState.signatures = nextSignatures;
   threadState.lastVisibleKeySet = new Set(nextKeyOrder);
@@ -695,6 +1215,7 @@ function ensureChatThreadMounts(body, deps = {}) {
       minWidth: "0",
       maxWidth: "100%",
       overflowWrap: "anywhere",
+      minHeight: "100%",
     });
   }
   if (!emptyMount) {
@@ -706,6 +1227,9 @@ function ensureChatThreadMounts(body, deps = {}) {
       minWidth: "0",
       maxWidth: "100%",
       overflowWrap: "anywhere",
+      minHeight: "100%",
+      alignContent: "center",
+      justifyItems: "center",
     });
   }
   if (!olderMount) {
@@ -1633,6 +2157,17 @@ export function populateActivityRows(body, panel, opts = {}, deps = {}) {
 function renderActivityRows(panel, deps = {}) {
   const mount = panel?.sections?.history;
   if (!mount) {
+    return;
+  }
+  if (panel?.state?.executorMode) {
+    const { clearNode } = deps;
+    if (typeof clearNode === "function") {
+      clearNode(mount);
+    }
+    mount.style.display = "none";
+    if (mount.parentNode?.className === "vibecomfy-agent-panel-region") {
+      mount.parentNode.style.display = "none";
+    }
     return;
   }
   populateActivityRows(mount, panel, {}, deps);

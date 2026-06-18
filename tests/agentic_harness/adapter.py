@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Any
 
 from tests.agentic_harness.actors import (
+    build_explain_simple_workflow_evidence,
     build_m2_audio_positive_evidence,
     build_m2_audio_unwired_negative_evidence,
     build_m2_edit_unwired_negative_evidence,
@@ -27,6 +28,7 @@ from tests.agentic_harness.actors import (
     build_m3_controlnet_depth_positive_evidence,
     build_m3_controlnet_video_noop_evidence,
     build_m3_save_node_finalize_positive_evidence,
+    build_research_hotshot_xl_evidence,
     build_faking_structural_chain,
     build_positive_structural_chain,
     build_recovery_structural_chain,
@@ -103,6 +105,11 @@ _M3_BUILDERS = {
     "add-depth-controlnet-image": build_m3_controlnet_depth_positive_evidence,
     "controlnet-video-noop": build_m3_controlnet_video_noop_evidence,
     "add-save-node-finalize": build_m3_save_node_finalize_positive_evidence,
+}
+
+_M6_BUILDERS = {
+    "explore-hotshot-xl-workflow": build_research_hotshot_xl_evidence,
+    "explain-simple-workflow": build_explain_simple_workflow_evidence,
 }
 
 
@@ -255,6 +262,10 @@ class VibeComfyProjectAdapter(FakeProjectAdapter):
 
         if run.dispatcher == "faking":
             return build_faking_structural_chain(frozen_root)
+        # Structural builders are deterministic shortcuts for the fake actor.
+        # Real agents must produce their own frozen evidence.
+        if run.dispatcher != "fake":
+            return None
         builder = _M2_BUILDERS.get(scenario.name)
         if builder is None:
             builder = _M3_BUILDERS.get(scenario.name)
@@ -262,6 +273,8 @@ class VibeComfyProjectAdapter(FakeProjectAdapter):
             builder = _M4_BUILDERS.get(scenario.name)
         if builder is None:
             builder = _M5_BUILDERS.get(scenario.name)
+        if builder is None:
+            builder = _M6_BUILDERS.get(scenario.name)
         if builder is not None:
             manifest = builder(frozen_root)
             git_diff_path = self._capture_workspace_git_diff(scenario.name, frozen_root)

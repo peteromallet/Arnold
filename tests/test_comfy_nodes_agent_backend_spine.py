@@ -89,7 +89,7 @@ from vibecomfy._compile._graph import UI_ONLY_CLASS_TYPES as GRAPH_UTILS_UI_ONLY
 from vibecomfy.porting.emitter import UI_ONLY_CLASS_TYPES as EMITTER_UI_ONLY_CLASS_TYPES
 from vibecomfy.porting.lowering import LoweringDiagnostic, LoweringEvidence, LoweringResult
 from vibecomfy.porting.emit.ui import emit_ui_json
-from vibecomfy.schema.provider import InputSpec, NodeSchema
+from vibecomfy.schema.provider import InputSpec, NodeSchema, OutputSpec
 from vibecomfy.workflow import ValidationIssue, VibeEdge, VibeNode, VibeWorkflow, WorkflowSource
 
 
@@ -3359,7 +3359,7 @@ def test_agent_provider_load_runtime_rejects_module_without_execution_contract(m
     monkeypatch.setenv("VIBECOMFY_ARNOLD_RUNTIME_MODULE", "empty_runtime")
     monkeypatch.setattr(agent_provider.importlib, "import_module", fake_import)
 
-    with pytest.raises(agent_provider.ProviderError, match="does not expose run_agent_turn_batch"):
+    with pytest.raises(agent_provider.ProviderError, match=r"does not expose .*run_agent_turn_batch"):
         agent_provider._load_arnold_runtime()
 
 
@@ -3606,6 +3606,7 @@ def test_build_batch_messages_turn_zero_includes_full_python_scoped_catalog_and_
     assert '"bypassed" | "muted" | "enabled"' in system
     assert "bypass does NOT pass input through" in system
     assert "search(focus_types" in system
+    assert "python()" in system
     assert "done()" in system
     assert 'clarify("' in system.lower() or "clarify(" in system
     assert "Output rule" in system
@@ -3615,7 +3616,7 @@ def test_build_batch_messages_turn_zero_includes_full_python_scoped_catalog_and_
     assert "exactly one" in system
     assert "Never respond with only a fenced" in system
     assert "```batch" in system
-    assert "ImageScaleBy(image=<decode_var>.IMAGE" in system
+    assert "ImageScaleBy(image=decode.IMAGE" in system
     assert "do NOT search for them" in system
     assert "search(" in system
     # Size ceiling: system prompt must stay under 2600 chars
@@ -3740,8 +3741,8 @@ def test_build_batch_messages_system_prompt_contains_all_three_mode_strings() ->
     assert "bypass does NOT pass input through" in system
 
 
-def test_build_batch_messages_system_prompt_contains_all_four_privileged_calls() -> None:
-    """The system prompt includes all four privileged calls: del, mode, search, done."""
+def test_build_batch_messages_system_prompt_contains_privileged_calls() -> None:
+    """The system prompt includes the privileged batch calls."""
     messages = agent_provider.build_batch_messages(
         task="test",
         python_source="x=1",
@@ -3750,6 +3751,7 @@ def test_build_batch_messages_system_prompt_contains_all_four_privileged_calls()
     assert "del x" in system
     assert "node.mode" in system
     assert "search(" in system
+    assert "python()" in system
     assert "done()" in system
     assert "clarify(" in system
 
@@ -4044,7 +4046,7 @@ def test_runtime_batch_turn_uses_batch_repl_worker_contract(monkeypatch) -> None
     """The shipped megaplan adapter asks the worker for raw batch_repl content."""
     calls: list[dict[str, object]] = []
 
-    monkeypatch.setattr(runtime, "_resolve_deepseek_key", lambda: "test-key")
+    monkeypatch.setattr(runtime, "_resolve_openrouter_key", lambda: "test-key")
 
     def _fake_run_worker(agent_kwargs, system_msg, user_msg, *, response_contract="python", agent_id=None):
         calls.append(
@@ -4075,7 +4077,116 @@ def test_runtime_batch_turn_uses_batch_repl_worker_contract(monkeypatch) -> None
     assert calls[0]["agent_id"] == "hermes"
     assert calls[0]["system_msg"] == "system batch prompt"
     assert calls[0]["user_msg"] == "user batch prompt"
-    assert calls[0]["agent_kwargs"]["model"] == "deepseek-v4-pro"
+    assert calls[0]["agent_kwargs"]["model"] == "deepseek-chat"
+
+
+def test_handle_agent_edit_batch_python_query_feeds_render_to_next_turn(tmp_path: Path) -> None:
+    from vibecomfy.comfy_nodes.agent.edit import handle_agent_edit
+
+    class Provider:
+        def __init__(self) -> None:
+            self._schemas = {
+                "LoadImage": NodeSchema(
+                    class_type="LoadImage",
+                    pack=None,
+                    inputs={
+                        "image": InputSpec(
+                            type="IMAGEUPLOAD",
+                            required=True,
+                            default=None,
+                        )
+                    },
+                    outputs=[OutputSpec(type="IMAGE", name="IMAGE")],
+                    source_provider="test",
+                    confidence=1.0,
+                )
+            }
+
+        def get_schema(self, class_type: str) -> NodeSchema | None:
+            return self._schemas.get(class_type)
+
+        def schemas(self) -> dict[str, NodeSchema]:
+            return dict(self._schemas)
+
+    graph = {
+        "last_node_id": 1,
+        "last_link_id": 0,
+        "nodes": [
+            {
+                "id": 1,
+                "type": "LoadImage",
+                "mode": 0,
+                "pos": [0, 0],
+                "size": [210, 58],
+                "widgets_values": ["example.png"],
+                "outputs": [{"name": "IMAGE", "type": "IMAGE"}],
+                "properties": {"vibecomfy_uid": "loadimage"},
+            }
+        ],
+        "links": [],
+        "groups": [],
+    }
+    calls: list[list[dict[str, str]]] = []
+    responses = iter(
+        [
+            {"message": "I'll inspect the Python render.", "batch": "python()"},
+            {"message": "The workflow has one LoadImage node.", "batch": "done()"},
+        ]
+    )
+
+    def _client(messages: list[dict[str, str]]) -> dict[str, str]:
+        calls.append(messages)
+        return next(responses)
+
+    result = handle_agent_edit(
+        {
+            "task": "What is in this workflow?",
+            "graph": graph,
+            "session_id": "python-query",
+            "max_batches": 2,
+        },
+        schema_provider=Provider(),
+        deepseek_client=_client,
+        session_root=tmp_path,
+    )
+
+    assert result["ok"] is True
+    assert len(calls) == 2
+    second_prompt = calls[1][1]["content"]
+    report = second_prompt.split("Teaching report from previous turn:", 1)[1]
+    assert 'Statement 1: query — not landed (source: "python()")' in report
+    assert "# vibecomfy: agent-edit" in report
+    assert "loadimage = LoadImage(image='example.png')" in report
+    first_turn = result["batch_turns"][0]
+    assert first_turn["statements"][0]["detail"]["query"] == "python"
+    assert "loadimage = LoadImage(image='example.png')" in first_turn["report"]
+
+
+def test_batch_report_does_not_truncate_python_query_output() -> None:
+    from vibecomfy.comfy_nodes.agent.edit import _format_batch_report
+    from vibecomfy.porting.edit._session_types import BatchResult, StatementResult
+
+    render = "# vibecomfy: agent-edit\n" + ("loadimage = LoadImage()\n" * 260)
+    report = _format_batch_report(
+        BatchResult(
+            ok=True,
+            statements=(
+                StatementResult(
+                    statement_index=1,
+                    source="python()",
+                    ok=True,
+                    landed=False,
+                    op_kind="query",
+                    detail={"query": "python", "query_output": render},
+                ),
+            ),
+        ),
+        consecutive_errors=0,
+        budget_remaining=1,
+    )
+
+    assert render in report
+    assert "... [truncated]" not in report
 
 
 def test_runtime_worker_timeout_raises_builtin_timeout(monkeypatch) -> None:
@@ -4084,7 +4195,7 @@ def test_runtime_worker_timeout_raises_builtin_timeout(monkeypatch) -> None:
         raise subprocess.TimeoutExpired(cmd=["worker"], timeout=2)
 
     monkeypatch.setattr(runtime.subprocess, "run", _timeout)
-    monkeypatch.setattr(runtime, "_resolve_deepseek_key", lambda: "test-key")
+    monkeypatch.setattr(runtime, "_resolve_openrouter_key", lambda: "test-key")
     monkeypatch.setattr(runtime, "_TURN_TIMEOUT_SECONDS", 2)
 
     with pytest.raises(TimeoutError, match="Agent worker timed out after 2 seconds"):
@@ -4133,7 +4244,7 @@ def test_runtime_readiness_normalizes_route_and_status_wraps_it(
 def test_runtime_readiness_reports_deepseek_key_presence(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(runtime, "_resolve_deepseek_key", lambda: "test-key")
+    monkeypatch.setattr(runtime, "_resolve_openrouter_key", lambda: "test-key")
 
     readiness = runtime.readiness(route="deepseek", model="deepseek-chat")
     status = runtime.get_agent_status(route="deepseek", model="deepseek-chat")
@@ -4141,11 +4252,11 @@ def test_runtime_readiness_reports_deepseek_key_presence(
     assert readiness == {
         "ready": True,
         "backend": "arnold.pipelines.megaplan.agent.run_agent.AIAgent",
-        "route": "deepseek",
+        "route": "openrouter",
         "model": "deepseek-chat",
-        "base_url": "https://api.deepseek.com/v1",
-        "deepseek_key_present": True,
-        "reason": "DeepSeek key resolved; ready to run agent-edit turns.",
+        "base_url": "https://openrouter.ai/api/v1",
+        "openrouter_key_present": True,
+        "reason": "OpenRouter key resolved; ready to run agent-edit turns.",
     }
     assert status["ok"] is True
     assert status["ready"] is True

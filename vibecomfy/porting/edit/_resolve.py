@@ -178,7 +178,7 @@ class _ResolveMixin:
         env: Mapping[str, Any],
     ) -> StatementResult:
         call_name = _call_name(call)
-        if call_name != "search":
+        if call_name not in {"search", "python"}:
             return StatementResult(
                 statement_index=statement_index,
                 source=source,
@@ -188,11 +188,68 @@ class _ResolveMixin:
                 diagnostics=(
                     _diag(
                         "unsupported_query_call",
-                        "Only search(...) and done() are supported as top-level query calls.",
+                        "Only search(...), python(), and done() are supported as top-level query calls.",
                         severity="error",
                         detail={"call": call_name},
                     ),
                 ),
+            )
+
+        if call_name == "python":
+            diagnostics: list[CompactDiagnostic] = []
+            if call.args:
+                diagnostics.append(
+                    _diag("python_arguments_not_allowed", "python() does not accept arguments.", severity="error")
+                )
+            for keyword in call.keywords:
+                if keyword.arg is None:
+                    diagnostics.append(
+                        _diag("kwargs_unpack_not_allowed", "**kwargs unpacking is not allowed.", severity="error")
+                    )
+                else:
+                    diagnostics.append(
+                        _diag(
+                            "unsupported_python_keyword",
+                            f"python() does not accept keyword {keyword.arg!r}.",
+                            severity="error",
+                            detail={"keyword": keyword.arg},
+                        )
+                    )
+            if diagnostics:
+                return StatementResult(
+                    statement_index=statement_index,
+                    source=source,
+                    ok=False,
+                    landed=False,
+                    op_kind="query",
+                    diagnostics=tuple(diagnostics),
+                    detail={"query": "python"},
+                )
+            try:
+                output = self.python()
+            except Exception as exc:  # noqa: BLE001 - report query failures in-band
+                return StatementResult(
+                    statement_index=statement_index,
+                    source=source,
+                    ok=False,
+                    landed=False,
+                    op_kind="query",
+                    diagnostics=(
+                        _diag(
+                            "python_query_failed",
+                            f"python() failed: {exc}",
+                            severity="error",
+                        ),
+                    ),
+                    detail={"query": "python"},
+                )
+            return StatementResult(
+                statement_index=statement_index,
+                source=source,
+                ok=True,
+                landed=False,
+                op_kind="query",
+                detail={"query": "python", "query_output": str(output)},
             )
 
         allowed = {"focus_types", "compatible_input_type", "compatible_output_type", "formatted"}

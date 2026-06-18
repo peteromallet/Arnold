@@ -3,30 +3,84 @@ from __future__ import annotations
 import asyncio
 import dataclasses
 import json
+import os
 from pathlib import Path
 from typing import Any, Mapping
 
 from .contracts import (
     FailureKind,
-    TurnContext,
-    apply_eligibility_payload,
     classify_failure,
-    derive_apply_eligibility,
     ensure_agent_edit_response_contract,
     failure_envelope,
 )
-from .edit import (
-    DEFAULT_CHAT_DISPLAY_MESSAGES,
-    _SESSION_ROOT,
-    _safe_session_id,
-    handle_agent_edit,
-    read_session_bundle,
-    read_session_chat,
-    read_session_json,
-)
 from .provider import readiness, handle_credential_submission
-from .session import accept_turn, payload_hash, rebaseline_session, reject_turn, session_dir_for, turn_dir_for
-from .audit import artifact_ref_for_path, write_audit
+from .hivemind_feedback import submit_hivemind_feedback
+
+
+def _handle_agent_executor(
+    payload: dict[str, Any],
+    *,
+    client_id: str | None = None,
+) -> dict[str, Any]:
+    """Run the stateless executor pipeline and return a JSON-serializable result."""
+    # Lazy import to avoid pulling executor (and its heavy ingestion graph
+    # imports) into the module-level import graph of routes.py.
+    from vibecomfy.executor.contracts import ClassifyDecision, ExecutorRequest
+    from vibecomfy.executor.core import run_executor
+
+    if not isinstance(payload, Mapping):
+        message = "ExecutorRequest payload must be a JSON object."
+        failure = failure_envelope(
+            FailureKind.VALIDATION_ERROR,
+            "executor",
+            agent_failure_context={"explanation": message},
+        ).to_dict()
+        failure.update({
+            "report": {"executor": {"plan": ClassifyDecision.respond_only().to_dict()}},
+            "failure_kind": FailureKind.VALIDATION_ERROR.value,
+            "failure_stage": "executor",
+            "failure_message": message,
+        })
+        return {
+            **failure,
+        }
+
+    try:
+        request = ExecutorRequest.from_payload(payload)
+    except ValueError as exc:
+        failure = failure_envelope(
+            FailureKind.MISSING_REQUIRED_FIELD,
+            "request",
+            agent_failure_context={"explanation": str(exc)},
+        ).to_dict()
+        failure.update({
+            "report": {"executor": {"plan": ClassifyDecision.respond_only().to_dict()}},
+            "failure_kind": FailureKind.MISSING_REQUIRED_FIELD.value,
+            "failure_stage": "request",
+            "failure_message": str(exc),
+        })
+        return {
+            **failure,
+        }
+
+    try:
+        result = run_executor(request, client_id=client_id)
+        return result.to_dict()
+    except Exception as exc:
+        failure = failure_envelope(
+            FailureKind.VALIDATION_ERROR,
+            "executor",
+            agent_failure_context={"explanation": f"Unexpected executor error: {exc}"},
+        ).to_dict()
+        failure.update({
+            "report": {"executor": {"plan": ClassifyDecision.respond_only().to_dict()}},
+            "failure_kind": FailureKind.VALIDATION_ERROR.value,
+            "failure_stage": "executor",
+            "failure_message": f"Unexpected executor error: {exc}",
+        })
+        return {
+            **failure,
+        }
 
 
 def _handle_roundtrip(
@@ -84,22 +138,12 @@ def _handle_roundtrip(
         return {"error": str(exc), "kind": type(exc).__name__}
 
 
-def _idempotency_key(payload: dict[str, Any]) -> str | None:
-    value = payload.get("idempotency_key")
-    return value if isinstance(value, str) and value else None
-
-
-def _root(path: Any = None) -> Path:
-    return Path(path) if path is not None else _SESSION_ROOT
-
 
 def _validated_failure_response(
     stage: str,
     failure: Any,
 ) -> dict[str, Any]:
     response = failure.to_dict() if hasattr(failure, "to_dict") else dict(failure)
-    if stage == "accept":
-        _promote_accept_rebaseline_recovery(response)
     recovery = _extract_failure_recovery(response)
     if recovery is not None:
         response.setdefault("rebaseline_recovery", recovery)
@@ -113,46 +157,6 @@ def _validated_failure_response(
             }
     return ensure_agent_edit_response_contract(response, stage=stage)
 
-
-def _promote_accept_rebaseline_recovery(response: dict[str, Any]) -> None:
-    if response.get("kind") != FailureKind.STALE_STATE_MISMATCH.value:
-        return
-    context = response.get("agent_failure_context")
-    if not isinstance(context, Mapping):
-        return
-    issues = context.get("issues")
-    if isinstance(issues, list):
-        for issue in issues:
-            if isinstance(issue, Mapping) and isinstance(issue.get("rebaseline_recovery"), Mapping):
-                return
-    reason = context.get("reason")
-    recovery = {
-        "action": "rebaseline",
-        "endpoint": "/vibecomfy/agent-edit/rebaseline",
-        "reason": reason if isinstance(reason, str) and reason else "stale_state_recovery",
-        "last_known_baseline_graph_hash": context.get("expected_baseline_graph_hash")
-        if isinstance(context.get("expected_baseline_graph_hash"), str)
-        else (
-            context.get("baseline_graph_hash")
-            if isinstance(context.get("baseline_graph_hash"), str)
-            else None
-        ),
-        "submit_structural_graph_hash": context.get("submit_structural_graph_hash")
-        if isinstance(context.get("submit_structural_graph_hash"), str)
-        else None,
-    }
-    issue = {
-        "code": "stale_state_mismatch",
-        "detail": context.get("explanation")
-        if isinstance(context.get("explanation"), str)
-        else "Accept request no longer matches the authoritative baseline.",
-        "rebaseline_recovery": recovery,
-    }
-    response.setdefault("rebaseline_recovery", recovery)
-    response["agent_failure_context"] = {
-        **dict(context),
-        "issues": [*issues, issue] if isinstance(issues, list) else [issue],
-    }
 
 
 def _extract_failure_recovery(response: Mapping[str, Any] | None) -> dict[str, Any] | None:
@@ -187,262 +191,6 @@ def _extract_failure_recovery(response: Mapping[str, Any] | None) -> dict[str, A
                 return dict(recovery)
     return None
 
-
-def _validated_success_response(
-    response: dict[str, Any],
-    *,
-    stage: str,
-    action: str | None = None,
-) -> dict[str, Any]:
-    payload = dict(response)
-    if "outcome" not in payload:
-        reason = None
-        if action in {"accept", "reject", "rebaseline", "chat"}:
-            reason = action
-        payload["outcome"] = {"kind": "noop", "reason": reason} if reason else {"kind": "noop"}
-    return ensure_agent_edit_response_contract(payload, stage=stage)
-
-
-def _handle_agent_edit_action(
-    payload: Any,
-    *,
-    action: str,
-    session_root: Any = None,
-) -> dict[str, Any]:
-    if not isinstance(payload, dict):
-        return _validated_failure_response(
-            action,
-            failure_envelope(
-            FailureKind.MISSING_REQUIRED_FIELD,
-            action,
-            agent_failure_context={"explanation": "Request body must be a JSON object."},
-            ),
-        )
-    session_id_raw = payload.get("session_id")
-    turn_id = payload.get("turn_id")
-    if not isinstance(session_id_raw, str) or not session_id_raw.strip():
-        return _validated_failure_response(
-            action,
-            failure_envelope(
-            FailureKind.MISSING_REQUIRED_FIELD,
-            action,
-            agent_failure_context={"explanation": "`session_id` is required."},
-            ),
-        )
-    if not isinstance(turn_id, str) or not turn_id.strip():
-        return _validated_failure_response(
-            action,
-            failure_envelope(
-            FailureKind.MISSING_REQUIRED_FIELD,
-            action,
-            agent_failure_context={"explanation": "`turn_id` is required."},
-            ),
-        )
-    session_id = _safe_session_id(session_id_raw)
-    root = _root(session_root)
-    mutator = accept_turn if action == "accept" else reject_turn
-
-    def _write_action_response(response: dict[str, Any]) -> Path:
-        path = turn_dir_for(root, session_id, turn_id) / f"{action}_response.json"
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps(response, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-        return path
-
-    result = mutator(
-        session_root=root,
-        session_id=session_id,
-        turn_id=turn_id,
-        client_graph_hash=payload.get("client_graph_hash")
-        if isinstance(payload.get("client_graph_hash"), str)
-        else None,
-        request_payload=payload,
-        idempotency_key=_idempotency_key(payload),
-        response_writer=_write_action_response,
-    )
-    if not isinstance(result, dict):
-        return _validated_failure_response(action, result)
-    terminal_state = result.get("accepted_state") if isinstance(result.get("accepted_state"), str) else None
-    eligibility = derive_apply_eligibility(
-        TurnContext(
-            session_id=session_id,
-            turn_id=turn_id,
-            baseline_turn_id=result.get("baseline_turn_id")
-            if isinstance(result.get("baseline_turn_id"), str)
-            else None,
-        ),
-        candidate_state=terminal_state,
-    )
-    result.update(
-        apply_eligibility_payload(
-            eligibility,
-            canvas_apply_allowed=False,
-            queue_allowed=False,
-        )
-    )
-    try:
-        audit_dir = turn_dir_for(root, session_id, turn_id) / f"{action}_audit"
-        audit_path = audit_dir / "audit.json"
-        if audit_path.exists():
-            audit_ref = artifact_ref_for_path(audit_path)
-        else:
-            audit_ref = write_audit(
-                audit_dir,
-                context=TurnContext(
-                    session_id=session_id,
-                    turn_id=turn_id,
-                    baseline_turn_id=result.get("baseline_turn_id")
-                    if isinstance(result.get("baseline_turn_id"), str)
-                    else None,
-                    idempotency_key=_idempotency_key(payload),
-                ),
-                turn_state=result.get("accepted_state")
-                if isinstance(result.get("accepted_state"), str)
-                else None,
-                response=result,
-                artifacts={"request": payload},
-                metadata={"action": action},
-            )
-        result = {**result, "audit_ref": audit_ref.to_dict()}
-    except Exception as exc:
-        failure = classify_failure("audit", exc)
-        return _validated_failure_response("audit", failure)
-    return _validated_success_response(result, stage=action, action=action)
-
-
-def _handle_agent_edit_accept(payload: Any, *, session_root: Any = None) -> dict[str, Any]:
-    return _handle_agent_edit_action(payload, action="accept", session_root=session_root)
-
-
-def _handle_agent_edit_reject(payload: Any, *, session_root: Any = None) -> dict[str, Any]:
-    return _handle_agent_edit_action(payload, action="reject", session_root=session_root)
-
-
-def _handle_agent_edit_rebaseline(payload: Any, *, session_root: Any = None) -> dict[str, Any]:
-    if not isinstance(payload, dict):
-        return _validated_failure_response(
-            "rebaseline",
-            failure_envelope(
-            FailureKind.MISSING_REQUIRED_FIELD,
-            "rebaseline",
-            agent_failure_context={"explanation": "Request body must be a JSON object."},
-            ),
-        )
-    session_id_raw = payload.get("session_id")
-    if not isinstance(session_id_raw, str) or not session_id_raw.strip():
-        return _validated_failure_response(
-            "rebaseline",
-            failure_envelope(
-            FailureKind.MISSING_REQUIRED_FIELD,
-            "rebaseline",
-            agent_failure_context={"explanation": "`session_id` is required."},
-            ),
-        )
-    session_id = _safe_session_id(session_id_raw)
-    root = _root(session_root)
-
-    result = rebaseline_session(
-        session_root=root,
-        session_id=session_id,
-        request_payload=payload,
-        idempotency_key=_idempotency_key(payload),
-    )
-    if not isinstance(result, dict):
-        return _validated_failure_response("rebaseline", result)
-    eligibility = derive_apply_eligibility(
-        TurnContext(
-            session_id=session_id,
-            baseline_turn_id=result.get("baseline_turn_id")
-            if isinstance(result.get("baseline_turn_id"), str)
-            else None,
-        ),
-        has_candidate=False,
-    )
-    result.update(
-        apply_eligibility_payload(
-            eligibility,
-            canvas_apply_allowed=False,
-            queue_allowed=False,
-        )
-    )
-
-    try:
-        rebaseline_id = result.get("rebaseline_id")
-        audit_dir = (
-            session_dir_for(root, session_id)
-            / "_rebaseline"
-            / str(rebaseline_id)
-            / "audit"
-        )
-        audit_path = audit_dir / "audit.json"
-        if audit_path.exists():
-            audit_ref = artifact_ref_for_path(audit_path)
-        else:
-            audit_ref = write_audit(
-                audit_dir,
-                context=TurnContext(
-                    session_id=session_id,
-                    baseline_turn_id=result.get("baseline_turn_id")
-                    if isinstance(result.get("baseline_turn_id"), str)
-                    else None,
-                    idempotency_key=_idempotency_key(payload),
-                ),
-                response=result,
-                artifacts={"request": payload},
-                metadata={
-                    "action": "rebaseline",
-                    "rebaseline_id": rebaseline_id,
-                },
-            )
-        result = {**result, "audit_ref": audit_ref.to_dict()}
-    except Exception as exc:
-        failure = classify_failure("audit", exc)
-        return _validated_failure_response("audit", failure)
-    return _validated_success_response(result, stage="rebaseline", action="rebaseline")
-
-
-def _handle_agent_edit_audit(
-    params: dict[str, Any],
-    *,
-    session_root: Any = None,
-) -> dict[str, Any]:
-    session_id_raw = params.get("session_id")
-    turn_id = params.get("turn_id")
-    action = params.get("action")
-    if not isinstance(session_id_raw, str) or not isinstance(turn_id, str):
-        return _validated_failure_response(
-            "audit",
-            failure_envelope(
-            FailureKind.MISSING_REQUIRED_FIELD,
-            "audit",
-            agent_failure_context={"explanation": "`session_id` and `turn_id` are required."},
-            ),
-        )
-    session_id = _safe_session_id(session_id_raw)
-    audit_dir = "audit"
-    if action in {"accept", "reject", "unknown"}:
-        audit_dir = f"{action}_audit"
-    path = turn_dir_for(_root(session_root), session_id, turn_id) / audit_dir / "audit.json"
-    session_dir = session_dir_for(_root(session_root), session_id).resolve()
-    try:
-        resolved = path.resolve()
-        if session_dir not in resolved.parents:
-            raise ValueError("Audit path escaped the session directory.")
-        body = resolved.read_bytes()
-    except Exception as exc:
-        return _validated_failure_response("audit", classify_failure("audit", exc))
-    return {
-        "ok": True,
-        "body": body,
-        "headers": {
-            "Content-Type": "application/json",
-            "Content-Disposition": f'attachment; filename="{session_id}-{turn_id}-{audit_dir}.json"',
-            "X-Content-Type-Options": "nosniff",
-        },
-        "path": str(resolved),
-        "sha256": payload_hash(json.loads(body.decode("utf-8"))),
-    }
-
-
 def _handle_agent_status(params: dict[str, Any] | None = None) -> dict[str, Any]:
     params = params or {}
     route = params.get("route") if isinstance(params.get("route"), str) else None
@@ -459,91 +207,7 @@ def _handle_agent_status(params: dict[str, Any] | None = None) -> dict[str, Any]
     return status
 
 
-def _handle_agent_edit_chat(
-    params: dict[str, Any],
-    *,
-    session_root: Any = None,
-) -> dict[str, Any]:
-    """Rehydrate the last N conversation messages for a session."""
-    session_id_raw = params.get("session_id")
-    if not isinstance(session_id_raw, str) or not session_id_raw.strip():
-        return _validated_failure_response(
-            "chat",
-            failure_envelope(
-            FailureKind.MISSING_REQUIRED_FIELD,
-            "chat",
-            agent_failure_context={"explanation": "`session_id` is required."},
-            ),
-        )
 
-    root = _root(session_root)
-    max_messages = DEFAULT_CHAT_DISPLAY_MESSAGES
-    raw_max_messages = params.get("max_messages")
-    try:
-        parsed_max_messages = int(raw_max_messages) if raw_max_messages is not None else max_messages
-    except (TypeError, ValueError):
-        parsed_max_messages = max_messages
-    if parsed_max_messages > 0:
-        max_messages = min(parsed_max_messages, DEFAULT_CHAT_DISPLAY_MESSAGES)
-
-    try:
-        return _validated_success_response(
-            read_session_chat(root, session_id_raw, max_messages=max_messages),
-            stage="chat",
-            action="chat",
-        )
-    except Exception as exc:
-        return _validated_failure_response("chat", classify_failure("chat", exc))
-
-
-def _handle_agent_edit_session_json(
-    params: dict[str, Any],
-    *,
-    session_root: Any = None,
-) -> dict[str, Any]:
-    """Return session metadata, sorted turn summaries with artifact paths,
-    and last-five messages for a sanitized session id.  No browsing, search,
-    indexes, or arbitrary path reads."""
-    session_id_raw = params.get("session_id")
-    if not isinstance(session_id_raw, str) or not session_id_raw.strip():
-        return failure_envelope(
-            FailureKind.MISSING_REQUIRED_FIELD,
-            "session-json",
-            agent_failure_context={"explanation": "`session_id` is required."},
-        ).to_dict()
-
-    root = _root(session_root)
-    max_messages = 5
-    if isinstance(params.get("max_messages"), int) and int(params.get("max_messages", 0)) > 0:
-        max_messages = int(params["max_messages"])
-
-    try:
-        return read_session_json(root, session_id_raw, max_messages=max_messages)
-    except Exception as exc:
-        return classify_failure("session-json", exc).to_dict()
-
-
-def _handle_agent_edit_session_bundle(
-    params: dict[str, Any],
-    *,
-    session_root: Any = None,
-) -> dict[str, Any]:
-    """Return every artifact under a session dir so the browser can build a
-    self-contained issue-report ZIP. Reads only within the sanitized session
-    dir — no browsing, search, indexes, or arbitrary path reads."""
-    session_id_raw = params.get("session_id")
-    if not isinstance(session_id_raw, str) or not session_id_raw.strip():
-        return failure_envelope(
-            FailureKind.MISSING_REQUIRED_FIELD,
-            "session-bundle",
-            agent_failure_context={"explanation": "`session_id` is required."},
-        ).to_dict()
-
-    root = _root(session_root)
-    try:
-        return read_session_bundle(root, session_id_raw)
-    except Exception as exc:
-        return classify_failure("session-bundle", exc).to_dict()
 
 
 def _handle_agent_credentials(
@@ -566,188 +230,167 @@ def _handle_agent_credentials(
         return classify_failure("ingest", exc).to_dict()
 
 
-def _handle_agent_edit(
-    payload: Any,
-    *,
-    schema_provider: Any = None,
-    deepseek_client: Any = None,
-    session_root: Any = None,
-    client_id: str | None = None,
-) -> dict[str, Any]:
-    if not isinstance(payload, dict):
-        return _validated_failure_response(
-            "ingest",
-            failure_envelope(
-                FailureKind.MISSING_REQUIRED_FIELD,
-                "ingest",
-                agent_failure_context={"explanation": "Request body must be a JSON object."},
-            ),
-        )
+
+
+def _handle_vibecomfy_submit_rating(payload: Any) -> tuple[dict[str, Any], int]:
+    result, status = submit_hivemind_feedback(payload)
+    if result.get("ok") is True and 200 <= status < 300:
+        return result, 201
+    return result, status
+
+
+def register_agent_edit_routes(app) -> None:
+    """Register the /agent/edit route on a ComfyUI PromptServer *app*.
+
+    This function is a no-op when ``VIBECOMFY_HEADLESS=1`` is set in the
+    environment, so importing this module outside a ComfyUI server does not
+    trigger ``aiohttp`` or ``server`` side effects.
+
+    Parameters
+    ----------
+    app:
+        A ComfyUI ``PromptServer`` instance whose ``.routes`` attribute exposes
+        an ``aiohttp.RouteTableDef``.
+    """
+    from .edit import handle_agent_edit  # noqa: PLC0415
+    from .contracts import (
+        FailureKind as _FK,
+        classify_failure as _classify_failure,
+        ensure_agent_edit_response_contract as _ensure_contract,
+        failure_envelope as _failure_envelope,
+    )
+
+    @app.routes.post("/agent/edit")
+    async def _agent_edit_route(request):  # type: ignore[no-untyped-def]
+        try:
+            payload = await request.json()
+        except Exception as exc:
+            return app.web.json_response(
+                _ensure_contract(
+                    _failure_envelope(
+                        _FK.MISSING_REQUIRED_FIELD,
+                        "agent_edit",
+                        agent_failure_context={
+                            "explanation": f"Request body must be valid JSON: {exc}"
+                        },
+                    ).to_dict(),
+                    stage="agent_edit",
+                ),
+                status=400,
+            )
+        try:
+            result = await asyncio.to_thread(handle_agent_edit, payload)
+        except Exception as exc:
+            failure = _classify_failure("agent_edit", exc)
+            return app.web.json_response(
+                _ensure_contract(failure.to_dict(), stage="agent_edit"),
+                status=500,
+            )
+        if not isinstance(result, dict):
+            return app.web.json_response(
+                _ensure_contract(
+                    _failure_envelope(
+                        _FK.VALIDATION_ERROR,
+                        "agent_edit",
+                        agent_failure_context={
+                            "explanation": "handle_agent_edit returned a non-dict result."
+                        },
+                    ).to_dict(),
+                    stage="agent_edit",
+                ),
+                status=500,
+            )
+        if result.get("status") == "error":
+            return app.web.json_response(result, status=400)
+        return app.web.json_response(result)
+
+
+# ── Route registration (guarded: no-op when VIBECOMFY_HEADLESS=1) ──────────
+
+if os.environ.get("VIBECOMFY_HEADLESS") != "1":
     try:
-        result = handle_agent_edit(
-            payload,
-            schema_provider=schema_provider,
-            deepseek_client=deepseek_client,
-            session_root=session_root,
-            client_id=client_id,
-        )
-        return ensure_agent_edit_response_contract(result, stage="submit")
-    except Exception as exc:
-        stage = "ingest" if isinstance(exc, ValueError) else "route"
-        return _validated_failure_response(stage, classify_failure(stage, exc))
+        from aiohttp import web as _web  # noqa: PLC0415
+        from server import PromptServer as _PromptServer  # noqa: PLC0415
+
+        @_PromptServer.instance.routes.post("/vibecomfy/roundtrip")
+        async def roundtrip_route(request):  # type: ignore[no-untyped-def]
+            try:
+                payload = await request.json()
+            except Exception as exc:
+                return _web.json_response(
+                    {"error": str(exc), "kind": type(exc).__name__}, status=400
+                )
+            result = _handle_roundtrip(payload)
+            if "error" in result:
+                return _web.json_response(result, status=400)
+            return _web.json_response(result)
 
 
-try:
-    from aiohttp import web as _web  # noqa: PLC0415
-    from server import PromptServer as _PromptServer  # noqa: PLC0415
-
-    @_PromptServer.instance.routes.post("/vibecomfy/roundtrip")
-    async def roundtrip_route(request):  # type: ignore[no-untyped-def]
-        try:
-            payload = await request.json()
-        except Exception as exc:
-            return _web.json_response(
-                {"error": str(exc), "kind": type(exc).__name__}, status=400
-            )
-        result = _handle_roundtrip(payload)
-        if "error" in result:
-            return _web.json_response(result, status=400)
-        return _web.json_response(result)
-
-    @_PromptServer.instance.routes.post("/vibecomfy/agent-edit")
-    async def agent_edit_route(request):  # type: ignore[no-untyped-def]
-        try:
-            payload = await request.json()
-        except Exception as exc:
-            return _web.json_response(
-                _validated_failure_response(
-                    "ingest",
-                    failure_envelope(
-                        FailureKind.MISSING_REQUIRED_FIELD,
-                        "ingest",
-                        agent_failure_context={
-                            "explanation": f"Request body must be valid JSON: {exc}"
-                        },
+        @_PromptServer.instance.routes.post("/vibecomfy/agent-executor")
+        async def agent_executor_route(request):  # type: ignore[no-untyped-def]
+            try:
+                payload = await request.json()
+            except Exception as exc:
+                return _web.json_response(
+                    _validated_failure_response(
+                        "executor",
+                        failure_envelope(
+                            FailureKind.MISSING_REQUIRED_FIELD,
+                            "executor",
+                            agent_failure_context={
+                                "explanation": f"Request body must be valid JSON: {exc}"
+                            },
+                        ),
                     ),
-                ),
-                status=400,
-            )
-        client_id = payload.get("client_id") if isinstance(payload.get("client_id"), str) and payload.get("client_id").strip() else None
-        result = await asyncio.to_thread(_handle_agent_edit, payload, client_id=client_id)
-        if result.get("ok") is False:
-            status = 500 if result.get("stage") == "route" else 400
-            return _web.json_response(result, status=status)
-        return _web.json_response(result)
+                    status=400,
+                )
+            client_id = payload.get("client_id") if isinstance(payload.get("client_id"), str) and payload.get("client_id").strip() else None
+            result = await asyncio.to_thread(_handle_agent_executor, payload, client_id=client_id)
+            if result.get("ok") is False:
+                status = 500 if result.get("stage") == "route" else 400
+                return _web.json_response(result, status=status)
+            return _web.json_response(result)
 
-    @_PromptServer.instance.routes.post("/vibecomfy/agent-edit/accept")
-    async def agent_edit_accept_route(request):  # type: ignore[no-untyped-def]
-        try:
-            payload = await request.json()
-        except Exception as exc:
-            return _web.json_response(
-                _validated_failure_response(
-                    "accept",
-                    failure_envelope(
-                        FailureKind.MISSING_REQUIRED_FIELD,
-                        "accept",
-                        agent_failure_context={
-                            "explanation": f"Request body must be valid JSON: {exc}"
-                        },
-                    ),
-                ),
-                status=400,
-            )
-        result = _handle_agent_edit_accept(payload)
-        return _web.json_response(result, status=400 if result.get("ok") is False else 200)
-
-    @_PromptServer.instance.routes.post("/vibecomfy/agent-edit/reject")
-    async def agent_edit_reject_route(request):  # type: ignore[no-untyped-def]
-        try:
-            payload = await request.json()
-        except Exception as exc:
-            return _web.json_response(
-                _validated_failure_response(
-                    "reject",
-                    failure_envelope(
-                        FailureKind.MISSING_REQUIRED_FIELD,
-                        "reject",
-                        agent_failure_context={
-                            "explanation": f"Request body must be valid JSON: {exc}"
-                        },
-                    ),
-                ),
-                status=400,
-            )
-        result = _handle_agent_edit_reject(payload)
-        return _web.json_response(result, status=400 if result.get("ok") is False else 200)
-
-    @_PromptServer.instance.routes.post("/vibecomfy/agent-edit/rebaseline")
-    async def agent_edit_rebaseline_route(request):  # type: ignore[no-untyped-def]
-        try:
-            payload = await request.json()
-        except Exception as exc:
-            return _web.json_response(
-                _validated_failure_response(
-                    "rebaseline",
-                    failure_envelope(
-                        FailureKind.MISSING_REQUIRED_FIELD,
-                        "rebaseline",
-                        agent_failure_context={
-                            "explanation": f"Request body must be valid JSON: {exc}"
-                        },
-                    ),
-                ),
-                status=400,
-            )
-        result = _handle_agent_edit_rebaseline(payload)
-        return _web.json_response(result, status=400 if result.get("ok") is False else 200)
-
-    @_PromptServer.instance.routes.get("/vibecomfy/agent-edit/audit")
-    async def agent_edit_audit_route(request):  # type: ignore[no-untyped-def]
-        result = _handle_agent_edit_audit(dict(request.query))
-        if result.get("ok") is not True:
-            return _web.json_response(result, status=400)
-        return _web.Response(
-            body=result["body"],
-            headers=result["headers"],
-        )
-
-    @_PromptServer.instance.routes.get("/vibecomfy/agent/status")
-    async def agent_status_route(request):  # type: ignore[no-untyped-def]
-        return _web.json_response(_handle_agent_status(dict(request.query)))
-
-    @_PromptServer.instance.routes.get("/vibecomfy/agent-edit/chat")
-    async def agent_edit_chat_route(request):  # type: ignore[no-untyped-def]
-        result = _handle_agent_edit_chat(dict(request.query))
-        return _web.json_response(result, status=400 if result.get("ok") is False else 200)
-
-    @_PromptServer.instance.routes.get("/vibecomfy/agent-edit/session-json")
-    async def agent_edit_session_json_route(request):  # type: ignore[no-untyped-def]
-        result = _handle_agent_edit_session_json(dict(request.query))
-        return _web.json_response(result, status=400 if result.get("ok") is False else 200)
-
-    @_PromptServer.instance.routes.get("/vibecomfy/agent-edit/session-bundle")
-    async def agent_edit_session_bundle_route(request):  # type: ignore[no-untyped-def]
-        result = _handle_agent_edit_session_bundle(dict(request.query))
-        return _web.json_response(result, status=400 if result.get("ok") is False else 200)
-
-    @_PromptServer.instance.routes.post("/vibecomfy/agent/credentials")
-    async def agent_credentials_route(request):  # type: ignore[no-untyped-def]
-        try:
-            payload = await request.json()
-        except Exception as exc:
-            return _web.json_response(
-                failure_envelope(
-                    FailureKind.MISSING_REQUIRED_FIELD,
-                    "credentials",
-                    agent_failure_context={
-                        "explanation": f"Request body must be valid JSON: {exc}"
+        @_PromptServer.instance.routes.post("/vibecomfy/agent-edit/rating")
+        async def agent_edit_rating_route(request):  # type: ignore[no-untyped-def]
+            try:
+                payload = await request.json()
+            except Exception as exc:
+                return _web.json_response(
+                    {
+                        "ok": False,
+                        "error": "validation",
+                        "detail": f"Request body must be valid JSON: {exc}",
                     },
-                ).to_dict(),
-                status=400,
-            )
-        result = _handle_agent_credentials(payload)
-        return _web.json_response(result, status=400 if result.get("ok") is False else 200)
+                    status=400,
+                )
+            result, status = await asyncio.to_thread(_handle_vibecomfy_submit_rating, payload)
+            return _web.json_response(result, status=status)
 
-except ImportError:
-    pass
+        @_PromptServer.instance.routes.get("/vibecomfy/agent/status")
+        async def agent_status_route(request):  # type: ignore[no-untyped-def]
+            return _web.json_response(_handle_agent_status(dict(request.query)))
+
+        @_PromptServer.instance.routes.post("/vibecomfy/agent/credentials")
+        async def agent_credentials_route(request):  # type: ignore[no-untyped-def]
+            try:
+                payload = await request.json()
+            except Exception as exc:
+                return _web.json_response(
+                    failure_envelope(
+                        FailureKind.MISSING_REQUIRED_FIELD,
+                        "credentials",
+                        agent_failure_context={
+                            "explanation": f"Request body must be valid JSON: {exc}"
+                        },
+                    ).to_dict(),
+                    status=400,
+                )
+            result = _handle_agent_credentials(payload)
+            return _web.json_response(result, status=400 if result.get("ok") is False else 200)
+
+        # Also register the agent edit route on the global PromptServer instance
+        register_agent_edit_routes(_PromptServer.instance)
+
+    except ImportError:
+        pass

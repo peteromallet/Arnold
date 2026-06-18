@@ -52,3 +52,6 @@ tests/e2e/node_modules/
 tests/e2e/playwright-report/
 tests/e2e/test-results/
 test-results/
+
+# Generated cache-busted web assets
+vibecomfy/comfy_nodes/web_dist/

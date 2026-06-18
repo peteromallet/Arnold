@@ -1,0 +1,636 @@
+"""Deterministic executor research phase.
+
+Implements the research step of the classify → research → implement → reply
+pipeline.  Uses the local search corpus (``build_search_corpus()``) with
+deterministic scoring and compactly normalized output fields.  Adds an
+injectable direct-HTTP Hivemind tier with configurable timeout, converting
+timeouts and errors into non-fatal warnings so the executor always proceeds
+with local-only results rather than blocking on network unavailability.
+"""
+
+from __future__ import annotations
+
+import logging
+import re
+from html import unescape
+from html.parser import HTMLParser
+from urllib.parse import parse_qs, quote, unquote, urlencode, urlparse
+import urllib.error
+import urllib.request
+from typing import Any, Callable
+
+from vibecomfy.search.index import build_search_corpus
+from vibecomfy.search.scorer import search_entries, SearchResult
+
+from .contracts import ResearchResult
+
+LOGGER = logging.getLogger(__name__)
+
+# ── Conservative external-search defaults ────────────────────────────────────
+
+_DEFAULT_HIVEMIND_URL = "https://ujlwuvkrxlvoswwkerdf.supabase.co/rest/v1/unified_feed"
+_DEFAULT_HIVEMIND_KEY = "sb_publishable_O38oPBafrBoFrpi_rlWJvA_UJrulFsx"
+_DEFAULT_HIVEMIND_TIMEOUT = 5.0  # seconds
+_DEFAULT_WEB_SEARCH_URL = "https://duckduckgo.com/html/"
+_DEFAULT_WEB_SEARCH_TIMEOUT = 5.0  # seconds
+_DEFAULT_EXTERNAL_LIMIT = 10
+
+# A Hivemind client is any callable (query: str, timeout: float) → dict.
+HivemindClient = Callable[[str, float], dict[str, Any]]
+WebSearchClient = Callable[[str, float], dict[str, Any]]
+
+_USE_DEFAULT = object()
+
+_QUERY_TOKEN_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.+-]*")
+_SEARCH_STOPWORDS = {
+    "a",
+    "an",
+    "and",
+    "are",
+    "build",
+    "can",
+    "create",
+    "for",
+    "generate",
+    "graph",
+    "happen",
+    "happening",
+    "how",
+    "image",
+    "in",
+    "is",
+    "make",
+    "of",
+    "on",
+    "please",
+    "show",
+    "the",
+    "this",
+    "to",
+    "video",
+    "what",
+    "whats",
+    "with",
+}
+
+
+# ── Hivemind error (non-fatal) ───────────────────────────────────────────────
+
+
+class HivemindError(Exception):
+    """Non-fatal Hivemind error — caught by the research runner and converted
+    to a warning rather than propagating as an exception."""
+
+
+class WebSearchError(Exception):
+    """Non-fatal web-search error converted to a warning by ``research()``."""
+
+
+# ── Local corpus research (deterministic) ────────────────────────────────────
+
+
+def run_local_research(
+    query: str,
+    *,
+    task: str | None = None,
+    limit: int = 10,
+) -> ResearchResult:
+    """Research using only the deterministic local corpus.
+
+    Calls :func:`~vibecomfy.search.index.build_search_corpus`, scores entries
+    against *query* with :func:`~vibecomfy.search.scorer.search_entries`, and
+    produces a compactly normalized :class:`ResearchResult`.
+
+    Parameters
+    ----------
+    query:
+        The user's natural-language request.
+    task:
+        Optional task hint (e.g. ``"t2v"``, ``"controlnet"``) for scorer alias
+        expansion.
+    limit:
+        Maximum number of top-scoring local results to include.
+    """
+    corpus = build_search_corpus()
+    results = search_entries(corpus, query, task=task, limit=limit)
+    sources = tuple(_normalize_source(r) for r in results)
+    summary = _build_summary(sources)
+    return ResearchResult(summary=summary, sources=sources)
+
+
+def _normalize_source(result: SearchResult) -> dict[str, Any]:
+    """Compact, deterministic normalization of a single scored search result.
+
+    The output dict always contains the same keys in the same order so
+    serialization is fully deterministic.
+    """
+    entry = result.entry
+    return {
+        "class_type": entry.class_type,
+        "score": result.score,
+        "reasons": list(result.reasons),
+        "source": entry.source,
+        "pack": entry.pack,
+        "description": entry.description,
+        "tasks": list(entry.tasks),
+    }
+
+
+def _build_summary(sources: tuple[dict[str, Any], ...]) -> str:
+    """Build a compact 1-sentence summary from source metadata."""
+    if not sources:
+        return "No relevant local results found."
+    n = len(sources)
+    top3 = [s["class_type"] for s in sources[:3]]
+    names = ", ".join(top3)
+    if n > 3:
+        names += f", and {n - 3} more"
+    return f"Found {n} local result(s): {names}"
+
+
+# ── Default direct-HTTP Hivemind client ──────────────────────────────────────
+
+
+def _default_hivemind_client(query: str, timeout: float) -> dict[str, Any]:
+    """Default direct-HTTP Hivemind client backed by Supabase/PostgREST.
+
+    Searches the public ``unified_feed`` table's ``title`` and ``body`` columns
+    with PostgREST ``ilike`` filters.
+
+    Query handling intentionally favors recall: it builds an ``OR`` query from
+    important tokens plus adjacent token phrases, then ranks rows locally by
+    phrase/token matches.  This avoids the previous all-words-as-one-phrase
+    failure where ``"Hotshot XL SDXL video"`` missed rows that mention
+    ``"Hotshot XL"`` without every query word.
+
+    Raises :class:`HivemindError` on any HTTP-level or timeout failure so the
+    caller can convert it to a warning.
+    """
+    terms = _search_terms(query)
+    if not terms:
+        return {"results": []}
+
+    filters: list[str] = []
+    for term in terms:
+        pattern = f"*{_postgrest_literal(term)}*"
+        filters.append(f"title.ilike.{pattern}")
+        filters.append(f"body.ilike.{pattern}")
+
+    params = {
+        "select": "*",
+        "or": f"({','.join(filters)})",
+        "limit": str(_DEFAULT_EXTERNAL_LIMIT * 3),
+    }
+    url = f"{_DEFAULT_HIVEMIND_URL}?{urlencode(params)}"
+    req = urllib.request.Request(
+        url,
+        headers={
+            "Accept": "application/json",
+            "apikey": _DEFAULT_HIVEMIND_KEY,
+            "Authorization": f"Bearer {_DEFAULT_HIVEMIND_KEY}",
+        },
+        method="GET",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            body = resp.read().decode("utf-8")
+            parsed = _parse_json_response(body)
+            if isinstance(parsed, dict):
+                return parsed
+            rows = parsed
+            if not isinstance(rows, list):
+                rows = []
+            return {"results": _rank_hivemind_rows(rows, query)[:_DEFAULT_EXTERNAL_LIMIT]}
+    except TimeoutError as exc:
+        raise HivemindError(f"Hivemind request timed out after {timeout}s") from exc
+    except urllib.error.URLError as exc:
+        raise HivemindError(f"Hivemind HTTP error: {exc}") from exc
+    except ValueError as exc:
+        raise HivemindError(f"Hivemind returned invalid JSON: {exc}") from exc
+
+
+def _parse_json_response(body: str) -> Any:
+    import json
+
+    return json.loads(body)
+
+
+def _search_terms(query: str, *, max_terms: int = 8) -> list[str]:
+    """Return recall-oriented PostgREST search terms for *query*.
+
+    The terms include adjacent phrases before individual tokens. Common generic
+    words are dropped when possible so broad words like ``video`` do not swamp
+    more specific terms such as ``Hotshot`` and ``XL``.
+    """
+    raw_tokens = _query_tokens(query)
+    if not raw_tokens:
+        return []
+    tokens = [t for t in raw_tokens if t.lower() not in _SEARCH_STOPWORDS]
+    if not tokens:
+        tokens = raw_tokens
+
+    terms: list[str] = []
+    for size in (3, 2):
+        for i in range(0, max(0, len(tokens) - size + 1)):
+            terms.append(" ".join(tokens[i : i + size]))
+    terms.extend(tokens)
+
+    deduped: list[str] = []
+    seen: set[str] = set()
+    for term in terms:
+        key = term.casefold()
+        if key not in seen:
+            deduped.append(term)
+            seen.add(key)
+        if len(deduped) >= max_terms:
+            break
+    return deduped
+
+
+def _query_tokens(query: str) -> list[str]:
+    return [m.group(0) for m in _QUERY_TOKEN_RE.finditer(query)]
+
+
+def _postgrest_literal(value: str) -> str:
+    """Sanitize a value embedded in PostgREST's filter grammar."""
+    return re.sub(r"[^A-Za-z0-9_.+ -]", " ", value).strip()
+
+
+def _rank_hivemind_rows(rows: list[Any], query: str) -> list[dict[str, Any]]:
+    query_terms = _search_terms(query, max_terms=12)
+    scored: list[tuple[int, int, dict[str, Any]]] = []
+    for index, row in enumerate(rows):
+        if not isinstance(row, dict):
+            continue
+        title = _first_text(row, "title", "name", "class_type")
+        body = _first_text(row, "body", "description", "content", "text")
+        haystack = f"{title}\n{body}".casefold()
+        score = 0
+        reasons: list[str] = []
+        for term in query_terms:
+            needle = term.casefold()
+            if not needle or needle not in haystack:
+                continue
+            is_phrase = " " in term
+            in_title = needle in title.casefold()
+            score += 50 if is_phrase else 20
+            if in_title:
+                score += 20
+            reasons.append(
+                f"hivemind:{'title' if in_title else 'body'} matched {term!r}"
+            )
+        if score <= 0:
+            continue
+        ranked = dict(row)
+        ranked["score"] = max(int(row.get("score", 0) or 0), score)
+        ranked["reasons"] = reasons or list(row.get("reasons", []) or [])
+        scored.append((ranked["score"], -index, ranked))
+    scored.sort(reverse=True)
+    return [row for _, _, row in scored]
+
+
+def _first_text(item: dict[str, Any], *keys: str) -> str:
+    for key in keys:
+        value = item.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return ""
+
+
+def _coerce_tasks(value: Any) -> list[str]:
+    if isinstance(value, list):
+        return [str(v) for v in value if v is not None]
+    if isinstance(value, tuple):
+        return [str(v) for v in value if v is not None]
+    if isinstance(value, str) and value.strip():
+        return [value.strip()]
+    return []
+
+
+def _excerpt(text: str, *, limit: int = 500) -> str:
+    text = " ".join(text.split())
+    if len(text) <= limit:
+        return text
+    return text[: limit - 1].rstrip() + "…"
+
+
+def _domain(url: str) -> str | None:
+    if not url:
+        return None
+    parsed = urlparse(url)
+    return parsed.netloc or None
+
+
+# ── Hivemind result normalization ────────────────────────────────────────────
+
+
+def _normalize_hivemind_source(item: dict[str, Any]) -> dict[str, Any]:
+    """Normalize a single Hivemind result dict to the canonical source shape."""
+    title = _first_text(item, "class_type", "name", "title")
+    body = _first_text(item, "description", "body", "content", "text")
+    if not title and body:
+        # Unified-feed messages often have no class_type/name/title; use a
+        # compact body excerpt so the source still has a usable identity.
+        title = _excerpt(body, limit=80)
+    url = _first_text(item, "url", "source_url", "permalink", "link")
+    pack = item.get("pack", item.get("package"))
+    if pack is None:
+        pack = item.get("channel", item.get("source_type", item.get("kind"))) or _domain(url)
+    return {
+        "class_type": title,
+        "score": item.get("score", 0),
+        "reasons": _coerce_tasks(item.get("reasons", [])),
+        "source": "hivemind",
+        "pack": pack,
+        "description": _excerpt(body),
+        "tasks": _coerce_tasks(item.get("tasks", item.get("task"))),
+        "hivemind_id": item.get("id"),
+    }
+
+
+def _run_hivemind_research(
+    query: str,
+    *,
+    client: HivemindClient,
+    timeout: float,
+) -> tuple[dict[str, Any], ...]:
+    """Run Hivemind and return normalized sources.
+
+    Raises :class:`HivemindError` on any failure; the public ``research()``
+    caller catches this and converts it to a warning.
+    """
+    response = client(query, timeout)
+    items = response.get("results", response.get("sources", []))
+    if not isinstance(items, list):
+        items = []
+    return tuple(
+        _normalize_hivemind_source(item)
+        for item in items
+        if isinstance(item, dict)
+    )
+
+
+# ── Web fallback ─────────────────────────────────────────────────────────────
+
+
+class _DuckDuckGoHTMLParser(HTMLParser):
+    def __init__(self) -> None:
+        super().__init__()
+        self.results: list[dict[str, str]] = []
+        self._active: dict[str, str] | None = None
+        self._capture: str | None = None
+        self._parts: list[str] = []
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        attr = {k: v or "" for k, v in attrs}
+        classes = set(attr.get("class", "").split())
+        if tag == "a" and "result__a" in classes:
+            self.finish_result()
+            self._active = {"url": _clean_duckduckgo_url(attr.get("href", ""))}
+            self._capture = "title"
+            self._parts = []
+        elif self._active is not None and "result__snippet" in classes:
+            self._capture = "snippet"
+            self._parts = []
+
+    def handle_endtag(self, tag: str) -> None:
+        if self._active is None or self._capture is None:
+            return
+        if self._capture == "title" and tag == "a":
+            self._active["title"] = unescape(" ".join(self._parts).strip())
+            self._capture = None
+            self._parts = []
+        elif self._capture == "snippet" and tag in {"a", "div"}:
+            self._active["snippet"] = unescape(" ".join(self._parts).strip())
+            self.results.append(self._active)
+            self._active = None
+            self._capture = None
+            self._parts = []
+
+    def handle_data(self, data: str) -> None:
+        if self._capture is not None:
+            self._parts.append(data)
+
+    def finish_result(self) -> None:
+        if self._active is None:
+            return
+        if self._capture == "title":
+            self._active["title"] = unescape(" ".join(self._parts).strip())
+        if self._active.get("title") or self._active.get("url"):
+            self._active.setdefault("snippet", "")
+            self.results.append(self._active)
+        self._active = None
+        self._capture = None
+        self._parts = []
+
+
+def _clean_duckduckgo_url(url: str) -> str:
+    parsed = urlparse(unescape(url))
+    if parsed.path == "/l/":
+        uddg = parse_qs(parsed.query).get("uddg", [""])[0]
+        if uddg:
+            return unquote(uddg)
+    return url
+
+
+def _default_web_search_client(query: str, timeout: float) -> dict[str, Any]:
+    """Best-effort public web-search fallback using DuckDuckGo HTML."""
+    url = f"{_DEFAULT_WEB_SEARCH_URL}?q={quote(query)}"
+    req = urllib.request.Request(
+        url,
+        headers={
+            "Accept": "text/html",
+            "User-Agent": (
+                "Mozilla/5.0 (compatible; vibecomfy-research/1.0; "
+                "+https://github.com/peteromallet/vibecomfy)"
+            ),
+        },
+        method="GET",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            html = resp.read().decode("utf-8", errors="replace")
+    except TimeoutError as exc:
+        raise WebSearchError(f"web search timed out after {timeout}s") from exc
+    except urllib.error.URLError as exc:
+        raise WebSearchError(f"web search HTTP error: {exc}") from exc
+
+    parser = _DuckDuckGoHTMLParser()
+    parser.feed(html)
+    parser.finish_result()
+    return {"results": parser.results[:_DEFAULT_EXTERNAL_LIMIT]}
+
+
+def _normalize_web_source(item: dict[str, Any], *, index: int = 0) -> dict[str, Any]:
+    title = _first_text(item, "title", "class_type", "name")
+    url = _first_text(item, "url", "href", "link")
+    snippet = _first_text(item, "snippet", "description", "body")
+    return {
+        "class_type": title or url,
+        "score": max(1, 40 - index),
+        "reasons": ["web search fallback"],
+        "source": "web",
+        "pack": _domain(url),
+        "description": _excerpt(snippet),
+        "tasks": [],
+        "url": url,
+    }
+
+
+def _run_web_search(
+    query: str,
+    *,
+    client: WebSearchClient,
+    timeout: float,
+) -> tuple[dict[str, Any], ...]:
+    response = client(query, timeout)
+    items = response.get("results", response.get("sources", []))
+    if not isinstance(items, list):
+        items = []
+    return tuple(
+        _normalize_web_source(item, index=i)
+        for i, item in enumerate(items)
+        if isinstance(item, dict)
+    )
+
+
+# ── Public API ───────────────────────────────────────────────────────────────
+
+
+def research(
+    query: str,
+    *,
+    task: str | None = None,
+    hivemind_client: HivemindClient | None | object = _USE_DEFAULT,
+    hivemind_timeout: float = _DEFAULT_HIVEMIND_TIMEOUT,
+    web_search_client: WebSearchClient | None | object = _USE_DEFAULT,
+    web_search_timeout: float = _DEFAULT_WEB_SEARCH_TIMEOUT,
+    local_limit: int = 10,
+) -> ResearchResult:
+    """Execute the full research phase: local corpus + external fallback.
+
+    Local-corpus search always runs first and is deterministic (no model calls).
+    Hivemind is injectable: by default the built-in Supabase/PostgREST client
+    runs; when *hivemind_client* is explicitly ``None``, the external tier is
+    skipped.  If Hivemind returns no results, a best-effort no-key web search
+    fallback runs.  External timeouts and errors become warnings — the executor
+    never fails because research endpoints are unreachable.
+
+    Parameters
+    ----------
+    query:
+        The user's natural-language request.
+    task:
+        Optional task hint (e.g. ``"t2v"``) for scorer alias expansion.
+    hivemind_client:
+        Injectable direct-HTTP client callable ``(query: str, timeout: float) → dict``.
+        By default, uses ``_default_hivemind_client``.  Pass ``None`` to skip
+        external Hivemind research.
+    hivemind_timeout:
+        Timeout in seconds for the Hivemind HTTP request.  Non-positive values
+        disable Hivemind.
+    web_search_client:
+        Injectable no-key web-search client used only when Hivemind returns no
+        normalized sources.  By default, uses DuckDuckGo HTML.  Pass ``None`` to
+        disable the fallback.
+    web_search_timeout:
+        Timeout in seconds for the web-search fallback.
+    local_limit:
+        Maximum number of top-scoring local results to include.
+
+    Returns
+    -------
+    ResearchResult
+        Deterministic, local-corpus-first results with compactly normalized
+        sources and non-fatal Hivemind warnings.
+    """
+    # ── Phase 1: deterministic local corpus (always runs) ─────────────────
+    local = run_local_research(query, task=task, limit=local_limit)
+    sources: list[dict[str, Any]] = list(local.sources)
+    warnings: list[str] = list(local.warnings)
+
+    # ── Phase 2: injectable Hivemind (non-fatal on any failure) ───────────
+    resolved_hivemind_client: HivemindClient | None
+    if hivemind_client is _USE_DEFAULT:
+        resolved_hivemind_client = _default_hivemind_client
+    else:
+        resolved_hivemind_client = hivemind_client  # type: ignore[assignment]
+
+    resolved_web_client: WebSearchClient | None
+    if web_search_client is _USE_DEFAULT:
+        resolved_web_client = _default_web_search_client
+    else:
+        resolved_web_client = web_search_client  # type: ignore[assignment]
+
+    hivemind_had_sources = False
+    if resolved_hivemind_client is not None and hivemind_timeout > 0:
+        try:
+            hivemind_sources = _run_hivemind_research(
+                query, client=resolved_hivemind_client, timeout=hivemind_timeout
+            )
+        except HivemindError as exc:
+            warnings.append(f"hivemind: {exc}")
+        except Exception as exc:
+            warnings.append(f"hivemind (unexpected): {exc}")
+        else:
+            hivemind_had_sources = bool(hivemind_sources)
+            # Merge Hivemind results after local, deduplicating by class_type.
+            existing = {s.get("class_type", "") for s in sources}
+            for hs in hivemind_sources:
+                ct = hs.get("class_type", "")
+                if ct and ct not in existing:
+                    sources.append(hs)
+                    existing.add(ct)
+
+    # ── Phase 3: no-key web fallback if Hivemind produced no sources ──────
+    if (
+        not hivemind_had_sources
+        and resolved_hivemind_client is not None
+        and resolved_web_client is not None
+        and hivemind_timeout > 0
+        and web_search_timeout > 0
+    ):
+        try:
+            web_sources = _run_web_search(
+                query, client=resolved_web_client, timeout=web_search_timeout
+            )
+        except WebSearchError as exc:
+            warnings.append(f"web search: {exc}")
+        except Exception as exc:
+            warnings.append(f"web search (unexpected): {exc}")
+        else:
+            if not web_sources:
+                warnings.append("web search: no results")
+            existing = {s.get("class_type", "") for s in sources}
+            for ws in web_sources:
+                ct = ws.get("class_type", "")
+                if ct and ct not in existing:
+                    sources.append(ws)
+                    existing.add(ct)
+
+    # Re-sort: local results first, then Hivemind, then web, each by score.
+    source_order = {"hivemind": 1, "web": 2}
+    sources.sort(
+        key=lambda s: (source_order.get(str(s.get("source")), 0), -s.get("score", 0))
+    )
+
+    # Rebuild summary with merged results.
+    summary = _build_summary(tuple(sources))
+
+    return ResearchResult(
+        summary=summary,
+        sources=tuple(sources),
+        warnings=tuple(warnings),
+    )
+
+
+__all__ = [
+    "HivemindClient",
+    "HivemindError",
+    "WebSearchClient",
+    "WebSearchError",
+    "_default_hivemind_client",
+    "_default_web_search_client",
+    "research",
+    "run_local_research",
+]

@@ -14,6 +14,7 @@ const PANEL_COMPOSER_SOURCE = path.join(REPO_ROOT, "vibecomfy", "comfy_nodes", "
 const LIFECYCLE_SOURCE = path.join(REPO_ROOT, "vibecomfy", "comfy_nodes", "web", "agent_edit_lifecycle.js");
 const ADAPTER_SOURCE = path.join(REPO_ROOT, "vibecomfy", "comfy_nodes", "web", "comfy_adapter.js");
 const RESPONSE_CONTRACT_SOURCE = path.join(REPO_ROOT, "vibecomfy", "comfy_nodes", "web", "agent_edit_response_contract.js");
+const DIAGNOSTICS_REPORTING_SOURCE = path.join(REPO_ROOT, "vibecomfy", "comfy_nodes", "web", "diagnostics_reporting.js");
 
 function clone(value) {
   return value == null ? value : JSON.parse(JSON.stringify(value));
@@ -532,14 +533,27 @@ export async function createBrowserHarness({
   } : null;
 
   const fetchImpl = async (url, options = {}) => {
-    const key = String(url);
-    requests.push({
-      url: key,
-      method: options.method || "GET",
-      headers: clone(options.headers || {}),
-      body: options.body,
-    });
-    operationLog.push({ kind: "request", url: key, method: options.method || "GET" });
+    let key = String(url);
+    if (
+      key === "/vibecomfy/agent-executor"
+      && responses[key] == null
+      && responses["/vibecomfy/agent-edit"] != null
+    ) {
+      key = "/vibecomfy/agent-edit";
+    }
+    const deferRequestLog = key.startsWith("/vibecomfy/agent-edit/chat?");
+    const logRequest = () => {
+      requests.push({
+        url: key,
+        method: options.method || "GET",
+        headers: clone(options.headers || {}),
+        body: options.body,
+      });
+      operationLog.push({ kind: "request", url: key, method: options.method || "GET" });
+    };
+    if (!deferRequestLog) {
+      logRequest();
+    }
     const entry = responses[key];
     if (entry instanceof Error) {
       throw entry;
@@ -594,8 +608,14 @@ export async function createBrowserHarness({
         url: key,
         options: { ...clone(options), signal: options.signal },
       }));
+      if (deferRequestLog) {
+        logRequest();
+      }
       operationLog.push({ kind: "response", url: key, status: value.status || 200 });
       return makeResponse(value.status || 200, value.body);
+    }
+    if (deferRequestLog) {
+      logRequest();
     }
     operationLog.push({ kind: "response", url: key, status: entry.status || 200 });
     return makeResponse(entry.status || 200, entry.body);
@@ -619,6 +639,7 @@ export async function createBrowserHarness({
   await writeFile(path.join(webRoot, "agent_edit_lifecycle.js"), await readFile(LIFECYCLE_SOURCE, "utf8"));
   await writeFile(path.join(webRoot, "comfy_adapter.js"), await readFile(ADAPTER_SOURCE, "utf8"));
   await writeFile(path.join(webRoot, "agent_edit_response_contract.js"), await readFile(RESPONSE_CONTRACT_SOURCE, "utf8"));
+  await writeFile(path.join(webRoot, "diagnostics_reporting.js"), await readFile(DIAGNOSTICS_REPORTING_SOURCE, "utf8"));
 
   const apiEventListeners = {};
   const mockApi = {
@@ -658,6 +679,7 @@ export async function createBrowserHarness({
   const originalClearTimeout = globalThis.clearTimeout;
   const originalApp = globalThis.__VIBECOMFY_BROWSER_APP__;
   const originalApi = globalThis.__VIBECOMFY_BROWSER_API__;
+  const originalComfyAPI = globalThis.window?.comfyAPI;
   const hadCrypto = "crypto" in globalThis;
 
   const blobUrls = [];
@@ -685,6 +707,11 @@ export async function createBrowserHarness({
   globalThis.fetch = fetchImpl;
   globalThis.__VIBECOMFY_BROWSER_APP__ = app;
   globalThis.__VIBECOMFY_BROWSER_API__ = mockApi;
+  globalThis.window.comfyAPI = {
+    app: { app },
+    api: { api: mockApi },
+  };
+  globalThis.window.__VIBECOMFY_ENABLE_LEGACY_CHAT_REHYDRATE__ = true;
   if (!hadCrypto) {
     globalThis.crypto = (await import("node:crypto")).webcrypto;
   }
@@ -823,7 +850,10 @@ export async function createBrowserHarness({
     async invokeCommand(id) {
       const command = this.getCommands().find((entry) => entry.id === id);
       assert(command, `missing command ${id}`);
-      return command.function();
+      const result = command.function();
+      await Promise.resolve();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      return result;
     },
     findButtons(label) {
       return findButtons(label);
@@ -943,6 +973,11 @@ export async function createBrowserHarness({
       else globalThis.__VIBECOMFY_BROWSER_APP__ = originalApp;
       if (originalApi === undefined) delete globalThis.__VIBECOMFY_BROWSER_API__;
       else globalThis.__VIBECOMFY_BROWSER_API__ = originalApi;
+      if (globalThis.window && originalComfyAPI !== undefined) {
+        globalThis.window.comfyAPI = originalComfyAPI;
+      } else if (globalThis.window) {
+        delete globalThis.window.comfyAPI;
+      }
       if (!hadCrypto) delete globalThis.crypto;
       globalThis.console = originalConsole;
       await rm(tempRoot, { recursive: true, force: true });

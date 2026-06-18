@@ -26,16 +26,15 @@ _REAL_AGENT_ACTORS = frozenset({"hermes", "deepseek-subagent", "subagent-launche
 
 
 def _ensure_megaplan_importable(actor: str) -> None:
-    """Make the ``megaplan`` package importable for real-agent actors.
+    """Best-effort: make the legacy ``megaplan`` package importable if present.
 
-    The DeepSeek/hermes/subagent-launcher actors do ``import megaplan.agent`` to
-    install the hermes runtime. ``megaplan`` is an editable sibling checkout, not
-    a pip dependency, so resolve it durably here instead of requiring a manual
-    ``PYTHONPATH=...`` prefix on every invocation. Resolution order:
-    already-importable → ``MEGAPLAN_HOME`` → known sibling locations. Raises a
-    clear error only when a real-agent actor needs it and it cannot be found.
+    Modern Sisypy dispatchers (hermes, deepseek-subagent) no longer require
+    ``import megaplan.agent``. ``megaplan`` may be an editable sibling checkout,
+    so resolve it when available, but warn and continue instead of blocking the
+    run when it is absent.
     """
     import importlib.util
+    import warnings
 
     if actor not in _REAL_AGENT_ACTORS:
         return
@@ -54,9 +53,6 @@ def _ensure_megaplan_importable(actor: str) -> None:
     for cand in candidates:
         if (cand / "megaplan" / "__init__.py").is_file():
             sys.path.insert(0, str(cand))
-            # Also export on PYTHONPATH so subprocess launchers (the executor's
-            # AND the assessor's hermes agents, spawned via subprocess) inherit
-            # megaplan — `sys.path` changes do NOT propagate to child processes.
             existing = os.environ.get("PYTHONPATH", "")
             parts = existing.split(os.pathsep) if existing else []
             if str(cand) not in parts:
@@ -66,11 +62,11 @@ def _ensure_megaplan_importable(actor: str) -> None:
                 return
 
     tried = ", ".join(str(c) for c in candidates) or "(no candidates)"
-    raise RuntimeError(
-        f"Actor {actor!r} needs the 'megaplan' package (it does 'import "
-        "megaplan.agent'), but it is not importable. Set MEGAPLAN_HOME to your "
-        "megaplan checkout, add it to PYTHONPATH, or pip install it. "
-        f"Tried: {tried}"
+    warnings.warn(
+        f"Actor {actor!r} could not locate the legacy 'megaplan' package "
+        f"(tried {tried}). Continuing anyway; modern dispatchers do not require it.",
+        RuntimeWarning,
+        stacklevel=2,
     )
 
 

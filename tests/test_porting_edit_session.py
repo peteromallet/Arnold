@@ -3405,6 +3405,41 @@ class TestSearchQuery:
         assert expected_returns in result, f"formatted result missing 16 output types"
 
 
+class TestPythonQuery:
+    """Tests for the side-effect-free python() query."""
+
+    def test_python_returns_current_render(self) -> None:
+        session = _primitive_session()
+
+        assert session.python() == session.last_rendered_source
+        assert "SourceOne" in session.last_rendered_source
+
+    def test_python_batch_query_returns_rendered_output(self) -> None:
+        session = _primitive_session()
+        before = deepcopy(session.working_ui)
+        landed_before = len(session.landed_ops)
+
+        result = session.apply_batch("python()\n")
+
+        assert result.ok is True
+        assert len(result.statements) == 1
+        statement = result.statements[0]
+        assert statement.op_kind == "query"
+        assert statement.landed is False
+        assert statement.detail["query"] == "python"
+        assert "SourceOne" in statement.detail["query_output"]
+        assert session.working_ui == before
+        assert len(session.landed_ops) == landed_before
+
+    def test_python_rejects_arguments(self) -> None:
+        session = _primitive_session()
+
+        result = session.apply_batch('python("x")\n')
+
+        assert result.ok is False
+        assert result.statements[0].diagnostics[0].code == "python_arguments_not_allowed"
+
+
 class TestReadOnlyNoOpSessions:
     """Read-only queries should preserve an empty/no-op session."""
 
@@ -3415,6 +3450,7 @@ class TestReadOnlyNoOpSessions:
         _ = session.describe("src")
         _ = session.search()
         _ = session.search(formatted=True)
+        _ = session.python()
 
         result = session.done()
 
