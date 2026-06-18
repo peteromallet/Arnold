@@ -1,0 +1,8 @@
+{
+  "ok": true,
+  "action": "reject",
+  "session_id": "session-reject",
+  "turn_id": "0001",
+  "rejected": { "turn_id": "0001" },
+  "message": "Candidate rejected."
+}

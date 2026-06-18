@@ -1,0 +1,17 @@
+{
+  "ok": true,
+  "exists": true,
+  "session_path": "out/editor_sessions/sess-pack",
+  "total_bytes": 1024,
+  "files": [
+    {
+      "name": "turns/0001/response.json",
+      "text": "{\"ok\":true}\n"
+    },
+    {
+      "name": "turns/0001/chat.json",
+      "text": "{\"messages\":[]}\n"
+    }
+  ],
+  "skipped": []
+}

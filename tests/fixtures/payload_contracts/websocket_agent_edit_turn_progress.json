@@ -1,0 +1,22 @@
+{
+  "session_id": "sess-batch-progress",
+  "turn_id": "0002",
+  "turn_number": 1,
+  "entry_type": "batch",
+  "status": "progress",
+  "emitted_at": "2025-06-01T12:00:01.234Z",
+  "message": "Researching available templates...",
+  "batch_ok": true,
+  "statement_count": 3,
+  "landed_op_count": 0,
+  "statements": [
+    { "op_kind": "query", "status": "done", "message": "Queried template index" },
+    { "op_kind": "search", "status": "done" },
+    { "op_kind": "analyze", "status": "active", "message": "Analyzing graph structure" }
+  ],
+  "timing": {
+    "model_elapsed_ms": 450,
+    "engine_elapsed_ms": 12,
+    "turn_elapsed_ms": 500
+  }
+}

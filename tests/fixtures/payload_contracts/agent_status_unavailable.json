@@ -1,0 +1,6 @@
+{
+  "ok": false,
+  "provider_available": false,
+  "message": "Status unavailable: HTTP 502",
+  "detail": "HTTP 502"
+}

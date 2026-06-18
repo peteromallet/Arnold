@@ -1,0 +1,8 @@
+{
+  "ok": true,
+  "mode": "clarify",
+  "reply": "Should I replace the sampler?",
+  "session_id": "session-clarify",
+  "clarification_required": true,
+  "clarification_message": "Should I replace the sampler?"
+}

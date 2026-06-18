@@ -1,0 +1,31 @@
+{
+  "ok": true,
+  "action": "accept",
+  "session_id": "session-stale-arrival",
+  "turn_id": "0001",
+  "baseline_turn_id": "0001",
+  "baseline_graph_hash": "abc123def",
+  "baseline_graph_hash_kind": "structural",
+  "baseline_graph_hash_version": 1,
+  "baseline_source": "turn",
+  "baseline_graph_source_path": "turns/0001/candidate.ui.json",
+  "canvas_apply_allowed": true,
+  "apply_allowed": true,
+  "queue_allowed": true,
+  "message": "Candidate accepted.",
+  "graph": {
+    "nodes": [{ "id": 9, "type": "PreviewImage", "properties": { "vibecomfy_uid": "uid-9" } }],
+    "links": []
+  },
+  "report": {
+    "change": {
+      "content_edits": {
+        "preserved": ["uid-1"],
+        "edited": ["uid-9"],
+        "removed_named": []
+      }
+    },
+    "recovery": []
+  },
+  "audit_ref": { "path": "/tmp/accept-audit.json" }
+}

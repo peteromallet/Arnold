@@ -1,0 +1,17 @@
+{
+  "ok": false,
+  "stage": "classify",
+  "kind": "ProviderError",
+  "message": "timeout",
+  "agent_failure_context": {
+    "kind": "ProviderError",
+    "stage": "classify",
+    "message": "timeout",
+    "issues": [
+      {
+        "code": "provider_timeout",
+        "detail": "Provider did not respond within timeout"
+      }
+    ]
+  }
+}
