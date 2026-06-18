@@ -1,0 +1,158 @@
+base_branch: main
+
+milestones:
+  - label: m0-workspace-scaffold
+    idea: .megaplan/briefs/reigh-extension-layer-epic/m0-workspace-scaffold.md
+    branch: epic/reigh-ext-m0-workspace-scaffold
+    profile: partnered-5
+    robustness: full
+    depth: medium
+    vendor: codex
+    notes: "Create stable SDK/schema import paths, build aliases, and megaplan profile config so the chain can start cleanly."
+
+  - label: m1-sdk-kernel
+    idea: .megaplan/briefs/reigh-extension-layer-epic/m1-sdk-kernel.md
+    branch: epic/reigh-ext-m1-sdk-kernel
+    profile: partnered-5
+    robustness: thorough
+    depth: high
+    vendor: codex
+    notes: "Freeze the trusted local extension kernel, provider injection, contribution IDs, diagnostics, reserved future fields, permissions/process metadata, and export guard baseline."
+
+  - label: m2-surfaces
+    idea: .megaplan/briefs/reigh-extension-layer-epic/m2-surfaces.md
+    branch: epic/reigh-ext-m2-surfaces
+    profile: partnered-5
+    robustness: full
+    depth: high
+    vendor: codex
+    notes: "Complete UI surfaces, committed codePanel, inspectors, overlays, subscriptions, responsive runtime, diagnostic collections, and host containment."
+
+  - label: m3-timeline-patch
+    idea: .megaplan/briefs/reigh-extension-layer-epic/m3-timeline-patch.md
+    branch: epic/reigh-ext-m3-timeline-patch
+    profile: partnered-5
+    robustness: thorough
+    depth: high
+    vendor: codex
+    notes: "Build semantic TimelinePatch, sync-aware ordering, atomic TimelineOps, proposals, optimistic concurrency, and preview overlays."
+
+  - label: m4-commands
+    idea: .megaplan/briefs/reigh-extension-layer-epic/m4-commands.md
+    branch: epic/reigh-ext-m4-commands
+    profile: partnered-5
+    robustness: full
+    depth: medium
+    vendor: codex
+    notes: "Add extension commands, keybindings, context menus, command palette integration, and patch-backed example workflows."
+
+  - label: m5-registry-foundation
+    idea: .megaplan/briefs/reigh-extension-layer-epic/m5-registry-foundation.md
+    branch: epic/reigh-ext-m5-registry-foundation
+    profile: partnered-5
+    robustness: thorough
+    depth: high
+    vendor: codex
+    notes: "Refactor render registries to provider-scoped lifecycle with provenance, renderability, HMR safety, cleanup, and minimal trusted loader enable/disable before registry consumers depend on it."
+
+  - label: m6-assets-astrid-output
+    idea: .megaplan/briefs/reigh-extension-layer-epic/m6-assets-astrid.md
+    branch: epic/reigh-ext-m6-assets-astrid-output
+    profile: partnered-5
+    robustness: full
+    depth: high
+    vendor: codex
+    notes: "Add asset metadata/parser contributions, compile-only output formats via the M5 registry foundation, and prove the local-first loop through Astrid."
+
+  - label: m7-component-effects
+    idea: .megaplan/briefs/reigh-extension-layer-epic/m7-component-effects.md
+    branch: epic/reigh-ext-m7-component-effects
+    profile: partnered-5
+    robustness: full
+    depth: high
+    vendor: codex
+    notes: "Bridge trusted local React/Remotion component effects into the provider-scoped registry, picker flow, inspector, and export-readiness scan."
+
+  - label: m8-transitions
+    idea: .megaplan/briefs/reigh-extension-layer-epic/m8-transitions.md
+    branch: epic/reigh-ext-m8-transitions
+    profile: partnered-5
+    robustness: thorough
+    depth: high
+    vendor: codex
+    notes: "Add dynamic transition contributions, registry lookup, params, repair, picker UI, and export blockers."
+
+  - label: m9-clip-types-keyframes
+    idea: .megaplan/briefs/reigh-extension-layer-epic/m9-clip-types-keyframes.md
+    branch: epic/reigh-ext-m9-clip-types-keyframes
+    profile: partnered-5
+    robustness: thorough
+    depth: high
+    vendor: codex
+    notes: "Add public clip-type renderer dispatch and deterministic keyframes for procedural parameters."
+
+  - label: m10-agent-tools
+    idea: .megaplan/briefs/reigh-extension-layer-epic/m10-agent-tools.md
+    branch: epic/reigh-ext-m10-agent-tools
+    profile: partnered-5
+    robustness: full
+    depth: high
+    vendor: codex
+    notes: "Make agent tools proposal-backed contribution kinds, add schema-rendered invocation UI, progress/cancel, and adapt at least one existing AI workflow."
+
+  - label: m11-live-data-bridge
+    idea: .megaplan/briefs/reigh-extension-layer-epic/m11-live-data-bridge.md
+    branch: epic/reigh-ext-m11-live-data-bridge
+    profile: partnered-5
+    robustness: full
+    depth: high
+    vendor: codex
+    notes: "Add live data lifecycle, ring buffers, frame-read bridge, bake semantics, permissions helpers, and webcam/diffusion canary."
+
+  - label: m12-render-capabilities-sidecars
+    idea: .megaplan/briefs/reigh-extension-layer-epic/m12-render-capabilities-sidecars.md
+    branch: epic/reigh-ext-m12-render-capabilities-sidecars
+    profile: partnered-5
+    robustness: thorough
+    depth: high
+    vendor: codex
+    notes: "Introduce render capability planning, render-dependent output formats, sidecar artifacts, trusted local process lifecycle, and IPC canary."
+
+  - label: m13-shader-webgl-bridge
+    idea: .megaplan/briefs/reigh-extension-layer-epic/m13-shader-webgl-bridge.md
+    branch: epic/reigh-ext-m13-shader-webgl-bridge
+    profile: partnered-5
+    robustness: thorough
+    depth: high
+    vendor: codex
+    notes: "Add the first browser-preview shader/WebGL bridge with uniforms, diagnostics, deterministic preview tests, and honest export blockers."
+
+  - label: m14-packaging-loader-manager
+    idea: .megaplan/briefs/reigh-extension-layer-epic/m14-packaging-loader-manager.md
+    branch: epic/reigh-ext-m14-packaging-loader-manager
+    profile: partnered-5
+    robustness: thorough
+    depth: high
+    vendor: codex
+    notes: "Move from local source imports toward installable packs, runtime loader, extension manager, persisted settings, integrity, and migrations."
+
+  - label: m15-hardening-docs
+    idea: .megaplan/briefs/reigh-extension-layer-epic/m15-hardening-docs.md
+    branch: epic/reigh-ext-m15-hardening-docs
+    profile: partnered-5
+    robustness: full
+    depth: medium
+    vendor: codex
+    notes: "Harden examples, compatibility tests, docs, migration notes, and release gates for the extension platform."
+
+on_failure:
+  abort: stop_chain
+on_escalate:
+  abort: stop_chain
+merge_policy: auto
+
+driver:
+  robustness: full
+  auto_approve: true
+  max_iterations: 120
+  poll_sleep: 8.0

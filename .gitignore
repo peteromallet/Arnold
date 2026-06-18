@@ -57,6 +57,7 @@ temp/
 !docs/design/*.md
 !tasks/*.md
 !CLAUDE.md
+!/.megaplan/briefs/**/*.md
 
 # Stray media files in root (should be in public/)
 /*.mp4
