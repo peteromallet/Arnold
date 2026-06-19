@@ -1,0 +1,70 @@
+{
+  "id": "log_14dfecb5c1b0",
+  "level": "debug",
+  "category": "system",
+  "event_type": "authority_divergence",
+  "message": "authority_divergence emitted",
+  "details": {
+    "event": {
+      "seq": 3120,
+      "schema_version": 1,
+      "ts_utc": "2026-06-19T18:41:04.738937+00:00",
+      "ts_rel_init_s": 3436.550974,
+      "kind": "authority_divergence",
+      "phase": "execute",
+      "payload": {
+        "diagnostic_version": 1,
+        "task_id": "T3",
+        "raw_terminal_status": "done",
+        "authority_status": "unknown",
+        "authoritative": false,
+        "reason": "stale_evidence:missing_head:task_files_changed",
+        "missing_outputs": [],
+        "stale_evidence": [
+          "missing_head:task_files_changed",
+          "missing_head:task_files_changed",
+          "missing_head:task_files_changed",
+          "missing_head:task_commands_run",
+          "missing_head:task_commands_run",
+          "missing_head:task_files_changed",
+          "missing_head:task_files_changed",
+          "missing_head:task_commands_run",
+          "missing_head:task_commands_run"
+        ],
+        "would_block_reasons": [
+          "stale_evidence:missing_head:task_files_changed",
+          "stale_evidence:missing_head:task_commands_run"
+        ],
+        "error": null,
+        "diagnostics": {
+          "task_id": "T3",
+          "declared_outputs": {
+            "files_changed": [
+              "arnold/pipeline/native/MILESTONE_3_HANDOFF.md",
+              "tests/arnold/pipeline/native/test_runtime.py"
+            ],
+            "commands_run": [
+              "python -m pytest tests/arnold/pipeline/native/test_runtime.py -v (43 tests)",
+              "python -m pytest tests/arnold/pipeline/native/ -q (226 tests)"
+            ]
+          },
+          "linked_evidence_count": 9,
+          "evidence_count": 42,
+          "normalization": "iterable",
+          "status": "unknown",
+          "evidence_sources": [
+            "plan_artifacts"
+          ],
+          "loaded_evidence_count": 42,
+          "raw_terminal_status": "done"
+        },
+        "ts_utc": "2026-06-19T18:41:04.738543+00:00"
+      },
+      "transaction_id": "ab699d133f009100",
+      "store_method": "log_system_event"
+    }
+  },
+  "turn_id": null,
+  "epic_id": "handoff-artifacts-exact-20260619-1943",
+  "occurred_at": "2026-06-19T18:41:04.738979Z"
+}

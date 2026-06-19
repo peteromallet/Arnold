@@ -504,7 +504,63 @@ def run_native_pipeline(
             else:
                 ctx["artifact_root"] = str(artifact_root)
 
-            result = instr.func(ctx)
+            # ── Hook: on_step_start (may rewrite ctx) ─────────────
+            ctx = _hooks.on_step_start(instr, ctx)
+
+            # ── Control override short-circuit ──────────────────────
+            # When a hook (e.g. MegaplanNativeRuntimeHooks) resolves a
+            # catalog-driven control override, the context will carry
+            # ``__override_route__``.  Skip the decision body and route
+            # directly.  Priority: halt > override > decision > normal.
+            control_override: str | None = ctx.pop("__override_route__", None)
+            if control_override is None:
+                # Backward-compat for older hook implementations that use
+                # the original key name.
+                control_override = ctx.pop("__control_override__", None)
+
+            if control_override is not None:
+                # Resolve the override route to a branch label.  First
+                # try the action name itself (e.g. "abort",
+                # "force_proceed"); if that is not in the vocabulary, fall
+                # back to "override"; otherwise execute the decision body
+                # normally so the program does not silently misroute.
+                override_label: str | None = control_override
+                if instr.branches and control_override not in instr.branches:
+                    override_label = (
+                        "override" if "override" in instr.branches else None
+                    )
+
+                if override_label is not None:
+                    # Build a synthetic result carrying the override
+                    # metadata.  The decision body is intentionally
+                    # **not** called — this is the control-override
+                    # short-circuit.
+                    result: Any = {"__override_route__": control_override}
+                    result = _hooks.on_step_end(instr, ctx, result)
+                    label: str = override_label
+                else:
+                    # No matching branch for the override — execute the
+                    # decision body normally.
+                    try:
+                        result = instr.func(ctx)
+                    except BaseException as exc:
+                        _hooks.on_step_error(instr, ctx, exc)
+                        raise
+                    result = _hooks.on_step_end(instr, ctx, result)
+                    label = _resolve_decision_label(result)
+            else:
+                # ── Normal decision execution (no override) ──────────
+                try:
+                    result = instr.func(ctx)
+                except BaseException as exc:
+                    _hooks.on_step_error(instr, ctx, exc)
+                    raise
+
+                # ── Hook: on_step_end (may rewrite result) ────────────
+                result = _hooks.on_step_end(instr, ctx, result)
+
+                # Resolve branch label
+                label = _resolve_decision_label(result)
 
             # ── Envelope accumulation for decisions ───────────────
             step_envelope: Any = None
@@ -513,9 +569,6 @@ def run_native_pipeline(
             elif isinstance(result, dict):
                 step_envelope = result.get("envelope")
             envelope = _hooks.join_envelope(instr, envelope, step_envelope)
-
-            # Resolve branch label
-            label = _resolve_decision_label(result)
 
             # ── Validate decision return value against declared vocabulary ──
             if instr.branches and label not in instr.branches:
@@ -552,6 +605,9 @@ def run_native_pipeline(
                             pc=pc,
                             envelope=envelope,
                         )
+
+                # ── Hook: on_stage_complete (normal decision completion) ──
+                _hooks.on_stage_complete(instr, ctx, result, state, owned_keys)
 
                 pc = target_pc
                 forward_visited.clear()
