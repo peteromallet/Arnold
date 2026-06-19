@@ -112,7 +112,9 @@ def test_stage_entry_hardlinks_or_symlinks_all_targets(monkeypatch: pytest.Monke
 
     assert staged_paths == [
         models_root / "checkpoints/model.bin",
+        models_root / "checkpoints/alias.bin",
         models_root / "diffusion_models/model.bin",
+        models_root / "diffusion_models/alias.bin",
     ]
     for staged in staged_paths:
         assert staged.read_bytes() == b"model-bytes"
@@ -211,6 +213,34 @@ def test_stage_entry_keeps_existing_target_that_satisfies_pins(monkeypatch: pyte
     assert staged_paths == [target]
     assert calls == []
     assert target.read_bytes() == payload
+
+
+def test_stage_entry_creates_alias_for_existing_target(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    payload = b"model-bytes"
+    target = tmp_path / "models" / "checkpoints" / "model.bin"
+    target.parent.mkdir(parents=True)
+    target.write_bytes(payload)
+    calls: list[object] = []
+
+    def fake_hf_download(**kwargs: object) -> str:
+        calls.append(kwargs)
+        return str(tmp_path / "should-not-download")
+
+    monkeypatch.setattr("huggingface_hub.hf_hub_download", fake_hf_download)
+    entry = ModelEntry(
+        id="aliased",
+        source=ModelSource(kind="huggingface", repo="example/repo", filename="model.bin"),
+        min_size=1,
+        targets=(ModelTarget(node_pack="comfy_gguf", path="checkpoints/model.bin"),),
+        aliases=("alias.bin",),
+    )
+
+    staged_paths = stage_entry(entry, models_root=tmp_path / "models")
+
+    alias = tmp_path / "models" / "checkpoints" / "alias.bin"
+    assert staged_paths == [target, alias]
+    assert alias.read_bytes() == payload
+    assert calls == []
 
 
 def test_load_registry_supports_composite_files_and_deterministic_hash(tmp_path: Path) -> None:

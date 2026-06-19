@@ -109,6 +109,7 @@ def stage_entry(entry: ModelEntry, *, models_root: Path) -> list[Path]:
         if os.path.lexists(staged):
             if _existing_target_satisfies(staged, entry):
                 staged_paths.append(staged)
+                staged_paths.extend(_stage_aliases(entry, source=staged, target=target, models_root=models_root))
                 continue
             _check_collision(staged, source, entry.id)
             staged.unlink()
@@ -119,6 +120,7 @@ def stage_entry(entry: ModelEntry, *, models_root: Path) -> list[Path]:
         _check_size(staged, entry.min_size, entry.id)
         _check_pins(staged, entry)
         staged_paths.append(staged)
+        staged_paths.extend(_stage_aliases(entry, source=staged, target=target, models_root=models_root))
     return staged_paths
 
 
@@ -128,6 +130,31 @@ def _existing_source(entry: ModelEntry, *, models_root: Path) -> Path | None:
         if os.path.lexists(staged) and _existing_target_satisfies(staged, entry):
             return staged.resolve(strict=True)
     return None
+
+
+def _stage_aliases(entry: ModelEntry, *, source: Path, target: ModelTarget, models_root: Path) -> list[Path]:
+    if not entry.aliases:
+        return []
+    staged_aliases: list[Path] = []
+    target_dir = (models_root / target.path).parent
+    for alias in entry.aliases:
+        if "/" in alias or "\\" in alias:
+            continue
+        alias_path = target_dir / alias
+        if os.path.lexists(alias_path):
+            if _existing_target_satisfies(alias_path, entry):
+                staged_aliases.append(alias_path)
+                continue
+            _check_collision(alias_path, source, entry.id)
+            alias_path.unlink()
+        try:
+            os.link(source, alias_path)
+        except OSError:
+            os.symlink(source, alias_path)
+        _check_size(alias_path, entry.min_size, entry.id)
+        _check_pins(alias_path, entry)
+        staged_aliases.append(alias_path)
+    return staged_aliases
 
 
 def stage_many(entries: Sequence[ModelEntry], *, models_root: Path, ids: Sequence[str] | None = None) -> None:
