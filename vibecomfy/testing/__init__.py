@@ -27,17 +27,28 @@ from vibecomfy.testing.assertions import (
     assert_output_kind,
 )
 from vibecomfy.testing.dry_run import DryRunResult, WouldInvoke, dry_run
-from vibecomfy.testing.fixtures import (
-    DryRuntime,
-    HandleFactory,
-    WorkflowFactory,
-    dry_runtime,
-    make_handle_factory,
-    make_workflow_factory,
-    vibecomfy_handle_factory,
-    vibecomfy_workflow_factory,
-)
 from vibecomfy.testing.snapshot import canonicalize_api
+
+_FIXTURE_EXPORTS = {
+    "WorkflowFactory",
+    "HandleFactory",
+    "DryRuntime",
+    "vibecomfy_workflow_factory",
+    "vibecomfy_handle_factory",
+    "dry_runtime",
+    "make_workflow_factory",
+    "make_handle_factory",
+}
+
+
+def __getattr__(name: str):
+    if name in _FIXTURE_EXPORTS:
+        from vibecomfy.testing import fixtures
+
+        value = getattr(fixtures, name)
+        globals()[name] = value
+        return value
+    raise AttributeError(f"module 'vibecomfy.testing' has no attribute {name!r}")
 
 __all__ = [
     # Schema Protocols (local, runtime-free)
