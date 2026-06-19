@@ -2619,16 +2619,14 @@ def handle_execute_auto_loop(
                 batch_agent, batch_mode, batch_model = (
                     tier_agent, tier_mode, tier_model
                 )
-                # Freshness: first batch keeps the caller's refreshed
-                # value (unless rework/block retry already forced it);
-                # later batches force a fresh session when the resolved
-                # model identity differs from the previous batch.
+                # Freshness: start a new session for every batch after the
+                # first. Persistent codex sessions accumulate context across
+                # batches and eventually return empty output; per-batch sessions
+                # keep context bounded without changing the resolved model.
                 if batch_index == 1:
                     batch_refreshed = refreshed  # already set by caller
-                elif prev_batch_identity is not None:
-                    new_identity = (batch_agent, batch_model)
-                    if new_identity != prev_batch_identity:
-                        batch_refreshed = True
+                else:
+                    batch_refreshed = True
                 # Update active-step state to reflect the tier-selected model
                 # while this batch runs. Persist immediately so the on-disk
                 # run_id matches the one the worker's liveness callback uses for
@@ -2805,9 +2803,15 @@ def handle_execute_auto_loop(
         refreshed = result.refreshed
 
     plan_mode = state["config"].get("mode", "code")
+    # Aggregate from the durable audited batch artifacts (execution_batch_N.json)
+    # rather than the in-memory raw payloads. Raw payloads can be truncated or
+    # placeholders; the audited files carry the final files_changed/task_updates.
+    audited_batch_payloads = [
+        read_json(path) for path in list_batch_artifacts(plan_dir)
+    ] or batch_payloads
     aggregate_payload = _build_aggregate_execution_payload(
-        batch_payloads,
-        completed_batches=len(batch_payloads),
+        audited_batch_payloads,
+        completed_batches=len(audited_batch_payloads),
         total_batches=total_batches,
         mode=plan_mode,
         plan_dir=plan_dir,
