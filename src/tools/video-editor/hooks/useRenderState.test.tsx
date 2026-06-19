@@ -2302,4 +2302,245 @@ describe('useRenderState — M6 export behavior', () => {
     expect(mocks.startClientRender).not.toHaveBeenCalled();
   });
 });
+
+// ---------------------------------------------------------------------------
+// Export guard — clip-type registry snapshot integration
+// ---------------------------------------------------------------------------
+
+describe('useRenderState export guard — clip-type registry snapshot', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.startClientRender.mockResolvedValue(undefined);
+    guardMocks.collectBuiltInKnownIds.mockReturnValue({
+      clipTypes: new Set(['media', 'text', 'hold', 'effect-layer']),
+      effectTypes: new Set(),
+      transitionTypes: new Set(),
+    });
+    guardMocks.collectExtensionDeclaredIds.mockReturnValue({
+      effectIds: new Set(),
+      transitionIds: new Set(),
+      clipTypeIds: new Set(),
+    });
+  });
+
+  it('passes clipTypeRegistrySnapshot to scanExportConfig when guard runs', async () => {
+    const extRuntime = makeExtensionRuntime({
+      extensions: [
+        {
+          manifest: {
+            id: 'test-ext' as any,
+            version: '1.0.0',
+            contributions: [],
+          },
+        } as any,
+      ],
+    });
+
+    guardMocks.scanExportConfig.mockReturnValue({
+      ...cleanGuardResult(),
+    });
+
+    const { result } = renderHook(() => useRenderState(
+      buildConfig({
+        id: 'c1',
+        clipType: 'media',
+        track: 'V1',
+        at: 0,
+        hold: 1,
+      }),
+      null,
+      null,
+      extRuntime,
+    ));
+
+    await act(async () => {
+      await result.current.startRender();
+    });
+
+    expect(guardMocks.scanExportConfig).toHaveBeenCalledTimes(1);
+    const callArgs = guardMocks.scanExportConfig.mock.calls[0];
+    // 6th argument should be the clipTypeRegistrySnapshot
+    expect(callArgs).toHaveLength(6);
+    // The clipTypeRegistrySnapshot is the 6th argument (index 5)
+    expect(callArgs[5]).toBeDefined();
+  });
+
+  it('includes clipType details in render log for blocking clip-type errors', async () => {
+    const extRuntime = makeExtensionRuntime({
+      extensions: [
+        {
+          manifest: {
+            id: 'test-ext' as any,
+            version: '1.0.0',
+            contributions: [],
+          },
+        } as any,
+      ],
+    });
+
+    guardMocks.scanExportConfig.mockReturnValue({
+      ...cleanGuardResult(),
+      diagnostics: [
+        {
+          severity: 'error',
+          code: 'export/unrenderable-clip-type',
+          message: 'Clip type "stale-clip-type" is registered but inactive and cannot be used for export or preview.',
+          extensionId: 'ext.stale',
+          contributionId: 'test:clipType:stale-clip-type',
+          detail: {
+            clipId: 'c1',
+            clipType: 'stale-clip-type',
+            clipTypeStatus: 'inactive',
+            provenance: 'bundled-extension',
+          },
+        },
+      ],
+      hasBlockingErrors: true,
+    });
+
+    const { result } = renderHook(() => useRenderState(
+      buildConfig({
+        id: 'c1',
+        clipType: 'media',
+        track: 'V1',
+        at: 0,
+        hold: 1,
+      }),
+      null,
+      null,
+      extRuntime,
+    ));
+
+    await act(async () => {
+      await result.current.startRender();
+    });
+
+    expect(result.current.renderStatus).toBe('error');
+    expect(result.current.renderLog).toContain('Export guard');
+    expect(result.current.renderLog).toContain('stale-clip-type');
+    expect(result.current.renderLog).toContain('export/unrenderable-clip-type');
+    expect(result.current.renderLog).toContain('inactive');
+    expect(mocks.startClientRender).not.toHaveBeenCalled();
+  });
+
+  it('includes clipType details in render log for warning diagnostics', async () => {
+    const extRuntime = makeExtensionRuntime({
+      extensions: [
+        {
+          manifest: {
+            id: 'test-ext' as any,
+            version: '1.0.0',
+            contributions: [],
+          },
+        } as any,
+      ],
+    });
+
+    guardMocks.scanExportConfig.mockReturnValue({
+      ...cleanGuardResult(),
+      diagnostics: [
+        {
+          severity: 'warning',
+          code: 'export/unknown-clip-type',
+          message: 'Clip type "future-clip" is declared by an inactive extension and may not be available at export time.',
+          detail: { clipId: 'c1', clipType: 'future-clip' },
+        },
+      ],
+      hasBlockingErrors: false,
+    });
+
+    const { result } = renderHook(() => useRenderState(
+      buildConfig({
+        id: 'c1',
+        clipType: 'media',
+        track: 'V1',
+        at: 0,
+        hold: 1,
+      }),
+      null,
+      null,
+      extRuntime,
+    ));
+
+    await act(async () => {
+      await result.current.startRender();
+    });
+
+    // Warning only — native routing preserved
+    expect(mocks.startClientRender).toHaveBeenCalledTimes(1);
+    expect(result.current.renderLog).toContain('Export guard');
+    expect(result.current.renderLog).toContain('future-clip');
+    expect(result.current.renderLog).toContain('warning');
+  });
+
+  it('publishes clip-type diagnostics to the provider collection', async () => {
+    const extRuntime = makeExtensionRuntime({
+      extensions: [
+        {
+          manifest: {
+            id: 'test-ext' as any,
+            version: '1.0.0',
+            contributions: [],
+          },
+        } as any,
+      ],
+    });
+    const collection = createDiagnosticCollection();
+    const runtimeValue = {
+      diagnosticCollection: collection,
+    } as unknown as VideoEditorRuntimeContextValue;
+    const wrapper = ({ children }: { children: ReactNode }) => (
+      <DataProviderContext.Provider value={runtimeValue}>
+        {children}
+      </DataProviderContext.Provider>
+    );
+
+    guardMocks.scanExportConfig.mockReturnValue({
+      ...cleanGuardResult(),
+      diagnostics: [
+        {
+          severity: 'error',
+          code: 'export/unrenderable-clip-type',
+          message: 'Clip type "stale-clip-type" is registered but inactive.',
+          extensionId: 'ext.stale',
+          contributionId: 'test:clipType:stale-clip-type',
+          detail: { clipId: 'c1', clipType: 'stale-clip-type', clipTypeStatus: 'inactive' },
+        },
+      ],
+      blockers: [
+        {
+          id: 'export.clipType.c1.stale-clip-type.inactive.browser-export',
+          severity: 'error',
+          route: 'browser-export',
+          reason: 'inactive-extension',
+          message: 'Clip type "stale-clip-type" on route "browser-export" is registered but inactive.',
+          clipId: 'c1',
+          detail: { clipType: 'stale-clip-type' },
+        },
+      ],
+      hasBlockingErrors: true,
+    });
+
+    const { result } = renderHook(() => useRenderState(
+      buildConfig({
+        id: 'c1',
+        clipType: 'media',
+        track: 'V1',
+        at: 0,
+        hold: 1,
+      }),
+      null,
+      null,
+      extRuntime,
+    ), { wrapper });
+
+    await act(async () => {
+      await result.current.startRender();
+    });
+
+    const diagnostics = collection.getSnapshot();
+    expect(diagnostics.some((diagnostic) => diagnostic.detail?.source === 'export-guard')).toBe(true);
+    expect(diagnostics.some((diagnostic) => diagnostic.detail?.source === 'render-planner')).toBe(true);
+  });
+});
 });

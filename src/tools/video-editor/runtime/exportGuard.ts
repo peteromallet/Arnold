@@ -38,6 +38,10 @@ import type {
   RenderRoute,
 } from '@/tools/video-editor/runtime/renderability.ts';
 import type { TransitionRegistryRecord, TransitionRegistrySnapshot } from '@/tools/video-editor/transitions/registry/types.ts';
+import type {
+  ClipTypeRegistryRecord,
+  ClipTypeRegistrySnapshot,
+} from '@/tools/video-editor/clip-types/ClipTypeRegistry.ts';
 
 // ---------------------------------------------------------------------------
 // Known ID collections
@@ -209,6 +213,7 @@ interface AllKnownIds {
   transitionTypes: ReadonlySet<string>;
   effectRegistrySnapshot?: EffectRegistrySnapshot;
   transitionRegistrySnapshot?: TransitionRegistrySnapshot;
+  clipTypeRegistrySnapshot?: ClipTypeRegistrySnapshot;
   /** Extension-declared IDs (metadata only, not used for dispatch). */
   extensionEffectIds: ReadonlySet<string>;
   extensionTransitionIds: ReadonlySet<string>;
@@ -220,6 +225,7 @@ function buildAllKnown(
   extIds: InactiveKnownIds,
   effectRegistrySnapshot?: EffectRegistrySnapshot,
   transitionRegistrySnapshot?: TransitionRegistrySnapshot,
+  clipTypeRegistrySnapshot?: ClipTypeRegistrySnapshot,
 ): AllKnownIds {
   return {
     clipTypes: builtIn.clipTypes,
@@ -227,6 +233,7 @@ function buildAllKnown(
     transitionTypes: builtIn.transitionTypes,
     ...(effectRegistrySnapshot ? { effectRegistrySnapshot } : {}),
     ...(transitionRegistrySnapshot ? { transitionRegistrySnapshot } : {}),
+    ...(clipTypeRegistrySnapshot ? { clipTypeRegistrySnapshot } : {}),
     extensionEffectIds: extIds.effectIds,
     extensionTransitionIds: extIds.transitionIds,
     extensionClipTypeIds: extIds.clipTypeIds,
@@ -252,6 +259,7 @@ export function scanExportConfig(
   extIds: InactiveKnownIds,
   effectRegistrySnapshot?: EffectRegistrySnapshot,
   transitionRegistrySnapshot?: TransitionRegistrySnapshot,
+  clipTypeRegistrySnapshot?: ClipTypeRegistrySnapshot,
 ): ExportGuardResult {
   const diagnostics: ExportDiagnostic[] = [];
   const findings: CapabilityFinding[] = [];
@@ -261,7 +269,7 @@ export function scanExportConfig(
   const unknownTransitions = new Set<string>();
 
   if (config && config.clips.length > 0) {
-    const allKnown = buildAllKnown(builtIn, extIds, effectRegistrySnapshot, transitionRegistrySnapshot);
+    const allKnown = buildAllKnown(builtIn, extIds, effectRegistrySnapshot, transitionRegistrySnapshot, clipTypeRegistrySnapshot);
 
     for (const clip of config.clips) {
       scanClip(clip, allKnown, diagnostics, findings, blockers, unknownClipTypes, unknownEffects, unknownTransitions);
@@ -303,20 +311,43 @@ function scanClip(
 ): void {
   // ---- clip type -----------------------------------------------------------
   if (clip.clipType) {
-    if (!known.clipTypes.has(clip.clipType)) {
-      const isExtDeclared = known.extensionClipTypeIds.has(clip.clipType);
+    // 1) Built-in / trusted clip types — fast path, no registry scan needed.
+    if (known.clipTypes.has(clip.clipType)) {
+      // Known built-in — pass through to effect/transition scanning.
+    }
+    // 2) Check the clip-type registry snapshot for contributed clip types.
+    else {
+      const snapshotRecord = known.clipTypeRegistrySnapshot?.get(clip.clipType);
 
-      diagnostics.push({
-        severity: isExtDeclared ? 'warning' : 'error',
-        code: 'export/unknown-clip-type',
-        message: isExtDeclared
-          ? `Clip type "${clip.clipType}" is declared by an inactive extension and may not be available at export time.`
-          : `Clip type "${clip.clipType}" is not recognised. Ensure the required extension or registry is installed.`,
-        detail: { clipId: clip.id, clipType: clip.clipType },
-      });
+      if (snapshotRecord) {
+        // Clip type is registered — scan its status and capabilities.
+        scanClipTypeRecordRenderability(clip, clip.clipType, snapshotRecord, diagnostics, findings, blockers);
+      } else {
+        // Clip type is NOT in the registry snapshot — check extension-declared fallback.
+        const isExtDeclared = known.extensionClipTypeIds.has(clip.clipType);
 
-      if (!isExtDeclared) {
-        unknownClipTypes.add(clip.clipType);
+        diagnostics.push({
+          severity: isExtDeclared ? 'warning' : 'error',
+          code: 'export/unknown-clip-type',
+          message: isExtDeclared
+            ? `Clip type \"${clip.clipType}\" is declared by an inactive extension and may not be available at export time.`
+            : `Clip type \"${clip.clipType}\" is not recognised. Ensure the required extension or registry is installed.`,
+          detail: { clipId: clip.id, clipType: clip.clipType },
+        });
+
+        if (!isExtDeclared) {
+          unknownClipTypes.add(clip.clipType);
+
+          // Emit shared blocker vocabulary for truly unknown clip types.
+          pushClipTypeFindingAndBlocker(findings, blockers, {
+            id: `export.clipType.${clip.id}.${clip.clipType}.missing`,
+            reason: 'missing-contribution',
+            message: `Clip type \"${clip.clipType}\" is not recognised. Ensure the required extension or registry is installed.`,
+            clipId: clip.id,
+            clipType: clip.clipType,
+            route: 'browser-export',
+          });
+        }
       }
     }
   }
@@ -769,6 +800,176 @@ function pushTransitionFindingAndBlocker(
 ): void {
   const detail: Record<string, unknown> = {
     transitionType: input.transitionType,
+  };
+  if (input.record?.provenance) {
+    detail.provenance = input.record.provenance;
+  }
+  const finding: CapabilityFinding = {
+    id: input.id,
+    severity: 'error',
+    route: input.route,
+    reason: input.reason,
+    message: input.message,
+    clipId: input.clipId,
+    ...(input.record?.ownerExtensionId ? { extensionId: input.record.ownerExtensionId } : {}),
+    ...(input.record?.contributionId ? { contributionId: input.record.contributionId } : {}),
+    detail,
+  };
+  findings.push(finding);
+  blockers.push({
+    ...finding,
+    severity: 'error',
+    route: input.route,
+    reason: input.reason,
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Clip-type registry scan helpers
+// ---------------------------------------------------------------------------
+
+/** Routes that the export guard checks independently for each registered clip type. */
+const CLIP_TYPE_GUARD_ROUTES: readonly RenderRoute[] = ['preview', 'browser-export', 'worker-export'] as const;
+
+function scanClipTypeRecordRenderability(
+  clip: ResolvedTimelineClip,
+  clipType: string,
+  record: ClipTypeRegistryRecord,
+  diagnostics: ExportDiagnostic[],
+  findings: CapabilityFinding[],
+  blockers: RenderBlocker[],
+): void {
+  if (record.status !== 'active') {
+    const message = `Clip type \"${clipType}\" is registered but inactive and cannot be used for export or preview.`;
+    diagnostics.push({
+      severity: 'error',
+      code: 'export/unrenderable-clip-type',
+      message,
+      extensionId: record.ownerExtensionId,
+      contributionId: record.contributionId,
+      detail: {
+        clipId: clip.id,
+        clipType,
+        clipTypeStatus: record.status,
+        provenance: record.provenance,
+      },
+    });
+
+    // Emit a blocker for every guarded route — an inactive clip type can't be used anywhere.
+    for (const route of CLIP_TYPE_GUARD_ROUTES) {
+      pushClipTypeFindingAndBlocker(findings, blockers, {
+        id: `export.clipType.${clip.id}.${clipType}.inactive.${route}`,
+        reason: 'inactive-extension',
+        message: `Clip type \"${clipType}\" on route \"${route}\" is registered but inactive.`,
+        clipId: clip.id,
+        clipType,
+        route,
+        record,
+      });
+    }
+    return;
+  }
+
+  // Active record — check each guarded route independently.
+  for (const route of CLIP_TYPE_GUARD_ROUTES) {
+    const capability = record.renderability.capabilities.find((cap) => cap.route === route);
+
+    if (!capability) {
+      // No capability declared for this route — pass silently (like effects).
+      continue;
+    }
+
+    if (capability.status === 'supported') {
+      // Route is supported — pass silently.
+      continue;
+    }
+
+    if (capability.status === 'unknown') {
+      // Unknown support — emit a warning finding (non-blocking).
+      const message = capability.message
+        ?? `Clip type \"${clipType}\" has unknown support for ${route}.`;
+      diagnostics.push({
+        severity: 'warning',
+        code: 'export/unknown-route-support',
+        message,
+        extensionId: record.ownerExtensionId,
+        contributionId: record.contributionId,
+        detail: {
+          clipId: clip.id,
+          clipType,
+          renderRoute: route,
+          provenance: record.provenance,
+          determinism: capability.determinism,
+        },
+      });
+      findings.push({
+        id: `export.clipType.${clip.id}.${clipType}.${route}.unknown`,
+        severity: 'warning',
+        route,
+        reason: 'unknown',
+        message,
+        clipId: clip.id,
+        ...(record.ownerExtensionId ? { extensionId: record.ownerExtensionId } : {}),
+        ...(record.contributionId ? { contributionId: record.contributionId } : {}),
+        detail: {
+          clipType,
+          provenance: record.provenance,
+          determinism: capability.determinism,
+        },
+      });
+      continue;
+    }
+
+    // status === 'blocked' — emit error diagnostic, finding, and blocker.
+    const reason = capability.blockerReason ?? firstClipTypeRouteBlockerReason(record, route) ?? 'route-unsupported';
+    const message = capability.message
+      ?? `Clip type \"${clipType}\" does not support ${route}.`;
+
+    diagnostics.push({
+      severity: 'error',
+      code: 'export/unrenderable-clip-type',
+      message,
+      extensionId: record.ownerExtensionId,
+      contributionId: record.contributionId,
+      detail: {
+        clipId: clip.id,
+        clipType,
+        renderRoute: route,
+        blockerReason: reason,
+        provenance: record.provenance,
+      },
+    });
+    pushClipTypeFindingAndBlocker(findings, blockers, {
+      id: `export.clipType.${clip.id}.${clipType}.${route}.${reason}`,
+      reason,
+      message,
+      clipId: clip.id,
+      clipType,
+      route,
+      record,
+    });
+  }
+}
+
+function firstClipTypeRouteBlockerReason(record: ClipTypeRegistryRecord, route: RenderRoute): RenderBlockerReason | undefined {
+  return record.renderability.blockers?.find((blocker) => blocker.route === route)?.reason;
+}
+
+function pushClipTypeFindingAndBlocker(
+  findings: CapabilityFinding[],
+  blockers: RenderBlocker[],
+  input: {
+    id: string;
+    reason: RenderBlockerReason;
+    message: string;
+    clipId: string;
+    clipType: string;
+    route: RenderRoute;
+    record?: ClipTypeRegistryRecord;
+  },
+): void {
+  const detail: Record<string, unknown> = {
+    clipType: input.clipType,
   };
   if (input.record?.provenance) {
     detail.provenance = input.record.provenance;

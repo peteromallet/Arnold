@@ -280,7 +280,7 @@ describe('@reigh/editor-sdk sufficiency', () => {
     expect(typeof contributionKindNotYetBridged).toBe('function');
     expect(typeof CONTRIBUTION_KIND_MILESTONE).toBe('object');
     expect(contributionKindNotYetBridged('slot')).toBeNull();
-    expect(contributionKindNotYetBridged('clipType')).toBe('M3');
+    expect(contributionKindNotYetBridged('clipType')).toBeNull();
   });
 });
 
@@ -324,6 +324,7 @@ describe('ExtensionContext — no internal members exposed', () => {
     expect(keys).toEqual([
       'apiVersion',
       'chrome',
+      'clipTypes',
       'commands',
       'creative',
       'effects',
@@ -343,6 +344,7 @@ describe('ExtensionContext — no internal members exposed', () => {
       'commands',
       'effects',
       'transitions',
+      'clipTypes',
     ]);
     for (const key of Object.keys(ctx)) {
       expect(allowed.has(key)).toBe(true);
@@ -538,6 +540,7 @@ describe('ExtensionContext — type safety guard', () => {
       'commands',
       'effects',
       'transitions',
+      'clipTypes',
     ];
 
     const actualKeys = Object.keys(ctx).sort();
@@ -580,7 +583,7 @@ describe('M6: contribution kind bridging (parser M6-active, output/search typed)
   it('unsupported contribution behavior is explicit (returns owning milestone)', () => {
     // Every reserved/unsupported kind returns its milestone so consumers
     // get a clear diagnostic, not silent ignorance.
-    expect(contributionKindNotYetBridged('clipType')).toBe('M3');
+    expect(contributionKindNotYetBridged('clipType')).toBeNull();
     expect(contributionKindNotYetBridged('agentTool')).toBe('M5');
     expect(contributionKindNotYetBridged('agent')).toBe('M5');
   });

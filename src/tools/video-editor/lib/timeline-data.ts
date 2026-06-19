@@ -60,6 +60,7 @@ export interface ClipMeta {
   clip_order?: TimelineClip['clip_order'];
   source_uuid?: TimelineClip['source_uuid'];
   generation?: TimelineClip['generation'];
+  keyframes?: TimelineClip['keyframes'];
 }
 
 export interface TranscriptSegment {
@@ -150,6 +151,7 @@ const getDefaultClipMeta = (clip: TimelineClip): ClipMeta => {
     clip_order: clip.clip_order,
     source_uuid: clip.source_uuid,
     generation: clip.generation,
+    keyframes: clip.keyframes,
   };
 };
 
@@ -292,6 +294,7 @@ export const rowsToConfig = (
         clip_order: clipMeta.clip_order,
         source_uuid: clipMeta.source_uuid,
         generation: clipMeta.generation,
+        keyframes: clipMeta.keyframes,
       };
 
       if (typeof clipMeta.hold === 'number') {

@@ -592,4 +592,289 @@ describe('video-editor serialization', () => {
     expect(serialized.clips[0].transition?.params).toEqual({});
     expect(() => validateSerializedConfig(serialized)).not.toThrow();
   });
+
+  // ── M9: Keyframe serialization round-trip tests ──────────────────────
+
+  it('round-trips clip keyframes through serializeForDisk and validation', () => {
+    const resolved = {
+      output: { resolution: '1920x1080', fps: 30, file: 'out.mp4' },
+      tracks: [{ id: 'V1', kind: 'visual', label: 'V1' }],
+      clips: [
+        {
+          id: 'clip-kf',
+          at: 0,
+          track: 'V1',
+          clipType: 'contributed:my-clip-type',
+          asset: 'asset-1',
+          hold: 5,
+          params: { intensity: 0.5, color: '#ff0000' },
+          keyframes: {
+            intensity: [
+              { time: 0, value: 0, interpolation: 'linear' },
+              { time: 2.5, value: 1, interpolation: 'linear' },
+              { time: 5, value: 0, interpolation: 'hold' },
+            ],
+            color: [
+              { time: 0, value: '#ff0000', interpolation: 'hold' },
+            ],
+          },
+        },
+      ],
+      registry: { 'asset-1': { file: 'foo.png' } },
+    } as unknown as ResolvedTimelineConfig;
+
+    const serialized = serializeForDisk(resolved);
+
+    expect(serialized.clips[0].keyframes).toBeDefined();
+    expect(serialized.clips[0].keyframes?.intensity).toEqual([
+      { time: 0, value: 0, interpolation: 'linear' },
+      { time: 2.5, value: 1, interpolation: 'linear' },
+      { time: 5, value: 0, interpolation: 'hold' },
+    ]);
+    expect(serialized.clips[0].keyframes?.color).toEqual([
+      { time: 0, value: '#ff0000', interpolation: 'hold' },
+    ]);
+    expect(() => validateSerializedConfig(serialized)).not.toThrow();
+  });
+
+  it('round-trips keyframes through serializeTimelineConfigSnapshot canonicalization', () => {
+    const config: TimelineConfig = {
+      output: { resolution: '1920x1080', fps: 30, file: 'output.mp4' },
+      clips: [
+        {
+          id: 'clip-animated',
+          at: 0,
+          track: 'V1',
+          clipType: 'contributed:animated-text',
+          hold: 4,
+          params: { text: 'Hello' },
+          keyframes: {
+            scale: [
+              { time: 0, value: 0.5, interpolation: 'linear' },
+              { time: 2, value: 1.5, interpolation: 'linear' },
+              { time: 4, value: 0.8, interpolation: 'linear' },
+            ],
+            visible: [
+              { time: 0, value: true, interpolation: 'hold' },
+              { time: 3, value: false, interpolation: 'hold' },
+            ],
+          },
+        },
+      ],
+    };
+
+    const snapshot = serializeTimelineConfigSnapshot(config);
+
+    expect(snapshot.config.clips[0].keyframes).toBeDefined();
+    expect(snapshot.config.clips[0].keyframes?.scale).toEqual([
+      { time: 0, value: 0.5, interpolation: 'linear' },
+      { time: 2, value: 1.5, interpolation: 'linear' },
+      { time: 4, value: 0.8, interpolation: 'linear' },
+    ]);
+    expect(snapshot.config.clips[0].keyframes?.visible).toEqual([
+      { time: 0, value: true, interpolation: 'hold' },
+      { time: 3, value: false, interpolation: 'hold' },
+    ]);
+    expect(snapshot.issues.every((i) => i.severity !== 'error')).toBe(true);
+  });
+
+  it('tolerates missing keyframes on clips (backward compatible)', () => {
+    const config: TimelineConfig = {
+      output: { resolution: '1920x1080', fps: 30, file: 'output.mp4' },
+      clips: [
+        {
+          id: 'clip-no-kf',
+          at: 0,
+          track: 'V1',
+          clipType: 'hold',
+          hold: 3,
+          params: { intensity: 0.5 },
+        },
+      ],
+    };
+
+    const snapshot = serializeTimelineConfigSnapshot(config);
+
+    expect(snapshot.config.clips[0].keyframes).toBeUndefined();
+    expect(snapshot.config.clips[0].params).toEqual({ intensity: 0.5 });
+    expect(snapshot.issues.every((i) => i.severity !== 'error')).toBe(true);
+  });
+
+  it('preserves empty keyframes object through round-trip', () => {
+    const resolved = {
+      output: { resolution: '1920x1080', fps: 30, file: 'out.mp4' },
+      tracks: [{ id: 'V1', kind: 'visual', label: 'V1' }],
+      clips: [
+        {
+          id: 'clip-empty-kf',
+          at: 0,
+          track: 'V1',
+          clipType: 'contributed:my-type',
+          asset: 'asset-1',
+          hold: 3,
+          keyframes: {},
+        },
+      ],
+      registry: { 'asset-1': { file: 'foo.png' } },
+    } as unknown as ResolvedTimelineConfig;
+
+    const serialized = serializeForDisk(resolved);
+    expect(serialized.clips[0].keyframes).toEqual({});
+    expect(() => validateSerializedConfig(serialized)).not.toThrow();
+  });
+
+  // ── M9: Automation clip payload round-trip tests ─────────────────────
+
+  it('round-trips automation clip params through serializeForDisk and validation', () => {
+    const automationParams = {
+      target: {
+        contributionId: 'myExt.myContrib',
+        parameterPath: 'intensity',
+      },
+      keyframes: [
+        { time: 0, value: 0, interpolation: 'linear' },
+        { time: 1, value: 0.8, interpolation: 'linear' },
+        { time: 2, value: 0.2, interpolation: 'hold' },
+      ],
+      enabled: true,
+    };
+
+    const resolved = {
+      output: { resolution: '1920x1080', fps: 30, file: 'out.mp4' },
+      tracks: [{ id: 'V1', kind: 'visual', label: 'V1' }],
+      clips: [
+        {
+          id: 'clip-auto',
+          at: 0,
+          track: 'V1',
+          clipType: 'automation',
+          hold: 2,
+          params: automationParams,
+        },
+      ],
+      registry: {},
+    } as unknown as ResolvedTimelineConfig;
+
+    const serialized = serializeForDisk(resolved);
+
+    expect(serialized.clips[0].clipType).toBe('automation');
+    expect(serialized.clips[0].params).toEqual(automationParams);
+    expect(() => validateSerializedConfig(serialized)).not.toThrow();
+  });
+
+  it('round-trips automation clip through serializeTimelineConfigSnapshot canonicalization', () => {
+    const automationParams = {
+      target: {
+        contributionId: 'ext.filter',
+        parameterPath: 'blur.radius',
+      },
+      keyframes: [
+        { time: 0, value: 0, interpolation: 'linear' },
+        { time: 5, value: 10, interpolation: 'linear' },
+      ],
+      enabled: false,
+    };
+
+    const config: TimelineConfig = {
+      output: { resolution: '1920x1080', fps: 30, file: 'output.mp4' },
+      clips: [
+        {
+          id: 'clip-automation',
+          at: 0,
+          track: 'V1',
+          clipType: 'automation',
+          hold: 5,
+          params: automationParams,
+        },
+      ],
+    };
+
+    const snapshot = serializeTimelineConfigSnapshot(config);
+
+    expect(snapshot.config.clips[0].clipType).toBe('automation');
+    expect(snapshot.config.clips[0].params).toEqual(automationParams);
+    expect(snapshot.issues.every((i) => i.severity !== 'error')).toBe(true);
+  });
+
+  it('round-trips a clip with both keyframes and automation-style params', () => {
+    const resolved = {
+      output: { resolution: '1920x1080', fps: 30, file: 'out.mp4' },
+      tracks: [{ id: 'V1', kind: 'visual', label: 'V1' }],
+      clips: [
+        {
+          id: 'clip-hybrid',
+          at: 0,
+          track: 'V1',
+          clipType: 'contributed:advanced',
+          asset: 'asset-1',
+          hold: 4,
+          params: {
+            baseColor: '#00ff00',
+            automationRef: {
+              target: { contributionId: 'ext.helper', parameterPath: 'speed' },
+              keyframes: [{ time: 0, value: 1, interpolation: 'linear' }],
+              enabled: true,
+            },
+          },
+          keyframes: {
+            opacity: [
+              { time: 0, value: 1, interpolation: 'linear' },
+              { time: 4, value: 0, interpolation: 'linear' },
+            ],
+          },
+        },
+      ],
+      registry: { 'asset-1': { file: 'foo.png' } },
+    } as unknown as ResolvedTimelineConfig;
+
+    const serialized = serializeForDisk(resolved);
+
+    expect(serialized.clips[0].keyframes?.opacity).toEqual([
+      { time: 0, value: 1, interpolation: 'linear' },
+      { time: 4, value: 0, interpolation: 'linear' },
+    ]);
+    expect(serialized.clips[0].params).toEqual({
+      baseColor: '#00ff00',
+      automationRef: {
+        target: { contributionId: 'ext.helper', parameterPath: 'speed' },
+        keyframes: [{ time: 0, value: 1, interpolation: 'linear' }],
+        enabled: true,
+      },
+    });
+    expect(() => validateSerializedConfig(serialized)).not.toThrow();
+  });
+
+  it('keyframes survive pair-aware canonicalization with asset registry', () => {
+    const config: TimelineConfig = {
+      output: { resolution: '1920x1080', fps: 30, file: 'output.mp4' },
+      clips: [
+        {
+          id: 'clip-pair-kf',
+          at: 0,
+          track: 'V1',
+          clipType: 'contributed:typed',
+          asset: 'asset-dur',
+          from: 0,
+          to: 6,
+          keyframes: {
+            rotation: [
+              { time: 0, value: 0, interpolation: 'linear' },
+              { time: 6, value: 360, interpolation: 'linear' },
+            ],
+          },
+        },
+      ],
+    };
+
+    const pair = serializeTimelinePair(config, {
+      assets: { 'asset-dur': { file: 'video.mp4', duration: 6 } },
+    });
+
+    expect(pair.config.clips[0].keyframes?.rotation).toEqual([
+      { time: 0, value: 0, interpolation: 'linear' },
+      { time: 6, value: 360, interpolation: 'linear' },
+    ]);
+    expect(pair.registry.assets['asset-dur']).toEqual({ file: 'video.mp4', duration: 6 });
+    expect(pair.issues.every((i) => i.severity !== 'error')).toBe(true);
+  });
 });

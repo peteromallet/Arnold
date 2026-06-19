@@ -155,6 +155,8 @@ export const TIMELINE_CLIP_FIELDS = [
   'source_uuid',
   'generation',
   'app',
+  // M9: Host-owned keyframes keyed by parameter name
+  'keyframes',
 ] as const;
 
 export type TimelineClipField = (typeof TIMELINE_CLIP_FIELDS)[number];

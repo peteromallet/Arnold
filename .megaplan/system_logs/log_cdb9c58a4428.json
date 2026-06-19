@@ -1,0 +1,81 @@
+{
+  "id": "log_cdb9c58a4428",
+  "level": "debug",
+  "category": "system",
+  "event_type": "authority_divergence",
+  "message": "authority_divergence emitted",
+  "details": {
+    "event": {
+      "seq": 1062,
+      "schema_version": 1,
+      "ts_utc": "2026-06-19T19:30:12.466124+00:00",
+      "ts_rel_init_s": 1497.382161,
+      "kind": "authority_divergence",
+      "phase": "execute",
+      "payload": {
+        "diagnostic_version": 1,
+        "task_id": "T2",
+        "raw_terminal_status": "done",
+        "authority_status": "unsatisfied",
+        "authoritative": false,
+        "reason": "stale_evidence:head_mismatch:task_files_changed",
+        "missing_outputs": [],
+        "stale_evidence": [
+          "head_mismatch:task_files_changed",
+          "head_mismatch:task_files_changed",
+          "head_mismatch:task_files_changed",
+          "head_mismatch:task_files_changed",
+          "head_mismatch:task_files_changed",
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_files_changed",
+          "head_mismatch:task_files_changed",
+          "head_mismatch:task_files_changed",
+          "head_mismatch:task_files_changed",
+          "head_mismatch:task_files_changed",
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_files_changed",
+          "head_mismatch:task_files_changed",
+          "head_mismatch:task_files_changed",
+          "head_mismatch:task_files_changed",
+          "head_mismatch:task_files_changed",
+          "head_mismatch:task_commands_run"
+        ],
+        "would_block_reasons": [
+          "stale_evidence:head_mismatch:task_files_changed",
+          "stale_evidence:head_mismatch:task_commands_run"
+        ],
+        "error": null,
+        "diagnostics": {
+          "task_id": "T2",
+          "declared_outputs": {
+            "files_changed": [
+              "src/tools/video-editor/types/index.ts",
+              "src/tools/video-editor/lib/timeline-domain.ts",
+              "src/tools/video-editor/lib/timeline-data.ts",
+              "src/tools/video-editor/lib/serialize.test.ts",
+              "src/tools/video-editor/lib/timeline-data.test.ts"
+            ],
+            "commands_run": [
+              "npx vitest run src/tools/video-editor/lib/serialize.test.ts src/tools/video-editor/lib/timeline-data.test.ts --reporter=verbose"
+            ]
+          },
+          "linked_evidence_count": 18,
+          "evidence_count": 36,
+          "normalization": "iterable",
+          "status": "unsatisfied",
+          "evidence_sources": [
+            "plan_artifacts"
+          ],
+          "loaded_evidence_count": 36,
+          "raw_terminal_status": "done"
+        },
+        "ts_utc": "2026-06-19T19:30:12.465842+00:00"
+      },
+      "transaction_id": "14b2b64375c0c86f",
+      "store_method": "log_system_event"
+    }
+  },
+  "turn_id": null,
+  "epic_id": "m9-clip-type-dispatch-and-20260619-2105",
+  "occurred_at": "2026-06-19T19:30:12.466163Z"
+}

@@ -27,13 +27,16 @@ export {
   resolveTrustedClipTypeRegistration,
 } from './registry.ts';
 export {
+  buildExtensionClipTypeDescriptorMap,
   clipTypeUsesHoldTiming,
   createClipMetaFromDescriptor,
   createEditorClipTypeRegistry,
+  defineClipTypeFromExtensionRecord,
   getBuiltinClipTypeDescriptor,
   getClipAssetMediaType,
   getClipTypeCommandAvailability,
   getClipTypeOverlayBehavior,
+  getExtensionClipTypeDescriptor,
   getRegisteredClipTypeDescriptor,
   getSequenceDescriptorParams,
   inferLegacyClipType,
@@ -69,11 +72,17 @@ export type {
   JsonValue,
   NormalizedClipTypeDefaults,
 } from './defineClipType.ts';
+export {
+  resolveDynamicClipType,
+  resolveDynamicClipTypeDescriptor,
+} from './registry.ts';
 export type {
   AvailableClipTypeLookupResult,
   AvailableClipTypeMetadata,
   AvailableClipTypeRegistration,
   AvailableClipTypeRegistryView,
+  DynamicClipTypeResolutionResult,
+  DynamicExtensionClipRecord,
   TrustedClipTypeLookupResult,
   TrustedClipTypeMetadata,
   TrustedClipTypeRegistration,
@@ -90,3 +99,26 @@ export type {
   RegisteredClipTypeLookupResult,
   TrustedRegisteredClipTypeRegistration,
 } from './runtime.ts';
+export {
+  createClipTypeRegistry,
+  resolveClipType,
+  resolveSnapshotClipType,
+  validateClipTypeParameterSchema,
+} from './ClipTypeRegistry.ts';
+export type {
+  ClipInspectorProps,
+  ClipRendererProps,
+  ClipTypeRegistry,
+  ClipTypeRegistryRecord,
+  ClipTypeRegistryRecordStatus,
+  ClipTypeRegistrySnapshot,
+  ClipTypeRegistrySubscriber,
+} from './ClipTypeRegistry.ts';
+export {
+  ClipTypeRegistryProvider,
+  useClipTypeRegistryContext,
+  useClipTypeRegistrySnapshot,
+  useOptionalClipTypeRegistryContext,
+  type ClipTypeRegistryContextValue,
+  type ClipTypeRegistryProviderProps,
+} from './ClipTypeRegistryContext.tsx';

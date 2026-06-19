@@ -8,7 +8,7 @@ import type { ClipTypeSequenceParamDefinition as SequenceParamMetadata } from '.
 export type SequenceDraftParams = Record<string, string | readonly string[]>;
 
 export type ValidatedSequenceDraft = {
-  clipType: TrustedSequenceClipType;
+  clipType: TrustedSequenceClipType | (string & {});
   hold: number;
   params: SequenceDraftParams;
 };
@@ -27,6 +27,8 @@ export type ValidateSequenceDraftOptions = {
   allowedClipTypes?: readonly string[];
   allowedAssetKeys?: readonly string[];
   metadata?: readonly TrustedSequenceMetadata[];
+  /** T7: extension clip type IDs considered valid even without trusted metadata. */
+  extensionClipTypeIds?: ReadonlySet<string>;
 };
 
 const ROOT_KEYS = new Set(['clipType', 'hold', 'params']);
@@ -186,15 +188,19 @@ export const validateSequenceDraft = (
     addError(errors, '$.clipType', 'invalid_clip_type', 'clipType must be a string.');
   }
 
-  const sequenceMetadata = typeof clipType === 'string'
+  const isExtensionClipType = typeof clipType === 'string'
+    && options.extensionClipTypeIds?.has(clipType) === true;
+
+  const sequenceMetadata = typeof clipType === 'string' && !isExtensionClipType
     ? (options.metadata
       ? findMetadata(metadata, clipType)
       : getTrustedClipTypeRegistration(clipType)?.metadata)
     : undefined;
-  if (typeof clipType === 'string' && !sequenceMetadata) {
+
+  if (typeof clipType === 'string' && !sequenceMetadata && !isExtensionClipType) {
     addError(errors, '$.clipType', 'unknown_clip_type', 'clipType is not a trusted sequence type.');
   }
-  if (typeof clipType === 'string' && !allowedClipTypes.has(clipType)) {
+  if (typeof clipType === 'string' && !allowedClipTypes.has(clipType) && !isExtensionClipType) {
     addError(errors, '$.clipType', 'clip_type_not_allowed', 'clipType is not allowed in this context.');
   }
 

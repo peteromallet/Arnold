@@ -259,3 +259,139 @@ export const getTrustedSequenceParamDefinitions = (
   }
   return descriptor.paramsSchema.params;
 };
+
+// ---------------------------------------------------------------------------
+// Dynamic-aware resolution (M9 T6)
+// ---------------------------------------------------------------------------
+
+/**
+ * Result of resolving a clip type against built-ins, trusted sequence
+ * descriptors, and dynamic extension records with deterministic precedence
+ * (builtins > trusted sequences > extensions).
+ *
+ * Duplicate detection fires when an extension record claims the same
+ * `clipTypeId` as a built-in or trusted sequence descriptor, surfacing
+ * the conflicting extension IDs for diagnostics.
+ */
+export type DynamicClipTypeResolutionResult =
+  | { status: 'available'; clipType: string; source: 'builtin' }
+  | { status: 'available'; clipType: string; source: 'trusted-sequence'; descriptor: SequenceClipTypeDescriptor; metadata: TrustedClipTypeMetadata }
+  | { status: 'available'; clipType: string; source: 'extension'; extensionRecord: Record<string, unknown> }
+  | { status: 'unavailable'; clipType: string; source: 'trusted-sequence'; descriptor: SequenceClipTypeDescriptor; metadata: TrustedClipTypeMetadata }
+  | { status: 'duplicate'; clipType: string; source: 'trusted-sequence'; descriptor: SequenceClipTypeDescriptor; metadata: TrustedClipTypeMetadata; duplicateExtensionIds: readonly string[] }
+  | { status: 'unknown'; clipType: string | undefined };
+
+/**
+ * Lightweight shape expected from a dynamic extension record for resolution.
+ * Accepts either full ClipTypeRegistryRecord or a minimal subset.
+ */
+export interface DynamicExtensionClipRecord {
+  readonly clipTypeId: string;
+  readonly ownerExtensionId?: string;
+  readonly [key: string]: unknown;
+}
+
+/**
+ * Build a dynamic-aware resolution view that merges built-ins (caller provides
+ * the set of built-in clip type IDs), trusted-sequence descriptors, and
+ * extension clip records with deterministic precedence.
+ *
+ * Precedence (first-match-wins):
+ * 1. Built-in clip types (e.g. 'media', 'hold', 'text', 'effect-layer')
+ * 2. Trusted-sequence descriptors
+ * 3. Extension records
+ *
+ * When an extension record shares a `clipTypeId` with a trusted-sequence
+ * descriptor, the resolution returns `duplicate` status with the conflicting
+ * extension IDs surfaced for diagnostics.
+ *
+ * Unknown clip types (not in any source) return `unknown` status.
+ */
+export function resolveDynamicClipType(
+  clipType: string | undefined,
+  builtinClipTypeIds: ReadonlySet<string>,
+  extensionRecords: readonly DynamicExtensionClipRecord[] | undefined,
+): DynamicClipTypeResolutionResult {
+  if (!clipType) {
+    return { status: 'unknown', clipType };
+  }
+
+  // 1. Built-ins take highest precedence
+  if (builtinClipTypeIds.has(clipType)) {
+    return { status: 'available', clipType, source: 'builtin' };
+  }
+
+  // 2. Trusted-sequence descriptors
+  const trustedRegistration = getTrustedClipTypeRegistration(clipType);
+
+  // 3. Check extension records for duplicates against trusted
+  const matchingExtensions = (extensionRecords ?? []).filter(
+    (record) => record.clipTypeId === clipType,
+  );
+
+  if (trustedRegistration && matchingExtensions.length > 0) {
+    // Duplicate: both trusted and extension claim this clipTypeId
+    return {
+      status: 'duplicate',
+      clipType,
+      source: 'trusted-sequence',
+      descriptor: trustedRegistration.descriptor,
+      metadata: trustedRegistration.metadata,
+      duplicateExtensionIds: matchingExtensions.map(
+        (record) => record.ownerExtensionId ?? '(unknown)',
+      ),
+    };
+  }
+
+  if (trustedRegistration) {
+    // Trusted-sequence descriptor exists — available (has component rendering)
+    // or unavailable based on whether it was registered in the available view.
+    // At this resolution layer, trusted descriptors are always "available" in
+    // the sense that their metadata/descriptor is known. The
+    // "unavailable" distinction (trusted but component not in build) is
+    // handled by the caller when it checks the sequence component registry.
+    return {
+      status: 'available',
+      clipType,
+      source: 'trusted-sequence',
+      descriptor: trustedRegistration.descriptor,
+      metadata: trustedRegistration.metadata,
+    };
+  }
+
+  // 4. Extension records
+  if (matchingExtensions.length > 0) {
+    // If multiple extensions claim the same clipTypeId, the first one wins
+    // (the ClipTypeRegistry already emitted duplicate diagnostics).
+    return {
+      status: 'available',
+      clipType,
+      source: 'extension',
+      extensionRecord: matchingExtensions[0]! as Record<string, unknown>,
+    };
+  }
+
+  // 5. Unknown
+  return { status: 'unknown', clipType };
+}
+
+/**
+ * Resolve a clip type for descriptor-only consumers that do not need
+ * the full extension record payload. Returns the ClipTypeDescriptor
+ * for built-ins and trusted sequences, or undefined for extensions
+ * and unknowns.
+ */
+export function resolveDynamicClipTypeDescriptor(
+  clipType: string | undefined,
+  builtinClipTypeIds: ReadonlySet<string>,
+  _extensionRecords: readonly DynamicExtensionClipRecord[] | undefined,
+): ClipTypeDescriptor | undefined {
+  if (!clipType) return undefined;
+
+  // Built-ins are not in this module; caller provides via getBuiltinClipTypeDescriptor
+  // Trusted sequences
+  const trusted = getTrustedClipTypeDescriptor(clipType);
+  if (trusted) return trusted;
+
+  return undefined;
+}

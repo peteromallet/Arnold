@@ -1,0 +1,73 @@
+{
+  "id": "log_9622bee8654a",
+  "level": "debug",
+  "category": "system",
+  "event_type": "authority_divergence",
+  "message": "authority_divergence emitted",
+  "details": {
+    "event": {
+      "seq": 4881,
+      "schema_version": 1,
+      "ts_utc": "2026-06-19T20:35:05.819367+00:00",
+      "ts_rel_init_s": 5390.735404,
+      "kind": "authority_divergence",
+      "phase": "execute",
+      "payload": {
+        "diagnostic_version": 1,
+        "task_id": "T9",
+        "raw_terminal_status": "done",
+        "authority_status": "unsatisfied",
+        "authoritative": false,
+        "reason": "stale_evidence:head_mismatch:task_files_changed",
+        "missing_outputs": [],
+        "stale_evidence": [
+          "head_mismatch:task_files_changed",
+          "head_mismatch:task_files_changed",
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_commands_run"
+        ],
+        "would_block_reasons": [
+          "stale_evidence:head_mismatch:task_files_changed",
+          "stale_evidence:head_mismatch:task_commands_run"
+        ],
+        "error": null,
+        "diagnostics": {
+          "task_id": "T9",
+          "declared_outputs": {
+            "files_changed": [
+              "src/tools/video-editor/components/PropertiesPanel/ClipPanel.tsx"
+            ],
+            "commands_run": [
+              "npx tsc --noEmit --pretty",
+              "npx vitest run src/tools/video-editor/components/PropertiesPanel/PropertiesPanel.test.tsx",
+              "npx vitest run src/tools/video-editor/runtime/ContributionErrorBoundary.test.tsx",
+              "npx vitest run src/tools/video-editor/clip-types/ClipTypeRegistry.test.ts",
+              "npx vitest run src/tools/video-editor/clip-types/runtime.test.ts",
+              "npx vite build"
+            ]
+          },
+          "linked_evidence_count": 18,
+          "evidence_count": 216,
+          "normalization": "iterable",
+          "status": "unsatisfied",
+          "evidence_sources": [
+            "plan_artifacts"
+          ],
+          "loaded_evidence_count": 216,
+          "raw_terminal_status": "done"
+        },
+        "ts_utc": "2026-06-19T20:35:05.818995+00:00"
+      },
+      "transaction_id": "3e063c25e46ba0f2",
+      "store_method": "log_system_event"
+    }
+  },
+  "turn_id": null,
+  "epic_id": "m9-clip-type-dispatch-and-20260619-2105",
+  "occurred_at": "2026-06-19T20:35:05.819409Z"
+}

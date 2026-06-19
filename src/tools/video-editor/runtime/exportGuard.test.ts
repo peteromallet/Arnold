@@ -16,6 +16,10 @@ import type {
   EffectRegistrySnapshot,
 } from '@/tools/video-editor/effects/registry/types.ts';
 import type { EffectComponentProps } from '@/tools/video-editor/effects/entrances.tsx';
+import type {
+  ClipTypeRegistryRecord,
+  ClipTypeRegistrySnapshot,
+} from '@/tools/video-editor/clip-types/ClipTypeRegistry.ts';
 import type { ResolvedTimelineConfig } from '@/tools/video-editor/types/index.ts';
 
 // ---------------------------------------------------------------------------
@@ -85,6 +89,46 @@ function snapshotWith(records: readonly EffectRegistryRecord[]): EffectRegistryS
     diagnostics: Object.freeze([]),
     get: (effectId: string) => byId.get(effectId),
     has: (effectId: string) => byId.has(effectId),
+  });
+}
+
+function clipTypeRecord(
+  clipTypeId: string,
+  overrides: Partial<ClipTypeRegistryRecord> = {},
+): ClipTypeRegistryRecord {
+  return {
+    clipTypeId,
+    contributionId: `test:clipType:${clipTypeId}`,
+    renderer: { render: () => null },
+    provenance: 'trusted-loader',
+    renderability: {
+      defaultRoute: 'preview',
+      determinism: 'deterministic',
+      capabilities: [
+        {
+          route: 'preview',
+          status: 'supported',
+          determinism: 'deterministic',
+        },
+        {
+          route: 'browser-export',
+          status: 'supported',
+          determinism: 'deterministic',
+        },
+      ],
+    },
+    status: 'active',
+    ...overrides,
+  };
+}
+
+function clipTypeSnapshotWith(records: readonly ClipTypeRegistryRecord[]): ClipTypeRegistrySnapshot {
+  const byId = new Map(records.map((record) => [record.clipTypeId, record]));
+  return Object.freeze({
+    records: Object.freeze([...records]),
+    diagnostics: Object.freeze([]),
+    get: (clipTypeId: string) => byId.get(clipTypeId),
+    has: (clipTypeId: string) => byId.has(clipTypeId),
   });
 }
 
@@ -975,6 +1019,346 @@ describe('scanExportConfig — effect-layer combined diagnostics', () => {
     expect(result.diagnostics.length).toBe(3);
     expect(result.unknownClipTypes).toEqual(['custom-effect-layer']);
     expect(result.unknownEffects).toEqual(['crazy-spin', 'hyperspace']);
+    expect(result.hasBlockingErrors).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Export config scan — clip-type registry snapshot
+// ---------------------------------------------------------------------------
+
+describe('scanExportConfig — clip-type registry snapshot', () => {
+  const builtIn = collectBuiltInKnownIds();
+  const extIds = collectExtensionDeclaredIds([]);
+
+  it('passes a clip type registered in the snapshot with active status and supported browser-export', () => {
+    const clip = makeClip('c1', { clipType: 'provider-slideshow' });
+    const snapshot = clipTypeSnapshotWith([clipTypeRecord('provider-slideshow')]);
+
+    const result = scanExportConfig(makeConfig([clip]), builtIn, extIds, undefined, undefined, snapshot);
+
+    expect(result.diagnostics).toEqual([]);
+    expect(result.findings).toEqual([]);
+    expect(result.blockers).toEqual([]);
+    expect(result.unknownClipTypes).toEqual([]);
+    expect(result.hasBlockingErrors).toBe(false);
+  });
+
+  it('emits error for an inactive clip type in the registry snapshot', () => {
+    const clip = makeClip('c1', { clipType: 'stale-clip-type' });
+    const snapshot = clipTypeSnapshotWith([
+      clipTypeRecord('stale-clip-type', {
+        ownerExtensionId: 'ext.stale',
+        status: 'inactive',
+        provenance: 'bundled-extension',
+      }),
+    ]);
+
+    const result = scanExportConfig(makeConfig([clip]), builtIn, extIds, undefined, undefined, snapshot);
+
+    expect(result.diagnostics).toEqual([
+      expect.objectContaining({
+        severity: 'error',
+        code: 'export/unrenderable-clip-type',
+        message: expect.stringContaining('inactive'),
+        extensionId: 'ext.stale',
+        contributionId: 'test:clipType:stale-clip-type',
+        detail: expect.objectContaining({
+          clipId: 'c1',
+          clipType: 'stale-clip-type',
+          clipTypeStatus: 'inactive',
+          provenance: 'bundled-extension',
+        }),
+      }),
+    ]);
+    // One finding+blocker per CLIP_TYPE_GUARD_ROUTE
+    expect(result.findings).toHaveLength(3);
+    expect(result.findings.map((f) => f.route).sort()).toEqual(['browser-export', 'preview', 'worker-export']);
+    expect(result.blockers).toHaveLength(3);
+    expect(result.hasBlockingErrors).toBe(true);
+  });
+
+  it('emits error for a clip type registered but blocked on browser-export', () => {
+    const clip = makeClip('c1', { clipType: 'preview-only-clip' });
+    const snapshot = clipTypeSnapshotWith([
+      clipTypeRecord('preview-only-clip', {
+        ownerExtensionId: 'ext.preview',
+        contributionId: 'ext.preview:clipType:preview-only-clip',
+        renderability: {
+          defaultRoute: 'preview',
+          determinism: 'preview-only',
+          capabilities: [
+            {
+              route: 'preview',
+              status: 'supported',
+              determinism: 'preview-only',
+            },
+            {
+              route: 'browser-export',
+              status: 'blocked',
+              determinism: 'preview-only',
+              blockerReason: 'preview-only',
+              message: 'Preview-only clip type cannot browser-export.',
+            },
+          ],
+        },
+      }),
+    ]);
+
+    const result = scanExportConfig(makeConfig([clip]), builtIn, extIds, undefined, undefined, snapshot);
+
+    expect(result.diagnostics).toEqual([
+      expect.objectContaining({
+        severity: 'error',
+        code: 'export/unrenderable-clip-type',
+        message: 'Preview-only clip type cannot browser-export.',
+        extensionId: 'ext.preview',
+        contributionId: 'ext.preview:clipType:preview-only-clip',
+        detail: expect.objectContaining({
+          clipId: 'c1',
+          clipType: 'preview-only-clip',
+          renderRoute: 'browser-export',
+          blockerReason: 'preview-only',
+        }),
+      }),
+    ]);
+    expect(result.findings).toEqual([
+      expect.objectContaining({
+        id: 'export.clipType.c1.preview-only-clip.browser-export.preview-only',
+        severity: 'error',
+        route: 'browser-export',
+        reason: 'preview-only',
+        message: 'Preview-only clip type cannot browser-export.',
+        clipId: 'c1',
+        extensionId: 'ext.preview',
+        contributionId: 'ext.preview:clipType:preview-only-clip',
+        detail: { clipType: 'preview-only-clip', provenance: 'trusted-loader' },
+      }),
+    ]);
+    expect(result.blockers).toEqual([
+      expect.objectContaining({
+        id: 'export.clipType.c1.preview-only-clip.browser-export.preview-only',
+        severity: 'error',
+        route: 'browser-export',
+        reason: 'preview-only',
+      }),
+    ]);
+    expect(result.hasBlockingErrors).toBe(true);
+  });
+
+  it('emits warning for unknown route support on a clip type', () => {
+    const clip = makeClip('c1', { clipType: 'unclassified-clip' });
+    const snapshot = clipTypeSnapshotWith([
+      clipTypeRecord('unclassified-clip', {
+        ownerExtensionId: 'ext.unclass',
+        contributionId: 'ext.unclass:clipType:unclassified-clip',
+        renderability: {
+          defaultRoute: 'preview',
+          determinism: 'unknown',
+          capabilities: [
+            {
+              route: 'preview',
+              status: 'supported',
+              determinism: 'deterministic',
+            },
+            {
+              route: 'browser-export',
+              status: 'supported',
+              determinism: 'deterministic',
+            },
+            {
+              route: 'worker-export',
+              status: 'unknown',
+              determinism: 'unknown',
+              message: 'Worker-export support has not been classified for this clip type.',
+            },
+          ],
+        },
+      }),
+    ]);
+
+    const result = scanExportConfig(makeConfig([clip]), builtIn, extIds, undefined, undefined, snapshot);
+
+    expect(result.diagnostics).toEqual([
+      expect.objectContaining({
+        severity: 'warning',
+        code: 'export/unknown-route-support',
+        message: 'Worker-export support has not been classified for this clip type.',
+        extensionId: 'ext.unclass',
+        detail: expect.objectContaining({
+          clipId: 'c1',
+          clipType: 'unclassified-clip',
+          renderRoute: 'worker-export',
+        }),
+      }),
+    ]);
+    expect(result.findings).toEqual([
+      expect.objectContaining({
+        id: 'export.clipType.c1.unclassified-clip.worker-export.unknown',
+        severity: 'warning',
+        route: 'worker-export',
+        reason: 'unknown',
+      }),
+    ]);
+    expect(result.blockers).toEqual([]);
+    expect(result.hasBlockingErrors).toBe(false);
+  });
+
+  it('still blocks truly unknown clip types not in registry, not in built-in, not extension-declared', () => {
+    const clip = makeClip('c1', { clipType: 'alien-format' });
+    const snapshot = clipTypeSnapshotWith([]); // empty registry
+
+    const result = scanExportConfig(makeConfig([clip]), builtIn, extIds, undefined, undefined, snapshot);
+
+    expect(result.diagnostics).toEqual([
+      expect.objectContaining({
+        severity: 'error',
+        code: 'export/unknown-clip-type',
+        message: expect.stringContaining('not recognised'),
+        detail: { clipId: 'c1', clipType: 'alien-format' },
+      }),
+    ]);
+    expect(result.unknownClipTypes).toEqual(['alien-format']);
+    expect(result.findings).toEqual([
+      expect.objectContaining({
+        id: 'export.clipType.c1.alien-format.missing',
+        severity: 'error',
+        route: 'browser-export',
+        reason: 'missing-contribution',
+        clipId: 'c1',
+        detail: { clipType: 'alien-format' },
+      }),
+    ]);
+    expect(result.blockers).toEqual([
+      expect.objectContaining({
+        id: 'export.clipType.c1.alien-format.missing',
+        severity: 'error',
+        route: 'browser-export',
+        reason: 'missing-contribution',
+      }),
+    ]);
+    expect(result.hasBlockingErrors).toBe(true);
+  });
+
+  it('prioritises registry snapshot over built-in for non-built-in clip types (does not collide)', () => {
+    // 'media' is built-in — registry snapshot is irrelevant
+    // 'provider-hero' is only in registry — should pass
+    const clip = makeClip('c1', { clipType: 'provider-hero' });
+    const snapshot = clipTypeSnapshotWith([clipTypeRecord('provider-hero')]);
+
+    const result = scanExportConfig(makeConfig([clip]), builtIn, extIds, undefined, undefined, snapshot);
+
+    expect(result.diagnostics).toEqual([]);
+    expect(result.unknownClipTypes).toEqual([]);
+    expect(result.hasBlockingErrors).toBe(false);
+  });
+
+  it('registry snapshot clip type with missing browser-export capability emits blocker', () => {
+    const clip = makeClip('c1', { clipType: 'worker-only-clip' });
+    const snapshot = clipTypeSnapshotWith([
+      clipTypeRecord('worker-only-clip', {
+        ownerExtensionId: 'ext.worker',
+        contributionId: 'ext.worker:clipType:worker-only-clip',
+        renderability: {
+          defaultRoute: 'worker-export',
+          determinism: 'process-dependent',
+          capabilities: [
+            {
+              route: 'preview',
+              status: 'supported',
+              determinism: 'deterministic',
+            },
+            // No browser-export capability declared — passes silently
+            {
+              route: 'worker-export',
+              status: 'supported',
+              determinism: 'process-dependent',
+            },
+          ],
+        },
+      }),
+    ]);
+
+    const result = scanExportConfig(makeConfig([clip]), builtIn, extIds, undefined, undefined, snapshot);
+
+    // No browser-export capability = pass silently (same as effect pattern)
+    expect(result.diagnostics).toEqual([]);
+    expect(result.findings).toEqual([]);
+    expect(result.blockers).toEqual([]);
+    expect(result.unknownClipTypes).toEqual([]);
+    expect(result.hasBlockingErrors).toBe(false);
+  });
+
+  it('emits per-route blockers for active clip types with blocked worker-export', () => {
+    const clip = makeClip('c1', { clipType: 'browser-only-clip' });
+    const snapshot = clipTypeSnapshotWith([
+      clipTypeRecord('browser-only-clip', {
+        ownerExtensionId: 'ext.browser',
+        contributionId: 'ext.browser:clipType:browser-only-clip',
+        renderability: {
+          defaultRoute: 'browser-export',
+          determinism: 'deterministic',
+          capabilities: [
+            {
+              route: 'preview',
+              status: 'supported',
+              determinism: 'deterministic',
+            },
+            {
+              route: 'browser-export',
+              status: 'supported',
+              determinism: 'deterministic',
+            },
+            {
+              route: 'worker-export',
+              status: 'blocked',
+              determinism: 'process-dependent',
+              blockerReason: 'process-dependent',
+              message: 'Browser-only clip type requires DOM APIs unavailable in worker.',
+            },
+          ],
+        },
+      }),
+    ]);
+
+    const result = scanExportConfig(makeConfig([clip]), builtIn, extIds, undefined, undefined, snapshot);
+
+    expect(result.diagnostics).toEqual([
+      expect.objectContaining({
+        severity: 'error',
+        code: 'export/unrenderable-clip-type',
+        message: 'Browser-only clip type requires DOM APIs unavailable in worker.',
+        extensionId: 'ext.browser',
+        contributionId: 'ext.browser:clipType:browser-only-clip',
+        detail: expect.objectContaining({
+          clipId: 'c1',
+          clipType: 'browser-only-clip',
+          renderRoute: 'worker-export',
+          blockerReason: 'process-dependent',
+        }),
+      }),
+    ]);
+    expect(result.findings).toEqual([
+      expect.objectContaining({
+        id: 'export.clipType.c1.browser-only-clip.worker-export.process-dependent',
+        severity: 'error',
+        route: 'worker-export',
+        reason: 'process-dependent',
+        message: 'Browser-only clip type requires DOM APIs unavailable in worker.',
+        clipId: 'c1',
+        extensionId: 'ext.browser',
+        contributionId: 'ext.browser:clipType:browser-only-clip',
+        detail: { clipType: 'browser-only-clip', provenance: 'trusted-loader' },
+      }),
+    ]);
+    expect(result.blockers).toEqual([
+      expect.objectContaining({
+        id: 'export.clipType.c1.browser-only-clip.worker-export.process-dependent',
+        severity: 'error',
+        route: 'worker-export',
+        reason: 'process-dependent',
+      }),
+    ]);
     expect(result.hasBlockingErrors).toBe(true);
   });
 });

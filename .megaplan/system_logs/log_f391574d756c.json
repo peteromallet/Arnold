@@ -1,0 +1,70 @@
+{
+  "id": "log_f391574d756c",
+  "level": "debug",
+  "category": "system",
+  "event_type": "authority_divergence",
+  "message": "authority_divergence emitted",
+  "details": {
+    "event": {
+      "seq": 4874,
+      "schema_version": 1,
+      "ts_utc": "2026-06-19T20:35:04.873722+00:00",
+      "ts_rel_init_s": 5389.789759,
+      "kind": "authority_divergence",
+      "phase": "execute",
+      "payload": {
+        "diagnostic_version": 1,
+        "task_id": "T2",
+        "raw_terminal_status": "done",
+        "authority_status": "unsatisfied",
+        "authoritative": false,
+        "reason": "stale_evidence:head_mismatch:task_files_changed",
+        "missing_outputs": [],
+        "stale_evidence": [
+          "head_mismatch:task_files_changed",
+          "head_mismatch:task_files_changed",
+          "head_mismatch:task_files_changed",
+          "head_mismatch:task_files_changed",
+          "head_mismatch:task_files_changed",
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_files_changed"
+        ],
+        "would_block_reasons": [
+          "stale_evidence:head_mismatch:task_files_changed",
+          "stale_evidence:head_mismatch:task_commands_run"
+        ],
+        "error": null,
+        "diagnostics": {
+          "task_id": "T2",
+          "declared_outputs": {
+            "files_changed": [
+              "src/tools/video-editor/types/index.ts",
+              "src/tools/video-editor/lib/timeline-domain.ts",
+              "src/tools/video-editor/lib/timeline-data.ts",
+              "src/tools/video-editor/lib/serialize.test.ts",
+              "src/tools/video-editor/lib/timeline-data.test.ts"
+            ],
+            "commands_run": [
+              "npx vitest run src/tools/video-editor/lib/serialize.test.ts src/tools/video-editor/lib/timeline-data.test.ts --reporter=verbose"
+            ]
+          },
+          "linked_evidence_count": 14,
+          "evidence_count": 216,
+          "normalization": "iterable",
+          "status": "unsatisfied",
+          "evidence_sources": [
+            "plan_artifacts"
+          ],
+          "loaded_evidence_count": 216,
+          "raw_terminal_status": "done"
+        },
+        "ts_utc": "2026-06-19T20:35:04.873370+00:00"
+      },
+      "transaction_id": "81549586d237264c",
+      "store_method": "log_system_event"
+    }
+  },
+  "turn_id": null,
+  "epic_id": "m9-clip-type-dispatch-and-20260619-2105",
+  "occurred_at": "2026-06-19T20:35:04.873757Z"
+}

@@ -18,7 +18,8 @@ import {
   getClipTypeOverlayBehavior,
   isClipTypeCommandAvailable,
 } from '@/tools/video-editor/clip-types/index.ts';
-import { isSequenceParamsSchema } from '@/tools/video-editor/clip-types/defineClipType.ts';
+import { isEditorParamsSchema, isSequenceParamsSchema } from '@/tools/video-editor/clip-types/defineClipType.ts';
+import { KeyframeInspector } from '@/tools/video-editor/components/KeyframeInspector/KeyframeInspector';
 import { continuousEffectTypes, entranceEffectTypes, exitEffectTypes } from '@/tools/video-editor/effects/index.tsx';
 import { EffectCreatorPanel } from '@/tools/video-editor/components/EffectCreatorPanel.tsx';
 import { useEffectResources, type EffectCategory, type EffectResource } from '@/tools/video-editor/hooks/useEffectResources.ts';
@@ -39,6 +40,12 @@ import {
   createTransitionSnapshot,
   materializeTransitionDefaults,
 } from '@/tools/video-editor/transitions/catalog.ts';
+import { useOptionalClipTypeRegistryContext } from '@/tools/video-editor/clip-types/ClipTypeRegistryContext.tsx';
+import type { ClipTypeRegistryRecord } from '@/tools/video-editor/clip-types/ClipTypeRegistry.ts';
+import {
+  ContributionErrorBoundary,
+  type ContributionErrorInfo,
+} from '@/tools/video-editor/runtime/ContributionErrorBoundary.tsx';
 
 export { getVisibleClipTabs } from '@/tools/video-editor/lib/clip-inspector.ts';
 
@@ -72,6 +79,8 @@ interface ClipPanelProps {
   onAddVariantAsGeneration?: (variant: GenerationVariant) => void | Promise<void>;
   isAddingVariantAsGeneration?: (variantId: string) => boolean;
   timelineFps?: number;
+  /** Current playhead time in seconds, used by KeyframeInspector. */
+  currentTime?: number;
 }
 
 export const NO_EFFECT = '__none__';
@@ -330,6 +339,7 @@ export function ClipPanel({
   onAddVariantAsGeneration,
   isAddingVariantAsGeneration,
   timelineFps,
+  currentTime = 0,
 }: ClipPanelProps) {
   const effectResources = useEffectResources();
   const [creatorOpen, setCreatorOpen] = useState(false);
@@ -387,6 +397,13 @@ export function ClipPanel({
     !resolvedTransitionRecord;
   const isTransitionInError = resolvedTransitionRecord?.status === 'error';
   const isTransitionInactive = resolvedTransitionRecord?.status === 'inactive';
+
+  // M9 T9: Extension-provided clip inspector section
+  const clipTypeRegistryContext = useOptionalClipTypeRegistryContext();
+  const clipTypeRegistryRecord: ClipTypeRegistryRecord | undefined = useMemo(() => {
+    if (!clip?.clipType || !clipTypeRegistryContext) return undefined;
+    return clipTypeRegistryContext.snapshot.get(clip.clipType);
+  }, [clip?.clipType, clipTypeRegistryContext]);
 
   if (!clip) {
     return (
@@ -1260,6 +1277,15 @@ export function ClipPanel({
                 }
               }}
             />
+              {/* M9: Keyframe Inspector — shown when clip type has editor params schema */}
+              {clipDescriptor && isEditorParamsSchema(clipDescriptor.paramsSchema) && (
+                <KeyframeInspector
+                  schema={clipDescriptor.paramsSchema.params}
+                  keyframes={clip.keyframes ?? {}}
+                  currentTime={currentTime}
+                  onChange={(updatedKeyframes) => onChange({ keyframes: updatedKeyframes })}
+                />
+              )}
               </>
             )}
           </TabsContent>
@@ -1413,6 +1439,53 @@ export function ClipPanel({
           </TabsContent>
         )}
       </Tabs>
+
+      {/* M9 T9: Extension-provided clip inspector section after host controls */}
+      {clipTypeRegistryRecord?.inspector && (() => {
+        const InspectorRenderer = clipTypeRegistryRecord.inspector as (props: {
+          clipId: string;
+          clipTypeId: string;
+          params: Record<string, unknown>;
+          onParamsChange: (params: Record<string, unknown>) => void;
+        }) => React.ReactNode;
+
+        const handleContributionError = (info: ContributionErrorInfo) => {
+          if (typeof console !== 'undefined') {
+            console.warn(
+              '[ClipPanel] Extension clip inspector error captured by boundary:',
+              info,
+            );
+          }
+        };
+
+        return (
+          <div className="mt-3 rounded-xl border border-border bg-card/70 p-3">
+            <ContributionErrorBoundary
+              contributionId={
+                clipTypeRegistryRecord.contributionId ??
+                `clip-inspector:${clip.clipType}`
+              }
+              extensionId={clipTypeRegistryRecord.ownerExtensionId}
+              kind="inspectorSection"
+              label={
+                clipTypeRegistryRecord.contributionId
+                  ? `${clipTypeRegistryRecord.clipTypeId} inspector`
+                  : `Clip inspector: ${clipTypeRegistryRecord.clipTypeId}`
+              }
+              onError={handleContributionError}
+            >
+              <InspectorRenderer
+                clipId={clip.id}
+                clipTypeId={clip.clipType ?? 'unknown'}
+                params={clip.params ?? {}}
+                onParamsChange={(params: Record<string, unknown>) =>
+                  onChange({ params })
+                }
+              />
+            </ContributionErrorBoundary>
+          </div>
+        );
+      })()}
     </div>
   );
 }

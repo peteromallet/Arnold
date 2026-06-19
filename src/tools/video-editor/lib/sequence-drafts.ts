@@ -1,5 +1,6 @@
 import type { TimelineEditMutation } from '@/tools/video-editor/hooks/useTimelineCommit.ts';
 import { createClipMetaFromDescriptor } from '@/tools/video-editor/clip-types/runtime.ts';
+import type { ClipTypeRegistryRecord } from '@/tools/video-editor/clip-types/ClipTypeRegistry.ts';
 import {
   findNearestFreeTrack,
   getCompatibleTrackId,
@@ -33,11 +34,13 @@ export type BuildInsertSequenceDraftOptions = {
   at?: number;
   selectedTrackId?: string | null;
   preferredTrackId?: string | null;
+  extensionRecords?: readonly Pick<ClipTypeRegistryRecord, 'clipTypeId' | 'schema'>[];
 };
 
 export type BuildReplaceSequenceDraftOptions = {
   selectedClipId: string | null | undefined;
   selectedClipIds?: Iterable<string> | null;
+  extensionRecords?: readonly Pick<ClipTypeRegistryRecord, 'clipTypeId' | 'schema'>[];
 };
 
 const cloneParams = (
@@ -47,6 +50,7 @@ const cloneParams = (
 const createSequenceClipMeta = (
   trackId: string,
   draft: ValidatedSequenceDraft,
+  extensionRecords?: readonly Pick<ClipTypeRegistryRecord, 'clipTypeId' | 'schema'>[],
 ): ClipMeta => {
   // Try the descriptor-driven path first (handles built-in/trusted clip
   // types and applies their defaults). For brand-new code-path components
@@ -58,6 +62,7 @@ const createSequenceClipMeta = (
     trackId,
     clipOverrides: { hold: draft.hold },
     params: cloneParams(draft.params),
+    extensionRecords,
   }) as ClipMeta | null;
   if (descriptorMeta) return descriptorMeta;
   return {
@@ -153,7 +158,7 @@ export const buildInsertSequenceDraftEdit = (
     end: start + draft.hold,
     effectId: `effect-${clipId}`,
   };
-  const clipMeta = createSequenceClipMeta(trackId, draft);
+  const clipMeta = createSequenceClipMeta(trackId, draft, options.extensionRecords);
   const metaForResolve = {
     ...current.meta,
     [clipId]: clipMeta,
@@ -231,7 +236,7 @@ export const buildReplaceSequenceDraftEdit = (
     end: earliestStart + draft.hold,
     effectId: `effect-${clipId}`,
   };
-  const clipMeta = createSequenceClipMeta(primaryTarget.row.id, draft);
+  const clipMeta = createSequenceClipMeta(primaryTarget.row.id, draft, options.extensionRecords);
   const nextMetaBase = {
     ...current.meta,
     [clipId]: clipMeta,

@@ -187,6 +187,19 @@ import type {
   TransitionParameterSchema,
   TransitionRegistrationOptions,
   TransitionRegistrationService,
+  // M9: Clip type dispatch, keyframes, automation
+  ClipTypeContribution,
+  ClipRenderer,
+  ClipInspector,
+  ClipParameterDefinition,
+  ClipParameterSchema,
+  ClipTypeRegistrationOptions,
+  ClipTypeRegistrationService,
+  KeyframeInterpolation,
+  Keyframe,
+  InterpolatedParam,
+  AutomationClipTarget,
+  AutomationClipParams,
 } from '@reigh/editor-sdk';
 import type {
   ExtensionId,
@@ -967,7 +980,9 @@ describe('M6: contribution kind bridging for parser/output/search', () => {
   it('unsupported contribution behavior remains explicit (each returns its milestone)', () => {
     // Each reserved/unsupported kind returns its owning milestone name,
     // so consumers get a clear diagnostic rather than silent ignorance.
-    expect(contributionKindNotYetBridged('clipType')).toBe('M3');
+    // M9 clipType and automation are now bridged, returning null.
+    expect(contributionKindNotYetBridged('clipType')).toBeNull();
+    expect(contributionKindNotYetBridged('automation')).toBeNull();
     expect(contributionKindNotYetBridged('agentTool')).toBe('M5');
     expect(contributionKindNotYetBridged('agent')).toBe('M5');
   });
@@ -1604,5 +1619,387 @@ describe('M8: internal transition registration types are NOT re-exported from @r
     for (const forbidden of M8_INTERNAL_FORBIDDEN) {
       expect(ns[forbidden]).toBeUndefined();
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// M9: Clip type contribution type interfaces
+// ---------------------------------------------------------------------------
+
+describe('M9: trusted component clip type interfaces are importable from @reigh/editor-sdk', () => {
+  it('ClipTypeContribution shape is constructable (minimal)', () => {
+    const contrib: ClipTypeContribution = {
+      id: 'myClipType' as ContributionId,
+      kind: 'clipType',
+      clipTypeId: 'ct.counter',
+    };
+    expect(contrib.kind).toBe('clipType');
+    expect(contrib.clipTypeId).toBe('ct.counter');
+    expect(contrib.allowBrowserExport).toBeUndefined();
+    expect(contrib.allowWorkerExport).toBeUndefined();
+    expect(contrib.order).toBeUndefined();
+  });
+
+  it('ClipTypeContribution shape is constructable (full)', () => {
+    const contrib: ClipTypeContribution = {
+      id: 'fullClipType' as ContributionId,
+      kind: 'clipType',
+      clipTypeId: 'ct.full',
+      label: 'Full Clip Type',
+      allowBrowserExport: true,
+      allowWorkerExport: true,
+      order: 10,
+    };
+    expect(contrib.kind).toBe('clipType');
+    expect(contrib.label).toBe('Full Clip Type');
+    expect(contrib.allowBrowserExport).toBe(true);
+    expect(contrib.allowWorkerExport).toBe(true);
+    expect(contrib.order).toBe(10);
+  });
+
+  it('ClipTypeContribution defaults allowBrowserExport and allowWorkerExport to false', () => {
+    const contrib: ClipTypeContribution = {
+      id: 'defaultExport' as ContributionId,
+      kind: 'clipType',
+      clipTypeId: 'ct.default',
+    };
+    expect(contrib.allowBrowserExport ?? false).toBe(false);
+    expect(contrib.allowWorkerExport ?? false).toBe(false);
+  });
+
+  it('ClipRenderer type can be a plain object', () => {
+    const renderer: ClipRenderer = { render: () => null };
+    expect(typeof renderer).toBe('object');
+    expect(renderer).not.toBeNull();
+  });
+
+  it('ClipRenderer type can be a function', () => {
+    const renderer: ClipRenderer = () => null;
+    expect(typeof renderer).toBe('function');
+  });
+
+  it('ClipInspector type can be a plain object', () => {
+    const inspector: ClipInspector = { render: () => null };
+    expect(typeof inspector).toBe('object');
+    expect(inspector).not.toBeNull();
+  });
+
+  it('ClipInspector type can be a function', () => {
+    const inspector: ClipInspector = () => null;
+    expect(typeof inspector).toBe('function');
+  });
+
+  it('ClipParameterDefinition shape is constructable (number)', () => {
+    const def: ClipParameterDefinition = {
+      name: 'count',
+      label: 'Count',
+      description: 'Number of items',
+      type: 'number',
+      default: 5,
+      min: 1,
+      max: 10,
+      step: 1,
+    };
+    expect(def.name).toBe('count');
+    expect(def.type).toBe('number');
+    expect(def.default).toBe(5);
+    expect(def.min).toBe(1);
+    expect(def.max).toBe(10);
+    expect(def.step).toBe(1);
+  });
+
+  it('ClipParameterDefinition shape is constructable (select)', () => {
+    const def: ClipParameterDefinition = {
+      name: 'variant',
+      label: 'Variant',
+      description: 'Display variant',
+      type: 'select',
+      default: 'a',
+      options: [
+        { label: 'Variant A', value: 'a' },
+        { label: 'Variant B', value: 'b' },
+      ],
+    };
+    expect(def.type).toBe('select');
+    expect(def.options).toHaveLength(2);
+    expect(def.options?.[0].label).toBe('Variant A');
+  });
+
+  it('ClipParameterDefinition shape is constructable (boolean)', () => {
+    const def: ClipParameterDefinition = {
+      name: 'enabled',
+      label: 'Enabled',
+      description: 'Enable clip',
+      type: 'boolean',
+      default: true,
+    };
+    expect(def.type).toBe('boolean');
+    expect(def.default).toBe(true);
+  });
+
+  it('ClipParameterDefinition shape is constructable (color)', () => {
+    const def: ClipParameterDefinition = {
+      name: 'background',
+      label: 'Background',
+      description: 'Background color',
+      type: 'color',
+      default: '#ffffff',
+    };
+    expect(def.type).toBe('color');
+    expect(def.default).toBe('#ffffff');
+  });
+
+  it('ClipParameterDefinition shape is constructable (audio-binding)', () => {
+    const def: ClipParameterDefinition = {
+      name: 'reactivity',
+      label: 'Reactivity',
+      description: 'Audio reactivity',
+      type: 'audio-binding',
+      default: { source: 'bass', min: 0, max: 1 },
+    };
+    expect(def.type).toBe('audio-binding');
+    expect(def.default).toEqual({ source: 'bass', min: 0, max: 1 });
+  });
+
+  it('ClipParameterSchema is an array of parameter definitions', () => {
+    const schema: ClipParameterSchema = [
+      { name: 'a', label: 'A', description: 'D', type: 'number', default: 0 },
+      { name: 'b', label: 'B', description: 'D', type: 'boolean', default: false },
+    ];
+    expect(Array.isArray(schema)).toBe(true);
+    expect(schema).toHaveLength(2);
+    expect(schema[0].name).toBe('a');
+    expect(schema[1].name).toBe('b');
+  });
+
+  it('ClipTypeRegistrationOptions shape is constructable', () => {
+    const opts: ClipTypeRegistrationOptions = {
+      label: 'My Clip Type',
+      parameterSchema: [
+        { name: 'x', label: 'X', description: 'D', type: 'number', default: 0 },
+      ],
+    };
+    expect(opts.label).toBe('My Clip Type');
+    expect(opts.parameterSchema).toBeDefined();
+    expect(opts.parameterSchema?.[0].name).toBe('x');
+  });
+
+  it('ClipTypeRegistrationOptions with only label is constructable', () => {
+    const opts: ClipTypeRegistrationOptions = { label: 'Just a label' };
+    expect(opts.label).toBe('Just a label');
+    expect(opts.parameterSchema).toBeUndefined();
+  });
+
+  it('ClipTypeRegistrationOptions empty object is constructable', () => {
+    const opts: ClipTypeRegistrationOptions = {};
+    expect(opts.label).toBeUndefined();
+    expect(opts.parameterSchema).toBeUndefined();
+  });
+
+  it('ClipTypeRegistrationService interface has registerClipType method with correct signature', () => {
+    const svc: ClipTypeRegistrationService = {
+      registerClipType(
+        _clipTypeId: string,
+        _renderer: ClipRenderer,
+        _inspector?: ClipInspector,
+        _options?: ClipTypeRegistrationOptions,
+      ) {
+        return { dispose() {} };
+      },
+    };
+    expect(typeof svc.registerClipType).toBe('function');
+
+    const handle = svc.registerClipType('ct.test', {});
+    expect(typeof handle.dispose).toBe('function');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// M9: ExtensionContext includes clipTypes registration service
+// ---------------------------------------------------------------------------
+
+describe('M9: ExtensionContext includes clipTypes registration service', () => {
+  it('ExtensionContext type includes readonly clipTypes property', () => {
+    const ctx: ExtensionContext = {
+      apiVersion: 1,
+      extension: {
+        id: 'test.ext' as ExtensionId,
+        version: '1.0.0',
+        label: 'Test',
+        manifest: {} as ExtensionManifest,
+      },
+      chrome: {
+        toast: () => {},
+        progress: () => {},
+        subscribe: () => ({ dispose: () => {} }),
+        focus: () => {},
+        announce: () => {},
+      },
+      services: {
+        settings: { get: () => undefined, set: () => {}, delete: () => {}, keys: () => [] },
+        i18n: { t: (k: string) => k },
+        diagnostics: { report: () => {}, diagnostics: [] },
+      },
+      creative: {
+        project: {},
+        timeline: {},
+        assets: {},
+        materials: {},
+        sessions: {},
+        export: {},
+        stage: {},
+        writing: {},
+        reader: {},
+        proposals: {},
+      } as CreativeContext,
+      commands: {
+        registerCommand: () => ({ dispose: () => {} }),
+      },
+      effects: {
+        registerComponent: () => ({ dispose: () => {} }),
+      },
+      transitions: {
+        registerRenderer: () => ({ dispose: () => {} }),
+      },
+      clipTypes: {
+        registerClipType: () => ({ dispose: () => {} }),
+      },
+    };
+    expect(ctx.clipTypes).toBeDefined();
+    expect(typeof ctx.clipTypes.registerClipType).toBe('function');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// M9: Internal clip type registration types are NOT exported
+// ---------------------------------------------------------------------------
+
+describe('M9: internal clip type registration types are NOT re-exported from @reigh/editor-sdk', () => {
+  const M9_INTERNAL_FORBIDDEN = [
+    // Clip type registry internals
+    'clipTypeRegistry',
+    'ClipTypeRegistry',
+    'ClipTypeRegistryRecord',
+    'ClipTypeRegistrySnapshot',
+    'createClipTypeRegistry',
+    'registerClipTypeHandler',
+    'resolveClipType',
+    'resolveSnapshotClipType',
+    'validateClipTypeParameterSchema',
+    'createClipTypeRegistrationService',
+    // Clip renderer internals
+    'ClipRendererProps',
+    'ClipInspectorProps',
+  ];
+
+  it('none of the forbidden M9 internal names appear as SDK value exports', () => {
+    const valueExports = Object.keys(sdkStar);
+    for (const forbidden of M9_INTERNAL_FORBIDDEN) {
+      expect(valueExports).not.toContain(forbidden);
+    }
+  });
+
+  it('forbidden M9 internal names are not accessible on the SDK namespace', () => {
+    const ns = sdkStar as Record<string, unknown>;
+    for (const forbidden of M9_INTERNAL_FORBIDDEN) {
+      expect(ns[forbidden]).toBeUndefined();
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// M9: Keyframe contracts
+// ---------------------------------------------------------------------------
+
+describe('M9: keyframe contracts are importable from @reigh/editor-sdk', () => {
+  it('KeyframeInterpolation accepts only linear and hold', () => {
+    const linear: KeyframeInterpolation = 'linear';
+    const hold: KeyframeInterpolation = 'hold';
+    expect(linear).toBe('linear');
+    expect(hold).toBe('hold');
+  });
+
+  it('Keyframe shape is constructable', () => {
+    const kf: Keyframe = {
+      time: 1.5,
+      value: 0.75,
+      interpolation: 'linear',
+    };
+    expect(kf.time).toBe(1.5);
+    expect(kf.value).toBe(0.75);
+    expect(kf.interpolation).toBe('linear');
+  });
+
+  it('Keyframe supports string values', () => {
+    const kf: Keyframe = {
+      time: 2.0,
+      value: 'active',
+      interpolation: 'hold',
+    };
+    expect(kf.value).toBe('active');
+    expect(kf.interpolation).toBe('hold');
+  });
+
+  it('Keyframe supports boolean values', () => {
+    const kf: Keyframe = {
+      time: 0.0,
+      value: true,
+      interpolation: 'linear',
+    };
+    expect(kf.value).toBe(true);
+  });
+
+  it('InterpolatedParam shape is constructable', () => {
+    const param: InterpolatedParam = {
+      name: 'opacity',
+      value: 0.5,
+    };
+    expect(param.name).toBe('opacity');
+    expect(param.value).toBe(0.5);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// M9: Automation clip contracts
+// ---------------------------------------------------------------------------
+
+describe('M9: automation clip contracts are importable from @reigh/editor-sdk', () => {
+  it('AutomationClipTarget shape is constructable', () => {
+    const target: AutomationClipTarget = {
+      contributionId: 'myContrib',
+      parameterPath: 'params.opacity',
+    };
+    expect(target.contributionId).toBe('myContrib');
+    expect(target.parameterPath).toBe('params.opacity');
+  });
+
+  it('AutomationClipParams shape is constructable', () => {
+    const params: AutomationClipParams = {
+      target: {
+        contributionId: 'myContrib',
+        parameterPath: 'params.opacity',
+      },
+      keyframes: [
+        { time: 0, value: 0, interpolation: 'linear' },
+        { time: 1, value: 1, interpolation: 'linear' },
+      ],
+      enabled: true,
+    };
+    expect(params.target.contributionId).toBe('myContrib');
+    expect(params.keyframes).toHaveLength(2);
+    expect(params.enabled).toBe(true);
+  });
+
+  it('AutomationClipParams with disabled state is constructable', () => {
+    const params: AutomationClipParams = {
+      target: {
+        contributionId: 'otherContrib',
+        parameterPath: 'params.scale',
+      },
+      keyframes: [],
+      enabled: false,
+    };
+    expect(params.enabled).toBe(false);
+    expect(params.keyframes).toHaveLength(0);
   });
 });

@@ -218,7 +218,7 @@ describe('contributionKindNotYetBridged', () => {
   });
 
   it('returns milestone name for not-yet-bridged kinds', () => {
-    expect(contributionKindNotYetBridged('clipType')).toBe('M3');
+    expect(contributionKindNotYetBridged('clipType')).toBeNull();
     expect(contributionKindNotYetBridged('parser')).toBeNull();
     expect(contributionKindNotYetBridged('outputFormat')).toBe('M6');
     expect(contributionKindNotYetBridged('searchProvider')).toBe('M6');
@@ -245,7 +245,7 @@ describe('contributionKindNotYetBridged', () => {
   });
 
   it('unsupported contribution behavior is explicit (returns owning milestone)', () => {
-    expect(contributionKindNotYetBridged('clipType')).toBe('M3');
+    expect(contributionKindNotYetBridged('clipType')).toBeNull();
     expect(contributionKindNotYetBridged('agentTool')).toBe('M5');
     expect(contributionKindNotYetBridged('agent')).toBe('M5');
   });
@@ -446,8 +446,12 @@ describe('M6: defineExtension accepts M6 contribution types', () => {
   });
 
   it('unsupported contribution behavior is explicit in CONTRIBUTION_KIND_MILESTONE', () => {
+    // clipType is now M9-bridged, so it returns null from contributionKindNotYetBridged.
+    // Verify the milestone map still records the owning milestone.
+    expect((CONTRIBUTION_KIND_MILESTONE as Record<string, string>)['clipType']).toBe('M9');
+    expect(contributionKindNotYetBridged('clipType' as any)).toBeNull();
+
     const reservedKinds = [
-      { kind: 'clipType', expectedMilestone: 'M3' },
       { kind: 'agentTool', expectedMilestone: 'M5' },
       { kind: 'agent', expectedMilestone: 'M5' },
     ];
@@ -1025,6 +1029,7 @@ describe('createExtensionContext', () => {
     expect(keys).toEqual([
       'apiVersion',
       'chrome',
+      'clipTypes',
       'commands',
       'creative',
       'effects',

@@ -6,6 +6,7 @@ import {
   type ClipTypeCommandConstraintValue,
   type ClipTypeCommandMetadata,
   type ClipTypeDescriptor,
+  type ClipTypeRenderCapabilities,
 } from './defineClipType.ts';
 import {
   createAvailableClipTypeRegistry,
@@ -13,6 +14,7 @@ import {
   type AvailableClipTypeRegistration,
   type TrustedClipTypeRegistration,
 } from './registry.ts';
+import type { ClipTypeRegistryRecord } from './ClipTypeRegistry.ts';
 
 export type BuiltinClipType = (typeof BUILTIN_CLIP_TYPES)[number];
 export type ClipAssetMediaType = 'image' | 'video' | 'audio' | 'unknown';
@@ -42,6 +44,7 @@ export type TrustedRegisteredClipTypeRegistration =
 export type RegisteredClipTypeLookupResult =
   | { status: 'available'; registration: AvailableRegisteredClipTypeRegistration }
   | { status: 'unavailable'; registration: SequenceTrustedRegistration }
+  | { status: 'duplicate'; registration: SequenceTrustedRegistration; duplicateExtensionIds: readonly string[] }
   | { status: 'unknown'; clipType: string | undefined };
 
 export type ClipTypeCommandEvaluationContext = {
@@ -305,6 +308,29 @@ const BUILTIN_CLIP_TYPE_REGISTRATIONS = [
       },
     }),
   },
+  {
+    id: 'automation',
+    source: 'builtin',
+    descriptor: defineClipType({
+      id: 'automation',
+      label: 'Automation',
+      description: 'Host-owned automation clip that applies keyframe curves to override target extension clip parameters.',
+      hold: {
+        kind: 'required',
+        defaultSeconds: 4,
+        minSeconds: 0.05,
+        maxSeconds: 120,
+        stepSeconds: 0.1,
+      },
+      commands: HOLD_ONLY_COMMANDS,
+      renderCapabilities: {
+        previewRoute: 'none',
+        exportRoute: 'client',
+        features: ['hold-duration'],
+        knownLimitations: ['Automation clips are data-only and do not produce visual output.'],
+      },
+    }),
+  },
 ] as const satisfies readonly BuiltinClipTypeRegistration[];
 
 const BUILTIN_CLIP_TYPE_REGISTRATION_MAP = new Map(
@@ -389,17 +415,144 @@ export const getBuiltinClipTypeDescriptor = (
 
 export const getRegisteredClipTypeDescriptor = (
   clipType: string | undefined,
+  extensionRecords?: readonly Pick<ClipTypeRegistryRecord, 'clipTypeId' | 'schema'>[],
 ): ClipTypeDescriptor | undefined => {
   if (!clipType) {
     return getBuiltinClipTypeDescriptor('media');
   }
-  return getBuiltinClipTypeDescriptor(clipType) ?? getTrustedClipTypeDescriptor(clipType);
+  return getBuiltinClipTypeDescriptor(clipType)
+    ?? getTrustedClipTypeDescriptor(clipType)
+    ?? (extensionRecords
+      ? getExtensionClipTypeDescriptor(clipType, extensionRecords)
+      : undefined);
 };
+
+// ---------------------------------------------------------------------------
+// M9 T7: Extension clip type descriptor synthesis
+// ---------------------------------------------------------------------------
+
+/**
+ * Extension clip types contribute a parameter schema through the
+ * ClipTypeRegistry but don't declare a full ClipTypeDescriptor. This helper
+ * synthesizes a minimal descriptor so the Sequence Creator panel can surface
+ * labels, defaults, and param editors for extension clip types the same way
+ * it does for trusted sequence clip types.
+ */
+export function defineClipTypeFromExtensionRecord(
+  clipTypeId: string,
+  schema: ReadonlyArray<{
+    name: string;
+    label: string;
+    description: string;
+    type: 'number' | 'select' | 'boolean' | 'color' | 'audio-binding';
+    default?: number | string | boolean | Record<string, unknown>;
+    min?: number;
+    max?: number;
+    step?: number;
+    options?: readonly { label: string; value: string }[];
+  }> | undefined,
+): ClipTypeDescriptor {
+  const params: Record<string, import('./defineClipType.ts').JsonValue> = {};
+  const paramDefs: Array<{
+    key: string;
+    label: string;
+    kind: 'string';
+    description: string;
+    required?: boolean;
+    defaultValue?: string;
+    options?: readonly string[];
+  }> = [];
+
+  if (schema) {
+    for (const def of schema) {
+      if (def.default !== undefined) {
+        params[def.name] = def.default as import('./defineClipType.ts').JsonValue;
+      }
+      paramDefs.push({
+        key: def.name,
+        label: def.label,
+        kind: 'string' as const,
+        description: def.description,
+        options: def.options?.map((o) => o.value),
+      });
+    }
+  }
+
+  const renderCapabilities: ClipTypeRenderCapabilities = {
+    previewRoute: 'custom',
+    exportRoute: 'custom',
+    features: ['visual', 'hold-duration'],
+  };
+
+  return defineClipType({
+    id: clipTypeId,
+    label: clipTypeId,
+    description: `Extension clip type contributed by an extension.`,
+    hold: {
+      kind: 'required',
+      defaultSeconds: 4,
+      minSeconds: 0.05,
+      maxSeconds: 120,
+      stepSeconds: 0.1,
+    },
+    paramsSchema: {
+      kind: 'sequence',
+      params: paramDefs,
+    },
+    defaults: {
+      params,
+    },
+    renderCapabilities,
+  });
+}
+
+/**
+ * Look up the extension record that matches `clipType` and synthesize a
+ * ClipTypeDescriptor from its schema. Returns undefined when no matching
+ * extension record exists.
+ */
+export function getExtensionClipTypeDescriptor(
+  clipType: string,
+  extensionRecords: readonly Pick<ClipTypeRegistryRecord, 'clipTypeId' | 'schema'>[],
+): ClipTypeDescriptor | undefined {
+  const match = extensionRecords.find((record) => record.clipTypeId === clipType);
+  if (!match) return undefined;
+  return defineClipTypeFromExtensionRecord(match.clipTypeId, match.schema);
+}
+
+/**
+ * Build a lookup map from clipTypeId → ClipTypeDescriptor for a set of
+ * extension records. Intended for the Sequence Creator panel so it can
+ * resolve labels/defaults for extension clip types with a single map lookup
+ * instead of linear scans per draft.
+ */
+export function buildExtensionClipTypeDescriptorMap(
+  extensionRecords: readonly Pick<ClipTypeRegistryRecord, 'clipTypeId' | 'schema'>[],
+): Map<string, ClipTypeDescriptor> {
+  const map = new Map<string, ClipTypeDescriptor>();
+  for (const record of extensionRecords) {
+    if (!map.has(record.clipTypeId)) {
+      map.set(record.clipTypeId, defineClipTypeFromExtensionRecord(record.clipTypeId, record.schema));
+    }
+  }
+  return map;
+}
 
 export const createEditorClipTypeRegistry = (
   registry: Partial<Record<string, unknown>>,
+  extensionRecords?: readonly { clipTypeId: string; ownerExtensionId?: string; [key: string]: unknown }[],
 ) => {
   const availableSequenceView = createAvailableClipTypeRegistry(registry);
+
+  // Index extension records by clipTypeId for O(1) duplicate lookup
+  const extensionRecordMap = new Map<string, readonly { ownerExtensionId?: string }[]>();
+  for (const record of (extensionRecords ?? [])) {
+    const existing = extensionRecordMap.get(record.clipTypeId) ?? [];
+    extensionRecordMap.set(record.clipTypeId, [
+      ...existing,
+      { ownerExtensionId: record.ownerExtensionId },
+    ]);
+  }
 
   const getAvailableRegistration = (
     clipType: string,
@@ -429,6 +582,28 @@ export const createEditorClipTypeRegistry = (
     }
 
     const sequenceResolution = availableSequenceView.resolveAvailableClipTypeRegistration(clipType);
+
+    // Check for duplicates: a trusted sequence has this clipType AND an extension also claims it
+    const matchingExtensions = extensionRecordMap.get(clipType);
+    const isTrusted = sequenceResolution.status === 'available' || sequenceResolution.status === 'unavailable';
+
+    if (isTrusted && matchingExtensions && matchingExtensions.length > 0) {
+      // Duplicate: both trusted sequence and extension claim this clipTypeId
+      const trustedReg = sequenceResolution.status === 'available'
+        ? sequenceResolution.registration
+        : { ...sequenceResolution.registration, source: 'sequence' as const };
+      return {
+        status: 'duplicate',
+        registration: {
+          ...trustedReg,
+          source: 'sequence',
+        } as SequenceTrustedRegistration,
+        duplicateExtensionIds: matchingExtensions.map(
+          (ext) => ext.ownerExtensionId ?? '(unknown)',
+        ),
+      };
+    }
+
     if (sequenceResolution.status === 'available') {
       return {
         status: 'available',
@@ -447,6 +622,15 @@ export const createEditorClipTypeRegistry = (
         },
       };
     }
+
+    // Extension records (not built-in, not trusted)
+    if (matchingExtensions && matchingExtensions.length > 0) {
+      // Extension clip types don't have a ClipTypeDescriptor in the traditional sense,
+      // so they are resolved as 'available' through the dynamic extension path.
+      // Consumers should check the ClipTypeRegistry for full records.
+      return { status: 'unknown', clipType };
+    }
+
     return sequenceResolution;
   };
 
@@ -472,14 +656,16 @@ export const createClipMetaFromDescriptor = ({
   clipOverrides,
   params,
   useDescriptorParamDefaults = false,
+  extensionRecords,
 }: {
   clipType: string;
   trackId: string;
   clipOverrides?: Record<string, unknown>;
   params?: Record<string, unknown>;
   useDescriptorParamDefaults?: boolean;
+  extensionRecords?: readonly Pick<ClipTypeRegistryRecord, 'clipTypeId' | 'schema'>[];
 }): Record<string, unknown> | null => {
-  const descriptor = getRegisteredClipTypeDescriptor(clipType);
+  const descriptor = getRegisteredClipTypeDescriptor(clipType, extensionRecords);
   if (!descriptor) {
     return null;
   }

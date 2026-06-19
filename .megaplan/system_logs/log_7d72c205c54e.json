@@ -1,0 +1,74 @@
+{
+  "id": "log_7d72c205c54e",
+  "level": "debug",
+  "category": "system",
+  "event_type": "authority_divergence",
+  "message": "authority_divergence emitted",
+  "details": {
+    "event": {
+      "seq": 3430,
+      "schema_version": 1,
+      "ts_utc": "2026-06-19T20:10:09.982789+00:00",
+      "ts_rel_init_s": 3894.898826,
+      "kind": "authority_divergence",
+      "phase": "execute",
+      "payload": {
+        "diagnostic_version": 1,
+        "task_id": "T8",
+        "raw_terminal_status": "done",
+        "authority_status": "unsatisfied",
+        "authoritative": false,
+        "reason": "stale_evidence:head_mismatch:task_files_changed",
+        "missing_outputs": [],
+        "stale_evidence": [
+          "head_mismatch:task_files_changed",
+          "head_mismatch:task_files_changed",
+          "head_mismatch:task_files_changed",
+          "head_mismatch:task_files_changed",
+          "head_mismatch:task_files_changed",
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_files_changed"
+        ],
+        "would_block_reasons": [
+          "stale_evidence:head_mismatch:task_files_changed",
+          "stale_evidence:head_mismatch:task_commands_run"
+        ],
+        "error": null,
+        "diagnostics": {
+          "task_id": "T8",
+          "declared_outputs": {
+            "files_changed": [
+              "src/tools/video-editor/components/KeyframeInspector/KeyframeInspector.tsx",
+              "src/tools/video-editor/components/KeyframeInspector/KeyframeInspector.test.tsx",
+              "src/tools/video-editor/components/PropertiesPanel/ClipPanel.tsx",
+              "src/tools/video-editor/components/PropertiesPanel/PropertiesPanel.tsx",
+              "src/tools/video-editor/components/PropertiesPanel/PropertiesPanel.test.tsx"
+            ],
+            "commands_run": [
+              "npx vitest run src/tools/video-editor/components/KeyframeInspector/KeyframeInspector.test.tsx --reporter=verbose",
+              "npx vitest run src/tools/video-editor/components/PropertiesPanel/ --reporter=verbose",
+              "npx vitest run src/tools/video-editor/keyframes/ src/tools/video-editor/components/KeyframeInspector/ src/tools/video-editor/components/PropertiesPanel/ --reporter=dot"
+            ]
+          },
+          "linked_evidence_count": 18,
+          "evidence_count": 144,
+          "normalization": "iterable",
+          "status": "unsatisfied",
+          "evidence_sources": [
+            "plan_artifacts"
+          ],
+          "loaded_evidence_count": 144,
+          "raw_terminal_status": "done"
+        },
+        "ts_utc": "2026-06-19T20:10:09.982476+00:00"
+      },
+      "transaction_id": "662ac680d1321034",
+      "store_method": "log_system_event"
+    }
+  },
+  "turn_id": null,
+  "epic_id": "m9-clip-type-dispatch-and-20260619-2105",
+  "occurred_at": "2026-06-19T20:10:09.982833Z"
+}

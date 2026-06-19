@@ -1,6 +1,6 @@
 {
     "schema_version": 0,
-    "current_milestone_index": 9,
+    "current_milestone_index": 10,
     "current_plan_name": null,
     "last_state": "merged",
     "pr_number": null,
@@ -121,6 +121,14 @@
             "pr_state": "merged",
             "plan_name": "m8-dynamic-transition-20260619-1915",
             "merged_at": "2026-06-19T19:02:00Z"
+        },
+        {
+            "label": "m9-clip-types-keyframes",
+            "index": 9,
+            "pr_number": 36,
+            "pr_state": "merged",
+            "plan_name": "m9-clip-type-dispatch-and-20260619-2105",
+            "merged_at": "2026-06-19T20:35:00Z"
         }
     ],
     "branch_head": "165291f8446e8669f3cb650f11c475527b8c0123",
@@ -149,8 +157,8 @@
             "target_root": "/Users/peteromalley/Documents/.megaplan-worktrees/reigh-extension-layer-epic",
             "work_dir": "/Users/peteromalley/Documents/.megaplan-worktrees/reigh-extension-layer-epic",
             "engine_root": "/Users/peteromalley/.pyenv/versions/3.11.11/lib/python3.11/site-packages",
-            "target_head": "165291f8446e8669f3cb650f11c475527b8c0123",
-            "target_base": "165291f8446e8669f3cb650f11c475527b8c0123",
+            "target_head": "787e26a10fdadf8a3bb07446364c615cfbfeb3fd",
+            "target_base": "787e26a10fdadf8a3bb07446364c615cfbfeb3fd",
             "target_base_ref": "main",
             "target_fallback_reason": null
         }

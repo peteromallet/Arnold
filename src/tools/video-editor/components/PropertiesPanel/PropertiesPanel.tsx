@@ -5,6 +5,7 @@ import { ClipPanel, getVisibleClipTabs, NO_EFFECT } from '@/tools/video-editor/c
 import {
   useTimelineEditorData,
   useTimelineEditorOps,
+  useTimelinePlaybackContext,
 } from '@/tools/video-editor/hooks/timelineStore.ts';
 import { useStaleVariants } from '@/tools/video-editor/hooks/useStaleVariants.ts';
 import { useAddVariantAsGeneration } from '@/tools/video-editor/hooks/useAddVariantAsGeneration.ts';
@@ -91,6 +92,7 @@ function PropertiesPanelComponent() {
     compositionSize,
     preferences,
   } = useTimelineEditorData();
+  const { currentTime } = useTimelinePlaybackContext();
   const {
     clearSelection,
     handleUpdateClips,
@@ -336,6 +338,7 @@ function PropertiesPanelComponent() {
             onAddVariantAsGeneration={selectedClip ? (variant) => addVariantAsGenerationAfterClip(selectedClip.id, variant) : undefined}
             isAddingVariantAsGeneration={selectedClip ? (variantId) => isAddingVariantAsGenerationPending(selectedClip.id, variantId) : undefined}
             timelineFps={resolvedConfig?.output.fps}
+            currentTime={currentTime}
           />
         )}
       </div>

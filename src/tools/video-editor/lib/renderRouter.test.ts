@@ -181,6 +181,236 @@ describe('Sprint 8 render-button router (decideRenderRoute)', () => {
   });
 });
 
+// ---------------------------------------------------------------------------
+// M9 T11: Contributed clip routing via dynamic capability records
+// ---------------------------------------------------------------------------
+
+function makeContributedRecord(
+  clipTypeId: string,
+  capabilities: Array<{ route: string; status: string }>,
+) {
+  return {
+    clipTypeId,
+    renderability: {
+      capabilities: capabilities.map((c) => ({
+        route: c.route,
+        status: c.status,
+        determinism: 'deterministic' as const,
+      })),
+      determinism: 'deterministic' as const,
+    },
+  };
+}
+
+const browserCapableRecord = makeContributedRecord('ext-glow', [
+  { route: 'browser-export', status: 'supported' },
+  { route: 'preview', status: 'supported' },
+]);
+
+const previewOnlyRecord = makeContributedRecord('ext-preview-only', [
+  { route: 'preview', status: 'supported' },
+  { route: 'browser-export', status: 'blocked' },
+]);
+
+const workerOnlyRecord = makeContributedRecord('ext-worker-only', [
+  { route: 'worker-export', status: 'supported' },
+  { route: 'preview', status: 'supported' },
+]);
+
+const noCapabilitiesRecord = makeContributedRecord('ext-no-caps', []);
+
+describe('M9 T11 contributed clip routing (decideRenderRoute)', () => {
+  it('routes a browser-capable contributed clip to browser-remotion', () => {
+    const decision = decideRenderRoute(
+      { clips: [{ clipType: 'ext-glow' }] },
+      [browserCapableRecord],
+    );
+    expect(decision.route).toBe('browser-remotion');
+    expect(decision.hasContributedClip).toBe(true);
+    expect(decision.hasThemedClip).toBe(false);
+    expect(decision.reason).toBe('browser_capable_contributed');
+  });
+
+  it('routes mixed browser-capable contributed + native clips to browser-remotion', () => {
+    const decision = decideRenderRoute(
+      {
+        clips: [
+          { clipType: 'ext-glow' },
+          { clipType: 'media' },
+        ],
+      },
+      [browserCapableRecord],
+    );
+    expect(decision.route).toBe('browser-remotion');
+    expect(decision.hasContributedClip).toBe(true);
+    expect(decision.hasMediaClip).toBe(true);
+    expect(decision.reason).toBe('mixed_browser_capable_contributed_and_native');
+  });
+
+  it('blocks a contributed clip without browser-export capability (preview-only route)', () => {
+    const decision = decideRenderRoute(
+      { clips: [{ clipType: 'ext-preview-only' }] },
+      [previewOnlyRecord],
+    );
+    expect(decision.route).toBe('preview-only');
+    expect(decision.hasContributedClip).toBe(true);
+    expect(decision.reason).toBe('contributed_blocked_no_browser_capability');
+  });
+
+  it('blocks a contributed clip with only worker-export capability (worker routes blocked for contributed code)', () => {
+    const decision = decideRenderRoute(
+      { clips: [{ clipType: 'ext-worker-only' }] },
+      [workerOnlyRecord],
+    );
+    expect(decision.route).toBe('preview-only');
+    expect(decision.hasContributedClip).toBe(true);
+    expect(decision.reason).toBe('contributed_blocked_no_browser_capability');
+  });
+
+  it('blocks a contributed clip with no capabilities at all', () => {
+    const decision = decideRenderRoute(
+      { clips: [{ clipType: 'ext-no-caps' }] },
+      [noCapabilitiesRecord],
+    );
+    expect(decision.route).toBe('preview-only');
+    expect(decision.hasContributedClip).toBe(true);
+    expect(decision.reason).toBe('contributed_blocked_no_browser_capability');
+  });
+
+  it('blocks mixed contributed (browser-capable) + themed clips due to worker route conflict', () => {
+    const decision = decideRenderRoute(
+      {
+        clips: [
+          { clipType: 'ext-glow' },
+          { clipType: 'image-jump' },
+        ],
+      },
+      [browserCapableRecord],
+    );
+    expect(decision.route).toBe('preview-only');
+    expect(decision.hasContributedClip).toBe(true);
+    expect(decision.hasThemedClip).toBe(true);
+    expect(decision.reason).toBe('contributed_blocked_worker_route_conflict');
+  });
+
+  it('blocks contributed clip mixed with generated remotion module due to worker route conflict', () => {
+    const decision = decideRenderRoute(
+      {
+        clips: [
+          { clipType: 'ext-glow' },
+          {
+            clipType: 'image-jump',
+            generation: {
+              sequence_lane: 'remotion_module',
+              artifact_id: 'artifact-1',
+            },
+          },
+        ],
+      },
+      [browserCapableRecord],
+    );
+    expect(decision.route).toBe('preview-only');
+    expect(decision.hasContributedClip).toBe(true);
+    expect(decision.reason).toBe('contributed_blocked_worker_route_conflict');
+  });
+
+  it('multiple browser-capable contributed clips all route to browser-remotion', () => {
+    const record2 = makeContributedRecord('ext-glow-2', [
+      { route: 'browser-export', status: 'supported' },
+    ]);
+    const decision = decideRenderRoute(
+      {
+        clips: [
+          { clipType: 'ext-glow' },
+          { clipType: 'ext-glow-2' },
+        ],
+      },
+      [browserCapableRecord, record2],
+    );
+    expect(decision.route).toBe('browser-remotion');
+    expect(decision.hasContributedClip).toBe(true);
+    expect(decision.reason).toBe('browser_capable_contributed');
+  });
+
+  it('existing themed routing is unchanged when contributed records are empty', () => {
+    const decision = decideRenderRoute(
+      { clips: [{ clipType: 'image-jump' }] },
+      [],
+    );
+    expect(decision.route).toBe('worker-banodoco');
+    expect(decision.hasThemedClip).toBe(true);
+    expect(decision.hasContributedClip).toBe(false);
+    expect(decision.reason).toBe('themed_only');
+  });
+
+  it('existing native routing is unchanged when contributed records are empty', () => {
+    const decision = decideRenderRoute(
+      { clips: [{ clipType: 'media' }] },
+      [],
+    );
+    expect(decision.route).toBe('browser-remotion');
+    expect(decision.hasContributedClip).toBe(false);
+    expect(decision.reason).toBe('pure_native_clips');
+  });
+
+  it('existing native routing is unchanged when contributed records are undefined', () => {
+    const decision = decideRenderRoute(
+      { clips: [{ clipType: 'media' }] },
+      undefined,
+    );
+    expect(decision.route).toBe('browser-remotion');
+    expect(decision.hasContributedClip).toBe(false);
+    expect(decision.reason).toBe('pure_native_clips');
+  });
+
+  it('a contributed record for an unrelated clipType does not affect themed routing', () => {
+    const decision = decideRenderRoute(
+      { clips: [{ clipType: 'title-card' }] },
+      [browserCapableRecord], // ext-glow record, not title-card
+    );
+    expect(decision.route).toBe('worker-banodoco');
+    expect(decision.hasContributedClip).toBe(false);
+    expect(decision.hasThemedClip).toBe(true);
+    expect(decision.reason).toBe('themed_only');
+  });
+
+  it('blocks the first contributed clip without browser capability even when mixed with native clips', () => {
+    const decision = decideRenderRoute(
+      {
+        clips: [
+          { clipType: 'media' },
+          { clipType: 'ext-preview-only' },
+        ],
+      },
+      [previewOnlyRecord],
+    );
+    expect(decision.route).toBe('preview-only');
+    expect(decision.hasContributedClip).toBe(true);
+    expect(decision.reason).toBe('contributed_blocked_no_browser_capability');
+  });
+
+  it('no_clips decision reports hasContributedClip false', () => {
+    const decision = decideRenderRoute({ clips: [] }, [browserCapableRecord]);
+    expect(decision.route).toBe('browser-remotion');
+    expect(decision.hasContributedClip).toBe(false);
+    expect(decision.reason).toBe('no_clips');
+  });
+
+  it('blocked remotion_module short-circuits before contributed record lookup', () => {
+    const decision = decideRenderRoute(
+      {
+        clips: [{
+          clipType: 'ext-glow',
+          generation: { sequence_lane: 'remotion_module' },
+        }],
+      },
+      [browserCapableRecord], // ext-glow is browser-capable but the module is blocked
+    );
+    expect(decision.route).toBe('preview-only');
+    expect(decision.reason).toBe('remotion_module_missing_artifact');
+  });
+});
+
 describe('Sprint 8 buildRenderTimelinePayload', () => {
   const baseInput = {
     request: {

@@ -303,7 +303,9 @@ export type ContributionKind =
   | 'transition'
   | 'clipType'
   | 'agentTool'
-  | 'agent';
+  | 'agent'
+  // M9: automation clip type (host-owned)
+  | 'automation';
 
 /** Slot names the host shell recognizes. */
 export type VideoEditorSlotName =
@@ -668,6 +670,190 @@ export interface TransitionContribution {
 }
 
 // ---------------------------------------------------------------------------
+// M9: Clip type contributions — renderers, inspectors, keyframes, automation
+// ---------------------------------------------------------------------------
+
+/**
+ * M9: A clip-type contribution declared in an extension manifest.
+ *
+ * Contributed clip types are trusted local browser-preview components
+ * analogous to M7 effects and M8 transitions. Worker execution of
+ * contributed clip code stays out of scope for M9.
+ */
+export interface ClipTypeContribution {
+  /** Unique within the extension. */
+  id: ContributionId;
+  kind: 'clipType';
+  /** The clip-type identifier used in registerClipType calls. */
+  clipTypeId: string;
+  /** Human-readable label for diagnostics / UI. */
+  label?: string;
+  /**
+   * When true, allows the clip type to be executed during browser export.
+   * Default: false (preview-only).
+   */
+  allowBrowserExport?: boolean;
+  /**
+   * When true, allows the clip type to be executed in a worker context.
+   * Default: false (preview-only).
+   */
+  allowWorkerExport?: boolean;
+  /** Lower values sort first. Default 0. */
+  order?: number;
+}
+
+/**
+ * M9: A trusted local component registered by an extension as a clip renderer.
+ *
+ * Clip renderers execute in the browser preview and receive host-interpolated
+ * params through ClipRendererProps.
+ */
+export type ClipRenderer = Record<string, unknown> | ((...args: unknown[]) => unknown);
+
+/**
+ * M9: A trusted local component registered by an extension as a clip inspector.
+ *
+ * Clip inspectors render in the inspector panel when a clip of the
+ * owning type is selected.
+ */
+export type ClipInspector = Record<string, unknown> | ((...args: unknown[]) => unknown);
+
+/**
+ * M9: A parameter definition for clip-type parameter schemas.
+ *
+ * Mirrors the effect/transition parameter definition shape so extensions
+ * can declare parameter contracts at registration time.
+ */
+export interface ClipParameterDefinition {
+  /** Unique parameter name (used as the key in params). */
+  name: string;
+  /** Human-readable label for UI controls. */
+  label: string;
+  /** Description shown in tooltips / inspector. */
+  description: string;
+  /** Parameter type determining the control and coercion rules. */
+  type: 'number' | 'select' | 'boolean' | 'color' | 'audio-binding';
+  /** Default value when no override is provided. */
+  default?: number | string | boolean | Record<string, unknown>;
+  /** Minimum value (number type only). */
+  min?: number;
+  /** Maximum value (number type only). */
+  max?: number;
+  /** Step increment (number type only). */
+  step?: number;
+  /** Options for select-type parameters. */
+  options?: readonly { label: string; value: string }[];
+}
+
+/** M9: Ordered array of clip parameter definitions. */
+export type ClipParameterSchema = readonly ClipParameterDefinition[];
+
+/** M9: Options for imperative clip-type registration via ctx.clipTypes.registerClipType(). */
+export interface ClipTypeRegistrationOptions {
+  /** Override label for picker / UI. */
+  label?: string;
+  /**
+   * Parameter schema for this clip type.
+   * Validated at registration time.
+   */
+  parameterSchema?: ClipParameterSchema;
+}
+
+/**
+ * M9: Clip-type registration service available as `ctx.clipTypes` during activate().
+ */
+export interface ClipTypeRegistrationService {
+  /**
+   * Register a trusted local renderer and optional inspector for a clip type.
+   *
+   * The `clipTypeId` must match the `clipTypeId` field of a `ClipTypeContribution`
+   * declared by this extension in its manifest.
+   *
+   * Returns a DisposeHandle that unregisters the clip type when dispose() is
+   * called (safe to call multiple times; idempotent).
+   */
+  registerClipType(
+    clipTypeId: string,
+    renderer: ClipRenderer,
+    inspector?: ClipInspector,
+    options?: ClipTypeRegistrationOptions,
+  ): DisposeHandle;
+}
+
+// ---------------------------------------------------------------------------
+// M9: Keyframe contracts
+// ---------------------------------------------------------------------------
+
+/**
+ * M9: Interpolation mode for keyframe curves.
+ *
+ * - `linear` — lerp between adjacent keyframe values.
+ * - `hold` — step function; value holds until the next keyframe.
+ */
+export type KeyframeInterpolation = 'linear' | 'hold';
+
+/**
+ * M9: A single keyframe stored as JSON-serializable timeline data on a clip.
+ *
+ * Keyframes are host-owned timeline data validated against the owning
+ * parameter schema, with interpolation performed by the host before
+ * passing computed params to renderers.
+ */
+export interface Keyframe {
+  /** Time in seconds. */
+  time: number;
+  /** JSON-serializable value (number | string | boolean). */
+  value: number | string | boolean;
+  /** Interpolation mode from this keyframe to the next. */
+  interpolation: KeyframeInterpolation;
+}
+
+/**
+ * M9: Interpolated parameter value at a specific time.
+ *
+ * Produced by the host keyframe interpolator and passed to clip renderers
+ * so extension code never needs to implement timeline interpolation.
+ */
+export interface InterpolatedParam {
+  /** The parameter name. */
+  name: string;
+  /** The interpolated value at the requested time. */
+  value: number | string | boolean;
+}
+
+// ---------------------------------------------------------------------------
+// M9: Automation clip contracts
+// ---------------------------------------------------------------------------
+
+/**
+ * M9: Target descriptor for an automation clip.
+ *
+ * Automation clips are host-owned timeline clips (clipType: 'automation')
+ * that reference target parameters by contribution ID and parameter path.
+ */
+export interface AutomationClipTarget {
+  /** The contribution ID that owns the target parameter. */
+  contributionId: string;
+  /** Dot-separated path to the target parameter within the contribution. */
+  parameterPath: string;
+}
+
+/**
+ * M9: Params stored on an automation clip.
+ *
+ * Automation clips apply baked keyframe curves to override target
+ * extension parameter values during preview and export.
+ */
+export interface AutomationClipParams {
+  /** The target parameter this automation clip controls. */
+  target: AutomationClipTarget;
+  /** Ordered keyframes defining the automation curve. */
+  keyframes: readonly Keyframe[];
+  /** Whether this automation clip is active. */
+  enabled: boolean;
+}
+
+// ---------------------------------------------------------------------------
 // Processes (reserved, validated but inactive in M1)
 // ---------------------------------------------------------------------------
 
@@ -732,6 +918,8 @@ export interface ExtensionManifest {
     | EffectContribution
     // M8: trusted component transitions
     | TransitionContribution
+    // M9: contributed clip types
+    | ClipTypeContribution
   )[];
   /** Reserved: descriptive permission metadata. */
   permissions?: readonly ExtensionPermissionDeclaration[];
@@ -1196,6 +1384,8 @@ export interface ExtensionContext {
   readonly effects: EffectRegistrationService;
   /** M8: Transition registration service for trusted component transitions. */
   readonly transitions: TransitionRegistrationService;
+  /** M9: Clip-type registration service for contributed clip types. */
+  readonly clipTypes: ClipTypeRegistrationService;
 }
 
 // ---------------------------------------------------------------------------
@@ -1254,6 +1444,7 @@ export function createExtensionContext(
   commands?: ExtensionCommandService,
   effects?: EffectRegistrationService,
   transitions?: TransitionRegistrationService,
+  clipTypes?: ClipTypeRegistrationService,
 ): ExtensionContext {
   const extensionId = extension.manifest.id as string;
   const manifest = extension.manifest; // Already frozen by defineExtension
@@ -1551,6 +1742,18 @@ export function createExtensionContext(
     },
   };
 
+  // ---- clipTypes service (optional, wired by provider) -----------------------
+  const clipTypesService: ClipTypeRegistrationService = clipTypes ?? {
+    registerClipType(_clipTypeId: string, _renderer: ClipRenderer, _inspector?: ClipInspector, _options?: ClipTypeRegistrationOptions): DisposeHandle {
+      diagnosticsService.report({
+        severity: 'error',
+        code: 'clipTypes/not-wired',
+        message: `Cannot register clip type \"${_clipTypeId}\" — the ClipTypeRegistry has not been wired by the host provider.`,
+      });
+      return { dispose() {} };
+    },
+  };
+
   // ---- assemble, attach dispose, then freeze -------------------------------
   const ctx = {
     apiVersion: 1,
@@ -1571,6 +1774,7 @@ export function createExtensionContext(
     commands: commandsService,
     effects: effectsService,
     transitions: transitionsService,
+    clipTypes: clipTypesService,
   } as ExtensionContext;
 
   // Attach host-service disposal so the lifecycle can clean up settings
@@ -1734,7 +1938,9 @@ export const CONTRIBUTION_KIND_MILESTONE: Record<ContributionKind, string | unde
   assetDetailSection: 'M6',
   effect: 'M7',
   transition: 'M8',
-  clipType: 'M3',
+  // M9: clip type dispatch and basic keyframes
+  clipType: 'M9',
+  automation: 'M9',
   agentTool: 'M5',
   agent: 'M5',
 };
@@ -1776,6 +1982,11 @@ export function contributionKindNotYetBridged(kind: ContributionKind): string | 
 
   // M8: transition is bridged.
   if (milestone === 'M8' && kind === 'transition') {
+    return null;
+  }
+
+  // M9: clipType and automation are bridged.
+  if (milestone === 'M9' && (kind === 'clipType' || kind === 'automation')) {
     return null;
   }
 

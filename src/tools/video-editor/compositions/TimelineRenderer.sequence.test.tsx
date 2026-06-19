@@ -3,7 +3,8 @@ import { render, screen } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { TimelineRenderer } from '@/tools/video-editor/compositions/TimelineRenderer';
 import type { ResolvedTimelineConfig } from '@/tools/video-editor/types';
-import type { PropsWithChildren } from 'react';
+import type { ClipRendererProps } from '@/tools/video-editor/clip-types/ClipTypeRegistry';
+import type { FC, PropsWithChildren } from 'react';
 
 const sequenceProps = vi.hoisted((): Array<Record<string, unknown>> => []);
 const visualClipMock = vi.hoisted(() => vi.fn());
@@ -482,5 +483,324 @@ describe('TimelineRenderer registered sequences', () => {
     expect(screen.queryByTestId('registered-sequence')).not.toBeInTheDocument();
     expect(visualClipMock).not.toHaveBeenCalled();
     expect(textClipMock).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// M9 T10: Extension clip renderer dispatch tests
+// ---------------------------------------------------------------------------
+
+const mockClipTypeRegistryGet = vi.fn();
+const mockClipTypeRegistryHas = vi.fn();
+
+vi.mock('@/tools/video-editor/clip-types/ClipTypeRegistryContext.tsx', async () => {
+  const actual = await vi.importActual<
+    typeof import('@/tools/video-editor/clip-types/ClipTypeRegistryContext.tsx')
+  >('@/tools/video-editor/clip-types/ClipTypeRegistryContext.tsx');
+  return {
+    ...actual,
+    useClipTypeRegistrySnapshot: () => ({
+      records: Object.freeze([]),
+      diagnostics: Object.freeze([]),
+      get: mockClipTypeRegistryGet,
+      has: mockClipTypeRegistryHas,
+    }),
+  };
+});
+
+/** Create a minimal ClipTypeRegistryRecord for tests. */
+function makeRegistryRecord(
+  overrides: Partial<{
+    clipTypeId: string;
+    status: string;
+    renderer: unknown;
+    capabilities: Array<{ route: string; status: string }>;
+    schema: ReadonlyArray<{
+      name: string;
+      label: string;
+      description: string;
+      type: string;
+      default?: unknown;
+      min?: number;
+      max?: number;
+      step?: number;
+      options?: readonly { label: string; value: string }[];
+    }>;
+  }> = {},
+): Record<string, unknown> {
+  const {
+    clipTypeId = 'ext.my-clip',
+    status = 'active',
+    renderer,
+    capabilities = [{ route: 'preview', status: 'supported' }],
+    schema,
+  } = overrides;
+  return {
+    clipTypeId,
+    contributionId: 'contrib-1',
+    renderer: renderer ?? ((() => null) as unknown),
+    status,
+    schema,
+    renderability: {
+      capabilities: capabilities.map((c) => ({
+        ...c,
+        determinism: 'deterministic',
+      })),
+      defaultRoute: 'preview',
+      determinism: 'deterministic',
+    },
+  };
+}
+
+describe('TimelineRenderer — extension clip renderer dispatch (M9 T10)', () => {
+  beforeEach(() => {
+    sequenceProps.length = 0;
+    visualClipMock.mockClear();
+    textClipMock.mockClear();
+    mockClipTypeRegistryGet.mockReset();
+    mockClipTypeRegistryHas.mockReset();
+  });
+
+  const extBuildConfig = (
+    clipType: string,
+    keyframes?: Record<string, Array<{ time: number; value: number | string | boolean; interpolation: string }>>,
+    params?: Record<string, unknown>,
+  ): ResolvedTimelineConfig => ({
+    output: { resolution: '1920x1080', fps: 30, file: 'out.mp4' },
+    tracks: [{ id: 'V1', kind: 'visual', label: 'V1' }],
+    clips: [
+      {
+        id: 'clip-ext-1',
+        clipType,
+        track: 'V1',
+        at: 0,
+        hold: 2,
+        params: params ?? {},
+        keyframes,
+      },
+    ],
+    registry: {},
+  });
+
+  it('renders an extension clip through the ClipTypeRegistry with host-interpolated params', () => {
+    const TestRenderer: FC<ClipRendererProps> = (props) => (
+      <div
+        data-testid="extension-clip-renderer"
+        data-clip-id={props.clipId}
+        data-clip-type-id={props.clipTypeId}
+        data-time={props.time}
+        data-width={props.width}
+        data-height={props.height}
+        data-params={JSON.stringify(props.params)}
+      >
+        EXTENSION
+      </div>
+    );
+
+    mockClipTypeRegistryGet.mockReturnValue(
+      makeRegistryRecord({
+        clipTypeId: 'ext.my-clip',
+        renderer: TestRenderer,
+      }),
+    );
+    mockClipTypeRegistryHas.mockReturnValue(true);
+
+    render(<TimelineRenderer config={extBuildConfig('ext.my-clip')} />);
+
+    const el = screen.getByTestId('extension-clip-renderer');
+    expect(el).toBeInTheDocument();
+    expect(el).toHaveAttribute('data-clip-id', 'clip-ext-1');
+    expect(el).toHaveAttribute('data-clip-type-id', 'ext.my-clip');
+    expect(el).toHaveAttribute('data-time', '0');
+    expect(el).toHaveAttribute('data-width', '1920');
+    expect(el).toHaveAttribute('data-height', '1080');
+    // No schema → params passed through as-is
+    expect(el.getAttribute('data-params')).toBe('{}');
+    expect(screen.queryByTestId('unknown-clip-placeholder')).not.toBeInTheDocument();
+  });
+
+  it('computes host-interpolated params from keyframes when schema is present', () => {
+    const TestRenderer: FC<ClipRendererProps> = (props) => (
+      <div
+        data-testid="extension-clip-renderer"
+        data-params={JSON.stringify(props.params)}
+      />
+    );
+
+    mockClipTypeRegistryGet.mockReturnValue(
+      makeRegistryRecord({
+        clipTypeId: 'ext.anim-clip',
+        renderer: TestRenderer,
+        schema: [{ name: 'opacity', label: 'Opacity', description: '', type: 'number', default: 0.5, min: 0, max: 1 }],
+      }),
+    );
+    mockClipTypeRegistryHas.mockReturnValue(true);
+
+    render(
+      <TimelineRenderer
+        config={extBuildConfig(
+          'ext.anim-clip',
+          {
+            opacity: [
+              { time: 0, value: 0.2, interpolation: 'linear' },
+              { time: 2, value: 1.0, interpolation: 'linear' },
+            ],
+          },
+        )}
+      />,
+    );
+
+    const el = screen.getByTestId('extension-clip-renderer');
+    const params = JSON.parse(el.getAttribute('data-params') ?? '{}');
+    // At time=0, we get the first keyframe value (0.2)
+    expect(params.opacity).toBe(0.2);
+  });
+
+  it('interpolates between keyframes at a non-zero time', () => {
+    const TestRenderer: FC<ClipRendererProps> = (props) => (
+      <div
+        data-testid="extension-clip-renderer"
+        data-params={JSON.stringify(props.params)}
+      />
+    );
+
+    mockClipTypeRegistryGet.mockReturnValue(
+      makeRegistryRecord({
+        clipTypeId: 'ext.anim-clip',
+        renderer: TestRenderer,
+        schema: [{ name: 'scale', label: 'Scale', description: '', type: 'number', default: 1, min: 0.1, max: 5 }],
+      }),
+    );
+    mockClipTypeRegistryHas.mockReturnValue(true);
+
+    render(
+      <TimelineRenderer
+        config={extBuildConfig(
+          'ext.anim-clip',
+          {
+            scale: [
+              { time: 0, value: 1, interpolation: 'linear' },
+              { time: 2, value: 3, interpolation: 'linear' },
+            ],
+          },
+        )}
+      />,
+    );
+
+    const el = screen.getByTestId('extension-clip-renderer');
+    const params = JSON.parse(el.getAttribute('data-params') ?? '{}');
+    // At time=0, we get the first keyframe value (1)
+    expect(params.scale).toBe(1);
+  });
+
+  it('falls back to raw params when clip has no keyframes and schema is present', () => {
+    const TestRenderer: FC<ClipRendererProps> = (props) => (
+      <div
+        data-testid="extension-clip-renderer"
+        data-params={JSON.stringify(props.params)}
+      />
+    );
+
+    mockClipTypeRegistryGet.mockReturnValue(
+      makeRegistryRecord({
+        clipTypeId: 'ext.nokf-clip',
+        renderer: TestRenderer,
+        schema: [{ name: 'volume', label: 'Volume', description: '', type: 'number', default: 0.8, min: 0, max: 1 }],
+      }),
+    );
+    mockClipTypeRegistryHas.mockReturnValue(true);
+
+    render(
+      <TimelineRenderer
+        config={extBuildConfig('ext.nokf-clip', undefined, { volume: 0.3 })}
+      />,
+    );
+
+    const el = screen.getByTestId('extension-clip-renderer');
+    const params = JSON.parse(el.getAttribute('data-params') ?? '{}');
+    // No keyframes → uses default value from schema (0.8)
+    expect(params.volume).toBe(0.8);
+  });
+
+  it('shows loud placeholder when renderer throws at runtime (error boundary)', () => {
+    const CrashingRenderer: FC = () => {
+      throw new Error('Intentional test crash');
+    };
+
+    mockClipTypeRegistryGet.mockReturnValue(
+      makeRegistryRecord({
+        clipTypeId: 'ext.crash-clip',
+        renderer: CrashingRenderer,
+      }),
+    );
+    mockClipTypeRegistryHas.mockReturnValue(true);
+
+    render(<TimelineRenderer config={extBuildConfig('ext.crash-clip')} />);
+
+    // Error boundary should catch the crash and render the placeholder
+    expect(screen.getByTestId('unknown-clip-placeholder')).toBeInTheDocument();
+    expect(screen.queryByTestId('extension-clip-renderer')).not.toBeInTheDocument();
+  });
+
+  it('shows loud placeholder when registry record has no renderer', () => {
+    mockClipTypeRegistryGet.mockReturnValue(
+      makeRegistryRecord({
+        clipTypeId: 'ext.norender-clip',
+        renderer: { notAFunction: true }, // Not a function
+      }),
+    );
+    mockClipTypeRegistryHas.mockReturnValue(true);
+
+    render(<TimelineRenderer config={extBuildConfig('ext.norender-clip')} />);
+
+    expect(screen.getByTestId('unknown-clip-placeholder')).toBeInTheDocument();
+    expect(screen.queryByTestId('extension-clip-renderer')).not.toBeInTheDocument();
+  });
+
+  it('shows loud placeholder when registry record is inactive', () => {
+    mockClipTypeRegistryGet.mockReturnValue(
+      makeRegistryRecord({
+        clipTypeId: 'ext.inactive-clip',
+        status: 'inactive',
+      }),
+    );
+    mockClipTypeRegistryHas.mockReturnValue(true);
+
+    render(<TimelineRenderer config={extBuildConfig('ext.inactive-clip')} />);
+
+    expect(screen.getByTestId('unknown-clip-placeholder')).toBeInTheDocument();
+    expect(screen.queryByTestId('extension-clip-renderer')).not.toBeInTheDocument();
+  });
+
+  it('shows loud placeholder when preview capability is blocked', () => {
+    const TestRenderer: FC<ClipRendererProps> = () => (
+      <div data-testid="extension-clip-renderer" />
+    );
+
+    mockClipTypeRegistryGet.mockReturnValue(
+      makeRegistryRecord({
+        clipTypeId: 'ext.blocked-clip',
+        renderer: TestRenderer,
+        capabilities: [{ route: 'preview', status: 'blocked' }],
+      }),
+    );
+    mockClipTypeRegistryHas.mockReturnValue(true);
+
+    render(<TimelineRenderer config={extBuildConfig('ext.blocked-clip')} />);
+
+    expect(screen.getByTestId('unknown-clip-placeholder')).toBeInTheDocument();
+    expect(screen.queryByTestId('extension-clip-renderer')).not.toBeInTheDocument();
+  });
+
+  it('falls through to existing loud placeholder when clipType is not in the registry', () => {
+    mockClipTypeRegistryGet.mockReturnValue(undefined);
+    mockClipTypeRegistryHas.mockReturnValue(false);
+
+    render(<TimelineRenderer config={extBuildConfig('ext.unknown-clip')} />);
+
+    // Not in registry → falls through to !isBuiltinClipType check → loud placeholder
+    expect(screen.getByTestId('unknown-clip-placeholder')).toBeInTheDocument();
+    expect(screen.queryByTestId('extension-clip-renderer')).not.toBeInTheDocument();
+    expect(visualClipMock).not.toHaveBeenCalled();
   });
 });

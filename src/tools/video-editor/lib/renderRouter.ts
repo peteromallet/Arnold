@@ -33,6 +33,7 @@ import {
   type GeneratedLaneClipShape,
 } from '@/tools/video-editor/lib/generated-lanes.ts';
 import { materializeSequenceConfig } from '@/tools/video-editor/sequences/materialize.ts';
+import type { ContributionRenderability } from '@/tools/video-editor/runtime/renderability.ts';
 
 /** Minimal clip shape we need from the resolved timeline. */
 export interface RouterClipShape extends GeneratedLaneClipShape {
@@ -42,6 +43,17 @@ export interface RouterClipShape extends GeneratedLaneClipShape {
 /** Minimal timeline shape we need from the resolved config. */
 export interface RouterTimelineShape {
   clips?: ReadonlyArray<RouterClipShape> | null;
+}
+
+/**
+ * Minimal contributed clip record the router needs to check dynamic
+ * capability declarations. Consumers pass a subset of
+ * ClipTypeRegistryRecord or an equivalent shape extracted from the
+ * provider-scoped registry snapshot.
+ */
+export interface ContributedClipRecord {
+  readonly clipTypeId: string;
+  readonly renderability: ContributionRenderability;
 }
 
 /**
@@ -80,6 +92,8 @@ export interface RenderRouteDecision {
   hasThemedClip: boolean;
   /** True iff at least one clip is pure-media / Reigh-native. */
   hasMediaClip: boolean;
+  /** True iff at least one clip is a contributed extension clip. */
+  hasContributedClip: boolean;
   reason:
     | 'no_clips'
     | 'pure_native_clips'
@@ -87,6 +101,10 @@ export interface RenderRouteDecision {
     | 'mixed_themed_and_media'
     | 'generated_remotion_module'
     | 'mixed_generated_module_and_other'
+    | 'browser_capable_contributed'
+    | 'mixed_browser_capable_contributed_and_native'
+    | 'contributed_blocked_no_browser_capability'
+    | 'contributed_blocked_worker_route_conflict'
     | GeneratedRemotionModuleBlockReason;
 }
 
@@ -95,6 +113,7 @@ const NATIVE_BUILTIN_CLIP_TYPES: ReadonlySet<string> = new Set([
   'text',
   'effect-layer',
   'hold',
+  'automation',
 ]);
 
 const isNativeBuiltinClipType = (value: unknown): boolean => {
@@ -112,23 +131,58 @@ const isCustomRenderClipType = (value: unknown): boolean => {
   return descriptor?.renderCapabilities.exportRoute === 'custom';
 };
 
+/**
+ * Map contributed clip records by clipTypeId for O(1) lookup during the
+ * routing loop.
+ */
+function indexContributedRecords(
+  records: ReadonlyArray<ContributedClipRecord> | undefined,
+): ReadonlyMap<string, ContributedClipRecord> {
+  if (!records || records.length === 0) return new Map();
+  const map = new Map<string, ContributedClipRecord>();
+  for (const record of records) {
+    if (!map.has(record.clipTypeId)) {
+      map.set(record.clipTypeId, record);
+    }
+  }
+  return map;
+}
+
+/**
+ * Check whether a contributed clip record explicitly declares a supported
+ * browser-export capability.
+ */
+function hasBrowserExportCapability(
+  record: ContributedClipRecord,
+): boolean {
+  return record.renderability.capabilities.some(
+    (c) => c.route === 'browser-export' && c.status === 'supported',
+  );
+}
+
 /** Pure-decision routing — call this from a hook or test. */
 export function decideRenderRoute(
   timeline: RouterTimelineShape | null | undefined,
+  contributedClipRecords?: ReadonlyArray<ContributedClipRecord>,
 ): RenderRouteDecision {
   const clips = (timeline?.clips ?? []) as ReadonlyArray<RouterClipShape>;
+  const contributedIndex = indexContributedRecords(contributedClipRecords);
 
   if (clips.length === 0) {
     return {
       route: 'browser-remotion',
       hasThemedClip: false,
       hasMediaClip: false,
+      hasContributedClip: false,
       reason: 'no_clips',
     };
   }
 
   let hasThemedClip = false;
   let hasMediaClip = false;
+  let hasContributedClip = false;
+  let hasBrowserCapableContributedClip = false;
+  let hasNativeOrMediaClip = false;
   let hasGeneratedModuleClip = false;
   let hasOtherClip = false;
   for (const clip of clips) {
@@ -138,6 +192,7 @@ export function decideRenderRoute(
         route: 'preview-only',
         hasThemedClip: false,
         hasMediaClip: false,
+        hasContributedClip: false,
         reason: moduleStatus.reason,
       };
     }
@@ -147,10 +202,52 @@ export function decideRenderRoute(
     }
 
     hasOtherClip = true;
+
+    // M9 T11: Check contributed clip records first. Contributed clip
+    // code is only allowed in browser-remotion when it explicitly
+    // declares browser-export capability. Worker routes are always
+    // blocked for contributed code (SD1).
+    const clipType = clip?.clipType;
+    if (typeof clipType === 'string') {
+      const contributedRecord = contributedIndex.get(clipType);
+      if (contributedRecord) {
+        hasContributedClip = true;
+        if (hasBrowserExportCapability(contributedRecord)) {
+          hasBrowserCapableContributedClip = true;
+        } else {
+          // Contributed clip without browser-export capability is
+          // immediately blocked — worker routes are out of scope
+          // for contributed code and no other route is available.
+          return {
+            route: 'preview-only',
+            hasThemedClip: false,
+            hasMediaClip: false,
+            hasContributedClip: true,
+            reason: 'contributed_blocked_no_browser_capability',
+          };
+        }
+        continue;
+      }
+    }
+
+    // Non-contributed clips follow existing routing.
     if (isCustomRenderClipType(clip?.clipType)) {
       hasThemedClip = true;
+      // A themed clip mixed with browser-capable contributed clips
+      // creates a conflict: themed clips need worker, contributed
+      // clips can't go to worker.
+      if (hasBrowserCapableContributedClip) {
+        return {
+          route: 'preview-only',
+          hasThemedClip: true,
+          hasMediaClip: true,
+          hasContributedClip: true,
+          reason: 'contributed_blocked_worker_route_conflict',
+        };
+      }
     } else if (isNativeBuiltinClipType(clip?.clipType)) {
       hasMediaClip = true;
+      hasNativeOrMediaClip = true;
     } else {
       // Unknown clipType (theme package not installed, typo). Treat as
       // media so the existing render path's loud-placeholder fallback
@@ -158,15 +255,67 @@ export function decideRenderRoute(
       // without the theme package, and the sprint scopes us to
       // registered themes.
       hasMediaClip = true;
+      hasNativeOrMediaClip = true;
     }
   }
 
+  // Generated Remotion module clips always go to the worker pool if
+  // they survived the blocked_module short-circuit above. Mixed
+  // generated + browser-capable contributed clips create an
+  // unresolvable conflict because contributed code cannot execute in
+  // the worker.
   if (hasGeneratedModuleClip) {
+    if (hasBrowserCapableContributedClip) {
+      return {
+        route: 'preview-only',
+        hasThemedClip,
+        hasMediaClip,
+        hasContributedClip: true,
+        reason: 'contributed_blocked_worker_route_conflict',
+      };
+    }
     return {
       route: 'worker-banodoco',
       hasThemedClip,
       hasMediaClip,
+      hasContributedClip: false,
       reason: hasOtherClip ? 'mixed_generated_module_and_other' : 'generated_remotion_module',
+    };
+  }
+
+  // Browser-capable contributed clips mixed with themed clips already
+  // short-circuit above (contributed_blocked_worker_route_conflict).
+  // Here we handle the remaining combinations.
+
+  if (hasBrowserCapableContributedClip) {
+    if (hasThemedClip) {
+      // Should not reach here (caught above), but defensive.
+      return {
+        route: 'preview-only',
+        hasThemedClip: true,
+        hasMediaClip: true,
+        hasContributedClip: true,
+        reason: 'contributed_blocked_worker_route_conflict',
+      };
+    }
+    if (hasNativeOrMediaClip) {
+      // Mixed browser-capable contributed + native → browser-remotion
+      // handles both.
+      return {
+        route: 'browser-remotion',
+        hasThemedClip: false,
+        hasMediaClip: true,
+        hasContributedClip: true,
+        reason: 'mixed_browser_capable_contributed_and_native',
+      };
+    }
+    // Pure browser-capable contributed clips
+    return {
+      route: 'browser-remotion',
+      hasThemedClip: false,
+      hasMediaClip: false,
+      hasContributedClip: true,
+      reason: 'browser_capable_contributed',
     };
   }
 
@@ -175,6 +324,7 @@ export function decideRenderRoute(
       route: 'worker-banodoco',
       hasThemedClip,
       hasMediaClip,
+      hasContributedClip: false,
       reason: 'mixed_themed_and_media',
     };
   }
@@ -183,6 +333,7 @@ export function decideRenderRoute(
       route: 'worker-banodoco',
       hasThemedClip,
       hasMediaClip,
+      hasContributedClip: false,
       reason: 'themed_only',
     };
   }
@@ -190,6 +341,7 @@ export function decideRenderRoute(
     route: 'browser-remotion',
     hasThemedClip,
     hasMediaClip,
+    hasContributedClip: false,
     reason: 'pure_native_clips',
   };
 }

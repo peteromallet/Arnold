@@ -62,6 +62,8 @@ import { createEffectRegistrationService } from '@/tools/video-editor/runtime/ef
 import type { EffectRegistry } from '@/tools/video-editor/effects/registry/types.ts';
 import { createTransitionRegistrationService } from '@/tools/video-editor/runtime/transitionRegistrationService.ts';
 import type { TransitionRegistry } from '@/tools/video-editor/transitions/registry/types.ts';
+import { createClipTypeRegistrationService } from '@/tools/video-editor/runtime/clipTypeRegistrationService.ts';
+import type { ClipTypeRegistry } from '@/tools/video-editor/clip-types/ClipTypeRegistry.ts';
 import {
   removeExtensionDiagnosticsFromCollection,
   syncExtensionDiagnosticsToCollection,
@@ -70,6 +72,10 @@ import {
   TransitionRegistryProvider,
   useTransitionRegistryContext,
 } from '@/tools/video-editor/transitions/registry/index.ts';
+import {
+  ClipTypeRegistryProvider,
+  useClipTypeRegistryContext,
+} from '@/tools/video-editor/clip-types/index.ts';
 
 export interface EditorRuntimeProviderProps {
   dataProvider: DataProvider;
@@ -103,6 +109,7 @@ function EditorRuntimeProviderInner({
   commandRegistryRef: React.MutableRefObject<CommandRegistry | null>;
   effectRegistryRef: React.MutableRefObject<EffectRegistry | null>;
   transitionRegistryRef: React.MutableRefObject<TransitionRegistry | null>;
+  clipTypeRegistryRef: React.MutableRefObject<ClipTypeRegistry | null>;
 }) {
   const effectsQuery = useEffects(userId, { enabled: !effectCatalog && Boolean(userId) });
   const effectResources = useResolvedEffectCatalog(userId, effectCatalog);
@@ -196,6 +203,7 @@ function EditorRuntimeProviderInner({
         const extId = ext.manifest.id as string;
         const effectRegistry = effectRegistryRef.current;
         const transitionRegistry = transitionRegistryRef.current;
+        const clipTypeRegistry = clipTypeRegistryRef.current;
         // Create per-extension commands service backed by the shared registry
         const commandsService: ExtensionCommandService | undefined = registry
           ? {
@@ -227,7 +235,17 @@ function EditorRuntimeProviderInner({
                 createExtensionDiagnosticsService(extId),
             })
           : undefined;
-        return createExtensionContext(ext, liveCreativeOverrides, commandsService, effectsService, transitionsService);
+        // Create per-extension clipTypes service backed by the shared ClipTypeRegistry.
+        const clipTypesService = clipTypeRegistry
+          ? createClipTypeRegistrationService({
+              extension: ext,
+              clipTypeRegistry,
+              diagnosticsService:
+                host.lifecycles.get(extId)?.diagnosticsService ??
+                createExtensionDiagnosticsService(extId),
+            })
+          : undefined;
+        return createExtensionContext(ext, liveCreativeOverrides, commandsService, effectsService, transitionsService, clipTypesService);
       },
     );
     syncExtensionDiagnosticsToCollection(diagnosticCollection, 'extension-lifecycle', [
@@ -253,6 +271,7 @@ function EditorRuntimeProviderInner({
   return (
     <EffectRegistryProvider>
       <TransitionRegistryProvider>
+        <ClipTypeRegistryProvider>
         <EffectCatalogProvider value={effectResources}>
           <EditorRuntimeEffectRegistryLifecycle
             effectsQueryData={effectsQuery.data}
@@ -268,6 +287,12 @@ function EditorRuntimeProviderInner({
             transitionRegistryRef={transitionRegistryRef}
             activeExtensionIds={activeExtensionIds}
           />
+          <EditorRuntimeClipTypeRegistryLifecycle
+            lifecycleHostRef={lifecycleHostRef}
+            commandRegistryRef={commandRegistryRef}
+            clipTypeRegistryRef={clipTypeRegistryRef}
+            activeExtensionIds={activeExtensionIds}
+          />
           <SequenceComponentCatalogProvider value={sequenceComponentResources}>
             <SequenceComponentRegistryProvider components={sequenceComponentResources.components}>
               <TimelineStoreProvider store={store}>
@@ -276,6 +301,7 @@ function EditorRuntimeProviderInner({
             </SequenceComponentRegistryProvider>
           </SequenceComponentCatalogProvider>
         </EffectCatalogProvider>
+        </ClipTypeRegistryProvider>
       </TransitionRegistryProvider>
     </EffectRegistryProvider>
   );
@@ -390,6 +416,46 @@ function EditorRuntimeTransitionRegistryLifecycle({
   return null;
 }
 
+function EditorRuntimeClipTypeRegistryLifecycle({
+  lifecycleHostRef,
+  commandRegistryRef,
+  clipTypeRegistryRef,
+  activeExtensionIds,
+}: {
+  lifecycleHostRef: React.MutableRefObject<ExtensionLifecycleHost | null>;
+  commandRegistryRef: React.MutableRefObject<CommandRegistry | null>;
+  clipTypeRegistryRef: React.MutableRefObject<ClipTypeRegistry | null>;
+  activeExtensionIds: ReadonlySet<string>;
+}) {
+  const { registry: clipTypeRegistry, snapshot: clipTypeRegistrySnapshot } = useClipTypeRegistryContext();
+  // Expose the clip-type registry to the outer synchronize effect via ref.
+  clipTypeRegistryRef.current = clipTypeRegistry;
+  const diagnosticCollection = useVideoEditorRuntime().diagnosticCollection;
+
+  useEffect(() => {
+    const host = lifecycleHostRef.current;
+    const commandRegistry = commandRegistryRef.current;
+    if (!host) return;
+    const handle = host.onLifecycleDisposed((extensionId: string) => {
+      commandRegistry?.unregisterAll(extensionId);
+      clipTypeRegistry.unregisterOwner(extensionId);
+      removeExtensionDiagnosticsFromCollection(diagnosticCollection, extensionId);
+    });
+    return () => handle.dispose();
+  }, [commandRegistryRef, diagnosticCollection, clipTypeRegistry, lifecycleHostRef]);
+
+  useEffect(() => {
+    syncExtensionDiagnosticsToCollection(
+      diagnosticCollection,
+      'clip-type-registry',
+      clipTypeRegistrySnapshot.diagnostics,
+      { activeExtensionIds },
+    );
+  }, [activeExtensionIds, diagnosticCollection, clipTypeRegistrySnapshot]);
+
+  return null;
+}
+
 export function EditorRuntimeProvider({
   dataProvider,
   timelineId,
@@ -425,6 +491,10 @@ export function EditorRuntimeProvider({
   // ---- M8: transition registry ref (registry is created by TransitionRegistryProvider,
   //        exposed via context and stored here for the synchronize effect) ----
   const transitionRegistryRef = useRef<TransitionRegistry | null>(null);
+
+  // ---- M9: clip-type registry ref (registry is created by ClipTypeRegistryProvider,
+  //        exposed via context and stored here for the synchronize effect) ----
+  const clipTypeRegistryRef = useRef<ClipTypeRegistry | null>(null);
 
   const diagnosticCollectionRef = useRef<DiagnosticCollection | null>(null);
   if (!diagnosticCollectionRef.current) {
@@ -549,6 +619,7 @@ export function EditorRuntimeProvider({
         commandRegistryRef={commandRegistryRef}
         effectRegistryRef={effectRegistryRef}
         transitionRegistryRef={transitionRegistryRef}
+        clipTypeRegistryRef={clipTypeRegistryRef}
       >
         {children}
       </EditorRuntimeProviderInner>

@@ -14,6 +14,7 @@ const useVideoEditorAssetPanelsMock = vi.fn();
 vi.mock('@/tools/video-editor/hooks/timelineStore', () => ({
   useTimelineEditorData: () => useTimelineEditorDataMock(),
   useTimelineEditorOps: () => useTimelineEditorOpsMock(),
+  useTimelinePlaybackContext: () => ({ currentTime: 0 }),
 }));
 
 vi.mock('@/tools/video-editor/runtime/useVideoEditorRenderContext', () => ({

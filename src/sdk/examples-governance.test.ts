@@ -16,13 +16,25 @@ import path from 'node:path';
 import { commandExtension } from '../examples/command-extension';
 import { integrityHashParserExtension, integrityParserHandler } from '../examples/integrity-hash-parser-example';
 import { metadataJsonOutputExtension, metadataJsonHandler } from '../examples/metadata-json-output-example';
+import { clipTypeKeyframedExample } from '../examples/clip-type-keyframed-example';
+import {
+  automationRecordingCanaryExample,
+  canaryRecordAutomation,
+  buildAutomationClipParams,
+  canaryApplyAutomationOverrides,
+} from '../examples/automation-recording-canary';
 import type {
   AssetMetadata,
+  AutomationClipParams,
+  AutomationClipTarget,
+  ClipParameterDefinition,
+  ClipTypeContribution,
   CommandContribution,
   CompileOnlyOutputResult,
   ContextMenuItemContribution,
   DeferredEnrichmentRecord,
   KeybindingContribution,
+  Keyframe,
   OutputFormatContribution,
   OutputFormatContext,
   OutputFormatHandler,
@@ -236,6 +248,10 @@ describe('Extension example import governance', () => {
       'createDiagnosticCollection',
     ]);
 
+    // M9 exports now covered by clip-type-keyframed-example.ts and
+    // automation-recording-canary.ts (T15 example/test coverage).
+    const M9_EXPECTED_UNCOVERED = new Set<string>([]);
+
     it('has SDK exports to validate', () => {
       expect(sdkExports.size).toBeGreaterThan(0);
     });
@@ -257,7 +273,15 @@ describe('Extension example import governance', () => {
         continue;
       }
 
-      it(`public export "${exportName}" is imported by at least one example`, () => {
+      if (M9_EXPECTED_UNCOVERED.has(exportName)) {
+        it(`SKIP: ${exportName} is an M9 export (examples created in later tasks)`, () => {
+          // M9 types are part of the public SDK surface but examples are
+          // created in later tasks. They will be covered when those examples land.
+        });
+        continue;
+      }
+
+      it(`public export \"${exportName}\" is imported by at least one example`, () => {
         expect(allSdkImports.has(exportName)).toBe(true);
       });
     }
@@ -909,6 +933,325 @@ describe('M6 metadata-json output example contract', () => {
 
   it('does not import from video-editor internals (governance)', () => {
     expect(metadataJsonOutputExtension).toBeDefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// M9 clip-type-keyframed example contract
+// ---------------------------------------------------------------------------
+
+describe('M9 clip-type-keyframed example contract', () => {
+  const extension = clipTypeKeyframedExample;
+  const contributions = extension.manifest.contributions ?? [];
+  const clipTypeContribution = contributions.find(
+    (contribution): contribution is ClipTypeContribution =>
+      contribution.kind === 'clipType',
+  )!;
+
+  it('compiles through public SDK clip-type exports', () => {
+    expect(extension.manifest.id).toBe('com.reigh.examples.clip-type-keyframed');
+    expect(typeof extension.activate).toBe('function');
+
+    expect(clipTypeContribution).toBeDefined();
+    expect(clipTypeContribution.kind).toBe('clipType');
+    expect(clipTypeContribution.clipTypeId).toBe('com.reigh.examples.clipType.keyframed');
+  });
+
+  it('declares a ClipTypeContribution in the manifest', () => {
+    expect(clipTypeContribution.label).toBe('Keyframed Procedural Clip');
+    expect(clipTypeContribution.allowBrowserExport).toBe(false);
+    expect(clipTypeContribution.allowWorkerExport).toBe(false);
+    expect(clipTypeContribution.order).toBe(10);
+  });
+
+  it('extension does not import from video-editor internals (governance)', () => {
+    expect(clipTypeKeyframedExample).toBeDefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// M9 automation-recording canary example contract
+// ---------------------------------------------------------------------------
+
+describe('M9 automation-recording canary example contract', () => {
+  const extension = automationRecordingCanaryExample;
+
+  it('compiles through public SDK keyframe and automation exports', () => {
+    expect(extension.manifest.id).toBe('com.reigh.examples.automation-recording-canary');
+    expect(typeof extension.activate).toBe('function');
+  });
+
+  describe('canaryRecordAutomation', () => {
+    const definition: ClipParameterDefinition = {
+      name: 'intensity',
+      label: 'Intensity',
+      description: 'Effect intensity (0–1).',
+      type: 'number',
+      default: 0.5,
+      min: 0,
+      max: 1,
+      step: 0.05,
+    };
+
+    it('converts valid samples into deterministic keyframes', () => {
+      const samples = [
+        { time: 0.0, value: 0.5 },
+        { time: 0.5, value: 0.7 },
+        { time: 1.0, value: 1.0 },
+        { time: 2.0, value: 0.3 },
+      ];
+
+      const result = canaryRecordAutomation(samples, definition, {
+        tolerance: 0.1,
+        defaultInterpolation: 'linear',
+      });
+
+      expect(result.keyframes).toHaveLength(4); // All changes (0.2, 0.3, 0.7) exceed tolerance 0.1
+      expect(result.keyframes[0].time).toBe(0.0);
+      expect(result.keyframes[0].value).toBe(0.5);
+      expect(result.keyframes[0].interpolation).toBe('linear');
+    });
+
+    it('downsamples by tolerance — skips small changes', () => {
+      const samples = [
+        { time: 0.0, value: 0.5 },
+        { time: 0.1, value: 0.501 }, // small change (<0.05 tolerance)
+        { time: 0.2, value: 0.502 }, // small change
+        { time: 0.3, value: 0.502 }, // zero change
+        { time: 0.5, value: 1.0 },   // large change
+      ];
+
+      const result = canaryRecordAutomation(samples, definition, {
+        tolerance: 0.05,
+      });
+
+      expect(result.keyframes.length).toBeLessThan(5);
+      expect(result.keyframes[0].value).toBe(0.5);
+      expect(result.keyframes[result.keyframes.length - 1].value).toBe(1.0);
+    });
+
+    it('rejects non-serializable values with diagnostics', () => {
+      const samples = [
+        { time: 0.0, value: 0.5 },
+        { time: 0.5, value: null as unknown as number }, // null rejected
+        { time: 1.0, value: undefined as unknown as number }, // undefined rejected
+        { time: 2.0, value: 0.8 },
+      ];
+
+      const result = canaryRecordAutomation(samples, definition, { tolerance: 0.1 });
+      expect(result.diagnostics.length).toBeGreaterThan(0);
+      expect(result.keyframes.length).toBeGreaterThan(0);
+      // Only the valid samples (0.5, 0.8) should produce keyframes
+      expect(result.keyframes.some((kf) => kf.value === 0.5)).toBe(true);
+      expect(result.keyframes.some((kf) => kf.value === 0.8)).toBe(true);
+    });
+
+    it('quantizes numeric values when quantizationStep is set', () => {
+      const samples = [
+        { time: 0.0, value: 0.123 },
+        { time: 0.5, value: 0.456 },
+        { time: 1.0, value: 0.789 },
+      ];
+
+      const result = canaryRecordAutomation(samples, definition, {
+        tolerance: 0.01,
+        quantizationStep: 0.1,
+      });
+
+      // 0.123 → 0.1, 0.456 → 0.5, 0.789 → 0.8
+      expect(result.keyframes[0].value).toBe(0.1);
+      expect(result.keyframes[1].value).toBe(0.5);
+      expect(result.keyframes[2].value).toBe(0.8);
+    });
+
+    it('handles duplicate sample times by keeping the first occurrence', () => {
+      const samples = [
+        { time: 0.0, value: 0.2 },
+        { time: 0.5, value: 0.5 },
+        { time: 0.5, value: 0.9 }, // duplicate time — first (0.5) wins
+        { time: 1.0, value: 0.8 },
+      ];
+
+      const result = canaryRecordAutomation(samples, definition, { tolerance: 0.01 });
+      expect(result.keyframes.find((kf) => kf.time === 0.5)?.value).toBe(0.5);
+    });
+  });
+
+  describe('buildAutomationClipParams', () => {
+    const keyframes: Keyframe[] = [
+      { time: 0, value: 0, interpolation: 'linear' },
+      { time: 2, value: 1, interpolation: 'linear' },
+    ];
+
+    it('constructs valid AutomationClipParams with target, keyframes, and enabled flag', () => {
+      const params = buildAutomationClipParams(
+        'com.reigh.examples.clipType.keyframed',
+        'intensity',
+        keyframes,
+        true,
+      );
+
+      expect(params.target.contributionId).toBe('com.reigh.examples.clipType.keyframed');
+      expect(params.target.parameterPath).toBe('intensity');
+      expect(params.keyframes).toEqual(keyframes);
+      expect(params.enabled).toBe(true);
+    });
+
+    it('defaults enabled to true', () => {
+      const params = buildAutomationClipParams(
+        'some.contribution',
+        'opacity',
+        keyframes,
+      );
+
+      expect(params.enabled).toBe(true);
+    });
+
+    it('allows explicitly disabled automation', () => {
+      const params = buildAutomationClipParams(
+        'some.contribution',
+        'opacity',
+        keyframes,
+        false,
+      );
+
+      expect(params.enabled).toBe(false);
+    });
+  });
+
+  describe('canaryApplyAutomationOverrides', () => {
+    const keyframes: Keyframe[] = [
+      { time: 0, value: 0, interpolation: 'linear' },
+      { time: 2, value: 1, interpolation: 'linear' },
+    ];
+
+    const automationParams = buildAutomationClipParams(
+      'com.reigh.target.clip',
+      'intensity',
+      keyframes,
+      true,
+    );
+
+    const automationClip = {
+      clipType: 'automation',
+      params: automationParams as unknown as Record<string, unknown>,
+    };
+
+    it('overrides a target parameter at a given time', () => {
+      const targetParams = { intensity: 0.5, mode: 'auto' };
+      const result = canaryApplyAutomationOverrides(
+        [automationClip],
+        'com.reigh.target.clip',
+        targetParams,
+        1.0,
+      );
+
+      expect(result.intensity).toBe(0.5); // linear interpolate at t=1.0 between 0→1: 0 + (1-0)*(1.0/2.0) = 0.5
+      expect(result.mode).toBe('auto'); // non-target param unchanged
+    });
+
+    it('returns original params when no automation clips match the target', () => {
+      const targetParams = { intensity: 0.5 };
+      const result = canaryApplyAutomationOverrides(
+        [automationClip],
+        'some.other.clip',
+        targetParams,
+        1.0,
+      );
+
+      expect(result).toEqual(targetParams);
+    });
+
+    it('returns original params when automation clip array is empty', () => {
+      const targetParams = { intensity: 0.5 };
+      const result = canaryApplyAutomationOverrides(
+        [],
+        'com.reigh.target.clip',
+        targetParams,
+        0,
+      );
+
+      expect(result).toEqual(targetParams);
+    });
+
+    it('ignores disabled automation clips', () => {
+      const disabledParams = buildAutomationClipParams(
+        'com.reigh.target.clip',
+        'intensity',
+        keyframes,
+        false,
+      );
+
+      const disabledClip = {
+        clipType: 'automation',
+        params: disabledParams as unknown as Record<string, unknown>,
+      };
+
+      const targetParams = { intensity: 0.5 };
+      const result = canaryApplyAutomationOverrides(
+        [disabledClip],
+        'com.reigh.target.clip',
+        targetParams,
+        1.0,
+      );
+
+      expect(result.intensity).toBe(0.5); // original value preserved
+    });
+
+    it('later automation clips override earlier ones (last-write-wins)', () => {
+      const firstKeyframes: Keyframe[] = [
+        { time: 0, value: 0, interpolation: 'linear' },
+        { time: 2, value: 1, interpolation: 'linear' },
+      ];
+      const secondKeyframes: Keyframe[] = [
+        { time: 0, value: 0.9, interpolation: 'hold' },
+        { time: 2, value: 0.9, interpolation: 'hold' },
+      ];
+
+      const firstParams = buildAutomationClipParams('com.reigh.target.clip', 'intensity', firstKeyframes, true);
+      const secondParams = buildAutomationClipParams('com.reigh.target.clip', 'intensity', secondKeyframes, true);
+
+      const clips = [
+        { clipType: 'automation', params: firstParams as unknown as Record<string, unknown> },
+        { clipType: 'automation', params: secondParams as unknown as Record<string, unknown> },
+      ];
+
+      const result = canaryApplyAutomationOverrides(
+        clips,
+        'com.reigh.target.clip',
+        { intensity: 0 },
+        0,
+      );
+
+      // Second clip's hold keyframes override the first
+      expect(result.intensity).toBe(0.9);
+    });
+
+    it('clamps time before first keyframe to first value', () => {
+      const result = canaryApplyAutomationOverrides(
+        [automationClip],
+        'com.reigh.target.clip',
+        { intensity: 0 },
+        -1,
+      );
+
+      expect(result.intensity).toBe(0); // first keyframe value
+    });
+
+    it('clamps time after last keyframe to last value', () => {
+      const result = canaryApplyAutomationOverrides(
+        [automationClip],
+        'com.reigh.target.clip',
+        { intensity: 0 },
+        10,
+      );
+
+      expect(result.intensity).toBe(1); // last keyframe value
+    });
+
+    it('extension does not import from video-editor internals (governance)', () => {
+      expect(automationRecordingCanaryExample).toBeDefined();
+    });
   });
 });
 

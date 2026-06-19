@@ -279,3 +279,86 @@ describe('sequence draft row mutations', () => {
     });
   });
 });
+
+// ---------------------------------------------------------------------------
+// M9 T7: Extension clip type insertion
+// ---------------------------------------------------------------------------
+
+describe('sequence draft insertion — extension clip types', () => {
+  const extDraft: ValidatedSequenceDraft = {
+    clipType: 'my-pulse-effect' as ValidatedSequenceDraft['clipType'],
+    hold: 4,
+    params: {
+      intensity: '0.8',
+      color: '#ff0000',
+    },
+  };
+
+  const extRecords = [
+    {
+      clipTypeId: 'my-pulse-effect',
+      schema: [
+        { name: 'intensity', label: 'Intensity', description: '', type: 'number' as const, default: 0.5 },
+        { name: 'color', label: 'Color', description: '', type: 'color' as const, default: '#ffffff' },
+      ],
+    },
+  ];
+
+  it('inserts an extension clip type with defaults from extension records', async () => {
+    const data = await buildData();
+    const result = buildInsertSequenceDraftEdit(data, extDraft, {
+      at: 0,
+      extensionRecords: extRecords,
+    });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.mutation.metaUpdates?.[result.clipId]).toMatchObject({
+      clipType: 'my-pulse-effect',
+      hold: 4,
+    });
+    // The extension descriptor should provide the params
+    expect(
+      (result.mutation.metaUpdates?.[result.clipId] as Record<string, unknown>)?.params,
+    ).toMatchObject({ intensity: '0.8', color: '#ff0000' });
+  });
+
+  it('replaces a selected clip with an extension clip type', async () => {
+    const data = await buildData({
+      clips: [
+        {
+          id: 'clip-0',
+          track: 'V1',
+          at: 2,
+          clipType: 'media',
+          hold: 8,
+        },
+      ],
+    });
+    const result = buildReplaceSequenceDraftEdit(data, extDraft, {
+      selectedClipId: 'clip-0',
+      extensionRecords: extRecords,
+    });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.mutation.metaDeletes).toEqual(['clip-0']);
+    expect(result.mutation.metaUpdates?.[result.clipId]).toMatchObject({
+      clipType: 'my-pulse-effect',
+    });
+  });
+
+  it('still inserts when extension records are not provided (falls back to minimal meta)', async () => {
+    const data = await buildData();
+    const result = buildInsertSequenceDraftEdit(data, extDraft, { at: 0 });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    // Without extension records, createClipMetaFromDescriptor returns null,
+    // so the fallback path produces a minimal meta with clipType + hold.
+    expect(result.mutation.metaUpdates?.[result.clipId]).toMatchObject({
+      clipType: 'my-pulse-effect',
+      hold: 4,
+    });
+  });
+});

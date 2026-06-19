@@ -12,6 +12,7 @@ export type DiagnosticCollectionSource =
   | 'effect-registry'
   | 'extension-lifecycle'
   | 'command-registry'
+  | 'clip-type-registry'
   | 'export-guard'
   | 'render-planner';
 

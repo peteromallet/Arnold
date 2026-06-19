@@ -326,4 +326,100 @@ describe('timeline data sequence clip persistence', () => {
     ]);
     expect(assetResolver.loadAssetProfile).toHaveBeenCalledWith('asset-2');
   });
+
+  // ── M9: Keyframe round-trip through configToRows / rowsToConfig ──────
+
+  it('round-trips keyframes through configToRows and rowsToConfig', () => {
+    const config: TimelineConfig = {
+      output: { resolution: '1920x1080', fps: 30, file: 'out.mp4' },
+      tracks: [{ id: 'V1', kind: 'visual', label: 'V1' }],
+      clips: [
+        {
+          id: 'clip-kf',
+          at: 0,
+          track: 'V1',
+          clipType: 'contributed:animated',
+          hold: 4,
+          params: { text: 'Animated' },
+          keyframes: {
+            opacity: [
+              { time: 0, value: 0, interpolation: 'linear' },
+              { time: 2, value: 1, interpolation: 'linear' },
+              { time: 4, value: 0.5, interpolation: 'hold' },
+            ],
+          },
+        },
+      ],
+    };
+
+    const { rows, meta, clipOrder, tracks } = configToRows(config);
+
+    expect(meta['clip-kf'].keyframes).toEqual({
+      opacity: [
+        { time: 0, value: 0, interpolation: 'linear' },
+        { time: 2, value: 1, interpolation: 'linear' },
+        { time: 4, value: 0.5, interpolation: 'hold' },
+      ],
+    });
+
+    const roundTripped = rowsToConfig(rows, meta, config.output, clipOrder, tracks, undefined, config);
+
+    expect(roundTripped.clips[0].keyframes).toEqual({
+      opacity: [
+        { time: 0, value: 0, interpolation: 'linear' },
+        { time: 2, value: 1, interpolation: 'linear' },
+        { time: 4, value: 0.5, interpolation: 'hold' },
+      ],
+    });
+  });
+
+  it('round-trips keyframes through buildTimelineData and rowsToConfig', async () => {
+    const config: TimelineConfig = {
+      output: { resolution: '1920x1080', fps: 30, file: 'out.mp4' },
+      tracks: [{ id: 'V1', kind: 'visual', label: 'V1' }],
+      clips: [
+        {
+          id: 'clip-kf-build',
+          at: 0,
+          track: 'V1',
+          clipType: 'contributed:keyframed',
+          hold: 5,
+          params: { color: '#ff0000' },
+          keyframes: {
+            intensity: [
+              { time: 0, value: 0, interpolation: 'linear' },
+              { time: 5, value: 1, interpolation: 'linear' },
+            ],
+          },
+        },
+      ],
+    };
+
+    const data = await buildTimelineData(config, registry);
+
+    expect(data.meta['clip-kf-build'].keyframes).toEqual({
+      intensity: [
+        { time: 0, value: 0, interpolation: 'linear' },
+        { time: 5, value: 1, interpolation: 'linear' },
+      ],
+    });
+
+    const roundTripped = rowsToConfig(
+      data.rows,
+      data.meta,
+      data.output,
+      data.clipOrder,
+      data.tracks,
+      data.config.pinnedShotGroups,
+      data.config,
+    );
+
+    expect(roundTripped.clips[0].keyframes).toEqual({
+      intensity: [
+        { time: 0, value: 0, interpolation: 'linear' },
+        { time: 5, value: 1, interpolation: 'linear' },
+      ],
+    });
+    expect(roundTripped.clips[0].params).toEqual({ color: '#ff0000' });
+  });
 });

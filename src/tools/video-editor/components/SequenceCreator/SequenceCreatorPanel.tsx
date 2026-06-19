@@ -72,6 +72,12 @@ import { CodePathPreview } from './CodePathPreview.tsx';
 import { CodePathParamEditor } from './CodePathParamEditor.tsx';
 import { ControlsManifestLayout } from './ControlsManifestLayout.tsx';
 import { validateControlsManifest } from '@/tools/video-editor/sequences/controlsManifest.ts';
+import {
+  useClipTypeRegistrySnapshot,
+  buildExtensionClipTypeDescriptorMap,
+  getExtensionClipTypeDescriptor,
+} from '@/tools/video-editor/clip-types/index.ts';
+import type { ClipTypeDescriptor } from '@/tools/video-editor/clip-types/defineClipType.ts';
 
 type SequenceCreatorPanelProps = {
   open?: boolean;
@@ -96,10 +102,12 @@ const formatEditError = (error: SequenceDraftEditError): string => {
 const validateEditableSequenceDraft = (
   draft: EditableSequenceDraft,
   allowedAssetKeys: readonly string[],
+  extensionClipTypeIds?: ReadonlySet<string>,
 ) => validateSequenceDraft(draft, {
   metadata: AVAILABLE_SEQUENCE_METADATA,
   allowedClipTypes: AVAILABLE_SEQUENCE_CLIP_TYPES,
   allowedAssetKeys,
+  extensionClipTypeIds,
 });
 
 export const buildSequencePreviewConfig = (
@@ -206,6 +214,22 @@ export function SequenceCreatorPanel({
   const { userId } = useAuth();
   const libraryCatalog = useSequenceResources(userId);
 
+  // T7: Read extension clip types from the ClipTypeRegistry so the Sequence
+  // Creator panel can surface their labels, defaults, and param editors.
+  const clipTypeRegistrySnapshot = useClipTypeRegistrySnapshot();
+  const extensionClipTypeRecords = useMemo(
+    () => clipTypeRegistrySnapshot.records,
+    [clipTypeRegistrySnapshot.records],
+  );
+  const extensionClipTypeDescriptorMap = useMemo(
+    () => buildExtensionClipTypeDescriptorMap(extensionClipTypeRecords),
+    [extensionClipTypeRecords],
+  );
+  const extensionClipTypeIds = useMemo(
+    () => new Set(extensionClipTypeRecords.map((r) => r.clipTypeId)),
+    [extensionClipTypeRecords],
+  );
+
   // Transient request lifecycle — deliberately NOT lifted to the store.
   // An in-flight request from before unmount/reload is gone afterward.
   const [isGenerating, setIsGenerating] = useState(false);
@@ -230,13 +254,19 @@ export function SequenceCreatorPanel({
   const drafts = selectedGroup?.drafts ?? [];
   const selectedDraft = drafts[selectedDraftIndex] ?? null;
   const selectedValidation = useMemo(() => (
-    selectedDraft ? validateEditableSequenceDraft(selectedDraft, allowedAssetKeys) : null
-  ), [allowedAssetKeys, selectedDraft]);
+    selectedDraft ? validateEditableSequenceDraft(selectedDraft, allowedAssetKeys, extensionClipTypeIds) : null
+  ), [allowedAssetKeys, extensionClipTypeIds, selectedDraft]);
   const validatedDraft = selectedValidation?.ok ? selectedValidation.draft : null;
   const selectedDescriptor = selectedDraft
-    ? getAvailableClipTypeDescriptor(selectedDraft.clipType)
+    ? (getAvailableClipTypeDescriptor(selectedDraft.clipType)
+      ?? extensionClipTypeDescriptorMap.get(selectedDraft.clipType))
     : undefined;
   const selectedMetadata = selectedDraft ? getAvailableSequenceMetadata(selectedDraft.clipType) : undefined;
+  // For extension clip types, derive a descriptor from the extension registry.
+  const resolvedDescriptor: ClipTypeDescriptor | undefined = selectedDescriptor
+    ?? (selectedDraft
+      ? getExtensionClipTypeDescriptor(selectedDraft.clipType, extensionClipTypeRecords)
+      : undefined);
 
   const previewConfig = useMemo(() => {
     if (!resolvedConfig || !validatedDraft) return null;
@@ -664,6 +694,7 @@ export function SequenceCreatorPanel({
       const result = buildInsertSequenceDraftEdit(data, resolved.draft, {
         at: currentTime,
         selectedTrackId,
+        extensionRecords: extensionClipTypeRecords,
       });
       if (!result.ok) {
         setActionError(formatEditError(result.error));
@@ -682,7 +713,7 @@ export function SequenceCreatorPanel({
     } finally {
       setIsSaving(false);
     }
-  }, [applyEdit, currentTime, data, onOpenChange, resolveDraftForApply, selectedDraftIndex, selectedGroup, selectedTrackId]);
+  }, [applyEdit, currentTime, data, extensionClipTypeRecords, onOpenChange, resolveDraftForApply, selectedDraftIndex, selectedGroup, selectedTrackId]);
 
   const handleReplace = useCallback(async () => {
     if (!data) return;
@@ -694,7 +725,11 @@ export function SequenceCreatorPanel({
         setActionError(resolved.error);
         return;
       }
-      const result = buildReplaceSequenceDraftEdit(data, resolved.draft, { selectedClipId, selectedClipIds });
+      const result = buildReplaceSequenceDraftEdit(data, resolved.draft, {
+        selectedClipId,
+        selectedClipIds,
+        extensionRecords: extensionClipTypeRecords,
+      });
       if (!result.ok) {
         setActionError(formatEditError(result.error));
         return;
@@ -712,7 +747,7 @@ export function SequenceCreatorPanel({
     } finally {
       setIsSaving(false);
     }
-  }, [applyEdit, data, onOpenChange, resolveDraftForApply, selectedClipId, selectedClipIds, selectedDraftIndex, selectedGroup]);
+  }, [applyEdit, data, extensionClipTypeRecords, onOpenChange, resolveDraftForApply, selectedClipId, selectedClipIds, selectedDraftIndex, selectedGroup]);
 
   const handleRemoveAllowedAsset = useCallback((asset: {
     clipId: string;
@@ -1088,6 +1123,8 @@ export function SequenceCreatorPanel({
                     <div className="space-y-2">
                       {drafts.map((draft, index) => {
                         const metadata = getAvailableSequenceMetadata(draft.clipType);
+                        const extDescriptor = extensionClipTypeDescriptorMap.get(draft.clipType);
+                        const label = metadata?.label ?? extDescriptor?.label ?? draft.clipType;
                         return (
                           <button
                             key={`${draft.clipType}-${index}`}
@@ -1104,7 +1141,7 @@ export function SequenceCreatorPanel({
                             }}
                           >
                             <div className="text-sm font-medium text-foreground">
-                              {metadata?.label ?? draft.clipType}
+                              {label}
                             </div>
                             <div className="text-xs text-muted-foreground">{draft.hold}s</div>
                           </button>
@@ -1141,40 +1178,77 @@ export function SequenceCreatorPanel({
               </div>
 
               <div className="flex max-h-[360px] min-h-0 flex-col border-t border-border">
-                {(selectedDraft && selectedMetadata) || generatedComponent ? (
+                {(selectedDraft && (selectedMetadata || resolvedDescriptor)) || generatedComponent ? (
                   <>
                     <div className="min-h-0 flex-1 overflow-y-auto p-4">
                       <div className="space-y-4">
-                        {selectedDraft && selectedMetadata ? (
+                        {selectedDraft && (selectedMetadata || resolvedDescriptor) ? (
                           <>
                             <div className="grid grid-cols-[1fr_140px] items-end gap-3">
                               <div>
                                 <div className="text-sm font-medium text-foreground">
-                                  {selectedDescriptor?.label ?? selectedMetadata.label}
+                                  {resolvedDescriptor?.label ?? selectedMetadata?.label ?? selectedDraft.clipType}
                                 </div>
                                 <div className="text-xs text-muted-foreground">
-                                  {selectedDescriptor?.description ?? selectedMetadata.description}
+                                  {resolvedDescriptor?.description ?? selectedMetadata?.description ?? ''}
                                 </div>
                               </div>
                               <div className="space-y-1.5">
                                 <div className="text-xs font-medium text-muted-foreground">Duration</div>
                                 <NumberInput
                                   value={selectedDraft.hold}
-                                  min={selectedMetadata.hold.minSeconds}
-                                  max={selectedMetadata.hold.maxSeconds}
-                                  step={selectedMetadata.hold.stepSeconds}
-                                  onChange={(value) => updateSelectedDraft({ hold: value ?? selectedMetadata.hold.defaultSeconds })}
+                                  min={selectedMetadata?.hold.minSeconds ?? resolvedDescriptor?.hold?.kind !== 'unsupported' ? (resolvedDescriptor?.hold as { defaultSeconds: number; minSeconds: number; maxSeconds: number; stepSeconds: number })?.minSeconds ?? 0.05 : 0.05}
+                                  max={selectedMetadata?.hold.maxSeconds ?? (resolvedDescriptor?.hold?.kind !== 'unsupported' ? (resolvedDescriptor?.hold as { defaultSeconds: number; minSeconds: number; maxSeconds: number; stepSeconds: number })?.maxSeconds ?? 120 : 120)}
+                                  step={selectedMetadata?.hold.stepSeconds ?? (resolvedDescriptor?.hold?.kind !== 'unsupported' ? (resolvedDescriptor?.hold as { defaultSeconds: number; minSeconds: number; maxSeconds: number; stepSeconds: number })?.stepSeconds ?? 0.1 : 0.1)}
+                                  onChange={(value) => updateSelectedDraft({ hold: value ?? selectedMetadata?.hold.defaultSeconds ?? 4 })}
                                 />
                               </div>
                             </div>
 
-                            <SequenceParamEditor
-                              clipType={selectedDraft.clipType}
-                              metadata={selectedMetadata}
-                              params={selectedDraft.params}
-                              registry={allowedRegistry}
-                              onChange={(params) => updateSelectedDraft({ params })}
-                            />
+                            {selectedMetadata ? (
+                              <SequenceParamEditor
+                                clipType={selectedDraft.clipType}
+                                metadata={selectedMetadata}
+                                params={selectedDraft.params}
+                                registry={allowedRegistry}
+                                onChange={(params) => updateSelectedDraft({ params })}
+                              />
+                            ) : resolvedDescriptor ? (
+                              <SequenceParamEditor
+                                clipType={selectedDraft.clipType}
+                                metadata={{
+                                  clipType: selectedDraft.clipType,
+                                  label: resolvedDescriptor.label ?? selectedDraft.clipType,
+                                  description: resolvedDescriptor.description ?? '',
+                                  themeId: '2rp',
+                                  hold: resolvedDescriptor.hold?.kind !== 'unsupported'
+                                    ? {
+                                        defaultSeconds: (resolvedDescriptor.hold as { defaultSeconds: number }).defaultSeconds ?? 4,
+                                        minSeconds: (resolvedDescriptor.hold as { minSeconds: number }).minSeconds ?? 0.05,
+                                        maxSeconds: (resolvedDescriptor.hold as { maxSeconds: number }).maxSeconds ?? 120,
+                                        stepSeconds: (resolvedDescriptor.hold as { stepSeconds: number }).stepSeconds ?? 0.1,
+                                      }
+                                    : { defaultSeconds: 4, minSeconds: 0.05, maxSeconds: 120, stepSeconds: 0.1 },
+                                  params: resolvedDescriptor.paramsSchema.kind === 'sequence'
+                                    ? resolvedDescriptor.paramsSchema.params.map((p) => ({
+                                        key: p.key,
+                                        label: p.label,
+                                        kind: p.kind,
+                                        description: p.description,
+                                        required: p.required,
+                                        defaultValue: p.defaultValue,
+                                        options: p.options,
+                                        maxItems: p.maxItems,
+                                        componentParam: p.componentParam,
+                                      }))
+                                    : [],
+                                  dependsOn: [],
+                                } as import('@/tools/video-editor/sequences/metadata').TrustedSequenceMetadata}
+                                params={selectedDraft.params}
+                                registry={allowedRegistry}
+                                onChange={(params) => updateSelectedDraft({ params })}
+                              />
+                            ) : null}
 
                             {selectedValidation && !selectedValidation.ok && (
                               <div className="rounded-lg border border-destructive/40 bg-destructive/10 p-3 text-xs text-destructive">

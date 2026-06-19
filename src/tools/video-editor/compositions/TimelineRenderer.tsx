@@ -1,8 +1,8 @@
 import { AbsoluteFill, Sequence } from 'remotion';
-import { memo, useMemo, type FC, type ReactNode } from 'react';
+import { Component, memo, useMemo, type FC, type ReactNode } from 'react';
 import { getAudioTracks, getVisualTracks } from '@/tools/video-editor/lib/editor-utils.ts';
-import { getClipDurationInFrames, getTimelineDurationInFrames } from '@/tools/video-editor/lib/config-utils.ts';
-import { BUILTIN_CLIP_TYPES, type ResolvedTimelineClip, type ResolvedTimelineConfig, type TrackDefinition } from '@/tools/video-editor/types/index.ts';
+import { getClipDurationInFrames, getTimelineDurationInFrames, secondsToFrames } from '@/tools/video-editor/lib/config-utils.ts';
+import { BUILTIN_CLIP_TYPES, type ParameterSchema, type ResolvedTimelineClip, type ResolvedTimelineConfig, type TrackDefinition } from '@/tools/video-editor/types/index.ts';
 import { AudioTrack } from '@/tools/video-editor/compositions/AudioTrack.tsx';
 import { AudioAnalysisProvider } from '@/tools/video-editor/compositions/AudioAnalysisProvider.tsx';
 import { EffectLayerSequence } from '@/tools/video-editor/compositions/EffectLayerSequence.tsx';
@@ -28,6 +28,9 @@ import {
   type DynamicSequenceComponentEntry,
 } from '@/tools/video-editor/sequences/registry.ts';
 import { useSequenceComponentRegistrySnapshot } from '@/tools/video-editor/sequences/SequenceComponentRegistryContext.tsx';
+import { useClipTypeRegistrySnapshot } from '@/tools/video-editor/clip-types/ClipTypeRegistryContext.tsx';
+import type { ClipRendererProps, ClipTypeRegistryRecord } from '@/tools/video-editor/clip-types/ClipTypeRegistry.ts';
+import { applyAutomationOverrides, resolveAnimatedParams } from '@/tools/video-editor/keyframes/index.ts';
 
 // Phase 4d (Sprint 5): EFFECT_REGISTRY dispatch.
 //
@@ -166,18 +169,164 @@ const GeneratedModulePlaceholderSequence: FC<{
   );
 };
 
+// ---------------------------------------------------------------------------
+// M9 T10: Extension clip renderer dispatch
+// ---------------------------------------------------------------------------
+
+/** Parse width and height from a resolution string like "1920x1080". */
+function parseResolution(resolution: string): { width: number; height: number } {
+  const parts = resolution.split('x');
+  const w = parseInt(parts[0] ?? '1920', 10);
+  const h = parseInt(parts[1] ?? '1080', 10);
+  return { width: Number.isFinite(w) ? w : 1920, height: Number.isFinite(h) ? h : 1080 };
+}
+
+/**
+ * Convert InterpolatedParam array to a plain Record for ClipRendererProps.
+ */
+function interpolatedParamsToRecord(
+  params: ReadonlyArray<{ name: string; value: number | string | boolean }>,
+): Record<string, unknown> {
+  const record: Record<string, unknown> = {};
+  for (const p of params) {
+    record[p.name] = p.value;
+  }
+  return record;
+}
+
+/**
+ * Error boundary that catches renderer crashes and shows a loud placeholder.
+ * Extension renderers are trusted local code but may throw at runtime
+ * (e.g. division by zero, invalid state). The boundary preserves the
+ * SD-025 guarantee that broken clips never silently vanish.
+ */
+class ExtensionRendererErrorBoundary extends Component<
+  { fallback: ReactNode; children: ReactNode },
+  { hasError: boolean }
+> {
+  constructor(props: { fallback: ReactNode; children: ReactNode }) {
+    super(props);
+    this.state = { hasError: false };
+  }
+  static getDerivedStateFromError(): { hasError: boolean } {
+    return { hasError: true };
+  }
+  override render(): ReactNode {
+    if (this.state.hasError) return this.props.fallback;
+    return this.props.children;
+  }
+}
+
+/** Props for the ExtensionClipSequence host-side wrapper. */
+interface ExtensionClipSequenceProps {
+  clip: ResolvedTimelineClip;
+  fps: number;
+  registryRecord: ClipTypeRegistryRecord;
+  resolution: string;
+  /** All timeline clips (needed for automation override resolution). */
+  allClips: readonly ResolvedTimelineClip[];
+}
+
+/**
+ * Wraps an extension-provided clip renderer in a Remotion <Sequence> with
+ * host-interpolated keyframe params and automation overrides applied.
+ *
+ * The host computes interpolated parameter values via resolveAnimatedParams()
+ * before passing them to the extension renderer, satisfying SD2 ("extension
+ * renderers must not implement timeline interpolation").
+ *
+ * Automation overrides are then applied via applyAutomationOverrides(),
+ * which scans automation clips for matching target contribution IDs and
+ * overrides the extension clip's parameters at the current time (SD3 /
+ * success criterion 9).
+ *
+ * If the renderer throws at runtime, the error boundary catches it and
+ * displays a loud placeholder preserving the clip's duration and position.
+ */
+const ExtensionClipSequence: FC<ExtensionClipSequenceProps> = ({
+  clip,
+  fps,
+  registryRecord,
+  resolution,
+  allClips,
+}) => {
+  const durationInFrames = getClipDurationInFrames(clip, fps);
+  const from = Math.max(0, secondsToFrames(clip.at, fps));
+  const { width, height } = parseResolution(resolution);
+
+  // Compute host-interpolated params from keyframe data, then apply
+  // automation overrides from automation clips targeting this extension clip.
+  const interpolatedParams = useMemo(() => {
+    const schema: ParameterSchema | undefined = registryRecord.schema as ParameterSchema | undefined;
+    const keyframes = clip.keyframes ?? {};
+    let baseParams: Record<string, unknown>;
+    if (!schema || schema.length === 0) {
+      // No schema → pass raw params (no interpolation needed)
+      baseParams = (clip.params as Record<string, unknown>) ?? {};
+    } else {
+      const resolved = resolveAnimatedParams(keyframes, schema, clip.at);
+      baseParams = interpolatedParamsToRecord(resolved);
+    }
+
+    // Apply automation overrides
+    if (clip.clipType) {
+      return applyAutomationOverrides(
+        allClips,
+        clip.clipType,
+        baseParams,
+        clip.at,
+      );
+    }
+    return baseParams;
+  }, [clip.at, clip.keyframes, clip.params, clip.clipType, registryRecord.schema, allClips]);
+
+  const rendererProps: ClipRendererProps = {
+    clipId: clip.id,
+    clipTypeId: registryRecord.clipTypeId,
+    time: clip.at,
+    params: interpolatedParams,
+    width,
+    height,
+  };
+
+  // Extension renderers are stored as `Record<string, unknown> | Function`.
+  // We cast to FC<ClipRendererProps> since the registry contract guarantees
+  // a React component.
+  const Renderer = registryRecord.renderer as FC<ClipRendererProps>;
+
+  const placeholder = (
+    <UnknownClipPlaceholderSequence
+      clip={clip}
+      fps={fps}
+      reason="unsupported"
+    />
+  );
+
+  return (
+    <Sequence key={clip.id} from={from} durationInFrames={durationInFrames}>
+      <ExtensionRendererErrorBoundary fallback={placeholder}>
+        <Renderer {...rendererProps} />
+      </ExtensionRendererErrorBoundary>
+    </Sequence>
+  );
+};
+
 interface VisualTrackProps {
   track: TrackDefinition;
   clips: ResolvedTimelineClip[];
   fps: number;
   theme: Theme;
+  resolution: string;
+  /** All timeline clips (needed for automation override resolution). */
+  allClips: readonly ResolvedTimelineClip[];
 }
 
 // Lifted into a component so we can call useSequenceComponentRegistrySnapshot
 // once per visual track. Keeps the dynamic-registry subscription out of the
 // per-clip dispatch loop.
-const VisualTrack: FC<VisualTrackProps> = ({ track, clips, fps, theme }) => {
+const VisualTrack: FC<VisualTrackProps> = ({ track, clips, fps, theme, resolution, allClips }) => {
   const { entries: dynamicEntries } = useSequenceComponentRegistrySnapshot();
+  const clipTypeRegistry = useClipTypeRegistrySnapshot();
   const sortedClips = sortClipsByAt(clips);
   if (sortedClips.length === 0) {
     return null;
@@ -222,6 +371,63 @@ const VisualTrack: FC<VisualTrackProps> = ({ track, clips, fps, theme }) => {
               dynamicEntries={dynamicEntries}
             />
           );
+        }
+
+        // M9 T10: Extension clip renderer dispatch.
+        // After built-ins and sequence components, before the loud
+        // placeholder fallback. Looks up the clipTypeId in the
+        // provider-scoped ClipTypeRegistry.
+        // - Active record with a renderer → ExtensionClipSequence
+        //   with host-interpolated params (SD2).
+        // - Active record without a usable renderer → loud placeholder
+        //   (missing renderer).
+        // - Inactive / error record → loud placeholder.
+        // - Not in registry → falls through to existing placeholder logic.
+        // The error boundary inside ExtensionClipSequence catches
+        // runtime renderer crashes and displays a placeholder too.
+        if (clip.clipType) {
+          const extensionRecord = clipTypeRegistry.get(clip.clipType);
+          if (extensionRecord) {
+            if (
+              extensionRecord.status === 'active' &&
+              typeof extensionRecord.renderer === 'function'
+            ) {
+              // Check renderability: if preview route is explicitly blocked,
+              // show the placeholder instead of attempting render.
+              const previewCap = extensionRecord.renderability.capabilities.find(
+                (c) => c.route === 'preview',
+              );
+              if (previewCap && previewCap.status === 'blocked') {
+                return (
+                  <UnknownClipPlaceholderSequence
+                    key={clip.id}
+                    clip={clip}
+                    fps={fps}
+                    reason="unsupported"
+                  />
+                );
+              }
+              return (
+                <ExtensionClipSequence
+                  key={clip.id}
+                  clip={clip}
+                  fps={fps}
+                  registryRecord={extensionRecord}
+                  resolution={resolution}
+                  allClips={allClips}
+                />
+              );
+            }
+            // Found in registry but not renderable: loud placeholder
+            return (
+              <UnknownClipPlaceholderSequence
+                key={clip.id}
+                clip={clip}
+                fps={fps}
+                reason="unsupported"
+              />
+            );
+          }
         }
 
         if (descriptor?.capabilities.preview === 'placeholder') {
@@ -329,7 +535,10 @@ export const TimelineRenderer: FC<{ config: ResolvedTimelineConfig }> = memo(({ 
     }>((groups, clip) => {
       groups.all[clip.track] ??= [];
       groups.all[clip.track].push(clip);
-      if (clip.clipType === 'effect-layer' && !isGeneratedRemotionModuleClip(clip)) {
+      if (clip.clipType === 'automation') {
+        // Automation clips are data-only and do not produce visual output.
+        // They are only processed for override resolution.
+      } else if (clip.clipType === 'effect-layer' && !isGeneratedRemotionModuleClip(clip)) {
         groups.effectLayers[clip.track] ??= [];
         groups.effectLayers[clip.track].push(clip);
       } else {
@@ -341,12 +550,13 @@ export const TimelineRenderer: FC<{ config: ResolvedTimelineConfig }> = memo(({ 
   }, [renderConfig]);
 
   const visualContent = useMemo(() => {
+    const resolution = renderConfig.output.resolution;
     let accumulated: ReactNode = null;
 
     for (const track of visualTracks) {
       const trackClips = clipsByTrack.regular[track.id] ?? [];
       const trackContent: ReactNode = trackClips.length > 0
-        ? <VisualTrack key={track.id} track={track} clips={trackClips} fps={fps} theme={theme} />
+        ? <VisualTrack key={track.id} track={track} clips={trackClips} fps={fps} theme={theme} resolution={resolution} allClips={renderConfig.clips} />
         : null;
       let lowerTrackContent: ReactNode = accumulated;
       const effectLayers = sortClipsByAt(clipsByTrack.effectLayers[track.id] ?? []);

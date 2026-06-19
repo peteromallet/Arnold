@@ -12,6 +12,7 @@ import {
 } from '@/tools/video-editor/runtime/outputFormatRegistry.ts';
 import { useEffectRegistrySnapshot } from '@/tools/video-editor/effects/registry/EffectRegistryContext.tsx';
 import { useTransitionRegistrySnapshot } from '@/tools/video-editor/transitions/registry/TransitionRegistryContext.tsx';
+import { useClipTypeRegistrySnapshot } from '@/tools/video-editor/clip-types/ClipTypeRegistryContext.tsx';
 import {
   collectBuiltInKnownIds,
   collectExtensionDeclaredIds,
@@ -120,14 +121,16 @@ function formatExportGuardLog(
     }
   }
 
-  // Then warnings — also name effects/transitions
+  // Then warnings — also name effects/transitions/clip types
   for (const diag of guardResult.diagnostics) {
     if (diag.severity === 'warning') {
       const name = diag.detail?.effectType
         ? ` effect \"${diag.detail.effectType}\"`
         : diag.detail?.transitionType
           ? ` transition \"${diag.detail.transitionType}\"`
-          : '';
+          : diag.detail?.clipType
+            ? ` clip type \"${diag.detail.clipType}\"`
+            : '';
       const route = diag.detail?.renderRoute ? ` (${diag.detail.renderRoute})` : '';
       lines.push(`  [${diag.code}]${name}${route}: ${diag.message}`);
     }
@@ -221,6 +224,7 @@ export function useRenderState(
   const [exportResultFilename, setExportResultFilename] = useState<string | null>(null);
   const effectRegistrySnapshot = useEffectRegistrySnapshot();
   const transitionRegistrySnapshot = useTransitionRegistrySnapshot();
+  const clipTypeRegistrySnapshot = useClipTypeRegistrySnapshot();
   // M6: Derive export format categories from extension runtime
   const exportFormats = useMemo(() => {
     const outputFormats = extensionRuntime?.config?.outputFormats ?? [];
@@ -270,7 +274,7 @@ export function useRenderState(
     diagnosticCollection?.remove((diagnostic) => diagnostic.detail?.source === 'render-planner');
 
     // Skip guard work only when there is no active extension/provider registry input.
-    if (isExtensionRuntimeEmpty(extensionRuntime) && effectRegistrySnapshot.records.length === 0 && transitionRegistrySnapshot.records.length === 0) {
+    if (isExtensionRuntimeEmpty(extensionRuntime) && effectRegistrySnapshot.records.length === 0 && transitionRegistrySnapshot.records.length === 0 && clipTypeRegistrySnapshot.records.length === 0) {
       return true; // no blocker
     }
 
@@ -281,7 +285,7 @@ export function useRenderState(
     const builtIn = collectBuiltInKnownIds();
     const allContributions = extensionRuntime ? buildExtensionContributions(extensionRuntime) : [];
     const extIds = collectExtensionDeclaredIds(allContributions);
-    const guardResult = scanExportConfig(resolvedConfig, builtIn, extIds, effectRegistrySnapshot, transitionRegistrySnapshot);
+    const guardResult = scanExportConfig(resolvedConfig, builtIn, extIds, effectRegistrySnapshot, transitionRegistrySnapshot, clipTypeRegistrySnapshot);
 
     guardResult.diagnostics.forEach((diagnostic, index) => {
       diagnosticCollection?.publish(toCollectionDiagnostic(diagnostic, index));
@@ -302,7 +306,7 @@ export function useRenderState(
 
     // Extension-declared warnings only — preserve native routing
     return true; // no blocker
-  }, [diagnosticCollection, effectRegistrySnapshot, transitionRegistrySnapshot, extensionRuntime, resolvedConfig]);
+  }, [diagnosticCollection, effectRegistrySnapshot, transitionRegistrySnapshot, clipTypeRegistrySnapshot, extensionRuntime, resolvedConfig]);
 
   const startRender = useCallback(async () => {
     // ---- export guard: scan for unknown IDs before routing ------------------
