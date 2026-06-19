@@ -1,0 +1,58 @@
+{
+  "id": "log_a153ad40b317",
+  "level": "debug",
+  "category": "system",
+  "event_type": "authority_divergence",
+  "message": "authority_divergence emitted",
+  "details": {
+    "event": {
+      "seq": 4351,
+      "schema_version": 1,
+      "ts_utc": "2026-06-19T19:00:56.843333+00:00",
+      "ts_rel_init_s": 4628.65537,
+      "kind": "authority_divergence",
+      "phase": "execute",
+      "payload": {
+        "diagnostic_version": 1,
+        "task_id": "T18",
+        "raw_terminal_status": "done",
+        "authority_status": "unknown",
+        "authoritative": false,
+        "reason": "stale_evidence:missing_head:task_commands_run",
+        "missing_outputs": [],
+        "stale_evidence": [
+          "missing_head:task_commands_run",
+          "missing_head:task_commands_run",
+          "missing_head:task_commands_run"
+        ],
+        "would_block_reasons": [
+          "stale_evidence:missing_head:task_commands_run"
+        ],
+        "error": null,
+        "diagnostics": {
+          "task_id": "T18",
+          "declared_outputs": {
+            "commands_run": [
+              "python -m pytest tests/arnold/pipeline/native/ -v --tb=short \u2014 232 collected, 226 passed, 6 failed (all pre-existing per T4 checkpoint)"
+            ]
+          },
+          "linked_evidence_count": 3,
+          "evidence_count": 55,
+          "normalization": "iterable",
+          "status": "unknown",
+          "evidence_sources": [
+            "plan_artifacts"
+          ],
+          "loaded_evidence_count": 55,
+          "raw_terminal_status": "done"
+        },
+        "ts_utc": "2026-06-19T19:00:56.842932+00:00"
+      },
+      "transaction_id": "179fb34f4f90a0e3",
+      "store_method": "log_system_event"
+    }
+  },
+  "turn_id": null,
+  "epic_id": "handoff-artifacts-exact-20260619-1943",
+  "occurred_at": "2026-06-19T19:00:56.843372Z"
+}
