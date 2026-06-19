@@ -427,6 +427,9 @@ export interface CommandRegistry {
   /** All diagnostics emitted by the registry. */
   readonly diagnostics: readonly ExtensionDiagnostic[];
 
+  /** Subscribe to registry diagnostic changes. */
+  subscribe(listener: () => void): DisposeHandle;
+
   // ---- Snapshot ----------------------------------------------------------
 
   /** Return a frozen snapshot suitable for external consumers. */
@@ -465,6 +468,7 @@ export function createCommandRegistry(): CommandRegistry {
   const runStatuses = new Map<string, InternalCommandRunStatus>();
 
   const diagnostics: ExtensionDiagnostic[] = [];
+  const listeners = new Set<() => void>();
   let callbacks: CommandRegistryCallbacks = {};
   let disposed = false;
   let frozenSnapshot: CommandRegistrySnapshot | null = null;
@@ -474,7 +478,7 @@ export function createCommandRegistry(): CommandRegistry {
   function guardDisposed(operation: string): boolean {
     if (disposed) {
       // Silently no-op; emit a diagnostic so operators can see post-dispose misuse.
-      emitDiagnostic(diagnostics, 'warning',
+      addDiagnostic('warning',
         'command-registry/disposed',
         `CommandRegistry operation "${operation}" called after dispose.`,
       );
@@ -485,6 +489,25 @@ export function createCommandRegistry(): CommandRegistry {
 
   function invalidateSnapshot(): void {
     frozenSnapshot = null;
+  }
+
+  function notifyListeners(): void {
+    for (const listener of listeners) {
+      listener();
+    }
+  }
+
+  function addDiagnostic(
+    severity: DiagnosticSeverity,
+    code: string,
+    message: string,
+    extensionId?: string,
+    contributionId?: string,
+    detail?: Record<string, unknown>,
+  ): void {
+    emitDiagnostic(diagnostics, severity, code, message, extensionId, contributionId, detail);
+    invalidateSnapshot();
+    notifyListeners();
   }
 
   function getOrCreateStatus(commandId: string): InternalCommandRunStatus {
@@ -517,7 +540,7 @@ export function createCommandRegistry(): CommandRegistry {
 
     // Reserved check
     if (isReservedCommandId(commandId)) {
-      emitDiagnostic(diagnostics, 'error',
+      addDiagnostic('error',
         'command-registry/reserved-command',
         `Command "${commandId}" (extension "${extensionId}") uses reserved "reigh." prefix.`,
         extensionId,
@@ -530,7 +553,7 @@ export function createCommandRegistry(): CommandRegistry {
     // Conflict check: first-registered-wins (across extensions)
     const existing = commands.get(commandId);
     if (existing && existing.extensionId !== extensionId) {
-      emitDiagnostic(diagnostics, 'warning',
+      addDiagnostic('warning',
         'command-registry/duplicate-command',
         `Command "${commandId}" already registered by extension "${existing.extensionId}". Extension "${extensionId}" cannot override it.`,
         extensionId,
@@ -568,7 +591,7 @@ export function createCommandRegistry(): CommandRegistry {
 
     const normalized = normalizeKeybinding(contribution.key);
     if (!normalized) {
-      emitDiagnostic(diagnostics, 'error',
+      addDiagnostic('error',
         'command-registry/invalid-keybinding',
         `Invalid keybinding notation "${contribution.key}" from extension "${extensionId}".`,
         extensionId,
@@ -579,7 +602,7 @@ export function createCommandRegistry(): CommandRegistry {
 
     // Check reserved built-in shortcuts
     if (isReservedKeybinding(normalized)) {
-      emitDiagnostic(diagnostics, 'error',
+      addDiagnostic('error',
         'command-registry/reserved-keybinding',
         `Keybinding "${contribution.key}" (normalized: "${normalized}") is reserved. Extension "${extensionId}" cannot use it.`,
         extensionId,
@@ -591,7 +614,7 @@ export function createCommandRegistry(): CommandRegistry {
 
     const existing = keybindings.get(normalized);
     if (existing && existing.extensionId !== extensionId) {
-      emitDiagnostic(diagnostics, 'warning',
+      addDiagnostic('warning',
         'command-registry/keybinding-conflict',
         `Keybinding "${normalized}" already bound to command "${existing.commandId}" by extension "${existing.extensionId}". Extension "${extensionId}" cannot override it.`,
         extensionId,
@@ -622,7 +645,7 @@ export function createCommandRegistry(): CommandRegistry {
     if (guardDisposed('ingestContextMenuItemContribution')) return;
 
     if (!VALID_CONTEXT_MENU_TARGETS.has(contribution.target)) {
-      emitDiagnostic(diagnostics, 'error',
+      addDiagnostic('error',
         'command-registry/reserved-context-menu-target',
         `Context menu target "${contribution.target}" from extension "${extensionId}" is reserved or unsupported.`,
         extensionId,
@@ -671,7 +694,7 @@ export function createCommandRegistry(): CommandRegistry {
     // Must have a command contribution already ingested
     const cmd = commands.get(commandId);
     if (!cmd) {
-      emitDiagnostic(diagnostics, 'warning',
+      addDiagnostic('warning',
         'command-registry/handler-no-command',
         `Cannot register handler for command "${commandId}" — no matching CommandContribution found for extension "${extensionId}".`,
         extensionId,
@@ -680,7 +703,7 @@ export function createCommandRegistry(): CommandRegistry {
     }
 
     if (cmd.extensionId !== extensionId) {
-      emitDiagnostic(diagnostics, 'error',
+      addDiagnostic('error',
         'command-registry/handler-wrong-extension',
         `Cannot register handler for command "${commandId}" — it is owned by extension "${cmd.extensionId}", not "${extensionId}".`,
         extensionId,
@@ -759,7 +782,7 @@ export function createCommandRegistry(): CommandRegistry {
 
     const cmd = commands.get(commandId);
     if (!cmd) {
-      emitDiagnostic(diagnostics, 'warning',
+      addDiagnostic('warning',
         'command-registry/invoke-unknown-command',
         `Cannot execute unknown command "${commandId}".`,
       );
@@ -767,7 +790,7 @@ export function createCommandRegistry(): CommandRegistry {
     }
 
     if (!cmd.handler) {
-      emitDiagnostic(diagnostics, 'info',
+      addDiagnostic('info',
         'command-registry/invoke-no-handler',
         `Command "${commandId}" has no registered handler and cannot be executed.`,
         cmd.extensionId,
@@ -796,7 +819,7 @@ export function createCommandRegistry(): CommandRegistry {
       status.lastRunOk = false;
       status.lastError = error.message;
 
-      emitDiagnostic(diagnostics, 'error',
+      addDiagnostic('error',
         'command-registry/invoke-error',
         `Command "${commandId}" handler threw: ${error.message}`,
         cmd.extensionId,
@@ -817,7 +840,7 @@ export function createCommandRegistry(): CommandRegistry {
   ): void {
     if (guardDisposed('diagnoseContextMenuStaleTarget')) return;
 
-    emitDiagnostic(diagnostics, 'warning',
+    addDiagnostic('warning',
       'command-registry/context-menu-stale-target',
       `Context menu command "${commandId}" was not invoked because its target is stale: ${reason}`,
       extensionId,
@@ -825,7 +848,6 @@ export function createCommandRegistry(): CommandRegistry {
       { commandId, target, reason },
     );
     callbacks.onContextMenuStaleTarget?.(commandId, extensionId, reason);
-    invalidateSnapshot();
   }
 
   // ---- snapshot ----------------------------------------------------------
@@ -981,10 +1003,19 @@ export function createCommandRegistry(): CommandRegistry {
     callbacks = {};
     invalidateSnapshot();
 
-    emitDiagnostic(diagnostics, 'info',
+    addDiagnostic('info',
       'command-registry/disposed',
       'CommandRegistry disposed.',
     );
+  }
+
+  function subscribe(listener: () => void): DisposeHandle {
+    listeners.add(listener);
+    return {
+      dispose(): void {
+        listeners.delete(listener);
+      },
+    };
   }
 
   // ---- assemble ----------------------------------------------------------
@@ -1002,6 +1033,7 @@ export function createCommandRegistry(): CommandRegistry {
     get diagnostics() {
       return diagnostics;
     },
+    subscribe,
     getSnapshot,
     unregisterAll,
     setCallbacks,

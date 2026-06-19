@@ -19,6 +19,7 @@ import type {
   ExtensionRuntime,
 } from '@/tools/video-editor/runtime/extensionSurface.ts';
 import type { CommandRegistry } from '@/tools/video-editor/runtime/commandRegistry.ts';
+import type { DiagnosticCollection } from '@reigh/editor-sdk';
 
 export interface VideoEditorRuntimeContextValue {
   provider: DataProvider;
@@ -39,6 +40,8 @@ export interface VideoEditorRuntimeContextValue {
   extensionRuntime?: ExtensionRuntime;
   /** M4: Provider-scoped command registry (commands, keybindings, context menus). */
   commandRegistry?: CommandRegistry;
+  /** Provider-scoped diagnostics surfaced by status and diagnostic panels. */
+  diagnosticCollection?: DiagnosticCollection;
 }
 
 export const DataProviderContext = createContext<VideoEditorRuntimeContextValue | null>(null);

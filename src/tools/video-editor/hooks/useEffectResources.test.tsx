@@ -1,5 +1,12 @@
-import { act, renderHook } from '@testing-library/react';
+import { act, render, renderHook, screen, waitFor } from '@testing-library/react';
+import { useEffect, type ReactNode } from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import {
+  EffectRegistryProvider,
+  useEffectRegistryContext,
+  useEffectRegistrySnapshot,
+} from '@/tools/video-editor/effects/registry/EffectRegistryContext';
+import { effectCatalogToRegistryRecords } from '@/tools/video-editor/effects/registry/adapters/effectSourceAdapters';
 import {
   createVideoEditorEffectCatalog,
   EffectCatalogProvider,
@@ -16,6 +23,7 @@ const mocks = vi.hoisted(() => ({
   useCreateResource: vi.fn(),
   useUpdateResource: vi.fn(),
   useDeleteResource: vi.fn(),
+  compileEffect: vi.fn(),
 }));
 
 vi.mock('@/features/resources/hooks/useResources', async (importOriginal) => {
@@ -30,9 +38,52 @@ vi.mock('@/features/resources/hooks/useResources', async (importOriginal) => {
   };
 });
 
+vi.mock('@/tools/video-editor/effects/compileEffect.tsx', () => ({
+  compileEffect: mocks.compileEffect,
+}));
+
+function CatalogRegistryProbe() {
+  const catalog = useEffectResources('user-1');
+  const { registry } = useEffectRegistryContext();
+  const snapshot = useEffectRegistrySnapshot();
+
+  useEffect(() => {
+    const handles = effectCatalogToRegistryRecords(catalog, mocks.compileEffect)
+      .map((record) => registry.register(record));
+
+    return () => {
+      handles.forEach((handle) => handle.dispose());
+    };
+  }, [catalog, registry]);
+
+  const mirroredRecords = snapshot.records
+    .filter((record) => record.effectId.startsWith('catalog-'))
+    .map((record) => ({
+      effectId: record.effectId,
+      code: record.code,
+      provenance: record.provenance,
+    }));
+
+  return <output data-testid="registry-records">{JSON.stringify(mirroredRecords)}</output>;
+}
+
+function catalogRegistryWrapper(catalog: ReturnType<typeof createVideoEditorEffectCatalog>) {
+  return function CatalogRegistryWrapper({ children }: { children: ReactNode }) {
+    return (
+      <EffectCatalogProvider value={catalog}>
+        <EffectRegistryProvider>{children}</EffectRegistryProvider>
+      </EffectCatalogProvider>
+    );
+  };
+}
+
 describe('useEffectResources', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    localStorage.clear();
+    mocks.compileEffect.mockReturnValue(({ children }: { children?: ReactNode }) => (
+      <div data-testid="compiled-registry-effect">{children}</div>
+    ));
 
     mocks.useListResources.mockReturnValue({
       data: [],
@@ -235,5 +286,70 @@ describe('useEffectResources', () => {
     expect(createMutateAsync).toHaveBeenCalledWith({ type: 'effect', metadata }, undefined);
     expect(updateMutateAsync).toHaveBeenCalledWith({ id: 'effect-1', type: 'effect', metadata }, undefined);
     expect(deleteMutateAsync).toHaveBeenCalledWith({ id: 'effect-1', type: 'effect' }, undefined);
+  });
+
+  it('mirrors injected catalog resources into the provider registry without replacing catalog APIs', async () => {
+    const createEffect = vi.fn(async () => ({ id: 'created-effect' }));
+    const updateEffect = vi.fn(async () => ({ id: 'updated-effect' }));
+    const initialCatalog = createVideoEditorEffectCatalog({
+      effects: [{
+        id: 'catalog-generated-effect',
+        type: 'effect',
+        name: 'Generated Catalog Effect',
+        slug: 'generated-catalog-effect',
+        code: 'export default function GeneratedCatalogEffect() { return null; }',
+        category: 'continuous',
+        description: 'Generated resource',
+        created_by: { is_you: true },
+        is_public: false,
+        generation_id: 'generation-1',
+      }],
+      createEffect,
+      updateEffect,
+    });
+    const updatedCatalog = createVideoEditorEffectCatalog({
+      effects: [{
+        id: 'catalog-edited-effect',
+        type: 'effect',
+        name: 'Edited Catalog Effect',
+        slug: 'edited-catalog-effect',
+        code: 'export default function EditedCatalogEffect() { return null; }',
+        category: 'entrance',
+        description: 'Edited resource',
+        created_by: { is_you: true },
+        is_public: false,
+      }],
+      createEffect,
+      updateEffect,
+    });
+
+    const { rerender } = render(<CatalogRegistryProbe />, {
+      wrapper: catalogRegistryWrapper(initialCatalog),
+    });
+
+    await waitFor(() => {
+      expect(screen.getByTestId('registry-records').textContent).toContain('catalog-generated-effect');
+    });
+    expect(screen.getByTestId('registry-records').textContent).toContain('"provenance":"ai-generated"');
+    expect(initialCatalog.canCreateEffect).toBe(true);
+    expect(initialCatalog.canUpdateEffect).toBe(true);
+    expect(createEffect).not.toHaveBeenCalled();
+    expect(updateEffect).not.toHaveBeenCalled();
+    expect(mocks.useListResources).toHaveBeenCalledWith('effect', { enabled: false });
+    expect(mocks.useListPublicResources).toHaveBeenCalledWith('effect', { enabled: false });
+
+    rerender(
+      <EffectCatalogProvider value={updatedCatalog}>
+        <EffectRegistryProvider>
+          <CatalogRegistryProbe />
+        </EffectRegistryProvider>
+      </EffectCatalogProvider>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId('registry-records').textContent).toContain('catalog-edited-effect');
+    });
+    expect(screen.getByTestId('registry-records').textContent).not.toContain('catalog-generated-effect');
+    expect(screen.getByTestId('registry-records').textContent).toContain('"provenance":"external-catalog"');
   });
 });

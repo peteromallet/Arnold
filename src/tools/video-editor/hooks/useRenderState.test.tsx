@@ -1,8 +1,23 @@
 import { act, renderHook } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type { ReactNode } from 'react';
 import { useRenderState } from '@/tools/video-editor/hooks/useRenderState';
 import type { ResolvedTimelineConfig } from '@/tools/video-editor/types';
 import type { ExtensionRuntime } from '@/tools/video-editor/runtime/extensionSurface';
+import {
+  EffectRegistryProvider,
+  useEffectRegistryContext,
+} from '@/tools/video-editor/effects/registry/EffectRegistryContext';
+import type {
+  EffectRegistry,
+  EffectRegistryRecord,
+  EffectRegistrySnapshot,
+} from '@/tools/video-editor/effects/registry';
+import {
+  DataProviderContext,
+  type VideoEditorRuntimeContextValue,
+} from '@/tools/video-editor/contexts/DataProviderContext';
+import { createDiagnosticCollection } from '@reigh/editor-sdk';
 
 const mocks = vi.hoisted(() => ({
   startClientRender: vi.fn(),
@@ -94,6 +109,162 @@ function makeExtensionRuntime(overrides?: Partial<ExtensionRuntime>): ExtensionR
     settingsDefaults: {},
     ...overrides,
   };
+}
+
+function makeTimelineWithEffect(effectId: string): ResolvedTimelineConfig {
+  return buildConfig({
+    id: 'clip-with-effect',
+    clipType: 'media',
+    track: 'V1',
+    at: 0,
+    hold: 1,
+    continuous: {
+      type: effectId,
+      params: {},
+    },
+  } as ResolvedTimelineConfig['clips'][number]);
+}
+
+function makeEffectRecord(
+  effectId: string,
+  capabilityStatus: 'supported' | 'blocked' = 'supported',
+): EffectRegistryRecord {
+  return {
+    effectId,
+    contributionId: `contrib.${effectId}`,
+    component: ({ children }) => children,
+    provenance: 'trusted-loader',
+    ownerExtensionId: 'provider-ext',
+    status: 'active',
+    renderability: {
+      defaultRoute: 'preview',
+      determinism: 'deterministic',
+      capabilities: [
+        {
+          route: 'preview',
+          status: 'supported',
+          determinism: 'deterministic',
+        },
+        {
+          route: 'browser-export',
+          status: capabilityStatus,
+          determinism: 'deterministic',
+          ...(capabilityStatus === 'blocked'
+            ? {
+                blockerReason: 'route-unsupported',
+                message: `Effect "${effectId}" cannot browser-export.`,
+              }
+            : {}),
+        },
+      ],
+    },
+  };
+}
+
+let capturedRegistry: EffectRegistry | null = null;
+
+function CaptureRegistry({ children }: { children: ReactNode }) {
+  capturedRegistry = useEffectRegistryContext().registry;
+  return <>{children}</>;
+}
+
+function RegistryWrapper({ children }: { children: ReactNode }) {
+  return (
+    <EffectRegistryProvider>
+      <CaptureRegistry>{children}</CaptureRegistry>
+    </EffectRegistryProvider>
+  );
+}
+
+function nonEmptyExtensionRuntime(): ExtensionRuntime {
+  return makeExtensionRuntime({
+    extensions: [
+      {
+        manifest: {
+          id: 'provider-ext' as any,
+          version: '1.0.0',
+          contributions: [],
+        },
+      } as any,
+    ],
+  });
+}
+
+function cleanGuardResult() {
+  return {
+    diagnostics: [],
+    findings: [],
+    blockers: [],
+    unknownClipTypes: [],
+    unknownEffects: [],
+    unknownTransitions: [],
+    inactiveExtensionIds: {
+      effectIds: new Set(),
+      transitionIds: new Set(),
+      clipTypeIds: new Set(),
+    },
+    hasBlockingErrors: false,
+  };
+}
+
+function installSnapshotAwareGuardMock() {
+  guardMocks.collectBuiltInKnownIds.mockReturnValue({
+    clipTypes: new Set(['media', 'text', 'hold', 'effect-layer']),
+    effectTypes: new Set(),
+    transitionTypes: new Set(),
+  });
+  guardMocks.collectExtensionDeclaredIds.mockReturnValue({
+    effectIds: new Set(),
+    transitionIds: new Set(),
+    clipTypeIds: new Set(),
+  });
+  guardMocks.scanExportConfig.mockImplementation((
+    config: ResolvedTimelineConfig | null,
+    _builtIn: unknown,
+    _extIds: unknown,
+    snapshot?: EffectRegistrySnapshot,
+  ) => {
+    const effectId = (config?.clips[0]?.continuous as { type?: string } | undefined)?.type;
+    const record = effectId ? snapshot?.get(effectId) : undefined;
+
+    if (!effectId || !record) {
+      return {
+        ...cleanGuardResult(),
+        diagnostics: [
+          {
+            severity: 'error',
+            code: 'export/unknown-effect-type',
+            message: `Continuous effect "${effectId ?? 'unknown'}" is not recognised. Ensure the required extension or registry is installed.`,
+            detail: { clipId: 'clip-with-effect', effectType: effectId },
+          },
+        ],
+        unknownEffects: effectId ? [effectId] : [],
+        hasBlockingErrors: true,
+      };
+    }
+
+    const browserExport = record.renderability.capabilities.find((capability) => capability.route === 'browser-export');
+    if (browserExport?.status !== 'supported') {
+      return {
+        ...cleanGuardResult(),
+        diagnostics: [
+          {
+            severity: 'error',
+            code: 'export/unrenderable-effect',
+            message: browserExport?.message ?? `Continuous effect "${effectId}" is registered but does not support browser export.`,
+            detail: {
+              clipId: 'clip-with-effect',
+              effectType: effectId,
+              renderRoute: 'browser-export',
+            },
+          },
+        ],
+        hasBlockingErrors: true,
+      };
+    }
+
+    return cleanGuardResult();
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -562,6 +733,74 @@ describe('useRenderState export guard', () => {
       expect(log).toContain('[export/unknown-effect-type]');
       // Warning still shown
       expect(log).toContain('[export/unknown-transition-type]');
+    });
+
+    it('publishes export and planner diagnostics to the provider collection during guard execution', async () => {
+      const extRuntime = makeExtensionRuntime({
+        extensions: [
+          {
+            manifest: {
+              id: 'test-ext' as any,
+              version: '1.0.0',
+              contributions: [],
+            },
+          } as any,
+        ],
+      });
+      const collection = createDiagnosticCollection();
+      const runtimeValue = {
+        diagnosticCollection: collection,
+      } as unknown as VideoEditorRuntimeContextValue;
+      const wrapper = ({ children }: { children: ReactNode }) => (
+        <DataProviderContext.Provider value={runtimeValue}>
+          {children}
+        </DataProviderContext.Provider>
+      );
+
+      guardMocks.scanExportConfig.mockReturnValue({
+        ...cleanGuardResult(),
+        diagnostics: [
+          {
+            severity: 'error',
+            code: 'export/unknown-effect-type',
+            message: 'Continuous effect "hyperspace" is not recognised.',
+            detail: { clipId: 'c1', effectType: 'hyperspace' },
+          },
+        ],
+        blockers: [
+          {
+            id: 'export.effect.c1.continuous.hyperspace.missing',
+            severity: 'error',
+            route: 'browser-export',
+            reason: 'missing-contribution',
+            message: 'Continuous effect "hyperspace" is not recognised.',
+            clipId: 'c1',
+            detail: { effectType: 'hyperspace', slot: 'continuous' },
+          },
+        ],
+        hasBlockingErrors: true,
+      });
+
+      const { result } = renderHook(() => useRenderState(
+        buildConfig({
+          id: 'c1',
+          clipType: 'media',
+          track: 'V1',
+          at: 0,
+          hold: 1,
+        }),
+        null,
+        null,
+        extRuntime,
+      ), { wrapper });
+
+      await act(async () => {
+        await result.current.startRender();
+      });
+
+      const diagnostics = collection.getSnapshot();
+      expect(diagnostics.some((diagnostic) => diagnostic.detail?.source === 'export-guard')).toBe(true);
+      expect(diagnostics.some((diagnostic) => diagnostic.detail?.source === 'render-planner')).toBe(true);
     });
   });
 
@@ -1286,6 +1525,100 @@ describe('useRenderState export guard', () => {
       expect(result.current.renderLog).toContain('custom-fx');
       expect(result.current.renderLog).toContain('custom-transition');
       expect(result.current.renderLog).toContain('warning');
+      expect(mocks.startClientRender).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe('export guard — provider registry snapshots', () => {
+    beforeEach(() => {
+      vi.clearAllMocks();
+      capturedRegistry = null;
+      mocks.startClientRender.mockResolvedValue(undefined);
+      installSnapshotAwareGuardMock();
+    });
+
+    it('passes the current provider snapshot into readiness checks and blocks missing effect IDs', async () => {
+      const { result } = renderHook(() => useRenderState(
+        makeTimelineWithEffect('missing-provider-effect'),
+        null,
+        null,
+        nonEmptyExtensionRuntime(),
+      ), { wrapper: RegistryWrapper });
+
+      await act(async () => {
+        await result.current.startRender();
+      });
+
+      expect(guardMocks.scanExportConfig).toHaveBeenCalledTimes(1);
+      const snapshot = guardMocks.scanExportConfig.mock.calls[0][3] as EffectRegistrySnapshot;
+      expect(snapshot.records).toHaveLength(0);
+      expect(snapshot.has('missing-provider-effect')).toBe(false);
+      expect(result.current.renderStatus).toBe('error');
+      expect(result.current.renderLog).toContain('missing-provider-effect');
+      expect(mocks.startClientRender).not.toHaveBeenCalled();
+    });
+
+    it('blocks provider records that are registered but cannot browser-export', async () => {
+      const { result } = renderHook(() => useRenderState(
+        makeTimelineWithEffect('preview-only-provider-effect'),
+        null,
+        null,
+        nonEmptyExtensionRuntime(),
+      ), { wrapper: RegistryWrapper });
+
+      act(() => {
+        capturedRegistry!.register(makeEffectRecord('preview-only-provider-effect', 'blocked'));
+      });
+
+      await act(async () => {
+        await result.current.startRender();
+      });
+
+      expect(guardMocks.scanExportConfig).toHaveBeenCalledTimes(1);
+      const snapshot = guardMocks.scanExportConfig.mock.calls[0][3] as EffectRegistrySnapshot;
+      expect(snapshot.get('preview-only-provider-effect')?.renderability.capabilities).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            route: 'browser-export',
+            status: 'blocked',
+          }),
+        ]),
+      );
+      expect(result.current.renderStatus).toBe('error');
+      expect(result.current.renderLog).toContain('cannot browser-export');
+      expect(mocks.startClientRender).not.toHaveBeenCalled();
+    });
+
+    it('recomputes readiness from updated provider snapshots', async () => {
+      const { result } = renderHook(() => useRenderState(
+        makeTimelineWithEffect('late-provider-effect'),
+        null,
+        null,
+        nonEmptyExtensionRuntime(),
+      ), { wrapper: RegistryWrapper });
+
+      await act(async () => {
+        await result.current.startRender();
+      });
+
+      expect(result.current.renderLog).toContain('late-provider-effect');
+      expect(mocks.startClientRender).not.toHaveBeenCalled();
+
+      act(() => {
+        capturedRegistry!.register(makeEffectRecord('late-provider-effect', 'supported'));
+      });
+
+      await act(async () => {
+        await result.current.startRender();
+      });
+
+      expect(guardMocks.scanExportConfig).toHaveBeenCalledTimes(2);
+      const firstSnapshot = guardMocks.scanExportConfig.mock.calls[0][3] as EffectRegistrySnapshot;
+      const secondSnapshot = guardMocks.scanExportConfig.mock.calls[1][3] as EffectRegistrySnapshot;
+      expect(firstSnapshot.records).toHaveLength(0);
+      expect(secondSnapshot.has('late-provider-effect')).toBe(true);
+      expect(secondSnapshot.records).toHaveLength(1);
+      expect(result.current.renderLog).toContain('Export guard: no issues found.');
       expect(mocks.startClientRender).toHaveBeenCalledTimes(1);
     });
   });

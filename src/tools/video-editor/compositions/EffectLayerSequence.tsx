@@ -6,6 +6,11 @@ import {
   lookupEffect,
   wrapWithEffect,
 } from '@/tools/video-editor/effects/index.tsx';
+import {
+  normalizeEffectRegistryId,
+  useOptionalEffectRegistryContext,
+  type EffectRegistrySnapshot,
+} from '@/tools/video-editor/effects/registry/index.ts';
 import { getClipDurationInFrames, secondsToFrames } from '@/tools/video-editor/lib/config-utils.ts';
 import type { ResolvedTimelineClip } from '@/tools/video-editor/types/index.ts';
 
@@ -13,6 +18,7 @@ interface EffectLayerSequenceProps {
   clip: ResolvedTimelineClip;
   fps: number;
   children: ReactNode;
+  effectRegistrySnapshot?: EffectRegistrySnapshot;
 }
 
 /**
@@ -21,8 +27,16 @@ interface EffectLayerSequenceProps {
  * children render unmodified; inside the range, the effect is applied
  * with a local frame context so effect animations start from 0.
  */
-export const EffectLayerSequence: FC<EffectLayerSequenceProps> = ({ clip, fps, children }) => {
+export const EffectLayerSequence: FC<EffectLayerSequenceProps> = ({
+  clip,
+  fps,
+  children,
+  effectRegistrySnapshot,
+}) => {
   const frame = useCurrentFrame();
+  const providerRegistryContext = useOptionalEffectRegistryContext();
+  const registrySnapshot = effectRegistrySnapshot ?? providerRegistryContext?.snapshot;
+  const shouldUseLegacyFallback = !effectRegistrySnapshot && !providerRegistryContext;
   const startFrame = Math.max(0, secondsToFrames(clip.at, fps));
   const durationInFrames = getClipDurationInFrames(clip, fps);
 
@@ -30,7 +44,10 @@ export const EffectLayerSequence: FC<EffectLayerSequenceProps> = ({ clip, fps, c
     return <>{children}</>;
   }
 
-  const Effect = lookupEffect(continuousEffects, clip.continuous.type);
+  const normalizedEffectId = normalizeEffectRegistryId(clip.continuous.type);
+  const registryRecord = registrySnapshot?.get(normalizedEffectId) ?? registrySnapshot?.get(clip.continuous.type);
+  const Effect = registryRecord?.component
+    ?? (shouldUseLegacyFallback ? lookupEffect(continuousEffects, clip.continuous.type) : null);
   if (!Effect) {
     console.warn('[EffectLayer] effect NOT FOUND for clip=%s type=%s', clip.id, clip.continuous.type);
     return <>{children}</>;
@@ -57,7 +74,8 @@ export const EffectLayerSequence: FC<EffectLayerSequenceProps> = ({ clip, fps, c
           effectFrames: durationInFrames,
           intensity: clip.continuous.intensity ?? 0.5,
           params: clip.continuous.params,
-          schema: getEffectRegistry().getSchema(clip.continuous.type),
+          schema: registryRecord?.schema
+            ?? (shouldUseLegacyFallback ? getEffectRegistry().getSchema(clip.continuous.type) : undefined),
         },
       )}
     </Sequence>

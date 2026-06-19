@@ -2,15 +2,22 @@ import type { FC } from 'react';
 import { AbsoluteFill, Sequence } from 'remotion';
 import { getClipDurationInFrames, secondsToFrames } from '@/tools/video-editor/lib/config-utils.ts';
 import { wrapWithClipEffects } from '@/tools/video-editor/effects/index.tsx';
+import {
+  useOptionalEffectRegistryContext,
+  type EffectRegistrySnapshot,
+} from '@/tools/video-editor/effects/registry/index.ts';
 import type { ResolvedTimelineClip, TrackDefinition } from '@/tools/video-editor/types/index.ts';
 
 type TextClipProps = {
   clip: ResolvedTimelineClip;
   track: TrackDefinition;
   fps: number;
+  effectRegistrySnapshot?: EffectRegistrySnapshot;
 };
 
-export const TextClip: FC<TextClipProps> = ({ clip, track: _track, fps }) => {
+export const TextClip: FC<TextClipProps> = ({ clip, track: _track, fps, effectRegistrySnapshot }) => {
+  const providerRegistryContext = useOptionalEffectRegistryContext();
+  const registrySnapshot = effectRegistrySnapshot ?? providerRegistryContext?.snapshot;
   const durationInFrames = getClipDurationInFrames(clip, fps);
   const text = clip.text;
   if (!text) {
@@ -42,17 +49,17 @@ export const TextClip: FC<TextClipProps> = ({ clip, track: _track, fps }) => {
     </AbsoluteFill>
   );
 
-  return <>{wrapWithClipEffects(content, clip, durationInFrames, fps)}</>;
+  return <>{wrapWithClipEffects(content, clip, durationInFrames, fps, registrySnapshot)}</>;
 };
 
-export const TextClipSequence: FC<TextClipProps> = ({ clip, track, fps }) => {
+export const TextClipSequence: FC<TextClipProps> = ({ clip, track, fps, effectRegistrySnapshot }) => {
   return (
     <Sequence
       key={clip.id}
       from={secondsToFrames(clip.at, fps)}
       durationInFrames={getClipDurationInFrames(clip, fps)}
     >
-      <TextClip clip={clip} track={track} fps={fps} />
+      <TextClip clip={clip} track={track} fps={fps} effectRegistrySnapshot={effectRegistrySnapshot} />
     </Sequence>
   );
 };

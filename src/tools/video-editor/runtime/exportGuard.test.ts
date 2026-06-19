@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import type { FC } from 'react';
 import {
   collectBuiltInKnownIds,
   collectExtensionDeclaredIds,
@@ -10,6 +11,11 @@ import type {
   ExportGuardResult,
 } from '@/tools/video-editor/runtime/exportGuard.ts';
 import type { ExtensionContribution } from '@reigh/editor-sdk';
+import type {
+  EffectRegistryRecord,
+  EffectRegistrySnapshot,
+} from '@/tools/video-editor/effects/registry/types.ts';
+import type { EffectComponentProps } from '@/tools/video-editor/effects/entrances.tsx';
 import type { ResolvedTimelineConfig } from '@/tools/video-editor/types/index.ts';
 
 // ---------------------------------------------------------------------------
@@ -38,6 +44,48 @@ function makeConfig(
     clips,
     registry: {},
   };
+}
+
+const RegistryEffect: FC<EffectComponentProps> = ({ children }) => children;
+
+function effectRecord(
+  effectId: string,
+  overrides: Partial<EffectRegistryRecord> = {},
+): EffectRegistryRecord {
+  return {
+    effectId,
+    contributionId: `test:effect:${effectId}`,
+    component: RegistryEffect,
+    provenance: 'trusted-loader',
+    renderability: {
+      defaultRoute: 'preview',
+      determinism: 'deterministic',
+      capabilities: [
+        {
+          route: 'preview',
+          status: 'supported',
+          determinism: 'deterministic',
+        },
+        {
+          route: 'browser-export',
+          status: 'supported',
+          determinism: 'deterministic',
+        },
+      ],
+    },
+    status: 'active',
+    ...overrides,
+  };
+}
+
+function snapshotWith(records: readonly EffectRegistryRecord[]): EffectRegistrySnapshot {
+  const byId = new Map(records.map((record) => [record.effectId, record]));
+  return Object.freeze({
+    records: Object.freeze([...records]),
+    diagnostics: Object.freeze([]),
+    get: (effectId: string) => byId.get(effectId),
+    has: (effectId: string) => byId.has(effectId),
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -321,6 +369,22 @@ describe('scanExportConfig — known effects', () => {
     const result = scanExportConfig(makeConfig([clip]), builtIn, extIds);
     expect(result.diagnostics).toEqual([]);
   });
+
+  it('passes provider snapshot effect IDs that are absent from legacy known IDs', () => {
+    const clip = makeClip('c1', {
+      clipType: 'media',
+      continuous: { type: 'provider-glow', intensity: 0.5 },
+    });
+    const snapshot = snapshotWith([effectRecord('provider-glow')]);
+
+    const result = scanExportConfig(makeConfig([clip]), builtIn, extIds, snapshot);
+
+    expect(result.diagnostics).toEqual([]);
+    expect(result.findings).toEqual([]);
+    expect(result.blockers).toEqual([]);
+    expect(result.unknownEffects).toEqual([]);
+    expect(result.hasBlockingErrors).toBe(false);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -345,6 +409,25 @@ describe('scanExportConfig — unknown effects', () => {
     expect(result.diagnostics[0].detail?.clipId).toBe('c1');
     expect(result.unknownEffects).toEqual(['crazy-spin']);
     expect(result.hasBlockingErrors).toBe(true);
+    expect(result.findings).toEqual([
+      expect.objectContaining({
+        id: 'export.effect.c1.entrance.crazy-spin.missing',
+        severity: 'error',
+        route: 'browser-export',
+        reason: 'missing-contribution',
+        clipId: 'c1',
+        detail: { effectType: 'crazy-spin', slot: 'entrance' },
+      }),
+    ]);
+    expect(result.blockers).toEqual([
+      expect.objectContaining({
+        id: 'export.effect.c1.entrance.crazy-spin.missing',
+        severity: 'error',
+        route: 'browser-export',
+        reason: 'missing-contribution',
+        clipId: 'c1',
+      }),
+    ]);
   });
 
   it('emits error for unknown continuous effect', () => {
@@ -387,6 +470,80 @@ describe('scanExportConfig — unknown effects', () => {
     expect(result.diagnostics[0].message).toContain('inactive extension');
     expect(result.unknownEffects).toEqual([]);
     expect(result.hasBlockingErrors).toBe(false);
+    expect(result.findings).toEqual([]);
+    expect(result.blockers).toEqual([]);
+  });
+
+  it('emits shared export blocker vocabulary for provider snapshot effects that cannot browser-export', () => {
+    const clip = makeClip('c1', {
+      clipType: 'media',
+      continuous: { type: 'preview-glow', intensity: 0.5 },
+    });
+    const snapshot = snapshotWith([
+      effectRecord('preview-glow', {
+        ownerExtensionId: 'ext.preview',
+        contributionId: 'ext.preview:effect:preview-glow',
+        renderability: {
+          defaultRoute: 'preview',
+          determinism: 'preview-only',
+          capabilities: [
+            {
+              route: 'preview',
+              status: 'supported',
+              determinism: 'preview-only',
+            },
+            {
+              route: 'browser-export',
+              status: 'blocked',
+              determinism: 'preview-only',
+              blockerReason: 'preview-only',
+              message: 'Preview Glow only supports interactive preview.',
+            },
+          ],
+        },
+      }),
+    ]);
+
+    const result = scanExportConfig(makeConfig([clip]), builtIn, extIds, snapshot);
+
+    expect(result.diagnostics).toEqual([
+      expect.objectContaining({
+        severity: 'error',
+        code: 'export/unrenderable-effect',
+        message: 'Preview Glow only supports interactive preview.',
+        extensionId: 'ext.preview',
+        contributionId: 'ext.preview:effect:preview-glow',
+        detail: expect.objectContaining({
+          clipId: 'c1',
+          effectType: 'preview-glow',
+          renderRoute: 'browser-export',
+          blockerReason: 'preview-only',
+        }),
+      }),
+    ]);
+    expect(result.findings).toEqual([
+      expect.objectContaining({
+        id: 'export.effect.c1.continuous.preview-glow.preview-only',
+        severity: 'error',
+        route: 'browser-export',
+        reason: 'preview-only',
+        message: 'Preview Glow only supports interactive preview.',
+        extensionId: 'ext.preview',
+        contributionId: 'ext.preview:effect:preview-glow',
+        clipId: 'c1',
+        detail: { effectType: 'preview-glow', slot: 'continuous' },
+      }),
+    ]);
+    expect(result.blockers).toEqual([
+      expect.objectContaining({
+        id: 'export.effect.c1.continuous.preview-glow.preview-only',
+        severity: 'error',
+        route: 'browser-export',
+        reason: 'preview-only',
+      }),
+    ]);
+    expect(result.unknownEffects).toEqual([]);
+    expect(result.hasBlockingErrors).toBe(true);
   });
 });
 

@@ -25,7 +25,17 @@ import {
   continuousEffectTypes,
   getEffectRegistry,
 } from '@/tools/video-editor/effects/index.tsx';
+import type {
+  EffectRegistryRecord,
+  EffectRegistrySnapshot,
+} from '@/tools/video-editor/effects/registry/types.ts';
 import { transitionTypes as builtInTransitionTypes } from '@/tools/video-editor/effects/transitions.ts';
+import type {
+  CapabilityFinding,
+  RenderBlocker,
+  RenderBlockerReason,
+  RenderCapability,
+} from '@/tools/video-editor/runtime/renderability.ts';
 
 // ---------------------------------------------------------------------------
 // Known ID collections
@@ -67,6 +77,10 @@ export interface InactiveKnownIds {
 export interface ExportGuardResult {
   /** Structured diagnostics for every unknown/unavailable ID found. */
   readonly diagnostics: readonly ExportDiagnostic[];
+  /** Shared planner-compatible findings for export readiness. */
+  readonly findings: readonly CapabilityFinding[];
+  /** Shared planner-compatible blockers that prevent browser export. */
+  readonly blockers: readonly RenderBlocker[];
   /** Clip types used in the timeline that are not in any known set. */
   readonly unknownClipTypes: readonly string[];
   /** Effect types used in the timeline that are not in any known set. */
@@ -191,6 +205,7 @@ interface AllKnownIds {
   clipTypes: ReadonlySet<string>;
   effectTypes: ReadonlySet<string>;
   transitionTypes: ReadonlySet<string>;
+  effectRegistrySnapshot?: EffectRegistrySnapshot;
   /** Extension-declared IDs (metadata only, not used for dispatch). */
   extensionEffectIds: ReadonlySet<string>;
   extensionTransitionIds: ReadonlySet<string>;
@@ -200,11 +215,13 @@ interface AllKnownIds {
 function buildAllKnown(
   builtIn: KnownIdCollection,
   extIds: InactiveKnownIds,
+  effectRegistrySnapshot?: EffectRegistrySnapshot,
 ): AllKnownIds {
   return {
     clipTypes: builtIn.clipTypes,
     effectTypes: builtIn.effectTypes,
     transitionTypes: builtIn.transitionTypes,
+    ...(effectRegistrySnapshot ? { effectRegistrySnapshot } : {}),
     extensionEffectIds: extIds.effectIds,
     extensionTransitionIds: extIds.transitionIds,
     extensionClipTypeIds: extIds.clipTypeIds,
@@ -228,27 +245,34 @@ export function scanExportConfig(
   config: ResolvedTimelineConfig | null,
   builtIn: KnownIdCollection,
   extIds: InactiveKnownIds,
+  effectRegistrySnapshot?: EffectRegistrySnapshot,
 ): ExportGuardResult {
   const diagnostics: ExportDiagnostic[] = [];
+  const findings: CapabilityFinding[] = [];
+  const blockers: RenderBlocker[] = [];
   const unknownClipTypes = new Set<string>();
   const unknownEffects = new Set<string>();
   const unknownTransitions = new Set<string>();
 
   if (config && config.clips.length > 0) {
-    const allKnown = buildAllKnown(builtIn, extIds);
+    const allKnown = buildAllKnown(builtIn, extIds, effectRegistrySnapshot);
 
     for (const clip of config.clips) {
-      scanClip(clip, allKnown, diagnostics, unknownClipTypes, unknownEffects, unknownTransitions);
+      scanClip(clip, allKnown, diagnostics, findings, blockers, unknownClipTypes, unknownEffects, unknownTransitions);
     }
   }
 
   // Sort diagnostics for determinism
   diagnostics.sort((a, b) => a.code.localeCompare(b.code) || a.message.localeCompare(b.message));
+  findings.sort((a, b) => a.id.localeCompare(b.id));
+  blockers.sort((a, b) => a.id.localeCompare(b.id));
 
   const hasBlockingErrors = diagnostics.some((d) => d.severity === 'error');
 
   return Object.freeze({
     diagnostics: Object.freeze(diagnostics),
+    findings: Object.freeze(findings),
+    blockers: Object.freeze(blockers),
     unknownClipTypes: Object.freeze([...unknownClipTypes].sort()),
     unknownEffects: Object.freeze([...unknownEffects].sort()),
     unknownTransitions: Object.freeze([...unknownTransitions].sort()),
@@ -265,6 +289,8 @@ function scanClip(
   clip: ResolvedTimelineClip,
   known: AllKnownIds,
   diagnostics: ExportDiagnostic[],
+  findings: CapabilityFinding[],
+  blockers: RenderBlocker[],
   unknownClipTypes: Set<string>,
   unknownEffects: Set<string>,
   unknownTransitions: Set<string>,
@@ -290,13 +316,13 @@ function scanClip(
   }
 
   // ---- entrance effect -----------------------------------------------------
-  scanEffect(clip, 'entrance', known, diagnostics, unknownEffects);
+  scanEffect(clip, 'entrance', known, diagnostics, findings, blockers, unknownEffects);
 
   // ---- exit effect ---------------------------------------------------------
-  scanEffect(clip, 'exit', known, diagnostics, unknownEffects);
+  scanEffect(clip, 'exit', known, diagnostics, findings, blockers, unknownEffects);
 
   // ---- continuous effect ---------------------------------------------------
-  scanEffect(clip, 'continuous', known, diagnostics, unknownEffects);
+  scanEffect(clip, 'continuous', known, diagnostics, findings, blockers, unknownEffects);
 
   // ---- transition ----------------------------------------------------------
   if (clip.transition?.type) {
@@ -331,6 +357,8 @@ function scanEffect(
   slot: EffectSlot,
   known: AllKnownIds,
   diagnostics: ExportDiagnostic[],
+  findings: CapabilityFinding[],
+  blockers: RenderBlocker[],
   unknownEffects: Set<string>,
 ): void {
   // The effect can be stored as `ClipEntrance | ClipExit | ClipContinuous`
@@ -346,22 +374,147 @@ function scanEffect(
 
   if (!effectType) return;
 
-  if (!known.effectTypes.has(effectType)) {
+  const snapshotRecord = known.effectRegistrySnapshot?.get(effectType);
+  if (!known.effectTypes.has(effectType) && !snapshotRecord) {
     const isExtDeclared = known.extensionEffectIds.has(effectType);
+    const message = isExtDeclared
+      ? `${capitalise(slot)} effect "${effectType}" is declared by an inactive extension and may not be available at export time.`
+      : `${capitalise(slot)} effect "${effectType}" is not recognised. Ensure the required extension or registry is installed.`;
 
     diagnostics.push({
       severity: isExtDeclared ? 'warning' : 'error',
       code: 'export/unknown-effect-type',
-      message: isExtDeclared
-        ? `${capitalise(slot)} effect "${effectType}" is declared by an inactive extension and may not be available at export time.`
-        : `${capitalise(slot)} effect "${effectType}" is not recognised. Ensure the required extension or registry is installed.`,
+      message,
       detail: { clipId: clip.id, effectType },
     });
 
     if (!isExtDeclared) {
       unknownEffects.add(effectType);
+      pushEffectFindingAndBlocker(findings, blockers, {
+        id: `export.effect.${clip.id}.${slot}.${effectType}.missing`,
+        reason: 'missing-contribution',
+        message,
+        clipId: clip.id,
+        effectType,
+        slot,
+      });
     }
+    return;
   }
+
+  if (snapshotRecord) {
+    scanEffectRecordRenderability(clip, slot, effectType, snapshotRecord, diagnostics, findings, blockers);
+  }
+}
+
+function scanEffectRecordRenderability(
+  clip: ResolvedTimelineClip,
+  slot: EffectSlot,
+  effectType: string,
+  record: EffectRegistryRecord,
+  diagnostics: ExportDiagnostic[],
+  findings: CapabilityFinding[],
+  blockers: RenderBlocker[],
+): void {
+  const browserExportCapability = record.renderability.capabilities.find(
+    (capability) => capability.route === 'browser-export',
+  );
+
+  if (record.status !== 'active') {
+    const message = `${capitalise(slot)} effect "${effectType}" is registered but inactive and cannot be used for browser export.`;
+    diagnostics.push({
+      severity: 'error',
+      code: 'export/unrenderable-effect',
+      message,
+      extensionId: record.ownerExtensionId,
+      contributionId: record.contributionId,
+      detail: { clipId: clip.id, effectType, effectStatus: record.status },
+    });
+    pushEffectFindingAndBlocker(findings, blockers, {
+      id: `export.effect.${clip.id}.${slot}.${effectType}.inactive`,
+      reason: 'inactive-extension',
+      message,
+      clipId: clip.id,
+      effectType,
+      slot,
+      record,
+    });
+    return;
+  }
+
+  if (isBrowserExportSupported(browserExportCapability)) return;
+
+  const reason = browserExportCapability?.blockerReason ?? firstBrowserExportBlockerReason(record) ?? 'unknown';
+  const message = browserExportCapability?.message
+    ?? `${capitalise(slot)} effect "${effectType}" is registered but does not support browser export.`;
+
+  diagnostics.push({
+    severity: 'error',
+    code: 'export/unrenderable-effect',
+    message,
+    extensionId: record.ownerExtensionId,
+    contributionId: record.contributionId,
+    detail: {
+      clipId: clip.id,
+      effectType,
+      renderRoute: 'browser-export',
+      blockerReason: reason,
+    },
+  });
+  pushEffectFindingAndBlocker(findings, blockers, {
+    id: `export.effect.${clip.id}.${slot}.${effectType}.${reason}`,
+    reason,
+    message,
+    clipId: clip.id,
+    effectType,
+    slot,
+    record,
+  });
+}
+
+function isBrowserExportSupported(capability: RenderCapability | undefined): boolean {
+  return capability?.route === 'browser-export' && capability.status === 'supported';
+}
+
+function firstBrowserExportBlockerReason(record: EffectRegistryRecord): RenderBlockerReason | undefined {
+  return record.renderability.blockers?.find((blocker) => blocker.route === 'browser-export')?.reason;
+}
+
+function pushEffectFindingAndBlocker(
+  findings: CapabilityFinding[],
+  blockers: RenderBlocker[],
+  input: {
+    id: string;
+    reason: RenderBlockerReason;
+    message: string;
+    clipId: string;
+    effectType: string;
+    slot: EffectSlot;
+    record?: EffectRegistryRecord;
+  },
+): void {
+  const detail = {
+    effectType: input.effectType,
+    slot: input.slot,
+  };
+  const finding: CapabilityFinding = {
+    id: input.id,
+    severity: 'error',
+    route: 'browser-export',
+    reason: input.reason,
+    message: input.message,
+    clipId: input.clipId,
+    ...(input.record?.ownerExtensionId ? { extensionId: input.record.ownerExtensionId } : {}),
+    ...(input.record?.contributionId ? { contributionId: input.record.contributionId } : {}),
+    detail,
+  };
+  findings.push(finding);
+  blockers.push({
+    ...finding,
+    severity: 'error',
+    route: 'browser-export',
+    reason: input.reason,
+  });
 }
 
 // ---------------------------------------------------------------------------

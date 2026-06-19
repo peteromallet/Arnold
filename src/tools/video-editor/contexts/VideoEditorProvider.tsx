@@ -32,12 +32,18 @@ import {
   type KeybindingContribution,
   type ContextMenuItemContribution,
   type ExtensionCommandService,
+  createDiagnosticCollection,
+  type DiagnosticCollection,
 } from '@reigh/editor-sdk';
 import type { CreativeContext } from '@reigh/editor-sdk';
 import { useAgentChatRegistry } from '@/shared/contexts/AgentChatContext.tsx';
 import { clearTimelineClipData, setTimelineClipData } from '@/shared/state/selectionStore.ts';
 import { useEffects } from '@/tools/video-editor/hooks/useEffects.ts';
 import { useEffectRegistry } from '@/tools/video-editor/hooks/useEffectRegistry.ts';
+import {
+  EffectRegistryProvider,
+  useEffectRegistryContext,
+} from '@/tools/video-editor/effects/registry/EffectRegistryContext.tsx';
 import {
   EffectCatalogProvider,
   useResolvedEffectCatalog,
@@ -78,6 +84,10 @@ import { createCommandRegistry, type CommandRegistry } from '@/tools/video-edito
 import { useTimelineOpsFromStore } from '@/tools/video-editor/hooks/timelineStore.ts';
 import type { SaveStatus } from '@/tools/video-editor/hooks/useTimelinePersistence.ts';
 import type { ResolvedAssetRegistryEntry } from '@/tools/video-editor/types/index.ts';
+import {
+  removeExtensionDiagnosticsFromCollection,
+  syncExtensionDiagnosticsToCollection,
+} from '@/tools/video-editor/runtime/diagnosticCollectionSync.ts';
 
 const log = import.meta.env.DEV ? (...args: Parameters<typeof console.log>) => console.log(...args) : () => {};
 
@@ -153,14 +163,12 @@ function InnerProvider({
     runtime.auth.userId,
     sequenceComponentCatalog,
   );
-  useEffectRegistry(
-    effectsQuery.data?.map((effect) => ({
-      slug: effect.slug,
-      code: effect.code,
-    })),
-    effectResources.effects,
-  );
   const { store, editor, chrome } = useTimelineState();
+  const diagnosticCollection = runtime.diagnosticCollection;
+  const activeExtensionIds = useMemo(
+    () => new Set(extensionRuntime.extensions.map((ext) => ext.manifest.id as string)),
+    [extensionRuntime.extensions],
+  );
   useEffect(() => {
     onSaveStatusChange?.(chrome.saveStatus);
   }, [chrome.saveStatus, onSaveStatusChange]);
@@ -268,7 +276,11 @@ function InnerProvider({
         return createExtensionContext(ext, liveCreativeOverrides, commandsService);
       },
     );
-  }, [lifecycleHostRef, extensionRuntime.extensions, liveCreativeOverrides, commandRegistryRef]);
+    syncExtensionDiagnosticsToCollection(diagnosticCollection, 'extension-lifecycle', [
+      ...extensionRuntime.diagnostics,
+      ...host.diagnostics,
+    ], { activeExtensionIds });
+  }, [activeExtensionIds, diagnosticCollection, lifecycleHostRef, extensionRuntime, liveCreativeOverrides, commandRegistryRef]);
   const [searchParams, setSearchParams] = useSearchParams();
   const pendingAddGenerationId = searchParams.get(ADD_GENERATION_QUERY_PARAM);
   const consumedAddGenerationRef = useRef<string | null>(null);
@@ -512,29 +524,102 @@ function InnerProvider({
   );
 
   return (
-    <EffectCatalogProvider value={effectResources}>
-      <SequenceComponentCatalogProvider value={sequenceComponentResources}>
-        <SequenceComponentRegistryProvider components={sequenceComponentResources.components}>
-          <TimelineStoreProvider store={store}>
-            <AgentChatBridgeRegistration />
-            {children}
-            {lightboxAssetKey && resolvedLightboxMedia && (
-              <>
-                <runtime.mediaLightbox.Lightbox
-                  media={resolvedLightboxMedia}
-                  navigation={navResult.navigation}
-                  initialVariantId={lightboxInitialVariantId}
-                  onClose={lightboxOnClose}
-                  features={lightboxFeatures}
-                />
-                {navResult.indicator ? <VideoEditorLightboxOverlay indicator={navResult.indicator} /> : null}
-              </>
-            )}
-          </TimelineStoreProvider>
-        </SequenceComponentRegistryProvider>
-      </SequenceComponentCatalogProvider>
-    </EffectCatalogProvider>
+    <EffectRegistryProvider>
+      <EffectCatalogProvider value={effectResources}>
+        <VideoEditorEffectRegistryLifecycle
+          effectsQueryData={effectsQuery.data}
+          effectResources={effectResources.effects}
+          lifecycleHostRef={lifecycleHostRef}
+          commandRegistryRef={commandRegistryRef}
+          activeExtensionIds={activeExtensionIds}
+        />
+        <SequenceComponentCatalogProvider value={sequenceComponentResources}>
+          <SequenceComponentRegistryProvider components={sequenceComponentResources.components}>
+            <TimelineStoreProvider store={store}>
+              <AgentChatBridgeRegistration />
+              {children}
+              {lightboxAssetKey && resolvedLightboxMedia && (
+                <>
+                  <runtime.mediaLightbox.Lightbox
+                    media={resolvedLightboxMedia}
+                    navigation={navResult.navigation}
+                    initialVariantId={lightboxInitialVariantId}
+                    onClose={lightboxOnClose}
+                    features={lightboxFeatures}
+                  />
+                  {navResult.indicator ? <VideoEditorLightboxOverlay indicator={navResult.indicator} /> : null}
+                </>
+              )}
+            </TimelineStoreProvider>
+          </SequenceComponentRegistryProvider>
+        </SequenceComponentCatalogProvider>
+      </EffectCatalogProvider>
+    </EffectRegistryProvider>
   );
+}
+
+function VideoEditorEffectRegistryLifecycle({
+  effectsQueryData,
+  effectResources,
+  lifecycleHostRef,
+  commandRegistryRef,
+  activeExtensionIds,
+}: {
+  effectsQueryData: Array<{ slug: string; code: string }> | undefined;
+  effectResources: VideoEditorEffectCatalog['effects'];
+  lifecycleHostRef: React.MutableRefObject<ExtensionLifecycleHost | null>;
+  commandRegistryRef: React.MutableRefObject<CommandRegistry | null>;
+  activeExtensionIds: ReadonlySet<string>;
+}) {
+  const { registry: effectRegistry, snapshot: effectRegistrySnapshot } = useEffectRegistryContext();
+  const diagnosticCollection = useVideoEditorRuntime().diagnosticCollection;
+
+  useEffectRegistry(
+    effectsQueryData?.map((effect) => ({
+      slug: effect.slug,
+      code: effect.code,
+    })),
+    effectResources,
+  );
+
+  useEffect(() => {
+    const host = lifecycleHostRef.current;
+    const commandRegistry = commandRegistryRef.current;
+    if (!host) return;
+    const handle = host.onLifecycleDisposed((extensionId: string) => {
+      commandRegistry?.unregisterAll(extensionId);
+      effectRegistry.unregisterOwner(extensionId);
+      removeExtensionDiagnosticsFromCollection(diagnosticCollection, extensionId);
+    });
+    return () => handle.dispose();
+  }, [commandRegistryRef, diagnosticCollection, effectRegistry, lifecycleHostRef]);
+
+  useEffect(() => {
+    syncExtensionDiagnosticsToCollection(
+      diagnosticCollection,
+      'effect-registry',
+      effectRegistrySnapshot.diagnostics,
+      { activeExtensionIds },
+    );
+  }, [activeExtensionIds, diagnosticCollection, effectRegistrySnapshot]);
+
+  useEffect(() => {
+    const registry = commandRegistryRef.current;
+    if (!registry) return;
+    const sync = () => {
+      syncExtensionDiagnosticsToCollection(
+        diagnosticCollection,
+        'command-registry',
+        registry.diagnostics,
+        { activeExtensionIds },
+      );
+    };
+    sync();
+    const handle = registry.subscribe(sync);
+    return () => handle.dispose();
+  }, [activeExtensionIds, commandRegistryRef, diagnosticCollection]);
+
+  return null;
 }
 
 export interface VideoEditorProviderProps {
@@ -582,16 +667,10 @@ export function VideoEditorProvider({
     commandRegistryRef.current = createCommandRegistry();
   }
 
-  // Wire lifecycle disposal → registry cleanup
-  useEffect(() => {
-    const host = lifecycleHostRef.current;
-    const registry = commandRegistryRef.current;
-    if (!host || !registry) return;
-    const handle = host.onLifecycleDisposed((extensionId: string) => {
-      registry.unregisterAll(extensionId);
-    });
-    return () => handle.dispose();
-  }, []);
+  const diagnosticCollectionRef = useRef<DiagnosticCollection | null>(null);
+  if (!diagnosticCollectionRef.current) {
+    diagnosticCollectionRef.current = createDiagnosticCollection();
+  }
 
   // Wire registry callbacks → host toast
   useEffect(() => {
@@ -665,6 +744,7 @@ export function VideoEditorProvider({
     extensions: extensionRuntime.config,
     extensionRuntime,
     commandRegistry: commandRegistryRef.current ?? undefined,
+    diagnosticCollection: diagnosticCollectionRef.current ?? undefined,
   }), [agentChatRegistry.register, agentChatRegistry.unregister, dataProvider, projectId, shotsHost, timelineId, timelineName, userId, extensionRuntime.config, extensionRuntime]);
 
   return (

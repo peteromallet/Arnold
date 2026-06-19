@@ -1,14 +1,18 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useContext, useEffect, useState } from 'react';
 import { useClientRender } from '@/tools/video-editor/hooks/useClientRender.ts';
 import type { CompositionMetadata } from '@/tools/video-editor/hooks/useDerivedTimeline.ts';
 import type { VideoEditorExporter } from '@/tools/video-editor/lib/browser-runtime.ts';
 import type { ResolvedTimelineConfig } from '@/tools/video-editor/types/index.ts';
 import type { ExtensionRuntime } from '@/tools/video-editor/runtime/extensionSurface.ts';
+import { useEffectRegistrySnapshot } from '@/tools/video-editor/effects/registry/EffectRegistryContext.tsx';
 import {
   collectBuiltInKnownIds,
   collectExtensionDeclaredIds,
   scanExportConfig,
 } from '@/tools/video-editor/runtime/exportGuard.ts';
+import { DataProviderContext } from '@/tools/video-editor/contexts/DataProviderContext.tsx';
+import { syncPlannerDiagnosticsToCollection } from '@/tools/video-editor/runtime/diagnosticCollectionSync.ts';
+import type { Diagnostic } from '@reigh/editor-sdk';
 
 export type RenderStatus = 'idle' | 'rendering' | 'done' | 'error';
 
@@ -108,6 +112,33 @@ function formatExportGuardLog(
   return lines.join('\n');
 }
 
+function exportDiagnosticId(diagnostic: ReturnType<typeof scanExportConfig>['diagnostics'][number], index: number): string {
+  const detail = diagnostic.detail ?? {};
+  return [
+    'export-guard',
+    diagnostic.code,
+    diagnostic.extensionId ?? 'host',
+    diagnostic.contributionId ?? 'timeline',
+    detail.clipId ?? 'no-clip',
+    detail.effectType ?? detail.clipType ?? detail.transitionType ?? index,
+  ].join(':');
+}
+
+function toCollectionDiagnostic(
+  diagnostic: ReturnType<typeof scanExportConfig>['diagnostics'][number],
+  index: number,
+): Diagnostic {
+  return {
+    id: exportDiagnosticId(diagnostic, index),
+    severity: diagnostic.severity,
+    code: diagnostic.code,
+    message: diagnostic.message,
+    ...(diagnostic.extensionId ? { extensionId: diagnostic.extensionId } : {}),
+    ...(diagnostic.contributionId ? { contributionId: diagnostic.contributionId } : {}),
+    ...(diagnostic.detail ? { detail: { ...diagnostic.detail, source: 'export-guard' } } : { detail: { source: 'export-guard' } }),
+  };
+}
+
 export function useRenderState(
   resolvedConfig: ResolvedTimelineConfig | null,
   renderMetadata: CompositionMetadata | null,
@@ -120,6 +151,8 @@ export function useRenderState(
   const [renderProgress, setRenderProgress] = useState<RenderProgress>(null);
   const [renderResultUrl, setRenderResultUrl] = useState<string | null>(null);
   const [renderResultFilename, setRenderResultFilename] = useState<string | null>(null);
+  const effectRegistrySnapshot = useEffectRegistrySnapshot();
+  const diagnosticCollection = useContext(DataProviderContext)?.diagnosticCollection;
 
   useEffect(() => {
     return () => {
@@ -151,8 +184,11 @@ export function useRenderState(
   });
 
   const runExportGuard = useCallback((): boolean => {
-    // Skip guard work for the empty extension runtime
-    if (isExtensionRuntimeEmpty(extensionRuntime)) {
+    diagnosticCollection?.remove((diagnostic) => diagnostic.detail?.source === 'export-guard');
+    diagnosticCollection?.remove((diagnostic) => diagnostic.detail?.source === 'render-planner');
+
+    // Skip guard work only when there is no active extension/provider registry input.
+    if (isExtensionRuntimeEmpty(extensionRuntime) && effectRegistrySnapshot.records.length === 0) {
       return true; // no blocker
     }
 
@@ -161,9 +197,14 @@ export function useRenderState(
     }
 
     const builtIn = collectBuiltInKnownIds();
-    const allContributions = buildExtensionContributions(extensionRuntime!);
+    const allContributions = extensionRuntime ? buildExtensionContributions(extensionRuntime) : [];
     const extIds = collectExtensionDeclaredIds(allContributions);
-    const guardResult = scanExportConfig(resolvedConfig, builtIn, extIds);
+    const guardResult = scanExportConfig(resolvedConfig, builtIn, extIds, effectRegistrySnapshot);
+
+    guardResult.diagnostics.forEach((diagnostic, index) => {
+      diagnosticCollection?.publish(toCollectionDiagnostic(diagnostic, index));
+    });
+    syncPlannerDiagnosticsToCollection(diagnosticCollection, guardResult.blockers ?? []);
 
     // Emit structured diagnostics as concise render log output
     const log = formatExportGuardLog(guardResult);
@@ -179,7 +220,7 @@ export function useRenderState(
 
     // Extension-declared warnings only — preserve native routing
     return true; // no blocker
-  }, [extensionRuntime, resolvedConfig]);
+  }, [diagnosticCollection, effectRegistrySnapshot, extensionRuntime, resolvedConfig]);
 
   const startRender = useCallback(async () => {
     // ---- export guard: scan for unknown IDs before routing ------------------

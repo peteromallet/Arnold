@@ -2,6 +2,10 @@ import type { FC, ReactNode } from 'react';
 import { secondsToFrames } from '@/tools/video-editor/lib/config-utils.ts';
 import { DynamicEffectRegistry } from '@/tools/video-editor/effects/DynamicEffectRegistry.ts';
 import { EffectErrorBoundary } from '@/tools/video-editor/effects/EffectErrorBoundary.tsx';
+import {
+  normalizeEffectRegistryId,
+  type EffectRegistrySnapshot,
+} from '@/tools/video-editor/effects/registry/index.ts';
 import { validateAndCoerceParams } from '@/tools/video-editor/effects/validateParams.ts';
 import {
   BounceEntrance,
@@ -79,6 +83,11 @@ const allBuiltInEffects: Record<string, ClipEffectComponent> = {
 
 let effectRegistry: DynamicEffectRegistry | null = null;
 
+/**
+ * @deprecated Legacy compatibility bridge for provider-unaware renderers and
+ * tests. New extension loading must use provider-scoped EffectRegistry instances
+ * from `effects/registry` instead of the module singleton.
+ */
 export function getEffectRegistry(): DynamicEffectRegistry {
   if (!effectRegistry) {
     effectRegistry = new DynamicEffectRegistry(allBuiltInEffects);
@@ -87,6 +96,10 @@ export function getEffectRegistry(): DynamicEffectRegistry {
   return effectRegistry;
 }
 
+/**
+ * @deprecated Legacy compatibility bridge for intentionally seeding the module
+ * singleton in standalone tests. Provider-mounted code must not call this.
+ */
 export function replaceEffectRegistry(registry: DynamicEffectRegistry): DynamicEffectRegistry {
   effectRegistry = registry;
   return effectRegistry;
@@ -108,6 +121,13 @@ export const lookupEffect = (
   const registry = getEffectRegistry();
   return registry.get(name) ?? null;
 };
+
+function resolveSnapshotEffect(
+  snapshot: EffectRegistrySnapshot,
+  type: string,
+): ReturnType<EffectRegistrySnapshot['get']> {
+  return snapshot.get(normalizeEffectRegistryId(type)) ?? snapshot.get(type);
+}
 
 type WrapWithEffectConfig = {
   effectName: string;
@@ -142,12 +162,19 @@ export const wrapWithClipEffects = (
   clip: ResolvedTimelineClip,
   durationInFrames: number,
   fps: number,
+  effectRegistrySnapshot?: EffectRegistrySnapshot,
 ): ReactNode => {
   let wrapped = content;
-  const registry = getEffectRegistry();
+  const legacyRegistry = effectRegistrySnapshot ? null : getEffectRegistry();
 
   const continuousEffect = clip.continuous;
-  const continuous = continuousEffect ? lookupEffect(continuousEffects, continuousEffect.type) : null;
+  const continuousRecord = continuousEffect && effectRegistrySnapshot
+    ? resolveSnapshotEffect(effectRegistrySnapshot, continuousEffect.type)
+    : undefined;
+  const continuous = continuousEffect
+    ? continuousRecord?.component
+      ?? (legacyRegistry ? lookupEffect(continuousEffects, continuousEffect.type) : null)
+    : null;
   if (continuousEffect && !continuous) {
     console.warn('[EffectWrap] continuous effect NOT FOUND for clip=%s type=%s', clip.id, continuousEffect.type);
   }
@@ -158,12 +185,18 @@ export const wrapWithClipEffects = (
       effectFrames: durationInFrames,
       intensity: continuousEffect!.intensity ?? 0.5,
       params: continuousEffect!.params,
-      schema: registry.getSchema(continuousEffect!.type),
+      schema: continuousRecord?.schema ?? legacyRegistry?.getSchema(continuousEffect!.type),
     });
   }
 
   const entranceEffect = clip.entrance;
-  const entrance = entranceEffect ? lookupEffect(entranceEffects, entranceEffect.type) : null;
+  const entranceRecord = entranceEffect && effectRegistrySnapshot
+    ? resolveSnapshotEffect(effectRegistrySnapshot, entranceEffect.type)
+    : undefined;
+  const entrance = entranceEffect
+    ? entranceRecord?.component
+      ?? (legacyRegistry ? lookupEffect(entranceEffects, entranceEffect.type) : null)
+    : null;
   if (entrance) {
     wrapped = wrapWithEffect(wrapped, entrance, {
       effectName: entranceEffect!.type,
@@ -171,12 +204,18 @@ export const wrapWithClipEffects = (
       effectFrames: secondsToFrames(entranceEffect!.duration ?? 0.4, fps),
       intensity: entranceEffect!.intensity,
       params: entranceEffect!.params,
-      schema: registry.getSchema(entranceEffect!.type),
+      schema: entranceRecord?.schema ?? legacyRegistry?.getSchema(entranceEffect!.type),
     });
   }
 
   const exitEffect = clip.exit;
-  const exit = exitEffect ? lookupEffect(exitEffects, exitEffect.type) : null;
+  const exitRecord = exitEffect && effectRegistrySnapshot
+    ? resolveSnapshotEffect(effectRegistrySnapshot, exitEffect.type)
+    : undefined;
+  const exit = exitEffect
+    ? exitRecord?.component
+      ?? (legacyRegistry ? lookupEffect(exitEffects, exitEffect.type) : null)
+    : null;
   if (exit) {
     wrapped = wrapWithEffect(wrapped, exit, {
       effectName: exitEffect!.type,
@@ -184,7 +223,7 @@ export const wrapWithClipEffects = (
       effectFrames: secondsToFrames(exitEffect!.duration ?? 0.4, fps),
       intensity: exitEffect!.intensity,
       params: exitEffect!.params,
-      schema: registry.getSchema(exitEffect!.type),
+      schema: exitRecord?.schema ?? legacyRegistry?.getSchema(exitEffect!.type),
     });
   }
 

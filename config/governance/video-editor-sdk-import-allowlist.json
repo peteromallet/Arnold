@@ -3,6 +3,7 @@
     "src/tools/video-editor/index.ts",
     "src/tools/video-editor/browser.ts",
     "src/tools/video-editor/browser-provider.ts",
+    "src/tools/video-editor/runtime/renderability.ts",
     "src/tools/video-editor/sequence.ts",
     "src/tools/video-editor/testing.ts"
   ],

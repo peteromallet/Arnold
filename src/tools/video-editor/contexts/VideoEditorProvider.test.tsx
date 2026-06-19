@@ -1,10 +1,12 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { fireEvent, render, renderHook, screen } from '@testing-library/react';
-import type { ReactNode } from 'react';
+import { fireEvent, render, renderHook, screen, waitFor } from '@testing-library/react';
+import { useEffect } from 'react';
+import type { FC, ReactNode } from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { MemoryRouter } from 'react-router-dom';
+import { defineExtension } from '@reigh/editor-sdk';
 import { useAddToVideoEditor } from '@/domains/media-lightbox/hooks/useAddToVideoEditor';
 import {
   ADD_GENERATION_QUERY_PARAM,
@@ -19,6 +21,8 @@ import {
 } from '@/shared/state/selectionStore';
 import { useVideoEditorRuntime } from '@/tools/video-editor/contexts/DataProviderContext';
 import { buildVideoEditorLightboxMedia, VideoEditorProvider } from '@/tools/video-editor/contexts/VideoEditorProvider';
+import type { EffectRegistryRecord } from '@/tools/video-editor/effects/registry/types';
+import { useEffectRegistryContext } from '@/tools/video-editor/effects/registry/EffectRegistryContext';
 import {
   INTERNAL_GESTURE_TIMELINE_MUTATIONS,
   PUBLIC_TIMELINE_COMMAND_NAMES,
@@ -468,6 +472,41 @@ const media = {
   type: 'image',
 } as const;
 
+const LifecycleComponent: FC<{ children: ReactNode }> = ({ children }) => children;
+const LifecycleReplacementComponent: FC<{ children: ReactNode }> = ({ children }) => children;
+
+function trustedEffectRecord(
+  effectId: string,
+  ownerExtensionId: string,
+  dispose: () => void,
+): EffectRegistryRecord {
+  return {
+    effectId,
+    contributionId: `${ownerExtensionId}.effect`,
+    component: LifecycleComponent,
+    provenance: 'trusted-loader',
+    ownerExtensionId,
+    status: 'active',
+    renderability: {
+      defaultRoute: 'preview',
+      determinism: 'deterministic',
+      capabilities: [
+        {
+          route: 'preview',
+          status: 'supported',
+          determinism: 'deterministic',
+        },
+        {
+          route: 'browser-export',
+          status: 'supported',
+          determinism: 'deterministic',
+        },
+      ],
+    },
+    dispose,
+  };
+}
+
 function AddToVideoEditorConsumer() {
   const { onClick, phase } = useAddToVideoEditor(media);
   const availability = useTimelineAvailabilityState();
@@ -624,6 +663,123 @@ describe('VideoEditorProvider', () => {
 
     expect(useEffectsMock).toHaveBeenCalledWith('user-1', { enabled: false });
     expect(useResolvedEffectCatalogMock).toHaveBeenCalledWith('user-1', injectedCatalog);
+  });
+
+  it('cleans extension-owned effect records and command contributions on removal after HMR replacement', async () => {
+    const provider: DataProvider = {
+      loadTimeline: vi.fn(),
+      saveTimeline: vi.fn(),
+      loadAssetRegistry: vi.fn(),
+      resolveAssetUrl: vi.fn(),
+    };
+    const queryClient = new QueryClient({
+      defaultOptions: {
+        queries: {
+          retry: false,
+        },
+      },
+    });
+    const extensionId = 'com.example.video-provider-lifecycle';
+    const commandId = `${extensionId}.run`;
+    const disposeOriginal = vi.fn();
+    const disposeReplacement = vi.fn();
+    let hmrHandle: { dispose(): void } | null = null;
+    let latestEffectIds: readonly string[] = [];
+    let latestCommandIds: readonly string[] = [];
+
+    const extension = defineExtension({
+      manifest: {
+        id: extensionId as never,
+        version: '1.0.0',
+        label: 'Video provider lifecycle extension',
+        contributions: [
+          {
+            id: 'lifecycle.command' as never,
+            kind: 'command',
+            command: commandId,
+            label: 'Run lifecycle command',
+          },
+        ],
+      },
+      activate(ctx) {
+        return ctx.commands.registerCommand(commandId, vi.fn());
+      },
+    });
+
+    function CaptureVideoProviderLifecycle() {
+      const { registry, snapshot } = useEffectRegistryContext();
+      const runtime = useVideoEditorRuntime();
+
+      latestEffectIds = snapshot.records.map((record) => record.effectId);
+      latestCommandIds = runtime.commandRegistry?.getSnapshot().commands.map((command) => command.commandId) ?? [];
+
+      useEffect(() => {
+        const originalHandle = registry.register(
+          trustedEffectRecord('trusted-video-fx', extensionId, disposeOriginal),
+        );
+        hmrHandle = registry.updateRecord('trusted-video-fx', (current) => ({
+          ...current,
+          contributionId: `${extensionId}.effect.hmr`,
+          component: LifecycleReplacementComponent,
+        }), disposeReplacement);
+
+        return () => {
+          originalHandle.dispose();
+          hmrHandle?.dispose();
+        };
+      }, [registry]);
+
+      return null;
+    }
+
+    const props = {
+      dataProvider: provider,
+      projectId: 'project-1',
+      timelineId: 'timeline-1',
+      userId: 'user-1',
+    };
+
+    const { rerender } = render(
+      <MemoryRouter>
+        <QueryClientProvider client={queryClient}>
+          <AgentChatProvider>
+            <VideoEditorProvider {...props} extensions={[extension]}>
+              <CaptureVideoProviderLifecycle />
+            </VideoEditorProvider>
+          </AgentChatProvider>
+        </QueryClientProvider>
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => {
+      expect(latestEffectIds).toContain('trusted-video-fx');
+      expect(latestCommandIds).toContain(commandId);
+    });
+    expect(disposeOriginal).toHaveBeenCalledTimes(1);
+    expect(disposeReplacement).not.toHaveBeenCalled();
+
+    rerender(
+      <MemoryRouter>
+        <QueryClientProvider client={queryClient}>
+          <AgentChatProvider>
+            <VideoEditorProvider {...props} extensions={[]}>
+              <CaptureVideoProviderLifecycle />
+            </VideoEditorProvider>
+          </AgentChatProvider>
+        </QueryClientProvider>
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => {
+      expect(latestEffectIds).not.toContain('trusted-video-fx');
+      expect(latestCommandIds).not.toContain(commandId);
+    });
+    expect(disposeOriginal).toHaveBeenCalledTimes(1);
+    expect(disposeReplacement).toHaveBeenCalledTimes(1);
+
+    hmrHandle?.dispose();
+    hmrHandle?.dispose();
+    expect(disposeReplacement).toHaveBeenCalledTimes(1);
   });
 
   it('lifts save status changes through the provider boundary', () => {

@@ -79,6 +79,96 @@ export interface ExtensionDiagnostic {
   detail?: Record<string, unknown>;
 }
 
+export interface DiagnosticSourceRange {
+  startLine: number;
+  startCol: number;
+  endLine: number;
+  endCol: number;
+}
+
+export interface Diagnostic extends ExtensionDiagnostic {
+  id: string;
+  sourceRange?: DiagnosticSourceRange;
+  relatedRanges?: readonly DiagnosticSourceRange[];
+}
+
+export interface DiagnosticCollection {
+  readonly snapshot: readonly Diagnostic[];
+  publish(diagnostic: Diagnostic): void;
+  remove(predicate: (diagnostic: Diagnostic) => boolean): void;
+  clear(): void;
+  subscribe(listener: () => void): DisposeHandle;
+  getSnapshot(): readonly Diagnostic[];
+}
+
+function freezeDiagnostic(diagnostic: Diagnostic): Diagnostic {
+  return Object.freeze({
+    ...diagnostic,
+    ...(diagnostic.sourceRange ? { sourceRange: Object.freeze({ ...diagnostic.sourceRange }) } : {}),
+    ...(diagnostic.relatedRanges
+      ? { relatedRanges: Object.freeze(diagnostic.relatedRanges.map((range) => Object.freeze({ ...range }))) }
+      : {}),
+    ...(diagnostic.detail ? { detail: Object.freeze({ ...diagnostic.detail }) } : {}),
+  });
+}
+
+export function createDiagnosticCollection(initialDiagnostics: readonly Diagnostic[] = []): DiagnosticCollection {
+  const diagnostics: Diagnostic[] = initialDiagnostics.map(freezeDiagnostic);
+  const listeners = new Set<() => void>();
+  let snapshot: readonly Diagnostic[] = Object.freeze([...diagnostics]);
+
+  const publishSnapshot = () => {
+    snapshot = Object.freeze([...diagnostics]);
+    for (const listener of listeners) {
+      listener();
+    }
+  };
+
+  return {
+    get snapshot(): readonly Diagnostic[] {
+      return snapshot;
+    },
+    publish(diagnostic: Diagnostic): void {
+      const frozen = freezeDiagnostic(diagnostic);
+      const existingIndex = diagnostics.findIndex((item) => item.id === frozen.id);
+      if (existingIndex >= 0) {
+        diagnostics[existingIndex] = frozen;
+      } else {
+        diagnostics.push(frozen);
+      }
+      publishSnapshot();
+    },
+    remove(predicate: (diagnostic: Diagnostic) => boolean): void {
+      let changed = false;
+      for (let index = diagnostics.length - 1; index >= 0; index -= 1) {
+        if (predicate(diagnostics[index])) {
+          diagnostics.splice(index, 1);
+          changed = true;
+        }
+      }
+      if (changed) {
+        publishSnapshot();
+      }
+    },
+    clear(): void {
+      if (diagnostics.length === 0) return;
+      diagnostics.length = 0;
+      publishSnapshot();
+    },
+    subscribe(listener: () => void): DisposeHandle {
+      listeners.add(listener);
+      return {
+        dispose(): void {
+          listeners.delete(listener);
+        },
+      };
+    },
+    getSnapshot(): readonly Diagnostic[] {
+      return snapshot;
+    },
+  };
+}
+
 /**
  * An export-scoped diagnostic produced by the pre-render export guard.
  * Carries the same shape as {@link ExtensionDiagnostic} but uses
@@ -96,6 +186,36 @@ export interface ExportDiagnostic extends ExtensionDiagnostic {
     transitionType?: string;
   };
 }
+
+// ---------------------------------------------------------------------------
+// M5: Renderability, blocker, material, and artifact contracts
+// ---------------------------------------------------------------------------
+
+export {
+  DETERMINISM_STATUSES,
+  RENDER_BLOCKER_REASONS,
+  RENDER_ROUTES,
+} from '@/tools/video-editor/runtime/renderability.ts';
+
+export type {
+  ArtifactBoundary,
+  BakeContract,
+  CapabilityFinding,
+  CapabilityFindingSeverity,
+  ContributionRenderability,
+  DeterminismStatus,
+  RenderArtifact,
+  RenderBlocker,
+  RenderBlockerReason,
+  RenderCapability,
+  RenderCapabilityStatus,
+  RenderLocatorKind,
+  RenderMaterial,
+  RenderMaterialMediaKind,
+  RenderMaterialRef,
+  RenderRoute,
+  RenderStorageLocator,
+} from '@/tools/video-editor/runtime/renderability.ts';
 
 // ---------------------------------------------------------------------------
 // M4: Commands, Keybindings, Context Menus — target and handler contracts

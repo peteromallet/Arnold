@@ -155,6 +155,35 @@ describe('DiagnosticPanel', () => {
 
       expect(screen.getByText('No diagnostics.')).toBeDefined();
     });
+
+    it('renders provider-collected effect registry diagnostics without source-specific panel wiring', () => {
+      const collection = createDiagnosticCollection();
+      collection.publish({
+        id: 'effect-registry-duplicate-effect',
+        severity: 'warning',
+        code: 'effect-registry/duplicate-effect',
+        message: 'Effect "custom:glow" was replaced by a newer registry record.',
+        extensionId: 'com.example.registry',
+        contributionId: 'effects.custom-glow',
+        detail: {
+          source: 'effect-registry',
+          effectId: 'custom:glow',
+          ownerExtensionId: 'com.example.registry',
+        },
+      });
+
+      render(<DiagnosticPanel diagnosticCollection={collection} />);
+
+      fireEvent.click(screen.getByText('com.example.registry'));
+      fireEvent.click(screen.getByText('effects.custom-glow'));
+
+      const item = screen.getByText('Effect "custom:glow" was replaced by a newer registry record.')
+        .closest('[data-video-editor-diagnostic-item]');
+      expect(item).toBeTruthy();
+      expect(item!.getAttribute('data-video-editor-diagnostic-code')).toBe('effect-registry/duplicate-effect');
+      expect(screen.getByText(/source=effect-registry/)).toBeDefined();
+      expect(screen.getByText(/effectId=custom:glow/)).toBeDefined();
+    });
   });
 
   describe('grouping and filtering', () => {

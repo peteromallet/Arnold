@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { render, screen, fireEvent } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { DataProviderWrapper, type VideoEditorRuntimeContextValue } from '@/tools/video-editor/contexts/DataProviderContext';
 import {
@@ -10,7 +10,9 @@ import { normalizeExtensionRuntime } from '@/tools/video-editor/runtime/extensio
 import { defineExtension, createDiagnosticCollection } from '@reigh/editor-sdk';
 import type { DiagnosticCollection, ReighExtension } from '@reigh/editor-sdk';
 import { createRendererRegistry } from '@/tools/video-editor/runtime/extensionRendererRegistry';
-import { createContext, useContext, type ReactNode } from 'react';
+import { createContext, useContext, useEffect, type ReactNode } from 'react';
+import { EffectRegistryProvider, useEffectRegistryContext } from '@/tools/video-editor/effects/registry/EffectRegistryContext';
+import type { EffectComponentProps } from '@/tools/video-editor/effects/entrances';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -73,6 +75,42 @@ function buildDrawerWrapper(contextValue: VideoEditorRuntimeContextValue) {
       </DataProviderWrapper>
     );
   };
+}
+
+function RegistryCanaryEffect({ children }: EffectComponentProps) {
+  return <>{children}</>;
+}
+
+function RegisterPreviewOnlyEffect() {
+  const { registry } = useEffectRegistryContext();
+
+  useEffect(() => {
+    const handle = registry.register({
+      effectId: 'preview-only-status-effect',
+      contributionId: 'status.effect',
+      component: RegistryCanaryEffect,
+      provenance: 'trusted-loader',
+      ownerExtensionId: 'com.example.status',
+      status: 'active',
+      renderability: {
+        defaultRoute: 'preview',
+        determinism: 'preview-only',
+        capabilities: [
+          { route: 'preview', status: 'supported', determinism: 'preview-only' },
+          {
+            route: 'browser-export',
+            status: 'blocked',
+            determinism: 'preview-only',
+            blockerReason: 'preview-only',
+            message: 'Preview only.',
+          },
+        ],
+      },
+    });
+    return () => handle.dispose();
+  }, [registry]);
+
+  return null;
 }
 
 /** Create a simple extension with a slot contribution. */
@@ -724,6 +762,54 @@ describe('ExtensionStatusDrawer', () => {
     );
 
     expect(screen.getByText('Render blockers')).toBeDefined();
+  });
+
+  it('shows provider effect registry counts, renderability summaries, and planner/export blockers', async () => {
+    const ext = makeSlotExtension('com.example.status', 'Status Extension', 'status.slot');
+    const dc = createDiagnosticCollection();
+    dc.publish({
+      id: 'export-status-blocker',
+      severity: 'error',
+      code: 'export/effect-preview-only',
+      message: 'Effect cannot browser export.',
+      extensionId: 'com.example.status',
+      contributionId: 'status.effect',
+    });
+    dc.publish({
+      id: 'planner-status-blocker',
+      severity: 'error',
+      code: 'planner/browser-export/preview-only',
+      message: 'Planner blocked browser export.',
+      extensionId: 'com.example.status',
+      contributionId: 'status.effect',
+      detail: { source: 'render-planner' },
+    });
+    const ctx = buildRuntimeContext([ext], dc);
+    const onClose = vi.fn();
+
+    render(
+      <DataProviderWrapper value={ctx}>
+        <EffectRegistryProvider>
+          <RegisterPreviewOnlyEffect />
+          <ExtensionStatusDrawer onClose={onClose} />
+        </EffectRegistryProvider>
+      </DataProviderWrapper>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText('Effects')).toBeDefined();
+      expect(screen.getByText('Effect export blockers')).toBeDefined();
+      expect(screen.getByText('supported routes')).toBeDefined();
+      expect(screen.getByText('blocked routes')).toBeDefined();
+      expect(screen.getByText('Export blockers')).toBeDefined();
+      expect(screen.getByText('Planner blockers')).toBeDefined();
+    });
+
+    expect(document.querySelector('[data-video-editor-effect-registry-summary="records"]')?.textContent).toContain('1');
+    expect(document.querySelector('[data-video-editor-effect-registry-summary="browser-export-blockers"]')?.textContent).toContain('1');
+    expect(document.querySelector('[data-video-editor-effect-renderability-summary="supported"]')?.textContent).toContain('1');
+    expect(document.querySelector('[data-video-editor-effect-renderability-summary="blocked"]')?.textContent).toContain('1');
+    expect(document.querySelector('[data-video-editor-planner-summary="blockers"]')?.textContent).toContain('1');
   });
 
   it('does not expose any install/uninstall/enable/disable buttons', () => {

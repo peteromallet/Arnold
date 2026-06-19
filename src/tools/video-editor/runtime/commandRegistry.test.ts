@@ -672,6 +672,19 @@ describe('CommandRegistry — invocation status', () => {
 // ---------------------------------------------------------------------------
 
 describe('CommandRegistry — rejected/thrown handler diagnostics', () => {
+  it('notifies subscribers when diagnostics are emitted and stops after subscription disposal', async () => {
+    const registry = createFreshRegistry();
+    const listener = vi.fn();
+    const subscription = registry.subscribe(listener);
+
+    await registry.executeCommand('missing.command');
+    expect(listener).toHaveBeenCalledTimes(1);
+
+    subscription.dispose();
+    await registry.executeCommand('still.missing');
+    expect(listener).toHaveBeenCalledTimes(1);
+  });
+
   it('emits error diagnostic when handler throws', async () => {
     const registry = createFreshRegistry();
     const handler = vi.fn().mockImplementation(() => {

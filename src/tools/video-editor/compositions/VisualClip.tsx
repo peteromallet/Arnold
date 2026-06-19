@@ -11,6 +11,10 @@ import {
   secondsToFrames,
 } from '@/tools/video-editor/lib/config-utils.ts';
 import { wrapWithClipEffects } from '@/tools/video-editor/effects/index.tsx';
+import {
+  useOptionalEffectRegistryContext,
+  type EffectRegistrySnapshot,
+} from '@/tools/video-editor/effects/registry/index.ts';
 import { transitions } from '@/tools/video-editor/effects/transitions.ts';
 import { MediaErrorBoundary } from '@/tools/video-editor/compositions/MediaErrorBoundary.tsx';
 import { computeViewportMediaLayout } from '@/tools/video-editor/lib/render-bounds.ts';
@@ -97,6 +101,7 @@ type VisualClipProps = {
   track: TrackDefinition;
   fps: number;
   predecessor?: ResolvedTimelineClip | null;
+  effectRegistrySnapshot?: EffectRegistrySnapshot;
 };
 
 const getClipBoxStyle = (
@@ -312,7 +317,9 @@ const VisualAsset: FC<VisualClipProps> = ({ clip, track, fps }) => {
   );
 };
 
-export const VisualClip: FC<VisualClipProps> = ({ clip, track, fps }) => {
+export const VisualClip: FC<VisualClipProps> = ({ clip, track, fps, effectRegistrySnapshot }) => {
+  const providerRegistryContext = useOptionalEffectRegistryContext();
+  const registrySnapshot = effectRegistrySnapshot ?? providerRegistryContext?.snapshot;
   if (clip.clipType === 'effect-layer') {
     return null;
   }
@@ -337,7 +344,7 @@ export const VisualClip: FC<VisualClipProps> = ({ clip, track, fps }) => {
     </AbsoluteFill>
   );
 
-  return <>{wrapWithClipEffects(content, clip, durationInFrames, fps)}</>;
+  return <>{wrapWithClipEffects(content, clip, durationInFrames, fps, registrySnapshot)}</>;
 };
 
 const LazyGuard: FC<{ durationInFrames: number; children: ReactNode }> = ({ durationInFrames, children }) => {
@@ -352,7 +359,7 @@ const LazyGuard: FC<{ durationInFrames: number; children: ReactNode }> = ({ dura
   return <>{children}</>;
 };
 
-export const VisualClipSequence: FC<VisualClipProps> = ({ clip, track, fps, predecessor }) => {
+export const VisualClipSequence: FC<VisualClipProps> = ({ clip, track, fps, predecessor, effectRegistrySnapshot }) => {
   const durationInFrames = getClipDurationInFrames(clip, fps);
   const transitionFrames = predecessor && clip.transition
     ? secondsToFrames(clip.transition.duration, fps)
@@ -371,7 +378,13 @@ export const VisualClipSequence: FC<VisualClipProps> = ({ clip, track, fps, pred
       premountFor={fps}
     >
       <LazyGuard durationInFrames={effectiveDuration}>
-        <VisualClip clip={clip} track={track} fps={fps} predecessor={predecessor} />
+        <VisualClip
+          clip={clip}
+          track={track}
+          fps={fps}
+          predecessor={predecessor}
+          effectRegistrySnapshot={effectRegistrySnapshot}
+        />
       </LazyGuard>
     </Sequence>
   );

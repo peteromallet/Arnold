@@ -5,6 +5,10 @@ import { createTimelineReader } from '@/tools/video-editor/lib/timeline-reader.t
 import { createProposalRuntime } from '@/tools/video-editor/lib/proposal-runtime.ts';
 import { useEffectRegistry } from '@/tools/video-editor/hooks/useEffectRegistry.ts';
 import {
+  EffectRegistryProvider,
+  useEffectRegistryContext,
+} from '@/tools/video-editor/effects/registry/EffectRegistryContext.tsx';
+import {
   EffectCatalogProvider,
   useResolvedEffectCatalog,
   type VideoEditorEffectCatalog,
@@ -20,6 +24,7 @@ import { useTimelineState } from '@/tools/video-editor/hooks/useTimelineState.ts
 import type { DataProvider } from '@/tools/video-editor/data/DataProvider.ts';
 import {
   DataProviderWrapper,
+  useVideoEditorRuntime,
   type VideoEditorRuntimeContextValue,
 } from '@/tools/video-editor/contexts/DataProviderContext.tsx';
 import {
@@ -38,6 +43,8 @@ import {
   type KeybindingContribution,
   type ContextMenuItemContribution,
   type ExtensionCommandService,
+  createDiagnosticCollection,
+  type DiagnosticCollection,
 } from '@reigh/editor-sdk';
 import type { CreativeContext } from '@reigh/editor-sdk';
 import type {
@@ -50,6 +57,10 @@ import type {
   VideoEditorTelemetryHost,
 } from '@/tools/video-editor/runtime/ports.ts';
 import { createCommandRegistry, type CommandRegistry } from '@/tools/video-editor/runtime/commandRegistry.ts';
+import {
+  removeExtensionDiagnosticsFromCollection,
+  syncExtensionDiagnosticsToCollection,
+} from '@/tools/video-editor/runtime/diagnosticCollectionSync.ts';
 
 export interface EditorRuntimeProviderProps {
   dataProvider: DataProvider;
@@ -95,6 +106,11 @@ function EditorRuntimeProviderInner({
   );
 
   const { store } = useTimelineState();
+  const diagnosticCollection = useVideoEditorRuntime().diagnosticCollection;
+  const activeExtensionIds = useMemo(
+    () => new Set(extensionRuntime.extensions.map((ext) => ext.manifest.id as string)),
+    [extensionRuntime.extensions],
+  );
 
   // ---- M3: live creative context for extensions --------------------------
   const timelineReader = useMemo(
@@ -176,7 +192,11 @@ function EditorRuntimeProviderInner({
         return createExtensionContext(ext, liveCreativeOverrides, commandsService);
       },
     );
-  }, [lifecycleHostRef, extensionRuntime.extensions, liveCreativeOverrides, commandRegistryRef]);
+    syncExtensionDiagnosticsToCollection(diagnosticCollection, 'extension-lifecycle', [
+      ...extensionRuntime.diagnostics,
+      ...host.diagnostics,
+    ], { activeExtensionIds });
+  }, [activeExtensionIds, diagnosticCollection, lifecycleHostRef, extensionRuntime, liveCreativeOverrides, commandRegistryRef]);
 
   // Sync proposalRuntime to the store so host-owned UI (ProposalPanel) can access it.
   useEffect(() => {
@@ -193,16 +213,89 @@ function EditorRuntimeProviderInner({
   }, [store]);
 
   return (
-    <EffectCatalogProvider value={effectResources}>
-      <SequenceComponentCatalogProvider value={sequenceComponentResources}>
-        <SequenceComponentRegistryProvider components={sequenceComponentResources.components}>
-          <TimelineStoreProvider store={store}>
-            {children}
-          </TimelineStoreProvider>
-        </SequenceComponentRegistryProvider>
-      </SequenceComponentCatalogProvider>
-    </EffectCatalogProvider>
+    <EffectRegistryProvider>
+      <EffectCatalogProvider value={effectResources}>
+        <EditorRuntimeEffectRegistryLifecycle
+          effectsQueryData={effectsQuery.data}
+          effectResources={effectResources.effects}
+          lifecycleHostRef={lifecycleHostRef}
+          commandRegistryRef={commandRegistryRef}
+          activeExtensionIds={activeExtensionIds}
+        />
+        <SequenceComponentCatalogProvider value={sequenceComponentResources}>
+          <SequenceComponentRegistryProvider components={sequenceComponentResources.components}>
+            <TimelineStoreProvider store={store}>
+              {children}
+            </TimelineStoreProvider>
+          </SequenceComponentRegistryProvider>
+        </SequenceComponentCatalogProvider>
+      </EffectCatalogProvider>
+    </EffectRegistryProvider>
   );
+}
+
+function EditorRuntimeEffectRegistryLifecycle({
+  effectsQueryData,
+  effectResources,
+  lifecycleHostRef,
+  commandRegistryRef,
+  activeExtensionIds,
+}: {
+  effectsQueryData: Array<{ slug: string; code: string }> | undefined;
+  effectResources: VideoEditorEffectCatalog['effects'];
+  lifecycleHostRef: React.MutableRefObject<ExtensionLifecycleHost | null>;
+  commandRegistryRef: React.MutableRefObject<CommandRegistry | null>;
+  activeExtensionIds: ReadonlySet<string>;
+}) {
+  const { registry: effectRegistry, snapshot: effectRegistrySnapshot } = useEffectRegistryContext();
+  const diagnosticCollection = useVideoEditorRuntime().diagnosticCollection;
+
+  useEffectRegistry(
+    effectsQueryData?.map((effect) => ({
+      slug: effect.slug,
+      code: effect.code,
+    })),
+    effectResources,
+  );
+
+  useEffect(() => {
+    const host = lifecycleHostRef.current;
+    const commandRegistry = commandRegistryRef.current;
+    if (!host) return;
+    const handle = host.onLifecycleDisposed((extensionId: string) => {
+      commandRegistry?.unregisterAll(extensionId);
+      effectRegistry.unregisterOwner(extensionId);
+      removeExtensionDiagnosticsFromCollection(diagnosticCollection, extensionId);
+    });
+    return () => handle.dispose();
+  }, [commandRegistryRef, diagnosticCollection, effectRegistry, lifecycleHostRef]);
+
+  useEffect(() => {
+    syncExtensionDiagnosticsToCollection(
+      diagnosticCollection,
+      'effect-registry',
+      effectRegistrySnapshot.diagnostics,
+      { activeExtensionIds },
+    );
+  }, [activeExtensionIds, diagnosticCollection, effectRegistrySnapshot]);
+
+  useEffect(() => {
+    const registry = commandRegistryRef.current;
+    if (!registry) return;
+    const sync = () => {
+      syncExtensionDiagnosticsToCollection(
+        diagnosticCollection,
+        'command-registry',
+        registry.diagnostics,
+        { activeExtensionIds },
+      );
+    };
+    sync();
+    const handle = registry.subscribe(sync);
+    return () => handle.dispose();
+  }, [activeExtensionIds, commandRegistryRef, diagnosticCollection]);
+
+  return null;
 }
 
 export function EditorRuntimeProvider({
@@ -233,16 +326,10 @@ export function EditorRuntimeProvider({
     commandRegistryRef.current = createCommandRegistry();
   }
 
-  // Wire lifecycle disposal → registry cleanup
-  useEffect(() => {
-    const host = lifecycleHostRef.current;
-    const registry = commandRegistryRef.current;
-    if (!host || !registry) return;
-    const handle = host.onLifecycleDisposed((extensionId: string) => {
-      registry.unregisterAll(extensionId);
-    });
-    return () => handle.dispose();
-  }, []);
+  const diagnosticCollectionRef = useRef<DiagnosticCollection | null>(null);
+  if (!diagnosticCollectionRef.current) {
+    diagnosticCollectionRef.current = createDiagnosticCollection();
+  }
 
   // Wire registry callbacks (stub — no host toast in browser context)
   useEffect(() => {
@@ -332,6 +419,7 @@ export function EditorRuntimeProvider({
     extensions: extensionRuntime.config,
     extensionRuntime,
     commandRegistry: commandRegistryRef.current ?? undefined,
+    diagnosticCollection: diagnosticCollectionRef.current ?? undefined,
   }), [
     dataProvider,
     runtime?.assetResolver,
