@@ -1,0 +1,58 @@
+{
+  "id": "log_713264408a26",
+  "level": "debug",
+  "category": "system",
+  "event_type": "authority_divergence",
+  "message": "authority_divergence emitted",
+  "details": {
+    "event": {
+      "seq": 3816,
+      "schema_version": 1,
+      "ts_utc": "2026-06-19T18:52:15.036811+00:00",
+      "ts_rel_init_s": 4106.848848,
+      "kind": "authority_divergence",
+      "phase": "execute",
+      "payload": {
+        "diagnostic_version": 1,
+        "task_id": "T18",
+        "raw_terminal_status": "done",
+        "authority_status": "unknown",
+        "authoritative": false,
+        "reason": "stale_evidence:missing_head:task_commands_run",
+        "missing_outputs": [],
+        "stale_evidence": [
+          "missing_head:task_commands_run",
+          "missing_head:task_commands_run",
+          "missing_head:task_commands_run"
+        ],
+        "would_block_reasons": [
+          "stale_evidence:missing_head:task_commands_run"
+        ],
+        "error": null,
+        "diagnostics": {
+          "task_id": "T18",
+          "declared_outputs": {
+            "commands_run": [
+              "python -m pytest tests/arnold/pipeline/native/ -v --tb=short \u2014 276 passed, 1 failed (pre-existing compiler Dict expression)"
+            ]
+          },
+          "linked_evidence_count": 3,
+          "evidence_count": 43,
+          "normalization": "iterable",
+          "status": "unknown",
+          "evidence_sources": [
+            "plan_artifacts"
+          ],
+          "loaded_evidence_count": 43,
+          "raw_terminal_status": "done"
+        },
+        "ts_utc": "2026-06-19T18:52:15.036481+00:00"
+      },
+      "transaction_id": "f10a673b8334ca0d",
+      "store_method": "log_system_event"
+    }
+  },
+  "turn_id": null,
+  "epic_id": "handoff-artifacts-exact-20260619-1943",
+  "occurred_at": "2026-06-19T18:52:15.036850Z"
+}
