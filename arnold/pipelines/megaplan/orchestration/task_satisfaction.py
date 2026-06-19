@@ -1,9 +1,11 @@
 """Pure task-done predicate over the M1 evidence contract.
 
 ``is_task_satisfied`` is an authority-reader helper, not a verifier. It does
-not inspect git, run providers, mutate plan state, or change routing. Callers
-hand it a task claim plus the current evidence nucleus, and it corroborates the
-claim from canonical :class:`EvidenceRef` records.
+not run providers, mutate plan state, or change routing. Callers hand it a task
+claim plus the current evidence nucleus, and it corroborates the claim from
+canonical :class:`EvidenceRef` records. When callers supply an execution window,
+the helper uses git ancestry to distinguish stale evidence from evidence
+recorded earlier in the same execution window.
 
 Supported evidence nucleus inputs are intentionally small and typed:
 
@@ -21,8 +23,10 @@ fields: ``files_changed``, ``commands_run``, ``evidence_files``, and
 
 from __future__ import annotations
 
+import subprocess
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 from arnold.pipelines.megaplan.orchestration.evidence_contract import (
@@ -66,11 +70,22 @@ class TaskSatisfactionResult:
         return self.status == EvidenceStatus.satisfied
 
 
+@dataclass(frozen=True)
+class EvidenceExecutionWindow:
+    """Git window in which prior evidence can remain fresh after commits."""
+
+    project_dir: Path
+    base_sha: str
+    head_sha: str | None = None
+    base_ref: str | None = None
+
+
 def is_task_satisfied(
     task: Any,
     evidence_nucleus: Any,
     current_head: str | None = None,
     current_code_hash: str | None = None,
+    execution_window: EvidenceExecutionWindow | None = None,
 ) -> TaskSatisfactionResult:
     """Return whether *task* is corroborated by canonical evidence.
 
@@ -100,7 +115,15 @@ def is_task_satisfied(
     diagnostics.update(normalization_diagnostics)
 
     missing_outputs = _missing_declared_outputs(declared_outputs, linked_refs)
-    stale_evidence = _stale_evidence(linked_refs, current_head, current_code_hash)
+    resolved_current_head = current_head or (
+        execution_window.head_sha if execution_window is not None else None
+    )
+    stale_evidence = _stale_evidence(
+        linked_refs,
+        resolved_current_head,
+        current_code_hash,
+        execution_window=execution_window,
+    )
     explicit_status = _explicit_terminal_status(linked_refs)
 
     would_block: list[str] = []
@@ -240,6 +263,8 @@ def _stale_evidence(
     refs: tuple[EvidenceRef, ...],
     current_head: str | None,
     current_code_hash: str | None,
+    *,
+    execution_window: EvidenceExecutionWindow | None = None,
 ) -> tuple[str, ...]:
     stale: list[str] = []
     for ref in refs:
@@ -247,7 +272,11 @@ def _stale_evidence(
             observed_head = _first_string(ref.details, ("head_sha", "current_head", "head"))
             if observed_head is None:
                 stale.append(f"missing_head:{ref.kind}")
-            elif observed_head != current_head:
+            elif observed_head != current_head and not _head_is_fresh_in_execution_window(
+                observed_head,
+                current_head,
+                execution_window,
+            ):
                 stale.append(f"head_mismatch:{ref.kind}")
         if current_code_hash:
             observed_code_hash = ref.code_hash or _first_string(ref.details, ("code_hash",))
@@ -256,6 +285,35 @@ def _stale_evidence(
             elif observed_code_hash != current_code_hash:
                 stale.append(f"code_hash_mismatch:{ref.kind}")
     return tuple(stale)
+
+
+def _head_is_fresh_in_execution_window(
+    observed_head: str,
+    current_head: str,
+    execution_window: EvidenceExecutionWindow | None,
+) -> bool:
+    if execution_window is None or not execution_window.base_sha:
+        return False
+    project_dir = execution_window.project_dir
+    return _git_is_ancestor(project_dir, observed_head, current_head) and _git_is_ancestor(
+        project_dir,
+        execution_window.base_sha,
+        observed_head,
+    )
+
+
+def _git_is_ancestor(project_dir: Path, ancestor: str, descendant: str) -> bool:
+    try:
+        completed = subprocess.run(
+            ["git", "merge-base", "--is-ancestor", ancestor, descendant],
+            cwd=project_dir,
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return completed.returncode == 0
 
 
 def _explicit_terminal_status(refs: tuple[EvidenceRef, ...]) -> EvidenceStatus | None:

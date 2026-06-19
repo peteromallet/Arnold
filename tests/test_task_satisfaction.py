@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import subprocess
+from pathlib import Path
+
 from arnold.pipelines.megaplan.orchestration.completion_contract import (
     CompletionSubject,
     CompletionVerdict,
@@ -10,8 +13,35 @@ from arnold.pipelines.megaplan.orchestration.evidence_contract import (
     EvidenceStatus,
 )
 from arnold.pipelines.megaplan.orchestration.task_satisfaction import (
+    EvidenceExecutionWindow,
     is_task_satisfied,
 )
+
+
+def _git(repo: Path, *args: str) -> str:
+    completed = subprocess.run(
+        ["git", *args],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    return completed.stdout.strip()
+
+
+def _commit(repo: Path, filename: str, content: str, message: str) -> str:
+    (repo / filename).write_text(content, encoding="utf-8")
+    _git(repo, "add", filename)
+    _git(repo, "commit", "-q", "-m", message)
+    return _git(repo, "rev-parse", "HEAD")
+
+
+def _init_repo(repo: Path) -> str:
+    repo.mkdir()
+    _git(repo, "init", "-q")
+    _git(repo, "config", "user.email", "test@example.com")
+    _git(repo, "config", "user.name", "Test User")
+    return _commit(repo, "seed.txt", "seed\n", "seed")
 
 
 def test_task_satisfaction_normalizes_legacy_verdict_dict_and_blocks_unsatisfied():
@@ -136,6 +166,70 @@ def test_task_satisfaction_reports_stale_head_and_code_hash_mismatch():
     )
     assert "stale_evidence:head_mismatch:green_suite" in result.would_block_reasons
     assert "stale_evidence:code_hash_mismatch:green_suite" in result.would_block_reasons
+
+
+def test_task_satisfaction_accepts_ancestor_head_within_execution_window(tmp_path: Path):
+    repo = tmp_path / "repo"
+    base_sha = _init_repo(repo)
+    observed_sha = _commit(repo, "work.py", "one\n", "batch 1")
+    current_sha = _commit(repo, "work.py", "two\n", "operator commit")
+
+    result = is_task_satisfied(
+        {"id": "T4b", "files_changed": ["work.py"]},
+        [
+            EvidenceRef(
+                "landed_diff",
+                EvidenceStatus.satisfied,
+                "batch 1 changed work.py",
+                {
+                    "task_ids": ["T4b"],
+                    "files_changed": ["work.py"],
+                    "head_sha": observed_sha,
+                },
+            )
+        ],
+        current_head=current_sha,
+        execution_window=EvidenceExecutionWindow(
+            project_dir=repo,
+            base_sha=base_sha,
+            head_sha=current_sha,
+        ),
+    )
+
+    assert result.status == EvidenceStatus.satisfied
+    assert result.stale_evidence == ()
+
+
+def test_task_satisfaction_rejects_ancestor_head_before_execution_window(tmp_path: Path):
+    repo = tmp_path / "repo"
+    observed_sha = _init_repo(repo)
+    base_sha = _commit(repo, "baseline.txt", "baseline\n", "baseline")
+    current_sha = _commit(repo, "work.py", "work\n", "current")
+
+    result = is_task_satisfied(
+        {"id": "T4c", "files_changed": ["seed.txt"]},
+        [
+            EvidenceRef(
+                "landed_diff",
+                EvidenceStatus.satisfied,
+                "pre-baseline change",
+                {
+                    "task_ids": ["T4c"],
+                    "files_changed": ["seed.txt"],
+                    "head_sha": observed_sha,
+                },
+            )
+        ],
+        current_head=current_sha,
+        execution_window=EvidenceExecutionWindow(
+            project_dir=repo,
+            base_sha=base_sha,
+            head_sha=current_sha,
+        ),
+    )
+
+    assert result.status == EvidenceStatus.unsatisfied
+    assert result.stale_evidence == ("head_mismatch:landed_diff",)
 
 
 def test_task_satisfaction_reports_missing_freshness_as_unknown():

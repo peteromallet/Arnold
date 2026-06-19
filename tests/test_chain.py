@@ -2530,6 +2530,7 @@ def test_checkout_milestone_branch_starts_from_configured_base_branch(tmp_path: 
         )
 
     assert commands == [
+        ["git", "reset", "--hard", "HEAD"],
         ["git", "checkout", "-B", "mp/m1", "setup/cloud"],
         ["git", "push", "-u", "origin", "mp/m1"],
     ]

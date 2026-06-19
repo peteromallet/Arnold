@@ -98,6 +98,38 @@ def test_profiles_package_layout_and_builtins_only(tmp_path: Path) -> None:
     }.issubset(profiles)
 
 
+def test_built_in_profile_files_falls_back_when_resources_path_missing(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """_built_in_profile_files must not crash when importlib.resources returns a missing path.
+
+    This regression-guard covers editable-install edge cases where
+    ``files('arnold.pipelines.megaplan.profiles')`` resolves to a stale or
+    non-existent site-packages directory.  The function should fall back to the
+    directory containing this source module and still return the expected
+    built-in profile files.
+    """
+    from arnold.pipelines.megaplan import profiles as profiles_module
+    from arnold.pipelines.megaplan.profiles import _built_in_profile_files
+
+    missing_resource_root = tmp_path / "missing" / "profiles"
+    monkeypatch.setattr(
+        profiles_module,
+        "files",
+        lambda _name: missing_resource_root,
+    )
+
+    files_list = _built_in_profile_files()
+    names = {entry.name for entry in files_list}
+
+    assert {
+        "apex.toml",
+        "all-open.toml",
+        "partnered-5.toml",
+    }.issubset(names)
+
+
 def test_load_profiles_user_and_project_layers_replace_lower_priority_profiles(tmp_path: Path) -> None:
     home = tmp_path / "home"
     project_dir = tmp_path / "project"

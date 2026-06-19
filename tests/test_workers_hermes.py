@@ -1161,3 +1161,51 @@ def test_shannon_pass_through_step_schema_filenames_unchanged() -> None:
         assert STEP_SCHEMA_FILENAMES[step].endswith(".json"), (
             f"Schema filename for {step!r} must be a .json path"
         )
+
+
+def test_template_has_content_execute_rejects_untouched_pending_template() -> None:
+    """An execute output template pre-filled with pending statuses must NOT be
+    treated as real worker output. Regression for batch-7 failure where the
+    harness accepted the untouched template and then failed structural audit.
+    """
+    from arnold.pipelines.megaplan.workers.hermes import _template_has_content
+
+    untouched_execute_template = {
+        "output": "",
+        "files_changed": [],
+        "commands_run": [],
+        "deviations": [],
+        "task_updates": [
+            {
+                "task_id": "T8",
+                "status": "pending",
+                "executor_notes": "",
+                "files_changed": [],
+                "commands_run": [],
+                "auto_attributed_files": False,
+            }
+        ],
+        "sense_check_acknowledgments": [
+            {"sense_check_id": "SC8", "executor_note": ""}
+        ],
+    }
+    assert _template_has_content(untouched_execute_template, step="execute") is False
+
+    # Once the worker actually fills something in, it should be considered content.
+    filled = {
+        **untouched_execute_template,
+        "task_updates": [
+            {
+                "task_id": "T8",
+                "status": "done",
+                "executor_notes": "Implemented.",
+                "files_changed": ["x.py"],
+                "commands_run": ["pytest"],
+                "auto_attributed_files": False,
+            }
+        ],
+        "sense_check_acknowledgments": [
+            {"sense_check_id": "SC8", "executor_note": "Acknowledged."}
+        ],
+    }
+    assert _template_has_content(filled, step="execute") is True

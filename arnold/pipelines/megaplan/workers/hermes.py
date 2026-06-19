@@ -31,6 +31,7 @@ from arnold.pipelines.megaplan._core import creative_form_id, read_json, schemas
 from arnold.pipeline import StepInvocation
 from arnold.pipelines.megaplan.model_seam import (
     ModelBudgetError,
+    ModelStructuralAuditError,
     ModelTier,
     capture_step_output,
     render_prompt_for_dispatch,
@@ -968,6 +969,38 @@ def _template_has_content(payload: dict, step: str) -> bool:
         for sc in payload.get("sense_check_verdicts", []):
             if isinstance(sc, dict) and sc.get("verdict", "").strip():
                 return True
+        return False
+    if step == "execute":
+        output = payload.get("output", "")
+        if isinstance(output, str) and output.strip():
+            return True
+        for key in ("files_changed", "commands_run", "deviations"):
+            value = payload.get(key, [])
+            if isinstance(value, list) and value:
+                return True
+        task_updates = payload.get("task_updates", [])
+        if isinstance(task_updates, list):
+            for update in task_updates:
+                if not isinstance(update, dict):
+                    continue
+                status = update.get("status")
+                if isinstance(status, str) and status.strip() and status != "pending":
+                    return True
+                executor_notes = update.get("executor_notes", "")
+                if isinstance(executor_notes, str) and executor_notes.strip():
+                    return True
+                for key in ("files_changed", "commands_run"):
+                    value = update.get(key, [])
+                    if isinstance(value, list) and value:
+                        return True
+        acknowledgments = payload.get("sense_check_acknowledgments", [])
+        if isinstance(acknowledgments, list):
+            for acknowledgment in acknowledgments:
+                if not isinstance(acknowledgment, dict):
+                    continue
+                executor_note = acknowledgment.get("executor_note", "")
+                if isinstance(executor_note, str) and executor_note.strip():
+                    return True
         return False
     # For other phases: any non-empty array or non-empty string
     return any(
@@ -1974,17 +2007,20 @@ def run_hermes_step(
                     current_payload,
                 )
                 current_payload = dict(capture_outcome.legacy_payload)
-            except CliError as error:
+            except (CliError, ModelStructuralAuditError) as error:
                 # For execute, try reconstructed payload if validation fails
+                reconstructed: dict | None = None
                 if step == "execute":
                     reconstructed = _reconstruct_execute_payload(messages, project_dir, plan_dir, mode=plan_mode)
-                    if reconstructed is not None:
-                        try:
-                            capture_outcome = capture_step_output(
-                                StepInvocation(
-                                    kind="model",
-                                    metadata={
-                                        "tier": seam_tier.value,
+                elif step == "gate":
+                    reconstructed = _reconstruct_gate_payload(plan_dir, current_payload)
+                if reconstructed is not None:
+                    try:
+                        capture_outcome = capture_step_output(
+                            StepInvocation(
+                                kind="model",
+                                metadata={
+                                    "tier": seam_tier.value,
                                     "worker": "hermes",
                                     "model": effective_resolved_model or resolved_model,
                                     "normalized_model": effective_resolved_model or resolved_model,
@@ -1995,16 +2031,22 @@ def run_hermes_step(
                             ),
                             reconstructed,
                         )
-                            current_payload = dict(capture_outcome.legacy_payload)
-                            print(
-                                "[hermes-worker] Using reconstructed payload (original failed validation)",
-                                file=activity_stderr,
-                            )
-                            error = None
-                        except CliError:
-                            pass
+                        current_payload = dict(capture_outcome.legacy_payload)
+                        print(
+                            f"[hermes-worker] Using reconstructed {step} payload (original failed validation)",
+                            file=activity_stderr,
+                        )
+                        error = None
+                    except (CliError, ModelStructuralAuditError):
+                        pass
                 if error is not None:
-                    raise CliError(error.code, error.message, extra={"raw_output": current_raw_output}) from error
+                    if isinstance(error, CliError):
+                        raise CliError(error.code, error.message, extra={"raw_output": current_raw_output}) from error
+                    raise CliError(
+                        "worker_structural_audit_failed",
+                        str(error),
+                        extra={"raw_output": current_raw_output},
+                    ) from error
 
             return current_result, current_payload, current_raw_output
 
@@ -2330,6 +2372,83 @@ def _reconstruct_execute_payload(
         "task_updates": task_updates,
         "sense_check_acknowledgments": [],
     }
+
+
+def _reconstruct_gate_payload(plan_dir: Path, current_payload: dict) -> dict | None:
+    """Reconstruct a valid gate payload when the model leaves the scratch file empty.
+
+    The Hermes/DeepSeek gate worker occasionally reads the scratch template but
+    never writes the filled JSON back. When that happens the promoted payload has
+    empty required fields and fails structural audit. This helper infers a safe,
+    conservative recommendation from the gate signals already computed by the
+    handler, builds a schema-valid payload, and returns it so the handler's own
+    normalization can refine it further.
+    """
+    import json as _json
+
+    signals_files = sorted(plan_dir.glob("gate_signals_v*.json"), reverse=True)
+    signals: dict = {}
+    for path in signals_files:
+        try:
+            data = _json.loads(path.read_text(encoding="utf-8"))
+            if isinstance(data, dict) and "signals" in data:
+                signals = data
+                break
+        except Exception:
+            continue
+
+    signals_inner = signals.get("signals", {}) if isinstance(signals, dict) else {}
+    preflight = signals.get("preflight_results", {}) if isinstance(signals, dict) else {}
+    preflight_passed = isinstance(preflight, dict) and all(preflight.values())
+    unresolved = signals.get("unresolved_flags", []) if isinstance(signals, dict) else []
+    has_significant = bool(
+        isinstance(unresolved, list)
+        and any(
+            isinstance(f, dict)
+            and f.get("severity") in ("significant", "likely-significant")
+            for f in unresolved
+        )
+    )
+
+    if has_significant:
+        recommendation = "ITERATE"
+        reason = "significant unresolved flags remain"
+    elif not preflight_passed:
+        recommendation = "ESCALATE"
+        reason = "preflight checks are still failing"
+    else:
+        recommendation = "PROCEED"
+        reason = "no significant unresolved flags and preflight passed"
+
+    reconstructed = dict(current_payload) if isinstance(current_payload, dict) else {}
+    reconstructed["recommendation"] = recommendation
+    if not str(reconstructed.get("rationale", "")).strip():
+        reconstructed["rationale"] = (
+            f"Auto-inferred {recommendation} because the gate worker returned an "
+            f"invalid/empty recommendation and {reason}."
+        )
+    if not str(reconstructed.get("signals_assessment", "")).strip():
+        reconstructed["signals_assessment"] = (
+            "No significant flags were raised by critique; proceeding to execution."
+            if recommendation == "PROCEED"
+            else "Critique signals require further attention before proceeding."
+        )
+    reconstructed.setdefault("warnings", [])
+    reconstructed.setdefault("settled_decisions", [])
+    reconstructed.setdefault("flag_resolutions", [])
+    reconstructed.setdefault("accepted_tradeoffs", [])
+    # Strip placeholder/empty tradeoff objects.
+    reconstructed["accepted_tradeoffs"] = [
+        item
+        for item in reconstructed["accepted_tradeoffs"]
+        if isinstance(item, dict)
+        and any(
+            str(value).strip()
+            for key, value in item.items()
+            if key in {"flag_id", "concern", "subsystem", "rationale"}
+        )
+    ]
+    return reconstructed
 
 
 def _fill_schema_defaults(payload: dict, schema: dict) -> None:

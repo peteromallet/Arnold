@@ -38,6 +38,7 @@ from arnold.pipelines.megaplan.orchestration.evidence_contract import (
 )
 from arnold.pipelines.megaplan.orchestration.rubber_stamp import is_rubber_stamp
 from arnold.pipelines.megaplan.orchestration.task_satisfaction import (
+    EvidenceExecutionWindow,
     TaskSatisfactionResult,
     is_task_satisfied,
 )
@@ -155,6 +156,7 @@ def authority_decision_for_task(
     *,
     current_head: str | None = None,
     current_code_hash: str | None = None,
+    execution_window: EvidenceExecutionWindow | None = None,
 ) -> AuthorityDecision:
     """Return the authority decision for one task via ``is_task_satisfied``."""
 
@@ -165,6 +167,7 @@ def authority_decision_for_task(
             evidence_nucleus,
             current_head=current_head,
             current_code_hash=current_code_hash,
+            execution_window=execution_window,
         )
     except Exception as exc:
         return AuthorityDecision.unknown(
@@ -187,6 +190,7 @@ def corroborated_completed_task_ids(
     evidence_nucleus: Any = None,
     current_head: str | None = None,
     current_code_hash: str | None = None,
+    execution_window: EvidenceExecutionWindow | None = None,
     decisions: dict[str, AuthorityDecision] | None = None,
 ) -> set[str]:
     """Return task IDs with authoritative satisfied/waived/not-applicable evidence.
@@ -213,6 +217,7 @@ def corroborated_completed_task_ids(
                 task_nucleus,
                 current_head=current_head,
                 current_code_hash=current_code_hash,
+                execution_window=execution_window,
             )
             decision = AuthorityDecision.from_result(
                 task_id,
@@ -245,6 +250,7 @@ def scheduler_completed_ids(
     evidence_nucleus: Any = None,
     current_head: str | None = None,
     current_code_hash: str | None = None,
+    execution_window: EvidenceExecutionWindow | None = None,
     decisions: dict[str, AuthorityDecision] | None = None,
 ) -> set[str]:
     """Return the production ``completed_ids`` set for the pure topo scheduler.
@@ -268,6 +274,7 @@ def scheduler_completed_ids(
         evidence_nucleus=evidence_nucleus,
         current_head=resolved_current_head,
         current_code_hash=current_code_hash,
+        execution_window=execution_window,
         decisions=decisions,
     )
 
