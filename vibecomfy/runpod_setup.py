@@ -48,7 +48,7 @@ def stage_ltx_models(
     if dry_run:
         models_loader._print_dry_run(selected, models_root=models_root)
         return
-    models_loader.stage_many(selected, models_root=models_root, select_phase=LTX_MODEL_PHASE)
+    models_loader.stage_many(selected, models_root=models_root)
 
 
 def park_node_packs(
