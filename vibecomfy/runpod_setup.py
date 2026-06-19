@@ -77,6 +77,7 @@ def runtime_environment(*, runtime_root: Path) -> dict[str, str]:
         "HF_HOME": str(cache / "huggingface"),
         "HUGGINGFACE_HUB_CACHE": str(cache / "huggingface" / "hub"),
         "TRANSFORMERS_CACHE": str(cache / "huggingface" / "transformers"),
+        "HF_HUB_DISABLE_XET": "1",
         "XDG_CACHE_HOME": str(cache / "xdg"),
     }
 

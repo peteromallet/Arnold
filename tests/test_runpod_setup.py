@@ -34,6 +34,7 @@ def test_runtime_layout_env_and_extra_model_paths(tmp_path: Path) -> None:
     assert paths["models"] == runtime / "models"
     assert (runtime / "custom_nodes").is_dir()
     assert env["HF_HOME"] == str(runtime / "cache" / "huggingface")
+    assert env["HF_HUB_DISABLE_XET"] == "1"
     assert "base_path: " + str(runtime / "models") in extra.read_text(encoding="utf-8")
 
 
