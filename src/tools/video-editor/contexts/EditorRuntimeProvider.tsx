@@ -64,6 +64,9 @@ import { createTransitionRegistrationService } from '@/tools/video-editor/runtim
 import type { TransitionRegistry } from '@/tools/video-editor/transitions/registry/types.ts';
 import { createClipTypeRegistrationService } from '@/tools/video-editor/runtime/clipTypeRegistrationService.ts';
 import type { ClipTypeRegistry } from '@/tools/video-editor/clip-types/ClipTypeRegistry.ts';
+import { createAgentToolRegistry, type AgentToolRegistry } from '@/tools/video-editor/runtime/agentToolRegistry.ts';
+import { createAgentToolInvocationService, type AgentToolInvocationService } from '@/tools/video-editor/runtime/agentToolInvocationService.ts';
+import type { AgentToolContribution, AgentToolRegistrationService, AgentToolHandler } from '@reigh/editor-sdk';
 import {
   removeExtensionDiagnosticsFromCollection,
   syncExtensionDiagnosticsToCollection,
@@ -88,7 +91,6 @@ export interface EditorRuntimeProviderProps {
   extensions?: readonly ReighExtension[];
   children: ReactNode;
 }
-
 function EditorRuntimeProviderInner({
   children,
   userId,
@@ -99,6 +101,8 @@ function EditorRuntimeProviderInner({
   commandRegistryRef,
   effectRegistryRef,
   transitionRegistryRef,
+  clipTypeRegistryRef,
+  agentToolRegistryRef,
 }: {
   children: ReactNode;
   userId: string | null;
@@ -110,6 +114,7 @@ function EditorRuntimeProviderInner({
   effectRegistryRef: React.MutableRefObject<EffectRegistry | null>;
   transitionRegistryRef: React.MutableRefObject<TransitionRegistry | null>;
   clipTypeRegistryRef: React.MutableRefObject<ClipTypeRegistry | null>;
+  agentToolRegistryRef: React.MutableRefObject<AgentToolRegistry | null>;
 }) {
   const effectsQuery = useEffects(userId, { enabled: !effectCatalog && Boolean(userId) });
   const effectResources = useResolvedEffectCatalog(userId, effectCatalog);
@@ -161,6 +166,19 @@ function EditorRuntimeProviderInner({
     }
   }
 
+  // ---- M10: Agent tool invocation service (composes registry + ProposalRuntime) -
+  const agentToolInvocationServiceRef = useRef<AgentToolInvocationService | null>(null);
+  if (!agentToolInvocationServiceRef.current) {
+    const registry = agentToolRegistryRef.current;
+    const pr = proposalRuntimeRef.current;
+    if (registry && pr) {
+      agentToolInvocationServiceRef.current = createAgentToolInvocationService({
+        registry,
+        proposalRuntime: pr,
+      });
+    }
+  }
+
   const liveCreativeOverrides = useMemo<Partial<CreativeContext>>(() => {
     const ops = store.getState().timelineOps ?? undefined;
     const proposals = proposalRuntimeRef.current ?? undefined;
@@ -192,6 +210,9 @@ function EditorRuntimeProviderInner({
             case 'contextMenuItem':
               registry.ingestContextMenuItemContribution(extId, contrib as ContextMenuItemContribution);
               break;
+            case 'agentTool':
+              agentToolRegistryRef.current?.ingestAgentToolContribution(extId, contrib as AgentToolContribution);
+              break;
           }
         }
       }
@@ -204,6 +225,7 @@ function EditorRuntimeProviderInner({
         const effectRegistry = effectRegistryRef.current;
         const transitionRegistry = transitionRegistryRef.current;
         const clipTypeRegistry = clipTypeRegistryRef.current;
+        const agentToolRegistry = agentToolRegistryRef.current;
         // Create per-extension commands service backed by the shared registry
         const commandsService: ExtensionCommandService | undefined = registry
           ? {
@@ -245,7 +267,25 @@ function EditorRuntimeProviderInner({
                 createExtensionDiagnosticsService(extId),
             })
           : undefined;
-        return createExtensionContext(ext, liveCreativeOverrides, commandsService, effectsService, transitionsService, clipTypesService);
+        // Create per-extension agent tools service backed by the shared AgentToolRegistry.
+        const agentToolsService: AgentToolRegistrationService | undefined = agentToolRegistry
+          ? {
+              registerTool(toolId: string, handler: AgentToolHandler) {
+                return agentToolRegistry.registerTool(extId, toolId, handler);
+              },
+              async invokeProcess(_toolId: string, _config: any) {
+                return {
+                  family: 'process' as const,
+                  diagnostics: [{
+                    severity: 'info' as const,
+                    code: 'agent-tool/process-not-available',
+                    message: `Process invocation is not available until M12.`,
+                  }],
+                };
+              },
+            }
+          : undefined;
+        return createExtensionContext(ext, liveCreativeOverrides, commandsService, effectsService, transitionsService, clipTypesService, agentToolsService);
       },
     );
     syncExtensionDiagnosticsToCollection(diagnosticCollection, 'extension-lifecycle', [
@@ -279,6 +319,7 @@ function EditorRuntimeProviderInner({
             lifecycleHostRef={lifecycleHostRef}
             commandRegistryRef={commandRegistryRef}
             effectRegistryRef={effectRegistryRef}
+            agentToolRegistryRef={agentToolRegistryRef}
             activeExtensionIds={activeExtensionIds}
           />
           <EditorRuntimeTransitionRegistryLifecycle
@@ -313,6 +354,7 @@ function EditorRuntimeEffectRegistryLifecycle({
   lifecycleHostRef,
   commandRegistryRef,
   effectRegistryRef,
+  agentToolRegistryRef,
   activeExtensionIds,
 }: {
   effectsQueryData: Array<{ slug: string; code: string }> | undefined;
@@ -320,6 +362,7 @@ function EditorRuntimeEffectRegistryLifecycle({
   lifecycleHostRef: React.MutableRefObject<ExtensionLifecycleHost | null>;
   commandRegistryRef: React.MutableRefObject<CommandRegistry | null>;
   effectRegistryRef: React.MutableRefObject<EffectRegistry | null>;
+  agentToolRegistryRef: React.MutableRefObject<AgentToolRegistry | null>;
   activeExtensionIds: ReadonlySet<string>;
 }) {
   const { registry: effectRegistry, snapshot: effectRegistrySnapshot } = useEffectRegistryContext();
@@ -339,14 +382,16 @@ function EditorRuntimeEffectRegistryLifecycle({
   useEffect(() => {
     const host = lifecycleHostRef.current;
     const commandRegistry = commandRegistryRef.current;
+    const agentToolRegistry = agentToolRegistryRef.current;
     if (!host) return;
     const handle = host.onLifecycleDisposed((extensionId: string) => {
       commandRegistry?.unregisterAll(extensionId);
       effectRegistry.unregisterOwner(extensionId);
+      agentToolRegistry?.unregisterAll(extensionId);
       removeExtensionDiagnosticsFromCollection(diagnosticCollection, extensionId);
     });
     return () => handle.dispose();
-  }, [commandRegistryRef, diagnosticCollection, effectRegistry, lifecycleHostRef]);
+  }, [commandRegistryRef, diagnosticCollection, effectRegistry, lifecycleHostRef, agentToolRegistryRef]);
 
   useEffect(() => {
     syncExtensionDiagnosticsToCollection(
@@ -496,6 +541,12 @@ export function EditorRuntimeProvider({
   //        exposed via context and stored here for the synchronize effect) ----
   const clipTypeRegistryRef = useRef<ClipTypeRegistry | null>(null);
 
+  // ---- M10: agent tool registry (one per provider mount) ---------------------
+  const agentToolRegistryRef = useRef<AgentToolRegistry | null>(null);
+  if (!agentToolRegistryRef.current) {
+    agentToolRegistryRef.current = createAgentToolRegistry();
+  }
+
   const diagnosticCollectionRef = useRef<DiagnosticCollection | null>(null);
   if (!diagnosticCollectionRef.current) {
     diagnosticCollectionRef.current = createDiagnosticCollection();
@@ -589,6 +640,7 @@ export function EditorRuntimeProvider({
     extensions: extensionRuntime.config,
     extensionRuntime,
     commandRegistry: commandRegistryRef.current ?? undefined,
+    agentToolRegistry: agentToolRegistryRef.current ?? undefined,
     diagnosticCollection: diagnosticCollectionRef.current ?? undefined,
   }), [
     dataProvider,
@@ -620,6 +672,7 @@ export function EditorRuntimeProvider({
         effectRegistryRef={effectRegistryRef}
         transitionRegistryRef={transitionRegistryRef}
         clipTypeRegistryRef={clipTypeRegistryRef}
+        agentToolRegistryRef={agentToolRegistryRef}
       >
         {children}
       </EditorRuntimeProviderInner>

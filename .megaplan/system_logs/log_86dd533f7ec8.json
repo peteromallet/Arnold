@@ -1,0 +1,82 @@
+{
+  "id": "log_86dd533f7ec8",
+  "level": "debug",
+  "category": "system",
+  "event_type": "authority_divergence",
+  "message": "authority_divergence emitted",
+  "details": {
+    "event": {
+      "seq": 7099,
+      "schema_version": 1,
+      "ts_utc": "2026-06-19T23:12:41.762613+00:00",
+      "ts_rel_init_s": 8728.345907,
+      "kind": "authority_divergence",
+      "phase": "execute",
+      "payload": {
+        "diagnostic_version": 1,
+        "task_id": "T16",
+        "raw_terminal_status": "done",
+        "authority_status": "unsatisfied",
+        "authoritative": false,
+        "reason": "stale_evidence:head_mismatch:task_commands_run",
+        "missing_outputs": [],
+        "stale_evidence": [
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_files_changed",
+          "head_mismatch:task_files_changed",
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_commands_run"
+        ],
+        "would_block_reasons": [
+          "stale_evidence:head_mismatch:task_commands_run",
+          "stale_evidence:head_mismatch:task_files_changed"
+        ],
+        "error": null,
+        "diagnostics": {
+          "task_id": "T16",
+          "declared_outputs": {
+            "files_changed": [
+              "src/tools/video-editor/examples/extensions/agent-tools-export/index.ts",
+              "src/tools/video-editor/examples/extensions/agent-tools-export/reigh-extension.json"
+            ],
+            "commands_run": [
+              "npx tsc --noEmit",
+              "npx vitest run --config config/testing/vitest.config.ts --reporter=verbose"
+            ]
+          },
+          "linked_evidence_count": 38,
+          "evidence_count": 150,
+          "normalization": "iterable",
+          "status": "unsatisfied",
+          "evidence_sources": [
+            "plan_artifacts"
+          ],
+          "loaded_evidence_count": 150,
+          "raw_terminal_status": "done"
+        },
+        "ts_utc": "2026-06-19T23:12:41.762266+00:00"
+      },
+      "transaction_id": "5bf5fceb6984dd85",
+      "store_method": "log_system_event"
+    }
+  },
+  "turn_id": null,
+  "epic_id": "m10-agent-tool-contributions-20260619-2247",
+  "occurred_at": "2026-06-19T23:12:41.762646Z"
+}

@@ -1,0 +1,43 @@
+{
+  "manifest": {
+    "id": "com.reigh.examples.agent-tools-canary",
+    "version": "1.0.0",
+    "label": "Agent Tools Canary",
+    "description": "Fake long-running generation canary demonstrating the M10 agent tool SDK surface: progress reporting, cancellation, preview-only GenerationSession, placeholder sample channel, proposal-ready output, fake baked asset/material refs, and diagnostics.",
+    "apiVersion": 1,
+    "contributions": [
+      {
+        "id": "canary-generation-contribution",
+        "kind": "agentTool",
+        "toolId": "canary.generation",
+        "label": "Canary Generation Tool",
+        "description": "Fake long-running generation tool that exercises progress reporting, cancellation, and preview-only sample channels through GenerationSession.",
+        "resultFamilies": ["generation/session"],
+        "order": 10
+      },
+      {
+        "id": "canary-material-contribution",
+        "kind": "agentTool",
+        "toolId": "canary.material",
+        "label": "Canary Material Tool",
+        "description": "Fake material/artifact tool returning placeholder baked asset and material refs.",
+        "resultFamilies": ["material/artifact"],
+        "order": 20
+      },
+      {
+        "id": "canary-proposal-contribution",
+        "kind": "agentTool",
+        "toolId": "canary.proposal",
+        "label": "Canary Proposal Tool",
+        "description": "Fake proposal tool returning mutation/proposal results with patches, affected object IDs, and source-to-output refs.",
+        "resultFamilies": ["mutation/proposal"],
+        "order": 30
+      }
+    ],
+    "messages": {
+      "activation.started": "Agent Tools Canary activating…",
+      "activation.ready": "Agent Tools Canary ready with 3 fake tools registered.",
+      "activation.disposed": "Agent Tools Canary disposed."
+    }
+  }
+}

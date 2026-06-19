@@ -298,14 +298,16 @@ export type ContributionKind =
   | 'searchProvider'
   | 'metadataFacet'
   | 'assetDetailSection'
-  // Reserved — not yet bridged
+  // M7-M9: effect, transition, clip type, automation (bridged in their milestones)
   | 'effect'
   | 'transition'
   | 'clipType'
-  | 'agentTool'
-  | 'agent'
   // M9: automation clip type (host-owned)
-  | 'automation';
+  | 'automation'
+  // M10: agent tool contributions (host-mediated, proposal-backed)
+  | 'agentTool'
+  // Reserved — not yet bridged
+  | 'agent';
 
 /** Slot names the host shell recognizes. */
 export type VideoEditorSlotName =
@@ -357,6 +359,8 @@ export interface ExtensionContribution {
   metadataFacetId?: string;
   /** M6: Asset detail section identifier declared by the extension. */
   assetDetailSectionId?: string;
+  /** M10: Agent tool identifier declared by the extension. */
+  agentToolId?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -854,7 +858,382 @@ export interface AutomationClipParams {
 }
 
 // ---------------------------------------------------------------------------
-// Processes (reserved, validated but inactive in M1)
+// M10: Agent tool contributions — host-mediated, proposal-backed
+// ---------------------------------------------------------------------------
+
+/**
+ * M10: An agent tool contribution declared in an extension manifest.
+ *
+ * Agent tools are host-mediated: the host owns invocation, progress,
+ * cancellation, proposal creation, and UI. Extensions contribute tool
+ * metadata, input schemas, and a handler that returns {@link ToolResult}
+ * records. All mutations are proposal-backed through host-owned
+ * {@link ProposalRuntime}.
+ */
+export interface AgentToolContribution {
+  /** Unique within the extension. */
+  id: ContributionId;
+  kind: 'agentTool';
+  /** The tool identifier used in ctx.agentTools registration calls. */
+  toolId: string;
+  /** Human-readable label for discovery / UI. */
+  label: string;
+  /** Human-readable description shown in tooltips / panel. */
+  description?: string;
+  /**
+   * Input schema defining the shape of the tool's invocation payload.
+   * Uses a StandardSchema-compatible subset validated at registration time.
+   */
+  inputSchema?: AgentToolInputSchema;
+  /**
+   * Result families this tool can produce.
+   * When empty, all families are accepted (validated at runtime).
+   */
+  resultFamilies?: readonly ToolResultFamily[];
+  /** Lower values sort first. Default 0. */
+  order?: number;
+  /** Optional visibility predicate (evaluated by host). */
+  when?: string;
+}
+
+/**
+ * Supported StandardSchema subset for agent tool input schemas.
+ *
+ * The host uses SchemaForm to render these schemas. Only a minimal
+ * StandardSchema subset is supported in M10:
+ * - type: 'object' with properties
+ * - property types: string, number, boolean, enum (string[])
+ * - nested objects (one level)
+ * - required fields
+ * - title, description annotations
+ */
+export interface AgentToolInputSchema {
+  type: 'object';
+  properties?: Record<string, AgentToolInputProperty>;
+  required?: readonly string[];
+  title?: string;
+  description?: string;
+}
+
+/** A single property in an agent tool input schema. */
+export interface AgentToolInputProperty {
+  type: 'string' | 'number' | 'boolean' | 'object';
+  title?: string;
+  description?: string;
+  default?: string | number | boolean;
+  enum?: readonly string[];
+  /** Nested properties (only when type === 'object'). */
+  properties?: Record<string, AgentToolInputProperty>;
+  /** Nested required fields (only when type === 'object'). */
+  required?: readonly string[];
+}
+
+/**
+ * Stable result families for agent tool outputs.
+ *
+ * New result shapes must fit an existing family or justify a new family
+ * in SDK review. Reject one-off feature-specific result objects with
+ * diagnostics.
+ */
+export type ToolResultFamily =
+  | 'mutation/proposal'
+  | 'generation/session'
+  | 'material/artifact'
+  | 'enrichment/search'
+  | 'export'
+  | 'process'
+  | 'ui/summary';
+
+/**
+ * M10: Grouped ToolResult union.
+ *
+ * Every result carries a `family` discriminator and a `family`-specific
+ * payload. Results that don't fit a known family are rejected with
+ * diagnostics before proposals or UI updates are created.
+ */
+export type ToolResult =
+  | ToolMutationProposalResult
+  | ToolGenerationSessionResult
+  | ToolMaterialArtifactResult
+  | ToolEnrichmentSearchResult
+  | ToolExportResult
+  | ToolProcessResult
+  | ToolUISummaryResult;
+
+/** Timeline-mutation proposal result. */
+export interface ToolMutationProposalResult {
+  family: 'mutation/proposal';
+  /** Rationale / explanation for the proposed change. */
+  rationale?: string;
+  /** The patch(es) to propose via ProposalRuntime. */
+  patches: readonly TimelinePatch[];
+  /** Affected object IDs for UI context (clip IDs, track IDs, etc.). */
+  affectedObjectIds?: readonly string[];
+  /** Source-to-output reference map for traceability. */
+  sourceRefs?: readonly ToolSourceRef[];
+  /** Structured diagnostics produced during tool execution. */
+  diagnostics?: readonly ToolResultDiagnostic[];
+}
+
+/** Generation/session result for long-running generation tools. */
+export interface ToolGenerationSessionResult {
+  family: 'generation/session';
+  /** Session handle for progress tracking and cancellation. */
+  session: GenerationSession;
+  /** Rationale / explanation for the generation. */
+  rationale?: string;
+  /** Structured diagnostics produced during tool execution. */
+  diagnostics?: readonly ToolResultDiagnostic[];
+}
+
+/** Material/artifact result referencing baked or placeholder asset refs. */
+export interface ToolMaterialArtifactResult {
+  family: 'material/artifact';
+  /** Material or artifact references produced by the tool. */
+  refs: readonly ToolArtifactRef[];
+  /** Rationale / explanation for the generated artifacts. */
+  rationale?: string;
+  /** Structured diagnostics produced during tool execution. */
+  diagnostics?: readonly ToolResultDiagnostic[];
+}
+
+/** Enrichment / search result for asset metadata suggestions. */
+export interface ToolEnrichmentSearchResult {
+  family: 'enrichment/search';
+  /** Enrichment suggestions keyed by asset/material key. */
+  suggestions?: Record<string, Record<string, unknown>>;
+  /** Search result matches, when applicable. */
+  matches?: readonly ToolSearchResultMatch[];
+  /** Rationale / explanation for the enrichment. */
+  rationale?: string;
+  /** Structured diagnostics produced during tool execution. */
+  diagnostics?: readonly ToolResultDiagnostic[];
+}
+
+/** Export result (planner-compatible findings). */
+export interface ToolExportResult {
+  family: 'export';
+  /** Planner-compatible findings (CapabilityFinding shape). */
+  findings?: readonly Record<string, unknown>[];
+  /** Export-scoped diagnostics. */
+  diagnostics?: readonly ToolResultDiagnostic[];
+  /** Rationale / explanation for the findings. */
+  rationale?: string;
+}
+
+/** Process invocation result (pre-M12 placeholder). */
+export interface ToolProcessResult {
+  family: 'process';
+  /** Structured pending diagnostic (always present before M12). */
+  diagnostics: readonly ToolResultDiagnostic[];
+}
+
+/** UI-only summary result (e.g. copilot explanation, analysis). */
+export interface ToolUISummaryResult {
+  family: 'ui/summary';
+  /** Human-readable summary text. */
+  summary: string;
+  /** Structured detail for UI rendering. */
+  detail?: Record<string, unknown>;
+  /** Structured diagnostics produced during tool execution. */
+  diagnostics?: readonly ToolResultDiagnostic[];
+}
+
+/** A source-to-output reference for traceability. */
+export interface ToolSourceRef {
+  /** Source identifier (clip ID, asset key, track ID, etc.). */
+  sourceId: string;
+  /** Output identifier produced from the source. */
+  outputId: string;
+  /** Human-readable description of the transformation. */
+  description?: string;
+}
+
+/** An artifact reference produced by a tool. */
+export interface ToolArtifactRef {
+  /** Artifact identifier (asset key, material key, etc.). */
+  ref: string;
+  /** Kind of artifact (asset, material, placeholder). */
+  kind: 'asset' | 'material' | 'placeholder';
+  /** Human-readable label for UI. */
+  label?: string;
+  /** Opaque metadata (e.g. bake parameters, resolution, format). */
+  meta?: Record<string, unknown>;
+}
+
+/** A search result match from an enrichment tool. */
+export interface ToolSearchResultMatch {
+  /** Asset or material key. */
+  key: string;
+  /** Relevance score (0-1). */
+  score: number;
+  /** Human-readable label. */
+  label?: string;
+}
+
+/** Structured diagnostic produced during tool execution. */
+export interface ToolResultDiagnostic {
+  severity: DiagnosticSeverity;
+  /** Stable diagnostic code, e.g. 'agent-tool/unsupported-schema'. */
+  code: `agent-tool/${string}`;
+  message: string;
+  /** Structured detail for debugging. */
+  detail?: Record<string, unknown>;
+}
+
+// ---------------------------------------------------------------------------
+// M10: AgentToolInvocationRequest
+// ---------------------------------------------------------------------------
+
+/**
+ * Request to invoke an agent tool.
+ *
+ * Carries the tool ID, extension context, creative context slices,
+ * and any tool-specific input. Edge and worker adapters receive only
+ * explicit serializable slices — never raw provider internals.
+ */
+export interface AgentToolInvocationRequest {
+  /** The tool identifier being invoked. */
+  toolId: string;
+  /** The extension ID that registered the tool. */
+  extensionId: string;
+  /** The contribution ID of the agent tool in the manifest. */
+  contributionId: string;
+  /** Tool-specific input matching the declared input schema. */
+  input?: Record<string, unknown>;
+  /**
+   * Explicit creative context slices for tool execution.
+   * Only serializable projections are included — never raw provider internals.
+   */
+  context?: AgentToolRequestContext;
+}
+
+/** Explicit creative context slices passed to a tool invocation. */
+export interface AgentToolRequestContext {
+  /** Read-only timeline snapshot at invocation time. */
+  timeline?: TimelineSnapshot;
+  /** Asset keys and metadata relevant to the request. */
+  assets?: readonly { key: string; metadata?: Record<string, unknown> }[];
+  /** Material keys and metadata relevant to the request. */
+  materials?: readonly { key: string; metadata?: Record<string, unknown> }[];
+  /** Export context (selected format, blockers, etc.). */
+  export?: AgentToolExportContext;
+  /** Opaque request metadata. */
+  meta?: Record<string, unknown>;
+}
+
+/** Export context passed to export-adjacent tools. */
+export interface AgentToolExportContext {
+  /** Selected output format ID. */
+  outputFormatId?: string;
+  /** Known render blockers at invocation time. */
+  blockers?: readonly Record<string, unknown>[];
+  /** Contribution IDs available for export. */
+  contributionIds?: readonly string[];
+}
+
+// ---------------------------------------------------------------------------
+// M10: GenerationSession (long-running generation)
+// ---------------------------------------------------------------------------
+
+/**
+ * Session handle for long-running generation tools.
+ *
+ * Provides progress reporting, cancellation, and a preview-only
+ * sample channel placeholder. Live media buffers and bake internals
+ * are deferred to M11/M12.
+ */
+export interface GenerationSession {
+  /** Unique session identifier. */
+  readonly id: string;
+  /** Current progress (0-100). */
+  readonly progress: number;
+  /** Human-readable progress label. */
+  readonly progressLabel?: string;
+  /** Whether the session has been cancelled. */
+  readonly cancelled: boolean;
+  /** Whether the session is complete. */
+  readonly done: boolean;
+  /** Structured diagnostics produced during generation. */
+  readonly diagnostics: readonly ToolResultDiagnostic[];
+
+  /**
+   * Subscribe to progress updates.
+   * Returns a DisposeHandle for unsubscription.
+   */
+  onProgress(listener: (progress: number, label?: string) => void): DisposeHandle;
+
+  /**
+   * Cancel the generation session.
+   * Idempotent — safe to call multiple times.
+   */
+  cancel(): void;
+
+  /**
+   * Preview-only sample channel placeholder.
+   * Returns a channel identifier for future live media stream attachment.
+   * No real media buffers or bake internals are available in M10.
+   */
+  getSampleChannel(): string;
+
+  /**
+   * Mark the session as complete with final result data.
+   * Safe to call once; subsequent calls are ignored.
+   */
+  complete(result?: Record<string, unknown>): void;
+}
+
+// ---------------------------------------------------------------------------
+// M10: AgentToolRegistrationService
+// ---------------------------------------------------------------------------
+
+/**
+ * Agent tool registration service available as `ctx.agentTools` during activate().
+ *
+ * Extensions register agent tool handlers imperatively. The host owns
+ * invocation, progress, cancellation, proposal creation, and UI.
+ */
+export interface AgentToolRegistrationService {
+  /**
+   * Register an agent tool handler.
+   *
+   * The `toolId` must match the `toolId` field of an `AgentToolContribution`
+   * declared by this extension in its manifest.
+   *
+   * The handler receives an {@link AgentToolInvocationRequest} and returns
+   * a {@link ToolResult} (or Promise thereof).
+   *
+   * Returns a DisposeHandle that unregisters the handler when dispose() is
+   * called (safe to call multiple times; idempotent).
+   */
+  registerTool(
+    toolId: string,
+    handler: AgentToolHandler,
+  ): DisposeHandle;
+
+  /**
+   * Invoke a process-backed tool (pre-M12 placeholder).
+   *
+   * Always returns a `ToolProcessResult` with a structured pending
+   * diagnostic indicating process execution is not available until M12.
+   */
+  invokeProcess(
+    toolId: string,
+    config: ProcessSpawnConfig,
+  ): Promise<ToolProcessResult>;
+}
+
+/**
+ * Agent tool handler function registered by an extension.
+ *
+ * Receives an invocation request with explicit context slices and
+ * returns a ToolResult. May be synchronous or async. Thrown errors
+ * are caught by the runtime and published as diagnostics.
+ */
+export type AgentToolHandler = (
+  request: AgentToolInvocationRequest,
+) => ToolResult | Promise<ToolResult>;
+
 // ---------------------------------------------------------------------------
 
 export interface ProcessSpawnConfig {
@@ -920,6 +1299,8 @@ export interface ExtensionManifest {
     | TransitionContribution
     // M9: contributed clip types
     | ClipTypeContribution
+    // M10: agent tool contributions
+    | AgentToolContribution
   )[];
   /** Reserved: descriptive permission metadata. */
   permissions?: readonly ExtensionPermissionDeclaration[];
@@ -1386,6 +1767,8 @@ export interface ExtensionContext {
   readonly transitions: TransitionRegistrationService;
   /** M9: Clip-type registration service for contributed clip types. */
   readonly clipTypes: ClipTypeRegistrationService;
+  /** M10: Agent tool registration service for host-mediated agent tools. */
+  readonly agentTools: AgentToolRegistrationService;
 }
 
 // ---------------------------------------------------------------------------
@@ -1445,6 +1828,7 @@ export function createExtensionContext(
   effects?: EffectRegistrationService,
   transitions?: TransitionRegistrationService,
   clipTypes?: ClipTypeRegistrationService,
+  agentTools?: AgentToolRegistrationService,
 ): ExtensionContext {
   const extensionId = extension.manifest.id as string;
   const manifest = extension.manifest; // Already frozen by defineExtension
@@ -1754,6 +2138,28 @@ export function createExtensionContext(
     },
   };
 
+  // ---- agentTools service (optional, wired by provider) ----------------------
+  const agentToolsService: AgentToolRegistrationService = agentTools ?? {
+    registerTool(_toolId: string, _handler: AgentToolHandler): DisposeHandle {
+      diagnosticsService.report({
+        severity: 'error',
+        code: 'agentTools/not-wired',
+        message: `Cannot register agent tool \"${_toolId}\" — the AgentToolRegistry has not been wired by the host provider.`,
+      });
+      return { dispose() {} };
+    },
+    async invokeProcess(_toolId: string, _config: ProcessSpawnConfig): Promise<ToolProcessResult> {
+      return {
+        family: 'process',
+        diagnostics: [{
+          severity: 'info',
+          code: 'agent-tool/process-not-available',
+          message: `Process invocation for tool \"${_toolId}\" is not available until M12.`,
+        }],
+      };
+    },
+  };
+
   // ---- assemble, attach dispose, then freeze -------------------------------
   const ctx = {
     apiVersion: 1,
@@ -1775,6 +2181,7 @@ export function createExtensionContext(
     effects: effectsService,
     transitions: transitionsService,
     clipTypes: clipTypesService,
+    agentTools: agentToolsService,
   } as ExtensionContext;
 
   // Attach host-service disposal so the lifecycle can clean up settings
@@ -1941,8 +2348,8 @@ export const CONTRIBUTION_KIND_MILESTONE: Record<ContributionKind, string | unde
   // M9: clip type dispatch and basic keyframes
   clipType: 'M9',
   automation: 'M9',
-  agentTool: 'M5',
-  agent: 'M5',
+  agentTool: 'M10',
+  agent: 'M10',
 };
 
 /**
@@ -1987,6 +2394,11 @@ export function contributionKindNotYetBridged(kind: ContributionKind): string | 
 
   // M9: clipType and automation are bridged.
   if (milestone === 'M9' && (kind === 'clipType' || kind === 'automation')) {
+    return null;
+  }
+
+  // M10: agentTool is bridged.
+  if (milestone === 'M10' && kind === 'agentTool') {
     return null;
   }
 

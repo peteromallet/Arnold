@@ -1,0 +1,67 @@
+{
+  "id": "log_fc90864070f9",
+  "level": "debug",
+  "category": "system",
+  "event_type": "authority_divergence",
+  "message": "authority_divergence emitted",
+  "details": {
+    "event": {
+      "seq": 8934,
+      "schema_version": 1,
+      "ts_utc": "2026-06-19T23:52:27.075974+00:00",
+      "ts_rel_init_s": 11113.659268,
+      "kind": "authority_divergence",
+      "phase": "execute",
+      "payload": {
+        "diagnostic_version": 1,
+        "task_id": "T21",
+        "raw_terminal_status": "done",
+        "authority_status": "unsatisfied",
+        "authoritative": false,
+        "reason": "stale_evidence:head_mismatch:task_files_changed",
+        "missing_outputs": [],
+        "stale_evidence": [
+          "head_mismatch:task_files_changed",
+          "head_mismatch:task_files_changed",
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_commands_run"
+        ],
+        "would_block_reasons": [
+          "stale_evidence:head_mismatch:task_files_changed",
+          "stale_evidence:head_mismatch:task_commands_run"
+        ],
+        "error": null,
+        "diagnostics": {
+          "task_id": "T21",
+          "declared_outputs": {
+            "files_changed": [
+              "src/tools/video-editor/components/AgentToolsPanel/AgentToolsPanel.test.tsx",
+              "src/tools/video-editor/components/CommandPalette/CommandPalette.test.tsx"
+            ],
+            "commands_run": [
+              "npx vitest run src/tools/video-editor/components/AgentToolsPanel/AgentToolsPanel.test.tsx --reporter=verbose",
+              "npx vitest run src/tools/video-editor/components/CommandPalette/CommandPalette.test.tsx --reporter=verbose",
+              "npx vitest run src/tools/video-editor/components/AgentToolsPanel/AgentToolsPanel.test.tsx src/tools/video-editor/components/CommandPalette/CommandPalette.test.tsx src/tools/video-editor/components/CopilotPrompt/CopilotPrompt.test.tsx --reporter=verbose"
+            ]
+          },
+          "linked_evidence_count": 10,
+          "evidence_count": 202,
+          "normalization": "iterable",
+          "status": "unsatisfied",
+          "evidence_sources": [
+            "plan_artifacts"
+          ],
+          "loaded_evidence_count": 202,
+          "raw_terminal_status": "done"
+        },
+        "ts_utc": "2026-06-19T23:52:27.075595+00:00"
+      },
+      "transaction_id": "5e835d53a79d2c7c",
+      "store_method": "log_system_event"
+    }
+  },
+  "turn_id": null,
+  "epic_id": "m10-agent-tool-contributions-20260619-2247",
+  "occurred_at": "2026-06-19T23:52:27.076020Z"
+}

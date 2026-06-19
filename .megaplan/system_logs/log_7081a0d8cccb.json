@@ -1,0 +1,76 @@
+{
+  "id": "log_7081a0d8cccb",
+  "level": "debug",
+  "category": "system",
+  "event_type": "authority_divergence",
+  "message": "authority_divergence emitted",
+  "details": {
+    "event": {
+      "seq": 8916,
+      "schema_version": 1,
+      "ts_utc": "2026-06-19T23:52:22.574861+00:00",
+      "ts_rel_init_s": 11109.158155,
+      "kind": "authority_divergence",
+      "phase": "execute",
+      "payload": {
+        "diagnostic_version": 1,
+        "task_id": "T3",
+        "raw_terminal_status": "done",
+        "authority_status": "unsatisfied",
+        "authoritative": false,
+        "reason": "stale_evidence:head_mismatch:task_commands_run",
+        "missing_outputs": [],
+        "stale_evidence": [
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_files_changed",
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_files_changed"
+        ],
+        "would_block_reasons": [
+          "stale_evidence:head_mismatch:task_commands_run",
+          "stale_evidence:head_mismatch:task_files_changed"
+        ],
+        "error": null,
+        "diagnostics": {
+          "task_id": "T3",
+          "declared_outputs": {
+            "files_changed": [
+              "src/tools/video-editor/runtime/agentToolContracts.ts"
+            ],
+            "commands_run": [
+              "npx vitest run src/tools/video-editor/runtime/agentToolContracts.test.ts --reporter=verbose",
+              "npx tsc --noEmit"
+            ]
+          },
+          "linked_evidence_count": 32,
+          "evidence_count": 202,
+          "normalization": "iterable",
+          "status": "unsatisfied",
+          "evidence_sources": [
+            "plan_artifacts"
+          ],
+          "loaded_evidence_count": 202,
+          "raw_terminal_status": "done"
+        },
+        "ts_utc": "2026-06-19T23:52:22.574424+00:00"
+      },
+      "transaction_id": "98420bc3553ad4bd",
+      "store_method": "log_system_event"
+    }
+  },
+  "turn_id": null,
+  "epic_id": "m10-agent-tool-contributions-20260619-2247",
+  "occurred_at": "2026-06-19T23:52:22.574911Z"
+}

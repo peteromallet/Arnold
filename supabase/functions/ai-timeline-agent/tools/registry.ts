@@ -69,7 +69,7 @@ type AgentMutationCommand =
 type RunToolArgs = {
   command?: string;
   transaction?: TimelineCommandInput<AgentMutationCommand> | unknown;
-  mode?: TimelineCommandRunMode;
+  mode?: TimelineCommandRunMode | "proposal";
 };
 
 const isRecord = (value: unknown): value is Record<string, unknown> => {
@@ -237,11 +237,333 @@ const formatExecutionResult = (
   return lines.join("\n");
 };
 
-const extractMode = (input: RunToolArgs | string): TimelineCommandRunMode => {
+/** Proposal-compatible patch operation produced by the registry. */
+interface ProposalPatchOperation {
+  op: string;
+  target: string;
+  payload?: Record<string, unknown>;
+  order?: number;
+}
+
+/** Proposal-compatible patch produced by the registry. */
+interface ProposalPatch {
+  version: number;
+  operations: readonly ProposalPatchOperation[];
+  source?: string;
+  meta?: Record<string, unknown>;
+}
+
+/** Proposal metadata returned alongside patches. */
+interface ProposalMetadata {
+  rationale: string;
+  source: string;
+  baseVersion: number;
+  /** Parsed summary of the proposed change. */
+  summary: string;
+}
+
+/** Result type for proposal mode — patches + metadata, no config saved. */
+interface ProposalResult {
+  patches: ProposalPatch[];
+  metadata: ProposalMetadata;
+}
+
+const PROPOSAL_SUPPORTED_COMMANDS_FOR_PATCHES = new Set<string>([
+  "move",
+  "split",
+  "trim",
+  "delete",
+  "set",
+  "add-text",
+  "set-text",
+  "duplicate",
+  "set-params",
+  "set-theme",
+  "set-theme-overrides",
+  "add-media",
+  "swap",
+]);
+
+/**
+ * Convert a parsed mutation command to a ProposalPatchOperation.
+ * Returns null for unsupported or error-typed commands.
+ */
+function parsedCommandToProposalPatchOp(
+  parsed: ParsedCommand,
+): ProposalPatchOperation | null {
+  switch (parsed.type) {
+    case "move":
+      return {
+        op: "clip.move",
+        target: parsed.clipId,
+        payload: { at: parsed.at },
+      };
+    case "split":
+      return {
+        op: "clip.split",
+        target: parsed.clipId,
+        payload: { time: parsed.time },
+      };
+    case "trim":
+      return {
+        op: "clip.update",
+        target: parsed.clipId,
+        payload: Object.fromEntries(
+          Object.entries({
+            from: parsed.from,
+            to: parsed.to,
+            duration: parsed.duration,
+          }).filter(([, v]) => v !== undefined),
+        ) as Record<string, unknown>,
+      };
+    case "delete":
+      return {
+        op: "clip.remove",
+        target: parsed.clipId,
+      };
+    case "set":
+      return {
+        op: "clip.update",
+        target: parsed.clipId,
+        payload: { [parsed.property]: parsed.value },
+      };
+    case "add-text":
+      return {
+        op: "clip.add",
+        target: parsed.track,
+        payload: { at: parsed.at, duration: parsed.duration, text: parsed.text },
+      };
+    case "set-text":
+      return {
+        op: "clip.update",
+        target: parsed.clipId,
+        payload: { text: parsed.text },
+      };
+    case "duplicate":
+      return {
+        op: "clip.add",
+        target: parsed.clipId,
+        payload: { count: parsed.count },
+      };
+    case "add-media":
+      return {
+        op: "clip.add",
+        target: parsed.track,
+        payload: {
+          at: parsed.at,
+          generationId: parsed.generationId,
+          url: parsed.url,
+          mediaType: parsed.mediaType,
+        },
+      };
+    case "swap":
+      return {
+        op: "clip.update",
+        target: parsed.clipId,
+        payload: {
+          generationId: parsed.generationId,
+          url: parsed.url,
+          mediaType: parsed.mediaType,
+        },
+      };
+    default:
+      return null;
+  }
+}
+
+/**
+ * Build a human-readable summary for a proposal patch operation.
+ */
+function proposalPatchOpSummary(op: ProposalPatchOperation): string {
+  const payload = op.payload ?? {};
+  switch (op.op) {
+    case "clip.move":
+      return `Move clip "${op.target}" to ${payload.at ?? "?"}s`;
+    case "clip.split":
+      return `Split clip "${op.target}" at ${payload.time ?? "?"}s`;
+    case "clip.update":
+      return `Update clip "${op.target}": ${JSON.stringify(payload)}`;
+    case "clip.remove":
+      return `Delete clip "${op.target}"`;
+    case "clip.add":
+      return `Add clip to track "${op.target}": ${JSON.stringify(payload)}`;
+    case "app.update":
+      return `Update app setting "${op.target}": ${JSON.stringify(payload)}`;
+    default:
+      return `${op.op} on "${op.target}"`;
+  }
+}
+
+/**
+ * Execute a command in proposal mode.
+ *
+ * Runs validation (dry-run) for the supported subset, converts to
+ * TimelinePatch[]-compatible proposal patches with metadata, and returns
+ * without saving timeline config.
+ *
+ * Read-only commands (view, query, find-issues) execute normally and
+ * return their usual result text alongside empty patches.
+ */
+async function executeProposal(
+  runArgs: RunToolArgs,
+  state: TimelineState,
+  timelineId: string,
+  supabaseAdmin: SupabaseAdmin,
+): Promise<ToolResult> {
+  const patches: ProposalPatch[] = [];
+  const summaries: string[] = [];
+
+  // --- Handle transaction input ---
+  if (typeof runArgs.transaction !== "undefined") {
+    const transaction = await normalizeTransactionInput(
+      runArgs.transaction,
+      state,
+      timelineId,
+      supabaseAdmin,
+    );
+
+    for (const command of transaction.commands) {
+      // We can't directly convert typed commands back to ParsedCommand,
+      // so we use the command type and payload to build patch ops.
+      const cmdType = command.type as string;
+      if (!PROPOSAL_SUPPORTED_COMMANDS_FOR_PATCHES.has(cmdType)) {
+        return {
+          result: `Proposal mode does not support command type "${cmdType}" in transactions.`,
+        };
+      }
+
+      const op: ProposalPatchOperation = {
+        op: mapCommandTypeToPatchOp(cmdType),
+        target: extractTargetFromCommand(command),
+        payload: (command.payload ?? {}) as Record<string, unknown>,
+      };
+      summaries.push(proposalPatchOpSummary(op));
+
+      patches.push({
+        version: state.configVersion,
+        operations: [op],
+        source: `ai-timeline-agent/proposal#${cmdType}`,
+      });
+    }
+  } else if (typeof runArgs.command === "string" && runArgs.command.trim().length > 0) {
+    // --- Handle string command ---
+    const parsed = parseCommand(runArgs.command);
+
+    if (parsed.type === "error") {
+      return { result: parsed.message };
+    }
+
+    const validationError = validateCommand(parsed, state.config, state.registry);
+    if (validationError) {
+      return { result: validationError };
+    }
+
+    // Read-only commands: execute normally, return info with empty patches
+    if (
+      parsed.type === "view" ||
+      parsed.type === "query" ||
+      parsed.type === "find-issues"
+    ) {
+      let readResult: ToolResult;
+      if (parsed.type === "view") {
+        readResult = viewTimeline(state.config, state.registry, state.shotNamesById);
+      } else if (parsed.type === "query") {
+        readResult = queryTimeline(state.config, state.registry);
+      } else {
+        readResult = findIssues(state.config, state.registry);
+      }
+
+      return {
+        result: `[PROPOSAL MODE — read-only, no patches]\n${readResult.result}`,
+      };
+    }
+
+    // Unsupported command types in proposal mode
+    if (!PROPOSAL_SUPPORTED_COMMANDS_FOR_PATCHES.has(parsed.type)) {
+      return {
+        result: `Proposal mode does not support command type "${parsed.type}". Supported types: ${Array.from(PROPOSAL_SUPPORTED_COMMANDS_FOR_PATCHES).join(", ")}.`,
+      };
+    }
+
+    const op = parsedCommandToProposalPatchOp(parsed);
+    if (!op) {
+      return { result: `Could not convert command "${parsed.type}" to a proposal patch.` };
+    }
+
+    summaries.push(proposalPatchOpSummary(op));
+
+    patches.push({
+      version: state.configVersion,
+      operations: [op],
+      source: `ai-timeline-agent/proposal#${parsed.type}`,
+    });
+  } else {
+    return { result: "Proposal mode requires a command string or transaction object." };
+  }
+
+  // Build proposal metadata
+  const metadata: ProposalMetadata = {
+    rationale: `Proposed by ai-timeline-agent at config version ${state.configVersion}. ${summaries.join("; ")}`,
+    source: "ai-timeline-agent/proposal",
+    baseVersion: state.configVersion,
+    summary: summaries.join("\n"),
+  };
+
+  // Return proposal result — no config saved
+  return {
+    result: `[PROPOSAL — not applied]\n${metadata.summary}\n\nBase version: ${metadata.baseVersion}\nPatches: ${patches.length}`,
+    config: state.config, // Return current config as-is (unchanged)
+  };
+}
+
+/** Map a command type string to a TimelinePatchOpFamily. */
+function mapCommandTypeToPatchOp(cmdType: string): string {
+  switch (cmdType) {
+    case "move":
+      return "clip.move";
+    case "split":
+      return "clip.split";
+    case "trim":
+    case "set":
+    case "set-text":
+    case "set-params":
+    case "swap":
+      return "clip.update";
+    case "delete":
+      return "clip.remove";
+    case "add-text":
+    case "add-media":
+    case "duplicate":
+      return "clip.add";
+    case "set-theme":
+    case "set-theme-overrides":
+      return "app.update";
+    default:
+      return "extension.noop";
+  }
+}
+
+/** Extract a target identifier from a typed command for proposal patches. */
+function extractTargetFromCommand(command: { type: string; payload?: unknown }): string {
+  const payload = command.payload as Record<string, unknown> | undefined;
+  if (!payload) return command.type;
+
+  // Prefer clipId, then track, then command type as fallback
+  if (typeof payload.clipId === "string") return payload.clipId;
+  if (typeof payload.trackId === "string") return payload.trackId;
+  if (typeof payload.track === "string") return payload.track;
+  if (command.type === "set-theme" || command.type === "set-theme-overrides") {
+    return "theme";
+  }
+  return command.type;
+}
+
+const extractMode = (input: RunToolArgs | string): TimelineCommandRunMode | "proposal" => {
   if (typeof input === "string") {
     return "apply";
   }
 
+  if (input.mode === "proposal") return "proposal";
   return input.mode === "validate" || input.mode === "dry_run" ? input.mode : "apply";
 };
 
@@ -649,10 +971,15 @@ export async function executeCommand(
   const runArgs = normalizeRunArgs(input);
   const runMode = extractMode(input);
 
+  // Route proposal mode to the dedicated handler before reaching the standard pipeline
+  if (runMode === "proposal") {
+    return await executeProposal(runArgs, state, timelineId, supabaseAdmin);
+  }
+
   if (typeof runArgs.transaction !== "undefined") {
     try {
       const transaction = await normalizeTransactionInput(runArgs.transaction, state, timelineId, supabaseAdmin);
-      return await executePreparedTransaction(transaction, runMode, state, timelineId, supabaseAdmin);
+      return await executePreparedTransaction(transaction, runMode as TimelineCommandRunMode, state, timelineId, supabaseAdmin);
     } catch (error) {
       return { result: error instanceof Error ? error.message : String(error) };
     }

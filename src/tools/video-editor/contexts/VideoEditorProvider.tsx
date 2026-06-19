@@ -87,6 +87,9 @@ import { createTransitionRegistrationService } from '@/tools/video-editor/runtim
 import type { TransitionRegistry } from '@/tools/video-editor/transitions/registry/types.ts';
 import { createClipTypeRegistrationService } from '@/tools/video-editor/runtime/clipTypeRegistrationService.ts';
 import type { ClipTypeRegistry } from '@/tools/video-editor/clip-types/ClipTypeRegistry.ts';
+import { createAgentToolRegistry, type AgentToolRegistry } from '@/tools/video-editor/runtime/agentToolRegistry.ts';
+import { createAgentToolInvocationService, type AgentToolInvocationService } from '@/tools/video-editor/runtime/agentToolInvocationService.ts';
+import type { AgentToolContribution, AgentToolRegistrationService, AgentToolHandler } from '@reigh/editor-sdk';
 
 import { useTimelineOpsFromStore } from '@/tools/video-editor/hooks/timelineStore.ts';
 import type { SaveStatus } from '@/tools/video-editor/hooks/useTimelinePersistence.ts';
@@ -164,6 +167,7 @@ function InnerProvider({
   effectRegistryRef,
   transitionRegistryRef,
   clipTypeRegistryRef,
+  agentToolRegistryRef,
 }: {
   children: React.ReactNode;
   effectCatalog?: VideoEditorEffectCatalog | null;
@@ -175,6 +179,7 @@ function InnerProvider({
   effectRegistryRef: React.MutableRefObject<EffectRegistry | null>;
   transitionRegistryRef: React.MutableRefObject<TransitionRegistry | null>;
   clipTypeRegistryRef: React.MutableRefObject<ClipTypeRegistry | null>;
+  agentToolRegistryRef: React.MutableRefObject<AgentToolRegistry | null>;
 }) {
   useRenderDiagnostic('VideoEditorProvider');
   const runtime = useVideoEditorRuntime();
@@ -245,6 +250,32 @@ function InnerProvider({
     }
   }, [store, timelineReader]);
 
+  // ---- M10: Agent tool invocation service (composes registry + ProposalRuntime) -
+  const agentToolInvocationServiceRef = useRef<AgentToolInvocationService | null>(null);
+  if (!agentToolInvocationServiceRef.current) {
+    const registry = agentToolRegistryRef.current;
+    const pr = proposalRuntimeRef.current;
+    if (registry && pr) {
+      agentToolInvocationServiceRef.current = createAgentToolInvocationService({
+        registry,
+        proposalRuntime: pr,
+      });
+    }
+  }
+
+  // Keep the invocation service in sync when proposalRuntime becomes available.
+  useEffect(() => {
+    if (agentToolInvocationServiceRef.current) return;
+    const registry = agentToolRegistryRef.current;
+    const pr = proposalRuntimeRef.current;
+    if (registry && pr) {
+      agentToolInvocationServiceRef.current = createAgentToolInvocationService({
+        registry,
+        proposalRuntime: pr,
+      });
+    }
+  }, [store, timelineReader]);
+
   // Sync extensions with live creative context.
   const liveCreativeOverrides = useMemo<Partial<CreativeContext>>(() => {
     const ops = store.getState().timelineOps ?? undefined;
@@ -277,6 +308,9 @@ function InnerProvider({
             case 'contextMenuItem':
               registry.ingestContextMenuItemContribution(extId, contrib as ContextMenuItemContribution);
               break;
+            case 'agentTool':
+              agentToolRegistryRef.current?.ingestAgentToolContribution(extId, contrib as AgentToolContribution);
+              break;
           }
         }
       }
@@ -289,6 +323,7 @@ function InnerProvider({
         const effectRegistry = effectRegistryRef.current;
         const transitionRegistry = transitionRegistryRef.current;
         const clipTypeRegistry = clipTypeRegistryRef.current;
+        const agentToolRegistry = agentToolRegistryRef.current;
         // Create per-extension commands service backed by the shared registry
         const commandsService: ExtensionCommandService | undefined = registry
           ? {
@@ -330,7 +365,25 @@ function InnerProvider({
                 createExtensionDiagnosticsService(extId),
             })
           : undefined;
-        return createExtensionContext(ext, liveCreativeOverrides, commandsService, effectsService, transitionsService, clipTypesService);
+        // Create per-extension agent tools service backed by the shared AgentToolRegistry.
+        const agentToolsService: AgentToolRegistrationService | undefined = agentToolRegistry
+          ? {
+              registerTool(toolId: string, handler: AgentToolHandler) {
+                return agentToolRegistry.registerTool(extId, toolId, handler);
+              },
+              async invokeProcess(_toolId: string, _config: any) {
+                return {
+                  family: 'process' as const,
+                  diagnostics: [{
+                    severity: 'info' as const,
+                    code: 'agent-tool/process-not-available',
+                    message: `Process invocation is not available until M12.`,
+                  }],
+                };
+              },
+            }
+          : undefined;
+        return createExtensionContext(ext, liveCreativeOverrides, commandsService, effectsService, transitionsService, clipTypesService, agentToolsService);
       },
     );
     syncExtensionDiagnosticsToCollection(diagnosticCollection, 'extension-lifecycle', [
@@ -591,6 +644,7 @@ function InnerProvider({
             lifecycleHostRef={lifecycleHostRef}
             commandRegistryRef={commandRegistryRef}
             effectRegistryRef={effectRegistryRef}
+            agentToolRegistryRef={agentToolRegistryRef}
             activeExtensionIds={activeExtensionIds}
           />
           <VideoEditorTransitionRegistryLifecycle
@@ -638,6 +692,7 @@ function VideoEditorEffectRegistryLifecycle({
   lifecycleHostRef,
   commandRegistryRef,
   effectRegistryRef,
+  agentToolRegistryRef,
   activeExtensionIds,
 }: {
   effectsQueryData: Array<{ slug: string; code: string }> | undefined;
@@ -645,6 +700,7 @@ function VideoEditorEffectRegistryLifecycle({
   lifecycleHostRef: React.MutableRefObject<ExtensionLifecycleHost | null>;
   commandRegistryRef: React.MutableRefObject<CommandRegistry | null>;
   effectRegistryRef: React.MutableRefObject<EffectRegistry | null>;
+  agentToolRegistryRef: React.MutableRefObject<AgentToolRegistry | null>;
   activeExtensionIds: ReadonlySet<string>;
 }) {
   const { registry: effectRegistry, snapshot: effectRegistrySnapshot } = useEffectRegistryContext();
@@ -664,14 +720,16 @@ function VideoEditorEffectRegistryLifecycle({
   useEffect(() => {
     const host = lifecycleHostRef.current;
     const commandRegistry = commandRegistryRef.current;
+    const agentToolRegistry = agentToolRegistryRef.current;
     if (!host) return;
     const handle = host.onLifecycleDisposed((extensionId: string) => {
       commandRegistry?.unregisterAll(extensionId);
       effectRegistry.unregisterOwner(extensionId);
+      agentToolRegistry?.unregisterAll(extensionId);
       removeExtensionDiagnosticsFromCollection(diagnosticCollection, extensionId);
     });
     return () => handle.dispose();
-  }, [commandRegistryRef, diagnosticCollection, effectRegistry, lifecycleHostRef]);
+  }, [commandRegistryRef, diagnosticCollection, effectRegistry, lifecycleHostRef, agentToolRegistryRef]);
 
   useEffect(() => {
     syncExtensionDiagnosticsToCollection(
@@ -838,6 +896,12 @@ export function VideoEditorProvider({
   //        exposed via context and stored here for the synchronize effect) ----
   const clipTypeRegistryRef = useRef<ClipTypeRegistry | null>(null);
 
+  // ---- M10: agent tool registry (one per provider mount) ---------------------
+  const agentToolRegistryRef = useRef<AgentToolRegistry | null>(null);
+  if (!agentToolRegistryRef.current) {
+    agentToolRegistryRef.current = createAgentToolRegistry();
+  }
+
   const diagnosticCollectionRef = useRef<DiagnosticCollection | null>(null);
   if (!diagnosticCollectionRef.current) {
     diagnosticCollectionRef.current = createDiagnosticCollection();
@@ -915,6 +979,7 @@ export function VideoEditorProvider({
     extensions: extensionRuntime.config,
     extensionRuntime,
     commandRegistry: commandRegistryRef.current ?? undefined,
+    agentToolRegistry: agentToolRegistryRef.current ?? undefined,
     diagnosticCollection: diagnosticCollectionRef.current ?? undefined,
   }), [agentChatRegistry.register, agentChatRegistry.unregister, dataProvider, projectId, shotsHost, timelineId, timelineName, userId, extensionRuntime.config, extensionRuntime]);
 
@@ -930,6 +995,7 @@ export function VideoEditorProvider({
         effectRegistryRef={effectRegistryRef}
         transitionRegistryRef={transitionRegistryRef}
         clipTypeRegistryRef={clipTypeRegistryRef}
+        agentToolRegistryRef={agentToolRegistryRef}
       >
         {children}
       </InnerProvider>

@@ -1,0 +1,67 @@
+{
+  "id": "log_a18da423a5f0",
+  "level": "debug",
+  "category": "system",
+  "event_type": "authority_divergence",
+  "message": "authority_divergence emitted",
+  "details": {
+    "event": {
+      "seq": 4828,
+      "schema_version": 1,
+      "ts_utc": "2026-06-19T22:25:12.062690+00:00",
+      "ts_rel_init_s": 5878.645984,
+      "kind": "authority_divergence",
+      "phase": "execute",
+      "payload": {
+        "diagnostic_version": 1,
+        "task_id": "T2",
+        "raw_terminal_status": "done",
+        "authority_status": "unsatisfied",
+        "authoritative": false,
+        "reason": "stale_evidence:head_mismatch:task_commands_run",
+        "missing_outputs": [],
+        "stale_evidence": [
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_files_changed",
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_files_changed",
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_commands_run"
+        ],
+        "would_block_reasons": [
+          "stale_evidence:head_mismatch:task_commands_run",
+          "stale_evidence:head_mismatch:task_files_changed"
+        ],
+        "error": null,
+        "diagnostics": {
+          "task_id": "T2",
+          "declared_outputs": {
+            "files_changed": [
+              "src/sdk/boundary.test.ts"
+            ],
+            "commands_run": [
+              "npx vitest run src/sdk/boundary.test.ts --reporter=verbose"
+            ]
+          },
+          "linked_evidence_count": 8,
+          "evidence_count": 156,
+          "normalization": "iterable",
+          "status": "unsatisfied",
+          "evidence_sources": [
+            "plan_artifacts"
+          ],
+          "loaded_evidence_count": 156,
+          "raw_terminal_status": "done"
+        },
+        "ts_utc": "2026-06-19T22:25:12.062316+00:00"
+      },
+      "transaction_id": "c7c9bd65d2d71a61",
+      "store_method": "log_system_event"
+    }
+  },
+  "turn_id": null,
+  "epic_id": "m10-agent-tool-contributions-20260619-2247",
+  "occurred_at": "2026-06-19T22:25:12.062736Z"
+}

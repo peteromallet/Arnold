@@ -1,0 +1,34 @@
+{
+  "manifest": {
+    "id": "com.reigh.examples.agent-tools-copilot",
+    "version": "1.0.0",
+    "label": "Agent Tools Copilot Canary",
+    "description": "Copilot proposal canary demonstrating M10 agent tools that read TimelineSnapshot, return proposal rationale/explanation with affected objects and source-to-output refs, and demonstrate replaceForSource by replacing prior pending suggestions from the same tool source.",
+    "apiVersion": 1,
+    "contributions": [
+      {
+        "id": "copilot-analyze-contribution",
+        "kind": "agentTool",
+        "toolId": "canary.copilot.analyze",
+        "label": "Copilot Analyze",
+        "description": "Reads TimelineSnapshot and returns a detailed analysis with source-to-output refs.",
+        "resultFamilies": ["ui/summary"],
+        "order": 10
+      },
+      {
+        "id": "copilot-suggest-contribution",
+        "kind": "agentTool",
+        "toolId": "canary.copilot.suggest",
+        "label": "Copilot Suggest",
+        "description": "Reads TimelineSnapshot and returns mutation/proposal results with patches, affected object IDs, and source-to-output refs. Uses a stable source identifier so repeated calls replace prior pending proposals (replaceForSource).",
+        "resultFamilies": ["mutation/proposal"],
+        "order": 20
+      }
+    ],
+    "messages": {
+      "activation.started": "Agent Tools Copilot Canary activating…",
+      "activation.ready": "Agent Tools Copilot Canary ready with analyze and suggest tools registered.",
+      "activation.disposed": "Agent Tools Copilot Canary disposed."
+    }
+  }
+}

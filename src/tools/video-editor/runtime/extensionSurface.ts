@@ -19,6 +19,8 @@ import type {
   MetadataFacetValueKind,
   EffectContribution,
   TransitionContribution,
+  AgentToolContribution,
+  ToolResultFamily,
 } from '@reigh/editor-sdk';
 import { contributionKindNotYetBridged } from '@reigh/editor-sdk';
 import type { TimelineGestureOwner } from '@/tools/video-editor/lib/mobile-interaction-model';
@@ -126,6 +128,8 @@ export interface VideoEditorExtensionRuntimeConfig {
   effects: readonly VideoEditorEffectDescriptor[];
   /** M8: Normalized component-backed transition descriptors, provider-scoped and deterministically ordered. */
   transitions: readonly VideoEditorTransitionDescriptor[];
+  /** M10: Normalized agent tool descriptors, provider-scoped and deterministically ordered. */
+  agentTools: readonly VideoEditorAgentToolDescriptor[];
 }
 
 export interface ResolvedVideoEditorPanelRegistry {
@@ -245,6 +249,27 @@ export interface VideoEditorTransitionDescriptor {
 }
 
 // ---------------------------------------------------------------------------
+// M10: Agent tool descriptors
+// ---------------------------------------------------------------------------
+
+/** A normalized agent tool descriptor produced by runtime normalization. */
+export interface VideoEditorAgentToolDescriptor {
+  id: string;
+  extensionId: string;
+  order?: number;
+  /** The tool identifier used in ctx.agentTools registration calls. */
+  toolId: string;
+  /** Human-readable label for discovery / UI. */
+  label: string;
+  /** Human-readable description shown in tooltips / panel. */
+  description?: string;
+  /** Result families this tool can produce (empty = all accepted). */
+  resultFamilies: readonly ToolResultFamily[];
+  /** Whether a handler has been registered (always false at normalization time). */
+  hasHandler: boolean;
+}
+
+// ---------------------------------------------------------------------------
 // Host-owned runtime normalization types
 // ---------------------------------------------------------------------------
 
@@ -288,6 +313,8 @@ export interface ExtensionRuntime {
   readonly effects: readonly VideoEditorEffectDescriptor[];
   /** M8: Normalized component-backed transition descriptors. */
   readonly transitions: readonly VideoEditorTransitionDescriptor[];
+  /** M10: Normalized agent tool descriptors. */
+  readonly agentTools: readonly VideoEditorAgentToolDescriptor[];
 }
 
 /** Signature for host-owned runtime normalization. */
@@ -305,6 +332,7 @@ const EMPTY_METADATA_FACETS: readonly VideoEditorMetadataFacetDescriptor[] = Obj
 const EMPTY_ASSET_DETAIL_SECTIONS: readonly VideoEditorAssetDetailSectionDescriptor[] = Object.freeze([]);
 const EMPTY_EFFECTS: readonly VideoEditorEffectDescriptor[] = Object.freeze([]);
 const EMPTY_TRANSITIONS: readonly VideoEditorTransitionDescriptor[] = Object.freeze([]);
+const EMPTY_AGENT_TOOLS: readonly VideoEditorAgentToolDescriptor[] = Object.freeze([]);
 const EMPTY_RESOLVED_PANEL_REGISTRY: ResolvedVideoEditorPanelRegistry = Object.freeze({
   assetPanels: EMPTY_PANELS,
   inspectorSections: Object.freeze({
@@ -331,6 +359,7 @@ export const DEFAULT_VIDEO_EDITOR_EXTENSION_RUNTIME: VideoEditorExtensionRuntime
   assetDetailSections: EMPTY_ASSET_DETAIL_SECTIONS,
   effects: EMPTY_EFFECTS,
   transitions: EMPTY_TRANSITIONS,
+  agentTools: EMPTY_AGENT_TOOLS,
 });
 
 /**
@@ -595,6 +624,7 @@ export function normalizeExtensionRuntime(
   const assetDetailSectionDescriptors: VideoEditorAssetDetailSectionDescriptor[] = [];
   const effectDescriptors: VideoEditorEffectDescriptor[] = [];
   const transitionDescriptors: VideoEditorTransitionDescriptor[] = [];
+  const agentToolDescriptors: VideoEditorAgentToolDescriptor[] = [];
 
   for (const { contribution, extensionId } of sorted) {
     switch (contribution.kind) {
@@ -723,6 +753,21 @@ export function normalizeExtensionRuntime(
         // Transitions without transitionId are filtered in Phase 2; they never reach here.
         break;
       }
+      // M10: agentTool — bridge agent tool contributions into agentTools
+      case 'agentTool': {
+        const at = contribution as unknown as AgentToolContribution;
+        agentToolDescriptors.push({
+          id: contribution.id as string,
+          extensionId,
+          order: contribution.order,
+          toolId: at.toolId,
+          label: at.label,
+          description: at.description,
+          resultFamilies: (at.resultFamilies ?? []) as readonly ToolResultFamily[],
+          hasHandler: false,
+        });
+        break;
+      }
       default:
         // Unknown bridged kinds are silently skipped (should not occur)
         break;
@@ -801,7 +846,8 @@ export function normalizeExtensionRuntime(
     metadataFacetDescriptors.length > 0 ||
     assetDetailSectionDescriptors.length > 0 ||
     effectDescriptors.length > 0 ||
-    transitionDescriptors.length > 0;
+    transitionDescriptors.length > 0 ||
+    agentToolDescriptors.length > 0;
 
   const config: VideoEditorExtensionRuntimeConfig = hasAnyConfigurableContent
     ? Object.freeze({
@@ -821,6 +867,7 @@ export function normalizeExtensionRuntime(
         assetDetailSections: Object.freeze(assetDetailSectionDescriptors),
         effects: Object.freeze(effectDescriptors),
         transitions: Object.freeze(transitionDescriptors),
+        agentTools: Object.freeze(agentToolDescriptors),
       })
     : DEFAULT_VIDEO_EDITOR_EXTENSION_RUNTIME;
 
@@ -842,6 +889,7 @@ export function normalizeExtensionRuntime(
     assetDetailSections: Object.freeze(assetDetailSectionDescriptors),
     effects: Object.freeze(effectDescriptors),
     transitions: Object.freeze(transitionDescriptors),
+    agentTools: Object.freeze(agentToolDescriptors),
   });
 
   return runtime;
@@ -862,6 +910,7 @@ const EMPTY_EXTENSION_RUNTIME: ExtensionRuntime = Object.freeze({
   assetDetailSections: EMPTY_ASSET_DETAIL_SECTIONS,
   effects: EMPTY_EFFECTS,
   transitions: EMPTY_TRANSITIONS,
+  agentTools: EMPTY_AGENT_TOOLS,
 });
 
 type RegistryDescriptor = {

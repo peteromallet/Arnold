@@ -1,0 +1,71 @@
+{
+  "id": "log_d18e9477a153",
+  "level": "debug",
+  "category": "system",
+  "event_type": "authority_divergence",
+  "message": "authority_divergence emitted",
+  "details": {
+    "event": {
+      "seq": 8343,
+      "schema_version": 1,
+      "ts_utc": "2026-06-19T23:40:05.630374+00:00",
+      "ts_rel_init_s": 10372.213668,
+      "kind": "authority_divergence",
+      "phase": "execute",
+      "payload": {
+        "diagnostic_version": 1,
+        "task_id": "T10",
+        "raw_terminal_status": "done",
+        "authority_status": "unsatisfied",
+        "authoritative": false,
+        "reason": "stale_evidence:head_mismatch:task_commands_run",
+        "missing_outputs": [],
+        "stale_evidence": [
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_files_changed",
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_commands_run"
+        ],
+        "would_block_reasons": [
+          "stale_evidence:head_mismatch:task_commands_run",
+          "stale_evidence:head_mismatch:task_files_changed"
+        ],
+        "error": null,
+        "diagnostics": {
+          "task_id": "T10",
+          "declared_outputs": {
+            "files_changed": [
+              "supabase/functions/ai-timeline-agent/tools/registry.ts"
+            ],
+            "commands_run": [
+              "npx tsc --noEmit"
+            ]
+          },
+          "linked_evidence_count": 24,
+          "evidence_count": 178,
+          "normalization": "iterable",
+          "status": "unsatisfied",
+          "evidence_sources": [
+            "plan_artifacts"
+          ],
+          "loaded_evidence_count": 178,
+          "raw_terminal_status": "done"
+        },
+        "ts_utc": "2026-06-19T23:40:05.629971+00:00"
+      },
+      "transaction_id": "db0f15e76752eb11",
+      "store_method": "log_system_event"
+    }
+  },
+  "turn_id": null,
+  "epic_id": "m10-agent-tool-contributions-20260619-2247",
+  "occurred_at": "2026-06-19T23:40:05.630433Z"
+}

@@ -1,0 +1,34 @@
+{
+  "manifest": {
+    "id": "com.reigh.examples.agent-tools-export",
+    "version": "1.0.0",
+    "label": "Agent Tools Export Canary",
+    "description": "Export-adjacent canary demonstrating M10 agent tools that read only explicit request context (timeline, assets, export) and return exportPlanFindings plus proposal/diagnostic metadata. Represents missing contribution/export blocker context as findings or diagnostics without raw provider internals.",
+    "apiVersion": 1,
+    "contributions": [
+      {
+        "id": "export-plan-contribution",
+        "kind": "agentTool",
+        "toolId": "canary.export.plan",
+        "label": "Export Plan",
+        "description": "Reads explicit export context and returns export plan findings with diagnostic metadata. Never accesses raw provider internals.",
+        "resultFamilies": ["export"],
+        "order": 10
+      },
+      {
+        "id": "export-validate-contribution",
+        "kind": "agentTool",
+        "toolId": "canary.export.validate",
+        "label": "Export Validate",
+        "description": "Reads explicit export context (blockers, contributions, timeline, assets) and returns validation findings. Missing contribution/export blocker context is represented as findings and diagnostics.",
+        "resultFamilies": ["export"],
+        "order": 20
+      }
+    ],
+    "messages": {
+      "activation.started": "Agent Tools Export Canary activating…",
+      "activation.ready": "Agent Tools Export Canary ready with export plan and validate tools registered.",
+      "activation.disposed": "Agent Tools Export Canary disposed."
+    }
+  }
+}

@@ -19,6 +19,7 @@ import type {
   ExtensionRuntime,
 } from '@/tools/video-editor/runtime/extensionSurface.ts';
 import type { CommandRegistry } from '@/tools/video-editor/runtime/commandRegistry.ts';
+import type { AgentToolRegistry } from '@/tools/video-editor/runtime/agentToolRegistry.ts';
 import type { DiagnosticCollection } from '@reigh/editor-sdk';
 
 export interface VideoEditorRuntimeContextValue {
@@ -40,6 +41,8 @@ export interface VideoEditorRuntimeContextValue {
   extensionRuntime?: ExtensionRuntime;
   /** M4: Provider-scoped command registry (commands, keybindings, context menus). */
   commandRegistry?: CommandRegistry;
+  /** M10: Provider-scoped agent tool registry for host-mediated, proposal-backed agent tools. */
+  agentToolRegistry?: AgentToolRegistry;
   /** Provider-scoped diagnostics surfaced by status and diagnostic panels. */
   diagnosticCollection?: DiagnosticCollection;
 }

@@ -1,0 +1,108 @@
+{
+  "id": "log_3200ede7eb74",
+  "level": "debug",
+  "category": "system",
+  "event_type": "authority_divergence",
+  "message": "authority_divergence emitted",
+  "details": {
+    "event": {
+      "seq": 5443,
+      "schema_version": 1,
+      "ts_utc": "2026-06-19T22:34:14.461900+00:00",
+      "ts_rel_init_s": 6421.045194,
+      "kind": "authority_divergence",
+      "phase": "execute",
+      "payload": {
+        "diagnostic_version": 1,
+        "task_id": "T8",
+        "raw_terminal_status": "done",
+        "authority_status": "unsatisfied",
+        "authoritative": false,
+        "reason": "stale_evidence:head_mismatch:task_files_changed",
+        "missing_outputs": [],
+        "stale_evidence": [
+          "head_mismatch:task_files_changed",
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_files_changed",
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_files_changed",
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_files_changed",
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_commands_run"
+        ],
+        "would_block_reasons": [
+          "stale_evidence:head_mismatch:task_files_changed",
+          "stale_evidence:head_mismatch:task_commands_run"
+        ],
+        "error": null,
+        "diagnostics": {
+          "task_id": "T8",
+          "declared_outputs": {
+            "files_changed": [
+              "src/tools/video-editor/runtime/agentToolInvocationAdapters.ts"
+            ],
+            "commands_run": [
+              "npx tsc --noEmit",
+              "npx vitest run src/tools/video-editor/runtime/agentToolRegistry.test.ts src/tools/video-editor/runtime/agentToolContracts.test.ts --reporter=verbose --config config/testing/vitest.config.ts",
+              "npx vitest run src/sdk/boundary.test.ts src/sdk/index.test.ts --reporter=verbose --config config/testing/vitest.config.ts",
+              "npx vitest run src/tools/video-editor/runtime/extensionSurface.test.ts --reporter=verbose --config config/testing/vitest.config.ts",
+              "npx vitest run src/tools/video-editor/runtime/extensionLifecycle.test.ts --reporter=verbose --config config/testing/vitest.config.ts",
+              "npx vitest run supabase/functions/ai-timeline-agent/tools/registry.proposal.test.ts supabase/functions/ai-timeline-agent/tools/timeline.test.ts --reporter=verbose --config config/testing/vitest.edge.config.ts",
+              "npx tsc --noEmit --pretty"
+            ]
+          },
+          "linked_evidence_count": 52,
+          "evidence_count": 152,
+          "normalization": "iterable",
+          "status": "unsatisfied",
+          "evidence_sources": [
+            "plan_artifacts"
+          ],
+          "loaded_evidence_count": 152,
+          "raw_terminal_status": "done"
+        },
+        "ts_utc": "2026-06-19T22:34:14.461529+00:00"
+      },
+      "transaction_id": "b31a3c0acd257df8",
+      "store_method": "log_system_event"
+    }
+  },
+  "turn_id": null,
+  "epic_id": "m10-agent-tool-contributions-20260619-2247",
+  "occurred_at": "2026-06-19T22:34:14.461940Z"
+}
