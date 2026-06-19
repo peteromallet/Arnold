@@ -420,14 +420,60 @@ def _load_profiles_file(
 
 
 def _built_in_profile_files() -> list[Any]:
-    return sorted(
-        (
-            entry
-            for entry in files("arnold.pipelines.megaplan.profiles").iterdir()
-            if entry.is_file() and entry.name.endswith(".toml")
-        ),
-        key=lambda entry: entry.name,
-    )
+    """Return built-in profile .toml files, tolerating broken editable installs.
+
+    ``importlib.resources.files`` can return a non-existent path when a package
+    is installed editable and the resource reader gets confused by namespace
+    packages or stale metadata.  In that case we fall back to the directory
+    containing this source file, which is the authoritative filesystem location
+    for the loaded module.
+    """
+    package_name = "arnold.pipelines.megaplan.profiles"
+    candidate_roots: list[Path] = []
+
+    # Primary: importlib.resources for installed packages.
+    try:
+        resource_root = files(package_name)
+        if resource_root is not None:
+            candidate_roots.append(Path(str(resource_root)))
+    except Exception:
+        pass
+
+    # Fallback: the directory of this module (works for editable installs).
+    candidate_roots.append(Path(__file__).parent)
+
+    # Additional fallback: spec search locations, if available.
+    try:
+        import importlib.util
+
+        spec = importlib.util.find_spec(package_name)
+        if spec is not None and spec.submodule_search_locations:
+            candidate_roots.extend(
+                Path(str(loc)) for loc in spec.submodule_search_locations
+            )
+    except Exception:
+        pass
+
+    seen: set[Path] = set()
+    entries: list[Path] = []
+    for root in candidate_roots:
+        try:
+            if not root.exists() or not root.is_dir():
+                continue
+        except Exception:
+            continue
+        resolved = root.resolve()
+        if resolved in seen:
+            continue
+        seen.add(resolved)
+        try:
+            for entry in root.iterdir():
+                if entry.is_file() and entry.name.endswith(".toml"):
+                    entries.append(entry)
+        except (OSError, FileNotFoundError):
+            continue
+
+    return sorted(entries, key=lambda entry: entry.name)
 
 
 def load_profile_sources(

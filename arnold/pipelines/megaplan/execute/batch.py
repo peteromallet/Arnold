@@ -77,6 +77,9 @@ from arnold.pipelines.megaplan.orchestration.phase_result import Deviation
 from arnold.pipelines.megaplan.orchestration.authority_readers import (
     scheduler_completed_ids,
 )
+from arnold.pipelines.megaplan.orchestration.task_satisfaction import (
+    EvidenceExecutionWindow,
+)
 from arnold.pipelines.megaplan.calibration import query_route_if_enabled
 from arnold.pipelines.megaplan.prompts import (
     _execute_batch_prompt,
@@ -142,15 +145,66 @@ def _scheduler_completed_ids_for_tasks(
     *,
     plan_dir: Path,
     root: Path | None = None,
+    state: PlanState | None = None,
     decisions: dict[str, Any] | None = None,
 ) -> set[str]:
     current_head = _best_effort_git_head(root)
+    execution_window = _execution_window_from_state(
+        state,
+        root=root,
+        current_head=current_head,
+    )
     return scheduler_completed_ids(
         tasks,
         plan_dir=plan_dir,
         current_head=current_head,
+        execution_window=execution_window,
         decisions=decisions,
     )
+
+
+def _execution_window_from_state(
+    state: PlanState | None,
+    *,
+    root: Path | None,
+    current_head: str | None,
+) -> EvidenceExecutionWindow | None:
+    if state is None or current_head is None:
+        return None
+    meta = state.get("meta") if isinstance(state, dict) else None
+    baseline = (
+        meta.get("execution_baseline")
+        if isinstance(meta, dict) and isinstance(meta.get("execution_baseline"), dict)
+        else None
+    )
+    if not isinstance(baseline, dict):
+        return None
+    base_sha = _string_or_none(baseline.get("base_sha")) or _string_or_none(
+        baseline.get("head")
+    )
+    if base_sha is None:
+        return None
+    config = state.get("config") if isinstance(state, dict) else None
+    configured_project_dir = (
+        config.get("project_dir") if isinstance(config, dict) else None
+    )
+    project_dir = (
+        Path(configured_project_dir)
+        if isinstance(configured_project_dir, str) and configured_project_dir
+        else root
+    )
+    if project_dir is None:
+        return None
+    return EvidenceExecutionWindow(
+        project_dir=project_dir,
+        base_sha=base_sha,
+        head_sha=current_head,
+        base_ref=_string_or_none(baseline.get("base_ref")),
+    )
+
+
+def _string_or_none(value: Any) -> str | None:
+    return value if isinstance(value, str) and value else None
 
 
 def _best_effort_git_head(root: Path | None) -> str | None:
@@ -168,6 +222,39 @@ def _best_effort_git_head(root: Path | None) -> str | None:
         return None
     head = completed.stdout.strip()
     return head or None
+
+
+def _stamp_head_sha_on_task_records(
+    payload: dict[str, Any],
+    finalize_data: dict[str, Any],
+    root: Path | None,
+) -> None:
+    """Stamp current git HEAD onto task records so evidence refs stay fresh.
+
+    The M2 authority reader treats evidence without a matching ``head_sha`` as
+    stale. Execute workers do not know the project HEAD, so the batch runner
+    must anchor completed task records to the HEAD at write time. This is a
+    minimal, safe injection: it only adds ``head_sha`` when the record already
+    carries task-output evidence (``files_changed`` or ``commands_run``) and
+    does not already have a ``head_sha``/``head`` value.
+    """
+
+    head = _best_effort_git_head(root)
+    if not head:
+        return
+
+    def _stamp(record: Any) -> None:
+        if not isinstance(record, dict):
+            return
+        has_evidence = bool(record.get("files_changed") or record.get("commands_run"))
+        has_head = bool(record.get("head_sha") or record.get("head"))
+        if has_evidence and not has_head:
+            record["head_sha"] = head
+
+    for update in payload.get("task_updates") or []:
+        _stamp(update)
+    for task in finalize_data.get("tasks") or []:
+        _stamp(task)
 
 
 def _batch_task_signature(batch_task_ids: Iterable[str], batch_complexity: int) -> str:
@@ -976,6 +1063,7 @@ def _run_and_merge_batch(
             artifact_prefix=f"execution_batch_{batch_number}",
             keys=("files_changed",),
         )
+    _stamp_head_sha_on_task_records(payload, finalize_data, root)
     atomic_write_json(batch_artifact_path(plan_dir, batch_number), payload)
     atomic_write_json(plan_dir / "execution_audit.json", execution_audit)
     write_plan_artifact_json(plan_dir, "finalize.json", finalize_data, contract_context=None)
@@ -1092,6 +1180,7 @@ def handle_execute_one_batch(
         overlaid_tasks,
         plan_dir=plan_dir,
         root=root,
+        state=state,
         decisions=authority_decisions,
     )
     for prior_idx in range(batch_number - 1):
@@ -2134,6 +2223,7 @@ def handle_execute_auto_loop(
         tasks,
         plan_dir=plan_dir,
         root=root,
+        state=state,
     )
     completed_task_ids |= {
         task["id"]
@@ -2377,6 +2467,39 @@ def handle_execute_auto_loop(
         else ([] if no_pending_execution else ([all_task_ids] if single_batch_mode else split_batches))
     )
     total_batches = len(batches_to_run) or 1
+    plan_mode = state["config"].get("mode", "code")
+    if no_pending_execution:
+        # All tasks are already terminal; the durable record lives in the
+        # per-batch artifacts. Load them so aggregation, sense-check
+        # accounting, and the final transition use the completed work instead
+        # of an empty reconstructed payload.
+        loaded_batch_payloads = [
+            read_json(path) for path in list_batch_artifacts(plan_dir)
+        ]
+        if loaded_batch_payloads:
+            total_batches = max(total_batches, len(loaded_batch_payloads))
+            _all_task_ids = list(all_task_ids)
+            _all_sense_check_ids = list(all_sense_check_ids)
+            _resume_merge_issues: list[str] = []
+            for payload in loaded_batch_payloads:
+                _merge_batch_results(
+                    finalize_data=finalize_data,
+                    payload=payload,
+                    batch_task_ids=_all_task_ids,
+                    batch_sense_check_ids=_all_sense_check_ids,
+                    issues=_resume_merge_issues,
+                    mode=plan_mode,
+                    state=state,
+                )
+            if _resume_merge_issues:
+                log.debug(
+                    "resume-merge issues from loaded batch payloads: %s",
+                    _resume_merge_issues,
+                )
+            write_plan_artifact_json(
+                plan_dir, "finalize.json", finalize_data, contract_context=None
+            )
+            batch_payloads = loaded_batch_payloads
     active_task_ids = set(
         review_rework_task_ids
         if rework_mode
@@ -2643,6 +2766,7 @@ def handle_execute_auto_loop(
             finalize_data.get("tasks", []),
             plan_dir=plan_dir,
             root=root,
+            state=state,
         )
         newly_blocked_task_ids = {
             task["id"]

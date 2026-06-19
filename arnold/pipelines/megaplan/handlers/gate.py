@@ -712,6 +712,82 @@ _GATE_SCRATCH_KNOWN_KEYS: frozenset[str] = frozenset(
 # ────────────────────────────────────────────────────────────────────────────
 
 
+_GATE_RECOMMENDATIONS: frozenset[str] = frozenset({"PROCEED", "ITERATE", "ESCALATE", "TIEBREAKER"})
+
+
+def _normalize_gate_payload(
+    gate_payload: dict[str, Any],
+    signals_artifact: dict[str, Any],
+) -> dict[str, Any]:
+    """Recover from an empty or structurally invalid gate worker payload.
+
+    Some worker/model combinations (notably DeepSeek via Hermes for the gate
+    phase) occasionally emit empty recommendation/rationale fields even when
+    the surrounding signals make the correct verdict obvious. Rather than
+    failing the whole gate, infer a conservative recommendation from the
+    computed signals and log a warning so the audit trail remains honest.
+    """
+    recommendation = str(gate_payload.get("recommendation", "")).strip().upper()
+    if recommendation not in _GATE_RECOMMENDATIONS:
+        original = gate_payload.get("recommendation")
+        preflight = signals_artifact.get("preflight_results", {})
+        preflight_passed = isinstance(preflight, dict) and all(preflight.values())
+        unresolved = signals_artifact.get("unresolved_flags", [])
+        has_significant = bool(
+            isinstance(unresolved, list)
+            and any(
+                isinstance(f, dict)
+                and f.get("severity") in ("significant", "likely-significant")
+                for f in unresolved
+            )
+        )
+        if has_significant:
+            recommendation = "ITERATE"
+            reason = "significant unresolved flags remain"
+        elif not preflight_passed:
+            recommendation = "ESCALATE"
+            reason = "preflight checks are still failing"
+        else:
+            recommendation = "PROCEED"
+            reason = "no significant unresolved flags and preflight passed"
+        log.warning(
+            "Gate worker emitted invalid/empty recommendation %r; falling back to %s (%s)",
+            original,
+            recommendation,
+            reason,
+        )
+        gate_payload["recommendation"] = recommendation
+        if not str(gate_payload.get("rationale", "")).strip():
+            gate_payload["rationale"] = (
+                f"Auto-inferred {recommendation} because the gate worker returned an "
+                f"invalid/empty recommendation and {reason}."
+            )
+        if not str(gate_payload.get("signals_assessment", "")).strip():
+            gate_payload["signals_assessment"] = (
+                "No significant flags were raised by critique; proceeding to execution."
+                if recommendation == "PROCEED"
+                else "Critique signals require further attention before proceeding."
+            )
+
+    # Ensure required array fields exist so later schema validation passes.
+    gate_payload.setdefault("warnings", [])
+    gate_payload.setdefault("settled_decisions", [])
+    gate_payload.setdefault("flag_resolutions", [])
+    gate_payload.setdefault("accepted_tradeoffs", [])
+    # Strip placeholder/empty tradeoff objects emitted by some workers.
+    gate_payload["accepted_tradeoffs"] = [
+        item
+        for item in gate_payload["accepted_tradeoffs"]
+        if isinstance(item, dict)
+        and any(
+            str(value).strip()
+            for key, value in item.items()
+            if key in {"flag_id", "concern", "subsystem", "rationale"}
+        )
+    ]
+    return gate_payload
+
+
 def handle_gate(root: Path, args: argparse.Namespace) -> StepResponse:
     with load_plan_locked(root, args.plan, step="gate") as (plan_dir, state):
         post_revise_gate = _post_revise_gate_allowed(state, plan_dir)
@@ -764,7 +840,8 @@ def handle_gate(root: Path, args: argparse.Namespace) -> StepResponse:
         worker.payload = _promoted
         # ────────────────────────────────────────────────────────────
 
-        gate_payload = worker.payload
+        gate_payload = _normalize_gate_payload(worker.payload, signals_artifact)
+        worker.payload = gate_payload
         try:
             audit_step_payload("gate", gate_payload)
         except ModelStructuralAuditError as error:
@@ -850,7 +927,8 @@ def handle_gate(root: Path, args: argparse.Namespace) -> StepResponse:
             # ────────────────────────────────────────────────────────
 
             worker = _merge_gate_worker_attempt(worker, retry_worker)
-            gate_payload = worker.payload
+            gate_payload = _normalize_gate_payload(worker.payload, signals_artifact)
+            worker.payload = gate_payload
             try:
                 audit_step_payload("gate", gate_payload)
             except ModelStructuralAuditError as error:

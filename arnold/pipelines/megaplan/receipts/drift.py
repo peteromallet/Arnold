@@ -20,6 +20,9 @@ BENIGN_PATTERNS = (
     "yarn.lock",
     "Cargo.lock",
     "step_receipt_*.json",
+    "*.bak",
+    "*.orig",
+    "*.rej",
 )
 
 

@@ -719,6 +719,7 @@ def _execute_batch_prompt(
         - Fill in the following template and return it as your JSON response. Only update the entries for this batch's tasks/sense checks.
         - {template_reference}
         - Only produce `task_updates` for these tasks: [{", ".join(batch_task_ids)}]
+        - `task_updates[].status` must be one of `done`, `skipped`, `completed`, or `blocked`; never `pending` or `in_progress`.
         - Only produce `sense_check_acknowledgments` for these sense checks: [{", ".join(batch_sense_check_ids)}]
         - Do not include updates for tasks or sense checks outside this batch.
         - Some prior file lists may be capped prompt projections with `items`, `omitted_count`, and `full_set_artifact_ref`; use the artifact reference when you need the full set.

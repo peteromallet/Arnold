@@ -708,6 +708,71 @@ def test_auto_attribute_populated_files_changed_short_circuits(tmp_path: Path) -
     assert result.recursive_snapshot is None
 
 
+def test_scheduler_completed_ids_for_tasks_accepts_prior_batch_head_after_operator_commit(
+    tmp_path: Path,
+) -> None:
+    project_dir = tmp_path / "project"
+    project_dir.mkdir()
+
+    def git(*args: str) -> str:
+        completed = subprocess.run(
+            ["git", *args],
+            cwd=project_dir,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        return completed.stdout.strip()
+
+    git("init", "-q")
+    git("config", "user.email", "test@example.com")
+    git("config", "user.name", "Test User")
+    (project_dir / "seed.txt").write_text("seed\n", encoding="utf-8")
+    git("add", "seed.txt")
+    git("commit", "-q", "-m", "seed")
+    base_sha = git("rev-parse", "HEAD")
+
+    (project_dir / "work.py").write_text("batch 1\n", encoding="utf-8")
+    git("add", "work.py")
+    git("commit", "-q", "-m", "batch 1")
+    observed_sha = git("rev-parse", "HEAD")
+
+    (project_dir / "operator.txt").write_text("operator\n", encoding="utf-8")
+    git("add", "operator.txt")
+    git("commit", "-q", "-m", "operator commit")
+
+    plan_dir = tmp_path / "plan"
+    plan_dir.mkdir()
+    (plan_dir / "execution_batch_1.json").write_text(
+        json.dumps(
+            {
+                "task_updates": [
+                    {
+                        "task_id": "T1",
+                        "status": "done",
+                        "files_changed": ["work.py"],
+                        "head_sha": observed_sha,
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    state = {
+        "config": {"project_dir": str(project_dir)},
+        "meta": {"execution_baseline": {"head": base_sha}},
+    }
+
+    completed = megaplan_execute_batch._scheduler_completed_ids_for_tasks(
+        [{"id": "T1", "status": "done", "files_changed": ["work.py"]}],
+        plan_dir=plan_dir,
+        root=project_dir,
+        state=state,
+    )
+
+    assert completed == {"T1"}
+
+
 def test_auto_attribute_skipped_tasks_ignored(tmp_path: Path) -> None:
     finalize_data = {
         "tasks": [

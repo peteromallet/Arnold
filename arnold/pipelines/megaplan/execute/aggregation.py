@@ -291,8 +291,14 @@ def _compute_execute_scope_drift(
                     files_claimed.add(claimed_path)
                     per_call_claimed.add(claimed_path)
     try:
+        # Capture the full working-tree snapshot without a base_ref filter.
+        # The committed range since ``milestone_base_sha`` is unioned in below
+        # via ``_collect_committed_range_paths``; filtering status by the
+        # committed window here drops uncommitted changes to files that were
+        # not already present in the committed range, causing false
+        # ``files_missing`` scope-drift failures.
         observed_snapshot, observed_error = _capture_execute_scope_snapshot(
-            project_dir, base_ref=milestone_base_sha
+            project_dir, base_ref=None
         )
     except Exception as exc:
         raise CliError(

@@ -250,6 +250,31 @@ def _remote_branch_exists(root: Path, branch: str, *, writer) -> bool:
     )
 
 
+def _clean_worktree_for_chain(root: Path, writer) -> None:
+    """Reset tracked changes and remove megaplan-generated untracked files.
+
+    Chain execution re-creates .megaplan metadata each phase; stale working-tree
+    changes from a previous run (modified schemas, deleted events.jsonl files,
+    telemetry dumps, lock files) would otherwise block branch checkouts.
+    """
+    writer("[chain] cleaning worktree for automated branch checkout\n")
+    _compat()._run_command(
+        root,
+        ["git", "reset", "--hard", "HEAD"],
+        writer=writer,
+        error_code="git_clean_failed",
+    )
+    for subdir in ("epics", "schemas", "telemetry", ".state-locks"):
+        path = root / ".megaplan" / subdir
+        if path.exists():
+            _compat()._run_command(
+                root,
+                ["git", "clean", "-fd", str(path.relative_to(root))],
+                writer=writer,
+                error_code="git_clean_failed",
+            )
+
+
 def _checkout_milestone_branch(
     root: Path,
     branch: str,
@@ -266,6 +291,7 @@ def _checkout_milestone_branch(
     merge creates a fresh commit only on the remote base branch.
     """
     if _compat()._remote_branch_exists(root, branch, writer=writer):
+        _clean_worktree_for_chain(root, writer)
         _compat()._run_command(root, ["git", "fetch", "origin", branch], writer=writer, error_code="git_branch_failed")
         _compat()._run_command(
             root,
@@ -274,6 +300,7 @@ def _checkout_milestone_branch(
             error_code="git_branch_failed",
         )
         return
+    _clean_worktree_for_chain(root, writer)
     fork_point = base_branch
     if from_origin:
         fetch = _compat().subprocess.run(
@@ -1117,6 +1144,46 @@ def _commit_and_push_phase(
     if committed_sha is None:
         # Nothing committed (and not an init anchor) — nothing to publish.
         return
+    # Reconcile with origin so a resumed chain whose local branch diverged
+    # from the remote milestone branch (e.g. reset to base) can still push.
+    fetch = _compat().subprocess.run(
+        ["git", "fetch", "origin", branch],
+        cwd=str(root),
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=120,
+    )
+    writer(f"[chain] git fetch origin {branch} -> rc={fetch.returncode}\n")
+    if fetch.returncode == 0:
+        rebase = _compat().subprocess.run(
+            ["git", "rebase", f"origin/{branch}"],
+            cwd=str(root),
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=120,
+        )
+        writer(f"[chain] git rebase origin/{branch} -> rc={rebase.returncode}\n")
+        if rebase.returncode != 0:
+            detail = (rebase.stderr or rebase.stdout or "").strip()
+            writer(
+                f"[chain] rebase failed; aborting and falling back to force push"
+                f"{(': ' + detail) if detail else ''}\n"
+            )
+            _compat()._run_command(
+                root,
+                ["git", "rebase", "--abort"],
+                writer=writer,
+                error_code="git_push_failed",
+            )
+            _compat()._run_command(
+                root,
+                ["git", "push", "--force-with-lease", "origin", branch],
+                writer=writer,
+                error_code="git_push_failed",
+            )
+            return
     _compat()._run_command(root, ["git", "push", "origin", branch], writer=writer, error_code="git_push_failed")
 
 
