@@ -111,6 +111,7 @@ from arnold.pipelines.megaplan._pipeline.types import (
     StepContext,
     StepResult,
 )
+from arnold.pipeline.types import Stage as _GenericStage
 
 
 @dataclasses.dataclass(frozen=True)
@@ -962,6 +963,11 @@ def _run_parallel_stage(node: ParallelStage, ctx: StepContext) -> StepResult:
     return joined
 
 
+def _is_single_stage(node: Any) -> bool:
+    """Return whether *node* is a Megaplan or generic Arnold Stage."""
+    return isinstance(node, (Stage, _GenericStage))
+
+
 def _materialize_stage_step(node: Stage):
     """Inject stage-level invocation metadata into runtime AgentStep instances."""
     if node.invocation is None:
@@ -1053,7 +1059,7 @@ def run_pipeline(
             from arnold.pipelines.megaplan._pipeline.contracts import PortBindError
 
             consumes = ()
-            if isinstance(node, Stage):
+            if _is_single_stage(node):
                 consumes = tuple(node.consumes) or tuple(
                     getattr(node.step, "consumes", ()) or ()
                 )
@@ -1109,7 +1115,7 @@ def run_pipeline(
         from arnold.pipelines.megaplan.observability.events import emit as _emit_event, EventKind as _EK
 
         _node_consumes: tuple
-        if isinstance(node, Stage):
+        if _is_single_stage(node):
             _node_consumes = tuple(getattr(node, "consumes", ()) or ()) or tuple(
                 getattr(node.step, "consumes", ()) or ()
             )
@@ -1159,7 +1165,7 @@ def run_pipeline(
             if isinstance(node, ParallelStage):
                 result = _run_parallel_stage(node, ctx)
             else:
-                assert isinstance(node, Stage)
+                assert _is_single_stage(node)
                 result = _materialize_stage_step(node).run(ctx)
         except BaseException as exc:
             if isinstance(exc, (KeyboardInterrupt, SystemExit)):

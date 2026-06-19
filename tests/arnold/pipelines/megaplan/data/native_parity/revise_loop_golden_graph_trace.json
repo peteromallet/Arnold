@@ -1,0 +1,13 @@
+{
+  "artifact_inventory": {},
+  "blocked": true,
+  "blocked_reason": "Requires gate worker mock returning 'iterate' then 'proceed'; default mock workers only produce 'proceed'.",
+  "envelope": null,
+  "final_stage": null,
+  "generated_by": "graph_executor",
+  "resume_cursor": null,
+  "scenario_id": "revise_loop",
+  "schema_version": 1,
+  "stage_sequence": [],
+  "state": null
+}

@@ -738,22 +738,14 @@ SCHEMAS: dict[str, dict[str, Any]] = {
             "output": {"type": "string"},
             "files_changed": {"type": "array", "items": {"type": "string"}},
             "commands_run": {"type": "array", "items": {"type": "string"}},
-            "deviations": {
-                "type": "array",
-                "items": {
-                    "anyOf": [
-                        {"type": "string"},
-                        {"type": "object", "additionalProperties": True},
-                    ]
-                },
-            },
+            "deviations": {"type": "array", "items": {"type": "string"}},
             "task_updates": {
                 "type": "array",
                 "items": {
                     "type": "object",
                     "properties": {
                         "task_id": {"type": "string"},
-                        "status": {"type": "string", "enum": ["done", "skipped", "completed", "blocked", "pending"]},
+                        "status": {"type": "string", "enum": ["done", "skipped", "completed", "blocked"]},
                         "executor_notes": {"type": "string"},
                         "files_changed": {"type": "array", "items": {"type": "string"}},
                         "commands_run": {"type": "array", "items": {"type": "string"}},

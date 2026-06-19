@@ -1,0 +1,13 @@
+{
+  "artifact_inventory": {},
+  "blocked": true,
+  "blocked_reason": "Requires execute phase to produce distinct artifacts for review consumption; default mock workers produce minimal output. Artifact content verification deferred to native execution path.",
+  "envelope": null,
+  "final_stage": null,
+  "generated_by": "graph_executor",
+  "resume_cursor": null,
+  "scenario_id": "execute_review_artifact",
+  "schema_version": 1,
+  "stage_sequence": [],
+  "state": null
+}

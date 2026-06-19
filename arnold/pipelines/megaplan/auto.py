@@ -1990,11 +1990,7 @@ def _execute_completion_authority(plan_dir: Path | None) -> tuple[bool, list[str
     for task in tasks:
         task_id = str(task.get("id") or task.get("task_id") or "")
         raw_status = task.get("status")
-        # Skipped tasks are intentionally not executed (e.g. baseline-unavailable
-        # checkpoints) and do not require evidence corroboration.
-        if raw_status == "skipped":
-            continue
-        if raw_status in {"done", "completed", "waived", "not_applicable"} and task_id not in completed:
+        if raw_status in {"done", "completed", "skipped", "waived", "not_applicable"} and task_id not in completed:
             decision = decisions.get(task_id)
             reason = "unknown"
             if decision is not None:

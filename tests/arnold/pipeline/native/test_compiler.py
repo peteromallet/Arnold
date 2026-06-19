@@ -544,6 +544,63 @@ class TestCompileErrors:
         assert "Attribute" in str(exc_info.value) or "not supported" in str(exc_info.value)
 
 
+# ── async def rejection (M4 settled decision) ─────────────────────────
+
+
+class TestAsyncRejection:
+    """Compiler rejects ``async def`` pipelines with a clear diagnostic.
+
+    M4 uses the existing sync generator subset for native pipelines.
+    Literal ``async def`` support is not required for milestone 4.
+    """
+
+    def test_async_def_pipeline_rejected(self) -> None:
+        """An async def pipeline is rejected with NativeCompileError."""
+
+        @phase
+        def _do_work(ctx: object) -> dict:
+            return {}
+
+        @pipeline
+        async def _async_pipe(ctx: object) -> dict:
+            state = yield _do_work(ctx)
+
+        with pytest.raises(NativeCompileError) as exc_info:
+            compile_pipeline(_async_pipe)
+        assert "async" in str(exc_info.value).lower()
+        assert "_async_pipe" in str(exc_info.value)
+
+    def test_async_def_error_mentions_sync_generator(self) -> None:
+        """The error message guides users to use sync generator syntax."""
+
+        @phase
+        def _step(ctx: object) -> dict:
+            return {}
+
+        @pipeline(name="async_test_pipe")
+        async def _async_test(ctx: object) -> dict:
+            state = yield _step(ctx)
+
+        with pytest.raises(NativeCompileError) as exc_info:
+            compile_pipeline(_async_test)
+        msg = str(exc_info.value)
+        assert "M4" in msg
+        assert "sync" in msg.lower() or "generator" in msg.lower()
+        assert "def" in msg.lower()
+
+    def test_async_def_without_yield_rejected(self) -> None:
+        """An async def pipeline without phases is also rejected clearly."""
+
+        @pipeline
+        async def _empty_async(ctx: object) -> dict:
+            return {}
+
+        with pytest.raises(NativeCompileError) as exc_info:
+            compile_pipeline(_empty_async)
+        assert "async" in str(exc_info.value).lower()
+        assert "_empty_async" in str(exc_info.value)
+
+
 # ── NativeInstruction / NativeProgram dataclass tests ─────────────────
 
 

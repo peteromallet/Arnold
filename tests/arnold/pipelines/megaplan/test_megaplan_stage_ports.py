@@ -9,6 +9,7 @@ from arnold.pipelines.megaplan._pipeline.pattern_topology import (
 from arnold.pipelines.megaplan._pipeline.types import Edge, ParallelStage, Stage, StepResult
 from arnold.pipeline.step_invocation import StepInvocation
 from arnold.pipeline.types import Port, PortRef, ReadRef, WriteRef
+from arnold.pipeline.native.graph_projection import _NativePhaseStep
 from arnold.pipelines.megaplan.pipeline import (
     _planning_loop_should_halt,
     build_pipeline,
@@ -195,6 +196,11 @@ def test_required_branch_and_loop_seam_pairs_are_declared() -> None:
     assert ("execute_payload", LOGICAL_EXECUTE_PAYLOAD) in _consumed_port_pairs(stages["review"])
 
 
+def _edge_tuples(edges: tuple[Edge, ...]) -> set[tuple[str, str, str]]:
+    """Normalize edges for cross-type comparison (generic vs Megaplan Edge)."""
+    return {(e.label, e.target, e.kind) for e in edges}
+
+
 def test_pattern_built_stages_gain_ports_without_topology_or_step_drift() -> None:
     pipeline = build_pipeline()
     stages = pipeline.stages
@@ -203,18 +209,21 @@ def test_pattern_built_stages_gain_ports_without_topology_or_step_drift() -> Non
     for stage_name in ("prep", "critique", "gate", "revise"):
         actual = stages[stage_name]
         expected = expected_pattern_stages[stage_name]
-        assert actual.step == expected.step
-        assert actual.edges == expected.edges
+        assert isinstance(actual.step, _NativePhaseStep)
+        assert actual.step.name == stage_name
+        assert _edge_tuples(actual.edges) == _edge_tuples(expected.edges)
 
     assert stages["gate"].decision_vocabulary == frozenset(PLANNING_DECISIONS)
     assert stages["gate"].loop_condition is _planning_loop_should_halt
     assert stages["tiebreaker"].decision_vocabulary == frozenset(
         {PLAN_ITERATE, PLAN_PROCEED, PLAN_ESCALATE}
     )
-    assert stages["tiebreaker"].edges == tiebreaker_edges(
-        on_iterate="critique",
-        on_proceed="finalize",
-        on_escalate="finalize",
+    assert _edge_tuples(stages["tiebreaker"].edges) == _edge_tuples(
+        tiebreaker_edges(
+            on_iterate="critique",
+            on_proceed="finalize",
+            on_escalate="finalize",
+        )
     )
 
 
@@ -245,15 +254,19 @@ def test_pattern_builder_function_signatures_are_unchanged() -> None:
 def test_non_pattern_stages_keep_expected_step_types_and_routing() -> None:
     stages = build_pipeline().stages
 
-    assert isinstance(stages["plan"].step, PlanStep)
-    assert isinstance(stages["finalize"].step, FinalizeStep)
-    assert isinstance(stages["execute"].step, ExecuteStep)
-    assert isinstance(stages["review"].step, ReviewStep)
-    assert isinstance(stages["tiebreaker"].step, TiebreakerStep)
-    assert stages["plan"].edges == (Edge(label="critique", target="critique"),)
-    assert stages["finalize"].edges == (Edge(label="execute", target="execute"),)
-    assert stages["execute"].edges == (Edge(label="review", target="review"),)
-    assert stages["review"].edges == (
-        Edge(label="review", target="halt"),
-        Edge(label="halt", target="halt"),
+    for stage_name in ("plan", "finalize", "execute", "review", "tiebreaker"):
+        assert isinstance(stages[stage_name].step, _NativePhaseStep)
+        assert stages[stage_name].step.name == stage_name
+
+    assert _edge_tuples(stages["plan"].edges) == _edge_tuples(
+        (Edge(label="critique", target="critique"),)
+    )
+    assert _edge_tuples(stages["finalize"].edges) == _edge_tuples(
+        (Edge(label="execute", target="execute"),)
+    )
+    assert _edge_tuples(stages["execute"].edges) == _edge_tuples(
+        (Edge(label="review", target="review"),)
+    )
+    assert _edge_tuples(stages["review"].edges) == _edge_tuples(
+        (Edge(label="review", target="halt"), Edge(label="halt", target="halt"))
     )

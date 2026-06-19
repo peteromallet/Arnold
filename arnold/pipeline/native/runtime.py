@@ -307,7 +307,7 @@ def run_native_pipeline(
             # Restore envelope from cursor frames if present
             saved_envelope = frames.pop("__envelope__", None)
             if saved_envelope is not None:
-                envelope = saved_envelope
+                envelope = _deserialize_envelope(saved_envelope)
 
     # ── resolve cursor_id (stable across suspension/resume) ──────────
     _cursor_id: str | None = None
@@ -374,6 +374,7 @@ def run_native_pipeline(
 
             # ── Callable return normalization (matching graph executor) ──
             outputs, contract_result = _normalize_phase_result(result, stage_id)
+            state_patch = _extract_state_patch(result)
 
             # ── Resolve handoff value for typed enforcement ────────
             # Graph executor pattern: prefers contract_result, falls back
@@ -414,6 +415,12 @@ def run_native_pipeline(
                     state["__contract_results__"] = published
                 published[instr.name] = contract_result
 
+            # Match the graph executor: StepResult.state_patch is merged
+            # after outputs/contract_result publication and before routing.
+            if state_patch:
+                state.update(state_patch)
+                owned_keys = frozenset(owned_keys | frozenset(state_patch.keys()))
+
             # ── Hook: merge_state (may rewrite state / owned_keys) ──
             state, owned_keys = _hooks.merge_state(instr, state, outputs, owned_keys)
 
@@ -428,7 +435,8 @@ def run_native_pipeline(
             # ── Hook: should_suspend (terminal exit) ────────────────
             do_suspend, suspend_reason = _hooks.should_suspend(instr, state, result)
             if do_suspend:
-                _hooks.on_stage_complete(instr, ctx, result, state, owned_keys)
+                if _should_emit_stage_complete(instr):
+                    _hooks.on_stage_complete(instr, ctx, result, state, owned_keys)
                 if hasattr(_hooks, "halt_reason"):
                     _hooks.halt_reason = suspend_reason  # type: ignore[attr-defined]
                 return NativeExecutionResult(
@@ -448,13 +456,16 @@ def run_native_pipeline(
             # which fires terminal exits after step completion)
             if max_phases is not None and phase_count >= max_phases:
                 # ── Hook: on_stage_complete before suspension ──────
-                _hooks.on_stage_complete(instr, ctx, result, state, owned_keys)
+                if _should_emit_stage_complete(instr):
+                    _hooks.on_stage_complete(instr, ctx, result, state, owned_keys)
                 # Advance pc to the next instruction for the resume point
                 next_pc = instr.next_pc if instr.next_pc is not None else pc + 1
+                reentry_stage = _reentry_stage_for_pc(program, next_pc)
                 _persist_suspension(
                     artifact_root=artifact_root,
                     stage=stage_id,
                     pc=next_pc,
+                    reentry_stage=reentry_stage,
                     stages=stages,
                     loops=loops,
                     frames=frames,
@@ -466,6 +477,7 @@ def run_native_pipeline(
                 _cursor = _build_cursor_dict(
                     stage=stage_id,
                     pc=next_pc,
+                    reentry_stage=reentry_stage,
                     stages=list(stages),
                     loops=dict(loops),
                     frames=dict(frames),
@@ -484,7 +496,8 @@ def run_native_pipeline(
                 )
 
             # ── Hook: on_stage_complete (normal completion) ────────
-            _hooks.on_stage_complete(instr, ctx, result, state, owned_keys)
+            if _should_emit_stage_complete(instr):
+                _hooks.on_stage_complete(instr, ctx, result, state, owned_keys)
 
             # Advance to next instruction
             pc = instr.next_pc if instr.next_pc is not None else pc + 1
@@ -504,7 +517,63 @@ def run_native_pipeline(
             else:
                 ctx["artifact_root"] = str(artifact_root)
 
-            result = instr.func(ctx)
+            # ── Hook: on_step_start (may rewrite ctx) ─────────────
+            ctx = _hooks.on_step_start(instr, ctx)
+
+            # ── Control override short-circuit ──────────────────────
+            # When a hook (e.g. MegaplanNativeRuntimeHooks) resolves a
+            # catalog-driven control override, the context will carry
+            # ``__override_route__``.  Skip the decision body and route
+            # directly.  Priority: halt > override > decision > normal.
+            control_override: str | None = ctx.pop("__override_route__", None)
+            if control_override is None:
+                # Backward-compat for older hook implementations that use
+                # the original key name.
+                control_override = ctx.pop("__control_override__", None)
+
+            if control_override is not None:
+                # Resolve the override route to a branch label.  First
+                # try the action name itself (e.g. "abort",
+                # "force_proceed"); if that is not in the vocabulary, fall
+                # back to "override"; otherwise execute the decision body
+                # normally so the program does not silently misroute.
+                override_label: str | None = control_override
+                if instr.branches and control_override not in instr.branches:
+                    override_label = (
+                        "override" if "override" in instr.branches else None
+                    )
+
+                if override_label is not None:
+                    # Build a synthetic result carrying the override
+                    # metadata.  The decision body is intentionally
+                    # **not** called — this is the control-override
+                    # short-circuit.
+                    result: Any = {"__override_route__": control_override}
+                    result = _hooks.on_step_end(instr, ctx, result)
+                    label: str = override_label
+                else:
+                    # No matching branch for the override — execute the
+                    # decision body normally.
+                    try:
+                        result = instr.func(ctx)
+                    except BaseException as exc:
+                        _hooks.on_step_error(instr, ctx, exc)
+                        raise
+                    result = _hooks.on_step_end(instr, ctx, result)
+                    label = _resolve_decision_label(result)
+            else:
+                # ── Normal decision execution (no override) ──────────
+                try:
+                    result = instr.func(ctx)
+                except BaseException as exc:
+                    _hooks.on_step_error(instr, ctx, exc)
+                    raise
+
+                # ── Hook: on_step_end (may rewrite result) ────────────
+                result = _hooks.on_step_end(instr, ctx, result)
+
+                # Resolve branch label
+                label = _resolve_decision_label(result)
 
             # ── Envelope accumulation for decisions ───────────────
             step_envelope: Any = None
@@ -513,9 +582,6 @@ def run_native_pipeline(
             elif isinstance(result, dict):
                 step_envelope = result.get("envelope")
             envelope = _hooks.join_envelope(instr, envelope, step_envelope)
-
-            # Resolve branch label
-            label = _resolve_decision_label(result)
 
             # ── Validate decision return value against declared vocabulary ──
             if instr.branches and label not in instr.branches:
@@ -543,7 +609,8 @@ def run_native_pipeline(
                     iteration = loops.get(instr.name, 0)
                     do_halt, halt_reason = _hooks.should_halt_loop(instr, state, iteration)
                     if do_halt:
-                        _hooks.on_stage_complete(instr, ctx, result, state, owned_keys)
+                        if _should_emit_stage_complete(instr):
+                            _hooks.on_stage_complete(instr, ctx, result, state, owned_keys)
                         if hasattr(_hooks, "halt_reason"):
                             _hooks.halt_reason = halt_reason  # type: ignore[attr-defined]
                         return NativeExecutionResult(
@@ -552,6 +619,10 @@ def run_native_pipeline(
                             pc=pc,
                             envelope=envelope,
                         )
+
+                # ── Hook: on_stage_complete (normal decision completion) ──
+                if _should_emit_stage_complete(instr):
+                    _hooks.on_stage_complete(instr, ctx, result, state, owned_keys)
 
                 pc = target_pc
                 forward_visited.clear()
@@ -574,6 +645,55 @@ def run_native_pipeline(
             forward_visited.add(pc)
             pc = next_pc
 
+        elif instr.op == "subpipeline":
+            child_program = getattr(instr, 'subprogram', None)
+            if child_program is not None:
+                child_name = instr.name or "child"
+
+                # ── Isolate artifact root ──────────────────────────
+                child_artifact_root = Path(artifact_root) / f"_child_{child_name}"
+                child_artifact_root.mkdir(parents=True, exist_ok=True)
+
+                # ── Isolate state: child receives a copy of parent state ──
+                child_initial_state = dict(state)
+
+                # ── Execute child subpipeline ───────────────────────
+                child_result = run_native_pipeline(
+                    program=child_program,
+                    artifact_root=child_artifact_root,
+                    initial_state=child_initial_state,
+                    max_phases=None,
+                    resume=False,
+                    hooks=hooks,
+                    schema_registry=schema_registry,
+                    telemetry_path=telemetry_path,
+                    initial_envelope=envelope,
+                    trace_dir=None,
+                )
+
+                # ── Merge child state back into parent state ────────
+                # Update parent state with child outputs first (matching
+                # the phase handler's state.update(outputs) before merge_state).
+                # The hooks.merge_state call can then override or CAS-enforce.
+                child_outputs = dict(child_result.state)
+                state.update(child_outputs)
+                state, owned_keys = _hooks.merge_state(
+                    instr, state, child_outputs, owned_keys,
+                )
+
+                # ── Join child envelope ────────────────────────────
+                envelope = _hooks.join_envelope(
+                    instr, envelope, child_result.envelope,
+                )
+
+                # ── Advance pc ──────────────────────────────────────
+                pc = instr.next_pc if instr.next_pc is not None else pc + 1
+                forward_visited.clear()
+            else:
+                # No child program attached — skip
+                pc = instr.next_pc if instr.next_pc is not None else pc + 1
+                forward_visited.clear()
+
         else:
             # Unknown op — treat as no-op and advance
             pc += 1
@@ -582,6 +702,7 @@ def run_native_pipeline(
     _clean_cursor = _build_cursor_dict(
         stage=stages[-1] if stages else "",
         pc=pc,
+        reentry_stage=_reentry_stage_for_pc(program, pc),
         stages=list(stages),
         loops=dict(loops),
         frames=dict(frames),
@@ -658,6 +779,7 @@ def _build_cursor_dict(
     *,
     stage: str,
     pc: int,
+    reentry_stage: str | None,
     stages: list[str],
     loops: dict[str, int],
     frames: dict[str, Any],
@@ -680,7 +802,7 @@ def _build_cursor_dict(
     frames_with_state = dict(frames)
     frames_with_state["__state__"] = dict(state)
     if envelope is not None:
-        frames_with_state["__envelope__"] = envelope
+        frames_with_state["__envelope__"] = _serialize_envelope(envelope)
 
     # Build stage_reentry_points from completed stages
     stage_reentry_points: dict[str, Any] = {}
@@ -694,6 +816,7 @@ def _build_cursor_dict(
     cursor: dict[str, Any] = {
         "stage": stage,
         "resume_cursor": None,
+        "reentry_stage": reentry_stage,
         "stages": list(stages),
         "loops": dict(loops),
         "frames": frames_with_state,
@@ -709,11 +832,33 @@ def _build_cursor_dict(
     return cursor
 
 
+def _reentry_stage_for_pc(program: NativeProgram, pc: int) -> str | None:
+    """Return the stable native stage identifier for *pc*, following jumps."""
+    instructions = program.instructions
+    visited: set[int] = set()
+    cur = pc
+    while 0 <= cur < len(instructions):
+        if cur in visited:
+            return None
+        visited.add(cur)
+        instr = instructions[cur]
+        if instr.op in {"phase", "decision"}:
+            return f"{program.name}__{instr.name}__pc{instr.pc}"
+        if instr.op == "jump":
+            cur = instr.next_pc if instr.next_pc is not None else -1
+            continue
+        if instr.op == "halt":
+            return "halt"
+        cur += 1
+    return None
+
+
 def _persist_suspension(
     *,
     artifact_root: str | Path,
     stage: str,
     pc: int,
+    reentry_stage: str | None,
     stages: list[str],
     loops: dict[str, int],
     frames: dict[str, Any],
@@ -734,7 +879,7 @@ def _persist_suspension(
         frames_with_state = dict(frames)
         frames_with_state["__state__"] = dict(state)
         if envelope is not None:
-            frames_with_state["__envelope__"] = envelope
+            frames_with_state["__envelope__"] = _serialize_envelope(envelope)
 
         # Build stage_reentry_points from completed stages
         stage_reentry_points: dict[str, Any] = {}
@@ -749,6 +894,7 @@ def _persist_suspension(
             stage=stage,
             pc=pc,
             stages=list(stages),
+            reentry_stage=reentry_stage,
             loops=dict(loops),
             frames=frames_with_state,
             cursor_id=cursor_id,
@@ -758,6 +904,69 @@ def _persist_suspension(
         # Best-effort: if persist fails, execution result still carries
         # the pc/stages so the caller can retry or log.
         pass
+
+
+def _extract_state_patch(result: Any) -> dict[str, Any]:
+    """Return a normalized ``state_patch`` mapping from a phase result."""
+    patch = getattr(result, "state_patch", {})
+    if isinstance(patch, dict):
+        return dict(patch)
+    if hasattr(patch, "items"):
+        try:
+            return dict(patch.items())
+        except Exception:
+            return {}
+    return {}
+
+
+def _serialize_envelope(envelope: Any) -> Any:
+    """Return a JSON-serializable representation of *envelope*."""
+    if envelope is None:
+        return None
+    if hasattr(envelope, "_to_jsonable"):
+        return {"__runtime_envelope__": envelope._to_jsonable()}
+    if hasattr(envelope, "to_jsonable"):
+        return {"__run_envelope__": envelope.to_jsonable()}
+    if hasattr(envelope, "to_json"):
+        raw = envelope.to_json()
+        if isinstance(raw, dict):
+            return {"__run_envelope__": raw}
+        if isinstance(raw, str):
+            return {"__runtime_envelope_json__": raw}
+    return envelope
+
+
+def _deserialize_envelope(payload: Any) -> Any:
+    """Rehydrate a serialized envelope payload when possible."""
+    if not isinstance(payload, dict):
+        return payload
+    if "__runtime_envelope__" in payload:
+        from arnold.runtime.envelope import RuntimeEnvelope
+
+        data = payload["__runtime_envelope__"]
+        if isinstance(data, dict):
+            return RuntimeEnvelope._from_jsonable(data)
+    if "__runtime_envelope_json__" in payload:
+        from arnold.runtime.envelope import RuntimeEnvelope
+
+        data = payload["__runtime_envelope_json__"]
+        if isinstance(data, str):
+            return RuntimeEnvelope.from_json(data)
+    if "__run_envelope__" in payload:
+        from arnold.runtime.envelope import RunEnvelope
+
+        data = payload["__run_envelope__"]
+        if isinstance(data, dict):
+            return RunEnvelope.from_jsonable(data)
+    return payload
+
+
+def _should_emit_stage_complete(instr: NativeInstruction) -> bool:
+    """Allow callables to suppress public stage-complete hooks."""
+    func = getattr(instr, "func", None)
+    if func is None:
+        return True
+    return bool(getattr(func, "__native_runtime_emit_stage_complete__", True))
 
 
 __all__ = [
