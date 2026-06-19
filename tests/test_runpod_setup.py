@@ -152,6 +152,15 @@ git_commit_sha = "abc123"
     assert "git -C" in output
 
 
+def test_install_runpod_torch_uses_cuda_128_index(capsys) -> None:
+    runpod_setup.install_runpod_torch(python="/venv/bin/python", dry_run=True)
+
+    output = capsys.readouterr().out
+    assert "--index-url https://download.pytorch.org/whl/cu128" in output
+    assert "torch==2.8.0+cu128" in output
+    assert "torchvision==0.23.0+cu128" in output
+
+
 def test_stage_ltx_models_default_is_basic_ttv_set(tmp_path: Path, capsys) -> None:
     runpod_setup.stage_ltx_models(models_root=tmp_path / "models", dry_run=True)
 

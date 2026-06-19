@@ -145,12 +145,25 @@ def _cmd_runpod_install_nodes(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_runpod_install_torch(args: argparse.Namespace) -> int:
+    runpod_setup.install_runpod_torch(
+        python=args.python,
+        dry_run=args.dry_run,
+    )
+    return 0
+
+
 def _cmd_runpod_bootstrap_comfy(args: argparse.Namespace) -> int:
     runtime_root = args.runtime_root
     runpod_setup.ensure_runtime_layout(runtime_root=runtime_root, dry_run=args.dry_run)
     env = runpod_setup.runtime_environment(runtime_root=runtime_root)
     os.environ.update({key: os.environ.get(key, value) for key, value in env.items()})
     runpod_setup.write_extra_model_paths(runtime_root=runtime_root, dry_run=args.dry_run)
+    if not args.skip_torch_fix:
+        runpod_setup.install_runpod_torch(
+            python=str(Path(args.comfyui_executable).with_name("python")) if "/" in args.comfyui_executable else sys.executable,
+            dry_run=args.dry_run,
+        )
     installed = runpod_setup.install_node_packs(
         custom_nodes=runtime_root / "custom_nodes",
         lockfile=args.lockfile,
@@ -251,6 +264,11 @@ def register(subparsers) -> None:
     install_nodes.add_argument("--dry-run", action="store_true")
     install_nodes.set_defaults(func=_cmd_runpod_install_nodes)
 
+    install_torch = runpod_sub.add_parser("install-torch")
+    install_torch.add_argument("--python", default=sys.executable)
+    install_torch.add_argument("--dry-run", action="store_true")
+    install_torch.set_defaults(func=_cmd_runpod_install_torch)
+
     bootstrap = runpod_sub.add_parser("bootstrap-comfy")
     bootstrap.add_argument("--runtime-root", type=Path, default=Path("/workspace/vibecomfy"))
     bootstrap.add_argument("--lockfile", type=Path, default=Path("custom_nodes.lock"))
@@ -266,6 +284,7 @@ def register(subparsers) -> None:
     )
     bootstrap.add_argument("--no-requirements", action="store_true")
     bootstrap.add_argument("--skip-models", action="store_true")
+    bootstrap.add_argument("--skip-torch-fix", action="store_true")
     bootstrap.add_argument("--full-ltx", action="store_true", help="Stage every phase:ltx registry asset instead of the basic TTV set.")
     bootstrap.add_argument("--dry-run", action="store_true")
     bootstrap.set_defaults(func=_cmd_runpod_bootstrap_comfy)

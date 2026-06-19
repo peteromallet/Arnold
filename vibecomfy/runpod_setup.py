@@ -23,6 +23,12 @@ LTX_BASIC_MODEL_IDS = (
     "ltx_2_3_distilled_lora_384_1_1",
 )
 BASELINE_PYTHON_DEPS = ("glfw", "PyOpenGL")
+RUNPOD_TORCH_DEPS = (
+    "torch==2.8.0+cu128",
+    "torchvision==0.23.0+cu128",
+    "torchaudio==2.8.0+cu128",
+)
+RUNPOD_TORCH_INDEX_URL = "https://download.pytorch.org/whl/cu128"
 BASELINE_PARKED_NODE_PACKS = ("ComfyUI-ResAdapter",)
 RUNTIME_SUBDIRS = (
     "cache/pip",
@@ -264,6 +270,21 @@ def install_python_deps(
     if not packages:
         return
     cmd = [python, "-m", "pip", "install", *packages]
+    if dry_run:
+        print(" ".join(cmd))
+        return
+    subprocess.check_call(cmd)
+
+
+def install_runpod_torch(
+    packages: Iterable[str] = RUNPOD_TORCH_DEPS,
+    *,
+    index_url: str = RUNPOD_TORCH_INDEX_URL,
+    python: str = sys.executable,
+    dry_run: bool = False,
+) -> None:
+    packages = tuple(packages)
+    cmd = [python, "-m", "pip", "install", "--index-url", index_url, *packages]
     if dry_run:
         print(" ".join(cmd))
         return
