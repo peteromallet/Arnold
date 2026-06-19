@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import subprocess
 import sys
+import base64
 from dataclasses import dataclass
 import os
 from pathlib import Path
@@ -12,6 +13,10 @@ from vibecomfy.registry import models_loader
 
 
 BASELINE_MODEL_IDS = ("sd15_v1_5_pruned_emaonly_fp16",)
+SMOKE_EXAMPLE_PNG_B64 = (
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGNgaGAAAAIE"
+    "AX6i7s8JAAAAAElFTkSuQmCC"
+)
 LTX_MODEL_PHASE = "ltx"
 LTX_BASIC_MODEL_IDS = (
     "ltx_2_3_22b_dev_fp8",
@@ -23,6 +28,11 @@ LTX_BASIC_MODEL_IDS = (
     "ltx_2_3_distilled_lora_384_1_1",
 )
 BASELINE_PYTHON_DEPS = ("glfw", "PyOpenGL")
+NODE_PACK_COMPAT_DEPS = {
+    # ComfyUI-LTXVideo@229437 imports kornia.geometry.transform.pyramid.pad,
+    # which was removed in kornia 0.8.3.
+    "ComfyUI-LTXVideo": ("kornia==0.8.2",),
+}
 RUNPOD_TORCH_DEPS = (
     "torch==2.8.0+cu128",
     "torchvision==0.23.0+cu128",
@@ -82,6 +92,18 @@ def ensure_runtime_layout(*, runtime_root: Path, dry_run: bool = False) -> dict[
         for path in paths.values():
             print(f"mkdir -p {path}")
     return paths
+
+
+def ensure_smoke_inputs(*, runtime_root: Path, dry_run: bool = False) -> list[Path]:
+    """Create tiny default input files referenced by built-in smoke templates."""
+    target = runtime_root / "input" / "example.png"
+    if dry_run:
+        print(f"write {target}")
+        return [target]
+    target.parent.mkdir(parents=True, exist_ok=True)
+    if not target.exists():
+        target.write_bytes(base64.b64decode(SMOKE_EXAMPLE_PNG_B64))
+    return [target]
 
 
 def runtime_environment(*, runtime_root: Path) -> dict[str, str]:
@@ -321,6 +343,9 @@ def install_node_packs(
             requirements = target / "requirements.txt"
             if requirements.exists() or dry_run:
                 _run([python, "-m", "pip", "install", "--no-deps", "-r", str(requirements)], dry_run=dry_run, check=False)
+            compat_deps = NODE_PACK_COMPAT_DEPS.get(name, ())
+            if compat_deps:
+                _run([python, "-m", "pip", "install", *compat_deps], dry_run=dry_run, check=False)
         installed.append(InstalledNodePack(name=name, path=target, url=url, commit=commit, changed=changed))
     return installed
 
@@ -329,7 +354,7 @@ def link_vibecomfy_custom_node(
     *,
     custom_nodes: Path,
     package_root: Path | None = None,
-    link_name: str = "vibecomfy",
+    link_name: str = "vibecomfy_custom_nodes",
     dry_run: bool = False,
 ) -> LinkedCustomNode:
     root = package_root or Path(__file__).resolve().parents[1]
@@ -340,6 +365,12 @@ def link_vibecomfy_custom_node(
         print(f"mkdir -p {custom_nodes}")
     else:
         custom_nodes.mkdir(parents=True, exist_ok=True)
+    legacy_target = custom_nodes / "vibecomfy"
+    if legacy_target != custom_nodes / link_name and legacy_target.is_symlink() and legacy_target.resolve() == source.resolve():
+        if dry_run:
+            print(f"rm {legacy_target}")
+        else:
+            legacy_target.unlink()
     target = custom_nodes / link_name
     if target.is_symlink() and target.resolve() == source.resolve():
         return LinkedCustomNode(source=source, target=target, changed=False)

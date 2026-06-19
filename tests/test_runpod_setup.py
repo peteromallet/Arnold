@@ -38,6 +38,15 @@ def test_runtime_layout_env_and_extra_model_paths(tmp_path: Path) -> None:
     assert "base_path: " + str(runtime / "models") in extra.read_text(encoding="utf-8")
 
 
+def test_ensure_smoke_inputs_creates_example_png(tmp_path: Path) -> None:
+    runtime = tmp_path / "runtime"
+
+    paths = runpod_setup.ensure_smoke_inputs(runtime_root=runtime)
+
+    assert paths == [runtime / "input" / "example.png"]
+    assert paths[0].read_bytes().startswith(b"\x89PNG")
+
+
 def test_comfy_serve_command_includes_runpod_public_flags(tmp_path: Path) -> None:
     runtime = tmp_path / "runtime"
 
@@ -108,7 +117,7 @@ def test_link_vibecomfy_custom_node_links_package_source(tmp_path: Path) -> None
     )
 
     assert result.changed is True
-    assert result.target == custom_nodes / "vibecomfy"
+    assert result.target == custom_nodes / "vibecomfy_custom_nodes"
     assert result.target.resolve() == source.resolve()
 
 
@@ -125,6 +134,24 @@ def test_link_vibecomfy_custom_node_dry_run_does_not_create_parent(tmp_path: Pat
 
     assert result.changed is True
     assert not custom_nodes.exists()
+
+
+def test_link_vibecomfy_custom_node_removes_legacy_shadowing_symlink(tmp_path: Path) -> None:
+    custom_nodes = tmp_path / "custom_nodes"
+    package_root = tmp_path / "repo"
+    source = package_root / "vibecomfy" / "comfy_nodes"
+    source.mkdir(parents=True)
+    custom_nodes.mkdir()
+    (custom_nodes / "vibecomfy").symlink_to(source, target_is_directory=True)
+
+    result = runpod_setup.link_vibecomfy_custom_node(
+        custom_nodes=custom_nodes,
+        package_root=package_root,
+    )
+
+    assert result.target == custom_nodes / "vibecomfy_custom_nodes"
+    assert result.target.resolve() == source.resolve()
+    assert not (custom_nodes / "vibecomfy").exists()
 
 
 def test_install_node_packs_reads_lockfile_and_dry_runs(tmp_path: Path, capsys) -> None:
@@ -149,6 +176,7 @@ git_commit_sha = "abc123"
     assert result[0].commit == "abc123"
     output = capsys.readouterr().out
     assert "git clone https://example.test/ltx.git" in output
+    assert "pip install kornia==0.8.2" in output
     assert "git -C" in output
 
 

@@ -159,6 +159,7 @@ def _cmd_runpod_bootstrap_comfy(args: argparse.Namespace) -> int:
     env = runpod_setup.runtime_environment(runtime_root=runtime_root)
     os.environ.update({key: os.environ.get(key, value) for key, value in env.items()})
     runpod_setup.write_extra_model_paths(runtime_root=runtime_root, dry_run=args.dry_run)
+    runpod_setup.ensure_smoke_inputs(runtime_root=runtime_root, dry_run=args.dry_run)
     if not args.skip_torch_fix:
         runpod_setup.install_runpod_torch(
             python=str(Path(args.comfyui_executable).with_name("python")) if "/" in args.comfyui_executable else sys.executable,
