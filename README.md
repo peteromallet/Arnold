@@ -133,6 +133,28 @@ The agent panel lets an agent edit a workflow from inside ComfyUI. `route=auto`
 uses OpenRouter when `OPENROUTER_API_KEY` is configured; Arnold-backed routes
 also require the `agent` extra above.
 
+### RunPod Baseline Setup
+
+For a new external RunPod user, install VibeComfy from GitHub into the same
+environment that runs ComfyUI, symlink `vibecomfy/comfy_nodes`, then run the
+baseline preparation step:
+
+```bash
+python -m pip install -e ".[agent,runpod-local]"
+vibecomfy runpod prepare-comfy \
+  --models-root /workspace/vibecomfy/models \
+  --custom-nodes /workspace/vibecomfy/custom_nodes \
+  --disabled-custom-nodes /workspace/vibecomfy/disabled_custom_nodes \
+  --install-python-deps
+```
+
+The baseline profile stages the official SD1.5 fp16 checkpoint and parks
+`ComfyUI-ResAdapter` outside `custom_nodes`. ResAdapter currently imports
+sampler hooks that can hang a plain SD1.5 `KSampler` during model transfer; keep
+it out for smoke checks. Use `vibecomfy runpod prepare-comfy --profile ltx`
+when intentionally running LTX/Runex templates that require ResAdapter nodes
+such as `ClownSampler_Beta`.
+
 ### Use VibeComfy Through Astrid
 
 [Astrid](https://github.com/peteromallet/Astrid) is the higher-level agentic

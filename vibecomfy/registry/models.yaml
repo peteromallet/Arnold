@@ -26,6 +26,20 @@
 # embed backslashes in model names.
 
 models:
+  - id: sd15_v1_5_pruned_emaonly_fp16
+    source:
+      kind: huggingface
+      repo: Comfy-Org/stable-diffusion-v1-5-archive
+      filename: v1-5-pruned-emaonly-fp16.safetensors
+    min_size: 2_000_000_000
+    targets:
+      - node_pack: comfy_core
+        path: checkpoints/v1-5-pruned-emaonly-fp16.safetensors
+    aliases:
+      - v1-5-pruned-emaonly.safetensors
+    tags: [phase:core]
+    notes: Baseline SD1.5 smoke checkpoint; fp16 avoids dtype splits on 4090 RunPod images.
+
   - id: flux2_klein_4b_fp8
     source:
       kind: huggingface

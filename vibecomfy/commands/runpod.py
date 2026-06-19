@@ -6,6 +6,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+from vibecomfy import runpod_setup
+
 
 def _runpod_lifecycle_root() -> Path:
     configured = getattr(sys, "_vibecomfy_runpod_lifecycle_root", None)
@@ -78,6 +80,34 @@ def _cmd_runpod_corpus_matrix(args: argparse.Namespace) -> int:
     return subprocess.call([sys.executable, str(script)])
 
 
+def _cmd_runpod_prepare_comfy(args: argparse.Namespace) -> int:
+    if args.profile == "baseline":
+        if args.install_python_deps:
+            runpod_setup.install_python_deps(dry_run=args.dry_run)
+        runpod_setup.stage_baseline_models(
+            models_root=args.models_root,
+            registry=args.registry,
+            dry_run=args.dry_run,
+        )
+        parked = runpod_setup.park_node_packs(
+            custom_nodes=args.custom_nodes,
+            disabled_custom_nodes=args.disabled_custom_nodes,
+            dry_run=args.dry_run,
+        )
+        for item in parked:
+            if item.changed:
+                action = "would park" if args.dry_run else "parked"
+                print(f"{action} {item.name}: {item.source} -> {item.target}")
+        return 0
+    if args.profile == "ltx":
+        print(
+            "ltx profile leaves ResAdapter active because some generated LTX templates use ClownSampler_Beta. "
+            "Use baseline profile for SD1.5 smoke checks.",
+        )
+        return 0
+    raise ValueError(f"unknown profile: {args.profile}")
+
+
 def register(subparsers) -> None:
     runpod = subparsers.add_parser("runpod")
     runpod_sub = runpod.add_subparsers(dest="subcmd", required=True)
@@ -102,3 +132,13 @@ def register(subparsers) -> None:
 
     runpod_corpus = runpod_sub.add_parser("corpus-matrix")
     runpod_corpus.set_defaults(func=_cmd_runpod_corpus_matrix)
+
+    prepare = runpod_sub.add_parser("prepare-comfy")
+    prepare.add_argument("--profile", choices=("baseline", "ltx"), default="baseline")
+    prepare.add_argument("--models-root", type=Path, default=Path("/workspace/vibecomfy/models"))
+    prepare.add_argument("--custom-nodes", type=Path, default=Path("/workspace/vibecomfy/custom_nodes"))
+    prepare.add_argument("--disabled-custom-nodes", type=Path, default=Path("/workspace/vibecomfy/disabled_custom_nodes"))
+    prepare.add_argument("--registry", type=Path, default=None)
+    prepare.add_argument("--install-python-deps", action="store_true")
+    prepare.add_argument("--dry-run", action="store_true")
+    prepare.set_defaults(func=_cmd_runpod_prepare_comfy)
