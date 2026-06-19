@@ -155,7 +155,7 @@ def _ensure_current_ltx_schema_defaults(workflow: VibeWorkflow) -> None:
     """Fill required API inputs added by current LTXVideo/Comfy output nodes."""
     _set_inputs(workflow, "3059", {"batch_size": 1})
     _set_inputs(workflow, "3980", {"frames_number": 9, "frame_rate": 8, "batch_size": 1})
-    _set_inputs(workflow, "4981", {"longer_size": 384})
+    _set_inputs(workflow, "4981", {"longer_size": 384, "resize_type.longer_size": 384})
     _set_inputs(
         workflow,
         "4966",

@@ -211,6 +211,7 @@ def test_ltx_lowvram_generated_ready_template_applies_before_metadata_policy() -
     assert api["3059"]["inputs"]["batch_size"] == 1
     assert api["3980"]["inputs"]["batch_size"] == 1
     assert api["4981"]["inputs"]["longer_size"] == 384
+    assert api["4981"]["inputs"]["resize_type.longer_size"] == 384
     assert api["4966"]["inputs"]["max_shift"] == 2.05
     assert api["4966"]["inputs"]["base_shift"] == 0.95
     assert api["4966"]["inputs"]["stretch"] is True
