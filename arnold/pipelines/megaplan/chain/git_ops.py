@@ -264,6 +264,14 @@ def _clean_worktree_for_chain(root: Path, writer) -> None:
         writer=writer,
         error_code="git_clean_failed",
     )
+    # Remove stale untracked source/output files while preserving megaplan plan
+    # state (which lives under .megaplan and may be needed across phases).
+    _compat()._run_command(
+        root,
+        ["git", "clean", "-fd", "-e", ".megaplan"],
+        writer=writer,
+        error_code="git_clean_failed",
+    )
     for subdir in ("epics", "schemas", "telemetry", ".state-locks"):
         path = root / ".megaplan" / subdir
         if path.exists():
@@ -1090,7 +1098,28 @@ def _commit_phase(
             continue
         if rel not in claimed_root_paths and rel not in claimed_nested_repo_roots:
             preexisting_unclaimed.append(path)
-    _compat()._reset_staged_paths(root, preexisting_unclaimed, writer=writer)
+    # Only unstage *tracked* preexisting-unclaimed paths. Untracked files that
+    # happen to share a path with preexisting dirt are typically new work
+    # produced by the current plan; resetting them would drop them from the
+    # milestone commit. Tracked preexisting changes are left unstaged so they
+    # do not pollute the milestone diff.
+    tracked_preexisting_unclaimed: list[Path] = []
+    for path in preexisting_unclaimed:
+        try:
+            rel = path.resolve().relative_to(root_abs).as_posix()
+        except (OSError, ValueError):
+            continue
+        tracked_check = _compat().subprocess.run(
+            ["git", "ls-files", "--error-unmatch", "--", rel],
+            cwd=str(root),
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=120,
+        )
+        if tracked_check.returncode == 0:
+            tracked_preexisting_unclaimed.append(path)
+    _compat()._reset_staged_paths(root, tracked_preexisting_unclaimed, writer=writer)
     staged = _compat().subprocess.run(
         ["git", "diff", "--cached", "--quiet"],
         cwd=str(root),
@@ -1140,6 +1169,22 @@ def _commit_and_push_phase(
     """Commit any current diff and push the milestone branch."""
     committed_sha = _commit_phase(
         root, plan, phase, writer=writer, preexisting_dirty_paths=preexisting_dirty_paths
+    )
+    # Execution/output aggregation can append plan state (events.jsonl, lock
+    # files) and preexisting-unclaimed untracked files can survive the first
+    # commit. Stage and commit any remaining tracked or untracked changes so
+    # the subsequent rebase/push sees a clean worktree and no milestone file
+    # is left unpublished.
+    # The cleanup commit intentionally does NOT reset preexisting-unclaimed
+    # paths, so that plan-state files (chain-state.json, events.jsonl, etc.)
+    # that were modified after the first commit are themselves committed and
+    # the worktree is clean before rebase/push.
+    _commit_phase(
+        root,
+        plan,
+        f"{phase}-cleanup",
+        writer=writer,
+        preexisting_dirty_paths=[],
     )
     if committed_sha is None:
         # Nothing committed (and not an init anchor) — nothing to publish.
@@ -1192,42 +1237,95 @@ def _mark_pr_ready(root: Path, pr_number: int, *, writer) -> None:
 
 
 def _enable_auto_merge(root: Path, pr_number: int, *, writer) -> str:
-    try:
+    def _dirty() -> bool:
+        status = _compat().subprocess.run(
+            ["git", "status", "--porcelain"],
+            cwd=str(root),
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=120,
+        )
+        return bool(status.stdout.strip())
+
+    def _stash() -> bool:
+        if not _dirty():
+            return False
         _compat()._run_command(
             root,
-            ["gh", "pr", "merge", str(pr_number), "--auto", "--squash", "--delete-branch"],
+            ["git", "stash", "push", "-u", "-m", "megaplan pre-merge cleanup"],
             writer=writer,
-            timeout=120,
-            error_code="gh_pr_merge_failed",
+            error_code="git_stash_failed",
         )
-        return "merged" if _compat()._pr_state(root, pr_number, writer=writer) == "merged" else "open"
-    except CliError as exc:
-        combined = f"{exc.message} {exc.extra.get('stdout', '')} {exc.extra.get('stderr', '')}"
-        if "already checked out" in combined:
-            # --delete-branch needs a local branch switch, which fails when the
-            # chain runs in a git worktree whose base branch is checked out
-            # elsewhere. Retry without local branch deletion (remote branch is
-            # cleaned up by GitHub's delete-on-merge or left for manual GC).
-            writer("[chain] --delete-branch impossible from worktree; retrying auto-merge without it\n")
+        return True
+
+    def _pop_stash() -> None:
+        try:
             _compat()._run_command(
                 root,
-                ["gh", "pr", "merge", str(pr_number), "--auto", "--squash"],
+                ["git", "stash", "pop"],
+                writer=writer,
+                error_code="git_stash_failed",
+            )
+        except CliError:
+            # If pop fails the working tree is at least clean for merge; the
+            # chain can recompute state from disk. Log and move on.
+            writer("[chain] stash pop failed; leaving stash for manual recovery\n")
+
+    stash_created = False
+    try:
+        stash_created = _stash()
+        try:
+            _compat()._run_command(
+                root,
+                ["gh", "pr", "merge", str(pr_number), "--auto", "--squash", "--delete-branch"],
                 writer=writer,
                 timeout=120,
                 error_code="gh_pr_merge_failed",
             )
             return "merged" if _compat()._pr_state(root, pr_number, writer=writer) == "merged" else "open"
-        if "Auto merge is not allowed" not in combined:
-            raise
-        writer("[chain] auto-merge unavailable; falling back to immediate squash merge\n")
-    _compat()._run_command(
-        root,
-        ["gh", "pr", "merge", str(pr_number), "--squash", "--delete-branch"],
-        writer=writer,
-        timeout=120,
-        error_code="gh_pr_merge_failed",
-    )
-    return "merged"
+        except CliError as exc:
+            combined = f"{exc.message} {exc.extra.get('stdout', '')} {exc.extra.get('stderr', '')}"
+            if "already checked out" in combined:
+                # --delete-branch needs a local branch switch, which fails when the
+                # chain runs in a git worktree whose base branch is checked out
+                # elsewhere. Retry without local branch deletion (remote branch is
+                # cleaned up by GitHub's delete-on-merge or left for manual GC).
+                writer("[chain] --delete-branch impossible from worktree; retrying auto-merge without it\n")
+                _compat()._run_command(
+                    root,
+                    ["gh", "pr", "merge", str(pr_number), "--auto", "--squash"],
+                    writer=writer,
+                    timeout=120,
+                    error_code="gh_pr_merge_failed",
+                )
+                return "merged" if _compat()._pr_state(root, pr_number, writer=writer) == "merged" else "open"
+            if "Auto merge is not allowed" not in combined:
+                raise
+            writer("[chain] auto-merge unavailable; falling back to immediate squash merge\n")
+        finally:
+            if stash_created:
+                _pop_stash()
+        _compat()._run_command(
+            root,
+            ["gh", "pr", "merge", str(pr_number), "--squash", "--delete-branch"],
+            writer=writer,
+            timeout=120,
+            error_code="gh_pr_merge_failed",
+        )
+        return "merged"
+    finally:
+        # Ensure stash is restored even if the immediate squash merge path above
+        # raised before the inner finally could run.
+        if stash_created and _compat().subprocess.run(
+            ["git", "stash", "list"],
+            cwd=str(root),
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=120,
+        ).stdout.strip():
+            _pop_stash()
 
 
 def _is_transient_gh_error(exc: CliError) -> bool:

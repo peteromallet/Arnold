@@ -1222,7 +1222,7 @@ def _auto_verify_deferred_must_criteria(plan_dir: Path | None, *, log) -> bool:
         return False
     try:
         from arnold.pipelines.megaplan._core.state import latest_plan_meta_path, save_state_merge_meta
-        from arnold.pipelines.megaplan._core.io import read_json as _read_json
+        from arnold.pipelines.megaplan._core.io import atomic_write_json, read_json as _read_json
         from arnold.pipelines.megaplan.audits.capabilities import get_worker_capabilities
         from arnold.pipelines.megaplan.handlers.verifiability import get_human_verification_status
         from arnold.pipelines.megaplan.orchestration.verifiability import classify_criteria
