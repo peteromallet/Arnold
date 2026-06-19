@@ -4785,7 +4785,7 @@
           },
           {
             "label": "d54d2ec0e57b",
-            "class_type": "LowVRAMAudioVAELoader",
+            "class_type": "LTXVAudioVAELoader",
             "inputs": {
               "ckpt_name": "ltx-2.3-22b-dev-fp8.safetensors"
             }
@@ -21529,7 +21529,7 @@
           },
           {
             "label": "d54d2ec0e57b",
-            "class_type": "LowVRAMAudioVAELoader",
+            "class_type": "LTXVAudioVAELoader",
             "inputs": {
               "ckpt_name": "ltx-2.3-22b-dev-fp8.safetensors"
             }

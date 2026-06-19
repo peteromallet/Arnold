@@ -36,3 +36,17 @@ def test_park_node_packs_dry_run_leaves_tree_in_place(tmp_path: Path) -> None:
 
     assert result[0].changed is True
     assert pack.exists()
+
+
+def test_unpark_node_packs_moves_resadapter_back_to_custom_nodes(tmp_path: Path) -> None:
+    custom_nodes = tmp_path / "custom_nodes"
+    disabled = tmp_path / "disabled_custom_nodes"
+    pack = disabled / "ComfyUI-ResAdapter"
+    pack.mkdir(parents=True)
+    (pack / "__init__.py").write_text("", encoding="utf-8")
+
+    result = runpod_setup.unpark_node_packs(custom_nodes=custom_nodes, disabled_custom_nodes=disabled)
+
+    assert result[0].changed is True
+    assert not pack.exists()
+    assert (custom_nodes / "ComfyUI-ResAdapter" / "__init__.py").exists()

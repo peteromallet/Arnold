@@ -655,7 +655,7 @@ def test_model_fingerprint_ltx_snapshot_excludes_edge_references() -> None:
     # widget_0 is now schema-resolved to lora_name; LTXAVTextEncoderLoader uses
     # canonical names from its source workflow JSON (text_encoder, not widget_0).
     assert ("LowVRAMCheckpointLoader", "ckpt_name", "ltx-2.3-22b-dev-fp8.safetensors") in fingerprint
-    assert ("LowVRAMAudioVAELoader", "ckpt_name", "ltx-2.3-22b-dev-fp8.safetensors") in fingerprint
+    assert ("LTXVAudioVAELoader", "ckpt_name", "ltx-2.3-22b-dev-fp8.safetensors") in fingerprint
     assert (
         "LTXAVTextEncoderLoader",
         "text_encoder",

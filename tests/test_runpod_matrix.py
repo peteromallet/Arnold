@@ -585,7 +585,7 @@ def test_runpod_remote_patch_policy_handles_ltx_i2v() -> None:
 
     assert patch_workflow_api("ltx2_3_i2v", api) is True
 
-    assert api["4010"]["class_type"] == "LowVRAMAudioVAELoader"
+    assert api["4010"]["class_type"] == "LTXVAudioVAELoader"
     assert api["4010"]["inputs"] == {"ckpt_name": LTX_CHECKPOINT}
     assert api["3940"]["class_type"] == "LowVRAMCheckpointLoader"
     assert api["4977"]["inputs"]["widget_0"] is False

@@ -216,7 +216,7 @@
     1
   ],
   [
-    "LowVRAMAudioVAELoader",
+    "LTXVAudioVAELoader",
     "ckpt_name",
     "'ltx-2.3-22b-dev-fp8.safetensors'",
     1

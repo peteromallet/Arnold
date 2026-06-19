@@ -26,7 +26,7 @@
   "LoadImage",
   "LoraLoaderModelOnly",
   "LoraLoaderModelOnly",
-  "LowVRAMAudioVAELoader",
+  "LTXVAudioVAELoader",
   "LowVRAMCheckpointLoader",
   "ManualSigmas",
   "MultimodalGuider",

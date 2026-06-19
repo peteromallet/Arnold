@@ -26,7 +26,7 @@ def apply(workflow: VibeWorkflow) -> VibeWorkflow:
         raise ValueError(
             "ltx_lowvram only supports LTX 2.3 workflows with node 3940 as a "
             "CheckpointLoaderSimple/LowVRAMCheckpointLoader and node 4010 as "
-            "an LTXVAudioVAELoader/LowVRAMAudioVAELoader."
+            "an LTXVAudioVAELoader."
         )
 
     image_to_video = workflow.metadata.get("capability") == "image_to_video"
@@ -44,7 +44,7 @@ def apply(workflow: VibeWorkflow) -> VibeWorkflow:
 
     if AUDIO_LOADER_ID in workflow.nodes:
         node = workflow.nodes[AUDIO_LOADER_ID]
-        node.class_type = "LowVRAMAudioVAELoader"
+        node.class_type = "LTXVAudioVAELoader"
         node.inputs = {"ckpt_name": FP8_CHECKPOINT}
         node.widgets = {}
     if CHECKPOINT_LOADER_ID in workflow.nodes:
@@ -64,7 +64,10 @@ def apply(workflow: VibeWorkflow) -> VibeWorkflow:
 
 
 def rationale(workflow: VibeWorkflow) -> str:
-    return "LTXVideo nodes detected; reduces VRAM by using low-VRAM loaders and 384x256x9 smoke settings."
+    return (
+        "LTXVideo nodes detected; reduces VRAM by using the fp8 checkpoint, "
+        "low-VRAM model loader, and 384x256x9 smoke settings."
+    )
 
 
 def _is_supported_target(workflow: VibeWorkflow) -> bool:
@@ -86,7 +89,7 @@ def _is_supported_applied_target(workflow: VibeWorkflow) -> bool:
     if audio_loader is None or checkpoint_loader is None:
         return False
 
-    return _is_lowvram_audio_loader(audio_loader) and _is_lowvram_checkpoint_loader(checkpoint_loader)
+    return _is_supported_audio_loader(audio_loader) and _is_lowvram_checkpoint_loader(checkpoint_loader)
 
 
 def _is_supported_audio_loader(node) -> bool:
@@ -97,12 +100,6 @@ def _is_supported_audio_loader(node) -> bool:
 
 def _is_supported_checkpoint_loader(node) -> bool:
     if node.class_type != "CheckpointLoaderSimple":
-        return False
-    return _is_ltx_2_3_checkpoint(_node_checkpoint_name(node))
-
-
-def _is_lowvram_audio_loader(node) -> bool:
-    if node.class_type != "LowVRAMAudioVAELoader":
         return False
     return _is_ltx_2_3_checkpoint(_node_checkpoint_name(node))
 

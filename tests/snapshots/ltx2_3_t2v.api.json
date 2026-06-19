@@ -24,7 +24,7 @@
     }
   },
   "4010": {
-    "class_type": "LowVRAMAudioVAELoader",
+    "class_type": "LTXVAudioVAELoader",
     "inputs": {
       "ckpt_name": "ltx-2.3-22b-dev-fp8.safetensors"
     }

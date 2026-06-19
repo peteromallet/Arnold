@@ -156,7 +156,7 @@ def test_ltx_lowvram_rewrites_supported_graph() -> None:
     assert positive.metadata["comfy_configuration"] == COMFY_CONFIGURATION
     assert positive.metadata["smoke_resolution"] == "384x256x9_frames"
     assert positive.metadata["external_python_marker"] == "external_python:video/ltx2_3_t2v"
-    assert positive.nodes["4010"].class_type == "LowVRAMAudioVAELoader"
+    assert positive.nodes["4010"].class_type == "LTXVAudioVAELoader"
     assert positive.nodes["4010"].inputs == {"ckpt_name": FP8_CHECKPOINT}
     assert positive.nodes["4010"].widgets == {}
     assert positive.nodes["3940"].class_type == "LowVRAMCheckpointLoader"
@@ -203,7 +203,7 @@ def test_ltx_lowvram_generated_ready_template_applies_before_metadata_policy() -
     workflow = build()
 
     assert workflow.metadata["ready_template"] == "video/ltx2_3_t2v"
-    assert workflow.nodes["4010"].class_type == "LowVRAMAudioVAELoader"
+    assert workflow.nodes["4010"].class_type == "LTXVAudioVAELoader"
     assert workflow.nodes["3940"].class_type == "LowVRAMCheckpointLoader"
     assert workflow.nodes["4010"].inputs["ckpt_name"] == FP8_CHECKPOINT
     assert workflow.nodes["3940"].inputs["ckpt_name"] == FP8_CHECKPOINT

@@ -31,7 +31,7 @@ def build() -> VibeWorkflow:
         widget_1=256,
         widget_2=9,
     )
-    lowvramaudiovaeloader = _node(wf, 'LowVRAMAudioVAELoader', '4010', _uid='n4',
+    ltxvaudiovaeloader = _node(wf, 'LTXVAudioVAELoader', '4010', _uid='n4',
         _outputs=('AUDIO_VAE',),
         ckpt_name='ltx-2.3-22b-dev-fp8.safetensors',
     )
@@ -97,7 +97,7 @@ def build() -> VibeWorkflow:
         frames_number=121,
         widget_0=9,
         frame_rate=ltxfloattoint.out('INT'),
-        audio_vae=lowvramaudiovaeloader.out('AUDIO_VAE'),
+        audio_vae=ltxvaudiovaeloader.out('AUDIO_VAE'),
     )
     guiderparameters_2 = _node(wf, 'GuiderParameters', '4964', _uid='n17',
         _outputs=('GUIDER_PARAMETERS',),
@@ -195,7 +195,7 @@ def build() -> VibeWorkflow:
     )
     ltxvaudiovaedecode_2 = _node(wf, 'LTXVAudioVAEDecode', '4848', _uid='n31',
         _outputs=('AUDIO',),
-        audio_vae=lowvramaudiovaeloader.out('AUDIO_VAE'),
+        audio_vae=ltxvaudiovaeloader.out('AUDIO_VAE'),
         samples=ltxvseparateavlatent_2.out('AUDIO_LATENT'),
     )
     ltxvtiledvaedecode = _node(wf, 'LTXVTiledVAEDecode', '4982', _uid='n32',
@@ -208,7 +208,7 @@ def build() -> VibeWorkflow:
     )
     ltxvaudiovaedecode = _node(wf, 'LTXVAudioVAEDecode', '4818', _uid='n33',
         _outputs=('AUDIO',),
-        audio_vae=lowvramaudiovaeloader.out('AUDIO_VAE'),
+        audio_vae=ltxvaudiovaeloader.out('AUDIO_VAE'),
         samples=ltxvseparateavlatent.out('AUDIO_LATENT'),
     )
     createvideo_2 = _node(wf, 'CreateVideo', '4849', _uid='n34',

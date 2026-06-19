@@ -4,8 +4,8 @@
 from __future__ import annotations
 
 from vibecomfy.templates import InputSpec, ReadyMetadata, new_workflow, node as raw_call
-from vibecomfy.nodes.core import CFGGuider, CLIPTextEncode, CreateVideo, EmptyLTXVLatentVideo, KSamplerSelect, LTXAVTextEncoderLoader, LTXVAudioVAEDecode, LTXVConcatAVLatent, LTXVConditioning, LTXVEmptyLatentAudio, LTXVPreprocess, LTXVScheduler, LTXVSeparateAVLatent, LoadImage, LoraLoaderModelOnly, ManualSigmas, RandomNoise, ResizeImageMaskNode, SamplerCustomAdvanced, SaveVideo
-from vibecomfy.nodes.ltxvideo import GuiderParameters, LTXFloatToInt, LTXVImgToVideoConditionOnly, LTXVTiledVAEDecode, LowVRAMAudioVAELoader, LowVRAMCheckpointLoader, MultimodalGuider
+from vibecomfy.nodes.core import CFGGuider, CLIPTextEncode, CreateVideo, EmptyLTXVLatentVideo, KSamplerSelect, LTXAVTextEncoderLoader, LTXVAudioVAEDecode, LTXVAudioVAELoader, LTXVConcatAVLatent, LTXVConditioning, LTXVEmptyLatentAudio, LTXVPreprocess, LTXVScheduler, LTXVSeparateAVLatent, LoadImage, LoraLoaderModelOnly, ManualSigmas, RandomNoise, ResizeImageMaskNode, SamplerCustomAdvanced, SaveVideo
+from vibecomfy.nodes.ltxvideo import GuiderParameters, LTXFloatToInt, LTXVImgToVideoConditionOnly, LTXVTiledVAEDecode, LowVRAMCheckpointLoader, MultimodalGuider
 from vibecomfy.patches.ltx_lowvram import apply as apply_ltx_lowvram
 from vibecomfy.patches.requirements import ensure_custom_nodes
 from vibecomfy.patches.resolution import resolution
@@ -83,11 +83,7 @@ def build() -> VibeWorkflow:
         _uid='n2',
     )
 
-    lowvramaudiovaeloader = LowVRAMAudioVAELoader(
-        _id='4010',
-        ckpt_name=CKPT_NAME,
-        _uid='n4',
-    )
+    ltxvaudiovaeloader = LTXVAudioVAELoader(_id='4010', ckpt_name=CKPT_NAME, _uid='n4')
 
     randomnoise = RandomNoise(
         _id='4814',
@@ -174,7 +170,7 @@ def build() -> VibeWorkflow:
         frames_number=121,
         widget_0=9,
         frame_rate=ltxfloattoint,
-        audio_vae=lowvramaudiovaeloader,
+        audio_vae=ltxvaudiovaeloader,
         _uid='n15',
     )
 
@@ -304,7 +300,7 @@ def build() -> VibeWorkflow:
 
     ltxvaudiovaedecode_2 = LTXVAudioVAEDecode(
         _id='4848',
-        audio_vae=lowvramaudiovaeloader,
+        audio_vae=ltxvaudiovaeloader,
         samples=audio_latent_2,
         _uid='n31',
     )
@@ -321,7 +317,7 @@ def build() -> VibeWorkflow:
 
     ltxvaudiovaedecode = LTXVAudioVAEDecode(
         _id='4818',
-        audio_vae=lowvramaudiovaeloader,
+        audio_vae=ltxvaudiovaeloader,
         samples=audio_latent,
         _uid='n33',
     )

@@ -203,7 +203,7 @@ def _patch_ltx(api: dict[str, Any], *, image_to_video: bool) -> None:
     if "4849" in api:
         api["4849"]["inputs"].pop("audio", None)
     if "4010" in api:
-        api["4010"]["class_type"] = "LowVRAMAudioVAELoader"
+        api["4010"]["class_type"] = "LTXVAudioVAELoader"
         api["4010"]["inputs"] = {"ckpt_name": LTX_CHECKPOINT}
     if "3940" in api:
         api["3940"]["class_type"] = "LowVRAMCheckpointLoader"
@@ -286,7 +286,7 @@ def _patch_ltx_common(api: dict[str, Any]) -> None:
         elif class_type == "LTXAVTextEncoderLoader":
             inputs.update({"text_encoder": LTX_TEXT_ENCODER, "ckpt_name": LTX_CHECKPOINT, "widget_0": LTX_TEXT_ENCODER, "widget_1": LTX_CHECKPOINT})
         elif class_type == "LTXVAudioVAELoader":
-            node["class_type"] = "LowVRAMAudioVAELoader"
+            node["class_type"] = "LTXVAudioVAELoader"
             node["inputs"] = {"ckpt_name": LTX_CHECKPOINT}
         elif class_type == "LoadVideoDepthAnythingModel":
             node["class_type"] = "DownloadAndLoadDepthAnythingV2Model"
