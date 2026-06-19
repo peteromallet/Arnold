@@ -113,6 +113,7 @@ def _cmd_runpod_prepare_comfy(args: argparse.Namespace) -> int:
         runpod_setup.stage_ltx_models(
             models_root=args.models_root,
             registry=args.registry,
+            full=args.full,
             dry_run=args.dry_run,
         )
         print("ltx profile staged LTX models. ResAdapter stays parked so SD1.5 and LTX can share one ComfyUI process.")
@@ -184,6 +185,7 @@ def _cmd_runpod_bootstrap_comfy(args: argparse.Namespace) -> int:
         runpod_setup.stage_ltx_models(
             models_root=runtime_root / "models",
             registry=args.registry,
+            full=args.full_ltx,
             dry_run=args.dry_run,
         )
     command = runpod_setup.comfy_serve_command(
@@ -232,6 +234,7 @@ def register(subparsers) -> None:
     prepare.add_argument("--disabled-custom-nodes", type=Path, default=Path("/workspace/vibecomfy/disabled_custom_nodes"))
     prepare.add_argument("--registry", type=Path, default=None)
     prepare.add_argument("--install-python-deps", action="store_true")
+    prepare.add_argument("--full", action="store_true", help="For --profile ltx, stage every phase:ltx registry asset.")
     prepare.add_argument("--dry-run", action="store_true")
     prepare.set_defaults(func=_cmd_runpod_prepare_comfy)
 
@@ -263,5 +266,6 @@ def register(subparsers) -> None:
     )
     bootstrap.add_argument("--no-requirements", action="store_true")
     bootstrap.add_argument("--skip-models", action="store_true")
+    bootstrap.add_argument("--full-ltx", action="store_true", help="Stage every phase:ltx registry asset instead of the basic TTV set.")
     bootstrap.add_argument("--dry-run", action="store_true")
     bootstrap.set_defaults(func=_cmd_runpod_bootstrap_comfy)

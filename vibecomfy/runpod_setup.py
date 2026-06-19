@@ -13,6 +13,15 @@ from vibecomfy.registry import models_loader
 
 BASELINE_MODEL_IDS = ("sd15_v1_5_pruned_emaonly_fp16",)
 LTX_MODEL_PHASE = "ltx"
+LTX_BASIC_MODEL_IDS = (
+    "ltx_2_3_22b_dev_fp8",
+    "ltx_2_3_text_encoder",
+    "ltx_2_3_text_projection",
+    "ltx_2_3_video_vae",
+    "ltx_2_3_audio_vae",
+    "ltx_2_3_preview_vae",
+    "ltx_2_3_distilled_lora_384_1_1",
+)
 BASELINE_PYTHON_DEPS = ("glfw", "PyOpenGL")
 BASELINE_PARKED_NODE_PACKS = ("ComfyUI-ResAdapter",)
 RUNTIME_SUBDIRS = (
@@ -175,15 +184,17 @@ def stage_ltx_models(
     *,
     models_root: Path,
     registry: Path | None = None,
+    full: bool = False,
     dry_run: bool = False,
 ) -> None:
     configure_workspace_cache(models_root=models_root)
     entries = models_loader.load_registry(registry)
     selected = models_loader._filter_entries(entries, ids=None, select_phase=LTX_MODEL_PHASE)
+    ids = None if full else LTX_BASIC_MODEL_IDS
     if dry_run:
-        models_loader._print_dry_run(selected, models_root=models_root)
+        models_loader._print_dry_run(models_loader._select_by_ids(selected, ids), models_root=models_root)
         return
-    models_loader.stage_many(selected, models_root=models_root)
+    models_loader.stage_many(selected, models_root=models_root, ids=ids)
 
 
 def configure_workspace_cache(*, models_root: Path) -> Path:
@@ -304,7 +315,10 @@ def link_vibecomfy_custom_node(
     source = root / "vibecomfy" / "comfy_nodes"
     if not source.exists():
         raise FileNotFoundError(f"VibeComfy custom node source not found: {source}")
-    custom_nodes.mkdir(parents=True, exist_ok=True)
+    if dry_run:
+        print(f"mkdir -p {custom_nodes}")
+    else:
+        custom_nodes.mkdir(parents=True, exist_ok=True)
     target = custom_nodes / link_name
     if target.is_symlink() and target.resolve() == source.resolve():
         return LinkedCustomNode(source=source, target=target, changed=False)

@@ -112,6 +112,21 @@ def test_link_vibecomfy_custom_node_links_package_source(tmp_path: Path) -> None
     assert result.target.resolve() == source.resolve()
 
 
+def test_link_vibecomfy_custom_node_dry_run_does_not_create_parent(tmp_path: Path) -> None:
+    custom_nodes = tmp_path / "missing" / "custom_nodes"
+    package_root = tmp_path / "repo"
+    (package_root / "vibecomfy" / "comfy_nodes").mkdir(parents=True)
+
+    result = runpod_setup.link_vibecomfy_custom_node(
+        custom_nodes=custom_nodes,
+        package_root=package_root,
+        dry_run=True,
+    )
+
+    assert result.changed is True
+    assert not custom_nodes.exists()
+
+
 def test_install_node_packs_reads_lockfile_and_dry_runs(tmp_path: Path, capsys) -> None:
     lockfile = tmp_path / "custom_nodes.lock"
     lockfile.write_text(
@@ -135,3 +150,12 @@ git_commit_sha = "abc123"
     output = capsys.readouterr().out
     assert "git clone https://example.test/ltx.git" in output
     assert "git -C" in output
+
+
+def test_stage_ltx_models_default_is_basic_ttv_set(tmp_path: Path, capsys) -> None:
+    runpod_setup.stage_ltx_models(models_root=tmp_path / "models", dry_run=True)
+
+    output = capsys.readouterr().out
+    assert "ltx-2.3-22b-dev-fp8.safetensors" in output
+    assert "ltx-2.3-22b-distilled-lora-384-1.1.safetensors" in output
+    assert "ltx-2.3-22b-distilled_transformer_only_fp8_scaled.safetensors" not in output

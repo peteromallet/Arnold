@@ -155,11 +155,12 @@ vibecomfy runpod bootstrap-comfy \
 
 `bootstrap-comfy` creates the runtime directories, writes
 `extra_model_paths.yaml`, links the VibeComfy custom node, installs the locked
-LTX/Runex node-pack set, stages the SD1.5 and LTX model files, parks
-`ComfyUI-ResAdapter`, and prints the environment exports plus the `comfyui
-serve` command to run. ResAdapter currently imports sampler hooks that can hang
-a plain SD1.5 `KSampler` during model transfer; keep it out so SD1.5 and LTX
-can share one ComfyUI process.
+LTX/Runex node-pack set, stages SD1.5 plus the basic LTX/Runex TTV model set,
+parks `ComfyUI-ResAdapter`, and prints the environment exports plus the
+`comfyui serve` command to run. Use `--full-ltx` only when the pod quota is
+large enough for every LTX auxiliary asset. ResAdapter currently imports
+sampler hooks that can hang a plain SD1.5 `KSampler` during model transfer;
+keep it out so SD1.5 and LTX can share one ComfyUI process.
 
 ### Use VibeComfy Through Astrid
 
