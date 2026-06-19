@@ -353,3 +353,236 @@ describe('useEffectResources', () => {
     expect(screen.getByTestId('registry-records').textContent).toContain('"provenance":"external-catalog"');
   });
 });
+
+// ---------------------------------------------------------------------------
+// Registry record integration in catalog
+// ---------------------------------------------------------------------------
+
+describe('registry record integration in useEffectResources catalog', () => {
+  it('registry records appear alongside DB effects in the catalog', () => {
+    const registryRecords = [{
+      effectId: 'ext-effect',
+      contributionId: 'contrib-1',
+      component: (() => null) as any,
+      provenance: 'bundled-extension' as const,
+      renderability: {
+        capabilities: [
+          { route: 'preview' as const, status: 'supported' as const, determinism: 'deterministic' as const },
+          { route: 'browser-export' as const, status: 'blocked' as const, determinism: 'deterministic' as const },
+          { route: 'worker-export' as const, status: 'blocked' as const, determinism: 'deterministic' as const },
+        ],
+        determinism: 'deterministic' as const,
+      },
+      status: 'active' as const,
+    }];
+
+    const catalog = createVideoEditorEffectCatalog({
+      effects: [{
+        id: 'db-effect',
+        type: 'effect' as const,
+        name: 'DB Effect',
+        slug: 'db-effect',
+        code: 'code',
+        category: 'continuous' as const,
+        description: 'DB',
+        created_by: { is_you: true },
+        is_public: false,
+      }],
+      registryRecords,
+    });
+
+    expect(catalog.effects).toHaveLength(2);
+    const extEffect = catalog.effects.find((e) => e.id === 'ext-effect');
+    expect(extEffect).toBeDefined();
+    expect(extEffect!.provenance).toBe('bundled-extension');
+    expect(extEffect!.readOnly).toBe(true);
+
+    const dbEffect = catalog.effects.find((e) => e.id === 'db-effect');
+    expect(dbEffect).toBeDefined();
+    expect(dbEffect!.provenance).toBeUndefined();
+  });
+
+  it('registry records carry provenance through to catalog resources', () => {
+    const provenances = [
+      'bundled-extension',
+      'external-catalog',
+      'db-resource',
+      'ai-generated',
+      'local-storage-draft',
+      'trusted-loader',
+    ] as const;
+
+    for (const provenance of provenances) {
+      const registryRecords = [{
+        effectId: `effect-${provenance}`,
+        contributionId: 'contrib-1',
+        component: (() => null) as any,
+        provenance,
+        renderability: {
+          capabilities: [{ route: 'preview' as const, status: 'supported' as const, determinism: 'deterministic' as const }],
+          determinism: 'deterministic' as const,
+        },
+        status: 'active' as const,
+      }];
+
+      const catalog = createVideoEditorEffectCatalog({ registryRecords });
+      expect(catalog.effects[0].provenance).toBe(provenance);
+    }
+  });
+
+  it('registry records carry renderability through to catalog resources', () => {
+    const renderability = {
+      capabilities: [
+        { route: 'preview' as const, status: 'supported' as const, determinism: 'deterministic' as const },
+        { route: 'browser-export' as const, status: 'blocked' as const, determinism: 'preview-only' as const },
+      ],
+      determinism: 'preview-only' as const,
+    };
+
+    const registryRecords = [{
+      effectId: 'ext-effect',
+      contributionId: 'contrib-1',
+      component: (() => null) as any,
+      provenance: 'bundled-extension' as const,
+      renderability,
+      status: 'active' as const,
+    }];
+
+    const catalog = createVideoEditorEffectCatalog({ registryRecords });
+    expect(catalog.effects[0].renderability).toEqual(renderability);
+  });
+
+  it('error-status registry records appear in catalog with diagnostics', () => {
+    const diagnostics = [{ code: 'effects/invalid-schema', message: 'Bad schema', severity: 'error' as const }];
+    const registryRecords = [{
+      effectId: 'error-effect',
+      contributionId: 'contrib-1',
+      component: (() => null) as any,
+      provenance: 'bundled-extension' as const,
+      renderability: {
+        capabilities: [{ route: 'preview' as const, status: 'supported' as const, determinism: 'deterministic' as const }],
+        determinism: 'deterministic' as const,
+      },
+      status: 'error' as const,
+      diagnostics,
+    }];
+
+    const catalog = createVideoEditorEffectCatalog({ registryRecords });
+    expect(catalog.effects[0].registryStatus).toBe('error');
+    expect(catalog.effects[0].diagnostics).toEqual(diagnostics);
+  });
+
+  it('inactive-status registry records appear in catalog but with inactive status', () => {
+    const registryRecords = [{
+      effectId: 'inactive-effect',
+      contributionId: 'contrib-1',
+      component: (() => null) as any,
+      provenance: 'bundled-extension' as const,
+      renderability: {
+        capabilities: [{ route: 'preview' as const, status: 'supported' as const, determinism: 'deterministic' as const }],
+        determinism: 'deterministic' as const,
+      },
+      status: 'inactive' as const,
+    }];
+
+    const catalog = createVideoEditorEffectCatalog({ registryRecords });
+    expect(catalog.effects).toHaveLength(1);
+    expect(catalog.effects[0].registryStatus).toBe('inactive');
+  });
+
+  it('registry record overrides DB effect with same id', () => {
+    const dbEffect = {
+      id: 'shared-id',
+      type: 'effect' as const,
+      name: 'DB Version',
+      slug: 'db-version',
+      code: 'db-code',
+      category: 'continuous' as const,
+      description: 'DB',
+      created_by: { is_you: true },
+      is_public: false,
+    };
+
+    const registryRecords = [{
+      effectId: 'shared-id',
+      contributionId: 'contrib-1',
+      component: (() => null) as any,
+      provenance: 'bundled-extension' as const,
+      renderability: {
+        capabilities: [{ route: 'preview' as const, status: 'supported' as const, determinism: 'deterministic' as const }],
+        determinism: 'deterministic' as const,
+      },
+      status: 'active' as const,
+    }];
+
+    const catalog = createVideoEditorEffectCatalog({
+      effects: [dbEffect],
+      registryRecords,
+    });
+
+    expect(catalog.effects).toHaveLength(1);
+    // Registry record wins — name comes from effectId
+    expect(catalog.effects[0].name).toBe('shared-id');
+    expect(catalog.effects[0].provenance).toBe('bundled-extension');
+  });
+
+  it('registry record parameter schema maps to parameterSchema field', () => {
+    const paramSchema = [
+      { name: 'intensity', label: 'Intensity', type: 'number' as const, min: 0, max: 1, step: 0.1, default: 0.5 },
+    ];
+    const registryRecords = [{
+      effectId: 'param-effect',
+      contributionId: 'contrib-1',
+      component: (() => null) as any,
+      provenance: 'bundled-extension' as const,
+      schema: paramSchema,
+      renderability: {
+        capabilities: [{ route: 'preview' as const, status: 'supported' as const, determinism: 'deterministic' as const }],
+        determinism: 'deterministic' as const,
+      },
+      status: 'active' as const,
+    }];
+
+    const catalog = createVideoEditorEffectCatalog({ registryRecords });
+    expect(catalog.effects[0].parameterSchema).toEqual(paramSchema);
+  });
+
+  it('registry record without schema has undefined parameterSchema', () => {
+    const registryRecords = [{
+      effectId: 'no-schema-effect',
+      contributionId: 'contrib-1',
+      component: (() => null) as any,
+      provenance: 'bundled-extension' as const,
+      renderability: {
+        capabilities: [{ route: 'preview' as const, status: 'supported' as const, determinism: 'deterministic' as const }],
+        determinism: 'deterministic' as const,
+      },
+      status: 'active' as const,
+    }];
+
+    const catalog = createVideoEditorEffectCatalog({ registryRecords });
+    expect(catalog.effects[0].parameterSchema).toBeUndefined();
+  });
+
+  it('catalog groups registry record effects by category (defaults to continuous)', () => {
+    const registryRecords = [
+      {
+        effectId: 'ext-continuous',
+        contributionId: 'contrib-1',
+        component: (() => null) as any,
+        provenance: 'bundled-extension' as const,
+        renderability: {
+          capabilities: [{ route: 'preview' as const, status: 'supported' as const, determinism: 'deterministic' as const }],
+          determinism: 'deterministic' as const,
+        },
+        status: 'active' as const,
+      },
+    ];
+
+    const catalog = createVideoEditorEffectCatalog({ registryRecords });
+    expect(catalog.continuous).toHaveLength(1);
+    expect(catalog.continuous[0].id).toBe('ext-continuous');
+    expect(catalog.entrance).toHaveLength(0);
+    expect(catalog.exit).toHaveLength(0);
+  });
+});

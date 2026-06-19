@@ -4,10 +4,10 @@ import {
   continuousEffects,
   getEffectRegistry,
   lookupEffect,
+  resolveSnapshotEffect,
   wrapWithEffect,
 } from '@/tools/video-editor/effects/index.tsx';
 import {
-  normalizeEffectRegistryId,
   useOptionalEffectRegistryContext,
   type EffectRegistrySnapshot,
 } from '@/tools/video-editor/effects/registry/index.ts';
@@ -44,8 +44,9 @@ export const EffectLayerSequence: FC<EffectLayerSequenceProps> = ({
     return <>{children}</>;
   }
 
-  const normalizedEffectId = normalizeEffectRegistryId(clip.continuous.type);
-  const registryRecord = registrySnapshot?.get(normalizedEffectId) ?? registrySnapshot?.get(clip.continuous.type);
+  const registryRecord = registrySnapshot
+    ? resolveSnapshotEffect(registrySnapshot, clip.continuous.type)
+    : undefined;
   const Effect = registryRecord?.component
     ?? (shouldUseLegacyFallback ? lookupEffect(continuousEffects, clip.continuous.type) : null);
   if (!Effect) {

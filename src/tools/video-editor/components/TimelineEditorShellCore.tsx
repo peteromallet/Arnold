@@ -1,7 +1,7 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react';
 import { CommandPalette } from '@/tools/video-editor/components/CommandPalette/CommandPalette.tsx';
 import { formatDistanceToNow } from 'date-fns';
-import { Download, Eye, FileOutput, GripHorizontal, History, Maximize2, Minimize2, Redo2, RefreshCw, Settings, SlidersHorizontal, Undo2, ZoomIn, ZoomOut } from 'lucide-react';
+import { AlertTriangle, Download, Eye, FileOutput, GripHorizontal, History, Maximize2, Minimize2, Redo2, RefreshCw, Settings, SlidersHorizontal, Undo2, ZoomIn, ZoomOut } from 'lucide-react';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/shared/components/ui/alert-dialog.tsx';
 import { Badge } from '@/shared/components/ui/badge.tsx';
 import { Button } from '@/shared/components/ui/button.tsx';
@@ -933,6 +933,17 @@ function TimelineEditorShellCoreComponent({
             ? `Render ${chrome.renderProgress.percent}%`
             : 'Render'}
         </Button>
+        {chrome.renderStatus === 'error' && chrome.renderLog && (
+          <div
+            className="absolute right-0 top-full mt-1 w-72 rounded-md border border-red-500/30 bg-red-500/10 px-2 py-1.5 text-[10px] text-red-300 backdrop-blur-sm"
+            data-video-editor-render-blocker="true"
+          >
+            <div className="flex items-start gap-1">
+              <AlertTriangle className="mt-0.5 h-3 w-3 shrink-0" />
+              <span className="line-clamp-3">{chrome.renderLog.split('\n')[0]}</span>
+            </div>
+          </div>
+        )}
         {chrome.renderResultUrl && chrome.renderStatus === 'done' && !chrome.renderDirty && (
           <a
             href={chrome.renderResultUrl}

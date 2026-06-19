@@ -80,6 +80,12 @@ export interface SchemaFormProps {
    * Called once on mount and whenever schema or registry changes.
    */
   onDiagnostics?: (diagnostics: ExtensionDiagnostic[]) => void;
+  /**
+   * Pre-existing diagnostics to display at the top of the form (e.g. from
+   * registry-level schema validation). Each diagnostic is rendered as an
+   * alert row showing the diagnostic message.
+   */
+  diagnostics?: readonly ExtensionDiagnostic[];
 }
 
 // ---------------------------------------------------------------------------
@@ -246,6 +252,7 @@ export function SchemaForm({
   className,
   capabilityRegistry,
   onDiagnostics,
+  diagnostics,
 }: SchemaFormProps) {
   const registry = useMemo(
     () => capabilityRegistry ?? createSchemaCapabilityRegistry(),
@@ -268,7 +275,41 @@ export function SchemaForm({
     }
   }, [fields, onDiagnostics]);
 
+  // Render diagnostics even when there are no fields (pure schema-level errors)
+  const hasDiagnostics = diagnostics && diagnostics.length > 0;
+
   if (fields.length === 0) {
+    if (hasDiagnostics) {
+      return (
+        <div
+          className={cn('space-y-3 rounded-xl border border-border bg-card/60 p-3', className)}
+          data-testid="schema-form"
+        >
+          {diagnostics!.map((diag, idx) => (
+            <div
+              key={`schema-diag-${idx}`}
+              className="rounded-lg border border-destructive/40 bg-destructive/5 p-3"
+              data-testid={`schema-form-diagnostic-${idx}`}
+              role="alert"
+            >
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="text-sm font-medium text-destructive">
+                    Schema validation error
+                  </div>
+                  <div className="text-xs text-muted-foreground">
+                    {diag.message}
+                  </div>
+                </div>
+                <span className="shrink-0 rounded-full bg-destructive/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-destructive">
+                  Error
+                </span>
+              </div>
+            </div>
+          ))}
+        </div>
+      );
+    }
     return null;
   }
 
@@ -277,6 +318,30 @@ export function SchemaForm({
       className={cn('space-y-3 rounded-xl border border-border bg-card/60 p-3', className)}
       data-testid="schema-form"
     >
+      {/* Render registry-level diagnostics above the parameter fields */}
+      {hasDiagnostics && diagnostics!.map((diag, idx) => (
+        <div
+          key={`schema-diag-${idx}`}
+          className="rounded-lg border border-destructive/40 bg-destructive/5 p-3"
+          data-testid={`schema-form-diagnostic-${idx}`}
+          role="alert"
+        >
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0">
+              <div className="text-sm font-medium text-destructive">
+                Schema validation error
+              </div>
+              <div className="text-xs text-muted-foreground">
+                {diag.message}
+              </div>
+            </div>
+            <span className="shrink-0 rounded-full bg-destructive/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-destructive">
+              Error
+            </span>
+          </div>
+        </div>
+      ))}
+
       {fields.map((field) => {
         const rawValue = values[field.name];
         const value = getDisplayValue(field, rawValue);

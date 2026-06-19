@@ -31,11 +31,67 @@ import type {
   ContextMenuItemContribution,
   KeybindingContribution,
   TimelinePatch,
+  EffectContribution,
+  EffectParameterSchema,
 } from '@reigh/editor-sdk';
+
+import { FlagshipEffectComponent } from './FlagshipEffectComponent';
 
 const FLAGSHIP_EXTENSION_ID = 'com.reigh.examples.flagship-local';
 const FLAGSHIP_MARK_REVIEW_COMMAND =
   `${FLAGSHIP_EXTENSION_ID}.markClipReview`;
+
+// ---------------------------------------------------------------------------
+// M7: Trusted component-effect parameter schema
+// ---------------------------------------------------------------------------
+
+/**
+ * Schema for the Flagship Glow effect.
+ *
+ * Demonstrates all supported parameter types:
+ *  - number (with min, max, step, default)
+ *  - select (with options)
+ *  - boolean (with default)
+ *  - color (with default)
+ */
+const FLAGSHIP_GLOW_SCHEMA: EffectParameterSchema = [
+  {
+    name: 'intensity',
+    label: 'Glow Intensity',
+    description: 'How strong the glow appears (0–1).',
+    type: 'number',
+    default: 0.5,
+    min: 0,
+    max: 1,
+    step: 0.05,
+  },
+  {
+    name: 'color',
+    label: 'Glow Color',
+    description: 'CSS color for the glow overlay.',
+    type: 'color',
+    default: '#ff6b6b',
+  },
+  {
+    name: 'style',
+    label: 'Glow Style',
+    description: 'Visual style of the overlay.',
+    type: 'select',
+    default: 'glow',
+    options: [
+      { label: 'Glow', value: 'glow' },
+      { label: 'Vignette', value: 'vignette' },
+      { label: 'Both', value: 'both' },
+    ],
+  },
+  {
+    name: 'animate',
+    label: 'Animate',
+    description: 'Pulse the glow over time.',
+    type: 'boolean',
+    default: true,
+  },
+];
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -162,14 +218,27 @@ export const flagshipLocalExtension: ReighExtension = defineExtension({
         label: 'Flagship status',
       },
 
+      // ---- M7 trusted component-effect contribution ------------------------
+      {
+        id: 'flagship-effect-glow' as any,
+        kind: 'effect',
+        label: 'Flagship Glow',
+        effectId: 'com.reigh.flagship.effect.glow',
+        // Preview-only: browser and worker export are blocked until a
+        // future milestone lifts the restriction (SD2).
+        allowBrowserExport: false,
+        allowWorkerExport: false,
+        order: 10,
+      } satisfies EffectContribution,
+
       // ---- Future inactive contribution declarations -----------------------
       // These are reserved for later milestones; the runtime will emit
       // info-level diagnostics noting they are not yet bridged.
       {
-        id: 'flagship-effect-future' as any,
+        id: 'flagship-effect-second-future' as any,
         kind: 'effect',
         label: 'Flagship custom effect (reserved for M3)',
-        effectId: 'com.reigh.flagship.effect.glow',
+        effectId: 'com.reigh.flagship.effect.second',
       },
       {
         id: 'flagship-transition-future' as any,
@@ -289,6 +358,22 @@ export const flagshipLocalExtension: ReighExtension = defineExtension({
       ctx.services.i18n.t('command.markReview.ready'),
     );
 
+    // --- M7: Trusted component-effect registration ----------------------
+    const effectHandle = ctx.effects.registerComponent(
+      'com.reigh.flagship.effect.glow',
+      FlagshipEffectComponent,
+      {
+        label: 'Flagship Glow',
+        parameterSchema: FLAGSHIP_GLOW_SCHEMA,
+      },
+    );
+
+    info(
+      ctx,
+      'flagship/effect-registered',
+      'Flagship Glow component effect registered (preview-only).',
+    );
+
     // --- Chrome event subscriptions -------------------------------------
     // Subscribe to toast events to demonstrate the subscribe API
     const toastSub = ctx.chrome.subscribe('toast', (payload) => {
@@ -332,6 +417,7 @@ export const flagshipLocalExtension: ReighExtension = defineExtension({
         toastSub.dispose();
         renderSub.dispose();
         commandHandle.dispose();
+        effectHandle.dispose();
 
         // Emit disposal diagnostic
         const disposedMsg = ctx.services.i18n.t('activation.disposed');

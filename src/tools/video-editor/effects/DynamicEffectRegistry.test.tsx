@@ -32,6 +32,10 @@ import {
   EffectRegistryProvider,
   useEffectRegistrySnapshot,
 } from '@/tools/video-editor/effects/registry/EffectRegistryContext';
+import type {
+  EffectRegistryRecord,
+  EffectRegistrySnapshot,
+} from '@/tools/video-editor/effects/registry/types';
 import { validateAndCoerceParams } from '@/tools/video-editor/effects/validateParams';
 import { useEffectRegistry } from '@/tools/video-editor/hooks/useEffectRegistry';
 import type { EffectResource } from '@/tools/video-editor/hooks/useEffectResources';
@@ -597,6 +601,78 @@ describe('DynamicEffectRegistry', () => {
     expect(screen.queryByTestId('standalone-fallback-a')).not.toContainElement(screen.getByTestId('fallback-b-fallback-child'));
     expect(screen.queryByTestId('standalone-fallback-b')).not.toContainElement(screen.getByTestId('fallback-a-fallback-child'));
     expect(getEffectRegistry().get('custom:fallback-shared-effect')).toBeUndefined();
+  });
+
+  it('wrapWithClipEffects prefers provider record component and schema over legacy singleton for same effect ID', () => {
+    const LegacyComponent = ({ children }: EffectComponentProps) => (
+      <div data-testid="legacy-override-component">{children}</div>
+    );
+    const ProviderComponent = ({ children, params }: EffectComponentProps) => (
+      <div data-testid="provider-override-component" data-amount={String(params?.amount ?? '')}>{children}</div>
+    );
+    const providerSchema: ParameterSchema = [
+      { name: 'amount', label: 'Amount', type: 'number', default: 42, min: 0, max: 100 },
+    ];
+    const legacySchema: ParameterSchema = [
+      { name: 'amount', label: 'Amount', type: 'number', default: 1, min: 0, max: 10 },
+    ];
+
+    // Seed the legacy singleton with one component and schema
+    replaceEffectRegistry(new DynamicEffectRegistry({ 'override-effect': LegacyComponent }));
+    getEffectRegistry().register('override-effect', 'export default function Effect(){}', legacySchema);
+
+    // Build a provider snapshot with a different component and schema for the same ID
+    const providerRecord: EffectRegistryRecord = {
+      effectId: 'override-effect',
+      contributionId: 'test:override-effect',
+      component: ProviderComponent,
+      provenance: 'trusted-loader',
+      ownerExtensionId: 'test-ext',
+      status: 'active',
+      schema: providerSchema,
+      renderability: {
+        defaultRoute: 'preview',
+        determinism: 'deterministic',
+        capabilities: [
+          { route: 'preview', status: 'supported', determinism: 'deterministic' },
+        ],
+      },
+    };
+    const providerSnapshot: EffectRegistrySnapshot = Object.freeze({
+      records: Object.freeze([providerRecord]),
+      diagnostics: Object.freeze([]),
+      get: (effectId: string) => effectId === 'override-effect' ? providerRecord : undefined,
+      has: (effectId: string) => effectId === 'override-effect',
+    }) as EffectRegistrySnapshot;
+
+    const clip: ResolvedTimelineClip = {
+      id: 'clip-override',
+      clipType: 'media',
+      track: 'V1',
+      at: 0,
+      hold: 1,
+      continuous: { type: 'override-effect', params: {}, intensity: 0.5 },
+    };
+
+    render(
+      <>
+        {wrapWithClipEffects(
+          <div data-testid="override-child" />,
+          clip,
+          30,
+          30,
+          providerSnapshot,
+        )}
+      </>,
+    );
+
+    // Provider component renders, not legacy
+    expect(screen.getByTestId('provider-override-component')).toBeInTheDocument();
+    expect(screen.queryByTestId('legacy-override-component')).not.toBeInTheDocument();
+    // Provider schema default (42) used, not legacy default (1)
+    expect(screen.getByTestId('provider-override-component')).toHaveAttribute('data-amount', '42');
+    // Legacy singleton is unchanged
+    expect(getEffectRegistry().get('custom:override-effect')).toBe(LegacyComponent);
   });
 
   it('validates and coerces effect params from schema defaults', () => {

@@ -17,6 +17,7 @@ import type {
   MetadataFacetContribution,
   AssetDetailSectionContribution,
   MetadataFacetValueKind,
+  EffectContribution,
 } from '@reigh/editor-sdk';
 import { contributionKindNotYetBridged } from '@reigh/editor-sdk';
 import type { TimelineGestureOwner } from '@/tools/video-editor/lib/mobile-interaction-model';
@@ -120,6 +121,8 @@ export interface VideoEditorExtensionRuntimeConfig {
   metadataFacets: readonly VideoEditorMetadataFacetDescriptor[];
   /** M6: Normalized asset detail section descriptors for the asset detail panel. */
   assetDetailSections: readonly VideoEditorAssetDetailSectionDescriptor[];
+  /** M7: Normalized component-backed effect descriptors, provider-scoped and deterministically ordered. */
+  effects: readonly VideoEditorEffectDescriptor[];
 }
 
 export interface ResolvedVideoEditorPanelRegistry {
@@ -197,6 +200,27 @@ export interface VideoEditorAssetDetailSectionDescriptor {
 }
 
 // ---------------------------------------------------------------------------
+// M7: Trusted component effect descriptors
+// ---------------------------------------------------------------------------
+
+/** A normalized component-backed effect descriptor produced by runtime normalization. */
+export interface VideoEditorEffectDescriptor {
+  id: string;
+  extensionId: string;
+  order?: number;
+  /** The effect identifier that must match registerComponent calls. */
+  effectId: string;
+  /** Human-readable label, falling back to effectId. */
+  label: string;
+  /** When true, the effect contribution allows browser export. */
+  allowBrowserExport: boolean;
+  /** When true, the effect contribution allows worker export. */
+  allowWorkerExport: boolean;
+  /** Whether the contribution has component metadata (always true for active descriptors). */
+  hasComponentMetadata: boolean;
+}
+
+// ---------------------------------------------------------------------------
 // Host-owned runtime normalization types
 // ---------------------------------------------------------------------------
 
@@ -236,6 +260,8 @@ export interface ExtensionRuntime {
   readonly metadataFacets: readonly VideoEditorMetadataFacetDescriptor[];
   /** M6: Asset detail section descriptors from all extensions. */
   readonly assetDetailSections: readonly VideoEditorAssetDetailSectionDescriptor[];
+  /** M7: Normalized component-backed effect descriptors. */
+  readonly effects: readonly VideoEditorEffectDescriptor[];
 }
 
 /** Signature for host-owned runtime normalization. */
@@ -251,6 +277,7 @@ const EMPTY_OUTPUT_FORMATS: readonly VideoEditorOutputFormatDescriptor[] = Objec
 const EMPTY_SEARCH_PROVIDERS: readonly VideoEditorSearchProviderDescriptor[] = Object.freeze([]);
 const EMPTY_METADATA_FACETS: readonly VideoEditorMetadataFacetDescriptor[] = Object.freeze([]);
 const EMPTY_ASSET_DETAIL_SECTIONS: readonly VideoEditorAssetDetailSectionDescriptor[] = Object.freeze([]);
+const EMPTY_EFFECTS: readonly VideoEditorEffectDescriptor[] = Object.freeze([]);
 const EMPTY_RESOLVED_PANEL_REGISTRY: ResolvedVideoEditorPanelRegistry = Object.freeze({
   assetPanels: EMPTY_PANELS,
   inspectorSections: Object.freeze({
@@ -275,6 +302,7 @@ export const DEFAULT_VIDEO_EDITOR_EXTENSION_RUNTIME: VideoEditorExtensionRuntime
   searchProviders: EMPTY_SEARCH_PROVIDERS,
   metadataFacets: EMPTY_METADATA_FACETS,
   assetDetailSections: EMPTY_ASSET_DETAIL_SECTIONS,
+  effects: EMPTY_EFFECTS,
 });
 
 /**
@@ -377,6 +405,41 @@ export function normalizeExtensionRuntime(
       // Check if the contribution kind is bridged in the current runtime
       const notYetBridged = contributionKindNotYetBridged(contrib.kind);
 
+      // M7: Effect contributions with component metadata (effectId) are
+      // treated as active and projected into deterministic descriptors.
+      // Effects without component metadata remain inactive with diagnostics.
+      if (contrib.kind === 'effect') {
+        const effectContrib = contrib as unknown as EffectContribution;
+        if (effectContrib.effectId) {
+          // Component-backed: treat as active
+          bridged.push({ contribution: contrib, extensionId: extId });
+          if (contrib.render) {
+            knownRenderIds.add(contrib.render);
+          }
+        } else {
+          // Unsupported: no component metadata — inactive with diagnostic
+          inactiveReserved.push({
+            extensionId: extId,
+            contributionId: contribId,
+            kind: contrib.kind,
+            milestone: notYetBridged ?? 'unknown',
+          });
+          diagnostics.push({
+            severity: 'warn',
+            code: 'runtime/effect-missing-component-metadata',
+            message:
+              `Effect contribution \"${contribId}\" in extension \"${extId}\" ` +
+              `has no effectId (component metadata). The effect will be inactive.`,
+            extensionId: extId,
+            contributionId: contribId,
+          });
+          if (contrib.render) {
+            knownRenderIds.add(contrib.render);
+          }
+        }
+        continue;
+      }
+
       // M6: OutputFormat and SearchProvider are reserved for execution but
       // must still be collected as descriptors in the runtime config.
       if (
@@ -467,6 +530,7 @@ export function normalizeExtensionRuntime(
   const assetParserDescriptors: VideoEditorAssetParserDescriptor[] = [];
   const metadataFacetDescriptors: VideoEditorMetadataFacetDescriptor[] = [];
   const assetDetailSectionDescriptors: VideoEditorAssetDetailSectionDescriptor[] = [];
+  const effectDescriptors: VideoEditorEffectDescriptor[] = [];
 
   for (const { contribution, extensionId } of sorted) {
     switch (contribution.kind) {
@@ -559,6 +623,24 @@ export function normalizeExtensionRuntime(
         });
         break;
       }
+      // M7: effect — bridge component-backed effects into effects
+      case 'effect': {
+        const effectContrib = contribution as unknown as EffectContribution;
+        if (effectContrib.effectId) {
+          effectDescriptors.push({
+            id: contribution.id as string,
+            extensionId,
+            order: contribution.order,
+            effectId: effectContrib.effectId,
+            label: effectContrib.label ?? effectContrib.effectId,
+            allowBrowserExport: effectContrib.allowBrowserExport ?? false,
+            allowWorkerExport: effectContrib.allowWorkerExport ?? false,
+            hasComponentMetadata: true,
+          });
+        }
+        // Effects without effectId are filtered in Phase 2; they never reach here.
+        break;
+      }
       default:
         // Unknown bridged kinds are silently skipped (should not occur)
         break;
@@ -635,7 +717,8 @@ export function normalizeExtensionRuntime(
     outputFormatDescriptors.length > 0 ||
     searchProviderDescriptors.length > 0 ||
     metadataFacetDescriptors.length > 0 ||
-    assetDetailSectionDescriptors.length > 0;
+    assetDetailSectionDescriptors.length > 0 ||
+    effectDescriptors.length > 0;
 
   const config: VideoEditorExtensionRuntimeConfig = hasAnyConfigurableContent
     ? Object.freeze({
@@ -653,6 +736,7 @@ export function normalizeExtensionRuntime(
         searchProviders: Object.freeze(searchProviderDescriptors),
         metadataFacets: Object.freeze(metadataFacetDescriptors),
         assetDetailSections: Object.freeze(assetDetailSectionDescriptors),
+        effects: Object.freeze(effectDescriptors),
       })
     : DEFAULT_VIDEO_EDITOR_EXTENSION_RUNTIME;
 
@@ -672,6 +756,7 @@ export function normalizeExtensionRuntime(
     searchProviders: Object.freeze(searchProviderDescriptors),
     metadataFacets: Object.freeze(metadataFacetDescriptors),
     assetDetailSections: Object.freeze(assetDetailSectionDescriptors),
+    effects: Object.freeze(effectDescriptors),
   });
 
   return runtime;
@@ -690,6 +775,7 @@ const EMPTY_EXTENSION_RUNTIME: ExtensionRuntime = Object.freeze({
   searchProviders: EMPTY_SEARCH_PROVIDERS,
   metadataFacets: EMPTY_METADATA_FACETS,
   assetDetailSections: EMPTY_ASSET_DETAIL_SECTIONS,
+  effects: EMPTY_EFFECTS,
 });
 
 type RegistryDescriptor = {

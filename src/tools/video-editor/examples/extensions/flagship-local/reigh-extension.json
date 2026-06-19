@@ -45,10 +45,19 @@
         "label": "Flagship status"
       },
       {
-        "id": "flagship-effect-future",
+        "id": "flagship-effect-glow",
+        "kind": "effect",
+        "label": "Flagship Glow",
+        "effectId": "com.reigh.flagship.effect.glow",
+        "allowBrowserExport": false,
+        "allowWorkerExport": false,
+        "order": 10
+      },
+      {
+        "id": "flagship-effect-second-future",
         "kind": "effect",
         "label": "Flagship custom effect (reserved for M3)",
-        "effectId": "com.reigh.flagship.effect.glow"
+        "effectId": "com.reigh.flagship.effect.second"
       },
       {
         "id": "flagship-transition-future",

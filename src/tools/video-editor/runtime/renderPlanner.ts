@@ -45,6 +45,7 @@ export interface RenderPlannerResult {
   readonly blockers: readonly RenderBlocker[];
   readonly routes: readonly RenderRouteSummary[];
   readonly canBrowserExport: boolean;
+  readonly canWorkerExport: boolean;
 }
 
 function extensionContributions(extensionRuntime: ExtensionRuntime | undefined): ExtensionContribution[] {
@@ -188,6 +189,7 @@ export function planRender(input: RenderPlannerInput): RenderPlannerResult {
     RENDER_ROUTES.map((route) => routeSummary(route, findings, blockers)),
   );
   const browserRoute = routes.find((route) => route.route === 'browser-export');
+  const workerRoute = routes.find((route) => route.route === 'worker-export');
 
   return Object.freeze({
     guard,
@@ -195,5 +197,6 @@ export function planRender(input: RenderPlannerInput): RenderPlannerResult {
     blockers,
     routes,
     canBrowserExport: !browserRoute?.blocked,
+    canWorkerExport: !workerRoute?.blocked,
   });
 }

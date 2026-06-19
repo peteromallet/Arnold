@@ -122,11 +122,27 @@ export const lookupEffect = (
   return registry.get(name) ?? null;
 };
 
-function resolveSnapshotEffect(
+/**
+ * Resolve an effect from a provider-scoped {@link EffectRegistrySnapshot} by
+ * normalized ID. Returns `undefined` when the record is missing, inactive, or
+ * has no renderable component.
+ *
+ * The resolution order is:
+ * 1. `snapshot.get(normalizeEffectRegistryId(type))` — strips `custom:` prefix
+ * 2. `snapshot.get(type)` — fallback for legacy `custom:` keys
+ *
+ * Records with `status: 'inactive'` are skipped so deactivated extensions
+ * don't leak stale effects into the render tree. Records with `status:
+ * 'error'` are still returned because T5 intentionally preserves
+ * render-time parameter coercion for already-applied legacy data.
+ */
+export function resolveSnapshotEffect(
   snapshot: EffectRegistrySnapshot,
   type: string,
 ): ReturnType<EffectRegistrySnapshot['get']> {
-  return snapshot.get(normalizeEffectRegistryId(type)) ?? snapshot.get(type);
+  const record = snapshot.get(normalizeEffectRegistryId(type)) ?? snapshot.get(type);
+  if (record && record.status === 'inactive') return undefined;
+  return record;
 }
 
 type WrapWithEffectConfig = {

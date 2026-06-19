@@ -196,4 +196,66 @@ describe('EffectLayerSequence registry snapshot resolution', () => {
     expect(screen.getByTestId('content')).toBeInTheDocument();
     expect(screen.queryByTestId('delayed-effect')).not.toBeInTheDocument();
   });
+
+  it('resolves effects from the context-based provider registry when no explicit snapshot is passed', async () => {
+    const ContextEffect = makeEffect('context-effect');
+    render(
+      <EffectRegistryProvider>
+        <ProviderRecord effectId="context-effect" component={ContextEffect} schema={schema(5)}>
+          <EffectLayerSequence clip={clip('context-effect')} fps={30}>
+            <div data-testid="ctx-content">content</div>
+          </EffectLayerSequence>
+        </ProviderRecord>
+      </EffectRegistryProvider>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId('context-effect')).toBeInTheDocument();
+    });
+    expect(screen.getByTestId('ctx-content')).toBeInTheDocument();
+    expect(screen.getByTestId('context-effect')).toHaveAttribute('data-amount', '5');
+  });
+
+  it('passes provider record schema defaults to the rendered effect component', async () => {
+    const ParamsEffect: FC<EffectComponentProps> = ({ children, params }) => (
+      <div data-testid="params-effect" data-amount={String(params?.amount ?? 'none')} data-enabled={String(params?.enabled ?? 'none')}>{children}</div>
+    );
+    const multiSchema: ParameterSchema = [
+      { name: 'amount', label: 'Amount', type: 'number', default: 10, min: 0, max: 20 },
+      { name: 'enabled', label: 'Enabled', type: 'boolean', default: true },
+    ];
+
+    render(
+      <EffectRegistryProvider>
+        <ProviderRecord effectId="multi-param-effect" component={ParamsEffect} schema={multiSchema}>
+          <EffectLayerSequence clip={clip('multi-param-effect')} fps={30}>
+            <div data-testid="mp-content">content</div>
+          </EffectLayerSequence>
+        </ProviderRecord>
+      </EffectRegistryProvider>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId('params-effect')).toBeInTheDocument();
+    });
+    expect(screen.getByTestId('params-effect')).toHaveAttribute('data-amount', '10');
+    expect(screen.getByTestId('params-effect')).toHaveAttribute('data-enabled', 'true');
+  });
+
+  it('context-based resolution falls back to legacy singleton when no provider context exists', async () => {
+    const LegacyOnly = makeEffect('legacy-context-only');
+    replaceEffectRegistry(new DynamicEffectRegistry({ 'legacy-context-only': LegacyOnly }));
+
+    // No EffectRegistryProvider wrapper — legacy fallback is active
+    render(
+      <EffectLayerSequence clip={clip('legacy-context-only')} fps={30}>
+        <div data-testid="lc-content">content</div>
+      </EffectLayerSequence>,
+    );
+
+    // With no provider context, falls back to legacy singleton
+    await waitFor(() => {
+      expect(screen.getByTestId('legacy-context-only')).toBeInTheDocument();
+    });
+  });
 });

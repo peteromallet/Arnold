@@ -523,7 +523,7 @@ describe('scanExportConfig — unknown effects', () => {
     ]);
     expect(result.findings).toEqual([
       expect.objectContaining({
-        id: 'export.effect.c1.continuous.preview-glow.preview-only',
+        id: 'export.effect.c1.continuous.preview-glow.browser-export.preview-only',
         severity: 'error',
         route: 'browser-export',
         reason: 'preview-only',
@@ -531,12 +531,12 @@ describe('scanExportConfig — unknown effects', () => {
         extensionId: 'ext.preview',
         contributionId: 'ext.preview:effect:preview-glow',
         clipId: 'c1',
-        detail: { effectType: 'preview-glow', slot: 'continuous' },
+        detail: { effectType: 'preview-glow', slot: 'continuous', provenance: 'trusted-loader' },
       }),
     ]);
     expect(result.blockers).toEqual([
       expect.objectContaining({
-        id: 'export.effect.c1.continuous.preview-glow.preview-only',
+        id: 'export.effect.c1.continuous.preview-glow.browser-export.preview-only',
         severity: 'error',
         route: 'browser-export',
         reason: 'preview-only',
@@ -544,6 +544,183 @@ describe('scanExportConfig — unknown effects', () => {
     ]);
     expect(result.unknownEffects).toEqual([]);
     expect(result.hasBlockingErrors).toBe(true);
+  });
+
+  it('blocks worker-export independently of browser-export for provider effects that lack worker capability', () => {
+    const clip = makeClip('c1', {
+      clipType: 'media',
+      entrance: { type: 'browser-only-effect', duration: 0.5 },
+    });
+    const snapshot = snapshotWith([
+      effectRecord('browser-only-effect', {
+        ownerExtensionId: 'ext.browser',
+        contributionId: 'ext.browser:effect:browser-only-effect',
+        renderability: {
+          defaultRoute: 'browser-export',
+          determinism: 'deterministic',
+          capabilities: [
+            {
+              route: 'preview',
+              status: 'supported',
+              determinism: 'deterministic',
+            },
+            {
+              route: 'browser-export',
+              status: 'supported',
+              determinism: 'deterministic',
+            },
+            {
+              route: 'worker-export',
+              status: 'blocked',
+              determinism: 'process-dependent',
+              blockerReason: 'process-dependent',
+              message: 'Browser-only effect requires DOM APIs unavailable in worker.',
+            },
+          ],
+        },
+      }),
+    ]);
+
+    const result = scanExportConfig(makeConfig([clip]), builtIn, extIds, snapshot);
+
+    // Browser-export is supported, worker-export is blocked — one error diagnostic
+    expect(result.diagnostics).toEqual([
+      expect.objectContaining({
+        severity: 'error',
+        code: 'export/unrenderable-effect',
+        message: 'Browser-only effect requires DOM APIs unavailable in worker.',
+        extensionId: 'ext.browser',
+        contributionId: 'ext.browser:effect:browser-only-effect',
+        detail: expect.objectContaining({
+          clipId: 'c1',
+          effectType: 'browser-only-effect',
+          renderRoute: 'worker-export',
+          blockerReason: 'process-dependent',
+        }),
+      }),
+    ]);
+    expect(result.findings).toEqual([
+      expect.objectContaining({
+        id: 'export.effect.c1.entrance.browser-only-effect.worker-export.process-dependent',
+        severity: 'error',
+        route: 'worker-export',
+        reason: 'process-dependent',
+        message: 'Browser-only effect requires DOM APIs unavailable in worker.',
+        clipId: 'c1',
+        detail: { effectType: 'browser-only-effect', slot: 'entrance', provenance: 'trusted-loader' },
+      }),
+    ]);
+    expect(result.blockers).toEqual([
+      expect.objectContaining({
+        id: 'export.effect.c1.entrance.browser-only-effect.worker-export.process-dependent',
+        severity: 'error',
+        route: 'worker-export',
+        reason: 'process-dependent',
+      }),
+    ]);
+    expect(result.unknownEffects).toEqual([]);
+    expect(result.hasBlockingErrors).toBe(true);
+  });
+
+  it('emits per-route blockers for inactive provider records across all GUARD_ROUTES', () => {
+    const clip = makeClip('c1', {
+      clipType: 'media',
+      continuous: { type: 'stale-effect', intensity: 0.5 },
+    });
+    const snapshot = snapshotWith([
+      effectRecord('stale-effect', {
+        ownerExtensionId: 'ext.stale',
+        contributionId: 'ext.stale:effect:stale-effect',
+        status: 'inactive',
+        provenance: 'bundled-extension',
+      }),
+    ]);
+
+    const result = scanExportConfig(makeConfig([clip]), builtIn, extIds, snapshot);
+
+    expect(result.diagnostics).toEqual([
+      expect.objectContaining({
+        severity: 'error',
+        code: 'export/unrenderable-effect',
+        message: expect.stringContaining('inactive'),
+        extensionId: 'ext.stale',
+        contributionId: 'ext.stale:effect:stale-effect',
+        detail: expect.objectContaining({
+          clipId: 'c1',
+          effectType: 'stale-effect',
+          effectStatus: 'inactive',
+          provenance: 'bundled-extension',
+        }),
+      }),
+    ]);
+    // One finding+blocker per GUARD_ROUTE
+    expect(result.findings).toHaveLength(3);
+    expect(result.findings.map((f) => f.route).sort()).toEqual(['browser-export', 'preview', 'worker-export']);
+    expect(result.blockers).toHaveLength(3);
+    expect(result.hasBlockingErrors).toBe(true);
+  });
+
+  it('emits unknown-route-support warnings for provider effects with unknown worker-export capability', () => {
+    const clip = makeClip('c1', {
+      clipType: 'media',
+      exit: { type: 'unclassified-effect', duration: 0.5 },
+    });
+    const snapshot = snapshotWith([
+      effectRecord('unclassified-effect', {
+        ownerExtensionId: 'ext.unclass',
+        contributionId: 'ext.unclass:effect:unclassified-effect',
+        renderability: {
+          defaultRoute: 'preview',
+          determinism: 'unknown',
+          capabilities: [
+            {
+              route: 'preview',
+              status: 'supported',
+              determinism: 'deterministic',
+            },
+            {
+              route: 'browser-export',
+              status: 'supported',
+              determinism: 'deterministic',
+            },
+            {
+              route: 'worker-export',
+              status: 'unknown',
+              determinism: 'unknown',
+              message: 'Worker-export support has not been classified for this effect.',
+            },
+          ],
+        },
+      }),
+    ]);
+
+    const result = scanExportConfig(makeConfig([clip]), builtIn, extIds, snapshot);
+
+    // One warning for unknown worker-export
+    expect(result.diagnostics).toEqual([
+      expect.objectContaining({
+        severity: 'warning',
+        code: 'export/unknown-route-support',
+        message: 'Worker-export support has not been classified for this effect.',
+        extensionId: 'ext.unclass',
+        detail: expect.objectContaining({
+          clipId: 'c1',
+          effectType: 'unclassified-effect',
+          renderRoute: 'worker-export',
+        }),
+      }),
+    ]);
+    expect(result.findings).toEqual([
+      expect.objectContaining({
+        id: 'export.effect.c1.exit.unclassified-effect.worker-export.unknown',
+        severity: 'warning',
+        route: 'worker-export',
+        reason: 'unknown',
+      }),
+    ]);
+    // Unknown support is non-blocking
+    expect(result.blockers).toEqual([]);
+    expect(result.hasBlockingErrors).toBe(false);
   });
 });
 

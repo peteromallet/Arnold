@@ -77,6 +77,19 @@ export interface ExtensionInventoryEntry {
   readonly hasWarnings: boolean;
 }
 
+/** M7: Per-effect blocker detail surfaced in the drawer. */
+export interface EffectBlockerDetail {
+  readonly effectId: string;
+  readonly provenance: string;
+  readonly status: string;
+  /** Route names that are blocked for this effect. */
+  readonly blockedRoutes: readonly string[];
+  /** Route names that have unknown support. */
+  readonly unknownRoutes: readonly string[];
+  /** Owner extension that registered the effect. */
+  readonly ownerExtensionId?: string;
+}
+
 /** Summary counts for the inventory. */
 export interface ExtensionStatusSummary {
   readonly totalExtensions: number;
@@ -111,6 +124,8 @@ export interface ExtensionStatusSummary {
   readonly effectBlockedRoutes: number;
   /** M5: Unknown renderability capability declarations across effect records. */
   readonly effectUnknownRoutes: number;
+  /** M7: Per-effect blocker details for drawer surfacing. */
+  readonly effectBlockerDetails: readonly EffectBlockerDetail[];
 }
 
 /** Complete read-only inventory derived from extension runtime state. */
@@ -154,6 +169,7 @@ const EMPTY_INVENTORY: ExtensionStatusInventory = Object.freeze({
     effectSupportedRoutes: 0,
     effectBlockedRoutes: 0,
     effectUnknownRoutes: 0,
+    effectBlockerDetails: Object.freeze([]),
   }),
   exportBlockers: Object.freeze([]),
   renderBlockers: Object.freeze([]),
@@ -330,6 +346,31 @@ export function useExtensionStatusInventory(): ExtensionStatusInventory {
     const effectBlockedRoutes = effectCapabilities.filter((capability) => capability.status === 'blocked').length;
     const effectUnknownRoutes = effectCapabilities.filter((capability) => capability.status === 'unknown').length;
 
+    // M7: Build per-effect blocker details for drawer surfacing.
+    const effectBlockerDetails: EffectBlockerDetail[] = [];
+    for (const record of effectRegistrySnapshot.records) {
+      const blockedRoutes: string[] = [];
+      const unknownRoutes: string[] = [];
+      for (const cap of record.renderability.capabilities) {
+        if (cap.status === 'blocked') {
+          blockedRoutes.push(cap.route);
+        } else if (cap.status === 'unknown') {
+          unknownRoutes.push(cap.route);
+        }
+      }
+      // Include records that have any blocked/unknown routes, or inactive/error status.
+      if (blockedRoutes.length > 0 || unknownRoutes.length > 0 || record.status !== 'active') {
+        effectBlockerDetails.push({
+          effectId: record.effectId,
+          provenance: record.provenance,
+          status: record.status,
+          blockedRoutes: Object.freeze(blockedRoutes),
+          unknownRoutes: Object.freeze(unknownRoutes),
+          ownerExtensionId: record.ownerExtensionId,
+        });
+      }
+    }
+
     const summary: ExtensionStatusSummary = {
       totalExtensions: extensions.length,
       activeExtensions: extensions.filter(
@@ -360,6 +401,7 @@ export function useExtensionStatusInventory(): ExtensionStatusInventory {
       effectSupportedRoutes,
       effectBlockedRoutes,
       effectUnknownRoutes,
+      effectBlockerDetails: Object.freeze(effectBlockerDetails),
     };
 
     return {
@@ -592,6 +634,46 @@ function SummaryBar({ inventory }: { inventory: ExtensionStatusInventory }) {
               <span className="text-[10px] text-zinc-600">unknown routes</span>
             </div>
           )}
+        </div>
+      )}
+
+      {/* M7: Per-effect blocker details */}
+      {summary.effectBlockerDetails.length > 0 && (
+        <div className="mt-1.5 border-t border-white/5 pt-1.5">
+          <div className="mb-1">
+            <span className="text-[9px] font-medium text-zinc-500 uppercase tracking-wider">
+              Effect Route Blockers
+            </span>
+          </div>
+          <div className="flex flex-col gap-1">
+            {summary.effectBlockerDetails.map((detail) => (
+              <div
+                key={detail.effectId}
+                className="flex flex-wrap items-center gap-1.5 rounded bg-zinc-800/50 px-1.5 py-1"
+                data-video-editor-effect-blocker-detail={detail.effectId}
+              >
+                <span className="text-[10px] font-medium text-zinc-300 truncate max-w-[160px]">
+                  {detail.effectId}
+                </span>
+                {detail.status !== 'active' && (
+                  <span className={`text-[9px] font-medium uppercase ${detail.status === 'error' ? 'text-red-400' : 'text-zinc-500'}`}>
+                    {detail.status}
+                  </span>
+                )}
+                <span className="text-[9px] text-zinc-600">{detail.provenance}</span>
+                {detail.blockedRoutes.length > 0 && (
+                  <span className="text-[9px] text-red-400">
+                    blocked: {detail.blockedRoutes.join(', ')}
+                  </span>
+                )}
+                {detail.unknownRoutes.length > 0 && (
+                  <span className="text-[9px] text-yellow-400">
+                    unknown: {detail.unknownRoutes.join(', ')}
+                  </span>
+                )}
+              </div>
+            ))}
+          </div>
         </div>
       )}
     </div>

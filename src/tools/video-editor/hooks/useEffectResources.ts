@@ -13,10 +13,12 @@ import {
 } from '@/features/resources/hooks/useResources.ts';
 import {
   createVideoEditorEffectCatalog,
+  registryRecordToEffectResource,
   type EffectCategory,
   type EffectResource,
   type VideoEditorEffectCatalog,
 } from '@/tools/video-editor/lib/effect-catalog.ts';
+import { useOptionalEffectRegistryContext } from '@/tools/video-editor/effects/registry/EffectRegistryContext';
 
 export type {
   CreateVideoEditorEffectInput,
@@ -29,7 +31,10 @@ export type {
   VideoEditorEffectCatalogOptions,
 } from '@/tools/video-editor/lib/effect-catalog.ts';
 
-export { createVideoEditorEffectCatalog } from '@/tools/video-editor/lib/effect-catalog.ts';
+export {
+  createVideoEditorEffectCatalog,
+  registryRecordToEffectResource,
+} from '@/tools/video-editor/lib/effect-catalog.ts';
 
 function toEffectResource(resource: Resource): EffectResource {
   const metadata = resource.metadata as EffectMetadata;
@@ -69,6 +74,10 @@ function useSupabaseEffectCatalog(
   const updateEffect = useUpdateEffectResource();
   const deleteEffect = useDeleteEffectResource();
 
+  // Pull provider-scoped registry records to merge into the catalog.
+  const registryCtx = useOptionalEffectRegistryContext();
+  const registryRecords = registryCtx?.snapshot?.records ?? [];
+
   const effects = useMemo(() => {
     const privateResources = userId ? privateEffectsQuery.data ?? [] : [];
     const publicResources = publicEffectsQuery.data ?? [];
@@ -83,6 +92,7 @@ function useSupabaseEffectCatalog(
 
   return useMemo(() => createVideoEditorEffectCatalog({
     effects,
+    registryRecords,
     isLoading: privateEffectsQuery.isLoading || publicEffectsQuery.isLoading,
     isFetching: privateEffectsQuery.isFetching || publicEffectsQuery.isFetching,
     error: privateEffectsQuery.error ?? publicEffectsQuery.error ?? null,
@@ -100,6 +110,7 @@ function useSupabaseEffectCatalog(
     createEffect,
     deleteEffect,
     effects,
+    registryRecords,
     privateEffectsQuery.error,
     privateEffectsQuery.isFetching,
     privateEffectsQuery.isLoading,

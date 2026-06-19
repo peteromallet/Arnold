@@ -35,6 +35,7 @@ import type {
   RenderBlocker,
   RenderBlockerReason,
   RenderCapability,
+  RenderRoute,
 } from '@/tools/video-editor/runtime/renderability.ts';
 
 // ---------------------------------------------------------------------------
@@ -352,6 +353,9 @@ function scanClip(
 
 type EffectSlot = 'entrance' | 'exit' | 'continuous';
 
+/** Routes that the export guard checks independently for each registered effect. */
+const GUARD_ROUTES: readonly RenderRoute[] = ['preview', 'browser-export', 'worker-export'] as const;
+
 function scanEffect(
   clip: ResolvedTimelineClip,
   slot: EffectSlot,
@@ -378,8 +382,8 @@ function scanEffect(
   if (!known.effectTypes.has(effectType) && !snapshotRecord) {
     const isExtDeclared = known.extensionEffectIds.has(effectType);
     const message = isExtDeclared
-      ? `${capitalise(slot)} effect "${effectType}" is declared by an inactive extension and may not be available at export time.`
-      : `${capitalise(slot)} effect "${effectType}" is not recognised. Ensure the required extension or registry is installed.`;
+      ? `${capitalise(slot)} effect \"${effectType}\" is declared by an inactive extension and may not be available at export time.`
+      : `${capitalise(slot)} effect \"${effectType}\" is not recognised. Ensure the required extension or registry is installed.`;
 
     diagnostics.push({
       severity: isExtDeclared ? 'warning' : 'error',
@@ -397,6 +401,7 @@ function scanEffect(
         clipId: clip.id,
         effectType,
         slot,
+        route: 'browser-export',
       });
     }
     return;
@@ -416,68 +421,123 @@ function scanEffectRecordRenderability(
   findings: CapabilityFinding[],
   blockers: RenderBlocker[],
 ): void {
-  const browserExportCapability = record.renderability.capabilities.find(
-    (capability) => capability.route === 'browser-export',
-  );
-
   if (record.status !== 'active') {
-    const message = `${capitalise(slot)} effect "${effectType}" is registered but inactive and cannot be used for browser export.`;
+    const message = `${capitalise(slot)} effect \"${effectType}\" is registered but inactive and cannot be used for export or preview.`;
     diagnostics.push({
       severity: 'error',
       code: 'export/unrenderable-effect',
       message,
       extensionId: record.ownerExtensionId,
       contributionId: record.contributionId,
-      detail: { clipId: clip.id, effectType, effectStatus: record.status },
+      detail: {
+        clipId: clip.id,
+        effectType,
+        effectStatus: record.status,
+        provenance: record.provenance,
+      },
+    });
+
+    // Emit a blocker for every guarded route — an inactive effect can't be used anywhere.
+    for (const route of GUARD_ROUTES) {
+      pushEffectFindingAndBlocker(findings, blockers, {
+        id: `export.effect.${clip.id}.${slot}.${effectType}.inactive.${route}`,
+        reason: 'inactive-extension',
+        message: `${capitalise(slot)} effect \"${effectType}\" on route \"${route}\" is registered but inactive.`,
+        clipId: clip.id,
+        effectType,
+        slot,
+        route,
+        record,
+      });
+    }
+    return;
+  }
+
+  // Check each guarded route independently.
+  for (const route of GUARD_ROUTES) {
+    const capability = record.renderability.capabilities.find((cap) => cap.route === route);
+
+    if (!capability) {
+      // No capability declared for this route — pass silently.
+      continue;
+    }
+
+    if (capability.status === 'supported') {
+      // Route is supported — pass silently.
+      continue;
+    }
+
+    if (capability.status === 'unknown') {
+      // Unknown support — emit a warning finding (non-blocking).
+      const message = capability.message
+        ?? `${capitalise(slot)} effect \"${effectType}\" has unknown support for ${route}.`;
+      diagnostics.push({
+        severity: 'warning',
+        code: 'export/unknown-route-support',
+        message,
+        extensionId: record.ownerExtensionId,
+        contributionId: record.contributionId,
+        detail: {
+          clipId: clip.id,
+          effectType,
+          renderRoute: route,
+          provenance: record.provenance,
+          determinism: capability.determinism,
+        },
+      });
+      findings.push({
+        id: `export.effect.${clip.id}.${slot}.${effectType}.${route}.unknown`,
+        severity: 'warning',
+        route,
+        reason: 'unknown',
+        message,
+        clipId: clip.id,
+        ...(record.ownerExtensionId ? { extensionId: record.ownerExtensionId } : {}),
+        ...(record.contributionId ? { contributionId: record.contributionId } : {}),
+        detail: {
+          effectType,
+          slot,
+          provenance: record.provenance,
+          determinism: capability.determinism,
+        },
+      });
+      continue;
+    }
+
+    // status === 'blocked' — emit error diagnostic, finding, and blocker.
+    const reason = capability.blockerReason ?? firstRouteBlockerReason(record, route) ?? 'route-unsupported';
+    const message = capability.message
+      ?? `${capitalise(slot)} effect \"${effectType}\" does not support ${route}.`;
+
+    diagnostics.push({
+      severity: 'error',
+      code: 'export/unrenderable-effect',
+      message,
+      extensionId: record.ownerExtensionId,
+      contributionId: record.contributionId,
+      detail: {
+        clipId: clip.id,
+        effectType,
+        renderRoute: route,
+        blockerReason: reason,
+        provenance: record.provenance,
+      },
     });
     pushEffectFindingAndBlocker(findings, blockers, {
-      id: `export.effect.${clip.id}.${slot}.${effectType}.inactive`,
-      reason: 'inactive-extension',
+      id: `export.effect.${clip.id}.${slot}.${effectType}.${route}.${reason}`,
+      reason,
       message,
       clipId: clip.id,
       effectType,
       slot,
+      route,
       record,
     });
-    return;
   }
-
-  if (isBrowserExportSupported(browserExportCapability)) return;
-
-  const reason = browserExportCapability?.blockerReason ?? firstBrowserExportBlockerReason(record) ?? 'unknown';
-  const message = browserExportCapability?.message
-    ?? `${capitalise(slot)} effect "${effectType}" is registered but does not support browser export.`;
-
-  diagnostics.push({
-    severity: 'error',
-    code: 'export/unrenderable-effect',
-    message,
-    extensionId: record.ownerExtensionId,
-    contributionId: record.contributionId,
-    detail: {
-      clipId: clip.id,
-      effectType,
-      renderRoute: 'browser-export',
-      blockerReason: reason,
-    },
-  });
-  pushEffectFindingAndBlocker(findings, blockers, {
-    id: `export.effect.${clip.id}.${slot}.${effectType}.${reason}`,
-    reason,
-    message,
-    clipId: clip.id,
-    effectType,
-    slot,
-    record,
-  });
 }
 
-function isBrowserExportSupported(capability: RenderCapability | undefined): boolean {
-  return capability?.route === 'browser-export' && capability.status === 'supported';
-}
-
-function firstBrowserExportBlockerReason(record: EffectRegistryRecord): RenderBlockerReason | undefined {
-  return record.renderability.blockers?.find((blocker) => blocker.route === 'browser-export')?.reason;
+function firstRouteBlockerReason(record: EffectRegistryRecord, route: RenderRoute): RenderBlockerReason | undefined {
+  return record.renderability.blockers?.find((blocker) => blocker.route === route)?.reason;
 }
 
 function pushEffectFindingAndBlocker(
@@ -490,17 +550,21 @@ function pushEffectFindingAndBlocker(
     clipId: string;
     effectType: string;
     slot: EffectSlot;
+    route: RenderRoute;
     record?: EffectRegistryRecord;
   },
 ): void {
-  const detail = {
+  const detail: Record<string, unknown> = {
     effectType: input.effectType,
     slot: input.slot,
   };
+  if (input.record?.provenance) {
+    detail.provenance = input.record.provenance;
+  }
   const finding: CapabilityFinding = {
     id: input.id,
     severity: 'error',
-    route: 'browser-export',
+    route: input.route,
     reason: input.reason,
     message: input.message,
     clipId: input.clipId,
@@ -512,7 +576,7 @@ function pushEffectFindingAndBlocker(
   blockers.push({
     ...finding,
     severity: 'error',
-    route: 'browser-export',
+    route: input.route,
     reason: input.reason,
   });
 }

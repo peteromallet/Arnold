@@ -22,6 +22,7 @@ import {
 } from '@/tools/video-editor/contexts/DataProviderContext.tsx';
 import {
   createExtensionLifecycleHost,
+  createExtensionDiagnosticsService,
   type ExtensionLifecycleHost,
 } from '@/tools/video-editor/runtime/extensionLifecycle.ts';
 import {
@@ -80,6 +81,8 @@ import { useRenderDiagnostic } from '@/tools/video-editor/hooks/usePerfDiagnosti
 import { createTimelineReader } from '@/tools/video-editor/lib/timeline-reader.ts';
 import { createProposalRuntime } from '@/tools/video-editor/lib/proposal-runtime.ts';
 import { createCommandRegistry, type CommandRegistry } from '@/tools/video-editor/runtime/commandRegistry.ts';
+import { createEffectRegistrationService } from '@/tools/video-editor/runtime/effectRegistrationService.ts';
+import type { EffectRegistry } from '@/tools/video-editor/effects/registry/types.ts';
 
 import { useTimelineOpsFromStore } from '@/tools/video-editor/hooks/timelineStore.ts';
 import type { SaveStatus } from '@/tools/video-editor/hooks/useTimelinePersistence.ts';
@@ -146,6 +149,7 @@ function InnerProvider({
   lifecycleHostRef,
   extensionRuntime,
   commandRegistryRef,
+  effectRegistryRef,
 }: {
   children: React.ReactNode;
   effectCatalog?: VideoEditorEffectCatalog | null;
@@ -154,6 +158,7 @@ function InnerProvider({
   lifecycleHostRef: React.MutableRefObject<ExtensionLifecycleHost | null>;
   extensionRuntime: ExtensionRuntime;
   commandRegistryRef: React.MutableRefObject<CommandRegistry | null>;
+  effectRegistryRef: React.MutableRefObject<EffectRegistry | null>;
 }) {
   useRenderDiagnostic('VideoEditorProvider');
   const runtime = useVideoEditorRuntime();
@@ -265,6 +270,7 @@ function InnerProvider({
       extensionRuntime.extensions,
       (ext) => {
         const extId = ext.manifest.id as string;
+        const effectRegistry = effectRegistryRef.current;
         // Create per-extension commands service backed by the shared registry
         const commandsService: ExtensionCommandService | undefined = registry
           ? {
@@ -273,7 +279,20 @@ function InnerProvider({
               },
             }
           : undefined;
-        return createExtensionContext(ext, liveCreativeOverrides, commandsService);
+        // Create per-extension effects service backed by the shared EffectRegistry.
+        // The lifecycle host creates per-extension diagnostics services during
+        // synchronize() before calling contextFactory, so we can obtain the
+        // correct one from the host.
+        const effectsService = effectRegistry
+          ? createEffectRegistrationService({
+              extension: ext,
+              effectRegistry,
+              diagnosticsService:
+                host.lifecycles.get(extId)?.diagnosticsService ??
+                createExtensionDiagnosticsService(extId),
+            })
+          : undefined;
+        return createExtensionContext(ext, liveCreativeOverrides, commandsService, effectsService);
       },
     );
     syncExtensionDiagnosticsToCollection(diagnosticCollection, 'extension-lifecycle', [
@@ -531,6 +550,7 @@ function InnerProvider({
           effectResources={effectResources.effects}
           lifecycleHostRef={lifecycleHostRef}
           commandRegistryRef={commandRegistryRef}
+          effectRegistryRef={effectRegistryRef}
           activeExtensionIds={activeExtensionIds}
         />
         <SequenceComponentCatalogProvider value={sequenceComponentResources}>
@@ -563,15 +583,20 @@ function VideoEditorEffectRegistryLifecycle({
   effectResources,
   lifecycleHostRef,
   commandRegistryRef,
+  effectRegistryRef,
   activeExtensionIds,
 }: {
   effectsQueryData: Array<{ slug: string; code: string }> | undefined;
   effectResources: VideoEditorEffectCatalog['effects'];
   lifecycleHostRef: React.MutableRefObject<ExtensionLifecycleHost | null>;
   commandRegistryRef: React.MutableRefObject<CommandRegistry | null>;
+  effectRegistryRef: React.MutableRefObject<EffectRegistry | null>;
   activeExtensionIds: ReadonlySet<string>;
 }) {
   const { registry: effectRegistry, snapshot: effectRegistrySnapshot } = useEffectRegistryContext();
+  // Expose the effect registry to the outer synchronize effect via ref.
+  // Set during render so the parent's useEffect can read it after commit.
+  effectRegistryRef.current = effectRegistry;
   const diagnosticCollection = useVideoEditorRuntime().diagnosticCollection;
 
   useEffectRegistry(
@@ -667,6 +692,10 @@ export function VideoEditorProvider({
     commandRegistryRef.current = createCommandRegistry();
   }
 
+  // ---- M7: effect registry ref (registry is created by EffectRegistryProvider,
+  //        exposed via context and stored here for the synchronize effect) ----
+  const effectRegistryRef = useRef<EffectRegistry | null>(null);
+
   const diagnosticCollectionRef = useRef<DiagnosticCollection | null>(null);
   if (!diagnosticCollectionRef.current) {
     diagnosticCollectionRef.current = createDiagnosticCollection();
@@ -756,6 +785,7 @@ export function VideoEditorProvider({
         lifecycleHostRef={lifecycleHostRef}
         extensionRuntime={extensionRuntime}
         commandRegistryRef={commandRegistryRef}
+        effectRegistryRef={effectRegistryRef}
       >
         {children}
       </InnerProvider>

@@ -85,6 +85,86 @@ describe('planRender', () => {
     });
   });
 
+  it('maps worker-export blocked capability to a per-route blocker summary with canWorkerExport=false', () => {
+    const result = planRender({
+      config: makeConfig('worker-blocked-effect'),
+      builtInKnownIds: {
+        clipTypes: new Set(['media']),
+        effectTypes: new Set(),
+        transitionTypes: new Set(),
+      },
+      inactiveKnownIds: {
+        effectIds: new Set(),
+        transitionIds: new Set(),
+        clipTypeIds: new Set(),
+      },
+      effectRegistrySnapshot: snapshotWith({
+        effectId: 'worker-blocked-effect',
+        contributionId: 'worker-blocked-contrib',
+        component: Effect,
+        provenance: 'trusted-loader',
+        ownerExtensionId: 'ext.worker',
+        status: 'active',
+        renderability: {
+          defaultRoute: 'preview',
+          determinism: 'process-dependent',
+          capabilities: [
+            { route: 'preview', status: 'supported', determinism: 'deterministic' },
+            { route: 'browser-export', status: 'supported', determinism: 'deterministic' },
+            {
+              route: 'worker-export',
+              status: 'blocked',
+              determinism: 'process-dependent',
+              blockerReason: 'process-dependent',
+              message: 'This effect requires browser-only APIs.',
+            },
+          ],
+        },
+      }),
+    });
+
+    expect(result.canBrowserExport).toBe(true);
+    expect(result.canWorkerExport).toBe(false);
+    // Two sources emit findings for the blocked worker-export route:
+    // export guard (export.effect.*) and registry collector (registry.effect.*)
+    expect(result.routes).toEqual([
+      { route: 'preview', blockerCount: 0, findingCount: 0, blocked: false },
+      { route: 'browser-export', blockerCount: 0, findingCount: 0, blocked: false },
+      { route: 'worker-export', blockerCount: 2, findingCount: 2, blocked: true },
+      { route: 'sidecar-export', blockerCount: 0, findingCount: 0, blocked: false },
+    ]);
+    expect(result.findings).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        id: 'export.effect.clip-1.continuous.worker-blocked-effect.worker-export.process-dependent',
+        severity: 'error',
+        route: 'worker-export',
+        reason: 'process-dependent',
+        message: 'This effect requires browser-only APIs.',
+      }),
+      expect.objectContaining({
+        id: 'registry.effect.worker-blocked-effect.worker-export.process-dependent',
+        severity: 'error',
+        route: 'worker-export',
+        reason: 'process-dependent',
+        message: 'This effect requires browser-only APIs.',
+      }),
+    ]));
+    expect(result.blockers).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        id: 'export.effect.clip-1.continuous.worker-blocked-effect.worker-export.process-dependent',
+        route: 'worker-export',
+        reason: 'process-dependent',
+      }),
+      expect.objectContaining({
+        id: 'registry.effect.worker-blocked-effect.worker-export.process-dependent',
+        route: 'worker-export',
+        reason: 'process-dependent',
+        extensionId: 'ext.worker',
+        contributionId: 'worker-blocked-contrib',
+      }),
+    ]));
+  });
+
   it('maps registry capability statuses to findings and per-route blocker summaries without selecting a route', () => {
     const result = planRender({
       config: makeConfig('multi-route-effect'),
@@ -139,10 +219,11 @@ describe('planRender', () => {
     });
 
     expect(result.canBrowserExport).toBe(true);
+    expect(result.canWorkerExport).toBe(true);
     expect(result.routes).toEqual([
       { route: 'preview', blockerCount: 0, findingCount: 0, blocked: false },
       { route: 'browser-export', blockerCount: 0, findingCount: 0, blocked: false },
-      { route: 'worker-export', blockerCount: 0, findingCount: 1, blocked: false },
+      { route: 'worker-export', blockerCount: 0, findingCount: 2, blocked: false },
       { route: 'sidecar-export', blockerCount: 2, findingCount: 1, blocked: true },
     ]);
     expect(result.findings).toEqual(expect.arrayContaining([

@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { AudioWaveform, Pencil, Plus, RefreshCw, Trash2, Volume2, X } from 'lucide-react';
+import { AlertTriangle, AudioWaveform, Globe, Lock, Monitor, Pencil, Plus, RefreshCw, Server, Trash2, Volume2, X } from 'lucide-react';
 import { Button } from '@/shared/components/ui/button.tsx';
 import { cn } from '@/shared/components/ui/contracts/cn.ts';
 import { Input } from '@/shared/components/ui/input.tsx';
@@ -125,8 +125,81 @@ function EffectSelectValue({ type, effects }: { type: string | undefined; effect
   return <SelectValue placeholder="None">{label ?? 'None'}</SelectValue>;
 }
 
+/** Check if an effect resource's registry status is 'error' (invalid schema, etc.). */
+function isEffectInError(effect: EffectResource): boolean {
+  return effect.registryStatus === 'error';
+}
+
+/** Check if an effect resource is read-only (bundled-extension per SD3). */
+function isReadOnlyEffect(effect: EffectResource): boolean {
+  return effect.readOnly === true;
+}
+
+/** Returns a short provenance label for display in effect selectors. */
+function getProvenanceLabel(effect: EffectResource): string | null {
+  switch (effect.provenance) {
+    case 'bundled-extension':
+      return 'Extension';
+    case 'external-catalog':
+      return 'Catalog';
+    case 'db-resource':
+      return 'DB';
+    case 'ai-generated':
+      return 'AI';
+    case 'local-storage-draft':
+      return 'Draft';
+    case 'trusted-loader':
+      return 'Trusted';
+    default:
+      return null;
+  }
+}
+
+/**
+ * Returns a compact summary of export capability status for an applied effect.
+ * Shows which routes are blocked so users see export limitations immediately after apply.
+ */
+function getBlockedRoutes(effect: EffectResource): string[] {
+  if (!effect.renderability?.capabilities) return [];
+  return effect.renderability.capabilities
+    .filter((cap) => cap.route !== 'preview' && cap.status === 'blocked')
+    .map((cap) => cap.route);
+}
+
+/** Check if an effect is preview-only (browser-export and worker-export both blocked). */
+function isPreviewOnly(effect: EffectResource): boolean {
+  if (!effect.renderability?.capabilities) return false;
+  const hasBrowserExport = effect.renderability.capabilities.some(
+    (cap) => cap.route === 'browser-export' && cap.status === 'supported',
+  );
+  const hasWorkerExport = effect.renderability.capabilities.some(
+    (cap) => cap.route === 'worker-export' && cap.status === 'supported',
+  );
+  const hasPreview = effect.renderability.capabilities.some(
+    (cap) => cap.route === 'preview' && cap.status === 'supported',
+  );
+  return hasPreview && !hasBrowserExport && !hasWorkerExport;
+}
+
 function hasParameterSchema(effect: EffectResource | undefined): effect is EffectResource & { parameterSchema: NonNullable<EffectResource['parameterSchema']> } {
   return Boolean(effect?.parameterSchema?.length);
+}
+
+/** Check if stored params differ from schema defaults (for reset-to-defaults affordance). */
+function hasCustomParams(
+  effect: EffectResource | undefined,
+  storedParams: Record<string, unknown> | undefined,
+): boolean {
+  if (!effect?.parameterSchema?.length) return false;
+  const defaults = getDefaultValues(effect.parameterSchema);
+  const params = storedParams ?? {};
+  const allKeys = new Set([...Object.keys(defaults), ...Object.keys(params)]);
+  for (const key of allKeys) {
+    if (JSON.stringify(params[key]) !== JSON.stringify(defaults[key])) {
+      return true;
+    }
+  }
+  return false;
 }
 
 function isAudioReactiveEffect(effect: EffectResource): boolean {
@@ -371,16 +444,111 @@ export function ClipPanel({
                             <span className="text-muted-foreground">{getEffectDisplayLabel(clip.entrance.type, effectResources.effects) ?? clip.entrance.type}</span>
                           </SelectItem>
                         )}
-                        {effectResources.entrance.map((effect) => (
-                          <SelectItem key={`custom:${effect.id}`} value={`custom:${effect.id}`}>
-                            <span className="flex items-center gap-1.5">{isAudioReactiveEffect(effect) && <AudioReactiveIcon />}{effect.name}</span>
-                          </SelectItem>
-                        ))}
+                        {effectResources.entrance.map((effect) => {
+                          const error = isEffectInError(effect);
+                          const provenanceLabel = getProvenanceLabel(effect);
+                          const readOnly = isReadOnlyEffect(effect);
+                          const blocked = getBlockedRoutes(effect);
+                          return (
+                            <SelectItem
+                              key={`custom:${effect.id}`}
+                              value={`custom:${effect.id}`}
+                              disabled={error}
+                            >
+                              <span className="flex items-center gap-1.5">
+                                {error && <AlertTriangle className="h-3 w-3 shrink-0 text-destructive" />}
+                                {isAudioReactiveEffect(effect) && <AudioReactiveIcon />}
+                                {readOnly && <Lock className="h-3 w-3 shrink-0 text-muted-foreground" />}
+                                {effect.name}
+                                {provenanceLabel && (
+                                  <span className="ml-0.5 rounded-sm bg-blue-500/15 px-1 text-[9px] font-medium text-blue-300">
+                                    {provenanceLabel}
+                                  </span>
+                                )}
+                                {blocked.length > 0 && (
+                                  <span className="ml-0.5 rounded-sm bg-amber-500/15 px-1 text-[9px] font-medium text-amber-300">
+                                    {blocked.map((r) => r === 'browser-export' ? 'No B' : r === 'worker-export' ? 'No W' : r).join(', ')}
+                                  </span>
+                                )}
+                                {error && <span className="ml-1 text-[10px] text-destructive">(invalid schema)</span>}
+                              </span>
+                            </SelectItem>
+                          );
+                        })}
                       </>
                     )}
                   </SelectContent>
                 </Select>
-                {entranceEffect && canEditEffects && (
+                {entranceEffect && (() => {
+                  const blockedEntrance = getBlockedRoutes(entranceEffect);
+                  const isRO = isReadOnlyEffect(entranceEffect);
+                  const previewOnlyEntrance = isPreviewOnly(entranceEffect);
+                  return (
+                    <>
+                      {(blockedEntrance.length > 0 || isRO || previewOnlyEntrance) && (
+                        <div className="flex flex-wrap items-center gap-1.5 rounded-md border border-amber-500/30 bg-amber-500/8 px-2 py-1 text-[11px] text-amber-200">
+                          {previewOnlyEntrance && (
+                            <span className="inline-flex items-center gap-1"><Monitor className="h-3 w-3" />Preview only</span>
+                          )}
+                          {blockedEntrance.includes('browser-export') && !previewOnlyEntrance && (
+                            <span className="inline-flex items-center gap-1"><Globe className="h-3 w-3" />No browser export</span>
+                          )}
+                          {blockedEntrance.includes('worker-export') && !previewOnlyEntrance && (
+                            <span className="inline-flex items-center gap-1"><Server className="h-3 w-3" />No worker export</span>
+                          )}
+                          {isRO && (
+                            <span className="inline-flex items-center gap-1"><Lock className="h-3 w-3" />Read-only</span>
+                          )}
+                        </div>
+                      )}
+                    </>
+                  );
+                })()}
+                {clip.entrance && (
+                  <div className="flex items-center gap-2">
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      className="h-6 gap-1 text-xs text-destructive hover:text-destructive"
+                      onClick={() => onChange({ entrance: undefined })}
+                    >
+                      <Trash2 className="h-3 w-3" /> Remove
+                    </Button>
+                    {hasParameterSchema(entranceEffect) && hasCustomParams(entranceEffect, clip.entrance.params) && (
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        className="h-6 gap-1 text-xs"
+                        onClick={() => onChange({
+                          entrance: {
+                            type: clip.entrance!.type,
+                            duration: clip.entrance!.duration ?? 0.4,
+                            params: getDefaultValues(entranceEffect!.parameterSchema),
+                          },
+                        })}
+                      >
+                        <RefreshCw className="h-3 w-3" /> Reset defaults
+                      </Button>
+                    )}
+                    {entranceEffect && !isReadOnlyEffect(entranceEffect) && canEditEffects && (
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        className="h-6 gap-1 text-xs"
+                        onClick={() => {
+                          setEditingEffect(entranceEffect);
+                          setCreatorOpen(true);
+                        }}
+                      >
+                        <Pencil className="h-3 w-3" /> Edit
+                      </Button>
+                    )}
+                  </div>
+                )}
+                {!clip.entrance && entranceEffect && !isReadOnlyEffect(entranceEffect) && canEditEffects && (
                   <Button
                     type="button"
                     variant="ghost"
@@ -408,6 +576,8 @@ export function ClipPanel({
                         },
                       },
                     })}
+                    disabled={isEffectInError(entranceEffect)}
+                    diagnostics={entranceEffect.diagnostics}
                   />
                 )}
               </div>
@@ -439,16 +609,111 @@ export function ClipPanel({
                             <span className="text-muted-foreground">{getEffectDisplayLabel(clip.exit.type, effectResources.effects) ?? clip.exit.type}</span>
                           </SelectItem>
                         )}
-                        {effectResources.exit.map((effect) => (
-                          <SelectItem key={`custom:${effect.id}`} value={`custom:${effect.id}`}>
-                            <span className="flex items-center gap-1.5">{isAudioReactiveEffect(effect) && <AudioReactiveIcon />}{effect.name}</span>
-                          </SelectItem>
-                        ))}
+                        {effectResources.exit.map((effect) => {
+                          const error = isEffectInError(effect);
+                          const provenanceLabel = getProvenanceLabel(effect);
+                          const readOnly = isReadOnlyEffect(effect);
+                          const blocked = getBlockedRoutes(effect);
+                          return (
+                            <SelectItem
+                              key={`custom:${effect.id}`}
+                              value={`custom:${effect.id}`}
+                              disabled={error}
+                            >
+                              <span className="flex items-center gap-1.5">
+                                {error && <AlertTriangle className="h-3 w-3 shrink-0 text-destructive" />}
+                                {isAudioReactiveEffect(effect) && <AudioReactiveIcon />}
+                                {readOnly && <Lock className="h-3 w-3 shrink-0 text-muted-foreground" />}
+                                {effect.name}
+                                {provenanceLabel && (
+                                  <span className="ml-0.5 rounded-sm bg-blue-500/15 px-1 text-[9px] font-medium text-blue-300">
+                                    {provenanceLabel}
+                                  </span>
+                                )}
+                                {blocked.length > 0 && (
+                                  <span className="ml-0.5 rounded-sm bg-amber-500/15 px-1 text-[9px] font-medium text-amber-300">
+                                    {blocked.map((r) => r === 'browser-export' ? 'No B' : r === 'worker-export' ? 'No W' : r).join(', ')}
+                                  </span>
+                                )}
+                                {error && <span className="ml-1 text-[10px] text-destructive">(invalid schema)</span>}
+                              </span>
+                            </SelectItem>
+                          );
+                        })}
                       </>
                     )}
                   </SelectContent>
                 </Select>
-                {exitEffect && canEditEffects && (
+                {exitEffect && (() => {
+                  const blockedExit = getBlockedRoutes(exitEffect);
+                  const isRO = isReadOnlyEffect(exitEffect);
+                  const previewOnlyExit = isPreviewOnly(exitEffect);
+                  return (
+                    <>
+                      {(blockedExit.length > 0 || isRO || previewOnlyExit) && (
+                        <div className="flex flex-wrap items-center gap-1.5 rounded-md border border-amber-500/30 bg-amber-500/8 px-2 py-1 text-[11px] text-amber-200">
+                          {previewOnlyExit && (
+                            <span className="inline-flex items-center gap-1"><Monitor className="h-3 w-3" />Preview only</span>
+                          )}
+                          {blockedExit.includes('browser-export') && !previewOnlyExit && (
+                            <span className="inline-flex items-center gap-1"><Globe className="h-3 w-3" />No browser export</span>
+                          )}
+                          {blockedExit.includes('worker-export') && !previewOnlyExit && (
+                            <span className="inline-flex items-center gap-1"><Server className="h-3 w-3" />No worker export</span>
+                          )}
+                          {isRO && (
+                            <span className="inline-flex items-center gap-1"><Lock className="h-3 w-3" />Read-only</span>
+                          )}
+                        </div>
+                      )}
+                    </>
+                  );
+                })()}
+                {clip.exit && (
+                  <div className="flex items-center gap-2">
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      className="h-6 gap-1 text-xs text-destructive hover:text-destructive"
+                      onClick={() => onChange({ exit: undefined })}
+                    >
+                      <Trash2 className="h-3 w-3" /> Remove
+                    </Button>
+                    {hasParameterSchema(exitEffect) && hasCustomParams(exitEffect, clip.exit.params) && (
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        className="h-6 gap-1 text-xs"
+                        onClick={() => onChange({
+                          exit: {
+                            type: clip.exit!.type,
+                            duration: clip.exit!.duration ?? 0.4,
+                            params: getDefaultValues(exitEffect!.parameterSchema),
+                          },
+                        })}
+                      >
+                        <RefreshCw className="h-3 w-3" /> Reset defaults
+                      </Button>
+                    )}
+                    {exitEffect && !isReadOnlyEffect(exitEffect) && canEditEffects && (
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        className="h-6 gap-1 text-xs"
+                        onClick={() => {
+                          setEditingEffect(exitEffect);
+                          setCreatorOpen(true);
+                        }}
+                      >
+                        <Pencil className="h-3 w-3" /> Edit
+                      </Button>
+                    )}
+                  </div>
+                )}
+                {!clip.exit && exitEffect && !isReadOnlyEffect(exitEffect) && canEditEffects && (
                   <Button
                     type="button"
                     variant="ghost"
@@ -476,6 +741,8 @@ export function ClipPanel({
                         },
                       },
                     })}
+                    disabled={isEffectInError(exitEffect)}
+                    diagnostics={exitEffect.diagnostics}
                   />
                 )}
               </div>
@@ -506,16 +773,111 @@ export function ClipPanel({
                             <span className="text-muted-foreground">{getEffectDisplayLabel(clip.continuous.type, effectResources.effects) ?? clip.continuous.type}</span>
                           </SelectItem>
                         )}
-                        {effectResources.continuous.map((effect) => (
-                          <SelectItem key={`custom:${effect.id}`} value={`custom:${effect.id}`}>
-                            <span className="flex items-center gap-1.5">{isAudioReactiveEffect(effect) && <AudioReactiveIcon />}{effect.name}</span>
-                          </SelectItem>
-                        ))}
+                        {effectResources.continuous.map((effect) => {
+                          const error = isEffectInError(effect);
+                          const provenanceLabel = getProvenanceLabel(effect);
+                          const readOnly = isReadOnlyEffect(effect);
+                          const blocked = getBlockedRoutes(effect);
+                          return (
+                            <SelectItem
+                              key={`custom:${effect.id}`}
+                              value={`custom:${effect.id}`}
+                              disabled={error}
+                            >
+                              <span className="flex items-center gap-1.5">
+                                {error && <AlertTriangle className="h-3 w-3 shrink-0 text-destructive" />}
+                                {isAudioReactiveEffect(effect) && <AudioReactiveIcon />}
+                                {readOnly && <Lock className="h-3 w-3 shrink-0 text-muted-foreground" />}
+                                {effect.name}
+                                {provenanceLabel && (
+                                  <span className="ml-0.5 rounded-sm bg-blue-500/15 px-1 text-[9px] font-medium text-blue-300">
+                                    {provenanceLabel}
+                                  </span>
+                                )}
+                                {blocked.length > 0 && (
+                                  <span className="ml-0.5 rounded-sm bg-amber-500/15 px-1 text-[9px] font-medium text-amber-300">
+                                    {blocked.map((r) => r === 'browser-export' ? 'No B' : r === 'worker-export' ? 'No W' : r).join(', ')}
+                                  </span>
+                                )}
+                                {error && <span className="ml-1 text-[10px] text-destructive">(invalid schema)</span>}
+                              </span>
+                            </SelectItem>
+                          );
+                        })}
                       </>
                     )}
                   </SelectContent>
                 </Select>
-                {continuousEffect && canEditEffects && (
+                {continuousEffect && (() => {
+                  const blockedContinuous = getBlockedRoutes(continuousEffect);
+                  const isRO = isReadOnlyEffect(continuousEffect);
+                  const previewOnlyContinuous = isPreviewOnly(continuousEffect);
+                  return (
+                    <>
+                      {(blockedContinuous.length > 0 || isRO || previewOnlyContinuous) && (
+                        <div className="flex flex-wrap items-center gap-1.5 rounded-md border border-amber-500/30 bg-amber-500/8 px-2 py-1 text-[11px] text-amber-200">
+                          {previewOnlyContinuous && (
+                            <span className="inline-flex items-center gap-1"><Monitor className="h-3 w-3" />Preview only</span>
+                          )}
+                          {blockedContinuous.includes('browser-export') && !previewOnlyContinuous && (
+                            <span className="inline-flex items-center gap-1"><Globe className="h-3 w-3" />No browser export</span>
+                          )}
+                          {blockedContinuous.includes('worker-export') && !previewOnlyContinuous && (
+                            <span className="inline-flex items-center gap-1"><Server className="h-3 w-3" />No worker export</span>
+                          )}
+                          {isRO && (
+                            <span className="inline-flex items-center gap-1"><Lock className="h-3 w-3" />Read-only</span>
+                          )}
+                        </div>
+                      )}
+                    </>
+                  );
+                })()}
+                {clip.continuous && (
+                  <div className="flex items-center gap-2">
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      className="h-6 gap-1 text-xs text-destructive hover:text-destructive"
+                      onClick={() => onChange({ continuous: undefined })}
+                    >
+                      <Trash2 className="h-3 w-3" /> Remove
+                    </Button>
+                    {hasParameterSchema(continuousEffect) && hasCustomParams(continuousEffect, clip.continuous.params) && (
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        className="h-6 gap-1 text-xs"
+                        onClick={() => onChange({
+                          continuous: {
+                            type: clip.continuous!.type,
+                            intensity: clip.continuous!.intensity ?? 0.5,
+                            params: getDefaultValues(continuousEffect!.parameterSchema),
+                          },
+                        })}
+                      >
+                        <RefreshCw className="h-3 w-3" /> Reset defaults
+                      </Button>
+                    )}
+                    {continuousEffect && !isReadOnlyEffect(continuousEffect) && canEditEffects && (
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        className="h-6 gap-1 text-xs"
+                        onClick={() => {
+                          setEditingEffect(continuousEffect);
+                          setCreatorOpen(true);
+                        }}
+                      >
+                        <Pencil className="h-3 w-3" /> Edit
+                      </Button>
+                    )}
+                  </div>
+                )}
+                {!clip.continuous && continuousEffect && !isReadOnlyEffect(continuousEffect) && canEditEffects && (
                   <Button
                     type="button"
                     variant="ghost"
@@ -543,6 +905,8 @@ export function ClipPanel({
                         },
                       },
                     })}
+                    disabled={isEffectInError(continuousEffect)}
+                    diagnostics={continuousEffect.diagnostics}
                   />
                 )}
               </div>

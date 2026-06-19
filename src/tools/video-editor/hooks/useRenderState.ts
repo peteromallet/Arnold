@@ -104,17 +104,33 @@ function formatExportGuardLog(
     `Export guard: ${totalDiags} issue(s) — ${errorCount} error(s), ${warningCount} warning(s), ${infoCount} info(s).`,
   );
 
-  // Show blocking errors first
+  // Show blocking errors first, naming the effect and route when available
   for (const diag of guardResult.diagnostics) {
     if (diag.severity === 'error') {
-      lines.push(`  [${diag.code}] ${diag.message}`);
+      const effectName = diag.detail?.effectType ? ` effect "${diag.detail.effectType}"` : '';
+      const route = diag.detail?.renderRoute ? ` (${diag.detail.renderRoute})` : '';
+      lines.push(`  [${diag.code}]${effectName}${route}: ${diag.message}`);
     }
   }
 
-  // Then warnings
+  // Then warnings — also name effects
   for (const diag of guardResult.diagnostics) {
     if (diag.severity === 'warning') {
-      lines.push(`  [${diag.code}] ${diag.message}`);
+      const effectName = diag.detail?.effectType ? ` effect "${diag.detail.effectType}"` : '';
+      const route = diag.detail?.renderRoute ? ` (${diag.detail.renderRoute})` : '';
+      lines.push(`  [${diag.code}]${effectName}${route}: ${diag.message}`);
+    }
+  }
+
+  // Append per-route blocker summaries from findings (when available)
+  const blockerFindings = (guardResult.findings ?? []).filter((f) => f.severity === 'error');
+  if (blockerFindings.length > 0) {
+    lines.push('');
+    lines.push('Route blockers:');
+    for (const finding of blockerFindings) {
+      const effectName = finding.detail?.effectType ? `"${finding.detail.effectType}"` : 'unknown';
+      const route = finding.route ?? 'unknown-route';
+      lines.push(`  ${effectName} blocked on ${route}: ${finding.message}`);
     }
   }
 
@@ -403,6 +419,23 @@ export function useRenderState(
       return;
     }
 
+    // ---- M7: Run export guard before compile-only export --------------------
+    // Compile-only exports don't need rendered pixels, but they still process
+    // timeline data.  Unknown / missing-contribution effects should block
+    // because the exported data would be invalid.  Route-specific capability
+    // blockers (browser-export blocked, worker-export blocked) are surfaced
+    // as warnings but do not prevent compile-only export.
+    const guardPassed = runExportGuard();
+    if (!guardPassed) {
+      // Export guard found blocking errors (e.g. truly unknown effects).
+      // Surface the guard log as the export error.
+      setExportStatus('error');
+      setExportLogState(
+        `Export blocked by readiness scan. See render log for details.`,
+      );
+      return;
+    }
+
     if (!compileOnlyRegistry || compileOnlyRegistry.size === 0) {
       setExportStatus('error');
       setExportLogState(`Export unavailable: no compile-only output handlers registered. Format "${fmt.label}" (${fmt.id}) requires a handler registered via ctx.export.registerOutputFormat().`);
@@ -470,7 +503,7 @@ export function useRenderState(
       setExportStatus('error');
       setExportLogState(`Export failed: ${message}`);
     }
-  }, [resolvedConfig, exportFormats]);
+  }, [resolvedConfig, exportFormats, runExportGuard]);
 
   return {
     renderStatus,

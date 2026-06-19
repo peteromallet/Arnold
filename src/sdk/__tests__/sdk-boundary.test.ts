@@ -173,6 +173,20 @@ import type {
   MetadataFacetDescriptor,
   MetadataFacetValueKind,
   AssetDetailSectionDescriptor,
+  // M7: Trusted component effects
+  EffectContribution,
+  EffectComponent,
+  EffectParameterDefinition,
+  EffectParameterSchema,
+  EffectRegistrationOptions,
+  EffectRegistrationService,
+} from '@reigh/editor-sdk';
+import type {
+  ExtensionId,
+  ExtensionManifest,
+  ExtensionContext,
+  ExtensionDiagnostic,
+  DisposeHandle,
 } from '@reigh/editor-sdk';
 
 // ---------------------------------------------------------------------------
@@ -204,6 +218,8 @@ describe('M3: value exports are importable from @reigh/editor-sdk', () => {
       'export',
       'materials',
       'project',
+      'proposals',
+      'reader',
       'sessions',
       'stage',
       'timeline',
@@ -997,6 +1013,7 @@ describe('M6: internal types are NOT re-exported from @reigh/editor-sdk', () => 
     'SearchProviderRegistry',
     'SearchExecutor',
     'resolveSearchProvider',
+    // Search index internals
     'searchIndex',
     // Asset/material internal accessors
     'assetStore',
@@ -1022,6 +1039,271 @@ describe('M6: internal types are NOT re-exported from @reigh/editor-sdk', () => 
   it('forbidden M6 internal names are not accessible on the SDK namespace', () => {
     const ns = sdkStar as Record<string, unknown>;
     for (const forbidden of M6_INTERNAL_FORBIDDEN) {
+      expect(ns[forbidden]).toBeUndefined();
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// M7: Trusted component effect contribution type interfaces
+// ---------------------------------------------------------------------------
+
+describe('M7: trusted component effect type interfaces are importable from @reigh/editor-sdk', () => {
+  it('EffectContribution shape is constructable (minimal)', () => {
+    const contrib: EffectContribution = {
+      id: 'myEffect' as ContributionId,
+      kind: 'effect',
+      effectId: 'fx.glow',
+    };
+    expect(contrib.kind).toBe('effect');
+    expect(contrib.effectId).toBe('fx.glow');
+    expect(contrib.allowBrowserExport).toBeUndefined();
+    expect(contrib.allowWorkerExport).toBeUndefined();
+    expect(contrib.order).toBeUndefined();
+  });
+
+  it('EffectContribution shape is constructable (full)', () => {
+    const contrib: EffectContribution = {
+      id: 'fullEffect' as ContributionId,
+      kind: 'effect',
+      effectId: 'fx.full',
+      label: 'Full Effect',
+      allowBrowserExport: true,
+      allowWorkerExport: true,
+      order: 10,
+    };
+    expect(contrib.kind).toBe('effect');
+    expect(contrib.label).toBe('Full Effect');
+    expect(contrib.allowBrowserExport).toBe(true);
+    expect(contrib.allowWorkerExport).toBe(true);
+    expect(contrib.order).toBe(10);
+  });
+
+  it('EffectContribution defaults allowBrowserExport and allowWorkerExport to false', () => {
+    const contrib: EffectContribution = {
+      id: 'defaultExport' as ContributionId,
+      kind: 'effect',
+      effectId: 'fx.default',
+    };
+    // SD2: defaults are false (preview-only)
+    expect(contrib.allowBrowserExport ?? false).toBe(false);
+    expect(contrib.allowWorkerExport ?? false).toBe(false);
+  });
+
+  it('EffectComponent type can be a plain object', () => {
+    const comp: EffectComponent = { render: () => null };
+    expect(typeof comp).toBe('object');
+    expect(comp).not.toBeNull();
+  });
+
+  it('EffectComponent type can be a function', () => {
+    const comp: EffectComponent = () => null;
+    expect(typeof comp).toBe('function');
+  });
+
+  it('EffectParameterDefinition shape is constructable (number)', () => {
+    const def: EffectParameterDefinition = {
+      name: 'intensity',
+      label: 'Intensity',
+      description: 'The effect intensity',
+      type: 'number',
+      default: 50,
+      min: 0,
+      max: 100,
+      step: 1,
+    };
+    expect(def.name).toBe('intensity');
+    expect(def.type).toBe('number');
+    expect(def.default).toBe(50);
+    expect(def.min).toBe(0);
+    expect(def.max).toBe(100);
+    expect(def.step).toBe(1);
+  });
+
+  it('EffectParameterDefinition shape is constructable (select)', () => {
+    const def: EffectParameterDefinition = {
+      name: 'style',
+      label: 'Style',
+      description: 'Visual style',
+      type: 'select',
+      default: 'modern',
+      options: [
+        { label: 'Modern', value: 'modern' },
+        { label: 'Classic', value: 'classic' },
+      ],
+    };
+    expect(def.type).toBe('select');
+    expect(def.options).toHaveLength(2);
+    expect(def.options?.[0].label).toBe('Modern');
+  });
+
+  it('EffectParameterDefinition shape is constructable (boolean)', () => {
+    const def: EffectParameterDefinition = {
+      name: 'enabled',
+      label: 'Enabled',
+      description: 'Enable effect',
+      type: 'boolean',
+      default: true,
+    };
+    expect(def.type).toBe('boolean');
+    expect(def.default).toBe(true);
+  });
+
+  it('EffectParameterDefinition shape is constructable (color)', () => {
+    const def: EffectParameterDefinition = {
+      name: 'tint',
+      label: 'Tint',
+      description: 'Color tint',
+      type: 'color',
+      default: '#ff0000',
+    };
+    expect(def.type).toBe('color');
+    expect(def.default).toBe('#ff0000');
+  });
+
+  it('EffectParameterDefinition shape is constructable (audio-binding)', () => {
+    const def: EffectParameterDefinition = {
+      name: 'bass',
+      label: 'Bass',
+      description: 'Bass reactivity',
+      type: 'audio-binding',
+      default: { source: 'bass', min: 0, max: 1 },
+    };
+    expect(def.type).toBe('audio-binding');
+    expect(def.default).toEqual({ source: 'bass', min: 0, max: 1 });
+  });
+
+  it('EffectParameterSchema is an array of parameter definitions', () => {
+    const schema: EffectParameterSchema = [
+      { name: 'a', label: 'A', description: 'D', type: 'number', default: 0 },
+      { name: 'b', label: 'B', description: 'D', type: 'boolean', default: false },
+    ];
+    expect(Array.isArray(schema)).toBe(true);
+    expect(schema).toHaveLength(2);
+    expect(schema[0].name).toBe('a');
+    expect(schema[1].name).toBe('b');
+  });
+
+  it('EffectRegistrationOptions shape is constructable', () => {
+    const opts: EffectRegistrationOptions = {
+      label: 'My Effect',
+      parameterSchema: [
+        { name: 'x', label: 'X', description: 'D', type: 'number', default: 0 },
+      ],
+    };
+    expect(opts.label).toBe('My Effect');
+    expect(opts.parameterSchema).toBeDefined();
+    expect(opts.parameterSchema?.[0].name).toBe('x');
+  });
+
+  it('EffectRegistrationOptions with only label is constructable', () => {
+    const opts: EffectRegistrationOptions = { label: 'Just a label' };
+    expect(opts.label).toBe('Just a label');
+    expect(opts.parameterSchema).toBeUndefined();
+  });
+
+  it('EffectRegistrationOptions empty object is constructable', () => {
+    const opts: EffectRegistrationOptions = {};
+    expect(opts.label).toBeUndefined();
+    expect(opts.parameterSchema).toBeUndefined();
+  });
+
+  it('EffectRegistrationService interface has registerComponent method with correct signature', () => {
+    // Compile-time proof that the interface shape is correct.
+    const svc: EffectRegistrationService = {
+      registerComponent(_effectId: string, _component: EffectComponent, _options?: EffectRegistrationOptions) {
+        return { dispose() {} };
+      },
+    };
+    expect(typeof svc.registerComponent).toBe('function');
+
+    const handle = svc.registerComponent('fx.test', {});
+    expect(typeof handle.dispose).toBe('function');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// M7: ExtensionContext includes effects registration service
+// ---------------------------------------------------------------------------
+
+describe('M7: ExtensionContext includes effects registration service', () => {
+  it('ExtensionContext type includes readonly effects property', () => {
+    // Compile-time proof: ExtensionContext must have an 'effects' member.
+    const ctx: ExtensionContext = {
+      apiVersion: 1,
+      extension: {
+        id: 'test.ext' as ExtensionId,
+        version: '1.0.0',
+        label: 'Test',
+        manifest: {} as ExtensionManifest,
+      },
+      chrome: {
+        toast: () => {},
+        progress: () => {},
+        subscribe: () => ({ dispose: () => {} }),
+        focus: () => {},
+        announce: () => {},
+      },
+      services: {
+        settings: { get: () => undefined, set: () => {}, delete: () => {}, keys: () => [] },
+        i18n: { t: (k: string) => k },
+        diagnostics: { report: () => {}, diagnostics: [] },
+      },
+      creative: {
+        project: {},
+        timeline: {},
+        assets: {},
+        materials: {},
+        sessions: {},
+        export: {},
+        stage: {},
+        writing: {},
+        reader: {},
+        proposals: {},
+      } as CreativeContext,
+      commands: {
+        registerCommand: () => ({ dispose: () => {} }),
+      },
+      effects: {
+        registerComponent: () => ({ dispose: () => {} }),
+      },
+    };
+    expect(ctx.effects).toBeDefined();
+    expect(typeof ctx.effects.registerComponent).toBe('function');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// M7: Internal effect registration types are NOT exported
+// ---------------------------------------------------------------------------
+
+describe('M7: internal effect registration types are NOT re-exported from @reigh/editor-sdk', () => {
+  const M7_INTERNAL_FORBIDDEN = [
+    // Effect registry internals
+    'effectRegistry',
+    'EffectRegistry',
+    'EffectRegistryRecord',
+    'EffectRegistrySnapshot',
+    'createEffectRegistry',
+    'registerEffect',
+    'resolveEffect',
+    'resolveSnapshotEffect',
+    'validateEffectParameterSchema',
+    'createEffectRegistrationService',
+    // Effect component internals
+    'EffectComponentProps',
+  ];
+
+  it('none of the forbidden M7 internal names appear as SDK value exports', () => {
+    const valueExports = Object.keys(sdkStar);
+    for (const forbidden of M7_INTERNAL_FORBIDDEN) {
+      expect(valueExports).not.toContain(forbidden);
+    }
+  });
+
+  it('forbidden M7 internal names are not accessible on the SDK namespace', () => {
+    const ns = sdkStar as Record<string, unknown>;
+    for (const forbidden of M7_INTERNAL_FORBIDDEN) {
       expect(ns[forbidden]).toBeUndefined();
     }
   });

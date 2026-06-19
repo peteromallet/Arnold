@@ -1,4 +1,5 @@
 import type { AudioBindingValue, ParameterDefinition, ParameterSchema } from '@/tools/video-editor/types/index.ts';
+import type { ExtensionDiagnostic } from '@reigh/editor-sdk';
 import { SchemaForm } from '@/tools/video-editor/components/SchemaForm/SchemaForm';
 
 export interface ParameterControlsProps {
@@ -7,6 +8,8 @@ export interface ParameterControlsProps {
   onChange: (name: string, value: unknown) => void;
   disabled?: boolean;
   className?: string;
+  /** Registry-level diagnostics to display above the parameter fields. */
+  diagnostics?: readonly ExtensionDiagnostic[];
 }
 
 type ParameterValue = number | string | boolean | AudioBindingValue;
@@ -69,6 +72,7 @@ export function ParameterControls({
   onChange,
   disabled = false,
   className,
+  diagnostics,
 }: ParameterControlsProps) {
   return (
     <SchemaForm
@@ -77,6 +81,7 @@ export function ParameterControls({
       onChange={onChange}
       disabled={disabled}
       className={className}
+      diagnostics={diagnostics}
     />
   );
 }

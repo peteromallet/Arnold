@@ -327,19 +327,21 @@ describe('normalizeExtensionRuntime — inactive reserved contributions', () => 
 
   it('collects inactive reserved contributions', () => {
     const rt = normalizeExtensionRuntime([withReserved]);
-    // parser is M6-active (bridged) — only 5 reserved kinds remain
-    expect(rt.inactiveReserved).toHaveLength(5);
+    // parser is M6-active (bridged), effect is M7-active (component-backed) —
+    // only 4 reserved kinds remain
+    expect(rt.inactiveReserved).toHaveLength(4);
     const kinds = rt.inactiveReserved.map((r: InactiveReservedContribution) => r.kind);
     expect(kinds.sort()).toEqual([
-      'agent', 'agentTool', 'clipType', 'effect', 'transition',
+      'agent', 'agentTool', 'clipType', 'transition',
     ]);
   });
 
   it('emits info diagnostics for each reserved contribution', () => {
     const rt = normalizeExtensionRuntime([withReserved]);
     const infos = diagsOf(rt, 'runtime/contribution-kind-not-yet-bridged');
-    // parser is M6-active (bridged) — only 5 reserved diagnostics remain
-    expect(infos).toHaveLength(5);
+    // parser is M6-active (bridged), effect is M7-active (component-backed) —
+    // only 4 reserved diagnostics remain
+    expect(infos).toHaveLength(4);
     for (const d of infos) {
       expect(d.severity).toBe('info');
       expect(d.milestone).toBeTruthy();
@@ -356,8 +358,13 @@ describe('normalizeExtensionRuntime — inactive reserved contributions', () => 
 
   it('includes milestones in inactive reserved entries', () => {
     const rt = normalizeExtensionRuntime([withReserved]);
-    const effect = rt.inactiveReserved.find((r) => r.kind === 'effect')!;
-    expect(effect.milestone).toBe('M3');
+    // effect is M7-active (component-backed) — verify it's not in inactiveReserved
+    const effect = rt.inactiveReserved.find((r) => r.kind === 'effect');
+    expect(effect).toBeUndefined();
+    // effect is now projected as a descriptor in config.effects
+    expect(rt.config.effects).toHaveLength(1);
+    expect(rt.config.effects[0].id).toBe('my-effect');
+    expect(rt.config.effects[0].effectId).toBe('glow');
     const agent = rt.inactiveReserved.find((r) => r.kind === 'agent')!;
     expect(agent.milestone).toBe('M5');
   });
@@ -481,12 +488,15 @@ describe('normalizeExtensionRuntime — mixed bridged and reserved', () => {
 
   it('separates bridged from reserved contributions', () => {
     const rt = normalizeExtensionRuntime([mixed]);
-    // Bridged: active-btn, active-dlg
+    // Bridged: active-btn, active-dlg, future-fx (effect is M7-active)
     expect(rt.config.slots).toHaveProperty('toolbar');
     expect(rt.config.dialogHost.dialogs).toHaveLength(1);
-    // Reserved: future-fx
-    expect(rt.inactiveReserved).toHaveLength(1);
-    expect(rt.inactiveReserved[0].contributionId).toBe('future-fx');
+    // future-fx is now active (component-backed effect) — projected as descriptor
+    expect(rt.config.effects).toHaveLength(1);
+    expect(rt.config.effects[0].id).toBe('future-fx');
+    expect(rt.config.effects[0].effectId).toBe('blur');
+    // No reserved contributions remain
+    expect(rt.inactiveReserved).toHaveLength(0);
   });
 
   it('does not use DEFAULT when there are bridged contributions', () => {
@@ -496,9 +506,12 @@ describe('normalizeExtensionRuntime — mixed bridged and reserved', () => {
 
   it('includes both bridged and reserved diagnostics', () => {
     const rt = normalizeExtensionRuntime([mixed]);
+    // future-fx is M7-active (component-backed) — no reserved diagnostics
     const reserved = diagsOf(rt, 'runtime/contribution-kind-not-yet-bridged');
-    expect(reserved).toHaveLength(1);
-    expect(reserved[0].contributionId).toBe('future-fx');
+    expect(reserved).toHaveLength(0);
+    // Verify effect appears in config.effects instead
+    expect(rt.config.effects).toHaveLength(1);
+    expect(rt.config.effects[0].id).toBe('future-fx');
   });
 });
 

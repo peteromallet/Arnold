@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { AudioWaveform, Volume2 } from 'lucide-react';
+import { AlertTriangle, AudioWaveform, Globe, Lock, Monitor, Server, Volume2 } from 'lucide-react';
 import { Button } from '@/shared/components/ui/button.tsx';
 import { cn } from '@/shared/components/ui/contracts/cn.ts';
 import { Input } from '@/shared/components/ui/input.tsx';
@@ -79,6 +79,44 @@ function isAudioReactiveEffect(effect: { code?: string; parameterSchema?: Array<
 
 function AudioReactiveIcon() {
   return <AudioWaveform className="inline-block h-3 w-3 shrink-0 text-muted-foreground" />;
+}
+
+/** Check if an effect resource's registry status is 'error' (invalid schema, etc.). */
+function isEffectInError(effect: { registryStatus?: string }): boolean {
+  return effect.registryStatus === 'error';
+}
+
+/** Check if an effect resource is read-only (bundled-extension per SD3). */
+function isReadOnlyEffect(effect: { readOnly?: boolean }): boolean {
+  return effect.readOnly === true;
+}
+
+/** Returns a short provenance label for display in effect selectors. */
+function getProvenanceLabel(effect: { provenance?: string }): string | null {
+  switch (effect.provenance) {
+    case 'bundled-extension':
+      return 'Extension';
+    case 'external-catalog':
+      return 'Catalog';
+    case 'db-resource':
+      return 'DB';
+    case 'ai-generated':
+      return 'AI';
+    case 'local-storage-draft':
+      return 'Draft';
+    case 'trusted-loader':
+      return 'Trusted';
+    default:
+      return null;
+  }
+}
+
+/** Returns blocked export routes for an effect's renderability. */
+function getBlockedRoutes(effect: { renderability?: { capabilities?: Array<{ route: string; status: string }> } }): string[] {
+  if (!effect.renderability?.capabilities) return [];
+  return effect.renderability.capabilities
+    .filter((cap) => cap.route !== 'preview' && cap.status === 'blocked')
+    .map((cap) => cap.route);
 }
 
 function getDefaultEffectParams(
@@ -279,11 +317,37 @@ export function BulkClipPanel(props: BulkClipPanelProps) {
                     {effectResources.entrance.length > 0 && (
                       <>
                         <div className="my-1 h-px bg-border" />
-                        {effectResources.entrance.map((effect) => (
-                          <SelectItem key={`custom:${effect.id}`} value={`custom:${effect.id}`}>
-                            <span className="flex items-center gap-1.5">{isAudioReactiveEffect(effect) && <AudioReactiveIcon />}{effect.name}</span>
-                          </SelectItem>
-                        ))}
+                        {effectResources.entrance.map((effect) => {
+                          const error = isEffectInError(effect);
+                          const provenanceLabel = getProvenanceLabel(effect);
+                          const readOnly = isReadOnlyEffect(effect);
+                          const blocked = getBlockedRoutes(effect);
+                          return (
+                            <SelectItem
+                              key={`custom:${effect.id}`}
+                              value={`custom:${effect.id}`}
+                              disabled={error}
+                            >
+                              <span className="flex items-center gap-1.5">
+                                {error && <AlertTriangle className="h-3 w-3 shrink-0 text-destructive" />}
+                                {isAudioReactiveEffect(effect) && <AudioReactiveIcon />}
+                                {readOnly && <Lock className="h-3 w-3 shrink-0 text-muted-foreground" />}
+                                {effect.name}
+                                {provenanceLabel && (
+                                  <span className="ml-0.5 rounded-sm bg-blue-500/15 px-1 text-[9px] font-medium text-blue-300">
+                                    {provenanceLabel}
+                                  </span>
+                                )}
+                                {blocked.length > 0 && (
+                                  <span className="ml-0.5 rounded-sm bg-amber-500/15 px-1 text-[9px] font-medium text-amber-300">
+                                    {blocked.map((r) => r === 'browser-export' ? 'No B' : r === 'worker-export' ? 'No W' : r).join(', ')}
+                                  </span>
+                                )}
+                                {error && <span className="ml-1 text-[10px] text-destructive">(invalid schema)</span>}
+                              </span>
+                            </SelectItem>
+                          );
+                        })}
                       </>
                     )}
                   </SelectContent>
@@ -311,11 +375,37 @@ export function BulkClipPanel(props: BulkClipPanelProps) {
                     {effectResources.exit.length > 0 && (
                       <>
                         <div className="my-1 h-px bg-border" />
-                        {effectResources.exit.map((effect) => (
-                          <SelectItem key={`custom:${effect.id}`} value={`custom:${effect.id}`}>
-                            <span className="flex items-center gap-1.5">{isAudioReactiveEffect(effect) && <AudioReactiveIcon />}{effect.name}</span>
-                          </SelectItem>
-                        ))}
+                        {effectResources.exit.map((effect) => {
+                          const error = isEffectInError(effect);
+                          const provenanceLabel = getProvenanceLabel(effect);
+                          const readOnly = isReadOnlyEffect(effect);
+                          const blocked = getBlockedRoutes(effect);
+                          return (
+                            <SelectItem
+                              key={`custom:${effect.id}`}
+                              value={`custom:${effect.id}`}
+                              disabled={error}
+                            >
+                              <span className="flex items-center gap-1.5">
+                                {error && <AlertTriangle className="h-3 w-3 shrink-0 text-destructive" />}
+                                {isAudioReactiveEffect(effect) && <AudioReactiveIcon />}
+                                {readOnly && <Lock className="h-3 w-3 shrink-0 text-muted-foreground" />}
+                                {effect.name}
+                                {provenanceLabel && (
+                                  <span className="ml-0.5 rounded-sm bg-blue-500/15 px-1 text-[9px] font-medium text-blue-300">
+                                    {provenanceLabel}
+                                  </span>
+                                )}
+                                {blocked.length > 0 && (
+                                  <span className="ml-0.5 rounded-sm bg-amber-500/15 px-1 text-[9px] font-medium text-amber-300">
+                                    {blocked.map((r) => r === 'browser-export' ? 'No B' : r === 'worker-export' ? 'No W' : r).join(', ')}
+                                  </span>
+                                )}
+                                {error && <span className="ml-1 text-[10px] text-destructive">(invalid schema)</span>}
+                              </span>
+                            </SelectItem>
+                          );
+                        })}
                       </>
                     )}
                   </SelectContent>
@@ -343,11 +433,37 @@ export function BulkClipPanel(props: BulkClipPanelProps) {
                     {effectResources.continuous.length > 0 && (
                       <>
                         <div className="my-1 h-px bg-border" />
-                        {effectResources.continuous.map((effect) => (
-                          <SelectItem key={`custom:${effect.id}`} value={`custom:${effect.id}`}>
-                            <span className="flex items-center gap-1.5">{isAudioReactiveEffect(effect) && <AudioReactiveIcon />}{effect.name}</span>
-                          </SelectItem>
-                        ))}
+                        {effectResources.continuous.map((effect) => {
+                          const error = isEffectInError(effect);
+                          const provenanceLabel = getProvenanceLabel(effect);
+                          const readOnly = isReadOnlyEffect(effect);
+                          const blocked = getBlockedRoutes(effect);
+                          return (
+                            <SelectItem
+                              key={`custom:${effect.id}`}
+                              value={`custom:${effect.id}`}
+                              disabled={error}
+                            >
+                              <span className="flex items-center gap-1.5">
+                                {error && <AlertTriangle className="h-3 w-3 shrink-0 text-destructive" />}
+                                {isAudioReactiveEffect(effect) && <AudioReactiveIcon />}
+                                {readOnly && <Lock className="h-3 w-3 shrink-0 text-muted-foreground" />}
+                                {effect.name}
+                                {provenanceLabel && (
+                                  <span className="ml-0.5 rounded-sm bg-blue-500/15 px-1 text-[9px] font-medium text-blue-300">
+                                    {provenanceLabel}
+                                  </span>
+                                )}
+                                {blocked.length > 0 && (
+                                  <span className="ml-0.5 rounded-sm bg-amber-500/15 px-1 text-[9px] font-medium text-amber-300">
+                                    {blocked.map((r) => r === 'browser-export' ? 'No B' : r === 'worker-export' ? 'No W' : r).join(', ')}
+                                  </span>
+                                )}
+                                {error && <span className="ml-1 text-[10px] text-destructive">(invalid schema)</span>}
+                              </span>
+                            </SelectItem>
+                          );
+                        })}
                       </>
                     )}
                   </SelectContent>
