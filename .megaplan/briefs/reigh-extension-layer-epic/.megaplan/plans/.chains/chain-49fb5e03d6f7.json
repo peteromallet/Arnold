@@ -1,113 +1,150 @@
 {
-  "schema_version": 0,
-  "current_milestone_index": 6,
-  "current_plan_name": "m6-asset-metadata-parser-20260619-1405",
-  "last_state": "active",
-  "pr_number": 33,
-  "pr_state": "open",
-  "completed": [
-    {
-      "label": "m0-workspace-scaffold",
-      "index": 0,
-      "pr_number": 23,
-      "pr_state": "merged",
-      "plan_name": "m0-workspace-and-sdk-scaffold-20260618-2252",
-      "merged_at": "2026-06-18T21:33:46Z"
-    },
-    {
-      "label": "m1-sdk-kernel",
-      "index": 1,
-      "pr_number": 25,
-      "pr_state": "merged",
-      "plan_name": "m1-sdk-kernel-and-trusted-20260618-2338",
-      "merged_at": "2026-06-18T23:33:29Z"
-    },
-    {
-      "label": "m2-surfaces",
-      "plan": "m2-surfaces-inspectors-20260619-0136",
-      "status": "done",
-      "pr_number": 26,
-      "pr_state": "merged",
-      "full_suite_backstop": {
-        "mode": "shadow",
-        "status": "failed",
-        "blocks": false,
-        "reason": "full_suite_backstop_mode=shadow: recorded only",
-        "passed": 8,
-        "failed": 3,
-        "failing_tests": [
-          "vendor/timeline-schema/tests/test_materialize_output.py::MaterializeOutputTests::test_materialize_output_from_2rp_theme",
-          "vendor/timeline-schema/tests/test_materialize_output.py::ResolveThemeTests::test_resolve_theme_2rp",
-          "vendor/timeline-schema/tests/test_materialize_output.py::ResolveThemeTests::test_resolve_theme_with_overrides"
-        ],
-        "newly_failing": [],
-        "deleted_tests": [],
-        "baseline_failing_count": 0,
-        "current_failing_count": 3,
-        "delta_computed": false,
-        "command": "pytest --tb=no -q --no-header -rA",
-        "duration_s": 0.6487866670358926,
-        "ran": true,
-        "artifact": "full_suite_backstop.json"
-      }
-    },
-    {
-      "label": "m3-timeline-patch",
-      "index": 3,
-      "status": "done",
-      "pr_number": 28,
-      "pr_state": "merged",
-      "merged_at": "2026-06-19T06:43:14Z",
-      "plan_name": "m3-timelinepatch-atomic-ops-20260619-0357"
-    },
-    {
-      "label": "m4-commands",
-      "index": 4,
-      "status": "done",
-      "pr_number": 29,
-      "pr_state": "merged",
-      "merged_at": "2026-06-19T08:49:38Z",
-      "plan_name": "m4-commands-keybindings-20260619-0843"
-    },
-    {
-      "label": "m5-registry-foundation",
-      "index": 5,
-      "pr_number": 30,
-      "pr_state": "merged",
-      "plan_name": "m5-provider-scoped-registry-20260619-1050",
-      "merged_at": "2026-06-19T12:02:55Z"
+    "schema_version": 0,
+    "current_milestone_index": 8,
+    "current_plan_name": null,
+    "last_state": "merged",
+    "pr_number": null,
+    "pr_state": null,
+    "completed": [
+        {
+            "label": "m0-workspace-scaffold",
+            "index": 0,
+            "pr_number": 23,
+            "pr_state": "merged",
+            "plan_name": "m0-workspace-and-sdk-scaffold-20260618-2252",
+            "merged_at": "2026-06-18T21:33:46Z"
+        },
+        {
+            "label": "m1-sdk-kernel",
+            "index": 1,
+            "pr_number": 25,
+            "pr_state": "merged",
+            "plan_name": "m1-sdk-kernel-and-trusted-20260618-2338",
+            "merged_at": "2026-06-18T23:33:29Z"
+        },
+        {
+            "label": "m2-surfaces",
+            "plan": "m2-surfaces-inspectors-20260619-0136",
+            "status": "done",
+            "pr_number": 26,
+            "pr_state": "merged",
+            "full_suite_backstop": {
+                "mode": "shadow",
+                "status": "failed",
+                "blocks": false,
+                "reason": "full_suite_backstop_mode=shadow: recorded only",
+                "passed": 8,
+                "failed": 3,
+                "failing_tests": [
+                    "vendor/timeline-schema/tests/test_materialize_output.py::MaterializeOutputTests::test_materialize_output_from_2rp_theme",
+                    "vendor/timeline-schema/tests/test_materialize_output.py::ResolveThemeTests::test_resolve_theme_2rp",
+                    "vendor/timeline-schema/tests/test_materialize_output.py::ResolveThemeTests::test_resolve_theme_with_overrides"
+                ],
+                "newly_failing": [],
+                "deleted_tests": [],
+                "baseline_failing_count": 0,
+                "current_failing_count": 3,
+                "delta_computed": false,
+                "command": "pytest --tb=no -q --no-header -rA",
+                "duration_s": 0.6487866670358926,
+                "ran": true,
+                "artifact": "full_suite_backstop.json"
+            }
+        },
+        {
+            "label": "m3-timeline-patch",
+            "index": 3,
+            "status": "done",
+            "pr_number": 28,
+            "pr_state": "merged",
+            "merged_at": "2026-06-19T06:43:14Z",
+            "plan_name": "m3-timelinepatch-atomic-ops-20260619-0357"
+        },
+        {
+            "label": "m4-commands",
+            "index": 4,
+            "status": "done",
+            "pr_number": 29,
+            "pr_state": "merged",
+            "merged_at": "2026-06-19T08:49:38Z",
+            "plan_name": "m4-commands-keybindings-20260619-0843"
+        },
+        {
+            "label": "m5-registry-foundation",
+            "index": 5,
+            "pr_number": 30,
+            "pr_state": "merged",
+            "plan_name": "m5-provider-scoped-registry-20260619-1050",
+            "merged_at": "2026-06-19T12:02:55Z"
+        },
+        {
+            "label": "m6-assets-astrid-output",
+            "plan": "m6-asset-metadata-parser-20260619-1405",
+            "status": "done",
+            "pr_number": 33,
+            "pr_state": "merged",
+            "full_suite_backstop": {
+                "mode": "shadow",
+                "status": "failed",
+                "blocks": false,
+                "reason": "full_suite_backstop_mode=shadow: recorded only",
+                "passed": 8,
+                "failed": 3,
+                "failing_tests": [
+                    "vendor/timeline-schema/tests/test_materialize_output.py::MaterializeOutputTests::test_materialize_output_from_2rp_theme",
+                    "vendor/timeline-schema/tests/test_materialize_output.py::ResolveThemeTests::test_resolve_theme_2rp",
+                    "vendor/timeline-schema/tests/test_materialize_output.py::ResolveThemeTests::test_resolve_theme_with_overrides"
+                ],
+                "newly_failing": [],
+                "deleted_tests": [],
+                "baseline_failing_count": 3,
+                "current_failing_count": 3,
+                "delta_computed": true,
+                "command": "pytest --tb=no -q --no-header -rA",
+                "duration_s": 1.7949512909399346,
+                "ran": true,
+                "artifact": "full_suite_backstop.json"
+            }
+        },
+        {
+            "label": "m7-component-effects",
+            "index": 7,
+            "pr_number": 34,
+            "pr_state": "merged",
+            "plan_name": "m7-trusted-component-effect-20260619-1732",
+            "merged_at": "2026-06-19T17:02:00Z"
+        }
+    ],
+    "branch_head": "66bf4e01c175fed9c21a3ba6f00b3a9172c88987",
+    "pr_head": "66bf4e01c175fed9c21a3ba6f00b3a9172c88987",
+    "last_pushed_commit": "66bf4e01c175fed9c21a3ba6f00b3a9172c88987",
+    "dirty_flag": false,
+    "sync_state": "dirty",
+    "extra_repos": [],
+    "chain_session": null,
+    "resolved_workspace": null,
+    "extra_repo_sync": [],
+    "completion_contract_mode": "shadow",
+    "full_suite_backstop_mode": "shadow",
+    "retry_counts": {},
+    "ladder_stage": {},
+    "profile_bumps": {},
+    "robustness_bumps": {},
+    "depth_bumps": {},
+    "enforce_revise_counts": {},
+    "metadata": {
+        "execution_environment": {
+            "schema_version": 1,
+            "created_phase": "chain_start",
+            "last_observed_phase": "chain_start",
+            "project_root": "/Users/peteromalley/Documents/.megaplan-worktrees/reigh-extension-layer-epic",
+            "target_root": "/Users/peteromalley/Documents/.megaplan-worktrees/reigh-extension-layer-epic",
+            "work_dir": "/Users/peteromalley/Documents/.megaplan-worktrees/reigh-extension-layer-epic",
+            "engine_root": "/Users/peteromalley/.pyenv/versions/3.11.11/lib/python3.11/site-packages",
+            "target_head": "36433bc5a9e12a17d45ffcceb28cdbcf419f6840",
+            "target_base": "36433bc5a9e12a17d45ffcceb28cdbcf419f6840",
+            "target_base_ref": "main",
+            "target_fallback_reason": null
+        }
     }
-  ],
-  "branch_head": "66bf4e01c175fed9c21a3ba6f00b3a9172c88987",
-  "pr_head": "66bf4e01c175fed9c21a3ba6f00b3a9172c88987",
-  "last_pushed_commit": "66bf4e01c175fed9c21a3ba6f00b3a9172c88987",
-  "dirty_flag": true,
-  "sync_state": "dirty",
-  "extra_repos": [],
-  "chain_session": null,
-  "resolved_workspace": null,
-  "extra_repo_sync": [],
-  "completion_contract_mode": "shadow",
-  "full_suite_backstop_mode": "shadow",
-  "retry_counts": {},
-  "ladder_stage": {},
-  "profile_bumps": {},
-  "robustness_bumps": {},
-  "depth_bumps": {},
-  "enforce_revise_counts": {},
-  "metadata": {
-    "execution_environment": {
-      "schema_version": 1,
-      "created_phase": "chain_start",
-      "last_observed_phase": "chain_start",
-      "project_root": "/Users/peteromalley/Documents/.megaplan-worktrees/reigh-extension-layer-epic",
-      "target_root": "/Users/peteromalley/Documents/.megaplan-worktrees/reigh-extension-layer-epic",
-      "work_dir": "/Users/peteromalley/Documents/.megaplan-worktrees/reigh-extension-layer-epic",
-      "engine_root": "/Users/peteromalley/.pyenv/versions/3.11.11/lib/python3.11/site-packages",
-      "target_head": "bd03604c2530927dbbbb0be900acb205d1bf0aaa",
-      "target_base": "05e8719f0daeb6dbc030d728b369bbc0adbf9601",
-      "target_base_ref": "main",
-      "target_fallback_reason": null
-    }
-  }
 }
