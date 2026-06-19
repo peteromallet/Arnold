@@ -15,6 +15,17 @@ BASELINE_MODEL_IDS = ("sd15_v1_5_pruned_emaonly_fp16",)
 LTX_MODEL_PHASE = "ltx"
 BASELINE_PYTHON_DEPS = ("glfw", "PyOpenGL")
 BASELINE_PARKED_NODE_PACKS = ("ComfyUI-ResAdapter",)
+RUNTIME_SUBDIRS = (
+    "cache/pip",
+    "cache/tmp",
+    "cache/huggingface/hub",
+    "cache/xdg",
+    "input",
+    "output",
+    "custom_nodes",
+    "disabled_custom_nodes",
+    "models",
+)
 LTX_NODE_PACKS = (
     "ComfyUI-LTXVideo",
     "ComfyUI-KJNodes",
@@ -45,6 +56,103 @@ class LinkedCustomNode:
     source: Path
     target: Path
     changed: bool
+
+
+def ensure_runtime_layout(*, runtime_root: Path, dry_run: bool = False) -> dict[str, Path]:
+    paths = {name: runtime_root / name for name in RUNTIME_SUBDIRS}
+    if not dry_run:
+        for path in paths.values():
+            path.mkdir(parents=True, exist_ok=True)
+    else:
+        for path in paths.values():
+            print(f"mkdir -p {path}")
+    return paths
+
+
+def runtime_environment(*, runtime_root: Path) -> dict[str, str]:
+    cache = runtime_root / "cache"
+    return {
+        "TMPDIR": str(cache / "tmp"),
+        "PIP_CACHE_DIR": str(cache / "pip"),
+        "HF_HOME": str(cache / "huggingface"),
+        "HUGGINGFACE_HUB_CACHE": str(cache / "huggingface" / "hub"),
+        "TRANSFORMERS_CACHE": str(cache / "huggingface" / "transformers"),
+        "XDG_CACHE_HOME": str(cache / "xdg"),
+    }
+
+
+def write_extra_model_paths(
+    *,
+    runtime_root: Path,
+    path: Path | None = None,
+    dry_run: bool = False,
+) -> Path:
+    target = path or runtime_root / "extra_model_paths.yaml"
+    models = runtime_root / "models"
+    content = f"""vibecomfy:
+  base_path: {models}
+  checkpoints: checkpoints
+  clip: clip
+  clip_vision: clip_vision
+  configs: configs
+  controlnet: controlnet
+  diffusion_models: diffusion_models
+  embeddings: embeddings
+  loras: loras
+  style_models: style_models
+  unet: unet
+  upscale_models: upscale_models
+  vae: vae
+  vae_approx: vae_approx
+  text_encoders: text_encoders
+  audio_encoders: audio_encoders
+"""
+    if dry_run:
+        print(f"write {target}")
+        print(content.rstrip())
+        return target
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(content, encoding="utf-8")
+    return target
+
+
+def comfy_serve_command(
+    *,
+    runtime_root: Path,
+    external_address: str | None,
+    port: int = 19123,
+    comfyui_executable: str = "comfyui",
+) -> list[str]:
+    command = [
+        comfyui_executable,
+        "serve",
+        "--listen",
+        "0.0.0.0",
+        "--port",
+        str(port),
+        "--base-directory",
+        str(runtime_root),
+        "--extra-model-paths-config",
+        str(runtime_root / "extra_model_paths.yaml"),
+        "--input-directory",
+        str(runtime_root / "input"),
+        "--output-directory",
+        str(runtime_root / "output"),
+        "--temp-directory",
+        str(runtime_root / "cache" / "tmp"),
+        "--user-directory",
+        str(runtime_root / "user"),
+        "--enable-cors-header",
+        "*",
+        "--enable-manager",
+        "--highvram",
+        "--disable-dynamic-vram",
+        "--disable-cuda-malloc",
+        "--log-stdout",
+    ]
+    if external_address:
+        command.extend(["--external-address", external_address])
+    return command
 
 
 def stage_baseline_models(

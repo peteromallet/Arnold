@@ -148,27 +148,18 @@ export HUGGINGFACE_HUB_CACHE=/workspace/vibecomfy/cache/huggingface/hub
 export XDG_CACHE_HOME=/workspace/vibecomfy/cache/xdg
 
 python -m pip install -e ".[agent,runpod-local]"
-vibecomfy runpod install-nodes \
-  --custom-nodes /workspace/vibecomfy/custom_nodes
-vibecomfy runpod prepare-comfy \
-  --models-root /workspace/vibecomfy/models \
-  --custom-nodes /workspace/vibecomfy/custom_nodes \
-  --disabled-custom-nodes /workspace/vibecomfy/disabled_custom_nodes \
-  --install-python-deps
-vibecomfy runpod prepare-comfy \
-  --profile ltx \
-  --models-root /workspace/vibecomfy/models \
-  --custom-nodes /workspace/vibecomfy/custom_nodes \
-  --disabled-custom-nodes /workspace/vibecomfy/disabled_custom_nodes
+vibecomfy runpod bootstrap-comfy \
+  --runtime-root /workspace/vibecomfy \
+  --external-address "https://<pod-id>-19123.proxy.runpod.net"
 ```
 
-`install-nodes` installs the locked LTX/Runex node-pack set and links the
-VibeComfy custom node into ComfyUI. The baseline profile stages the official
-SD1.5 fp16 checkpoint and parks `ComfyUI-ResAdapter` outside `custom_nodes`.
-ResAdapter currently imports sampler hooks that can hang a plain SD1.5
-`KSampler` during model transfer; keep it out for smoke checks. The LTX profile
-stages the LTX model set while leaving ResAdapter parked so SD1.5 and LTX can
-share one ComfyUI process.
+`bootstrap-comfy` creates the runtime directories, writes
+`extra_model_paths.yaml`, links the VibeComfy custom node, installs the locked
+LTX/Runex node-pack set, stages the SD1.5 and LTX model files, parks
+`ComfyUI-ResAdapter`, and prints the environment exports plus the `comfyui
+serve` command to run. ResAdapter currently imports sampler hooks that can hang
+a plain SD1.5 `KSampler` during model transfer; keep it out so SD1.5 and LTX
+can share one ComfyUI process.
 
 ### Use VibeComfy Through Astrid
 

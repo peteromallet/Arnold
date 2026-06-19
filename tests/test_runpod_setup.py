@@ -24,6 +24,37 @@ def test_configure_workspace_cache_defaults_to_models_parent(tmp_path: Path, mon
     assert Path(runpod_setup.os.environ["XDG_CACHE_HOME"]) == cache_root / "xdg"
 
 
+def test_runtime_layout_env_and_extra_model_paths(tmp_path: Path) -> None:
+    runtime = tmp_path / "runtime"
+
+    paths = runpod_setup.ensure_runtime_layout(runtime_root=runtime)
+    extra = runpod_setup.write_extra_model_paths(runtime_root=runtime)
+    env = runpod_setup.runtime_environment(runtime_root=runtime)
+
+    assert paths["models"] == runtime / "models"
+    assert (runtime / "custom_nodes").is_dir()
+    assert env["HF_HOME"] == str(runtime / "cache" / "huggingface")
+    assert "base_path: " + str(runtime / "models") in extra.read_text(encoding="utf-8")
+
+
+def test_comfy_serve_command_includes_runpod_public_flags(tmp_path: Path) -> None:
+    runtime = tmp_path / "runtime"
+
+    command = runpod_setup.comfy_serve_command(
+        runtime_root=runtime,
+        external_address="https://example.proxy.runpod.net",
+        comfyui_executable="/venv/bin/comfyui",
+    )
+
+    assert command[:2] == ["/venv/bin/comfyui", "serve"]
+    assert "--listen" in command
+    assert "0.0.0.0" in command
+    assert "--external-address" in command
+    assert "https://example.proxy.runpod.net" in command
+    assert "--extra-model-paths-config" in command
+    assert str(runtime / "extra_model_paths.yaml") in command
+
+
 def test_park_node_packs_moves_resadapter_out_of_custom_nodes(tmp_path: Path) -> None:
     custom_nodes = tmp_path / "custom_nodes"
     disabled = tmp_path / "disabled_custom_nodes"

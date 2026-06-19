@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import shlex
 import subprocess
 import sys
 from pathlib import Path
@@ -143,6 +144,62 @@ def _cmd_runpod_install_nodes(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_runpod_bootstrap_comfy(args: argparse.Namespace) -> int:
+    runtime_root = args.runtime_root
+    runpod_setup.ensure_runtime_layout(runtime_root=runtime_root, dry_run=args.dry_run)
+    env = runpod_setup.runtime_environment(runtime_root=runtime_root)
+    os.environ.update({key: os.environ.get(key, value) for key, value in env.items()})
+    runpod_setup.write_extra_model_paths(runtime_root=runtime_root, dry_run=args.dry_run)
+    installed = runpod_setup.install_node_packs(
+        custom_nodes=runtime_root / "custom_nodes",
+        lockfile=args.lockfile,
+        node_packs=args.node_pack or runpod_setup.LTX_NODE_PACKS,
+        install_requirements=not args.no_requirements,
+        dry_run=args.dry_run,
+    )
+    for item in installed:
+        action = "would install" if args.dry_run else ("installed" if item.changed else "verified")
+        print(f"{action} {item.name} @ {item.commit}: {item.path}")
+    try:
+        linked = runpod_setup.link_vibecomfy_custom_node(
+            custom_nodes=runtime_root / "custom_nodes",
+            dry_run=args.dry_run,
+        )
+        if linked.changed:
+            action = "would link" if args.dry_run else "linked"
+            print(f"{action} VibeComfy custom node: {linked.target} -> {linked.source}")
+    except FileExistsError as exc:
+        print(f"VibeComfy custom node link skipped: {exc}")
+    if not args.skip_models:
+        runpod_setup.stage_baseline_models(
+            models_root=runtime_root / "models",
+            registry=args.registry,
+            dry_run=args.dry_run,
+        )
+        runpod_setup.park_node_packs(
+            custom_nodes=runtime_root / "custom_nodes",
+            disabled_custom_nodes=runtime_root / "disabled_custom_nodes",
+            dry_run=args.dry_run,
+        )
+        runpod_setup.stage_ltx_models(
+            models_root=runtime_root / "models",
+            registry=args.registry,
+            dry_run=args.dry_run,
+        )
+    command = runpod_setup.comfy_serve_command(
+        runtime_root=runtime_root,
+        external_address=args.external_address,
+        port=args.port,
+        comfyui_executable=args.comfyui_executable,
+    )
+    print("\n# Runtime environment")
+    for key, value in env.items():
+        print(f"export {key}={shlex.quote(value)}")
+    print("\n# Start ComfyUI")
+    print(" ".join(shlex.quote(part) for part in command))
+    return 0
+
+
 def register(subparsers) -> None:
     runpod = subparsers.add_parser("runpod")
     runpod_sub = runpod.add_subparsers(dest="subcmd", required=True)
@@ -190,3 +247,21 @@ def register(subparsers) -> None:
     install_nodes.add_argument("--no-requirements", action="store_true")
     install_nodes.add_argument("--dry-run", action="store_true")
     install_nodes.set_defaults(func=_cmd_runpod_install_nodes)
+
+    bootstrap = runpod_sub.add_parser("bootstrap-comfy")
+    bootstrap.add_argument("--runtime-root", type=Path, default=Path("/workspace/vibecomfy"))
+    bootstrap.add_argument("--lockfile", type=Path, default=Path("custom_nodes.lock"))
+    bootstrap.add_argument("--registry", type=Path, default=None)
+    bootstrap.add_argument("--port", type=int, default=19123)
+    bootstrap.add_argument("--external-address")
+    bootstrap.add_argument("--comfyui-executable", default="comfyui")
+    bootstrap.add_argument(
+        "--node-pack",
+        action="append",
+        default=None,
+        help="Node pack from custom_nodes.lock to install. Repeat to override/extend the default LTX set.",
+    )
+    bootstrap.add_argument("--no-requirements", action="store_true")
+    bootstrap.add_argument("--skip-models", action="store_true")
+    bootstrap.add_argument("--dry-run", action="store_true")
+    bootstrap.set_defaults(func=_cmd_runpod_bootstrap_comfy)
