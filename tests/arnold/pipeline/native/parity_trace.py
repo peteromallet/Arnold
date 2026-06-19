@@ -317,6 +317,105 @@ _ARTIFACT_SKIP_NAMES: frozenset[str] = frozenset({
     "resume_cursor.json",
 })
 
+def normalize_envelope(envelope: dict[str, Any] | None) -> dict[str, Any] | None:
+    """Return a normalized copy of *envelope* with named volatile fields masked.
+
+    Named volatile fields that are masked (replaced with ``<masked>``):
+    * ``run_id``, ``plugin_id`` — runtime identity
+    * ``lease_id``, ``fencing_token`` — infrastructure tokens
+    * ``deadline`` — wall-clock derived
+    * ``created_at``, ``updated_at`` — timestamps
+    * ``cost`` — non-deterministic across executors
+    * ``capacity_grant`` — runtime-derived
+    * Absolute paths in string values — replaced with ``<absolute-path>``.
+    """
+    if envelope is None:
+        return None
+
+    _ENVELOPE_VOLATILE_KEYS: frozenset[str] = frozenset({
+        "run_id",
+        "plugin_id",
+        "lease_id",
+        "fencing_token",
+        "deadline",
+        "created_at",
+        "updated_at",
+        "cost",
+        "capacity_grant",
+    })
+
+    def _clean_env(obj: Any) -> Any:
+        if isinstance(obj, dict):
+            result: dict[str, Any] = {}
+            for k, v in obj.items():
+                if k in _ENVELOPE_VOLATILE_KEYS:
+                    result[k] = _VOLATILE_SENTINEL
+                elif isinstance(v, str) and v.startswith("/"):
+                    result[k] = "<absolute-path>"
+                else:
+                    result[k] = _clean_env(v)
+            return result
+        if isinstance(obj, list):
+            return [_clean_env(v) for v in obj]
+        if isinstance(obj, str) and obj.startswith("/"):
+            return "<absolute-path>"
+        return obj
+
+    return _clean_env(envelope)
+
+
+def normalize_event_fold(event_fold: dict[str, Any] | None) -> dict[str, Any] | None:
+    """Return a normalized copy of an event-fold dict.
+
+    Event folds are produced by :func:`arnold.runtime.wal_fold.fold_journal`
+    and merge event payloads into a single accumulated state snapshot.
+    This normalizer strips **named volatile keys** and masks absolute paths.
+
+    Named volatile fields that are stripped:
+    * ``invocation_id``, ``session_id`` — runtime identity
+    * ``ts_utc``, ``ts_rel_init_s``, ``timestamp`` — timestamps
+    * ``started_at``, ``finished_at``, ``created_at``, ``updated_at``
+    * ``seq`` — volatile sequence numbers
+    * ``__state__``, ``__envelope__`` — internal runtime scaffolding
+    * Absolute paths in string values → ``<absolute-path>``.
+    """
+    if event_fold is None:
+        return None
+
+    _FOLD_VOLATILE_KEYS: frozenset[str] = frozenset({
+        "invocation_id",
+        "session_id",
+        "ts_utc",
+        "ts_rel_init_s",
+        "timestamp",
+        "started_at",
+        "finished_at",
+        "created_at",
+        "updated_at",
+        "seq",
+        "__state__",
+        "__envelope__",
+    })
+
+    def _clean_fold(obj: Any) -> Any:
+        if isinstance(obj, dict):
+            result: dict[str, Any] = {}
+            for k, v in obj.items():
+                if k in _FOLD_VOLATILE_KEYS:
+                    continue
+                elif isinstance(v, str) and v.startswith("/"):
+                    result[k] = "<absolute-path>"
+                else:
+                    result[k] = _clean_fold(v)
+            return result
+        if isinstance(obj, list):
+            return [_clean_fold(v) for v in obj]
+        if isinstance(obj, str) and obj.startswith("/"):
+            return "<absolute-path>"
+        return obj
+
+    return _clean_fold(event_fold)
+
 
 def inventory_artifacts(
     directory: Path | str,
@@ -490,6 +589,26 @@ def diff_traces(
             ),
         }
 
+    # ── accumulated_envelope ─────────────────────────────────────────
+    native_env = _json_normalize(native.accumulated_envelope)
+    graph_env = _json_normalize(graph.accumulated_envelope)
+    if native_env == graph_env:
+        report["accumulated_envelope"] = "match"
+    else:
+        # Normalize both for comparison
+        native_normalized = normalize_envelope(native.accumulated_envelope)
+        graph_normalized = normalize_envelope(graph.accumulated_envelope)
+        if _json_normalize(native_normalized) == _json_normalize(graph_normalized):
+            report["accumulated_envelope"] = "match_after_normalization"
+        else:
+            report["accumulated_envelope"] = {
+                "native": native_normalized,
+                "graph": graph_normalized,
+                "detail": _dict_diff_detail(
+                    native_normalized or {}, graph_normalized or {}
+                ),
+            }
+
     return report
 
 
@@ -645,6 +764,8 @@ __all__ = [
     "diff_traces",
     "inventory_artifacts",
     "normalize_cursor",
+    "normalize_envelope",
+    "normalize_event_fold",
     "normalize_events",
     "normalize_state",
 ]

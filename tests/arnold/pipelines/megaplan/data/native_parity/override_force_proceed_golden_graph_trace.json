@@ -1,0 +1,13 @@
+{
+  "artifact_inventory": {},
+  "blocked": true,
+  "blocked_reason": "Requires gate override infrastructure ('override force-proceed' edge dispatch); not reproducible with default mock worker output.",
+  "envelope": null,
+  "final_stage": null,
+  "generated_by": "graph_executor",
+  "resume_cursor": null,
+  "scenario_id": "override_force_proceed",
+  "schema_version": 1,
+  "stage_sequence": [],
+  "state": null
+}

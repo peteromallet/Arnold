@@ -30,21 +30,178 @@ execution and reused across all checkpoint/suspension events within that
 run.  ``stage_reentry_points`` maps each completed phase name to its
 full stage identifier, enabling external tooling to locate reentry
 targets without parsing the ``stages`` list.
+
+Resume routing
+--------------
+
+:func:`classify_resume_cursor` inspects the raw cursor on disk and
+returns one of three outcomes:
+
+* ``"graph"`` — cursor exists but has **no** ``native`` key.
+  The cursor was produced by the graph executor; resume must route
+  through :func:`arnold.pipeline.executor.run_pipeline_resume`.
+
+* ``"native"`` — cursor exists with a valid ``native`` key (contains
+  ``pc`` and ``version`` as integers).  The cursor was produced by
+  the native runtime; resume must route through
+  :func:`arnold.pipeline.native.runtime.run_native_pipeline` with
+  ``resume=True``.
+
+* ``"none"`` — no ``resume_cursor.json`` file exists at
+  *artifact_root*.  The caller must decide whether to start a fresh
+  run or raise a missing-cursor error.
+
+* Raises :class:`NativeCursorCorruptError` — cursor exists and carries
+  a ``native`` key, but the key is malformed (not a dict, missing
+  ``pc``/``version``, or non-integer values).  The caller MUST NOT
+  silently fall back to the graph executor; it must fail closed and
+  surface the diagnostic so an operator can investigate.
+
+This classification is intentionally separate from
+:func:`read_native_cursor` so that callers who only care about the
+valid native shape can use the existing reader, while resume routing
+can inspect the raw on-disk bytes and distinguish between "no native
+data" and "native data that is corrupt."
 """
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
 from arnold.pipeline.resume import (
+    RESUME_CURSOR_FILENAME,
     persist_resume_cursor,
     read_resume_cursor,
 )
 
 NATIVE_CURSOR_VERSION = 1
 """Schema version for the native cursor payload."""
+
+
+class NativeCursorCorruptError(ValueError):
+    """Raised when a resume cursor carries a native key that is corrupt.
+
+    This is a **fail-closed** error.  The caller MUST NOT silently
+    fall back to the graph executor — the cursor claims native
+    ownership but cannot be validated, so resuming through the wrong
+    engine risks incompatible state.
+    """
+
+    def __init__(self, detail: str, *, cursor_path: str | None = None) -> None:
+        super().__init__(detail)
+        self.detail = detail
+        self.cursor_path = cursor_path
+
+
+def classify_resume_cursor(artifact_root: str | Path) -> str:
+    """Classify a resume cursor as graph-born or native-born.
+
+    Reads the raw ``resume_cursor.json`` from *artifact_root* and
+    inspects the top-level ``native`` key WITHOUT applying the
+    full :func:`read_native_cursor` normalisation — callers get a
+    deterministic routing decision based solely on the on-disk shape.
+
+    Returns
+    -------
+    str
+        One of ``"graph"``, ``"native"``, or ``"none"``.
+
+        * ``"graph"`` — cursor exists but the ``native`` key is absent.
+          The cursor was written by the graph executor (or an older
+          system that never emitted a ``native`` key).  Resume must
+          route through the graph executor.
+
+        * ``"native"`` — cursor exists and the ``native`` key is a
+          valid dict containing integer ``pc`` and ``version`` fields.
+          Resume must route through the native runtime.
+
+        * ``"none"`` — no ``resume_cursor.json`` file exists at
+          *artifact_root*.  There is no cursor to route.
+
+    Raises
+    ------
+    NativeCursorCorruptError
+        The cursor file exists and carries a ``native`` key, but the
+        key is malformed — not a dict, missing ``pc`` or ``version``,
+        or non-integer values.  The caller must fail closed.
+    """
+    root = Path(artifact_root)
+    cursor_path = root / RESUME_CURSOR_FILENAME
+
+    if not cursor_path.exists():
+        return "none"
+
+    # Read raw JSON — intentionally bypass read_resume_cursor so we
+    # can distinguish malformed JSON from a missing native key.
+    try:
+        raw = json.loads(cursor_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        # Unreadable or malformed JSON — treat as no usable cursor.
+        # This is the same as "none" because we cannot even determine
+        # whether a native key was intended.
+        return "none"
+
+    if not isinstance(raw, dict):
+        return "none"
+
+    native = raw.get("native")
+
+    # No native key at all → graph-born cursor.
+    if native is None:
+        return "graph"
+
+    # native key present but not a dict → corrupt.
+    if not isinstance(native, dict):
+        raise NativeCursorCorruptError(
+            f"Resume cursor at {cursor_path} has a 'native' key "
+            f"that is not a JSON object (got {type(native).__name__}). "
+            f"The cursor claims native ownership but the native payload "
+            f"is unreadable — refusing to route.",
+            cursor_path=str(cursor_path),
+        )
+
+    # native key is a dict — check required fields.
+    if "pc" not in native:
+        raise NativeCursorCorruptError(
+            f"Resume cursor at {cursor_path} has a 'native' key "
+            f"that is missing the required 'pc' field. "
+            f"The cursor claims native ownership but the native "
+            f"payload is incomplete — refusing to route.",
+            cursor_path=str(cursor_path),
+        )
+
+    if "version" not in native:
+        raise NativeCursorCorruptError(
+            f"Resume cursor at {cursor_path} has a 'native' key "
+            f"that is missing the required 'version' field. "
+            f"The cursor claims native ownership but the native "
+            f"payload is incomplete — refusing to route.",
+            cursor_path=str(cursor_path),
+        )
+
+    if not isinstance(native["pc"], int):
+        raise NativeCursorCorruptError(
+            f"Resume cursor at {cursor_path} has a 'native.pc' "
+            f"value of type {type(native['pc']).__name__} (expected int). "
+            f"The cursor claims native ownership but the program "
+            f"counter is unreadable — refusing to route.",
+            cursor_path=str(cursor_path),
+        )
+
+    if not isinstance(native["version"], int):
+        raise NativeCursorCorruptError(
+            f"Resume cursor at {cursor_path} has a 'native.version' "
+            f"value of type {type(native['version']).__name__} (expected int). "
+            f"The cursor claims native ownership but the schema "
+            f"version is unreadable — refusing to route.",
+            cursor_path=str(cursor_path),
+        )
+
+    # Valid native cursor.
+    return "native"
 
 
 def persist_native_cursor(
@@ -57,6 +214,7 @@ def persist_native_cursor(
     frames: dict[str, Any] | None = None,
     resume_cursor: str | None = None,
     cursor_id: str | None = None,
+    reentry_stage: str | None = None,
     stage_reentry_points: dict[str, Any] | None = None,
     version: int = NATIVE_CURSOR_VERSION,
 ) -> Path:
@@ -74,6 +232,7 @@ def persist_native_cursor(
         frames: JSON-serializable per-loop frame data keyed by loop guard name.
         resume_cursor: Opaque cursor string (forwarded as-is).
         cursor_id: Stable identifier for this cursor instance (uuid4 hex).
+        reentry_stage: Stable stage identifier where resume should re-enter.
         stage_reentry_points: Mapping of phase name → stable stage identifier.
         version: Native cursor schema version (default ``1``).
 
@@ -94,6 +253,8 @@ def persist_native_cursor(
 
     if cursor_id is not None:
         extra["cursor_id"] = cursor_id
+    if reentry_stage is not None:
+        extra["reentry_stage"] = reentry_stage
     if stage_reentry_points is not None:
         extra["stage_reentry_points"] = stage_reentry_points
 
@@ -153,6 +314,8 @@ def read_native_cursor(artifact_root: str | Path) -> dict[str, Any] | None:
 
 __all__ = [
     "NATIVE_CURSOR_VERSION",
+    "NativeCursorCorruptError",
+    "classify_resume_cursor",
     "persist_native_cursor",
     "read_native_cursor",
 ]

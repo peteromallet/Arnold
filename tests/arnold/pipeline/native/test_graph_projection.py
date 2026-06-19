@@ -791,3 +791,444 @@ class TestPortAndVocabularyPreservation:
         assert expected_key in binding_map, (
             f"Key {expected_key!r} should be in binding_map, got keys: {list(binding_map.keys())!r}"
         )
+
+
+# ── phase-keyed projection ─────────────────────────────────────────────
+
+
+class TestPhaseKeyedProjection:
+    """Graph projection using ``key_mode='phase'`` — stage names are bare
+    phase/decision names with ``__pc{N}`` disambiguation for duplicates."""
+
+    # ── phase names ──────────────────────────────────────────────────
+
+    def test_phase_keyed_stage_names_are_bare(self) -> None:
+        """With key_mode='phase', stage names use the bare phase name."""
+
+        @phase
+        def pre_check(ctx: object) -> dict:
+            return {}
+
+        @phase
+        def do_it(ctx: object) -> dict:
+            return {}
+
+        @pipeline
+        def my_pipe(ctx: object) -> dict:
+            state = yield pre_check(ctx)
+            state = yield do_it(ctx)
+            return state
+
+        prog = compile_pipeline(my_pipe)
+        graph = project_graph(prog, key_mode="phase")
+
+        assert len(graph.stages) == 2
+        assert "pre_check" in graph.stages
+        assert "do_it" in graph.stages
+        # No pc-prefixed clutter
+        for name in graph.stages:
+            assert not name.startswith("my_pipe__"), f"stage name has prefix: {name!r}"
+            assert "__pc" not in name, f"stage name has pc suffix: {name!r}"
+
+    def test_phase_keyed_entry_is_bare_name(self) -> None:
+        """entry matches the bare phase name under phase-keyed projection."""
+
+        @phase
+        def first(ctx: object) -> dict:
+            return {}
+
+        @phase
+        def second(ctx: object) -> dict:
+            return {}
+
+        @pipeline
+        def my_pipe(ctx: object) -> dict:
+            state = yield first(ctx)
+            state = yield second(ctx)
+            return state
+
+        prog = compile_pipeline(my_pipe)
+        graph = project_graph(prog, key_mode="phase")
+        assert graph.entry == "first"
+
+    def test_phase_keyed_pc_mode_default_unchanged(self) -> None:
+        """Default (key_mode='pc') still produces pc-prefixed names."""
+
+        @phase
+        def work(ctx: object) -> dict:
+            return {}
+
+        @pipeline
+        def my_pipe(ctx: object) -> dict:
+            state = yield work(ctx)
+            return state
+
+        prog = compile_pipeline(my_pipe)
+        graph = project_graph(prog)  # default key_mode='pc'
+        stage_names = list(graph.stages.keys())
+        assert len(stage_names) == 1
+        assert "my_pipe__" in stage_names[0]
+        assert "__pc" in stage_names[0]
+
+    # ── consumes / produces ──────────────────────────────────────────
+
+    def test_phase_keyed_preserves_produces_consumes(self) -> None:
+        """produces and consumes survive phase-keyed projection."""
+
+        from arnold.pipeline.types import Port, PortRef
+
+        port_out = Port(name="result", content_type="text/plain")
+        port_in = PortRef(port_name="input", content_type="application/json")
+
+        @phase(produces=(port_out,), consumes=(port_in,))
+        def step(ctx: object) -> dict:
+            return {}
+
+        @pipeline
+        def my_pipe(ctx: object) -> dict:
+            state = yield step(ctx)
+            return state
+
+        prog = compile_pipeline(my_pipe)
+        graph = project_graph(prog, key_mode="phase")
+
+        stage = graph.stages["step"]
+        assert stage.produces == (port_out,)
+        assert stage.consumes == (port_in,)
+        assert stage.step.produces == (port_out,)
+        assert stage.step.consumes == (port_in,)
+
+    def test_phase_keyed_produces_consumes_no_ports(self) -> None:
+        """Phases without typed ports still project cleanly under phase-keyed."""
+
+        @phase
+        def step_a(ctx: object) -> dict:
+            return {}
+
+        @phase
+        def step_b(ctx: object) -> dict:
+            return {}
+
+        @pipeline
+        def my_pipe(ctx: object) -> dict:
+            state = yield step_a(ctx)
+            state = yield step_b(ctx)
+            return state
+
+        prog = compile_pipeline(my_pipe)
+        graph = project_graph(prog, key_mode="phase")
+
+        assert graph.stages["step_a"].produces == ()
+        assert graph.stages["step_a"].consumes == ()
+        assert graph.stages["step_b"].produces == ()
+        assert graph.stages["step_b"].consumes == ()
+
+    # ── decisions ────────────────────────────────────────────────────
+
+    def test_phase_keyed_decision_stage_name(self) -> None:
+        """Decision stages use bare decision name under phase-keyed projection."""
+
+        @phase
+        def step_a(ctx: object) -> dict:
+            return {}
+
+        @phase
+        def step_b(ctx: object) -> dict:
+            return {}
+
+        @decision(vocabulary={"yes", "no"})
+        def decide(ctx: object) -> str:
+            return "yes"
+
+        @pipeline
+        def my_pipe(ctx: object) -> dict:
+            state = yield step_a(ctx)
+            if decide(ctx) == "yes":
+                state = yield step_b(ctx)
+            return state
+
+        prog = compile_pipeline(my_pipe)
+        graph = project_graph(prog, key_mode="phase")
+
+        assert "decide" in graph.stages
+        dec_stage = graph.stages["decide"]
+        assert dec_stage.step.kind == "native_decision"
+        assert dec_stage.decision_vocabulary == frozenset({"yes", "no"})
+
+    def test_phase_keyed_decision_vocabulary_survives(self) -> None:
+        """decision_vocabulary survives phase-keyed projection intact."""
+
+        @phase
+        def step_a(ctx: object) -> dict:
+            return {}
+
+        @phase
+        def step_b(ctx: object) -> dict:
+            return {}
+
+        @decision(vocabulary={"alpha", "beta", "gamma"})
+        def triage(ctx: object) -> str:
+            return "alpha"
+
+        @pipeline
+        def my_pipe(ctx: object) -> dict:
+            state = yield step_a(ctx)
+            if triage(ctx) == "alpha":
+                state = yield step_b(ctx)
+            return state
+
+        prog = compile_pipeline(my_pipe)
+        graph = project_graph(prog, key_mode="phase")
+
+        # triage is a single decision instruction → bare name
+        dec_stage = graph.stages["triage"]
+        assert dec_stage.decision_vocabulary == frozenset({"alpha", "beta", "gamma"})
+        assert dec_stage.step.decision_vocabulary == frozenset({"alpha", "beta", "gamma"})
+
+    def test_phase_keyed_decision_routes_survive(self) -> None:
+        """decision_routes survive phase-keyed projection."""
+
+        @phase
+        def step_a(ctx: object) -> dict:
+            return {}
+
+        @phase
+        def step_b(ctx: object) -> dict:
+            return {}
+
+        @decision(vocabulary={"left", "right"})
+        def fork(ctx: object) -> str:
+            return "left"
+
+        @pipeline
+        def my_pipe(ctx: object) -> dict:
+            state = yield step_a(ctx)
+            if fork(ctx) == "left":
+                state = yield step_b(ctx)
+            return state
+
+        prog = compile_pipeline(my_pipe)
+        graph = project_graph(prog, key_mode="phase")
+
+        dec_stage = graph.stages["fork"]
+        assert "left" in dec_stage.decision_routes
+        assert "right" in dec_stage.decision_routes
+        # 'left' branch reaches step_b → edge label 'left'
+        assert dec_stage.decision_routes["left"] == "left"
+        # 'right' branch has no phase → terminal
+        assert dec_stage.decision_routes["right"] is None
+
+    # ── binding maps ─────────────────────────────────────────────────
+
+    def test_phase_keyed_binding_map_non_none_with_typed_ports(self) -> None:
+        """binding_map is non-None under phase-keyed projection when typed ports exist."""
+
+        from arnold.pipeline.types import Port
+
+        port_out = Port(name="data", content_type="text/plain")
+
+        @phase(produces=(port_out,))
+        def producer(ctx: object) -> dict:
+            return {"data": "hi"}
+
+        @phase
+        def consumer(ctx: object) -> dict:
+            return {}
+
+        @pipeline
+        def my_pipe(ctx: object) -> dict:
+            state = yield producer(ctx)
+            state = yield consumer(ctx)
+            return state
+
+        prog = compile_pipeline(my_pipe)
+        graph = project_graph(prog, key_mode="phase")
+
+        assert graph.binding_map is not None
+        assert isinstance(graph.binding_map, dict)
+
+    def test_phase_keyed_binding_map_keys_are_phase_names(self) -> None:
+        """binding_map keys use bare phase names under phase-keyed projection."""
+
+        from arnold.pipeline.declaration_lowering import derive_binding_map
+        from arnold.pipeline.types import Port, PortRef
+
+        port_out = Port(name="shared", content_type="text/plain")
+        port_in = PortRef(port_name="shared", content_type="text/plain")
+
+        @phase(produces=(port_out,))
+        def producer(ctx: object) -> dict:
+            return {"shared": "val"}
+
+        @phase(consumes=(port_in,))
+        def consumer(ctx: object) -> dict:
+            return {}
+
+        @pipeline
+        def my_pipe(ctx: object) -> dict:
+            state = yield producer(ctx)
+            state = yield consumer(ctx)
+            return state
+
+        prog = compile_pipeline(my_pipe)
+        graph = project_graph(prog, key_mode="phase")
+
+        edge_pairs = [
+            (src, edge.target)
+            for src, stage in graph.stages.items()
+            for edge in stage.edges
+            if edge.target != "halt"
+        ]
+        binding_map = derive_binding_map(graph.stages, edge_pairs)
+
+        assert binding_map is not None
+        expected_key = ("consumer", "shared")
+        assert expected_key in binding_map, (
+            f"Key {expected_key!r} should be in binding_map, ",
+            f"got keys: {list(binding_map.keys())!r}",
+        )
+
+    # ── duplicate name disambiguation ────────────────────────────────
+
+    def test_phase_keyed_loop_duplicate_names_use_pc_fallback(self) -> None:
+        """When a phase name appears multiple times (e.g. used both before
+        and inside a loop), stage names fall back to ``{name}__pc{N}`` for
+        disambiguation."""
+
+        @phase
+        def step(ctx: object) -> dict:
+            return {}
+
+        @decision(vocabulary={"again", "done"})
+        def guard(ctx: object) -> str:
+            return "again"
+
+        @pipeline
+        def my_pipe(ctx: object) -> dict:
+            state = yield step(ctx)  # step before loop
+            while guard(ctx) == "again":
+                state = yield step(ctx)  # step inside loop → duplicate
+            return state
+
+        prog = compile_pipeline(my_pipe)
+        graph = project_graph(prog, key_mode="phase")
+
+        # 'step' appears twice → __pc fallback for both instances
+        step_names = sorted(n for n in graph.stages if n.startswith("step"))
+        assert len(step_names) >= 2, f"Expected ≥2 'step' stages, got: {step_names}"
+        for name in step_names:
+            assert "__pc" in name, f"duplicate step name should have __pc: {name!r}"
+
+        # The guard (compiler-named 'guard_guard') is unique → bare name
+        assert "guard_guard" in graph.stages
+
+    def test_phase_keyed_loop_edge_targets_use_phase_keyed_names(self) -> None:
+        """Edges reference phase-keyed stage names, not pc-prefixed names."""
+
+        @phase
+        def step(ctx: object) -> dict:
+            return {}
+
+        @decision(vocabulary={"again", "done"})
+        def guard(ctx: object) -> str:
+            return "again"
+
+        @pipeline
+        def my_pipe(ctx: object) -> dict:
+            state = yield step(ctx)
+            while guard(ctx) == "again":
+                state = yield step(ctx)
+            return state
+
+        prog = compile_pipeline(my_pipe)
+        graph = project_graph(prog, key_mode="phase")
+
+        # step appears twice — once before loop, once in body
+        # The first step should have bare name, second should have __pc fallback
+        step_names = sorted(n for n in graph.stages if n.startswith("step"))
+        assert len(step_names) >= 2, f"Expected 2 'step' stages, got: {step_names}"
+
+        # All edge targets should reference valid stage names
+        for stage_name, stage in graph.stages.items():
+            for edge in stage.edges:
+                if edge.target != "halt":
+                    assert edge.target in graph.stages, (
+                        f"Edge from {stage_name!r} targets unknown {edge.target!r}"
+                    )
+
+
+    # ── validation ───────────────────────────────────────────────────
+
+    def test_phase_keyed_pipeline_validates(self) -> None:
+        """Phase-keyed projection produces a validatable Pipeline."""
+
+        @phase
+        def a(ctx: object) -> dict:
+            return {}
+
+        @phase
+        def b(ctx: object) -> dict:
+            return {}
+
+        @decision(vocabulary={"x", "y"})
+        def d(ctx: object) -> str:
+            return "x"
+
+        @pipeline
+        def my_pipe(ctx: object) -> dict:
+            state = yield a(ctx)
+            if d(ctx) == "x":
+                state = yield b(ctx)
+            return state
+
+        prog = compile_pipeline(my_pipe)
+        graph = project_graph(prog, key_mode="phase")
+        result = validate(graph)
+        assert len(result.defects) == 0
+
+    # ── edge cases ──────────────────────────────────────────────────
+
+    def test_phase_keyed_unknown_mode_raises(self) -> None:
+        """Invalid key_mode raises ValueError."""
+
+        @phase
+        def step(ctx: object) -> dict:
+            return {}
+
+        @pipeline
+        def my_pipe(ctx: object) -> dict:
+            state = yield step(ctx)
+            return state
+
+        prog = compile_pipeline(my_pipe)
+        with pytest.raises(ValueError, match="Unknown key_mode"):
+            project_graph(prog, key_mode="bogus")
+
+    def test_phase_keyed_all_stages_have_run_method(self) -> None:
+        """Under phase-keyed projection every Stage.step has a callable run."""
+
+        @phase
+        def a(ctx: object) -> dict:
+            return {}
+
+        @phase
+        def b(ctx: object) -> dict:
+            return {}
+
+        @decision(vocabulary={"x", "y"})
+        def d(ctx: object) -> str:
+            return "x"
+
+        @pipeline
+        def my_pipe(ctx: object) -> dict:
+            state = yield a(ctx)
+            if d(ctx) == "x":
+                state = yield b(ctx)
+            return state
+
+        prog = compile_pipeline(my_pipe)
+        graph = project_graph(prog, key_mode="phase")
+
+        for name, stage in graph.stages.items():
+            assert hasattr(stage.step, "run"), f"Stage {name} has no run method"
+            assert callable(stage.step.run)

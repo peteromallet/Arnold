@@ -45,6 +45,7 @@ from __future__ import annotations
 import concurrent.futures
 import dataclasses
 import json
+import os
 from pathlib import Path
 from typing import Any, Callable, Mapping
 
@@ -66,6 +67,101 @@ from arnold.pipeline.types import (
 )
 from arnold.runtime.envelope import RuntimeEnvelope
 from arnold.runtime.operations import NullOperationRegistry, OperationRegistry
+
+
+def _run_native_dispatched(
+    pipeline: Pipeline,
+    native_bundle: Any,
+    *,
+    initial_state: Mapping[str, Any],
+    envelope: RuntimeEnvelope,
+    initial_context: StepContext | None,
+    resume: bool,
+) -> Any:
+    """Delegate execution to the native runtime or a runner adapter."""
+    from arnold.pipeline.native.ir import NativeProgram
+    from arnold.pipeline.native.runtime import run_native_pipeline
+
+    # Resolve the NativeProgram when an adapter is used; adapters may ignore
+    # it (Megaplan compiles its own canonically-named program), but callers
+    # and probes expect it to be supplied.
+    program: NativeProgram | None = None
+    if isinstance(native_bundle, NativeProgram):
+        program = native_bundle
+    else:
+        for bundle in getattr(pipeline, "resource_bundles", ()) or ():
+            if isinstance(bundle, NativeProgram):
+                program = bundle
+                break
+
+    kwargs: dict[str, Any] = {
+        "artifact_root": envelope.artifact_root,
+        "initial_state": dict(initial_state),
+        "resume": resume,
+        "initial_envelope": envelope,
+    }
+    if isinstance(native_bundle, NativeProgram):
+        return run_native_pipeline(native_bundle, **kwargs)
+
+    # Runner adapter path (e.g. NativeMegaplanRunner) — forward the full
+    # caller context so adapters can reconstruct pipeline-specific context.
+    kwargs["program"] = program
+    kwargs["schema_registry"] = None
+    kwargs["initial_context"] = initial_context
+    return native_bundle.run_native_pipeline(**kwargs)
+
+
+def _read_persisted_executor_marker(artifact_root: str | Path) -> str | None:
+    """Read ``meta.executor`` from ``<artifact_root>/state.json`` if present."""
+    state_path = Path(artifact_root) / "state.json"
+    if not state_path.is_file():
+        return None
+    try:
+        data = json.loads(state_path.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+    if isinstance(data, dict):
+        meta = data.get("meta") or {}
+        if isinstance(meta, dict):
+            marker = meta.get("executor")
+            if isinstance(marker, str):
+                return marker
+    return None
+
+
+def _resolve_executor_marker(
+    initial_state: Mapping[str, Any],
+    artifact_root: str | Path,
+) -> str | None:
+    """Return the executor marker, preferring persisted state.json over memory."""
+    persisted = _read_persisted_executor_marker(artifact_root)
+    if persisted is not None:
+        return persisted
+    state_dict = dict(initial_state) if isinstance(initial_state, dict) else {}
+    meta = state_dict.get("meta") or {}
+    if isinstance(meta, dict):
+        marker = meta.get("executor")
+        if isinstance(marker, str):
+            return marker
+    return None
+
+
+def _find_native_bundle(pipeline: Pipeline) -> Any | None:
+    """Locate a native execution bundle in *pipeline.resource_bundles*.
+
+    Runner-like adapters are preferred over bare
+    :class:`~arnold.pipeline.native.ir.NativeProgram` so callers can supply
+    a custom dispatch wrapper (e.g. ``NativeMegaplanRunner``).
+    """
+    from arnold.pipeline.native.ir import NativeProgram
+
+    program: NativeProgram | None = None
+    for bundle in getattr(pipeline, "resource_bundles", ()) or ():
+        if hasattr(bundle, "run_native_pipeline"):
+            return bundle
+        if program is None and isinstance(bundle, NativeProgram):
+            program = bundle
+    return program
 from arnold.runtime.wal_fold import (
     fold_journal,
     last_state_snapshot_projector,
@@ -264,6 +360,23 @@ def run_pipeline(
 
     _hooks: ExecutorHooks = hooks if hooks is not None else NullExecutorHooks()
 
+    # Native-runtime opt-in dispatch (ARNOLD_NATIVE_RUNTIME + state marker).
+    # Persisted state.json wins over in-memory state so resume choices are
+    # stable across process restarts.
+    if os.environ.get("ARNOLD_NATIVE_RUNTIME") == "1":
+        marker = _resolve_executor_marker(initial_state, envelope.artifact_root)
+        if marker == "native":
+            native_bundle = _find_native_bundle(pipeline)
+            if native_bundle is not None:
+                return _run_native_dispatched(
+                    pipeline,
+                    native_bundle,
+                    initial_state=initial_state,
+                    envelope=envelope,
+                    initial_context=initial_context,
+                    resume=False,
+                )
+
     # When custom hooks are active, delegate parallel-safety to the hooks
     # instance; otherwise honour the caller's parallel_safe predicate.
     _eff_parallel_safe: ParallelSafePredicate = (
@@ -368,6 +481,21 @@ def run_pipeline_resume(
     _eff_parallel_safe: ParallelSafePredicate = (
         _hooks.is_parallel_safe if hooks is not None else DEFAULT_PARALLEL_SAFE  # type: ignore[assignment]
     )
+
+    # Native-runtime resume dispatch: persisted marker wins, then memory.
+    if os.environ.get("ARNOLD_NATIVE_RUNTIME") == "1":
+        marker = _resolve_executor_marker(merged, envelope.artifact_root)
+        if marker == "native":
+            native_bundle = _find_native_bundle(pipeline)
+            if native_bundle is not None:
+                return _run_native_dispatched(
+                    pipeline,
+                    native_bundle,
+                    initial_state=merged,
+                    envelope=envelope,
+                    initial_context=initial_context,
+                    resume=True,
+                )
 
     wrapped_hooks = _wrap_resume_reverify_hooks(
         hooks=_hooks,

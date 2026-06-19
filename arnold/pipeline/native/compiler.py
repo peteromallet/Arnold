@@ -85,12 +85,31 @@ def compile_pipeline(pipeline_func: Callable[..., Any]) -> NativeProgram:
 
     tree = ast.parse(source)
     func_def = _find_function_def(tree, pipeline_func.__name__)
+
+    # ── async def rejection (M4 settled decision) ──────────────────
+    # M4 uses the existing sync generator subset.  Literal ``async def``
+    # native pipelines are not required for milestone 4; if a future
+    # milestone adds async, only compiler-level lowering (matching the
+    # current grammar) is needed — not general async runtime scheduling.
     if func_def is None:
+        # Check whether the function exists as an async def instead
+        async_func_def = _find_async_function_def(tree, pipeline_func.__name__)
+        if async_func_def is not None:
+            raise NativeCompileError(
+                f"Async def pipeline {pipeline_name!r} is not supported in M4. "
+                "M4 uses the sync generator subset for native pipelines. "
+                "Use a regular ``def`` (not ``async def``) with ``yield <phase>(ctx)`` syntax.",
+                async_func_def,
+            )
         raise NativeCompileError(
             f"Function {pipeline_name!r} not found in parsed source"
         )
 
-    compiler = _Compiler(pipeline_name)
+    # Pass the pipeline function's globals so the compiler can resolve
+    # module-level @phase/@decision references that live in the same module
+    # as the @pipeline declaration.
+    pipeline_globals: dict[str, Any] = getattr(pipeline_func, '__globals__', {})
+    compiler = _Compiler(pipeline_name, pipeline_globals=pipeline_globals)
     compiler.lower_body(func_def.body)
     return compiler.emit(pipeline_func, description)
 
@@ -106,14 +125,23 @@ def _find_function_def(tree: ast.AST, name: str) -> ast.FunctionDef | None:
     return None
 
 
+def _find_async_function_def(tree: ast.AST, name: str) -> ast.AsyncFunctionDef | None:
+    """Return the top-level ``AsyncFunctionDef`` named *name*, or None."""
+    for node in ast.walk(tree):
+        if isinstance(node, ast.AsyncFunctionDef) and node.name == name:
+            return node
+    return None
+
+
 # ── compiler state machine ────────────────────────────────────────────
 
 
 class _Compiler:
     """Internal compiler that walks the AST and emits instructions."""
 
-    def __init__(self, pipeline_name: str) -> None:
+    def __init__(self, pipeline_name: str, pipeline_globals: dict[str, Any] | None = None) -> None:
         self._pipeline_name = pipeline_name
+        self._pipeline_globals: dict[str, Any] = pipeline_globals or {}
         self._instructions: list[NativeInstruction] = []
         self._phases: list[NativePhase] = []
         self._decisions: list[NativeDecision] = []
@@ -181,7 +209,15 @@ class _Compiler:
         )
 
     def _lookup_name(self, name: str, node: ast.AST) -> Callable[..., Any]:
-        """Look up *name* in the calling frame's globals/locals."""
+        """Look up *name* in the pipeline globals, then the calling frame's globals/locals."""
+        # First, check the pipeline function's own module globals.
+        # This allows @phase/@decision functions defined in the same module
+        # as the @pipeline declaration to be resolved without frame walking.
+        if name in self._pipeline_globals:
+            candidate = self._pipeline_globals[name]
+            if callable(candidate):
+                return candidate
+
         frame = inspect.currentframe()
         try:
             # Walk up to the frame that called compile_pipeline
@@ -218,8 +254,7 @@ class _Compiler:
         elif isinstance(stmt, ast.While):
             self._lower_while_stmt(stmt)
         elif isinstance(stmt, ast.Return):
-            # Return is fine — just halt after the last phase
-            pass
+            self._emit_halt()
         elif isinstance(stmt, ast.Pass):
             pass
         else:
@@ -245,6 +280,12 @@ class _Compiler:
         elif isinstance(expr, ast.Constant):
             # Literal — nothing to emit, e.g. '...'
             pass
+        elif isinstance(expr, ast.Dict):
+            for key in expr.keys:
+                if key is not None:
+                    self._lower_expr(key)
+            for value in expr.values:
+                self._lower_expr(value)
         elif isinstance(expr, ast.Tuple) or isinstance(expr, ast.List):
             for elt in expr.elts:
                 self._lower_expr(elt)
@@ -367,11 +408,13 @@ class _Compiler:
 
         # Lower then-body
         then_start_pc = self._pc
+        self._pending_halt = False
         self.lower_body(stmt.body)
+        then_halts = self._pending_halt
 
         # After then-body, jump to merge point
         then_end_pc = self._pc
-        if not self._pending_halt:
+        if not then_halts:
             # We'll need a jump instruction to the merge point, but we don't
             # know the merge PC yet.  Emit a placeholder jump.
             jump_pc = self._emit("jump", name="if_then_exit")
@@ -380,9 +423,10 @@ class _Compiler:
 
         # Lower else-body (if present)
         else_start_pc = self._pc
+        self._pending_halt = False
         if stmt.orelse:
             self.lower_body(stmt.orelse)
-        else_end_pc = self._pc
+        else_halts = self._pending_halt if stmt.orelse else False
 
         # Merge point
         merge_pc = self._pc
@@ -424,7 +468,7 @@ class _Compiler:
         )
 
         # Patch the then-exit jump to point to merge
-        if not self._pending_halt:
+        if not then_halts:
             self._instructions[jump_pc] = NativeInstruction(
                 pc=jump_pc,
                 op="jump",
@@ -434,6 +478,7 @@ class _Compiler:
                 consumes=(),
                 decision_vocabulary=frozenset(),
             )
+        self._pending_halt = then_halts and bool(stmt.orelse) and else_halts
 
     # ── while lowering ────────────────────────────────────────────
 
@@ -541,10 +586,13 @@ class _Compiler:
 
         # Body PC
         body_pc = self._pc
+        self._pending_halt = False
         self.lower_body(stmt.body)
+        body_halts = self._pending_halt
 
         # Jump back to header
-        self._emit("jump", name=f"{name}_loop_back", next_pc=header_pc)
+        if not body_halts:
+            self._emit("jump", name=f"{name}_loop_back", next_pc=header_pc)
 
         # Exit PC (after loop)
         exit_pc = self._pc
@@ -576,6 +624,7 @@ class _Compiler:
             consumes=(),
             decision_vocabulary=vocabulary,
         )
+        self._pending_halt = False
 
     # ── final assembly ────────────────────────────────────────────
 

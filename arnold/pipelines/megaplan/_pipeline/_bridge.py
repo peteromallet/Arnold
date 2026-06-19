@@ -30,6 +30,11 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Mapping
 
+from arnold.pipeline.native.checkpoint import (
+    NativeCursorCorruptError,
+    classify_resume_cursor,
+)
+
 _BRIDGED_PIPELINES: frozenset[str] = frozenset({"demo_judges"})
 
 
@@ -477,7 +482,13 @@ def run_pipeline_dispatch(
     artifact_root: Path,
     pipeline_key: str,
 ) -> dict:
-    """Route a pipeline to the bridged or legacy executor based on the allowlist.
+    """Route a pipeline to the bridged, native, or legacy executor.
+
+    **M4 opt-in native execution (SD2):** When the working state carries
+    ``_native_execution: true``, the dispatch routes through
+    :class:`~arnold.pipelines.megaplan.native_runner.NativeMegaplanRunner`
+    instead of the graph executor.  Graph execution remains the default
+    path — native execution only runs when explicitly opted in per run.
 
     Pipelines in :data:`_BRIDGED_PIPELINES` are executed via the neutral
     Arnold walk-loop through :func:`run_pipeline_bridged`.  All other
@@ -496,6 +507,12 @@ def run_pipeline_dispatch(
         The registry name for the pipeline (SD1: derived at the CLI call site,
         not from ``Pipeline`` — which has no ``name`` field).
 
+    SD2 — native execution opt-in
+    -----------------------------
+    Native execution is **opt-in** per run via a ``_native_execution: true``
+    key in the working state.  When absent or falsy, the graph executor
+    remains the default path.
+
     SD3 — allowlist contract
     ------------------------
     ``_BRIDGED_PIPELINES = {'demo_judges'}`` is the M1 hard cap.  Any
@@ -503,9 +520,87 @@ def run_pipeline_dispatch(
     bridge-compatible (no ``_materialize_stage_step`` dependency, no
     ``InProcessHandlerStep`` in a ``ParallelStage``, etc.).
     """
+    # ── Native execution opt-in (M4 SD2) ────────────────────────────
+    # Check the working state for the per-run native-execution marker.
+    # Graph executor remains the default when the marker is absent.
+    state: dict = getattr(ctx, "state", None) or {}
+
+    # Resume-cursor routing takes precedence over the per-run flag.  A valid
+    # native cursor forces the native runtime (with resume=True); a graph-born
+    # cursor forces the graph executor.  Corrupt native cursors fail closed
+    # here because classify_resume_cursor raises NativeCursorCorruptError.
+    cursor_kind = classify_resume_cursor(artifact_root)
+    if cursor_kind == "native":
+        return _run_native_dispatched(
+            pipeline=pipeline,
+            ctx=ctx,
+            artifact_root=artifact_root,
+            pipeline_key=pipeline_key,
+            resume=True,
+        )
+    if cursor_kind == "graph":
+        from arnold.pipelines.megaplan._pipeline.executor import run_pipeline
+
+        return run_pipeline(pipeline, ctx, artifact_root=artifact_root)
+
+    if state.get("_native_execution"):
+        return _run_native_dispatched(
+            pipeline=pipeline,
+            ctx=ctx,
+            artifact_root=artifact_root,
+            pipeline_key=pipeline_key,
+            resume=False,
+        )
+
     if pipeline_key in _BRIDGED_PIPELINES:
         return run_pipeline_bridged(pipeline, ctx, artifact_root=artifact_root)
 
     from arnold.pipelines.megaplan._pipeline.executor import run_pipeline
 
     return run_pipeline(pipeline, ctx, artifact_root=artifact_root)
+
+
+def _run_native_dispatched(
+    pipeline: Any,
+    ctx: Any,
+    *,
+    artifact_root: Path,
+    pipeline_key: str,
+    resume: bool = False,
+) -> dict:
+    """Execute the Megaplan pipeline through the native runtime.
+
+    Constructs a :class:`NativeMegaplanRunner`, delegates to its
+    :meth:`run_native_pipeline` method, and converts the returned
+    :class:`~arnold.pipeline.native.runtime.NativeExecutionResult`
+    into the same dict shape that the legacy graph executor returns.
+    """
+    from arnold.pipelines.megaplan.native_runner import NativeMegaplanRunner
+
+    # Build the initial envelope from ctx when available
+    initial_envelope: Any = None
+    if hasattr(ctx, "envelope"):
+        initial_envelope = ctx.envelope
+
+    # Extract state from ctx for the native runner.
+    _dispatch_state: dict = getattr(ctx, "state", None) or {}
+    runner = NativeMegaplanRunner()
+    native_result = runner.run_native_pipeline(
+        artifact_root=artifact_root,
+        initial_state=dict(_dispatch_state),
+        resume=resume,
+        initial_envelope=initial_envelope,
+        initial_context=ctx,
+    )
+
+    # Convert NativeExecutionResult to the dict shape expected by callers
+    # (matches _terminal_result format from executor.py).
+    result_state: dict = dict(native_result.state) if native_result.state else {}
+    return {
+        "state": result_state,
+        "final_stage": native_result.stages[-1] if native_result.stages else "",
+        "envelope": native_result.envelope,
+        "status": "completed" if not native_result.suspended else "suspended",
+        "contract_result": None,
+        "halt_reason": "max_phases" if native_result.suspended else None,
+    }

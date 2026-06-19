@@ -307,7 +307,7 @@ def run_native_pipeline(
             # Restore envelope from cursor frames if present
             saved_envelope = frames.pop("__envelope__", None)
             if saved_envelope is not None:
-                envelope = saved_envelope
+                envelope = _deserialize_envelope(saved_envelope)
 
     # ── resolve cursor_id (stable across suspension/resume) ──────────
     _cursor_id: str | None = None
@@ -374,6 +374,7 @@ def run_native_pipeline(
 
             # ── Callable return normalization (matching graph executor) ──
             outputs, contract_result = _normalize_phase_result(result, stage_id)
+            state_patch = _extract_state_patch(result)
 
             # ── Resolve handoff value for typed enforcement ────────
             # Graph executor pattern: prefers contract_result, falls back
@@ -414,6 +415,12 @@ def run_native_pipeline(
                     state["__contract_results__"] = published
                 published[instr.name] = contract_result
 
+            # Match the graph executor: StepResult.state_patch is merged
+            # after outputs/contract_result publication and before routing.
+            if state_patch:
+                state.update(state_patch)
+                owned_keys = frozenset(owned_keys | frozenset(state_patch.keys()))
+
             # ── Hook: merge_state (may rewrite state / owned_keys) ──
             state, owned_keys = _hooks.merge_state(instr, state, outputs, owned_keys)
 
@@ -428,7 +435,8 @@ def run_native_pipeline(
             # ── Hook: should_suspend (terminal exit) ────────────────
             do_suspend, suspend_reason = _hooks.should_suspend(instr, state, result)
             if do_suspend:
-                _hooks.on_stage_complete(instr, ctx, result, state, owned_keys)
+                if _should_emit_stage_complete(instr):
+                    _hooks.on_stage_complete(instr, ctx, result, state, owned_keys)
                 if hasattr(_hooks, "halt_reason"):
                     _hooks.halt_reason = suspend_reason  # type: ignore[attr-defined]
                 return NativeExecutionResult(
@@ -448,13 +456,16 @@ def run_native_pipeline(
             # which fires terminal exits after step completion)
             if max_phases is not None and phase_count >= max_phases:
                 # ── Hook: on_stage_complete before suspension ──────
-                _hooks.on_stage_complete(instr, ctx, result, state, owned_keys)
+                if _should_emit_stage_complete(instr):
+                    _hooks.on_stage_complete(instr, ctx, result, state, owned_keys)
                 # Advance pc to the next instruction for the resume point
                 next_pc = instr.next_pc if instr.next_pc is not None else pc + 1
+                reentry_stage = _reentry_stage_for_pc(program, next_pc)
                 _persist_suspension(
                     artifact_root=artifact_root,
                     stage=stage_id,
                     pc=next_pc,
+                    reentry_stage=reentry_stage,
                     stages=stages,
                     loops=loops,
                     frames=frames,
@@ -466,6 +477,7 @@ def run_native_pipeline(
                 _cursor = _build_cursor_dict(
                     stage=stage_id,
                     pc=next_pc,
+                    reentry_stage=reentry_stage,
                     stages=list(stages),
                     loops=dict(loops),
                     frames=dict(frames),
@@ -484,7 +496,8 @@ def run_native_pipeline(
                 )
 
             # ── Hook: on_stage_complete (normal completion) ────────
-            _hooks.on_stage_complete(instr, ctx, result, state, owned_keys)
+            if _should_emit_stage_complete(instr):
+                _hooks.on_stage_complete(instr, ctx, result, state, owned_keys)
 
             # Advance to next instruction
             pc = instr.next_pc if instr.next_pc is not None else pc + 1
@@ -596,7 +609,8 @@ def run_native_pipeline(
                     iteration = loops.get(instr.name, 0)
                     do_halt, halt_reason = _hooks.should_halt_loop(instr, state, iteration)
                     if do_halt:
-                        _hooks.on_stage_complete(instr, ctx, result, state, owned_keys)
+                        if _should_emit_stage_complete(instr):
+                            _hooks.on_stage_complete(instr, ctx, result, state, owned_keys)
                         if hasattr(_hooks, "halt_reason"):
                             _hooks.halt_reason = halt_reason  # type: ignore[attr-defined]
                         return NativeExecutionResult(
@@ -607,7 +621,8 @@ def run_native_pipeline(
                         )
 
                 # ── Hook: on_stage_complete (normal decision completion) ──
-                _hooks.on_stage_complete(instr, ctx, result, state, owned_keys)
+                if _should_emit_stage_complete(instr):
+                    _hooks.on_stage_complete(instr, ctx, result, state, owned_keys)
 
                 pc = target_pc
                 forward_visited.clear()
@@ -687,6 +702,7 @@ def run_native_pipeline(
     _clean_cursor = _build_cursor_dict(
         stage=stages[-1] if stages else "",
         pc=pc,
+        reentry_stage=_reentry_stage_for_pc(program, pc),
         stages=list(stages),
         loops=dict(loops),
         frames=dict(frames),
@@ -763,6 +779,7 @@ def _build_cursor_dict(
     *,
     stage: str,
     pc: int,
+    reentry_stage: str | None,
     stages: list[str],
     loops: dict[str, int],
     frames: dict[str, Any],
@@ -785,7 +802,7 @@ def _build_cursor_dict(
     frames_with_state = dict(frames)
     frames_with_state["__state__"] = dict(state)
     if envelope is not None:
-        frames_with_state["__envelope__"] = envelope
+        frames_with_state["__envelope__"] = _serialize_envelope(envelope)
 
     # Build stage_reentry_points from completed stages
     stage_reentry_points: dict[str, Any] = {}
@@ -799,6 +816,7 @@ def _build_cursor_dict(
     cursor: dict[str, Any] = {
         "stage": stage,
         "resume_cursor": None,
+        "reentry_stage": reentry_stage,
         "stages": list(stages),
         "loops": dict(loops),
         "frames": frames_with_state,
@@ -814,11 +832,33 @@ def _build_cursor_dict(
     return cursor
 
 
+def _reentry_stage_for_pc(program: NativeProgram, pc: int) -> str | None:
+    """Return the stable native stage identifier for *pc*, following jumps."""
+    instructions = program.instructions
+    visited: set[int] = set()
+    cur = pc
+    while 0 <= cur < len(instructions):
+        if cur in visited:
+            return None
+        visited.add(cur)
+        instr = instructions[cur]
+        if instr.op in {"phase", "decision"}:
+            return f"{program.name}__{instr.name}__pc{instr.pc}"
+        if instr.op == "jump":
+            cur = instr.next_pc if instr.next_pc is not None else -1
+            continue
+        if instr.op == "halt":
+            return "halt"
+        cur += 1
+    return None
+
+
 def _persist_suspension(
     *,
     artifact_root: str | Path,
     stage: str,
     pc: int,
+    reentry_stage: str | None,
     stages: list[str],
     loops: dict[str, int],
     frames: dict[str, Any],
@@ -839,7 +879,7 @@ def _persist_suspension(
         frames_with_state = dict(frames)
         frames_with_state["__state__"] = dict(state)
         if envelope is not None:
-            frames_with_state["__envelope__"] = envelope
+            frames_with_state["__envelope__"] = _serialize_envelope(envelope)
 
         # Build stage_reentry_points from completed stages
         stage_reentry_points: dict[str, Any] = {}
@@ -854,6 +894,7 @@ def _persist_suspension(
             stage=stage,
             pc=pc,
             stages=list(stages),
+            reentry_stage=reentry_stage,
             loops=dict(loops),
             frames=frames_with_state,
             cursor_id=cursor_id,
@@ -863,6 +904,69 @@ def _persist_suspension(
         # Best-effort: if persist fails, execution result still carries
         # the pc/stages so the caller can retry or log.
         pass
+
+
+def _extract_state_patch(result: Any) -> dict[str, Any]:
+    """Return a normalized ``state_patch`` mapping from a phase result."""
+    patch = getattr(result, "state_patch", {})
+    if isinstance(patch, dict):
+        return dict(patch)
+    if hasattr(patch, "items"):
+        try:
+            return dict(patch.items())
+        except Exception:
+            return {}
+    return {}
+
+
+def _serialize_envelope(envelope: Any) -> Any:
+    """Return a JSON-serializable representation of *envelope*."""
+    if envelope is None:
+        return None
+    if hasattr(envelope, "_to_jsonable"):
+        return {"__runtime_envelope__": envelope._to_jsonable()}
+    if hasattr(envelope, "to_jsonable"):
+        return {"__run_envelope__": envelope.to_jsonable()}
+    if hasattr(envelope, "to_json"):
+        raw = envelope.to_json()
+        if isinstance(raw, dict):
+            return {"__run_envelope__": raw}
+        if isinstance(raw, str):
+            return {"__runtime_envelope_json__": raw}
+    return envelope
+
+
+def _deserialize_envelope(payload: Any) -> Any:
+    """Rehydrate a serialized envelope payload when possible."""
+    if not isinstance(payload, dict):
+        return payload
+    if "__runtime_envelope__" in payload:
+        from arnold.runtime.envelope import RuntimeEnvelope
+
+        data = payload["__runtime_envelope__"]
+        if isinstance(data, dict):
+            return RuntimeEnvelope._from_jsonable(data)
+    if "__runtime_envelope_json__" in payload:
+        from arnold.runtime.envelope import RuntimeEnvelope
+
+        data = payload["__runtime_envelope_json__"]
+        if isinstance(data, str):
+            return RuntimeEnvelope.from_json(data)
+    if "__run_envelope__" in payload:
+        from arnold.runtime.envelope import RunEnvelope
+
+        data = payload["__run_envelope__"]
+        if isinstance(data, dict):
+            return RunEnvelope.from_jsonable(data)
+    return payload
+
+
+def _should_emit_stage_complete(instr: NativeInstruction) -> bool:
+    """Allow callables to suppress public stage-complete hooks."""
+    func = getattr(instr, "func", None)
+    if func is None:
+        return True
+    return bool(getattr(func, "__native_runtime_emit_stage_complete__", True))
 
 
 __all__ = [
