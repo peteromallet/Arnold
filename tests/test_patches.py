@@ -207,6 +207,23 @@ def test_ltx_lowvram_generated_ready_template_applies_before_metadata_policy() -
     assert workflow.nodes["3940"].class_type == "LowVRAMCheckpointLoader"
     assert workflow.nodes["4010"].inputs["ckpt_name"] == FP8_CHECKPOINT
     assert workflow.nodes["3940"].inputs["ckpt_name"] == FP8_CHECKPOINT
+    api = workflow.compile("api")
+    assert api["3059"]["inputs"]["batch_size"] == 1
+    assert api["3980"]["inputs"]["batch_size"] == 1
+    assert api["4981"]["inputs"]["longer_size"] == 384
+    assert api["4966"]["inputs"]["max_shift"] == 2.05
+    assert api["4966"]["inputs"]["base_shift"] == 0.95
+    assert api["4966"]["inputs"]["stretch"] is True
+    assert api["4966"]["inputs"]["terminal"] == 0.1
+    assert api["4963"]["inputs"]["cross_attn"] is True
+    assert api["4964"]["inputs"]["modality"] == "VIDEO"
+    assert api["4808"]["inputs"]["skip_blocks"] == "28"
+    assert api["4982"]["inputs"]["last_frame_fix"] is False
+    assert api["4983"]["inputs"]["last_frame_fix"] is False
+    assert api["4823"]["inputs"]["format"] == "auto"
+    assert api["4823"]["inputs"]["codec"] == "auto"
+    assert api["4852"]["inputs"]["format"] == "auto"
+    assert api["4852"]["inputs"]["codec"] == "auto"
 
 
 def _supported_ltx_workflow() -> VibeWorkflow:

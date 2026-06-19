@@ -56,6 +56,8 @@ def apply(workflow: VibeWorkflow) -> VibeWorkflow:
         node.inputs = {"ckpt_name": FP8_CHECKPOINT, "dependencies": ["4960", 0]}
         node.widgets = {}
 
+    _ensure_current_ltx_schema_defaults(workflow)
+
     workflow.metadata["smoke_resolution"] = "384x256x9_frames"
     workflow.metadata["comfy_configuration"] = dict(COMFY_CONFIGURATION)
     if ready_template := workflow.metadata.get("ready_template"):
@@ -147,6 +149,48 @@ def _replace_clown_samplers(workflow: VibeWorkflow) -> None:
         node.class_type = "KSamplerSelect"
         node.inputs = {"sampler_name": PORTABLE_SAMPLER}
         node.widgets = {}
+
+
+def _ensure_current_ltx_schema_defaults(workflow: VibeWorkflow) -> None:
+    """Fill required API inputs added by current LTXVideo/Comfy output nodes."""
+    _set_inputs(workflow, "3059", {"batch_size": 1})
+    _set_inputs(workflow, "3980", {"frames_number": 9, "frame_rate": 8, "batch_size": 1})
+    _set_inputs(workflow, "4981", {"longer_size": 384})
+    _set_inputs(
+        workflow,
+        "4966",
+        {"max_shift": 2.05, "base_shift": 0.95, "stretch": True, "terminal": 0.1},
+    )
+    _set_inputs(
+        workflow,
+        "4963",
+        {"stg": 1.0, "perturb_attn": True, "rescale": 0.7, "skip_step": 0, "cross_attn": True},
+    )
+    _set_inputs(
+        workflow,
+        "4964",
+        {
+            "modality": "VIDEO",
+            "stg": 1.0,
+            "perturb_attn": True,
+            "skip_step": 0,
+            "cross_attn": True,
+        },
+    )
+    if "4808" in workflow.nodes:
+        node = workflow.nodes["4808"]
+        node.inputs["skip_blocks"] = node.inputs.pop("widget_0", node.widgets.pop("widget_0", "28"))
+    _set_inputs(workflow, "4982", {"last_frame_fix": False})
+    _set_inputs(workflow, "4983", {"last_frame_fix": False})
+    _set_inputs(workflow, "4823", {"format": "auto", "codec": "auto"})
+    _set_inputs(workflow, "4852", {"format": "auto", "codec": "auto"})
+
+
+def _set_inputs(workflow: VibeWorkflow, node_id: str, values: dict) -> None:
+    node = workflow.nodes.get(node_id)
+    if node is None:
+        return
+    node.inputs.update(values)
 
 
 patch = Patch("ltx_lowvram", applies_to, apply, rationale)
