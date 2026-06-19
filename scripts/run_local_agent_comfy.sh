@@ -55,10 +55,19 @@ export VIBECOMFY_ARNOLD_RUNTIME_MODULE="${VIBECOMFY_ARNOLD_RUNTIME_MODULE:-vibec
 #     local megaplan/arnold checkout. Set VIBECOMFY_ARNOLD_AUTO_INSTALL=0 to
 #     make this a warning-only check. Set VIBECOMFY_ALLOW_LOCAL_ARNOLD=1 for
 #     intentional local Arnold co-development.
-ARNOLD_PACKAGE_SPEC="${ARNOLD_PACKAGE_SPEC:-arnold @ git+https://github.com/peteromallet/Arnold.git@3db60a6cfe73e250b836d6147952ccf449151906}"
+ARNOLD_PACKAGE_SPEC="${ARNOLD_PACKAGE_SPEC:-arnold @ git+https://github.com/peteromallet/Arnold.git@9d8b2a4af93ba764e7e82381656a8fffb3678cf7}"
 _arnold_origin="$("${PYBIN}" - <<'PY' 2>/dev/null || true
 import arnold
 print(getattr(arnold, "__file__", "") or "")
+PY
+)"
+_arnold_ref_ok="$("${PYBIN}" - <<'PY' 2>/dev/null || true
+import importlib.metadata
+try:
+    direct_url = importlib.metadata.distribution("arnold").read_text("direct_url.json") or ""
+except importlib.metadata.PackageNotFoundError:
+    direct_url = ""
+print("yes" if "9d8b2a4af93ba764e7e82381656a8fffb3678cf7" in direct_url else "no")
 PY
 )"
 _arnold_install_reason=""
@@ -68,6 +77,11 @@ if [[ -z "${_arnold_origin}" ]]; then
 elif [[ "${VIBECOMFY_ALLOW_LOCAL_ARNOLD:-0}" != "1" ]] && [[ "${_arnold_origin}" == "${HOME}/Documents/megaplan"* || "${_arnold_origin}" == "${HOME}/Documents/megaplan-engine"* ]]; then
   _arnold_install_reason="arnold currently imports from local checkout: ${_arnold_origin}"
   _arnold_install_flags=(--upgrade --force-reinstall --no-deps)
+elif [[ "${VIBECOMFY_ALLOW_LOCAL_ARNOLD:-0}" == "1" ]] && [[ "${_arnold_origin}" == "${HOME}/Documents/megaplan"* || "${_arnold_origin}" == "${HOME}/Documents/megaplan-engine"* ]]; then
+  :
+elif [[ "${_arnold_ref_ok}" != "yes" ]]; then
+  _arnold_install_reason="arnold is installed but not from the validated GitHub ref"
+  _arnold_install_flags=(--upgrade --force-reinstall)
 fi
 if [[ -n "${_arnold_install_reason}" ]]; then
   if [[ "${VIBECOMFY_ARNOLD_AUTO_INSTALL:-1}" == "1" ]]; then

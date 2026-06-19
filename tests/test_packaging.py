@@ -45,6 +45,17 @@ def test_runpod_dependencies_stay_out_of_core_metadata() -> None:
     )
 
 
+def test_agent_extra_uses_validated_arnold_ref() -> None:
+    project = tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))["project"]
+
+    agent_dependencies = project["optional-dependencies"]["agent"]
+
+    assert agent_dependencies == [
+        "arnold @ git+https://github.com/peteromallet/Arnold.git@9d8b2a4af93ba764e7e82381656a8fffb3678cf7"
+    ]
+    assert not any("3db60a6cfe73e250b836d6147952ccf449151906" in dependency for dependency in agent_dependencies)
+
+
 def test_unused_schema_dependencies_stay_out_of_core_metadata() -> None:
     project = tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))["project"]
 

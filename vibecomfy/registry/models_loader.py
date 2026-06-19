@@ -105,6 +105,9 @@ def stage_entry(entry: ModelEntry, *, models_root: Path) -> list[Path]:
         staged = models_root / target.path
         staged.parent.mkdir(parents=True, exist_ok=True)
         if os.path.lexists(staged):
+            if _existing_target_satisfies(staged, entry):
+                staged_paths.append(staged)
+                continue
             _check_collision(staged, source, entry.id)
             staged.unlink()
         try:
@@ -363,6 +366,9 @@ def _stage_composite_entry(entry: ModelEntry, *, models_root: Path) -> list[Path
             staged = models_root / target.path / file.path
             staged.parent.mkdir(parents=True, exist_ok=True)
             if os.path.lexists(staged):
+                if _existing_model_file_satisfies(staged, entry=entry, file=file):
+                    staged_paths.append(staged)
+                    continue
                 _check_collision(staged, source, entry.id)
                 staged.unlink()
             try:
@@ -383,6 +389,27 @@ def _check_collision(staged: Path, source: Path, entry_id: str) -> None:
     except FileNotFoundError:
         return
     raise RuntimeError(f"{entry_id}: refusing to overwrite unrelated existing file at {staged}")
+
+
+def _existing_target_satisfies(staged: Path, entry: ModelEntry) -> bool:
+    if not staged.exists():
+        return False
+    try:
+        _check_size(staged, entry.min_size, entry.id)
+        _check_pins(staged, entry)
+    except RuntimeError:
+        return False
+    return True
+
+
+def _existing_model_file_satisfies(staged: Path, *, entry: ModelEntry, file: ModelFile) -> bool:
+    if not staged.exists():
+        return False
+    try:
+        _check_model_file_pins(staged, entry=entry, file=file)
+    except RuntimeError:
+        return False
+    return True
 
 
 def _check_size(path: Path, min_size: int, entry_id: str) -> None:

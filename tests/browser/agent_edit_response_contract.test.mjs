@@ -121,6 +121,53 @@ test("normalizeAgentEditResponse infers legacy clarify outcome and preserves cla
   });
 });
 
+test("normalizeAgentEditResponse does not treat clarify diagnostic graphs as candidates", () => {
+  const raw = {
+    ok: true,
+    message: "Which audio source should I use?",
+    clarification_required: true,
+    clarification_message: "Which audio source should I use?",
+    graph_unchanged: true,
+    graph: { nodes: [{ id: 7, type: "TextGenerateLTX2Prompt" }], links: [[1, 2, 0, 7, 3, "AUDIO"]] },
+    candidate: null,
+    candidate_graph_hash: "submitted-graph-hash",
+    apply_eligibility: {
+      applyable: false,
+      reason: "no_candidate",
+      message: "No candidate is available to apply.",
+      warnings: [],
+    },
+    apply_allowed: false,
+    canvas_apply_allowed: false,
+    queue_allowed: false,
+  };
+
+  const normalized = normalizeAgentEditResponse(raw, { endpoint: "/vibecomfy/agent-edit" });
+
+  assert.equal(normalized.outcome.kind, "clarify");
+  assert.equal(normalized.candidateGraph, null);
+  assert.equal(normalized.candidate, null);
+});
+
+test("normalizeAgentEditResponse does not expose candidateGraph for explicit non-candidate outcomes", () => {
+  const raw = {
+    ok: true,
+    message: "Need clarification.",
+    outcome: {
+      kind: "clarify",
+      question: "Where should the audio be connected?",
+    },
+    graph: { nodes: [{ id: 8, type: "LoadAudio" }], links: [] },
+    candidate_graph: { nodes: [{ id: 9, type: "LoadAudio" }], links: [] },
+  };
+
+  const normalized = normalizeAgentEditResponse(raw, { endpoint: "/vibecomfy/agent-edit" });
+
+  assert.equal(normalized.outcome.kind, "clarify");
+  assert.equal(normalized.candidateGraph, null);
+  assert.equal(normalized.candidate, null);
+});
+
 test("normalizeAgentEditResponse infers legacy error outcomes and normalizes nested stale recovery", () => {
   const raw = {
     ok: false,

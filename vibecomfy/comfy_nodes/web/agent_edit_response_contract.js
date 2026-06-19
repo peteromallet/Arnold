@@ -286,6 +286,14 @@ function inferLegacyOutcome(response, { endpoint }) {
   if (response.ok === false || hasFailureHints(response)) {
     return publicErrorOutcomeFromResponse(response, { defaultStage: asString(response.stage) });
   }
+  const clarificationQuestion =
+    asTrimmedString(response.clarificationMessage) || asTrimmedString(response.clarification_message);
+  if (response.clarification_required === true || response.clarificationRequired === true || clarificationQuestion) {
+    return {
+      kind: "clarify",
+      ...clarificationPayload(clarificationQuestion),
+    };
+  }
   if (
     response.graph_unchanged === true
     && (resultHasNoCandidateEligibility(response) || resultLooksLikeNoopResponse(response))
@@ -294,14 +302,6 @@ function inferLegacyOutcome(response, { endpoint }) {
       kind: "noop",
       reason: asTrimmedString(response.message),
     });
-  }
-  const clarificationQuestion =
-    asTrimmedString(response.clarificationMessage) || asTrimmedString(response.clarification_message);
-  if (response.clarification_required === true || response.clarificationRequired === true || clarificationQuestion) {
-    return {
-      kind: "clarify",
-      ...clarificationPayload(clarificationQuestion),
-    };
   }
   if (responseHasCandidatePayload(response)) {
     return {
@@ -361,7 +361,7 @@ function normalizeCandidateGraph(response, outcome) {
   if (!isObject(response)) {
     return null;
   }
-  if (outcome?.kind === "noop") {
+  if (outcome?.kind !== "candidate") {
     return null;
   }
   const typedGraph = response.candidate?.graph;

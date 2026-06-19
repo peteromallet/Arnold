@@ -94,10 +94,11 @@ Summarize what changed and show me the exact API JSON fields ComfyUI will receiv
 ### Use VibeComfy Inside ComfyUI
 
 Use this when you want VibeComfy's ComfyUI extension nodes. The in-editor agent
-panel is still a development surface.
+panel also works from a normal install, but it needs the `agent` extra so the
+Arnold runtime package is present in the same Python environment as ComfyUI.
 
 ```text
-Install VibeComfy into my ComfyUI checkout. Use the same Python that runs ComfyUI, install VibeComfy editable, symlink `vibecomfy/comfy_nodes` into `ComfyUI/custom_nodes/vibecomfy`, restart ComfyUI, and verify that the VibeComfy node categories appear.
+Install VibeComfy into my ComfyUI checkout. Use the same Python that runs ComfyUI, install VibeComfy editable with the agent extra if I want the in-editor agent panel, symlink `vibecomfy/comfy_nodes` into `ComfyUI/custom_nodes/vibecomfy`, restart ComfyUI, and verify that the VibeComfy node categories and `/vibecomfy/agent/status?route=auto` are available.
 ```
 
 Manual install:
@@ -111,17 +112,26 @@ ln -sfn "$PWD/vibecomfy/comfy_nodes" "$COMFYUI/custom_nodes/vibecomfy"
 ```
 
 The `pip install -e .` step installs the VibeComfy Python package and
-dependencies into ComfyUI's interpreter. The symlink is what makes ComfyUI load
-`vibecomfy/comfy_nodes/__init__.py`, which registers the node classes and serves
-the bundled `web/` extension assets.
+extension-only dependencies into ComfyUI's interpreter. For the agent panel,
+install the optional runtime dependency as well:
+
+```bash
+"$COMFY_PYTHON" -m pip install -e ".[agent]"
+```
+
+The symlink is what makes ComfyUI load `vibecomfy/comfy_nodes/__init__.py`,
+which registers the node classes and serves the bundled `web/` extension assets.
 
 After restart, look for nodes under `vibecomfy/exec`, `vibecomfy/intent`, and
-`conditioning/vibecomfy`.
+`conditioning/vibecomfy`. If you installed the agent extra, also verify:
 
-The experimental agent panel lets an agent edit a workflow from inside ComfyUI.
-It needs an agent runtime module in the ComfyUI process; the current development
-setup is documented in
-[docs/agent-edit/e2e-real-browser-tier.md](docs/agent-edit/e2e-real-browser-tier.md).
+```bash
+curl "http://127.0.0.1:8190/vibecomfy/agent/status?route=auto"
+```
+
+The agent panel lets an agent edit a workflow from inside ComfyUI. `route=auto`
+uses OpenRouter when `OPENROUTER_API_KEY` is configured; Arnold-backed routes
+also require the `agent` extra above.
 
 ### Use VibeComfy Through Astrid
 

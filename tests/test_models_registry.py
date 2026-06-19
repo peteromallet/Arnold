@@ -181,6 +181,31 @@ def test_stage_entry_passes_hf_revision_and_verifies_pins(monkeypatch: pytest.Mo
     assert staged_paths[0].read_bytes() == payload
 
 
+def test_stage_entry_keeps_existing_target_that_satisfies_pins(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    payload = b"model-bytes"
+    digest = hashlib.sha256(payload).hexdigest()
+    source = tmp_path / "hf" / "model.bin"
+    source.parent.mkdir()
+    source.write_bytes(payload)
+    target = tmp_path / "models" / "checkpoints" / "model.bin"
+    target.parent.mkdir(parents=True)
+    target.write_bytes(payload)
+    monkeypatch.setattr("huggingface_hub.hf_hub_download", lambda repo_id, filename: str(source))
+    entry = ModelEntry(
+        id="pinned",
+        source=ModelSource(kind="huggingface", repo="example/repo", filename="model.bin"),
+        min_size=1,
+        targets=(ModelTarget(node_pack="comfy_gguf", path="checkpoints/model.bin"),),
+        sha256=digest,
+        size_bytes=len(payload),
+    )
+
+    staged_paths = stage_entry(entry, models_root=tmp_path / "models")
+
+    assert staged_paths == [target]
+    assert target.read_bytes() == payload
+
+
 def test_load_registry_supports_composite_files_and_deterministic_hash(tmp_path: Path) -> None:
     first = hashlib.sha256(b"first").hexdigest()
     second = hashlib.sha256(b"second").hexdigest()
@@ -301,13 +326,14 @@ def test_stage_entry_rejects_unrelated_existing_target(monkeypatch: pytest.Monke
     source.write_bytes(b"large-enough")
     target = tmp_path / "models" / "checkpoints" / "model.bin"
     target.parent.mkdir(parents=True)
-    target.write_bytes(b"unrelated")
+    target.write_bytes(b"unrelated-but-large-enough")
     monkeypatch.setattr("huggingface_hub.hf_hub_download", lambda repo_id, filename: str(source))
     entry = ModelEntry(
         id="collision",
         source=ModelSource(kind="huggingface", repo="example/repo", filename="model.bin"),
         min_size=3,
         targets=(ModelTarget(node_pack="comfy_gguf", path="checkpoints/model.bin"),),
+        sha256=hashlib.sha256(b"large-enough").hexdigest(),
     )
 
     with pytest.raises(RuntimeError, match="refusing to overwrite unrelated existing file"):
