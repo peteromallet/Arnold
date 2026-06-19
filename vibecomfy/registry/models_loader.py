@@ -97,7 +97,9 @@ def load_registry(path: str | Path | None = None) -> tuple[ModelEntry, ...]:
 def stage_entry(entry: ModelEntry, *, models_root: Path) -> list[Path]:
     if entry.files:
         return _stage_composite_entry(entry, models_root=models_root)
-    source = _download_source(entry, models_root=models_root)
+    source = _existing_source(entry, models_root=models_root)
+    if source is None:
+        source = _download_source(entry, models_root=models_root)
     _check_size(source, entry.min_size, entry.id)
     _check_pins(source, entry)
     staged_paths: list[Path] = []
@@ -118,6 +120,14 @@ def stage_entry(entry: ModelEntry, *, models_root: Path) -> list[Path]:
         _check_pins(staged, entry)
         staged_paths.append(staged)
     return staged_paths
+
+
+def _existing_source(entry: ModelEntry, *, models_root: Path) -> Path | None:
+    for target in entry.targets:
+        staged = models_root / target.path
+        if os.path.lexists(staged) and _existing_target_satisfies(staged, entry):
+            return staged.resolve(strict=True)
+    return None
 
 
 def stage_many(entries: Sequence[ModelEntry], *, models_root: Path, ids: Sequence[str] | None = None) -> None:

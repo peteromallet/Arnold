@@ -190,7 +190,13 @@ def test_stage_entry_keeps_existing_target_that_satisfies_pins(monkeypatch: pyte
     target = tmp_path / "models" / "checkpoints" / "model.bin"
     target.parent.mkdir(parents=True)
     target.write_bytes(payload)
-    monkeypatch.setattr("huggingface_hub.hf_hub_download", lambda repo_id, filename: str(source))
+    calls: list[object] = []
+
+    def fake_hf_download(**kwargs: object) -> str:
+        calls.append(kwargs)
+        return str(source)
+
+    monkeypatch.setattr("huggingface_hub.hf_hub_download", fake_hf_download)
     entry = ModelEntry(
         id="pinned",
         source=ModelSource(kind="huggingface", repo="example/repo", filename="model.bin"),
@@ -203,6 +209,7 @@ def test_stage_entry_keeps_existing_target_that_satisfies_pins(monkeypatch: pyte
     staged_paths = stage_entry(entry, models_root=tmp_path / "models")
 
     assert staged_paths == [target]
+    assert calls == []
     assert target.read_bytes() == payload
 
 
