@@ -3,7 +3,7 @@
 """Auto-generated ready_template — use python -m vibecomfy.cli copy-to-recipe <id> for hand-editing."""
 from __future__ import annotations
 
-from vibecomfy.templates import InputSpec, ReadyMetadata, new_workflow, node as raw_call
+from vibecomfy.templates import InputSpec, ReadyMetadata, new_workflow
 from vibecomfy.nodes.core import CFGGuider, CLIPTextEncode, CreateVideo, EmptyLTXVLatentVideo, KSamplerSelect, LTXAVTextEncoderLoader, LTXVAudioVAEDecode, LTXVAudioVAELoader, LTXVConcatAVLatent, LTXVConditioning, LTXVEmptyLatentAudio, LTXVPreprocess, LTXVScheduler, LTXVSeparateAVLatent, LoadImage, LoraLoaderModelOnly, ManualSigmas, RandomNoise, ResizeImageMaskNode, SamplerCustomAdvanced, SaveVideo
 from vibecomfy.nodes.ltxvideo import GuiderParameters, LTXFloatToInt, LTXVImgToVideoConditionOnly, LTXVTiledVAEDecode, LowVRAMCheckpointLoader, MultimodalGuider
 from vibecomfy.patches.ltx_lowvram import apply as apply_ltx_lowvram
@@ -19,6 +19,7 @@ DEFAULT_PROMPT = 'A traditional Japanese tea ceremony takes place in a tatami ro
 DEFAULT_PROMPT_2 = 'pc game, console game, video game, cartoon, childish, ugly'
 DEFAULT_SEED = 42
 DEFAULT_SEED_2 = 43
+EULER_ANCESTRAL_CFG_PP = 'euler_ancestral_cfg_pp'
 FIXED = 'fixed'
 GUIDE_STRENGTH = 7
 GUIDE_STRENGTH_2 = 0.5
@@ -94,7 +95,7 @@ def build() -> VibeWorkflow:
 
     ksamplerselect = KSamplerSelect(
         _id='4831',
-        sampler_name='euler_ancestral_cfg_pp',
+        sampler_name=EULER_ANCESTRAL_CFG_PP,
         _uid='n6',
     )
 
@@ -121,12 +122,9 @@ def build() -> VibeWorkflow:
         _uid='n9',
     )
 
-    clownsampler_beta = raw_call('ClownSampler_Beta', '4967',
-        widget_0=0.25,
-        widget_1='exponential/res_2s',
-        widget_2=94,
-        widget_3='fixed',
-        widget_4=True,
+    ksamplerselect_2 = KSamplerSelect(
+        _id='4967',
+        sampler_name=EULER_ANCESTRAL_CFG_PP,
         _uid='n10',
     )
 
@@ -281,7 +279,7 @@ def build() -> VibeWorkflow:
         guider=multimodalguider,
         latent_image=ltxvconcatavlatent,
         noise=randomnoise,
-        sampler=clownsampler_beta.out(0),
+        sampler=ksamplerselect_2,
         sigmas=ltxvscheduler,
         _uid='n28',
     )

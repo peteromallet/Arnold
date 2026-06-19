@@ -9,6 +9,8 @@ FP8_CHECKPOINT = "ltx-2.3-22b-dev-fp8.safetensors"
 SOURCE_CHECKPOINT = "ltx-2.3-22b-dev.safetensors"
 AUDIO_LOADER_ID = "4010"
 CHECKPOINT_LOADER_ID = "3940"
+CLOWN_SAMPLER_CLASS = "ClownSampler_Beta"
+PORTABLE_SAMPLER = "euler_ancestral_cfg_pp"
 
 COMFY_CONFIGURATION = {
     "reserve_vram": 12,
@@ -41,6 +43,7 @@ def apply(workflow: VibeWorkflow) -> VibeWorkflow:
     _update_node(workflow, "4977", widgets={"widget_0": not image_to_video})
     _update_node(workflow, "2004", widgets={"widget_0": "egyptian_queen.png" if image_to_video else "example.png"})
     _update_node(workflow, "4981", widgets={"widget_1": 384})
+    _replace_clown_samplers(workflow)
 
     if AUDIO_LOADER_ID in workflow.nodes:
         node = workflow.nodes[AUDIO_LOADER_ID]
@@ -66,7 +69,7 @@ def apply(workflow: VibeWorkflow) -> VibeWorkflow:
 def rationale(workflow: VibeWorkflow) -> str:
     return (
         "LTXVideo nodes detected; reduces VRAM by using the fp8 checkpoint, "
-        "low-VRAM model loader, and 384x256x9 smoke settings."
+        "low-VRAM model loader, portable sampler, and 384x256x9 smoke settings."
     )
 
 
@@ -135,6 +138,15 @@ def _update_node(
             node.inputs[key] = value
     if widgets:
         node.widgets.update(widgets)
+
+
+def _replace_clown_samplers(workflow: VibeWorkflow) -> None:
+    for node in workflow.nodes.values():
+        if node.class_type != CLOWN_SAMPLER_CLASS:
+            continue
+        node.class_type = "KSamplerSelect"
+        node.inputs = {"sampler_name": PORTABLE_SAMPLER}
+        node.widgets = {}
 
 
 patch = Patch("ltx_lowvram", applies_to, apply, rationale)

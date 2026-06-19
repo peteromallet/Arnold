@@ -61,12 +61,8 @@ def build() -> VibeWorkflow:
         modality='AUDIO',
         modality_scale=3,
     )
-    clownsampler_beta = _node(wf, 'ClownSampler_Beta', '4967', _uid='n10',
-        widget_0=0.25,
-        widget_1='exponential/res_2s',
-        widget_2=94,
-        widget_3='fixed',
-        widget_4=True,
+    ksamplerselect_2 = _node(wf, 'KSamplerSelect', '4967', _uid='n10',
+        sampler_name='euler_ancestral_cfg_pp',
     )
     manualsigmas = _node(wf, 'ManualSigmas', '4971', _uid='n11',
         _outputs=('SIGMAS',),
@@ -182,7 +178,7 @@ def build() -> VibeWorkflow:
         guider=multimodalguider.out('GUIDER'),
         latent_image=ltxvconcatavlatent.out('LATENT'),
         noise=randomnoise.out('NOISE'),
-        sampler=clownsampler_beta.out(0),
+        sampler=ksamplerselect_2.out(0),
         sigmas=ltxvscheduler.out('SIGMAS'),
     )
     ltxvseparateavlatent_2 = _node(wf, 'LTXVSeparateAVLatent', '4845', _uid='n29',

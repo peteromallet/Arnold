@@ -246,6 +246,9 @@ def _patch_ltx_common(api: dict[str, Any]) -> None:
         elif class_type in {"BasicScheduler", "LTXVScheduler"}:
             inputs["steps"] = 1
             inputs["widget_0"] = 1
+        elif class_type == "ClownSampler_Beta":
+            node["class_type"] = "KSamplerSelect"
+            node["inputs"] = {"sampler_name": "euler_ancestral_cfg_pp"}
         elif class_type == "CFGGuider":
             inputs["widget_0"] = 2.5
         elif class_type == "LTXVEmptyLatentAudio":

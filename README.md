@@ -160,7 +160,8 @@ The baseline profile stages the official SD1.5 fp16 checkpoint and parks
 sampler hooks that can hang a plain SD1.5 `KSampler` during model transfer; keep
 it out for smoke checks. Use `vibecomfy runpod prepare-comfy --profile ltx`
 when intentionally running LTX/Runex templates; that profile stages the LTX
-model set and enables node packs needed by generated LTX workflows.
+model set while leaving ResAdapter parked so SD1.5 and LTX can share one
+ComfyUI process.
 
 ### Use VibeComfy Through Astrid
 

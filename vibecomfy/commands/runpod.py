@@ -107,16 +107,7 @@ def _cmd_runpod_prepare_comfy(args: argparse.Namespace) -> int:
             registry=args.registry,
             dry_run=args.dry_run,
         )
-        unparked = runpod_setup.unpark_node_packs(
-            custom_nodes=args.custom_nodes,
-            disabled_custom_nodes=args.disabled_custom_nodes,
-            dry_run=args.dry_run,
-        )
-        for item in unparked:
-            if item.changed:
-                action = "would unpark" if args.dry_run else "unparked"
-                print(f"{action} {item.name}: {item.source} -> {item.target}")
-        print("ltx profile staged LTX models and enabled node packs needed by generated LTX/Runex templates.")
+        print("ltx profile staged LTX models. ResAdapter stays parked so SD1.5 and LTX can share one ComfyUI process.")
         return 0
     raise ValueError(f"unknown profile: {args.profile}")
 
