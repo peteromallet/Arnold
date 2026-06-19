@@ -221,6 +221,8 @@ def test_ltx_lowvram_generated_ready_template_applies_before_metadata_policy() -
     assert api["4808"]["inputs"]["skip_blocks"] == "28"
     assert api["4982"]["inputs"]["last_frame_fix"] is False
     assert api["4983"]["inputs"]["last_frame_fix"] is False
+    assert "audio" not in api["4819"]["inputs"]
+    assert "audio" not in api["4849"]["inputs"]
     assert api["4823"]["inputs"]["format"] == "auto"
     assert api["4823"]["inputs"]["codec"] == "auto"
     assert api["4852"]["inputs"]["format"] == "auto"

@@ -116,6 +116,7 @@ def runtime_environment(*, runtime_root: Path) -> dict[str, str]:
         "TRANSFORMERS_CACHE": str(cache / "huggingface" / "transformers"),
         "HF_HUB_DISABLE_XET": "1",
         "XDG_CACHE_HOME": str(cache / "xdg"),
+        "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
     }
 
 
@@ -183,9 +184,9 @@ def comfy_serve_command(
         "--enable-cors-header",
         "*",
         "--enable-manager",
-        "--highvram",
-        "--disable-dynamic-vram",
-        "--disable-cuda-malloc",
+        "--lowvram",
+        "--reserve-vram",
+        "2",
         "--log-stdout",
     ]
     if external_address:

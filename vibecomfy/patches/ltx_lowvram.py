@@ -182,6 +182,8 @@ def _ensure_current_ltx_schema_defaults(workflow: VibeWorkflow) -> None:
         node.inputs["skip_blocks"] = node.inputs.pop("widget_0", node.widgets.pop("widget_0", "28"))
     _set_inputs(workflow, "4982", {"last_frame_fix": False})
     _set_inputs(workflow, "4983", {"last_frame_fix": False})
+    _drop_inputs(workflow, "4819", ("audio",))
+    _drop_inputs(workflow, "4849", ("audio",))
     _set_inputs(workflow, "4823", {"format": "auto", "codec": "auto"})
     _set_inputs(workflow, "4852", {"format": "auto", "codec": "auto"})
 
@@ -191,6 +193,20 @@ def _set_inputs(workflow: VibeWorkflow, node_id: str, values: dict) -> None:
     if node is None:
         return
     node.inputs.update(values)
+
+
+def _drop_inputs(workflow: VibeWorkflow, node_id: str, keys: tuple[str, ...]) -> None:
+    node = workflow.nodes.get(node_id)
+    if node is None:
+        return
+    key_set = set(keys)
+    for key in keys:
+        node.inputs.pop(key, None)
+    workflow.edges = [
+        edge
+        for edge in workflow.edges
+        if not (str(edge.to_node) == str(node_id) and edge.to_input in key_set)
+    ]
 
 
 patch = Patch("ltx_lowvram", applies_to, apply, rationale)

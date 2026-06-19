@@ -35,6 +35,7 @@ def test_runtime_layout_env_and_extra_model_paths(tmp_path: Path) -> None:
     assert (runtime / "custom_nodes").is_dir()
     assert env["HF_HOME"] == str(runtime / "cache" / "huggingface")
     assert env["HF_HUB_DISABLE_XET"] == "1"
+    assert env["PYTORCH_CUDA_ALLOC_CONF"] == "expandable_segments:True"
     assert "base_path: " + str(runtime / "models") in extra.read_text(encoding="utf-8")
 
 
@@ -63,6 +64,10 @@ def test_comfy_serve_command_includes_runpod_public_flags(tmp_path: Path) -> Non
     assert "https://example.proxy.runpod.net" in command
     assert "--extra-model-paths-config" in command
     assert str(runtime / "extra_model_paths.yaml") in command
+    assert "--lowvram" in command
+    assert "--reserve-vram" in command
+    assert "--highvram" not in command
+    assert "--disable-dynamic-vram" not in command
 
 
 def test_park_node_packs_moves_resadapter_out_of_custom_nodes(tmp_path: Path) -> None:
