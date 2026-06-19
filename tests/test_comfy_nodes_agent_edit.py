@@ -548,12 +548,20 @@ def test_agent_edit_route_extracts_only_non_empty_string_client_id(
     real_aiohttp = sys.modules.get("aiohttp")
     real_server = sys.modules.get("server")
 
-    class _Routes:
-        def post(self, _path):
-            return lambda fn: fn
+    registered: dict[str, Any] = {}
 
-        def get(self, _path):
-            return lambda fn: fn
+    class _Routes:
+        def post(self, path):
+            def _decorator(fn):
+                registered[path] = fn
+                return fn
+            return _decorator
+
+        def get(self, path):
+            def _decorator(fn):
+                registered[path] = fn
+                return fn
+            return _decorator
 
     server_module = types.ModuleType("server")
     server_module.PromptServer = types.SimpleNamespace(instance=types.SimpleNamespace(routes=_Routes()))
@@ -566,21 +574,26 @@ def test_agent_edit_route_extracts_only_non_empty_string_client_id(
 
     monkeypatch.setitem(sys.modules, "server", server_module)
     monkeypatch.setitem(sys.modules, "aiohttp", aiohttp_module)
-    routes = importlib.reload(routes)
 
     captured: list[tuple[dict, str | None]] = []
     to_thread_calls: list[str] = []
+
+    def _fake_handle_agent_edit(payload, *, client_id=None):
+        captured.append((payload, client_id))
+        return {"ok": True}
+
+    edit_module = importlib.import_module("vibecomfy.comfy_nodes.agent.edit")
+    monkeypatch.setattr(edit_module, "handle_agent_edit", _fake_handle_agent_edit)
+
+    routes = importlib.reload(routes)
+    agent_edit_route = registered.get("/vibecomfy/agent-edit")
+    assert agent_edit_route is not None, "agent-edit route was not registered"
 
     async def _fake_to_thread(fn, /, *args, **kwargs):
         to_thread_calls.append(getattr(fn, "__name__", repr(fn)))
         return fn(*args, **kwargs)
 
     monkeypatch.setattr(routes.asyncio, "to_thread", _fake_to_thread)
-    monkeypatch.setattr(
-        routes,
-        "_handle_agent_edit",
-        lambda payload, **kwargs: captured.append((payload, kwargs.get("client_id"))) or {"ok": True},
-    )
 
     class _Request:
         def __init__(self, payload):
@@ -590,20 +603,20 @@ def test_agent_edit_route_extracts_only_non_empty_string_client_id(
             return self._payload
 
     try:
-        response = asyncio.run(routes.agent_edit_route(_Request({"graph": {}, "task": "x", "client_id": "client-123"})))
+        response = asyncio.run(agent_edit_route(_Request({"graph": {}, "task": "x", "client_id": "client-123"})))
         assert response["status"] == 200
         assert captured[-1][1] == "client-123"
-        assert to_thread_calls[-1] == "<lambda>"
+        assert to_thread_calls[-1] == "_fake_handle_agent_edit"
 
-        response = asyncio.run(routes.agent_edit_route(_Request({"graph": {}, "task": "x", "client_id": 99})))
+        response = asyncio.run(agent_edit_route(_Request({"graph": {}, "task": "x", "client_id": 99})))
         assert response["status"] == 200
         assert captured[-1][1] is None
-        assert to_thread_calls[-1] == "<lambda>"
+        assert to_thread_calls[-1] == "_fake_handle_agent_edit"
 
-        response = asyncio.run(routes.agent_edit_route(_Request({"graph": {}, "task": "x", "client_id": "   "})))
+        response = asyncio.run(agent_edit_route(_Request({"graph": {}, "task": "x", "client_id": "   "})))
         assert response["status"] == 200
         assert captured[-1][1] is None
-        assert to_thread_calls[-1] == "<lambda>"
+        assert to_thread_calls[-1] == "_fake_handle_agent_edit"
     finally:
         if real_aiohttp is not None:
             sys.modules["aiohttp"] = real_aiohttp
@@ -2146,6 +2159,62 @@ def test_handle_agent_edit_batch_repl_returns_successful_non_commit_clarificatio
     audit = json.loads(Path(result["audit_ref"]["path"]).read_text(encoding="utf-8"))
     assert audit["metadata"]["batch_repl"]["exit_mode"] == "pure_clarify"
     assert audit["metadata"]["batch_repl"]["turn_count"] == 1
+
+
+def test_handle_agent_edit_batch_repl_treats_followup_after_clarify_as_continuation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    provider = _batch_repl_provider()
+    monkeypatch.setenv("VIBECOMFY_AGENT_EDIT_BATCH_REPL", "1")
+
+    def _clarify_client(_messages):
+        return {
+            "batch": 'clarify("Which image file should be used as the input?")',
+            "message": "I need one detail before continuing.",
+        }
+
+    first = handle_agent_edit(
+        {
+            "graph": _ui_graph(),
+            "task": "Can you switch this to img2img",
+            "session_id": "clarify-continuation",
+            "max_batches": 1,
+        },
+        schema_provider=provider,
+        deepseek_client=_clarify_client,
+        session_root=tmp_path,
+    )
+    assert first["outcome"]["kind"] == "clarify"
+
+    captured_messages: list[list[dict[str, str]]] = []
+
+    def _done_client(messages):
+        captured_messages.append(messages)
+        return {
+            "batch": "done()",
+            "message": "Using the default image selection for the img2img setup.",
+        }
+
+    second = handle_agent_edit(
+        {
+            "graph": _ui_graph(),
+            "task": "Default for now",
+            "session_id": "clarify-continuation",
+            "max_batches": 1,
+        },
+        schema_provider=provider,
+        deepseek_client=_done_client,
+        session_root=tmp_path,
+    )
+
+    assert second["ok"] is True
+    user_msg = captured_messages[0][1]["content"]
+    assert "Conversation state (JSON; derived from the latest clarify outcome):" in user_msg
+    assert '"active_request": "Can you switch this to img2img"' in user_msg
+    assert '"current_user_request_is": "answer_to_pending_clarification"' in user_msg
+    assert '"pending_clarification": "Which image file should be used as the input?"' in user_msg
+    assert "User request:\nDefault for now" in user_msg
 
 
 def test_handle_agent_edit_batch_repl_done_commits_and_exposes_gate_c_summary(
@@ -5619,7 +5688,7 @@ def test_agent_status_and_credentials_route_helpers_do_not_leak_secrets(
 
     env_path = tmp_path / ".hermes" / ".env"
     saved = _handle_agent_credentials(
-        {"provider": "deepseek", "api_key": "deepseek-secret"},
+        {"provider": "openrouter", "api_key": "openrouter-secret"},
         env_path=env_path,
     )
     ignored = _handle_agent_credentials(
@@ -5629,8 +5698,8 @@ def test_agent_status_and_credentials_route_helpers_do_not_leak_secrets(
 
     assert saved["ok"] is True
     assert saved["stored"] is True
-    assert "DEEPSEEK_API_KEY=deepseek-secret" in env_path.read_text(encoding="utf-8")
-    assert "deepseek-secret" not in json.dumps(saved)
+    assert "OPENROUTER_API_KEY=openrouter-secret" in env_path.read_text(encoding="utf-8")
+    assert "openrouter-secret" not in json.dumps(saved)
     assert ignored["ok"] is True
     assert ignored["stored"] is False
     assert ignored["ignored"] is True
@@ -5649,9 +5718,11 @@ def test_agent_status_and_credentials_cover_provider_unavailable_redaction_and_s
     from vibecomfy.comfy_nodes.agent.contracts import TurnContext
     from vibecomfy.comfy_nodes.agent.routes import _handle_agent_credentials, _handle_agent_status
 
+    monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setenv("ARNOLD_API_KEY", "arnold-secret")
     monkeypatch.setenv("HERMES_API_KEY", "hermes-secret")
-    monkeypatch.setenv("DEEPSEEK_API_KEY", "deepseek-env-secret")
+    monkeypatch.setenv("OPENROUTER_API_KEY", "openrouter-env-secret")
+    monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
 
     class Runtime:
         @staticmethod
@@ -5674,16 +5745,17 @@ def test_agent_status_and_credentials_cover_provider_unavailable_redaction_and_s
     assert healthy["requested_route"] == "openai-codex"
     assert healthy["route_metadata"]["normalized_route"] == "arnold"
     assert healthy["route_metadata"]["browser_api_key_allowed"] is False
-    assert healthy["route_options"]["deepseek"]["browser_api_key_allowed"] is True
+    assert healthy["route_options"]["openrouter"]["browser_api_key_allowed"] is True
     assert healthy["credential_presence"] == {
         "arnold_api_key": True,
         "hermes_api_key": True,
-        "deepseek_api_key": True,
+        "openrouter_api_key": True,
+        "deepseek_api_key": False,
     }
     dumped_healthy = json.dumps(healthy, sort_keys=True)
     assert "arnold-secret" not in dumped_healthy
     assert "hermes-secret" not in dumped_healthy
-    assert "deepseek-env-secret" not in dumped_healthy
+    assert "openrouter-env-secret" not in dumped_healthy
     assert "runtime-secret" not in dumped_healthy
     assert "runtime-token" not in dumped_healthy
     assert "provider-secret" not in dumped_healthy
@@ -5718,16 +5790,16 @@ def test_agent_status_and_credentials_cover_provider_unavailable_redaction_and_s
         "route_options": {
             "auto": {
                 "requested_route": "auto",
-                "normalized_route": "deepseek",
+                "normalized_route": "openrouter",
                 "browser_api_key_allowed": True,
-                "guidance": "DeepSeek browser key submission is supported and stored locally.",
+                "guidance": "OpenRouter browser key submission is supported and stored locally.",
                 "tos_acknowledgement_required": False,
             },
-            "deepseek": {
-                "requested_route": "deepseek",
-                "normalized_route": "deepseek",
+            "openrouter": {
+                "requested_route": "openrouter",
+                "normalized_route": "openrouter",
                 "browser_api_key_allowed": True,
-                "guidance": "DeepSeek browser key submission is supported and stored locally.",
+                "guidance": "OpenRouter browser key submission is supported and stored locally.",
                 "tos_acknowledgement_required": False,
             },
             "anthropic": {
@@ -5751,17 +5823,18 @@ def test_agent_status_and_credentials_cover_provider_unavailable_redaction_and_s
         "credential_presence": {
             "arnold_api_key": True,
             "hermes_api_key": True,
-            "deepseek_api_key": True,
+            "openrouter_api_key": True,
+            "deepseek_api_key": False,
         },
         "legacy_deepseek_fallback_enabled": False,
     }
 
     env_path = tmp_path / ".hermes" / ".env"
-    deepseek = _handle_agent_credentials(
+    openrouter = _handle_agent_credentials(
         {
-            "provider": "deepseek",
-            "api_key": "deepseek-secret",
-            "credential_payload": {"api_key": "deepseek-secret"},
+            "provider": "openrouter",
+            "api_key": "openrouter-secret",
+            "credential_payload": {"api_key": "openrouter-secret"},
         },
         env_path=env_path,
     )
@@ -5774,14 +5847,14 @@ def test_agent_status_and_credentials_cover_provider_unavailable_redaction_and_s
         env_path=env_path,
     )
 
-    assert deepseek == {
+    assert openrouter == {
         "ok": True,
         "stored": True,
-        "provider": "deepseek",
-        "key_name": "DEEPSEEK_API_KEY",
+        "provider": "openrouter",
+        "key_name": "OPENROUTER_API_KEY",
         "path": str(env_path),
     }
-    assert "deepseek-secret" not in json.dumps(deepseek)
+    assert "openrouter-secret" not in json.dumps(openrouter)
     assert claude["stored"] is False
     assert codex["stored"] is False
     assert claude["provider"] == "arnold"
@@ -5792,26 +5865,26 @@ def test_agent_status_and_credentials_cover_provider_unavailable_redaction_and_s
     assert "codex-secret" not in json.dumps(codex)
 
     written = env_path.read_text(encoding="utf-8")
-    assert "DEEPSEEK_API_KEY=deepseek-secret" in written
+    assert "OPENROUTER_API_KEY=openrouter-secret" in written
     assert "claude-secret" not in written
     assert "codex-secret" not in written
 
     audit_ref = write_audit(
         tmp_path / "credential-audit",
         context=TurnContext(session_id="cred", turn_id="0001"),
-        response=deepseek,
+        response=openrouter,
         artifacts={
             "request": {
-                "provider": "deepseek",
-                "deepseek_api_key": "deepseek-secret",
-                "credential_payload": {"api_key": "deepseek-secret"},
+                "provider": "openrouter",
+                "openrouter_api_key": "openrouter-secret",
+                "credential_payload": {"api_key": "openrouter-secret"},
             }
         },
     )
     audit_payload = json.loads(Path(audit_ref.path).read_text(encoding="utf-8"))
-    assert audit_payload["artifacts"]["request"]["deepseek_api_key"] == "<REDACTED>"
+    assert audit_payload["artifacts"]["request"]["openrouter_api_key"] == "<REDACTED>"
     assert audit_payload["artifacts"]["request"]["credential_payload"] == "<REDACTED>"
-    assert "deepseek-secret" not in json.dumps(audit_payload)
+    assert "openrouter-secret" not in json.dumps(audit_payload)
 
 
 # ── message-synthesis tests (T24) ─────────────────────────────────────────
@@ -5916,6 +5989,76 @@ def test_synthesize_message_zero_ops_noop_hides_gate_jargon() -> None:
     assert "Gate" not in msg
     assert "identity" not in msg
     assert "No operations" not in msg
+
+
+def test_synthesize_message_answer_only_noop_uses_terminal_done_prose() -> None:
+    """Answer-only turns should show the model's final explanation, not edit status."""
+    state = _make_state(
+        user_message="",
+        batch_exit_mode="noop",
+        batch_done_summary=(
+            "No edits applied - identity verified; Gate B passed. "
+            "Summary: No operations were applied."
+        ),
+        batch_turns=[
+            {
+                "turn_number": 0,
+                "batch": "done()",
+                "message": "This workflow loads an image and generates a short video.",
+                "statements": [{"op_kind": "done", "ok": True, "landed": False}],
+            },
+            {
+                "turn_number": 1,
+                "batch": "done()",
+                "message": "Final answer: it is an image-to-video workflow with audio.",
+                "statements": [{"op_kind": "done", "ok": True, "landed": False}],
+            },
+        ],
+    )
+    msg = _synthesize_batch_repl_message(state, outcome=TurnOutcome.noop())
+
+    assert msg == "Final answer: it is an image-to-video workflow with audio."
+    assert "Nothing needed changing" not in msg
+    assert "Gate" not in msg
+
+
+def test_rendered_chat_message_uses_answer_only_noop_prose(tmp_path: Path) -> None:
+    """Persisted chat text must carry answer prose for no-edit question turns."""
+    from vibecomfy.comfy_nodes.agent.edit import _change_details_payload
+
+    context = TurnContext(session_id="chat-answer-noop", turn_id="0001")
+    state = _make_state(
+        task="What's happening in this workflow?",
+        session_dir=tmp_path / "chat-answer-noop",
+        turn_dir=tmp_path / "chat-answer-noop" / "turns" / "0001",
+        batch_exit_mode="noop",
+        batch_done_summary=(
+            "No edits applied - identity verified; Gate B passed. "
+            "Summary: No operations were applied."
+        ),
+        batch_turns=[
+            {
+                "turn_number": 0,
+                "batch": "done()",
+                "message": "This workflow generates video from an input image.",
+                "statements": [{"op_kind": "done", "ok": True, "landed": False}],
+            },
+        ],
+    )
+    message = _synthesize_batch_repl_message(state, outcome=TurnOutcome.noop())
+    response = {
+        "message": message,
+        "outcome": TurnOutcome.noop(reason=state.batch_done_summary).to_dict(),
+        "change_details": _change_details_payload(state, context),
+    }
+
+    _write_turn_chat_artifact(state, context, response, "batch_repl")
+    chat = json.loads((state.turn_dir / "chat.json").read_text(encoding="utf-8"))
+    agent = chat["messages"][1]
+    assert agent["text"] == "This workflow generates video from an input image."
+    assert agent["outcome"]["kind"] == "noop"
+    assert "Gate B passed" in agent["outcome"]["reason"]
+    assert agent["change_details"]["batch_turns"][0]["message"].startswith("This workflow")
 
 
 def test_synthesize_message_budget_exhaustion() -> None:

@@ -43,11 +43,9 @@ agent = [
   # Arnold/Hermes backend needs it. vibecomfy installs and tests without it; the
   # runtime is pluggable via VIBECOMFY_ARNOLD_RUNTIME_MODULE and falls back to a
   # pure-Python path when the package is absent. Mirrors the runpod-lifecycle
-  # git-pin pattern below. Pinned to the latest pushed arnold SHA we validate
-  # against; bump as arnold stabilizes (a real release tag would replace this).
-  # For local co-development of the engine, prefer an editable checkout instead
-  # so unpushed engine fixes are live:  pip install -e ~/Documents/megaplan
-  "arnold @ git+https://github.com/peteromallet/arnold.git@004914542202887c1ebd9bf333971becd0682ec5",
+  # git-pin pattern below. Pinned to the latest pushed Arnold SHA we validate
+  # against; bump as Arnold stabilizes (a real release tag would replace this).
+  "arnold @ git+https://github.com/peteromallet/Arnold.git@3db60a6cfe73e250b836d6147952ccf449151906",
 ]
 runpod-local = [
   "python-dotenv>=1.0",

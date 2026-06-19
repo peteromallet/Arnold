@@ -262,6 +262,7 @@ def _run_implement(
     spec: AgentSpecShape,
     *,
     plan: ClassifyDecision,
+    research_result: ResearchResult | None = None,
     client_id: str | None = None,
 ) -> ImplementationResult:
     """Run the implement phase via ``handle_agent_edit``.
@@ -269,6 +270,8 @@ def _run_implement(
     Forwards the request as ``{task, query, graph, route, model, session_id}`` (SD2).
     The resolved *spec* supplies ``route`` and ``model`` so the edit engine
     uses the profile-configured provider path.
+    When research has run, its summary and structured sources are forwarded so
+    implementation can act on the discovered workflow/template context.
     Converts the result to an :class:`ImplementationResult`; failures from
     the edit engine are surfaced as :class:`_ExecutorPhaseError`.
     """
@@ -285,6 +288,11 @@ def _run_implement(
         "model": spec.model,
         "executor_classification": plan.to_dict(),
     }
+    if research_result is not None:
+        research_payload = research_result.to_dict()
+        payload["research_summary"] = research_payload.get("summary", "")
+        payload["research_sources"] = research_payload.get("sources", [])
+        payload["executor_research"] = research_payload
     if request.session_id:
         payload["session_id"] = request.session_id
 
@@ -481,6 +489,7 @@ def _emit_executor_phase_event(
     executor_id: str,
     phase: str,
     status: str,
+    plan: ClassifyDecision | None = None,
     client_id: str | None = None,
 ) -> None:
     if not client_id:
@@ -495,7 +504,25 @@ def _emit_executor_phase_event(
         "query_preview": short_text(request.query),
         "emitted_at": datetime.now(timezone.utc).isoformat(timespec="milliseconds"),
     }
+    if phase == "classify" and plan is not None:
+        payload["plan_summary"] = _classification_plan_summary(plan)
+        payload["intent"] = plan.intent
     _ws_send("vibecomfy.executor.phase", payload, client_id=client_id)
+
+
+def _classification_plan_summary(plan: ClassifyDecision) -> str:
+    summary = plan.plan_summary.strip()
+    if summary:
+        return summary
+    if plan.implement and plan.research:
+        return "Research relevant context, then edit the graph."
+    if plan.implement:
+        return "Edit the graph."
+    if plan.intent == "explain_graph":
+        return "Inspect the attached graph and explain it."
+    if plan.research:
+        return "Research relevant context before replying."
+    return "Reply to the request."
 
 
 def run_executor(
@@ -573,6 +600,14 @@ def run_executor(
                 plan_implement=plan.implement,
                 plan_reply=plan.reply,
             )
+        _emit_executor_phase_event(
+            request,
+            executor_id=executor_id,
+            phase="classify",
+            status="progress",
+            plan=plan,
+            client_id=client_id,
+        )
     except _ExecutorPhaseError as exc:
         report = Report(plan=ClassifyDecision.respond_only())
         return ExecutorResult.failure(
@@ -677,6 +712,7 @@ def run_executor(
                     request,
                     implement_spec,
                     plan=plan,
+                    research_result=research_result,
                     client_id=client_id,
                 )
                 span.update(

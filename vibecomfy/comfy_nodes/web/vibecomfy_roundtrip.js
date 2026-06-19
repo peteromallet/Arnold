@@ -75,6 +75,22 @@ import {
   downloadTurnAudit,
   downloadTurnAuditEntry,
 } from "./diagnostics_reporting.js";
+import {
+  normalizeExecutorPhasePayload,
+  progressFromExecutorPhase,
+  executorProgressLabel,
+  executorDecisionLabel,
+  createExecutorProgressSnapshot,
+  executorPhaseToCanonicalProgress,
+} from "./executor_progress.js";
+import {
+  normalizeAgentTurnPayload,
+  agentTurnProgressLabel,
+  deriveAgentActivityState,
+  reduceAgentActivityFeed,
+  FEED_SOURCE_PRIORITY,
+  isTerminalAgentTurnStatus,
+} from "./agent_turn_feed.js";
 
 // Re-export diagnostics functions for tests and external callers.
 export {
@@ -127,16 +143,7 @@ export {
   sanitizeSerializedGraphLinks,
 };
 
-console.log("[vibecomfy] vibecomfy_roundtrip.js module evaluated");
-
-if (typeof window !== "undefined") {
-  window.addEventListener("error", (event) => {
-    console.error("[vibecomfy] global error", event.error?.stack || event.message, event.filename, event.lineno);
-  });
-  window.addEventListener("unhandledrejection", (event) => {
-    console.error("[vibecomfy] unhandled rejection", event.reason?.stack || event.reason);
-  });
-}
+console.log("[vibecomfy] vibecomfy_roundtrip_main.mjs module evaluated");
 
 // ── VibeComfy Contract (S2 — Durable Frontend Panel) ─────────────────────
 // This file captures the frontend↔backend contract before feature work.
@@ -164,7 +171,7 @@ if (typeof window !== "undefined") {
 // ── Submit Fields (POST /vibecomfy/agent-edit) ────────────────────────────
 //   graph   (object, required) — ComfyUI UI JSON (app.canvas.graph.serialize())
 //   task    (string, required) — natural-language edit instruction
-//   route   (string, optional) — "deepseek" (default when absent)
+//   route   (string, optional) — "openrouter" (default when absent)
 //   model   (string, optional) — model id for the provider
 //   session_id        (string, optional) — reuse existing session
 //   idempotency_key   (string, optional) — client dedup key
@@ -314,8 +321,8 @@ const PANEL_IDS = Object.freeze({
 const ROUTE_ALIASES = Object.freeze({
   auto: "auto",
   arnold: "auto",
-  deepseek: "deepseek",
-  openrouter: "deepseek",
+  deepseek: "openrouter",
+  openrouter: "openrouter",
   anthropic: "anthropic",
   claude: "anthropic",
   "openai-codex": "openai-codex",
@@ -324,7 +331,7 @@ const ROUTE_ALIASES = Object.freeze({
 
 const ROUTE_LABELS = Object.freeze({
   auto: "auto",
-  deepseek: "deepseek",
+  openrouter: "openrouter",
   anthropic: "anthropic",
   "openai-codex": "openai-codex",
 });
@@ -416,11 +423,12 @@ function _lsRemove(key) {
   }
 }
 
-const CANONICAL_AGENT_PROVIDERS = new Set(["anthropic", "openai-codex", "deepseek"]);
+const CANONICAL_AGENT_PROVIDERS = new Set(["anthropic", "openai-codex", "openrouter"]);
 
 function getPersistedAgentProvider() {
   const raw = _lsGet(LS_AGENT_PROVIDER_KEY);
   if (raw == null) return null;
+  if (raw === "deepseek") return "openrouter";
   if (CANONICAL_AGENT_PROVIDERS.has(raw)) return raw;
   return null;
 }
@@ -2502,7 +2510,7 @@ function normalizeRoutePreference(value) {
   const normalized = String(value || "")
     .trim()
     .toLowerCase();
-  return ROUTE_ALIASES[normalized] || "deepseek";
+  return ROUTE_ALIASES[normalized] || "openrouter";
 }
 
 function normalizeModelPreference(value) {
@@ -3006,7 +3014,7 @@ async function refreshAgentStatus(panel, { quiet = false } = {}) {
     } else {
       const availableRoute = routeOptions[requestedRoute]
         ? requestedRoute
-        : (routeOptions["deepseek"] ? "deepseek" : Object.keys(routeOptions)[0] || requestedRoute);
+        : (routeOptions["openrouter"] ? "openrouter" : Object.keys(routeOptions)[0] || requestedRoute);
       console.log("[vibecomfy] refreshAgentStatus using availableRoute=", availableRoute, "(requestedRoute=", requestedRoute, ")");
       populateRouteSelect(panel.fields.route, routeOptions, { selectedRoute: availableRoute });
       panel.fields.route.value = availableRoute;
@@ -3023,10 +3031,9 @@ async function refreshAgentStatus(panel, { quiet = false } = {}) {
         requestedRoute: availableRoute,
         model,
       };
-        if (!quiet) {
-          const availability = status?.provider_available === false ? "provider unavailable" : "provider ready";
-          panel.state.settingsMessage = `${status?.requested_route || route} → ${status?.route || route} (${availability})`;
-        }
+      if (!quiet) {
+        const availability = status?.provider_available === false ? "provider unavailable" : "provider ready";
+        panel.state.settingsMessage = `${status?.requested_route || route} → ${status?.route || route} (${availability})`;
       }
     }
     if (typeof status?.model === "string" && !panel.fields.model.value.trim()) {
@@ -3077,8 +3084,9 @@ function clearCredentialInput(panel) {
   panel.fields.apiKey.value = "";
 }
 
-function hasStoredDeepseekCredential(panel) {
-  return Boolean(panel?.state?.statusSnapshot?.credential_presence?.deepseek_api_key);
+function hasStoredOpenRouterCredential(panel) {
+  const presence = panel?.state?.statusSnapshot?.credential_presence || {};
+  return Boolean(presence.openrouter_api_key || presence.deepseek_api_key);
 }
 
 function closeChooseEngineOverlay(panel) {
@@ -3100,8 +3108,8 @@ function storedReadyProviderFromStatus(panel) {
   const resolvedRoute = normalizeRoutePreference(
     status.route || status.route_metadata?.normalized_route || status.requested_route,
   );
-  if (resolvedRoute === "deepseek" && status.credential_presence?.deepseek_api_key) {
-    return "deepseek";
+  if (resolvedRoute === "openrouter" && (status.credential_presence?.openrouter_api_key || status.credential_presence?.deepseek_api_key)) {
+    return "openrouter";
   }
   return null;
 }
@@ -3606,10 +3614,24 @@ function createAgentPanelShell() {
   // flexShrink:0 it shrinks to the wrapper's height and (overflow:hidden from
   // panelSection) CLIPS the conversation instead of letting the wrapper scroll.
   threadRegion.section.style.flexShrink = "0";
+  threadRegion.section.style.minHeight = "100%";
+  threadRegion.section.style.display = "flex";
+  threadRegion.section.style.flexDirection = "column";
   threadRegion.body.style.gap = "10px";
+  threadRegion.body.style.flex = "1 1 auto";
+  threadRegion.body.style.minHeight = "0";
+  threadRegion.body.style.display = "flex";
+  threadRegion.body.style.flexDirection = "column";
 
   // Chat section: persisted conversation bubbles (M3).
   const chatRegion = panelSection(PANEL_IDS.chatRegion, "");
+  chatRegion.section.style.flex = "1 0 auto";
+  chatRegion.section.style.display = "flex";
+  chatRegion.section.style.flexDirection = "column";
+  chatRegion.body.style.flex = "1 0 auto";
+  chatRegion.body.style.minHeight = "0";
+  chatRegion.body.style.display = "flex";
+  chatRegion.body.style.flexDirection = "column";
   threadRegion.body.appendChild(chatRegion.section);
 
   const historyRegion = panelSection(PANEL_IDS.historyRegion, "");
@@ -3805,7 +3827,7 @@ function createAgentPanelShell() {
   const apiKeyInput = document.createElement("input");
   apiKeyInput.id = PANEL_IDS.apiKey;
   apiKeyInput.type = "password";
-  apiKeyInput.placeholder = "DeepSeek API key";
+  apiKeyInput.placeholder = "OpenRouter API key";
   Object.assign(apiKeyInput.style, {
     width: "100%",
     background: "#0d0e12",
@@ -3996,6 +4018,7 @@ function createAgentPanelShell() {
         requestedRoute: "auto",
         model: null,
       },
+      executorProgress: createExecutorProgressSnapshot(),
       queueGuard: getQueueGuardStateForPanel(),
       previewEnabled: false,
       expandedTurnKeys: {},
@@ -4757,7 +4780,7 @@ function changeDetailsForMessage(panel, message, snapshot = null) {
   return panel?.state?.changeDetails || null;
 }
 
-function normalizeBatchTurn(payload, { source = "response", sessionId = null, status = null, parentTurnId = null } = {}) {
+function normalizeBatchTurn(payload, { source = "response", sessionId = null, status = null, parentTurnId = null, canonicalActivity = null } = {}) {
   if (!payload || typeof payload !== "object") {
     return null;
   }
@@ -4815,6 +4838,7 @@ function normalizeBatchTurn(payload, { source = "response", sessionId = null, st
     raw_payload: source === "response" ? payload : null,
     source,
     source_priority: BATCH_SOURCE_PRIORITY[source] || 0,
+    canonical_activity: canonicalActivity,
   };
 }
 
@@ -4846,6 +4870,8 @@ function mergeBatchTurnEntry(existing, incoming) {
         : (existing.budget && typeof existing.budget === "object" ? existing.budget : null),
     raw_payload: incoming.raw_payload || existing.raw_payload || null,
     source_priority: Math.max(existingPriority, incomingPriority),
+    // Preserve canonical activity state from the higher-priority source.
+    canonical_activity: incoming.canonical_activity || existing.canonical_activity || null,
   };
 }
 
@@ -4964,6 +4990,18 @@ export function messageStableKey(msg, index = 0) {
 }
 
 /**
+ * Fast, non-cryptographic string hash. Used to keep message signatures short
+ * even when the message text is long Markdown prose.
+ */
+function djb2Hash(text) {
+  let hash = 5381;
+  for (let i = 0; i < text.length; i += 1) {
+    hash = ((hash << 5) + hash) + text.charCodeAt(i);
+  }
+  return (hash >>> 0).toString(16);
+}
+
+/**
  * Lightweight content signature for a chat message.
  * Used to detect content changes without deep comparison during reconciliation.
  */
@@ -4971,9 +5009,12 @@ export function messageSignature(msg) {
   if (!msg || typeof msg !== "object") {
     return "empty";
   }
+  const text = String(msg.text || "");
   const parts = [
     msg.role || "",
-    String(msg.text || "").slice(0, 200),
+    // Hash the full text so tail changes are detected, and include a short
+    // prefix so similar messages remain distinguishable in debug output.
+    `${text.slice(0, 80)}:${djb2Hash(text)}`,
     msg.turn_id || "",
     msg.synthetic ? "1" : "0",
     msg.local_id || "",
@@ -5054,6 +5095,81 @@ function buildSyntheticAgentMessage(panel) {
   };
 }
 
+function makePendingResponseChatMessage(panel, task, progress, submitEpoch) {
+  return {
+    role: "agent",
+    text: "",
+    source: "agent-edit",
+    pending_response: true,
+    executor_pending: true,
+    progress: progress || createExecutorProgressSnapshot({ decide: "active" }),
+    optimistic: true,
+    synthetic: false,
+    local_id: `executor-pending:${submitEpoch || Date.now()}`,
+    session_id: panel?.state?.sessionId || null,
+    task: typeof task === "string" ? task : null,
+    timestamp: new Date().toISOString(),
+  };
+}
+
+function findPendingResponseMessage(panel) {
+  const messages = Array.isArray(panel?.state?.chatMessages) ? panel.state.chatMessages : [];
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index];
+    if (message?.role === "agent" && (message.pending_response === true || message.executor_pending === true)) {
+      return message;
+    }
+  }
+  return null;
+}
+
+function updatePendingResponseProgress(panel, progress, label = null, canonicalActivity = null) {
+  const pending = findPendingResponseMessage(panel);
+  if (!pending || !progress || typeof progress !== "object") {
+    return false;
+  }
+  // Store progress from canonical phase_progress.
+  pending.progress = progress;
+  // Use canonical headline as the progress label.
+  pending.progress_label = typeof label === "string" && label ? label : null;
+  if (canonicalActivity && typeof canonicalActivity === "object") {
+    pending.canonical_activity = clonePlainData(canonicalActivity);
+  }
+  // Only blank the text if we have a meaningful progress update to show.
+  const hasActivePhase = progress.decide === "active"
+    || progress.research === "active"
+    || progress.execute === "active";
+  if (hasActivePhase || typeof label === "string") {
+    pending.text = "";
+  }
+  return true;
+}
+
+function clearPendingResponseMessages(panel) {
+  if (!Array.isArray(panel?.state?.chatMessages)) {
+    return false;
+  }
+  const before = panel.state.chatMessages.length;
+  // Clear only pending response bubbles; executor_pending messages are separate.
+  panel.state.chatMessages = panel.state.chatMessages.filter((message) => (
+    message?.pending_response !== true
+  ));
+  const changed = panel.state.chatMessages.length !== before;
+  if (changed && panel?.state) {
+    // Clear only the active activity state; terminal progress stays.
+    const progress = panel.state.executorProgress;
+    if (progress && typeof progress === "object") {
+      const hasActivePhase = progress.decide === "active"
+        || progress.research === "active"
+        || progress.execute === "active";
+      if (hasActivePhase) {
+        panel.state.executorProgress = null;
+      }
+    }
+  }
+  return changed;
+}
+
 function syntheticFailureAgentMessage(panel, failure, fallbackStage = "frontend") {
   if (!failure || typeof failure !== "object") {
     return null;
@@ -5113,12 +5229,23 @@ function reconcileResponseBatchTurns(panel, result) {
       ? result.session_id
       : (typeof panel?.state?.sessionId === "string" && panel.state.sessionId ? panel.state.sessionId : null);
   const nextTurns = [];
+  // Derive canonical activity feed from current batch turns and merge with response turns.
+  const existingBatchByKey = new Map();
   for (const entry of Array.isArray(panel?.state?.turns) ? panel.state.turns : []) {
     if (entry?.entry_type !== "batch") {
       nextTurns.push(entry);
       continue;
     }
     if (responseSessionId && entry.session_id === responseSessionId) {
+      // Track existing batch turns by canonical key for merge dedup.
+      const turnId = typeof entry.turn_id === "string" && entry.turn_id ? entry.turn_id : null;
+      const turnNumber = typeof entry.turn_number === "number" ? entry.turn_number : null;
+      if (turnId && typeof turnNumber === "number") {
+        const key = `${responseSessionId}:${turnId}:${turnNumber}`;
+        if (!existingBatchByKey.has(key)) {
+          existingBatchByKey.set(key, entry);
+        }
+      }
       continue;
     }
     nextTurns.push(entry);
@@ -5126,8 +5253,27 @@ function reconcileResponseBatchTurns(panel, result) {
   panel.state.turns = nextTurns;
   const finalIndex = result.batch_turns.length - 1;
   const resultHasCandidate = Boolean(result?.candidateGraph && typeof result.candidateGraph === "object");
+  // Track processed keys to prevent duplicate detail rows.
+  const processedKeys = new Set();
   for (let index = 0; index < result.batch_turns.length; index += 1) {
     const turn = result.batch_turns[index];
+    const turnId = typeof turn.turn_id === "string" && turn.turn_id ? turn.turn_id : null;
+    const turnNumberRaw = turn.turn_number;
+    const turnNumber = Number.isInteger(turnNumberRaw)
+      ? turnNumberRaw
+      : (typeof turnNumberRaw === "number" && Number.isFinite(turnNumberRaw) ? Math.trunc(turnNumberRaw) : null);
+
+    // Deduplicate: skip turns already reconciled that appear again.
+    const dedupKey = responseSessionId && turnId && typeof turnNumber === "number"
+      ? `${responseSessionId}:${turnId}:${turnNumber}`
+      : null;
+    if (dedupKey && processedKeys.has(dedupKey)) {
+      continue;
+    }
+    if (dedupKey) {
+      processedKeys.add(dedupKey);
+    }
+
     const turnPayload =
       index === finalIndex
       && typeof result?.done_summary === "string"
@@ -5151,11 +5297,18 @@ function reconcileResponseBatchTurns(panel, result) {
     } else {
       status = "in_progress";
     }
+    // Derive canonical activity state for this batch turn; wire through canonical deriver.
+    // Real backend batch_turns often omit `status`, so inject the computed terminal
+    // status before deriving so the canonical activity reflects the final HTTP outcome.
+    const derivationPayload =
+      turnPayload?.status ? turnPayload : { ...turnPayload, status };
+    const canonicalActivity = deriveAgentActivityState(derivationPayload);
     upsertBatchTurn(panel, turnPayload, {
       source: "response",
       sessionId: responseSessionId,
       status,
       parentTurnId: typeof result?.turn_id === "string" && result.turn_id ? result.turn_id : null,
+      canonicalActivity,
     });
   }
   restoreExpandedTurnKeys(panel, previousExpanded);
@@ -5217,11 +5370,25 @@ function handleAgentTurnEvent(event) {
   if (!panel.state.sessionId && typeof payload.session_id === "string" && payload.session_id) {
     panel.state.sessionId = payload.session_id;
   }
-  const normalized = upsertBatchTurn(panel, payload, { source: "websocket" });
+  // Derive canonical activity state before upserting so the turn entry carries it.
+  const canonicalPayload = normalizeAgentTurnPayload(payload);
+  const canonicalActivity = canonicalPayload ? deriveAgentActivityState(canonicalPayload) : null;
+  const normalized = upsertBatchTurn(panel, payload, {
+    source: "websocket",
+    canonicalActivity,
+  });
   if (!normalized) {
     return;
   }
-  scheduleRenderAgentPanel("websocket", panel);
+  // Use the canonical activity state for executor progress (derived compatibility).
+  if (canonicalActivity?.phase_progress) {
+    panel.state.executorProgress = canonicalActivity.phase_progress;
+    const label = canonicalActivity.headline || agentTurnProgressLabel(canonicalPayload);
+    updatePendingResponseProgress(panel, canonicalActivity.phase_progress, label, canonicalActivity);
+    scheduleRenderAgentPanel("websocket", panel, [RENDER_SECTIONS.META, RENDER_SECTIONS.THREAD]);
+    return;
+  }
+  scheduleRenderAgentPanel("websocket", panel, [RENDER_SECTIONS.THREAD]);
 }
 
 function ensureAgentTurnListener() {
@@ -5237,12 +5404,76 @@ function ensureAgentTurnListener() {
   api.__vibecomfyAgentTurnListenerRegistered = true;
 }
 
+function handleExecutorPhaseEvent(event) {
+  const panel = currentAgentPanel();
+  if (!panel || panel.root?.dataset?.open !== "1") {
+    return;
+  }
+  const normalized = normalizeExecutorPhasePayload(event);
+  if (!normalized) {
+    return;
+  }
+  if (
+    normalized.session_id
+    && panel.state?.sessionId
+    && normalized.session_id !== panel.state.sessionId
+  ) {
+    return;
+  }
+  const progress = executorPhaseToCanonicalProgress(normalized);
+  if (!progress) {
+    return;
+  }
+
+  // Always update executor progress for the meta row (legacy compatibility).
+  panel.state.executorProgress = progress;
+
+  // Update pending response progress for message bubbles.
+  const decisionLabel = progress.decide === "active"
+    ? executorDecisionLabel(normalized)
+    : null;
+  const touchedPendingMessage = updatePendingResponseProgress(panel, progress, decisionLabel);
+
+  // When agent-turn activity is active (batch turns are being tracked),
+  // executor phase events are compatibility input only: they update phase
+  // progress state but must NOT create an independent rendering branch or
+  // duplicate legacy progress rows. The agent turn handler manages rendering
+  // via the canonical activity feed.
+  const hasActiveAgentTurn = Array.isArray(panel.state?.turns)
+    && panel.state.turns.some((entry) => entry?.entry_type === "batch");
+  if (hasActiveAgentTurn) {
+    // Compatibility-only: state updated; rendering left to agent turn handler.
+    return;
+  }
+
+  // Legacy behavior: for non-agent-edit flows, executor phase events drive
+  // the visible progress UI.
+  scheduleRenderAgentPanel(
+    "executor-phase",
+    panel,
+    touchedPendingMessage
+      ? [RENDER_SECTIONS.META, RENDER_SECTIONS.THREAD]
+      : [RENDER_SECTIONS.META],
+  );
+}
+
+function ensureExecutorPhaseListener() {
+  if (api?.__vibecomfyExecutorPhaseListenerRegistered || typeof api?.addEventListener !== "function") {
+    return;
+  }
+  api.addEventListener("vibecomfy.executor.phase", handleExecutorPhaseEvent);
+  api.__vibecomfyExecutorPhaseListenerRegistered = true;
+}
+
 function renderMeta(panel) {
   clearNode(panel.metaRow);
   panel.metaRow.appendChild(labelValue("state", panel.state.phase));
   panel.metaRow.appendChild(labelValue("session", panel.state.sessionId || "new"));
   panel.metaRow.appendChild(labelValue("turn", panel.state.turnId || "pending"));
   panel.metaRow.appendChild(labelValue("baseline", panel.state.baselineTurnId || "none"));
+  if (panel.state.executorProgress) {
+    panel.metaRow.appendChild(labelValue("phase", executorProgressLabel(panel.state.executorProgress)));
+  }
 }
 
 // ── Chat thread rendering (M4b — newest-at-bottom bubble list) ────────────
@@ -5280,6 +5511,8 @@ function renderChatBubbleNode(bubble, panel, msg, messageKey, messageIndex) {
     detailSnapshotForMessage,
     el,
     ensureThreadRenderState,
+    showIssueModal,
+    submitRating,
   });
 }
 
@@ -5301,6 +5534,8 @@ function reconcileChatBubbles(panel, messagesMount, displayEntries) {
     el,
     ensureThreadRenderState,
     messageSignature,
+    showIssueModal,
+    submitRating,
   });
 }
 
@@ -7798,9 +8033,9 @@ function renderSettings(panel) {
   panel.fields.route.disabled = !controlsReady;
   panel.fields.model.disabled = !controlsReady;
   setVisible(panel.fields.apiKey, apiKeyVisible, "");
-  const storedDeepseekKey = hasStoredDeepseekCredential(panel);
+  const storedOpenRouterKey = hasStoredOpenRouterCredential(panel);
   panel.fields.apiKey.placeholder = apiKeyVisible
-    ? (storedDeepseekKey ? "Saved DeepSeek key present; paste a new key to replace" : "DeepSeek API key")
+    ? (storedOpenRouterKey ? "Saved OpenRouter key present; paste a new key to replace" : "OpenRouter API key")
     : "Browser API keys are not accepted for this route";
   if (!apiKeyVisible) {
     clearCredentialInput(panel);
@@ -7845,8 +8080,8 @@ function renderSettings(panel) {
   statusNode.textContent = panel.state.settingsMessage
     || `${descriptor.requested_route} → ${normalizedRoute} (${availability})`;
   guidanceNode.textContent = descriptor.guidance || "";
-  if (apiKeyVisible && storedDeepseekKey) {
-    guidanceNode.textContent += `${guidanceNode.textContent ? "\n" : ""}Saved DeepSeek key present. Paste a new key only if you want to replace it.`;
+  if (apiKeyVisible && storedOpenRouterKey) {
+    guidanceNode.textContent += `${guidanceNode.textContent ? "\n" : ""}Saved OpenRouter key present. Paste a new key only if you want to replace it.`;
   }
   if (descriptor.requested_route === "anthropic") {
     guidanceNode.textContent += "\nClaude runs through your local CLI setup; browser-submitted API keys are not stored for this route.";
@@ -8437,6 +8672,7 @@ async function submitAgentEdit(panel, { taskOverride } = {}) {
       }
     } catch (e) {
       if (!isCurrentSubmit()) {
+        clearPendingResponseMessages(panel);
         transition(panel, "SUBMIT_STALE_EPOCH", { submitEpoch });
         return;
       }
@@ -8485,12 +8721,17 @@ async function submitAgentEdit(panel, { taskOverride } = {}) {
     if (!Array.isArray(panel.state.chatMessages)) {
       panel.state.chatMessages = [];
     }
+    clearPendingResponseMessages(panel);
     panel.state.chatMessages.push({
       role: "user",
       text: task,
       optimistic: true,
       timestamp: new Date().toISOString(),
     });
+    const pendingProgress = createExecutorProgressSnapshot({ decide: "active" });
+    panel.state.executorProgress = pendingProgress;
+    panel.state.chatMessages.push(makePendingResponseChatMessage(panel, task, pendingProgress, submitEpoch));
+    ensureThreadRenderState(panel).forceScrollOnNextRender = true;
     pushHistory(panel, "pending", pendingMessage);
     pushTurnStatus(panel, "pending", {
       task,
@@ -8510,6 +8751,7 @@ async function submitAgentEdit(panel, { taskOverride } = {}) {
         signal: submitAbortController.signal,
       });
       if (!isCurrentSubmit()) {
+        clearPendingResponseMessages(panel);
         transition(panel, "SUBMIT_STALE_EPOCH", { submitEpoch });
         return;
       }
@@ -8530,6 +8772,7 @@ async function submitAgentEdit(panel, { taskOverride } = {}) {
         throw error;
       }
       if (!isCurrentSubmit()) {
+        clearPendingResponseMessages(panel);
         transition(panel, "SUBMIT_STALE_EPOCH", { submitEpoch });
         return;
       }
@@ -8555,6 +8798,7 @@ async function submitAgentEdit(panel, { taskOverride } = {}) {
       }
     } catch (e) {
       if (!isCurrentSubmit()) {
+        clearPendingResponseMessages(panel);
         transition(panel, "SUBMIT_STALE_EPOCH", { submitEpoch });
         return;
       }
@@ -8569,6 +8813,7 @@ async function submitAgentEdit(panel, { taskOverride } = {}) {
         } catch (_e) { /* no-op */ }
       }
       if (e?.name === "AbortError") {
+        clearPendingResponseMessages(panel);
         const obligations = transition(panel, "SUBMIT_ABORT", {
           message: "Request cancelled.",
           syntheticAgentMessage: {
@@ -8594,6 +8839,7 @@ async function submitAgentEdit(panel, { taskOverride } = {}) {
         return;
       }
       const failure = normalizeSubmitFailure(e);
+      clearPendingResponseMessages(panel);
       const obligations = transition(panel, "SUBMIT_NETWORK_FAILURE", {
         failure,
         debugPayload: {
@@ -8663,6 +8909,7 @@ async function submitAgentEdit(panel, { taskOverride } = {}) {
         },
       });
       fulfillLifecycleTransitionObligations(panel, obligations);
+      clearPendingResponseMessages(panel);
       reconcileResponseBatchTurns(panel, result.raw || result);
       pushHistory(panel, "clarify", clarifyMessage);
       pushTurnStatus(panel, "clarify", {
@@ -8708,6 +8955,7 @@ async function submitAgentEdit(panel, { taskOverride } = {}) {
         },
       });
       fulfillLifecycleTransitionObligations(panel, obligations);
+      clearPendingResponseMessages(panel);
       reconcileResponseBatchTurns(panel, result.raw || result);
       pushHistory(panel, "noop", noopMessage);
       pushTurnStatus(panel, "noop", {
@@ -8735,11 +8983,13 @@ async function submitAgentEdit(panel, { taskOverride } = {}) {
     try {
       arrivalSnapshot = await buildCanvasSnapshot();
       if (!isCurrentSubmit()) {
+        clearPendingResponseMessages(panel);
         transition(panel, "SUBMIT_STALE_EPOCH", { submitEpoch });
         return;
       }
     } catch (e) {
       if (!isCurrentSubmit()) {
+        clearPendingResponseMessages(panel);
         transition(panel, "SUBMIT_STALE_EPOCH", { submitEpoch });
         return;
       }
@@ -8758,6 +9008,7 @@ async function submitAgentEdit(panel, { taskOverride } = {}) {
         },
       });
       fulfillLifecycleTransitionObligations(panel, obligations);
+      clearPendingResponseMessages(panel);
       renderLifecycleTransition(panel, obligations);
       return;
     }
@@ -8774,6 +9025,7 @@ async function submitAgentEdit(panel, { taskOverride } = {}) {
         : null)
       || await sha256HexUtf8(canonicalJsonString(candidateGraph));
     if (!isCurrentSubmit()) {
+      clearPendingResponseMessages(panel);
       transition(panel, "SUBMIT_STALE_EPOCH", { submitEpoch });
       return;
     }
@@ -8809,6 +9061,7 @@ async function submitAgentEdit(panel, { taskOverride } = {}) {
       },
     );
     fulfillLifecycleTransitionObligations(panel, candidateObligations);
+    clearPendingResponseMessages(panel);
     reconcileResponseBatchTurns(panel, result.raw || result);
     pushHistory(panel, "candidate", result.turnId ? `turn ${result.turnId}` : "candidate");
     pushTurnStatus(panel, "candidate", {
@@ -10090,14 +10343,14 @@ function openChooseEngineOverlay(panel, { onResolved }) {
   // ── card colors ──
   const claudeColor = "#e6a817";
   const codexColor = "#02d4b3";
-  const deepseekColor = "#7e8ba3";
+  const openrouterColor = "#7e8ba3";
 
   // Selection state. Each card registers a setSelected() that lights it up and
   // reveals its extra content; selecting one deselects the others.
   let selectedRoute = null;
   const cardRegistry = []; // { route, setSelected(bool) }
-  let deepseekKeyInput = null;
-  let deepseekErrorNode = null;
+  let openrouterKeyInput = null;
+  let openrouterErrorNode = null;
 
   // ── card helper ──
   // makeCard returns { card, body, setSelected }. The card is a single-select
@@ -10169,18 +10422,18 @@ function openChooseEngineOverlay(panel, { onResolved }) {
     return { card, body, setSelected };
   }
 
-  // ── cards (order: Claude, DeepSeek, Codex) ──
+  // ── cards (order: Claude, OpenRouter, Codex) ──
   const claudeCard = makeCard(
     "Claude",
     "The sharpest hand. Uses your local Claude CLI.",
     claudeColor,
     "anthropic",
   );
-  const deepseekCard = makeCard(
-    "DeepSeek",
-    "Open source. Pay as you go — your key, your bill.",
-    deepseekColor,
-    "deepseek",
+  const openrouterCard = makeCard(
+    "OpenRouter",
+    "OpenRouter-backed models. Pay as you go — your key, your bill.",
+    openrouterColor,
+    "openrouter",
   );
   const codexCard = makeCard(
     "Codex",
@@ -10190,7 +10443,7 @@ function openChooseEngineOverlay(panel, { onResolved }) {
   );
 
   cardRegistry.push({ route: "anthropic", setSelected: claudeCard.setSelected });
-  cardRegistry.push({ route: "deepseek", setSelected: deepseekCard.setSelected });
+  cardRegistry.push({ route: "openrouter", setSelected: openrouterCard.setSelected });
   cardRegistry.push({ route: "openai-codex", setSelected: codexCard.setSelected });
 
   // ── Claude revealed content: ToS warning (no buttons) ──
@@ -10209,12 +10462,12 @@ function openChooseEngineOverlay(panel, { onResolved }) {
   });
   claudeCard.body.appendChild(claudeWarning);
 
-  // ── DeepSeek revealed content: key field + "where do I get a key?" + error ──
-  deepseekKeyInput = el("input");
-  deepseekKeyInput.onclick = function (event) { event.stopPropagation(); };
-  deepseekKeyInput.type = "password";
-  deepseekKeyInput.placeholder = "Paste your DeepSeek API key…";
-  Object.assign(deepseekKeyInput.style, {
+  // ── OpenRouter revealed content: key field + "where do I get a key?" + error ──
+  openrouterKeyInput = el("input");
+  openrouterKeyInput.onclick = function (event) { event.stopPropagation(); };
+  openrouterKeyInput.type = "password";
+  openrouterKeyInput.placeholder = "Paste your OpenRouter API key...";
+  Object.assign(openrouterKeyInput.style, {
     width: "100%",
     boxSizing: "border-box",
     padding: "6px 8px",
@@ -10225,24 +10478,24 @@ function openChooseEngineOverlay(panel, { onResolved }) {
     fontFamily: "monospace",
     fontSize: "12px",
   });
-  deepseekKeyInput.oninput = function () { updateConfirmEnabled(); };
-  deepseekCard.body.appendChild(deepseekKeyInput);
+  openrouterKeyInput.oninput = function () { updateConfirmEnabled(); };
+  openrouterCard.body.appendChild(openrouterKeyInput);
 
   const keyLink = el("a", "Where do I get a key?");
   keyLink.onclick = function (event) { event.stopPropagation(); };
-  keyLink.href = "https://platform.deepseek.com";
+  keyLink.href = "https://openrouter.ai/settings/keys";
   keyLink.target = "_blank";
   keyLink.rel = "noopener";
   Object.assign(keyLink.style, {
     fontSize: "11px",
-    color: deepseekColor,
+    color: openrouterColor,
     textDecoration: "underline",
     cursor: "pointer",
   });
-  deepseekCard.body.appendChild(keyLink);
+  openrouterCard.body.appendChild(keyLink);
 
-  const deepseekStoredKeyNode = el("div");
-  Object.assign(deepseekStoredKeyNode.style, {
+  const openrouterStoredKeyNode = el("div");
+  Object.assign(openrouterStoredKeyNode.style, {
     display: "none",
     fontSize: "11px",
     color: "#b8d9c7",
@@ -10251,10 +10504,10 @@ function openChooseEngineOverlay(panel, { onResolved }) {
     background: "#142218",
     border: "1px solid #2f6842",
   });
-  deepseekCard.body.appendChild(deepseekStoredKeyNode);
+  openrouterCard.body.appendChild(openrouterStoredKeyNode);
 
-  deepseekErrorNode = el("div");
-  Object.assign(deepseekErrorNode.style, {
+  openrouterErrorNode = el("div");
+  Object.assign(openrouterErrorNode.style, {
     display: "none",
     fontSize: "11px",
     color: "#e07070",
@@ -10262,11 +10515,11 @@ function openChooseEngineOverlay(panel, { onResolved }) {
     borderRadius: "4px",
     background: "#2a1a1a",
   });
-  deepseekCard.body.appendChild(deepseekErrorNode);
+  openrouterCard.body.appendChild(openrouterErrorNode);
 
-  // Vertical order: Claude (top), DeepSeek (middle), Codex (bottom).
+  // Vertical order: Claude (top), OpenRouter (middle), Codex (bottom).
   box.appendChild(claudeCard.card);
-  box.appendChild(deepseekCard.card);
+  box.appendChild(openrouterCard.card);
   box.appendChild(codexCard.card);
 
   // ── Confirm button (below all cards) ──
@@ -10279,28 +10532,28 @@ function openChooseEngineOverlay(panel, { onResolved }) {
   });
   box.appendChild(confirmBtn);
 
-  function deepseekKeyOk() {
-    return hasStoredDeepseekCredential(panel) || !!(deepseekKeyInput && deepseekKeyInput.value.trim());
+  function openrouterKeyOk() {
+    return hasStoredOpenRouterCredential(panel) || !!(openrouterKeyInput && openrouterKeyInput.value.trim());
   }
 
   function confirmEnabled() {
     if (!selectedRoute) return false;
-    if (selectedRoute === "deepseek") return deepseekKeyOk();
+    if (selectedRoute === "openrouter") return openrouterKeyOk();
     return true;
   }
 
   function updateConfirmEnabled() {
-    const storedDeepseekKey = hasStoredDeepseekCredential(panel);
-    if (deepseekStoredKeyNode) {
-      deepseekStoredKeyNode.style.display = storedDeepseekKey ? "block" : "none";
-      deepseekStoredKeyNode.textContent = storedDeepseekKey
-        ? "Saved DeepSeek key present. Paste a new key only if you want to replace it."
+    const storedOpenRouterKey = hasStoredOpenRouterCredential(panel);
+    if (openrouterStoredKeyNode) {
+      openrouterStoredKeyNode.style.display = storedOpenRouterKey ? "block" : "none";
+      openrouterStoredKeyNode.textContent = storedOpenRouterKey
+        ? "Saved OpenRouter key present. Paste a new key only if you want to replace it."
         : "";
     }
-    if (deepseekKeyInput) {
-      deepseekKeyInput.placeholder = storedDeepseekKey
-        ? "Optional replacement DeepSeek API key…"
-        : "Paste your DeepSeek API key…";
+    if (openrouterKeyInput) {
+      openrouterKeyInput.placeholder = storedOpenRouterKey
+        ? "Optional replacement OpenRouter API key..."
+        : "Paste your OpenRouter API key...";
     }
     const enabled = confirmEnabled();
     confirmBtn.disabled = !enabled;
@@ -10328,7 +10581,7 @@ function openChooseEngineOverlay(panel, { onResolved }) {
     cardRegistry.forEach(function (entry) {
       entry.setSelected(entry.route === route);
     });
-    if (deepseekErrorNode) deepseekErrorNode.style.display = "none";
+    if (openrouterErrorNode) openrouterErrorNode.style.display = "none";
     updateConfirmEnabled();
   }
 
@@ -10388,32 +10641,32 @@ function openChooseEngineOverlay(panel, { onResolved }) {
     if (!confirmEnabled()) return;
     const route = selectedRoute;
 
-    if (route === "deepseek") {
-      const apiKey = deepseekKeyInput.value.trim();
-      if (!apiKey && !hasStoredDeepseekCredential(panel)) return;
+    if (route === "openrouter") {
+      const apiKey = openrouterKeyInput.value.trim();
+      if (!apiKey && !hasStoredOpenRouterCredential(panel)) return;
       if (apiKey) {
         confirmBtn.disabled = true;
         confirmBtn.textContent = "Storing…";
         Object.assign(confirmBtn.style, { opacity: "0.5", cursor: "not-allowed" });
-        deepseekErrorNode.style.display = "none";
+        openrouterErrorNode.style.display = "none";
 
         let stored = false;
         try {
           const res = await fetch("/vibecomfy/agent/credentials", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ provider: "deepseek", api_key: apiKey }),
+            body: JSON.stringify({ provider: "openrouter", api_key: apiKey }),
           });
           const result = await res.json();
           if (result && result.stored) {
             stored = true;
           } else {
-            deepseekErrorNode.textContent = (result && result.reason) || "Failed to store key.";
-            deepseekErrorNode.style.display = "block";
+            openrouterErrorNode.textContent = (result && result.reason) || "Failed to store key.";
+            openrouterErrorNode.style.display = "block";
           }
         } catch (e) {
-          deepseekErrorNode.textContent = "Credential save failed: " + String(e);
-          deepseekErrorNode.style.display = "block";
+          openrouterErrorNode.textContent = "Credential save failed: " + String(e);
+          openrouterErrorNode.style.display = "block";
         }
 
         if (!stored) {
@@ -10502,7 +10755,7 @@ app.registerExtension({
   name: "VibeComfy.Roundtrip",
   commands: [
     { id: "VibeComfy.Roundtrip", label: "Round-trip (VibeComfy)", function: openRoundtrip },
-    { id: "VibeComfy.AgentEdit", label: "Edit with DeepSeek (VibeComfy)", function: openAgentEdit },
+    { id: "VibeComfy.AgentEdit", label: "Edit with Agent (VibeComfy)", function: openAgentEdit },
   ],
   menuCommands: [{ path: ["Extensions", "VibeComfy"], commands: ["VibeComfy.Roundtrip", "VibeComfy.AgentEdit"] }],
   async beforeRegisterNodeDef(nodeType, nodeData) {
@@ -10534,6 +10787,7 @@ app.registerExtension({
     repairLiveIntentNodesFromCandidate();
     installQueueGuard();
     ensureAgentTurnListener();
+    ensureExecutorPhaseListener();
     installAgentPanelDebugHook();
     const proto = window.LiteGraph?.LGraphCanvas?.prototype;
     if (proto && !proto.__vibecomfyRoundtripPatched) {
@@ -10542,7 +10796,7 @@ app.registerExtension({
       proto.getCanvasMenuOptions = function () {
         const opts = orig ? orig.apply(this, arguments) : [];
         opts.push({ content: "Round-trip (VibeComfy)", callback: openRoundtrip });
-        opts.push({ content: "Edit with DeepSeek (VibeComfy)", callback: openAgentEdit });
+        opts.push({ content: "Edit with Agent (VibeComfy)", callback: openAgentEdit });
         return opts;
       };
     }

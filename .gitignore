@@ -46,6 +46,15 @@ _regen_templates.py
 finalize.json
 install.log
 .hypothesis/
+.tmp/
+node_modules/
+*.pid
+*.zip
+comfyui_*.png
+comfyui_screenshot*.png
+comfyui_panel_open*.png
+agent_edit_e2e.mjs
+local_env.sh
 
 # e2e test tier — isolated dependency management
 tests/e2e/node_modules/

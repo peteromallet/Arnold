@@ -1104,6 +1104,250 @@ def build_research_hotshot_xl_evidence(
     }
 
 
+def build_ltx_i2v_audio_research_execute_evidence(report_dir: Path) -> dict[str, Any]:
+    """Write evidence that executor research context drives an LTX audio edit."""
+    from vibecomfy.executor.contracts import ClassifyDecision, ExecutorRequest
+    from vibecomfy.executor.core import run_executor
+
+    root = report_dir.resolve()
+    root.mkdir(parents=True, exist_ok=True)
+
+    query = (
+        "Start from video/ltx2_3_i2v and add voice/audio input so the generated "
+        "character speaks from an audio clip, using LTX/RuneXX workflow lessons."
+    )
+    expected_source_paths = (
+        "ready_templates/video/ltx2_3_runexx_custom_audio.py",
+        "ready_templates/video/ltx2_3_runexx_lipsync_custom_audio.py",
+    )
+    starting_graph: dict[str, Any] = {
+        "workflow_id": "video/ltx2_3_i2v",
+        "nodes": [
+            {"id": 1, "class_type": "LoadImage", "type": "LoadImage"},
+            {"id": 2, "class_type": "LTXImageToVideo", "type": "LTXImageToVideo"},
+            {"id": 3, "class_type": "VHS_VideoCombine", "type": "VHS_VideoCombine"},
+        ],
+        "links": [
+            [1, 1, 0, 2, 0, "IMAGE"],
+            [2, 2, 0, 3, 0, "IMAGE"],
+        ],
+    }
+    request = ExecutorRequest(
+        query=query,
+        graph=starting_graph,
+        profile="default",
+        session_id="agentic-harness-ltx-audio-research-execute",
+    )
+
+    def fake_classify(*_args: Any, **_kwargs: Any) -> ClassifyDecision:
+        return ClassifyDecision(
+            research=True,
+            implement=True,
+            reply=True,
+            effort="high",
+            plan_summary="Research LTX/RuneXX custom audio, then edit the I2V graph.",
+            intent="edit",
+        )
+
+    def fake_hivemind_client(_query: str, _timeout: float) -> dict[str, Any]:
+        return {"results": []}
+
+    implementation_payloads: list[dict[str, Any]] = []
+
+    def fake_handle_agent_edit(payload: dict[str, Any], **_kwargs: Any) -> dict[str, Any]:
+        implementation_payloads.append(json.loads(json.dumps(payload)))
+        summary = payload.get("research_summary", "")
+        sources = payload.get("research_sources", [])
+        has_ltx_audio_context = any(path in str(summary) for path in expected_source_paths) or any(
+            isinstance(source, dict) and source.get("path") in expected_source_paths
+            for source in sources
+        )
+        graph = json.loads(json.dumps(payload["graph"]))
+        if has_ltx_audio_context:
+            graph.setdefault("nodes", []).extend(
+                [
+                    {
+                        "id": 10,
+                        "class_type": "LoadAudio",
+                        "type": "LoadAudio",
+                        "inputs": {"audio": "voice_reference.wav"},
+                    },
+                    {
+                        "id": 11,
+                        "class_type": "LTXVAudioVAEEncode",
+                        "type": "LTXVAudioVAEEncode",
+                        "inputs": {"audio": [10, 0]},
+                    },
+                    {
+                        "id": 12,
+                        "class_type": "RuneXXCustomAudioLipsync",
+                        "type": "RuneXXCustomAudioLipsync",
+                        "inputs": {"audio_latent": [11, 0], "video": [2, 0]},
+                    },
+                ]
+            )
+            graph.setdefault("links", []).extend(
+                [
+                    [10, 10, 0, 11, 0, "AUDIO"],
+                    [11, 11, 0, 12, 0, "LATENT"],
+                    [12, 12, 0, 3, 1, "AUDIO"],
+                ]
+            )
+        return {
+            "ok": True,
+            "graph": graph,
+            "message": (
+                "Added LoadAudio and LTX/RuneXX custom-audio lipsync nodes "
+                "using executor-provided research context."
+            ),
+        }
+
+    def fake_reply(
+        _query: str,
+        *,
+        implementation_message: str | None = None,
+        **_kwargs: Any,
+    ) -> str:
+        return f"Implemented LTX audio input. {implementation_message or ''}".strip()
+
+    with _EXECUTOR_FAKE_LOCK:
+        with (
+            mock.patch("vibecomfy.executor.core.run_classify_turn", side_effect=fake_classify),
+            mock.patch("vibecomfy.executor.core._default_hivemind_client", side_effect=fake_hivemind_client),
+            mock.patch("vibecomfy.executor.core.handle_agent_edit", side_effect=fake_handle_agent_edit),
+            mock.patch("vibecomfy.executor.core.run_reply_turn", side_effect=fake_reply),
+        ):
+            executor_result = run_executor(request)
+
+    executor_payload = executor_result.to_dict()
+    executor_path = root / "executor_result.json"
+    executor_path.write_text(json.dumps(executor_payload, indent=2, sort_keys=True), encoding="utf-8")
+    report_payload = executor_payload.get("report", {})
+    executor_report_path = root / "executor_report.json"
+    executor_report_path.write_text(json.dumps(report_payload, indent=2, sort_keys=True), encoding="utf-8")
+
+    research = executor_result.report.research
+    if research is None:
+        raise RuntimeError("LTX audio scenario did not produce research evidence.")
+    research_path = root / "research_result.json"
+    research_path.write_text(json.dumps(research.to_dict(), indent=2, sort_keys=True), encoding="utf-8")
+
+    implementation = executor_result.report.implementation
+    if implementation is None:
+        raise RuntimeError("LTX audio scenario did not produce implementation evidence.")
+    implementation_path = root / "implementation_result.json"
+    implementation_path.write_text(json.dumps(implementation.to_dict(), indent=2, sort_keys=True), encoding="utf-8")
+
+    compiled_api = _ui_graph_to_compiled_api(executor_result.graph or {})
+    compiled_api_path = root / "compiled_api.json"
+    compiled_api_path.write_text(json.dumps(compiled_api, indent=2, sort_keys=True), encoding="utf-8")
+
+    implementation_payload_path = root / "implementation_payload.json"
+    implementation_payload_path.write_text(
+        json.dumps(implementation_payloads[-1] if implementation_payloads else {}, indent=2, sort_keys=True),
+        encoding="utf-8",
+    )
+
+    metadata_path = root / "metadata.json"
+    metadata_path.write_text(
+        json.dumps(
+            {
+                "entrypoint": "video/ltx2_3_i2v",
+                "layer": "agentic-structural",
+                "requirements": [
+                    "LTX/RuneXX custom audio context passed from research to implementation"
+                ],
+                "artifact_paths": {
+                    "executor_result": str(executor_path),
+                    "executor_report": str(executor_report_path),
+                    "research_result": str(research_path),
+                    "implementation_result": str(implementation_path),
+                    "compiled_api": str(compiled_api_path),
+                    "implementation_payload": str(implementation_payload_path),
+                },
+            },
+            indent=2,
+            sort_keys=True,
+        ),
+        encoding="utf-8",
+    )
+
+    graph_nodes = [
+        node for node in (executor_result.graph or {}).get("nodes", [])
+        if isinstance(node, dict)
+    ]
+    research_source_paths = [
+        str(source.get("path"))
+        for source in research.sources
+        if isinstance(source, dict) and source.get("path")
+    ]
+    _write_actions(
+        root / "actions.jsonl",
+        [
+            {
+                "op": "executor.run",
+                "query": query,
+                "starting_workflow": "video/ltx2_3_i2v",
+                "plan": executor_result.report.plan.to_dict(),
+            },
+            {
+                "op": "research",
+                "source_paths": research_source_paths,
+                "expected_runexx_audio_source_found": any(
+                    path in expected_source_paths for path in research_source_paths
+                ),
+                "source_paths_all_python": all(path.endswith(".py") for path in research_source_paths),
+                "source_paths_include_json": any(path.endswith(".json") for path in research_source_paths),
+            },
+            {
+                "op": "implementation",
+                "ran": implementation is not None,
+                "received_research_summary": bool(
+                    implementation_payloads
+                    and implementation_payloads[-1].get("research_summary")
+                ),
+                "added_audio_node": any(
+                    node.get("class_type")
+                    in {"LoadAudio", "LTXVAudioVAEEncode", "RuneXXCustomAudioLipsync"}
+                    for node in graph_nodes
+                ),
+            },
+            {"op": "finalize_metadata", "status": "completed"},
+        ],
+    )
+    (root / "stdout.txt").write_text("", encoding="utf-8")
+    (root / "stderr.txt").write_text("", encoding="utf-8")
+    (root / "report.md").write_text(
+        "Ran executor research plus implementation for LTX I2V custom audio and froze graph evidence.\n",
+        encoding="utf-8",
+    )
+    return {
+        "scenario": "ltx-i2v-audio-research-execute",
+        "executor_result_path": str(executor_path),
+        "executor_report_path": str(executor_report_path),
+        "research_result_path": str(research_path),
+        "implementation_result_path": str(implementation_path),
+        "compiled_api_path": str(compiled_api_path),
+        "metadata_path": str(metadata_path),
+        "implementation_payload_path": str(implementation_payload_path),
+        "actions_path": str(root / "actions.jsonl"),
+        "report_path": str(root / "report.md"),
+    }
+
+
+def _ui_graph_to_compiled_api(graph: dict[str, Any]) -> dict[str, Any]:
+    """Convert a tiny structural UI graph to API-ish JSON for assessment."""
+    compiled: dict[str, Any] = {}
+    for node in graph.get("nodes", []):
+        if not isinstance(node, dict):
+            continue
+        node_id = str(node.get("id"))
+        class_type = node.get("class_type") or node.get("type") or "Unknown"
+        inputs = node.get("inputs") if isinstance(node.get("inputs"), dict) else {}
+        compiled[node_id] = {"class_type": class_type, "inputs": inputs}
+    return compiled
+
+
 def build_explain_simple_workflow_evidence(report_dir: Path) -> dict[str, Any]:
     """Write evidence that the executor reaches the graph-explain implement path."""
     from vibecomfy.comfy_nodes.agent.edit import _build_graph_report

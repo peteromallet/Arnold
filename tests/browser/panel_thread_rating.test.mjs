@@ -83,16 +83,47 @@ test("rating widget renders only below the latest assistant response and submits
     widgets[0].querySelectorAll((node) => node.dataset?.vibecomfyRatingComment === "1")[0].value = "helpful";
     widgets[0].querySelectorAll((node) => node.dataset?.vibecomfyRatingSubmit === "1")[0].click();
 
-    await waitFor(() => seen.length === 1 && widgets[0].style.display === "none");
+    await waitFor(() => (
+      seen.length === 1
+      && /Rating applied/.test(
+        widgets[0].querySelectorAll((node) => node.dataset?.vibecomfyRatingStatus === "1")[0].textContent,
+      )
+    ));
     assert.deepEqual(seen[0], {
       response_id: "sess-rating/0002",
       session_id: "sess-rating",
       turn_id: "0002",
       rating: 8,
       pack_shared: false,
+      pack_comment: null,
       comment: "helpful",
     });
-    assert.equal(widgets[0].style.display, "none");
+    assert.notEqual(widgets[0].style.display, "none");
+    assert.equal(ratingButton(widgets[0], 8).dataset.selected, "1");
+    assert.match(
+      widgets[0].querySelectorAll((node) => node.dataset?.vibecomfyRatingStatus === "1")[0].textContent,
+      /Rating applied/,
+    );
+  } finally {
+    await harness.dispose();
+  }
+});
+
+test("thread reconciliation rerenders long markdown messages when only the tail changes", async () => {
+  const harness = await createBrowserHarness();
+  try {
+    const mod = await harness.loadExtension();
+    const prefix = "prefix ".repeat(40);
+    renderPanelWithMessages(mod, [
+      { role: "agent", text: `${prefix}**old tail**`, turn_id: "0002" },
+    ]);
+    assert.match(harness.document.body.textContent, /old tail/);
+
+    renderPanelWithMessages(mod, [
+      { role: "agent", text: `${prefix}**new tail**`, turn_id: "0002" },
+    ]);
+    assert.match(harness.document.body.textContent, /new tail/);
+    assert.doesNotMatch(harness.document.body.textContent, /old tail/);
   } finally {
     await harness.dispose();
   }
@@ -141,6 +172,30 @@ test("rating widget submit passes the active panel and waits for a selected rati
   }
 });
 
+test("rating widget scrolls to the bottom when a score is selected", async () => {
+  const harness = await createBrowserHarness();
+  try {
+    const activePanel = {
+      state: { sessionId: "sess-scroll", turnId: "0004" },
+      thread: { scrollHeight: 640, scrollTop: 0, dataset: {} },
+    };
+    const widget = renderRatingWidget(
+      activePanel,
+      { role: "agent", text: "answer", turn_id: "0004" },
+      makeWidgetDeps(harness.document, async () => ({ ok: true })),
+    );
+    harness.document.body.appendChild(widget);
+
+    ratingButton(widget, 6).click();
+
+    assert.equal(activePanel.thread.scrollTop, 640);
+    assert.equal(activePanel.thread.dataset.vibecomfyScrolledToBottom, "1");
+    assert.equal(ratingButton(widget, 6).dataset.selected, "1");
+  } finally {
+    await harness.dispose();
+  }
+});
+
 test("rating widget timer is not reset by comment typing and successful retry clears it", async () => {
   const harness = await createBrowserHarness();
   try {
@@ -171,8 +226,10 @@ test("rating widget timer is not reset by comment typing and successful retry cl
     assert.equal(panel.__vibecomfyRatingTimers["sess-timer/0005"], scheduledTimer);
 
     submit.click();
-    await waitFor(() => widget.style.display === "none");
+    await waitFor(() => panel.state.ratingSubmittedResponseIds?.["sess-timer/0005"]);
     assert.equal(panel.__vibecomfyRatingTimers?.["sess-timer/0005"], undefined);
+    assert.notEqual(widget.style.display, "none");
+    assert.equal(ratingButton(widget, 4).dataset.selected, "1");
   } finally {
     await harness.dispose();
   }
@@ -235,7 +292,7 @@ test("rating widget persists debug-pack default and honors the disable localStor
   }
 });
 
-test("rating widget auto-hides after the 60-second expiry timer fires", async () => {
+test("rating widget auto-hides after the 120-second expiry timer fires", async () => {
   const harness = await createBrowserHarness();
   const originalSetTimeout = globalThis.setTimeout;
   let expiryCallback;
@@ -254,7 +311,7 @@ test("rating widget auto-hides after the 60-second expiry timer fires", async ()
     );
     harness.document.body.appendChild(widget);
 
-    assert.equal(expiryMs, 60000);
+    assert.equal(expiryMs, 120000);
     assert.equal(typeof expiryCallback, "function");
     expiryCallback();
     assert.equal(widget.style.display, "none");
@@ -291,7 +348,7 @@ test("rating widget cancels expiry timer when user selects a rating", async () =
     );
     harness.document.body.appendChild(widget);
 
-    const expiryId = Object.keys(scheduled).find((id) => scheduled[id].ms === 60000);
+    const expiryId = Object.keys(scheduled).find((id) => scheduled[id].ms === 120000);
     assert.ok(expiryId, "expiry timer scheduled");
 
     ratingButton(widget, 5).click();
@@ -322,7 +379,7 @@ test("rating widget does not render for non-agent assistant-role messages", asyn
   }
 });
 
-test("rating widget hides when a new turn begins", async () => {
+test("rating widget hides as soon as a new user message starts a pending turn", async () => {
   const harness = await createBrowserHarness();
   try {
     const mod = await harness.loadExtension();
@@ -333,13 +390,109 @@ test("rating widget hides when a new turn begins", async () => {
     let widgets = ratingWidgets(harness.document);
     assert.equal(widgets.length, 1);
 
-    // Simulate the user starting a new turn: advance panel.state.turnId.
+    // Simulate the user starting a new turn: the previous answer remains in
+    // history, but a user message and pending agent bubble become latest.
     const panel = mod.ensureAgentPanel();
-    panel.state.turnId = "0003";
+    panel.state.chatMessages = [
+      { role: "agent", text: "last response", turn_id: "0002" },
+      { role: "user", text: "next request", optimistic: true },
+      { role: "agent", text: "", pending_response: true, executor_pending: true, local_id: "pending:0003" },
+    ];
     mod.renderAgentPanel(panel, { dirtySections: ["THREAD"] });
 
     widgets = ratingWidgets(harness.document);
     assert.equal(widgets.length, 0);
+  } finally {
+    await harness.dispose();
+  }
+});
+
+test("rating widget hides as soon as a new user message is appended", async () => {
+  const harness = await createBrowserHarness();
+  try {
+    const mod = await harness.loadExtension();
+    renderPanelWithMessages(mod, [
+      { role: "agent", text: "last response", turn_id: "0002" },
+    ]);
+
+    let widgets = ratingWidgets(harness.document);
+    assert.equal(widgets.length, 1);
+
+    const panel = mod.ensureAgentPanel();
+    panel.state.chatMessages = [
+      { role: "agent", text: "last response", turn_id: "0002" },
+      { role: "user", text: "next request", optimistic: true },
+    ];
+    mod.renderAgentPanel(panel, { dirtySections: ["THREAD"] });
+
+    widgets = ratingWidgets(harness.document);
+    assert.equal(widgets.length, 0);
+  } finally {
+    await harness.dispose();
+  }
+});
+
+test("rating widget keeps the selected score visible after successful submit and rerender", async () => {
+  const harness = await createBrowserHarness({
+    responses: {
+      "/vibecomfy/agent-edit/rating": { status: 201, body: { ok: true, rating_id: "rating-rerender" } },
+    },
+  });
+  try {
+    const mod = await harness.loadExtension();
+    const panel = renderPanelWithMessages(mod, [
+      { role: "agent", text: "answer", turn_id: "0002" },
+    ]);
+
+    let widgets = ratingWidgets(harness.document);
+    ratingButton(widgets[0], 9).click();
+    widgets[0].querySelectorAll((node) => node.dataset?.vibecomfyRatingSubmit === "1")[0].click();
+    await waitFor(() => panel.state.ratingSubmittedResponseIds?.["sess-rating/0002"]);
+
+    mod.renderAgentPanel(panel, { dirtySections: ["THREAD"] });
+    widgets = ratingWidgets(harness.document);
+    assert.equal(widgets.length, 1);
+    assert.equal(ratingButton(widgets[0], 9).dataset.selected, "1");
+    assert.match(
+      widgets[0].querySelectorAll((node) => node.dataset?.vibecomfyRatingStatus === "1")[0].textContent,
+      /Rating applied/,
+    );
+  } finally {
+    await harness.dispose();
+  }
+});
+
+test("rating widget does not inherit panel turn id for pending responses", async () => {
+  const harness = await createBrowserHarness();
+  try {
+    const mod = await harness.loadExtension();
+    const panel = renderPanelWithMessages(mod, [
+      { role: "user", text: "ask", optimistic: true },
+      { role: "agent", text: "", pending_response: true, executor_pending: true, local_id: "pending:no-turn" },
+    ]);
+    panel.state.turnId = "previous-turn";
+    mod.renderAgentPanel(panel, { dirtySections: ["THREAD"] });
+
+    const widgets = ratingWidgets(harness.document);
+    assert.equal(widgets.length, 0);
+  } finally {
+    await harness.dispose();
+  }
+});
+
+test("rating widget is keyed to the completed message turn, not current panel turn", async () => {
+  const harness = await createBrowserHarness();
+  try {
+    const mod = await harness.loadExtension();
+    const panel = renderPanelWithMessages(mod, [
+      { role: "agent", text: "completed response", turn_id: "0009" },
+    ]);
+    panel.state.turnId = "0010";
+    mod.renderAgentPanel(panel, { dirtySections: ["THREAD"] });
+
+    const widgets = ratingWidgets(harness.document);
+    assert.equal(widgets.length, 1);
+    assert.equal(widgets[0].dataset.vibecomfyResponseId, "sess-rating/0009");
   } finally {
     await harness.dispose();
   }

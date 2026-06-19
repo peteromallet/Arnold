@@ -230,6 +230,114 @@ def test_build_search_corpus_warns_when_explicit_schema_provider_fails(
     assert "RuntimeError: boom" in warnings[0].message
 
 
+def test_build_search_corpus_surfaces_only_ready_template_python_for_workflows(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    (tmp_path / "node_index.json").write_text("[]", encoding="utf-8")
+    (tmp_path / "template_index.json").write_text(
+        json.dumps(
+            {
+                "templates": [
+                    {
+                        "id": "video/ltx2_3_t2v",
+                        "path": "ready_templates/video/ltx2_3_t2v.py",
+                        "source_workflow": "ready_templates/sources/custom_nodes/ltxvideo/ltx2_3.json",
+                        "capability": "video",
+                        "coverage_tier": "required",
+                        "readiness_class": "ready",
+                        "public_inputs": [{"name": "prompt"}, {"name": "seed"}],
+                        "public_outputs": [{"name": "video"}],
+                        "custom_nodes": ["LTXVLoader"],
+                        "model_count": 2,
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / "workflow_index.json").write_text(
+        json.dumps(
+            [
+                {
+                    "id": "image/json_only_template",
+                    "path": "ready_templates/sources/custom_nodes/json_only_template.json",
+                    "source_workflow": "ready_templates/sources/custom_nodes/json_only_template.json",
+                    "capability": "image",
+                },
+                {
+                    "id": "wan_official_i2v",
+                    "path": "ready_templates/sources/official/video/wan_i2v.json",
+                    "media_type": "video",
+                    "source": "Comfy-Org/workflow_templates",
+                },
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / "external_workflow_index.json").write_text(
+        json.dumps(
+            [
+                {
+                    "id": "flux_depth_control",
+                    "path": "ready_templates/sources/custom_nodes/flux/depth_control.json",
+                    "media_type": "image",
+                    "package": "flux-pack",
+                    "public_inputs": [{"name": "depth"}],
+                    "public_outputs": [{"name": "image"}],
+                    "custom_nodes": ["FluxDepth"],
+                    "model_count": 1,
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+    coverage = tmp_path / "ready_templates/sources/manifests/coverage.json"
+    coverage.parent.mkdir(parents=True)
+    coverage.write_text(
+        json.dumps(
+            {
+                "workflows": [
+                    {
+                        "id": "coverage_json_only",
+                        "path": "ready_templates/sources/official/video/coverage_json_only.json",
+                        "task": "text_to_video",
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.chdir(tmp_path)
+
+    entries = build_search_corpus()
+    by_id = {entry.class_type: entry for entry in entries}
+
+    ready = by_id["video/ltx2_3_t2v"]
+    assert ready.source == "ready_template"
+    assert ready.path == "ready_templates/video/ltx2_3_t2v.py"
+    assert "converted source workflow ltx2_3" in ready.description
+    assert "prompt" in ready.tags
+    assert "LTXVLoader" in ready.tags
+
+    assert "image/json_only_template" not in by_id
+    assert "wan_official_i2v" not in by_id
+    assert "flux_depth_control" not in by_id
+    assert "coverage_json_only" not in by_id
+
+    workflow_entries = [
+        entry
+        for entry in entries
+        if entry.source in {"ready_template", "source_workflow", "external_workflow", "curated", "custom_node_examples"}
+    ]
+    assert workflow_entries
+    assert all(entry.path is None or entry.path.endswith(".py") for entry in workflow_entries)
+
+    results = search_entries(entries, "ltx2 3", limit=5)
+    assert results[0].entry.class_type == "video/ltx2_3_t2v"
+    assert results[0].entry.path == "ready_templates/video/ltx2_3_t2v.py"
+
+
 class FailingSchemaProvider:
     def schemas(self):
         raise RuntimeError("boom")

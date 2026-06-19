@@ -113,6 +113,8 @@ export async function openPanelViaSidebar(page, { timeout = 15_000 } = {}) {
   // Different ComfyUI frontend builds render the tab differently, so we
   // try multiple selector strategies.
   const sidebarSelectors = [
+    `button[aria-label="Open the VibeComfy agent edit panel"]`,
+    `.vibecomfy\\.agent-edit-tab-button`,
     `[data-tab-id="vibecomfy.agent-edit"]`,
     `[data-sidebar-tab="vibecomfy.agent-edit"]`,
     `#vibecomfy\\.agent-edit`,

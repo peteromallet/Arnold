@@ -7,11 +7,12 @@
 # when served from a static host like ComfyUI's web serving.
 #
 # Usage:
-#   bash scripts/build_web_cache_bust.sh [--sha] [--hash] [--dir <name>]
+#   bash scripts/build_web_cache_bust.sh [--sha] [--hash] [--dir <name>] [--force]
 #
 #   --sha    Use the current Git commit SHA as the version tag (default).
 #   --hash   Use a content hash (sha256 over all web/ files) as the version tag.
 #   --dir    Use an explicit directory name.
+#   --force  Replace the destination if it already exists.
 #
 # Output:
 #   vibecomfy/comfy_nodes/web_dist/<tag>/
@@ -37,28 +38,36 @@ get_git_sha() {
 }
 
 get_content_hash() {
-  # sha256 over all non-bak web/ files, sorted for determinism
-  local tmp
-  tmp="$(mktemp)"
-  # shellcheck disable=SC2044
-  for f in $(find "${WEB_SRC}" -maxdepth 1 -type f -name '*.js' -o -name '*.png' -o -name '*.css' -o -name '*.json' | sort); do
-    shasum -a 256 "$f" >> "$tmp"
-  done
-  # Take the first 12 hex chars of the hash-of-hashes
-  local hash
-  hash="$(shasum -a 256 "$tmp" | cut -d' ' -f1 | cut -c1-12)"
-  rm -f "$tmp"
-  echo "$hash"
+  # sha256 over distributable web/ files, sorted by relative file name.
+  # Keep this algorithm in sync with vibecomfy/comfy_nodes/__init__.py.
+  "${PYTHON:-python3}" - "${WEB_SRC}" <<'PY'
+import hashlib
+import pathlib
+import sys
+
+root = pathlib.Path(sys.argv[1])
+digest = hashlib.sha256()
+for path in sorted(p for p in root.iterdir() if p.is_file()):
+    if path.name.endswith((".bak", "~", ".orig", ".tmp")):
+        continue
+    digest.update(path.name.encode("utf-8"))
+    digest.update(b"\0")
+    digest.update(path.read_bytes())
+    digest.update(b"\0")
+print(digest.hexdigest()[:12])
+PY
 }
 
 # --- parse args ---
 
 TAG=""
+FORCE=0
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --sha)   TAG="$(get_git_sha)" ;;
     --hash)  TAG="$(get_content_hash)" ;;
     --dir)   shift; TAG="$1" ;;
+    --force) FORCE=1 ;;
     *)       echo "Unknown option: $1" >&2; exit 1 ;;
   esac
   shift
@@ -74,10 +83,13 @@ fi
 DEST="${WEB_DIST}/${TAG}"
 
 if [[ -d "${DEST}" ]]; then
-  echo "[build_web_cache_bust] Destination already exists: ${DEST}" >&2
-  echo "[build_web_cache_bust] Remove it first if you want a fresh copy:" >&2
-  echo "  rm -rf ${DEST}" >&2
-  exit 1
+  if [[ "${FORCE}" == "1" ]]; then
+    rm -rf "${DEST}"
+  else
+    echo "[build_web_cache_bust] Destination already exists: ${DEST}" >&2
+    echo "[build_web_cache_bust] Re-run with --force if you want a fresh copy." >&2
+    exit 1
+  fi
 fi
 
 echo "[build_web_cache_bust] Tag:  ${TAG}"

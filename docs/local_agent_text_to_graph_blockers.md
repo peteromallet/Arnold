@@ -39,20 +39,23 @@ pre-existing and out of scope.
 `"Arnold/Hermes runtime is unavailable… Import attempts: arnold.hermes…; hermes_agent…; arnold…"`.
 **Root cause:** `agent_provider._load_arnold_runtime()` imports one of
 `arnold.hermes` / `hermes_agent` / `arnold` (or `$VIBECOMFY_ARNOLD_RUNTIME_MODULE`).
-None were importable; the published harness installs as the **`megaplan`** package
-(`github.com/peteromallet/arnold`) and exposes no `run_agent_turn`/`run`.
+None were importable; the Arnold harness is installed from
+`github.com/peteromallet/Arnold` as the **`arnold`** package and exposes no
+`run_agent_turn`/`run`.
 **Fix:** shipped adapter `vibecomfy/comfy_nodes/agent/runtime.py` (delegates one
 tool-free `AIAgent` turn) + launcher sets
 `VIBECOMFY_ARNOLD_RUNTIME_MODULE=vibecomfy.comfy_nodes.agent.runtime`.
-Status route now: `ok:true, provider_available:true, backend:megaplan.agent.run_agent.AIAgent`.
+Status route now: `ok:true, provider_available:true, backend:arnold.pipelines.megaplan.agent.run_agent.AIAgent`.
 
-### B2 — `megaplan` editable install pointed at a stale worktree ✅
-**Symptom:** `import megaplan` → `ModuleNotFoundError`, yet `pip show megaplan-harness`
-succeeded (v0.23.0).
-**Root cause:** the editable `.pth` pointed at `~/Documents/.megaplan-worktrees/arnold-paf`
-(stale) instead of the live checkout `~/Documents/megaplan`.
-**Fix:** `pip install -e ~/Documents/megaplan --no-deps` into the ComfyUI python
-(`~/.pyenv/versions/3.11.11`). Re-points the editable install.
+### B2 — local Arnold editable installs can drift from the runtime pin ✅
+**Symptom:** ComfyUI imports a local `~/Documents/megaplan` / `~/Documents/megaplan-engine`
+checkout instead of the validated GitHub Arnold package.
+**Root cause:** an editable `.pth` or `PYTHONPATH` entry shadows the pinned
+GitHub dependency.
+**Fix:** `scripts/run_local_agent_comfy.sh` now installs the pinned GitHub
+package from `https://github.com/peteromallet/Arnold` when Arnold is missing or
+when the import resolves to a local checkout. Use `VIBECOMFY_ALLOW_LOCAL_ARNOLD=1`
+only for intentional Arnold co-development.
 
 ### B3 — `utils` top-level module collision ✅
 **Symptom:** agent turn failed with classified `ProviderError` whose detail was

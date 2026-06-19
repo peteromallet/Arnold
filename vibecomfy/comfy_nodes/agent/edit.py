@@ -127,6 +127,8 @@ class AgentEditState:
     # Batch REPL state (gated behind VIBECOMFY_AGENT_EDIT_BATCH_REPL=1)
     batch_session: EditSession | None = None
     batch_signature_catalog: str = ""
+    executor_research_summary: str = ""
+    executor_research_sources: tuple[dict[str, Any], ...] = ()
     batch_turns: list[dict[str, Any]] = field(default_factory=list)
     batch_field_changes: tuple[FieldChange, ...] = ()
     batch_noop_field_changes: tuple[FieldChange, ...] = ()
@@ -666,6 +668,33 @@ def _humanized_edit_message(state: AgentEditState) -> str:
     return _sentence_case(ensure_sentence_message(text, fallback=f"Updated {len(changes)} workflow fields."))
 
 
+def _terminal_answer_message(state: AgentEditState) -> str | None:
+    if state.lint_noop_messages or state.batch_noop_field_changes or state.batch_field_changes:
+        return None
+    if state.batch_exit_mode != _BATCH_EXIT_NOOP:
+        return None
+
+    for turn in reversed(state.batch_turns or []):
+        if not isinstance(turn, Mapping):
+            continue
+        statements = turn.get("statements")
+        has_terminal_done = False
+        if isinstance(statements, list):
+            has_terminal_done = any(
+                isinstance(stmt, Mapping) and stmt.get("op_kind") == "done"
+                for stmt in statements
+            )
+        batch = turn.get("batch")
+        if not has_terminal_done and isinstance(batch, str):
+            has_terminal_done = batch.strip().startswith("done(")
+        if not has_terminal_done:
+            continue
+        message = turn.get("message")
+        if isinstance(message, str) and message.strip():
+            return ensure_sentence_message(message.strip(), fallback="No graph changes were needed.")
+    return None
+
+
 def _humanized_noop_message(state: AgentEditState) -> str:
     # Prefer lint normalization messages when available (they carry
     # class/title/field/slot context and avoid raw gate text or uids).
@@ -687,6 +716,9 @@ def _humanized_noop_message(state: AgentEditState) -> str:
         )
     if len(changes) > 1:
         return "The requested fields already match the current graph; no change needed."
+    answer = _terminal_answer_message(state)
+    if answer:
+        return answer
     summary = (state.batch_done_summary or "").strip()
     gate_jargon = bool(re.search(r"\bGate\s+[AB]\b|identity verified|No operations were applied", summary, re.I))
     if summary and not gate_jargon:
@@ -2641,9 +2673,19 @@ def _stage_agent_batch_repl(
     prefetch_explain = intent == "explain_graph" or (
         not intent and _is_graph_explain_intent(state.task)
     )
-    prefetch_research_summary = (
+    prefetch_research_summary = state.executor_research_summary or (
         _prefetch_research_summary(state.task) if prefetch_research else ""
     )
+    if prefetch_research_summary and state.executor_research_sources:
+        source_lines = [
+            json.dumps(source, sort_keys=True)
+            for source in state.executor_research_sources[:8]
+        ]
+        prefetch_research_summary = (
+            f"{prefetch_research_summary}\n\n"
+            "Structured research sources (JSON lines):\n"
+            + "\n".join(source_lines)
+        )
     prefetch_graph_report = (
         _build_graph_report(state.graph) if prefetch_explain else ""
     )
@@ -4480,6 +4522,14 @@ def handle_agent_edit(
         projection_path=turn_dir / "projection.txt",
         messages_path=turn_dir / "messages.jsonl",
     )
+    research_summary = payload.get("research_summary")
+    if isinstance(research_summary, str) and research_summary.strip():
+        state.executor_research_summary = research_summary.strip()
+    research_sources = payload.get("research_sources")
+    if isinstance(research_sources, list):
+        state.executor_research_sources = tuple(
+            source for source in research_sources if isinstance(source, dict)
+        )
     if isinstance(payload.get("max_batches"), int) and payload["max_batches"] > 0:
         state.batch_max_turns = int(payload["max_batches"])
     if (

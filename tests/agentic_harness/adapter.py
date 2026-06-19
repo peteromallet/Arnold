@@ -28,6 +28,7 @@ from tests.agentic_harness.actors import (
     build_m3_controlnet_depth_positive_evidence,
     build_m3_controlnet_video_noop_evidence,
     build_m3_save_node_finalize_positive_evidence,
+    build_ltx_i2v_audio_research_execute_evidence,
     build_research_hotshot_xl_evidence,
     build_faking_structural_chain,
     build_positive_structural_chain,
@@ -110,6 +111,7 @@ _M3_BUILDERS = {
 _M6_BUILDERS = {
     "explore-hotshot-xl-workflow": build_research_hotshot_xl_evidence,
     "explain-simple-workflow": build_explain_simple_workflow_evidence,
+    "ltx-i2v-audio-research-execute": build_ltx_i2v_audio_research_execute_evidence,
 }
 
 

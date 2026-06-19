@@ -10,80 +10,9 @@ from typing import Any, Mapping
 
 _LOGGER = logging.getLogger(__name__)
 
-from .contracts import (
-    FailureKind,
-    classify_failure,
-    ensure_agent_edit_response_contract,
-    failure_envelope,
-)
+from .contracts import FailureKind, classify_failure, failure_envelope
 from .provider import readiness, handle_credential_submission
 from .hivemind_feedback import submit_hivemind_feedback
-
-
-def _handle_agent_executor(
-    payload: dict[str, Any],
-    *,
-    client_id: str | None = None,
-) -> dict[str, Any]:
-    """Run the stateless executor pipeline and return a JSON-serializable result."""
-    # Lazy import to avoid pulling executor (and its heavy ingestion graph
-    # imports) into the module-level import graph of routes.py.
-    from vibecomfy.executor.contracts import ClassifyDecision, ExecutorRequest
-    from vibecomfy.executor.core import run_executor
-
-    if not isinstance(payload, Mapping):
-        message = "ExecutorRequest payload must be a JSON object."
-        failure = failure_envelope(
-            FailureKind.VALIDATION_ERROR,
-            "executor",
-            agent_failure_context={"explanation": message},
-        ).to_dict()
-        failure.update({
-            "report": {"executor": {"plan": ClassifyDecision.respond_only().to_dict()}},
-            "failure_kind": FailureKind.VALIDATION_ERROR.value,
-            "failure_stage": "executor",
-            "failure_message": message,
-        })
-        return {
-            **failure,
-        }
-
-    try:
-        request = ExecutorRequest.from_payload(payload)
-    except ValueError as exc:
-        failure = failure_envelope(
-            FailureKind.MISSING_REQUIRED_FIELD,
-            "request",
-            agent_failure_context={"explanation": str(exc)},
-        ).to_dict()
-        failure.update({
-            "report": {"executor": {"plan": ClassifyDecision.respond_only().to_dict()}},
-            "failure_kind": FailureKind.MISSING_REQUIRED_FIELD.value,
-            "failure_stage": "request",
-            "failure_message": str(exc),
-        })
-        return {
-            **failure,
-        }
-
-    try:
-        result = run_executor(request, client_id=client_id)
-        return result.to_dict()
-    except Exception as exc:
-        failure = failure_envelope(
-            FailureKind.VALIDATION_ERROR,
-            "executor",
-            agent_failure_context={"explanation": f"Unexpected executor error: {exc}"},
-        ).to_dict()
-        failure.update({
-            "report": {"executor": {"plan": ClassifyDecision.respond_only().to_dict()}},
-            "failure_kind": FailureKind.VALIDATION_ERROR.value,
-            "failure_stage": "executor",
-            "failure_message": f"Unexpected executor error: {exc}",
-        })
-        return {
-            **failure,
-        }
 
 
 def _handle_roundtrip(
@@ -140,59 +69,6 @@ def _handle_roundtrip(
     except Exception as exc:
         return {"error": str(exc), "kind": type(exc).__name__}
 
-
-
-def _validated_failure_response(
-    stage: str,
-    failure: Any,
-) -> dict[str, Any]:
-    response = failure.to_dict() if hasattr(failure, "to_dict") else dict(failure)
-    recovery = _extract_failure_recovery(response)
-    if recovery is not None:
-        response.setdefault("rebaseline_recovery", recovery)
-        outcome = response.get("outcome")
-        if isinstance(outcome, Mapping) and outcome.get("kind") == "error":
-            response["outcome"] = {
-                **dict(outcome),
-                "rebaseline_recovery": dict(outcome.get("rebaseline_recovery"))
-                if isinstance(outcome.get("rebaseline_recovery"), Mapping)
-                else recovery,
-            }
-    return ensure_agent_edit_response_contract(response, stage=stage)
-
-
-
-def _extract_failure_recovery(response: Mapping[str, Any] | None) -> dict[str, Any] | None:
-    if not isinstance(response, Mapping):
-        return None
-    top_level = response.get("rebaseline_recovery")
-    if isinstance(top_level, Mapping):
-        return dict(top_level)
-    contexts: list[Any] = [response.get("agent_failure_context")]
-    outcome = response.get("outcome")
-    if isinstance(outcome, Mapping):
-        outcome_recovery = outcome.get("rebaseline_recovery")
-        if isinstance(outcome_recovery, Mapping):
-            return dict(outcome_recovery)
-        contexts.append(outcome.get("agent_failure_context"))
-    debug = response.get("debug")
-    if isinstance(debug, Mapping):
-        failure_debug = debug.get("failure")
-        if isinstance(failure_debug, Mapping):
-            contexts.append(failure_debug.get("agent_failure_context"))
-    for context in contexts:
-        if not isinstance(context, Mapping):
-            continue
-        issues = context.get("issues")
-        if not isinstance(issues, list):
-            continue
-        for issue in issues:
-            if not isinstance(issue, Mapping):
-                continue
-            recovery = issue.get("rebaseline_recovery")
-            if isinstance(recovery, Mapping):
-                return dict(recovery)
-    return None
 
 def _handle_agent_status(params: dict[str, Any] | None = None) -> dict[str, Any]:
     params = params or {}
@@ -254,9 +130,21 @@ def _handle_vibecomfy_submit_rating(payload: Any) -> tuple[dict[str, Any], int]:
     return result, status
 
 
-def register_agent_edit_routes(app) -> None:
-    """Register the /agent/edit route on a ComfyUI PromptServer *app*.
+def _to_serializable(result: Any) -> Any:
+    """Convert a FailureEnvelope/dataclass result to a plain dict for JSON."""
+    if result is None:
+        return {}
+    if isinstance(result, dict):
+        return result
+    if hasattr(result, "to_dict") and callable(result.to_dict):
+        return result.to_dict()
+    return {"error": "Non-serializable result", "repr": repr(result)}
 
+
+def register_agent_edit_routes(app) -> None:
+    """Register the /vibecomfy/agent-edit/* routes on a ComfyUI PromptServer *app*.
+
+    Includes the legacy POST /agent/edit alias for backward compatibility.
     This function is a no-op when ``VIBECOMFY_HEADLESS=1`` is set in the
     environment, so importing this module outside a ComfyUI server does not
     trigger ``aiohttp`` or ``server`` side effects.
@@ -267,7 +155,21 @@ def register_agent_edit_routes(app) -> None:
         A ComfyUI ``PromptServer`` instance whose ``.routes`` attribute exposes
         an ``aiohttp.RouteTableDef``.
     """
-    from .edit import handle_agent_edit  # noqa: PLC0415
+    from pathlib import Path as _Path  # noqa: PLC0415
+    from aiohttp import web as _web  # noqa: PLC0415
+    from .edit import (  # noqa: PLC0415
+        _safe_session_id as _safe_session_id,
+        _SESSION_ROOT as _EDIT_SESSION_ROOT,
+        handle_agent_edit,
+        read_session_bundle,
+        read_session_chat,
+        read_session_json,
+    )
+    from .session import (  # noqa: PLC0415
+        accept_turn,
+        reject_turn,
+        rebaseline_session,
+    )
     from .contracts import (
         FailureKind as _FK,
         classify_failure as _classify_failure,
@@ -275,49 +177,219 @@ def register_agent_edit_routes(app) -> None:
         failure_envelope as _failure_envelope,
     )
 
-    @app.routes.post("/agent/edit")
+    _SESSION_ROOT = _Path(_EDIT_SESSION_ROOT)
+
+    def _client_id_from_payload(payload: Any) -> str | None:
+        cid = payload.get("client_id") if isinstance(payload, dict) else None
+        if isinstance(cid, str) and cid.strip():
+            return cid
+        return None
+
+    def _session_id_from_query(request) -> str:  # type: ignore[no-untyped-def]
+        return _safe_session_id(request.query.get("session_id"))
+
+    def _json_error(message: str, stage: str = "agent_edit", status: int = 400):  # type: ignore[no-untyped-def]
+        return _web.json_response(
+            _ensure_contract(
+                _failure_envelope(
+                    _FK.MISSING_REQUIRED_FIELD,
+                    stage,
+                    agent_failure_context={"explanation": message},
+                ).to_dict(),
+                stage=stage,
+            ),
+            status=status,
+        )
+
+    @app.routes.post("/vibecomfy/agent-edit")
     async def _agent_edit_route(request):  # type: ignore[no-untyped-def]
         try:
             payload = await request.json()
         except Exception as exc:
-            return app.web.json_response(
-                _ensure_contract(
-                    _failure_envelope(
-                        _FK.MISSING_REQUIRED_FIELD,
-                        "agent_edit",
-                        agent_failure_context={
-                            "explanation": f"Request body must be valid JSON: {exc}"
-                        },
-                    ).to_dict(),
-                    stage="agent_edit",
-                ),
-                status=400,
-            )
+            return _json_error(f"Request body must be valid JSON: {exc}", stage="agent_edit")
+        if not isinstance(payload, dict):
+            return _json_error("Request body must be a JSON object.", stage="agent_edit")
         try:
-            result = await asyncio.to_thread(handle_agent_edit, payload)
+            result = await asyncio.to_thread(
+                handle_agent_edit,
+                payload,
+                client_id=_client_id_from_payload(payload),
+            )
         except Exception as exc:
             failure = _classify_failure("agent_edit", exc)
-            return app.web.json_response(
+            return _web.json_response(
                 _ensure_contract(failure.to_dict(), stage="agent_edit"),
                 status=500,
             )
         if not isinstance(result, dict):
-            return app.web.json_response(
-                _ensure_contract(
-                    _failure_envelope(
-                        _FK.VALIDATION_ERROR,
-                        "agent_edit",
-                        agent_failure_context={
-                            "explanation": "handle_agent_edit returned a non-dict result."
-                        },
-                    ).to_dict(),
-                    stage="agent_edit",
-                ),
+            return _json_error("handle_agent_edit returned a non-dict result.", stage="agent_edit", status=500)
+        if result.get("status") == "error":
+            return _web.json_response(result, status=400)
+        return _web.json_response(result)
+
+    @app.routes.post("/agent/edit")
+    async def _legacy_agent_edit_route(request):  # type: ignore[no-untyped-def]
+        try:
+            payload = await request.json()
+        except Exception as exc:
+            return _json_error(f"Request body must be valid JSON: {exc}", stage="agent_edit")
+        if not isinstance(payload, dict):
+            return _json_error("Request body must be a JSON object.", stage="agent_edit")
+        try:
+            result = await asyncio.to_thread(handle_agent_edit, payload)
+        except Exception as exc:
+            failure = _classify_failure("agent_edit", exc)
+            return _web.json_response(
+                _ensure_contract(failure.to_dict(), stage="agent_edit"),
                 status=500,
             )
+        if not isinstance(result, dict):
+            return _json_error("handle_agent_edit returned a non-dict result.", stage="agent_edit", status=500)
         if result.get("status") == "error":
-            return app.web.json_response(result, status=400)
-        return app.web.json_response(result)
+            return _web.json_response(result, status=400)
+        return _web.json_response(result)
+
+    @app.routes.post("/vibecomfy/agent-edit/accept")
+    async def _agent_edit_accept_route(request):  # type: ignore[no-untyped-def]
+        try:
+            payload = await request.json()
+        except Exception as exc:
+            return _json_error(f"Request body must be valid JSON: {exc}", stage="accept")
+        if not isinstance(payload, dict):
+            return _json_error("Request body must be a JSON object.", stage="accept")
+        session_id = _safe_session_id(payload.get("session_id"))
+        turn_id = payload.get("turn_id")
+        if not isinstance(turn_id, str) or not turn_id.strip():
+            return _json_error("turn_id is required.", stage="accept")
+        try:
+            result = await asyncio.to_thread(
+                accept_turn,
+                session_root=_SESSION_ROOT,
+                session_id=session_id,
+                turn_id=turn_id,
+                client_graph_hash=payload.get("client_graph_hash"),
+                request_payload=payload,
+                idempotency_key=payload.get("idempotency_key")
+                if isinstance(payload.get("idempotency_key"), str)
+                else None,
+            )
+        except Exception as exc:
+            failure = _classify_failure("accept", exc)
+            return _web.json_response(
+                _ensure_contract(failure.to_dict(), stage="accept"),
+                status=500,
+            )
+        return _web.json_response(_to_serializable(result))
+
+    @app.routes.post("/vibecomfy/agent-edit/reject")
+    async def _agent_edit_reject_route(request):  # type: ignore[no-untyped-def]
+        try:
+            payload = await request.json()
+        except Exception as exc:
+            return _json_error(f"Request body must be valid JSON: {exc}", stage="reject")
+        if not isinstance(payload, dict):
+            return _json_error("Request body must be a JSON object.", stage="reject")
+        session_id = _safe_session_id(payload.get("session_id"))
+        turn_id = payload.get("turn_id")
+        if not isinstance(turn_id, str) or not turn_id.strip():
+            return _json_error("turn_id is required.", stage="reject")
+        try:
+            result = await asyncio.to_thread(
+                reject_turn,
+                session_root=_SESSION_ROOT,
+                session_id=session_id,
+                turn_id=turn_id,
+                client_graph_hash=payload.get("client_graph_hash"),
+                request_payload=payload,
+                idempotency_key=payload.get("idempotency_key")
+                if isinstance(payload.get("idempotency_key"), str)
+                else None,
+            )
+        except Exception as exc:
+            failure = _classify_failure("reject", exc)
+            return _web.json_response(
+                _ensure_contract(failure.to_dict(), stage="reject"),
+                status=500,
+            )
+        return _web.json_response(_to_serializable(result))
+
+    @app.routes.post("/vibecomfy/agent-edit/rebaseline")
+    async def _agent_edit_rebaseline_route(request):  # type: ignore[no-untyped-def]
+        try:
+            payload = await request.json()
+        except Exception as exc:
+            return _json_error(f"Request body must be valid JSON: {exc}", stage="rebaseline")
+        if not isinstance(payload, dict):
+            return _json_error("Request body must be a JSON object.", stage="rebaseline")
+        session_id = _safe_session_id(payload.get("session_id"))
+        try:
+            result = await asyncio.to_thread(
+                rebaseline_session,
+                session_root=_SESSION_ROOT,
+                session_id=session_id,
+                request_payload=payload,
+                idempotency_key=payload.get("idempotency_key")
+                if isinstance(payload.get("idempotency_key"), str)
+                else None,
+            )
+        except Exception as exc:
+            failure = _classify_failure("rebaseline", exc)
+            return _web.json_response(
+                _ensure_contract(failure.to_dict(), stage="rebaseline"),
+                status=500,
+            )
+        return _web.json_response(_to_serializable(result))
+
+    @app.routes.get("/vibecomfy/agent-edit/chat")
+    async def _agent_edit_chat_route(request):  # type: ignore[no-untyped-def]
+        session_id = _session_id_from_query(request)
+        try:
+            result = await asyncio.to_thread(
+                read_session_chat,
+                _SESSION_ROOT,
+                session_id,
+            )
+        except Exception as exc:
+            failure = _classify_failure("chat", exc)
+            return _web.json_response(
+                _ensure_contract(failure.to_dict(), stage="chat"),
+                status=500,
+            )
+        return _web.json_response(_to_serializable(result))
+
+    @app.routes.get("/vibecomfy/agent-edit/session-bundle")
+    async def _agent_edit_session_bundle_route(request):  # type: ignore[no-untyped-def]
+        session_id = _session_id_from_query(request)
+        try:
+            result = await asyncio.to_thread(
+                read_session_bundle,
+                _SESSION_ROOT,
+                session_id,
+            )
+        except Exception as exc:
+            failure = _classify_failure("session_bundle", exc)
+            return _web.json_response(
+                _ensure_contract(failure.to_dict(), stage="session_bundle"),
+                status=500,
+            )
+        return _web.json_response(_to_serializable(result))
+
+    @app.routes.get("/vibecomfy/agent-edit/session-json")
+    async def _agent_edit_session_json_route(request):  # type: ignore[no-untyped-def]
+        session_id = _session_id_from_query(request)
+        try:
+            result = await asyncio.to_thread(
+                read_session_json,
+                _SESSION_ROOT,
+                session_id,
+            )
+        except Exception as exc:
+            failure = _classify_failure("session_json", exc)
+            return _web.json_response(
+                _ensure_contract(failure.to_dict(), stage="session_json"),
+                status=500,
+            )
+        return _web.json_response(_to_serializable(result))
 
 
 # ── Route registration (guarded: no-op when VIBECOMFY_HEADLESS=1) ──────────
@@ -341,33 +413,6 @@ if os.environ.get("VIBECOMFY_HEADLESS") != "1":
                 return _web.json_response(result, status=400)
             return _web.json_response(result)
 
-
-        @_PromptServer.instance.routes.post("/vibecomfy/agent-executor")
-        async def agent_executor_route(request):  # type: ignore[no-untyped-def]
-            _LOGGER.info("/vibecomfy/agent-executor request")
-            try:
-                payload = await request.json()
-            except Exception as exc:
-                return _web.json_response(
-                    _validated_failure_response(
-                        "executor",
-                        failure_envelope(
-                            FailureKind.MISSING_REQUIRED_FIELD,
-                            "executor",
-                            agent_failure_context={
-                                "explanation": f"Request body must be valid JSON: {exc}"
-                            },
-                        ),
-                    ),
-                    status=400,
-                )
-            client_id = payload.get("client_id") if isinstance(payload.get("client_id"), str) and payload.get("client_id").strip() else None
-            result = await asyncio.to_thread(_handle_agent_executor, payload, client_id=client_id)
-            _LOGGER.info("/vibecomfy/agent-executor result ok=%s stage=%s", result.get("ok"), result.get("stage"))
-            if result.get("ok") is False:
-                status = 500 if result.get("stage") == "route" else 400
-                return _web.json_response(result, status=status)
-            return _web.json_response(result)
 
         @_PromptServer.instance.routes.post("/vibecomfy/agent-edit/rating")
         async def agent_edit_rating_route(request):  # type: ignore[no-untyped-def]

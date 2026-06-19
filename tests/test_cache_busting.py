@@ -12,6 +12,7 @@ import os
 import shutil
 import subprocess
 import sys
+import hashlib
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -34,6 +35,18 @@ def _src_module_names() -> set[str]:
             continue
         names.add(f.name)
     return names
+
+
+def _source_hash() -> str:
+    digest = hashlib.sha256()
+    for f in sorted(p for p in WEB_SRC.iterdir() if p.is_file()):
+        if f.name.endswith((".bak", "~", ".orig", ".tmp")):
+            continue
+        digest.update(f.name.encode("utf-8"))
+        digest.update(b"\0")
+        digest.update(f.read_bytes())
+        digest.update(b"\0")
+    return digest.hexdigest()[:12]
 
 
 def _run_python_expr(expr: str, *, env: dict[str, str] | None = None) -> str:
@@ -144,6 +157,36 @@ class TestBuildHelper:
             if dest.exists():
                 shutil.rmtree(dest)
 
+    def test_force_overwrites_destination(self):
+        """The helper can deliberately replace an existing destination."""
+        tag = "test-cb-force-overwrite"
+        dest = WEB_DIST / tag
+        if dest.exists():
+            shutil.rmtree(dest)
+
+        try:
+            r1 = subprocess.run(
+                ["bash", str(BUILD_SCRIPT), "--dir", tag],
+                capture_output=True,
+                text=True,
+                cwd=str(ROOT),
+            )
+            assert r1.returncode == 0, f"First build failed: {r1.stderr}"
+            stale = dest / "stale.js"
+            stale.write_text("// stale")
+
+            r2 = subprocess.run(
+                ["bash", str(BUILD_SCRIPT), "--dir", tag, "--force"],
+                capture_output=True,
+                text=True,
+                cwd=str(ROOT),
+            )
+            assert r2.returncode == 0, f"Force build failed: {r2.stderr}"
+            assert not stale.exists(), "--force should replace the destination"
+        finally:
+            if dest.exists():
+                shutil.rmtree(dest)
+
     def test_excludes_backup_files(self):
         """The helper excludes .bak files from the dist copy."""
         tag = "test-cb-excludes-bak"
@@ -172,14 +215,8 @@ class TestBuildHelper:
         tag_dest_pairs: list[tuple[str, Path]] = []
         try:
             for i in range(2):
-                # Remove any pre-existing hash dist so the build doesn't bail
-                if i == 1 and tag_dest_pairs:
-                    prev_dest = tag_dest_pairs[0][1]
-                    if prev_dest.exists():
-                        shutil.rmtree(prev_dest)
-
                 result = subprocess.run(
-                    ["bash", str(BUILD_SCRIPT), "--hash"],
+                    ["bash", str(BUILD_SCRIPT), "--hash", "--force"],
                     capture_output=True,
                     text=True,
                     cwd=str(ROOT),
@@ -191,6 +228,7 @@ class TestBuildHelper:
                     ln for ln in result.stdout.splitlines() if "Tag:" in ln
                 ][0]
                 tag = tag_line.split("Tag:")[1].strip()
+                assert tag == _source_hash()
                 assert len(tag) == 12, f"Expected 12-char hash tag, got {tag!r}"
                 assert all(c in "0123456789abcdef" for c in tag), (
                     f"Tag is not hex: {tag!r}"
@@ -204,8 +242,9 @@ class TestBuildHelper:
                 "--hash should be deterministic across runs"
             )
         finally:
+            current_hash = _source_hash()
             for _, d in tag_dest_pairs:
-                if d.exists():
+                if d.exists() and d.name != current_hash:
                     shutil.rmtree(d)
 
     def test_git_sha_produces_full_sha_tag(self):
@@ -314,32 +353,32 @@ class TestWebDirectoryResolver:
                 shutil.rmtree(WEB_DIST)
             self._restore_web_dist()
 
-    def test_selects_newest_dist(self):
-        """WEB_DIRECTORY selects the newest valid subdirectory by mtime."""
+    def test_selects_matching_source_hash_before_newest_dist(self):
+        """WEB_DIRECTORY prefers the dist matching the current source hash."""
         self._save_web_dist()
         WEB_DIST.mkdir(exist_ok=True)
 
-        older = WEB_DIST / "test-older-aaa"
+        matching = WEB_DIST / _source_hash()
         newer = WEB_DIST / "test-newer-bbb"
-        for d in (older, newer):
+        for d in (matching, newer):
             if d.exists():
                 shutil.rmtree(d)
 
         try:
-            older.mkdir(parents=True, exist_ok=True)
-            (older / "placeholder.js").write_text("// older")
+            matching.mkdir(parents=True, exist_ok=True)
+            (matching / "placeholder.js").write_text("// matching")
             newer.mkdir(parents=True, exist_ok=True)
             (newer / "placeholder.js").write_text("// newer")
 
-            os.utime(str(older), (1000.0, 1000.0))
+            os.utime(str(matching), (1000.0, 1000.0))
             os.utime(str(newer), (2000.0, 2000.0))
 
             val = _get_web_directory()
-            assert val == "./web_dist/test-newer-bbb", (
-                f"Expected './web_dist/test-newer-bbb' (newest), got {val!r}"
+            assert val == f"./web_dist/{matching.name}", (
+                f"Expected './web_dist/{matching.name}' (matching source hash), got {val!r}"
             )
         finally:
-            for d in (older, newer):
+            for d in (matching, newer):
                 if d.exists():
                     shutil.rmtree(d)
             if WEB_DIST.exists():
@@ -396,3 +435,8 @@ class TestWebDirectoryResolver:
         assert resolved.is_dir(), (
             f"WEB_DIRECTORY {val!r} does not resolve to an existing directory"
         )
+        for name in _src_module_names():
+            assert (resolved / name).is_file(), f"{name} missing from resolved dist"
+            assert (resolved / name).read_bytes() == (WEB_SRC / name).read_bytes(), (
+                f"{name} differs between source and resolved dist"
+            )

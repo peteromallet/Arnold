@@ -15,7 +15,7 @@ from __future__ import annotations
 import tempfile
 import textwrap
 from pathlib import Path
-from typing import Generator
+from typing import Any, Generator
 from unittest import mock
 
 import pytest
@@ -28,6 +28,7 @@ from vibecomfy.executor.contracts import (
     Report,
     ResearchResult,
 )
+from vibecomfy.executor import core as executor_core
 from vibecomfy.executor.core import run_executor
 from vibecomfy.executor.profiles import set_profile_override_dir
 
@@ -782,6 +783,55 @@ class TestGraphDescribeFlow:
         classify_call_kwargs = mock_classify.call_args.kwargs
         assert classify_call_kwargs.get("has_graph") is True
 
+    @mock.patch("vibecomfy.executor.core.run_classify_turn", side_effect=_fake_classify_graph_describe)
+    @mock.patch("vibecomfy.executor.core.run_reply_turn", side_effect=_fake_reply_graph_describe)
+    @mock.patch("vibecomfy.executor.core.handle_agent_edit", side_effect=_fake_handle_agent_edit)
+    @mock.patch("vibecomfy.executor.research.build_search_corpus")
+    @mock.patch(
+        "vibecomfy.executor.core._default_hivemind_client",
+        side_effect=_empty_hivemind_client,
+    )
+    def test_research_context_is_forwarded_to_implementation(
+        self, mock_hivemind, mock_corpus, mock_edit, mock_reply, mock_classify, profile_dir: Path
+    ) -> None:
+        """Research output is available to the edit engine, not only reply."""
+        from vibecomfy.search.index import SearchEntry
+
+        source_path = (
+            "ready_templates/sources/custom_nodes/ltxvideo/runexx/"
+            "LTX-2.3_V2V_Just_Talk_custom_audio_lipsync.py"
+        )
+        mock_corpus.return_value = [
+            SearchEntry(
+                class_type="LTXRuneXXCustomAudioLipsync",
+                description="LTX RuneXX custom audio lipsync workflow template",
+                pack="ltxvideo",
+                tags=("ltx", "audio", "lipsync", "i2v"),
+                tasks=("i2v", "audio"),
+                source="custom_node_examples",
+                path=source_path,
+            ),
+        ]
+
+        input_graph = {"nodes": [{"id": 1, "class_type": "LTXImageToVideo"}]}
+        request = ExecutorRequest(
+            query="Add voice audio input so the generated character speaks from my clip.",
+            graph=input_graph,
+            profile="default",
+        )
+        result = run_executor(request)
+
+        assert result.ok is True
+        payload = mock_edit.call_args.args[0]
+        assert "LTXRuneXXCustomAudioLipsync" in payload["research_summary"]
+        assert source_path in payload["research_summary"]
+        assert payload["research_sources"][0]["path"] == source_path
+        assert payload["executor_research"]["sources"][0]["source"] == "custom_node_examples"
+        reply_kwargs = mock_reply.call_args.kwargs
+        assert "LTXRuneXXCustomAudioLipsync" in reply_kwargs["research_summary"]
+        assert source_path in reply_kwargs["research_summary"]
+        assert reply_kwargs["implementation_message"] == "Added a KSampler node to the graph."
+
 
 # ── Explain-graph flow tests ─────────────────────────────────────────────────
 
@@ -923,6 +973,60 @@ class TestExecutorEdgeCases:
 
     @mock.patch("vibecomfy.executor.core.run_classify_turn", side_effect=_fake_classify_respond_only)
     @mock.patch("vibecomfy.executor.core.run_reply_turn", side_effect=_fake_reply_respond_only)
+    @mock.patch("vibecomfy.executor.core._ws_send")
+    def test_classify_progress_event_includes_plan_summary_and_intent(
+        self, mock_ws_send, mock_reply, mock_classify, profile_dir: Path
+    ) -> None:
+        """The Decide stage receives the model's classification direction."""
+        request = ExecutorRequest(
+            query="hello",
+            session_id="session-plan",
+            profile="default",
+        )
+        result = run_executor(request, client_id="client-1")
+
+        assert result.ok is True
+        phase_payloads = [
+            call.args[1]
+            for call in mock_ws_send.call_args_list
+            if call.args[0] == "vibecomfy.executor.phase"
+        ]
+        classify_progress = next(
+            payload
+            for payload in phase_payloads
+            if payload["phase"] == "classify" and payload["status"] == "progress"
+        )
+        assert classify_progress["plan_summary"] == "simple chat reply"
+        assert classify_progress["intent"] == "respond"
+
+    @mock.patch("vibecomfy.executor.core._ws_send")
+    def test_classify_phase_event_derives_summary_when_plan_summary_empty(
+        self, mock_ws_send
+    ) -> None:
+        request = ExecutorRequest(query="edit it", session_id="session-fallback")
+        plan = ClassifyDecision(
+            research=True,
+            implement=True,
+            reply=True,
+            plan_summary="",
+            intent="edit",
+        )
+
+        executor_core._emit_executor_phase_event(
+            request,
+            executor_id="executor-fallback",
+            phase="classify",
+            status="progress",
+            plan=plan,
+            client_id="client-1",
+        )
+
+        payload = mock_ws_send.call_args.args[1]
+        assert payload["plan_summary"] == "Research relevant context, then edit the graph."
+        assert payload["intent"] == "edit"
+
+    @mock.patch("vibecomfy.executor.core.run_classify_turn", side_effect=_fake_classify_respond_only)
+    @mock.patch("vibecomfy.executor.core.run_reply_turn", side_effect=_fake_reply_respond_only)
     def test_missing_profile_file_fails_gracefully(
         self, mock_reply, mock_classify, profile_dir: Path
     ) -> None:
@@ -1037,4 +1141,3 @@ class TestExecutorFailureHandling:
 
         assert result.ok is False
         assert result.failure_stage == "implement"
-

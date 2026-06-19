@@ -12,6 +12,12 @@ import {
 } from "../../vibecomfy/comfy_nodes/web/agent_edit_lifecycle.js";
 import { syncComposerButtons } from "../../vibecomfy/comfy_nodes/web/panel_composer.js";
 
+import {
+  reduceAgentActivityFeed,
+  deriveAgentActivityState,
+  normalizeAgentTurnPayload,
+} from "../../vibecomfy/comfy_nodes/web/agent_turn_feed.js";
+
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
 function makePanel(overrides = {}) {
@@ -2875,6 +2881,638 @@ test("All foundation transitions return plain obligations objects", () => {
     // Must be a plain object (not a class instance or array)
     assert.equal(Object.getPrototypeOf(result), Object.prototype, `${name} must return plain object`);
   }
+});
+
+
+
+// ── Feed lifecycle helpers ───────────────────────────────────────────────
+
+/**
+ * Build a minimal raw payload and derive canonical activity state.
+ * Defaults to no statements so headline comes from 'message'.
+ */
+function makeActivity(overrides = {}) {
+  const raw = {
+    session_id: "sess-lifecycle",
+    turn_id: "0001",
+    turn_number: 1,
+    status: "progress",
+    message: null,
+    statements: [],
+    entry_type: "batch",
+    ...overrides,
+  };
+  const normalized = normalizeAgentTurnPayload(raw);
+  return deriveAgentActivityState(normalized);
+}
+
+// ── Websocket partial → HTTP final reconciliation ────────────────────────
+
+test("websocket partial followed by HTTP final reconciles without duplication", () => {
+  let feed = [];
+
+  // Step 1: websocket partial arrives (in_progress, no statements)
+  const wsPartial = makeActivity({
+    turn_id: "0001", turn_number: 1,
+    status: "progress",
+    message: "Analyzing request...",
+  });
+  feed = reduceAgentActivityFeed(feed, wsPartial, { source: "websocket" });
+  assert.equal(feed.length, 1, "websocket partial creates one entry");
+  assert.equal(feed[0].status, "in_progress", "legacy progress normalized to in_progress");
+  assert.ok(feed[0].phase_progress, "phase_progress must be present");
+  // No statements and no landed ops → decide is active
+  // With turn_number=1, decide is "done" (turns have passed decide phase)
+  assert.equal(feed[0].phase_progress.decide, "done");
+
+  // Step 2: HTTP final response arrives for same turn (with statements, done)
+  const httpFinal = makeActivity({
+    turn_id: "0001", turn_number: 1,
+    status: "done",
+    message: "Updated cfg scale to 7.5",
+    done_summary: "Changed cfg from 7.0 → 7.5",
+    landed_op_count: 2,
+    statement_count: 4,
+    statements: [
+      { op_kind: "decide", ok: true, landed: true, message: "Plan: update cfg", statement_index: 0 },
+      { op_kind: "set_node_field", ok: true, landed: true, message: "Set cfg to 7.5", statement_index: 1 },
+      { op_kind: "done", ok: true, landed: true, message: "done()", statement_index: 2 },
+    ],
+  });
+  feed = reduceAgentActivityFeed(feed, httpFinal, { source: "http" });
+  assert.equal(feed.length, 1, "HTTP final must replace in place, not duplicate");
+  assert.equal(feed[0].status, "done", "terminal status from HTTP");
+  // Headline from latest substantive statement (done() excluded)
+  assert.equal(feed[0].headline, "Set cfg to 7.5");
+  // Phase progress all done
+  assert.equal(feed[0].phase_progress.decide, "done");
+  assert.equal(feed[0].phase_progress.research, "done");
+  assert.equal(feed[0].phase_progress.execute, "done");
+  assert.equal(feed[0].phase_progress.review, "done");
+});
+
+test("active-state clearing: in_progress phases transition to all-done on completion", () => {
+  let feed = [];
+
+  // websocket in_progress with statements to get active research
+  const wsPartial = makeActivity({
+    turn_id: "0001", turn_number: 1,
+    status: "progress",
+    message: "Planning...",
+    statements: [
+      { op_kind: "decide", ok: true, landed: true, message: "Plan", statement_index: 0 },
+    ],
+  });
+  feed = reduceAgentActivityFeed(feed, wsPartial, { source: "websocket" });
+  // landed ops > 0 → execute active
+  const wsPhases = feed[0].phase_progress;
+  const hasActive = wsPhases.decide === "active"
+    || wsPhases.research === "active"
+    || wsPhases.execute === "active";
+  assert.ok(hasActive, "in_progress entry must have at least one active phase");
+
+  // HTTP final done
+  const httpFinal = makeActivity({
+    turn_id: "0001", turn_number: 1,
+    status: "done",
+    message: "Done",
+    landed_op_count: 1,
+    statement_count: 2,
+    statements: [
+      { op_kind: "decide", ok: true, landed: true, message: "Plan", statement_index: 0 },
+      { op_kind: "done", ok: true, landed: true, message: "done()", statement_index: 1 },
+    ],
+  });
+  feed = reduceAgentActivityFeed(feed, httpFinal, { source: "http" });
+
+  // All phases must be "done" — no active state
+  const finalPhases = feed[0].phase_progress;
+  assert.equal(finalPhases.decide, "done");
+  assert.equal(finalPhases.research, "done");
+  assert.equal(finalPhases.execute, "done");
+  assert.equal(finalPhases.review, "done");
+  assert.equal(
+    finalPhases.decide === "active" || finalPhases.research === "active" || finalPhases.execute === "active",
+    false,
+    "no active phases remain after terminal status"
+  );
+});
+
+test("preservation of durable final turn details across websocket→HTTP reconciliation", () => {
+  let feed = [];
+
+  const wsPartial = makeActivity({
+    turn_id: "0042", turn_number: 42,
+    session_id: "sess-durable",
+    status: "progress",
+    message: "Working on it...",
+  });
+  feed = reduceAgentActivityFeed(feed, wsPartial, { source: "websocket" });
+
+  const httpFinal = makeActivity({
+    session_id: "sess-durable",
+    turn_id: "0042", turn_number: 42,
+    status: "done",
+    message: "Changed cfg from 7.0 → 7.5",
+    done_summary: "1 node updated (cfg scale)",
+    landed_op_count: 1,
+    statement_count: 3,
+    statements: [
+      { op_kind: "decide", ok: true, landed: true, message: "Plan", statement_index: 0 },
+      { op_kind: "set_node_field", ok: true, landed: true, message: "Set cfg to 7.5", statement_index: 1 },
+      { op_kind: "done", ok: true, landed: true, message: "done()", statement_index: 2 },
+    ],
+  });
+  feed = reduceAgentActivityFeed(feed, httpFinal, { source: "http" });
+
+  const entry = feed[0];
+  // Durable turn identity preserved
+  assert.equal(entry.turn_id, "0042");
+  assert.equal(entry.turn_number, 42);
+  assert.equal(entry.session_id, "sess-durable");
+  assert.equal(entry.entry_type, "batch");
+
+  // Status/outcome preserved
+  assert.equal(entry.status, "done");
+  assert.equal(entry.outcome.kind, "done");
+  assert.ok(entry.outcome.summary, "outcome summary must be present");
+
+  // Headline from latest substantive statement
+  assert.equal(entry.headline, "Set cfg to 7.5");
+
+  // Counts preserved
+  assert.ok(entry.counts, "counts must be present");
+  assert.ok(entry.counts.total > 0, "statement count preserved");
+
+  // Details preserved
+  assert.ok(Array.isArray(entry.details), "details array preserved");
+  assert.ok(entry.details.length > 0, "details not empty");
+});
+
+test("pending-message label updates from canonical headline on each websocket progress event", () => {
+  let feed = [];
+
+  // First websocket event — no statements, so headline from message
+  let ws = makeActivity({
+    turn_id: "0001", turn_number: 1,
+    message: "Analyzing your request...",
+    status: "progress",
+    statements: [],
+  });
+  feed = reduceAgentActivityFeed(feed, ws, { source: "websocket" });
+  assert.equal(feed[0].headline, "Analyzing your request...");
+
+  // Second websocket event with statements
+  ws = makeActivity({
+    turn_id: "0001", turn_number: 1,
+    message: "Working...",
+    status: "progress",
+    statements: [
+      { op_kind: "research", ok: true, landed: false, message: "Checking node references", statement_index: 0 },
+    ],
+  });
+  feed = reduceAgentActivityFeed(feed, ws, { source: "websocket" });
+  // Headline from latest substantive statement
+  assert.equal(feed[0].headline, "Checking node references");
+
+  // Third websocket event — landed ops exist
+  ws = makeActivity({
+    turn_id: "0001", turn_number: 1,
+    status: "progress",
+    statements: [
+      { op_kind: "decide", ok: true, landed: true, message: "I'll update the node", statement_index: 0 },
+      { op_kind: "set_node_field", ok: true, landed: true, message: "Set cfg to 7.5", statement_index: 1 },
+    ],
+    landed_op_count: 1,
+  });
+  feed = reduceAgentActivityFeed(feed, ws, { source: "websocket" });
+  assert.equal(feed[0].headline, "Set cfg to 7.5",
+    "headline updates with each progress event");
+  // Phase should reflect executing now (has landed ops)
+  assert.equal(feed[0].phase_progress.execute, "active");
+
+  // HTTP final — headline still from latest substantive statement
+  const httpFinal = makeActivity({
+    turn_id: "0001", turn_number: 1,
+    status: "done",
+    message: "Completed",
+    done_summary: "1 node updated (cfg scale)",
+    statements: [
+      { op_kind: "decide", ok: true, landed: true, message: "I'll update the node", statement_index: 0 },
+      { op_kind: "set_node_field", ok: true, landed: true, message: "Set cfg to 7.5", statement_index: 1 },
+      { op_kind: "done", ok: true, landed: true, message: "done()", statement_index: 2 },
+    ],
+    landed_op_count: 1,
+    statement_count: 3,
+  });
+  feed = reduceAgentActivityFeed(feed, httpFinal, { source: "http" });
+  // done() excluded from headline selection
+  assert.equal(feed[0].headline, "Set cfg to 7.5");
+});
+
+// ── Multi-turn lifecycle ─────────────────────────────────────────────────
+
+test("multi-turn lifecycle: websocket partials interleaved with HTTP finals preserve all turns", () => {
+  let feed = [];
+
+  feed = reduceAgentActivityFeed(feed, makeActivity({
+    turn_id: "0001", turn_number: 1, session_id: "sess-multi",
+    status: "progress", message: "T1 analyzing",
+  }), { source: "websocket" });
+  assert.equal(feed.length, 1);
+
+  feed = reduceAgentActivityFeed(feed, makeActivity({
+    turn_id: "0001", turn_number: 1, session_id: "sess-multi",
+    status: "done", message: "T1 done", done_summary: "T1: cfg updated",
+    landed_op_count: 1, statement_count: 2,
+  }), { source: "http" });
+  assert.equal(feed.length, 1);
+  assert.equal(feed[0].status, "done");
+  assert.equal(feed[0].turn_id, "0001");
+
+  feed = reduceAgentActivityFeed(feed, makeActivity({
+    turn_id: "0002", turn_number: 2, session_id: "sess-multi",
+    status: "progress", message: "T2 analyzing",
+  }), { source: "websocket" });
+  assert.equal(feed.length, 2);
+
+  feed = reduceAgentActivityFeed(feed, makeActivity({
+    turn_id: "0003", turn_number: 3, session_id: "sess-multi",
+    status: "progress", message: "T3 analyzing",
+  }), { source: "websocket" });
+  assert.equal(feed.length, 3);
+
+  feed = reduceAgentActivityFeed(feed, makeActivity({
+    turn_id: "0002", turn_number: 2, session_id: "sess-multi",
+    status: "done", message: "T2 done", done_summary: "T2: node added",
+    landed_op_count: 1, statement_count: 2,
+  }), { source: "http" });
+  assert.equal(feed[0].status, "done"); // T1 still done
+  assert.equal(feed[1].status, "done"); // T2 now done
+  assert.equal(feed[2].status, "in_progress"); // T3 still in progress
+
+  feed = reduceAgentActivityFeed(feed, makeActivity({
+    turn_id: "0003", turn_number: 3, session_id: "sess-multi",
+    status: "done", message: "T3 done", done_summary: "T3: mode changed",
+    landed_op_count: 1, statement_count: 2,
+  }), { source: "http" });
+  assert.equal(feed.length, 3, "all three turns preserved");
+  for (const entry of feed) {
+    assert.equal(entry.status, "done", "all turns terminal after HTTP finals");
+    assert.equal(entry.phase_progress.decide, "done");
+  }
+});
+
+test("multi-turn lifecycle: historical turn details survive new turn reconciliation", () => {
+  let feed = [];
+
+  // Turn 1 done via HTTP — no statements, so headline from message
+  feed = reduceAgentActivityFeed(feed, makeActivity({
+    turn_id: "0001", turn_number: 1, session_id: "sess-hist",
+    status: "done", message: "T1: added node", done_summary: "Added KSampler",
+    landed_op_count: 1, statement_count: 2,
+    statements: [],
+  }), { source: "http" });
+  assert.equal(feed[0].headline, "T1: added node");
+  assert.equal(feed[0].outcome.summary, "Added KSampler");
+
+  // Turn 2 done via HTTP
+  feed = reduceAgentActivityFeed(feed, makeActivity({
+    turn_id: "0002", turn_number: 2, session_id: "sess-hist",
+    status: "done", message: "T2: changed prompt", done_summary: "Updated prompt text",
+    landed_op_count: 1, statement_count: 3,
+    statements: [],
+  }), { source: "http" });
+  assert.equal(feed[1].headline, "T2: changed prompt");
+  assert.equal(feed[1].outcome.summary, "Updated prompt text");
+
+  // Verify both turns preserved (turn order by arrival)
+  const turn1 = feed[0];
+  assert.equal(turn1.turn_id, "0001");
+  assert.equal(turn1.headline, "T1: added node");
+  assert.equal(turn1.outcome.summary, "Added KSampler");
+  assert.equal(turn1.status, "done");
+
+  const turn2 = feed[1];
+  assert.equal(turn2.turn_id, "0002");
+  assert.equal(turn2.headline, "T2: changed prompt");
+  assert.equal(turn2.outcome.summary, "Updated prompt text");
+  assert.equal(turn2.status, "done");
+
+  // Feed must be frozen (immutable)
+  assert.throws(() => { feed.push({}); }, /frozen|not extensible|read.only/i,
+    "reduceAgentActivityFeed must return frozen arrays");
+});
+
+// ── Clarify / error / budget_exhausted lifecycle ─────────────────────────
+
+test("clarify outcome lifecycle: websocket in_progress → HTTP clarify clears active state, preserves clarification", () => {
+  let feed = [];
+
+  feed = reduceAgentActivityFeed(feed, makeActivity({
+    turn_id: "0001", turn_number: 1,
+    status: "progress", message: "Analyzing...",
+  }), { source: "websocket" });
+  assert.equal(feed[0].status, "in_progress");
+
+  const clarifyActivity = makeActivity({
+    turn_id: "0001", turn_number: 1,
+    status: "clarify",
+    message: "Which cfg value would you prefer?",
+    clarification_required: true,
+    clarification_message: "Please specify cfg range",
+  });
+
+  feed = reduceAgentActivityFeed(feed, clarifyActivity, { source: "http" });
+  assert.equal(feed[0].status, "clarify");
+  assert.equal(feed[0].outcome.kind, "clarify");
+  assert.equal(feed[0].outcome.clarification_required, true);
+  assert.equal(feed[0].outcome.clarification_message, "Please specify cfg range");
+  assert.equal(feed[0].phase_progress.decide, "done");
+  assert.equal(feed[0].phase_progress.review, "done");
+});
+
+test("error outcome lifecycle: websocket in_progress → HTTP error clears active state, preserves diagnostics", () => {
+  let feed = [];
+
+  feed = reduceAgentActivityFeed(feed, makeActivity({
+    turn_id: "0001", turn_number: 1,
+    status: "progress", message: "Working...",
+  }), { source: "websocket" });
+
+  const errorActivity = makeActivity({
+    turn_id: "0001", turn_number: 1,
+    status: "error",
+    message: "Backend unavailable",
+    diagnostics: [
+      { code: "E_BACKEND", message: "Connection refused on port 8188" },
+    ],
+  });
+
+  feed = reduceAgentActivityFeed(feed, errorActivity, { source: "http" });
+  assert.equal(feed[0].status, "error");
+  assert.equal(feed[0].outcome.kind, "error");
+  assert.ok(feed[0].outcome.summary, "error outcome has summary");
+  assert.ok(Array.isArray(feed[0].diagnostics), "diagnostics preserved");
+  assert.equal(feed[0].diagnostics[0].code, "E_BACKEND");
+  assert.equal(feed[0].phase_progress.decide, "done");
+  assert.equal(feed[0].phase_progress.execute, "done");
+});
+
+test("budget_exhausted outcome lifecycle: websocket in_progress → HTTP budget_exhausted clears active state, preserves budget", () => {
+  let feed = [];
+
+  feed = reduceAgentActivityFeed(feed, makeActivity({
+    turn_id: "0001", turn_number: 1,
+    status: "progress", message: "Working...",
+  }), { source: "websocket" });
+
+  const budgetActivity = makeActivity({
+    turn_id: "0001", turn_number: 1,
+    status: "budget_exhausted",
+    message: "Budget limit reached",
+    budget: { remaining_batches: 0, consecutive_errors: 3 },
+  });
+
+  feed = reduceAgentActivityFeed(feed, budgetActivity, { source: "http" });
+  assert.equal(feed[0].status, "budget_exhausted");
+  assert.equal(feed[0].outcome.kind, "budget_exhausted");
+  assert.ok(feed[0].outcome.summary.includes("Budget exhausted"),
+    "budget exhausted outcome has descriptive summary");
+  assert.equal(feed[0].phase_progress.decide, "done");
+  assert.equal(feed[0].phase_progress.execute, "done");
+});
+
+// ── Regression protections in lifecycle context ─────────────────────────
+
+test("stale websocket in_progress after HTTP final terminal is rejected (terminal→active regression)", () => {
+  let feed = [];
+
+  feed = reduceAgentActivityFeed(feed, makeActivity({
+    turn_id: "0001", turn_number: 1, session_id: "sess-regress",
+    status: "done", message: "Completed", done_summary: "Done",
+    landed_op_count: 1, statement_count: 2,
+  }), { source: "http" });
+  assert.equal(feed[0].status, "done");
+
+  const lateWs = makeActivity({
+    turn_id: "0001", turn_number: 1, session_id: "sess-regress",
+    status: "progress", message: "Wait, still working...",
+  });
+  const result = reduceAgentActivityFeed(feed, lateWs, { source: "websocket" });
+  assert.equal(result, feed, "late websocket in_progress must be rejected");
+  assert.equal(result[0].status, "done", "terminal done status preserved");
+});
+
+test("HTTP final for same turn as existing in_progress replaces entry with terminal details intact", () => {
+  let feed = [];
+
+  feed = reduceAgentActivityFeed(feed, makeActivity({
+    turn_id: "0099", turn_number: 99,
+    session_id: "sess-replace",
+    status: "progress", message: "T99 working",
+  }), { source: "websocket" });
+
+  const httpFinal = makeActivity({
+    turn_id: "0099", turn_number: 99,
+    session_id: "sess-replace",
+    status: "done",
+    message: "T99 complete",
+    done_summary: "T99: cfg updated",
+    landed_op_count: 3,
+    statement_count: 7,
+    statements: [
+      { op_kind: "decide", ok: true, landed: true, message: "Plan", statement_index: 0 },
+      { op_kind: "set_node_field", ok: true, landed: true, message: "Edit 1", statement_index: 1 },
+      { op_kind: "set_node_field", ok: true, landed: true, message: "Edit 2", statement_index: 2 },
+      { op_kind: "set_node_field", ok: true, landed: true, message: "Edit 3", statement_index: 3 },
+      { op_kind: "done", ok: true, landed: true, message: "done()", statement_index: 4 },
+    ],
+  });
+  feed = reduceAgentActivityFeed(feed, httpFinal, { source: "http" });
+
+  assert.equal(feed.length, 1);
+  const entry = feed[0];
+  assert.equal(entry.status, "done");
+  assert.equal(entry.turn_id, "0099");
+  assert.equal(entry.turn_number, 99);
+  assert.equal(entry.session_id, "sess-replace");
+  assert.equal(entry.outcome.kind, "done");
+  assert.ok(typeof entry.outcome.landed_ops === "number", "landed ops count field present");
+  // counts from statements array: 5 statements total
+  assert.ok(entry.counts.total >= 5, "statement count preserved (from statements array)");
+
+  // Verify details array has expected categories
+  const detailKinds = entry.details.map(d => d.kind);
+  assert.ok(detailKinds.includes("identity"), "identity detail preserved");
+  assert.ok(detailKinds.includes("counts") || detailKinds.includes("statements"),
+    "counts or statements detail preserved");
+  assert.ok(detailKinds.includes("done_summary") || detailKinds.includes("message"),
+    "message or done_summary detail preserved");
+});
+
+// ── Answer-only / no-edit turn lifecycle ────────────────────────────────
+
+test("answer-only turn: websocket in_progress → HTTP done with no substantive statements preserves answer outcome", () => {
+  let feed = [];
+
+  const wsPartial = makeActivity({
+    turn_id: "0001", turn_number: 1,
+    status: "progress", message: "Looking up information...",
+  });
+  feed = reduceAgentActivityFeed(feed, wsPartial, { source: "websocket" });
+  assert.equal(feed[0].status, "in_progress");
+
+  const answerActivity = makeActivity({
+    turn_id: "0001", turn_number: 1,
+    status: "done",
+    message: "The cfg scale controls how closely the sampler follows your prompt.",
+    statements: [
+      { op_kind: "done", ok: true, landed: true, message: "done()", statement_index: 0 },
+    ],
+    landed_op_count: 0,
+    statement_count: 1,
+  });
+
+  feed = reduceAgentActivityFeed(feed, answerActivity, { source: "http" });
+  assert.equal(feed[0].status, "done");
+  assert.equal(feed[0].outcome.kind, "answered",
+    "answer-only turn gets 'answered' outcome kind");
+  assert.equal(feed[0].outcome.graph_changes, false);
+  assert.equal(feed[0].outcome.summary, "The cfg scale controls how closely the sampler follows your prompt.");
+  assert.equal(feed[0].phase_progress.execute, "done");
+});
+
+// ── Durable details persistence across lifecycle ────────────────────────
+
+test("durable details array includes identity, message, statements, and counts after HTTP reconciliation", () => {
+  let feed = [];
+
+  feed = reduceAgentActivityFeed(feed, makeActivity({
+    turn_id: "0007", turn_number: 7,
+    session_id: "sess-details",
+    status: "progress",
+    message: "Starting work...",
+  }), { source: "websocket" });
+
+  const httpFinal = makeActivity({
+    turn_id: "0007", turn_number: 7,
+    session_id: "sess-details",
+    status: "done",
+    message: "Work complete",
+    done_summary: "2 nodes updated",
+    landed_op_count: 2,
+    statement_count: 5,
+    statements: [
+      { op_kind: "decide", ok: true, landed: true, message: "Plan: update 2 nodes", statement_index: 0 },
+      { op_kind: "set_node_field", ok: true, landed: true, message: "Set cfg to 8.0", statement_index: 1 },
+      { op_kind: "set_node_field", ok: false, landed: false, message: "Failed to set steps", statement_index: 2 },
+      { op_kind: "set_node_field", ok: true, landed: true, message: "Set steps to 20", statement_index: 3 },
+      { op_kind: "done", ok: true, landed: true, message: "done()", statement_index: 4 },
+    ],
+  });
+  feed = reduceAgentActivityFeed(feed, httpFinal, { source: "http" });
+
+  const entry = feed[0];
+  assert.equal(entry.turn_id, "0007");
+  assert.equal(entry.turn_number, 7);
+
+  const detailKinds = entry.details.map(d => d.kind);
+  assert.ok(detailKinds.includes("identity"), "identity detail present");
+  assert.ok(detailKinds.includes("done_summary") || detailKinds.includes("message"),
+    "message/done_summary detail present");
+  assert.ok(detailKinds.includes("statements") || detailKinds.includes("counts"),
+    "statements or counts detail present");
+
+  // Counts from statements array (all 5, including done())
+  assert.equal(entry.counts.total, 5, "5 statements total");
+  assert.equal(entry.counts.landed, 4, "4 landed (decide + 2 set_node_field + done())");
+  assert.equal(entry.counts.ok, 4, "4 ok statements (Failed to set steps has ok: false)");
+  assert.equal(entry.counts.not_ok, 1, "1 not-ok (Failed to set steps has ok: false, not_ok counts not-ok)");
+
+  // Latest substantive statement is "Set steps to 20" (index 3, skipping done())
+  assert.equal(entry.latest_substantive_statement.op_kind, "set_node_field");
+  assert.equal(entry.latest_substantive_statement.message, "Set steps to 20");
+});
+
+test("details are bounded: statements capped at 5, diagnostics capped at 5", () => {
+  const stmts = [];
+  for (let i = 0; i < 10; i++) {
+    stmts.push({
+      op_kind: i === 9 ? "done" : "set_node_field",
+      ok: true,
+      landed: true,
+      message: `Change ${i + 1}`,
+      statement_index: i,
+    });
+  }
+  const diags = [];
+  for (let i = 0; i < 10; i++) {
+    diags.push({ code: `DIAG_${i}`, message: `Issue ${i}` });
+  }
+
+  const activity = makeActivity({
+    session_id: "sess-bounded",
+    turn_id: "0001",
+    turn_number: 1,
+    status: "done",
+    message: "Done",
+    statements: stmts,
+    diagnostics: diags,
+    statement_count: 10,
+    landed_op_count: 9,
+  });
+
+  const stmtDetail = activity.details.find(d => d.kind === "statements");
+  assert.ok(stmtDetail, "statements detail exists");
+  assert.equal(stmtDetail.shown, 5, "statements shown capped at 5");
+  assert.equal(stmtDetail.total, 10, "total preserved");
+
+  assert.ok(Array.isArray(activity.diagnostics));
+  assert.ok(activity.diagnostics.length <= 5, "diagnostics capped at 5");
+});
+
+// ── Feed immutability contract ──────────────────────────────────────────
+
+test("reduceAgentActivityFeed returns frozen arrays on every valid operation", () => {
+  let feed = [];
+
+  feed = reduceAgentActivityFeed(feed, makeActivity({
+    turn_id: "0001", turn_number: 1,
+  }), { source: "websocket" });
+  assert.ok(Object.isFrozen(feed), "feed array is frozen after websocket append");
+
+  feed = reduceAgentActivityFeed(feed, makeActivity({
+    turn_id: "0001", turn_number: 1,
+    status: "progress", message: "Updated",
+  }), { source: "websocket" });
+  assert.ok(Object.isFrozen(feed), "feed array is frozen after in-place update");
+
+  feed = reduceAgentActivityFeed(feed, makeActivity({
+    turn_id: "0001", turn_number: 1,
+    status: "done", message: "Done", done_summary: "Done",
+    landed_op_count: 1, statement_count: 2,
+  }), { source: "http" });
+  assert.ok(Object.isFrozen(feed), "feed array is frozen after HTTP replacement");
+  assert.ok(Object.isFrozen(feed[0]), "feed entries are frozen");
+});
+
+// ── Unknown / null edge cases in lifecycle flow ─────────────────────────
+
+test("reduceAgentActivityFeed with null/undefined feed starts fresh", () => {
+  const result = reduceAgentActivityFeed(null, makeActivity({
+    turn_id: "0001", turn_number: 1,
+  }), { source: "websocket" });
+  assert.equal(result.length, 1);
+  assert.equal(result[0].turn_id, "0001");
+});
+
+test("reduceAgentActivityFeed with non-array feed treats as empty", () => {
+  const result = reduceAgentActivityFeed({ not: "an array" }, makeActivity({
+    turn_id: "0001", turn_number: 1,
+  }), { source: "websocket" });
+  assert.ok(Array.isArray(result));
+  assert.equal(result.length, 1);
 });
 
 // ── RENDER_SECTIONS ─────────────────────────────────────────────────────────

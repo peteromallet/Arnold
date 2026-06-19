@@ -657,15 +657,24 @@ test("VibeComfy agent executor submit posts the live graph, renders the reply, a
         status: 200,
         body: { system: { comfyui_frontend_package: "1.39.19" } },
       },
-      "/vibecomfy/agent-executor": async () => {
+      "/vibecomfy/agent-edit": async () => {
         await pendingResponse;
         return {
           status: 200,
           body: {
             ok: true,
-            mode: "respond",
-            reply: "executor reply rendered",
             session_id: "session-1",
+            turn_id: "0001",
+            baseline_turn_id: null,
+            outcome: {
+              kind: "noop",
+              reason: "executor reply rendered",
+            },
+            graph_unchanged: true,
+            canvas_apply_allowed: false,
+            apply_allowed: false,
+            queue_allowed: false,
+            message: "executor reply rendered",
           },
         };
       },
@@ -711,14 +720,36 @@ test("VibeComfy agent executor submit posts the live graph, renders the reply, a
     firstSubmit = submitButton.click();
     duplicateSubmit = submitButton.click();
 
-    await waitFor(() => harness.requests.filter((entry) => entry.url === "/vibecomfy/agent-executor").length === 1);
+    await waitFor(() => harness.requests.filter((entry) => entry.url === "/vibecomfy/agent-edit").length === 1);
     await waitFor(() => harness.textDump().includes("tighten the prompt"));
     const pendingText = harness.textDump();
     assert.ok(pendingText.includes("previous user request"), "prior user message should remain visible while pending");
     assert.ok(pendingText.includes("previous agent reply"), "prior agent message should remain visible while pending");
     assert.ok(pendingText.includes("tighten the prompt"), "submitted user prompt should render immediately");
-    assert.ok(pendingText.includes("In progress..."), "pending agent bubble should render immediately");
+    assert.doesNotMatch(pendingText, /In progress\.\.\./, "pending agent bubble should not render a duplicate progress label");
     assert.ok(pendingText.includes("Decide") && pendingText.includes("Research") && pendingText.includes("Execute") && pendingText.includes("Review"));
+    const executorStage = (stage) => harness.document.body.querySelectorAll(
+      (node) => node.dataset?.vibecomfyExecutorStage === stage,
+    )[0];
+    assert.equal(
+      executorStage("decide")?.dataset?.vibecomfyExecutorStatus,
+      "active",
+      "initial pending bubble should show the decide stage as active",
+    );
+    harness.dispatchApiEvent("vibecomfy.executor.phase", {
+      phase: "implement",
+      status: "start",
+      session_id: "session-1",
+      executor_id: "executor-test",
+    });
+    await waitFor(() => (
+      executorStage("execute")?.dataset?.vibecomfyExecutorStatus === "active"
+    ));
+    assert.equal(
+      executorStage("research")?.dataset?.vibecomfyExecutorStatus,
+      "done",
+      "executor websocket phase should repaint the visible pending bubble",
+    );
     assert.doesNotMatch(pendingText, /Turn 1/, "executor pending/status chrome must not render Turn labels");
     assert.equal(
       harness.document.body.querySelectorAll((node) => node.className === "vibecomfy-batch-row").length,
@@ -730,18 +761,33 @@ test("VibeComfy agent executor submit posts the live graph, renders the reply, a
       "none",
       "executor pending status must not show the legacy below-thread activity strip",
     );
+    harness.dispatchApiEvent("vibecomfy.agent_edit.turn", {
+      session_id: "session-1",
+      turn_id: "0001",
+      turn_number: 1,
+      status: "progress",
+      landed_op_count: 1,
+      statement_count: 2,
+    });
+    await waitFor(() => (
+      executorStage("execute")?.dataset?.vibecomfyExecutorStatus === "active"
+    ));
+    assert.doesNotMatch(
+      harness.textDump(),
+      /In progress\.\.\./,
+      "agent-edit turn websocket progress should update stages without adding progress label text",
+    );
     assert.equal(
       harness.document.body.querySelectorAll((node) => node.dataset?.vibecomfyChatEmpty === "1" && node.style.display !== "none").length,
       0,
       "chat empty-state mount should be hidden after optimistic messages",
     );
 
-    const request = harness.requests.find((entry) => entry.url === "/vibecomfy/agent-executor");
+    const request = harness.requests.find((entry) => entry.url === "/vibecomfy/agent-edit");
     const payload = JSON.parse(request.body);
     assert.equal(request.method, "POST");
-    assert.equal(payload.query, "tighten the prompt");
+    assert.equal(payload.task, "tighten the prompt");
     assert.deepEqual(payload.graph, graph);
-    assert.equal(payload.profile, "default");
     assert.equal(payload.client_id, harness.api.clientId);
     assert.equal(payload.route, "openai-codex");
     assert.equal(payload.model, "gpt-5.1");
@@ -766,16 +812,6 @@ test("VibeComfy agent executor submit posts the live graph, renders the reply, a
       harness.document.body.querySelectorAll((node) => node.dataset?.vibecomfyChatEmpty === "1" && node.style.display !== "none").length,
       0,
       "chat empty-state mount should remain hidden after final reply",
-    );
-    assert.equal(
-      harness.document.body.querySelectorAll((node) => node.className === "vibecomfy-batch-row").length,
-      0,
-      "respond-only executor reply should not leave turn rows behind",
-    );
-    assert.equal(
-      harness.document.getElementById("vibecomfy-agent-panel-region-history")?.style.display,
-      "none",
-      "respond-only executor reply should not reveal the legacy below-thread activity strip",
     );
     assert.equal(harness.document.getElementById("vibecomfy-agent-panel-submit")?.textContent, "Submit");
   } finally {
@@ -804,15 +840,24 @@ test("VibeComfy executor submit preserves prior chat history while pending", asy
         status: 200,
         body: { system: { comfyui_frontend_package: "1.39.19" } },
       },
-      "/vibecomfy/agent-executor": async () => {
+      "/vibecomfy/agent-edit": async () => {
         await pendingResponse;
         return {
           status: 200,
           body: {
             ok: true,
-            mode: "respond",
-            reply: "second executor answer",
             session_id: "session-history",
+            turn_id: "0002",
+            baseline_turn_id: null,
+            outcome: {
+              kind: "noop",
+              reason: "second executor answer",
+            },
+            graph_unchanged: true,
+            canvas_apply_allowed: false,
+            apply_allowed: false,
+            queue_allowed: false,
+            message: "second executor answer",
           },
         };
       },
@@ -842,20 +887,24 @@ test("VibeComfy executor submit preserves prior chat history while pending", asy
 
     const panel = extensionModule.ensureAgentPanel();
     panel.state.chatMessages = [
-      { role: "user", text: "first user message", source: "agent-executor", local_id: "first-user" },
-      { role: "agent", text: "first agent answer", source: "agent-executor", local_id: "first-agent" },
+      { role: "user", text: "first user message", source: "agent-edit", local_id: "first-user" },
+      { role: "agent", text: "first agent answer", source: "agent-edit", local_id: "first-agent" },
     ];
     extensionModule.renderAgentPanel(panel, { dirtySections: ["THREAD"] });
 
     harness.document.getElementById("vibecomfy-agent-panel-prompt").value = "second user message";
     const submitPromise = harness.document.getElementById("vibecomfy-agent-panel-submit").click();
-    await waitFor(() => harness.requests.filter((entry) => entry.url === "/vibecomfy/agent-executor").length === 1);
+    await waitFor(() => harness.requests.filter((entry) => entry.url === "/vibecomfy/agent-edit").length === 1);
 
     const pendingText = harness.textDump();
     assert.match(pendingText, /first user message/);
     assert.match(pendingText, /first agent answer/);
     assert.match(pendingText, /second user message/);
-    assert.match(pendingText, /In progress\.\.\./);
+    assert.doesNotMatch(pendingText, /In progress\.\.\./);
+    assert.match(pendingText, /Decide/);
+    assert.match(pendingText, /Research/);
+    assert.match(pendingText, /Execute/);
+    assert.match(pendingText, /Review/);
     assert.doesNotMatch(pendingText, /Try an example/);
     assert.doesNotMatch(pendingText, /Turn 1/);
     assert.equal(
@@ -1498,6 +1547,93 @@ test("VibeComfy live submit no-op response shape settles in Ready without review
     assert.equal(harness.document.getElementById("vibecomfy-agent-panel-reject")?.disabled, true);
     assert.equal(harness.document.getElementById("vibecomfy-agent-panel-submit")?.disabled, false);
     assert.equal(harness.loadGraphDataCalls.length, 0);
+  } finally {
+    await Promise.allSettled([submitPromise].filter(Boolean));
+    await harness.dispose();
+  }
+});
+
+test("VibeComfy answer-only no-op response renders the assistant explanation", async () => {
+  const graph = {
+    nodes: [{ id: 1, type: "VHS_VideoCombine", properties: { vibecomfy_uid: "video-output" } }],
+    links: [],
+  };
+  const answer = "This workflow turns an input image into a short video with audio.";
+  const harness = await createBrowserHarness({
+    graph,
+    responses: {
+      "/system_stats": {
+        status: 200,
+        body: { system: { comfyui_frontend_package: "1.39.19" } },
+      },
+      "/vibecomfy/agent/status?route=auto": {
+        status: 200,
+        body: {
+          ok: true,
+          provider_available: true,
+          route: "deepseek",
+          requested_route: "auto",
+          route_options: {
+            auto: { requested_route: "auto", normalized_route: "deepseek", browser_api_key_allowed: false },
+          },
+        },
+      },
+      "/vibecomfy/agent-edit": {
+        status: 200,
+        body: {
+          ok: true,
+          session_id: "session-answer-noop",
+          turn_id: "0001",
+          graph_unchanged: true,
+          apply_allowed: false,
+          canvas_apply_allowed: false,
+          queue_allowed: false,
+          outcome: {
+            kind: "noop",
+            reason: "No edits applied - identity verified; Gate B passed. Summary: No operations were applied.",
+          },
+          graph,
+          report: {
+            done_summary: "No edits applied - identity verified; Gate B passed. Summary: No operations were applied.",
+            queue_blockers: [],
+          },
+          change_details: {
+            done_summary: "No edits applied - identity verified; Gate B passed. Summary: No operations were applied.",
+            batch_turns: [
+              {
+                turn_number: 0,
+                batch: "done()",
+                batch_ok: true,
+                landed_op_count: 0,
+                message: answer,
+                statements: [{ op_kind: "done", ok: true, landed: false }],
+              },
+            ],
+          },
+          message: answer,
+        },
+      },
+    },
+  });
+
+  let submitPromise;
+  try {
+    const extensionModule = await harness.loadExtension();
+    await harness.setup();
+    await harness.invokeCommand("VibeComfy.AgentEdit");
+    await waitFor(() => harness.requests.some((entry) => entry.url === "/vibecomfy/agent/status?route=auto"));
+
+    harness.document.getElementById("vibecomfy-agent-panel-prompt").value = "What's happening in this workflow?";
+    submitPromise = harness.clickButton("Submit");
+    await submitPromise;
+
+    const panel = extensionModule.ensureAgentPanel();
+    assert.equal(panel.state.phase, "IDLE");
+    assert.equal(panel.state.candidateGraph, null);
+    assert.equal(panel.state.applyAllowed, false);
+    assert.match(harness.textDump(), /turns an input image into a short video with audio/);
+    assert.doesNotMatch(harness.textDump(), /Nothing needed changing; the workflow already matches that\./);
+    assert.doesNotMatch(harness.textDump(), /Review Changes/);
   } finally {
     await Promise.allSettled([submitPromise].filter(Boolean));
     await harness.dispose();
@@ -13593,6 +13729,8 @@ test("VibeComfy chat thread mounts have containment styles to prevent horizontal
     assert.equal(messagesMount.style.minWidth, "0", "messages mount should have minWidth: 0");
     assert.equal(messagesMount.style.maxWidth, "100%", "messages mount should have maxWidth: 100%");
     assert.equal(messagesMount.style.overflowWrap, "anywhere", "messages mount should wrap overflow text");
+    assert.equal(messagesMount.style.alignContent, "start", "messages mount should top-align sparse messages");
+    assert.equal(messagesMount.style.alignItems, "start", "messages should keep natural height instead of stretching");
 
     // Older mount should have containment
     const olderMount = body.querySelectorAll(

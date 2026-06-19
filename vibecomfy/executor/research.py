@@ -34,6 +34,11 @@ _DEFAULT_HIVEMIND_TIMEOUT = 5.0  # seconds
 _DEFAULT_WEB_SEARCH_URL = "https://duckduckgo.com/html/"
 _DEFAULT_WEB_SEARCH_TIMEOUT = 5.0  # seconds
 _DEFAULT_EXTERNAL_LIMIT = 10
+WORKFLOW_RESEARCH_GUIDANCE = (
+    "Workflow/template exploration: use `vibecomfy workflows list --ready` to see ready templates; "
+    "explore or copy ready template `.py` representations with "
+    "`vibecomfy copy-to-recipe <template_id> --out <file.py> --strip-markers`."
+)
 
 # A Hivemind client is any callable (query: str, timeout: float) → dict.
 HivemindClient = Callable[[str, float], dict[str, Any]]
@@ -133,6 +138,7 @@ def _normalize_source(result: SearchResult) -> dict[str, Any]:
         "pack": entry.pack,
         "description": entry.description,
         "tasks": list(entry.tasks),
+        "path": entry.path,
     }
 
 
@@ -145,7 +151,36 @@ def _build_summary(sources: tuple[dict[str, Any], ...]) -> str:
     names = ", ".join(top3)
     if n > 3:
         names += f", and {n - 3} more"
-    return f"Found {n} local result(s): {names}"
+    result_scope = (
+        "research"
+        if any(str(source.get("source", "")).startswith(("hivemind", "web")) for source in sources)
+        else "local"
+    )
+    workflow_sources = [
+        source
+        for source in sources
+        if source.get("source") in {
+            "ready_template",
+            "source_workflow",
+            "external_workflow",
+            "curated",
+            "custom_node_examples",
+            "hivemind_workflow",
+        }
+        and source.get("path")
+        and str(source.get("path")).endswith(".py")
+    ]
+    if workflow_sources:
+        workflow_refs = ", ".join(
+            f"{source.get('class_type')} ({source.get('path')})"
+            for source in workflow_sources[:3]
+        )
+        return (
+            f"Found {n} {result_scope} result(s): {names}. "
+            f"Relevant workflow/template paths: {workflow_refs}. "
+            f"{WORKFLOW_RESEARCH_GUIDANCE}"
+        )
+    return f"Found {n} {result_scope} result(s): {names}"
 
 
 # ── Default direct-HTTP Hivemind client ──────────────────────────────────────
@@ -181,6 +216,28 @@ def _default_hivemind_client(query: str, timeout: float) -> dict[str, Any]:
         "or": f"({','.join(filters)})",
         "limit": str(_DEFAULT_EXTERNAL_LIMIT * 3),
     }
+    try:
+        parsed = _hivemind_get(params, timeout=timeout)
+        if isinstance(parsed, dict):
+            return parsed
+        rows = parsed if isinstance(parsed, list) else []
+
+        workflow_params = dict(params)
+        workflow_params["kind"] = "eq.workflow"
+        workflow_rows = _hivemind_get(workflow_params, timeout=timeout)
+        if isinstance(workflow_rows, list):
+            rows = [*workflow_rows, *rows]
+
+        return {"results": _rank_hivemind_rows(rows, query)[:_DEFAULT_EXTERNAL_LIMIT]}
+    except TimeoutError as exc:
+        raise HivemindError(f"Hivemind request timed out after {timeout}s") from exc
+    except urllib.error.URLError as exc:
+        raise HivemindError(f"Hivemind HTTP error: {exc}") from exc
+    except ValueError as exc:
+        raise HivemindError(f"Hivemind returned invalid JSON: {exc}") from exc
+
+
+def _hivemind_get(params: dict[str, str], *, timeout: float) -> Any:
     url = f"{_DEFAULT_HIVEMIND_URL}?{urlencode(params)}"
     req = urllib.request.Request(
         url,
@@ -191,22 +248,9 @@ def _default_hivemind_client(query: str, timeout: float) -> dict[str, Any]:
         },
         method="GET",
     )
-    try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
-            body = resp.read().decode("utf-8")
-            parsed = _parse_json_response(body)
-            if isinstance(parsed, dict):
-                return parsed
-            rows = parsed
-            if not isinstance(rows, list):
-                rows = []
-            return {"results": _rank_hivemind_rows(rows, query)[:_DEFAULT_EXTERNAL_LIMIT]}
-    except TimeoutError as exc:
-        raise HivemindError(f"Hivemind request timed out after {timeout}s") from exc
-    except urllib.error.URLError as exc:
-        raise HivemindError(f"Hivemind HTTP error: {exc}") from exc
-    except ValueError as exc:
-        raise HivemindError(f"Hivemind returned invalid JSON: {exc}") from exc
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
+        body = resp.read().decode("utf-8")
+        return _parse_json_response(body)
 
 
 def _parse_json_response(body: str) -> Any:
@@ -267,6 +311,9 @@ def _rank_hivemind_rows(rows: list[Any], query: str) -> list[dict[str, Any]]:
         haystack = f"{title}\n{body}".casefold()
         score = 0
         reasons: list[str] = []
+        if row.get("kind") == "workflow":
+            score += 25
+            reasons.append("hivemind:workflow resource")
         for term in query_terms:
             needle = term.casefold()
             if not needle or needle not in haystack:
@@ -336,15 +383,26 @@ def _normalize_hivemind_source(item: dict[str, Any]) -> dict[str, Any]:
     pack = item.get("pack", item.get("package"))
     if pack is None:
         pack = item.get("channel", item.get("source_type", item.get("kind"))) or _domain(url)
+    metadata = item.get("metadata") if isinstance(item.get("metadata"), dict) else {}
+    payload = item.get("payload") if isinstance(item.get("payload"), dict) else {}
+    ready_id = _first_text(metadata, "ready_template_id") or _first_text(payload, "ready_template_id")
+    path = (
+        _first_text(item, "path")
+        or _first_text(metadata, "path", "python_path")
+        or _first_text(payload, "python_path")
+    )
+    source = "hivemind_workflow" if item.get("kind") == "workflow" else "hivemind"
     return {
-        "class_type": title,
+        "class_type": ready_id or title,
         "score": item.get("score", 0),
         "reasons": _coerce_tasks(item.get("reasons", [])),
-        "source": "hivemind",
+        "source": source,
         "pack": pack,
         "description": _excerpt(body),
         "tasks": _coerce_tasks(item.get("tasks", item.get("task"))),
-        "hivemind_id": item.get("id"),
+        "path": path or None,
+        "hivemind_id": item.get("item_id", item.get("id")),
+        "url": url,
     }
 
 
@@ -609,7 +667,7 @@ def research(
                     existing.add(ct)
 
     # Re-sort: local results first, then Hivemind, then web, each by score.
-    source_order = {"hivemind": 1, "web": 2}
+    source_order = {"hivemind_workflow": 1, "hivemind": 2, "web": 3}
     sources.sort(
         key=lambda s: (source_order.get(str(s.get("source")), 0), -s.get("score", 0))
     )

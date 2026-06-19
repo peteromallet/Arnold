@@ -6,8 +6,10 @@
 #
 # Prereqs (one-time):
 #   * ComfyUI checkout at $COMFYUI_DIR (default below).
-#   * megaplan/arnold installed into the SAME python that runs ComfyUI:
-#         pip install -e "${HOME}/Documents/megaplan"   # github.com/peteromallet/arnold
+#   * Arnold installed into the SAME python that runs ComfyUI. This launcher
+#     auto-installs the pinned GitHub package when arnold is missing or when the
+#     current import resolves to a local ~/Documents/megaplan checkout:
+#         pip install "arnold @ git+https://github.com/peteromallet/Arnold.git@<sha>"
 #   * An OpenRouter key, either exported as OPENROUTER_API_KEY or stored in
 #     ~/.hermes/.env (the VibeComfy browser credential route writes it there).
 #
@@ -19,6 +21,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="${REPO_ROOT:-$(cd -- "${SCRIPT_DIR}/.." && pwd)}"
+export REPO_ROOT
 COMFYUI_DIR="${COMFYUI_DIR:-$(cd -- "${REPO_ROOT}/.." && pwd)/ComfyUI}"
 PORT="${PORT:-8190}"
 PYBIN="${PYBIN:-python}"
@@ -48,20 +51,32 @@ export PYTHONPATH="${REPO_ROOT}:${PYTHONPATH:-}"
 #    agent/status route reports the Arnold/Hermes runtime as unavailable.
 export VIBECOMFY_ARNOLD_RUNTIME_MODULE="${VIBECOMFY_ARNOLD_RUNTIME_MODULE:-vibecomfy.comfy_nodes.agent.runtime}"
 
-# 3a. Ensure the arnold/megaplan backend is importable. Preferred install is the
-#     declared `agent` extra (pip install -e ".[agent]") or an editable dev
-#     checkout (pip install -e ~/Documents/megaplan). If neither has put it on
-#     the path, fall back to a local checkout via PYTHONPATH, and warn loudly
-#     rather than failing late with a confusing "No module named 'megaplan'".
-MEGAPLAN_DIR="${MEGAPLAN_DIR:-${HOME}/Documents/megaplan}"
-if ! "${PYBIN}" -c "import arnold" >/dev/null 2>&1; then
-  if [[ -d "${MEGAPLAN_DIR}/arnold" ]]; then
-    export PYTHONPATH="${MEGAPLAN_DIR}:${PYTHONPATH}"
-    echo "  note: arnold not installed; falling back to checkout at ${MEGAPLAN_DIR}"
+# 3a. Ensure the arnold backend comes from the pinned GitHub package, not a
+#     local megaplan/arnold checkout. Set VIBECOMFY_ARNOLD_AUTO_INSTALL=0 to
+#     make this a warning-only check. Set VIBECOMFY_ALLOW_LOCAL_ARNOLD=1 for
+#     intentional local Arnold co-development.
+ARNOLD_PACKAGE_SPEC="${ARNOLD_PACKAGE_SPEC:-arnold @ git+https://github.com/peteromallet/Arnold.git@3db60a6cfe73e250b836d6147952ccf449151906}"
+_arnold_origin="$("${PYBIN}" - <<'PY' 2>/dev/null || true
+import arnold
+print(getattr(arnold, "__file__", "") or "")
+PY
+)"
+_arnold_install_reason=""
+_arnold_install_flags=(--upgrade)
+if [[ -z "${_arnold_origin}" ]]; then
+  _arnold_install_reason="arnold is not importable"
+elif [[ "${VIBECOMFY_ALLOW_LOCAL_ARNOLD:-0}" != "1" ]] && [[ "${_arnold_origin}" == "${HOME}/Documents/megaplan"* || "${_arnold_origin}" == "${HOME}/Documents/megaplan-engine"* ]]; then
+  _arnold_install_reason="arnold currently imports from local checkout: ${_arnold_origin}"
+  _arnold_install_flags=(--upgrade --force-reinstall --no-deps)
+fi
+if [[ -n "${_arnold_install_reason}" ]]; then
+  if [[ "${VIBECOMFY_ARNOLD_AUTO_INSTALL:-1}" == "1" ]]; then
+    echo "  note: ${_arnold_install_reason}; installing pinned Arnold from GitHub"
+    "${PYBIN}" -m pip install "${_arnold_install_flags[@]}" "${ARNOLD_PACKAGE_SPEC}"
   else
-    echo "  WARNING: arnold backend not importable and no checkout at"
-    echo "           ${MEGAPLAN_DIR}. The agent routes will report unavailable."
-    echo "           Install it:  pip install -e \"${REPO_ROOT}[agent]\"   (or)   pip install -e <arnold-checkout>"
+    echo "  WARNING: ${_arnold_install_reason}"
+    echo "           Install pinned Arnold with:"
+    echo "           ${PYBIN} -m pip install ${_arnold_install_flags[*]} '${ARNOLD_PACKAGE_SPEC}'"
   fi
 fi
 
@@ -80,6 +95,7 @@ echo "  repo:    ${REPO_ROOT}"
 echo "  comfyui: ${COMFYUI_DIR}"
 echo "  port:    ${PORT}"
 echo "  runtime: ${VIBECOMFY_ARNOLD_RUNTIME_MODULE}"
+echo "  arnold:  ${ARNOLD_PACKAGE_SPEC}"
 echo "  openrouter key present: $([[ -n "${OPENROUTER_API_KEY:-}" ]] && echo yes || echo no)"
 echo
 

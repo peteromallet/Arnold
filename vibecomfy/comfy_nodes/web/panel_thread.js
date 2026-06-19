@@ -1,9 +1,16 @@
 import { getAgentPanelRuntime } from "./panel_runtime.js";
+import { renderMarkdown } from "./markdown.js";
+import {
+  formatActivityHeadline,
+  formatOutcomeCounts,
+  formatStatementAction,
+  isSubstantiveStatement,
+} from "./agent_turn_feed.js";
 
 const THREAD_WINDOW_SIZE = 30;
 const THREAD_NEAR_BOTTOM_TOLERANCE_PX = 120;
 const RATING_WIDGET_CLEAR_DELAY_MS = 2400;
-const RATING_WIDGET_EXPIRY_MS = 60000;
+const RATING_WIDGET_EXPIRY_MS = 120000;
 const RATING_PACK_SHARE_DEFAULT_LS_KEY = "vibecomfy_pack_share_default";
 const RATING_WIDGET_DISABLED_LS_KEY = "vibecomfy_rating_widget_disabled";
 
@@ -80,6 +87,12 @@ export function recordThreadRender(runtimePayload) {
 }
 
 function bubbleDetailSignature(msg, detailSnapshot) {
+  const canonicalDetails = Array.isArray(msg?.canonical_activity?.details)
+    ? String(msg.canonical_activity.details.length)
+    : "";
+  const canonicalDiagnostics = Array.isArray(msg?.canonical_activity?.diagnostics)
+    ? String(msg.canonical_activity.diagnostics.length)
+    : "";
   const detailSigParts = [
     detailSnapshot?.phase || "",
     detailSnapshot?.message || "",
@@ -87,6 +100,8 @@ function bubbleDetailSignature(msg, detailSnapshot) {
     detailSnapshot?.changeDetails?.done_summary || msg?.change_details?.done_summary || "",
     Array.isArray(detailSnapshot?.fieldChanges) ? String(detailSnapshot.fieldChanges.length) : "",
     Array.isArray(msg?.field_changes) ? String(msg.field_changes.length) : "",
+    canonicalDetails,
+    canonicalDiagnostics,
     msg?.turn_id || "",
     msg?.detail_turn_id || "",
     String(msg?.text || "").slice(0, 80),
@@ -103,6 +118,7 @@ function bubbleRenderSignature(panel, msg, deps = {}) {
     ? candidateActionState(panel, msg, snapshot)
     : {};
   const responseId = ratingResponseIdForMessage(panel, msg);
+  const ratingState = responseId ? getRatingResponseState(panel, responseId) : null;
   const signatureParts = [
     typeof messageSignature === "function" ? messageSignature(msg) : "",
     snapshot?.phase || "",
@@ -118,12 +134,17 @@ function bubbleRenderSignature(panel, msg, deps = {}) {
     actionState.applyDisabled ? "1" : "0",
     actionState.rejectDisabled ? "1" : "0",
     String(messageKey || "") === String(latestAgentMessageKey || "") ? "rating-latest" : "",
+    deps.ratingHasLaterUserOrPending ? "rating-blocked-by-next-turn" : "",
     responseId || "",
     isRatingResponseSubmitted(panel, responseId) ? "rating-submitted" : "",
+    Number.isFinite(ratingState?.rating) ? `rating-${ratingState.rating}` : "",
     ratingWidgetDisabled(panel, deps) ? "rating-disabled" : "",
     panel?.state?.turnId || "",
-    msg?.executor_pending ? "executor-pending" : "",
+    (msg?.pending_response || msg?.executor_pending) ? "pending-response" : "",
     msg?.progress ? JSON.stringify(msg.progress) : "",
+    msg?.progress_label || "",
+    Array.isArray(msg?.canonical_activity?.details) ? String(msg.canonical_activity.details.length) : "",
+    Array.isArray(msg?.canonical_activity?.diagnostics) ? String(msg.canonical_activity.diagnostics.length) : "",
   ];
   return signatureParts.join("|");
 }
@@ -180,7 +201,6 @@ function ratingTurnIdForMessage(panel, message) {
   return (
     (typeof message?.turn_id === "string" && message.turn_id)
     || (typeof message?.detail_turn_id === "string" && message.detail_turn_id)
-    || (typeof panel?.state?.turnId === "string" && panel.state.turnId)
     || null
   );
 }
@@ -207,6 +227,37 @@ function isRatingResponseSubmitted(panel, responseId) {
   return Boolean(submitted && typeof submitted === "object" && submitted[responseId]);
 }
 
+function ensureRatingResponseStates(panel) {
+  if (!panel?.state) {
+    return {};
+  }
+  if (!panel.state.ratingResponseStates || typeof panel.state.ratingResponseStates !== "object") {
+    panel.state.ratingResponseStates = {};
+  }
+  return panel.state.ratingResponseStates;
+}
+
+function getRatingResponseState(panel, responseId) {
+  if (!panel?.state || !responseId) {
+    return null;
+  }
+  const states = panel.state.ratingResponseStates;
+  const state = states && typeof states === "object" ? states[responseId] : null;
+  return state && typeof state === "object" ? state : null;
+}
+
+function updateRatingResponseState(panel, responseId, patch) {
+  if (!panel?.state || !responseId || !patch || typeof patch !== "object") {
+    return null;
+  }
+  const states = ensureRatingResponseStates(panel);
+  const existing = states[responseId] && typeof states[responseId] === "object"
+    ? states[responseId]
+    : {};
+  states[responseId] = { ...existing, ...patch };
+  return states[responseId];
+}
+
 function markRatingResponseSubmitted(panel, responseId) {
   if (!panel?.state || !responseId) {
     return;
@@ -215,28 +266,39 @@ function markRatingResponseSubmitted(panel, responseId) {
     panel.state.ratingSubmittedResponseIds = {};
   }
   panel.state.ratingSubmittedResponseIds[responseId] = true;
+  updateRatingResponseState(panel, responseId, { submitted: true });
 }
 
 function renderExecutorProgressRow(msg, panel, deps = {}) {
   const { el } = deps;
-  if (!msg?.executor_pending || typeof el !== "function") {
+  if (!(msg?.pending_response || msg?.executor_pending) || typeof el !== "function") {
     return null;
   }
-  const progress = msg.progress && typeof msg.progress === "object"
+  // Prefer canonical activity phase_progress from the message (set by
+  // updatePendingResponseProgress in vibecomfy_roundtrip.js), then fall
+  // back to panel.state.executorProgress which is also derived from
+  // canonical activity state.
+  const progress = (msg.progress && typeof msg.progress === "object"
     ? msg.progress
-    : (panel?.state?.executorProgress && typeof panel.state.executorProgress === "object" ? panel.state.executorProgress : {});
+    : null)
+    || (panel?.state?.executorProgress && typeof panel.state.executorProgress === "object" ? panel.state.executorProgress : null)
+    || {};
+  const secondaryText = (typeof msg?.text === "string" && msg.text.trim())
+    || (typeof msg.progress_label === "string" && msg.progress_label)
+    || null;
   const steps = [
     ["Decide", progress.decide || "pending"],
     ["Research", progress.research || "pending"],
     ["Execute", progress.execute || "pending"],
-    ["Respond", progress.review || "pending"],
+    ["Review", progress.review || "pending"],
   ];
   const row = el("div");
+  row.dataset.vibecomfyPhaseSource = "canonical";
   Object.assign(row.style, {
     display: "flex",
     alignItems: "center",
     gap: "6px",
-    marginTop: "7px",
+    marginTop: "0",
     flexWrap: "wrap",
     fontSize: "10px",
     color: "#8d93a1",
@@ -251,6 +313,8 @@ function renderExecutorProgressRow(msg, panel, deps = {}) {
       row.appendChild(divider);
     }
     const step = el("span");
+    step.dataset.vibecomfyExecutorStage = label.toLowerCase();
+    step.dataset.vibecomfyExecutorStatus = status;
     Object.assign(step.style, {
       display: "inline-flex",
       alignItems: "center",
@@ -270,6 +334,22 @@ function renderExecutorProgressRow(msg, panel, deps = {}) {
     step.appendChild(dot);
     step.appendChild(el("span", label));
     row.appendChild(step);
+  }
+  if (secondaryText) {
+    const labelLine = el("div", secondaryText);
+    labelLine.dataset.vibecomfyProgressSecondary = "1";
+    Object.assign(labelLine.style, {
+      flexBasis: "100%",
+      fontSize: "11px",
+      color: "#9aa3b2",
+      marginTop: "3px",
+      overflow: "hidden",
+      textOverflow: "ellipsis",
+      whiteSpace: "nowrap",
+      maxWidth: "100%",
+      fontWeight: "400",
+    });
+    row.appendChild(labelLine);
   }
   return row;
 }
@@ -306,6 +386,9 @@ function scheduleRatingNoticeClear(panel, responseId, element) {
     element.textContent = "";
     element.style.display = "none";
   }, RATING_WIDGET_CLEAR_DELAY_MS);
+  if (typeof timers[responseId]?.unref === "function") {
+    timers[responseId].unref();
+  }
 }
 
 function ensureRatingExpiryTimers(panel) {
@@ -340,6 +423,9 @@ function scheduleRatingExpiry(panel, responseId, element) {
     element.style.display = "none";
     element.textContent = "";
   }, RATING_WIDGET_EXPIRY_MS);
+  if (typeof timers[responseId]?.unref === "function") {
+    timers[responseId].unref();
+  }
 }
 
 function latestAgentMessageKey(displayEntries) {
@@ -352,22 +438,50 @@ function latestAgentMessageKey(displayEntries) {
   return latestKey;
 }
 
+function hasLaterUserOrPendingMessage(displayEntries, messageKey) {
+  let seenMessage = false;
+  for (const entry of displayEntries || []) {
+    if (String(entry?.key || "") === String(messageKey || "")) {
+      seenMessage = true;
+      continue;
+    }
+    if (!seenMessage) {
+      continue;
+    }
+    const msg = entry?.msg;
+    if (
+      msg?.role === "user"
+      || msg?.pending_response === true
+      || msg?.executor_pending === true
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
 function shouldRenderRatingWidget(panel, msg, messageKey, deps = {}) {
   if (msg?.role !== "agent") {
     return false;
   }
+  if (msg?.pending_response || msg?.executor_pending) {
+    return false;
+  }
   if (String(messageKey || "") !== String(deps.latestAgentMessageKey || "")) {
+    return false;
+  }
+  if (deps.ratingHasLaterUserOrPending) {
     return false;
   }
   if (ratingWidgetDisabled(panel, deps)) {
     return false;
   }
   const turnId = ratingTurnIdForMessage(panel, msg);
-  if (!turnId || turnId !== panel?.state?.turnId) {
+  if (!turnId) {
     return false;
   }
   const responseId = ratingResponseIdForMessage(panel, msg);
-  return Boolean(responseId && !isRatingResponseSubmitted(panel, responseId));
+  return Boolean(responseId);
 }
 
 export function renderRatingWidget(panel, msg, deps = {}) {
@@ -536,6 +650,7 @@ export function renderRatingWidget(panel, msg, deps = {}) {
   const ratingButtons = [];
   const setSelectedRating = (rating) => {
     selectedRating = rating;
+    updateRatingResponseState(panel, responseId, { rating });
     clearRatingExpiryTimer(panel, responseId);
     stepTwo.style.display = "grid";
     reportIssueButton.style.display = rating < 5 ? "inline-block" : "none";
@@ -545,6 +660,7 @@ export function renderRatingWidget(panel, msg, deps = {}) {
       entry.button.style.borderColor = entry.rating === rating ? "#7db6ff" : "#343946";
       entry.button.style.color = entry.rating === rating ? "#ffffff" : "#c4ccd6";
     }
+    scrollChatThreadToBottom(panel);
   };
   for (let rating = 1; rating <= 10; rating += 1) {
     const ratingButton = typeof button === "function"
@@ -565,7 +681,19 @@ export function renderRatingWidget(panel, msg, deps = {}) {
     ratingRow.appendChild(ratingButton);
   }
 
-  scheduleRatingExpiry(panel, responseId, root);
+  const existingRatingState = getRatingResponseState(panel, responseId);
+  if (Number.isFinite(existingRatingState?.rating)) {
+    setSelectedRating(existingRatingState.rating);
+  }
+  if (existingRatingState?.submitted || isRatingResponseSubmitted(panel, responseId)) {
+    submitButton.disabled = true;
+    status.style.display = "block";
+    status.style.color = "#8d93a1";
+    status.textContent = "Rating applied.";
+    clearRatingExpiryTimer(panel, responseId);
+  } else {
+    scheduleRatingExpiry(panel, responseId, root);
+  }
 
   submitButton.onclick = async () => {
     if (!selectedRating || submitButton.disabled) {
@@ -590,10 +718,15 @@ export function renderRatingWidget(panel, msg, deps = {}) {
       return;
     }
     if (result?.ok) {
+      updateRatingResponseState(panel, responseId, { rating: selectedRating, submitted: true });
       markRatingResponseSubmitted(panel, responseId);
       clearRatingTimer(panel, responseId);
       clearRatingExpiryTimer(panel, responseId);
-      root.style.display = "none";
+      submitButton.disabled = true;
+      status.style.display = "block";
+      status.style.color = "#8d93a1";
+      status.textContent = "Rating applied.";
+      scrollChatThreadToBottom(panel);
       return;
     }
     submitButton.disabled = false;
@@ -661,7 +794,7 @@ export function populateAgentBubbleDetail(target, panel, message, snapshot = nul
   } = deps;
   clearNode(target);
 
-  const isExecutorMessage = message?.executor_pending === true || message?.source === "agent-executor";
+  const isExecutorMessage = message?.pending_response === true || message?.executor_pending === true || message?.source === "agent-edit";
   if (!isExecutorMessage) {
     const metaSection = createBubbleDetailSection("Turn");
     appendTurnMeta(metaSection.body, panel, message, snapshot, { appendTextLine, el });
@@ -692,6 +825,23 @@ export function populateAgentBubbleDetail(target, panel, message, snapshot = nul
     }
     changesSection.body.appendChild(createDetails("full change details", changeDetails));
     target.appendChild(changesSection.section);
+  }
+
+  const canonicalActivity = message?.canonical_activity && typeof message.canonical_activity === "object"
+    ? message.canonical_activity
+    : null;
+  if (
+    canonicalActivity
+    && (
+      (Array.isArray(canonicalActivity.details) && canonicalActivity.details.length)
+      || (Array.isArray(canonicalActivity.diagnostics) && canonicalActivity.diagnostics.length)
+    )
+  ) {
+    const activitySection = createBubbleDetailSection("Progress");
+    _renderCanonicalDetails(activitySection.body, canonicalActivity, deps);
+    if (activitySection.body.children.length) {
+      target.appendChild(activitySection.section);
+    }
   }
 
   const candidateSection = createBubbleDetailSection("Candidate");
@@ -756,7 +906,9 @@ export function renderChatBubbleNode(bubble, panel, msg, messageKey, messageInde
   });
   bubble.appendChild(label);
 
-  const text = el("div", String(msg.text || ""));
+  const isPendingResponse = msg?.pending_response === true || msg?.executor_pending === true;
+  const bubbleText = isPendingResponse ? "" : String(msg.text || "");
+  const text = renderMarkdown(panel.document || document, bubbleText);
   Object.assign(text.style, {
     fontSize: "12px",
     color: isUser ? "#d8dce3" : "#d8dce3",
@@ -767,7 +919,7 @@ export function renderChatBubbleNode(bubble, panel, msg, messageKey, messageInde
     maxWidth: "92%",
     wordBreak: "break-word",
     overflowWrap: "anywhere",
-    whiteSpace: "pre-wrap",
+    whiteSpace: "normal",
     lineHeight: "1.4",
     minWidth: "0",
   });
@@ -1012,10 +1164,12 @@ export function reconcileChatBubbles(panel, messagesMount, displayEntries, deps 
     if (!msg || typeof msg !== "object" || !msg.role) {
       continue;
     }
+    const ratingHasLaterUserOrPending = hasLaterUserOrPendingMessage(displayEntries, key);
     const signature = bubbleRenderSignature(panel, msg, {
       ...deps,
       latestAgentMessageKey: latestAgentKey,
       messageKey: key,
+      ratingHasLaterUserOrPending,
       messageSignature,
     });
     let bubbleEntry = priorBubbleMap[key] || null;
@@ -1024,11 +1178,13 @@ export function reconcileChatBubbles(panel, messagesMount, displayEntries, deps 
       renderChatBubbleNode(bubbleEntry.node, panel, msg, key, index, {
         ...deps,
         latestAgentMessageKey: latestAgentKey,
+        ratingHasLaterUserOrPending,
       });
     } else if (priorSignatures[key] !== signature) {
       renderChatBubbleNode(bubbleEntry.node, panel, msg, key, index, {
         ...deps,
         latestAgentMessageKey: latestAgentKey,
+        ratingHasLaterUserOrPending,
       });
     }
     nextBubbleMap[key] = bubbleEntry;
@@ -1092,6 +1248,7 @@ export function renderChatThread(panel, deps = {}) {
     }
     renderShowEarlierMessages(panel, olderMount, 0, deps);
     clearNode(messagesMount);
+    messagesMount.style.display = "none";
     const threadState = ensureThreadRenderState(panel);
     threadState.renderedKeyOrder = [];
     threadState.bubbleMap = {};
@@ -1111,6 +1268,7 @@ export function renderChatThread(panel, deps = {}) {
   }
 
   emptyMount.style.display = "none";
+  messagesMount.style.display = "grid";
   clearNode(emptyMount);
   const { displayEntries, hiddenCount } = computeThreadDisplayEntries(panel, threadEntries);
   const lastThreadRender = recordThreadRenderImpl({
@@ -1192,6 +1350,12 @@ function ensureChatThreadMounts(body, deps = {}) {
       }
     }
   }
+  Object.assign(body.style, {
+    display: "flex",
+    flexDirection: "column",
+    flex: "1 1 auto",
+    minHeight: "0",
+  });
   if (!sessionRow) {
     sessionRow = el("div");
     sessionRow.dataset.vibecomfyChatSessionRow = "1";
@@ -1211,11 +1375,14 @@ function ensureChatThreadMounts(body, deps = {}) {
     messagesMount.dataset.vibecomfyChatMessages = "1";
     Object.assign(messagesMount.style, {
       display: "grid",
+      flex: "1 1 auto",
       gap: "6px",
       minWidth: "0",
       maxWidth: "100%",
       overflowWrap: "anywhere",
       minHeight: "100%",
+      alignContent: "start",
+      alignItems: "start",
     });
   }
   if (!emptyMount) {
@@ -1223,6 +1390,7 @@ function ensureChatThreadMounts(body, deps = {}) {
     emptyMount.dataset.vibecomfyChatEmpty = "1";
     Object.assign(emptyMount.style, {
       display: "none",
+      flex: "1 1 auto",
       gap: "6px",
       minWidth: "0",
       maxWidth: "100%",
@@ -1261,6 +1429,14 @@ function ensureChatThreadMounts(body, deps = {}) {
   messagesMount.dataset.vibecomfyChatMessages = "1";
   activityMount.dataset.vibecomfyChatActivity = "1";
   emptyMount.dataset.vibecomfyChatEmpty = "1";
+  messagesMount.style.flex = "1 1 auto";
+  messagesMount.style.minHeight = "100%";
+  messagesMount.style.minWidth = "0";
+  messagesMount.style.alignContent = "start";
+  messagesMount.style.alignItems = "start";
+  emptyMount.style.flex = "1 1 auto";
+  emptyMount.style.minHeight = "100%";
+  emptyMount.style.minWidth = "0";
   appendChildOnce(body, sessionRow);
   appendChildOnce(body, olderMount);
   appendChildOnce(body, messagesMount);
@@ -1444,6 +1620,12 @@ const BATCH_STATEMENT_CAP = 5;
 
 function _batchTurnDisplayStatus(entry) {
   const status = typeof entry?.status === "string" ? entry.status : "";
+  // Answer-only / no-graph-changes turns display as "answered" rather than
+  // the generic "turn done" so users can distinguish edit turns from
+  // terminal information-only responses.
+  if (status === "done" && _isAnswerOnlyTurn(entry)) {
+    return "answered";
+  }
   if (status === "done") {
     return "turn done";
   }
@@ -1502,7 +1684,11 @@ function _compactStatementStatus(stmt) {
     }
   }
   if (!result) {
-    if (stmt.landed === true) {
+    // Protocol terminators (done(), exit, etc.) are never "not landed" —
+    // they signal turn completion, not a failed graph operation.
+    if (!isSubstantiveStatement(stmt)) {
+      result = null;
+    } else if (stmt.landed === true) {
       result = "landed";
     } else if (stmt.ok === false) {
       result = "failed";
@@ -1520,6 +1706,10 @@ function _renderLiveTurnSummary(panel, entry, deps = {}) {
   }
   const turnKey = entry.turn_key;
   const expanded = !!(turnKey && panelStateExpanded(panel, entry));
+  // Prefer canonical activity when available; fall back to raw entry.
+  const canonical = entry.canonical_activity && typeof entry.canonical_activity === "object"
+    ? entry.canonical_activity
+    : null;
   const statusColor = _statusColor(entry.status);
   const turnLabel = Number.isFinite(entry.turn_number)
     ? `Turn ${entry.turn_number + 1}`
@@ -1560,24 +1750,53 @@ function _renderLiveTurnSummary(panel, entry, deps = {}) {
     return box;
   }
 
-  const statements = Array.isArray(entry.statements) ? entry.statements : [];
-  const latestStatement = statements.length ? statements[statements.length - 1] : null;
-  const statementStatus = _compactStatementStatus(latestStatement);
-  if (statementStatus?.source) {
-    const sourceLine = el("div", `latest: ${statementStatus.source}`);
+  // Use canonical activity for latest action + summary when available.
+  let latestSource = null;
+  let latestResult = null;
+  if (canonical && canonical.latest_substantive_statement && typeof canonical.latest_substantive_statement === "object") {
+    const lss = canonical.latest_substantive_statement;
+    latestSource = typeof lss.source === "string" ? lss.source : (typeof lss.message === "string" ? lss.message : null);
+    if (lss.landed === true) latestResult = "landed";
+    else if (lss.ok === false) latestResult = "failed";
+    else if (lss.landed === false) latestResult = "not landed";
+  } else {
+    const statements = Array.isArray(entry.statements) ? entry.statements : [];
+    const latestStatement = statements.length ? statements[statements.length - 1] : null;
+    const statementStatus = _compactStatementStatus(latestStatement);
+    latestSource = statementStatus?.source || null;
+    latestResult = statementStatus?.result || null;
+  }
+
+  // Answer-only / no-graph-changes turns: override the result so done()
+  // protocol statements never leak "not landed" in live summary rows.
+  if (canonical && canonical.outcome && typeof canonical.outcome === "object") {
+    const outcomeKind = canonical.outcome.kind;
+    if (outcomeKind === "answered") {
+      latestResult = null; // outcome summary already describes this
+    }
+  }
+
+  if (latestSource) {
+    const sourceLine = el("div", `latest: ${latestSource}`);
     sourceLine.style.fontSize = "11px";
     sourceLine.style.color = "#c4ccd6";
     sourceLine.style.overflowWrap = "anywhere";
     box.appendChild(sourceLine);
   }
   const active = entry.status === "in_progress" || entry.status === "progress";
-  if (!active && statementStatus?.result) {
-    const resultLine = el("div", `status: ${statementStatus.result}`);
+  if (!active && latestResult) {
+    const resultLine = el("div", `status: ${latestResult}`);
     resultLine.style.fontSize = "10px";
     resultLine.style.color = "#8d93a1";
     box.appendChild(resultLine);
   }
-  const summary = _safeSummaryText(entry);
+  // Use canonical outcome summary when available.
+  let summary = null;
+  if (canonical && canonical.outcome && typeof canonical.outcome === "object" && typeof canonical.outcome.summary === "string") {
+    summary = canonical.outcome.summary;
+  } else {
+    summary = _safeSummaryText(entry);
+  }
   if (summary) {
     const summaryLine = el("div", summary);
     summaryLine.style.fontSize = "11px";
@@ -1586,16 +1805,40 @@ function _renderLiveTurnSummary(panel, entry, deps = {}) {
     summaryLine.style.wordBreak = "break-word";
     box.appendChild(summaryLine);
   }
-  const showStmts = statements.slice(0, BATCH_STATEMENT_CAP);
-  if (showStmts.length) {
-    const stmtsHeader = el("div", "Turn details:");
-    stmtsHeader.style.fontSize = "10px";
-    stmtsHeader.style.color = "#9da1ac";
-    stmtsHeader.style.textTransform = "uppercase";
-    stmtsHeader.style.letterSpacing = "0.04em";
-    box.appendChild(stmtsHeader);
-    for (let index = 0; index < showStmts.length; index += 1) {
-      box.appendChild(_statementBullet(showStmts[index], index, deps));
+  // Render statement details from canonical when available.
+  if (canonical && Array.isArray(canonical.details) && canonical.details.length) {
+    // Extract statements-kind details entry for inline rendering
+    for (const detail of canonical.details) {
+      if (detail && detail.kind === "statements" && Array.isArray(detail.items)) {
+        const stmtsHeader = el("div", "Turn details:");
+        stmtsHeader.style.fontSize = "10px";
+        stmtsHeader.style.color = "#9da1ac";
+        stmtsHeader.style.textTransform = "uppercase";
+        stmtsHeader.style.letterSpacing = "0.04em";
+        box.appendChild(stmtsHeader);
+        const items = detail.items;
+        for (let s = 0; s < items.length; s += 1) {
+          const stmt = items[s];
+          if (stmt && typeof stmt === "object") {
+            box.appendChild(_statementBullet(stmt, s, deps));
+          }
+        }
+        break;
+      }
+    }
+  } else {
+    const rawStatements = Array.isArray(entry.statements) ? entry.statements : [];
+    const showStmts = rawStatements.slice(0, BATCH_STATEMENT_CAP);
+    if (showStmts.length) {
+      const stmtsHeader = el("div", "Turn details:");
+      stmtsHeader.style.fontSize = "10px";
+      stmtsHeader.style.color = "#9da1ac";
+      stmtsHeader.style.textTransform = "uppercase";
+      stmtsHeader.style.letterSpacing = "0.04em";
+      box.appendChild(stmtsHeader);
+      for (let index = 0; index < showStmts.length; index += 1) {
+        box.appendChild(_statementBullet(showStmts[index], index, deps));
+      }
     }
   }
   return box;
@@ -1623,6 +1866,24 @@ function toggleExpandedTurnKey(panel, entry, deps = {}) {
   renderActivityRows(panel, deps);
 }
 
+// ── Answer-only / no-graph-changes display helpers ─────────────────────
+
+/**
+ * Determine whether a batch turn entry represents an answer-only (no graph
+ * changes) outcome, preferring the canonical derivation.
+ */
+function _isAnswerOnlyTurn(entry) {
+  if (!entry || typeof entry !== "object") return false;
+  const canonical = entry.canonical_activity;
+  if (canonical && typeof canonical === "object") {
+    const outcomeKind = canonical.outcome && typeof canonical.outcome === "object"
+      ? canonical.outcome.kind
+      : null;
+    if (outcomeKind === "answered") return true;
+  }
+  return false;
+}
+
 function _statementBullet(stmt, index, deps = {}) {
   const { el } = deps;
   const row = el("div");
@@ -1648,8 +1909,8 @@ function _statementBullet(stmt, index, deps = {}) {
   });
   row.appendChild(badge);
 
-  const kind = typeof stmt.op_kind === "string" && stmt.op_kind ? stmt.op_kind : "stmt";
-  const kindEl = el("span", `${kind}${Number.isFinite(stmt.statement_index) ? ` #${stmt.statement_index}` : ""}`);
+  const actionLabel = formatStatementAction(stmt);
+  const kindEl = el("span", `${actionLabel}${Number.isFinite(stmt.statement_index) ? ` #${stmt.statement_index}` : ""}`);
   kindEl.style.color = "#9da1ac";
   row.appendChild(kindEl);
 
@@ -1788,14 +2049,20 @@ function _renderBatchTurnRow(body, panel, entry, index, deps = {}) {
   const { button, el, downloadTurnAudit } = deps;
   const turnKey = entry.turn_key;
   const expanded = !!(panel.state.expandedTurnKeys && panel.state.expandedTurnKeys[turnKey]);
-  const isInProgress = entry.status === "in_progress" || entry.status === "progress";
-  const statusColor = _statusColor(entry.status);
+  // ── Canonical activity state (preferred over raw entry fields) ───────
+  const canonical = entry.canonical_activity && typeof entry.canonical_activity === "object"
+    ? entry.canonical_activity
+    : null;
+  const status = typeof entry.status === "string" ? entry.status : "unknown";
+  const isInProgress = status === "in_progress" || status === "progress";
+  const statusColor = _statusColor(status);
   const turnLabel = Number.isFinite(entry.turn_number)
     ? `Turn ${entry.turn_number + 1}`
     : (typeof entry.turn_id === "string" && entry.turn_id ? `turn ${entry.turn_id}` : "turn");
 
   const row = el("div");
   row.className = "vibecomfy-batch-row";
+  row.dataset.vibecomfyActivitySource = canonical ? "canonical" : "raw";
   Object.assign(row.style, {
     borderLeft: `3px solid ${statusColor}`,
     paddingLeft: "8px",
@@ -1847,16 +2114,8 @@ function _renderBatchTurnRow(body, panel, entry, index, deps = {}) {
   });
   collapsedLine.appendChild(statusEl);
 
-  const shortMsg = _truncateMessage(
-    entry.status === "done"
-      ? (
-        entry.done_summary && entry.message && entry.done_summary !== entry.message
-          ? `${entry.done_summary} ${entry.message}`
-          : (entry.done_summary || entry.message)
-      )
-      : (entry.message || entry.done_summary),
-    80,
-  );
+  // Use canonical formatting helpers for the short message.
+  const shortMsg = _truncateMessage(formatActivityHeadline(canonical, entry), 80);
   if (shortMsg) {
     const msgEl = el("span", shortMsg);
     msgEl.style.color = "#9da1ac";
@@ -1869,12 +2128,28 @@ function _renderBatchTurnRow(body, panel, entry, index, deps = {}) {
     collapsedLine.appendChild(msgEl);
   }
 
-  const statements = Array.isArray(entry.statements) ? entry.statements : [];
-  const latestStatement = statements.length ? statements[statements.length - 1] : null;
-  const latestSource = _truncateMessage(
-    typeof latestStatement?.source === "string" ? latestStatement.source : null,
-    96,
-  );
+  // Determine a "latest" source/action line from canonical or raw data.
+  let latestSource = null;
+  if (canonical && canonical.latest_substantive_statement && typeof canonical.latest_substantive_statement === "object") {
+    const lss = canonical.latest_substantive_statement;
+    latestSource = _truncateMessage(
+      typeof lss.source === "string" ? lss.source : (typeof lss.message === "string" ? lss.message : null),
+      96,
+    );
+  }
+  if (!latestSource) {
+    // Answer-only turns: skip the raw-statement fallback when there is no
+    // substantive statement — the headline + outcome counts already convey
+    // the result; echoing the done() statement source is noise.
+    if (!_isAnswerOnlyTurn(entry)) {
+      const rawStatements = Array.isArray(entry.statements) ? entry.statements : [];
+      const rawLatest = rawStatements.length ? rawStatements[rawStatements.length - 1] : null;
+      latestSource = _truncateMessage(
+        typeof rawLatest?.source === "string" ? rawLatest.source : null,
+        96,
+      );
+    }
+  }
   const chevron = el("span", expanded ? "\u25bc" : "\u25b6");
   chevron.style.color = "#8d93a1";
   chevron.style.fontSize = "9px";
@@ -1916,7 +2191,13 @@ function _renderBatchTurnRow(body, panel, entry, index, deps = {}) {
     auditBtnRow.appendChild(auditBtn);
     expandedBox.appendChild(auditBtnRow);
 
-    const summary = _safeSummaryText(entry);
+    // Use canonical outcome summary when available; fall back to raw entry.
+    let summary = null;
+    if (canonical && canonical.outcome && typeof canonical.outcome === "object" && typeof canonical.outcome.summary === "string") {
+      summary = canonical.outcome.summary;
+    } else {
+      summary = _safeSummaryText(entry);
+    }
     if (summary) {
       const reasoningRow = el("div");
       const reasoningToggle = el("span", "\u25b6 Reasoning");
@@ -1950,30 +2231,53 @@ function _renderBatchTurnRow(body, panel, entry, index, deps = {}) {
       expandedBox.appendChild(reasoningRow);
     }
 
-    const showStmts = statements.slice(0, BATCH_STATEMENT_CAP);
-    const moreCount = statements.length - BATCH_STATEMENT_CAP;
-    if (showStmts.length) {
-      const stmtsHeader = el("div", "Turn details:");
-      stmtsHeader.style.fontSize = "10px";
-      stmtsHeader.style.color = "#9da1ac";
-      stmtsHeader.style.textTransform = "uppercase";
-      stmtsHeader.style.letterSpacing = "0.04em";
-      expandedBox.appendChild(stmtsHeader);
-      for (let s = 0; s < showStmts.length; s += 1) {
-        expandedBox.appendChild(_statementBullet(showStmts[s], s, deps));
+    // Outcome counts line
+    const outcomeCountsText = formatOutcomeCounts(canonical, entry);
+    if (outcomeCountsText) {
+      const countsLine = el("div", outcomeCountsText);
+      Object.assign(countsLine.style, {
+        fontSize: "10px",
+        color: "#8d93a1",
+        marginTop: "2px",
+      });
+      expandedBox.appendChild(countsLine);
+    }
+
+    // Render expanded details from canonical activity when available.
+    if (canonical && Array.isArray(canonical.details) && canonical.details.length) {
+      _renderCanonicalDetails(expandedBox, canonical, deps);
+    } else {
+      // Fallback: raw entry statements + diagnostics
+      const rawStatements = Array.isArray(entry.statements) ? entry.statements : [];
+      const showStmts = rawStatements.slice(0, BATCH_STATEMENT_CAP);
+      const moreCount = rawStatements.length - BATCH_STATEMENT_CAP;
+      if (showStmts.length) {
+        const stmtsHeader = el("div", "Turn details:");
+        stmtsHeader.style.fontSize = "10px";
+        stmtsHeader.style.color = "#9da1ac";
+        stmtsHeader.style.textTransform = "uppercase";
+        stmtsHeader.style.letterSpacing = "0.04em";
+        expandedBox.appendChild(stmtsHeader);
+        for (let s = 0; s < showStmts.length; s += 1) {
+          expandedBox.appendChild(_statementBullet(showStmts[s], s, deps));
+        }
+        if (moreCount > 0) {
+          const moreLine = el("div", `+${moreCount} more statement${moreCount !== 1 ? "s" : ""}\u2026`);
+          moreLine.style.fontSize = "10px";
+          moreLine.style.color = "#8d93a1";
+          moreLine.style.fontStyle = "italic";
+          expandedBox.appendChild(moreLine);
+        }
+      } else if (Number.isFinite(entry.statement_count) && entry.statement_count > 0) {
+        const stmtsNote = el("div", `${entry.statement_count} statement${entry.statement_count !== 1 ? "s" : ""} (details unavailable)`);
+        stmtsNote.style.fontSize = "10px";
+        stmtsNote.style.color = "#8d93a1";
+        expandedBox.appendChild(stmtsNote);
       }
-      if (moreCount > 0) {
-        const moreLine = el("div", `+${moreCount} more statement${moreCount !== 1 ? "s" : ""}\u2026`);
-        moreLine.style.fontSize = "10px";
-        moreLine.style.color = "#8d93a1";
-        moreLine.style.fontStyle = "italic";
-        expandedBox.appendChild(moreLine);
+
+      if (Array.isArray(entry.diagnostics) && entry.diagnostics.length) {
+        _renderDiagnostics(expandedBox, entry.diagnostics, deps);
       }
-    } else if (Number.isFinite(entry.statement_count) && entry.statement_count > 0) {
-      const stmtsNote = el("div", `${entry.statement_count} statement${entry.statement_count !== 1 ? "s" : ""} (details unavailable)`);
-      stmtsNote.style.fontSize = "10px";
-      stmtsNote.style.color = "#8d93a1";
-      expandedBox.appendChild(stmtsNote);
     }
 
     const footer = _renderOutcomeFooter(entry, deps);
@@ -1981,29 +2285,6 @@ function _renderBatchTurnRow(body, panel, entry, index, deps = {}) {
       expandedBox.appendChild(footer);
     }
 
-    if (Array.isArray(entry.diagnostics) && entry.diagnostics.length) {
-      const diagHeader = el("div", "Diagnostics:");
-      diagHeader.style.fontSize = "10px";
-      diagHeader.style.color = "#9da1ac";
-      diagHeader.style.textTransform = "uppercase";
-      diagHeader.style.letterSpacing = "0.04em";
-      expandedBox.appendChild(diagHeader);
-      const maxDiags = Math.min(entry.diagnostics.length, 5);
-      for (let d = 0; d < maxDiags; d += 1) {
-        const diag = entry.diagnostics[d];
-        if (diag && typeof diag === "object") {
-          const code = typeof diag.code === "string" ? diag.code : "";
-          const msg = typeof diag.message === "string" ? diag.message : "";
-          const diagText = code && msg ? `${code}: ${msg}` : (code || msg);
-          if (diagText) {
-            const diagLine = el("div", diagText);
-            diagLine.style.fontSize = "10px";
-            diagLine.style.color = "#8d93a1";
-            expandedBox.appendChild(diagLine);
-          }
-        }
-      }
-    }
 
     const tsRel = _formatRelativeTime(entry.timestamp);
     if (tsRel) {
@@ -2019,6 +2300,112 @@ function _renderBatchTurnRow(body, panel, entry, index, deps = {}) {
   }
 
   body.appendChild(row);
+}
+
+// Render canonical activity details into the expanded view.
+function _renderCanonicalDetails(container, canonical, deps = {}) {
+  const { el } = deps;
+  const details = canonical.details;
+  if (!Array.isArray(details)) return;
+
+  for (const detail of details) {
+    if (!detail || typeof detail !== "object") continue;
+
+    if (detail.kind === "statements") {
+      const stmtsHeader = el("div", "Turn details:");
+      stmtsHeader.style.fontSize = "10px";
+      stmtsHeader.style.color = "#9da1ac";
+      stmtsHeader.style.textTransform = "uppercase";
+      stmtsHeader.style.letterSpacing = "0.04em";
+      container.appendChild(stmtsHeader);
+      const items = Array.isArray(detail.items) ? detail.items : [];
+      for (let s = 0; s < items.length; s += 1) {
+        const stmt = items[s];
+        if (stmt && typeof stmt === "object") {
+          container.appendChild(_statementBullet(stmt, s, deps));
+        }
+      }
+      const shown = typeof detail.shown === "number" ? detail.shown : items.length;
+      const total = typeof detail.total === "number" ? detail.total : shown;
+      if (total > shown) {
+        const moreLine = el("div", `+${total - shown} more statement${total - shown !== 1 ? "s" : ""}\u2026`);
+        moreLine.style.fontSize = "10px";
+        moreLine.style.color = "#8d93a1";
+        moreLine.style.fontStyle = "italic";
+        container.appendChild(moreLine);
+      }
+    }
+
+    if (detail.kind === "counts") {
+      const parts = [];
+      if (typeof detail.total === "number" && detail.total > 0) parts.push(`${detail.total} statements`);
+      if (typeof detail.landed_ops === "number" && detail.landed_ops > 0) parts.push(`${detail.landed_ops} landed`);
+      if (detail.landed && typeof detail.landed === "number" && detail.landed > 0) parts.push(`${detail.landed} landed`);
+      if (parts.length) {
+        const countsLine = el("div", parts.join(" \u00b7 "));
+        countsLine.style.fontSize = "10px";
+        countsLine.style.color = "#8d93a1";
+        container.appendChild(countsLine);
+      }
+    }
+
+    if (detail.kind === "budget") {
+      const budgetParts = [];
+      if (typeof detail.remaining_batches === "number") budgetParts.push(`${detail.remaining_batches} turns left`);
+      if (typeof detail.consecutive_errors === "number") budgetParts.push(`errors: ${detail.consecutive_errors}`);
+      if (budgetParts.length) {
+        const budgetLine = el("div", budgetParts.join(" \u00b7 "));
+        budgetLine.style.fontSize = "10px";
+        budgetLine.style.color = "#8d93a1";
+        budgetLine.style.fontStyle = "italic";
+        container.appendChild(budgetLine);
+      }
+    }
+
+    if (detail.kind === "timing") {
+      const timingParts = [];
+      if (typeof detail.turn_elapsed_ms === "number") timingParts.push(`${(detail.turn_elapsed_ms / 1000).toFixed(1)}s`);
+      if (typeof detail.model_elapsed_ms === "number") timingParts.push(`model ${(detail.model_elapsed_ms / 1000).toFixed(1)}s`);
+      if (timingParts.length) {
+        const timingLine = el("div", timingParts.join(" \u00b7 "));
+        timingLine.style.fontSize = "10px";
+        timingLine.style.color = "#8d93a1";
+        container.appendChild(timingLine);
+      }
+    }
+  }
+
+  // Render diagnostics from canonical state (separate from details entries).
+  if (Array.isArray(canonical.diagnostics) && canonical.diagnostics.length) {
+    _renderDiagnostics(container, canonical.diagnostics, deps);
+  }
+}
+
+// Shared diagnostics renderer used by both canonical and raw paths.
+function _renderDiagnostics(container, diagnostics, deps = {}) {
+  const { el } = deps;
+  if (!Array.isArray(diagnostics) || !diagnostics.length) return;
+  const diagHeader = el("div", "Diagnostics:");
+  diagHeader.style.fontSize = "10px";
+  diagHeader.style.color = "#9da1ac";
+  diagHeader.style.textTransform = "uppercase";
+  diagHeader.style.letterSpacing = "0.04em";
+  container.appendChild(diagHeader);
+  const maxDiags = Math.min(diagnostics.length, 5);
+  for (let d = 0; d < maxDiags; d += 1) {
+    const diag = diagnostics[d];
+    if (diag && typeof diag === "object") {
+      const code = typeof diag.code === "string" ? diag.code : "";
+      const msg = typeof diag.message === "string" ? diag.message : "";
+      const diagText = code && msg ? `${code}: ${msg}` : (code || msg);
+      if (diagText) {
+        const diagLine = el("div", diagText);
+        diagLine.style.fontSize = "10px";
+        diagLine.style.color = "#8d93a1";
+        container.appendChild(diagLine);
+      }
+    }
+  }
 }
 
 function _renderDurableTurnRow(body, panel, entry, index, deps = {}) {
@@ -2143,6 +2530,8 @@ export function populateActivityRows(body, panel, opts = {}, deps = {}) {
       return isLiveActivityTurn(entry);
     })
     : [];
+  // Render every live batch turn; upserts are already deduplicated by turn_key
+  // in upsertBatchTurn, and sortPanelTurns keeps them newest-first.
 
   for (let index = 0; index < relevantTurns.length; index += 1) {
     const entry = relevantTurns[index];
@@ -2159,11 +2548,13 @@ function renderActivityRows(panel, deps = {}) {
   if (!mount) {
     return;
   }
-  if (panel?.state?.executorMode) {
-    const { clearNode } = deps;
-    if (typeof clearNode === "function") {
-      clearNode(mount);
-    }
+  const hasPendingResponse = Array.isArray(panel?.state?.chatMessages)
+    && panel.state.chatMessages.some((message) => (
+      message?.role === "agent"
+      && (message.pending_response === true || message.executor_pending === true)
+    ));
+  if (hasPendingResponse) {
+    deps.clearNode?.(mount);
     mount.style.display = "none";
     if (mount.parentNode?.className === "vibecomfy-agent-panel-region") {
       mount.parentNode.style.display = "none";

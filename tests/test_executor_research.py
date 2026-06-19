@@ -40,6 +40,7 @@ def _make_entry(
     tags: tuple[str, ...] = (),
     tasks: tuple[str, ...] = (),
     source: str = "object_info",
+    path: str | None = None,
 ) -> SearchEntry:
     return SearchEntry(
         class_type=class_type,
@@ -48,6 +49,7 @@ def _make_entry(
         tags=tags,
         tasks=tasks,
         source=source,
+        path=path,
     )
 
 
@@ -78,6 +80,7 @@ class TestNormalizeSource:
             "pack",
             "description",
             "tasks",
+            "path",
         ]
         assert source["class_type"] == "KSampler"
         assert source["score"] == 10
@@ -97,6 +100,15 @@ class TestNormalizeSource:
         result = _make_result("CustomNode", pack=None)
         source = _normalize_source(result)
         assert source["pack"] is None
+
+    def test_path_is_preserved_for_workflow_source(self) -> None:
+        result = _make_result(
+            "video/ltx2_3_t2v",
+            source="ready_template",
+            path="ready_templates/video/ltx2_3_t2v.py",
+        )
+        source = _normalize_source(result)
+        assert source["path"] == "ready_templates/video/ltx2_3_t2v.py"
 
 
 class TestNormalizeHivemindSource:
@@ -133,6 +145,23 @@ class TestNormalizeHivemindSource:
         out = _normalize_hivemind_source(item)
         assert out["pack"] == "mypack"
 
+    def test_workflow_resource_uses_python_ready_template_metadata(self) -> None:
+        item = {
+            "kind": "workflow",
+            "item_id": "42",
+            "title": "video/ltx2_3_runexx_custom_audio",
+            "body": "VibeComfy ready-template Python workflow",
+            "metadata": {
+                "ready_template_id": "video/ltx2_3_runexx_custom_audio",
+                "path": "ready_templates/video/ltx2_3_runexx_custom_audio.py",
+            },
+        }
+        out = _normalize_hivemind_source(item)
+        assert out["source"] == "hivemind_workflow"
+        assert out["class_type"] == "video/ltx2_3_runexx_custom_audio"
+        assert out["path"] == "ready_templates/video/ltx2_3_runexx_custom_audio.py"
+        assert out["hivemind_id"] == "42"
+
 
 class TestBuildSummary:
     """Compact 1-sentence summary builder."""
@@ -159,6 +188,27 @@ class TestBuildSummary:
         summary = _build_summary(sources)
         assert "A, B, C" in summary
         assert "2 more" in summary
+
+    def test_workflow_paths_and_exploration_guidance(self) -> None:
+        sources = (
+            {
+                "class_type": "video/ltx2_3_t2v",
+                "source": "ready_template",
+                "path": "ready_templates/video/ltx2_3_t2v.py",
+            },
+            {
+                "class_type": "ltx2_3_source",
+                "source": "source_workflow",
+                "path": "ready_templates/sources/custom_nodes/ltxvideo/ltx2_3.json",
+            },
+        )
+        summary = _build_summary(sources)
+        assert "video/ltx2_3_t2v (ready_templates/video/ltx2_3_t2v.py)" in summary
+        assert ".json" not in summary
+        assert "vibecomfy workflows list --ready" in summary
+        assert "vibecomfy copy-to-recipe <template_id> --out <file.py> --strip-markers" in summary
+        assert "ready template `.py` representations" in summary
+        assert "open that path directly in ComfyUI" not in summary
 
 
 # ── Local research (deterministic) ───────────────────────────────────────────
@@ -495,6 +545,36 @@ class TestDefaultHivemindClient:
         assert "title.ilike.*Hotshot XL SDXL*" in decoded_url
         assert "title.ilike.*Hotshot*" in decoded_url
 
+    def test_postgrest_search_queries_workflow_kind_and_prioritizes_it(self) -> None:
+        seen_urls: list[str] = []
+
+        def capture_urlopen(req: Any, *args: Any, **kwargs: Any) -> Any:
+            seen_urls.append(req.full_url)
+            if "kind=eq.workflow" in req.full_url:
+                payload = (
+                    b'[{"kind": "workflow", "title": "video/ltx2_3_runexx_custom_audio", '
+                    b'"body": "LTX RuneXX audio workflow", '
+                    b'"metadata": {"ready_template_id": "video/ltx2_3_runexx_custom_audio", '
+                    b'"path": "ready_templates/video/ltx2_3_runexx_custom_audio.py"}}]'
+                )
+            else:
+                payload = b'[{"kind": "message", "title": "generic audio note", "body": "audio"}]'
+            return type(
+                "MockResponse",
+                (),
+                {
+                    "read": lambda self: payload,
+                    "__enter__": lambda self: self,
+                    "__exit__": lambda self, *a: None,
+                },
+            )()
+
+        with patch("urllib.request.urlopen", side_effect=capture_urlopen):
+            result = _default_hivemind_client("LTX RuneXX audio workflow", timeout=1.0)
+
+        assert any("kind=eq.workflow" in url for url in seen_urls)
+        assert result["results"][0]["kind"] == "workflow"
+
     def test_raises_hivemind_error_on_invalid_json(self) -> None:
         mock_response = type(
             "MockResponse",
@@ -562,7 +642,7 @@ class TestResearchIntegration:
 
         result = research("test", hivemind_client=client)
         # Summary should reflect merged count (local + new hivemind).
-        assert "2" in result.summary or "local" in result.summary.lower()
+        assert "research result" in result.summary.lower()
 
     @patch("vibecomfy.executor.research.build_search_corpus")
     def test_web_fallback_runs_when_hivemind_empty(self, mock_corpus) -> None:

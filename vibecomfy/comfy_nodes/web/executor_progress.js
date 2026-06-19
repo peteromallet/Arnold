@@ -56,6 +56,13 @@ export const EXECUTOR_PROGRESS_VALUES = Object.freeze([
   "done",
 ]);
 
+export const EXECUTOR_INTENTS = Object.freeze([
+  "edit",
+  "research",
+  "explain_graph",
+  "respond",
+]);
+
 /**
  * All four progress stages must be present with one of the canonical values
  * for the snapshot to be considered valid.
@@ -85,6 +92,7 @@ export function normalizeExecutorPhasePayload(raw) {
   if (!phase || !EXECUTOR_PHASES.includes(phase.toLowerCase())) {
     return null;
   }
+  const intent = asString(payload.intent);
 
   const normalized = compactObject({
     // Phase (required)
@@ -101,9 +109,41 @@ export function normalizeExecutorPhasePayload(raw) {
 
     // Timing
     emitted_at: asString(payload.emitted_at),
+
+    // Classify decision metadata (optional; emitted once the decision exists)
+    plan_summary: asString(payload.plan_summary),
+    intent: intent && EXECUTOR_INTENTS.includes(intent) ? intent : null,
   });
 
   return Object.freeze(normalized);
+}
+
+export function executorDecisionLabel(normalized) {
+  if (!isObject(normalized) || normalized.phase !== "classify") {
+    return null;
+  }
+  const summary = typeof normalized.plan_summary === "string"
+    ? normalized.plan_summary.trim()
+    : "";
+  if (summary) {
+    return `Deciding: ${summary}`;
+  }
+  const intent = typeof normalized.intent === "string"
+    ? normalized.intent
+    : "";
+  if (intent === "edit") {
+    return "Deciding: Edit the graph.";
+  }
+  if (intent === "research") {
+    return "Deciding: Research relevant context before replying.";
+  }
+  if (intent === "explain_graph") {
+    return "Deciding: Inspect the attached graph and explain it.";
+  }
+  if (intent === "respond") {
+    return "Deciding: Reply to the request.";
+  }
+  return null;
 }
 
 /**
@@ -185,6 +225,41 @@ export function progressFromExecutorPhase(normalized) {
   const phase = String(normalized.phase || "").toLowerCase();
   const status = String(normalized.status || "start").toLowerCase();
 
+  if (status === "done") {
+    if (phase === "classify") {
+      return createExecutorProgressSnapshot({
+        decide: "done",
+        research: "pending",
+        execute: "pending",
+        review: "pending",
+      });
+    }
+    if (phase === "research") {
+      return createExecutorProgressSnapshot({
+        decide: "done",
+        research: "done",
+        execute: "pending",
+        review: "pending",
+      });
+    }
+    if (phase === "implement") {
+      return createExecutorProgressSnapshot({
+        decide: "done",
+        research: "done",
+        execute: "done",
+        review: "pending",
+      });
+    }
+    if (phase === "reply") {
+      return createExecutorProgressSnapshot({
+        decide: "done",
+        research: "done",
+        execute: "done",
+        review: "done",
+      });
+    }
+  }
+
   // Skipped phases
   if (status === "skipped") {
     if (phase === "research") {
@@ -249,6 +324,23 @@ export function progressFromExecutorPhase(normalized) {
   }
 
   return null;
+}
+
+/**
+ * Convert a normalized executor phase payload into a canonical phase_progress
+ * snapshot compatible with deriveAgentActivityState.phase_progress.
+ *
+ * This is the compatibility bridge between legacy executor phase events
+ * (vibecomfy.executor.phase) and the canonical agent-activity model. When
+ * agent-turn activity is active, executor phase events flow through this
+ * function to update panel.state.executorProgress without creating an
+ * independent rendering branch.
+ *
+ * @param {object|null} normalized - normalized executor phase payload
+ * @returns {object|null} frozen { decide, research, execute, review } or null
+ */
+export function executorPhaseToCanonicalProgress(normalized) {
+  return progressFromExecutorPhase(normalized);
 }
 
 /**

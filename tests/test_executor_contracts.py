@@ -351,6 +351,18 @@ class TestBuildReplyMessages:
         assert "found template" in content
         assert "applied template" in content
 
+    def test_research_implementation_prompt_requests_concise_rationale(self) -> None:
+        msgs = build_reply_messages(
+            "edit",
+            research_summary="found a relevant custom-audio workflow",
+            implementation_message="applied the custom-audio wiring pattern",
+        )
+        system = msgs[0]["content"]
+        assert "include one brief reason" in system
+        assert "chosen approach/source informed the edit" in system
+        assert "Do not dump the research summary" in system
+        assert "quality scores only when that metadata is explicitly present" in system
+
 
 # ── Response parsers ─────────────────────────────────────────────────────────
 

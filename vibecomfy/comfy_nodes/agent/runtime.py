@@ -3,7 +3,7 @@
 VibeComfy's ``agent_provider._load_arnold_runtime`` discovers a runtime module
 that exposes ``run_agent_turn(...)`` and (optionally) ``get_agent_status(...)``.
 The shipped arnold harness (``pip install`` of
-https://github.com/peteromallet/arnold, importable as the ``arnold`` package;
+https://github.com/peteromallet/Arnold, importable as the ``arnold`` package;
 formerly ``megaplan``) does not expose those exact entry points -- its agent
 backend is the ``arnold.pipelines.megaplan.agent.run_agent.AIAgent`` class (the
 legacy ``megaplan.agent.run_agent.AIAgent`` location is still accepted as a
@@ -48,13 +48,13 @@ from vibecomfy.executor.profiler import (
 )
 
 # How long to wait for a single agent turn (subprocess) before giving up.
-_TURN_TIMEOUT_SECONDS = float(os.getenv("VIBECOMFY_AGENT_TURN_TIMEOUT", "180"))
+_TURN_TIMEOUT_SECONDS = float(os.getenv("VIBECOMFY_AGENT_TURN_TIMEOUT", "1500"))
 _WORKER_PATH = str(Path(__file__).with_name("worker.py"))
 LOGGER = logging.getLogger(__name__)
 
 _OPENROUTER_MODEL = os.getenv("VIBECOMFY_OPENROUTER_MODEL", "openrouter:deepseek/deepseek-v4-pro")
 _OPENROUTER_BASE_URL = os.getenv("VIBECOMFY_OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1")
-_OPENROUTER_MAX_TOKENS = int(os.getenv("VIBECOMFY_OPENROUTER_MAX_TOKENS", "393216"))
+_OPENROUTER_MAX_TOKENS = int(os.getenv("VIBECOMFY_OPENROUTER_MAX_TOKENS", "8192"))
 
 # Arnold/Hermes (Claude etc.) default model when a non-browser-key route is used.
 _ARNOLD_MODEL = os.getenv("VIBECOMFY_ARNOLD_MODEL", "anthropic/claude-opus-4.6")
@@ -63,16 +63,13 @@ _ARNOLD_BASE_URL = os.getenv("VIBECOMFY_ARNOLD_BASE_URL") or None
 _HERMES_ENV_PATH = Path("~/.hermes/.env").expanduser()
 
 
-def _load_env_file_into_environ(path: Path = _HERMES_ENV_PATH) -> None:
-    """Best-effort: hydrate os.environ from ~/.hermes/.env without overwriting.
-
-    The browser credential route writes ``OPENROUTER_API_KEY=...`` here, so a
-    ComfyUI process started without the key in its environment still picks it up.
-    """
+def _read_env_file_entries(path: Path = _HERMES_ENV_PATH) -> list[tuple[str, str]]:
+    """Read dotenv-style key/value pairs in file order."""
+    entries: list[tuple[str, str]] = []
     try:
         text = path.read_text(encoding="utf-8")
     except (FileNotFoundError, OSError):
-        return
+        return entries
     for line in text.splitlines():
         line = line.strip()
         if not line or line.startswith("#") or "=" not in line:
@@ -80,6 +77,26 @@ def _load_env_file_into_environ(path: Path = _HERMES_ENV_PATH) -> None:
         key, _, value = line.partition("=")
         key = key.strip()
         value = value.strip().strip('"').strip("'")
+        if key:
+            entries.append((key, value))
+    return entries
+
+
+def _read_env_file(path: Path = _HERMES_ENV_PATH) -> dict[str, str]:
+    """Read dotenv-style key/value pairs, with later duplicate entries winning."""
+    values: dict[str, str] = {}
+    for key, value in _read_env_file_entries(path):
+        values[key] = value
+    return values
+
+
+def _load_env_file_into_environ(path: Path = _HERMES_ENV_PATH) -> None:
+    """Best-effort: hydrate os.environ from ~/.hermes/.env without overwriting.
+
+    The browser credential route writes ``OPENROUTER_API_KEY=...`` here, so a
+    ComfyUI process started without the key in its environment still picks it up.
+    """
+    for key, value in _read_env_file(path).items():
         if key and key not in os.environ:
             os.environ[key] = value
 
@@ -90,10 +107,40 @@ _load_env_file_into_environ()
 
 def _resolve_openrouter_key() -> str | None:
     # Re-read the env file each call so a freshly browser-submitted key is seen
-    # without restarting the server.
-    if not os.getenv("OPENROUTER_API_KEY"):
-        _load_env_file_into_environ()
-    return os.getenv("OPENROUTER_API_KEY")
+    # without restarting the server. Duplicate OPENROUTER_API_KEY lines can
+    # exist; prefer the OpenRouter-shaped key over stale generic sk-* entries.
+    file_values = _read_env_file()
+    for key, value in file_values.items():
+        if key and value and key not in os.environ:
+            os.environ[key] = value
+    file_keys = [
+        value.strip()
+        for key, value in _read_env_file_entries()
+        if key == "OPENROUTER_API_KEY" and value.strip()
+    ]
+    for file_key in file_keys:
+        if file_key.startswith("sk-or-"):
+            os.environ["OPENROUTER_API_KEY"] = file_key
+            return file_key
+    if file_keys:
+        os.environ["OPENROUTER_API_KEY"] = file_keys[-1]
+    _load_env_file_into_environ()
+    candidates: list[tuple[str, str]] = []
+    for key, value in file_values.items():
+        if key == "OPENROUTER_API_KEY" or key.startswith("OPENROUTER_API_KEY_"):
+            value = value.strip()
+            if value:
+                candidates.append((key, value))
+    for key, value in os.environ.items():
+        if key == "OPENROUTER_API_KEY" or key.startswith("OPENROUTER_API_KEY_"):
+            value = value.strip()
+            if value:
+                candidates.append((key, value))
+    candidates.sort(key=lambda item: (item[0] != "OPENROUTER_API_KEY", item[0]))
+    for _, value in candidates:
+        if value.startswith("sk-or-"):
+            return value
+    return candidates[0][1] if candidates else None
 
 
 def _is_runtime_unavailable(result: Mapping[str, Any]) -> bool:
@@ -109,6 +156,25 @@ def _is_runtime_unavailable(result: Mapping[str, Any]) -> bool:
     if result.get("runtime_unavailable"):
         return True
     return result.get("error_type") in {"ModuleNotFoundError", "ImportError", "LookupError"}
+
+
+def _raise_worker_error(result: Mapping[str, Any]) -> None:
+    err = str(result.get("error") or "agent worker failed")
+    error_type = str(result.get("error_type") or "").strip()
+    message = f"{error_type}: {err}" if error_type and error_type not in err else err
+    lowered = message.lower()
+    if (
+        error_type in {"AuthError", "AuthenticationError", "PermissionError"}
+        or "authenticationerror" in lowered
+        or "error code: 401" in lowered
+        or "missing authentication header" in lowered
+        or "invalid api key" in lowered
+        or "unauthorized" in lowered
+    ):
+        raise PermissionError(message)
+    if _is_runtime_unavailable(result):
+        raise ImportError(message)
+    raise RuntimeError(message)
 
 
 def _normalize_route(route: str | None) -> str:
@@ -146,11 +212,34 @@ def _agent_id_for_route(route: str | None) -> str:
 
 
 def _default_model_for_route(route: str, model: str | None) -> str:
-    if model:
+    if _is_real_model_override(model):
         return _strip_provider_prefix(model, "openrouter")
     if route == "openrouter":
         return _strip_provider_prefix(_OPENROUTER_MODEL, "openrouter")
     return _ARNOLD_MODEL
+
+
+def _is_real_model_override(model: str | None) -> bool:
+    """True when *model* is an actual provider model, not the panel contract id."""
+    normalized = (model or "").strip()
+    return bool(normalized and normalized != "agent-edit")
+
+
+def _runtime_model_for_route(route: str | None, model: str | None) -> str | None:
+    """Return the model slug to hand to the provider adapter.
+
+    The browser/status contract historically used ``agent-edit`` as a product
+    label.  That is not a valid OpenRouter/Anthropic/Codex model id, so keep it
+    out of the provider seam and let the route resolve its real default.
+    """
+    if _is_real_model_override(model):
+        return model
+    normalized_route = _normalize_route(route)
+    if normalized_route == "openrouter":
+        return _OPENROUTER_MODEL
+    if normalized_route in {"arnold", "anthropic", "openai-codex"}:
+        return _ARNOLD_MODEL
+    return None
 
 
 def _strip_provider_prefix(model: str, provider: str) -> str:
@@ -207,7 +296,7 @@ def _build_agent_kwargs(agent_id: str, route: str | None = None, model: str | No
         quiet_mode=True,
     )
     if agent_id == "hermes":
-        resolved_model = model or _OPENROUTER_MODEL
+        resolved_model = _runtime_model_for_route(route, model) or _OPENROUTER_MODEL
         resolved_model = _strip_provider_prefix(resolved_model, "openrouter")
         return dict(
             model=resolved_model,
@@ -257,6 +346,8 @@ def _run_worker(
         openrouter_key = _resolve_openrouter_key()
         if openrouter_key:
             env["OPENROUTER_API_KEY"] = openrouter_key
+            env["OPENAI_API_KEY"] = openrouter_key
+            env["HERMES_API_KEY"] = openrouter_key
         # Don't leak ComfyUI's cwd/path into the child (it is what causes the
         # `utils` collision); run from a neutral directory.
         try:
@@ -344,14 +435,7 @@ def run_agent_turn(
         agent_id=agent_id,
     )
     if "error" in result:
-        # Surface auth-style failures as PermissionError so VibeComfy classifies
-        # them as auth errors; everything else stays a provider error.
-        err = result.get("error", "agent worker failed")
-        if result.get("error_type") in {"AuthError", "AuthenticationError", "PermissionError"}:
-            raise PermissionError(err)
-        if _is_runtime_unavailable(result):
-            raise ImportError(err)
-        raise RuntimeError(err)
+        _raise_worker_error(result)
     return {"python": result["python"], "message": result["message"]}
 
 
@@ -390,12 +474,7 @@ def run_agent_turn_delta(
         agent_id=agent_id,
     )
     if "error" in result:
-        err = result.get("error", "agent worker failed")
-        if result.get("error_type") in {"AuthError", "AuthenticationError", "PermissionError"}:
-            raise PermissionError(err)
-        if _is_runtime_unavailable(result):
-            raise ImportError(err)
-        raise RuntimeError(err)
+        _raise_worker_error(result)
     return {"delta": result["delta"], "message": result["message"]}
 
 
@@ -428,14 +507,7 @@ def run_agent_turn_batch(
         agent_id=agent_id,
     )
     if "error" in result:
-        err = result.get("error", "agent worker failed")
-        if result.get("error_type") in {"AuthError", "AuthenticationError", "PermissionError"}:
-            raise PermissionError(err)
-        if _is_runtime_unavailable(result):
-            raise ImportError(err)
-        if result.get("error_type") in {"JSONDecodeError", "ValueError"}:
-            return {"content": ""}
-        raise RuntimeError(err)
+        _raise_worker_error(result)
     return {"content": result["content"]}
 
 
@@ -768,12 +840,7 @@ def run_model_turn(
             profiling_context=effective_profile,
         )
         if "error" in result:
-            err = result.get("error", "agent worker failed")
-            if result.get("error_type") in {"AuthError", "AuthenticationError", "PermissionError"}:
-                raise PermissionError(err)
-            if _is_runtime_unavailable(result):
-                raise ImportError(err)
-            raise RuntimeError(err)
+            _raise_worker_error(result)
 
         span.update(
             result_keys=sorted(result.keys()),

@@ -15,6 +15,9 @@ const LIFECYCLE_SOURCE = path.join(REPO_ROOT, "vibecomfy", "comfy_nodes", "web",
 const ADAPTER_SOURCE = path.join(REPO_ROOT, "vibecomfy", "comfy_nodes", "web", "comfy_adapter.js");
 const RESPONSE_CONTRACT_SOURCE = path.join(REPO_ROOT, "vibecomfy", "comfy_nodes", "web", "agent_edit_response_contract.js");
 const DIAGNOSTICS_REPORTING_SOURCE = path.join(REPO_ROOT, "vibecomfy", "comfy_nodes", "web", "diagnostics_reporting.js");
+const EXECUTOR_PROGRESS_SOURCE = path.join(REPO_ROOT, "vibecomfy", "comfy_nodes", "web", "executor_progress.js");
+const AGENT_TURN_FEED_SOURCE = path.join(REPO_ROOT, "vibecomfy", "comfy_nodes", "web", "agent_turn_feed.js");
+const MARKDOWN_SOURCE = path.join(REPO_ROOT, "vibecomfy", "comfy_nodes", "web", "markdown.js");
 
 function clone(value) {
   return value == null ? value : JSON.parse(JSON.stringify(value));
@@ -103,9 +106,21 @@ class FakeElement {
     this.value = "";
     this.disabled = false;
     this.onclick = null;
-    this.textContent = "";
+    this._textContent = "";
     this.id = "";
     this.eventListeners = {};
+  }
+
+  get textContent() {
+    if (this.children.length > 0) {
+      return this.children.map((child) => (child == null ? "" : String(child.textContent || ""))).join("");
+    }
+    return this._textContent;
+  }
+
+  set textContent(value) {
+    this._textContent = String(value == null ? "" : value);
+    this.children.length = 0;
   }
 
   get isConnected() {
@@ -245,6 +260,13 @@ function makeResponse(status, body) {
   return {
     ok: status >= 200 && status < 300,
     status,
+    headers: {
+      get(name) {
+        return String(name || "").toLowerCase() === "content-type"
+          ? "application/json"
+          : null;
+      },
+    },
     async json() {
       return clone(normalizedBody);
     },
@@ -534,13 +556,6 @@ export async function createBrowserHarness({
 
   const fetchImpl = async (url, options = {}) => {
     let key = String(url);
-    if (
-      key === "/vibecomfy/agent-executor"
-      && responses[key] == null
-      && responses["/vibecomfy/agent-edit"] != null
-    ) {
-      key = "/vibecomfy/agent-edit";
-    }
     const deferRequestLog = key.startsWith("/vibecomfy/agent-edit/chat?");
     const logRequest = () => {
       requests.push({
@@ -640,6 +655,9 @@ export async function createBrowserHarness({
   await writeFile(path.join(webRoot, "comfy_adapter.js"), await readFile(ADAPTER_SOURCE, "utf8"));
   await writeFile(path.join(webRoot, "agent_edit_response_contract.js"), await readFile(RESPONSE_CONTRACT_SOURCE, "utf8"));
   await writeFile(path.join(webRoot, "diagnostics_reporting.js"), await readFile(DIAGNOSTICS_REPORTING_SOURCE, "utf8"));
+  await writeFile(path.join(webRoot, "executor_progress.js"), await readFile(EXECUTOR_PROGRESS_SOURCE, "utf8"));
+  await writeFile(path.join(webRoot, "agent_turn_feed.js"), await readFile(AGENT_TURN_FEED_SOURCE, "utf8"));
+  await writeFile(path.join(webRoot, "markdown.js"), await readFile(MARKDOWN_SOURCE, "utf8"));
 
   const apiEventListeners = {};
   const mockApi = {

@@ -23,6 +23,7 @@ from __future__ import annotations
 import logging
 import os
 import sys
+import hashlib
 from pathlib import Path
 from typing import Any
 
@@ -37,13 +38,37 @@ from vibecomfy.contracts.intent_nodes import KIND_TO_CLASS_TYPE
 
 _MAX_DYNAMIC_PORTS = 16
 
-# Resolve WEB_DIRECTORY to the newest cache-busted web_dist/<hash>/ copy when
-# available, falling back to ./web for development/no-build scenarios.
+# Resolve WEB_DIRECTORY to the cache-busted web_dist/<hash>/ copy matching the
+# current web/ source content when available, falling back to the newest valid
+# dist and then ./web for development/no-build scenarios.
 _MODULE_DIR = Path(__file__).resolve().parent
+_WEB_SRC_DIR = _MODULE_DIR / "web"
 _WEB_DIST_DIR = _MODULE_DIR / "web_dist"
 _WEB_DIRECTORY = "./web"  # fallback
+
+
+def _web_source_hash() -> str | None:
+    """Return the 12-char content hash used by build_web_cache_bust.sh."""
+    if not _WEB_SRC_DIR.is_dir():
+        return None
+    digest = hashlib.sha256()
+    try:
+        entries = sorted(_p for _p in _WEB_SRC_DIR.iterdir() if _p.is_file())
+        for entry in entries:
+            if entry.name.endswith((".bak", "~", ".orig", ".tmp")):
+                continue
+            digest.update(entry.name.encode("utf-8"))
+            digest.update(b"\0")
+            digest.update(entry.read_bytes())
+            digest.update(b"\0")
+    except OSError:
+        return None
+    return digest.hexdigest()[:12]
+
+
 if _WEB_DIST_DIR.is_dir():
     _best: "tuple[float, str] | None" = None
+    _source_hash = _web_source_hash()
     for _entry in _WEB_DIST_DIR.iterdir():
         if not _entry.is_dir():
             continue
@@ -52,8 +77,11 @@ if _WEB_DIST_DIR.is_dir():
         except OSError:
             continue
         if _has_file:
+            if _source_hash and _entry.name == _source_hash:
+                _best = (_entry.stat().st_mtime, _entry.name)
+                break
             _mtime = _entry.stat().st_mtime
-            if _best is None or _mtime > _best[0]:
+            if _best is None or (_mtime, _entry.name) > _best:
                 _best = (_mtime, _entry.name)
     if _best is not None:
         _WEB_DIRECTORY = f"./web_dist/{_best[1]}"
@@ -103,7 +131,7 @@ except ImportError as _route_import_exc:
     _LOGGER.warning(
         "Could not register VibeComfy agent routes (%s); "
         "the ComfyUI server may not be available. "
-        "POST /vibecomfy/agent-executor and /vibecomfy/agent/status will not be served.",
+        "POST /vibecomfy/agent-edit and /vibecomfy/agent/status will not be served.",
         _route_import_exc,
     )
 

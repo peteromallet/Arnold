@@ -26,7 +26,7 @@ def score_entry(entry: SearchEntry, query: str, *, task: str | None = None) -> S
     score = 0
     reasons: list[str] = []
     if class_text and (normalize_text(query) == class_text or class_text in terms):
-        score += 5
+        score += 30
         reasons.append("class_type")
 
     if _field_matches(pack_text, terms):
