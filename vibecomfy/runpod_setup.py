@@ -3,6 +3,7 @@ from __future__ import annotations
 import subprocess
 import sys
 from dataclasses import dataclass
+import os
 from pathlib import Path
 from typing import Iterable, Sequence
 
@@ -29,6 +30,7 @@ def stage_baseline_models(
     registry: Path | None = None,
     dry_run: bool = False,
 ) -> None:
+    configure_workspace_cache(models_root=models_root)
     entries = models_loader.load_registry(registry)
     selected = models_loader._filter_entries(entries, ids=BASELINE_MODEL_IDS, select_phase=None)
     if dry_run:
@@ -43,12 +45,24 @@ def stage_ltx_models(
     registry: Path | None = None,
     dry_run: bool = False,
 ) -> None:
+    configure_workspace_cache(models_root=models_root)
     entries = models_loader.load_registry(registry)
     selected = models_loader._filter_entries(entries, ids=None, select_phase=LTX_MODEL_PHASE)
     if dry_run:
         models_loader._print_dry_run(selected, models_root=models_root)
         return
     models_loader.stage_many(selected, models_root=models_root)
+
+
+def configure_workspace_cache(*, models_root: Path) -> Path:
+    cache_root = models_root.resolve().parent / "cache"
+    hf_home = cache_root / "huggingface"
+    os.environ.setdefault("HF_HOME", str(hf_home))
+    os.environ.setdefault("HUGGINGFACE_HUB_CACHE", str(hf_home / "hub"))
+    os.environ.setdefault("TRANSFORMERS_CACHE", str(hf_home / "transformers"))
+    os.environ.setdefault("XDG_CACHE_HOME", str(cache_root / "xdg"))
+    hf_home.mkdir(parents=True, exist_ok=True)
+    return cache_root
 
 
 def park_node_packs(
