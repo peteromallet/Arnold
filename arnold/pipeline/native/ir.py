@@ -122,13 +122,17 @@ class NativeInstruction:
     """Zero-based program counter — position in the instruction tuple."""
 
     op: str
-    """Operation code: ``'phase'``, ``'decision'``, ``'jump'``, or ``'halt'``."""
+    """Operation code: ``'phase'``, ``'decision'``, ``'jump'``, ``'halt'``, or ``'subpipeline'``."""
 
     name: str = ""
     """Human-readable label for the instruction (phase/decision name)."""
 
     func: Callable[..., Any] | None = field(default=None, compare=False, hash=False)
     """The callable to invoke for ``phase`` and ``decision`` ops."""
+
+    subprogram: Any = field(default=None, compare=False, hash=False)
+    """For ``subpipeline`` ops: the child :class:`NativeProgram` to execute.
+    Excluded from equality/hash; ignored for other ops."""
 
     next_pc: int | None = None
     """Program counter of the next instruction for sequential fall-through."""

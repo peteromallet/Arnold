@@ -160,8 +160,8 @@ reference.  The implementation is scoped to:
 |-----------------------------------|-------------------------------------------------------------------|
 | `resolve_step_io_policy` seam     | Invented callback; step-IO policy redesign deferred to post-M3    |
 | `on_edge_traverse` seam           | Invented callback; no M3 requirement for edge-traversal hooks     |
-| Sub-pipeline dispatch             | M4 work; requires compiler/runtime changes for nested programs    |
-| Composite cursor / suspension-lift| T11–T12 in plan; dependent on subpipeline IR landing first        |
+| Sub-pipeline compiler lowering    | M4 work; compiler does not yet emit `subpipeline` instructions    |
+| Composite cursor / suspension-lift| T11–T12 in plan; dependent on subpipeline compiler work           |
 
 ---
 
@@ -439,6 +439,10 @@ native pipeline) is partially implemented in M3 and will be completed in M4.
 
 | Component                         | Status      | Location                                                    |
 |-----------------------------------|:----------:|-------------------------------------------------------------|
+| Neutral child-frame execution     | **Done**   | `runtime.py` — `run_native_pipeline` handles `op="subpipeline"` with isolated artifact roots and state |
+| Child state isolation             | **Done**   | Child receives `dict(parent_state)` copy; state merge via `state.update` + `hooks.merge_state` |
+| Child envelope joining            | **Done**   | Child envelope joined via `hooks.join_envelope` |
+| `NativeInstruction.subprogram`    | **Done**   | `ir.py` — new field carries the child `NativeProgram` |
 | `completed_subloop` helper        | **Done**   | `arnold/pipelines/megaplan/native_hooks.py:520`             |
 | `suspended_subloop` helper        | **Done**   | `arnold/pipelines/megaplan/native_hooks.py:587`             |
 | Composite cursor persistence      | **Done**   | `save_composite_resume_cursor` in `_pipeline/resume.py`     |
@@ -451,13 +455,10 @@ native pipeline) is partially implemented in M3 and will be completed in M4.
 |-----------------------------------|:----------:|-------------------------------------------------------------|
 | Subpipeline IR lowering           | Deferred   | Compiler does not yet emit `NativeInstruction` sequences for nested `@pipeline` definitions |
 | Subpipeline compiler pass         | Deferred   | The `compile_pipeline` entry point only handles top-level pipelines |
-| Nested runtime dispatch           | Deferred   | `run_native_pipeline` has no subpipeline call/return protocol |
-| Subpipeline isolation (state)     | Deferred   | Child state is promoted via `subloop:<name>:state` but the child runtime does not yet have a true sandboxed state |
 | Composite cursor resume in runtime| Deferred   | The runtime can *write* composite cursors but cannot yet *resume* from them (parent+child restoration) |
 
 ### M4 plan
 
-1. Extend `compile_pipeline` to detect nested `@pipeline` definitions and emit `NativeInstruction(op="call_subpipeline", ...)` / `NativeInstruction(op="return_subpipeline", ...)`.
-2. Add subpipeline state isolation — child gets a copy of parent state merged with child-specific keys.
-3. Implement composite cursor resume in `run_native_pipeline` — detect `composite_resume_cursor.json`, restore parent and child contexts, resume from the suspension point.
-4. Extend `MegaplanNativeRuntimeHooks` with subpipeline-aware `should_suspend` logic.
+1. Extend `compile_pipeline` to detect nested `@pipeline` definitions and emit `NativeInstruction(op="subpipeline", subprogram=...)` instructions.
+2. Implement composite cursor resume in `run_native_pipeline` — detect `composite_resume_cursor.json`, restore parent and child contexts, resume from the suspension point.
+3. Extend `MegaplanNativeRuntimeHooks` with subpipeline-aware `should_suspend` logic.

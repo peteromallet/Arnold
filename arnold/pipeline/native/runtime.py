@@ -630,6 +630,55 @@ def run_native_pipeline(
             forward_visited.add(pc)
             pc = next_pc
 
+        elif instr.op == "subpipeline":
+            child_program = getattr(instr, 'subprogram', None)
+            if child_program is not None:
+                child_name = instr.name or "child"
+
+                # ── Isolate artifact root ──────────────────────────
+                child_artifact_root = Path(artifact_root) / f"_child_{child_name}"
+                child_artifact_root.mkdir(parents=True, exist_ok=True)
+
+                # ── Isolate state: child receives a copy of parent state ──
+                child_initial_state = dict(state)
+
+                # ── Execute child subpipeline ───────────────────────
+                child_result = run_native_pipeline(
+                    program=child_program,
+                    artifact_root=child_artifact_root,
+                    initial_state=child_initial_state,
+                    max_phases=None,
+                    resume=False,
+                    hooks=hooks,
+                    schema_registry=schema_registry,
+                    telemetry_path=telemetry_path,
+                    initial_envelope=envelope,
+                    trace_dir=None,
+                )
+
+                # ── Merge child state back into parent state ────────
+                # Update parent state with child outputs first (matching
+                # the phase handler's state.update(outputs) before merge_state).
+                # The hooks.merge_state call can then override or CAS-enforce.
+                child_outputs = dict(child_result.state)
+                state.update(child_outputs)
+                state, owned_keys = _hooks.merge_state(
+                    instr, state, child_outputs, owned_keys,
+                )
+
+                # ── Join child envelope ────────────────────────────
+                envelope = _hooks.join_envelope(
+                    instr, envelope, child_result.envelope,
+                )
+
+                # ── Advance pc ──────────────────────────────────────
+                pc = instr.next_pc if instr.next_pc is not None else pc + 1
+                forward_visited.clear()
+            else:
+                # No child program attached — skip
+                pc = instr.next_pc if instr.next_pc is not None else pc + 1
+                forward_visited.clear()
+
         else:
             # Unknown op — treat as no-op and advance
             pc += 1
