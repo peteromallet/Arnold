@@ -3,10 +3,13 @@ import React, { useMemo, useState } from 'react';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { TimelineCanvas } from '@/tools/video-editor/components/TimelineEditor/TimelineCanvas';
+import { DataProviderWrapper, type VideoEditorRuntimeContextValue } from '@/tools/video-editor/contexts/DataProviderContext';
 import { createInteractionState, onInteractionEnd } from '@/tools/video-editor/lib/interaction-state';
 import { requestCenterTimelineClip } from '@/tools/video-editor/lib/timeline-viewport-events';
+import { createCommandRegistry, type CommandRegistry } from '@/tools/video-editor/runtime/commandRegistry';
 import type { TrackDefinition } from '@/tools/video-editor/types';
 import type { TimelineAction, TimelineRow } from '@/tools/video-editor/types/timeline-canvas';
+import type { ReighExtension } from '@reigh/editor-sdk';
 
 const useTimelineMutableAdaptersMock = vi.fn();
 
@@ -56,6 +59,78 @@ const pinnedShotGroup: NonNullable<React.ComponentProps<typeof TimelineCanvas>['
 };
 const setGestureOwner = vi.fn();
 const setInputModalityFromPointerType = vi.fn(() => 'mouse');
+
+function buildRuntime(commandRegistry: CommandRegistry): VideoEditorRuntimeContextValue {
+  const extension = {
+    manifest: {
+      id: 'ext.timeline',
+      version: '1.0.0',
+      label: 'Timeline Extension',
+    },
+  } as ReighExtension;
+
+  return {
+    provider: {} as VideoEditorRuntimeContextValue['provider'],
+    assetResolver: {} as VideoEditorRuntimeContextValue['assetResolver'],
+    auth: { userId: 'user-1' },
+    project: { projectId: 'project-1' },
+    shots: {} as VideoEditorRuntimeContextValue['shots'],
+    mediaLightbox: {} as VideoEditorRuntimeContextValue['mediaLightbox'],
+    agentChat: {} as VideoEditorRuntimeContextValue['agentChat'],
+    toast: {
+      error: vi.fn(),
+      success: vi.fn(),
+      warning: vi.fn(),
+      info: vi.fn(),
+    },
+    telemetry: {
+      log: vi.fn(),
+      warn: vi.fn(),
+      error: vi.fn(),
+    },
+    timelineId: 'timeline-1',
+    userId: 'user-1',
+    extensions: {
+      slots: {},
+      dialogHost: { dialogs: [] },
+      registry: { panels: [], inspectorSections: [] },
+      overlays: [],
+    },
+    extensionRuntime: {
+      extensions: [extension],
+      byId: new Map([['ext.timeline', extension]]),
+    } as VideoEditorRuntimeContextValue['extensionRuntime'],
+    commandRegistry,
+  };
+}
+
+function registerTimelineAreaMenuCommand(
+  registry: CommandRegistry,
+  handler: Parameters<CommandRegistry['registerCommand']>[2] = vi.fn(),
+  options: {
+    command?: string;
+    label?: string;
+    menuLabel?: string;
+    when?: string;
+  } = {},
+) {
+  const command = options.command ?? 'ext.timeline.open';
+  registry.ingestCommandContribution('ext.timeline', {
+    id: `${command}.command` as never,
+    kind: 'command',
+    command,
+    label: options.label ?? 'Open timeline command',
+  });
+  registry.ingestContextMenuItemContribution('ext.timeline', {
+    id: `${command}.menu` as never,
+    kind: 'contextMenuItem',
+    command,
+    target: 'timeline-area',
+    label: options.menuLabel ?? 'Open timeline command',
+    when: options.when,
+  });
+  registry.registerCommand('ext.timeline', command, handler);
+}
 
 function cloneRowState(source: TimelineRow): TimelineRow {
   return {
@@ -251,6 +326,7 @@ function renderCanvas(params?: {
   rows?: TimelineRow[];
   onAddTextAt?: React.ComponentProps<typeof TimelineCanvas>['onAddTextAt'];
   onOpenSequenceCreator?: React.ComponentProps<typeof TimelineCanvas>['onOpenSequenceCreator'];
+  commandRegistry?: CommandRegistry;
 }) {
   const dataRef = params?.dataRef ?? { current: null };
   const trackDefinitions = params?.tracks ?? [params?.track ?? track];
@@ -267,7 +343,7 @@ function renderCanvas(params?: {
   const onClipEdgeResizeEnd = params?.onClipEdgeResizeEnd ?? vi.fn();
   const getActionRender = params?.getActionRender ?? vi.fn(() => <div>clip</div>);
 
-  const renderResult = render(
+  const canvas = (
     <TimelineCanvas
       rows={timelineRows}
       tracks={trackDefinitions}
@@ -307,7 +383,13 @@ function renderCanvas(params?: {
       onAddTextAt={params?.onAddTextAt}
       onOpenSequenceCreator={params?.onOpenSequenceCreator}
       dragSessionRef={{ current: null }}
-    />,
+    />
+  );
+
+  const renderResult = render(
+    params?.commandRegistry
+      ? <DataProviderWrapper value={buildRuntime(params.commandRegistry)}>{canvas}</DataProviderWrapper>
+      : canvas,
   );
 
   const targetRow = timelineRows.find((candidate) => candidate.actions.length > 0) ?? timelineRows[0];
@@ -381,6 +463,92 @@ describe('TimelineCanvas floating tools', () => {
 
     fireEvent.click(sequenceTool);
     expect(onOpenSequenceCreator).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('TimelineCanvas extension context menus', () => {
+  it('invokes timeline-area context menu commands from editable canvas background targets', async () => {
+    const registry = createCommandRegistry();
+    const handler = vi.fn();
+    registerTimelineAreaMenuCommand(registry, handler);
+    const { container } = renderCanvas({ commandRegistry: registry });
+    const background = container.querySelector('.timeline-canvas-edit-area > .relative');
+    if (!(background instanceof HTMLElement)) {
+      throw new Error('expected timeline background');
+    }
+
+    fireEvent.contextMenu(background, { clientX: 160, clientY: 120 });
+    fireEvent.click(screen.getByText('Open timeline command'));
+
+    await waitFor(() => expect(handler).toHaveBeenCalledTimes(1));
+    expect(handler.mock.calls[0][0]).toEqual(expect.objectContaining({
+      commandId: 'ext.timeline.open',
+      extensionId: 'ext.timeline',
+      target: { target: 'timeline-area' },
+    }));
+  });
+
+  it('leaves native background context-menu behavior alone when no extension items are eligible', () => {
+    const { container } = renderCanvas();
+    const background = container.querySelector('.timeline-canvas-edit-area > .relative');
+    if (!(background instanceof HTMLElement)) {
+      throw new Error('expected timeline background');
+    }
+
+    const event = new MouseEvent('contextmenu', {
+      bubbles: true,
+      cancelable: true,
+      clientX: 160,
+      clientY: 120,
+    });
+    background.dispatchEvent(event);
+
+    expect(event.defaultPrevented).toBe(false);
+    expect(document.body.querySelector('div.fixed.z-50')).toBeNull();
+  });
+
+  it('filters timeline-area context menu items by predicate', () => {
+    const registry = createCommandRegistry();
+    registerTimelineAreaMenuCommand(registry, vi.fn(), {
+      command: 'ext.timeline.visible',
+      menuLabel: 'Visible timeline action',
+      when: 'target.target == "timeline-area"',
+    });
+    registerTimelineAreaMenuCommand(registry, vi.fn(), {
+      command: 'ext.timeline.hidden',
+      menuLabel: 'Hidden timeline action',
+      when: 'target.target == "clip"',
+    });
+    const { container } = renderCanvas({ commandRegistry: registry });
+    const background = container.querySelector('.timeline-canvas-edit-area > .relative');
+    if (!(background instanceof HTMLElement)) {
+      throw new Error('expected timeline background');
+    }
+
+    fireEvent.contextMenu(background, { clientX: 160, clientY: 120 });
+
+    expect(screen.getByText('Visible timeline action')).toBeInTheDocument();
+    expect(screen.queryByText('Hidden timeline action')).not.toBeInTheDocument();
+  });
+
+  it('keeps shot-group context menus reserved to the built-in shot-group surface', () => {
+    const registry = createCommandRegistry();
+    const handler = vi.fn();
+    registerTimelineAreaMenuCommand(registry, handler);
+    const onShotGroupNavigate = vi.fn();
+    const { getByTitle } = renderCanvas({
+      commandRegistry: registry,
+      row: pinnedGroupRow,
+      shotGroups: [pinnedShotGroup],
+      allowMissingHandles: true,
+      onShotGroupNavigate,
+    });
+    const label = getByTitle('Pinned Shot') as HTMLElement;
+
+    fireEvent.contextMenu(label, { clientX: 120, clientY: 80 });
+
+    expect(screen.getByText('Jump to Shot')).toBeInTheDocument();
+    expect(screen.queryByText('Open timeline command')).not.toBeInTheDocument();
   });
 });
 

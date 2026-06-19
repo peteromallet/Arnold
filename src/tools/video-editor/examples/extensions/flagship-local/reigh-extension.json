@@ -3,9 +3,33 @@
     "id": "com.reigh.examples.flagship-local",
     "version": "1.0.0",
     "label": "Flagship Local Extension",
-    "description": "Flagship trusted-local extension example demonstrating the full M1 SDK surface: activation lifecycle, toolbar and status-bar slot UI, settings with defaults, diagnostics, chrome toast/progress scaffolding, trusted-local safety warnings, and future inactive contribution declarations (effect, transition, clipType, parser, agentTool).",
+    "description": "Flagship trusted-local extension example demonstrating the SDK surface: activation lifecycle, toolbar and status-bar slot UI, settings with defaults, diagnostics, chrome toast/progress scaffolding, trusted-local safety warnings, command/keybinding/context-menu contributions, and future inactive contribution declarations (effect, transition, clipType, parser, agentTool).",
     "apiVersion": 1,
     "contributions": [
+      {
+        "id": "flagship-mark-review-command",
+        "kind": "command",
+        "command": "com.reigh.examples.flagship-local.markClipReview",
+        "label": "Flagship: Mark Clip for Review",
+        "category": "Flagship",
+        "order": 10
+      },
+      {
+        "id": "flagship-mark-review-keybinding",
+        "kind": "keybinding",
+        "command": "com.reigh.examples.flagship-local.markClipReview",
+        "key": "CtrlOrCmd+Alt+F",
+        "order": 10
+      },
+      {
+        "id": "flagship-mark-review-menu",
+        "kind": "contextMenuItem",
+        "command": "com.reigh.examples.flagship-local.markClipReview",
+        "label": "Flagship: Mark Clip for Review",
+        "target": "clip",
+        "when": "target.clipId != null",
+        "order": 10
+      },
       {
         "id": "flagship-toolbar-button",
         "kind": "slot",
@@ -62,7 +86,9 @@
       "warning.trustedLocal": "⚠️ Trusted-local extension: this extension executes with full browser-renderer privileges. Review the extension source before enabling it in a shared project.",
       "progress.label": "Chrome progress scaffold",
       "toast.error": "Flagship encountered an error: {{error}}",
-      "toast.info": "Flagship status update: {{message}}"
+      "toast.info": "Flagship status update: {{message}}",
+      "command.markReview.ready": "Flagship review marker command registered.",
+      "command.markReview.done": "Flagship review marker stored."
     }
   }
 }

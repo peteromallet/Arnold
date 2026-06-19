@@ -1,4 +1,5 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react';
+import { CommandPalette } from '@/tools/video-editor/components/CommandPalette/CommandPalette.tsx';
 import { formatDistanceToNow } from 'date-fns';
 import { Download, Eye, GripHorizontal, History, Maximize2, Minimize2, Redo2, RefreshCw, Settings, SlidersHorizontal, Undo2, ZoomIn, ZoomOut } from 'lucide-react';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/shared/components/ui/alert-dialog.tsx';
@@ -176,6 +177,7 @@ function TimelineEditorShellCoreComponent({
   const [condensedRightPanel, setCondensedRightPanel] = useState<'preview' | 'properties'>('preview');
   const [isMobilePropertiesOpen, setIsMobilePropertiesOpen] = useState(false);
   const [isSequenceCreatorOpen, setIsSequenceCreatorOpen] = useState(false);
+  const [isCommandPaletteOpen, setIsCommandPaletteOpen] = useState(false);
   const timelineFps = Math.max(1, editorData.resolvedConfig?.output?.fps ?? 30);
   const conflict = useTimelineRealtime({
     timelineId,
@@ -227,6 +229,25 @@ function TimelineEditorShellCoreComponent({
     MemoryPressureDetector.start();
     return MemoryPressureDetector.stop;
   }, []);
+
+  // M4: Host-reserved command palette keyboard shortcut (CtrlOrCmd+Shift+P).
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      // Don't trigger when the palette is already open — the cmdk dialog
+      // owns keyboard handling in that case.
+      if (isCommandPaletteOpen) return;
+
+      const isModifierPressed = event.metaKey || event.ctrlKey;
+      if (isModifierPressed && event.shiftKey && event.key.toLowerCase() === 'p') {
+        event.preventDefault();
+        event.stopPropagation();
+        setIsCommandPaletteOpen(true);
+      }
+    };
+
+    window.addEventListener('keydown', onKeyDown, { capture: true });
+    return () => window.removeEventListener('keydown', onKeyDown, { capture: true });
+  }, [isCommandPaletteOpen]);
 
   const handleKeyboardDelete = useCallback(() => {
     const mutation = buildKeyboardDeleteMutation(editorData.dataRef.current, editorData.selectedClipIds);
@@ -1041,6 +1062,15 @@ function TimelineEditorShellCoreComponent({
         <SequenceCreatorPanel
           open={isSequenceCreatorOpen}
           onOpenChange={setIsSequenceCreatorOpen}
+        />
+      )}
+
+      {/* M4: Host command palette overlay — only mount when open to avoid
+          unnecessary context lookups that break in tests without providers. */}
+      {isCommandPaletteOpen && (
+        <CommandPalette
+          open={isCommandPaletteOpen}
+          onOpenChange={setIsCommandPaletteOpen}
         />
       )}
 

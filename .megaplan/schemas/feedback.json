@@ -1,0 +1,49 @@
+{
+  "type": "object",
+  "properties": {
+    "overall": {
+      "type": "object",
+      "properties": {
+        "rating": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 10
+        },
+        "comment": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "rating",
+        "comment"
+      ],
+      "additionalProperties": false
+    },
+    "stages": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "properties": {
+          "rating": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 10
+          },
+          "comment": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "rating",
+          "comment"
+        ],
+        "additionalProperties": false
+      }
+    }
+  },
+  "required": [
+    "overall",
+    "stages"
+  ],
+  "additionalProperties": false
+}

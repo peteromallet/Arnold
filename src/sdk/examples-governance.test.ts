@@ -13,6 +13,15 @@
 import { describe, expect, it } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
+import { commandExtension } from '../examples/command-extension';
+import type {
+  CommandContribution,
+  ContextMenuItemContribution,
+  KeybindingContribution,
+  ReighExtension,
+  TimelineOps,
+  TimelineProposalInput,
+} from '@reigh/editor-sdk';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -205,6 +214,85 @@ describe('Extension example import governance', () => {
         expect(allSdkImports.has(exportName)).toBe(true);
       });
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// M4 command extension example contract
+// ---------------------------------------------------------------------------
+
+describe('M4 command extension example contract', () => {
+  const COMMAND_EXAMPLE_PATH = path.join(
+    REPO_ROOT,
+    'src',
+    'examples',
+    'command-extension.ts',
+  );
+  const source = fs.readFileSync(COMMAND_EXAMPLE_PATH, 'utf8');
+  const extension: ReighExtension = commandExtension;
+  const contributions = extension.manifest.contributions ?? [];
+
+  const commandContribution = contributions.find(
+    (contribution): contribution is CommandContribution =>
+      contribution.kind === 'command',
+  );
+  const keybindingContribution = contributions.find(
+    (contribution): contribution is KeybindingContribution =>
+      contribution.kind === 'keybinding',
+  );
+  const contextMenuContribution = contributions.find(
+    (contribution): contribution is ContextMenuItemContribution =>
+      contribution.kind === 'contextMenuItem',
+  );
+
+  it('compiles through public SDK command exports', () => {
+    expect(extension.manifest.id).toBe('com.reigh.examples.command-extension');
+    expect(typeof extension.activate).toBe('function');
+
+    expect(commandContribution?.kind).toBe('command');
+    expect(keybindingContribution?.kind).toBe('keybinding');
+    expect(contextMenuContribution?.kind).toBe('contextMenuItem');
+
+    const timelineApply: TimelineOps['apply'] | undefined = undefined;
+    const proposalInput: TimelineProposalInput | undefined = undefined;
+    expect(timelineApply).toBeUndefined();
+    expect(proposalInput).toBeUndefined();
+  });
+
+  it('contributes palette, keybinding, and clip context-menu metadata', () => {
+    expect(commandContribution).toMatchObject({
+      command: 'com.reigh.examples.command-extension.markClipReview',
+      label: 'Mark Clip for Review',
+      category: 'Examples',
+      order: 10,
+    });
+    expect(keybindingContribution).toMatchObject({
+      command: commandContribution?.command,
+      key: 'CtrlOrCmd+Alt+R',
+      order: 10,
+    });
+    expect(contextMenuContribution).toMatchObject({
+      command: commandContribution?.command,
+      label: 'Mark Clip for Review',
+      target: 'clip',
+      when: 'target.clipId != null',
+      order: 10,
+    });
+  });
+
+  it('mutates through creative timeline/proposal APIs instead of editor internals', () => {
+    expect(source).toContain("from '@reigh/editor-sdk'");
+    expect(source).toContain('ctx.creative.reader.snapshot()');
+    expect(source).toMatch(
+      /ctx\.creative\.(?:timeline\.apply|proposals\.create)\s*\(/,
+    );
+
+    expect(source).not.toMatch(/['"]@\/tools\/video-editor/);
+    expect(source).not.toMatch(/['"]\.\.?\/.*tools\/video-editor/);
+    expect(source).not.toMatch(/\bapplyEdit\b/);
+    expect(source).not.toMatch(/\bDataProvider\b/);
+    expect(source).not.toMatch(/\buseTimelineStore\b/);
+    expect(source).not.toMatch(/\bTimelineEditMutation\b/);
   });
 });
 

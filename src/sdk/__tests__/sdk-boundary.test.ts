@@ -100,6 +100,17 @@ import {
   ExtensionNotImplementedError,
 } from '@reigh/editor-sdk';
 import type {
+  // M4 commands / keybindings / context menus
+  ContributionId,
+  TargetContext,
+  TargetContextPayload,
+  CommandRunContext,
+  CommandHandler,
+  CommandRegistrationOptions,
+  CommandContribution,
+  KeybindingContribution,
+  ContextMenuItemContribution,
+  ExtensionCommandService,
   // M3 TimelinePatch types
   TimelinePatchOpFamily,
   TimelinePatchReservedOpFamily,
@@ -477,6 +488,182 @@ describe('M3: type interfaces are importable from @reigh/editor-sdk', () => {
 });
 
 // ---------------------------------------------------------------------------
+// M4: Command / keybinding / context-menu type interfaces
+// ---------------------------------------------------------------------------
+
+describe('M4: command/keybinding/context-menu type interfaces are importable from @reigh/editor-sdk', () => {
+  it('TargetContext sealed union accepts only the 4 documented values', () => {
+    // Compile-time proof that TargetContext is limited to these 4 literals.
+    // Assigning anything else would be a type error.
+    const values: TargetContext[] = ['clip', 'clip-selection', 'track', 'timeline-area'];
+    expect(values).toHaveLength(4);
+    expect(values).toContain('clip');
+    expect(values).toContain('clip-selection');
+    expect(values).toContain('track');
+    expect(values).toContain('timeline-area');
+  });
+
+  it('TargetContextPayload clip variant is constructable', () => {
+    const payload: TargetContextPayload = {
+      target: 'clip',
+      clipId: 'clip-1',
+      trackId: 'track-1',
+    };
+    expect(payload.target).toBe('clip');
+    expect(payload.clipId).toBe('clip-1');
+    expect(payload.trackId).toBe('track-1');
+  });
+
+  it('TargetContextPayload clip-selection variant is constructable', () => {
+    const payload: TargetContextPayload = {
+      target: 'clip-selection',
+      clipIds: ['clip-1', 'clip-2'],
+      trackId: 'track-1',
+    };
+    expect(payload.target).toBe('clip-selection');
+    expect(payload.clipIds).toEqual(['clip-1', 'clip-2']);
+    expect(payload.trackId).toBe('track-1');
+  });
+
+  it('TargetContextPayload track variant is constructable', () => {
+    const payload: TargetContextPayload = {
+      target: 'track',
+      trackId: 'track-1',
+    };
+    expect(payload.target).toBe('track');
+    expect(payload.trackId).toBe('track-1');
+  });
+
+  it('TargetContextPayload timeline-area variant is constructable', () => {
+    const payload: TargetContextPayload = {
+      target: 'timeline-area',
+    };
+    expect(payload.target).toBe('timeline-area');
+  });
+
+  it('CommandRunContext shape is constructable (without target)', () => {
+    const ctx: CommandRunContext = {
+      commandId: 'myExtension.doSomething',
+      extensionId: 'myExtension',
+    };
+    expect(ctx.commandId).toBe('myExtension.doSomething');
+    expect(ctx.extensionId).toBe('myExtension');
+    expect(ctx.target).toBeUndefined();
+  });
+
+  it('CommandRunContext shape is constructable (with clip target)', () => {
+    const ctx: CommandRunContext = {
+      commandId: 'myExtension.doSomething',
+      extensionId: 'myExtension',
+      target: { target: 'clip', clipId: 'clip-1', trackId: 'track-1' },
+    };
+    expect(ctx.target?.target).toBe('clip');
+    expect(ctx.target?.clipId).toBe('clip-1');
+  });
+
+  it('CommandHandler typed function is callable (sync)', () => {
+    let called = false;
+    const handler: CommandHandler = (_ctx) => {
+      called = true;
+    };
+    handler({ commandId: 'test.cmd', extensionId: 'test' });
+    expect(called).toBe(true);
+  });
+
+  it('CommandHandler typed function handles async', async () => {
+    let called = false;
+    const handler: CommandHandler = async (_ctx) => {
+      called = true;
+    };
+    await handler({ commandId: 'test.cmd', extensionId: 'test' });
+    expect(called).toBe(true);
+  });
+
+  it('CommandRegistrationOptions shape is constructable', () => {
+    const opts: CommandRegistrationOptions = {
+      label: 'My Command',
+      category: 'Editing',
+    };
+    expect(opts.label).toBe('My Command');
+    expect(opts.category).toBe('Editing');
+  });
+
+  it('CommandRegistrationOptions with only label is constructable', () => {
+    const opts: CommandRegistrationOptions = { label: 'My Command' };
+    expect(opts.label).toBe('My Command');
+    expect(opts.category).toBeUndefined();
+  });
+
+  it('CommandContribution shape is constructable', () => {
+    const contrib: CommandContribution = {
+      id: 'myCommand' as ContributionId,
+      kind: 'command',
+      command: 'myExtension.doSomething',
+      label: 'Do Something',
+      category: 'Editing',
+      when: 'editorHasSelection',
+      order: 10,
+    };
+    expect(contrib.kind).toBe('command');
+    expect(contrib.command).toBe('myExtension.doSomething');
+    expect(contrib.label).toBe('Do Something');
+    expect(contrib.category).toBe('Editing');
+    expect(contrib.when).toBe('editorHasSelection');
+    expect(contrib.order).toBe(10);
+  });
+
+  it('KeybindingContribution shape is constructable', () => {
+    const contrib: KeybindingContribution = {
+      id: 'myKeybinding' as ContributionId,
+      kind: 'keybinding',
+      command: 'myExtension.doSomething',
+      key: 'CtrlOrCmd+K',
+      when: 'editorHasSelection',
+      order: 5,
+    };
+    expect(contrib.kind).toBe('keybinding');
+    expect(contrib.command).toBe('myExtension.doSomething');
+    expect(contrib.key).toBe('CtrlOrCmd+K');
+    expect(contrib.when).toBe('editorHasSelection');
+    expect(contrib.order).toBe(5);
+  });
+
+  it('ContextMenuItemContribution shape is constructable', () => {
+    const contrib: ContextMenuItemContribution = {
+      id: 'myMenuItem' as ContributionId,
+      kind: 'contextMenuItem',
+      command: 'myExtension.doSomething',
+      label: 'Do Something',
+      target: 'clip',
+      when: 'editorHasSelection',
+      order: 5,
+      icon: 'scissors',
+    };
+    expect(contrib.kind).toBe('contextMenuItem');
+    expect(contrib.command).toBe('myExtension.doSomething');
+    expect(contrib.target).toBe('clip');
+    expect(contrib.icon).toBe('scissors');
+  });
+
+  it('ContextMenuItemContribution targets cover all variants', () => {
+    const targets: TargetContext[] = ['clip', 'clip-selection', 'track', 'timeline-area'];
+    const contribs: ContextMenuItemContribution[] = targets.map((t) => ({
+      id: `menu-${t}` as ContributionId,
+      kind: 'contextMenuItem',
+      command: 'myExtension.doSomething',
+      target: t,
+    }));
+    expect(contribs).toHaveLength(4);
+    expect(contribs.map((c) => c.target).sort()).toEqual([
+      'clip',
+      'clip-selection',
+      'timeline-area',
+      'track',
+    ]);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // 3. Internal types are NOT importable from @reigh/editor-sdk
 //    (neither as value exports nor leaked through the context)
 // ---------------------------------------------------------------------------
@@ -503,6 +690,26 @@ describe('M3: internal types are NOT re-exported from @reigh/editor-sdk', () => 
     'useTimelineEditorData',
     'timelineState',
     'TimelineDataRef',
+    // M4 command / keybinding / context-menu internals
+    'commandRegistry',
+    'keybindingRegistry',
+    'contextMenuRegistry',
+    'registerCommandHandler',
+    'executeCommand',
+    'getCommands',
+    'getKeybindings',
+    'getContextMenuItems',
+    'resolveKeybinding',
+    'matchKeybinding',
+    'parseKeyChord',
+    'normalizeKeyNotation',
+    'KeybindingResolver',
+    'CommandExecutor',
+    'ContextMenuRenderer',
+    'CommandPaletteStore',
+    'commandStore',
+    'keybindingStore',
+    'menuStore',
     // Command internals
     'buildTimelineData',
     'buildTimelineDataWithResolver',

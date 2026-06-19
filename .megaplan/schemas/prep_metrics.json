@@ -1,0 +1,300 @@
+{
+  "type": "object",
+  "properties": {
+    "area_count": {
+      "type": "integer"
+    },
+    "fanout_count": {
+      "type": "integer"
+    },
+    "completed_count": {
+      "type": "integer"
+    },
+    "partial_count": {
+      "type": "integer"
+    },
+    "timed_out_count": {
+      "type": "integer"
+    },
+    "error_count": {
+      "type": "integer"
+    },
+    "missed_units": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "total_cost_usd": {
+      "type": "number"
+    },
+    "prompt_tokens": {
+      "type": "integer"
+    },
+    "completion_tokens": {
+      "type": "integer"
+    },
+    "total_tokens": {
+      "type": "integer"
+    },
+    "elapsed_time_ms": {
+      "type": "integer"
+    },
+    "files": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "code_refs": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "gap_notes": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "contradiction_notes": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "overlap_groups": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "file",
+              "code_ref"
+            ]
+          },
+          "value": {
+            "type": "string"
+          },
+          "areas": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "kind",
+          "value",
+          "areas"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "cross_reference": {
+      "type": "object",
+      "properties": {
+        "performed": {
+          "type": "boolean"
+        },
+        "checked_files": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "existing_files": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "missing_files": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "shared_files": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "performed",
+        "checked_files",
+        "existing_files",
+        "missing_files",
+        "shared_files"
+      ],
+      "additionalProperties": false
+    },
+    "stage_metrics": {
+      "type": "object",
+      "properties": {
+        "triage": {
+          "type": "object",
+          "properties": {
+            "cost_usd": {
+              "type": "number"
+            },
+            "prompt_tokens": {
+              "type": "integer"
+            },
+            "completion_tokens": {
+              "type": "integer"
+            },
+            "total_tokens": {
+              "type": "integer"
+            },
+            "elapsed_time_ms": {
+              "type": "integer"
+            }
+          },
+          "required": [
+            "cost_usd",
+            "prompt_tokens",
+            "completion_tokens",
+            "total_tokens",
+            "elapsed_time_ms"
+          ],
+          "additionalProperties": false
+        },
+        "fanout": {
+          "type": "object",
+          "properties": {
+            "cost_usd": {
+              "type": "number"
+            },
+            "prompt_tokens": {
+              "type": "integer"
+            },
+            "completion_tokens": {
+              "type": "integer"
+            },
+            "total_tokens": {
+              "type": "integer"
+            },
+            "elapsed_time_ms": {
+              "type": "integer"
+            }
+          },
+          "required": [
+            "cost_usd",
+            "prompt_tokens",
+            "completion_tokens",
+            "total_tokens",
+            "elapsed_time_ms"
+          ],
+          "additionalProperties": false
+        },
+        "distill": {
+          "type": "object",
+          "properties": {
+            "cost_usd": {
+              "type": "number"
+            },
+            "prompt_tokens": {
+              "type": "integer"
+            },
+            "completion_tokens": {
+              "type": "integer"
+            },
+            "total_tokens": {
+              "type": "integer"
+            },
+            "elapsed_time_ms": {
+              "type": "integer"
+            }
+          },
+          "required": [
+            "cost_usd",
+            "prompt_tokens",
+            "completion_tokens",
+            "total_tokens",
+            "elapsed_time_ms"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "triage",
+        "fanout",
+        "distill"
+      ],
+      "additionalProperties": false
+    },
+    "per_unit": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "area": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "complete",
+              "partial",
+              "timed_out",
+              "error",
+              "not_needed"
+            ]
+          },
+          "elapsed_time_ms": {
+            "type": "integer"
+          },
+          "files": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "code_refs": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "area",
+          "status",
+          "elapsed_time_ms",
+          "files",
+          "code_refs"
+        ],
+        "additionalProperties": false
+      }
+    }
+  },
+  "required": [
+    "area_count",
+    "fanout_count",
+    "completed_count",
+    "partial_count",
+    "timed_out_count",
+    "error_count",
+    "missed_units",
+    "total_cost_usd",
+    "prompt_tokens",
+    "completion_tokens",
+    "total_tokens",
+    "elapsed_time_ms",
+    "files",
+    "code_refs",
+    "gap_notes",
+    "contradiction_notes",
+    "overlap_groups",
+    "cross_reference",
+    "stage_metrics",
+    "per_unit"
+  ],
+  "additionalProperties": false
+}

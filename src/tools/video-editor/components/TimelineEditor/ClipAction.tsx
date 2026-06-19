@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import React, { useCallback, useContext, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { ArrowRight, Clapperboard, Copy, Ellipsis, Film, FolderPlus, ImageIcon, Layers, Loader2, MapPin, MapPinOff, Music2, RefreshCw, Scissors, Sparkles, Trash2, Type, X } from 'lucide-react';
 import { cn } from '@/shared/components/ui/contracts/cn.ts';
@@ -7,9 +7,16 @@ import type { GenerationVariant } from '@/shared/hooks/variants/useVariants.ts';
 import type { Shot } from '@/domains/generation/types/index.ts';
 import { usePortalMousedownGuard } from '@/shared/hooks/usePortalMousedownGuard.ts';
 import { WaveformOverlay } from '@/tools/video-editor/components/TimelineEditor/WaveformOverlay.tsx';
+import {
+  ExtensionContextMenuItems,
+  hasEligibleExtensionContextMenuItems,
+} from '@/tools/video-editor/components/TimelineEditor/ExtensionContextMenuItems.tsx';
+import { DataProviderContext } from '@/tools/video-editor/contexts/DataProviderContext.tsx';
 import { useWaveformData } from '@/tools/video-editor/hooks/useWaveformData.ts';
 import type { ClipMeta } from '@/tools/video-editor/lib/timeline-data.ts';
+import type { CommandRegistry, ContextMenuItemEntry } from '@/tools/video-editor/runtime/commandRegistry.ts';
 import type { TimelineAction } from '@/tools/video-editor/types/timeline-canvas.ts';
+import type { ReighExtension, TargetContextPayload } from '@reigh/editor-sdk';
 
 const log = import.meta.env.DEV ? (...args: Parameters<typeof console.log>) => console.log(...args) : () => {};
 
@@ -17,6 +24,7 @@ interface ContextMenuState {
   x: number;
   y: number;
   clientX: number;
+  target: TargetContextPayload;
 }
 
 interface ClipActionProps {
@@ -84,7 +92,7 @@ const menuItemClassName = 'relative flex w-full cursor-default select-none items
 const destructiveMenuItemClassName = `${menuItemClassName} hover:bg-destructive hover:text-destructive-foreground`;
 const disabledMenuItemClassName = 'disabled:cursor-wait disabled:opacity-60';
 
-type ClipContextMenuProps = Pick<ClipActionProps, 'isGenerationAsset' | 'isDuplicatingGeneration' | 'onDuplicateGeneration' | 'onUpdateVariant' | 'isVariantStale' | 'onDismissStale' | 'onSplitHere' | 'onSplitClipsAtPlayhead' | 'onTrimToMediaEnd' | 'onConvertOverhangToHold' | 'overhangDurationSeconds' | 'onToggleMuteClips' | 'onOpenSequenceCreator' | 'onCreateShotFromSelection' | 'onGenerateVideoFromSelection' | 'onNavigateToShot' | 'onOpenGenerateVideo' | 'isCreatingShot' | 'onDeleteClip' | 'onDeleteClips' | 'isInPinnedShotGroup'> & { actionId: string; contextMenu: ContextMenuState; menuRef: React.RefObject<HTMLDivElement>; closeMenu: () => void; hasBatchSelection: boolean; selectedClipIds: string[]; showShotActions: boolean; hasActionsBeforeShotSection: boolean; existingShots?: Shot[]; };
+type ClipContextMenuProps = Pick<ClipActionProps, 'isGenerationAsset' | 'isDuplicatingGeneration' | 'onDuplicateGeneration' | 'onUpdateVariant' | 'isVariantStale' | 'onDismissStale' | 'onSplitHere' | 'onSplitClipsAtPlayhead' | 'onTrimToMediaEnd' | 'onConvertOverhangToHold' | 'overhangDurationSeconds' | 'onToggleMuteClips' | 'onOpenSequenceCreator' | 'onCreateShotFromSelection' | 'onGenerateVideoFromSelection' | 'onNavigateToShot' | 'onOpenGenerateVideo' | 'isCreatingShot' | 'onDeleteClip' | 'onDeleteClips' | 'isInPinnedShotGroup'> & { actionId: string; trackId: string; contextMenu: ContextMenuState; menuRef: React.RefObject<HTMLDivElement>; closeMenu: () => void; hasBatchSelection: boolean; selectedClipIds: string[]; showShotActions: boolean; hasActionsBeforeShotSection: boolean; existingShots?: Shot[]; extensionContextMenuItems: readonly ContextMenuItemEntry[]; extensions: readonly ReighExtension[]; commandRegistry?: CommandRegistry; };
 type ClipContextMenuItemProps = { icon: React.ComponentType<{ className?: string }>; onClick: () => void; children: React.ReactNode; disabled?: boolean; destructive?: boolean; suffix?: React.ReactNode; };
 
 function ClipContextMenuItem({ icon: Icon, onClick, children, disabled = false, destructive = false, suffix }: ClipContextMenuItemProps) {
@@ -100,6 +108,39 @@ function ClipContextMenuItem({ icon: Icon, onClick, children, disabled = false, 
       {suffix}
     </button>
   );
+}
+
+function isSameClipSelection(left: readonly string[], right: readonly string[]): boolean {
+  if (left.length !== right.length) return false;
+  const rightSet = new Set(right);
+  return left.every((clipId) => rightSet.has(clipId));
+}
+
+function validateContextMenuTarget(
+  target: TargetContextPayload,
+  current: { actionId: string; trackId: string; selectedClipIds: readonly string[] },
+): string | null {
+  if (target.target === 'clip') {
+    if (target.clipId !== current.actionId) {
+      return `Clip "${target.clipId}" is no longer available.`;
+    }
+    if (target.trackId !== current.trackId) {
+      return `Clip "${target.clipId}" moved from track "${target.trackId}".`;
+    }
+    return null;
+  }
+
+  if (target.target === 'clip-selection') {
+    if (target.trackId !== current.trackId) {
+      return `Clip selection moved from track "${target.trackId}".`;
+    }
+    if (!isSameClipSelection(target.clipIds, current.selectedClipIds)) {
+      return 'The selected clips changed after the menu was opened.';
+    }
+    return null;
+  }
+
+  return null;
 }
 
 function ClipContextMenu(props: ClipContextMenuProps) {
@@ -307,6 +348,18 @@ function ClipContextMenu(props: ClipContextMenuProps) {
           )}
         </>
       )}
+      <ExtensionContextMenuItems
+        items={props.extensionContextMenuItems}
+        target={props.contextMenu.target}
+        extensions={props.extensions}
+        commandRegistry={props.commandRegistry}
+        closeMenu={props.closeMenu}
+        validateTarget={(target) => validateContextMenuTarget(target, {
+          actionId: props.actionId,
+          trackId: props.trackId,
+          selectedClipIds: props.selectedClipIds,
+        })}
+      />
     </div>,
     document.body,
   );
@@ -364,6 +417,9 @@ function ClipActionComponent({
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
   const openMenuWithSelectionRef = useRef<(clientX: number, clientY: number) => void>(() => undefined);
+  const runtime = useContext(DataProviderContext);
+  const commandRegistry = runtime?.commandRegistry;
+  const extensions = runtime?.extensionRuntime?.extensions ?? [];
   const { waveform } = useWaveformData(audioSrc, {
     from: clipMeta.from,
     to: clipMeta.to,
@@ -372,7 +428,15 @@ function ClipActionComponent({
   });
 
   const closeMenu = useCallback(() => setContextMenu(null), []);
-  const openMenuAt = useCallback((x: number, y: number) => { setContextMenu({ x, y, clientX: x }); }, []);
+  const buildContextMenuTarget = useCallback((forceSingle = false): TargetContextPayload => {
+    if (!forceSingle && isSelected && selectedClipIds.length > 1) {
+      return { target: 'clip-selection', clipIds: [...selectedClipIds], trackId: clipMeta.track };
+    }
+    return { target: 'clip', clipId: action.id, trackId: clipMeta.track };
+  }, [action.id, clipMeta.track, isSelected, selectedClipIds]);
+  const openMenuAt = useCallback((x: number, y: number, target: TargetContextPayload) => {
+    setContextMenu({ x, y, clientX: x, target });
+  }, []);
 
   useEffect(() => {
     if (!contextMenu) return;
@@ -395,11 +459,12 @@ function ClipActionComponent({
   openMenuWithSelectionRef.current = (clientX: number, clientY: number) => {
     if (!isSelected) {
       onSelect(action.id, clipMeta.track);
-      requestAnimationFrame(() => openMenuAt(clientX, clientY));
+      const target = buildContextMenuTarget(true);
+      requestAnimationFrame(() => openMenuAt(clientX, clientY, target));
       return;
     }
 
-    openMenuAt(clientX, clientY);
+    openMenuAt(clientX, clientY, buildContextMenuTarget());
   };
 
   const isEffectLayer = clipMeta.clipType === 'effect-layer';
@@ -425,7 +490,15 @@ function ClipActionComponent({
     )
     || (hasOverhang && Boolean(onTrimToMediaEnd || onConvertOverhangToHold))
   );
-  const canOpenContextMenu = !isInPinnedShotGroup || hasPinnedShotGroupContextActions;
+  const extensionContextMenuItems = contextMenu && commandRegistry
+    ? commandRegistry.getSnapshot().contextMenuItems.filter((item) => item.target === contextMenu.target.target)
+    : [];
+  const hasExtensionContextMenuActions = hasEligibleExtensionContextMenuItems(
+    commandRegistry,
+    extensions,
+    buildContextMenuTarget(),
+  );
+  const canOpenContextMenu = !isInPinnedShotGroup || hasPinnedShotGroupContextActions || hasExtensionContextMenuActions;
   const handleContextMenu = useCallback((e: React.MouseEvent) => {
     e.preventDefault();
     e.stopPropagation();
@@ -650,6 +723,7 @@ function ClipActionComponent({
       {contextMenu && (
         <ClipContextMenu
           actionId={action.id}
+          trackId={clipMeta.track}
           contextMenu={contextMenu}
           menuRef={menuRef}
           closeMenu={closeMenu}
@@ -679,6 +753,9 @@ function ClipActionComponent({
           isCreatingShot={isCreatingShot}
           onDeleteClip={onDeleteClip}
           onDeleteClips={onDeleteClips}
+          extensionContextMenuItems={extensionContextMenuItems}
+          extensions={extensions}
+          commandRegistry={commandRegistry}
         />
       )}
     </>

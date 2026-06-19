@@ -1,8 +1,10 @@
 import React, {
+  useContext,
   forwardRef,
   useCallback,
   useEffect,
   useImperativeHandle,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -11,9 +13,14 @@ import React, {
   type ReactNode,
   type UIEvent,
 } from 'react';
+import { createPortal } from 'react-dom';
 import { type DragEndEvent, useSensors } from '@dnd-kit/core';
 import { Layers, Sparkles } from 'lucide-react';
 import { usePortalMousedownGuard } from '@/shared/hooks/usePortalMousedownGuard.ts';
+import {
+  ExtensionContextMenuItems,
+  hasEligibleExtensionContextMenuItems,
+} from '@/tools/video-editor/components/TimelineEditor/ExtensionContextMenuItems.tsx';
 import {
   ShotGroupBorders,
   ShotGroupLabels,
@@ -29,6 +36,7 @@ import {
 } from '@/tools/video-editor/components/TimelineEditor/TimelineRulerAndGrid.tsx';
 import { TrackListRenderer } from '@/tools/video-editor/components/TimelineEditor/TrackListRenderer.tsx';
 import { TimelineGhostLayer } from '@/tools/video-editor/components/TimelineEditor/TimelineGhostLayer.tsx';
+import { DataProviderContext } from '@/tools/video-editor/contexts/DataProviderContext.tsx';
 import type { TimelineGhostEntry } from '@/tools/video-editor/types/timeline-canvas.ts';
 import { useClipResizeGesture } from '@/tools/video-editor/hooks/useClipResizeGesture.ts';
 import type { ShotGroup } from '@/tools/video-editor/hooks/useShotGroups.ts';
@@ -59,6 +67,7 @@ import type { TimelineAction, TimelineCanvasHandle, TimelineRow } from '@/tools/
 import type { DragSession } from '@/tools/video-editor/hooks/useClipDrag.ts';
 import type { ClipEdgeResizeEndTarget } from '@/tools/video-editor/hooks/useClipResize.ts';
 import type { MarqueeRect } from '@/tools/video-editor/hooks/useMarqueeSelect.ts';
+import type { TargetContextPayload } from '@reigh/editor-sdk';
 import {
   ACTION_VERTICAL_MARGIN,
   CURSOR_WIDTH,
@@ -136,6 +145,76 @@ export interface TimelineCanvasProps {
 }
 
 const clamp = (value: number, min: number, max: number): number => Math.min(max, Math.max(min, value));
+const MENU_VIEWPORT_MARGIN = 8;
+
+interface TimelineAreaContextMenuState {
+  x: number;
+  y: number;
+  target: TargetContextPayload;
+}
+
+function TimelineAreaExtensionContextMenu({
+  menu,
+  menuRef,
+  closeMenu,
+}: {
+  menu: TimelineAreaContextMenuState;
+  menuRef: React.RefObject<HTMLDivElement>;
+  closeMenu: () => void;
+}) {
+  const [adjusted, setAdjusted] = useState<{ x: number; y: number } | null>(null);
+  const runtime = useContext(DataProviderContext);
+  const commandRegistry = runtime?.commandRegistry;
+  const extensions = runtime?.extensionRuntime?.extensions ?? [];
+  const items = commandRegistry
+    ? commandRegistry.getSnapshot().contextMenuItems.filter((item) => item.target === menu.target.target)
+    : [];
+
+  useLayoutEffect(() => {
+    const node = menuRef.current;
+    if (!node) {
+      setAdjusted(null);
+      return;
+    }
+
+    const recompute = () => {
+      const rect = node.getBoundingClientRect();
+      setAdjusted({
+        x: Math.max(MENU_VIEWPORT_MARGIN, Math.min(menu.x, window.innerWidth - rect.width - MENU_VIEWPORT_MARGIN)),
+        y: Math.max(MENU_VIEWPORT_MARGIN, Math.min(menu.y, window.innerHeight - rect.height - MENU_VIEWPORT_MARGIN)),
+      });
+    };
+
+    recompute();
+
+    if (typeof ResizeObserver === 'undefined') return;
+    const observer = new ResizeObserver(recompute);
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, [menu.x, menu.y, menuRef]);
+
+  usePortalMousedownGuard(menuRef);
+
+  const pos = adjusted ?? menu;
+
+  return createPortal(
+    <div
+      ref={menuRef}
+      className="fixed z-50 min-w-[10rem] overflow-hidden rounded-md border bg-popover p-1 text-popover-foreground shadow-md animate-in fade-in-0 zoom-in-95"
+      style={{ left: pos.x, top: pos.y, visibility: adjusted ? 'visible' : 'hidden' }}
+    >
+      <ExtensionContextMenuItems
+        items={items}
+        target={menu.target}
+        extensions={extensions}
+        commandRegistry={commandRegistry}
+        closeMenu={closeMenu}
+        validateTarget={() => null}
+      />
+    </div>,
+    document.body,
+  );
+}
 
 export const TimelineCanvas = forwardRef<TimelineCanvasHandle, TimelineCanvasProps>(function TimelineCanvas({
   rows,
@@ -202,7 +281,12 @@ export const TimelineCanvas = forwardRef<TimelineCanvasHandle, TimelineCanvasPro
   const [scrollLeft, setScrollLeft] = useState(0);
   const [scrollTop, setScrollTop] = useState(0);
   const [shotGroupMenu, setShotGroupMenu] = useState<ShotGroupMenuState>(null);
+  const [timelineAreaMenu, setTimelineAreaMenu] = useState<TimelineAreaContextMenuState | null>(null);
   const shotGroupMenuRef = useRef<HTMLDivElement>(null);
+  const timelineAreaMenuRef = useRef<HTMLDivElement>(null);
+  const runtime = useContext(DataProviderContext);
+  const commandRegistry = runtime?.commandRegistry;
+  const extensions = runtime?.extensionRuntime?.extensions ?? [];
   useRenderDiagnostic('TimelineCanvas');
 
   usePortalMousedownGuard(shotGroupMenuRef, Boolean(shotGroupMenu));
@@ -224,6 +308,24 @@ export const TimelineCanvas = forwardRef<TimelineCanvasHandle, TimelineCanvasPro
       document.removeEventListener('keydown', handleEscape);
     };
   }, [shotGroupMenu]);
+
+  useEffect(() => {
+    if (!timelineAreaMenu) return;
+    const handleClickOutside = (e: MouseEvent) => {
+      if (timelineAreaMenuRef.current && !timelineAreaMenuRef.current.contains(e.target as Node)) {
+        setTimelineAreaMenu(null);
+      }
+    };
+    const handleEscape = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setTimelineAreaMenu(null);
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    document.addEventListener('keydown', handleEscape);
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+      document.removeEventListener('keydown', handleEscape);
+    };
+  }, [timelineAreaMenu]);
 
   const { pixelsPerSecond, pixelToTime, timeToPixel } = useTimelineScale({ scale, scaleWidth, startLeft });
   const resizeHandleWidth = shouldExpandTouchTrimHandles(deviceClass, inputModality, interactionMode)
@@ -412,6 +514,26 @@ export const TimelineCanvas = forwardRef<TimelineCanvasHandle, TimelineCanvasPro
     setShotGroupMenu({ x, y, ...group, trackId: group.rowId });
   }, []);
 
+  const handleTimelineAreaContextMenu = useCallback((event: React.MouseEvent<HTMLDivElement>) => {
+    const eventTarget = event.target instanceof Element ? event.target : null;
+    if (eventTarget?.closest('[data-action-id], [data-track-id], [data-shot-group-drag-anchor-clip-id], button, input, textarea, select, [role="menuitem"]')) {
+      return;
+    }
+
+    const target: TargetContextPayload = { target: 'timeline-area' };
+    if (!hasEligibleExtensionContextMenuItems(commandRegistry, extensions, target)) {
+      return;
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
+    setTimelineAreaMenu({
+      x: event.clientX,
+      y: event.clientY,
+      target,
+    });
+  }, [commandRegistry, extensions]);
+
   const syncCursor = useCallback((time = timeRef.current) => {
     const cursor = cursorRef.current;
     if (!cursor) {
@@ -512,6 +634,7 @@ export const TimelineCanvas = forwardRef<TimelineCanvasHandle, TimelineCanvasPro
       >
         <div
           className="relative"
+          onContextMenu={handleTimelineAreaContextMenu}
           style={{
             width: totalWidth,
             backgroundImage: buildGridBackground(startLeft, scaleWidth, scaleSplitCount),
@@ -548,6 +671,13 @@ export const TimelineCanvas = forwardRef<TimelineCanvasHandle, TimelineCanvasPro
             onUnpinGroup={onShotGroupUnpin}
             onDeleteShot={onShotGroupDelete}
           />
+          {timelineAreaMenu && (
+            <TimelineAreaExtensionContextMenu
+              menu={timelineAreaMenu}
+              menuRef={timelineAreaMenuRef}
+              closeMenu={() => setTimelineAreaMenu(null)}
+            />
+          )}
           <TimelineGhostLayer
             ghosts={ghostEntries ?? []}
             rows={rows}

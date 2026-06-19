@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 import type { ReactNode } from 'react';
 import type { VideoEditorRenderContext } from '@/tools/video-editor/runtime/extensionSurface';
@@ -102,6 +102,11 @@ vi.mock('@/tools/video-editor/hooks/useEditorSync.ts', () => ({
 
 vi.mock('@/tools/video-editor/hooks/usePerfDiagnostics.ts', () => ({
   useRenderDiagnostic: vi.fn(),
+}));
+
+vi.mock('@/tools/video-editor/components/CommandPalette/CommandPalette.tsx', () => ({
+  CommandPalette: ({ open }: { open: boolean }) =>
+    open ? <div data-testid="command-palette">Command Palette</div> : null,
 }));
 
 vi.mock('@/tools/video-editor/lib/perf-diagnostics.ts', () => ({
@@ -212,6 +217,18 @@ describe('TimelineEditorShellCore surface slots', () => {
   it('renders the timeline editor component', () => {
     render(<TimelineEditorShellCore timelineId="test-timeline" />);
     expect(screen.getByTestId('timeline-editor')).toBeTruthy();
+  });
+
+  it('opens the host command palette for reserved CtrlOrCmd+Shift+P', async () => {
+    render(<TimelineEditorShellCore timelineId="test-timeline" />);
+
+    fireEvent.keyDown(window, {
+      key: 'p',
+      ctrlKey: true,
+      shiftKey: true,
+    });
+
+    await waitFor(() => expect(screen.getByTestId('command-palette')).toBeTruthy());
   });
 
   it('renders the preview panel component', () => {

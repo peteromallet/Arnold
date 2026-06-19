@@ -24,7 +24,15 @@ import {
   createExtensionLifecycleHost,
   type ExtensionLifecycleHost,
 } from '@/tools/video-editor/runtime/extensionLifecycle.ts';
-import { createExtensionContext, createCreativeContext, type ReighExtension } from '@reigh/editor-sdk';
+import {
+  createExtensionContext,
+  createCreativeContext,
+  type ReighExtension,
+  type CommandContribution,
+  type KeybindingContribution,
+  type ContextMenuItemContribution,
+  type ExtensionCommandService,
+} from '@reigh/editor-sdk';
 import type { CreativeContext } from '@reigh/editor-sdk';
 import { useAgentChatRegistry } from '@/shared/contexts/AgentChatContext.tsx';
 import { clearTimelineClipData, setTimelineClipData } from '@/shared/state/selectionStore.ts';
@@ -65,6 +73,7 @@ import {
 import { useRenderDiagnostic } from '@/tools/video-editor/hooks/usePerfDiagnostics.ts';
 import { createTimelineReader } from '@/tools/video-editor/lib/timeline-reader.ts';
 import { createProposalRuntime } from '@/tools/video-editor/lib/proposal-runtime.ts';
+import { createCommandRegistry, type CommandRegistry } from '@/tools/video-editor/runtime/commandRegistry.ts';
 
 import { useTimelineOpsFromStore } from '@/tools/video-editor/hooks/timelineStore.ts';
 import type { SaveStatus } from '@/tools/video-editor/hooks/useTimelinePersistence.ts';
@@ -126,6 +135,7 @@ function InnerProvider({
   onSaveStatusChange,
   lifecycleHostRef,
   extensionRuntime,
+  commandRegistryRef,
 }: {
   children: React.ReactNode;
   effectCatalog?: VideoEditorEffectCatalog | null;
@@ -133,6 +143,7 @@ function InnerProvider({
   onSaveStatusChange?: (status: SaveStatus) => void;
   lifecycleHostRef: React.MutableRefObject<ExtensionLifecycleHost | null>;
   extensionRuntime: ExtensionRuntime;
+  commandRegistryRef: React.MutableRefObject<CommandRegistry | null>;
 }) {
   useRenderDiagnostic('VideoEditorProvider');
   const runtime = useVideoEditorRuntime();
@@ -219,13 +230,45 @@ function InnerProvider({
 
   useEffect(() => {
     const host = lifecycleHostRef.current;
+    const registry = commandRegistryRef.current;
     if (!host) return;
+
+    // Ingest declarative command/keybinding/context-menu contributions
+    if (registry) {
+      for (const ext of extensionRuntime.extensions) {
+        const extId = ext.manifest.id as string;
+        for (const contrib of ext.manifest.contributions ?? []) {
+          switch (contrib.kind) {
+            case 'command':
+              registry.ingestCommandContribution(extId, contrib as CommandContribution);
+              break;
+            case 'keybinding':
+              registry.ingestKeybindingContribution(extId, contrib as KeybindingContribution);
+              break;
+            case 'contextMenuItem':
+              registry.ingestContextMenuItemContribution(extId, contrib as ContextMenuItemContribution);
+              break;
+          }
+        }
+      }
+    }
 
     host.synchronize(
       extensionRuntime.extensions,
-      (ext) => createExtensionContext(ext, liveCreativeOverrides),
+      (ext) => {
+        const extId = ext.manifest.id as string;
+        // Create per-extension commands service backed by the shared registry
+        const commandsService: ExtensionCommandService | undefined = registry
+          ? {
+              registerCommand(commandId, handler, options) {
+                return registry.registerCommand(extId, commandId, handler, options);
+              },
+            }
+          : undefined;
+        return createExtensionContext(ext, liveCreativeOverrides, commandsService);
+      },
     );
-  }, [lifecycleHostRef, extensionRuntime.extensions, liveCreativeOverrides]);
+  }, [lifecycleHostRef, extensionRuntime.extensions, liveCreativeOverrides, commandRegistryRef]);
   const [searchParams, setSearchParams] = useSearchParams();
   const pendingAddGenerationId = searchParams.get(ADD_GENERATION_QUERY_PARAM);
   const consumedAddGenerationRef = useRef<string | null>(null);
@@ -533,6 +576,50 @@ export function VideoEditorProvider({
     lifecycleHostRef.current = createExtensionLifecycleHost();
   }
 
+  // ---- M4: command registry (one per provider mount) -----------------------
+  const commandRegistryRef = useRef<CommandRegistry | null>(null);
+  if (!commandRegistryRef.current) {
+    commandRegistryRef.current = createCommandRegistry();
+  }
+
+  // Wire lifecycle disposal → registry cleanup
+  useEffect(() => {
+    const host = lifecycleHostRef.current;
+    const registry = commandRegistryRef.current;
+    if (!host || !registry) return;
+    const handle = host.onLifecycleDisposed((extensionId: string) => {
+      registry.unregisterAll(extensionId);
+    });
+    return () => handle.dispose();
+  }, []);
+
+  // Wire registry callbacks → host toast
+  useEffect(() => {
+    const registry = commandRegistryRef.current;
+    if (!registry) return;
+    registry.setCallbacks({
+      onCommandFailure: (commandId, error, extensionId) => {
+        const msg = `Command "${commandId}" failed (${extensionId}): ${error.message}`;
+        toast.error(msg);
+      },
+      onReservedCommand: (commandId, extensionId) => {
+        toast.warning(`Reserved command "${commandId}" rejected for extension "${extensionId}".`);
+      },
+      onReservedKeybinding: (key, extensionId, commandId) => {
+        toast.warning(`Reserved keybinding "${key}" for "${commandId}" rejected for extension "${extensionId}".`);
+      },
+      onDuplicateCommand: (commandId, originalExtension, conflictingExtension) => {
+        toast.warning(`Command "${commandId}" already registered by "${originalExtension}". Extension "${conflictingExtension}" cannot override it.`);
+      },
+      onKeybindingConflict: (key, originalExtension, conflictingExtension) => {
+        toast.warning(`Keybinding "${key}" already bound by "${originalExtension}". Extension "${conflictingExtension}" cannot override it.`);
+      },
+      onContextMenuStaleTarget: (commandId, extensionId, reason) => {
+        toast.warning(`Command "${commandId}" was not run for extension "${extensionId}".`, { description: reason });
+      },
+    });
+  }, []);
+
 
   useEffect(() => {
     const host = lifecycleHostRef.current;
@@ -577,6 +664,7 @@ export function VideoEditorProvider({
     userId,
     extensions: extensionRuntime.config,
     extensionRuntime,
+    commandRegistry: commandRegistryRef.current ?? undefined,
   }), [agentChatRegistry.register, agentChatRegistry.unregister, dataProvider, projectId, shotsHost, timelineId, timelineName, userId, extensionRuntime.config, extensionRuntime]);
 
   return (
@@ -587,6 +675,7 @@ export function VideoEditorProvider({
         onSaveStatusChange={onSaveStatusChange}
         lifecycleHostRef={lifecycleHostRef}
         extensionRuntime={extensionRuntime}
+        commandRegistryRef={commandRegistryRef}
       >
         {children}
       </InnerProvider>

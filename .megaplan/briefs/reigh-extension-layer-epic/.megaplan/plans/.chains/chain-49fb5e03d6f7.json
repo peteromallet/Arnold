@@ -1,0 +1,96 @@
+{
+  "schema_version": 0,
+  "current_milestone_index": 4,
+  "current_plan_name": "m4-commands-keybindings-20260619-0843",
+  "last_state": "failed",
+  "pr_number": 29,
+  "pr_state": "open",
+  "completed": [
+    {
+      "label": "m0-workspace-scaffold",
+      "index": 0,
+      "pr_number": 23,
+      "pr_state": "merged",
+      "plan_name": "m0-workspace-and-sdk-scaffold-20260618-2252",
+      "merged_at": "2026-06-18T21:33:46Z"
+    },
+    {
+      "label": "m1-sdk-kernel",
+      "index": 1,
+      "pr_number": 25,
+      "pr_state": "merged",
+      "plan_name": "m1-sdk-kernel-and-trusted-20260618-2338",
+      "merged_at": "2026-06-18T23:33:29Z"
+    },
+    {
+      "label": "m2-surfaces",
+      "plan": "m2-surfaces-inspectors-20260619-0136",
+      "status": "done",
+      "pr_number": 26,
+      "pr_state": "merged",
+      "full_suite_backstop": {
+        "mode": "shadow",
+        "status": "failed",
+        "blocks": false,
+        "reason": "full_suite_backstop_mode=shadow: recorded only",
+        "passed": 8,
+        "failed": 3,
+        "failing_tests": [
+          "vendor/timeline-schema/tests/test_materialize_output.py::MaterializeOutputTests::test_materialize_output_from_2rp_theme",
+          "vendor/timeline-schema/tests/test_materialize_output.py::ResolveThemeTests::test_resolve_theme_2rp",
+          "vendor/timeline-schema/tests/test_materialize_output.py::ResolveThemeTests::test_resolve_theme_with_overrides"
+        ],
+        "newly_failing": [],
+        "deleted_tests": [],
+        "baseline_failing_count": 0,
+        "current_failing_count": 3,
+        "delta_computed": false,
+        "command": "pytest --tb=no -q --no-header -rA",
+        "duration_s": 0.6487866670358926,
+        "ran": true,
+        "artifact": "full_suite_backstop.json"
+      }
+    },
+    {
+      "label": "m3-timeline-patch",
+      "index": 3,
+      "status": "done",
+      "pr_number": 28,
+      "pr_state": "merged",
+      "merged_at": "2026-06-19T06:43:14Z",
+      "plan_name": "m3-timelinepatch-atomic-ops-20260619-0357"
+    }
+  ],
+  "branch_head": "42bda92eb998ee12514a2f435ca6652c5b250f72",
+  "pr_head": "42bda92eb998ee12514a2f435ca6652c5b250f72",
+  "last_pushed_commit": "42bda92eb998ee12514a2f435ca6652c5b250f72",
+  "dirty_flag": true,
+  "sync_state": "dirty",
+  "extra_repos": [],
+  "chain_session": null,
+  "resolved_workspace": null,
+  "extra_repo_sync": [],
+  "completion_contract_mode": "shadow",
+  "full_suite_backstop_mode": "shadow",
+  "retry_counts": {},
+  "ladder_stage": {},
+  "profile_bumps": {},
+  "robustness_bumps": {},
+  "depth_bumps": {},
+  "enforce_revise_counts": {},
+  "metadata": {
+    "execution_environment": {
+      "schema_version": 1,
+      "created_phase": "chain_start",
+      "last_observed_phase": "chain_start",
+      "project_root": "/Users/peteromalley/Documents/.megaplan-worktrees/reigh-extension-layer-epic",
+      "target_root": "/Users/peteromalley/Documents/.megaplan-worktrees/reigh-extension-layer-epic",
+      "work_dir": "/Users/peteromalley/Documents/.megaplan-worktrees/reigh-extension-layer-epic",
+      "engine_root": "/Users/peteromalley/Documents/megaplan",
+      "target_head": "42bda92eb998ee12514a2f435ca6652c5b250f72",
+      "target_base": "202c8073d11cd8dea94af071de9d240d395261af",
+      "target_base_ref": "main",
+      "target_fallback_reason": null
+    }
+  }
+}

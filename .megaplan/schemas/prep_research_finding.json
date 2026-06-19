@@ -1,0 +1,61 @@
+{
+  "type": "object",
+  "properties": {
+    "area": {
+      "type": "string"
+    },
+    "brief": {
+      "type": "string"
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "complete",
+        "partial",
+        "timed_out",
+        "error",
+        "not_needed"
+      ]
+    },
+    "findings": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "files": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "code_refs": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "confidence": {
+      "type": "string",
+      "enum": [
+        "high",
+        "medium",
+        "low"
+      ]
+    },
+    "error": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "area",
+    "brief",
+    "status",
+    "findings",
+    "files",
+    "code_refs",
+    "confidence",
+    "error"
+  ],
+  "additionalProperties": false
+}

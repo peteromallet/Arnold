@@ -37,6 +37,7 @@ import type {
   ContributionKind,
 } from '@reigh/editor-sdk';
 import type { InactiveReservedContribution } from '@/tools/video-editor/runtime/extensionSurface';
+import type { CommandRegistry, CommandRegistrySnapshot } from '@/tools/video-editor/runtime/commandRegistry';
 
 // ---------------------------------------------------------------------------
 // Inventory types
@@ -88,6 +89,14 @@ export interface ExtensionStatusSummary {
   readonly infoDiagnostics: number;
   readonly exportBlockers: number;
   readonly renderBlockers: number;
+  /** M4: Total commands registered in the command registry. */
+  readonly commandCount: number;
+  /** M4: Total keybindings registered. */
+  readonly keybindingCount: number;
+  /** M4: Total context menu items registered. */
+  readonly contextMenuCount: number;
+  /** M4: Commands whose most recent invocation threw or rejected. */
+  readonly commandsFailedLastRun: number;
 }
 
 /** Complete read-only inventory derived from extension runtime state. */
@@ -121,6 +130,10 @@ const EMPTY_INVENTORY: ExtensionStatusInventory = Object.freeze({
     infoDiagnostics: 0,
     exportBlockers: 0,
     renderBlockers: 0,
+    commandCount: 0,
+    keybindingCount: 0,
+    contextMenuCount: 0,
+    commandsFailedLastRun: 0,
   }),
   exportBlockers: Object.freeze([]),
   renderBlockers: Object.freeze([]),
@@ -145,7 +158,7 @@ const EMPTY_INVENTORY: ExtensionStatusInventory = Object.freeze({
  * Does NOT expose install/uninstall/enable/disable/settings controls.
  */
 export function useExtensionStatusInventory(): ExtensionStatusInventory {
-  const { extensionRuntime, diagnosticCollection } = useVideoEditorRuntime();
+  const { extensionRuntime, diagnosticCollection, commandRegistry } = useVideoEditorRuntime();
 
   return useMemo(() => {
     if (!extensionRuntime || extensionRuntime.extensions.length === 0) {
@@ -153,7 +166,21 @@ export function useExtensionStatusInventory(): ExtensionStatusInventory {
     }
 
     const runtime = extensionRuntime;
-    const allDiagnostics = diagnosticCollection.snapshot;
+
+    // Merge diagnostics from the legacy DiagnosticCollection (if wired) and
+    // the M4 command registry so command diagnostics flow into the same
+    // summary counts and blocker lists without a separate reporting surface.
+    const legacyDiags: readonly Diagnostic[] = diagnosticCollection?.snapshot ?? [];
+    const commandRegistryDiags: readonly Diagnostic[] = commandRegistry?.diagnostics ?? [];
+    const allDiagnostics: readonly Diagnostic[] = legacyDiags.length === 0
+      ? commandRegistryDiags
+      : Object.freeze([...legacyDiags, ...commandRegistryDiags]);
+
+    // Snapshot the command registry once per inventory derivation.
+    let commandSnapshot: CommandRegistrySnapshot | undefined;
+    if (commandRegistry) {
+      commandSnapshot = commandRegistry.getSnapshot();
+    }
 
     // ---- Resolve per-contribution status ----------------------------------
 
@@ -247,6 +274,23 @@ export function useExtensionStatusInventory(): ExtensionStatusInventory {
 
     // ---- Compute summary ---------------------------------------------------
 
+    // M4: Derive command registry statistics from the snapshot.
+    let commandCount = 0;
+    let keybindingCount = 0;
+    let contextMenuCount = 0;
+    let commandsFailedLastRun = 0;
+    if (commandSnapshot) {
+      commandCount = commandSnapshot.commands.length;
+      keybindingCount = commandSnapshot.keybindings.length;
+      contextMenuCount = commandSnapshot.contextMenuItems.length;
+      for (const cmd of commandSnapshot.commands) {
+        const status = commandSnapshot.getStatus(cmd.commandId);
+        if (!status.lastRunOk && status.lastRunAt > 0) {
+          commandsFailedLastRun++;
+        }
+      }
+    }
+
     const summary: ExtensionStatusSummary = {
       totalExtensions: extensions.length,
       activeExtensions: extensions.filter(
@@ -267,6 +311,10 @@ export function useExtensionStatusInventory(): ExtensionStatusInventory {
       infoDiagnostics: allDiagnostics.filter((d) => d.severity === 'info').length,
       exportBlockers: exportBlockers.length,
       renderBlockers: renderBlockers.length,
+      commandCount,
+      keybindingCount,
+      contextMenuCount,
+      commandsFailedLastRun,
     };
 
     return {
@@ -276,7 +324,7 @@ export function useExtensionStatusInventory(): ExtensionStatusInventory {
       renderBlockers: Object.freeze(renderBlockers),
       derivedAt: Date.now(),
     };
-  }, [extensionRuntime, diagnosticCollection]);
+  }, [extensionRuntime, diagnosticCollection, commandRegistry]);
 }
 
 // ---------------------------------------------------------------------------
@@ -357,6 +405,17 @@ function SummaryBar({ inventory }: { inventory: ExtensionStatusInventory }) {
     { label: 'Info', value: summary.infoDiagnostics, color: 'text-blue-400' },
   ];
 
+  // M4: Command registry stats row (only shown when commands are present).
+  const hasCommands = summary.commandCount > 0
+    || summary.keybindingCount > 0
+    || summary.contextMenuCount > 0;
+
+  const cmdItems: { label: string; value: number; color: string }[] = [
+    { label: 'Commands', value: summary.commandCount, color: 'text-zinc-300' },
+    { label: 'Keybindings', value: summary.keybindingCount, color: 'text-zinc-400' },
+    { label: 'Menus', value: summary.contextMenuCount, color: 'text-zinc-400' },
+  ];
+
   return (
     <div
       className="border-b border-white/10 px-3 py-2"
@@ -413,6 +472,36 @@ function SummaryBar({ inventory }: { inventory: ExtensionStatusInventory }) {
           </div>
         )}
       </div>
+
+      {/* M4: Command registry stats */}
+      {hasCommands && (
+        <div className="mt-1.5 flex flex-wrap items-center gap-2 border-t border-white/5 pt-1.5">
+          {cmdItems.map((item) => (
+            <div
+              key={item.label}
+              className="flex items-center gap-1"
+              data-video-editor-command-summary={item.label.toLowerCase()}
+            >
+              <span className={`text-[10px] font-medium ${item.color} tabular-nums`}>
+                {item.value}
+              </span>
+              <span className="text-[10px] text-zinc-600">{item.label}</span>
+            </div>
+          ))}
+          {summary.commandsFailedLastRun > 0 && (
+            <div
+              className="flex items-center gap-0.5"
+              data-video-editor-command-summary="failed-last-run"
+            >
+              <AlertCircle className="h-2 w-2 text-red-400" aria-hidden="true" />
+              <span className="text-[10px] font-medium text-red-400 tabular-nums">
+                {summary.commandsFailedLastRun}
+              </span>
+              <span className="text-[10px] text-zinc-600">failed last run</span>
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }

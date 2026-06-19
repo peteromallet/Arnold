@@ -1,9 +1,12 @@
 // @vitest-environment jsdom
-import { fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import type { ComponentProps } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { ClipMeta } from '@/tools/video-editor/lib/timeline-data';
+import { DataProviderWrapper, type VideoEditorRuntimeContextValue } from '@/tools/video-editor/contexts/DataProviderContext';
+import { createCommandRegistry, type CommandRegistry } from '@/tools/video-editor/runtime/commandRegistry';
 import type { TimelineAction } from '@/tools/video-editor/types/timeline-canvas';
+import type { ReighExtension } from '@reigh/editor-sdk';
 
 const mocks = vi.hoisted(() => ({
   useWaveformData: vi.fn(),
@@ -55,6 +58,87 @@ function buildProps(overrides: Partial<ComponentProps<typeof ClipAction>> = {}) 
 
 function getContextMenu() {
   return document.body.querySelector('div.fixed.z-50');
+}
+
+function buildRuntime(commandRegistry: CommandRegistry): VideoEditorRuntimeContextValue {
+  const extension = {
+    manifest: {
+      id: 'ext.menu',
+      version: '1.0.0',
+      label: 'Menu Extension',
+    },
+  } as ReighExtension;
+
+  return {
+    provider: {} as VideoEditorRuntimeContextValue['provider'],
+    assetResolver: {} as VideoEditorRuntimeContextValue['assetResolver'],
+    auth: { userId: 'user-1' },
+    project: { projectId: 'project-1' },
+    shots: {} as VideoEditorRuntimeContextValue['shots'],
+    mediaLightbox: {} as VideoEditorRuntimeContextValue['mediaLightbox'],
+    agentChat: {} as VideoEditorRuntimeContextValue['agentChat'],
+    toast: {
+      error: vi.fn(),
+      success: vi.fn(),
+      warning: vi.fn(),
+      info: vi.fn(),
+    },
+    telemetry: {
+      log: vi.fn(),
+      warn: vi.fn(),
+      error: vi.fn(),
+    },
+    timelineId: 'timeline-1',
+    userId: 'user-1',
+    extensions: {
+      slots: {},
+      dialogHost: { dialogs: [] },
+      registry: { panels: [], inspectorSections: [] },
+      overlays: [],
+    },
+    extensionRuntime: {
+      extensions: [extension],
+      byId: new Map([['ext.menu', extension]]),
+    } as VideoEditorRuntimeContextValue['extensionRuntime'],
+    commandRegistry,
+  };
+}
+
+function registerMenuCommand(
+  registry: CommandRegistry,
+  options: {
+    command?: string;
+    label?: string;
+    menuLabel?: string;
+    target?: 'clip' | 'clip-selection';
+    when?: string;
+    handler?: Parameters<CommandRegistry['registerCommand']>[2];
+  } = {},
+) {
+  const command = options.command ?? 'ext.menu.run';
+  registry.ingestCommandContribution('ext.menu', {
+    id: `${command}.command` as never,
+    kind: 'command',
+    command,
+    label: options.label ?? 'Run extension command',
+  });
+  registry.ingestContextMenuItemContribution('ext.menu', {
+    id: `${command}.menu` as never,
+    kind: 'contextMenuItem',
+    command,
+    target: options.target ?? 'clip',
+    label: options.menuLabel,
+    when: options.when,
+  });
+  registry.registerCommand('ext.menu', command, options.handler ?? vi.fn());
+}
+
+function renderWithRuntime(props: ReturnType<typeof buildProps>, registry: CommandRegistry) {
+  return render(
+    <DataProviderWrapper value={buildRuntime(registry)}>
+      <ClipAction {...props} />
+    </DataProviderWrapper>,
+  );
 }
 
 describe('ClipAction', () => {
@@ -232,6 +316,186 @@ describe('ClipAction', () => {
     fireEvent.click(screen.getByText('Duplicate generation'));
 
     expect(props.onDuplicateGeneration).toHaveBeenCalledWith('clip-1');
+  });
+
+  it('renders eligible extension clip menu items and invokes with a snapshotted clip target', async () => {
+    mockUseWaveformData();
+    const registry = createCommandRegistry();
+    const handler = vi.fn();
+    registerMenuCommand(registry, {
+      menuLabel: 'Analyze clip',
+      when: 'target.target == "clip" && target.clipId == "clip-1"',
+      handler,
+    });
+    const props = buildProps({ selectedClipIds: ['clip-1'], onDeleteClip: vi.fn() });
+    const { container } = renderWithRuntime(props, registry);
+
+    fireEvent.contextMenu(container.querySelector('[data-clip-id="clip-1"]') as HTMLElement);
+    fireEvent.click(screen.getByText('Analyze clip'));
+
+    await waitFor(() => expect(handler).toHaveBeenCalledTimes(1));
+    expect(handler).toHaveBeenCalledWith(expect.objectContaining({
+      commandId: 'ext.menu.run',
+      extensionId: 'ext.menu',
+      target: { target: 'clip', clipId: 'clip-1', trackId: 'V1' },
+    }));
+  });
+
+  it('renders eligible extension clip-selection menu items with the menu-open selection target', async () => {
+    mockUseWaveformData();
+    const registry = createCommandRegistry();
+    const handler = vi.fn();
+    registerMenuCommand(registry, {
+      command: 'ext.menu.batch',
+      menuLabel: 'Batch analyze clips',
+      target: 'clip-selection',
+      when: 'target.target == "clip-selection" && target.clipIds > 1',
+      handler,
+    });
+    const props = buildProps({ selectedClipIds: ['clip-1', 'clip-2'] });
+    const { container } = renderWithRuntime(props, registry);
+
+    fireEvent.contextMenu(container.querySelector('[data-clip-id="clip-1"]') as HTMLElement);
+    fireEvent.click(screen.getByText('Batch analyze clips'));
+
+    await waitFor(() => expect(handler).toHaveBeenCalledTimes(1));
+    expect(handler).toHaveBeenCalledWith(expect.objectContaining({
+      commandId: 'ext.menu.batch',
+      extensionId: 'ext.menu',
+      target: { target: 'clip-selection', clipIds: ['clip-1', 'clip-2'], trackId: 'V1' },
+    }));
+  });
+
+  it('filters extension context menu items when their predicate does not pass', () => {
+    mockUseWaveformData();
+    const registry = createCommandRegistry();
+    registerMenuCommand(registry, {
+      menuLabel: 'Hidden extension action',
+      when: 'target.clipId == "other-clip"',
+    });
+    const props = buildProps({ selectedClipIds: ['clip-1'], onDeleteClip: vi.fn() });
+    const { container } = renderWithRuntime(props, registry);
+
+    fireEvent.contextMenu(container.querySelector('[data-clip-id="clip-1"]') as HTMLElement);
+
+    expect(screen.queryByText('Hidden extension action')).not.toBeInTheDocument();
+    expect(screen.getByText('Delete Clip')).toBeInTheDocument();
+  });
+
+  it('keeps built-in clip menu actions available when extension items are contributed', () => {
+    mockUseWaveformData();
+    const registry = createCommandRegistry();
+    const handler = vi.fn();
+    registerMenuCommand(registry, {
+      menuLabel: 'Analyze clip',
+      handler,
+    });
+    const props = buildProps({ selectedClipIds: ['clip-1'], onDeleteClip: vi.fn() });
+    const { container } = renderWithRuntime(props, registry);
+
+    fireEvent.contextMenu(container.querySelector('[data-clip-id="clip-1"]') as HTMLElement);
+
+    expect(screen.getByText('Analyze clip')).toBeInTheDocument();
+    expect(screen.getByText('Split Here')).toBeInTheDocument();
+    expect(screen.getByText('Create Shot')).toBeInTheDocument();
+    expect(screen.getByText('Generate Video')).toBeInTheDocument();
+    expect(screen.getByText('Delete Clip')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByText('Delete Clip'));
+
+    expect(props.onDeleteClip).toHaveBeenCalledWith('clip-1');
+    expect(handler).not.toHaveBeenCalled();
+  });
+
+  it('diagnoses stale snapshotted clip targets instead of invoking extension handlers', async () => {
+    mockUseWaveformData();
+    const registry = createCommandRegistry();
+    const staleToast = vi.fn();
+    registry.setCallbacks({
+      onContextMenuStaleTarget: staleToast,
+    });
+    const handler = vi.fn();
+    registerMenuCommand(registry, {
+      command: 'ext.menu.staleClip',
+      menuLabel: 'Use stale clip',
+      handler,
+    });
+    const props = buildProps({ selectedClipIds: ['clip-1'], onDeleteClip: vi.fn() });
+    const { container, rerender } = render(
+      <DataProviderWrapper value={buildRuntime(registry)}>
+        <ClipAction {...props} />
+      </DataProviderWrapper>,
+    );
+
+    fireEvent.contextMenu(container.querySelector('[data-clip-id="clip-1"]') as HTMLElement);
+
+    rerender(
+      <DataProviderWrapper value={buildRuntime(registry)}>
+        <ClipAction
+          {...props}
+          action={{ ...props.action, id: 'clip-9' }}
+          selectedClipIds={['clip-9']}
+        />
+      </DataProviderWrapper>,
+    );
+    fireEvent.click(screen.getByText('Use stale clip'));
+
+    expect(handler).not.toHaveBeenCalled();
+    expect(staleToast).toHaveBeenCalledWith(
+      'ext.menu.staleClip',
+      'ext.menu',
+      'Clip "clip-1" is no longer available.',
+    );
+    expect(registry.diagnostics).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        code: 'command-registry/context-menu-stale-target',
+        extensionId: 'ext.menu',
+      }),
+    ]));
+  });
+
+  it('diagnoses stale snapshotted targets instead of invoking extension context menu handlers', async () => {
+    mockUseWaveformData();
+    const registry = createCommandRegistry();
+    const staleToast = vi.fn();
+    registry.setCallbacks({
+      onContextMenuStaleTarget: staleToast,
+    });
+    const handler = vi.fn();
+    registerMenuCommand(registry, {
+      command: 'ext.menu.stale',
+      menuLabel: 'Use stale selection',
+      target: 'clip-selection',
+      handler,
+    });
+    const props = buildProps({ selectedClipIds: ['clip-1', 'clip-2'] });
+    const { container, rerender } = render(
+      <DataProviderWrapper value={buildRuntime(registry)}>
+        <ClipAction {...props} />
+      </DataProviderWrapper>,
+    );
+
+    fireEvent.contextMenu(container.querySelector('[data-clip-id="clip-1"]') as HTMLElement);
+
+    rerender(
+      <DataProviderWrapper value={buildRuntime(registry)}>
+        <ClipAction {...props} selectedClipIds={['clip-1', 'clip-3']} />
+      </DataProviderWrapper>,
+    );
+    fireEvent.click(screen.getByText('Use stale selection'));
+
+    expect(handler).not.toHaveBeenCalled();
+    expect(staleToast).toHaveBeenCalledWith(
+      'ext.menu.stale',
+      'ext.menu',
+      'The selected clips changed after the menu was opened.',
+    );
+    expect(registry.diagnostics).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        code: 'command-registry/context-menu-stale-target',
+        extensionId: 'ext.menu',
+      }),
+    ]));
   });
 
   it('does not open a context menu for pinned-shot-group clips when no asset-state actions are available', () => {

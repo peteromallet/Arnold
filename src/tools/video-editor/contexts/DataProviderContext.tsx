@@ -18,6 +18,7 @@ import type {
   VideoEditorExtensionRuntimeConfig,
   ExtensionRuntime,
 } from '@/tools/video-editor/runtime/extensionSurface.ts';
+import type { CommandRegistry } from '@/tools/video-editor/runtime/commandRegistry.ts';
 
 export interface VideoEditorRuntimeContextValue {
   provider: DataProvider;
@@ -36,6 +37,8 @@ export interface VideoEditorRuntimeContextValue {
   hostContext?: VideoEditorHostContext | null;
   extensions: VideoEditorExtensionRuntimeConfig;
   extensionRuntime?: ExtensionRuntime;
+  /** M4: Provider-scoped command registry (commands, keybindings, context menus). */
+  commandRegistry?: CommandRegistry;
 }
 
 export const DataProviderContext = createContext<VideoEditorRuntimeContextValue | null>(null);

@@ -1,0 +1,43 @@
+{
+  "type": "object",
+  "properties": {
+    "triage_framing": {
+      "type": "string"
+    },
+    "areas": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "area": {
+            "type": "string"
+          },
+          "brief": {
+            "type": "string"
+          },
+          "suggested_files": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "id",
+          "area",
+          "brief",
+          "suggested_files"
+        ],
+        "additionalProperties": false
+      }
+    }
+  },
+  "required": [
+    "triage_framing",
+    "areas"
+  ],
+  "additionalProperties": false
+}

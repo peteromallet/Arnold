@@ -10,6 +10,8 @@
  *   - Diagnostics service (report + read-back)
  *   - Chrome toast/progress scaffolding
  *   - Trusted-local safety-warning copy emitted on activation
+ *   - Command palette, keybinding, and clip context-menu contributions
+ *   - Patch-backed command behavior through public creative timeline APIs
  *   - Future inactive contribution declarations (effect, transition, clipType,
  *     parser, agentTool) in the manifest for forward-compatibility testing
  *
@@ -24,7 +26,16 @@ import type {
   ReighExtension,
   ExtensionContext,
   DisposeHandle,
+  CommandContribution,
+  CommandRunContext,
+  ContextMenuItemContribution,
+  KeybindingContribution,
+  TimelinePatch,
 } from '@reigh/editor-sdk';
+
+const FLAGSHIP_EXTENSION_ID = 'com.reigh.examples.flagship-local';
+const FLAGSHIP_MARK_REVIEW_COMMAND =
+  `${FLAGSHIP_EXTENSION_ID}.markClipReview`;
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -55,13 +66,78 @@ function error(ctx: ExtensionContext, code: string, message: string): void {
   ctx.services.diagnostics.report({ severity: 'error', code, message });
 }
 
+/** Build a small extension-owned patch that records the latest command run. */
+function buildFlagshipReviewPatch(
+  ctx: ExtensionContext,
+  run: CommandRunContext,
+): TimelinePatch {
+  const snapshot = ctx.creative.reader.snapshot();
+  const targetClipId = run.target?.target === 'clip'
+    ? run.target.clipId
+    : snapshot.clips[0]?.id ?? null;
+
+  return {
+    version: snapshot.baseVersion,
+    source: ctx.extension.id as string,
+    meta: { kind: 'flagship-review-marker' },
+    operations: [
+      {
+        op: 'project-data.write',
+        target: ctx.extension.id as string,
+        payload: {
+          key: 'flagship.lastReviewMarker',
+          value: {
+            commandId: run.commandId,
+            targetClipId,
+            clipCount: snapshot.clips.length,
+            trackCount: snapshot.tracks.length,
+            snapshotVersion: snapshot.currentVersion,
+          },
+          mode: 'replace',
+        },
+      },
+    ],
+  };
+}
+
+const commandContributions: readonly [
+  CommandContribution,
+  KeybindingContribution,
+  ContextMenuItemContribution,
+] = [
+  {
+    id: 'flagship-mark-review-command' as any,
+    kind: 'command',
+    command: FLAGSHIP_MARK_REVIEW_COMMAND,
+    label: 'Flagship: Mark Clip for Review',
+    category: 'Flagship',
+    order: 10,
+  },
+  {
+    id: 'flagship-mark-review-keybinding' as any,
+    kind: 'keybinding',
+    command: FLAGSHIP_MARK_REVIEW_COMMAND,
+    key: 'CtrlOrCmd+Alt+F',
+    order: 10,
+  },
+  {
+    id: 'flagship-mark-review-menu' as any,
+    kind: 'contextMenuItem',
+    command: FLAGSHIP_MARK_REVIEW_COMMAND,
+    label: 'Flagship: Mark Clip for Review',
+    target: 'clip',
+    when: 'target.clipId != null',
+    order: 10,
+  },
+];
+
 // ---------------------------------------------------------------------------
 // Extension definition
 // ---------------------------------------------------------------------------
 
 export const flagshipLocalExtension: ReighExtension = defineExtension({
   manifest: {
-    id: 'com.reigh.examples.flagship-local' as any,
+    id: FLAGSHIP_EXTENSION_ID as any,
     version: '1.0.0',
     label: 'Flagship Local Extension',
     description:
@@ -70,6 +146,7 @@ export const flagshipLocalExtension: ReighExtension = defineExtension({
 
     // ---- Bridged M1 slot contributions ------------------------------------
     contributions: [
+      ...commandContributions,
       {
         id: 'flagship-toolbar-button' as any,
         kind: 'slot',
@@ -143,6 +220,10 @@ export const flagshipLocalExtension: ReighExtension = defineExtension({
         'Flagship encountered an error: {{error}}',
       'toast.info':
         'Flagship status update: {{message}}',
+      'command.markReview.ready':
+        'Flagship review marker command registered.',
+      'command.markReview.done':
+        'Flagship review marker stored.',
     },
   },
 
@@ -186,6 +267,28 @@ export const flagshipLocalExtension: ReighExtension = defineExtension({
     ctx.chrome.progress(50, ctx.services.i18n.t('progress.label'));
     ctx.chrome.progress(100, ctx.services.i18n.t('progress.label'));
 
+    // --- Command contribution handler ------------------------------------
+    const commandHandle = ctx.commands.registerCommand(
+      FLAGSHIP_MARK_REVIEW_COMMAND,
+      (run: CommandRunContext): void => {
+        const patch = buildFlagshipReviewPatch(ctx, run);
+        ctx.creative.timeline.apply(patch);
+        const doneMsg = ctx.services.i18n.t('command.markReview.done');
+        info(ctx, 'flagship/mark-review-command-ran', doneMsg);
+        ctx.chrome.toast(doneMsg, 'info');
+      },
+      {
+        label: 'Flagship: Mark Clip for Review',
+        category: 'Flagship',
+      },
+    );
+
+    info(
+      ctx,
+      'flagship/mark-review-command-ready',
+      ctx.services.i18n.t('command.markReview.ready'),
+    );
+
     // --- Chrome event subscriptions -------------------------------------
     // Subscribe to toast events to demonstrate the subscribe API
     const toastSub = ctx.chrome.subscribe('toast', (payload) => {
@@ -228,6 +331,7 @@ export const flagshipLocalExtension: ReighExtension = defineExtension({
         // Unsubscribe chrome event handlers
         toastSub.dispose();
         renderSub.dispose();
+        commandHandle.dispose();
 
         // Emit disposal diagnostic
         const disposedMsg = ctx.services.i18n.t('activation.disposed');

@@ -30,7 +30,15 @@ import {
   createExtensionLifecycleHost,
   type ExtensionLifecycleHost,
 } from '@/tools/video-editor/runtime/extensionLifecycle.ts';
-import { createExtensionContext, createCreativeContext, type ReighExtension } from '@reigh/editor-sdk';
+import {
+  createExtensionContext,
+  createCreativeContext,
+  type ReighExtension,
+  type CommandContribution,
+  type KeybindingContribution,
+  type ContextMenuItemContribution,
+  type ExtensionCommandService,
+} from '@reigh/editor-sdk';
 import type { CreativeContext } from '@reigh/editor-sdk';
 import type {
   VideoEditorAuthHost,
@@ -41,6 +49,7 @@ import type {
   VideoEditorToastHost,
   VideoEditorTelemetryHost,
 } from '@/tools/video-editor/runtime/ports.ts';
+import { createCommandRegistry, type CommandRegistry } from '@/tools/video-editor/runtime/commandRegistry.ts';
 
 export interface EditorRuntimeProviderProps {
   dataProvider: DataProvider;
@@ -61,6 +70,7 @@ function EditorRuntimeProviderInner({
   sequenceComponentCatalog,
   lifecycleHostRef,
   extensionRuntime,
+  commandRegistryRef,
 }: {
   children: ReactNode;
   userId: string | null;
@@ -68,6 +78,7 @@ function EditorRuntimeProviderInner({
   sequenceComponentCatalog?: VideoEditorSequenceComponentCatalog | null;
   lifecycleHostRef: React.MutableRefObject<ExtensionLifecycleHost | null>;
   extensionRuntime: ExtensionRuntime;
+  commandRegistryRef: React.MutableRefObject<CommandRegistry | null>;
 }) {
   const effectsQuery = useEffects(userId, { enabled: !effectCatalog && Boolean(userId) });
   const effectResources = useResolvedEffectCatalog(userId, effectCatalog);
@@ -127,13 +138,45 @@ function EditorRuntimeProviderInner({
 
   useEffect(() => {
     const host = lifecycleHostRef.current;
+    const registry = commandRegistryRef.current;
     if (!host) return;
+
+    // Ingest declarative command/keybinding/context-menu contributions
+    if (registry) {
+      for (const ext of extensionRuntime.extensions) {
+        const extId = ext.manifest.id as string;
+        for (const contrib of ext.manifest.contributions ?? []) {
+          switch (contrib.kind) {
+            case 'command':
+              registry.ingestCommandContribution(extId, contrib as CommandContribution);
+              break;
+            case 'keybinding':
+              registry.ingestKeybindingContribution(extId, contrib as KeybindingContribution);
+              break;
+            case 'contextMenuItem':
+              registry.ingestContextMenuItemContribution(extId, contrib as ContextMenuItemContribution);
+              break;
+          }
+        }
+      }
+    }
 
     host.synchronize(
       extensionRuntime.extensions,
-      (ext) => createExtensionContext(ext, liveCreativeOverrides),
+      (ext) => {
+        const extId = ext.manifest.id as string;
+        // Create per-extension commands service backed by the shared registry
+        const commandsService: ExtensionCommandService | undefined = registry
+          ? {
+              registerCommand(commandId, handler, options) {
+                return registry.registerCommand(extId, commandId, handler, options);
+              },
+            }
+          : undefined;
+        return createExtensionContext(ext, liveCreativeOverrides, commandsService);
+      },
     );
-  }, [lifecycleHostRef, extensionRuntime.extensions, liveCreativeOverrides]);
+  }, [lifecycleHostRef, extensionRuntime.extensions, liveCreativeOverrides, commandRegistryRef]);
 
   // Sync proposalRuntime to the store so host-owned UI (ProposalPanel) can access it.
   useEffect(() => {
@@ -184,7 +227,48 @@ export function EditorRuntimeProvider({
     lifecycleHostRef.current = createExtensionLifecycleHost();
   }
 
+  // ---- M4: command registry (one per provider mount) -----------------------
+  const commandRegistryRef = useRef<CommandRegistry | null>(null);
+  if (!commandRegistryRef.current) {
+    commandRegistryRef.current = createCommandRegistry();
+  }
 
+  // Wire lifecycle disposal → registry cleanup
+  useEffect(() => {
+    const host = lifecycleHostRef.current;
+    const registry = commandRegistryRef.current;
+    if (!host || !registry) return;
+    const handle = host.onLifecycleDisposed((extensionId: string) => {
+      registry.unregisterAll(extensionId);
+    });
+    return () => handle.dispose();
+  }, []);
+
+  // Wire registry callbacks (stub — no host toast in browser context)
+  useEffect(() => {
+    const registry = commandRegistryRef.current;
+    if (!registry) return;
+    registry.setCallbacks({
+      onCommandFailure: (commandId, error, extensionId) => {
+        console.error(`[CommandRegistry] Command "${commandId}" failed (${extensionId}): ${error.message}`);
+      },
+      onReservedCommand: (commandId, extensionId) => {
+        console.warn(`[CommandRegistry] Reserved command "${commandId}" rejected for extension "${extensionId}".`);
+      },
+      onReservedKeybinding: (key, extensionId, commandId) => {
+        console.warn(`[CommandRegistry] Reserved keybinding "${key}" for "${commandId}" rejected for extension "${extensionId}".`);
+      },
+      onDuplicateCommand: (commandId, originalExtension, conflictingExtension) => {
+        console.warn(`[CommandRegistry] Command "${commandId}" already registered by "${originalExtension}". Extension "${conflictingExtension}" cannot override it.`);
+      },
+      onKeybindingConflict: (key, originalExtension, conflictingExtension) => {
+        console.warn(`[CommandRegistry] Keybinding "${key}" already bound by "${originalExtension}". Extension "${conflictingExtension}" cannot override it.`);
+      },
+      onContextMenuStaleTarget: (commandId, extensionId, reason) => {
+        console.warn(`[CommandRegistry] Context menu command "${commandId}" rejected for extension "${extensionId}": ${reason}`);
+      },
+    });
+  }, []);
 
   useEffect(() => {
     const host = lifecycleHostRef.current;
@@ -247,6 +331,7 @@ export function EditorRuntimeProvider({
     hostContext: runtime?.hostContext ?? null,
     extensions: extensionRuntime.config,
     extensionRuntime,
+    commandRegistry: commandRegistryRef.current ?? undefined,
   }), [
     dataProvider,
     runtime?.assetResolver,
@@ -273,10 +358,10 @@ export function EditorRuntimeProvider({
         sequenceComponentCatalog={sequenceComponentCatalog}
         lifecycleHostRef={lifecycleHostRef}
         extensionRuntime={extensionRuntime}
+        commandRegistryRef={commandRegistryRef}
       >
         {children}
       </EditorRuntimeProviderInner>
     </DataProviderWrapper>
   );
 }
-

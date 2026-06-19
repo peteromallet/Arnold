@@ -481,6 +481,13 @@ export interface ExtensionLifecycleHost {
 
   /** Dispose all managed lifecycles. Idempotent. */
   disposeAll(): void;
+
+  /**
+   * Register a callback invoked whenever a managed lifecycle is disposed
+   * (whether via synchronize removal, manifest change, or disposeAll).
+   * Called exactly once per lifecycle with its extension ID.
+   */
+  onLifecycleDisposed(callback: (extensionId: string) => void): DisposeHandle;
 }
 
 /**
@@ -489,7 +496,19 @@ export interface ExtensionLifecycleHost {
 export function createExtensionLifecycleHost(): ExtensionLifecycleHost {
   const lifecycles = new Map<string, ExtensionLifecycle>();
   const hostDiagnostics: ExtensionDiagnostic[] = [];
+  const disposedCallbacks = new Set<(extensionId: string) => void>();
   let disposed = false;
+
+  /** Notify all registered disposal callbacks that a lifecycle was disposed. */
+  function notifyLifecycleDisposed(extensionId: string): void {
+    for (const cb of disposedCallbacks) {
+      try {
+        cb(extensionId);
+      } catch {
+        // Callback errors are silently dropped.
+      }
+    }
+  }
 
   function computeDiagnostics(): readonly ExtensionDiagnostic[] {
     const all: ExtensionDiagnostic[] = [...hostDiagnostics];
@@ -525,8 +544,10 @@ export function createExtensionLifecycleHost(): ExtensionLifecycleHost {
         // Check if manifest changed (by reference comparison, since manifests are frozen)
         if (existing.extension.manifest !== ext.manifest) {
           // Manifest changed — dispose old and create new
+          const oldId = existing.extensionId;
           existing.dispose();
           lifecycles.delete(id);
+          notifyLifecycleDisposed(oldId);
           const newLc = createExtensionLifecycle(ext);
           lifecycles.set(id, newLc);
           toActivate.push(newLc);
@@ -543,8 +564,10 @@ export function createExtensionLifecycleHost(): ExtensionLifecycleHost {
     // Remove extensions no longer in the list
     for (const [id, lc] of lifecycles) {
       if (!incomingIds.has(id)) {
+        const removedId = lc.extensionId;
         lc.dispose();
         lifecycles.delete(id);
+        notifyLifecycleDisposed(removedId);
       }
     }
 
@@ -581,7 +604,9 @@ export function createExtensionLifecycleHost(): ExtensionLifecycleHost {
     if (disposed) return;
     disposed = true;
 
+    const disposedIds: string[] = [];
     for (const lc of lifecycles.values()) {
+      disposedIds.push(lc.extensionId);
       try {
         lc.dispose();
       } catch {
@@ -589,6 +614,10 @@ export function createExtensionLifecycleHost(): ExtensionLifecycleHost {
       }
     }
     lifecycles.clear();
+
+    for (const id of disposedIds) {
+      notifyLifecycleDisposed(id);
+    }
   }
 
   const host: ExtensionLifecycleHost = {
@@ -600,6 +629,14 @@ export function createExtensionLifecycleHost(): ExtensionLifecycleHost {
     },
     synchronize,
     disposeAll,
+    onLifecycleDisposed(callback: (extensionId: string) => void): DisposeHandle {
+      disposedCallbacks.add(callback);
+      return {
+        dispose(): void {
+          disposedCallbacks.delete(callback);
+        },
+      };
+    },
   };
 
   return host;

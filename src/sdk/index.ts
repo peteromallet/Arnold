@@ -98,6 +98,66 @@ export interface ExportDiagnostic extends ExtensionDiagnostic {
 }
 
 // ---------------------------------------------------------------------------
+// M4: Commands, Keybindings, Context Menus — target and handler contracts
+// ---------------------------------------------------------------------------
+
+/**
+ * Sealed target context union for context-menu contributions.
+ *
+ * - `clip` — right-click on a single clip
+ * - `clip-selection` — right-click when multiple clips are selected
+ * - `track` — right-click on a track header/label
+ * - `timeline-area` — right-click on the editable canvas background
+ *
+ * Shot-group contributions are **reserved** and diagnosed rather than
+ * silently ignored until the shot-group ambiguity is resolved.
+ */
+export type TargetContext = 'clip' | 'clip-selection' | 'track' | 'timeline-area';
+
+/**
+ * Typed payload discriminator for command invocations originating
+ * from a context menu or other target-scoped trigger.
+ */
+export type TargetContextPayload =
+  | { readonly target: 'clip'; readonly clipId: string; readonly trackId: string }
+  | { readonly target: 'clip-selection'; readonly clipIds: readonly string[]; readonly trackId: string }
+  | { readonly target: 'track'; readonly trackId: string }
+  | { readonly target: 'timeline-area' };
+
+/**
+ * Context passed to a command handler on invocation.
+ *
+ * Handlers receive the fully-qualified command ID, the owning extension ID,
+ * and an optional `target` payload populated when the command is triggered
+ * from a context-menu or other target-scoped surface.
+ */
+export interface CommandRunContext {
+  /** The fully-qualified command ID that was invoked. */
+  readonly commandId: string;
+  /** The extension that registered the handler. */
+  readonly extensionId: string;
+  /** The target context, with its typed payload, when applicable. */
+  readonly target?: TargetContextPayload;
+}
+
+/**
+ * A command handler function registered by an extension during activate().
+ *
+ * May be synchronous or async.  Thrown errors (or rejected promises) are
+ * caught by the runtime and published as diagnostics + host toasts — they
+ * must not crash the palette, menus, or editor shell.
+ */
+export type CommandHandler = (ctx: CommandRunContext) => void | Promise<void>;
+
+/** Options for imperative command registration via ctx.commands.registerCommand(). */
+export interface CommandRegistrationOptions {
+  /** Human-readable label for the palette (defaults to command ID when absent). */
+  label?: string;
+  /** Category for palette grouping. */
+  category?: string;
+}
+
+// ---------------------------------------------------------------------------
 // Manifest
 // ---------------------------------------------------------------------------
 
@@ -108,6 +168,10 @@ export type ContributionKind =
   | 'panel'
   | 'inspectorSection'
   | 'timelineOverlay'
+  // M4: commands, keybindings, context menus
+  | 'command'
+  | 'keybinding'
+  | 'contextMenuItem'
   // Reserved — not yet bridged in M1
   | 'effect'
   | 'transition'
@@ -156,6 +220,65 @@ export interface ExtensionContribution {
   transitionId?: string;
   /** Reserved for future clip-type descriptors. */
   clipTypeId?: string;
+}
+
+// ---------------------------------------------------------------------------
+// M4: Command / keybinding / context-menu contributions
+// ---------------------------------------------------------------------------
+
+/** A command contribution in an extension manifest. */
+export interface CommandContribution {
+  /** Unique within the extension. */
+  id: ContributionId;
+  kind: 'command';
+  /** The command identifier (e.g. 'myExtension.doSomething'). */
+  command: string;
+  /** Human-readable label for the command palette. */
+  label: string;
+  /** Category for palette grouping. */
+  category?: string;
+  /** Optional visibility predicate (evaluated by host). */
+  when?: string;
+  /** Lower values sort first. Default 0. */
+  order?: number;
+}
+
+/** A keybinding contribution that binds a keyboard shortcut to a command. */
+export interface KeybindingContribution {
+  /** Unique within the extension. */
+  id: ContributionId;
+  kind: 'keybinding';
+  /** The command identifier this keybinding triggers. */
+  command: string;
+  /**
+   * Platform-aware key notation (e.g. 'CtrlOrCmd+K', 'Alt+Shift+R').
+   * Modifier keys: CtrlOrCmd, Ctrl, Cmd, Alt, Shift.
+   * Key names are case-insensitive and normalized at registration time.
+   */
+  key: string;
+  /** Optional visibility predicate (evaluated by host). */
+  when?: string;
+  /** Lower values sort first. Default 0. */
+  order?: number;
+}
+
+/** A context-menu item contribution for clip/track/timeline-area surfaces. */
+export interface ContextMenuItemContribution {
+  /** Unique within the extension. */
+  id: ContributionId;
+  kind: 'contextMenuItem';
+  /** The command identifier this menu item invokes. */
+  command: string;
+  /** Override label for the menu item (falls back to command contribution label). */
+  label?: string;
+  /** The target context(s) where this item appears. */
+  target: TargetContext;
+  /** Optional visibility predicate (evaluated by host). */
+  when?: string;
+  /** Lower values sort first. Default 0. */
+  order?: number;
+  /** Optional icon name for the menu item. */
+  icon?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -208,7 +331,12 @@ export interface ExtensionManifest {
   /** API version this extension targets (currently 1). */
   apiVersion?: number;
   /** Contribution declarations. */
-  contributions?: readonly ExtensionContribution[];
+  contributions?: readonly (
+    | ExtensionContribution
+    | CommandContribution
+    | KeybindingContribution
+    | ContextMenuItemContribution
+  )[];
   /** Reserved: descriptive permission metadata. */
   permissions?: readonly ExtensionPermissionDeclaration[];
   /** Reserved: process declarations. */
@@ -442,6 +570,34 @@ export function createCreativeContext(
 }
 
 // ---------------------------------------------------------------------------
+// M4: Command registration service
+// ---------------------------------------------------------------------------
+
+/**
+ * Command registration service available as `ctx.commands` during activate().
+ *
+ * Commands must have a matching `command` contribution in the extension
+ * manifest.  Handlers are registered imperatively via `registerCommand()`
+ * and the returned DisposeHandle unregisters them on dispose.
+ */
+export interface ExtensionCommandService {
+  /**
+   * Register a command handler imperatively during activate().
+   *
+   * The `commandId` must match the `command` field of a `CommandContribution`
+   * declared by this extension in its manifest.
+   *
+   * Returns a DisposeHandle that unregisters the handler when dispose() is
+   * called (safe to call multiple times; idempotent).
+   */
+  registerCommand(
+    commandId: string,
+    handler: CommandHandler,
+    options?: CommandRegistrationOptions,
+  ): DisposeHandle;
+}
+
+// ---------------------------------------------------------------------------
 // ExtensionContext
 // ---------------------------------------------------------------------------
 
@@ -469,8 +625,10 @@ export interface ExtensionContext {
     readonly i18n: ExtensionI18nService;
     readonly diagnostics: ExtensionDiagnosticsService;
   };
-  /** Reserved creative context stubs — throw typed "not implemented until Mx". */
+  /** Reserved creative context stubs — throw typed \"not implemented until Mx\". */
   readonly creative: CreativeContext;
+  /** M4: Command registration service for imperative handler binding. */
+  readonly commands: ExtensionCommandService;
 }
 
 // ---------------------------------------------------------------------------
@@ -526,6 +684,7 @@ export function getEditorShellRoot(): HTMLElement | null {
 export function createExtensionContext(
   extension: ReighExtension,
   creativeOverrides?: Partial<CreativeContext>,
+  commands?: ExtensionCommandService,
 ): ExtensionContext {
   const extensionId = extension.manifest.id as string;
   const manifest = extension.manifest; // Already frozen by defineExtension
@@ -787,6 +946,18 @@ export function createExtensionContext(
   // ---- creative context (stubs with optional live overrides) --------------
   const creative = createCreativeContext(creativeOverrides);
 
+  // ---- commands service (optional, wired by provider) -----------------------
+  const commandsService: ExtensionCommandService = commands ?? {
+    registerCommand(_commandId: string, _handler: CommandHandler, _options?: CommandRegistrationOptions): DisposeHandle {
+      diagnosticsService.report({
+        severity: 'error',
+        code: 'commands/not-wired',
+        message: `Cannot register command "${_commandId}" — the CommandRegistry has not been wired by the host provider.`,
+      });
+      return { dispose() {} };
+    },
+  };
+
   // ---- assemble, attach dispose, then freeze -------------------------------
   const ctx = {
     apiVersion: 1,
@@ -804,6 +975,7 @@ export function createExtensionContext(
       diagnostics: diagnosticsService,
     },
     creative,
+    commands: commandsService,
   } as ExtensionContext;
 
   // Attach host-service disposal so the lifecycle can clean up settings
@@ -956,6 +1128,9 @@ export const CONTRIBUTION_KIND_MILESTONE: Record<ContributionKind, string | unde
   panel: 'M1',
   inspectorSection: 'M1',
   timelineOverlay: 'M2',
+  command: 'M4',
+  keybinding: 'M4',
+  contextMenuItem: 'M4',
   effect: 'M3',
   transition: 'M3',
   clipType: 'M3',
@@ -970,8 +1145,21 @@ export const CONTRIBUTION_KIND_MILESTONE: Record<ContributionKind, string | unde
  */
 export function contributionKindNotYetBridged(kind: ContributionKind): string | null {
   const milestone = CONTRIBUTION_KIND_MILESTONE[kind];
-  if (milestone && (milestone === 'M1' || milestone === 'M2')) return null;
-  return milestone ?? 'unknown';
+  if (!milestone) return 'unknown';
+
+  // M1 / M2 are fully bridged.
+  if (milestone === 'M1' || milestone === 'M2') return null;
+
+  // M4: command, keybinding, and contextMenuItem are bridged.
+  // Other M4 kinds (parser) remain inactive.
+  if (
+    milestone === 'M4' &&
+    (kind === 'command' || kind === 'keybinding' || kind === 'contextMenuItem')
+  ) {
+    return null;
+  }
+
+  return milestone;
 }
 
 // ---------------------------------------------------------------------------
