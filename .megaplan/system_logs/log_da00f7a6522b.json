@@ -1,0 +1,62 @@
+{
+  "id": "log_da00f7a6522b",
+  "level": "debug",
+  "category": "system",
+  "event_type": "authority_divergence",
+  "message": "authority_divergence emitted",
+  "details": {
+    "event": {
+      "seq": 3800,
+      "schema_version": 1,
+      "ts_utc": "2026-06-19T23:32:02.045248+00:00",
+      "ts_rel_init_s": 134606.336282,
+      "kind": "authority_divergence",
+      "phase": "execute",
+      "payload": {
+        "diagnostic_version": 1,
+        "task_id": "T9",
+        "raw_terminal_status": "done",
+        "authority_status": "unknown",
+        "authoritative": false,
+        "reason": "stale_evidence:missing_head:task_files_changed",
+        "missing_outputs": [],
+        "stale_evidence": [
+          "missing_head:task_files_changed",
+          "missing_head:task_files_changed",
+          "missing_head:task_commands_run"
+        ],
+        "would_block_reasons": [
+          "stale_evidence:missing_head:task_files_changed",
+          "stale_evidence:missing_head:task_commands_run"
+        ],
+        "error": null,
+        "diagnostics": {
+          "task_id": "T9",
+          "declared_outputs": {
+            "files_changed": [
+              "tests/arnold/pipelines/megaplan/test_native_hooks.py"
+            ],
+            "commands_run": [
+              "python -m pytest /Users/peteromalley/Documents/megaplan/tests/arnold/pipelines/megaplan/test_native_hooks.py -v --rootdir=/Users/peteromalley/Documents/megaplan"
+            ]
+          },
+          "linked_evidence_count": 7,
+          "evidence_count": 85,
+          "normalization": "iterable",
+          "status": "unknown",
+          "evidence_sources": [
+            "plan_artifacts"
+          ],
+          "loaded_evidence_count": 85,
+          "raw_terminal_status": "done"
+        },
+        "ts_utc": "2026-06-19T23:32:02.044813+00:00"
+      },
+      "transaction_id": "44b0bbd761274d6b",
+      "store_method": "log_system_event"
+    }
+  },
+  "turn_id": null,
+  "epic_id": "milestone-3-megaplan-specific-20260618-1208",
+  "occurred_at": "2026-06-19T23:32:02.045297Z"
+}
