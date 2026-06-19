@@ -1,0 +1,68 @@
+{
+  "id": "log_fb2547951213",
+  "level": "debug",
+  "category": "system",
+  "event_type": "authority_divergence",
+  "message": "authority_divergence emitted",
+  "details": {
+    "event": {
+      "seq": 4205,
+      "schema_version": 1,
+      "ts_utc": "2026-06-19T18:58:37.785310+00:00",
+      "ts_rel_init_s": 4489.597347,
+      "kind": "authority_divergence",
+      "phase": "execute",
+      "payload": {
+        "diagnostic_version": 1,
+        "task_id": "T16",
+        "raw_terminal_status": "done",
+        "authority_status": "unknown",
+        "authoritative": false,
+        "reason": "stale_evidence:missing_head:task_commands_run",
+        "missing_outputs": [],
+        "stale_evidence": [
+          "missing_head:task_commands_run",
+          "missing_head:task_files_changed",
+          "missing_head:task_commands_run",
+          "missing_head:task_commands_run",
+          "missing_head:task_commands_run",
+          "missing_head:task_files_changed",
+          "missing_head:task_commands_run",
+          "missing_head:task_commands_run"
+        ],
+        "would_block_reasons": [
+          "stale_evidence:missing_head:task_commands_run",
+          "stale_evidence:missing_head:task_files_changed"
+        ],
+        "error": null,
+        "diagnostics": {
+          "task_id": "T16",
+          "declared_outputs": {
+            "files_changed": [
+              "tests/arnold/pipeline/native/test_megaplan_hooks.py"
+            ],
+            "commands_run": [
+              "python -m pytest tests/arnold/pipeline/native/test_megaplan_hooks.py -v",
+              "python -m pytest tests/arnold/pipeline/native/ -q"
+            ]
+          },
+          "linked_evidence_count": 8,
+          "evidence_count": 52,
+          "normalization": "iterable",
+          "status": "unknown",
+          "evidence_sources": [
+            "plan_artifacts"
+          ],
+          "loaded_evidence_count": 52,
+          "raw_terminal_status": "done"
+        },
+        "ts_utc": "2026-06-19T18:58:37.784952+00:00"
+      },
+      "transaction_id": "92b845c1d9170213",
+      "store_method": "log_system_event"
+    }
+  },
+  "turn_id": null,
+  "epic_id": "handoff-artifacts-exact-20260619-1943",
+  "occurred_at": "2026-06-19T18:58:37.785348Z"
+}
