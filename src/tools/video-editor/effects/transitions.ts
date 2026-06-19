@@ -22,4 +22,5 @@ export const transitions: Record<string, TransitionRenderer> = {
   }),
 };
 
+/** Array of built-in transition type IDs — preserved for unmigrated callers. */
 export const transitionTypes = Object.keys(transitions);

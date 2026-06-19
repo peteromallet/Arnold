@@ -83,6 +83,8 @@ import { createProposalRuntime } from '@/tools/video-editor/lib/proposal-runtime
 import { createCommandRegistry, type CommandRegistry } from '@/tools/video-editor/runtime/commandRegistry.ts';
 import { createEffectRegistrationService } from '@/tools/video-editor/runtime/effectRegistrationService.ts';
 import type { EffectRegistry } from '@/tools/video-editor/effects/registry/types.ts';
+import { createTransitionRegistrationService } from '@/tools/video-editor/runtime/transitionRegistrationService.ts';
+import type { TransitionRegistry } from '@/tools/video-editor/transitions/registry/types.ts';
 
 import { useTimelineOpsFromStore } from '@/tools/video-editor/hooks/timelineStore.ts';
 import type { SaveStatus } from '@/tools/video-editor/hooks/useTimelinePersistence.ts';
@@ -91,6 +93,10 @@ import {
   removeExtensionDiagnosticsFromCollection,
   syncExtensionDiagnosticsToCollection,
 } from '@/tools/video-editor/runtime/diagnosticCollectionSync.ts';
+import {
+  TransitionRegistryProvider,
+  useTransitionRegistryContext,
+} from '@/tools/video-editor/transitions/registry/index.ts';
 
 const log = import.meta.env.DEV ? (...args: Parameters<typeof console.log>) => console.log(...args) : () => {};
 
@@ -150,6 +156,7 @@ function InnerProvider({
   extensionRuntime,
   commandRegistryRef,
   effectRegistryRef,
+  transitionRegistryRef,
 }: {
   children: React.ReactNode;
   effectCatalog?: VideoEditorEffectCatalog | null;
@@ -159,6 +166,7 @@ function InnerProvider({
   extensionRuntime: ExtensionRuntime;
   commandRegistryRef: React.MutableRefObject<CommandRegistry | null>;
   effectRegistryRef: React.MutableRefObject<EffectRegistry | null>;
+  transitionRegistryRef: React.MutableRefObject<TransitionRegistry | null>;
 }) {
   useRenderDiagnostic('VideoEditorProvider');
   const runtime = useVideoEditorRuntime();
@@ -271,6 +279,7 @@ function InnerProvider({
       (ext) => {
         const extId = ext.manifest.id as string;
         const effectRegistry = effectRegistryRef.current;
+        const transitionRegistry = transitionRegistryRef.current;
         // Create per-extension commands service backed by the shared registry
         const commandsService: ExtensionCommandService | undefined = registry
           ? {
@@ -292,7 +301,17 @@ function InnerProvider({
                 createExtensionDiagnosticsService(extId),
             })
           : undefined;
-        return createExtensionContext(ext, liveCreativeOverrides, commandsService, effectsService);
+        // Create per-extension transitions service backed by the shared TransitionRegistry.
+        const transitionsService = transitionRegistry
+          ? createTransitionRegistrationService({
+              extension: ext,
+              transitionRegistry,
+              diagnosticsService:
+                host.lifecycles.get(extId)?.diagnosticsService ??
+                createExtensionDiagnosticsService(extId),
+            })
+          : undefined;
+        return createExtensionContext(ext, liveCreativeOverrides, commandsService, effectsService, transitionsService);
       },
     );
     syncExtensionDiagnosticsToCollection(diagnosticCollection, 'extension-lifecycle', [
@@ -544,36 +563,44 @@ function InnerProvider({
 
   return (
     <EffectRegistryProvider>
-      <EffectCatalogProvider value={effectResources}>
-        <VideoEditorEffectRegistryLifecycle
-          effectsQueryData={effectsQuery.data}
-          effectResources={effectResources.effects}
-          lifecycleHostRef={lifecycleHostRef}
-          commandRegistryRef={commandRegistryRef}
-          effectRegistryRef={effectRegistryRef}
-          activeExtensionIds={activeExtensionIds}
-        />
-        <SequenceComponentCatalogProvider value={sequenceComponentResources}>
-          <SequenceComponentRegistryProvider components={sequenceComponentResources.components}>
-            <TimelineStoreProvider store={store}>
-              <AgentChatBridgeRegistration />
-              {children}
-              {lightboxAssetKey && resolvedLightboxMedia && (
-                <>
-                  <runtime.mediaLightbox.Lightbox
-                    media={resolvedLightboxMedia}
-                    navigation={navResult.navigation}
-                    initialVariantId={lightboxInitialVariantId}
-                    onClose={lightboxOnClose}
-                    features={lightboxFeatures}
-                  />
-                  {navResult.indicator ? <VideoEditorLightboxOverlay indicator={navResult.indicator} /> : null}
-                </>
-              )}
-            </TimelineStoreProvider>
-          </SequenceComponentRegistryProvider>
-        </SequenceComponentCatalogProvider>
-      </EffectCatalogProvider>
+      <TransitionRegistryProvider>
+        <EffectCatalogProvider value={effectResources}>
+          <VideoEditorEffectRegistryLifecycle
+            effectsQueryData={effectsQuery.data}
+            effectResources={effectResources.effects}
+            lifecycleHostRef={lifecycleHostRef}
+            commandRegistryRef={commandRegistryRef}
+            effectRegistryRef={effectRegistryRef}
+            activeExtensionIds={activeExtensionIds}
+          />
+          <VideoEditorTransitionRegistryLifecycle
+            lifecycleHostRef={lifecycleHostRef}
+            commandRegistryRef={commandRegistryRef}
+            transitionRegistryRef={transitionRegistryRef}
+            activeExtensionIds={activeExtensionIds}
+          />
+          <SequenceComponentCatalogProvider value={sequenceComponentResources}>
+            <SequenceComponentRegistryProvider components={sequenceComponentResources.components}>
+              <TimelineStoreProvider store={store}>
+                <AgentChatBridgeRegistration />
+                {children}
+                {lightboxAssetKey && resolvedLightboxMedia && (
+                  <>
+                    <runtime.mediaLightbox.Lightbox
+                      media={resolvedLightboxMedia}
+                      navigation={navResult.navigation}
+                      initialVariantId={lightboxInitialVariantId}
+                      onClose={lightboxOnClose}
+                      features={lightboxFeatures}
+                    />
+                    {navResult.indicator ? <VideoEditorLightboxOverlay indicator={navResult.indicator} /> : null}
+                  </>
+                )}
+              </TimelineStoreProvider>
+            </SequenceComponentRegistryProvider>
+          </SequenceComponentCatalogProvider>
+        </EffectCatalogProvider>
+      </TransitionRegistryProvider>
     </EffectRegistryProvider>
   );
 }
@@ -647,6 +674,46 @@ function VideoEditorEffectRegistryLifecycle({
   return null;
 }
 
+function VideoEditorTransitionRegistryLifecycle({
+  lifecycleHostRef,
+  commandRegistryRef,
+  transitionRegistryRef,
+  activeExtensionIds,
+}: {
+  lifecycleHostRef: React.MutableRefObject<ExtensionLifecycleHost | null>;
+  commandRegistryRef: React.MutableRefObject<CommandRegistry | null>;
+  transitionRegistryRef: React.MutableRefObject<TransitionRegistry | null>;
+  activeExtensionIds: ReadonlySet<string>;
+}) {
+  const { registry: transitionRegistry, snapshot: transitionRegistrySnapshot } = useTransitionRegistryContext();
+  // Expose the transition registry to the outer synchronize effect via ref.
+  transitionRegistryRef.current = transitionRegistry;
+  const diagnosticCollection = useVideoEditorRuntime().diagnosticCollection;
+
+  useEffect(() => {
+    const host = lifecycleHostRef.current;
+    const commandRegistry = commandRegistryRef.current;
+    if (!host) return;
+    const handle = host.onLifecycleDisposed((extensionId: string) => {
+      commandRegistry?.unregisterAll(extensionId);
+      transitionRegistry.unregisterOwner(extensionId);
+      removeExtensionDiagnosticsFromCollection(diagnosticCollection, extensionId);
+    });
+    return () => handle.dispose();
+  }, [commandRegistryRef, diagnosticCollection, transitionRegistry, lifecycleHostRef]);
+
+  useEffect(() => {
+    syncExtensionDiagnosticsToCollection(
+      diagnosticCollection,
+      'transition-registry',
+      transitionRegistrySnapshot.diagnostics,
+      { activeExtensionIds },
+    );
+  }, [activeExtensionIds, diagnosticCollection, transitionRegistrySnapshot]);
+
+  return null;
+}
+
 export interface VideoEditorProviderProps {
   dataProvider: DataProvider;
   projectId: string | null;
@@ -695,6 +762,10 @@ export function VideoEditorProvider({
   // ---- M7: effect registry ref (registry is created by EffectRegistryProvider,
   //        exposed via context and stored here for the synchronize effect) ----
   const effectRegistryRef = useRef<EffectRegistry | null>(null);
+
+  // ---- M8: transition registry ref (registry is created by TransitionRegistryProvider,
+  //        exposed via context and stored here for the synchronize effect) ----
+  const transitionRegistryRef = useRef<TransitionRegistry | null>(null);
 
   const diagnosticCollectionRef = useRef<DiagnosticCollection | null>(null);
   if (!diagnosticCollectionRef.current) {
@@ -786,6 +857,7 @@ export function VideoEditorProvider({
         extensionRuntime={extensionRuntime}
         commandRegistryRef={commandRegistryRef}
         effectRegistryRef={effectRegistryRef}
+        transitionRegistryRef={transitionRegistryRef}
       >
         {children}
       </InnerProvider>

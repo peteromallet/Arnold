@@ -180,6 +180,13 @@ import type {
   EffectParameterSchema,
   EffectRegistrationOptions,
   EffectRegistrationService,
+  // M8: Trusted component transitions
+  TransitionContribution,
+  TransitionRenderer,
+  TransitionParameterDefinition,
+  TransitionParameterSchema,
+  TransitionRegistrationOptions,
+  TransitionRegistrationService,
 } from '@reigh/editor-sdk';
 import type {
   ExtensionId,
@@ -960,8 +967,6 @@ describe('M6: contribution kind bridging for parser/output/search', () => {
   it('unsupported contribution behavior remains explicit (each returns its milestone)', () => {
     // Each reserved/unsupported kind returns its owning milestone name,
     // so consumers get a clear diagnostic rather than silent ignorance.
-    expect(contributionKindNotYetBridged('effect')).toBe('M3');
-    expect(contributionKindNotYetBridged('transition')).toBe('M3');
     expect(contributionKindNotYetBridged('clipType')).toBe('M3');
     expect(contributionKindNotYetBridged('agentTool')).toBe('M5');
     expect(contributionKindNotYetBridged('agent')).toBe('M5');
@@ -1304,6 +1309,299 @@ describe('M7: internal effect registration types are NOT re-exported from @reigh
   it('forbidden M7 internal names are not accessible on the SDK namespace', () => {
     const ns = sdkStar as Record<string, unknown>;
     for (const forbidden of M7_INTERNAL_FORBIDDEN) {
+      expect(ns[forbidden]).toBeUndefined();
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// M7 / M8: Contribution kind bridging — effect is M7-bridged, transition is M8-bridged
+// ---------------------------------------------------------------------------
+
+describe('M7/M8: contribution kind bridging for effect and transition', () => {
+  it('effect is M7-bridged (contributionKindNotYetBridged returns null)', () => {
+    expect(contributionKindNotYetBridged('effect')).toBeNull();
+  });
+
+  it('transition is M8-bridged (contributionKindNotYetBridged returns null)', () => {
+    expect(contributionKindNotYetBridged('transition')).toBeNull();
+  });
+
+  it('CONTRIBUTION_KIND_MILESTONE maps effect to M7 and transition to M8', () => {
+    expect(CONTRIBUTION_KIND_MILESTONE.effect).toBe('M7');
+    expect(CONTRIBUTION_KIND_MILESTONE.transition).toBe('M8');
+  });
+
+  it('previously bridged kinds remain bridged (regression)', () => {
+    expect(contributionKindNotYetBridged('slot')).toBeNull();
+    expect(contributionKindNotYetBridged('command')).toBeNull();
+    expect(contributionKindNotYetBridged('parser')).toBeNull();
+    expect(contributionKindNotYetBridged('effect')).toBeNull();
+    expect(contributionKindNotYetBridged('transition')).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// M8: Trusted component transition contribution type interfaces
+// ---------------------------------------------------------------------------
+
+describe('M8: trusted component transition type interfaces are importable from @reigh/editor-sdk', () => {
+  it('TransitionContribution shape is constructable (minimal)', () => {
+    const contrib: TransitionContribution = {
+      id: 'myTransition' as ContributionId,
+      kind: 'transition',
+      transitionId: 'tx.dissolve',
+    };
+    expect(contrib.kind).toBe('transition');
+    expect(contrib.transitionId).toBe('tx.dissolve');
+    expect(contrib.allowBrowserExport).toBeUndefined();
+    expect(contrib.allowWorkerExport).toBeUndefined();
+    expect(contrib.order).toBeUndefined();
+  });
+
+  it('TransitionContribution shape is constructable (full)', () => {
+    const contrib: TransitionContribution = {
+      id: 'fullTransition' as ContributionId,
+      kind: 'transition',
+      transitionId: 'tx.full',
+      label: 'Full Transition',
+      allowBrowserExport: true,
+      allowWorkerExport: true,
+      order: 10,
+    };
+    expect(contrib.kind).toBe('transition');
+    expect(contrib.label).toBe('Full Transition');
+    expect(contrib.allowBrowserExport).toBe(true);
+    expect(contrib.allowWorkerExport).toBe(true);
+    expect(contrib.order).toBe(10);
+  });
+
+  it('TransitionContribution defaults allowBrowserExport and allowWorkerExport to false', () => {
+    const contrib: TransitionContribution = {
+      id: 'defaultExport' as ContributionId,
+      kind: 'transition',
+      transitionId: 'tx.default',
+    };
+    // SD3: defaults are false (preview-only)
+    expect(contrib.allowBrowserExport ?? false).toBe(false);
+    expect(contrib.allowWorkerExport ?? false).toBe(false);
+  });
+
+  it('TransitionRenderer type can be a plain object', () => {
+    const renderer: TransitionRenderer = { render: () => ({}) };
+    expect(typeof renderer).toBe('object');
+    expect(renderer).not.toBeNull();
+  });
+
+  it('TransitionRenderer type can be a function', () => {
+    const renderer: TransitionRenderer = () => ({});
+    expect(typeof renderer).toBe('function');
+  });
+
+  it('TransitionParameterDefinition shape is constructable (number)', () => {
+    const def: TransitionParameterDefinition = {
+      name: 'duration',
+      label: 'Duration',
+      description: 'Transition duration in frames',
+      type: 'number',
+      default: 30,
+      min: 1,
+      max: 120,
+      step: 1,
+    };
+    expect(def.name).toBe('duration');
+    expect(def.type).toBe('number');
+    expect(def.default).toBe(30);
+    expect(def.min).toBe(1);
+    expect(def.max).toBe(120);
+    expect(def.step).toBe(1);
+  });
+
+  it('TransitionParameterDefinition shape is constructable (select)', () => {
+    const def: TransitionParameterDefinition = {
+      name: 'direction',
+      label: 'Direction',
+      description: 'Wipe direction',
+      type: 'select',
+      default: 'left',
+      options: [
+        { label: 'Left', value: 'left' },
+        { label: 'Right', value: 'right' },
+      ],
+    };
+    expect(def.type).toBe('select');
+    expect(def.options).toHaveLength(2);
+    expect(def.options?.[0].label).toBe('Left');
+  });
+
+  it('TransitionParameterDefinition shape is constructable (boolean)', () => {
+    const def: TransitionParameterDefinition = {
+      name: 'reverse',
+      label: 'Reverse',
+      description: 'Reverse transition direction',
+      type: 'boolean',
+      default: false,
+    };
+    expect(def.type).toBe('boolean');
+    expect(def.default).toBe(false);
+  });
+
+  it('TransitionParameterDefinition shape is constructable (color)', () => {
+    const def: TransitionParameterDefinition = {
+      name: 'matteColor',
+      label: 'Matte Color',
+      description: 'Color for matte transitions',
+      type: 'color',
+      default: '#000000',
+    };
+    expect(def.type).toBe('color');
+    expect(def.default).toBe('#000000');
+  });
+
+  it('TransitionParameterDefinition shape is constructable (audio-binding)', () => {
+    const def: TransitionParameterDefinition = {
+      name: 'reactivity',
+      label: 'Reactivity',
+      description: 'Audio reactivity',
+      type: 'audio-binding',
+      default: { source: 'kick', min: 0, max: 1 },
+    };
+    expect(def.type).toBe('audio-binding');
+    expect(def.default).toEqual({ source: 'kick', min: 0, max: 1 });
+  });
+
+  it('TransitionParameterSchema is an array of parameter definitions', () => {
+    const schema: TransitionParameterSchema = [
+      { name: 'a', label: 'A', description: 'D', type: 'number', default: 0 },
+      { name: 'b', label: 'B', description: 'D', type: 'boolean', default: false },
+    ];
+    expect(Array.isArray(schema)).toBe(true);
+    expect(schema).toHaveLength(2);
+    expect(schema[0].name).toBe('a');
+    expect(schema[1].name).toBe('b');
+  });
+
+  it('TransitionRegistrationOptions shape is constructable', () => {
+    const opts: TransitionRegistrationOptions = {
+      label: 'My Transition',
+      parameterSchema: [
+        { name: 'x', label: 'X', description: 'D', type: 'number', default: 0 },
+      ],
+    };
+    expect(opts.label).toBe('My Transition');
+    expect(opts.parameterSchema).toBeDefined();
+    expect(opts.parameterSchema?.[0].name).toBe('x');
+  });
+
+  it('TransitionRegistrationOptions with only label is constructable', () => {
+    const opts: TransitionRegistrationOptions = { label: 'Just a label' };
+    expect(opts.label).toBe('Just a label');
+    expect(opts.parameterSchema).toBeUndefined();
+  });
+
+  it('TransitionRegistrationOptions empty object is constructable', () => {
+    const opts: TransitionRegistrationOptions = {};
+    expect(opts.label).toBeUndefined();
+    expect(opts.parameterSchema).toBeUndefined();
+  });
+
+  it('TransitionRegistrationService interface has registerRenderer method with correct signature', () => {
+    const svc: TransitionRegistrationService = {
+      registerRenderer(_transitionId: string, _renderer: TransitionRenderer, _options?: TransitionRegistrationOptions) {
+        return { dispose() {} };
+      },
+    };
+    expect(typeof svc.registerRenderer).toBe('function');
+
+    const handle = svc.registerRenderer('tx.test', {});
+    expect(typeof handle.dispose).toBe('function');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// M8: ExtensionContext includes transitions registration service
+// ---------------------------------------------------------------------------
+
+describe('M8: ExtensionContext includes transitions registration service', () => {
+  it('ExtensionContext type includes readonly transitions property', () => {
+    const ctx: ExtensionContext = {
+      apiVersion: 1,
+      extension: {
+        id: 'test.ext' as ExtensionId,
+        version: '1.0.0',
+        label: 'Test',
+        manifest: {} as ExtensionManifest,
+      },
+      chrome: {
+        toast: () => {},
+        progress: () => {},
+        subscribe: () => ({ dispose: () => {} }),
+        focus: () => {},
+        announce: () => {},
+      },
+      services: {
+        settings: { get: () => undefined, set: () => {}, delete: () => {}, keys: () => [] },
+        i18n: { t: (k: string) => k },
+        diagnostics: { report: () => {}, diagnostics: [] },
+      },
+      creative: {
+        project: {},
+        timeline: {},
+        assets: {},
+        materials: {},
+        sessions: {},
+        export: {},
+        stage: {},
+        writing: {},
+        reader: {},
+        proposals: {},
+      } as CreativeContext,
+      commands: {
+        registerCommand: () => ({ dispose: () => {} }),
+      },
+      effects: {
+        registerComponent: () => ({ dispose: () => {} }),
+      },
+      transitions: {
+        registerRenderer: () => ({ dispose: () => {} }),
+      },
+    };
+    expect(ctx.transitions).toBeDefined();
+    expect(typeof ctx.transitions.registerRenderer).toBe('function');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// M8: Internal transition registration types are NOT exported
+// ---------------------------------------------------------------------------
+
+describe('M8: internal transition registration types are NOT re-exported from @reigh/editor-sdk', () => {
+  const M8_INTERNAL_FORBIDDEN = [
+    // Transition registry internals
+    'transitionRegistry',
+    'TransitionRegistry',
+    'TransitionRegistryRecord',
+    'TransitionRegistrySnapshot',
+    'createTransitionRegistry',
+    'registerTransition',
+    'resolveTransition',
+    'resolveSnapshotTransition',
+    'validateTransitionParameterSchema',
+    'createTransitionRegistrationService',
+    // Transition renderer internals
+    'TransitionRendererProps',
+  ];
+
+  it('none of the forbidden M8 internal names appear as SDK value exports', () => {
+    const valueExports = Object.keys(sdkStar);
+    for (const forbidden of M8_INTERNAL_FORBIDDEN) {
+      expect(valueExports).not.toContain(forbidden);
+    }
+  });
+
+  it('forbidden M8 internal names are not accessible on the SDK namespace', () => {
+    const ns = sdkStar as Record<string, unknown>;
+    for (const forbidden of M8_INTERNAL_FORBIDDEN) {
       expect(ns[forbidden]).toBeUndefined();
     }
   });

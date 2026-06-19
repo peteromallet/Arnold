@@ -3,7 +3,7 @@
     "id": "com.reigh.examples.flagship-local",
     "version": "1.0.0",
     "label": "Flagship Local Extension",
-    "description": "Flagship trusted-local extension example demonstrating the SDK surface: activation lifecycle, toolbar and status-bar slot UI, settings with defaults, diagnostics, chrome toast/progress scaffolding, trusted-local safety warnings, command/keybinding/context-menu contributions, and future inactive contribution declarations (effect, transition, clipType, parser, agentTool).",
+    "description": "Flagship trusted-local extension example demonstrating the SDK surface: activation lifecycle, toolbar and status-bar slot UI, settings with defaults, diagnostics, chrome toast/progress scaffolding, trusted-local safety warnings, command/keybinding/context-menu contributions, active transition contribution (M8 wipe), component effect (M7 glow), and future inactive contribution declarations (clipType, parser, agentTool).",
     "apiVersion": 1,
     "contributions": [
       {
@@ -60,10 +60,13 @@
         "effectId": "com.reigh.flagship.effect.second"
       },
       {
-        "id": "flagship-transition-future",
+        "id": "flagship-transition-wipe",
         "kind": "transition",
-        "label": "Flagship custom transition (reserved for M3)",
-        "transitionId": "com.reigh.flagship.transition.crossfade"
+        "label": "Flagship Wipe",
+        "transitionId": "com.reigh.flagship.transition.wipe",
+        "allowBrowserExport": false,
+        "allowWorkerExport": false,
+        "order": 10
       },
       {
         "id": "flagship-cliptype-future",

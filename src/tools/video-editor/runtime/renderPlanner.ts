@@ -10,6 +10,7 @@ import type {
   EffectRegistryRecord,
   EffectRegistrySnapshot,
 } from '@/tools/video-editor/effects/registry/types.ts';
+import type { TransitionRegistryRecord, TransitionRegistrySnapshot } from '@/tools/video-editor/transitions/registry/types.ts';
 import type { ExtensionRuntime } from '@/tools/video-editor/runtime/extensionSurface.ts';
 import type { ResolvedTimelineConfig } from '@/tools/video-editor/types/index.ts';
 import type {
@@ -27,6 +28,7 @@ import type { ExtensionContribution } from '@reigh/editor-sdk';
 export interface RenderPlannerInput {
   readonly config: ResolvedTimelineConfig | null;
   readonly effectRegistrySnapshot?: EffectRegistrySnapshot;
+  readonly transitionRegistrySnapshot?: TransitionRegistrySnapshot;
   readonly extensionRuntime?: ExtensionRuntime;
   readonly builtInKnownIds?: KnownIdCollection;
   readonly inactiveKnownIds?: InactiveKnownIds;
@@ -69,22 +71,36 @@ function blockerReasonForCapability(capability: RenderCapability): RenderBlocker
   return capability.status === 'unknown' ? 'unknown' : 'route-unsupported';
 }
 
-function findingForCapability(record: EffectRegistryRecord, capability: RenderCapability): CapabilityFinding | undefined {
+/** Record shape shared by EffectRegistryRecord and TransitionRegistryRecord for capability scanning. */
+interface RegistryRecordLike {
+  readonly contributorId: string;
+  readonly contributionId: string;
+  readonly ownerExtensionId?: string;
+  readonly provenance: string;
+  readonly status: string;
+}
+
+function findingForCapability(record: RegistryRecordLike, capability: RenderCapability): CapabilityFinding | undefined {
   if (capability.status === 'supported') return undefined;
 
   const reason = blockerReasonForCapability(capability);
+  const isEffect = !!(record as any).effectId;
+  const sourceLabel = isEffect ? 'effect-registry' : 'transition-registry';
+  const typeKey = isEffect ? 'effectType' : 'transitionType';
+  const typeValue = (record as any).effectId ?? (record as any).transitionId;
+  const idPrefix = isEffect ? 'registry.effect' : 'registry.transition';
   return Object.freeze({
-    id: `registry.effect.${record.effectId}.${capability.route}.${reason}`,
+    id: `${idPrefix}.${typeValue}.${capability.route}.${reason}`,
     severity: findingSeverityForStatus(capability.status),
     route: capability.route,
     reason,
     message: capability.message
-      ?? `Effect "${record.effectId}" ${capability.status === 'unknown' ? 'has unknown support for' : 'does not support'} ${capability.route}.`,
+      ?? `\"${typeValue}\" ${capability.status === 'unknown' ? 'has unknown support for' : 'does not support'} ${capability.route}.`,
     ...(record.ownerExtensionId ? { extensionId: record.ownerExtensionId } : {}),
     contributionId: record.contributionId,
     detail: {
-      source: 'effect-registry',
-      effectType: record.effectId,
+      source: sourceLabel,
+      [typeKey]: typeValue,
       provenance: record.provenance,
       status: record.status,
       determinism: capability.determinism,
@@ -92,14 +108,18 @@ function findingForCapability(record: EffectRegistryRecord, capability: RenderCa
   });
 }
 
-function blockerForRegistryBlocker(record: EffectRegistryRecord, blocker: RenderBlocker): RenderBlocker {
+function blockerForRegistryBlocker(record: RegistryRecordLike, blocker: RenderBlocker): RenderBlocker {
+  const isEffect = !!(record as any).effectId;
+  const sourceLabel = isEffect ? 'effect-registry' : 'transition-registry';
+  const typeKey = isEffect ? 'effectType' : 'transitionType';
+  const typeValue = (record as any).effectId ?? (record as any).transitionId;
   return Object.freeze({
     ...blocker,
     ...(blocker.extensionId ?? record.ownerExtensionId ? { extensionId: blocker.extensionId ?? record.ownerExtensionId } : {}),
     contributionId: blocker.contributionId ?? record.contributionId,
     detail: {
-      source: 'effect-registry',
-      effectType: record.effectId,
+      source: sourceLabel,
+      [typeKey]: typeValue,
       provenance: record.provenance,
       status: record.status,
       ...(blocker.detail ?? {}),
@@ -141,6 +161,69 @@ function collectRegistryFindingsAndBlockers(snapshot: EffectRegistrySnapshot | u
   return { findings, blockers };
 }
 
+function collectTransitionRegistryFindingsAndBlockers(snapshot: TransitionRegistrySnapshot | undefined): {
+  findings: CapabilityFinding[];
+  blockers: RenderBlocker[];
+} {
+  const findings: CapabilityFinding[] = [];
+  const blockers: RenderBlocker[] = [];
+
+  for (const record of snapshot?.records ?? []) {
+    for (const capability of record.renderability.capabilities) {
+      const finding = findingForCapability(record, capability);
+      if (!finding) continue;
+      findings.push(finding);
+      const blocker = blockerForFinding(finding);
+      if (blocker) blockers.push(blocker);
+    }
+
+    for (const blocker of record.renderability.blockers ?? []) {
+      blockers.push(blockerForRegistryBlocker(record, blocker));
+    }
+
+    // Worker-export default-block: if no worker-export capability is declared, block worker export
+    const hasWorkerCapability = record.renderability.capabilities.some(
+      (cap) => cap.route === 'worker-export',
+    );
+    if (!hasWorkerCapability && record.status === 'active') {
+      const id = `transition.${record.transitionId}.worker-export.route-unsupported`;
+      const message = `Transition \"${record.transitionId}\" does not declare worker-export support. Worker export is blocked by default.`;
+      findings.push({
+        id,
+        severity: 'error',
+        route: 'worker-export',
+        reason: 'route-unsupported',
+        message,
+        ...(record.ownerExtensionId ? { extensionId: record.ownerExtensionId } : {}),
+        contributionId: record.contributionId,
+        detail: {
+          source: 'transition-registry',
+          transitionType: record.transitionId,
+          provenance: record.provenance,
+          status: record.status,
+        },
+      });
+      blockers.push({
+        id,
+        severity: 'error',
+        route: 'worker-export',
+        reason: 'route-unsupported',
+        message,
+        ...(record.ownerExtensionId ? { extensionId: record.ownerExtensionId } : {}),
+        contributionId: record.contributionId,
+        detail: {
+          source: 'transition-registry',
+          transitionType: record.transitionId,
+          provenance: record.provenance,
+          status: record.status,
+        },
+      });
+    }
+  }
+
+  return { findings, blockers };
+}
+
 function dedupeById<T extends { readonly id: string }>(items: readonly T[]): T[] {
   const seen = new Set<string>();
   const deduped: T[] = [];
@@ -176,13 +259,15 @@ export function planRender(input: RenderPlannerInput): RenderPlannerResult {
     builtIn,
     inactiveIds,
     input.effectRegistrySnapshot,
+    input.transitionRegistrySnapshot,
   );
   const registry = collectRegistryFindingsAndBlockers(input.effectRegistrySnapshot);
+  const transitionRegistry = collectTransitionRegistryFindingsAndBlockers(input.transitionRegistrySnapshot);
   const findings = Object.freeze(
-    dedupeById([...guard.findings, ...registry.findings]).sort((a, b) => a.id.localeCompare(b.id)),
+    dedupeById([...guard.findings, ...registry.findings, ...transitionRegistry.findings]).sort((a, b) => a.id.localeCompare(b.id)),
   );
   const blockers = Object.freeze(
-    dedupeById([...guard.blockers, ...registry.blockers]).sort((a, b) => a.id.localeCompare(b.id)),
+    dedupeById([...guard.blockers, ...registry.blockers, ...transitionRegistry.blockers]).sort((a, b) => a.id.localeCompare(b.id)),
   );
 
   const routes: readonly RenderRouteSummary[] = Object.freeze(

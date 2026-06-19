@@ -218,8 +218,6 @@ describe('contributionKindNotYetBridged', () => {
   });
 
   it('returns milestone name for not-yet-bridged kinds', () => {
-    expect(contributionKindNotYetBridged('effect')).toBe('M3');
-    expect(contributionKindNotYetBridged('transition')).toBe('M3');
     expect(contributionKindNotYetBridged('clipType')).toBe('M3');
     expect(contributionKindNotYetBridged('parser')).toBeNull();
     expect(contributionKindNotYetBridged('outputFormat')).toBe('M6');
@@ -247,8 +245,6 @@ describe('contributionKindNotYetBridged', () => {
   });
 
   it('unsupported contribution behavior is explicit (returns owning milestone)', () => {
-    expect(contributionKindNotYetBridged('effect')).toBe('M3');
-    expect(contributionKindNotYetBridged('transition')).toBe('M3');
     expect(contributionKindNotYetBridged('clipType')).toBe('M3');
     expect(contributionKindNotYetBridged('agentTool')).toBe('M5');
     expect(contributionKindNotYetBridged('agent')).toBe('M5');
@@ -451,8 +447,6 @@ describe('M6: defineExtension accepts M6 contribution types', () => {
 
   it('unsupported contribution behavior is explicit in CONTRIBUTION_KIND_MILESTONE', () => {
     const reservedKinds = [
-      { kind: 'effect', expectedMilestone: 'M3' },
-      { kind: 'transition', expectedMilestone: 'M3' },
       { kind: 'clipType', expectedMilestone: 'M3' },
       { kind: 'agentTool', expectedMilestone: 'M5' },
       { kind: 'agent', expectedMilestone: 'M5' },
@@ -1031,9 +1025,12 @@ describe('createExtensionContext', () => {
     expect(keys).toEqual([
       'apiVersion',
       'chrome',
+      'commands',
       'creative',
+      'effects',
       'extension',
       'services',
+      'transitions',
     ]);
   });
 

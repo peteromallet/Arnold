@@ -12,8 +12,10 @@
  *   - Trusted-local safety-warning copy emitted on activation
  *   - Command palette, keybinding, and clip context-menu contributions
  *   - Patch-backed command behavior through public creative timeline APIs
- *   - Future inactive contribution declarations (effect, transition, clipType,
- *     parser, agentTool) in the manifest for forward-compatibility testing
+ *   - M7 trusted component-effect registration with parameter schema
+ *   - M8 trusted component-transition registration with pure renderer
+ *   - Future inactive contribution declarations (clipType, parser, agentTool)
+ *     in the manifest for forward-compatibility testing
  *
  * This file must NOT import from editor internals (src/tools/video-editor/*).
  * It imports exclusively from @reigh/editor-sdk, the public SDK entrypoint.
@@ -33,6 +35,9 @@ import type {
   TimelinePatch,
   EffectContribution,
   EffectParameterSchema,
+  TransitionContribution,
+  TransitionParameterSchema,
+  TransitionRegistrationOptions,
 } from '@reigh/editor-sdk';
 
 import { FlagshipEffectComponent } from './FlagshipEffectComponent';
@@ -92,6 +97,70 @@ const FLAGSHIP_GLOW_SCHEMA: EffectParameterSchema = [
     default: true,
   },
 ];
+
+// ---------------------------------------------------------------------------
+// M8: Trusted component-transition parameter schema
+// ---------------------------------------------------------------------------
+
+/**
+ * Schema for the Flagship Wipe transition.
+ *
+ * Demonstrates parameterized contributed transitions with a small schema:
+ *  - select: direction (left, right)
+ *  - number: softness (0–1 edge feathering)
+ */
+const FLAGSHIP_WIPE_SCHEMA: TransitionParameterSchema = [
+  {
+    name: 'direction',
+    label: 'Wipe Direction',
+    description: 'Which way the wipe travels across the frame.',
+    type: 'select',
+    default: 'right',
+    options: [
+      { label: 'Left to Right', value: 'right' },
+      { label: 'Right to Left', value: 'left' },
+    ],
+  },
+  {
+    name: 'softness',
+    label: 'Edge Softness',
+    description: 'Amount of edge feathering (0 = hard edge, 1 = fully blurred).',
+    type: 'number',
+    default: 0,
+    min: 0,
+    max: 1,
+    step: 0.05,
+  },
+];
+
+/**
+ * Pure renderer for the Flagship Wipe transition.
+ *
+ * Returns CSS properties for a directional wipe based on progress and params.
+ * This is a simple pure function — no React, no Remotion imports needed.
+ */
+function flagshipWipeRenderer(
+  progress: number,
+  params?: Record<string, unknown>,
+): Record<string, unknown> {
+  const direction = (params?.direction as string) ?? 'right';
+  const softness = (params?.softness as number) ?? 0;
+
+  const clipPercent = (1 - progress) * 100;
+  const blurPx = softness > 0 ? softness * progress * 20 : 0;
+
+  const clipPath =
+    direction === 'left'
+      ? `inset(0 0 0 ${clipPercent}%)`
+      : `inset(0 ${clipPercent}% 0 0)`;
+
+  const style: Record<string, unknown> = { clipPath };
+  if (blurPx > 0) {
+    style.filter = `blur(${blurPx}px)`;
+  }
+
+  return style;
+}
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -231,6 +300,17 @@ export const flagshipLocalExtension: ReighExtension = defineExtension({
         order: 10,
       } satisfies EffectContribution,
 
+      // ---- M8: Active transition contribution ----------------------------------
+      {
+        id: 'flagship-transition-wipe' as any,
+        kind: 'transition',
+        label: 'Flagship Wipe',
+        transitionId: 'com.reigh.flagship.transition.wipe',
+        allowBrowserExport: false,
+        allowWorkerExport: false,
+        order: 10,
+      } satisfies TransitionContribution,
+
       // ---- Future inactive contribution declarations -----------------------
       // These are reserved for later milestones; the runtime will emit
       // info-level diagnostics noting they are not yet bridged.
@@ -239,12 +319,6 @@ export const flagshipLocalExtension: ReighExtension = defineExtension({
         kind: 'effect',
         label: 'Flagship custom effect (reserved for M3)',
         effectId: 'com.reigh.flagship.effect.second',
-      },
-      {
-        id: 'flagship-transition-future' as any,
-        kind: 'transition',
-        label: 'Flagship custom transition (reserved for M3)',
-        transitionId: 'com.reigh.flagship.transition.crossfade',
       },
       {
         id: 'flagship-cliptype-future' as any,
@@ -374,6 +448,22 @@ export const flagshipLocalExtension: ReighExtension = defineExtension({
       'Flagship Glow component effect registered (preview-only).',
     );
 
+    // --- M8: Trusted component-transition registration ------------------
+    const transitionHandle = ctx.transitions.registerRenderer(
+      'com.reigh.flagship.transition.wipe',
+      flagshipWipeRenderer,
+      {
+        label: 'Flagship Wipe',
+        parameterSchema: FLAGSHIP_WIPE_SCHEMA,
+      } satisfies TransitionRegistrationOptions,
+    );
+
+    info(
+      ctx,
+      'flagship/transition-registered',
+      'Flagship Wipe transition renderer registered (preview-only).',
+    );
+
     // --- Chrome event subscriptions -------------------------------------
     // Subscribe to toast events to demonstrate the subscribe API
     const toastSub = ctx.chrome.subscribe('toast', (payload) => {
@@ -418,6 +508,7 @@ export const flagshipLocalExtension: ReighExtension = defineExtension({
         renderSub.dispose();
         commandHandle.dispose();
         effectHandle.dispose();
+        transitionHandle.dispose();
 
         // Emit disposal diagnostic
         const disposedMsg = ctx.services.i18n.t('activation.disposed');

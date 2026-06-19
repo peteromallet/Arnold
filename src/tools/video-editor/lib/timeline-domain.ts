@@ -4,12 +4,19 @@ import type {
   ClipContinuous,
   ClipEntrance,
   ClipExit,
+  ClipTransition,
   PinnedShotGroup,
   TimelineClip,
   TimelineConfig,
   TrackDefinition,
 } from '../types/index.ts';
 import { validateAssetMetadata } from './assetMetadata';
+import type { TransitionRegistrySnapshot } from '@/tools/video-editor/transitions/registry/types.ts';
+import {
+  validateClipTransition,
+  repairClipTransition,
+  TransitionDiagnosticCodes,
+} from '@/tools/video-editor/transitions/validation.ts';
 
 export type TimelineDomainContractLevel = 'config-only' | 'pair-aware';
 export type TimelineDomainIssueSeverity = 'warning' | 'error';
@@ -24,7 +31,12 @@ export type TimelineDomainIssueCode =
   | 'malformed_non_hold_trim_zero_duration'
   | 'unexpected_top_level_key'
   | 'unexpected_clip_key'
-  | 'unexpected_track_key';
+  | 'unexpected_track_key'
+  | 'legacy_transition_missing_type'
+  | 'legacy_transition_unresolvable'
+  | 'legacy_transition_removed_contributed'
+  | 'legacy_transition_params_repaired'
+  | 'legacy_transition_cleared';
 
 export interface TimelineDomainIssue {
   level: TimelineDomainContractLevel;
@@ -753,9 +765,16 @@ export const canonicalizeTimelineConfigSnapshot = (
   const repairedConfig = repairConfig(config, issues, 'config-only');
   const contiguousConfig = repairShotGroupContiguity(repairedConfig, issues, 'config-only');
   const migratedConfig = migrateToFlatTracks(contiguousConfig, issues, 'config-only');
-  const canonicalConfig = withCanonicalClips(
+  // Repair clip transitions against built-in catalog (no registry snapshot in config-only)
+  const transitionRepairedConfig = repairTimelineClipTransitions(
     migratedConfig,
-    migratedConfig.clips.map((clip) => canonicalizeNonHoldTrim(clip, 'config-only', issues)),
+    undefined,
+    issues,
+    'config-only',
+  );
+  const canonicalConfig = withCanonicalClips(
+    transitionRepairedConfig,
+    transitionRepairedConfig.clips.map((clip) => canonicalizeNonHoldTrim(clip, 'config-only', issues)),
   );
 
   return {
@@ -773,9 +792,16 @@ export const canonicalizeTimelinePair = (
   const repairedConfig = repairConfig(config, issues, 'pair-aware');
   const contiguousConfig = repairShotGroupContiguity(repairedConfig, issues, 'pair-aware');
   const migratedConfig = migrateToFlatTracks(contiguousConfig, issues, 'pair-aware');
-  const canonicalConfig = withCanonicalClips(
+  // Repair clip transitions against built-in catalog (no registry snapshot in pair-aware)
+  const transitionRepairedConfig = repairTimelineClipTransitions(
     migratedConfig,
-    migratedConfig.clips.map((clip) => canonicalizeNonHoldTrim(clip, 'pair-aware', issues, registry)),
+    undefined,
+    issues,
+    'pair-aware',
+  );
+  const canonicalConfig = withCanonicalClips(
+    transitionRepairedConfig,
+    transitionRepairedConfig.clips.map((clip) => canonicalizeNonHoldTrim(clip, 'pair-aware', issues, registry)),
   );
 
   return {
@@ -785,6 +811,146 @@ export const canonicalizeTimelinePair = (
     issues,
   };
 };
+
+// ---------------------------------------------------------------------------
+// Transition validation / repair (T14: timeline-domain integration)
+// ---------------------------------------------------------------------------
+
+const TRANSITION_CODE_TO_ISSUE_CODE: Partial<Record<string, TimelineDomainIssueCode>> = {
+  [TransitionDiagnosticCodes.MISSING_TRANSITION_OBJECT]: 'legacy_transition_cleared',
+  [TransitionDiagnosticCodes.MISSING_TYPE]: 'legacy_transition_missing_type',
+  [TransitionDiagnosticCodes.INVALID_TYPE]: 'legacy_transition_missing_type',
+  [TransitionDiagnosticCodes.UNRESOLVED_TYPE]: 'legacy_transition_unresolvable',
+  [TransitionDiagnosticCodes.REMOVED_CONTRIBUTED]: 'legacy_transition_removed_contributed',
+  [TransitionDiagnosticCodes.MISSING_PARAMS]: 'legacy_transition_params_repaired',
+  [TransitionDiagnosticCodes.INACTIVE_RECORD]: 'legacy_transition_unresolvable',
+};
+
+/**
+ * Validate and repair clip transitions across a timeline config.
+ *
+ * Uses the pure validation/repair helpers from
+ * `@/tools/video-editor/transitions/validation.ts` to detect malformed legacy
+ * transitions, removed contributed transitions, and missing params. Each issue
+ * is surfaced as a `TimelineDomainIssue` so consumers can report or repair.
+ *
+ * **Repair strategy:**
+ * - Malformed / missing type / unresolvable → transition is cleared (removed).
+ * - Missing params → schema defaults are materialized via `set-transition`.
+ * - Valid transitions → left unchanged.
+ *
+ * Unresolvable transition IDs are **never** silently replaced with a built-in
+ * fallback; they are explicitly cleared and the diagnostic is recorded.
+ *
+ * @param config - The timeline config whose clips may have transitions.
+ * @param registrySnapshot - Optional provider-scoped transition registry snapshot
+ *   for resolution against contributed transitions.
+ * @param issues - Optional mutable array to append TimelineDomainIssue entries.
+ * @param level - The contract level for generated issues.
+ * @returns A new config with repaired transitions. Returns the original config
+ *   unchanged if no transitions needed repair.
+ */
+export function repairTimelineClipTransitions(
+  config: TimelineConfig,
+  registrySnapshot?: TransitionRegistrySnapshot,
+  issues?: TimelineDomainIssue[],
+  level: TimelineDomainContractLevel = 'config-only',
+): TimelineConfig {
+  let repaired = false;
+  let clearedCount = 0;
+  let repairedParamsCount = 0;
+
+  const clips: TimelineClip[] = config.clips.map((clip) => {
+    const transition = clip.transition as ClipTransition | undefined;
+
+    // Skip clips without a transition
+    if (!transition) return clip;
+
+    const validation = validateClipTransition(transition, registrySnapshot);
+
+    // If valid with no issues, skip this clip
+    if (validation.isValid && validation.diagnostics.every(
+      (d) => d.severity !== 'error' && d.code !== TransitionDiagnosticCodes.MISSING_PARAMS,
+    )) {
+      return clip;
+    }
+
+    const repair = repairClipTransition(transition, registrySnapshot);
+
+    if (repair.action === 'no-op') return clip;
+
+    // Generate timeline-domain issues for each validation diagnostic
+    for (const diag of repair.diagnostics) {
+      const issueCode: TimelineDomainIssueCode =
+        TRANSITION_CODE_TO_ISSUE_CODE[diag.code] ?? 'legacy_transition_unresolvable';
+
+      issues?.push({
+        level,
+        severity: diag.severity === 'error' ? 'error' : 'warning',
+        code: issueCode,
+        message: `Clip "${clip.id}": ${diag.message}`,
+        clipId: clip.id,
+        path: `clips.${clip.id}.transition`,
+        repairApplied: repair.action !== 'no-op',
+        details: {
+          transitionType: transition.type,
+          repairAction: repair.action,
+          diagnosticCode: diag.code,
+          ...(diag.detail ?? {}),
+        },
+      });
+    }
+
+    repaired = true;
+
+    if (repair.action === 'clear-transition') {
+      clearedCount += 1;
+      // Return clip without the transition
+      const { transition: _removed, ...clipWithoutTransition } = clip;
+      return clipWithoutTransition as TimelineClip;
+    }
+
+    if (repair.action === 'set-transition') {
+      repairedParamsCount += 1;
+      return {
+        ...clip,
+        transition: repair.transition as ClipTransition,
+      };
+    }
+
+    return clip;
+  });
+
+  if (clearedCount > 0) {
+    issues?.push(createIssue(
+      level,
+      'warning',
+      'legacy_transition_cleared',
+      `Cleared ${clearedCount} unresolvable or malformed clip transition(s).`,
+      {
+        path: 'clips',
+        repairApplied: true,
+        details: { clearedCount, repairedParamsCount },
+      },
+    ));
+  }
+
+  if (repairedParamsCount > 0 && clearedCount === 0) {
+    issues?.push(createIssue(
+      level,
+      'warning',
+      'legacy_transition_params_repaired',
+      `Repaired ${repairedParamsCount} clip transition(s) with materialized schema defaults.`,
+      {
+        path: 'clips',
+        repairApplied: true,
+        details: { repairedParamsCount },
+      },
+    ));
+  }
+
+  return repaired ? { ...config, clips } : config;
+}
 
 export const sanitizeTimelineClipSnapshot = (clip: TimelineClip): TimelineClip => {
   const serializedClip: Partial<Record<TimelineClipField, TimelineClip[TimelineClipField]>> = {

@@ -1,4 +1,4 @@
-import type { CSSProperties, FC, ReactNode } from 'react';
+import { useMemo, type CSSProperties, type FC, type ReactNode } from 'react';
 import { AbsoluteFill, Img, Sequence, interpolate, useCurrentFrame, useVideoConfig } from 'remotion';
 import { Video } from '@remotion/media';
 import {
@@ -15,9 +15,15 @@ import {
   useOptionalEffectRegistryContext,
   type EffectRegistrySnapshot,
 } from '@/tools/video-editor/effects/registry/index.ts';
-import { transitions } from '@/tools/video-editor/effects/transitions.ts';
 import { MediaErrorBoundary } from '@/tools/video-editor/compositions/MediaErrorBoundary.tsx';
 import { computeViewportMediaLayout } from '@/tools/video-editor/lib/render-bounds.ts';
+import {
+  useOptionalTransitionRegistryContext,
+} from '@/tools/video-editor/transitions/registry/index.ts';
+import {
+  createTransitionSnapshot,
+  resolveTransition,
+} from '@/tools/video-editor/transitions/catalog.ts';
 import type { ResolvedTimelineClip, TrackDefinition } from '@/tools/video-editor/types/index.ts';
 
 // SD-025 (Sprint 3): inline missing-asset placeholder body. Mirrors the
@@ -56,6 +62,46 @@ const MissingAssetBody: FC<{ clipId: string; clipType: string }> = ({ clipId, cl
       }}
     >
       {`clipType '${clipType}' missing asset — clip will not appear in render`}
+    </div>
+  </AbsoluteFill>
+);
+
+// SD-032 (Sprint 5): inline missing-transition placeholder body. Renders when
+// a clip has a transition type that cannot be resolved through the unified
+// catalog (built-ins + provider registry). The clip content still renders, but
+// without transition styling — the placeholder is rendered as a diagnostic
+// overlay. No silent fallback to crossfade.
+const MissingTransitionBody: FC<{ clipId: string; transitionType: string }> = ({ clipId, transitionType }) => (
+  <AbsoluteFill
+    data-testid="missing-transition-placeholder"
+    data-clip-id={clipId}
+    data-transition-type={transitionType}
+    style={{
+      backgroundColor: '#1A0A2E',
+      borderTop: '2px solid #A855F7',
+      borderBottom: '2px solid #A855F7',
+      color: '#E9D5FF',
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'center',
+      padding: '12px 24px',
+      textAlign: 'center',
+      fontFamily:
+        'ui-monospace, SFMono-Regular, "Roboto Mono", Menlo, Consolas, monospace',
+      fontSize: 13,
+      lineHeight: 1.4,
+      letterSpacing: '0.04em',
+    }}
+  >
+    <div
+      style={{
+        maxWidth: '80%',
+        padding: '8px 16px',
+        borderRadius: 4,
+        background: 'rgba(0, 0, 0, 0.45)',
+      }}
+    >
+      {`transition '${transitionType}' not found — clip will render without transition`}
     </div>
   </AbsoluteFill>
 );
@@ -320,23 +366,54 @@ const VisualAsset: FC<VisualClipProps> = ({ clip, track, fps }) => {
 export const VisualClip: FC<VisualClipProps> = ({ clip, track, fps, effectRegistrySnapshot }) => {
   const providerRegistryContext = useOptionalEffectRegistryContext();
   const registrySnapshot = effectRegistrySnapshot ?? providerRegistryContext?.snapshot;
+
+  // Transition registry: resolve through the unified catalog (built-ins +
+  // provider-scoped contributed transitions). No silent fallback to crossfade
+  // for missing or unrenderable IDs.
+  const transitionRegistryContext = useOptionalTransitionRegistryContext();
+  const mergedTransitionSnapshot = useMemo(
+    () => createTransitionSnapshot(transitionRegistryContext?.snapshot),
+    [transitionRegistryContext?.snapshot],
+  );
+
   if (clip.clipType === 'effect-layer') {
     return null;
   }
 
   const durationInFrames = getClipDurationInFrames(clip, fps);
   const frame = useCurrentFrame();
-  const transitionRenderer = clip.transition ? transitions[clip.transition.type] : undefined;
-  const transitionProgress = interpolate(
-    frame,
-    [0, Math.max(1, secondsToFrames(clip.transition?.duration ?? 0.4, fps))],
-    [0, 1],
-    {
-      extrapolateLeft: 'clamp',
-      extrapolateRight: 'clamp',
-    },
-  );
-  const transitionStyle = transitionRenderer ? transitionRenderer(transitionProgress) : undefined;
+
+  let transitionStyle: CSSProperties | undefined;
+  if (clip.transition) {
+    const record = resolveTransition(clip.transition.type, mergedTransitionSnapshot);
+    if (record) {
+      const transitionProgress = interpolate(
+        frame,
+        [0, Math.max(1, secondsToFrames(clip.transition.duration, fps))],
+        [0, 1],
+        {
+          extrapolateLeft: 'clamp',
+          extrapolateRight: 'clamp',
+        },
+      );
+      const renderer = record.renderer;
+      const params = clip.transition.params ?? {};
+      if (typeof renderer === 'function') {
+        transitionStyle = (renderer as (progress: number, params: Record<string, unknown>) => CSSProperties)(
+          transitionProgress,
+          params,
+        );
+      } else {
+        // Object-style renderer (static CSSProperties)
+        transitionStyle = renderer as CSSProperties;
+      }
+    } else {
+      // Transition ID not found in catalog — render diagnostic placeholder
+      // and skip the clip content wrapper (the clip still renders, but
+      // without transition styling). No crossfade fallback.
+      return <MissingTransitionBody clipId={clip.id} transitionType={clip.transition.type} />;
+    }
+  }
 
   const content: ReactNode = (
     <AbsoluteFill style={{ overflow: 'hidden', ...transitionStyle }}>

@@ -280,7 +280,7 @@ describe('@reigh/editor-sdk sufficiency', () => {
     expect(typeof contributionKindNotYetBridged).toBe('function');
     expect(typeof CONTRIBUTION_KIND_MILESTONE).toBe('object');
     expect(contributionKindNotYetBridged('slot')).toBeNull();
-    expect(contributionKindNotYetBridged('effect')).toBe('M3');
+    expect(contributionKindNotYetBridged('clipType')).toBe('M3');
   });
 });
 
@@ -324,9 +324,12 @@ describe('ExtensionContext — no internal members exposed', () => {
     expect(keys).toEqual([
       'apiVersion',
       'chrome',
+      'commands',
       'creative',
+      'effects',
       'extension',
       'services',
+      'transitions',
     ]);
   });
 
@@ -337,6 +340,9 @@ describe('ExtensionContext — no internal members exposed', () => {
       'chrome',
       'services',
       'creative',
+      'commands',
+      'effects',
+      'transitions',
     ]);
     for (const key of Object.keys(ctx)) {
       expect(allowed.has(key)).toBe(true);
@@ -529,6 +535,9 @@ describe('ExtensionContext — type safety guard', () => {
       'chrome',
       'services',
       'creative',
+      'commands',
+      'effects',
+      'transitions',
     ];
 
     const actualKeys = Object.keys(ctx).sort();
@@ -571,8 +580,6 @@ describe('M6: contribution kind bridging (parser M6-active, output/search typed)
   it('unsupported contribution behavior is explicit (returns owning milestone)', () => {
     // Every reserved/unsupported kind returns its milestone so consumers
     // get a clear diagnostic, not silent ignorance.
-    expect(contributionKindNotYetBridged('effect')).toBe('M3');
-    expect(contributionKindNotYetBridged('transition')).toBe('M3');
     expect(contributionKindNotYetBridged('clipType')).toBe('M3');
     expect(contributionKindNotYetBridged('agentTool')).toBe('M5');
     expect(contributionKindNotYetBridged('agent')).toBe('M5');

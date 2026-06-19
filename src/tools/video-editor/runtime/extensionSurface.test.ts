@@ -327,21 +327,23 @@ describe('normalizeExtensionRuntime — inactive reserved contributions', () => 
 
   it('collects inactive reserved contributions', () => {
     const rt = normalizeExtensionRuntime([withReserved]);
-    // parser is M6-active (bridged), effect is M7-active (component-backed) —
-    // only 4 reserved kinds remain
-    expect(rt.inactiveReserved).toHaveLength(4);
+    // parser is M6-active (bridged), effect is M7-active (component-backed),
+    // transition is M8-active (renderer-backed) —
+    // only 3 reserved kinds remain
+    expect(rt.inactiveReserved).toHaveLength(3);
     const kinds = rt.inactiveReserved.map((r: InactiveReservedContribution) => r.kind);
     expect(kinds.sort()).toEqual([
-      'agent', 'agentTool', 'clipType', 'transition',
+      'agent', 'agentTool', 'clipType',
     ]);
   });
 
   it('emits info diagnostics for each reserved contribution', () => {
     const rt = normalizeExtensionRuntime([withReserved]);
     const infos = diagsOf(rt, 'runtime/contribution-kind-not-yet-bridged');
-    // parser is M6-active (bridged), effect is M7-active (component-backed) —
-    // only 4 reserved diagnostics remain
-    expect(infos).toHaveLength(4);
+    // parser is M6-active (bridged), effect is M7-active (component-backed),
+    // transition is M8-active (renderer-backed) —
+    // only 3 reserved diagnostics remain
+    expect(infos).toHaveLength(3);
     for (const d of infos) {
       expect(d.severity).toBe('info');
       expect(d.milestone).toBeTruthy();
@@ -365,6 +367,13 @@ describe('normalizeExtensionRuntime — inactive reserved contributions', () => 
     expect(rt.config.effects).toHaveLength(1);
     expect(rt.config.effects[0].id).toBe('my-effect');
     expect(rt.config.effects[0].effectId).toBe('glow');
+    // transition is M8-active (renderer-backed) — verify it's not in inactiveReserved
+    const transition = rt.inactiveReserved.find((r) => r.kind === 'transition');
+    expect(transition).toBeUndefined();
+    // transition is now projected as a descriptor in config.transitions
+    expect(rt.config.transitions).toHaveLength(1);
+    expect(rt.config.transitions[0].id).toBe('my-transition');
+    expect(rt.config.transitions[0].transitionId).toBe('dissolve');
     const agent = rt.inactiveReserved.find((r) => r.kind === 'agent')!;
     expect(agent.milestone).toBe('M5');
   });

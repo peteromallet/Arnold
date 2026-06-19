@@ -104,6 +104,7 @@ export type ClipContinuous = {
 export type ClipTransition = {
   type: string;
   duration: number;
+  params?: Record<string, unknown>;
 };
 
 export type TextAlignment = 'left' | 'center' | 'right';

@@ -11,6 +11,7 @@ import {
   type CompileOnlyOutputFormatRegistry,
 } from '@/tools/video-editor/runtime/outputFormatRegistry.ts';
 import { useEffectRegistrySnapshot } from '@/tools/video-editor/effects/registry/EffectRegistryContext.tsx';
+import { useTransitionRegistrySnapshot } from '@/tools/video-editor/transitions/registry/TransitionRegistryContext.tsx';
 import {
   collectBuiltInKnownIds,
   collectExtensionDeclaredIds,
@@ -104,21 +105,31 @@ function formatExportGuardLog(
     `Export guard: ${totalDiags} issue(s) — ${errorCount} error(s), ${warningCount} warning(s), ${infoCount} info(s).`,
   );
 
-  // Show blocking errors first, naming the effect and route when available
+  // Show blocking errors first, naming the effect/transition and route when available
   for (const diag of guardResult.diagnostics) {
     if (diag.severity === 'error') {
-      const effectName = diag.detail?.effectType ? ` effect "${diag.detail.effectType}"` : '';
+      const name = diag.detail?.effectType
+        ? ` effect \"${diag.detail.effectType}\"`
+        : diag.detail?.transitionType
+          ? ` transition \"${diag.detail.transitionType}\"`
+          : diag.detail?.clipType
+            ? ` clip type \"${diag.detail.clipType}\"`
+            : '';
       const route = diag.detail?.renderRoute ? ` (${diag.detail.renderRoute})` : '';
-      lines.push(`  [${diag.code}]${effectName}${route}: ${diag.message}`);
+      lines.push(`  [${diag.code}]${name}${route}: ${diag.message}`);
     }
   }
 
-  // Then warnings — also name effects
+  // Then warnings — also name effects/transitions
   for (const diag of guardResult.diagnostics) {
     if (diag.severity === 'warning') {
-      const effectName = diag.detail?.effectType ? ` effect "${diag.detail.effectType}"` : '';
+      const name = diag.detail?.effectType
+        ? ` effect \"${diag.detail.effectType}\"`
+        : diag.detail?.transitionType
+          ? ` transition \"${diag.detail.transitionType}\"`
+          : '';
       const route = diag.detail?.renderRoute ? ` (${diag.detail.renderRoute})` : '';
-      lines.push(`  [${diag.code}]${effectName}${route}: ${diag.message}`);
+      lines.push(`  [${diag.code}]${name}${route}: ${diag.message}`);
     }
   }
 
@@ -128,9 +139,13 @@ function formatExportGuardLog(
     lines.push('');
     lines.push('Route blockers:');
     for (const finding of blockerFindings) {
-      const effectName = finding.detail?.effectType ? `"${finding.detail.effectType}"` : 'unknown';
+      const name = finding.detail?.effectType
+        ? `"${finding.detail.effectType}"`
+        : finding.detail?.transitionType
+          ? `"${finding.detail.transitionType}"`
+          : 'unknown';
       const route = finding.route ?? 'unknown-route';
-      lines.push(`  ${effectName} blocked on ${route}: ${finding.message}`);
+      lines.push(`  ${name} blocked on ${route}: ${finding.message}`);
     }
   }
 
@@ -145,7 +160,7 @@ function exportDiagnosticId(diagnostic: ReturnType<typeof scanExportConfig>['dia
     diagnostic.extensionId ?? 'host',
     diagnostic.contributionId ?? 'timeline',
     detail.clipId ?? 'no-clip',
-    detail.effectType ?? detail.clipType ?? detail.transitionType ?? index,
+    detail.effectType ?? detail.transitionType ?? detail.clipType ?? index,
   ].join(':');
 }
 
@@ -205,6 +220,7 @@ export function useRenderState(
   const [exportResultUrl, setExportResultUrl] = useState<string | null>(null);
   const [exportResultFilename, setExportResultFilename] = useState<string | null>(null);
   const effectRegistrySnapshot = useEffectRegistrySnapshot();
+  const transitionRegistrySnapshot = useTransitionRegistrySnapshot();
   // M6: Derive export format categories from extension runtime
   const exportFormats = useMemo(() => {
     const outputFormats = extensionRuntime?.config?.outputFormats ?? [];
@@ -254,7 +270,7 @@ export function useRenderState(
     diagnosticCollection?.remove((diagnostic) => diagnostic.detail?.source === 'render-planner');
 
     // Skip guard work only when there is no active extension/provider registry input.
-    if (isExtensionRuntimeEmpty(extensionRuntime) && effectRegistrySnapshot.records.length === 0) {
+    if (isExtensionRuntimeEmpty(extensionRuntime) && effectRegistrySnapshot.records.length === 0 && transitionRegistrySnapshot.records.length === 0) {
       return true; // no blocker
     }
 
@@ -265,7 +281,7 @@ export function useRenderState(
     const builtIn = collectBuiltInKnownIds();
     const allContributions = extensionRuntime ? buildExtensionContributions(extensionRuntime) : [];
     const extIds = collectExtensionDeclaredIds(allContributions);
-    const guardResult = scanExportConfig(resolvedConfig, builtIn, extIds, effectRegistrySnapshot);
+    const guardResult = scanExportConfig(resolvedConfig, builtIn, extIds, effectRegistrySnapshot, transitionRegistrySnapshot);
 
     guardResult.diagnostics.forEach((diagnostic, index) => {
       diagnosticCollection?.publish(toCollectionDiagnostic(diagnostic, index));
@@ -286,7 +302,7 @@ export function useRenderState(
 
     // Extension-declared warnings only — preserve native routing
     return true; // no blocker
-  }, [diagnosticCollection, effectRegistrySnapshot, extensionRuntime, resolvedConfig]);
+  }, [diagnosticCollection, effectRegistrySnapshot, transitionRegistrySnapshot, extensionRuntime, resolvedConfig]);
 
   const startRender = useCallback(async () => {
     // ---- export guard: scan for unknown IDs before routing ------------------

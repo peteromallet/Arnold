@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { repairConfig } from '@/tools/video-editor/lib/migrate';
-import { serializeForDisk, validateSerializedConfig } from '@/tools/video-editor/lib/serialize';
+import { serializeClipForDisk, serializeForDisk, validateSerializedConfig } from '@/tools/video-editor/lib/serialize';
 import {
   TimelineDomainError,
   serializeTimelineConfigSnapshot,
@@ -443,5 +443,153 @@ describe('video-editor serialization', () => {
       ],
     });
     expect(serialized.app?.['x-reigh']).not.toBe(config.app?.['x-reigh']);
+  });
+
+  // ── M8: Transition params snapshot and round-trip ─────────────────────
+
+  it('preserves transition.params through serializeForDisk round-trip', () => {
+    const resolved = {
+      output: { resolution: '1280x720', fps: 30, file: 'out.mp4' },
+      tracks: [{ id: 'V1', kind: 'visual', label: 'V1' }],
+      clips: [
+        {
+          id: 'clip-1',
+          at: 0,
+          track: 'V1',
+          clipType: 'hold',
+          asset: 'asset-1',
+          hold: 3,
+          transition: {
+            type: 'crossfade',
+            duration: 0.5,
+            params: { easing: 'ease-in-out', intensity: 0.8 },
+          },
+        },
+      ],
+      registry: { 'asset-1': { file: 'foo.png' } },
+    } as unknown as ResolvedTimelineConfig;
+
+    const serialized = serializeForDisk(resolved);
+
+    expect(serialized.clips[0].transition).toBeDefined();
+    expect(serialized.clips[0].transition?.type).toBe('crossfade');
+    expect(serialized.clips[0].transition?.duration).toBe(0.5);
+    expect(serialized.clips[0].transition?.params).toEqual({
+      easing: 'ease-in-out',
+      intensity: 0.8,
+    });
+    expect(() => validateSerializedConfig(serialized)).not.toThrow();
+  });
+
+  it('preserves transition.params immutably through sanitizeTimelineClipSnapshot', () => {
+    const clip: TimelineClip = {
+      id: 'clip-1',
+      at: 0,
+      track: 'V1',
+      clipType: 'hold',
+      asset: 'asset-1',
+      hold: 3,
+      transition: {
+        type: 'wipe',
+        duration: 0.3,
+        params: { direction: 'left', feather: 0.1 },
+      },
+    };
+
+    const sanitized = serializeClipForDisk(clip);
+
+    expect(sanitized.transition).toBeDefined();
+    expect(sanitized.transition?.type).toBe('wipe');
+    expect(sanitized.transition?.duration).toBe(0.3);
+    expect(sanitized.transition?.params).toEqual({
+      direction: 'left',
+      feather: 0.1,
+    });
+    // Params object reference is preserved (same object identity for non-app fields)
+    expect(sanitized.transition?.params).toBe(clip.transition?.params);
+  });
+
+  it('round-trips persisted transition params through serializeTimelineConfigSnapshot', () => {
+    const config: TimelineConfig = {
+      output: { resolution: '1280x720', fps: 30, file: 'output.mp4' },
+      clips: [
+        {
+          id: 'clip-1',
+          at: 0,
+          track: 'V1',
+          clipType: 'hold',
+          asset: 'asset-1',
+          hold: 3,
+          transition: {
+            type: 'slide-push',
+            duration: 0.6,
+            params: {
+              axis: 'x',
+              overshoot: 1.05,
+              nested: { key: 'value' },
+            },
+          },
+        },
+      ],
+    };
+
+    const snapshot = serializeTimelineConfigSnapshot(config);
+
+    expect(snapshot.config.clips[0].transition).toBeDefined();
+    expect(snapshot.config.clips[0].transition?.params).toEqual({
+      axis: 'x',
+      overshoot: 1.05,
+      nested: { key: 'value' },
+    });
+    expect(snapshot.issues.every((i) => i.severity !== 'error')).toBe(true);
+  });
+
+  it('tolerates missing transition.params (backward compatible)', () => {
+    const resolved = {
+      output: { resolution: '1280x720', fps: 30, file: 'out.mp4' },
+      tracks: [{ id: 'V1', kind: 'visual', label: 'V1' }],
+      clips: [
+        {
+          id: 'clip-1',
+          at: 0,
+          track: 'V1',
+          clipType: 'hold',
+          asset: 'asset-1',
+          hold: 3,
+          transition: { type: 'crossfade', duration: 0.4 },
+        },
+      ],
+      registry: { 'asset-1': { file: 'foo.png' } },
+    } as unknown as ResolvedTimelineConfig;
+
+    const serialized = serializeForDisk(resolved);
+
+    expect(serialized.clips[0].transition).toBeDefined();
+    expect(serialized.clips[0].transition?.type).toBe('crossfade');
+    expect(serialized.clips[0].transition?.params).toBeUndefined();
+    expect(() => validateSerializedConfig(serialized)).not.toThrow();
+  });
+
+  it('preserves empty transition.params object through round-trip', () => {
+    const resolved = {
+      output: { resolution: '1280x720', fps: 30, file: 'out.mp4' },
+      tracks: [{ id: 'V1', kind: 'visual', label: 'V1' }],
+      clips: [
+        {
+          id: 'clip-1',
+          at: 0,
+          track: 'V1',
+          clipType: 'hold',
+          asset: 'asset-1',
+          hold: 3,
+          transition: { type: 'zoom-through', duration: 0.7, params: {} },
+        },
+      ],
+      registry: { 'asset-1': { file: 'foo.png' } },
+    } as unknown as ResolvedTimelineConfig;
+
+    const serialized = serializeForDisk(resolved);
+    expect(serialized.clips[0].transition?.params).toEqual({});
+    expect(() => validateSerializedConfig(serialized)).not.toThrow();
   });
 });

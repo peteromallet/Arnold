@@ -60,10 +60,16 @@ import type {
 import { createCommandRegistry, type CommandRegistry } from '@/tools/video-editor/runtime/commandRegistry.ts';
 import { createEffectRegistrationService } from '@/tools/video-editor/runtime/effectRegistrationService.ts';
 import type { EffectRegistry } from '@/tools/video-editor/effects/registry/types.ts';
+import { createTransitionRegistrationService } from '@/tools/video-editor/runtime/transitionRegistrationService.ts';
+import type { TransitionRegistry } from '@/tools/video-editor/transitions/registry/types.ts';
 import {
   removeExtensionDiagnosticsFromCollection,
   syncExtensionDiagnosticsToCollection,
 } from '@/tools/video-editor/runtime/diagnosticCollectionSync.ts';
+import {
+  TransitionRegistryProvider,
+  useTransitionRegistryContext,
+} from '@/tools/video-editor/transitions/registry/index.ts';
 
 export interface EditorRuntimeProviderProps {
   dataProvider: DataProvider;
@@ -86,6 +92,7 @@ function EditorRuntimeProviderInner({
   extensionRuntime,
   commandRegistryRef,
   effectRegistryRef,
+  transitionRegistryRef,
 }: {
   children: ReactNode;
   userId: string | null;
@@ -95,6 +102,7 @@ function EditorRuntimeProviderInner({
   extensionRuntime: ExtensionRuntime;
   commandRegistryRef: React.MutableRefObject<CommandRegistry | null>;
   effectRegistryRef: React.MutableRefObject<EffectRegistry | null>;
+  transitionRegistryRef: React.MutableRefObject<TransitionRegistry | null>;
 }) {
   const effectsQuery = useEffects(userId, { enabled: !effectCatalog && Boolean(userId) });
   const effectResources = useResolvedEffectCatalog(userId, effectCatalog);
@@ -187,6 +195,7 @@ function EditorRuntimeProviderInner({
       (ext) => {
         const extId = ext.manifest.id as string;
         const effectRegistry = effectRegistryRef.current;
+        const transitionRegistry = transitionRegistryRef.current;
         // Create per-extension commands service backed by the shared registry
         const commandsService: ExtensionCommandService | undefined = registry
           ? {
@@ -208,7 +217,17 @@ function EditorRuntimeProviderInner({
                 createExtensionDiagnosticsService(extId),
             })
           : undefined;
-        return createExtensionContext(ext, liveCreativeOverrides, commandsService, effectsService);
+        // Create per-extension transitions service backed by the shared TransitionRegistry.
+        const transitionsService = transitionRegistry
+          ? createTransitionRegistrationService({
+              extension: ext,
+              transitionRegistry,
+              diagnosticsService:
+                host.lifecycles.get(extId)?.diagnosticsService ??
+                createExtensionDiagnosticsService(extId),
+            })
+          : undefined;
+        return createExtensionContext(ext, liveCreativeOverrides, commandsService, effectsService, transitionsService);
       },
     );
     syncExtensionDiagnosticsToCollection(diagnosticCollection, 'extension-lifecycle', [
@@ -233,23 +252,31 @@ function EditorRuntimeProviderInner({
 
   return (
     <EffectRegistryProvider>
-      <EffectCatalogProvider value={effectResources}>
-        <EditorRuntimeEffectRegistryLifecycle
-          effectsQueryData={effectsQuery.data}
-          effectResources={effectResources.effects}
-          lifecycleHostRef={lifecycleHostRef}
-          commandRegistryRef={commandRegistryRef}
-          effectRegistryRef={effectRegistryRef}
-          activeExtensionIds={activeExtensionIds}
-        />
-        <SequenceComponentCatalogProvider value={sequenceComponentResources}>
-          <SequenceComponentRegistryProvider components={sequenceComponentResources.components}>
-            <TimelineStoreProvider store={store}>
-              {children}
-            </TimelineStoreProvider>
-          </SequenceComponentRegistryProvider>
-        </SequenceComponentCatalogProvider>
-      </EffectCatalogProvider>
+      <TransitionRegistryProvider>
+        <EffectCatalogProvider value={effectResources}>
+          <EditorRuntimeEffectRegistryLifecycle
+            effectsQueryData={effectsQuery.data}
+            effectResources={effectResources.effects}
+            lifecycleHostRef={lifecycleHostRef}
+            commandRegistryRef={commandRegistryRef}
+            effectRegistryRef={effectRegistryRef}
+            activeExtensionIds={activeExtensionIds}
+          />
+          <EditorRuntimeTransitionRegistryLifecycle
+            lifecycleHostRef={lifecycleHostRef}
+            commandRegistryRef={commandRegistryRef}
+            transitionRegistryRef={transitionRegistryRef}
+            activeExtensionIds={activeExtensionIds}
+          />
+          <SequenceComponentCatalogProvider value={sequenceComponentResources}>
+            <SequenceComponentRegistryProvider components={sequenceComponentResources.components}>
+              <TimelineStoreProvider store={store}>
+                {children}
+              </TimelineStoreProvider>
+            </SequenceComponentRegistryProvider>
+          </SequenceComponentCatalogProvider>
+        </EffectCatalogProvider>
+      </TransitionRegistryProvider>
     </EffectRegistryProvider>
   );
 }
@@ -323,6 +350,46 @@ function EditorRuntimeEffectRegistryLifecycle({
   return null;
 }
 
+function EditorRuntimeTransitionRegistryLifecycle({
+  lifecycleHostRef,
+  commandRegistryRef,
+  transitionRegistryRef,
+  activeExtensionIds,
+}: {
+  lifecycleHostRef: React.MutableRefObject<ExtensionLifecycleHost | null>;
+  commandRegistryRef: React.MutableRefObject<CommandRegistry | null>;
+  transitionRegistryRef: React.MutableRefObject<TransitionRegistry | null>;
+  activeExtensionIds: ReadonlySet<string>;
+}) {
+  const { registry: transitionRegistry, snapshot: transitionRegistrySnapshot } = useTransitionRegistryContext();
+  // Expose the transition registry to the outer synchronize effect via ref.
+  transitionRegistryRef.current = transitionRegistry;
+  const diagnosticCollection = useVideoEditorRuntime().diagnosticCollection;
+
+  useEffect(() => {
+    const host = lifecycleHostRef.current;
+    const commandRegistry = commandRegistryRef.current;
+    if (!host) return;
+    const handle = host.onLifecycleDisposed((extensionId: string) => {
+      commandRegistry?.unregisterAll(extensionId);
+      transitionRegistry.unregisterOwner(extensionId);
+      removeExtensionDiagnosticsFromCollection(diagnosticCollection, extensionId);
+    });
+    return () => handle.dispose();
+  }, [commandRegistryRef, diagnosticCollection, transitionRegistry, lifecycleHostRef]);
+
+  useEffect(() => {
+    syncExtensionDiagnosticsToCollection(
+      diagnosticCollection,
+      'transition-registry',
+      transitionRegistrySnapshot.diagnostics,
+      { activeExtensionIds },
+    );
+  }, [activeExtensionIds, diagnosticCollection, transitionRegistrySnapshot]);
+
+  return null;
+}
+
 export function EditorRuntimeProvider({
   dataProvider,
   timelineId,
@@ -354,6 +421,10 @@ export function EditorRuntimeProvider({
   // ---- M7: effect registry ref (registry is created by EffectRegistryProvider,
   //        exposed via context and stored here for the synchronize effect) ----
   const effectRegistryRef = useRef<EffectRegistry | null>(null);
+
+  // ---- M8: transition registry ref (registry is created by TransitionRegistryProvider,
+  //        exposed via context and stored here for the synchronize effect) ----
+  const transitionRegistryRef = useRef<TransitionRegistry | null>(null);
 
   const diagnosticCollectionRef = useRef<DiagnosticCollection | null>(null);
   if (!diagnosticCollectionRef.current) {
@@ -477,6 +548,7 @@ export function EditorRuntimeProvider({
         extensionRuntime={extensionRuntime}
         commandRegistryRef={commandRegistryRef}
         effectRegistryRef={effectRegistryRef}
+        transitionRegistryRef={transitionRegistryRef}
       >
         {children}
       </EditorRuntimeProviderInner>

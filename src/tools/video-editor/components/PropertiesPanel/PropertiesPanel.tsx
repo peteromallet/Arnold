@@ -157,6 +157,9 @@ function PropertiesPanelComponent() {
   const bulkVolume = getSharedValue(bulkSelectedClips.map((clip) => clip.volume ?? 1));
   const bulkFontSize = getSharedValue(bulkSelectedClips.map((clip) => clip.text?.fontSize ?? 64));
   const bulkTextColor = getSharedValue(bulkSelectedClips.map((clip) => clip.text?.color ?? '#ffffff'));
+  const bulkTransition = getSharedNestedValue(bulkSelectedClips, (clip) => clip.transition);
+  const bulkTransitionType = getSharedValue(bulkSelectedClips.map((clip) => clip.transition?.type ?? NO_EFFECT));
+  const bulkTransitionDuration = getSharedValue(bulkSelectedClips.map((clip) => clip.transition?.duration ?? 0.5));
 
   useEffect(() => {
     if (selectedClipIds.size > 1) {
@@ -279,6 +282,9 @@ function PropertiesPanelComponent() {
             sharedVolume={bulkVolume}
             sharedFontSize={bulkFontSize}
             sharedTextColor={bulkTextColor}
+            sharedTransition={bulkTransition}
+            sharedTransitionType={bulkTransitionType}
+            sharedTransitionDuration={bulkTransitionDuration}
             onChange={(patch) => handleUpdateClips(selectedClipIdsList, patch)}
             onChangeDeep={(patchFn) => handleUpdateClipsDeep(selectedClipIdsList, patchFn)}
             onResetPosition={() => handleResetClipsPosition(selectedClipIdsList)}

@@ -3418,6 +3418,23 @@
       "resolved": false,
       "resolved_by": null,
       "resolved_at": null
+    },
+    {
+      "id": "DEBT-202",
+      "subsystem": "video-editor-worker-export",
+      "concern": "does the change touch all locations and supporting infrastructure?: the plan updates visualclip.tsx for rendering, but the worker export path may also invoke the same remotion composition indirectly. no separate worker-side file is mentioned.",
+      "flag_ids": [
+        "all_locations-1"
+      ],
+      "plan_ids": [
+        "m8-dynamic-transition-20260619-1915"
+      ],
+      "occurrence_count": 1,
+      "created_at": "2026-06-19T17:28:06Z",
+      "updated_at": "2026-06-19T17:28:06Z",
+      "resolved": false,
+      "resolved_by": null,
+      "resolved_at": null
     }
   ]
 }

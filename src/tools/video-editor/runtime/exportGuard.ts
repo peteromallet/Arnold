@@ -37,6 +37,7 @@ import type {
   RenderCapability,
   RenderRoute,
 } from '@/tools/video-editor/runtime/renderability.ts';
+import type { TransitionRegistryRecord, TransitionRegistrySnapshot } from '@/tools/video-editor/transitions/registry/types.ts';
 
 // ---------------------------------------------------------------------------
 // Known ID collections
@@ -207,6 +208,7 @@ interface AllKnownIds {
   effectTypes: ReadonlySet<string>;
   transitionTypes: ReadonlySet<string>;
   effectRegistrySnapshot?: EffectRegistrySnapshot;
+  transitionRegistrySnapshot?: TransitionRegistrySnapshot;
   /** Extension-declared IDs (metadata only, not used for dispatch). */
   extensionEffectIds: ReadonlySet<string>;
   extensionTransitionIds: ReadonlySet<string>;
@@ -217,12 +219,14 @@ function buildAllKnown(
   builtIn: KnownIdCollection,
   extIds: InactiveKnownIds,
   effectRegistrySnapshot?: EffectRegistrySnapshot,
+  transitionRegistrySnapshot?: TransitionRegistrySnapshot,
 ): AllKnownIds {
   return {
     clipTypes: builtIn.clipTypes,
     effectTypes: builtIn.effectTypes,
     transitionTypes: builtIn.transitionTypes,
     ...(effectRegistrySnapshot ? { effectRegistrySnapshot } : {}),
+    ...(transitionRegistrySnapshot ? { transitionRegistrySnapshot } : {}),
     extensionEffectIds: extIds.effectIds,
     extensionTransitionIds: extIds.transitionIds,
     extensionClipTypeIds: extIds.clipTypeIds,
@@ -247,6 +251,7 @@ export function scanExportConfig(
   builtIn: KnownIdCollection,
   extIds: InactiveKnownIds,
   effectRegistrySnapshot?: EffectRegistrySnapshot,
+  transitionRegistrySnapshot?: TransitionRegistrySnapshot,
 ): ExportGuardResult {
   const diagnostics: ExportDiagnostic[] = [];
   const findings: CapabilityFinding[] = [];
@@ -256,7 +261,7 @@ export function scanExportConfig(
   const unknownTransitions = new Set<string>();
 
   if (config && config.clips.length > 0) {
-    const allKnown = buildAllKnown(builtIn, extIds, effectRegistrySnapshot);
+    const allKnown = buildAllKnown(builtIn, extIds, effectRegistrySnapshot, transitionRegistrySnapshot);
 
     for (const clip of config.clips) {
       scanClip(clip, allKnown, diagnostics, findings, blockers, unknownClipTypes, unknownEffects, unknownTransitions);
@@ -328,21 +333,38 @@ function scanClip(
   // ---- transition ----------------------------------------------------------
   if (clip.transition?.type) {
     const tType = clip.transition.type;
-    if (!known.transitionTypes.has(tType)) {
+    const snapshotRecord = known.transitionRegistrySnapshot?.get(tType);
+
+    // Check built-in + registry
+    if (!known.transitionTypes.has(tType) && !snapshotRecord) {
       const isExtDeclared = known.extensionTransitionIds.has(tType);
 
       diagnostics.push({
         severity: isExtDeclared ? 'warning' : 'error',
         code: 'export/unknown-transition-type',
         message: isExtDeclared
-          ? `Transition "${tType}" is declared by an inactive extension and may not be available at export time.`
-          : `Transition "${tType}" is not recognised. Ensure the required extension or registry is installed.`,
+          ? `Transition \"${tType}\" is declared by an inactive extension and may not be available at export time.`
+          : `Transition \"${tType}\" is not recognised. Ensure the required extension or registry is installed.`,
         detail: { clipId: clip.id, transitionType: tType },
       });
 
       if (!isExtDeclared) {
         unknownTransitions.add(tType);
+        pushTransitionFindingAndBlocker(findings, blockers, {
+          id: `export.transition.${clip.id}.${tType}.missing`,
+          reason: 'missing-contribution',
+          message: `Transition \"${tType}\" is not recognised. Ensure the required extension or registry is installed.`,
+          clipId: clip.id,
+          transitionType: tType,
+          route: 'browser-export',
+        });
       }
+      return;
+    }
+
+    // Registry-based scanning
+    if (snapshotRecord) {
+      scanTransitionRecordRenderability(clip, tType, snapshotRecord, diagnostics, findings, blockers);
     }
   }
 }
@@ -557,6 +579,196 @@ function pushEffectFindingAndBlocker(
   const detail: Record<string, unknown> = {
     effectType: input.effectType,
     slot: input.slot,
+  };
+  if (input.record?.provenance) {
+    detail.provenance = input.record.provenance;
+  }
+  const finding: CapabilityFinding = {
+    id: input.id,
+    severity: 'error',
+    route: input.route,
+    reason: input.reason,
+    message: input.message,
+    clipId: input.clipId,
+    ...(input.record?.ownerExtensionId ? { extensionId: input.record.ownerExtensionId } : {}),
+    ...(input.record?.contributionId ? { contributionId: input.record.contributionId } : {}),
+    detail,
+  };
+  findings.push(finding);
+  blockers.push({
+    ...finding,
+    severity: 'error',
+    route: input.route,
+    reason: input.reason,
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Transition scan helpers (T15)
+// ---------------------------------------------------------------------------
+
+/** Routes that the export guard checks independently for each registered transition. */
+const TRANSITION_GUARD_ROUTES: readonly RenderRoute[] = ['preview', 'browser-export', 'worker-export'] as const;
+
+function scanTransitionRecordRenderability(
+  clip: ResolvedTimelineClip,
+  transitionType: string,
+  record: TransitionRegistryRecord,
+  diagnostics: ExportDiagnostic[],
+  findings: CapabilityFinding[],
+  blockers: RenderBlocker[],
+): void {
+  if (record.status !== 'active') {
+    const message = `Transition \"${transitionType}\" is registered but inactive and cannot be used for export or preview.`;
+    diagnostics.push({
+      severity: 'error',
+      code: 'export/unrenderable-transition',
+      message,
+      extensionId: record.ownerExtensionId,
+      contributionId: record.contributionId,
+      detail: {
+        clipId: clip.id,
+        transitionType,
+        transitionStatus: record.status,
+        provenance: record.provenance,
+      },
+    });
+
+    for (const route of TRANSITION_GUARD_ROUTES) {
+      pushTransitionFindingAndBlocker(findings, blockers, {
+        id: `export.transition.${clip.id}.${transitionType}.inactive.${route}`,
+        reason: 'inactive-extension',
+        message: `Transition \"${transitionType}\" on route \"${route}\" is registered but inactive.`,
+        clipId: clip.id,
+        transitionType,
+        route,
+        record,
+      });
+    }
+    return;
+  }
+
+  for (const route of TRANSITION_GUARD_ROUTES) {
+    const capability = record.renderability.capabilities.find((cap) => cap.route === route);
+
+    if (!capability) {
+      // No capability declared for this route — this is a blocker for worker-export by default
+      if (route === 'worker-export') {
+        const message = `Transition \"${transitionType}\" does not declare ${route} support. Worker export is blocked by default.`;
+        diagnostics.push({
+          severity: 'error',
+          code: 'export/unrenderable-transition',
+          message,
+          extensionId: record.ownerExtensionId,
+          contributionId: record.contributionId,
+          detail: {
+            clipId: clip.id,
+            transitionType,
+            renderRoute: route,
+            blockerReason: 'route-unsupported',
+            provenance: record.provenance,
+          },
+        });
+        pushTransitionFindingAndBlocker(findings, blockers, {
+          id: `export.transition.${clip.id}.${transitionType}.${route}.route-unsupported`,
+          reason: 'route-unsupported',
+          message,
+          clipId: clip.id,
+          transitionType,
+          route,
+          record,
+        });
+      }
+      continue;
+    }
+
+    if (capability.status === 'supported') continue;
+
+    if (capability.status === 'unknown') {
+      const message = capability.message
+        ?? `Transition \"${transitionType}\" has unknown support for ${route}.`;
+      diagnostics.push({
+        severity: 'warning',
+        code: 'export/unknown-route-support',
+        message,
+        extensionId: record.ownerExtensionId,
+        contributionId: record.contributionId,
+        detail: {
+          clipId: clip.id,
+          transitionType,
+          renderRoute: route,
+          provenance: record.provenance,
+          determinism: capability.determinism,
+        },
+      });
+      findings.push({
+        id: `export.transition.${clip.id}.${transitionType}.${route}.unknown`,
+        severity: 'warning',
+        route,
+        reason: 'unknown',
+        message,
+        clipId: clip.id,
+        ...(record.ownerExtensionId ? { extensionId: record.ownerExtensionId } : {}),
+        ...(record.contributionId ? { contributionId: record.contributionId } : {}),
+        detail: {
+          transitionType,
+          provenance: record.provenance,
+          determinism: capability.determinism,
+        },
+      });
+      continue;
+    }
+
+    // status === 'blocked'
+    const reason = capability.blockerReason ?? firstTransitionRouteBlockerReason(record, route) ?? 'route-unsupported';
+    const message = capability.message
+      ?? `Transition \"${transitionType}\" does not support ${route}.`;
+
+    diagnostics.push({
+      severity: 'error',
+      code: 'export/unrenderable-transition',
+      message,
+      extensionId: record.ownerExtensionId,
+      contributionId: record.contributionId,
+      detail: {
+        clipId: clip.id,
+        transitionType,
+        renderRoute: route,
+        blockerReason: reason,
+        provenance: record.provenance,
+      },
+    });
+    pushTransitionFindingAndBlocker(findings, blockers, {
+      id: `export.transition.${clip.id}.${transitionType}.${route}.${reason}`,
+      reason,
+      message,
+      clipId: clip.id,
+      transitionType,
+      route,
+      record,
+    });
+  }
+}
+
+function firstTransitionRouteBlockerReason(record: TransitionRegistryRecord, route: RenderRoute): RenderBlockerReason | undefined {
+  return record.renderability.blockers?.find((blocker) => blocker.route === route)?.reason;
+}
+
+function pushTransitionFindingAndBlocker(
+  findings: CapabilityFinding[],
+  blockers: RenderBlocker[],
+  input: {
+    id: string;
+    reason: RenderBlockerReason;
+    message: string;
+    clipId: string;
+    transitionType: string;
+    route: RenderRoute;
+    record?: TransitionRegistryRecord;
+  },
+): void {
+  const detail: Record<string, unknown> = {
+    transitionType: input.transitionType,
   };
   if (input.record?.provenance) {
     detail.provenance = input.record.provenance;

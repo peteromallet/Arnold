@@ -18,6 +18,7 @@ import type {
   AssetDetailSectionContribution,
   MetadataFacetValueKind,
   EffectContribution,
+  TransitionContribution,
 } from '@reigh/editor-sdk';
 import { contributionKindNotYetBridged } from '@reigh/editor-sdk';
 import type { TimelineGestureOwner } from '@/tools/video-editor/lib/mobile-interaction-model';
@@ -123,6 +124,8 @@ export interface VideoEditorExtensionRuntimeConfig {
   assetDetailSections: readonly VideoEditorAssetDetailSectionDescriptor[];
   /** M7: Normalized component-backed effect descriptors, provider-scoped and deterministically ordered. */
   effects: readonly VideoEditorEffectDescriptor[];
+  /** M8: Normalized component-backed transition descriptors, provider-scoped and deterministically ordered. */
+  transitions: readonly VideoEditorTransitionDescriptor[];
 }
 
 export interface ResolvedVideoEditorPanelRegistry {
@@ -221,6 +224,27 @@ export interface VideoEditorEffectDescriptor {
 }
 
 // ---------------------------------------------------------------------------
+// M8: Trusted component transition descriptors
+// ---------------------------------------------------------------------------
+
+/** A normalized component-backed transition descriptor produced by runtime normalization. */
+export interface VideoEditorTransitionDescriptor {
+  id: string;
+  extensionId: string;
+  order?: number;
+  /** The transition identifier that must match registerRenderer calls. */
+  transitionId: string;
+  /** Human-readable label, falling back to transitionId. */
+  label: string;
+  /** When true, the transition contribution allows browser export. */
+  allowBrowserExport: boolean;
+  /** When true, the transition contribution allows worker export. */
+  allowWorkerExport: boolean;
+  /** Whether the contribution has renderer metadata (always true for active descriptors). */
+  hasRendererMetadata: boolean;
+}
+
+// ---------------------------------------------------------------------------
 // Host-owned runtime normalization types
 // ---------------------------------------------------------------------------
 
@@ -262,6 +286,8 @@ export interface ExtensionRuntime {
   readonly assetDetailSections: readonly VideoEditorAssetDetailSectionDescriptor[];
   /** M7: Normalized component-backed effect descriptors. */
   readonly effects: readonly VideoEditorEffectDescriptor[];
+  /** M8: Normalized component-backed transition descriptors. */
+  readonly transitions: readonly VideoEditorTransitionDescriptor[];
 }
 
 /** Signature for host-owned runtime normalization. */
@@ -278,6 +304,7 @@ const EMPTY_SEARCH_PROVIDERS: readonly VideoEditorSearchProviderDescriptor[] = O
 const EMPTY_METADATA_FACETS: readonly VideoEditorMetadataFacetDescriptor[] = Object.freeze([]);
 const EMPTY_ASSET_DETAIL_SECTIONS: readonly VideoEditorAssetDetailSectionDescriptor[] = Object.freeze([]);
 const EMPTY_EFFECTS: readonly VideoEditorEffectDescriptor[] = Object.freeze([]);
+const EMPTY_TRANSITIONS: readonly VideoEditorTransitionDescriptor[] = Object.freeze([]);
 const EMPTY_RESOLVED_PANEL_REGISTRY: ResolvedVideoEditorPanelRegistry = Object.freeze({
   assetPanels: EMPTY_PANELS,
   inspectorSections: Object.freeze({
@@ -303,6 +330,7 @@ export const DEFAULT_VIDEO_EDITOR_EXTENSION_RUNTIME: VideoEditorExtensionRuntime
   metadataFacets: EMPTY_METADATA_FACETS,
   assetDetailSections: EMPTY_ASSET_DETAIL_SECTIONS,
   effects: EMPTY_EFFECTS,
+  transitions: EMPTY_TRANSITIONS,
 });
 
 /**
@@ -440,6 +468,41 @@ export function normalizeExtensionRuntime(
         continue;
       }
 
+      // M8: Transition contributions with renderer metadata (transitionId) are
+      // treated as active and projected into deterministic descriptors.
+      // Transitions without renderer metadata remain inactive with diagnostics.
+      if (contrib.kind === 'transition') {
+        const transitionContrib = contrib as unknown as TransitionContribution;
+        if (transitionContrib.transitionId) {
+          // Renderer-backed: treat as active
+          bridged.push({ contribution: contrib, extensionId: extId });
+          if (contrib.render) {
+            knownRenderIds.add(contrib.render);
+          }
+        } else {
+          // Unsupported: no renderer metadata — inactive with diagnostic
+          inactiveReserved.push({
+            extensionId: extId,
+            contributionId: contribId,
+            kind: contrib.kind,
+            milestone: notYetBridged ?? 'unknown',
+          });
+          diagnostics.push({
+            severity: 'warn',
+            code: 'runtime/transition-missing-renderer-metadata',
+            message:
+              `Transition contribution "${contribId}" in extension "${extId}" ` +
+              `has no transitionId (renderer metadata). The transition will be inactive.`,
+            extensionId: extId,
+            contributionId: contribId,
+          });
+          if (contrib.render) {
+            knownRenderIds.add(contrib.render);
+          }
+        }
+        continue;
+      }
+
       // M6: OutputFormat and SearchProvider are reserved for execution but
       // must still be collected as descriptors in the runtime config.
       if (
@@ -531,6 +594,7 @@ export function normalizeExtensionRuntime(
   const metadataFacetDescriptors: VideoEditorMetadataFacetDescriptor[] = [];
   const assetDetailSectionDescriptors: VideoEditorAssetDetailSectionDescriptor[] = [];
   const effectDescriptors: VideoEditorEffectDescriptor[] = [];
+  const transitionDescriptors: VideoEditorTransitionDescriptor[] = [];
 
   for (const { contribution, extensionId } of sorted) {
     switch (contribution.kind) {
@@ -641,6 +705,24 @@ export function normalizeExtensionRuntime(
         // Effects without effectId are filtered in Phase 2; they never reach here.
         break;
       }
+      // M8: transition — bridge renderer-backed transitions into transitions
+      case 'transition': {
+        const transitionContrib = contribution as unknown as TransitionContribution;
+        if (transitionContrib.transitionId) {
+          transitionDescriptors.push({
+            id: contribution.id as string,
+            extensionId,
+            order: contribution.order,
+            transitionId: transitionContrib.transitionId,
+            label: transitionContrib.label ?? transitionContrib.transitionId,
+            allowBrowserExport: transitionContrib.allowBrowserExport ?? false,
+            allowWorkerExport: transitionContrib.allowWorkerExport ?? false,
+            hasRendererMetadata: true,
+          });
+        }
+        // Transitions without transitionId are filtered in Phase 2; they never reach here.
+        break;
+      }
       default:
         // Unknown bridged kinds are silently skipped (should not occur)
         break;
@@ -718,7 +800,8 @@ export function normalizeExtensionRuntime(
     searchProviderDescriptors.length > 0 ||
     metadataFacetDescriptors.length > 0 ||
     assetDetailSectionDescriptors.length > 0 ||
-    effectDescriptors.length > 0;
+    effectDescriptors.length > 0 ||
+    transitionDescriptors.length > 0;
 
   const config: VideoEditorExtensionRuntimeConfig = hasAnyConfigurableContent
     ? Object.freeze({
@@ -737,6 +820,7 @@ export function normalizeExtensionRuntime(
         metadataFacets: Object.freeze(metadataFacetDescriptors),
         assetDetailSections: Object.freeze(assetDetailSectionDescriptors),
         effects: Object.freeze(effectDescriptors),
+        transitions: Object.freeze(transitionDescriptors),
       })
     : DEFAULT_VIDEO_EDITOR_EXTENSION_RUNTIME;
 
@@ -757,6 +841,7 @@ export function normalizeExtensionRuntime(
     metadataFacets: Object.freeze(metadataFacetDescriptors),
     assetDetailSections: Object.freeze(assetDetailSectionDescriptors),
     effects: Object.freeze(effectDescriptors),
+    transitions: Object.freeze(transitionDescriptors),
   });
 
   return runtime;
@@ -776,6 +861,7 @@ const EMPTY_EXTENSION_RUNTIME: ExtensionRuntime = Object.freeze({
   metadataFacets: EMPTY_METADATA_FACETS,
   assetDetailSections: EMPTY_ASSET_DETAIL_SECTIONS,
   effects: EMPTY_EFFECTS,
+  transitions: EMPTY_TRANSITIONS,
 });
 
 type RegistryDescriptor = {

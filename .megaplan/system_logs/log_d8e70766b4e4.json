@@ -1,0 +1,86 @@
+{
+  "id": "log_d8e70766b4e4",
+  "level": "debug",
+  "category": "system",
+  "event_type": "authority_divergence",
+  "message": "authority_divergence emitted",
+  "details": {
+    "event": {
+      "seq": 3704,
+      "schema_version": 1,
+      "ts_utc": "2026-06-19T18:26:01.875233+00:00",
+      "ts_rel_init_s": 4208.73784,
+      "kind": "authority_divergence",
+      "phase": "execute",
+      "payload": {
+        "diagnostic_version": 1,
+        "task_id": "T2",
+        "raw_terminal_status": "done",
+        "authority_status": "unsatisfied",
+        "authoritative": false,
+        "reason": "stale_evidence:head_mismatch:task_files_changed",
+        "missing_outputs": [],
+        "stale_evidence": [
+          "head_mismatch:task_files_changed",
+          "head_mismatch:task_files_changed",
+          "head_mismatch:task_files_changed",
+          "head_mismatch:task_files_changed",
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_files_changed",
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_files_changed",
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_files_changed",
+          "head_mismatch:task_files_changed",
+          "head_mismatch:task_files_changed",
+          "head_mismatch:task_files_changed",
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_files_changed",
+          "head_mismatch:task_files_changed",
+          "head_mismatch:task_files_changed",
+          "head_mismatch:task_files_changed",
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_files_changed",
+          "head_mismatch:task_commands_run"
+        ],
+        "would_block_reasons": [
+          "stale_evidence:head_mismatch:task_files_changed",
+          "stale_evidence:head_mismatch:task_commands_run"
+        ],
+        "error": null,
+        "diagnostics": {
+          "task_id": "T2",
+          "declared_outputs": {
+            "files_changed": [
+              "src/tools/video-editor/transitions/registry/types.ts",
+              "src/tools/video-editor/transitions/registry/TransitionRegistry.ts",
+              "src/tools/video-editor/transitions/registry/TransitionRegistry.test.ts",
+              "src/tools/video-editor/transitions/registry/index.ts"
+            ],
+            "commands_run": [
+              "npx vitest run src/tools/video-editor/transitions/registry/TransitionRegistry.test.ts --no-color"
+            ]
+          },
+          "linked_evidence_count": 24,
+          "evidence_count": 165,
+          "normalization": "iterable",
+          "status": "unsatisfied",
+          "evidence_sources": [
+            "plan_artifacts"
+          ],
+          "loaded_evidence_count": 165,
+          "raw_terminal_status": "done"
+        },
+        "ts_utc": "2026-06-19T18:26:01.874701+00:00"
+      },
+      "transaction_id": "f7067b29d7b2f5a2",
+      "store_method": "log_system_event"
+    }
+  },
+  "turn_id": null,
+  "epic_id": "m8-dynamic-transition-20260619-1915",
+  "occurred_at": "2026-06-19T18:26:01.875292Z"
+}

@@ -192,20 +192,22 @@ describe('collectExtensionDeclaredIds', () => {
     expect(result.effectIds.size).toBe(0);
   });
 
-  it('collects effectId from effect-kind inactive contributions', () => {
+  it('skips bridged effect-kind contributions (M7 bridged)', () => {
     const contributions: ExtensionContribution[] = [
       { id: 'contrib.1' as any, kind: 'effect', effectId: 'my-custom-effect' },
     ];
     const result = collectExtensionDeclaredIds(contributions);
-    expect(result.effectIds.has('my-custom-effect')).toBe(true);
+    // Effect is M7-bridged, so it is NOT collected as inactive
+    expect(result.effectIds.has('my-custom-effect')).toBe(false);
   });
 
-  it('collects transitionId from transition-kind inactive contributions', () => {
+  it('skips bridged transition-kind contributions (M8 bridged)', () => {
     const contributions: ExtensionContribution[] = [
       { id: 'contrib.2' as any, kind: 'transition', transitionId: 'my-custom-transition' },
     ];
     const result = collectExtensionDeclaredIds(contributions);
-    expect(result.transitionIds.has('my-custom-transition')).toBe(true);
+    // Transition is M8-bridged, so it is NOT collected as inactive
+    expect(result.transitionIds.has('my-custom-transition')).toBe(false);
   });
 
   it('collects clipTypeId from clipType-kind inactive contributions', () => {
@@ -216,14 +218,14 @@ describe('collectExtensionDeclaredIds', () => {
     expect(result.clipTypeIds.has('my-custom-clip')).toBe(true);
   });
 
-  it('deduplicates across multiple contributions', () => {
+  it('deduplicates across multiple contributions (clipType, not bridged)', () => {
     const contributions: ExtensionContribution[] = [
-      { id: 'contrib.1' as any, kind: 'effect', effectId: 'shared-effect' },
-      { id: 'contrib.2' as any, kind: 'effect', effectId: 'shared-effect' },
+      { id: 'contrib.1' as any, kind: 'clipType', clipTypeId: 'shared-clip' },
+      { id: 'contrib.2' as any, kind: 'clipType', clipTypeId: 'shared-clip' },
     ];
     const result = collectExtensionDeclaredIds(contributions);
-    expect(result.effectIds.size).toBe(1);
-    expect(result.effectIds.has('shared-effect')).toBe(true);
+    expect(result.clipTypeIds.size).toBe(1);
+    expect(result.clipTypeIds.has('shared-clip')).toBe(true);
   });
 });
 
@@ -450,28 +452,27 @@ describe('scanExportConfig — unknown effects', () => {
     expect(result.unknownEffects).toEqual(['explode-out']);
   });
 
-  it('emits warning for extension-declared (inactive) effect', () => {
-    const extIdsWithEffect = collectExtensionDeclaredIds([
+  it('emits warning for extension-declared (inactive) clipType with unknown effect', () => {
+    // Effect is M7-bridged, so we test with clipType (M3, not bridged)
+    const extIdsWithClip = collectExtensionDeclaredIds([
       {
         id: 'contrib.e' as any,
-        kind: 'effect',
-        effectId: 'future-effect',
+        kind: 'clipType',
+        clipTypeId: 'future-clip',
       } as ExtensionContribution,
     ]);
 
     const clip = makeClip('c1', {
-      clipType: 'media',
-      entrance: { type: 'future-effect', duration: 0.5 },
+      clipType: 'future-clip',
     });
-    const result = scanExportConfig(makeConfig([clip]), builtIn, extIdsWithEffect);
+    const result = scanExportConfig(makeConfig([clip]), builtIn, extIdsWithClip);
 
     expect(result.diagnostics.length).toBe(1);
     expect(result.diagnostics[0].severity).toBe('warning');
+    expect(result.diagnostics[0].code).toBe('export/unknown-clip-type');
     expect(result.diagnostics[0].message).toContain('inactive extension');
-    expect(result.unknownEffects).toEqual([]);
+    expect(result.unknownClipTypes).toEqual([]);
     expect(result.hasBlockingErrors).toBe(false);
-    expect(result.findings).toEqual([]);
-    expect(result.blockers).toEqual([]);
   });
 
   it('emits shared export blocker vocabulary for provider snapshot effects that cannot browser-export', () => {
@@ -774,25 +775,26 @@ describe('scanExportConfig — unknown transitions', () => {
     expect(result.hasBlockingErrors).toBe(true);
   });
 
-  it('emits warning for extension-declared (inactive) transition', () => {
-    const extIdsWithTrans = collectExtensionDeclaredIds([
+  it('emits warning for extension-declared (inactive) clipType with unknown transition', () => {
+    // Transition is M8-bridged, so we test with clipType (M3, not bridged)
+    const extIdsWithClip = collectExtensionDeclaredIds([
       {
         id: 'contrib.t' as any,
-        kind: 'transition',
-        transitionId: 'future-transition',
+        kind: 'clipType',
+        clipTypeId: 'future-clip',
       } as ExtensionContribution,
     ]);
 
     const clip = makeClip('c1', {
-      clipType: 'media',
-      transition: { type: 'future-transition', duration: 1 },
+      clipType: 'future-clip',
     });
-    const result = scanExportConfig(makeConfig([clip]), builtIn, extIdsWithTrans);
+    const result = scanExportConfig(makeConfig([clip]), builtIn, extIdsWithClip);
 
     expect(result.diagnostics.length).toBe(1);
     expect(result.diagnostics[0].severity).toBe('warning');
+    expect(result.diagnostics[0].code).toBe('export/unknown-clip-type');
     expect(result.diagnostics[0].message).toContain('inactive extension');
-    expect(result.unknownTransitions).toEqual([]);
+    expect(result.unknownClipTypes).toEqual([]);
     expect(result.hasBlockingErrors).toBe(false);
   });
 });
@@ -924,28 +926,29 @@ describe('scanExportConfig — effect-layer clips', () => {
     expect(result.hasBlockingErrors).toBe(true);
   });
 
-  it('emits warning for extension-declared continuous effect on effect-layer clip', () => {
-    const extIdsWithEffect = collectExtensionDeclaredIds([
+  it('emits warning for extension-declared clipType on effect-layer clip', () => {
+    // Effect is M7-bridged, so we test with clipType (M3, not bridged)
+    const extIdsWithClip = collectExtensionDeclaredIds([
       {
         id: 'contrib.el' as any,
-        kind: 'effect',
-        effectId: 'future-continuous',
+        kind: 'clipType',
+        clipTypeId: 'future-effect-layer',
       } as ExtensionContribution,
     ]);
 
     const clip = makeClip('c1', {
-      clipType: 'effect-layer',
-      continuous: { type: 'future-continuous', intensity: 0.5 },
+      clipType: 'future-effect-layer',
+      continuous: { type: 'ken-burns', intensity: 0.5 },
     });
-    const result = scanExportConfig(makeConfig([clip]), builtIn, extIdsWithEffect);
+    const result = scanExportConfig(makeConfig([clip]), builtIn, extIdsWithClip);
 
     expect(result.diagnostics.length).toBe(1);
     expect(result.diagnostics[0].severity).toBe('warning');
-    expect(result.diagnostics[0].code).toBe('export/unknown-effect-type');
-    expect(result.diagnostics[0].detail?.effectType).toBe('future-continuous');
+    expect(result.diagnostics[0].code).toBe('export/unknown-clip-type');
+    expect(result.diagnostics[0].detail?.clipType).toBe('future-effect-layer');
     expect(result.diagnostics[0].detail?.clipId).toBe('c1');
     expect(result.diagnostics[0].message).toContain('inactive extension');
-    expect(result.unknownEffects).toEqual([]);
+    expect(result.unknownClipTypes).toEqual([]);
     expect(result.hasBlockingErrors).toBe(false);
   });
 });
@@ -1012,20 +1015,20 @@ describe('scanExportConfig — edge cases', () => {
   });
 
   it('preserves inactiveExtensionIds in result', () => {
-    const extIdsWithEffect = collectExtensionDeclaredIds([
+    const extIdsWithClip = collectExtensionDeclaredIds([
       {
         id: 'contrib.e' as any,
-        kind: 'effect',
-        effectId: 'future-effect',
+        kind: 'clipType',
+        clipTypeId: 'future-clip',
       } as ExtensionContribution,
     ]);
 
     const result = scanExportConfig(
       makeConfig([makeClip('c1', { clipType: 'media' })]),
       builtIn,
-      extIdsWithEffect,
+      extIdsWithClip,
     );
 
-    expect(result.inactiveExtensionIds.effectIds.has('future-effect')).toBe(true);
+    expect(result.inactiveExtensionIds.clipTypeIds.has('future-clip')).toBe(true);
   });
 });

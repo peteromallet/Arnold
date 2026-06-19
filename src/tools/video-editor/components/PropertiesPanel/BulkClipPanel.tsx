@@ -1,5 +1,5 @@
-import { useEffect, useState } from 'react';
-import { AlertTriangle, AudioWaveform, Globe, Lock, Monitor, Server, Volume2 } from 'lucide-react';
+import { useEffect, useMemo, useState } from 'react';
+import { AlertTriangle, AudioWaveform, Globe, Lock, Monitor, RefreshCw, Server, Trash2, Volume2 } from 'lucide-react';
 import { Button } from '@/shared/components/ui/button.tsx';
 import { cn } from '@/shared/components/ui/contracts/cn.ts';
 import { Input } from '@/shared/components/ui/input.tsx';
@@ -11,13 +11,24 @@ import { getDefaultValues } from '@/tools/video-editor/components/ParameterContr
 import {
   FieldLabel,
   NO_EFFECT,
+  NO_TRANSITION,
   TAB_COLUMNS_CLASS,
 } from '@/tools/video-editor/components/PropertiesPanel/ClipPanel.tsx';
 import { continuousEffectTypes, entranceEffectTypes, exitEffectTypes } from '@/tools/video-editor/effects/index.tsx';
 import { useEffectResources } from '@/tools/video-editor/hooks/useEffectResources.ts';
 import type { ClipTab } from '@/tools/video-editor/hooks/useEditorPreferences.ts';
 import type { ClipMeta } from '@/tools/video-editor/lib/timeline-data.ts';
-import type { ResolvedTimelineClip } from '@/tools/video-editor/types/index.ts';
+import type { ResolvedTimelineClip, ClipTransition } from '@/tools/video-editor/types/index.ts';
+import {
+  useOptionalTransitionRegistryContext,
+  type TransitionRegistryRecord,
+} from '@/tools/video-editor/transitions/registry/index.ts';
+import {
+  listTransitions,
+  resolveTransition,
+  createTransitionSnapshot,
+  materializeTransitionDefaults,
+} from '@/tools/video-editor/transitions/catalog.ts';
 
 const MIXED_SELECT_VALUE = '__mixed__';
 
@@ -35,9 +46,11 @@ export interface BulkClipPanelProps {
   sharedExit: ResolvedTimelineClip['exit'] | null;
   sharedContinuous: ResolvedTimelineClip['continuous'] | null;
   sharedText: ResolvedTimelineClip['text'] | null;
+  sharedTransition: ClipTransition | null;
   sharedEntranceType: string | null;
   sharedExitType: string | null;
   sharedContinuousType: string | null;
+  sharedTransitionType: string | null;
   sharedSpeed: number | null;
   sharedFrom: number | null;
   sharedTo: number | null;
@@ -49,6 +62,7 @@ export interface BulkClipPanelProps {
   sharedVolume: number | null;
   sharedFontSize: number | null;
   sharedTextColor: string | null;
+  sharedTransitionDuration: number | null;
   onChange: (patch: BulkScalarPatch) => void;
   onChangeDeep: (patchFn: (existing: ClipMeta) => Partial<ClipMeta>) => void;
   onResetPosition: () => void;
@@ -132,6 +146,36 @@ function getDefaultEffectParams(
   return effect?.parameterSchema ? getDefaultValues(effect.parameterSchema) : undefined;
 }
 
+/** Returns a short provenance label for display in transition selectors. */
+function getTransitionProvenanceLabel(record: TransitionRegistryRecord): string | null {
+  switch (record.provenance) {
+    case 'built-in':
+      return 'Built-in';
+    case 'bundled-extension':
+      return 'Extension';
+    case 'external-catalog':
+      return 'Catalog';
+    case 'db-resource':
+      return 'DB';
+    case 'ai-generated':
+      return 'AI';
+    case 'local-storage-draft':
+      return 'Draft';
+    case 'trusted-loader':
+      return 'Trusted';
+    default:
+      return null;
+  }
+}
+
+/** Returns rendered export routes that are blocked for a transition record. */
+function getTransitionBlockedRoutes(record: TransitionRegistryRecord): string[] {
+  if (!record.renderability?.capabilities) return [];
+  return record.renderability.capabilities
+    .filter((cap) => cap.route !== 'preview' && cap.status === 'blocked')
+    .map((cap) => cap.route);
+}
+
 export function BulkClipPanel(props: BulkClipPanelProps) {
   const {
     clips,
@@ -142,9 +186,12 @@ export function BulkClipPanel(props: BulkClipPanelProps) {
     sharedExit,
     sharedContinuous,
     sharedText,
+    sharedTransition,
     sharedEntranceType,
     sharedExitType,
     sharedContinuousType,
+    sharedTransitionType,
+    sharedTransitionDuration,
     sharedOpacity,
     sharedVolume,
     onChange,
@@ -157,6 +204,26 @@ export function BulkClipPanel(props: BulkClipPanelProps) {
   } = props;
   const effectResources = useEffectResources();
   const [drafts, setDrafts] = useState<BulkDrafts>(() => buildDrafts(props));
+
+  // Transition registry (T12: bulk transition controls)
+  const transitionRegistryContext = useOptionalTransitionRegistryContext();
+  const mergedTransitionSnapshot = useMemo(
+    () => createTransitionSnapshot(transitionRegistryContext?.snapshot),
+    [transitionRegistryContext?.snapshot],
+  );
+  const availableTransitions = useMemo(
+    () => listTransitions(mergedTransitionSnapshot),
+    [mergedTransitionSnapshot],
+  );
+  const resolvedTransitionRecord = useMemo(() => {
+    if (!sharedTransitionType || sharedTransitionType === NO_TRANSITION || sharedTransitionType === NO_EFFECT) return undefined;
+    return resolveTransition(sharedTransitionType, mergedTransitionSnapshot);
+  }, [sharedTransitionType, mergedTransitionSnapshot]);
+  const isTransitionUnresolvable =
+    sharedTransitionType != null &&
+    sharedTransitionType !== NO_TRANSITION &&
+    sharedTransitionType !== NO_EFFECT &&
+    !resolvedTransitionRecord;
 
   useEffect(() => {
     setDrafts(buildDrafts(props));
@@ -468,6 +535,158 @@ export function BulkClipPanel(props: BulkClipPanelProps) {
                     )}
                   </SelectContent>
                 </Select>
+              </div>
+              <div className="space-y-2 md:col-span-2">
+                <FieldLabel>Transition</FieldLabel>
+                <Select
+                  value={sharedTransitionType ?? MIXED_SELECT_VALUE}
+                  onValueChange={(value) => {
+                    if (value === NO_TRANSITION || value === MIXED_SELECT_VALUE) {
+                      onChangeDeep(() => ({ transition: undefined }));
+                      return;
+                    }
+                    const record = resolveTransition(value, mergedTransitionSnapshot);
+                    const defaults = record?.schema
+                      ? materializeTransitionDefaults(record.schema)
+                      : undefined;
+                    onChangeDeep((meta) => ({
+                      transition: {
+                        type: value,
+                        duration: meta.transition?.duration ?? sharedTransitionDuration ?? 0.5,
+                        params: defaults && Object.keys(defaults).length > 0 ? defaults : undefined,
+                      },
+                    }));
+                  }}
+                >
+                  <SelectTrigger><SelectValue placeholder="None" /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value={MIXED_SELECT_VALUE} disabled>Mixed</SelectItem>
+                    <SelectItem value={NO_TRANSITION}>None</SelectItem>
+                    {availableTransitions.map((record) => {
+                      const error = record.status === 'error';
+                      const inactive = record.status === 'inactive';
+                      const provenanceLabel = getTransitionProvenanceLabel(record);
+                      const blocked = getTransitionBlockedRoutes(record);
+                      return (
+                        <SelectItem
+                          key={record.transitionId}
+                          value={record.transitionId}
+                          disabled={error}
+                        >
+                          <span className="flex items-center gap-1.5">
+                            {error && <AlertTriangle className="h-3 w-3 shrink-0 text-destructive" />}
+                            {record.transitionId}
+                            {provenanceLabel && (
+                              <span className="ml-0.5 rounded-sm bg-blue-500/15 px-1 text-[9px] font-medium text-blue-300">
+                                {provenanceLabel}
+                              </span>
+                            )}
+                            {blocked.length > 0 && (
+                              <span className="ml-0.5 rounded-sm bg-amber-500/15 px-1 text-[9px] font-medium text-amber-300">
+                                {blocked.map((r) => r === 'browser-export' ? 'No B' : r === 'worker-export' ? 'No W' : r).join(', ')}
+                              </span>
+                            )}
+                            {inactive && <span className="ml-1 text-[10px] text-muted-foreground">(inactive)</span>}
+                            {error && <span className="ml-1 text-[10px] text-destructive">(invalid)</span>}
+                          </span>
+                        </SelectItem>
+                      );
+                    })}
+                    {isTransitionUnresolvable && sharedTransitionType && (
+                      <>
+                        <div className="my-1 h-px bg-border" />
+                        <SelectItem value={sharedTransitionType} disabled>
+                          <span className="text-muted-foreground">
+                            {sharedTransitionType} (missing)
+                          </span>
+                        </SelectItem>
+                      </>
+                    )}
+                  </SelectContent>
+                </Select>
+
+                {/* Renderability badges */}
+                {resolvedTransitionRecord && (() => {
+                  const blocked = getTransitionBlockedRoutes(resolvedTransitionRecord);
+                  if (blocked.length === 0) return null;
+                  return (
+                    <div className="flex flex-wrap items-center gap-1.5 rounded-md border border-amber-500/30 bg-amber-500/8 px-2 py-1 text-[11px] text-amber-200">
+                      {blocked.includes('browser-export') && (
+                        <span className="inline-flex items-center gap-1"><Globe className="h-3 w-3" />No browser export</span>
+                      )}
+                      {blocked.includes('worker-export') && (
+                        <span className="inline-flex items-center gap-1"><Server className="h-3 w-3" />No worker export</span>
+                      )}
+                    </div>
+                  );
+                })()}
+
+                {/* Unresolvable / missing transition row */}
+                {isTransitionUnresolvable && sharedTransitionType && (
+                  <div className="flex items-center gap-2 rounded-md border border-destructive/30 bg-destructive/5 px-2 py-1.5 text-xs text-destructive">
+                    <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+                    <span>Transition "{sharedTransitionType}" is not available. The extension may have been removed.</span>
+                  </div>
+                )}
+
+                {/* Duration editing */}
+                {sharedTransitionType && sharedTransitionType !== NO_TRANSITION && sharedTransitionType !== NO_EFFECT && sharedTransitionDuration !== null && (
+                  <div className="space-y-1">
+                    <FieldLabel>Duration (seconds)</FieldLabel>
+                    <NumberInput
+                      value={sharedTransitionDuration}
+                      min={0.05}
+                      max={10}
+                      step={0.05}
+                      onChange={(value) => {
+                        if (value !== null) {
+                          onChangeDeep((meta) => ({
+                            transition: {
+                              type: sharedTransitionType!,
+                              duration: value,
+                              params: meta.transition?.params ?? sharedTransition?.params,
+                            },
+                          }));
+                        }
+                      }}
+                    />
+                  </div>
+                )}
+
+                {/* Remove / Reset buttons */}
+                {sharedTransitionType && sharedTransitionType !== NO_TRANSITION && sharedTransitionType !== NO_EFFECT && (
+                  <div className="flex items-center gap-2">
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      className="h-6 gap-1 text-xs text-destructive hover:text-destructive"
+                      onClick={() => onChangeDeep(() => ({ transition: undefined }))}
+                    >
+                      <Trash2 className="h-3 w-3" /> Remove
+                    </Button>
+                    {resolvedTransitionRecord?.schema?.length && (
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        className="h-6 gap-1 text-xs"
+                        onClick={() => {
+                          if (!sharedTransitionType || !resolvedTransitionRecord?.schema) return;
+                          onChangeDeep(() => ({
+                            transition: {
+                              type: sharedTransitionType,
+                              duration: sharedTransitionDuration ?? 0.5,
+                              params: materializeTransitionDefaults(resolvedTransitionRecord.schema),
+                            },
+                          }));
+                        }}
+                      >
+                        <RefreshCw className="h-3 w-3" /> Reset defaults
+                      </Button>
+                    )}
+                  </div>
+                )}
               </div>
             </div>
           </TabsContent>
