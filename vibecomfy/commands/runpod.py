@@ -81,6 +81,13 @@ def _cmd_runpod_corpus_matrix(args: argparse.Namespace) -> int:
 
 
 def _cmd_runpod_prepare_comfy(args: argparse.Namespace) -> int:
+    try:
+        runpod_setup.link_vibecomfy_custom_node(
+            custom_nodes=args.custom_nodes,
+            dry_run=args.dry_run,
+        )
+    except FileExistsError as exc:
+        print(f"VibeComfy custom node link skipped: {exc}")
     if args.profile == "baseline":
         if args.install_python_deps:
             runpod_setup.install_python_deps(dry_run=args.dry_run)
@@ -110,6 +117,30 @@ def _cmd_runpod_prepare_comfy(args: argparse.Namespace) -> int:
         print("ltx profile staged LTX models. ResAdapter stays parked so SD1.5 and LTX can share one ComfyUI process.")
         return 0
     raise ValueError(f"unknown profile: {args.profile}")
+
+
+def _cmd_runpod_install_nodes(args: argparse.Namespace) -> int:
+    try:
+        linked = runpod_setup.link_vibecomfy_custom_node(
+            custom_nodes=args.custom_nodes,
+            dry_run=args.dry_run,
+        )
+        if linked.changed:
+            action = "would link" if args.dry_run else "linked"
+            print(f"{action} VibeComfy custom node: {linked.target} -> {linked.source}")
+    except FileExistsError as exc:
+        print(f"VibeComfy custom node link skipped: {exc}")
+    installed = runpod_setup.install_node_packs(
+        custom_nodes=args.custom_nodes,
+        lockfile=args.lockfile,
+        node_packs=args.node_pack or runpod_setup.LTX_NODE_PACKS,
+        install_requirements=not args.no_requirements,
+        dry_run=args.dry_run,
+    )
+    for item in installed:
+        action = "would install" if args.dry_run else ("installed" if item.changed else "verified")
+        print(f"{action} {item.name} @ {item.commit}: {item.path}")
+    return 0
 
 
 def register(subparsers) -> None:
@@ -146,3 +177,16 @@ def register(subparsers) -> None:
     prepare.add_argument("--install-python-deps", action="store_true")
     prepare.add_argument("--dry-run", action="store_true")
     prepare.set_defaults(func=_cmd_runpod_prepare_comfy)
+
+    install_nodes = runpod_sub.add_parser("install-nodes")
+    install_nodes.add_argument("--custom-nodes", type=Path, default=Path("/workspace/vibecomfy/custom_nodes"))
+    install_nodes.add_argument("--lockfile", type=Path, default=Path("custom_nodes.lock"))
+    install_nodes.add_argument(
+        "--node-pack",
+        action="append",
+        default=None,
+        help="Node pack from custom_nodes.lock to install. Repeat to override/extend the default LTX set.",
+    )
+    install_nodes.add_argument("--no-requirements", action="store_true")
+    install_nodes.add_argument("--dry-run", action="store_true")
+    install_nodes.set_defaults(func=_cmd_runpod_install_nodes)

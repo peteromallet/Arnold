@@ -62,3 +62,44 @@ def test_unpark_node_packs_moves_resadapter_back_to_custom_nodes(tmp_path: Path)
     assert result[0].changed is True
     assert not pack.exists()
     assert (custom_nodes / "ComfyUI-ResAdapter" / "__init__.py").exists()
+
+
+def test_link_vibecomfy_custom_node_links_package_source(tmp_path: Path) -> None:
+    custom_nodes = tmp_path / "custom_nodes"
+    package_root = tmp_path / "repo"
+    source = package_root / "vibecomfy" / "comfy_nodes"
+    source.mkdir(parents=True)
+
+    result = runpod_setup.link_vibecomfy_custom_node(
+        custom_nodes=custom_nodes,
+        package_root=package_root,
+    )
+
+    assert result.changed is True
+    assert result.target == custom_nodes / "vibecomfy"
+    assert result.target.resolve() == source.resolve()
+
+
+def test_install_node_packs_reads_lockfile_and_dry_runs(tmp_path: Path, capsys) -> None:
+    lockfile = tmp_path / "custom_nodes.lock"
+    lockfile.write_text(
+        """
+[nodepacks.ComfyUI-LTXVideo]
+url = "https://example.test/ltx.git"
+git_commit_sha = "abc123"
+""",
+        encoding="utf-8",
+    )
+
+    result = runpod_setup.install_node_packs(
+        custom_nodes=tmp_path / "custom_nodes",
+        lockfile=lockfile,
+        node_packs=("ComfyUI-LTXVideo",),
+        dry_run=True,
+    )
+
+    assert result[0].name == "ComfyUI-LTXVideo"
+    assert result[0].commit == "abc123"
+    output = capsys.readouterr().out
+    assert "git clone https://example.test/ltx.git" in output
+    assert "git -C" in output
