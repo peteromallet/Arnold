@@ -393,4 +393,137 @@ describe('ClipAction', () => {
       numBuckets: 40,
     }));
   });
+  describe('source-map stale badges', () => {
+    const props = buildProps();
+
+    it('renders source-map stale badge when isSourceMapStale is true', () => {
+      mockUseWaveformData();
+      render(<ClipAction {...props} isSourceMapStale={true} />);
+      const staleBadge = document.querySelector('[data-source-map-stale="true"]');
+      expect(staleBadge).toBeTruthy();
+    });
+
+    it('does not render stale badge when isSourceMapStale is false', () => {
+      mockUseWaveformData();
+      render(<ClipAction {...props} isSourceMapStale={false} />);
+      expect(document.querySelector('[data-source-map-stale="true"]')).toBeFalsy();
+    });
+
+    it('calls onNavigateToSource when stale badge is clicked', () => {
+      mockUseWaveformData();
+      const onNavigateToSource = vi.fn();
+      render(
+        <ClipAction
+          {...props}
+          isSourceMapStale={true}
+          onNavigateToSource={onNavigateToSource}
+        />,
+      );
+      const staleBadge = document.querySelector('[data-source-map-stale="true"]');
+      fireEvent.click(staleBadge!);
+      expect(onNavigateToSource).toHaveBeenCalledWith(props.action.id);
+    });
+  });
+
+
+  describe('source-map entry indicator (non-stale)', () => {
+    it('renders source-map entry badge (MapPin) when hasSourceMapEntry is true and not stale', () => {
+      mockUseWaveformData();
+      const props = buildProps();
+      render(<ClipAction {...props} hasSourceMapEntry={true} isSourceMapStale={false} />);
+      const entryBadge = document.querySelector('[data-source-map-entry="true"]');
+      expect(entryBadge).toBeTruthy();
+    });
+
+    it('does not render entry badge when hasSourceMapEntry is false', () => {
+      mockUseWaveformData();
+      const props = buildProps();
+      render(<ClipAction {...props} hasSourceMapEntry={false} isSourceMapStale={false} />);
+      expect(document.querySelector('[data-source-map-entry="true"]')).toBeFalsy();
+    });
+
+    it('click on non-stale source-map badge calls onNavigateToSource', () => {
+      mockUseWaveformData();
+      const onNavigateToSource = vi.fn();
+      const props = buildProps();
+      render(
+        <ClipAction
+          {...props}
+          hasSourceMapEntry={true}
+          isSourceMapStale={false}
+          onNavigateToSource={onNavigateToSource}
+        />,
+      );
+      const entryBadge = document.querySelector('[data-source-map-entry="true"]');
+      fireEvent.click(entryBadge!);
+      expect(onNavigateToSource).toHaveBeenCalledWith(props.action.id);
+    });
+
+    it('renders stale badge (not entry badge) when both hasSourceMapEntry and isSourceMapStale are true', () => {
+      mockUseWaveformData();
+      const props = buildProps();
+      render(
+        <ClipAction
+          {...props}
+          hasSourceMapEntry={true}
+          isSourceMapStale={true}
+        />,
+      );
+      // Stale badge takes precedence
+      expect(document.querySelector('[data-source-map-stale="true"]')).toBeTruthy();
+      // Entry badge (non-stale) should not render
+      expect(document.querySelector('[data-source-map-entry="true"]')).toBeFalsy();
+    });
+
+    it('does not render any source-map badge when neither prop is true', () => {
+      mockUseWaveformData();
+      const props = buildProps();
+      render(
+        <ClipAction
+          {...props}
+          hasSourceMapEntry={false}
+          isSourceMapStale={false}
+        />,
+      );
+      expect(document.querySelector('[data-source-map-stale="true"]')).toBeFalsy();
+      expect(document.querySelector('[data-source-map-entry="true"]')).toBeFalsy();
+    });
+
+    it('stale badge has aria-label for accessibility', () => {
+      mockUseWaveformData();
+      const props = buildProps();
+      render(<ClipAction {...props} isSourceMapStale={true} />);
+      const badge = document.querySelector('[data-source-map-stale="true"]');
+      expect(badge!.getAttribute('aria-label')).toBe('Stale source map — click to navigate to source');
+    });
+
+    it('entry badge has aria-label for accessibility', () => {
+      mockUseWaveformData();
+      const props = buildProps();
+      render(<ClipAction {...props} hasSourceMapEntry={true} isSourceMapStale={false} />);
+      const badge = document.querySelector('[data-source-map-entry="true"]');
+      expect(badge!.getAttribute('aria-label')).toBe('Source map — click to navigate to source');
+    });
+
+    it('source-map stale badge stops click propagation', () => {
+      mockUseWaveformData();
+      const onSelect = vi.fn();
+      const props = buildProps({ onSelect, isSelected: false });
+      render(<ClipAction {...props} isSourceMapStale={true} />);
+      const badge = document.querySelector('[data-source-map-stale="true"]');
+      fireEvent.click(badge!);
+      // Click on badge should NOT trigger onSelect
+      expect(onSelect).not.toHaveBeenCalled();
+    });
+
+    it('source-map entry badge stops click propagation', () => {
+      mockUseWaveformData();
+      const onSelect = vi.fn();
+      const props = buildProps({ onSelect, isSelected: false });
+      render(<ClipAction {...props} hasSourceMapEntry={true} isSourceMapStale={false} />);
+      const badge = document.querySelector('[data-source-map-entry="true"]');
+      fireEvent.click(badge!);
+      expect(onSelect).not.toHaveBeenCalled();
+    });
+  });
 });

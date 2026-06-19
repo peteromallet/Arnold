@@ -49,4 +49,13 @@ export const VIDEO_EDITOR_THEME_VARS = {
   '--video-editor-stage-fg': 'rgb(255 255 255)',
   '--video-editor-stage-fg-muted': 'rgb(255 255 255 / 0.8)',
   '--video-editor-stage-fg-subtle': 'rgb(255 255 255 / 0.5)',
+  // ── Ghost preview overlay tokens ────────────────────────────────────
+  '--video-editor-ghost-added-border': 'rgb(52 211 153 / 0.5)',
+  '--video-editor-ghost-added-bg': 'rgb(52 211 153 / 0.1)',
+  '--video-editor-ghost-removed-border': 'rgb(248 113 113 / 0.5)',
+  '--video-editor-ghost-removed-bg': 'rgb(248 113 113 / 0.1)',
+  '--video-editor-ghost-modified-border': 'rgb(56 189 248 / 0.5)',
+  '--video-editor-ghost-modified-bg': 'rgb(56 189 248 / 0.1)',
+  '--video-editor-ghost-reordered-border': 'rgb(251 191 36 / 0.5)',
+  '--video-editor-ghost-reordered-bg': 'rgb(251 191 36 / 0.1)',
 } as CSSProperties;

@@ -59,3 +59,21 @@ export interface TimelineCanvasHandle {
   pause: () => void;
   setScrollLeft: (value: number) => void;
 }
+
+/** A ghost preview entry for rendering proposal previews on the timeline.
+ *  Uses distinct data-testid attributes and never collides with canonical
+ *  data-action-id (which belongs to real rows/actions). */
+export interface TimelineGhostEntry {
+  /** Stable ghost identifier (not a clip ID — avoids data-action-id collisions). */
+  id: string;
+  /** Track ID this ghost overlay belongs to. */
+  trackId: string;
+  /** Start time in seconds (canonical transform math). */
+  start: number;
+  /** End time in seconds (canonical transform math). */
+  end: number;
+  /** The kind of diff change being previewed. */
+  kind: 'added' | 'removed' | 'modified' | 'reordered';
+  /** Optional clip type label for diagnostics / tooltip. */
+  clipType?: string;
+}

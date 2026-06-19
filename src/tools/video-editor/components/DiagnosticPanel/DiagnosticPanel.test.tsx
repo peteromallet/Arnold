@@ -537,3 +537,220 @@ describe('DiagnosticPanel', () => {
     });
   });
 });
+
+  describe('source-map stale indicators', () => {
+    it('renders stale source-map badge when diagnostic clipId is in sourceMapStaleTargetIds', () => {
+      const collection = createDiagnosticCollection();
+      collection.publish({
+        id: 'sm-diag-1',
+        severity: 'warning',
+        code: 'source-map/stale-entry',
+        message: 'Source map entry is stale for this clip',
+        extensionId: 'com.example.sm',
+        contributionId: 'sm.contrib',
+        detail: { clipId: 'clip-stale-1' },
+      });
+
+      render(
+        <DiagnosticPanel
+          diagnosticCollection={collection}
+          sourceMapStaleTargetIds={new Set(['clip-stale-1'])}
+        />,
+      );
+
+      fireEvent.click(screen.getByText('com.example.sm'));
+      fireEvent.click(screen.getByText('sm.contrib'));
+
+      expect(screen.getByText('Source map stale')).toBeDefined();
+      const badge = document.querySelector('[data-video-editor-diagnostic-source-map-stale-badge="true"]');
+      expect(badge).toBeTruthy();
+      expect(badge!.textContent).toBe('Source map stale');
+    });
+
+    it('does not render stale badge when clipId is not in sourceMapStaleTargetIds', () => {
+      const collection = createDiagnosticCollection();
+      collection.publish({
+        id: 'sm-diag-2',
+        severity: 'warning',
+        code: 'source-map/stale-entry',
+        message: 'Source map entry is stale for this clip',
+        extensionId: 'com.example.sm',
+        contributionId: 'sm.contrib',
+        detail: { clipId: 'clip-fresh-1' },
+      });
+
+      render(
+        <DiagnosticPanel
+          diagnosticCollection={collection}
+          sourceMapStaleTargetIds={new Set(['clip-something-else'])}
+        />,
+      );
+
+      fireEvent.click(screen.getByText('com.example.sm'));
+      fireEvent.click(screen.getByText('sm.contrib'));
+
+      expect(screen.queryByText('Source map stale')).toBeNull();
+      const badge = document.querySelector('[data-video-editor-diagnostic-source-map-stale-badge="true"]');
+      expect(badge).toBeNull();
+    });
+
+    it('does not render stale badge when sourceMapStaleTargetIds is not provided', () => {
+      const collection = createDiagnosticCollection();
+      collection.publish({
+        id: 'sm-diag-3',
+        severity: 'warning',
+        code: 'source-map/stale-entry',
+        message: 'Source map entry is stale for this clip',
+        extensionId: 'com.example.sm',
+        contributionId: 'sm.contrib',
+        detail: { clipId: 'clip-stale-3' },
+      });
+
+      render(<DiagnosticPanel diagnosticCollection={collection} />);
+
+      fireEvent.click(screen.getByText('com.example.sm'));
+      fireEvent.click(screen.getByText('sm.contrib'));
+
+      expect(screen.queryByText('Source map stale')).toBeNull();
+    });
+
+    it('renders stale badges for multiple diagnostics with mixed stale states', () => {
+      const collection = createDiagnosticCollection();
+      collection.publish({
+        id: 'sm-multi-1',
+        severity: 'warning',
+        code: 'source-map/stale-entry',
+        message: 'First stale diagnostic',
+        extensionId: 'com.example.multi',
+        contributionId: 'multi.contrib',
+        detail: { clipId: 'clip-a' },
+      });
+      collection.publish({
+        id: 'sm-multi-2',
+        severity: 'error',
+        code: 'source-map/stale-entry',
+        message: 'Second stale diagnostic',
+        extensionId: 'com.example.multi',
+        contributionId: 'multi.contrib',
+        detail: { clipId: 'clip-b' },
+      });
+      collection.publish({
+        id: 'sm-multi-3',
+        severity: 'info',
+        code: 'source-map/ok',
+        message: 'Third non-stale diagnostic',
+        extensionId: 'com.example.multi',
+        contributionId: 'multi.contrib',
+        detail: { clipId: 'clip-c' },
+      });
+
+      render(
+        <DiagnosticPanel
+          diagnosticCollection={collection}
+          sourceMapStaleTargetIds={new Set(['clip-a', 'clip-b'])}
+        />,
+      );
+
+      fireEvent.click(screen.getByText('com.example.multi'));
+      fireEvent.click(screen.getByText('multi.contrib'));
+
+      const staleBadges = document.querySelectorAll('[data-video-editor-diagnostic-source-map-stale-badge="true"]');
+      expect(staleBadges).toHaveLength(2);
+
+      expect(screen.getByText('First stale diagnostic')).toBeDefined();
+      expect(screen.getByText('Second stale diagnostic')).toBeDefined();
+      expect(screen.getByText('Third non-stale diagnostic')).toBeDefined();
+    });
+
+    it('sets data-video-editor-diagnostic-source-map-stale attribute on diagnostic items', () => {
+      const collection = createDiagnosticCollection();
+      collection.publish({
+        id: 'sm-attr-1',
+        severity: 'warning',
+        code: 'source-map/stale-entry',
+        message: 'Stale entry diagnostic',
+        extensionId: 'com.example.attr',
+        contributionId: 'attr.contrib',
+        detail: { clipId: 'clip-stale-attr' },
+      });
+      collection.publish({
+        id: 'sm-attr-2',
+        severity: 'info',
+        code: 'source-map/ok',
+        message: 'Fresh entry diagnostic',
+        extensionId: 'com.example.attr',
+        contributionId: 'attr.contrib',
+        detail: { clipId: 'clip-fresh-attr' },
+      });
+
+      render(
+        <DiagnosticPanel
+          diagnosticCollection={collection}
+          sourceMapStaleTargetIds={new Set(['clip-stale-attr'])}
+        />,
+      );
+
+      fireEvent.click(screen.getByText('com.example.attr'));
+      fireEvent.click(screen.getByText('attr.contrib'));
+
+      const items = document.querySelectorAll('[data-video-editor-diagnostic-item]');
+      expect(items).toHaveLength(2);
+
+      const staleItem = document.querySelector('[data-video-editor-diagnostic-source-map-stale="true"]');
+      const freshItem = document.querySelector('[data-video-editor-diagnostic-source-map-stale="false"]');
+
+      expect(staleItem).toBeTruthy();
+      expect(freshItem).toBeTruthy();
+      expect(staleItem!.textContent).toContain('Stale entry diagnostic');
+      expect(freshItem!.textContent).toContain('Fresh entry diagnostic');
+    });
+
+    it('does not render stale badge when diagnostic has no detail', () => {
+      const collection = createDiagnosticCollection();
+      collection.publish({
+        id: 'sm-no-detail',
+        severity: 'warning',
+        code: 'source-map/generic',
+        message: 'Generic diagnostic without detail',
+        extensionId: 'com.example.nodetail',
+        contributionId: 'nodetail.contrib',
+      });
+
+      render(
+        <DiagnosticPanel
+          diagnosticCollection={collection}
+          sourceMapStaleTargetIds={new Set(['any-clip'])}
+        />,
+      );
+
+      fireEvent.click(screen.getByText('com.example.nodetail'));
+      fireEvent.click(screen.getByText('nodetail.contrib'));
+
+      expect(screen.queryByText('Source map stale')).toBeNull();
+    });
+
+    it('does not render stale badge when detail has no clipId', () => {
+      const collection = createDiagnosticCollection();
+      collection.publish({
+        id: 'sm-no-clipid',
+        severity: 'warning',
+        code: 'source-map/other',
+        message: 'Diagnostic with non-clipId detail',
+        extensionId: 'com.example.noclipid',
+        contributionId: 'noclipid.contrib',
+        detail: { otherKey: 'otherValue' },
+      });
+
+      render(
+        <DiagnosticPanel
+          diagnosticCollection={collection}
+          sourceMapStaleTargetIds={new Set(['any-clip'])}
+        />,
+      );
+
+      fireEvent.click(screen.getByText('com.example.noclipid'));
+      fireEvent.click(screen.getByText('noclipid.contrib'));
+
+      expect(screen.queryByText('Source map stale')).toBeNull();
+    });
+  });

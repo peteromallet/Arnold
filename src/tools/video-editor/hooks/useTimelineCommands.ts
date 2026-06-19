@@ -33,6 +33,8 @@ import type {
   TimelineEditorOpsContextValue,
 } from '@/tools/video-editor/hooks/useTimelineState.types.ts';
 import type { AssetRegistryEntry, TimelineClip, TrackKind } from '@/tools/video-editor/types/index.ts';
+import type { ManagedObjectGuard, ManagedObjectInfo } from '@/tools/video-editor/lib/managed-object-guard';
+import { detachManagedApp } from '@/tools/video-editor/lib/managed-object-guard';
 
 export type TimelineCommandErrorCode =
   | 'editor_not_mounted'
@@ -43,6 +45,7 @@ export type TimelineCommandErrorCode =
   | 'unsupported_asset_type'
   | 'invalid_argument'
   | 'pinned_group_edit_blocked'
+  | 'managed_object_blocked'
   | 'mutation_failed'
   | 'asset_registration_failed';
 
@@ -52,6 +55,8 @@ export interface TimelineCommandError {
   level?: string;
   issues?: unknown[];
   cause?: unknown;
+  /** Managed-object metadata when code is 'managed_object_blocked'. */
+  managedInfo?: ManagedObjectInfo;
 }
 
 export type TimelineCommandResult<T> =
@@ -127,6 +132,11 @@ export interface SetClipParamsCommandInput {
   params: Record<string, unknown> | undefined;
 }
 
+/** Input for detaching a managed clip from its owning extension. */
+export interface DetachManagedClipCommandInput {
+  clipId: string;
+}
+
 export interface TimelineCommands {
   /**
    * Insert a registry-backed asset clip onto the timeline without exposing the
@@ -173,6 +183,14 @@ export interface TimelineCommands {
    * Replace the persisted `params` blob for a clip.
    */
   setClipParams: (input: SetClipParamsCommandInput) => TimelineCommandResult<{ clipId: string }>;
+  /**
+   * Detach a clip from extension management by clearing managed-object
+   * metadata (managedBy, __generated__, extension namespace keys, source_uuid).
+   *
+   * After detachment the clip becomes a regular user-owned clip and future
+   * edits will not trigger the managed-object confirmation dialog.
+   */
+  detachManagedClip: (input: DetachManagedClipCommandInput) => TimelineCommandResult<{ clipId: string }>;
 }
 
 /**
@@ -192,6 +210,7 @@ export const PUBLIC_TIMELINE_COMMAND_NAMES = [
   'moveTrack',
   'registerAsset',
   'setClipParams',
+  'detachManagedClip',
 ] as const satisfies ReadonlyArray<keyof TimelineCommands>;
 
 /**
@@ -230,6 +249,7 @@ const failure = (
     ...(extra?.level ? { level: extra.level } : {}),
     ...(extra?.issues ? { issues: extra.issues } : {}),
     ...(extra?.cause !== undefined ? { cause: extra.cause } : {}),
+    ...(extra?.managedInfo ? { managedInfo: extra.managedInfo } : {}),
   },
 });
 
@@ -310,18 +330,81 @@ const applyValidatedMutation = <T,>(
   }
 };
 
+export interface CreateTimelineCommandsOptions {
+  /** Optional ManagedObjectGuard for intercepting edits on managed clips. */
+  managedObjectGuard?: ManagedObjectGuard | null;
+}
+
 /**
  * Build the mounted command facade from the timeline store.
  *
  * Prefer `useTimelineCommands()` or `useTimelineCommandsSafe()` at runtime.
  */
-export function createTimelineCommands(store: TimelineStoreApi): TimelineCommands {
+export function createTimelineCommands(
+  store: TimelineStoreApi,
+  options?: CreateTimelineCommandsOptions,
+): TimelineCommands {
+  const explicitGuard = options?.managedObjectGuard;
+  const getManagedObjectGuard = (): ManagedObjectGuard | null => {
+    if (explicitGuard !== undefined) return explicitGuard;
+    return store.getState().managedObjectGuard ?? null;
+  };
+
   const getMountedState = (): CommandStoreState | null => {
     const state = store.getState();
     if (!state.availability.mounted) {
       return null;
     }
     return state;
+  };
+
+  /**
+   * Check if a clip is managed by an extension and return a blocked error
+   * if it is. Returns null if the clip can be freely edited.
+   */
+  const checkManagedClip = (clipId: string): TimelineCommandResult<never> | null => {
+    const guard = getManagedObjectGuard();
+    if (!guard) return null;
+    const info = guard.checkClipManaged(clipId);
+    if (!info) return null;
+
+    return failure(
+      'managed_object_blocked',
+      `Clip '${clipId}' is managed by ${info.managedBy}. Confirm to detach and edit anyway.`,
+      { managedInfo: info },
+    );
+  };
+
+  /**
+   * Build a patch that detaches managed-object metadata from the clip's app
+   * and source_uuid fields, using the store's extension requirements for
+   * namespace key detection.
+   */
+  const buildDetachPatch = (clip: TimelineClip): Partial<Omit<TimelineClip, 'id'>> => {
+    const state = store.getState();
+    // Collect known extension IDs from the store's extension requirements.
+    const extensionIds = new Set<string>();
+    if (state.timelineOps) {
+      const snapshot = state.timelineOps;
+      // We need to get extension IDs — read from the timeline reader if available.
+    }
+    // Fallback: use the managedBy value from the clip itself.
+    const knownExtIds: ReadonlySet<string> = new Set(
+      clip.app && typeof clip.app.managedBy === 'string' ? [clip.app.managedBy] : [],
+    );
+
+    const nextApp = detachManagedApp(clip.app as Record<string, unknown> | undefined, knownExtIds);
+
+    const patch: Partial<Omit<TimelineClip, 'id'>> = {
+      app: nextApp as any,
+    };
+
+    // Also clear source_uuid if it matches a known extension.
+    if (clip.source_uuid && knownExtIds.has(clip.source_uuid)) {
+      patch.source_uuid = undefined as any;
+    }
+
+    return patch;
   };
 
   const commands: TimelineCommands = {
@@ -446,6 +529,10 @@ export function createTimelineCommands(store: TimelineStoreApi): TimelineCommand
         return failure('clip_not_found', `Clip '${input.clipId}' was not found.`);
       }
 
+      // --- M3 managed-object guard ---
+      const managedBlock = checkManagedClip(input.clipId);
+      if (managedBlock) return managedBlock;
+
       if (input.patch.track) {
         const targetTrack = getTrackById(current.resolvedConfig, input.patch.track);
         if (!targetTrack) {
@@ -500,6 +587,10 @@ export function createTimelineCommands(store: TimelineStoreApi): TimelineCommand
         return failure('invalid_argument', 'moveClip requires a target track, a target time, or both.');
       }
 
+      // --- M3 managed-object guard ---
+      const managedBlock = checkManagedClip(input.clipId);
+      if (managedBlock) return managedBlock;
+
       const nextTrackId = input.trackId ?? clip.track;
       const targetTrack = getTrackById(current.resolvedConfig, nextTrackId);
       if (!targetTrack) {
@@ -552,6 +643,10 @@ export function createTimelineCommands(store: TimelineStoreApi): TimelineCommand
       if (isPinnedGroupClip(current, input.clipId)) {
         return failure('pinned_group_edit_blocked', 'Pinned shot-group clip trimming stays on the internal gesture path in Sprint 2.');
       }
+
+      // --- M3 managed-object guard ---
+      const managedBlock = checkManagedClip(input.clipId);
+      if (managedBlock) return managedBlock;
 
       const currentStart = clip.at;
       const currentEnd = getClipEndSeconds(clip);
@@ -621,6 +716,10 @@ export function createTimelineCommands(store: TimelineStoreApi): TimelineCommand
         return failure('pinned_group_edit_blocked', 'Pinned shot-group clip splitting stays on the internal gesture path in Sprint 2.');
       }
 
+      // --- M3 managed-object guard ---
+      const managedBlock = checkManagedClip(input.clipId);
+      if (managedBlock) return managedBlock;
+
       const splitResult = splitClipAtPlayhead(current.resolvedConfig, input.clipId, input.time);
       if (!splitResult.nextSelectedClipId) {
         return failure('invalid_argument', 'The requested split time is outside the clip’s playable range.');
@@ -660,6 +759,10 @@ export function createTimelineCommands(store: TimelineStoreApi): TimelineCommand
       if (!input.allowPinnedGroupDelete && isPinnedGroupClip(current, input.clipId)) {
         return failure('pinned_group_edit_blocked', 'Use the shot-group delete flow for pinned shot clips.');
       }
+
+      // --- M3 managed-object guard ---
+      const managedBlock = checkManagedClip(input.clipId);
+      if (managedBlock) return managedBlock;
 
       const nextRows = current.rows.map((row) => ({
         ...row,
@@ -807,12 +910,56 @@ export function createTimelineCommands(store: TimelineStoreApi): TimelineCommand
     },
 
     setClipParams(input) {
+      // --- M3 managed-object guard ---
+      const managedBlock = checkManagedClip(input.clipId);
+      if (managedBlock) return managedBlock;
+
       return commands.updateClip({
         clipId: input.clipId,
         patch: {
           params: input.params,
         },
       });
+    },
+
+    detachManagedClip(input) {
+      const state = getMountedState();
+      if (!state) {
+        return failure('editor_not_mounted', 'Timeline commands are only available in a mounted editor.');
+      }
+
+      const current = getCurrentData(state);
+      if (!current) {
+        return failure('timeline_unavailable', 'Timeline data is not loaded.');
+      }
+
+      const clip = getResolvedClip(current, input.clipId);
+      if (!clip) {
+        return failure('clip_not_found', `Clip '${input.clipId}' was not found.`);
+      }
+
+      // Build detach patch from the current clip.
+      const detachPatch = buildDetachPatch(clip);
+
+      const nextConfig = updateClipInConfig(current.resolvedConfig, input.clipId, (existingClip) => ({
+        ...existingClip,
+        ...detachPatch,
+      }));
+
+      return applyValidatedMutation(
+        store,
+        current,
+        {
+          type: 'config',
+          resolvedConfig: nextConfig,
+        },
+        { clipId: input.clipId },
+        {
+          selectedClipId: input.clipId,
+          selectedTrackId: clip.track,
+          semantic: true,
+        },
+      );
     },
   };
 

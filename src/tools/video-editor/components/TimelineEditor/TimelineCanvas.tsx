@@ -28,6 +28,8 @@ import {
   TimelineRulerAndGrid,
 } from '@/tools/video-editor/components/TimelineEditor/TimelineRulerAndGrid.tsx';
 import { TrackListRenderer } from '@/tools/video-editor/components/TimelineEditor/TrackListRenderer.tsx';
+import { TimelineGhostLayer } from '@/tools/video-editor/components/TimelineEditor/TimelineGhostLayer.tsx';
+import type { TimelineGhostEntry } from '@/tools/video-editor/types/timeline-canvas.ts';
 import { useClipResizeGesture } from '@/tools/video-editor/hooks/useClipResizeGesture.ts';
 import type { ShotGroup } from '@/tools/video-editor/hooks/useShotGroups.ts';
 import { useTimelineMutableAdapters } from '@/tools/video-editor/hooks/timelineStore.ts';
@@ -48,6 +50,8 @@ import { useRenderBudget } from '@/shared/dev/useRenderBudget.ts';
 import {
   TIMELINE_CENTER_CLIP_EVENT,
   type TimelineCenterClipEventDetail,
+  SOURCE_NAVIGATE_TO_TIMELINE_EVENT,
+  type SourceNavigateToTimelineDetail,
 } from '@/tools/video-editor/lib/timeline-viewport-events.ts';
 import { VIDEO_EDITOR_THEME_VARS } from '@/tools/video-editor/lib/themeTokens.ts';
 import type { TrackDefinition } from '@/tools/video-editor/types/index.ts';
@@ -125,6 +129,10 @@ export interface TimelineCanvasProps {
   unusedTrackCount?: number;
   onClearUnusedTracks?: () => void;
   newTrackDropLabel?: string | null;
+  /** Ghost preview entries for rendering proposal previews over the timeline. */
+  ghostEntries?: readonly TimelineGhostEntry[];
+  /** Set of clip IDs that have stale source-map entries (for stale badge rendering). */
+  sourceMapStaleClipIds?: ReadonlySet<string>;
 }
 
 const clamp = (value: number, min: number, max: number): number => Math.min(max, Math.max(min, value));
@@ -180,6 +188,8 @@ export const TimelineCanvas = forwardRef<TimelineCanvasHandle, TimelineCanvasPro
   unusedTrackCount = 0,
   onClearUnusedTracks,
   newTrackDropLabel,
+  ghostEntries,
+  sourceMapStaleClipIds,
 }: TimelineCanvasProps, ref) {
   useRenderBudget('TimelineCanvas', 3);
   const { dataRef } = useTimelineMutableAdapters();
@@ -365,6 +375,27 @@ export const TimelineCanvas = forwardRef<TimelineCanvasHandle, TimelineCanvasPro
     return () => window.removeEventListener(TIMELINE_CENTER_CLIP_EVENT, handleCenterClip);
   }, [scheduleCenterClipInViewport]);
 
+  // ── Source → Timeline navigation ───────────────────────────────────
+  useEffect(() => {
+    const handleSourceNavigate = (event: Event) => {
+      const detail = (event as CustomEvent<SourceNavigateToTimelineDetail>).detail;
+      if (!detail?.extensionId) return;
+
+      // If a specific target is requested, center on it
+      if (detail.targetId) {
+        scheduleCenterClipInViewport(detail.targetId);
+      }
+      // Dispatch event for source-panel listeners
+      window.dispatchEvent(
+        new CustomEvent('reigh:source-navigate-to-timeline-handled', {
+          detail: { ...detail, handled: true },
+        }),
+      );
+    };
+    window.addEventListener(SOURCE_NAVIGATE_TO_TIMELINE_EVENT, handleSourceNavigate);
+    return () => window.removeEventListener(SOURCE_NAVIGATE_TO_TIMELINE_EVENT, handleSourceNavigate);
+  }, [scheduleCenterClipInViewport]);
+
   useEffect(() => {
     const pendingClipId = pendingCenterClipIdRef.current;
     if (pendingClipId) {
@@ -516,6 +547,13 @@ export const TimelineCanvas = forwardRef<TimelineCanvasHandle, TimelineCanvasPro
             onUpdateToLatestVideo={onShotGroupUpdateToLatestVideo}
             onUnpinGroup={onShotGroupUnpin}
             onDeleteShot={onShotGroupDelete}
+          />
+          <TimelineGhostLayer
+            ghosts={ghostEntries ?? []}
+            rows={rows}
+            rowHeight={rowHeight}
+            startLeft={startLeft}
+            pixelsPerSecond={pixelsPerSecond}
           />
           <TrackListRenderer
             rows={rows}

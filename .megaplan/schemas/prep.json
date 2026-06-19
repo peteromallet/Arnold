@@ -95,13 +95,37 @@
       }
     },
     "primary_criterion": {
-      "type": [
-        "string",
-        "null"
-      ]
+      "type": "string"
     },
     "suggested_approach": {
       "type": "string"
+    },
+    "open_questions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "severity": {
+            "type": "string",
+            "enum": [
+              "blocking",
+              "assume_and_proceed"
+            ]
+          },
+          "question": {
+            "type": "string"
+          },
+          "assumption": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "severity",
+          "question",
+          "assumption"
+        ],
+        "additionalProperties": false
+      }
     }
   },
   "required": [
@@ -111,8 +135,9 @@
     "relevant_code",
     "test_expectations",
     "constraints",
+    "suggested_approach",
     "primary_criterion",
-    "suggested_approach"
+    "open_questions"
   ],
   "additionalProperties": false
 }

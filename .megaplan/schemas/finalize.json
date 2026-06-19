@@ -27,6 +27,16 @@
               "blocked"
             ]
           },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "code",
+              "audit",
+              "test",
+              "docs",
+              "research"
+            ]
+          },
           "executor_notes": {
             "type": "string"
           },
@@ -57,11 +67,16 @@
           "reviewer_verdict": {
             "type": "string"
           },
+          "complexity": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 5
+          },
+          "complexity_justification": {
+            "type": "string"
+          },
           "stance": {
-            "type": [
-              "object",
-              "null"
-            ],
+            "type": "object",
             "properties": {
               "challenge_engaged": {
                 "type": "string"
@@ -81,10 +96,7 @@
             "additionalProperties": false
           },
           "stop_signal": {
-            "type": [
-              "object",
-              "null"
-            ],
+            "type": "object",
             "properties": {
               "requested": {
                 "type": "boolean"
@@ -105,12 +117,15 @@
           "description",
           "depends_on",
           "status",
+          "complexity",
+          "complexity_justification",
           "executor_notes",
           "files_changed",
           "commands_run",
-          "auto_attributed_files",
           "evidence_files",
           "reviewer_verdict",
+          "kind",
+          "auto_attributed_files",
           "stance",
           "stop_signal"
         ],
@@ -173,25 +188,16 @@
             ]
           },
           "blocks_task_ids": {
-            "type": [
-              "array",
-              "null"
-            ],
+            "type": "array",
             "items": {
               "type": "string"
             }
           },
           "rationale": {
-            "type": [
-              "string",
-              "null"
-            ]
+            "type": "string"
           },
           "requires_human_only_reason": {
-            "type": [
-              "string",
-              "null"
-            ]
+            "type": "string"
           }
         },
         "required": [
@@ -271,6 +277,12 @@
     },
     "baseline_test_note": {
       "type": "string"
+    },
+    "suite_runs_ndjson_path": {
+      "type": [
+        "string",
+        "null"
+      ]
     }
   },
   "required": [
@@ -282,7 +294,8 @@
     "validation",
     "baseline_test_failures",
     "baseline_test_command",
-    "baseline_test_note"
+    "baseline_test_note",
+    "suite_runs_ndjson_path"
   ],
   "additionalProperties": false
 }

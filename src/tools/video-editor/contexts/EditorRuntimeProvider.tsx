@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useRef, type ReactNode } from 'react';
 import { useLayoutEffect } from 'react';
 import { useEffects } from '@/tools/video-editor/hooks/useEffects.ts';
+import { createTimelineReader } from '@/tools/video-editor/lib/timeline-reader.ts';
+import { createProposalRuntime } from '@/tools/video-editor/lib/proposal-runtime.ts';
 import { useEffectRegistry } from '@/tools/video-editor/hooks/useEffectRegistry.ts';
 import {
   EffectCatalogProvider,
@@ -28,7 +30,8 @@ import {
   createExtensionLifecycleHost,
   type ExtensionLifecycleHost,
 } from '@/tools/video-editor/runtime/extensionLifecycle.ts';
-import { createExtensionContext, type ReighExtension } from '@reigh/editor-sdk';
+import { createExtensionContext, createCreativeContext, type ReighExtension } from '@reigh/editor-sdk';
+import type { CreativeContext } from '@reigh/editor-sdk';
 import type {
   VideoEditorAuthHost,
   VideoEditorProjectHost,
@@ -56,11 +59,15 @@ function EditorRuntimeProviderInner({
   userId,
   effectCatalog,
   sequenceComponentCatalog,
+  lifecycleHostRef,
+  extensionRuntime,
 }: {
   children: ReactNode;
   userId: string | null;
   effectCatalog?: VideoEditorEffectCatalog | null;
   sequenceComponentCatalog?: VideoEditorSequenceComponentCatalog | null;
+  lifecycleHostRef: React.MutableRefObject<ExtensionLifecycleHost | null>;
+  extensionRuntime: ExtensionRuntime;
 }) {
   const effectsQuery = useEffects(userId, { enabled: !effectCatalog && Boolean(userId) });
   const effectResources = useResolvedEffectCatalog(userId, effectCatalog);
@@ -77,6 +84,64 @@ function EditorRuntimeProviderInner({
   );
 
   const { store } = useTimelineState();
+
+  // ---- M3: live creative context for extensions --------------------------
+  const timelineReader = useMemo(
+    () =>
+      createTimelineReader({
+        data: () => {
+          const data = store.getState().data.data;
+          if (!data) {
+            throw new Error('Timeline data is not ready.');
+          }
+          return data;
+        },
+        projectId: null,
+        extensionRequirements: extensionRuntime.requirements,
+      }),
+    [store, extensionRuntime.requirements],
+  );
+
+  const proposalRuntimeRef = useRef<ReturnType<typeof createProposalRuntime> | null>(null);
+  if (!proposalRuntimeRef.current) {
+    const ops = store.getState().timelineOps;
+    if (ops) {
+      proposalRuntimeRef.current = createProposalRuntime({
+        timelineOps: ops,
+        reader: timelineReader,
+      });
+      store.getState().syncSlices({ proposalRuntime: proposalRuntimeRef.current });
+    }
+  }
+
+  const liveCreativeOverrides = useMemo<Partial<CreativeContext>>(() => {
+    const ops = store.getState().timelineOps ?? undefined;
+    const proposals = proposalRuntimeRef.current ?? undefined;
+    return {
+      timeline: ops as any,
+      reader: timelineReader,
+      proposals: proposals as any,
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [timelineReader, store]);
+
+  useEffect(() => {
+    const host = lifecycleHostRef.current;
+    if (!host) return;
+
+    host.synchronize(
+      extensionRuntime.extensions,
+      (ext) => createExtensionContext(ext, liveCreativeOverrides),
+    );
+  }, [lifecycleHostRef, extensionRuntime.extensions, liveCreativeOverrides]);
+
+  // Sync proposalRuntime to the store so host-owned UI (ProposalPanel) can access it.
+  useEffect(() => {
+    const pr = proposalRuntimeRef.current;
+    if (pr) {
+      store.getState().syncSlices({ proposalRuntime: pr });
+    }
+  }, [store, extensionRuntime.requirements]);
 
   useLayoutEffect(() => {
     store.getState().syncSlices({
@@ -119,10 +184,7 @@ export function EditorRuntimeProvider({
     lifecycleHostRef.current = createExtensionLifecycleHost();
   }
 
-  useEffect(() => {
-    const host = lifecycleHostRef.current!;
-    host.synchronize(extensionRuntime.extensions, createExtensionContext);
-  }, [extensionRuntime.extensions]);
+
 
   useEffect(() => {
     const host = lifecycleHostRef.current;
@@ -209,6 +271,8 @@ export function EditorRuntimeProvider({
         userId={userId}
         effectCatalog={effectCatalog}
         sequenceComponentCatalog={sequenceComponentCatalog}
+        lifecycleHostRef={lifecycleHostRef}
+        extensionRuntime={extensionRuntime}
       >
         {children}
       </EditorRuntimeProviderInner>

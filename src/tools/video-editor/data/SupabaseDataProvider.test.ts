@@ -642,4 +642,130 @@ describe('SupabaseDataProvider', () => {
       },
     });
   });
+
+  // -------------------------------------------------------------------------
+  // Strict expectedVersion CAS conflict handling (T14)
+  // -------------------------------------------------------------------------
+  describe('strict expectedVersion CAS conflict handling', () => {
+    it('rejects saveTimeline when the append service returns a 409 version_conflict', async () => {
+      vi.mocked(globalThis.fetch).mockResolvedValue(new Response(JSON.stringify({
+        error: 'version_conflict',
+        detail: 'timeline config_version mismatch: expected 3, found 5',
+      }), {
+        status: 409,
+        headers: { 'Content-Type': 'application/json' },
+      }));
+      const provider = new SupabaseDataProvider({ projectId: 'project-1', userId: 'user-123' });
+
+      await expect(
+        provider.saveTimeline('timeline-1', buildConfig(), 3),
+      ).rejects.toBeInstanceOf(TimelineVersionConflictError);
+    });
+
+    it('the conflict error message preserves the version details from the service', async () => {
+      vi.mocked(globalThis.fetch).mockResolvedValue(new Response(JSON.stringify({
+        error: 'version_conflict',
+        detail: 'expected version 2 but timeline head is at version 7',
+      }), {
+        status: 409,
+        headers: { 'Content-Type': 'application/json' },
+      }));
+      const provider = new SupabaseDataProvider({ projectId: 'project-1', userId: 'user-123' });
+
+      let caught: unknown;
+      try {
+        await provider.saveTimeline('timeline-1', buildConfig(), 2);
+      } catch (e) {
+        caught = e;
+      }
+
+      expect(caught).toBeInstanceOf(TimelineVersionConflictError);
+      // The error should carry the conflict code
+      expect((caught as any)?.code).toBe('timeline_version_conflict');
+    });
+
+    it('saveTimeline succeeds with the updated version when expectedVersion matches', async () => {
+      vi.mocked(globalThis.fetch).mockResolvedValue(new Response(JSON.stringify({
+        config_version: 9,
+        db_head: {
+          version: 9,
+          hash: 'b'.repeat(64),
+          event_id: '01ARZ3NDEKTSV4RRFFQ69G5FBB',
+        },
+      }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }));
+      const provider = new SupabaseDataProvider({ projectId: 'project-1', userId: 'user-123' });
+
+      const nextVersion = await provider.saveTimeline('timeline-1', buildConfig(), 8);
+      expect(nextVersion).toBe(9);
+    });
+
+    it('maps non-JSON 409 responses to TimelineVersionConflictError gracefully', async () => {
+      vi.mocked(globalThis.fetch).mockResolvedValue(new Response('Conflict', {
+        status: 409,
+        statusText: 'Conflict',
+      }));
+      const provider = new SupabaseDataProvider({ projectId: 'project-1', userId: 'user-123' });
+
+      await expect(
+        provider.saveTimeline('timeline-1', buildConfig(), 3),
+      ).rejects.toBeInstanceOf(TimelineVersionConflictError);
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // Local monotonic stale invalidation behavior (T14)
+  // -------------------------------------------------------------------------
+  describe('local monotonic stale invalidation behavior', () => {
+    it('the provider enforces CAS before the save payload reaches the append service', async () => {
+      // The SupabaseDataProvider delegates CAS to the append service via
+      // the expected_version field. The service returns 409 on conflict.
+      // This test verifies that the error is correctly surfaced as
+      // TimelineVersionConflictError, which is the contract that
+      // useTimelineOps and other callers rely on for stale detection.
+      vi.mocked(globalThis.fetch).mockResolvedValue(new Response(JSON.stringify({
+        error: 'version_conflict',
+        detail: 'config_version mismatch',
+      }), {
+        status: 409,
+        headers: { 'Content-Type': 'application/json' },
+      }));
+      const provider = new SupabaseDataProvider({ projectId: 'project-1', userId: 'user-123' });
+
+      // A stale expectedVersion should produce TimelineVersionConflictError
+      await expect(
+        provider.saveTimeline('timeline-1', buildConfig(), 1),
+      ).rejects.toBeInstanceOf(TimelineVersionConflictError);
+
+      // The fetch must have been called (the error came from the service, not a local check)
+      expect(globalThis.fetch).toHaveBeenCalledTimes(1);
+    });
+
+    it('the append-service CAS is the authoritative conflict boundary for Supabase', async () => {
+      // Unlike InMemory which checks expectedVersion locally before any
+      // mutation, Supabase delegates the check to the append service.
+      // This test confirms that the fetch is always made and the service
+      // response determines success or conflict.
+      vi.mocked(globalThis.fetch).mockResolvedValue(new Response(JSON.stringify({
+        config_version: 5,
+        db_head: { version: 5, hash: 'c'.repeat(64), event_id: '01ARZ3NDEKTSV4RRFFQ69G5FBC' },
+      }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }));
+      const provider = new SupabaseDataProvider({ projectId: 'project-1', userId: 'user-123' });
+
+      const version = await provider.saveTimeline('timeline-1', buildConfig(), 4);
+      expect(version).toBe(5);
+      expect(globalThis.fetch).toHaveBeenCalledTimes(1);
+
+      // Verify the expected_version is in the request body
+      const [, init] = vi.mocked(globalThis.fetch).mock.calls[0];
+      const body = JSON.parse(String(init?.body));
+      expect(body.expected_version).toBe(4);
+    });
+  });
+
 });

@@ -29,6 +29,7 @@
             "enum": [
               "done",
               "skipped",
+              "completed",
               "blocked"
             ]
           },
@@ -42,10 +43,7 @@
             }
           },
           "stance": {
-            "type": [
-              "object",
-              "null"
-            ],
+            "type": "object",
             "properties": {
               "challenge_engaged": {
                 "type": "string"
@@ -65,10 +63,7 @@
             "additionalProperties": false
           },
           "stop_signal": {
-            "type": [
-              "object",
-              "null"
-            ],
+            "type": "object",
             "properties": {
               "requested": {
                 "type": "boolean"

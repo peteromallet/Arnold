@@ -24,12 +24,16 @@
           },
           "reason": {
             "type": "string"
+          },
+          "where": {
+            "type": "string"
           }
         },
         "required": [
           "id",
           "resolution",
-          "reason"
+          "reason",
+          "where"
         ],
         "additionalProperties": false
       }

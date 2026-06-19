@@ -9,10 +9,7 @@
       ]
     },
     "checks": {
-      "type": [
-        "array",
-        "null"
-      ],
+      "type": "array",
       "items": {
         "type": "object",
         "properties": {
@@ -74,6 +71,12 @@
               ],
               "additionalProperties": false
             }
+          },
+          "concerned_task_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
           }
         },
         "required": [
@@ -81,16 +84,14 @@
           "question",
           "guidance",
           "findings",
-          "prior_findings"
+          "prior_findings",
+          "concerned_task_ids"
         ],
         "additionalProperties": false
       }
     },
     "pre_check_flags": {
-      "type": [
-        "array",
-        "null"
-      ],
+      "type": "array",
       "items": {
         "type": "object",
         "properties": {
@@ -121,19 +122,13 @@
       }
     },
     "verified_flag_ids": {
-      "type": [
-        "array",
-        "null"
-      ],
+      "type": "array",
       "items": {
         "type": "string"
       }
     },
     "disputed_flag_ids": {
-      "type": [
-        "array",
-        "null"
-      ],
+      "type": "array",
       "items": {
         "type": "string"
       }
@@ -213,6 +208,78 @@
               "string",
               "null"
             ]
+          },
+          "target": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "task",
+                  "bulk",
+                  "manifest",
+                  "global"
+                ]
+              },
+              "task_id": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "task_ids": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "id": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "kind",
+              "task_id",
+              "task_ids",
+              "id"
+            ]
+          },
+          "deterministic_check": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "command": {
+                "type": "string"
+              },
+              "baseline_status": {
+                "type": "string"
+              },
+              "post_status": {
+                "type": "string"
+              },
+              "evidence_file": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "command",
+              "baseline_status",
+              "post_status",
+              "evidence_file"
+            ]
           }
         },
         "required": [
@@ -222,7 +289,9 @@
           "actual",
           "evidence_file",
           "flag_id",
-          "source"
+          "source",
+          "target",
+          "deterministic_check"
         ],
         "additionalProperties": false
       }
@@ -278,16 +347,16 @@
   },
   "required": [
     "review_verdict",
-    "checks",
-    "pre_check_flags",
-    "verified_flag_ids",
-    "disputed_flag_ids",
     "criteria",
     "issues",
     "rework_items",
     "summary",
     "task_verdicts",
-    "sense_check_verdicts"
+    "sense_check_verdicts",
+    "checks",
+    "pre_check_flags",
+    "verified_flag_ids",
+    "disputed_flag_ids"
   ],
   "additionalProperties": false
 }

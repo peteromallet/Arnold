@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { ArrowRight, Clapperboard, Copy, Ellipsis, Film, FolderPlus, ImageIcon, Layers, Loader2, Music2, RefreshCw, Scissors, Sparkles, Trash2, Type, X } from 'lucide-react';
+import { ArrowRight, Clapperboard, Copy, Ellipsis, Film, FolderPlus, ImageIcon, Layers, Loader2, MapPin, MapPinOff, Music2, RefreshCw, Scissors, Sparkles, Trash2, Type, X } from 'lucide-react';
 import { cn } from '@/shared/components/ui/contracts/cn.ts';
 import { MediaVariantPicker } from '@/shared/components/MediaVariantPicker.tsx';
 import type { GenerationVariant } from '@/shared/hooks/variants/useVariants.ts';
@@ -53,6 +53,12 @@ interface ClipActionProps {
   onDuplicateGeneration?: (clipId: string) => void | Promise<void>;
   onUpdateVariant?: () => void;
   onDismissStale?: () => void;
+  /** True when the clip has stale source-map entries. */
+  isSourceMapStale?: boolean;
+  /** Called when the user clicks the source-map stale badge to navigate to source. */
+  onNavigateToSource?: (clipId: string) => void;
+  /** True when the clip has any source-map entries (stale or not). */
+  hasSourceMapEntry?: boolean;
   /** Generation id for the asset bound to this clip (enables the variant picker badge). */
   variantPickerGenerationId?: string;
   /** Variant id currently bound to this clip's asset (highlighted in picker). */
@@ -332,6 +338,9 @@ function ClipActionComponent({
   isVariantStale,
   isGenerationAsset,
   isDuplicatingGeneration = false,
+  isSourceMapStale = false,
+  hasSourceMapEntry = false,
+  onNavigateToSource,
   onDuplicateGeneration,
   onUpdateVariant,
   onDismissStale,
@@ -576,6 +585,38 @@ function ClipActionComponent({
             <RefreshCw className="h-2.5 w-2.5" />
           </div>
         ) : null}
+        {/* Source-map stale badge */}
+        {isSourceMapStale && (
+          <div
+            className="absolute left-1 bottom-1 z-20 flex h-4 w-4 cursor-pointer items-center justify-center rounded-full bg-purple-500 text-white hover:bg-purple-400"
+            title="Source map stale — click to navigate to source"
+            role="button"
+            data-source-map-stale="true"
+            aria-label="Stale source map — click to navigate to source"
+            onClick={(e) => {
+              e.stopPropagation();
+              onNavigateToSource?.(action.id);
+            }}
+          >
+            <MapPinOff className="h-2.5 w-2.5" />
+          </div>
+        )}
+        {/* Source-map indicator (non-stale) */}
+        {hasSourceMapEntry && !isSourceMapStale && (
+          <div
+            className="absolute left-1 bottom-1 z-20 flex h-4 w-4 cursor-pointer items-center justify-center rounded-full bg-purple-500/60 text-white hover:bg-purple-400"
+            title="Source map — click to navigate to source"
+            role="button"
+            data-source-map-entry="true"
+            aria-label="Source map — click to navigate to source"
+            onClick={(e) => {
+              e.stopPropagation();
+              onNavigateToSource?.(action.id);
+            }}
+          >
+            <MapPin className="h-2.5 w-2.5" />
+          </div>
+        )}
         {showOverflowMenu && canOpenContextMenu && (
           <div
             role="button"
@@ -660,6 +701,8 @@ function areClipActionPropsEqual(prev: ClipActionProps, next: ClipActionProps): 
   if (prev.isVideoClip !== next.isVideoClip) return false;
   if (prev.isTaskActive !== next.isTaskActive) return false;
   if (prev.isVariantStale !== next.isVariantStale) return false;
+  if (prev.isSourceMapStale !== next.isSourceMapStale) return false;
+  if (prev.hasSourceMapEntry !== next.hasSourceMapEntry) return false;
   if (prev.isGenerationAsset !== next.isGenerationAsset) return false;
   if (prev.isDuplicatingGeneration !== next.isDuplicatingGeneration) return false;
   if (prev.variantPickerGenerationId !== next.variantPickerGenerationId) return false;
@@ -704,6 +747,7 @@ function areClipActionPropsEqual(prev: ClipActionProps, next: ClipActionProps): 
     && prev.onApplyVariant === next.onApplyVariant
     && prev.onAddVariantAsGeneration === next.onAddVariantAsGeneration
     && prev.isAddingVariantAsGeneration === next.isAddingVariantAsGeneration
+    && prev.onNavigateToSource === next.onNavigateToSource
   );
 }
 

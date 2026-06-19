@@ -11,6 +11,22 @@ import type {
   ExtensionLifecycleState,
 } from '@/tools/video-editor/runtime/extensionLifecycle';
 import { defineExtension } from '@reigh/editor-sdk';
+import {
+  createCreativeContext,
+  createCreativeContextStubs,
+  createExtensionContext,
+  ExtensionNotImplementedError,
+  CREATIVE_MEMBER_MILESTONE,
+} from '@reigh/editor-sdk';
+import type {
+  TimelineOps,
+  TimelinePatch,
+  TimelinePatchValidationResult,
+  TimelinePreviewResult,
+  TimelineDiff,
+  CreativeContext,
+} from '@reigh/editor-sdk';
+
 import type {
   ReighExtension,
   ExtensionContext,
@@ -1448,3 +1464,760 @@ describe('ExtensionLifecycleHost — diagnostics cleanup', () => {
     expect(postErrors[0].message).toContain('context factory fatal');
   });
 });
+
+// ---------------------------------------------------------------------------
+// M3: ExtensionLifecycle — creative.timeline with live TimelineOps
+// ---------------------------------------------------------------------------
+
+describe('ExtensionLifecycle — creative.timeline with live TimelineOps (M3 public SDK contracts)', () => {
+  /** Create a mock TimelineOps with vi.fn() on all methods. */
+  function mockTimelineOps(overrides?: Partial<TimelineOps>): TimelineOps {
+    return {
+      validate: vi.fn().mockReturnValue({ valid: true, diagnostics: [] } as TimelinePatchValidationResult),
+      preview: vi.fn().mockReturnValue({ diff: { version: 0, entries: [], affectedObjectIds: [] }, fullyPreviewable: true, diagnostics: [] } as TimelinePreviewResult),
+      apply: vi.fn().mockReturnValue({ version: 0, entries: [], affectedObjectIds: [] } as TimelineDiff),
+      checkpoint: vi.fn().mockReturnValue('ckpt-1'),
+      rollback: vi.fn().mockReturnValue(null),
+      setAllTracksMuted: vi.fn().mockReturnValue({ version: 0, entries: [], affectedObjectIds: [] } as TimelineDiff),
+      ...overrides,
+    };
+  }
+
+  const samplePatch: TimelinePatch = {
+    version: 1,
+    operations: [
+      { op: 'clip.add', target: 'new-clip-1', payload: { at: 0, clipType: 'video' }, order: 0 },
+    ],
+  };
+
+  it('extension receives live ctx.creative.timeline when created with creativeOverrides', () => {
+    const ops = mockTimelineOps();
+    const extension = ext('com.example.live-timeline', {
+      activate: vi.fn(),
+    });
+    const ctx = createExtensionContext(extension, {
+      timeline: ops as any,
+    } as Partial<CreativeContext>);
+
+    // ctx.creative.timeline is the live TimelineOps we passed
+    expect(ctx.creative.timeline).toBe(ops);
+    // It is not a throwing stub
+    expect(() => ctx.creative.timeline).not.toThrow();
+  });
+
+  it('live ctx.creative.timeline has all required TimelineOps methods', () => {
+    const ops = mockTimelineOps();
+    const extension = ext('com.example.methods');
+    const ctx = createExtensionContext(extension, {
+      timeline: ops as any,
+    } as Partial<CreativeContext>);
+
+    const timeline = ctx.creative.timeline;
+    expect(typeof timeline.validate).toBe('function');
+    expect(typeof timeline.preview).toBe('function');
+    expect(typeof timeline.apply).toBe('function');
+    expect(typeof timeline.checkpoint).toBe('function');
+    expect(typeof timeline.rollback).toBe('function');
+    expect(typeof timeline.setAllTracksMuted).toBe('function');
+  });
+
+  it('extension activate function receives ctx.creative.timeline and can call validate', () => {
+    const ops = mockTimelineOps();
+    const activateFn = vi.fn((ctx: ExtensionContext) => {
+      const result = ctx.creative.timeline.validate(samplePatch);
+      return { dispose: () => {} };
+    });
+
+    const extension = ext('com.example.validate', { activate: activateFn });
+    const ctx = createExtensionContext(extension, {
+      timeline: ops as any,
+    } as Partial<CreativeContext>);
+
+    const lc = createExtensionLifecycle(extension);
+    lc.activate(ctx);
+
+    expect(activateFn).toHaveBeenCalledTimes(1);
+    expect(ops.validate).toHaveBeenCalledTimes(1);
+    expect(ops.validate).toHaveBeenCalledWith(samplePatch);
+  });
+
+  it('extension can call ctx.creative.timeline.preview() through public contract', () => {
+    const ops = mockTimelineOps();
+    const extension = ext('com.example.preview');
+    const ctx = createExtensionContext(extension, {
+      timeline: ops as any,
+    } as Partial<CreativeContext>);
+
+    const result = ctx.creative.timeline.preview(samplePatch);
+    expect(ops.preview).toHaveBeenCalledWith(samplePatch);
+    expect(result).toBeDefined();
+    expect(result.fullyPreviewable).toBe(true);
+  });
+
+  it('extension can call ctx.creative.timeline.apply() through public contract', () => {
+    const ops = mockTimelineOps();
+    const extension = ext('com.example.apply');
+    const ctx = createExtensionContext(extension, {
+      timeline: ops as any,
+    } as Partial<CreativeContext>);
+
+    const result = ctx.creative.timeline.apply(samplePatch);
+    expect(ops.apply).toHaveBeenCalledWith(samplePatch);
+    expect(result).toBeDefined();
+    expect(result.entries).toEqual([]);
+  });
+
+  it('extension can call ctx.creative.timeline.checkpoint() and rollback()', () => {
+    const ops = mockTimelineOps();
+    const extension = ext('com.example.checkpoint');
+    const ctx = createExtensionContext(extension, {
+      timeline: ops as any,
+    } as Partial<CreativeContext>);
+
+    const ckptId = ctx.creative.timeline.checkpoint('test-label');
+    expect(ckptId).toBe('ckpt-1');
+    expect(ops.checkpoint).toHaveBeenCalledWith('test-label');
+
+    const undone = ctx.creative.timeline.rollback(ckptId);
+    expect(ops.rollback).toHaveBeenCalledWith(ckptId);
+    expect(undone).toBeNull();
+  });
+
+  it('extension can call ctx.creative.timeline.setAllTracksMuted()', () => {
+    const ops = mockTimelineOps();
+    const extension = ext('com.example.mute');
+    const ctx = createExtensionContext(extension, {
+      timeline: ops as any,
+    } as Partial<CreativeContext>);
+
+    const result = ctx.creative.timeline.setAllTracksMuted(true);
+    expect(ops.setAllTracksMuted).toHaveBeenCalledWith(true);
+    expect(result).toBeDefined();
+  });
+
+  it('extension can construct valid TimelinePatch using public SDK types', () => {
+    // This test proves that the extension code itself — without importing
+    // any video-editor internals — can construct patches using only SDK types.
+    const ops = mockTimelineOps();
+    const extension = ext('com.example.construct-patch');
+    const ctx = createExtensionContext(extension, {
+      timeline: ops as any,
+    } as Partial<CreativeContext>);
+
+    const patch: TimelinePatch = {
+      version: 3,
+      operations: [
+        { op: 'clip.add', target: 'c1', payload: { at: 10, clipType: 'video', track: 't1' }, order: 0 },
+        { op: 'track.add', target: 't2', payload: { kind: 'audio', label: 'Voiceover' }, order: 1 },
+        { op: 'clip.move', target: 'c2', payload: { track: 't2', at: 20 }, order: 2 },
+      ],
+      source: 'com.example.construct-patch',
+      meta: { requestId: 'test-123' },
+    };
+
+    const validation = ctx.creative.timeline.validate(patch);
+    expect(ops.validate).toHaveBeenCalledWith(patch);
+    expect(validation.valid).toBe(true);
+  });
+
+  it('live TimelineOps is passed to extension through ExtensionLifecycle.activate()', () => {
+    const ops = mockTimelineOps();
+    const capturedTimeline: TimelineOps[] = [];
+
+    const extension = ext('com.example.activate-ctx', {
+      activate: (ctx) => {
+        capturedTimeline.push(ctx.creative.timeline);
+        return { dispose: () => {} };
+      },
+    });
+
+    const ctx = createExtensionContext(extension, {
+      timeline: ops as any,
+    } as Partial<CreativeContext>);
+
+    const lc = createExtensionLifecycle(extension);
+    lc.activate(ctx);
+
+    expect(lc.state).toBe('active');
+    expect(capturedTimeline).toHaveLength(1);
+    expect(capturedTimeline[0]).toBe(ops);
+
+    // The extension can use the captured timeline reference
+    capturedTimeline[0].validate(samplePatch);
+    expect(ops.validate).toHaveBeenCalledWith(samplePatch);
+  });
+
+  it('multiple extensions receive independent timeline references', () => {
+    const ops1 = mockTimelineOps();
+    const ops2 = mockTimelineOps();
+
+    const ext1 = ext('com.example.indep1', {
+      activate: vi.fn(),
+    });
+    const ext2 = ext('com.example.indep2', {
+      activate: vi.fn(),
+    });
+
+    const ctx1 = createExtensionContext(ext1, { timeline: ops1 as any } as Partial<CreativeContext>);
+    const ctx2 = createExtensionContext(ext2, { timeline: ops2 as any } as Partial<CreativeContext>);
+
+    expect(ctx1.creative.timeline).toBe(ops1);
+    expect(ctx2.creative.timeline).toBe(ops2);
+    expect(ctx1.creative.timeline).not.toBe(ctx2.creative.timeline);
+  });
+
+  it('extension can use TimelineOps.checkpoint + rollback for safe mutation patterns', () => {
+    const ops = mockTimelineOps({
+      checkpoint: vi.fn().mockReturnValue('safe-ckpt'),
+      rollback: vi.fn().mockReturnValue({ version: 1, entries: [], affectedObjectIds: [] } as TimelineDiff),
+    });
+
+    const extension = ext('com.example.safe-pattern');
+    const ctx = createExtensionContext(extension, { timeline: ops as any } as Partial<CreativeContext>);
+
+    // Safe mutation pattern: checkpoint → try apply → catch → rollback
+    const ckpt = ctx.creative.timeline.checkpoint('before-risky-op');
+    expect(ckpt).toBe('safe-ckpt');
+
+    // In real code, the extension would try apply() and on failure call rollback()
+    const undone = ctx.creative.timeline.rollback(ckpt);
+    expect(ops.rollback).toHaveBeenCalledWith('safe-ckpt');
+    expect(undone).toBeDefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// M3: ExtensionLifecycle — creative.timeline stubs (unmounted contexts)
+// ---------------------------------------------------------------------------
+
+describe('ExtensionLifecycle — creative.timeline stubs (unmounted contexts)', () => {
+  it('createCreativeContextStubs() produces a frozen object', () => {
+    const stubs = createCreativeContextStubs();
+    expect(Object.isFrozen(stubs)).toBe(true);
+  });
+
+  it('createCreativeContextStubs() throws ExtensionNotImplementedError for timeline', () => {
+    const stubs = createCreativeContextStubs();
+    expect(() => stubs.timeline).toThrow(ExtensionNotImplementedError);
+    try {
+      stubs.timeline;
+    } catch (err) {
+      expect(err).toBeInstanceOf(ExtensionNotImplementedError);
+      expect((err as ExtensionNotImplementedError).feature).toBe('timeline');
+      expect((err as ExtensionNotImplementedError).milestone).toBe('M3');
+    }
+  });
+
+  it('createCreativeContextStubs() throws for reader and proposals (M3 members)', () => {
+    const stubs = createCreativeContextStubs();
+    // reader
+    expect(() => stubs.reader).toThrow(ExtensionNotImplementedError);
+    try { stubs.reader; } catch (err) {
+      expect((err as ExtensionNotImplementedError).feature).toBe('reader');
+      expect((err as ExtensionNotImplementedError).milestone).toBe('M3');
+    }
+    // proposals
+    expect(() => stubs.proposals).toThrow(ExtensionNotImplementedError);
+    try { stubs.proposals; } catch (err) {
+      expect((err as ExtensionNotImplementedError).feature).toBe('proposals');
+      expect((err as ExtensionNotImplementedError).milestone).toBe('M3');
+    }
+  });
+
+  it('createCreativeContextStubs() throws for ALL creative members when accessed', () => {
+    const stubs = createCreativeContextStubs();
+    const members = Object.keys(CREATIVE_MEMBER_MILESTONE) as (keyof CreativeContext)[];
+    for (const member of members) {
+      expect(() => stubs[member]).toThrow(ExtensionNotImplementedError);
+    }
+  });
+
+  it('createCreativeContext() without overrides returns stubs (timeline throws)', () => {
+    const creative = createCreativeContext();
+    expect(() => creative.timeline).toThrow(ExtensionNotImplementedError);
+    try {
+      creative.timeline;
+    } catch (err) {
+      expect((err as ExtensionNotImplementedError).feature).toBe('timeline');
+      expect((err as ExtensionNotImplementedError).milestone).toBe('M3');
+    }
+  });
+
+  it('createCreativeContext() with partial overrides keeps stubs for non-overridden members', () => {
+    const ops = {
+      validate: vi.fn().mockReturnValue({ valid: true, diagnostics: [] }),
+      preview: vi.fn(),
+      apply: vi.fn(),
+      checkpoint: vi.fn(),
+      rollback: vi.fn(),
+      setAllTracksMuted: vi.fn(),
+    };
+
+    const creative = createCreativeContext({
+      timeline: ops as any,
+    } as Partial<CreativeContext>);
+
+    // timeline is live
+    expect(creative.timeline).toBe(ops);
+    expect(() => creative.timeline).not.toThrow();
+
+    // reader still throws (not overridden)
+    expect(() => creative.reader).toThrow(ExtensionNotImplementedError);
+    try { creative.reader; } catch (err) {
+      expect((err as ExtensionNotImplementedError).feature).toBe('reader');
+    }
+
+    // proposals still throws (not overridden)
+    expect(() => creative.proposals).toThrow(ExtensionNotImplementedError);
+  });
+
+  it('createExtensionContext() without creativeOverrides creates stubs', () => {
+    const extension = ext('com.example.nostubs');
+    const ctx = createExtensionContext(extension);
+
+    expect(() => ctx.creative.timeline).toThrow(ExtensionNotImplementedError);
+    try {
+      ctx.creative.timeline;
+    } catch (err) {
+      expect((err as ExtensionNotImplementedError).feature).toBe('timeline');
+      expect((err as ExtensionNotImplementedError).milestone).toBe('M3');
+    }
+  });
+
+  it('ExtensionNotImplementedError has correct shape and message', () => {
+    const err = new ExtensionNotImplementedError('test-feature', 'M5');
+    expect(err).toBeInstanceOf(Error);
+    expect(err.name).toBe('ExtensionNotImplementedError');
+    expect(err.feature).toBe('test-feature');
+    expect(err.milestone).toBe('M5');
+    expect(err.message).toContain('test-feature');
+    expect(err.message).toContain('M5');
+  });
+
+  it('stubs are NOT callable — accessing them throws, not calling them', () => {
+    const stubs = createCreativeContextStubs();
+    // Accessing the property throws immediately (it's a throwing getter)
+    expect(() => {
+      const t = stubs.timeline;
+    }).toThrow(ExtensionNotImplementedError);
+    // You never get a reference to call methods on
+  });
+});
+
+// ---------------------------------------------------------------------------
+// M3: ExtensionLifecycle — creative context internal API boundary
+// ---------------------------------------------------------------------------
+
+describe('ExtensionLifecycle — creative context internal API boundary', () => {
+  const INTERNAL_FORBIDDEN_KEYS = [
+    'TimelineData',
+    'TimelineEditMutation',
+    'DataProvider',
+    'provider',
+    'dataProvider',
+    'dataProviderRef',
+    'getDataProvider',
+    'isDataProviderPersistenceEnabled',
+    'timelineStore',
+    'store',
+    'getTimeline',
+    'timelineRef',
+    'useTimelineDataSlice',
+    'useTimelineDataSelector',
+    'useTimelineEditorData',
+    'timelineState',
+    'TimelineDataRef',
+    'buildTimelineData',
+    'buildTimelineDataWithResolver',
+    'buildTimelineCommandData',
+    'assembleTimelineData',
+    'preserveUploadingClips',
+    'applyEdit',
+    'edit',
+    'mutate',
+    'patch',
+    'commit',
+    'transact',
+    'commitData',
+    'ops',
+    'internalOps',
+    '_internal',
+    '__editorInternals',
+    '_editor',
+    'resolveTimelineProvider',
+    'createProvider',
+  ];
+
+  it('ExtensionContext does not expose internal API keys at top level', () => {
+    const extension = ext('com.example.boundary');
+    const ctx = createExtensionContext(extension);
+    const ctxKeys = Object.keys(ctx);
+
+    for (const forbidden of INTERNAL_FORBIDDEN_KEYS) {
+      expect(ctxKeys).not.toContain(forbidden);
+    }
+  });
+
+  it('ExtensionContext.creative only has defined CreativeContext members', () => {
+    const extension = ext('com.example.creative-keys');
+    const ctx = createExtensionContext(extension);
+    const creativeKeys = Object.keys(ctx.creative).sort();
+    expect(creativeKeys).toEqual([
+      'assets',
+      'export',
+      'materials',
+      'project',
+      'proposals',
+      'reader',
+      'sessions',
+      'stage',
+      'timeline',
+      'writing',
+    ]);
+  });
+
+  it('internal mutation APIs are not accessible as properties on creative context', () => {
+    const ops = {
+      validate: vi.fn(),
+      preview: vi.fn(),
+      apply: vi.fn(),
+      checkpoint: vi.fn(),
+      rollback: vi.fn(),
+      setAllTracksMuted: vi.fn(),
+    };
+    const extension = ext('com.example.creative-boundary');
+    const ctx = createExtensionContext(extension, {
+      timeline: ops as any,
+    } as Partial<CreativeContext>);
+
+    const creative = ctx.creative as Record<string, unknown>;
+    for (const forbidden of INTERNAL_FORBIDDEN_KEYS) {
+      expect(creative).not.toHaveProperty(forbidden);
+    }
+  });
+
+  it('internal APIs are not accessible on the timeline ops reference itself', () => {
+    const ops = {
+      validate: vi.fn(),
+      preview: vi.fn(),
+      apply: vi.fn(),
+      checkpoint: vi.fn(),
+      rollback: vi.fn(),
+      setAllTracksMuted: vi.fn(),
+    };
+    const extension = ext('com.example.ops-boundary');
+    const ctx = createExtensionContext(extension, {
+      timeline: ops as any,
+    } as Partial<CreativeContext>);
+
+    const timeline = ctx.creative.timeline as Record<string, unknown>;
+    // Only the public TimelineOps methods should be present
+    const publicMethods = ['validate', 'preview', 'apply', 'checkpoint', 'rollback', 'setAllTracksMuted'];
+    for (const method of publicMethods) {
+      expect(typeof timeline[method]).toBe('function');
+    }
+    // Internal keys should not be present
+    for (const forbidden of INTERNAL_FORBIDDEN_KEYS) {
+      expect(timeline).not.toHaveProperty(forbidden);
+    }
+  });
+
+  it('createExtensionContext returns a frozen-like context (creative is frozen)', () => {
+    const extension = ext('com.example.frozen-ctx');
+    const ctx = createExtensionContext(extension);
+    // creative is frozen by createCreativeContext
+    expect(Object.isFrozen(ctx.creative)).toBe(true);
+  });
+
+  it('extension cannot access raw TimelineData through any context path', () => {
+    const extension = ext('com.example.raw-timeline');
+    const ctx = createExtensionContext(extension);
+    const allKeys = new Set<string>();
+
+    function collectKeys(obj: unknown, depth: number) {
+      if (depth > 2 || obj === null || typeof obj !== 'object') return;
+      for (const key of Object.keys(obj as object)) {
+        allKeys.add(key);
+        try {
+          collectKeys((obj as Record<string, unknown>)[key], depth + 1);
+        } catch {
+          // Throwing getter — skip
+        }
+      }
+    }
+
+    collectKeys(ctx, 0);
+    for (const forbidden of ['TimelineData', 'TimelineEditMutation', 'applyEdit', 'commitData', 'timelineStore']) {
+      expect(allKeys.has(forbidden)).toBe(false);
+    }
+  });
+
+  it('extension cannot import internal video-editor modules through context', () => {
+    // The context itself is a plain object — no import/require mechanism
+    const extension = ext('com.example.no-internal-import');
+    const ctx = createExtensionContext(extension);
+
+    expect((ctx as any).require).toBeUndefined();
+    expect((ctx as any).import).toBeUndefined();
+    expect((ctx as any).module).toBeUndefined();
+    expect((ctx as any).__esModule).toBeUndefined();
+  });
+
+  it('creative context members are non-configurable (cannot be deleted/redefined)', () => {
+    const extension = ext('com.example.non-configurable');
+    const ctx = createExtensionContext(extension);
+
+    // timeline is a non-configurable property
+    const desc = Object.getOwnPropertyDescriptor(ctx.creative, 'timeline');
+    expect(desc).toBeDefined();
+    if (desc) {
+      expect(desc.configurable).toBe(false);
+      expect(desc.enumerable).toBe(true);
+    }
+  });
+
+  it('a live timeline reference is a non-writable property on creative context', () => {
+    const ops = {
+      validate: vi.fn(),
+      preview: vi.fn(),
+      apply: vi.fn(),
+      checkpoint: vi.fn(),
+      rollback: vi.fn(),
+      setAllTracksMuted: vi.fn(),
+    };
+    const extension = ext('com.example.non-writable');
+    const ctx = createExtensionContext(extension, {
+      timeline: ops as any,
+    } as Partial<CreativeContext>);
+
+    const desc = Object.getOwnPropertyDescriptor(ctx.creative, 'timeline');
+    expect(desc).toBeDefined();
+    if (desc) {
+      expect(desc.writable).toBe(false);
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// M3: ExtensionLifecycle — mutations only through public SDK contracts
+// ---------------------------------------------------------------------------
+
+describe('ExtensionLifecycle — mutations through public SDK contracts only', () => {
+  function makeLiveOps(): TimelineOps {
+    const patches: TimelinePatch[] = [];
+    return {
+      validate: vi.fn((patch: TimelinePatch): TimelinePatchValidationResult => ({
+        valid: true,
+        diagnostics: [],
+      })),
+      preview: vi.fn((patch: TimelinePatch): TimelinePreviewResult => ({
+        diff: {
+          version: patch.version,
+          entries: patch.operations.map((op) => ({
+            granularity: 'clip' as const,
+            kind: 'added' as const,
+            target: op.target,
+            op: op.op,
+            after: op.payload,
+          })),
+          affectedObjectIds: patch.operations.map((op) => op.target),
+        },
+        fullyPreviewable: true,
+        diagnostics: [],
+      })),
+      apply: vi.fn((patch: TimelinePatch): TimelineDiff => {
+        patches.push(patch);
+        return {
+          version: patch.version + 1,
+          entries: patch.operations.map((op) => ({
+            granularity: 'clip' as const,
+            kind: 'added' as const,
+            target: op.target,
+            op: op.op,
+            after: op.payload,
+          })),
+          affectedObjectIds: patch.operations.map((op) => op.target),
+        };
+      }),
+      checkpoint: vi.fn().mockReturnValue('apply-ckpt'),
+      rollback: vi.fn().mockReturnValue(null),
+      setAllTracksMuted: vi.fn((muted: boolean): TimelineDiff => ({
+        version: 1,
+        entries: [],
+        affectedObjectIds: [],
+      })),
+      _patches: patches,
+    } as TimelineOps & { _patches: TimelinePatch[] };
+  }
+
+  it('extension can only mutate through ctx.creative.timeline.apply()', () => {
+    const ops = makeLiveOps();
+    const extension = ext('com.example.only-apply');
+    const ctx = createExtensionContext(extension, {
+      timeline: ops as any,
+    } as Partial<CreativeContext>);
+
+    const patch: TimelinePatch = {
+      version: 1,
+      operations: [
+        { op: 'clip.add', target: 'new-clip', payload: { at: 0, clipType: 'video' }, order: 0 },
+      ],
+      source: 'com.example.only-apply',
+    };
+
+    // The only mutation path is through apply()
+    const diff = ctx.creative.timeline.apply(patch);
+    expect(ops.apply).toHaveBeenCalledTimes(1);
+    expect(diff.affectedObjectIds).toContain('new-clip');
+  });
+
+  it('extension previews changes before applying them (public contract pattern)', () => {
+    const ops = makeLiveOps();
+    const extension = ext('com.example.preview-then-apply');
+    const ctx = createExtensionContext(extension, {
+      timeline: ops as any,
+    } as Partial<CreativeContext>);
+
+    const patch: TimelinePatch = {
+      version: 2,
+      operations: [
+        { op: 'clip.move', target: 'clip-1', payload: { at: 30 }, order: 0 },
+      ],
+      source: 'com.example.preview-then-apply',
+    };
+
+    // 1. Preview to see what would happen
+    const preview = ctx.creative.timeline.preview(patch);
+    expect(preview.fullyPreviewable).toBe(true);
+    expect(ops.preview).toHaveBeenCalledWith(patch);
+
+    // 2. Then apply if preview looks good
+    const diff = ctx.creative.timeline.apply(patch);
+    expect(ops.apply).toHaveBeenCalledWith(patch);
+    expect(diff).toBeDefined();
+  });
+
+  it('extension validates patch before applying (public contract pattern)', () => {
+    const ops = makeLiveOps();
+    const extension = ext('com.example.validate-then-apply');
+    const ctx = createExtensionContext(extension, {
+      timeline: ops as any,
+    } as Partial<CreativeContext>);
+
+    const patch: TimelinePatch = {
+      version: 3,
+      operations: [
+        { op: 'track.add', target: 'new-track', payload: { kind: 'audio' }, order: 0 },
+      ],
+      source: 'com.example.validate-then-apply',
+    };
+
+    // 1. Validate first
+    const validation = ctx.creative.timeline.validate(patch);
+    expect(validation.valid).toBe(true);
+
+    // 2. Apply if valid
+    const diff = ctx.creative.timeline.apply(patch);
+    expect(ops.apply).toHaveBeenCalledWith(patch);
+    expect(diff).toBeDefined();
+  });
+
+  it('extension cannot bypass TimelineOps to directly modify timeline data', () => {
+    const ops = makeLiveOps();
+    const extension = ext('com.example.no-bypass');
+    const ctx = createExtensionContext(extension, {
+      timeline: ops as any,
+    } as Partial<CreativeContext>);
+
+    // The context has no direct mutation methods beyond creative.timeline
+    const ctxAny = ctx as Record<string, unknown>;
+    expect(ctxAny.applyEdit).toBeUndefined();
+    expect(ctxAny.commitData).toBeUndefined();
+    expect(ctxAny.mutate).toBeUndefined();
+    expect(ctxAny.patch).toBeUndefined();
+    expect(ctxAny.commit).toBeUndefined();
+    expect(ctxAny.transact).toBeUndefined();
+  });
+
+  it('extension cannot access provider references through context', () => {
+    const ops = makeLiveOps();
+    const extension = ext('com.example.no-provider');
+    const ctx = createExtensionContext(extension, {
+      timeline: ops as any,
+    } as Partial<CreativeContext>);
+
+    const ctxAny = ctx as Record<string, unknown>;
+    expect(ctxAny.dataProvider).toBeUndefined();
+    expect(ctxAny.provider).toBeUndefined();
+    expect(ctxAny.dataProviderRef).toBeUndefined();
+    expect(ctxAny.timelineRef).toBeUndefined();
+    expect(ctxAny.store).toBeUndefined();
+    expect(ctxAny.timelineStore).toBeUndefined();
+  });
+
+  it('extension can construct complex multi-operation patches using public types', () => {
+    const ops = makeLiveOps();
+    const extension = ext('com.example.multi-op');
+    const ctx = createExtensionContext(extension, {
+      timeline: ops as any,
+    } as Partial<CreativeContext>);
+
+    // Construct a realistic batch: add a track, add two clips to it, mute audio
+    const patch: TimelinePatch = {
+      version: 5,
+      operations: [
+        { op: 'track.add', target: 'intro-track', payload: { kind: 'visual', label: 'Intro' }, order: 0 },
+        { op: 'clip.add', target: 'title-clip', payload: { at: 0, clipType: 'video', track: 'intro-track' }, order: 1 },
+        { op: 'clip.add', target: 'broll-clip', payload: { at: 120, clipType: 'video', track: 'intro-track' }, order: 2 },
+      ],
+      source: 'com.example.multi-op',
+      meta: { description: 'Add intro section' },
+    };
+
+    const preview = ctx.creative.timeline.preview(patch);
+    expect(preview.fullyPreviewable).toBe(true);
+    expect(preview.diff.entries).toHaveLength(3);
+    expect(preview.diff.affectedObjectIds).toContain('intro-track');
+    expect(preview.diff.affectedObjectIds).toContain('title-clip');
+    expect(preview.diff.affectedObjectIds).toContain('broll-clip');
+  });
+
+  it('extension mutation path is fully captured by the public SDK boundary', () => {
+    // This test proves the complete flow: extension creates patch →
+    // validates → previews → applies, all through ctx.creative.timeline,
+    // never touching any internal API.
+    const ops = makeLiveOps();
+    const extension = ext('com.example.full-flow');
+    const ctx = createExtensionContext(extension, {
+      timeline: ops as any,
+    } as Partial<CreativeContext>);
+
+    // Step 1: extension builds a patch using only SDK types
+    const patch: TimelinePatch = {
+      version: 10,
+      operations: [
+        { op: 'clip.add', target: 'extension-clip', payload: { at: 60, clipType: 'video' }, order: 0 },
+      ],
+      source: extension.manifest.id as string,
+      meta: { extensionVersion: '1.0.0' },
+    };
+
+    // Step 2: validate
+    const validation = ctx.creative.timeline.validate(patch);
+    expect(validation.valid).toBe(true);
+
+    // Step 3: preview
+    const preview = ctx.creative.timeline.preview(patch);
+    expect(preview.fullyPreviewable).toBe(true);
+    expect(preview.diff.affectedObjectIds).toEqual(['extension-clip']);
+
+    // Step 4: apply
+    const diff = ctx.creative.timeline.apply(patch);
+    expect(diff.affectedObjectIds).toEqual(['extension-clip']);
+    expect(ops.apply).toHaveBeenCalledTimes(1);
+
+    // Verify the patch was captured by the mock (went through public API)
+    expect(ops.apply).toHaveBeenCalledWith(patch);
+  });
+});
+

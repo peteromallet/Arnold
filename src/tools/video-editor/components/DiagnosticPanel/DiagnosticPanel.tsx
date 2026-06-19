@@ -26,6 +26,7 @@ import {
   AlertTriangle,
   AlertCircle,
   Info,
+  MapPinOff,
   X,
   ChevronDown,
   ChevronRight,
@@ -54,6 +55,12 @@ export interface DiagnosticPanelProps {
     extensionId?: string;
     contributionId?: string;
   };
+  /**
+   * Optional set of target IDs that have stale source-map entries.
+   * When a diagnostic's detail references a target in this set, a stale
+   * source-map badge is shown next to the diagnostic.
+   */
+  sourceMapStaleTargetIds?: ReadonlySet<string>;
   /** Called when the panel requests to be closed. */
   onClose?: () => void;
 }
@@ -138,6 +145,7 @@ export function DiagnosticPanel({
   diagnosticCollection,
   initialFilter,
   onClose,
+  sourceMapStaleTargetIds,
 }: DiagnosticPanelProps) {
   const panelRef = useRef<HTMLDivElement>(null);
 
@@ -452,6 +460,14 @@ export function DiagnosticPanel({
                                         data-video-editor-diagnostic-item="true"
                                         data-video-editor-diagnostic-severity={diag.severity}
                                         data-video-editor-diagnostic-code={diag.code}
+                                        data-video-editor-diagnostic-source-map-stale={
+                                          sourceMapStaleTargetIds &&
+                                          diag.detail &&
+                                          typeof diag.detail.clipId === 'string' &&
+                                          sourceMapStaleTargetIds.has(diag.detail.clipId)
+                                            ? 'true'
+                                            : 'false'
+                                        }
                                         className="flex flex-col gap-0.5 border-t border-white/5 pl-10 pr-3 py-1.5 hover:bg-white/5 transition-colors"
                                       >
                                         {/* Row 1: severity icon + message */}
@@ -472,6 +488,21 @@ export function DiagnosticPanel({
                                           </div>
                                         </div>
 
+                                        {/* Source-map stale indicator */}
+                                        {sourceMapStaleTargetIds &&
+                                          diag.detail &&
+                                          typeof diag.detail.clipId === 'string' &&
+                                          sourceMapStaleTargetIds.has(diag.detail.clipId) && (
+                                            <div className="pl-4 flex items-center gap-1">
+                                              <MapPinOff className="h-2.5 w-2.5 text-purple-400" aria-hidden="true" />
+                                              <span
+                                                className="text-[10px] text-purple-400 font-medium"
+                                                data-video-editor-diagnostic-source-map-stale-badge="true"
+                                              >
+                                                Source map stale
+                                              </span>
+                                            </div>
+                                        )}
                                         {/* Row 2: source range (verbatim 1-based) */}
                                         {diag.sourceRange && (
                                           <div className="pl-4">

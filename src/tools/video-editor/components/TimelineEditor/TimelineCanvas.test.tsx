@@ -1290,3 +1290,134 @@ describe('TimelineCanvas resize pending ops', () => {
     });
   });
 });
+
+  describe('source-map stale indicators and navigation', () => {
+    it('accepts sourceMapStaleClipIds prop without errors', () => {
+      const { container } = renderCanvas({
+        sourceMapStaleClipIds: new Set(['clip-1', 'clip-3']),
+      });
+
+      // Canvas should render normally with the prop
+      expect(container.querySelector('[data-action-id="clip-1"]')).toBeTruthy();
+    });
+
+    it('accepts empty sourceMapStaleClipIds set', () => {
+      const { container } = renderCanvas({
+        sourceMapStaleClipIds: new Set(),
+      });
+
+      expect(container.querySelector('[data-action-id="clip-1"]')).toBeTruthy();
+    });
+
+    it('accepts undefined sourceMapStaleClipIds', () => {
+      const { container } = renderCanvas({
+        sourceMapStaleClipIds: undefined,
+      });
+
+      expect(container.querySelector('[data-action-id="clip-1"]')).toBeTruthy();
+    });
+
+    it('dispatches reigh:source-navigate-to-timeline-handled when SOURCE_NAVIGATE_TO_TIMELINE_EVENT fires', () => {
+      const dispatchSpy = vi.spyOn(window, 'dispatchEvent');
+      renderCanvas();
+
+      const detail = {
+        extensionId: 'ext.test',
+        sourceUri: 'file:///test.ts',
+        sourceStartLine: 10,
+        sourceEndLine: 20,
+        targetId: 'clip-1',
+      };
+
+      window.dispatchEvent(
+        new CustomEvent('reigh:source-navigate-to-timeline', { detail }),
+      );
+
+      const handledEvent = dispatchSpy.mock.calls
+        .map((call) => call[0] as CustomEvent)
+        .find((e) => e.type === 'reigh:source-navigate-to-timeline-handled');
+      expect(handledEvent).toBeTruthy();
+      expect((handledEvent!.detail as Record<string, unknown>).handled).toBe(true);
+      expect((handledEvent!.detail as Record<string, unknown>).extensionId).toBe('ext.test');
+      dispatchSpy.mockRestore();
+    });
+
+    it('schedules center clip when SOURCE_NAVIGATE_TO_TIMELINE_EVENT includes targetId', async () => {
+      const { container } = renderCanvas({
+        scale: 1,
+        scaleWidth: 100,
+      });
+      const editArea = container.querySelector('.timeline-canvas-edit-area') as HTMLElement;
+      Object.defineProperty(editArea, 'clientWidth', { value: 200, configurable: true });
+      Object.defineProperty(editArea, 'clientHeight', { value: 48, configurable: true });
+      const scrollTo = vi.fn((options: ScrollToOptions) => {
+        editArea.scrollLeft = Number(options.left ?? 0);
+        editArea.scrollTop = Number(options.top ?? 0);
+      });
+      editArea.scrollTo = scrollTo;
+
+      window.dispatchEvent(
+        new CustomEvent('reigh:source-navigate-to-timeline', {
+          detail: {
+            extensionId: 'ext.test',
+            sourceUri: 'file:///test.ts',
+            sourceStartLine: 10,
+            sourceEndLine: 20,
+            targetId: 'clip-1',
+          },
+        }),
+      );
+
+      await vi.waitFor(() => expect(scrollTo).toHaveBeenCalled());
+      // Clip-1 starts at 0, duration 2, center ≈ 100px viewport minus half clip
+      expect(scrollTo).toHaveBeenCalledWith(expect.objectContaining({
+        left: 0,
+        behavior: 'smooth',
+      }));
+    });
+
+    it('handles SOURCE_NAVIGATE_TO_TIMELINE_EVENT without targetId gracefully', () => {
+      const dispatchSpy = vi.spyOn(window, 'dispatchEvent');
+      renderCanvas();
+
+      window.dispatchEvent(
+        new CustomEvent('reigh:source-navigate-to-timeline', {
+          detail: {
+            extensionId: 'ext.test',
+            sourceUri: 'file:///test.ts',
+            sourceStartLine: 10,
+            sourceEndLine: 20,
+          },
+        }),
+      );
+
+      const handledEvent = dispatchSpy.mock.calls
+        .map((call) => call[0] as CustomEvent)
+        .find((e) => e.type === 'reigh:source-navigate-to-timeline-handled');
+      expect(handledEvent).toBeTruthy();
+      expect((handledEvent!.detail as Record<string, unknown>).handled).toBe(true);
+      expect((handledEvent!.detail as Record<string, unknown>).targetId).toBeUndefined();
+      dispatchSpy.mockRestore();
+    });
+
+    it('ignores SOURCE_NAVIGATE_TO_TIMELINE_EVENT without extensionId', () => {
+      const dispatchSpy = vi.spyOn(window, 'dispatchEvent');
+      renderCanvas();
+
+      window.dispatchEvent(
+        new CustomEvent('reigh:source-navigate-to-timeline', {
+          detail: {
+            sourceUri: 'file:///test.ts',
+            sourceStartLine: 10,
+            sourceEndLine: 20,
+          },
+        }),
+      );
+
+      const handledEvent = dispatchSpy.mock.calls
+        .map((call) => call[0] as CustomEvent)
+        .find((e) => e.type === 'reigh:source-navigate-to-timeline-handled');
+      expect(handledEvent).toBeFalsy();
+      dispatchSpy.mockRestore();
+    });
+  });

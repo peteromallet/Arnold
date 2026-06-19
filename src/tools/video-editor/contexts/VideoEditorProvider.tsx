@@ -24,7 +24,8 @@ import {
   createExtensionLifecycleHost,
   type ExtensionLifecycleHost,
 } from '@/tools/video-editor/runtime/extensionLifecycle.ts';
-import { createExtensionContext, type ReighExtension } from '@reigh/editor-sdk';
+import { createExtensionContext, createCreativeContext, type ReighExtension } from '@reigh/editor-sdk';
+import type { CreativeContext } from '@reigh/editor-sdk';
 import { useAgentChatRegistry } from '@/shared/contexts/AgentChatContext.tsx';
 import { clearTimelineClipData, setTimelineClipData } from '@/shared/state/selectionStore.ts';
 import { useEffects } from '@/tools/video-editor/hooks/useEffects.ts';
@@ -62,6 +63,10 @@ import {
   planGenerationAssetRegistration,
 } from '@/tools/video-editor/lib/timeline-asset-plans.ts';
 import { useRenderDiagnostic } from '@/tools/video-editor/hooks/usePerfDiagnostics.ts';
+import { createTimelineReader } from '@/tools/video-editor/lib/timeline-reader.ts';
+import { createProposalRuntime } from '@/tools/video-editor/lib/proposal-runtime.ts';
+
+import { useTimelineOpsFromStore } from '@/tools/video-editor/hooks/timelineStore.ts';
 import type { SaveStatus } from '@/tools/video-editor/hooks/useTimelinePersistence.ts';
 import type { ResolvedAssetRegistryEntry } from '@/tools/video-editor/types/index.ts';
 
@@ -119,11 +124,15 @@ function InnerProvider({
   effectCatalog,
   sequenceComponentCatalog,
   onSaveStatusChange,
+  lifecycleHostRef,
+  extensionRuntime,
 }: {
   children: React.ReactNode;
   effectCatalog?: VideoEditorEffectCatalog | null;
   sequenceComponentCatalog?: VideoEditorSequenceComponentCatalog | null;
   onSaveStatusChange?: (status: SaveStatus) => void;
+  lifecycleHostRef: React.MutableRefObject<ExtensionLifecycleHost | null>;
+  extensionRuntime: ExtensionRuntime;
 }) {
   useRenderDiagnostic('VideoEditorProvider');
   const runtime = useVideoEditorRuntime();
@@ -144,6 +153,79 @@ function InnerProvider({
   useEffect(() => {
     onSaveStatusChange?.(chrome.saveStatus);
   }, [chrome.saveStatus, onSaveStatusChange]);
+
+  // ---- M3: live creative context for extensions --------------------------
+  // Create stable TimelineReader from the data ref (always reads latest data).
+  const timelineReader = useMemo(
+    () =>
+      createTimelineReader({
+        data: () => {
+          const data = store.getState().data.data;
+          if (!data) {
+            throw new Error('Timeline data is not ready.');
+          }
+          return data;
+        },
+        projectId: runtime.project.projectId,
+        extensionRequirements: runtime.extensionRuntime.requirements,
+      }),
+    [store, runtime.project.projectId, runtime.extensionRuntime.requirements],
+  );
+
+  // One ProposalRuntime per provider mount, stable for the provider lifetime.
+  const proposalRuntimeRef = useRef<ReturnType<typeof createProposalRuntime> | null>(null);
+  if (!proposalRuntimeRef.current) {
+    const ops = store.getState().timelineOps;
+    if (ops) {
+      proposalRuntimeRef.current = createProposalRuntime({
+        timelineOps: ops,
+        reader: timelineReader,
+      });
+      store.getState().syncSlices({ proposalRuntime: proposalRuntimeRef.current });
+    }
+  }
+
+  // When timelineOps first becomes available, create ProposalRuntime if not yet created.
+  useEffect(() => {
+    if (proposalRuntimeRef.current) return;
+    const ops = store.getState().timelineOps;
+    if (ops) {
+      proposalRuntimeRef.current = createProposalRuntime({
+        timelineOps: ops,
+        reader: timelineReader,
+      });
+    }
+  }, [store, timelineReader]);
+
+  // Sync proposalRuntime to the store so host-owned UI (ProposalPanel) can access it.
+  useEffect(() => {
+    const pr = proposalRuntimeRef.current;
+    if (pr) {
+      store.getState().syncSlices({ proposalRuntime: pr });
+    }
+  }, [store, timelineReader]);
+
+  // Sync extensions with live creative context.
+  const liveCreativeOverrides = useMemo<Partial<CreativeContext>>(() => {
+    const ops = store.getState().timelineOps ?? undefined;
+    const proposals = proposalRuntimeRef.current ?? undefined;
+    return {
+      timeline: ops as any,
+      reader: timelineReader,
+      proposals: proposals as any,
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [timelineReader, store]);
+
+  useEffect(() => {
+    const host = lifecycleHostRef.current;
+    if (!host) return;
+
+    host.synchronize(
+      extensionRuntime.extensions,
+      (ext) => createExtensionContext(ext, liveCreativeOverrides),
+    );
+  }, [lifecycleHostRef, extensionRuntime.extensions, liveCreativeOverrides]);
   const [searchParams, setSearchParams] = useSearchParams();
   const pendingAddGenerationId = searchParams.get(ADD_GENERATION_QUERY_PARAM);
   const consumedAddGenerationRef = useRef<string | null>(null);
@@ -451,10 +533,6 @@ export function VideoEditorProvider({
     lifecycleHostRef.current = createExtensionLifecycleHost();
   }
 
-  useEffect(() => {
-    const host = lifecycleHostRef.current!;
-    host.synchronize(extensionRuntime.extensions, createExtensionContext);
-  }, [extensionRuntime.extensions]);
 
   useEffect(() => {
     const host = lifecycleHostRef.current;
@@ -507,6 +585,8 @@ export function VideoEditorProvider({
         effectCatalog={effectCatalog}
         sequenceComponentCatalog={sequenceComponentCatalog}
         onSaveStatusChange={onSaveStatusChange}
+        lifecycleHostRef={lifecycleHostRef}
+        extensionRuntime={extensionRuntime}
       >
         {children}
       </InnerProvider>

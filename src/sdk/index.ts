@@ -336,7 +336,12 @@ export type ChromeEventPayload<E extends ChromeEvent> =
 /** Reserved creative context members — each becomes live in its owning milestone. */
 export interface CreativeContext {
   readonly project: unknown;
-  readonly timeline: unknown;
+  /** Public mutation surface for atomic timeline operations (M3). */
+  readonly timeline: TimelineOps;
+  /** Read-only snapshot projection of the current timeline state (M3). */
+  readonly reader: TimelineReader;
+  /** Provider-scoped proposal lifecycle manager (M3). */
+  readonly proposals: ProposalRuntime;
   readonly assets: unknown;
   readonly materials: unknown;
   readonly sessions: unknown;
@@ -348,7 +353,9 @@ export interface CreativeContext {
 /** The milestone that activates each creative context member. */
 export const CREATIVE_MEMBER_MILESTONE: Record<keyof CreativeContext, string> = {
   project: 'M2',
-  timeline: 'M2',
+  timeline: 'M3',
+  reader: 'M3',
+  proposals: 'M3',
   assets: 'M6',
   materials: 'M6',
   sessions: 'M4',
@@ -390,6 +397,48 @@ export function createCreativeContextStubs(): CreativeContext {
   }
 
   return Object.freeze(stub) as unknown as CreativeContext;
+}
+
+/**
+ * Create a CreativeContext with optional live overrides.
+ *
+ * Members present in `overrides` are used directly; all other members
+ * retain the default throwing-stub behavior from createCreativeContextStubs().
+ * This lets host providers inject live timeline services for extensions
+ * running inside a mounted video-editor context while keeping stubs for
+ * unmounted or non-editor contexts.
+ */
+export function createCreativeContext(
+  overrides?: Partial<CreativeContext>,
+): CreativeContext {
+  if (!overrides) {
+    return createCreativeContextStubs();
+  }
+
+  const members = Object.keys(CREATIVE_MEMBER_MILESTONE) as (keyof CreativeContext)[];
+  const merged: Record<string, unknown> = {};
+
+  for (const member of members) {
+    if (member in overrides) {
+      Object.defineProperty(merged, member, {
+        value: (overrides as Record<string, unknown>)[member],
+        enumerable: true,
+        writable: false,
+        configurable: false,
+      });
+    } else {
+      const milestone = CREATIVE_MEMBER_MILESTONE[member];
+      Object.defineProperty(merged, member, {
+        get(): never {
+          throw new ExtensionNotImplementedError(member, milestone);
+        },
+        enumerable: true,
+        configurable: false,
+      });
+    }
+  }
+
+  return Object.freeze(merged) as unknown as CreativeContext;
 }
 
 // ---------------------------------------------------------------------------
@@ -474,7 +523,10 @@ export function getEditorShellRoot(): HTMLElement | null {
  * No raw DataProvider, applyEdit, timeline store, or internal mutation
  * escape hatch is exposed.
  */
-export function createExtensionContext(extension: ReighExtension): ExtensionContext {
+export function createExtensionContext(
+  extension: ReighExtension,
+  creativeOverrides?: Partial<CreativeContext>,
+): ExtensionContext {
   const extensionId = extension.manifest.id as string;
   const manifest = extension.manifest; // Already frozen by defineExtension
 
@@ -732,8 +784,8 @@ export function createExtensionContext(extension: ReighExtension): ExtensionCont
     subscribers.clear();
   }
 
-  // ---- creative stubs -----------------------------------------------------
-  const creative = createCreativeContextStubs();
+  // ---- creative context (stubs with optional live overrides) --------------
+  const creative = createCreativeContext(creativeOverrides);
 
   // ---- assemble, attach dispose, then freeze -------------------------------
   const ctx = {
@@ -941,3 +993,617 @@ export interface ProjectExtensionRequirement {
 export interface ProjectExtensionRequirements {
   requirements: readonly ProjectExtensionRequirement[];
 }
+
+// ---------------------------------------------------------------------------
+// M3: TimelinePatch — semantic operation vocabulary
+// ---------------------------------------------------------------------------
+
+/** Top-level operation families supported by TimelinePatch. */
+export type TimelinePatchOpFamily =
+  | 'clip.add'
+  | 'clip.update'
+  | 'clip.remove'
+  | 'clip.move'
+  | 'track.add'
+  | 'track.update'
+  | 'track.remove'
+  | 'asset.update'
+  | 'asset.remove'
+  | 'app.update'
+  | 'project-data.write'
+  | 'project-data.delete'
+  | 'extension.noop';
+
+/** Reserved operation families that are validated but not executed in M3. */
+export type TimelinePatchReservedOpFamily =
+  | 'clip.split'
+  | 'clip.slice';
+
+/** All known operation family strings (active + reserved). */
+export type TimelinePatchAnyOpFamily =
+  | TimelinePatchOpFamily
+  | TimelinePatchReservedOpFamily;
+
+/**
+ * A single semantic operation in a TimelinePatch batch.
+ *
+ * Every operation carries an `op` family, a `target` object identifier
+ * (clip ID, track ID, asset key, extension ID, etc.), and an optional
+ * `payload` whose shape is family-dependent.
+ */
+export interface TimelinePatchOperation {
+  /** Operation family, e.g. "clip.add", "track.update". */
+  op: TimelinePatchAnyOpFamily;
+  /** Object identifier scoped to the operation family. */
+  target: string;
+  /** Family-dependent payload. */
+  payload?: Record<string, unknown>;
+  /**
+   * Sortable anchor for ordering-dependent operations (clip.move, etc.).
+   * Interpreted by the patch compiler; ignored for order-independent ops.
+   */
+  order?: number;
+}
+
+/** A batch of TimelinePatch operations applied atomically. */
+export interface TimelinePatch {
+  /** Monotonically-increasing batch version assigned by the runtime. */
+  version: number;
+  /** Ordered list of operations in this batch. */
+  operations: readonly TimelinePatchOperation[];
+  /** Extension or source that produced this patch. */
+  source?: string;
+  /** Opaque metadata attached by the producer. */
+  meta?: Record<string, unknown>;
+}
+
+// ---------------------------------------------------------------------------
+// M3: TimelinePatch diagnostics
+// ---------------------------------------------------------------------------
+
+/**
+ * Structured diagnostic produced by TimelinePatch validation or compilation.
+ *
+ * Diagnostics are exportable to the host diagnostic panel and carry enough
+ * context to navigate from the diagnostic to the offending operation/payload.
+ */
+export interface TimelinePatchDiagnostic {
+  severity: DiagnosticSeverity;
+  /** Stable diagnostic code, e.g. "timeline-patch/unknown-op". */
+  code: `timeline-patch/${string}`;
+  message: string;
+  /** Zero-based index into the patch operation list, when applicable. */
+  operationIndex?: number;
+  /** The operation family that triggered the diagnostic. */
+  op?: TimelinePatchAnyOpFamily;
+  /** The target identifier from the offending operation. */
+  target?: string;
+  /** Structured detail (expected type, actual value, constraint, etc.). */
+  detail?: Record<string, unknown>;
+}
+
+/** Result of validating a TimelinePatch batch. */
+export interface TimelinePatchValidationResult {
+  /** True when every operation in the batch passes validation. */
+  valid: boolean;
+  /** Diagnostics produced during validation (empty when valid). */
+  diagnostics: readonly TimelinePatchDiagnostic[];
+}
+
+// ---------------------------------------------------------------------------
+// M3: TimelineOps — atomic mutation interface
+// ---------------------------------------------------------------------------
+
+/**
+ * Stable host adapter for atomic timeline mutations.
+ *
+ * TimelineOps is the only public mutation surface available to extensions
+ * and host proposal machinery. It validates full batches, delegates to the
+ * existing commitData/history path for undo/persistence, and does not expose
+ * internal mutation APIs, provider handles, or raw timeline stores.
+ */
+export interface TimelineOps {
+  /**
+   * Validate a patch batch without mutating timeline state.
+   * Returns structured diagnostics for every invalid operation.
+   */
+  validate(patch: TimelinePatch): TimelinePatchValidationResult;
+
+  /**
+   * Preview a patch batch against a snapshot of current timeline state.
+   * Returns the projected timeline diff and affected object IDs without
+   * committing any changes.
+   */
+  preview(patch: TimelinePatch): TimelinePreviewResult;
+
+  /**
+   * Validate and apply a patch batch atomically through the existing
+   * commitData/history path. Returns the applied diff.
+   *
+   * Throws if validation fails — always call validate() first when
+   * the caller cannot guarantee validity.
+   */
+  apply(patch: TimelinePatch): TimelineDiff;
+
+  /**
+   * Take a checkpoint of the current timeline state for later rollback.
+   * Returns the checkpoint identifier.
+   */
+  checkpoint(label?: string): string;
+
+  /**
+   * Rollback to a previously taken checkpoint, discarding all mutations
+   * applied after it.
+   *
+   * Returns the diff that was undone, or null if the checkpoint is not found.
+   */
+  rollback(checkpointId: string): TimelineDiff | null;
+
+  /**
+   * Convenience: set all audio tracks to the given muted state and commit.
+   * Returns the diff describing which tracks were affected.
+   */
+  setAllTracksMuted(muted: boolean): TimelineDiff;
+}
+
+// ---------------------------------------------------------------------------
+// M3: TimelineDiff — semantic change description
+// ---------------------------------------------------------------------------
+
+/** Granularity of a diff entry. */
+export type TimelineDiffGranularity =
+  | 'clip'
+  | 'track'
+  | 'asset'
+  | 'app'
+  | 'project-data';
+
+/** The kind of change represented by a diff entry. */
+export type TimelineDiffKind = 'added' | 'removed' | 'modified' | 'reordered';
+
+/** A single entry in a TimelineDiff describing what changed. */
+export interface TimelineDiffEntry {
+  granularity: TimelineDiffGranularity;
+  kind: TimelineDiffKind;
+  /** Object identifier (clip ID, track ID, asset key, extension ID, etc.). */
+  target: string;
+  /** The operation family that produced this change. */
+  op: TimelinePatchAnyOpFamily;
+  /**
+   * Pre-mutation value snapshot (summary). Omitted for 'added' entries.
+   * Never exposes raw internal row/meta shapes.
+   */
+  before?: Record<string, unknown>;
+  /**
+   * Post-mutation value snapshot (summary). Omitted for 'removed' entries.
+   * Never exposes raw internal row/meta shapes.
+   */
+  after?: Record<string, unknown>;
+}
+
+/**
+ * Semantic diff describing what a patch batch changed.
+ *
+ * This is the public change description — it never exposes raw internal
+ * timeline row data, provider metadata, or mutation engine internals.
+ */
+export interface TimelineDiff {
+  /** The patch version this diff corresponds to. */
+  version: number;
+  /** Ordered list of changes produced by the patch. */
+  entries: readonly TimelineDiffEntry[];
+  /** Set of all object IDs affected by this patch. */
+  affectedObjectIds: readonly string[];
+}
+
+/** Result of previewing a patch batch against current timeline state. */
+export interface TimelinePreviewResult {
+  /** The projected diff if the patch were applied. */
+  diff: TimelineDiff;
+  /**
+   * Whether every operation in the patch is previewable.
+   * Non-previewable operations (e.g. clip.split reserved) still produce
+   * diagnostics but the diff may be incomplete.
+   */
+  fullyPreviewable: boolean;
+  /** Diagnostics for non-previewable or problematic operations. */
+  diagnostics: readonly TimelinePatchDiagnostic[];
+}
+
+// ---------------------------------------------------------------------------
+// M3: TimelineSnapshot / TimelineReader
+// ---------------------------------------------------------------------------
+
+/**
+ * Stable, read-only projection of timeline state for extensions and proposal
+ * machinery. Never exposes raw internal rows, provider handles, or mutation
+ * engine internals.
+ */
+export interface TimelineSnapshot {
+  /** Project identifier, when available. */
+  projectId: string | null;
+  /**
+   * Base version for concurrency control. This is the version the snapshot
+   * was taken at; proposals based on this snapshot must revalidate against
+   * the current reader version before acceptance.
+   */
+  baseVersion: number;
+  /**
+   * Current version at the time the snapshot was taken. Equal to baseVersion
+   * when there are no uncommitted local edits.
+   */
+  currentVersion: number;
+  /** Extensions referenced by this project with version-range constraints. */
+  extensionRequirements: readonly ProjectExtensionRequirement[];
+  /** Ordered list of clip summaries (ID, track, at, clipType, duration). */
+  clips: readonly TimelineClipSummary[];
+  /** Ordered list of track summaries (ID, kind, label, muted). */
+  tracks: readonly TimelineTrackSummary[];
+  /** Asset keys present in the timeline. */
+  assetKeys: readonly string[];
+  /** Extension-owned app data (project-data) keyed by extension ID. */
+  app: Record<string, unknown>;
+  /**
+   * Source-map entries extracted from extension project-data.
+   * Each entry maps a timeline object to a source location.
+   */
+  sourceMapEntries?: readonly SourceMapEntry[];
+}
+
+/** Lightweight clip summary for TimelineSnapshot projection. */
+export interface TimelineClipSummary {
+  id: string;
+  track: string;
+  at: number;
+  clipType?: string;
+  /** Duration in frames (derived from to-from or hold). */
+  duration: number;
+  /** True when this clip is managed by a registered extension. */
+  managed: boolean;
+  /** Extension ID that manages this clip, if managed. */
+  managedBy?: string;
+  /** Generated-object metadata attached by the owning extension, if any. */
+  generatedMeta?: GeneratedObjectMeta;
+}
+
+/** Lightweight track summary for TimelineSnapshot projection. */
+export interface TimelineTrackSummary {
+  id: string;
+  kind: 'visual' | 'audio';
+  label: string;
+  muted: boolean;
+  /** Extension-owned app data attached to this track. */
+  app?: Record<string, unknown>;
+  /** Generated-object metadata attached by the owning extension, if any. */
+  generatedMeta?: GeneratedObjectMeta;
+}
+
+/**
+ * Read-only timeline reader exposed to host and extension code.
+ * Provides stable snapshots without exposing internal stores.
+ */
+export interface TimelineReader {
+  /** Take a point-in-time snapshot of the current timeline state. */
+  snapshot(): TimelineSnapshot;
+}
+
+// ---------------------------------------------------------------------------
+// M3: TimelineProposal
+// ---------------------------------------------------------------------------
+
+/** Lifecycle state of a proposal. */
+export type ProposalState =
+  | 'pending'
+  | 'accepted'
+  | 'rejected'
+  | 'stale';
+
+/** A proposal to mutate the timeline, submitted by an extension or tool. */
+export interface TimelineProposal {
+  /** Unique proposal identifier assigned by the runtime. */
+  id: string;
+  /** The source that created this proposal (extension ID, tool name, etc.). */
+  source: string;
+  /** Human-readable rationale / description. */
+  rationale?: string;
+  /** Current lifecycle state. */
+  state: ProposalState;
+  /** The patch to apply if accepted. */
+  patch: TimelinePatch;
+  /**
+   * The baseVersion the proposal was created against.
+   * If the current reader version differs at acceptance time, the proposal
+   * is stale and must be rejected or refreshed.
+   */
+  baseVersion: number;
+  /**
+   * Whether this proposal's effects can be previewed (ghost-rendered)
+   * without committing. Reserved operations are non-previewable.
+   */
+  previewable: boolean;
+  /** The diff produced when this proposal was last previewed, if any. */
+  previewDiff?: TimelineDiff;
+  /** Timestamp when the proposal was created (epoch ms). */
+  createdAt: number;
+  /** Timestamp when the proposal last changed state (epoch ms). */
+  updatedAt: number;
+  /** Diagnostics produced during validation or preview, if any. */
+  diagnostics?: readonly TimelinePatchDiagnostic[];
+}
+
+/** Input for creating a new proposal. */
+export interface TimelineProposalInput {
+  source: string;
+  rationale?: string;
+  patch: TimelinePatch;
+  baseVersion: number;
+}
+
+/** Listener callback for proposal state changes. */
+export type ProposalListener = (proposal: TimelineProposal) => void;
+
+// ---------------------------------------------------------------------------
+// M3: ProposalRuntime
+// ---------------------------------------------------------------------------
+
+/**
+ * Provider-scoped proposal runtime.
+ *
+ * Manages the lifecycle of TimelineProposals: creation, preview, acceptance,
+ * rejection, and stale detection. Proposals are in-memory and provider-scoped
+ * for M3; page refresh drops unaccepted proposals.
+ */
+export interface ProposalRuntime {
+  /**
+   * Subscribe to proposal state changes.
+   * The listener is called whenever any proposal changes state.
+   * Returns a DisposeHandle for unsubscription.
+   */
+  subscribe(listener: ProposalListener): DisposeHandle;
+
+  /**
+   * Create a new pending proposal. If a proposal from the same source
+   * already exists in 'pending' state, it is atomically replaced
+   * (replaceForSource semantics).
+   */
+  create(input: TimelineProposalInput): TimelineProposal;
+
+  /**
+   * Preview a pending proposal against the current reader snapshot.
+   * Returns the projected diff. Does not mutate canonical timeline state.
+   * Updates the proposal's previewDiff and previewable fields.
+   */
+  preview(proposalId: string): TimelinePreviewResult;
+
+  /**
+   * Accept a pending proposal. Revalidates baseVersion against the current
+   * reader snapshot; if stale, the proposal is marked stale and the call
+   * fails with a diagnostic. On success, applies the patch through
+   * TimelineOps and marks the proposal accepted.
+   *
+   * Throws on stale baseVersion or if the proposal is not in 'pending' state.
+   */
+  accept(proposalId: string): TimelineDiff;
+
+  /**
+   * Reject a pending proposal, moving it to 'rejected' state.
+   * No timeline mutation occurs.
+   */
+  reject(proposalId: string, reason?: string): void;
+
+  /**
+   * Get a proposal by ID, or undefined if not found.
+   */
+  get(proposalId: string): TimelineProposal | undefined;
+
+  /**
+   * List all proposals, optionally filtered by state.
+   */
+  list(state?: ProposalState): readonly TimelineProposal[];
+
+  /**
+   * Get the current reader snapshot version for baseVersion comparisons.
+   */
+  readonly currentVersion: number;
+}
+
+// ---------------------------------------------------------------------------
+// M3: SourceMapRuntime
+// ---------------------------------------------------------------------------
+
+/**
+ * Provider-scoped runtime for managing SourceMapEntry records.
+ *
+ * Stores entries in extension project-data under well-known keys so they
+ * are replayable, rollback-safe, and stale-aware.
+ *
+ * SourceMapEntry records are stored in the extension's project-data namespace
+ * using the key pattern `__sm__:<entryId>`.  This keeps them alongside other
+ * extension-owned data and makes them subject to the same limits.
+ */
+export interface SourceMapRuntime {
+  /**
+   * Create a new non-stale source-map entry and persist it via project-data.
+   * Returns the created entry.
+   */
+  create(
+    extensionId: string,
+    targetId: string,
+    targetGranularity: TimelineDiffGranularity,
+    sourceUri: string,
+    sourceStartLine: number,
+    sourceStartColumn: number,
+    sourceEndLine: number,
+    sourceEndColumn: number,
+    meta?: Record<string, unknown>,
+  ): SourceMapEntry;
+
+  /**
+   * Retrieve a source-map entry by ID from project-data.
+   * Returns undefined if not found.
+   */
+  get(extensionId: string, entryId: string): SourceMapEntry | undefined;
+
+  /**
+   * Retrieve all source-map entries for a given timeline target (clip, track, etc.).
+   */
+  getForTarget(extensionId: string, targetId: string): SourceMapEntry[];
+
+  /**
+   * Retrieve all source-map entries for a given source URI.
+   */
+  getForSource(extensionId: string, sourceUri: string): SourceMapEntry[];
+
+  /**
+   * Mark all source-map entries for a given source URI as stale.
+   * Updates the stale flag in persisted project-data.
+   * Returns the updated entries.
+   */
+  markStale(extensionId: string, sourceUri: string): SourceMapEntry[];
+
+  /**
+   * Mark all source-map entries for a given target as stale.
+   */
+  markStaleForTarget(extensionId: string, targetId: string): SourceMapEntry[];
+
+  /**
+   * Delete a source-map entry from project-data.
+   * Returns true if the entry existed and was deleted.
+   */
+  delete(extensionId: string, entryId: string): boolean;
+
+  /**
+   * List all source-map entries for an extension.
+   */
+  list(extensionId: string): SourceMapEntry[];
+}
+
+// ---------------------------------------------------------------------------
+// M3: SourceMapEntry
+// ---------------------------------------------------------------------------
+
+/**
+ * A bidirectional mapping between a timeline object and a source range
+ * in extension-owned code or DSL.
+ *
+ * Source maps enable navigation from timeline objects to the code that
+ * generated them and from source ranges back to affected timeline objects.
+ */
+export interface SourceMapEntry {
+  /** Unique identifier for this mapping. */
+  id: string;
+  /** The extension that owns this mapping. */
+  source: string;
+  /** Timeline object identifier (clip ID, track ID, etc.). */
+  targetId: string;
+  /** Granularity of the mapped object. */
+  targetGranularity: TimelineDiffGranularity;
+  /** Source file path or virtual document URI. */
+  sourceUri: string;
+  /** 0-based start line in the source. */
+  sourceStartLine: number;
+  /** 0-based start column in the source. */
+  sourceStartColumn: number;
+  /** 0-based end line in the source (exclusive). */
+  sourceEndLine: number;
+  /** 0-based end column in the source (exclusive). */
+  sourceEndColumn: number;
+  /**
+   * True when the mapping may be out of date because the source or the
+   * timeline object has changed since the mapping was created.
+   */
+  stale: boolean;
+  /** Opaque metadata attached by the mapping producer. */
+  meta?: Record<string, unknown>;
+}
+
+// ---------------------------------------------------------------------------
+// M3: Generated-object metadata
+// ---------------------------------------------------------------------------
+
+/**
+ * Metadata attached to timeline objects that were generated or managed
+ * by an extension. Stored in the clip/track/app record so the editor can
+ * surface ownership, enable confirmation dialogs, and support source-map
+ * navigation without importing extension code.
+ */
+export interface GeneratedObjectMeta {
+  /** Extension ID that generated or manages this object. */
+  extensionId: string;
+  /** The contribution within the extension that produced this object. */
+  contributionId?: string;
+  /** Opaque generation provenance (source hash, prompt ID, etc.). */
+  provenance?: Record<string, unknown>;
+  /** Timestamp when the object was generated (epoch ms). */
+  generatedAt?: number;
+  /** Source-map entry ID that maps this object to its source, if any. */
+  sourceMapEntryId?: string;
+}
+
+// ---------------------------------------------------------------------------
+// M3: Extension project-data limits
+// ---------------------------------------------------------------------------
+
+/**
+ * Hard limits on extension-owned project data stored in TimelineConfig.app.
+ *
+ * These limits are enforced by the patch compiler and the project-data
+ * validation path. Exceeding any limit produces a diagnostic — the host
+ * may choose to surface this as a warning or block the write.
+ */
+export const EXTENSION_PROJECT_DATA_LIMITS = {
+  /** Maximum size in bytes for a single project-data entry (JSON-serialized). */
+  MAX_ENTRY_BYTES: 64 * 1024, // 64 KB
+  /** Maximum total size in bytes for all entries owned by one extension. */
+  MAX_EXTENSION_TOTAL_BYTES: 1 * 1024 * 1024, // 1 MB
+  /** Maximum number of entries one extension may store. */
+  MAX_ENTRIES_PER_EXTENSION: 128,
+} as const;
+
+/** Diagnostic codes produced when project-data limits are exceeded. */
+export type ProjectDataLimitCode =
+  | 'project-data/entry-size-exceeded'
+  | 'project-data/extension-total-exceeded'
+  | 'project-data/entry-count-exceeded';
+
+/**
+ * Structured detail carried in TimelinePatchDiagnostic.detail when a
+ * project-data limit is exceeded.
+ */
+export interface ProjectDataLimitDetail {
+  extensionId: string;
+  limit: number;
+  actual: number;
+  unit: 'bytes' | 'entries';
+  code: ProjectDataLimitCode;
+}
+
+// ---------------------------------------------------------------------------
+// M3: Host-owned proposal UI contract (surface shape only)
+// ---------------------------------------------------------------------------
+
+/**
+ * Contract for the host-owned proposal panel UI surface.
+ *
+ * The actual UI is implemented by the host using existing
+ * TimelineEditorShellCore, AlertDialog, and DiagnosticPanel components.
+ * This interface defines the data shape the UI surface expects from the
+ * proposal runtime — it does not prescribe rendering details.
+ */
+export interface ProposalPanelState {
+  /** All proposals currently known to the runtime. */
+  proposals: readonly TimelineProposal[];
+  /** The proposal currently selected for preview, if any. */
+  selectedProposalId: string | null;
+  /** Whether the proposal panel is visible. */
+  visible: boolean;
+}
+
+/** Action types the proposal UI can dispatch. */
+export type ProposalPanelAction =
+  | { type: 'select'; proposalId: string }
+  | { type: 'deselect' }
+  | { type: 'accept'; proposalId: string }
+  | { type: 'reject'; proposalId: string; reason?: string }
+  | { type: 'preview'; proposalId: string }
+  | { type: 'toggleVisibility' };

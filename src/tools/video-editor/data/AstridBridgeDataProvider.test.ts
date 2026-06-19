@@ -1147,4 +1147,196 @@ describe('AstridBridgeDataProvider', () => {
   it('uses the direct localhost asset base default', () => {
     expect(defaultAstridBridgeAssetBaseUrl()).toBe('http://127.0.0.1:17333');
   });
+
+  // -------------------------------------------------------------------------
+  // Local monotonic stale invalidation gap (T14)
+  // -------------------------------------------------------------------------
+  describe('local monotonic stale invalidation gap', () => {
+    it('does NOT reject saves with a stale expectedVersion (no CAS enforcement)', async () => {
+      // AstridBridgeDataProvider explicitly ignores expectedVersion
+      // (the parameter is named _expectedVersion in saveTimeline).
+      // This test demonstrates the gap: without the local monotonic
+      // invalidation in useTimelineOps.apply(), a stale patch would
+      // silently overwrite newer data.
+      const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url.endsWith('/api/astrid/projects/ados-talks/timelines/11111111-1111-1111-1111-111111111111')) {
+          return new Response(JSON.stringify(makePayload()), { status: 200 });
+        }
+        if (url.endsWith('/registry')) {
+          return new Response(JSON.stringify(makePayload().registry), { status: 200 });
+        }
+        if (url.endsWith('/save')) {
+          return new Response(JSON.stringify({
+            ...makePayload(),
+            config_version: 42,
+          }), { status: 200 });
+        }
+        throw new Error(`Unexpected bridge request: ${url}`);
+      });
+      vi.stubGlobal('fetch', fetchMock);
+
+      const provider = new AstridBridgeDataProvider({
+        projectSlug: 'ados-talks',
+        timelineRef: 'intro-cut',
+        timelineId: '11111111-1111-1111-1111-111111111111',
+      });
+
+      // Save with a wildly stale expectedVersion (99999) — must NOT throw
+      const version = await provider.saveTimeline(
+        '11111111-1111-1111-1111-111111111111',
+        { output: {}, clips: [], tracks: [] },
+        99999,
+      );
+
+      // The save succeeds and returns whatever version the bridge returns
+      expect(version).toBe(42);
+    });
+
+    it('multiple consecutive saves with different stale expectedVersions all succeed', async () => {
+      // Because Astrid ignores expectedVersion, every save succeeds
+      // regardless of what version the caller thinks the timeline is at.
+      // This is the exact scenario where useTimelineOps local invalidation
+      // is essential — it must reject stale patches before they reach the
+      // provider.
+      let callCount = 0;
+      const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input);
+        callCount += 1;
+        if (url.endsWith('/api/astrid/projects/ados-talks/timelines/11111111-1111-1111-1111-111111111111')) {
+          return new Response(JSON.stringify(makePayload()), { status: 200 });
+        }
+        if (url.endsWith('/registry')) {
+          return new Response(JSON.stringify(makePayload().registry), { status: 200 });
+        }
+        if (url.endsWith('/save')) {
+          return new Response(JSON.stringify({
+            ...makePayload(),
+            config_version: 10 + callCount,
+          }), { status: 200 });
+        }
+        throw new Error(`Unexpected bridge request: ${url}`);
+      });
+      vi.stubGlobal('fetch', fetchMock);
+
+      const provider = new AstridBridgeDataProvider({
+        projectSlug: 'ados-talks',
+        timelineRef: 'intro-cut',
+        timelineId: '11111111-1111-1111-1111-111111111111',
+      });
+
+      // Three saves, each with a different (and wrong) expectedVersion
+      const v1 = await provider.saveTimeline(
+        '11111111-1111-1111-1111-111111111111',
+        { output: {}, clips: [], tracks: [] },
+        1,
+      );
+      const v2 = await provider.saveTimeline(
+        '11111111-1111-1111-1111-111111111111',
+        { output: {}, clips: [], tracks: [] },
+        5, // stale
+      );
+      const v3 = await provider.saveTimeline(
+        '11111111-1111-1111-1111-111111111111',
+        { output: {}, clips: [], tracks: [] },
+        999, // very stale
+      );
+
+      // All three succeed because Astrid doesn't check expectedVersion
+      expect(v1).toBeGreaterThan(0);
+      expect(v2).toBeGreaterThan(0);
+      expect(v3).toBeGreaterThan(0);
+    });
+
+    it('the returned version reflects the bridge state, not the expectedVersion', async () => {
+      const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url.endsWith('/api/astrid/projects/ados-talks/timelines/11111111-1111-1111-1111-111111111111')) {
+          return new Response(JSON.stringify(makePayload()), { status: 200 });
+        }
+        if (url.endsWith('/registry')) {
+          return new Response(JSON.stringify(makePayload().registry), { status: 200 });
+        }
+        if (url.endsWith('/save')) {
+          return new Response(JSON.stringify({
+            ...makePayload(),
+            config_version: 77,
+          }), { status: 200 });
+        }
+        throw new Error(`Unexpected bridge request: ${url}`);
+      });
+      vi.stubGlobal('fetch', fetchMock);
+
+      const provider = new AstridBridgeDataProvider({
+        projectSlug: 'ados-talks',
+        timelineRef: 'intro-cut',
+        timelineId: '11111111-1111-1111-1111-111111111111',
+      });
+
+      // expectedVersion is 5, but the bridge returns version 77
+      const version = await provider.saveTimeline(
+        '11111111-1111-1111-1111-111111111111',
+        { output: {}, clips: [], tracks: [] },
+        5,
+      );
+
+      expect(version).toBe(77);
+      // Version 77 ≠ expectedVersion 5 + 1, proving the bridge ignores
+      // expectedVersion entirely and just returns its own head version.
+    });
+
+    it('confirms the provider gap that makes useTimelineOps local invalidation essential', async () => {
+      // This test explicitly documents why the local monotonic stale
+      // invalidation in useTimelineOps.apply() is critical for providers
+      // like Astrid that do not enforce CAS:
+      //
+      // 1. The provider never throws TimelineVersionConflictError
+      // 2. Stale writes silently succeed
+      // 3. Without the local check, two concurrent editors could
+      //    overwrite each other's changes
+      //
+      // The useTimelineOps.apply() base-version check (patch.version vs
+      // dataRef.current.configVersion) catches this BEFORE the provider
+      // is called, providing defense-in-depth.
+
+      const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url.endsWith('/api/astrid/projects/ados-talks/timelines/11111111-1111-1111-1111-111111111111')) {
+          return new Response(JSON.stringify(makePayload()), { status: 200 });
+        }
+        if (url.endsWith('/registry')) {
+          return new Response(JSON.stringify(makePayload().registry), { status: 200 });
+        }
+        if (url.endsWith('/save')) {
+          return new Response(JSON.stringify({
+            ...makePayload(),
+            config_version: 100,
+          }), { status: 200 });
+        }
+        throw new Error(`Unexpected bridge request: ${url}`);
+      });
+      vi.stubGlobal('fetch', fetchMock);
+
+      const provider = new AstridBridgeDataProvider({
+        projectSlug: 'ados-talks',
+        timelineRef: 'intro-cut',
+        timelineId: '11111111-1111-1111-1111-111111111111',
+      });
+
+      // Any expectedVersion, no matter how stale, succeeds
+      for (const staleVersion of [1, 2, 5, 10, 50, 9999]) {
+        const version = await provider.saveTimeline(
+          '11111111-1111-1111-1111-111111111111',
+          { output: {}, clips: [], tracks: [] },
+          staleVersion,
+        );
+        expect(version).toBeGreaterThan(0);
+      }
+
+      // The provider itself never threw a conflict — the local
+      // invalidation in useTimelineOps is the only guard against
+      // stale writes for this provider.
+    });
+  });
+
 });

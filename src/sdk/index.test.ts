@@ -364,7 +364,7 @@ describe('createExtensionContext', () => {
       ctx.creative.timeline;
     } catch (err) {
       expect((err as ExtensionNotImplementedError).feature).toBe('timeline');
-      expect((err as ExtensionNotImplementedError).milestone).toBe('M2');
+      expect((err as ExtensionNotImplementedError).milestone).toBe('M3');
     }
   });
 

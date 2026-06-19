@@ -52,6 +52,7 @@ import {
 } from '@/tools/video-editor/lib/mobile-interaction-model.ts';
 import type { TimelineData } from '@/tools/video-editor/lib/timeline-data.ts';
 import { useTimelineTrackManagement } from '@/tools/video-editor/hooks/useTimelineTrackManagement.ts';
+import { useTimelineOps } from '@/tools/video-editor/hooks/useTimelineOps';
 
 export type { EditorPreferences } from '@/tools/video-editor/hooks/useEditorPreferences.ts';
 export type { RenderStatus } from '@/tools/video-editor/hooks/useRenderState.ts';
@@ -516,6 +517,18 @@ export function useTimelineState(): UseTimelineStateResult {
     createManualCheckpoint,
     onBeforeCommit,
   } = history;
+
+  // Wire TimelineOps (M3 atomic mutation adapter) into the host runtime context.
+  // The adapter is stable (memoized on its callback deps) and delegates to
+  // the existing commitData/history path without replacing the command facade.
+  const timelineOps = useTimelineOps({
+    commitData: save.commitData,
+    dataRef: save.dataRef,
+    createManualCheckpoint,
+    jumpToCheckpoint,
+    checkpoints,
+  });
+
   const {
     scale,
     scaleWidth,
@@ -914,6 +927,7 @@ export function useTimelineState(): UseTimelineStateResult {
     ops: editorOps,
     chrome,
     playback: playbackValue,
+    timelineOps,
   });
 
   useLayoutEffect(() => {
@@ -922,8 +936,9 @@ export function useTimelineState(): UseTimelineStateResult {
       ops: editorOps,
       chrome,
       playback: playbackValue,
+      timelineOps,
     });
-  }, [chrome, editorData, editorOps, playbackValue]);
+  }, [chrome, editorData, editorOps, playbackValue, timelineOps]);
 
   return {
     store: storeRef.current,
