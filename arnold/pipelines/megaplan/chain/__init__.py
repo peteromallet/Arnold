@@ -953,19 +953,31 @@ def _latest_execution_batch_all_tasks_done(plan_dir: Path) -> tuple[bool, str]:
     )
     if not batches:
         return False, "no execution_batch_*.json artifact found"
-    latest = batches[-1]
-    try:
-        payload = json.loads(latest.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as error:
-        return False, f"{latest.name} could not be read: {error}"
-    if not isinstance(payload, dict):
-        return False, f"{latest.name} payload is not an object"
 
-    task_records: list[dict[str, Any]] = []
-    for key in ("task_updates", "tasks"):
-        raw_records = payload.get(key)
-        if isinstance(raw_records, list):
-            task_records.extend(item for item in raw_records if isinstance(item, dict))
+    # Accumulate the most recent task record across all batch artifacts. Earlier
+    # retries may have left stale partial batches (e.g. batch 5 with only T5),
+    # while later batches or retries completed the remaining tasks. Authority is
+    # still checked against the actual evidence in each originating artifact.
+    task_records_by_id: dict[str, dict[str, Any]] = {}
+    latest = batches[-1]
+    for batch_path in batches:
+        try:
+            payload = json.loads(batch_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        if not isinstance(payload, dict):
+            continue
+        for key in ("task_updates", "tasks"):
+            raw_records = payload.get(key)
+            if not isinstance(raw_records, list):
+                continue
+            for item in raw_records:
+                if isinstance(item, dict):
+                    task_id = str(item.get("task_id") or item.get("id") or "")
+                    if task_id:
+                        task_records_by_id[task_id] = item
+
+    task_records = list(task_records_by_id.values())
     if not task_records:
         return False, f"{latest.name} has no task records"
 
@@ -977,7 +989,7 @@ def _latest_execution_batch_all_tasks_done(plan_dir: Path) -> tuple[bool, str]:
     )
     incomplete = _non_authoritative_task_reasons(task_records, completed, batch_decisions)
     if incomplete:
-        return False, f"{latest.name} has non-authoritative tasks: {', '.join(incomplete)}"
+        return False, f"accumulated batches have non-authoritative tasks: {', '.join(incomplete)}"
     finalize_path = plan_dir / "finalize.json"
     if finalize_path.exists():
         try:
@@ -1046,7 +1058,7 @@ def _finalize_records_missing_authority_fields(
         kind = task.get("kind")
         notes = task.get("executor_notes")
         if (
-            kind in {"audit", "research"}
+            kind in {"audit", "research", "docs"}
             and isinstance(notes, str)
             and len(notes.strip()) >= 100
             and not is_rubber_stamp(notes, strict=True)

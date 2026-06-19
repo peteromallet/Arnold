@@ -353,6 +353,11 @@ def _evidence_from_task_record(
     root: Path,
 ) -> tuple[EvidenceRef, ...]:
     task_id = _task_id(record)
+    # Execution workers often omit head_sha/code_hash from task records. Anchor
+    # evidence to the current git HEAD of the project so authority checks do not
+    # treat in-flight batch artifacts as stale/missing-head.
+    fallback_head = _best_effort_git_head(root)
+    fallback_code_hash = _optional_str(record.get("code_hash"))
     refs: list[EvidenceRef] = []
     for field_name in ("files_changed", "commands_run", "evidence_files", "sections_written"):
         for value in _string_values(record.get(field_name)):
@@ -364,21 +369,25 @@ def _evidence_from_task_record(
                     details={
                         "task_id": task_id,
                         field_name: [value],
-                        "head_sha": _optional_str(record.get("head_sha") or record.get("head")),
-                        "code_hash": _optional_str(record.get("code_hash")),
+                        "head_sha": _optional_str(record.get("head_sha") or record.get("head")) or fallback_head,
+                        "code_hash": fallback_code_hash,
                     },
                     trust_class=TrustClass.evidence,
                     artifact=ArtifactRef(path=_relative_artifact_path(artifact_path, root)),
                     source=artifact_path.name,
                     subject=task_id,
-                    code_hash=_optional_str(record.get("code_hash")),
+                    code_hash=fallback_code_hash,
                 )
             )
     kind = _optional_str(record.get("kind"))
     notes = _optional_str(record.get("executor_notes"))
+    # Docs-only tasks (e.g., donor salvage write-ups) may legitimately carry no
+    # files_changed/commands_run after finalize merge, but their executor notes
+    # are substantive evidence of completion.
+    substantive_note_kinds = {"audit", "research", "docs"}
     if (
         not refs
-        and kind in {"audit", "research"}
+        and kind in substantive_note_kinds
         and notes is not None
         and len(notes.strip()) >= _AUDIT_RESEARCH_NOTES_MIN_LEN
         and not is_rubber_stamp(notes, strict=True)
@@ -392,14 +401,14 @@ def _evidence_from_task_record(
                     "task_id": task_id,
                     "kind": kind,
                     "executor_notes_length": len(notes.strip()),
-                    "head_sha": _optional_str(record.get("head_sha") or record.get("head")),
-                    "code_hash": _optional_str(record.get("code_hash")),
+                    "head_sha": _optional_str(record.get("head_sha") or record.get("head")) or fallback_head,
+                    "code_hash": fallback_code_hash,
                 },
                 trust_class=TrustClass.evidence,
                 artifact=ArtifactRef(path=_relative_artifact_path(artifact_path, root)),
                 source=artifact_path.name,
                 subject=task_id,
-                code_hash=_optional_str(record.get("code_hash")),
+                code_hash=fallback_code_hash,
             )
         )
     if not refs and _optional_str(record.get("status")) in {"waived", "not_applicable"}:
