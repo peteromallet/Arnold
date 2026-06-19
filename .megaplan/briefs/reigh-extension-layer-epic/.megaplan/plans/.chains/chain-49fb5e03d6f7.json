@@ -1,7 +1,7 @@
 {
     "schema_version": 0,
     "current_milestone_index": 9,
-    "current_plan_name": "m8-dynamic-transition-20260619-1915",
+    "current_plan_name": null,
     "last_state": "merged",
     "pr_number": null,
     "pr_state": null,
@@ -123,9 +123,9 @@
             "merged_at": "2026-06-19T19:02:00Z"
         }
     ],
-    "branch_head": "8713775601e91f219c8c54accdadb290476c0d0b",
-    "pr_head": "8713775601e91f219c8c54accdadb290476c0d0b",
-    "last_pushed_commit": "8713775601e91f219c8c54accdadb290476c0d0b",
+    "branch_head": "165291f8446e8669f3cb650f11c475527b8c0123",
+    "pr_head": "165291f8446e8669f3cb650f11c475527b8c0123",
+    "last_pushed_commit": "165291f8446e8669f3cb650f11c475527b8c0123",
     "dirty_flag": false,
     "sync_state": "dirty",
     "extra_repos": [],
@@ -149,8 +149,8 @@
             "target_root": "/Users/peteromalley/Documents/.megaplan-worktrees/reigh-extension-layer-epic",
             "work_dir": "/Users/peteromalley/Documents/.megaplan-worktrees/reigh-extension-layer-epic",
             "engine_root": "/Users/peteromalley/.pyenv/versions/3.11.11/lib/python3.11/site-packages",
-            "target_head": "01060767cee5c83b22f3897bfe09dcac648ec2d9",
-            "target_base": "01060767cee5c83b22f3897bfe09dcac648ec2d9",
+            "target_head": "165291f8446e8669f3cb650f11c475527b8c0123",
+            "target_base": "165291f8446e8669f3cb650f11c475527b8c0123",
             "target_base_ref": "main",
             "target_fallback_reason": null
         }
