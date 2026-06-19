@@ -1,0 +1,68 @@
+base_branch: native-python-pipelines
+
+milestones:
+  - label: m3-megaplan-runtime-hooks
+    idea: .megaplan/briefs/native-python-pipelines/m3-megaplan-runtime-hooks.md
+    profile: partnered-5
+    vendor: codex
+    robustness: thorough
+    depth: high
+    branch: native-python-epic-m3-hooks
+    notes: "Clean-start corrective milestone after the already-landed substrate/pilot base. Implement `arnold.pipelines.megaplan.native_hooks` against the existing native hook surface, add the missing nested/subpipeline runtime/compiler/checkpoint/composite-cursor support, and prove the semantics on a Megaplan-shaped toy pipeline with byte-compatible persistence. No-go unless work starts from a clean `native-python-pipelines@371a6d7e` checkout or fresh child branch from it."
+
+  - label: m4-main-megaplan-pipeline
+    idea: .megaplan/briefs/native-python-pipelines/m4-main-megaplan-pipeline.md
+    profile: partnered-5
+    vendor: codex
+    robustness: thorough
+    depth: high
+    branch: native-python-epic-m4-main-megaplan
+    notes: "Load-bearing Megaplan conversion milestone. Rewrite `arnold/pipelines/megaplan/pipeline.py` as a native `@pipeline` function, run it side-by-side with the graph executor behind a flag, and require representative trace/state/event/artifact/topology parity plus stable graph-born/native-born resume routing before M5A may start. This depends on the M3 hook/runtime handoff."
+
+  - label: m5a-parallel-and-panel-pipelines
+    idea: .megaplan/briefs/native-python-pipelines/m5a-parallel-and-panel-pipelines.md
+    profile: partnered-5
+    vendor: codex
+    robustness: thorough
+    depth: high
+    branch: native-python-m5a-parallel-panels
+    notes: "After M4 parity is green, add native `parallel(...)`, panel composition, and derived-graph/projection support for bounded fan-out/fan-in, then convert `select-tournament` and `epic-blitz`. Keep human-gate suspend/resume explicitly out of this milestone so the acceptance gate stays focused on parallel/panel behavior only."
+
+  - label: m5b-human-gates
+    idea: .megaplan/briefs/native-python-pipelines/m5b-human-gates.md
+    profile: partnered-5
+    vendor: codex
+    robustness: thorough
+    depth: high
+    branch: native-python-m5b-human-gates
+    notes: "After M5A lands, add human-gate suspend/resume parity and convert `writing-panel-strict`; `deliberation` only enters by explicit kickoff decision if a second real human-gate pipeline is needed. Keep remaining pipeline migrations out so this milestone proves the human-review cursor/resume contract cleanly."
+
+  - label: m6-remaining-pipeline-migrations
+    idea: .megaplan/briefs/native-python-pipelines/m6-remaining-pipeline-migrations.md
+    profile: partnered-5
+    vendor: codex
+    robustness: thorough
+    depth: high
+    branch: native-python-m6-remaining-pipelines
+    notes: "Convert only the frozen remaining inventory: `creative`, `doc`, `jokes`, `live_supervisor`, and `deliberation` if M5B did not already finish it. The `planning` package is a read-only alias to canonical `megaplan`, and `evidence_pack` stays out of scope as a model-less `in_process` pipeline. Anything else discovered later is an explicit re-scope decision, not automatic M6 scope."
+
+  - label: m7-flip-default-and-cleanup
+    idea: .megaplan/briefs/native-python-pipelines/m7-flip-default-and-cleanup.md
+    profile: partnered-5
+    vendor: codex
+    robustness: thorough
+    depth: high
+    branch: native-python-m7-flip-cleanup
+    notes: "Default-flip and cleanup milestone. Make native execution the default only after M6 handoff proves parity across all active converted pipelines, graph-born/native-born resume routing is stable, rollback is documented, and unused graph-builder scaffolding is the only code being removed. Manual merge policy remains appropriate because this milestone changes defaults and deletes code."
+
+on_failure:
+  abort: stop_chain
+on_escalate:
+  abort: stop_chain
+merge_policy: review
+
+driver:
+  robustness: thorough
+  auto_approve: true
+  max_iterations: 100
+  poll_sleep: 8.0
