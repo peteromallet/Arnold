@@ -98,6 +98,8 @@ import {
   CREATIVE_MEMBER_MILESTONE,
   createCreativeContextStubs,
   ExtensionNotImplementedError,
+  contributionKindNotYetBridged,
+  CONTRIBUTION_KIND_MILESTONE,
 } from '@reigh/editor-sdk';
 import type {
   // M4 commands / keybindings / context menus
@@ -150,6 +152,27 @@ import type {
   ProposalPanelAction,
   // CreativeContext (updated in M3)
   CreativeContext,
+  // M6: Parser / output format / search provider
+  ParserContribution,
+  OutputFormatContribution,
+  SearchProviderContribution,
+  ParserInput,
+  ParserResult,
+  ParserDiagnostic,
+  ParserHandler,
+  CompileOnlyOutputResult,
+  OutputFormatHandler,
+  OutputFormatContext,
+  SearchMatch,
+  SearchProviderResult,
+  SearchProviderHandler,
+  SearchProviderContext,
+  AssetReadSurface,
+  MaterialReadSurface,
+  ExportService,
+  MetadataFacetDescriptor,
+  MetadataFacetValueKind,
+  AssetDetailSectionDescriptor,
 } from '@reigh/editor-sdk';
 
 // ---------------------------------------------------------------------------
@@ -755,5 +778,251 @@ describe('M3: internal types are NOT re-exported from @reigh/editor-sdk', () => 
     const valueCount = Object.keys(sdkStar).length;
     expect(valueCount).toBeLessThan(80);
     expect(valueCount).toBeGreaterThan(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// M6: Parser / output format / search provider contribution type interfaces
+// ---------------------------------------------------------------------------
+
+describe('M6: parser/outputFormat/searchProvider type interfaces are importable from @reigh/editor-sdk', () => {
+  it('ParserContribution shape is constructable (minimal)', () => {
+    const contrib: ParserContribution = {
+      id: 'myParser' as ContributionId,
+      kind: 'parser',
+      label: 'My Parser',
+      acceptMimeTypes: ['image/jpeg'],
+    };
+    expect(contrib.kind).toBe('parser');
+    expect(contrib.label).toBe('My Parser');
+    expect(contrib.acceptMimeTypes).toEqual(['image/jpeg']);
+    expect(contrib.required).toBeUndefined();
+  });
+
+  it('ParserContribution with acceptExtensions is constructable', () => {
+    const contrib: ParserContribution = {
+      id: 'extParser' as ContributionId,
+      kind: 'parser',
+      label: 'Extension Parser',
+      acceptExtensions: ['jpg', 'jpeg', 'png'],
+      maxBytes: 10485760,
+    };
+    expect(contrib.acceptExtensions).toEqual(['jpg', 'jpeg', 'png']);
+    expect(contrib.maxBytes).toBe(10485760);
+    expect(contrib.acceptMimeTypes).toBeUndefined();
+  });
+
+  it('ParserContribution with required:true is constructable', () => {
+    const contrib: ParserContribution = {
+      id: 'requiredParser' as ContributionId,
+      kind: 'parser',
+      label: 'Required Parser',
+      acceptMimeTypes: ['video/mp4'],
+      required: true,
+      order: 5,
+    };
+    expect(contrib.required).toBe(true);
+    expect(contrib.order).toBe(5);
+  });
+
+  it('OutputFormatContribution (compile-only) shape is constructable', () => {
+    const contrib: OutputFormatContribution = {
+      id: 'metadataJson' as ContributionId,
+      kind: 'outputFormat',
+      label: 'Metadata JSON',
+      requiresRender: false,
+      outputExtension: 'json',
+      outputMimeType: 'application/json',
+      description: 'Serializes timeline metadata to JSON',
+      order: 10,
+    };
+    expect(contrib.kind).toBe('outputFormat');
+    expect(contrib.requiresRender).toBe(false);
+    expect(contrib.outputExtension).toBe('json');
+    expect(contrib.outputMimeType).toBe('application/json');
+    expect(contrib.description).toBe('Serializes timeline metadata to JSON');
+    expect(contrib.order).toBe(10);
+  });
+
+  it('OutputFormatContribution (render-dependent) shape is constructable', () => {
+    const contrib: OutputFormatContribution = {
+      id: 'mp4Export' as ContributionId,
+      kind: 'outputFormat',
+      label: 'MP4 Export',
+      requiresRender: true,
+      outputExtension: 'mp4',
+      outputMimeType: 'video/mp4',
+      description: 'Rendered video export',
+    };
+    expect(contrib.kind).toBe('outputFormat');
+    expect(contrib.requiresRender).toBe(true);
+    expect(contrib.outputExtension).toBe('mp4');
+  });
+
+  it('OutputFormatContribution requiresRender distinguishes compile-only from render-dependent', () => {
+    const compileOnly: OutputFormatContribution = {
+      id: 'co' as ContributionId,
+      kind: 'outputFormat',
+      label: 'Compile Only',
+      requiresRender: false,
+      outputExtension: 'json',
+    };
+    const renderDependent: OutputFormatContribution = {
+      id: 'rd' as ContributionId,
+      kind: 'outputFormat',
+      label: 'Render Dependent',
+      requiresRender: true,
+      outputExtension: 'mp4',
+    };
+    expect(compileOnly.requiresRender).toBe(false);
+    expect(renderDependent.requiresRender).toBe(true);
+  });
+
+  it('SearchProviderContribution shape is constructable', () => {
+    const contrib: SearchProviderContribution = {
+      id: 'mySearch' as ContributionId,
+      kind: 'searchProvider',
+      label: 'My Search Provider',
+      description: 'Semantic search over image embeddings',
+      order: 5,
+    };
+    expect(contrib.kind).toBe('searchProvider');
+    expect(contrib.label).toBe('My Search Provider');
+    expect(contrib.description).toBe('Semantic search over image embeddings');
+    expect(contrib.order).toBe(5);
+  });
+
+  it('SearchProviderContribution with resultKinds is constructable', () => {
+    const contrib: SearchProviderContribution = {
+      id: 'assetSearch' as ContributionId,
+      kind: 'searchProvider',
+      label: 'Asset Search',
+      resultKinds: ['asset', 'material'],
+    };
+    expect(contrib.resultKinds).toEqual(['asset', 'material']);
+  });
+
+  it('SearchProviderContribution defaults resultKinds to asset-only when omitted', () => {
+    const contrib: SearchProviderContribution = {
+      id: 'defaultSearch' as ContributionId,
+      kind: 'searchProvider',
+      label: 'Default Search',
+    };
+    expect(contrib.resultKinds).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// M6: Contribution kind bridging — parser is M6-active, output/search are typed
+// ---------------------------------------------------------------------------
+
+describe('M6: contribution kind bridging for parser/output/search', () => {
+  it('parser is M6-active (contributionKindNotYetBridged returns null)', () => {
+    expect(contributionKindNotYetBridged('parser')).toBeNull();
+  });
+
+  it('outputFormat is typed but execution is reserved (returns M6)', () => {
+    expect(contributionKindNotYetBridged('outputFormat')).toBe('M6');
+  });
+
+  it('searchProvider is typed but execution is reserved (returns M6)', () => {
+    expect(contributionKindNotYetBridged('searchProvider')).toBe('M6');
+  });
+
+  it('render-dependent output declarations remain declarable but reserved for execution', () => {
+    // outputFormat contributions (both compile-only and render-dependent)
+    // are declarable in manifests during M6 but their runtime execution
+    // is reserved. The bridging function reflects this by returning 'M6'
+    // (not yet bridged).
+    const bridged = contributionKindNotYetBridged('outputFormat');
+    expect(bridged).toBe('M6');
+
+    // contrats with parser which IS bridged
+    expect(contributionKindNotYetBridged('parser')).toBeNull();
+  });
+
+  it('unsupported contribution behavior remains explicit (each returns its milestone)', () => {
+    // Each reserved/unsupported kind returns its owning milestone name,
+    // so consumers get a clear diagnostic rather than silent ignorance.
+    expect(contributionKindNotYetBridged('effect')).toBe('M3');
+    expect(contributionKindNotYetBridged('transition')).toBe('M3');
+    expect(contributionKindNotYetBridged('clipType')).toBe('M3');
+    expect(contributionKindNotYetBridged('agentTool')).toBe('M5');
+    expect(contributionKindNotYetBridged('agent')).toBe('M5');
+  });
+
+  it('CONTRIBUTION_KIND_MILESTONE maps M6 kinds to M6 milestone', () => {
+    expect(CONTRIBUTION_KIND_MILESTONE.parser).toBe('M6');
+    expect(CONTRIBUTION_KIND_MILESTONE.outputFormat).toBe('M6');
+    expect(CONTRIBUTION_KIND_MILESTONE.searchProvider).toBe('M6');
+  });
+
+  it('already-bridged M1/M2/M4 kinds still return null', () => {
+    // Regression: existing bridged kinds must remain bridged
+    expect(contributionKindNotYetBridged('slot')).toBeNull();
+    expect(contributionKindNotYetBridged('dialog')).toBeNull();
+    expect(contributionKindNotYetBridged('panel')).toBeNull();
+    expect(contributionKindNotYetBridged('inspectorSection')).toBeNull();
+    expect(contributionKindNotYetBridged('command')).toBeNull();
+    expect(contributionKindNotYetBridged('keybinding')).toBeNull();
+    expect(contributionKindNotYetBridged('contextMenuItem')).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// M6: Internal types are NOT leaked through @reigh/editor-sdk
+// ---------------------------------------------------------------------------
+
+describe('M6: internal types are NOT re-exported from @reigh/editor-sdk', () => {
+  const M6_INTERNAL_FORBIDDEN = [
+    // Parser internals
+    'parserRegistry',
+    'registerParser',
+    'executeParser',
+    'ParserRegistry',
+    'ParserExecutor',
+    'resolveParser',
+    // Output format internals
+    'outputFormatRegistry',
+    'registerOutputFormat',
+    'executeOutputFormat',
+    'OutputFormatRegistry',
+    'OutputFormatExecutor',
+    'resolveOutputFormat',
+    'renderPipeline',
+    // Search provider internals
+    'searchProviderRegistry',
+    'registerSearchProvider',
+    'executeSearch',
+    'SearchProviderRegistry',
+    'SearchExecutor',
+    'resolveSearchProvider',
+    'searchIndex',
+    // Asset/material internal accessors
+    'assetStore',
+    'materialStore',
+    'getAssetStore',
+    'getMaterialStore',
+    'resolveAsset',
+    'resolveMaterial',
+    // Export internals (execution, not registration)
+    'executeExport',
+    'renderAndExport',
+    'ExportExecutor',
+    'ExportPipeline',
+  ];
+
+  it('none of the forbidden M6 internal names appear as SDK value exports', () => {
+    const valueExports = Object.keys(sdkStar);
+    for (const forbidden of M6_INTERNAL_FORBIDDEN) {
+      expect(valueExports).not.toContain(forbidden);
+    }
+  });
+
+  it('forbidden M6 internal names are not accessible on the SDK namespace', () => {
+    const ns = sdkStar as Record<string, unknown>;
+    for (const forbidden of M6_INTERNAL_FORBIDDEN) {
+      expect(ns[forbidden]).toBeUndefined();
+    }
   });
 });

@@ -1,9 +1,9 @@
 {
   "schema_version": 0,
-  "current_milestone_index": 5,
-  "current_plan_name": "m5-provider-scoped-registry-20260619-1050",
+  "current_milestone_index": 6,
+  "current_plan_name": "m6-asset-metadata-parser-20260619-1405",
   "last_state": "active",
-  "pr_number": 30,
+  "pr_number": 33,
   "pr_state": "open",
   "completed": [
     {
@@ -68,13 +68,21 @@
       "pr_state": "merged",
       "merged_at": "2026-06-19T08:49:38Z",
       "plan_name": "m4-commands-keybindings-20260619-0843"
+    },
+    {
+      "label": "m5-registry-foundation",
+      "index": 5,
+      "pr_number": 30,
+      "pr_state": "merged",
+      "plan_name": "m5-provider-scoped-registry-20260619-1050",
+      "merged_at": "2026-06-19T12:02:55Z"
     }
   ],
-  "branch_head": "c5d32b3a072b18601d09eccaaa0cd8ab39c1b817",
-  "pr_head": "c5d32b3a072b18601d09eccaaa0cd8ab39c1b817",
-  "last_pushed_commit": "c5d32b3a072b18601d09eccaaa0cd8ab39c1b817",
-  "dirty_flag": false,
-  "sync_state": "clean",
+  "branch_head": "66bf4e01c175fed9c21a3ba6f00b3a9172c88987",
+  "pr_head": "66bf4e01c175fed9c21a3ba6f00b3a9172c88987",
+  "last_pushed_commit": "66bf4e01c175fed9c21a3ba6f00b3a9172c88987",
+  "dirty_flag": true,
+  "sync_state": "dirty",
   "extra_repos": [],
   "chain_session": null,
   "resolved_workspace": null,
@@ -95,8 +103,8 @@
       "project_root": "/Users/peteromalley/Documents/.megaplan-worktrees/reigh-extension-layer-epic",
       "target_root": "/Users/peteromalley/Documents/.megaplan-worktrees/reigh-extension-layer-epic",
       "work_dir": "/Users/peteromalley/Documents/.megaplan-worktrees/reigh-extension-layer-epic",
-      "engine_root": "/Users/peteromalley/Documents/megaplan",
-      "target_head": "ada1924cb1e74d74fc16e1c8ada3b0a09e04ad92",
+      "engine_root": "/Users/peteromalley/.pyenv/versions/3.11.11/lib/python3.11/site-packages",
+      "target_head": "bd03604c2530927dbbbb0be900acb205d1bf0aaa",
       "target_base": "05e8719f0daeb6dbc030d728b369bbc0adbf9601",
       "target_base_ref": "main",
       "target_fallback_reason": null

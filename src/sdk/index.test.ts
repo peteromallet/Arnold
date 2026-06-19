@@ -20,6 +20,17 @@ import type {
   DisposeHandle,
   ExtensionDiagnostic,
   ProcessManifestEntry,
+  // M6 contribution types
+  ParserContribution,
+  OutputFormatContribution,
+  SearchProviderContribution,
+  CompileOnlyOutputResult,
+  ExportService,
+  AssetReadSurface,
+  MaterialReadSurface,
+  MetadataFacetDescriptor,
+  MetadataFacetValueKind,
+  AssetDetailSectionDescriptor,
 } from '@/sdk/index';
 
 // ---------------------------------------------------------------------------
@@ -210,9 +221,246 @@ describe('contributionKindNotYetBridged', () => {
     expect(contributionKindNotYetBridged('effect')).toBe('M3');
     expect(contributionKindNotYetBridged('transition')).toBe('M3');
     expect(contributionKindNotYetBridged('clipType')).toBe('M3');
-    expect(contributionKindNotYetBridged('parser')).toBe('M4');
+    expect(contributionKindNotYetBridged('parser')).toBeNull();
+    expect(contributionKindNotYetBridged('outputFormat')).toBe('M6');
+    expect(contributionKindNotYetBridged('searchProvider')).toBe('M6');
     expect(contributionKindNotYetBridged('agentTool')).toBe('M5');
     expect(contributionKindNotYetBridged('agent')).toBe('M5');
+  });
+
+  it('parser is M6-active (returns null)', () => {
+    expect(contributionKindNotYetBridged('parser')).toBeNull();
+  });
+
+  it('outputFormat is typed but execution is reserved (returns M6)', () => {
+    expect(contributionKindNotYetBridged('outputFormat')).toBe('M6');
+  });
+
+  it('searchProvider is typed but execution is reserved (returns M6)', () => {
+    expect(contributionKindNotYetBridged('searchProvider')).toBe('M6');
+  });
+
+  it('render-dependent output declarations remain declarable but reserved for execution', () => {
+    const bridged = contributionKindNotYetBridged('outputFormat');
+    expect(bridged).toBe('M6');
+    expect(contributionKindNotYetBridged('parser')).toBeNull();
+  });
+
+  it('unsupported contribution behavior is explicit (returns owning milestone)', () => {
+    expect(contributionKindNotYetBridged('effect')).toBe('M3');
+    expect(contributionKindNotYetBridged('transition')).toBe('M3');
+    expect(contributionKindNotYetBridged('clipType')).toBe('M3');
+    expect(contributionKindNotYetBridged('agentTool')).toBe('M5');
+    expect(contributionKindNotYetBridged('agent')).toBe('M5');
+  });
+
+  it('CONTRIBUTION_KIND_MILESTONE maps M6 kinds to M6', () => {
+    expect(CONTRIBUTION_KIND_MILESTONE.parser).toBe('M6');
+    expect(CONTRIBUTION_KIND_MILESTONE.outputFormat).toBe('M6');
+    expect(CONTRIBUTION_KIND_MILESTONE.searchProvider).toBe('M6');
+  });
+
+  it('existing bridged M1/M2/M4 kinds remain unchanged', () => {
+    expect(contributionKindNotYetBridged('slot')).toBeNull();
+    expect(contributionKindNotYetBridged('dialog')).toBeNull();
+    expect(contributionKindNotYetBridged('panel')).toBeNull();
+    expect(contributionKindNotYetBridged('inspectorSection')).toBeNull();
+    expect(contributionKindNotYetBridged('command')).toBeNull();
+    expect(contributionKindNotYetBridged('keybinding')).toBeNull();
+    expect(contributionKindNotYetBridged('contextMenuItem')).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// M6: defineExtension accepts parser/outputFormat/searchProvider contributions
+// ---------------------------------------------------------------------------
+
+describe('M6: defineExtension accepts M6 contribution types', () => {
+  it('accepts a manifest with a parser contribution', () => {
+    const ext = defineExtension({
+      manifest: {
+        id: 'com.m6.parser-test' as any,
+        version: '1.0.0',
+        label: 'M6 Parser Test',
+        contributions: [
+          {
+            id: 'img-parser' as any,
+            kind: 'parser',
+            label: 'Image Metadata Parser',
+            acceptMimeTypes: ['image/jpeg', 'image/png'],
+            required: true,
+          },
+        ],
+      },
+    });
+    expect(ext.manifest.id).toBe('com.m6.parser-test');
+    expect(ext.manifest.contributions![0].kind).toBe('parser');
+  });
+
+  it('accepts a manifest with a compile-only outputFormat contribution', () => {
+    const ext = defineExtension({
+      manifest: {
+        id: 'com.m6.output-test' as any,
+        version: '1.0.0',
+        label: 'M6 Output Test',
+        contributions: [
+          {
+            id: 'metadata-json' as any,
+            kind: 'outputFormat',
+            label: 'Metadata JSON',
+            requiresRender: false,
+            outputExtension: 'json',
+            outputMimeType: 'application/json',
+          },
+        ],
+      },
+    });
+    expect(ext.manifest.id).toBe('com.m6.output-test');
+    expect(ext.manifest.contributions![0].kind).toBe('outputFormat');
+    expect((ext.manifest.contributions![0] as any).requiresRender).toBe(false);
+  });
+
+  it('accepts a manifest with a render-dependent outputFormat contribution (reserved)', () => {
+    const ext = defineExtension({
+      manifest: {
+        id: 'com.m6.output-reserved' as any,
+        version: '1.0.0',
+        label: 'M6 Reserved Output',
+        contributions: [
+          {
+            id: 'mp4-export' as any,
+            kind: 'outputFormat',
+            label: 'MP4 Export',
+            requiresRender: true,
+            outputExtension: 'mp4',
+            outputMimeType: 'video/mp4',
+          },
+        ],
+      },
+    });
+    expect(ext.manifest.id).toBe('com.m6.output-reserved');
+    expect(ext.manifest.contributions![0].kind).toBe('outputFormat');
+    expect((ext.manifest.contributions![0] as any).requiresRender).toBe(true);
+  });
+
+  it('accepts a manifest with a searchProvider contribution', () => {
+    const ext = defineExtension({
+      manifest: {
+        id: 'com.m6.search-test' as any,
+        version: '1.0.0',
+        label: 'M6 Search Test',
+        contributions: [
+          {
+            id: 'semantic-search' as any,
+            kind: 'searchProvider',
+            label: 'Semantic Search',
+            description: 'Semantic asset search',
+            resultKinds: ['asset'],
+          },
+        ],
+      },
+    });
+    expect(ext.manifest.id).toBe('com.m6.search-test');
+    expect(ext.manifest.contributions![0].kind).toBe('searchProvider');
+  });
+
+  it('accepts a manifest with all three M6 contribution kinds', () => {
+    const ext = defineExtension({
+      manifest: {
+        id: 'com.m6.all' as any,
+        version: '1.0.0',
+        label: 'M6 All Contributions',
+        contributions: [
+          {
+            id: 'my-parser' as any,
+            kind: 'parser',
+            label: 'My Parser',
+            acceptMimeTypes: ['image/png'],
+          },
+          {
+            id: 'my-output' as any,
+            kind: 'outputFormat',
+            label: 'My Output',
+            requiresRender: false,
+            outputExtension: 'json',
+          },
+          {
+            id: 'my-search' as any,
+            kind: 'searchProvider',
+            label: 'My Search',
+          },
+        ],
+      },
+    });
+    expect(ext.manifest.contributions).toHaveLength(3);
+    expect(ext.manifest.contributions![0].kind).toBe('parser');
+    expect(ext.manifest.contributions![1].kind).toBe('outputFormat');
+    expect(ext.manifest.contributions![2].kind).toBe('searchProvider');
+  });
+
+  it('rejects duplicate contribution IDs across M6 kinds', () => {
+    expect(() =>
+      defineExtension({
+        manifest: {
+          id: 'com.m6.dup' as any,
+          version: '1.0.0',
+          label: 'M6 Duplicate Test',
+          contributions: [
+            {
+              id: 'dup-id' as any,
+              kind: 'parser',
+              label: 'Parser',
+              acceptMimeTypes: ['image/jpeg'],
+            },
+            {
+              id: 'dup-id' as any,
+              kind: 'outputFormat',
+              label: 'Output',
+              requiresRender: false,
+              outputExtension: 'json',
+            },
+          ],
+        },
+      }),
+    ).toThrow(/Duplicate contribution ID/);
+  });
+
+  it('render-dependent output declarations remain declarable but reserved', () => {
+    const ext = defineExtension({
+      manifest: {
+        id: 'com.m6.render-dependent' as any,
+        version: '1.0.0',
+        label: 'Render Dependent Test',
+        contributions: [
+          {
+            id: 'hd-render' as any,
+            kind: 'outputFormat',
+            label: 'HD Render',
+            requiresRender: true,
+            outputExtension: 'mp4',
+            outputMimeType: 'video/mp4',
+          },
+        ],
+      },
+    });
+    expect(ext.manifest.contributions![0].kind).toBe('outputFormat');
+    expect((ext.manifest.contributions![0] as any).requiresRender).toBe(true);
+    expect(contributionKindNotYetBridged('outputFormat')).toBe('M6');
+    expect(contributionKindNotYetBridged('parser')).toBeNull();
+  });
+
+  it('unsupported contribution behavior is explicit in CONTRIBUTION_KIND_MILESTONE', () => {
+    const reservedKinds = [
+      { kind: 'effect', expectedMilestone: 'M3' },
+      { kind: 'transition', expectedMilestone: 'M3' },
+      { kind: 'clipType', expectedMilestone: 'M3' },
+      { kind: 'agentTool', expectedMilestone: 'M5' },
+      { kind: 'agent', expectedMilestone: 'M5' },
+    ];
+    for (const { kind, expectedMilestone } of reservedKinds) {
+      expect((CONTRIBUTION_KIND_MILESTONE as Record<string, string>)[kind]).toBe(expectedMilestone);
+      expect(contributionKindNotYetBridged(kind as any)).toBe(expectedMilestone);
+    }
   });
 });
 

@@ -1,7 +1,7 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react';
 import { CommandPalette } from '@/tools/video-editor/components/CommandPalette/CommandPalette.tsx';
 import { formatDistanceToNow } from 'date-fns';
-import { Download, Eye, GripHorizontal, History, Maximize2, Minimize2, Redo2, RefreshCw, Settings, SlidersHorizontal, Undo2, ZoomIn, ZoomOut } from 'lucide-react';
+import { Download, Eye, FileOutput, GripHorizontal, History, Maximize2, Minimize2, Redo2, RefreshCw, Settings, SlidersHorizontal, Undo2, ZoomIn, ZoomOut } from 'lucide-react';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/shared/components/ui/alert-dialog.tsx';
 import { Badge } from '@/shared/components/ui/badge.tsx';
 import { Button } from '@/shared/components/ui/button.tsx';
@@ -46,7 +46,7 @@ import {
   ContributionErrorBoundary,
   type ContributionErrorInfo,
 } from '@/tools/video-editor/runtime/ContributionErrorBoundary.tsx';
-import type { VideoEditorSlotName, VideoEditorRenderContext } from '@/tools/video-editor/runtime/extensionSurface';
+import type { VideoEditorSlotName, VideoEditorRenderContext, VideoEditorOutputFormatDescriptor } from '@/tools/video-editor/runtime/extensionSurface';
 import { CodePanelCanary } from '@/tools/video-editor/components/Canary/CodePanelCanary';
 import { WritingPanelCanary } from '@/tools/video-editor/components/Canary/WritingPanelCanary';
 import { StagePanelCanary } from '@/tools/video-editor/components/Canary/StagePanelCanary';
@@ -396,6 +396,17 @@ function TimelineEditorShellCoreComponent({
   // Extension slots: hosts can override entire chrome regions.
   const slotRenderers = useVideoEditorSlotRenderers();
   const renderContext = useVideoEditorRenderContext();
+
+  // M6: Derive export format categories from extension contributions
+  const compileOnlyExportFormats: VideoEditorOutputFormatDescriptor[] = useMemo(() => {
+    const all = renderContext.extensions?.outputFormats ?? [];
+    return all.filter((f) => !f.requiresRender && !f.disabled);
+  }, [renderContext.extensions?.outputFormats]);
+  const renderDependentExportFormats: VideoEditorOutputFormatDescriptor[] = useMemo(() => {
+    const all = renderContext.extensions?.outputFormats ?? [];
+    return all.filter((f) => f.requiresRender || f.disabled);
+  }, [renderContext.extensions?.outputFormats]);
+  const hasAnyExportFormat = compileOnlyExportFormats.length > 0 || renderDependentExportFormats.length > 0;
   const contributedAssetPanels = useVideoEditorAssetPanels();
   const dialogDescriptors = useVideoEditorDialogDescriptors();
 
@@ -844,6 +855,71 @@ function TimelineEditorShellCoreComponent({
             <Maximize2 className="h-3 w-3" />
             Editor
           </Button>
+        )}
+        {/* M6: Export dropdown — compile-only formats near render controls */}
+        {hasAnyExportFormat && (
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                className={`gap-1.5 ${previewActionButtonClass}`}
+              >
+                <FileOutput className="h-3.5 w-3.5" />
+                Export
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="w-56">
+              <DropdownMenuLabel className="text-[11px] uppercase tracking-[0.12em] text-muted-foreground">
+                Export Formats
+              </DropdownMenuLabel>
+              <DropdownMenuSeparator />
+              {compileOnlyExportFormats.length > 0 && (
+                <>
+                  {compileOnlyExportFormats.map((fmt) => (
+                    <DropdownMenuItem
+                      key={fmt.id}
+                      onClick={() => {
+                        // Compile-only export: dispatch via chrome or local handler
+                        console.log(`[Export] Compile-only format: ${fmt.id} (${fmt.label})`);
+                      }}
+                      className="gap-2 text-[11px]"
+                    >
+                      <FileOutput className="h-3 w-3 text-emerald-400" />
+                      <span className="flex-1">{fmt.label}</span>
+                      <span className="text-[10px] text-muted-foreground uppercase">.{fmt.outputExtension}</span>
+                    </DropdownMenuItem>
+                  ))}
+                  {renderDependentExportFormats.length > 0 && <DropdownMenuSeparator />}
+                </>
+              )}
+              {renderDependentExportFormats.length > 0 && (
+                <>
+                  <DropdownMenuLabel className="text-[10px] text-muted-foreground/60">
+                    Reserved — Requires Render
+                  </DropdownMenuLabel>
+                  {renderDependentExportFormats.map((fmt) => (
+                    <DropdownMenuItem
+                      key={fmt.id}
+                      disabled
+                      className="gap-2 text-[11px] text-muted-foreground/50"
+                      title={fmt.disabledReason ?? `"${fmt.label}" requires render pipeline execution. Use the Render button for video output.`}
+                    >
+                      <Download className="h-3 w-3" />
+                      <span className="flex-1">{fmt.label}</span>
+                      <span className="text-[10px] text-muted-foreground/40 uppercase">.{fmt.outputExtension}</span>
+                    </DropdownMenuItem>
+                  ))}
+                </>
+              )}
+              {compileOnlyExportFormats.length === 0 && renderDependentExportFormats.length === 0 && (
+                <DropdownMenuItem disabled className="text-[11px] text-muted-foreground/50">
+                  No export formats registered
+                </DropdownMenuItem>
+              )}
+            </DropdownMenuContent>
+          </DropdownMenu>
         )}
         <Button
           type="button"

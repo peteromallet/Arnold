@@ -1,9 +1,15 @@
-import { useCallback, useContext, useEffect, useState } from 'react';
+import { useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import { useClientRender } from '@/tools/video-editor/hooks/useClientRender.ts';
 import type { CompositionMetadata } from '@/tools/video-editor/hooks/useDerivedTimeline.ts';
 import type { VideoEditorExporter } from '@/tools/video-editor/lib/browser-runtime.ts';
 import type { ResolvedTimelineConfig } from '@/tools/video-editor/types/index.ts';
-import type { ExtensionRuntime } from '@/tools/video-editor/runtime/extensionSurface.ts';
+import type { ExtensionRuntime, VideoEditorOutputFormatDescriptor } from '@/tools/video-editor/runtime/extensionSurface.ts';
+import {
+  createCompileOnlyOutputFormatRegistry,
+  executeCompileOnlyOutput,
+  type CompileOnlyOutputFormatEntry,
+  type CompileOnlyOutputFormatRegistry,
+} from '@/tools/video-editor/runtime/outputFormatRegistry.ts';
 import { useEffectRegistrySnapshot } from '@/tools/video-editor/effects/registry/EffectRegistryContext.tsx';
 import {
   collectBuiltInKnownIds,
@@ -15,6 +21,9 @@ import { syncPlannerDiagnosticsToCollection } from '@/tools/video-editor/runtime
 import type { Diagnostic } from '@reigh/editor-sdk';
 
 export type RenderStatus = 'idle' | 'rendering' | 'done' | 'error';
+
+/** M6: Export status for compile-only and render-dependent export operations. */
+export type ExportStatus = 'idle' | 'exporting' | 'done' | 'error';
 
 type RenderProgress = { current: number; total: number; percent: number; phase: string } | null;
 
@@ -139,6 +148,29 @@ function toCollectionDiagnostic(
   };
 }
 
+// ---------------------------------------------------------------------------
+// M6: Export format categorization
+// ---------------------------------------------------------------------------
+
+/** Categorize output format descriptors into compile-only and render-dependent groups. */
+function categorizeExportFormats(
+  outputFormats: readonly VideoEditorOutputFormatDescriptor[],
+): {
+  compileOnly: VideoEditorOutputFormatDescriptor[];
+  renderDependent: VideoEditorOutputFormatDescriptor[];
+} {
+  const compileOnly: VideoEditorOutputFormatDescriptor[] = [];
+  const renderDependent: VideoEditorOutputFormatDescriptor[] = [];
+  for (const fmt of outputFormats) {
+    if (fmt.requiresRender || fmt.disabled) {
+      renderDependent.push(fmt);
+    } else {
+      compileOnly.push(fmt);
+    }
+  }
+  return { compileOnly, renderDependent };
+}
+
 export function useRenderState(
   resolvedConfig: ResolvedTimelineConfig | null,
   renderMetadata: CompositionMetadata | null,
@@ -151,7 +183,17 @@ export function useRenderState(
   const [renderProgress, setRenderProgress] = useState<RenderProgress>(null);
   const [renderResultUrl, setRenderResultUrl] = useState<string | null>(null);
   const [renderResultFilename, setRenderResultFilename] = useState<string | null>(null);
+  // M6: Export state
+  const [exportStatus, setExportStatus] = useState<ExportStatus>('idle');
+  const [exportLog, setExportLogState] = useState('');
+  const [exportResultUrl, setExportResultUrl] = useState<string | null>(null);
+  const [exportResultFilename, setExportResultFilename] = useState<string | null>(null);
   const effectRegistrySnapshot = useEffectRegistrySnapshot();
+  // M6: Derive export format categories from extension runtime
+  const exportFormats = useMemo(() => {
+    const outputFormats = extensionRuntime?.config?.outputFormats ?? [];
+    return categorizeExportFormats(outputFormats);
+  }, [extensionRuntime]);
   const diagnosticCollection = useContext(DataProviderContext)?.diagnosticCollection;
 
   useEffect(() => {
@@ -161,6 +203,14 @@ export function useRenderState(
       }
     };
   }, [renderResultUrl]);
+  // M6: Cleanup export result URL on unmount
+  useEffect(() => {
+    return () => {
+      if (exportResultUrl) {
+        URL.revokeObjectURL(exportResultUrl);
+      }
+    };
+  }, [exportResultUrl]);
 
   const startClientRender = useClientRender({
     resolvedConfig,
@@ -325,6 +375,103 @@ export function useRenderState(
     await startClientRender();
   }, [exporter, renderMetadata?.durationInFrames, resolvedConfig, startClientRender, runExportGuard]);
 
+  // ---- M6: compile-only export ------------------------------------------------
+  const startExport = useCallback(async (
+    formatId: string,
+    compileOnlyRegistry?: CompileOnlyOutputFormatRegistry,
+  ) => {
+    if (!resolvedConfig) {
+      setExportStatus('error');
+      setExportLogState('Export unavailable: no timeline configuration.');
+      return;
+    }
+
+    const fmt = exportFormats.compileOnly.find((f) => f.id === formatId);
+    if (!fmt) {
+      // Check if it's a render-dependent format
+      const rdFmt = exportFormats.renderDependent.find((f) => f.id === formatId);
+      if (rdFmt) {
+        setExportStatus('error');
+        setExportLogState(
+          `Export blocked: "${rdFmt.label}" requires render pipeline execution which is reserved for the Render button.` +
+          (rdFmt.disabledReason ? ` ${rdFmt.disabledReason}` : ''),
+        );
+      } else {
+        setExportStatus('error');
+        setExportLogState(`Export format "${formatId}" not found.`);
+      }
+      return;
+    }
+
+    if (!compileOnlyRegistry || compileOnlyRegistry.size === 0) {
+      setExportStatus('error');
+      setExportLogState(`Export unavailable: no compile-only output handlers registered. Format "${fmt.label}" (${fmt.id}) requires a handler registered via ctx.export.registerOutputFormat().`);
+      return;
+    }
+
+    setExportStatus('exporting');
+    setExportLogState(`Exporting "${fmt.label}"...`);
+    setExportResultUrl((current) => {
+      if (current) URL.revokeObjectURL(current);
+      return null;
+    });
+    setExportResultFilename(null);
+
+    try {
+      // Build timeline snapshot from resolved config
+      const timeline = Object.freeze({
+        id: resolvedConfig.output?.file ?? 'timeline',
+        assetKeys: Object.freeze(Object.keys(resolvedConfig.registry ?? {})),
+        clipCount: resolvedConfig.clips?.length ?? 0,
+        trackCount: resolvedConfig.tracks?.length ?? 0,
+        fps: resolvedConfig.output?.fps ?? 30,
+        resolution: resolvedConfig.output?.resolution ?? '1920x1080',
+      });
+
+      // Build assets map from registry
+      const assetsMap = new Map<string, any>();
+      if (resolvedConfig.registry) {
+        for (const [key, entry] of Object.entries(resolvedConfig.registry)) {
+          assetsMap.set(key, Object.freeze(entry));
+        }
+      }
+      const assets: ReadonlyMap<string, Readonly<any>> = Object.freeze(assetsMap);
+
+      const result = await executeCompileOnlyOutput(compileOnlyRegistry, {
+        formatId,
+        timeline: timeline as any,
+        assets: assets as any,
+        extensionId: fmt.extensionId,
+      });
+
+      if (!result) {
+        setExportStatus('error');
+        setExportLogState(`Export failed: format "${fmt.label}" is not available in the compile-only registry.`);
+        return;
+      }
+
+      // Create a downloadable blob from the artifact data
+      const mimeType = fmt.outputMimeType ?? 'application/octet-stream';
+      const blob = new Blob([result.data], { type: mimeType });
+      const url = URL.createObjectURL(blob);
+      const filename = `export.${fmt.outputExtension}`;
+
+      setExportResultUrl(url);
+      setExportResultFilename(filename);
+      setExportStatus('done');
+      const diagCount = result.artifact.diagnostics?.length ?? 0;
+      setExportLogState(
+        `Export complete: "${fmt.label}" → ${filename}` +
+        (result.hasBlockingErrors ? ' (with blocking errors)' : '') +
+        (diagCount > 0 ? ` [${diagCount} diagnostic(s)]` : ''),
+      );
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      setExportStatus('error');
+      setExportLogState(`Export failed: ${message}`);
+    }
+  }, [resolvedConfig, exportFormats]);
+
   return {
     renderStatus,
     renderLog,
@@ -337,5 +484,12 @@ export function useRenderState(
     setRenderDirty,
     setRenderProgress,
     startRender,
+    // M6: Export state
+    exportStatus,
+    exportLog,
+    exportResultUrl,
+    exportResultFilename,
+    exportFormats,
+    startExport,
   };
 }

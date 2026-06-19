@@ -9,6 +9,7 @@ import type {
   TimelineConfig,
   TrackDefinition,
 } from '../types/index.ts';
+import { validateAssetMetadata } from './assetMetadata';
 
 export type TimelineDomainContractLevel = 'config-only' | 'pair-aware';
 export type TimelineDomainIssueSeverity = 'warning' | 'error';
@@ -187,6 +188,7 @@ const ASSET_REGISTRY_ENTRY_FIELDS = [
   'generationId',
   'variantId',
   'thumbnailUrl',
+  'metadata',
 ] as const;
 
 const roundTimelineValue = (value: number, digits = TIMELINE_TIME_PRECISION): number => {
@@ -834,7 +836,15 @@ export const sanitizeAssetRegistryEntry = (entry: AssetRegistryEntry): AssetRegi
   const sanitized: Partial<AssetRegistryEntry> = {};
   for (const field of ASSET_REGISTRY_ENTRY_FIELDS) {
     const value = entry[field];
-    if (value !== undefined) {
+    if (value === undefined) {
+      continue;
+    }
+    if (field === 'metadata') {
+      const validated = validateAssetMetadata(value);
+      if (validated) {
+        sanitized.metadata = validated;
+      }
+    } else {
       sanitized[field] = value;
     }
   }

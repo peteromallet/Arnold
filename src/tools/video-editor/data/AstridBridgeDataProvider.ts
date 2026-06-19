@@ -17,6 +17,8 @@ import type {
 } from '@/tools/video-editor/data/AssetResolver.ts';
 import { extractAssetRegistryEntry } from '@/tools/video-editor/lib/mediaMetadata.ts';
 import { resolveGenerationAsset } from '@/tools/video-editor/data/generationAssetResolver.ts';
+import { enrichRegistryEntryWithParsers } from '@/tools/video-editor/lib/mediaMetadata';
+import type { RegisteredParser } from '@/tools/video-editor/lib/assetParserRuntime';
 import {
   ensurePermission,
   getDirectoryHandle,
@@ -42,6 +44,7 @@ type AstridBridgeDataProviderOptions = {
   timelineId?: string;
   apiBaseUrl?: string;
   assetBaseUrl?: string;
+  registeredParsers?: readonly RegisteredParser[];
 };
 
 const DEFAULT_API_BASE_URL = '/api/astrid';
@@ -209,6 +212,7 @@ export class AstridBridgeDataProvider implements DataProvider {
   private localObjectUrls = new Map<string, string>();
   private materializationStates = new Map<string, AssetMaterializationState>();
   private localTimelineFiles: LocalTimelineFiles | null = null;
+  private readonly registeredParsers: readonly RegisteredParser[] | undefined;
 
   constructor(options: AstridBridgeDataProviderOptions) {
     this.apiBaseUrl = trimTrailingSlash(options.apiBaseUrl ?? DEFAULT_API_BASE_URL);
@@ -221,6 +225,7 @@ export class AstridBridgeDataProvider implements DataProvider {
     this.selectedTimelineRef = options.timelineRef;
     this.canonicalTimelineId = options.timelineId ?? null;
     this.projectSlug = options.projectSlug;
+    this.registeredParsers = options.registeredParsers;
   }
 
   private readonly projectSlug: string;
@@ -380,12 +385,27 @@ export class AstridBridgeDataProvider implements DataProvider {
     const sourcesHandle = await this.requireProjectSourcesDirectory(projectRootHandle);
     const localDropsHandle = await sourcesHandle.getDirectoryHandle(LOCAL_DROP_DIRECTORY_NAME, { create: true });
     const relativePath = await this.writeLocalDropFile(localDropsHandle, file);
-    const entry = await extractAssetRegistryEntry(file, relativePath);
+    let entry = await extractAssetRegistryEntry(file, relativePath);
     if (!entry.type) {
       entry.type = inferContentType(file);
     }
 
     const assetId = generateUUID();
+
+    // Enrich with parser metadata when registered parsers are configured.
+    // Providers that do not opt into parser execution leave
+    // registeredParsers undefined and follow the exact same code path
+    // as before.
+    if (this.registeredParsers && this.registeredParsers.length > 0) {
+      const enriched = await enrichRegistryEntryWithParsers(
+        file,
+        entry,
+        assetId,
+        this.registeredParsers,
+      );
+      entry = enriched.entry;
+    }
+
     await this.registerAsset(options.timelineId, assetId, entry);
     return { assetId, entry };
   }

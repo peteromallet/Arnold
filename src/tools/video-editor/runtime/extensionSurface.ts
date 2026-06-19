@@ -11,6 +11,12 @@ import type {
   ExtensionContribution,
   ExtensionDiagnostic,
   ContributionKind,
+  ParserContribution,
+  OutputFormatContribution,
+  SearchProviderContribution,
+  MetadataFacetContribution,
+  AssetDetailSectionContribution,
+  MetadataFacetValueKind,
 } from '@reigh/editor-sdk';
 import { contributionKindNotYetBridged } from '@reigh/editor-sdk';
 import type { TimelineGestureOwner } from '@/tools/video-editor/lib/mobile-interaction-model';
@@ -104,6 +110,16 @@ export interface VideoEditorExtensionRuntimeConfig {
     inspectorSections: readonly VideoEditorInspectorSectionDescriptor[];
   };
   overlays: readonly VideoEditorOverlayDescriptor[];
+  /** M6: Normalized asset parser descriptors, provider-scoped and deterministically ordered. */
+  assetParsers: readonly VideoEditorAssetParserDescriptor[];
+  /** M6: Normalized output format descriptors (disabled diagnostics for render-dependent). */
+  outputFormats: readonly VideoEditorOutputFormatDescriptor[];
+  /** M6: Normalized search provider descriptors, declaration-only until execution is bridged. */
+  searchProviders: readonly VideoEditorSearchProviderDescriptor[];
+  /** M6: Normalized metadata facet descriptors for the asset panel. */
+  metadataFacets: readonly VideoEditorMetadataFacetDescriptor[];
+  /** M6: Normalized asset detail section descriptors for the asset detail panel. */
+  assetDetailSections: readonly VideoEditorAssetDetailSectionDescriptor[];
 }
 
 export interface ResolvedVideoEditorPanelRegistry {
@@ -113,6 +129,71 @@ export interface ResolvedVideoEditorPanelRegistry {
     beforeDefault: readonly VideoEditorInspectorSectionDescriptor[];
     afterDefault: readonly VideoEditorInspectorSectionDescriptor[];
   };
+}
+
+// ---------------------------------------------------------------------------
+// M6: Asset parser / output format / search provider descriptors
+// ---------------------------------------------------------------------------
+
+/** A normalized asset parser descriptor produced by runtime normalization. */
+export interface VideoEditorAssetParserDescriptor {
+  id: string;
+  extensionId: string;
+  order?: number;
+  label: string;
+  acceptMimeTypes?: readonly string[];
+  acceptExtensions?: readonly string[];
+  maxBytes?: number;
+  required?: boolean;
+}
+
+/** A normalized output format descriptor produced by runtime normalization. */
+export interface VideoEditorOutputFormatDescriptor {
+  id: string;
+  extensionId: string;
+  order?: number;
+  label: string;
+  requiresRender: boolean;
+  outputExtension: string;
+  outputMimeType?: string;
+  description?: string;
+  /** When true, this format is declared but execution is not yet available. */
+  disabled: boolean;
+  /** Reason for disabled state, surfaced in the export UI. */
+  disabledReason?: string;
+}
+
+/** A normalized search provider descriptor produced by runtime normalization. */
+export interface VideoEditorSearchProviderDescriptor {
+  id: string;
+  extensionId: string;
+  order?: number;
+  label: string;
+  description?: string;
+  resultKinds?: readonly ('asset' | 'material')[];
+}
+
+/** A normalized metadata facet descriptor produced by runtime normalization. */
+export interface VideoEditorMetadataFacetDescriptor {
+  id: string;
+  extensionId: string;
+  order?: number;
+  fieldPath: string;
+  displayName: string;
+  valueKind: MetadataFacetValueKind;
+  aggregationPosture?: 'exact' | 'range' | 'presence';
+  enumValues?: readonly string[];
+}
+
+/** A normalized asset detail section descriptor produced by runtime normalization. */
+export interface VideoEditorAssetDetailSectionDescriptor {
+  id: string;
+  extensionId: string;
+  order?: number;
+  title: string;
+  placement: 'before-default' | 'after-default';
+  fieldPaths?: readonly string[];
+  when?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -145,6 +226,16 @@ export interface ExtensionRuntime {
   readonly knownRenderIds: ReadonlySet<string>;
   /** Extension-scoped settings defaults keyed by extension ID. */
   readonly settingsDefaults: Readonly<Record<string, Readonly<Record<string, unknown>>>>;
+  /** M6: Normalized parser descriptors, ordered by extension order then contribution order. */
+  readonly assetParsers: readonly VideoEditorAssetParserDescriptor[];
+  /** M6: Output format descriptors with disabled diagnostics for render-dependent formats. */
+  readonly outputFormats: readonly VideoEditorOutputFormatDescriptor[];
+  /** M6: Search provider descriptors, declaration-only. */
+  readonly searchProviders: readonly VideoEditorSearchProviderDescriptor[];
+  /** M6: Metadata facet descriptors from all extensions. */
+  readonly metadataFacets: readonly VideoEditorMetadataFacetDescriptor[];
+  /** M6: Asset detail section descriptors from all extensions. */
+  readonly assetDetailSections: readonly VideoEditorAssetDetailSectionDescriptor[];
 }
 
 /** Signature for host-owned runtime normalization. */
@@ -155,6 +246,11 @@ const EMPTY_DIALOGS: readonly VideoEditorDialogDescriptor[] = Object.freeze([]);
 const EMPTY_OVERLAYS: readonly VideoEditorOverlayDescriptor[] = Object.freeze([]);
 const EMPTY_PANELS: readonly VideoEditorPanelDescriptor[] = Object.freeze([]);
 const EMPTY_INSPECTOR_SECTIONS: readonly VideoEditorInspectorSectionDescriptor[] = Object.freeze([]);
+const EMPTY_ASSET_PARSERS: readonly VideoEditorAssetParserDescriptor[] = Object.freeze([]);
+const EMPTY_OUTPUT_FORMATS: readonly VideoEditorOutputFormatDescriptor[] = Object.freeze([]);
+const EMPTY_SEARCH_PROVIDERS: readonly VideoEditorSearchProviderDescriptor[] = Object.freeze([]);
+const EMPTY_METADATA_FACETS: readonly VideoEditorMetadataFacetDescriptor[] = Object.freeze([]);
+const EMPTY_ASSET_DETAIL_SECTIONS: readonly VideoEditorAssetDetailSectionDescriptor[] = Object.freeze([]);
 const EMPTY_RESOLVED_PANEL_REGISTRY: ResolvedVideoEditorPanelRegistry = Object.freeze({
   assetPanels: EMPTY_PANELS,
   inspectorSections: Object.freeze({
@@ -174,6 +270,11 @@ export const DEFAULT_VIDEO_EDITOR_EXTENSION_RUNTIME: VideoEditorExtensionRuntime
     inspectorSections: EMPTY_INSPECTOR_SECTIONS,
   }),
   overlays: EMPTY_OVERLAYS,
+  assetParsers: EMPTY_ASSET_PARSERS,
+  outputFormats: EMPTY_OUTPUT_FORMATS,
+  searchProviders: EMPTY_SEARCH_PROVIDERS,
+  metadataFacets: EMPTY_METADATA_FACETS,
+  assetDetailSections: EMPTY_ASSET_DETAIL_SECTIONS,
 });
 
 /**
@@ -204,6 +305,11 @@ export function normalizeExtensionRuntime(
   // ---- Phase 1: validate extension IDs, detect duplicates ------------------
   const diagnostics: ExtensionDiagnostic[] = [];
   const seenExtensionIds = new Set<string>();
+  /**
+   * Extension order map: extensionId -> insertion index.
+   * Used as the primary sort key for deterministic contribution ordering.
+   */
+  const extensionOrder = new Map<string, number>();
   const uniqueExtensions: ReighExtension[] = [];
 
   for (const ext of extensions) {
@@ -217,6 +323,7 @@ export function normalizeExtensionRuntime(
       });
     } else {
       seenExtensionIds.add(id);
+      extensionOrder.set(id, uniqueExtensions.length);
       uniqueExtensions.push(ext);
     }
   }
@@ -231,6 +338,11 @@ export function normalizeExtensionRuntime(
   const inactiveReserved: InactiveReservedContribution[] = [];
   const knownRenderIds = new Set<string>();
   const settingsDefaults: Record<string, Record<string, unknown>> = {};
+
+  // M6: Collect contributions that are reserved for execution but still
+  // need to be surfaced as disabled/reserved descriptors in the runtime config.
+  const m6ReservedOutputFormats: CollectedContribution[] = [];
+  const m6ReservedSearchProviders: CollectedContribution[] = [];
 
   const seenContributionIds = new Map<string, string>(); // contribId -> extensionId
 
@@ -262,8 +374,44 @@ export function normalizeExtensionRuntime(
       }
       seenContributionIds.set(contribId, extId);
 
-      // Check if the contribution kind is bridged in M1
+      // Check if the contribution kind is bridged in the current runtime
       const notYetBridged = contributionKindNotYetBridged(contrib.kind);
+
+      // M6: OutputFormat and SearchProvider are reserved for execution but
+      // must still be collected as descriptors in the runtime config.
+      if (
+        notYetBridged !== null &&
+        (contrib.kind === 'outputFormat' || contrib.kind === 'searchProvider')
+      ) {
+        // Add to inactive reserved for diagnostics
+        inactiveReserved.push({
+          extensionId: extId,
+          contributionId: contribId,
+          kind: contrib.kind,
+          milestone: notYetBridged,
+        });
+        diagnostics.push({
+          severity: 'info',
+          code: 'runtime/contribution-kind-not-yet-bridged',
+          message:
+            `Contribution "${contribId}" (kind: ${contrib.kind}) in extension "${extId}" ` +
+            `is reserved for ${notYetBridged}.`,
+          extensionId: extId,
+          contributionId: contribId,
+          milestone: notYetBridged,
+        });
+        // Still collect known render IDs even for inactive contributions
+        if (contrib.render) {
+          knownRenderIds.add(contrib.render);
+        }
+        // Collect into the appropriate M6 reserved list for later projection
+        if (contrib.kind === 'outputFormat') {
+          m6ReservedOutputFormats.push({ contribution: contrib, extensionId: extId });
+        } else {
+          m6ReservedSearchProviders.push({ contribution: contrib, extensionId: extId });
+        }
+        continue;
+      }
       if (notYetBridged !== null) {
         inactiveReserved.push({
           extensionId: extId,
@@ -298,9 +446,12 @@ export function normalizeExtensionRuntime(
   }
 
   // ---- Phase 3: deterministic ordering -------------------------------------
-  // Sort by order ascending, then by contribution ID alphabetically.
-  // Built-in extensions are reserved for a future flag.
+  // Sort by extension order (primary), then contribution order ascending,
+  // then contribution ID alphabetically (stable tiebreaker).
   const sorted = [...bridged].sort((a, b) => {
+    const extOrderA = extensionOrder.get(a.extensionId) ?? Number.MAX_SAFE_INTEGER;
+    const extOrderB = extensionOrder.get(b.extensionId) ?? Number.MAX_SAFE_INTEGER;
+    if (extOrderA !== extOrderB) return extOrderA - extOrderB;
     const orderA = a.contribution.order ?? 0;
     const orderB = b.contribution.order ?? 0;
     if (orderA !== orderB) return orderA - orderB;
@@ -313,6 +464,9 @@ export function normalizeExtensionRuntime(
   const panelDescriptors: VideoEditorPanelDescriptor[] = [];
   const inspectorSectionDescriptors: VideoEditorInspectorSectionDescriptor[] = [];
   const overlayDescriptors: VideoEditorOverlayDescriptor[] = [];
+  const assetParserDescriptors: VideoEditorAssetParserDescriptor[] = [];
+  const metadataFacetDescriptors: VideoEditorMetadataFacetDescriptor[] = [];
+  const assetDetailSectionDescriptors: VideoEditorAssetDetailSectionDescriptor[] = [];
 
   for (const { contribution, extensionId } of sorted) {
     switch (contribution.kind) {
@@ -361,18 +515,129 @@ export function normalizeExtensionRuntime(
         });
         break;
       }
+      // M6: parser — bridge parser contributions into assetParsers
+      case 'parser': {
+        const parserContrib = contribution as unknown as ParserContribution;
+        assetParserDescriptors.push({
+          id: contribution.id as string,
+          extensionId,
+          order: contribution.order,
+          label: parserContrib.label ?? contribution.id as string,
+          acceptMimeTypes: parserContrib.acceptMimeTypes,
+          acceptExtensions: parserContrib.acceptExtensions,
+          maxBytes: parserContrib.maxBytes,
+          required: parserContrib.required,
+        });
+        break;
+      }
+      // M6: metadataFacet — bridge into metadataFacets
+      case 'metadataFacet': {
+        const facetContrib = contribution as unknown as MetadataFacetContribution;
+        metadataFacetDescriptors.push({
+          id: contribution.id as string,
+          extensionId,
+          order: contribution.order,
+          fieldPath: facetContrib.fieldPath,
+          displayName: facetContrib.displayName,
+          valueKind: facetContrib.valueKind,
+          aggregationPosture: facetContrib.aggregationPosture,
+          enumValues: facetContrib.enumValues,
+        });
+        break;
+      }
+      // M6: assetDetailSection — bridge into assetDetailSections
+      case 'assetDetailSection': {
+        const sectionContrib = contribution as unknown as AssetDetailSectionContribution;
+        assetDetailSectionDescriptors.push({
+          id: contribution.id as string,
+          extensionId,
+          order: contribution.order,
+          title: sectionContrib.title,
+          placement: sectionContrib.placement,
+          fieldPaths: sectionContrib.fieldPaths,
+          when: sectionContrib.when,
+        });
+        break;
+      }
+      default:
+        // Unknown bridged kinds are silently skipped (should not occur)
+        break;
     }
   }
 
+  // ---- Phase 4b: project M6 reserved contributions --------------------------
+  // OutputFormat: surfaced with disabled diagnostics for render-dependent formats
+  const outputFormatDescriptors: VideoEditorOutputFormatDescriptor[] = [];
+  for (const { contribution, extensionId } of m6ReservedOutputFormats) {
+    const of = contribution as unknown as OutputFormatContribution;
+    const requiresRender = of.requiresRender ?? false;
+    outputFormatDescriptors.push({
+      id: contribution.id as string,
+      extensionId,
+      order: contribution.order,
+      label: of.label ?? contribution.id as string,
+      requiresRender,
+      outputExtension: of.outputExtension,
+      outputMimeType: of.outputMimeType,
+      description: of.description,
+      disabled: requiresRender,
+      disabledReason: requiresRender
+        ? `Output format "${of.label ?? contribution.id}" requires render planning (not yet available in M6).`
+        : undefined,
+    });
+  }
+
+  // Order output formats by extension order, then contribution order, then ID
+  outputFormatDescriptors.sort((a, b) => {
+    const extOrderA = extensionOrder.get(a.extensionId) ?? Number.MAX_SAFE_INTEGER;
+    const extOrderB = extensionOrder.get(b.extensionId) ?? Number.MAX_SAFE_INTEGER;
+    if (extOrderA !== extOrderB) return extOrderA - extOrderB;
+    const orderA = a.order ?? 0;
+    const orderB = b.order ?? 0;
+    if (orderA !== orderB) return orderA - orderB;
+    return a.id.localeCompare(b.id);
+  });
+
+  // SearchProvider: surfaced as declaration-only descriptors
+  const searchProviderDescriptors: VideoEditorSearchProviderDescriptor[] = [];
+  for (const { contribution, extensionId } of m6ReservedSearchProviders) {
+    const sp = contribution as unknown as SearchProviderContribution;
+    searchProviderDescriptors.push({
+      id: contribution.id as string,
+      extensionId,
+      order: contribution.order,
+      label: sp.label ?? contribution.id as string,
+      description: sp.description,
+      resultKinds: sp.resultKinds,
+    });
+  }
+
+  // Order search providers by extension order, then contribution order, then ID
+  searchProviderDescriptors.sort((a, b) => {
+    const extOrderA = extensionOrder.get(a.extensionId) ?? Number.MAX_SAFE_INTEGER;
+    const extOrderB = extensionOrder.get(b.extensionId) ?? Number.MAX_SAFE_INTEGER;
+    if (extOrderA !== extOrderB) return extOrderA - extOrderB;
+    const orderA = a.order ?? 0;
+    const orderB = b.order ?? 0;
+    if (orderA !== orderB) return orderA - orderB;
+    return a.id.localeCompare(b.id);
+  });
+
   // ---- Phase 5: assemble and freeze ----------------------------------------
-  const hasAnyBridged =
+  /** Whether any contributions — bridged or M6-reserved — affect the config. */
+  const hasAnyConfigurableContent =
     Object.keys(slots).length > 0 ||
     dialogDescriptors.length > 0 ||
     panelDescriptors.length > 0 ||
     inspectorSectionDescriptors.length > 0 ||
-    overlayDescriptors.length > 0;
+    overlayDescriptors.length > 0 ||
+    assetParserDescriptors.length > 0 ||
+    outputFormatDescriptors.length > 0 ||
+    searchProviderDescriptors.length > 0 ||
+    metadataFacetDescriptors.length > 0 ||
+    assetDetailSectionDescriptors.length > 0;
 
-  const config: VideoEditorExtensionRuntimeConfig = hasAnyBridged
+  const config: VideoEditorExtensionRuntimeConfig = hasAnyConfigurableContent
     ? Object.freeze({
         slots: Object.freeze(slots) as Partial<Record<VideoEditorSlotName, VideoEditorSlotRenderer>>,
         dialogHost: Object.freeze({
@@ -383,6 +648,11 @@ export function normalizeExtensionRuntime(
           inspectorSections: Object.freeze(inspectorSectionDescriptors),
         }),
         overlays: Object.freeze(overlayDescriptors),
+        assetParsers: Object.freeze(assetParserDescriptors),
+        outputFormats: Object.freeze(outputFormatDescriptors),
+        searchProviders: Object.freeze(searchProviderDescriptors),
+        metadataFacets: Object.freeze(metadataFacetDescriptors),
+        assetDetailSections: Object.freeze(assetDetailSectionDescriptors),
       })
     : DEFAULT_VIDEO_EDITOR_EXTENSION_RUNTIME;
 
@@ -397,6 +667,11 @@ export function normalizeExtensionRuntime(
         Object.entries(settingsDefaults).map(([k, v]) => [k, Object.freeze(v)]),
       ),
     ),
+    assetParsers: Object.freeze(assetParserDescriptors),
+    outputFormats: Object.freeze(outputFormatDescriptors),
+    searchProviders: Object.freeze(searchProviderDescriptors),
+    metadataFacets: Object.freeze(metadataFacetDescriptors),
+    assetDetailSections: Object.freeze(assetDetailSectionDescriptors),
   });
 
   return runtime;
@@ -410,6 +685,11 @@ const EMPTY_EXTENSION_RUNTIME: ExtensionRuntime = Object.freeze({
   inactiveReserved: Object.freeze([]),
   knownRenderIds: Object.freeze(new Set<string>()),
   settingsDefaults: Object.freeze({}),
+  assetParsers: EMPTY_ASSET_PARSERS,
+  outputFormats: EMPTY_OUTPUT_FORMATS,
+  searchProviders: EMPTY_SEARCH_PROVIDERS,
+  metadataFacets: EMPTY_METADATA_FACETS,
+  assetDetailSections: EMPTY_ASSET_DETAIL_SECTIONS,
 });
 
 type RegistryDescriptor = {

@@ -200,3 +200,125 @@ export interface BakeContract {
   readonly replacementPolicy: RenderMaterialRef['replacementPolicy'];
   readonly blockers?: readonly RenderBlocker[];
 }
+
+// ---------------------------------------------------------------------------
+// Compile-only output artifact helpers
+// ---------------------------------------------------------------------------
+
+/**
+ * Route used for compile-only output artifacts.
+ * Compile-only outputs never invoke render providers, render planning,
+ * or media render routes.
+ */
+export const COMPILE_ONLY_ARTIFACT_ROUTE: RenderRoute = 'browser-export';
+
+/**
+ * Parameters for constructing a {@link RenderArtifact} from a compile-only
+ * output execution.
+ */
+export interface CompileOnlyArtifactParams {
+  /** Unique artifact ID. */
+  readonly artifactId: string;
+  /** The output bytes from the compile-only handler. */
+  readonly data: Uint8Array;
+  /** MIME type of the output. */
+  readonly mimeType: string;
+  /** Suggested filename for the output. */
+  readonly filename: string;
+  /** Extension that produced the output. */
+  readonly producerExtensionId?: string;
+  /** Extension version, if available. */
+  readonly producerVersion?: string;
+  /** Asset keys consumed from the registry during compilation. */
+  readonly consumedAssetKeys?: readonly string[];
+  /**
+   * Diagnostics produced during compilation.
+   * Error-severity diagnostics that are blocking will be surfaced in findings.
+   */
+  readonly diagnostics?: readonly {
+    severity: 'error' | 'warning' | 'info';
+    code: string;
+    message: string;
+    assetKey?: string;
+    extensionId?: string;
+    contributionId?: string;
+    detail?: Record<string, unknown>;
+  }[];
+  /** Whether the compilation produced blocking errors. */
+  readonly hasBlockingErrors?: boolean;
+}
+
+/**
+ * Create a deterministic {@link RenderArtifact} from a compile-only output
+ * execution result.
+ *
+ * Compile-only artifacts are always marked `deterministic` because they
+ * are produced from read-only timeline + asset data without external
+ * processes, render providers, or media render routes.
+ */
+export function createCompileOnlyArtifact(params: CompileOnlyArtifactParams): RenderArtifact {
+  const findings: CapabilityFinding[] = [];
+
+  // Convert diagnostics to findings
+  for (const diag of params.diagnostics ?? []) {
+    findings.push({
+      id: `compile-only.${params.artifactId}.${diag.code}`,
+      severity: diag.severity === 'error' ? 'error' : diag.severity === 'warning' ? 'warning' : 'info',
+      route: COMPILE_ONLY_ARTIFACT_ROUTE,
+      reason: diag.severity === 'error' ? 'unknown' : undefined,
+      message: diag.message,
+      extensionId: diag.extensionId ?? params.producerExtensionId,
+      contributionId: diag.contributionId,
+      detail: diag.detail,
+    });
+  }
+
+  // Build consumed material refs from asset keys
+  const consumedMaterialRefs: RenderMaterialRef[] = (params.consumedAssetKeys ?? []).map((key) => ({
+    id: `material.asset.${key}`,
+    mediaKind: 'unknown',
+    locator: {
+      kind: 'asset-registry',
+      uri: `asset://${key}`,
+    },
+    determinism: 'deterministic',
+    replacementPolicy: 'preserve-live-ref',
+  }));
+
+  const artifact: RenderArtifact = {
+    id: params.artifactId,
+    route: COMPILE_ONLY_ARTIFACT_ROUTE,
+    locator: {
+      kind: 'inline',
+      uri: params.filename,
+      mimeType: params.mimeType,
+    },
+    mediaKind: mimeTypeToMediaKind(params.mimeType),
+    producerExtensionId: params.producerExtensionId,
+    producerVersion: params.producerVersion,
+    consumedMaterialRefs,
+    determinism: 'deterministic',
+    boundary: {
+      source: 'browser',
+      target: 'export-output',
+      route: COMPILE_ONLY_ARTIFACT_ROUTE,
+      failureBehavior: 'emit-diagnostic',
+    },
+    findings: findings.length > 0 ? Object.freeze(findings) : undefined,
+  };
+
+  return Object.freeze(artifact);
+}
+
+/**
+ * Map a MIME type string to a {@link RenderMaterialMediaKind}.
+ */
+function mimeTypeToMediaKind(mimeType: string): RenderMaterialMediaKind {
+  if (mimeType.startsWith('image/')) return 'image';
+  if (mimeType.startsWith('video/')) return 'video';
+  if (mimeType.startsWith('audio/')) return 'audio';
+  if (mimeType === 'application/json' || mimeType.endsWith('+json')) return 'json';
+  if (mimeType.startsWith('text/')) return 'text';
+  if (mimeType === 'application/octet-stream') return 'binary';
+  return 'unknown';
+}

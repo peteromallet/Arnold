@@ -17,13 +17,13 @@ import {
   createExtensionContext,
   validateExtensionId,
   validateContributionId,
-  contributionKindNotYetBridged,
-  CONTRIBUTION_KIND_MILESTONE,
   createCreativeContextStubs,
   ExtensionNotImplementedError,
   CREATIVE_MEMBER_MILESTONE,
   disposeExtensionContextServices,
   CONTEXT_DISPOSE_SYMBOL,
+  contributionKindNotYetBridged,
+  CONTRIBUTION_KIND_MILESTONE,
 } from '@/sdk/index';
 import type {
   ReighExtension,
@@ -53,6 +53,15 @@ import type {
   ChromeRenderStatusPayload,
   ChromeEventPayload,
   DiagnosticSeverity,
+  // M6: Parser / output format / search provider
+  ParserContribution,
+  OutputFormatContribution,
+  SearchProviderContribution,
+  CompileOnlyOutputResult,
+  ExportService,
+  AssetReadSurface,
+  MaterialReadSurface,
+  MetadataFacetDescriptor,
 } from '@/sdk/index';
 
 // ---------------------------------------------------------------------------
@@ -529,5 +538,179 @@ describe('ExtensionContext — type safety guard', () => {
     for (const key of actualKeys) {
       expect(declaredKeys).toContain(key);
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// M6: Contribution kind bridging — parser active, output/search typed
+// ---------------------------------------------------------------------------
+
+describe('M6: contribution kind bridging (parser M6-active, output/search typed)', () => {
+  it('parser is M6-active (contributionKindNotYetBridged returns null)', () => {
+    expect(contributionKindNotYetBridged('parser')).toBeNull();
+  });
+
+  it('outputFormat is typed but execution is reserved (returns M6)', () => {
+    expect(contributionKindNotYetBridged('outputFormat')).toBe('M6');
+  });
+
+  it('searchProvider is typed but execution is reserved (returns M6)', () => {
+    expect(contributionKindNotYetBridged('searchProvider')).toBe('M6');
+  });
+
+  it('render-dependent output declarations remain declarable but reserved for execution', () => {
+    // outputFormat (both compile-only and render-dependent) is declarable
+    // in manifests but its runtime execution is reserved in M6.
+    const bridged = contributionKindNotYetBridged('outputFormat');
+    expect(bridged).toBe('M6');
+
+    // Contrast: parser IS bridged at M6
+    expect(contributionKindNotYetBridged('parser')).toBeNull();
+  });
+
+  it('unsupported contribution behavior is explicit (returns owning milestone)', () => {
+    // Every reserved/unsupported kind returns its milestone so consumers
+    // get a clear diagnostic, not silent ignorance.
+    expect(contributionKindNotYetBridged('effect')).toBe('M3');
+    expect(contributionKindNotYetBridged('transition')).toBe('M3');
+    expect(contributionKindNotYetBridged('clipType')).toBe('M3');
+    expect(contributionKindNotYetBridged('agentTool')).toBe('M5');
+    expect(contributionKindNotYetBridged('agent')).toBe('M5');
+  });
+
+  it('CONTRIBUTION_KIND_MILESTONE maps M6 kinds to M6', () => {
+    expect(CONTRIBUTION_KIND_MILESTONE.parser).toBe('M6');
+    expect(CONTRIBUTION_KIND_MILESTONE.outputFormat).toBe('M6');
+    expect(CONTRIBUTION_KIND_MILESTONE.searchProvider).toBe('M6');
+  });
+
+  it('existing bridged M1/M2/M4 kinds remain unchanged', () => {
+    expect(contributionKindNotYetBridged('slot')).toBeNull();
+    expect(contributionKindNotYetBridged('dialog')).toBeNull();
+    expect(contributionKindNotYetBridged('panel')).toBeNull();
+    expect(contributionKindNotYetBridged('inspectorSection')).toBeNull();
+    expect(contributionKindNotYetBridged('command')).toBeNull();
+    expect(contributionKindNotYetBridged('keybinding')).toBeNull();
+    expect(contributionKindNotYetBridged('contextMenuItem')).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// M6: ExtensionManifest accepts M6 contributions in contributions array
+// ---------------------------------------------------------------------------
+
+describe('M6: ExtensionManifest contributions accept parser/outputFormat/searchProvider', () => {
+  it('defineExtension accepts a manifest with a parser contribution', () => {
+    const ext = defineExtension({
+      manifest: {
+        id: 'com.m6.parser-test' as any,
+        version: '1.0.0',
+        label: 'M6 Parser Test',
+        contributions: [
+          {
+            id: 'img-parser' as any,
+            kind: 'parser',
+            label: 'Image Metadata Parser',
+            acceptMimeTypes: ['image/jpeg', 'image/png'],
+            required: true,
+          },
+        ],
+      },
+    });
+    expect(ext.manifest.id).toBe('com.m6.parser-test');
+    expect(ext.manifest.contributions![0].kind).toBe('parser');
+  });
+
+  it('defineExtension accepts a manifest with an outputFormat contribution (compile-only)', () => {
+    const ext = defineExtension({
+      manifest: {
+        id: 'com.m6.output-test' as any,
+        version: '1.0.0',
+        label: 'M6 Output Test',
+        contributions: [
+          {
+            id: 'metadata-json' as any,
+            kind: 'outputFormat',
+            label: 'Metadata JSON',
+            requiresRender: false,
+            outputExtension: 'json',
+            outputMimeType: 'application/json',
+          },
+        ],
+      },
+    });
+    expect(ext.manifest.id).toBe('com.m6.output-test');
+    expect(ext.manifest.contributions![0].kind).toBe('outputFormat');
+  });
+
+  it('defineExtension accepts a manifest with an outputFormat contribution (render-dependent, reserved)', () => {
+    const ext = defineExtension({
+      manifest: {
+        id: 'com.m6.output-reserved' as any,
+        version: '1.0.0',
+        label: 'M6 Reserved Output',
+        contributions: [
+          {
+            id: 'mp4-export' as any,
+            kind: 'outputFormat',
+            label: 'MP4 Export',
+            requiresRender: true,
+            outputExtension: 'mp4',
+            outputMimeType: 'video/mp4',
+          },
+        ],
+      },
+    });
+    expect(ext.manifest.id).toBe('com.m6.output-reserved');
+    expect(ext.manifest.contributions![0].kind).toBe('outputFormat');
+    expect((ext.manifest.contributions![0] as any).requiresRender).toBe(true);
+  });
+
+  it('defineExtension accepts a manifest with a searchProvider contribution', () => {
+    const ext = defineExtension({
+      manifest: {
+        id: 'com.m6.search-test' as any,
+        version: '1.0.0',
+        label: 'M6 Search Test',
+        contributions: [
+          {
+            id: 'semantic-search' as any,
+            kind: 'searchProvider',
+            label: 'Semantic Search',
+            description: 'Semantic asset search',
+            resultKinds: ['asset'],
+          },
+        ],
+      },
+    });
+    expect(ext.manifest.id).toBe('com.m6.search-test');
+    expect(ext.manifest.contributions![0].kind).toBe('searchProvider');
+  });
+
+  it('defineExtension rejects duplicate contribution IDs across M6 kinds', () => {
+    expect(() =>
+      defineExtension({
+        manifest: {
+          id: 'com.m6.dup' as any,
+          version: '1.0.0',
+          label: 'M6 Duplicate Test',
+          contributions: [
+            {
+              id: 'dup-id' as any,
+              kind: 'parser',
+              label: 'Parser',
+              acceptMimeTypes: ['image/jpeg'],
+            },
+            {
+              id: 'dup-id' as any,
+              kind: 'outputFormat',
+              label: 'Output',
+              requiresRender: false,
+              outputExtension: 'json',
+            },
+          ],
+        },
+      }),
+    ).toThrow(/Duplicate contribution ID/);
   });
 });

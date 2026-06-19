@@ -1,5 +1,8 @@
 import { extractVideoMetadata } from '@/shared/lib/media/videoMetadata.ts';
 import type { AssetRegistryEntry } from '@/tools/video-editor/types/index.ts';
+import { runAllParsers } from './assetParserRuntime';
+import type { RegisteredParser } from './assetParserRuntime';
+import type { AssetParserPreflightInput, ParserDiagnostic } from './assetParserRuntime';
 
 const VIDEO_EXTENSION_TYPES: Record<string, string> = {
   '.avi': 'video/x-msvideo',
@@ -128,4 +131,44 @@ export async function extractAssetRegistryEntry(
     type: file.type || 'application/octet-stream',
     origin: 'immutable-public',
   };
+}
+
+
+/**
+ * Enrich an already-extracted registry entry by running registered parsers
+ * against the source file.
+ *
+ * - When `registeredParsers` is empty or undefined, the existing entry is
+ *   returned unchanged (no-parser uploads preserve current behavior).
+ * - When parsers are registered, each parser is independently preflighted
+ *   and eligible parsers are invoked in deterministic order. Parser-produced
+ *   metadata is merged into the entry via {@link mergeParserMetadata}.
+ * - Diagnostics and blocked status are propagated for consumer logging/UX.
+ */
+export async function enrichRegistryEntryWithParsers(
+  file: File,
+  existingEntry: AssetRegistryEntry,
+  assetKey: string,
+  registeredParsers?: readonly RegisteredParser[],
+): Promise<{
+  entry: AssetRegistryEntry;
+  diagnostics: ParserDiagnostic[];
+  blocked: boolean;
+}> {
+  if (!registeredParsers || registeredParsers.length === 0) {
+    return { entry: existingEntry, diagnostics: [], blocked: false };
+  }
+
+  const extension = file.name.includes('.')
+    ? file.name.slice(file.name.lastIndexOf('.') + 1).toLowerCase()
+    : '';
+
+  const preflightInput: AssetParserPreflightInput = {
+    mimeType: existingEntry.type || file.type || 'application/octet-stream',
+    extension,
+    byteSize: file.size,
+    filename: file.name,
+  };
+
+  return runAllParsers(registeredParsers, preflightInput, existingEntry, assetKey);
 }

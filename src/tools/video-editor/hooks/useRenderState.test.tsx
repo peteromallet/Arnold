@@ -1622,4 +1622,684 @@ describe('useRenderState export guard', () => {
       expect(mocks.startClientRender).toHaveBeenCalledTimes(1);
     });
   });
+
+// ---------------------------------------------------------------------------
+// M6: Export behavior — compile-only formats invoke registry, render-dependent
+// formats are rejected, and existing Render behavior is unchanged
+// ---------------------------------------------------------------------------
+
+const exportMocks = vi.hoisted(() => ({
+  executeCompileOnlyOutput: vi.fn(),
+}));
+
+vi.mock('@/tools/video-editor/runtime/outputFormatRegistry', async () => {
+  const actual = await vi.importActual('@/tools/video-editor/runtime/outputFormatRegistry');
+  return {
+    ...actual,
+    executeCompileOnlyOutput: exportMocks.executeCompileOnlyOutput,
+  };
+});
+
+describe('useRenderState — M6 export behavior', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.startClientRender.mockResolvedValue(undefined);
+    guardMocks.collectBuiltInKnownIds.mockReturnValue({
+      clipTypes: new Set(['media', 'text', 'hold', 'effect-layer']),
+      effectTypes: new Set(['fade', 'slide-up']),
+      transitionTypes: new Set(['crossfade']),
+    });
+    guardMocks.collectExtensionDeclaredIds.mockReturnValue({
+      effectIds: new Set(),
+      transitionIds: new Set(),
+      clipTypeIds: new Set(),
+    });
+    guardMocks.scanExportConfig.mockReturnValue({
+      diagnostics: [],
+      unknownClipTypes: [],
+      unknownEffects: [],
+      unknownTransitions: [],
+      inactiveExtensionIds: {
+        effectIds: new Set(),
+        transitionIds: new Set(),
+        clipTypeIds: new Set(),
+      },
+      hasBlockingErrors: false,
+    });
+    exportMocks.executeCompileOnlyOutput.mockReset();
+  });
+
+  // ---- exportFormats categorization ---------------------------------------
+
+  it('categorizes output formats into compile-only and render-dependent from extension runtime config', () => {
+    const extRuntime = makeExtensionRuntime({
+      config: {
+        slots: {},
+        dialogHost: { dialogs: [] },
+        registry: { panels: [], inspectorSections: [] },
+        outputFormats: [
+          { id: 'fmt-meta-json', extensionId: 'ext-a', label: 'Metadata JSON', requiresRender: false, outputExtension: 'json', disabled: false },
+          { id: 'fmt-csv', extensionId: 'ext-a', label: 'CSV Export', requiresRender: false, outputExtension: 'csv', disabled: false },
+          { id: 'fmt-mp4', extensionId: 'ext-b', label: 'MP4 Video', requiresRender: true, outputExtension: 'mp4', disabled: false },
+          { id: 'fmt-disabled', extensionId: 'ext-b', label: 'Disabled Format', requiresRender: false, outputExtension: 'bin', disabled: true, disabledReason: 'Not yet implemented' },
+        ],
+      } as any,
+    });
+
+    const { result } = renderHook(() => useRenderState(
+      buildConfig({ id: 'c1', clipType: 'media', track: 'V1', at: 0, hold: 1 }),
+      null,
+      null,
+      extRuntime,
+    ));
+
+    expect(result.current.exportFormats.compileOnly).toHaveLength(2);
+    expect(result.current.exportFormats.compileOnly.map((f) => f.id)).toEqual(['fmt-meta-json', 'fmt-csv']);
+    expect(result.current.exportFormats.renderDependent).toHaveLength(2);
+    expect(result.current.exportFormats.renderDependent.map((f) => f.id)).toEqual(['fmt-mp4', 'fmt-disabled']);
+  });
+
+  it('returns empty arrays when no output formats are registered', () => {
+    const extRuntime = makeExtensionRuntime({
+      config: {
+        slots: {},
+        dialogHost: { dialogs: [] },
+        registry: { panels: [], inspectorSections: [] },
+        outputFormats: [],
+      } as any,
+    });
+
+    const { result } = renderHook(() => useRenderState(
+      buildConfig({ id: 'c1', clipType: 'media', track: 'V1', at: 0, hold: 1 }),
+      null,
+      null,
+      extRuntime,
+    ));
+
+    expect(result.current.exportFormats.compileOnly).toHaveLength(0);
+    expect(result.current.exportFormats.renderDependent).toHaveLength(0);
+  });
+
+  it('returns empty arrays when extension runtime is undefined', () => {
+    const { result } = renderHook(() => useRenderState(
+      buildConfig({ id: 'c1', clipType: 'media', track: 'V1', at: 0, hold: 1 }),
+      null,
+      null,
+      undefined,
+    ));
+
+    expect(result.current.exportFormats.compileOnly).toHaveLength(0);
+    expect(result.current.exportFormats.renderDependent).toHaveLength(0);
+  });
+
+  // ---- startExport — compile-only invocation --------------------------------
+
+  it('invokes executeCompileOnlyOutput for a valid compile-only format with timeline and assets', async () => {
+    exportMocks.executeCompileOnlyOutput.mockResolvedValue({
+      artifact: { id: 'artifact-1', determinism: 'deterministic', diagnostics: [] },
+      data: new Uint8Array([1, 2, 3]),
+      hasBlockingErrors: false,
+    });
+
+    const extRuntime = makeExtensionRuntime({
+      config: {
+        slots: {},
+        dialogHost: { dialogs: [] },
+        registry: { panels: [], inspectorSections: [] },
+        outputFormats: [
+          { id: 'fmt-json', extensionId: 'ext-a', label: 'Metadata JSON', requiresRender: false, outputExtension: 'json', outputMimeType: 'application/json', disabled: false },
+        ],
+      } as any,
+    });
+
+    const { result } = renderHook(() => useRenderState(
+      buildConfig({ id: 'c1', clipType: 'media', track: 'V1', at: 0, hold: 1 }),
+      null,
+      null,
+      extRuntime,
+    ));
+
+    await act(async () => {
+      await result.current.startExport('fmt-json', new Map([['fmt-json', {}]]));
+    });
+
+    expect(exportMocks.executeCompileOnlyOutput).toHaveBeenCalledTimes(1);
+    const callArgs = exportMocks.executeCompileOnlyOutput.mock.calls[0];
+    expect(callArgs[1].formatId).toBe('fmt-json');
+    expect(callArgs[1].extensionId).toBe('ext-a');
+    expect(callArgs[1].timeline).toBeDefined();
+    expect(callArgs[1].assets).toBeDefined();
+    expect(result.current.exportStatus).toBe('done');
+    expect(result.current.exportResultUrl).toBeTruthy();
+    expect(result.current.exportResultFilename).toBe('export.json');
+  });
+
+  it('sets exportStatus to done and produces a downloadable blob on success', async () => {
+    exportMocks.executeCompileOnlyOutput.mockResolvedValue({
+      artifact: { id: 'artifact-1', determinism: 'deterministic', diagnostics: [] },
+      data: new Uint8Array([7, 8, 9]),
+      hasBlockingErrors: false,
+    });
+
+    const extRuntime = makeExtensionRuntime({
+      config: {
+        slots: {},
+        dialogHost: { dialogs: [] },
+        registry: { panels: [], inspectorSections: [] },
+        outputFormats: [
+          { id: 'fmt-csv', extensionId: 'ext-a', label: 'CSV', requiresRender: false, outputExtension: 'csv', outputMimeType: 'text/csv', disabled: false },
+        ],
+      } as any,
+    });
+
+    const { result } = renderHook(() => useRenderState(
+      buildConfig({ id: 'c1', clipType: 'media', track: 'V1', at: 0, hold: 1 }),
+      null,
+      null,
+      extRuntime,
+    ));
+
+    await act(async () => {
+      await result.current.startExport('fmt-csv', new Map([['fmt-csv', {}]]));
+    });
+
+    expect(result.current.exportStatus).toBe('done');
+    expect(result.current.exportResultFilename).toBe('export.csv');
+    expect(result.current.exportResultUrl).toMatch(/^blob:/);
+    expect(result.current.exportLog).toContain('Export complete');
+  });
+
+  it('sets exportStatus to error when compile-only registry is empty', async () => {
+    const extRuntime = makeExtensionRuntime({
+      config: {
+        slots: {},
+        dialogHost: { dialogs: [] },
+        registry: { panels: [], inspectorSections: [] },
+        outputFormats: [
+          { id: 'fmt-json', extensionId: 'ext-a', label: 'JSON', requiresRender: false, outputExtension: 'json', disabled: false },
+        ],
+      } as any,
+    });
+
+    const { result } = renderHook(() => useRenderState(
+      buildConfig({ id: 'c1', clipType: 'media', track: 'V1', at: 0, hold: 1 }),
+      null,
+      null,
+      extRuntime,
+    ));
+
+    await act(async () => {
+      await result.current.startExport('fmt-json', new Map()); // empty Map = no handlers registered
+    });
+
+    expect(result.current.exportStatus).toBe('error');
+    expect(result.current.exportLog).toContain('no compile-only output handlers registered');
+    expect(exportMocks.executeCompileOnlyOutput).not.toHaveBeenCalled();
+  });
+
+  it('sets exportStatus to error when resolvedConfig is null', async () => {
+    const extRuntime = makeExtensionRuntime({
+      config: {
+        slots: {},
+        dialogHost: { dialogs: [] },
+        registry: { panels: [], inspectorSections: [] },
+        outputFormats: [
+          { id: 'fmt-json', extensionId: 'ext-a', label: 'JSON', requiresRender: false, outputExtension: 'json', disabled: false },
+        ],
+      } as any,
+    });
+
+    const { result } = renderHook(() => useRenderState(
+      null, // no config
+      null,
+      null,
+      extRuntime,
+    ));
+
+    await act(async () => {
+      await result.current.startExport('fmt-json', new Map());
+    });
+
+    expect(result.current.exportStatus).toBe('error');
+    expect(result.current.exportLog).toContain('no timeline configuration');
+    expect(exportMocks.executeCompileOnlyOutput).not.toHaveBeenCalled();
+  });
+
+  // ---- startExport — render-dependent rejection ----------------------------
+
+  it('rejects render-dependent format with descriptive error and does not invoke executeCompileOnlyOutput', async () => {
+    const extRuntime = makeExtensionRuntime({
+      config: {
+        slots: {},
+        dialogHost: { dialogs: [] },
+        registry: { panels: [], inspectorSections: [] },
+        outputFormats: [
+          { id: 'fmt-mp4', extensionId: 'ext-b', label: 'MP4 Video', requiresRender: true, outputExtension: 'mp4', disabled: false },
+        ],
+      } as any,
+    });
+
+    const { result } = renderHook(() => useRenderState(
+      buildConfig({ id: 'c1', clipType: 'media', track: 'V1', at: 0, hold: 1 }),
+      null,
+      null,
+      extRuntime,
+    ));
+
+    await act(async () => {
+      await result.current.startExport('fmt-mp4', new Map());
+    });
+
+    expect(result.current.exportStatus).toBe('error');
+    expect(result.current.exportLog).toContain('requires render pipeline execution');
+    expect(result.current.exportLog).toContain('MP4 Video');
+    expect(result.current.exportLog).toContain('reserved for the Render button');
+    expect(exportMocks.executeCompileOnlyOutput).not.toHaveBeenCalled();
+  });
+
+  it('rejects render-dependent format with disabledReason when provided', async () => {
+    const extRuntime = makeExtensionRuntime({
+      config: {
+        slots: {},
+        dialogHost: { dialogs: [] },
+        registry: { panels: [], inspectorSections: [] },
+        outputFormats: [
+          { id: 'fmt-future', extensionId: 'ext-b', label: 'Future Format', requiresRender: true, outputExtension: 'fut', disabled: true, disabledReason: 'Needs real-time encoder integration' },
+        ],
+      } as any,
+    });
+
+    const { result } = renderHook(() => useRenderState(
+      buildConfig({ id: 'c1', clipType: 'media', track: 'V1', at: 0, hold: 1 }),
+      null,
+      null,
+      extRuntime,
+    ));
+
+    await act(async () => {
+      await result.current.startExport('fmt-future', new Map());
+    });
+
+    expect(result.current.exportStatus).toBe('error');
+    expect(result.current.exportLog).toContain('requires render pipeline execution');
+    expect(result.current.exportLog).toContain('Needs real-time encoder integration');
+    expect(exportMocks.executeCompileOnlyOutput).not.toHaveBeenCalled();
+  });
+
+  it('rejects unknown format ID with not-found error', async () => {
+    const extRuntime = makeExtensionRuntime({
+      config: {
+        slots: {},
+        dialogHost: { dialogs: [] },
+        registry: { panels: [], inspectorSections: [] },
+        outputFormats: [
+          { id: 'fmt-json', extensionId: 'ext-a', label: 'JSON', requiresRender: false, outputExtension: 'json', disabled: false },
+        ],
+      } as any,
+    });
+
+    const { result } = renderHook(() => useRenderState(
+      buildConfig({ id: 'c1', clipType: 'media', track: 'V1', at: 0, hold: 1 }),
+      null,
+      null,
+      extRuntime,
+    ));
+
+    await act(async () => {
+      await result.current.startExport('non-existent-format', new Map());
+    });
+
+    expect(result.current.exportStatus).toBe('error');
+    expect(result.current.exportLog).toContain('not found');
+    expect(exportMocks.executeCompileOnlyOutput).not.toHaveBeenCalled();
+  });
+
+  // ---- startExport — exceptions from output registry -----------------------
+
+  it('sets exportStatus to error when executeCompileOnlyOutput returns null', async () => {
+    exportMocks.executeCompileOnlyOutput.mockResolvedValue(null);
+
+    const extRuntime = makeExtensionRuntime({
+      config: {
+        slots: {},
+        dialogHost: { dialogs: [] },
+        registry: { panels: [], inspectorSections: [] },
+        outputFormats: [
+          { id: 'fmt-json', extensionId: 'ext-a', label: 'JSON', requiresRender: false, outputExtension: 'json', disabled: false },
+        ],
+      } as any,
+    });
+
+    const { result } = renderHook(() => useRenderState(
+      buildConfig({ id: 'c1', clipType: 'media', track: 'V1', at: 0, hold: 1 }),
+      null,
+      null,
+      extRuntime,
+    ));
+
+    await act(async () => {
+      await result.current.startExport('fmt-json', new Map([['fmt-json', {}]]));
+    });
+
+    expect(result.current.exportStatus).toBe('error');
+    expect(result.current.exportLog).toContain('not available in the compile-only registry');
+  });
+
+  it('sets exportStatus to error when executeCompileOnlyOutput throws', async () => {
+    exportMocks.executeCompileOnlyOutput.mockRejectedValue(new Error('Handler crashed'));
+
+    const extRuntime = makeExtensionRuntime({
+      config: {
+        slots: {},
+        dialogHost: { dialogs: [] },
+        registry: { panels: [], inspectorSections: [] },
+        outputFormats: [
+          { id: 'fmt-json', extensionId: 'ext-a', label: 'JSON', requiresRender: false, outputExtension: 'json', disabled: false },
+        ],
+      } as any,
+    });
+
+    const { result } = renderHook(() => useRenderState(
+      buildConfig({ id: 'c1', clipType: 'media', track: 'V1', at: 0, hold: 1 }),
+      null,
+      null,
+      extRuntime,
+    ));
+
+    await act(async () => {
+      await result.current.startExport('fmt-json', new Map([['fmt-json', {}]]));
+    });
+
+    expect(result.current.exportStatus).toBe('error');
+    expect(result.current.exportLog).toContain('Handler crashed');
+  });
+
+  // ---- startExport — export state transitions ------------------------------
+
+  it('transitions through exporting → done during compile-only export', async () => {
+    exportMocks.executeCompileOnlyOutput.mockResolvedValue({
+      artifact: { id: 'artifact-1', determinism: 'deterministic', diagnostics: [] },
+      data: new Uint8Array([1, 2, 3]),
+      hasBlockingErrors: false,
+    });
+
+    const extRuntime = makeExtensionRuntime({
+      config: {
+        slots: {},
+        dialogHost: { dialogs: [] },
+        registry: { panels: [], inspectorSections: [] },
+        outputFormats: [
+          { id: 'fmt-json', extensionId: 'ext-a', label: 'JSON', requiresRender: false, outputExtension: 'json', disabled: false },
+        ],
+      } as any,
+    });
+
+    const { result } = renderHook(() => useRenderState(
+      buildConfig({ id: 'c1', clipType: 'media', track: 'V1', at: 0, hold: 1 }),
+      null,
+      null,
+      extRuntime,
+    ));
+
+    await act(async () => {
+      await result.current.startExport('fmt-json', new Map([['fmt-json', {}]]));
+    });
+
+    // After export completes, status should be 'done'
+    expect(result.current.exportStatus).toBe('done');
+    expect(result.current.exportLog).toContain('Export complete');
+    expect(result.current.exportResultUrl).toMatch(/^blob:/);
+    expect(result.current.exportResultFilename).toBe('export.json');
+  });
+
+  it('transitions through exporting → error on handler exception', async () => {
+    exportMocks.executeCompileOnlyOutput.mockRejectedValue(new Error('Boom'));
+
+    const extRuntime = makeExtensionRuntime({
+      config: {
+        slots: {},
+        dialogHost: { dialogs: [] },
+        registry: { panels: [], inspectorSections: [] },
+        outputFormats: [
+          { id: 'fmt-json', extensionId: 'ext-a', label: 'JSON', requiresRender: false, outputExtension: 'json', disabled: false },
+        ],
+      } as any,
+    });
+
+    const { result } = renderHook(() => useRenderState(
+      buildConfig({ id: 'c1', clipType: 'media', track: 'V1', at: 0, hold: 1 }),
+      null,
+      null,
+      extRuntime,
+    ));
+
+    await act(async () => {
+      await result.current.startExport('fmt-json', new Map([['fmt-json', {}]]));
+    });
+
+    expect(result.current.exportStatus).toBe('error');
+    expect(result.current.exportLog).toContain('Export failed');
+    expect(result.current.exportLog).toContain('Boom');
+  });
+
+  // ---- startExport — diagnostics in result ---------------------------------
+
+  it('includes diagnostic count in export log when result has diagnostics', async () => {
+    exportMocks.executeCompileOnlyOutput.mockResolvedValue({
+      artifact: {
+        id: 'artifact-1',
+        determinism: 'deterministic',
+        diagnostics: [
+          { severity: 'warning', code: 'fmt/warning', message: 'Some warning' },
+          { severity: 'info', code: 'fmt/info', message: 'Some info' },
+        ],
+      },
+      data: new Uint8Array([1]),
+      hasBlockingErrors: false,
+    });
+
+    const extRuntime = makeExtensionRuntime({
+      config: {
+        slots: {},
+        dialogHost: { dialogs: [] },
+        registry: { panels: [], inspectorSections: [] },
+        outputFormats: [
+          { id: 'fmt-json', extensionId: 'ext-a', label: 'JSON', requiresRender: false, outputExtension: 'json', disabled: false },
+        ],
+      } as any,
+    });
+
+    const { result } = renderHook(() => useRenderState(
+      buildConfig({ id: 'c1', clipType: 'media', track: 'V1', at: 0, hold: 1 }),
+      null,
+      null,
+      extRuntime,
+    ));
+
+    await act(async () => {
+      await result.current.startExport('fmt-json', new Map([['fmt-json', {}]]));
+    });
+
+    expect(result.current.exportStatus).toBe('done');
+    expect(result.current.exportLog).toContain('[2 diagnostic(s)]');
+  });
+
+  it('includes blocking errors note in export log when hasBlockingErrors is true', async () => {
+    exportMocks.executeCompileOnlyOutput.mockResolvedValue({
+      artifact: {
+        id: 'artifact-1',
+        determinism: 'deterministic',
+        diagnostics: [
+          { severity: 'error', code: 'fmt/error', message: 'Blocking error' },
+        ],
+      },
+      data: new Uint8Array([1]),
+      hasBlockingErrors: true,
+    });
+
+    const extRuntime = makeExtensionRuntime({
+      config: {
+        slots: {},
+        dialogHost: { dialogs: [] },
+        registry: { panels: [], inspectorSections: [] },
+        outputFormats: [
+          { id: 'fmt-json', extensionId: 'ext-a', label: 'JSON', requiresRender: false, outputExtension: 'json', disabled: false },
+        ],
+      } as any,
+    });
+
+    const { result } = renderHook(() => useRenderState(
+      buildConfig({ id: 'c1', clipType: 'media', track: 'V1', at: 0, hold: 1 }),
+      null,
+      null,
+      extRuntime,
+    ));
+
+    await act(async () => {
+      await result.current.startExport('fmt-json', new Map([['fmt-json', {}]]));
+    });
+
+    expect(result.current.exportStatus).toBe('done');
+    expect(result.current.exportLog).toContain('with blocking errors');
+  });
+
+  // ---- Render behavior unchanged when export formats are present -----------
+
+  it('preserves existing render routing when compile-only export formats are registered', async () => {
+    const extRuntime = makeExtensionRuntime({
+      extensions: [
+        {
+          manifest: {
+            id: 'test-ext' as any,
+            version: '1.0.0',
+            contributions: [],
+          },
+        } as any,
+      ],
+      config: {
+        slots: {},
+        dialogHost: { dialogs: [] },
+        registry: { panels: [], inspectorSections: [] },
+        outputFormats: [
+          { id: 'fmt-json', extensionId: 'ext-a', label: 'JSON', requiresRender: false, outputExtension: 'json', disabled: false },
+        ],
+      } as any,
+    });
+
+    const { result } = renderHook(() => useRenderState(
+      buildConfig({ id: 'c1', clipType: 'media', track: 'V1', at: 0, hold: 1 }),
+      null,
+      null,
+      extRuntime,
+    ));
+
+    await act(async () => {
+      await result.current.startRender();
+    });
+
+    // Render still invokes guard and routes normally
+    expect(guardMocks.scanExportConfig).toHaveBeenCalledTimes(1);
+    expect(mocks.startClientRender).toHaveBeenCalledTimes(1);
+    expect(result.current.renderStatus).toBe('idle');
+  });
+
+  it('preserves existing exporter-based render routing when compile-only formats are registered', async () => {
+    const exporter = {
+      render: vi.fn(async () => ({
+        id: 'job-1',
+        subscribe(listener: (progress: { phase: string; progress?: number; resultUrl?: string | null; log?: string }) => void) {
+          listener({
+            phase: 'complete',
+            progress: 1,
+            resultUrl: 'blob:https://example.com/rendered',
+            log: 'done',
+          });
+          return () => undefined;
+        },
+      })),
+    };
+
+    const extRuntime = makeExtensionRuntime({
+      config: {
+        slots: {},
+        dialogHost: { dialogs: [] },
+        registry: { panels: [], inspectorSections: [] },
+        outputFormats: [
+          { id: 'fmt-json', extensionId: 'ext-a', label: 'JSON', requiresRender: false, outputExtension: 'json', disabled: false },
+        ],
+      } as any,
+    });
+
+    const { result } = renderHook(() => useRenderState(
+      buildConfig({ id: 'c1', clipType: 'media', track: 'V1', at: 0, hold: 1 }),
+      { fps: 30, durationInFrames: 30, compositionWidth: 1920, compositionHeight: 1080 },
+      exporter,
+      extRuntime,
+    ));
+
+    await act(async () => {
+      await result.current.startRender();
+    });
+
+    expect(exporter.render).toHaveBeenCalledTimes(1);
+    expect(mocks.startClientRender).not.toHaveBeenCalled();
+    expect(result.current.renderStatus).toBe('done');
+    expect(result.current.renderResultUrl).toBe('blob:https://example.com/rendered');
+  });
+
+  it('preserves render block when export guard finds blocking errors even with compile-only formats present', async () => {
+    const extRuntime = makeExtensionRuntime({
+      extensions: [
+        {
+          manifest: {
+            id: 'test-ext' as any,
+            version: '1.0.0',
+            contributions: [],
+          },
+        } as any,
+      ],
+      config: {
+        slots: {},
+        dialogHost: { dialogs: [] },
+        registry: { panels: [], inspectorSections: [] },
+        outputFormats: [
+          { id: 'fmt-json', extensionId: 'ext-a', label: 'JSON', requiresRender: false, outputExtension: 'json', disabled: false },
+        ],
+      } as any,
+    });
+
+    guardMocks.scanExportConfig.mockReturnValue({
+      diagnostics: [
+        {
+          severity: 'error',
+          code: 'export/unknown-clip-type',
+          message: 'Clip type alien-format is not recognised.',
+          detail: { clipId: 'c1', clipType: 'alien-format' },
+        },
+      ],
+      unknownClipTypes: ['alien-format'],
+      unknownEffects: [],
+      unknownTransitions: [],
+      inactiveExtensionIds: { effectIds: new Set(), transitionIds: new Set(), clipTypeIds: new Set() },
+      hasBlockingErrors: true,
+    });
+
+    const { result } = renderHook(() => useRenderState(
+      buildConfig({ id: 'c1', clipType: 'media', track: 'V1', at: 0, hold: 1 }),
+      null,
+      null,
+      extRuntime,
+    ));
+
+    await act(async () => {
+      await result.current.startRender();
+    });
+
+    // Render was blocked by guard despite having export formats
+    expect(result.current.renderStatus).toBe('error');
+    expect(result.current.renderLog).toContain('Export guard');
+    expect(result.current.renderLog).toContain('alien-format');
+    expect(mocks.startClientRender).not.toHaveBeenCalled();
+  });
+});
 });

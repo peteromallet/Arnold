@@ -292,11 +292,16 @@ export type ContributionKind =
   | 'command'
   | 'keybinding'
   | 'contextMenuItem'
-  // Reserved — not yet bridged in M1
+  // M6: parser, output format, search provider, metadata facet, asset detail section
+  | 'parser'
+  | 'outputFormat'
+  | 'searchProvider'
+  | 'metadataFacet'
+  | 'assetDetailSection'
+  // Reserved — not yet bridged
   | 'effect'
   | 'transition'
   | 'clipType'
-  | 'parser'
   | 'agentTool'
   | 'agent';
 
@@ -340,6 +345,89 @@ export interface ExtensionContribution {
   transitionId?: string;
   /** Reserved for future clip-type descriptors. */
   clipTypeId?: string;
+  /** M6: Parser identifier declared by the extension. */
+  parserId?: string;
+  /** M6: Output format identifier declared by the extension. */
+  outputFormatId?: string;
+  /** M6: Search provider identifier declared by the extension. */
+  searchProviderId?: string;
+  /** M6: Metadata facet identifier declared by the extension. */
+  metadataFacetId?: string;
+  /** M6: Asset detail section identifier declared by the extension. */
+  assetDetailSectionId?: string;
+}
+
+// ---------------------------------------------------------------------------
+// M6: Metadata facet / asset detail section contributions
+// ---------------------------------------------------------------------------
+
+/**
+ * M6: A metadata facet contribution declared in an extension manifest.
+ *
+ * Metadata facets tell the host how to surface a metadata field
+ * as a searchable/filterable facet in the asset panel.
+ */
+export interface MetadataFacetContribution {
+  /** Unique within the extension. */
+  id: ContributionId;
+  kind: 'metadataFacet';
+  /**
+   * Dot-separated path to the metadata field.
+   * E.g. 'gps.latitude', 'integrity.algorithm', 'extensions.myExt.tags'.
+   */
+  fieldPath: string;
+  /** Human-readable display name for the facet. */
+  displayName: string;
+  /** The value kind — determines rendering and filtering strategy. */
+  valueKind: MetadataFacetValueKind;
+  /** Lower values sort first. Default 0. */
+  order?: number;
+  /**
+   * Aggregation posture hint for the host.
+   * - `exact` — values should be surfaced individually
+   * - `range` — numeric values can be bucketed
+   * - `presence` — only show whether the field exists
+   */
+  aggregationPosture?: 'exact' | 'range' | 'presence';
+  /**
+   * Allowed values when `valueKind` is 'enum'.
+   * The host uses this for dropdown/checkbox filter UI.
+   */
+  enumValues?: readonly string[];
+}
+
+/**
+ * M6: An asset detail section contribution declared in an extension manifest.
+ *
+ * Asset detail sections are named slots within the asset detail panel.
+ * The host owns section placement, empty/error states, search result badges,
+ * and provenance-chain rendering.  Extensions provide section descriptors
+ * to declare what metadata they surface.
+ */
+export interface AssetDetailSectionContribution {
+  /** Unique within the extension. */
+  id: ContributionId;
+  kind: 'assetDetailSection';
+  /** Human-readable section title. */
+  title: string;
+  /**
+   * Placement within the asset detail panel.
+   * - `before-default` — before host-owned metadata sections
+   * - `after-default` — after host-owned metadata sections
+   */
+  placement: 'before-default' | 'after-default';
+  /**
+   * The metadata field paths this section reads.
+   * The host uses these to determine section visibility and data binding.
+   */
+  fieldPaths?: readonly string[];
+  /** Lower values sort first within their placement group. Default 0. */
+  order?: number;
+  /**
+   * Optional visibility predicate (evaluated by host).
+   * E.g. 'asset.metadata.integrity != null'.
+   */
+  when?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -402,6 +490,118 @@ export interface ContextMenuItemContribution {
 }
 
 // ---------------------------------------------------------------------------
+// M6: Parser / output format / search provider contributions
+// ---------------------------------------------------------------------------
+
+/**
+ * M6: A parser contribution declared in an extension manifest.
+ *
+ * Parsers enrich asset metadata during ingestion.  The contribution declares
+ * accepted MIME types, file extensions, max size, and whether the parser is
+ * required (blocking) or optional.
+ *
+ * Actual parser behaviour is registered imperatively during activate() via
+ * the host's parser registry (ctx.creative.assets if active, or a
+ * dedicated parser registration surface).
+ */
+export interface ParserContribution {
+  /** Unique within the extension. */
+  id: ContributionId;
+  kind: 'parser';
+  /** Human-readable label for diagnostics / UI. */
+  label: string;
+  /**
+   * Accepted MIME types.  At least one of `acceptMimeTypes` or
+   * `acceptExtensions` must be non-empty.
+   */
+  acceptMimeTypes?: readonly string[];
+  /**
+   * Accepted file extensions (without leading dot).  E.g. `['jpg','jpeg']`.
+   */
+  acceptExtensions?: readonly string[];
+  /**
+   * Maximum file size in bytes this parser will accept.
+   * Files exceeding this size produce a diagnostic and are not passed
+   * to the parser handler.
+   */
+  maxBytes?: number;
+  /**
+   * When true, parser failure blocks asset ingestion with a clear
+   * diagnostic.  When false (default), the failure is diagnostic-only
+   * and the asset is still ingested with whatever metadata was already
+   * available.
+   */
+  required?: boolean;
+  /** Lower values sort first. Default 0. */
+  order?: number;
+}
+
+/**
+ * M6: An output format contribution declared in an extension manifest.
+ *
+ * Output formats produce an artifact from timeline and asset data.
+ * Compile-only formats (requiresRender: false) do not invoke the render
+ * pipeline; they read timeline/asset data and produce a deterministic
+ * artifact (e.g. metadata JSON).
+ *
+ * Render-dependent formats (requiresRender: true) are declaration-only
+ * in M6 and appear disabled in the export UI with a diagnostic explaining
+ * that execution is unavailable until render planning activates the route.
+ */
+export interface OutputFormatContribution {
+  /** Unique within the extension. */
+  id: ContributionId;
+  kind: 'outputFormat';
+  /** Human-readable label for the export UI. */
+  label: string;
+  /**
+   * When false, this is a compile-only format that does not invoke the
+   * render pipeline.  When true, the format requires render planning and
+   * is surfaced as disabled/reserved in M6.
+   */
+  requiresRender: boolean;
+  /** File extension for the output artifact (e.g. 'json', 'xml'). */
+  outputExtension: string;
+  /** MIME type for the output artifact (e.g. 'application/json'). */
+  outputMimeType?: string;
+  /** Optional human-readable description shown in the export UI. */
+  description?: string;
+  /** Lower values sort first. Default 0. */
+  order?: number;
+}
+
+/**
+ * M6: A search provider contribution declared in an extension manifest.
+ *
+ * Search providers supply asset/material search results to the host search
+ * surface.  The provider owns indexing, model choice, and refresh; the host
+ * owns query dispatch, result merge, and source labeling.
+ *
+ * Search providers are bounded to host query/result integration — no local
+ * model loading, inference, vector database, or ranking ownership is added
+ * in M6.
+ */
+export interface SearchProviderContribution {
+  /** Unique within the extension. */
+  id: ContributionId;
+  kind: 'searchProvider';
+  /** Human-readable label shown in the search surface. */
+  label: string;
+  /**
+   * Optional description of the search provider capabilities
+   * (e.g. 'semantic search over image embeddings').
+   */
+  description?: string;
+  /**
+   * Kinds of results this provider can surface.
+   * Defaults to ['asset'] when omitted.
+   */
+  resultKinds?: readonly ('asset' | 'material')[];
+  /** Lower values sort first. Default 0. */
+  order?: number;
+}
+
+// ---------------------------------------------------------------------------
 // Processes (reserved, validated but inactive in M1)
 // ---------------------------------------------------------------------------
 
@@ -456,6 +656,12 @@ export interface ExtensionManifest {
     | CommandContribution
     | KeybindingContribution
     | ContextMenuItemContribution
+    // M6: parser, output format, search provider, metadata facet, asset detail section
+    | ParserContribution
+    | OutputFormatContribution
+    | SearchProviderContribution
+    | MetadataFacetContribution
+    | AssetDetailSectionContribution
   )[];
   /** Reserved: descriptive permission metadata. */
   permissions?: readonly ExtensionPermissionDeclaration[];
@@ -590,10 +796,13 @@ export interface CreativeContext {
   readonly reader: TimelineReader;
   /** Provider-scoped proposal lifecycle manager (M3). */
   readonly proposals: ProposalRuntime;
-  readonly assets: unknown;
-  readonly materials: unknown;
+  /** Read-only asset metadata surface (M6). */
+  readonly assets: AssetReadSurface;
+  /** Read-only material metadata surface (M6). */
+  readonly materials: MaterialReadSurface;
   readonly sessions: unknown;
-  readonly export: unknown;
+  /** Export service for registering output format handlers (M6). */
+  readonly export: ExportService;
   readonly stage: unknown;
   readonly writing: unknown;
 }
@@ -1251,10 +1460,15 @@ export const CONTRIBUTION_KIND_MILESTONE: Record<ContributionKind, string | unde
   command: 'M4',
   keybinding: 'M4',
   contextMenuItem: 'M4',
+  // M6: parser, output format, search provider, metadata facet, asset detail section
+  parser: 'M6',
+  outputFormat: 'M6',
+  searchProvider: 'M6',
+  metadataFacet: 'M6',
+  assetDetailSection: 'M6',
   effect: 'M3',
   transition: 'M3',
   clipType: 'M3',
-  parser: 'M4',
   agentTool: 'M5',
   agent: 'M5',
 };
@@ -1271,10 +1485,20 @@ export function contributionKindNotYetBridged(kind: ContributionKind): string | 
   if (milestone === 'M1' || milestone === 'M2') return null;
 
   // M4: command, keybinding, and contextMenuItem are bridged.
-  // Other M4 kinds (parser) remain inactive.
+  // Other M4 kinds remain inactive (none exist as of M6).
   if (
     milestone === 'M4' &&
     (kind === 'command' || kind === 'keybinding' || kind === 'contextMenuItem')
+  ) {
+    return null;
+  }
+
+  // M6: parser, metadataFacet, and assetDetailSection are M6-active.
+  // outputFormat and searchProvider are typed but execution is reserved
+  // (declarable, not yet bridged for runtime).
+  if (
+    milestone === 'M6' &&
+    (kind === 'parser' || kind === 'metadataFacet' || kind === 'assetDetailSection')
   ) {
     return null;
   }
@@ -1915,3 +2139,546 @@ export type ProposalPanelAction =
   | { type: 'reject'; proposalId: string; reason?: string }
   | { type: 'preview'; proposalId: string }
   | { type: 'toggleVisibility' };
+
+// ---------------------------------------------------------------------------
+// M6: Asset metadata types
+// ---------------------------------------------------------------------------
+
+/**
+ * Integrity metadata for an asset (checksum, algorithm, byte size).
+ * Host-owned top-level shape under `AssetMetadata.integrity`.
+ */
+export interface AssetIntegrityMetadata {
+  /** Checksum algorithm (e.g. 'sha256'). */
+  algorithm: string;
+  /** Hex-encoded checksum digest. */
+  hash: string;
+  /** File size in bytes. */
+  size: number;
+}
+
+/**
+ * GPS / geolocation metadata extracted from asset headers.
+ * Host-owned top-level shape under `AssetMetadata.gps`.
+ */
+export interface AssetGPSMetadata {
+  /** Latitude in decimal degrees (WGS84). */
+  latitude?: number;
+  /** Longitude in decimal degrees (WGS84). */
+  longitude?: number;
+  /** Altitude in metres above WGS84 ellipsoid. */
+  altitude?: number;
+  /** GPS timestamp if available (epoch ms). */
+  timestamp?: number;
+}
+
+/**
+ * Consent / rights metadata for an asset.
+ * Host-owned top-level shape under `AssetMetadata.consent`.
+ */
+export interface AssetConsentMetadata {
+  /** Human-readable source attribution. */
+  source?: string;
+  /** Consent / rights note (e.g. 'CC BY 4.0', 'all rights reserved'). */
+  rightsNote?: string;
+  /** Whether consent has been explicitly recorded. */
+  consentRecorded?: boolean;
+  /** ISO 8601 timestamp when consent was recorded. */
+  consentTimestamp?: string;
+}
+
+/**
+ * Provenance metadata describing where an asset came from.
+ * Host-owned top-level shape under `AssetMetadata.provenance`.
+ */
+export interface AssetProvenanceMetadata {
+  /** Human-readable origin description. */
+  origin?: string;
+  /** ID of the asset this was derived from, if any. */
+  derivedFromAssetId?: string;
+  /** Whether this asset was generated by AI/ML. */
+  generated?: boolean;
+  /** ISO 8601 capture or import timestamp. */
+  capturedAt?: string;
+  /** ISO 8601 import timestamp. */
+  importedAt?: string;
+}
+
+/**
+ * Enrichment status lifecycle state machine.
+ *
+ *   pending   → record created, not yet claimed
+ *   claimed   → claimed by an extension/agent for processing
+ *   resolving → processing in progress
+ *   resolved  → enrichment completed successfully
+ *   failed    → enrichment failed with a diagnostic
+ *   expired   → enrichment timed out or was cancelled
+ */
+export type EnrichmentStatus =
+  | 'pending'
+  | 'claimed'
+  | 'resolving'
+  | 'resolved'
+  | 'failed'
+  | 'expired';
+
+/**
+ * A deferred enrichment record persisted inside asset metadata.
+ *
+ * Parsers that need ML inference may emit deferred enrichment records
+ * instead of blocking ingestion.  The record carries an asset reference,
+ * enrichment kind, input parameters, status, and owning extension.
+ * M6 persists and displays the shape; M10/M12 activate claim/resolve
+ * execution through agent/process contracts.
+ */
+export interface DeferredEnrichmentRecord {
+  /** Unique record identifier. */
+  id: string;
+  /** The asset this enrichment targets. */
+  assetId: string;
+  /** Enrichment kind (e.g. 'embedding', 'caption', 'object-detection'). */
+  kind: string;
+  /** Input parameters for the enrichment process. */
+  input?: Record<string, unknown>;
+  /** Current lifecycle state. */
+  status: EnrichmentStatus;
+  /** The extension that owns this enrichment record. */
+  extensionId: string;
+  /** Contribution ID within the extension, if any. */
+  contributionId?: string;
+  /** ISO 8601 timestamp when the record was created. */
+  createdAt: string;
+  /** ISO 8601 timestamp when the record was last updated. */
+  updatedAt: string;
+  /** Diagnostic message when status is 'failed' or 'expired'. */
+  diagnostic?: string;
+  /** Enrichment output when status is 'resolved'. */
+  output?: Record<string, unknown>;
+}
+
+/**
+ * Top-level asset metadata shape persisted in AssetRegistryEntry.
+ *
+ * Host-owned keys (integrity, gps, consent, provenance, enrichment) are
+ * at the top level.  Extension-owned metadata is namespaced under
+ * `extensions[extensionId]`.
+ */
+export interface AssetMetadata {
+  /** Integrity / checksum metadata. */
+  integrity?: AssetIntegrityMetadata;
+  /** GPS / geolocation metadata. */
+  gps?: AssetGPSMetadata;
+  /** Consent / rights metadata. */
+  consent?: AssetConsentMetadata;
+  /** Provenance / origin metadata. */
+  provenance?: AssetProvenanceMetadata;
+  /**
+   * Extension-owned metadata namespaced by extension ID.
+   * Extensions may store arbitrary structured data under their own key.
+   */
+  extensions?: Record<string, Record<string, unknown>>;
+  /**
+   * Deferred enrichment records for this asset.
+   * Parsers may enqueue enrichment tasks without blocking ingestion.
+   */
+  enrichment?: readonly DeferredEnrichmentRecord[];
+}
+
+// ---------------------------------------------------------------------------
+// M6: Metadata facet descriptors
+// ---------------------------------------------------------------------------
+
+/**
+ * The value kind of a metadata facet field.
+ *
+ * Determines how the host renders filter/aggregation UI for the facet.
+ */
+export type MetadataFacetValueKind =
+  | 'string'
+  | 'number'
+  | 'boolean'
+  | 'date'
+  | 'enum';
+
+/**
+ * A descriptor that tells the host how to surface a metadata field
+ * as a searchable/filterable facet in the asset panel.
+ *
+ * The host owns facet rendering and aggregation; extensions provide
+ * the descriptor and the metadata values.
+ */
+export interface MetadataFacetDescriptor {
+  /**
+   * Dot-separated path to the metadata field.
+   * E.g. 'gps.latitude', 'integrity.algorithm', 'extensions.myExt.tags'.
+   */
+  fieldPath: string;
+  /** Human-readable display name for the facet. */
+  displayName: string;
+  /** The value kind — determines rendering and filtering strategy. */
+  valueKind: MetadataFacetValueKind;
+  /**
+   * Sort order for this facet relative to others (lower = first).
+   * Default 0.
+   */
+  order?: number;
+  /**
+   * Aggregation posture hint for the host.
+   * - `exact` — values should be surfaced individually
+   * - `range` — numeric values can be bucketed
+   * - `presence` — only show whether the field exists
+   */
+  aggregationPosture?: 'exact' | 'range' | 'presence';
+  /**
+   * Allowed values when `valueKind` is 'enum'.
+   * The host uses this for dropdown/checkbox filter UI.
+   */
+  enumValues?: readonly string[];
+}
+
+// ---------------------------------------------------------------------------
+// M6: Asset detail section descriptors
+// ---------------------------------------------------------------------------
+
+/**
+ * A descriptor for a named section slot inside the asset detail panel.
+ *
+ * Asset detail sections are named slots within the asset panel (not whole
+ * replacement panels).  The host owns section placement, empty/error states,
+ * search result badges, and provenance-chain rendering.  Extensions provide
+ * section descriptors to declare what metadata they surface.
+ */
+export interface AssetDetailSectionDescriptor {
+  /** Unique section identifier within the extension. */
+  id: string;
+  /** Human-readable section title. */
+  title: string;
+  /**
+   * Placement within the asset detail panel.
+   * - `before-default` — before host-owned metadata sections
+   * - `after-default` — after host-owned metadata sections
+   */
+  placement: 'before-default' | 'after-default';
+  /**
+   * The metadata field paths this section reads.
+   * The host uses these to determine section visibility and data binding.
+   */
+  fieldPaths?: readonly string[];
+  /** Lower values sort first within their placement group. Default 0. */
+  order?: number;
+  /**
+   * Optional visibility predicate (evaluated by host).
+   * E.g. 'asset.metadata.integrity != null'.
+   */
+  when?: string;
+}
+
+// ---------------------------------------------------------------------------
+// M6: Parser runtime types
+// ---------------------------------------------------------------------------
+
+/**
+ * Input passed to a parser handler during asset ingestion.
+ *
+ * Parsers receive metadata about the ingested file but not the raw
+ * file bytes — the host validates size/type before invoking the parser
+ * and the parser receives only the fields it declares interest in.
+ */
+export interface ParserInput {
+  /** Asset key in the registry. */
+  assetKey: string;
+  /** Detected MIME type of the uploaded file. */
+  mimeType: string;
+  /** File extension (without leading dot). */
+  extension: string;
+  /** File size in bytes. */
+  byteSize: number;
+  /** Original filename from the upload. */
+  filename?: string;
+  /**
+   * Any metadata already collected for this asset before this parser runs.
+   * Parsers may read existing metadata to avoid recomputing values.
+   */
+  existingMetadata?: Readonly<AssetMetadata>;
+}
+
+/**
+ * Result returned by a parser handler.
+ *
+ * Parsers return only the metadata they wish to contribute.
+ * The host shallow-merges blessed registry fields and deep-merges
+ * metadata by namespace.  Unknown top-level fields are rejected with
+ * a diagnostic.
+ */
+export interface ParserResult {
+  /**
+   * Metadata to merge into the asset's metadata.
+   * Extension-owned fields should be placed under `extensions[extensionId]`.
+   */
+  metadata?: Partial<AssetMetadata>;
+  /** Diagnostics produced by the parser. */
+  diagnostics?: readonly ParserDiagnostic[];
+  /**
+   * Deferred enrichment records the parser wishes to enqueue.
+   * These are persisted alongside the asset and surface in the asset
+   * detail panel; execution is deferred to M10/M12.
+   */
+  enrichment?: readonly DeferredEnrichmentRecord[];
+}
+
+/**
+ * A diagnostic produced by a parser during asset ingestion.
+ *
+ * Parser diagnostics use `parser/`-prefixed codes and carry
+ * enough context to identify the asset and the parser that produced
+ * the diagnostic.
+ */
+export interface ParserDiagnostic {
+  severity: DiagnosticSeverity;
+  /** Stable diagnostic code, e.g. 'parser/unsupported-mime-type'. */
+  code: `parser/${string}`;
+  message: string;
+  /** The asset key that triggered the diagnostic. */
+  assetKey?: string;
+  /** The extension that owns the parser. */
+  extensionId?: string;
+  /** The parser contribution ID. */
+  contributionId?: string;
+  /** Structured detail (expected MIME, actual MIME, size limit, etc.). */
+  detail?: Record<string, unknown>;
+}
+
+/**
+ * A parser handler function registered by an extension.
+ *
+ * Receives a {@link ParserInput} and returns a {@link ParserResult}
+ * or a Promise of one.  Thrown errors are caught by the host and
+ * published as parser diagnostics.
+ */
+export type ParserHandler = (
+  input: ParserInput,
+) => ParserResult | Promise<ParserResult>;
+
+// ---------------------------------------------------------------------------
+// M6: Compile-only output result types
+// ---------------------------------------------------------------------------
+
+/**
+ * The result of executing a compile-only output format.
+ *
+ * Compile-only formats (requiresRender: false) produce an artifact
+ * without entering the render pipeline.  The output is a byte buffer
+ * plus metadata describing the artifact.
+ */
+export interface CompileOnlyOutputResult {
+  /** The output artifact bytes. */
+  data: Uint8Array;
+  /** MIME type of the output artifact. */
+  mimeType: string;
+  /** Suggested filename for the output artifact. */
+  filename: string;
+  /**
+   * Diagnostics produced during compilation.
+   * Non-error diagnostics do not prevent artifact production.
+   */
+  diagnostics?: readonly ParserDiagnostic[];
+  /** Whether the compilation produced blocking errors. */
+  hasBlockingErrors: boolean;
+}
+
+/**
+ * A compile-only output format handler registered by an extension.
+ *
+ * Receives read-only access to timeline and asset data and produces
+ * a deterministic artifact.  Must not mutate timeline state.
+ */
+export type OutputFormatHandler = (
+  context: OutputFormatContext,
+) => CompileOnlyOutputResult | Promise<CompileOnlyOutputResult>;
+
+/**
+ * Context passed to an output format handler.
+ *
+ * Provides read-only access to timeline snapshot and asset metadata
+ * without exposing mutation surfaces.
+ */
+export interface OutputFormatContext {
+  /** Read-only snapshot of the current timeline state. */
+  readonly timeline: TimelineSnapshot;
+  /** Read-only map of asset key to asset metadata. */
+  readonly assets: ReadonlyMap<string, Readonly<AssetMetadata>>;
+  /** The extension that registered the handler. */
+  readonly extensionId: string;
+  /** The output format contribution ID. */
+  readonly contributionId: string;
+}
+
+// ---------------------------------------------------------------------------
+// M6: Search provider runtime types
+// ---------------------------------------------------------------------------
+
+/**
+ * A single search result match from a search provider.
+ */
+export interface SearchMatch {
+  /** Asset or material reference key. */
+  ref: string;
+  /** Kind of the referenced item. */
+  kind: 'asset' | 'material';
+  /**
+   * Relevance score (0–1). Higher = more relevant.
+   * Relative ordering is provider-owned; host may normalize.
+   */
+  score: number;
+  /** Short excerpt or description for display in search results. */
+  excerpt?: string;
+  /** Opaque provider metadata (embedding distance, model version, etc.). */
+  meta?: Record<string, unknown>;
+}
+
+/**
+ * Result returned by a search provider for a host query.
+ */
+export interface SearchProviderResult {
+  /** Ordered list of matches (highest score first). */
+  matches: readonly SearchMatch[];
+  /** Total number of results available beyond the returned matches. */
+  totalCount?: number;
+  /** Whether the provider has more results available. */
+  hasMore?: boolean;
+  /** Provider-owned diagnostics (indexing errors, etc.). */
+  diagnostics?: readonly ParserDiagnostic[];
+}
+
+/**
+ * A search provider handler registered by an extension.
+ *
+ * Receives a query string and returns scored asset/material refs.
+ * Providers own indexing, model choice, and refresh; the host
+ * owns query dispatch, result merge, and source labeling.
+ */
+export type SearchProviderHandler = (
+  query: string,
+  context: SearchProviderContext,
+) => SearchProviderResult | Promise<SearchProviderResult>;
+
+/**
+ * Context passed to a search provider handler.
+ */
+export interface SearchProviderContext {
+  /** The extension that registered the handler. */
+  readonly extensionId: string;
+  /** The search provider contribution ID. */
+  readonly contributionId: string;
+  /** Maximum number of results the host will display. */
+  readonly maxResults: number;
+  /** Optional filter scoping the search to asset/material kind. */
+  readonly resultKind?: 'asset' | 'material';
+}
+
+// ---------------------------------------------------------------------------
+// M6: Asset read surface
+// ---------------------------------------------------------------------------
+
+/**
+ * Read-only asset metadata surface exposed to extension code.
+ *
+ * Extensions can query asset metadata by key and list all asset keys
+ * known to the registry.  This is a read-only projection — no mutation
+ * or persistence surface is exposed.
+ */
+export interface AssetReadSurface {
+  /**
+   * Get metadata for a single asset by its registry key.
+   * Returns undefined if the asset is not found.
+   */
+  get(assetKey: string): Readonly<AssetMetadata> | undefined;
+
+  /**
+   * List all asset keys known to the registry.
+   */
+  keys(): readonly string[];
+
+  /**
+   * Check whether an asset key exists in the registry.
+   */
+  has(assetKey: string): boolean;
+
+  /**
+   * Search assets by a metadata field path and value.
+   * Returns matching asset keys.  Bounded to exact field matches
+   * on host-owned metadata fields; extension-owned fields may be
+   * searched only when a search provider is active.
+   */
+  search(fieldPath: string, value: string): readonly string[];
+}
+
+/**
+ * Read-only material metadata surface exposed to extension code.
+ *
+ * Materials reference assets with additional media-specific metadata
+ * (resolution, frame rate, codec, etc.).  This is a read-only projection.
+ */
+export interface MaterialReadSurface {
+  /**
+   * Get material metadata by its registry key.
+   * Returns undefined if the material is not found.
+   */
+  get(materialKey: string): Readonly<Record<string, unknown>> | undefined;
+
+  /**
+   * List all material keys known to the registry.
+   */
+  keys(): readonly string[];
+
+  /**
+   * Check whether a material key exists in the registry.
+   */
+  has(materialKey: string): boolean;
+}
+
+// ---------------------------------------------------------------------------
+// Updated CreativeContext with M6 types
+// ---------------------------------------------------------------------------
+
+// NOTE: CreativeContext is declared above (line ~590).
+// The `assets`, `materials`, and `export` members are typed here
+// but the runtime stubs still throw ExtensionNotImplementedError
+// until the host provider wires live implementations.
+
+// ---------------------------------------------------------------------------
+// M6: Export service
+// ---------------------------------------------------------------------------
+
+/**
+ * Export service available to extensions for registering output format
+ * handlers imperatively during activate().
+ *
+ * Output formats must have a matching `OutputFormatContribution` in the
+ * extension manifest.  Handlers are registered via `registerOutputFormat()`
+ * and the returned DisposeHandle unregisters them on dispose.
+ */
+export interface ExportService {
+  /**
+   * Register a compile-only output format handler.
+   *
+   * The `formatId` must match the `id` of an `OutputFormatContribution`
+   * declared by this extension in its manifest with `requiresRender: false`.
+   *
+   * Returns a DisposeHandle that unregisters the handler when dispose()
+   * is called (safe to call multiple times; idempotent).
+   */
+  registerOutputFormat(
+    formatId: string,
+    handler: OutputFormatHandler,
+    options?: OutputFormatRegistrationOptions,
+  ): DisposeHandle;
+}
+
+/** Options for imperative output format registration. */
+export interface OutputFormatRegistrationOptions {
+  /** Override label for the export UI. */
+  label?: string;
+  /** Override description for the export UI. */
+  description?: string;
+}

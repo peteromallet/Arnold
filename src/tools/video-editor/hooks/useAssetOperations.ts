@@ -7,6 +7,8 @@ import {
   type AssetResolver,
 } from '@/tools/video-editor/data/AssetResolver.ts';
 import type { AssetRegistryEntry } from '@/tools/video-editor/types/index.ts';
+import type { RegisteredParser } from '../lib/assetParserRuntime';
+import { enrichRegistryEntryWithParsers } from '../lib/mediaMetadata';
 
 export function useAssetOperations(
   provider: AssetResolver,
@@ -14,6 +16,7 @@ export function useAssetOperations(
   userId: string | null,
   queryClient: QueryClient,
   pendingOpsRef: MutableRefObject<number>,
+  registeredParsers?: readonly RegisteredParser[],
 ) {
   const uploadAsset = useCallback(async (file: File) => {
     pendingOpsRef.current += 1;
@@ -24,14 +27,32 @@ export function useAssetOperations(
         userId: userId!,
         intent: 'asset-upload',
       });
-      return await uploadAssetWithResolver(provider, {
+
+      const result = await uploadAssetWithResolver(provider, {
         file: preparedFile,
         options: { timelineId, userId: userId! },
       });
+
+      // If parsers are registered, enrich the entry after upload
+      if (registeredParsers && registeredParsers.length > 0) {
+        const enriched = await enrichRegistryEntryWithParsers(
+          preparedFile,
+          result.entry,
+          result.assetId,
+          registeredParsers,
+        );
+        // Update the provider-registered entry with parser-enriched metadata
+        if (provider.registerAsset) {
+          await provider.registerAsset(timelineId, result.assetId, enriched.entry);
+        }
+        return { assetId: result.assetId, entry: enriched.entry };
+      }
+
+      return result;
     } finally {
       pendingOpsRef.current -= 1;
     }
-  }, [pendingOpsRef, provider, timelineId, userId]);
+    }, [pendingOpsRef, provider, timelineId, userId, registeredParsers]);
 
   const registerAsset = useCallback(async (assetId: string, entry: AssetRegistryEntry) => {
     if (!provider.registerAsset) {

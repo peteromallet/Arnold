@@ -114,6 +114,22 @@ vi.mock('@/tools/video-editor/lib/perf-diagnostics.ts', () => ({
   MemoryPressureDetector: { start: vi.fn(), stop: vi.fn() },
 }));
 
+let __exportExtensions: any = { slots: {}, dialogHost: { dialogs: [] }, registry: { panels: [], inspectorSections: [] }, outputFormats: [] };
+
+function __setExportExtensions(extensions: any) {
+  __exportExtensions = {
+    slots: {},
+    dialogHost: { dialogs: [] },
+    registry: { panels: [], inspectorSections: [] },
+    outputFormats: [],
+    ...extensions,
+  };
+}
+
+function __clearExportExtensions() {
+  __exportExtensions = { slots: {}, dialogHost: { dialogs: [] }, registry: { panels: [], inspectorSections: [] }, outputFormats: [] };
+}
+
 vi.mock('@/tools/video-editor/runtime/useVideoEditorRenderContext.ts', () => ({
   useVideoEditorSlotRenderers: () => __slotRenderers,
   useVideoEditorRenderContext: () => ({
@@ -121,7 +137,7 @@ vi.mock('@/tools/video-editor/runtime/useVideoEditorRenderContext.ts', () => ({
     timelineId: 'test-timeline',
     timelineName: 'Test Timeline',
     userId: 'user-1',
-    extensions: { slots: {}, dialogHost: { dialogs: [] }, registry: { panels: [], inspectorSections: [] } },
+    extensions: __exportExtensions,
     data: {} as any,
     ops: {} as any,
     chrome: {} as any,
@@ -440,4 +456,199 @@ describe('TimelineEditorShellCore with registered slot renderers', () => {
     expect(style).toContain('minmax(0,1fr)');
     expect(style).toContain('360px');
   });
+
+
+// ---------------------------------------------------------------------------
+// M6: Export dropdown UI — compile-only formats enabled, render-dependent
+// formats disabled with diagnostics, Render button behavior unchanged
+// ---------------------------------------------------------------------------
+
+describe('TimelineEditorShellCore — M6 export dropdown', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    __clearSlotRenderers();
+    __clearExportExtensions();
+  });
+
+  // ---- Export dropdown visibility -----------------------------------------
+
+  it('renders Export dropdown when compile-only output formats are registered', () => {
+    __setExportExtensions({
+      outputFormats: [
+        { id: 'fmt-json', extensionId: 'ext-a', label: 'Metadata JSON', requiresRender: false, outputExtension: 'json', disabled: false },
+      ],
+    });
+
+    render(<TimelineEditorShellCore timelineId="test-timeline" />);
+
+    expect(screen.getByText('Export')).toBeTruthy();
+  });
+
+  it('renders Export dropdown when render-dependent formats are registered', () => {
+    __setExportExtensions({
+      outputFormats: [
+        { id: 'fmt-mp4', extensionId: 'ext-b', label: 'MP4 Video', requiresRender: true, outputExtension: 'mp4', disabled: false },
+      ],
+    });
+
+    render(<TimelineEditorShellCore timelineId="test-timeline" />);
+
+    expect(screen.getByText('Export')).toBeTruthy();
+  });
+
+  it('does not render Export dropdown when no output formats are registered', () => {
+    __setExportExtensions({ outputFormats: [] });
+
+    render(<TimelineEditorShellCore timelineId="test-timeline" />);
+
+    expect(screen.queryByText('Export')).toBeNull();
+  });
+
+  it('does not render Export dropdown when extensions context has no outputFormats property', () => {
+    // Default mock has no outputFormats property
+    render(<TimelineEditorShellCore timelineId="test-timeline" />);
+
+    expect(screen.queryByText('Export')).toBeNull();
+  });
+
+  // ---- Compile-only format items are clickable and enabled ----------------
+
+  it('shows compile-only format as an enabled, clickable menu item with green FileOutput icon and output extension', () => {
+    __setExportExtensions({
+      outputFormats: [
+        { id: 'fmt-json', extensionId: 'ext-a', label: 'Metadata JSON', requiresRender: false, outputExtension: 'json', disabled: false },
+      ],
+    });
+
+    render(<TimelineEditorShellCore timelineId="test-timeline" />);
+
+    // Click Export to open the dropdown
+    fireEvent.click(screen.getByText('Export'));
+
+    // The compile-only format should be visible as a menu item
+    const formatItem = screen.getByText('Metadata JSON');
+    expect(formatItem).toBeTruthy();
+    // The extension badge should be visible
+    expect(screen.getByText('.json')).toBeTruthy();
+    // The item should NOT be disabled (it's a button or menuitem role)
+    const menuItem = formatItem.closest('[role="menuitem"]');
+    expect(menuItem).toBeTruthy();
+    expect(menuItem).not.toHaveAttribute('aria-disabled', 'true');
+  });
+
+  it('shows multiple compile-only formats as distinct enabled menu items', () => {
+    __setExportExtensions({
+      outputFormats: [
+        { id: 'fmt-json', extensionId: 'ext-a', label: 'Metadata JSON', requiresRender: false, outputExtension: 'json', disabled: false },
+        { id: 'fmt-csv', extensionId: 'ext-a', label: 'CSV Export', requiresRender: false, outputExtension: 'csv', disabled: false },
+      ],
+    });
+
+    render(<TimelineEditorShellCore timelineId="test-timeline" />);
+
+    fireEvent.click(screen.getByText('Export'));
+
+    expect(screen.getByText('Metadata JSON')).toBeTruthy();
+    expect(screen.getByText('CSV Export')).toBeTruthy();
+    expect(screen.getByText('.json')).toBeTruthy();
+    expect(screen.getByText('.csv')).toBeTruthy();
+  });
+
+  // ---- Render-dependent format items are disabled with diagnostics ----------
+
+  it('shows render-dependent format as a disabled menu item with diagnostic tooltip', () => {
+    __setExportExtensions({
+      outputFormats: [
+        { id: 'fmt-mp4', extensionId: 'ext-b', label: 'MP4 Video', requiresRender: true, outputExtension: 'mp4', disabled: false },
+      ],
+    });
+
+    render(<TimelineEditorShellCore timelineId="test-timeline" />);
+
+    fireEvent.click(screen.getByText('Export'));
+
+    // Check the "Reserved — Requires Render" label
+    expect(screen.getByText('Reserved — Requires Render')).toBeTruthy();
+    // The render-dependent format item should be present but disabled
+    const formatItem = screen.getByText('MP4 Video');
+    expect(formatItem).toBeTruthy();
+    const menuItem = formatItem.closest('[role="menuitem"]');
+    expect(menuItem).toBeTruthy();
+    expect(menuItem).toHaveAttribute('aria-disabled', 'true');
+    // Should have a title tooltip with diagnostics
+    expect(menuItem).toHaveAttribute('title');
+    expect(menuItem!.getAttribute('title')).toContain('requires render pipeline execution');
+  });
+
+  it('shows disabledReason in tooltip for disabled render-dependent formats', () => {
+    __setExportExtensions({
+      outputFormats: [
+        { id: 'fmt-future', extensionId: 'ext-b', label: 'Future Format', requiresRender: true, outputExtension: 'fut', disabled: true, disabledReason: 'Needs encoder v2' },
+      ],
+    });
+
+    render(<TimelineEditorShellCore timelineId="test-timeline" />);
+
+    fireEvent.click(screen.getByText('Export'));
+
+    const formatItem = screen.getByText('Future Format');
+    const menuItem = formatItem.closest('[role="menuitem"]');
+    expect(menuItem).toHaveAttribute('aria-disabled', 'true');
+    expect(menuItem!.getAttribute('title')).toContain('Needs encoder v2');
+  });
+
+  it('shows both compile-only and render-dependent sections when mixed formats are present', () => {
+    __setExportExtensions({
+      outputFormats: [
+        { id: 'fmt-json', extensionId: 'ext-a', label: 'Metadata JSON', requiresRender: false, outputExtension: 'json', disabled: false },
+        { id: 'fmt-mp4', extensionId: 'ext-b', label: 'MP4 Video', requiresRender: true, outputExtension: 'mp4', disabled: false },
+      ],
+    });
+
+    render(<TimelineEditorShellCore timelineId="test-timeline" />);
+
+    fireEvent.click(screen.getByText('Export'));
+
+    // Both sections visible
+    expect(screen.getByText('Metadata JSON')).toBeTruthy();
+    expect(screen.getByText('MP4 Video')).toBeTruthy();
+    expect(screen.getByText('Reserved — Requires Render')).toBeTruthy();
+    // Compile-only enabled
+    const compileMenuItem = screen.getByText('Metadata JSON').closest('[role="menuitem"]');
+    expect(compileMenuItem).not.toHaveAttribute('aria-disabled', 'true');
+    // Render-dependent disabled
+    const renderMenuItem = screen.getByText('MP4 Video').closest('[role="menuitem"]');
+    expect(renderMenuItem).toHaveAttribute('aria-disabled', 'true');
+  });
+
+  // ---- Render button behavior is unchanged -------------------------------
+
+  it('renders the Render button even when export formats are registered', () => {
+    __setExportExtensions({
+      outputFormats: [
+        { id: 'fmt-json', extensionId: 'ext-a', label: 'Metadata JSON', requiresRender: false, outputExtension: 'json', disabled: false },
+      ],
+    });
+
+    render(<TimelineEditorShellCore timelineId="test-timeline" />);
+
+    expect(screen.getByText('Render')).toBeTruthy();
+  });
+
+  it('Render button is unchanged and still clickable when export formats are present', () => {
+    __setExportExtensions({
+      outputFormats: [
+        { id: 'fmt-json', extensionId: 'ext-a', label: 'JSON', requiresRender: false, outputExtension: 'json', disabled: false },
+        { id: 'fmt-mp4', extensionId: 'ext-b', label: 'MP4', requiresRender: true, outputExtension: 'mp4', disabled: false },
+      ],
+    });
+
+    render(<TimelineEditorShellCore timelineId="test-timeline" />);
+
+    const renderButton = screen.getByText('Render');
+    expect(renderButton).toBeTruthy();
+    // Should not be disabled (idle state)
+    expect(renderButton.closest('button')).not.toBeDisabled();
+  });
+});
 });

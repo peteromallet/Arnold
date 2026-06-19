@@ -240,6 +240,67 @@ export type TimelineConfig = {
   app?: Record<string, unknown>;
 };
 
+// ---------------------------------------------------------------------------
+// Asset metadata — host-owned shapes + extension namespace
+// ---------------------------------------------------------------------------
+
+export type AssetMetadataIntegrity = {
+  sha256?: string;
+  md5?: string;
+  crc32?: string;
+};
+
+export type AssetMetadataGPS = {
+  latitude?: number;
+  longitude?: number;
+  altitude?: number;
+  horizontalAccuracy?: number;
+  timestamp?: string;
+};
+
+export type AssetMetadataConsent = {
+  modelRelease?: boolean;
+  propertyRelease?: boolean;
+  rightsHolder?: string;
+  license?: string;
+  usageTerms?: string;
+};
+
+export type AssetMetadataProvenance = {
+  importTimestamp?: string;
+  sourceUrl?: string;
+  sourceProvider?: string;
+  importedBy?: string;
+  originalFilename?: string;
+};
+
+export type AssetMetadataEnrichmentClaim = {
+  claimId: string;
+  parserId: string;
+  timestamp: string;
+  field?: string;
+  summary?: string;
+};
+
+export type AssetMetadataEnrichment = {
+  pending?: number;
+  failed?: number;
+  claims?: AssetMetadataEnrichmentClaim[];
+};
+
+export type AssetMetadata = {
+  integrity?: AssetMetadataIntegrity;
+  gps?: AssetMetadataGPS;
+  consent?: AssetMetadataConsent;
+  provenance?: AssetMetadataProvenance;
+  enrichment?: AssetMetadataEnrichment;
+  extensions?: Record<string, unknown>;
+};
+
+// ---------------------------------------------------------------------------
+// Registry entries
+// ---------------------------------------------------------------------------
+
 export type AssetRegistryEntry = {
   file: string;
   url?: string;
@@ -259,6 +320,7 @@ export type AssetRegistryEntry = {
   generationId?: string;
   variantId?: string;
   thumbnailUrl?: string;
+  metadata?: AssetMetadata;
 };
 
 export type AssetRegistry = {
