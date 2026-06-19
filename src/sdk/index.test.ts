@@ -9,6 +9,8 @@ import {
   createCreativeContextStubs,
   ExtensionNotImplementedError,
   CREATIVE_MEMBER_MILESTONE,
+  setEditorShellRoot,
+  getEditorShellRoot,
 } from '@/sdk/index';
 import type {
   ReighExtension,
@@ -311,6 +313,8 @@ describe('createExtensionContext', () => {
     expect(typeof ctx.chrome.toast).toBe('function');
     expect(typeof ctx.chrome.progress).toBe('function');
     expect(typeof ctx.chrome.subscribe).toBe('function');
+    expect(typeof ctx.chrome.focus).toBe('function');
+    expect(typeof ctx.chrome.announce).toBe('function');
   });
 
   it('exposes services.settings', () => {
@@ -577,6 +581,172 @@ describe('createExtensionContext', () => {
     expect(received[0].percent).toBe(75);
     expect(received[0].label).toBe('Exporting...');
     handle.dispose();
+  });
+
+  // ---- chrome.focus -------------------------------------------------------
+
+  describe('chrome.focus', () => {
+    let shellRoot: HTMLElement;
+
+    beforeEach(() => {
+      // Create a fresh shell root for each test
+      shellRoot = document.createElement('div');
+      shellRoot.setAttribute('data-test-shell', 'true');
+      document.body.appendChild(shellRoot);
+      setEditorShellRoot(shellRoot);
+    });
+
+    afterEach(() => {
+      setEditorShellRoot(null);
+      if (shellRoot.parentNode) {
+        shellRoot.parentNode.removeChild(shellRoot);
+      }
+    });
+
+    it('focuses an element inside the shell root', () => {
+      const btn = document.createElement('button');
+      btn.id = 'inside-btn';
+      shellRoot.appendChild(btn);
+
+      ctx.chrome.focus('#inside-btn');
+      expect(document.activeElement).toBe(btn);
+    });
+
+    it('diagnoses a selector not found anywhere', () => {
+      ctx.chrome.focus('#nonexistent');
+      const diags = ctx.services.diagnostics.diagnostics;
+      const focusDiags = diags.filter((d) => d.code === 'chrome/focus-missing-selector');
+      expect(focusDiags).toHaveLength(1);
+      expect(focusDiags[0].severity).toBe('warning');
+      expect(focusDiags[0].message).toContain('#nonexistent');
+    });
+
+    it('diagnoses an out-of-shell (portal) target', () => {
+      // Create element outside shell root but inside document
+      const portalBtn = document.createElement('button');
+      portalBtn.id = 'portal-btn';
+      document.body.appendChild(portalBtn);
+
+      ctx.chrome.focus('#portal-btn');
+      const diags = ctx.services.diagnostics.diagnostics;
+      const focusDiags = diags.filter((d) => d.code === 'chrome/focus-out-of-shell');
+      expect(focusDiags).toHaveLength(1);
+      expect(focusDiags[0].severity).toBe('warning');
+      expect(focusDiags[0].message).toContain('portal');
+
+      // Cleanup
+      document.body.removeChild(portalBtn);
+    });
+
+    it('diagnoses when no shell root is mounted', () => {
+      setEditorShellRoot(null);
+
+      ctx.chrome.focus('.any-selector');
+      const diags = ctx.services.diagnostics.diagnostics;
+      const focusDiags = diags.filter((d) => d.code === 'chrome/focus-no-shell');
+      expect(focusDiags).toHaveLength(1);
+      expect(focusDiags[0].severity).toBe('warning');
+      expect(focusDiags[0].message).toContain('no editor shell root');
+    });
+
+    it('does not focus elements outside the shell root', () => {
+      const outsideBtn = document.createElement('button');
+      outsideBtn.id = 'outside-btn';
+      document.body.appendChild(outsideBtn);
+
+      const prevActive = document.activeElement;
+      ctx.chrome.focus('#outside-btn');
+      // Should NOT have focused the outside element
+      expect(document.activeElement).not.toBe(outsideBtn);
+      // Should have emitted a diagnostic
+      const diags = ctx.services.diagnostics.diagnostics;
+      const focusDiags = diags.filter((d) => d.code === 'chrome/focus-out-of-shell');
+      expect(focusDiags).toHaveLength(1);
+
+      document.body.removeChild(outsideBtn);
+    });
+  });
+
+  // ---- chrome.announce ----------------------------------------------------
+
+  describe('chrome.announce', () => {
+    let shellRoot: HTMLElement;
+
+    beforeEach(() => {
+      shellRoot = document.createElement('div');
+      document.body.appendChild(shellRoot);
+      setEditorShellRoot(shellRoot);
+    });
+
+    afterEach(() => {
+      setEditorShellRoot(null);
+      if (shellRoot.parentNode) {
+        shellRoot.parentNode.removeChild(shellRoot);
+      }
+    });
+
+    it('creates an aria-live host node on first call', () => {
+      ctx.chrome.announce('Hello, world!');
+
+      const liveRegion = shellRoot.querySelector('[data-video-editor-aria-live]');
+      expect(liveRegion).not.toBeNull();
+      expect(liveRegion!.getAttribute('aria-live')).toBe('polite');
+      expect(liveRegion!.getAttribute('aria-atomic')).toBe('true');
+    });
+
+    it('sets the announced text (after rAF)', async () => {
+      ctx.chrome.announce('Test announcement');
+
+      // Wait for requestAnimationFrame
+      await new Promise((resolve) => requestAnimationFrame(resolve));
+
+      const liveRegion = shellRoot.querySelector('[data-video-editor-aria-live]');
+      expect(liveRegion).not.toBeNull();
+      expect(liveRegion!.textContent).toBe('Test announcement');
+    });
+
+    it('respects assertive politeness', () => {
+      ctx.chrome.announce('Important!', 'assertive');
+
+      const liveRegion = shellRoot.querySelector('[data-video-editor-aria-live]');
+      expect(liveRegion).not.toBeNull();
+      expect(liveRegion!.getAttribute('aria-live')).toBe('assertive');
+    });
+
+    it('reuses the same aria-live host for subsequent calls', () => {
+      ctx.chrome.announce('First');
+      ctx.chrome.announce('Second', 'assertive');
+
+      const regions = shellRoot.querySelectorAll('[data-video-editor-aria-live]');
+      expect(regions).toHaveLength(1);
+      expect(regions[0].getAttribute('aria-live')).toBe('assertive');
+    });
+
+    it('does not throw when no shell root is mounted', () => {
+      setEditorShellRoot(null);
+
+      expect(() => ctx.chrome.announce('No shell')).not.toThrow();
+    });
+
+    it('clears text before setting new text for re-announcement', async () => {
+      ctx.chrome.announce('First message');
+
+      // Wait for rAF
+      await new Promise((resolve) => requestAnimationFrame(resolve));
+
+      const liveRegion = shellRoot.querySelector('[data-video-editor-aria-live]');
+      expect(liveRegion!.textContent).toBe('First message');
+
+      // The clear happens synchronously, then rAF sets new text
+      // So after the announce call but before rAF, textContent should be ''
+      ctx.chrome.announce('Second message');
+      // Synchronously cleared
+      expect(liveRegion!.textContent).toBe('');
+
+      // After rAF, new text is set
+      await new Promise((resolve) => requestAnimationFrame(resolve));
+      expect(liveRegion!.textContent).toBe('Second message');
+    });
   });
 
   // ---- no internal mutation escape hatch ----------------------------------

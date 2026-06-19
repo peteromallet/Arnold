@@ -251,6 +251,8 @@ describe('@reigh/editor-sdk sufficiency', () => {
     expect(typeof chrome.toast).toBe('function');
     expect(typeof chrome.progress).toBe('function');
     expect(typeof chrome.subscribe).toBe('function');
+    expect(typeof chrome.focus).toBe('function');
+    expect(typeof chrome.announce).toBe('function');
   });
 
   it('exports creative stubs that throw typed errors', () => {
@@ -403,9 +405,9 @@ describe('ExtensionContext — no internal members exposed', () => {
 
   // ---- chrome has only the approved API ------------------------------------
 
-  it('chrome has exactly 3 methods (toast, progress, subscribe)', () => {
+  it('chrome has exactly 5 methods (toast, progress, subscribe, focus, announce)', () => {
     const chromeKeys = Object.keys(ctx.chrome).sort();
-    expect(chromeKeys).toEqual(['progress', 'subscribe', 'toast']);
+    expect(chromeKeys).toEqual(['announce', 'focus', 'progress', 'subscribe', 'toast']);
   });
 
   // ---- creative stubs are present but no real internals --------------------

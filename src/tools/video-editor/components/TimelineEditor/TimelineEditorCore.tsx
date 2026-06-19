@@ -1,4 +1,4 @@
-import { memo, useCallback, useLayoutEffect, useMemo, useState } from 'react';
+import { memo, useCallback, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { shallow } from 'zustand/shallow';
 import {
   KeyboardSensor,
@@ -21,6 +21,7 @@ import {
   useTimelineChromeSelector,
   useTimelineDataSelector,
   useTimelineOpsSelector,
+  useTimelinePlaybackSelector,
 } from '@/tools/video-editor/hooks/timelineStore.ts';
 import { useClipDrag } from '@/tools/video-editor/hooks/useClipDrag.ts';
 import { useActiveTaskClips } from '@/tools/video-editor/hooks/useActiveTaskClips.ts';
@@ -37,6 +38,10 @@ import {
 import type { TimelineActionResizeStart, TimelineClipEdgeResizeEnd } from '@/tools/video-editor/hooks/useTimelineState.types.ts';
 import type { ResolvedTimelineClip, TrackDefinition } from '@/tools/video-editor/types/index.ts';
 import type { TimelineAction, TimelineRow } from '@/tools/video-editor/types/timeline-canvas.ts';
+import type {
+  TimelineOverlayContribution,
+  TimelineOverlayRenderProps,
+} from '@/tools/video-editor/runtime/extensionSurface';
 
 const EMPTY_ASSET_GENERATION_MAP: Record<string, string> = {};
 const EMPTY_CLIP_IDS = new Set<string>();
@@ -436,11 +441,96 @@ function TimelineEditorCoreComponent({
     setSelectedTrackId(trackId);
   }, [setSelectedTrackId]);
 
-  const { pixelToTime } = useTimelineScale({
+  const { pixelToTime, pixelsPerSecond } = useTimelineScale({
     scale,
     scaleWidth,
     startLeft: TIMELINE_START_LEFT,
   });
+
+  // ---- Timeline overlay host state -------------------------------------------
+  const [overlayScrollLeft, setOverlayScrollLeft] = useState(0);
+  const [overlayScrollTop, setOverlayScrollTop] = useState(0);
+  const [claimedOverlayId, setClaimedOverlayId] = useState<string | null>(null);
+  const overlayViewportRef = useRef<{ width: number; height: number }>({ width: 0, height: 0 });
+  const currentTime = useTimelinePlaybackSelector((pb) => pb.currentTime);
+  const selectedClipIdsSet = useMemo(
+    () => new Set(selectedClipIds),
+    [selectedClipIds],
+  );
+
+  const handleOverlayScroll = useCallback(
+    (metrics: { scrollLeft: number; scrollTop: number }) => {
+      setOverlayScrollLeft(metrics.scrollLeft);
+      setOverlayScrollTop(metrics.scrollTop);
+    },
+    [],
+  );
+
+  const handleClaimPointer = useCallback((overlayId: string) => {
+    setClaimedOverlayId(overlayId);
+  }, []);
+
+  const handleReleasePointer = useCallback((overlayId: string) => {
+    setClaimedOverlayId((current) => (current === overlayId ? null : current));
+  }, []);
+
+  // Resolve overlay viewport dimensions from the timeline wrapper
+  useLayoutEffect(() => {
+    const wrapper = timelineWrapperRef.current;
+    if (!wrapper) return;
+    const editArea = wrapper.querySelector<HTMLElement>('.timeline-canvas-edit-area');
+    if (editArea) {
+      overlayViewportRef.current = {
+        width: editArea.clientWidth,
+        height: editArea.clientHeight,
+      };
+    }
+  });
+
+  // Compute overlay render props (memoised to keep contributions stable)
+  const overlayRenderProps = useMemo<Omit<TimelineOverlayRenderProps, 'pointerClaimed' | 'claimPointer' | 'releasePointer'>>(() => {
+    // Compute total dimensions
+    let maxEnd = 0;
+    if (data) {
+      for (const row of data.rows) {
+        for (const action of row.actions) {
+          maxEnd = Math.max(maxEnd, action.end);
+        }
+      }
+    }
+    const totalWidth = TIMELINE_START_LEFT + (Math.ceil((maxEnd + 20) / scale) + 1) * scaleWidth;
+    const totalHeight = ((data?.rows.length ?? 0) + 1) * ROW_HEIGHT;
+
+    return {
+      scrollLeft: overlayScrollLeft,
+      scrollTop: overlayScrollTop,
+      viewportWidth: overlayViewportRef.current.width,
+      viewportHeight: overlayViewportRef.current.height,
+      totalWidth,
+      totalHeight,
+      pixelsPerSecond,
+      startLeft: TIMELINE_START_LEFT,
+      playheadTime: currentTime,
+      isPlaying: false,
+      selectedClipIds: selectedClipIdsSet,
+      selectedTrackId,
+      gestureOwner,
+      setGestureOwner,
+    };
+  }, [
+    overlayScrollLeft,
+    overlayScrollTop,
+    currentTime,
+    selectedClipIdsSet,
+    selectedTrackId,
+    gestureOwner,
+    setGestureOwner,
+    data,
+    scale,
+    scaleWidth,
+    pixelsPerSecond,
+  ]);
+
   const assetGenerationMap = useMemo<Record<string, string>>(() => {
     const assets = data?.registry?.assets;
     if (!assets) {
@@ -822,7 +912,28 @@ function TimelineEditorCoreComponent({
           unusedTrackCount={unusedTrackCount}
           onClearUnusedTracks={handleClearUnusedTracks}
           newTrackDropLabel={newTrackDropLabel}
+          onScroll={handleOverlayScroll}
         />
+        {/* Timeline overlay host — renders extension overlays above the edit area.
+            Defaults to pointer-events-none so overlays don't steal gestures unless
+            they explicitly claim pointer via claimPointer(). */}
+        <div
+          className="pointer-events-none absolute inset-0 z-20"
+          style={{ pointerEvents: claimedOverlayId ? 'auto' : 'none' }}
+          data-testid="timeline-overlay-host"
+        >
+          {claimedOverlayId && (
+            <div
+              data-testid="timeline-overlay-claimed-indicator"
+              data-claimed-overlay-id={claimedOverlayId}
+              className="sr-only"
+              role="status"
+              aria-live="polite"
+            >
+              Overlay {claimedOverlayId} has claimed pointer
+            </div>
+          )}
+        </div>
         <DropIndicator ref={indicatorRef} editAreaRef={editAreaRef} onNewTrackLabel={setNewTrackDropLabel} />
       </div>
     </div>

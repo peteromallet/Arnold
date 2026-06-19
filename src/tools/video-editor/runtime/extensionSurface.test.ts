@@ -2,10 +2,12 @@ import { describe, expect, it } from 'vitest';
 import {
   normalizeExtensionRuntime,
   DEFAULT_VIDEO_EDITOR_EXTENSION_RUNTIME,
+  getTimelineOverlayContributions,
 } from '@/tools/video-editor/runtime/extensionSurface.ts';
 import type {
   ExtensionRuntime,
   InactiveReservedContribution,
+  TimelineOverlayRenderProps,
 } from '@/tools/video-editor/runtime/extensionSurface.ts';
 import { defineExtension } from '@reigh/editor-sdk';
 import type { ReighExtension, ExtensionDiagnostic } from '@reigh/editor-sdk';
@@ -544,5 +546,100 @@ describe('normalizeExtensionRuntime — multiple extensions', () => {
       'com.example.first',
       'com.example.second',
     ]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// timelineOverlay contributions
+// ---------------------------------------------------------------------------
+
+describe('normalizeExtensionRuntime — timelineOverlay', () => {
+  it('bridges timelineOverlay contributions into config.overlays', () => {
+    const overlayExt = ext('com.example.overlay', {
+      manifest: {
+        contributions: [
+          { id: 'my-overlay' as any, kind: 'timelineOverlay', order: 5 },
+        ],
+      },
+    });
+    const rt = normalizeExtensionRuntime([overlayExt]);
+    expect(rt.config.overlays).toHaveLength(1);
+    expect(rt.config.overlays[0].id).toBe('my-overlay');
+    expect(rt.config.overlays[0].order).toBe(5);
+  });
+
+  it('orders multiple timelineOverlay contributions deterministically', () => {
+    const extA = ext('com.example.a', {
+      manifest: {
+        contributions: [
+          { id: 'zzz-overlay' as any, kind: 'timelineOverlay', order: 10 },
+          { id: 'aaa-overlay' as any, kind: 'timelineOverlay', order: 10 },
+        ],
+      },
+    });
+    const rt = normalizeExtensionRuntime([extA]);
+    expect(rt.config.overlays).toHaveLength(2);
+    // Same order → alphabetical by ID
+    expect(rt.config.overlays[0].id).toBe('aaa-overlay');
+    expect(rt.config.overlays[1].id).toBe('zzz-overlay');
+  });
+
+  it('does NOT mark timelineOverlay as inactive reserved', () => {
+    const overlayExt = ext('com.example.overlay', {
+      manifest: {
+        contributions: [
+          { id: 'my-overlay' as any, kind: 'timelineOverlay' },
+        ],
+      },
+    });
+    const rt = normalizeExtensionRuntime([overlayExt]);
+    const reserved = rt.inactiveReserved.filter(
+      (r: InactiveReservedContribution) => r.kind === 'timelineOverlay',
+    );
+    expect(reserved).toEqual([]);
+  });
+
+  it('preserves empty overlays identity when no timelineOverlay contributions exist', () => {
+    const extA = ext('com.example.slot-only', {
+      manifest: {
+        contributions: [
+          { id: 'btn' as any, kind: 'slot', slot: 'toolbar' },
+        ],
+      },
+    });
+    const rt = normalizeExtensionRuntime([extA]);
+    expect(rt.config.overlays).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// getTimelineOverlayContributions
+// ---------------------------------------------------------------------------
+
+describe('getTimelineOverlayContributions', () => {
+  const baseRenderProps: Omit<TimelineOverlayRenderProps, 'pointerClaimed' | 'claimPointer' | 'releasePointer'> = {
+    scrollLeft: 0,
+    scrollTop: 0,
+    viewportWidth: 800,
+    viewportHeight: 600,
+    totalWidth: 2000,
+    totalHeight: 400,
+    pixelsPerSecond: 30,
+    startLeft: 160,
+    playheadTime: 5,
+    isPlaying: false,
+    selectedClipIds: new Set<string>(),
+    selectedTrackId: null,
+    gestureOwner: 'none',
+    setGestureOwner: () => {},
+  };
+
+  it('returns an empty frozen array when overlays list is empty', () => {
+    const result = getTimelineOverlayContributions(
+      [],
+      { ...baseRenderProps, claimPointer: () => {}, releasePointer: () => {} },
+      null,
+    );
+    expect(result).toEqual([]);
   });
 });

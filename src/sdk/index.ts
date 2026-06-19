@@ -107,6 +107,7 @@ export type ContributionKind =
   | 'dialog'
   | 'panel'
   | 'inspectorSection'
+  | 'timelineOverlay'
   // Reserved — not yet bridged in M1
   | 'effect'
   | 'transition'
@@ -121,6 +122,9 @@ export type VideoEditorSlotName =
   | 'toolbar'
   | 'leftPanel'
   | 'rightPanel'
+  | 'codePanel'
+  | 'writingPanel'
+  | 'stagePanel'
   | 'timelineFooter'
   | 'statusBar'
   | 'dialogs'
@@ -260,6 +264,32 @@ export interface ExtensionChromeService {
     event: E,
     handler: (payload: ChromeEventPayload<E>) => void,
   ): DisposeHandle;
+  /**
+   * Focus an element matching the CSS selector within the editor shell root.
+   *
+   * Scoped to the editor shell root: only descendants of the shell root are
+   * considered valid targets.  Emits diagnostics when:
+   * - No shell root is mounted (`chrome/focus-no-shell`)
+   * - The selector matches an element outside the shell root, e.g. a portal
+   *   target (`chrome/focus-out-of-shell`)
+   * - The selector does not match any element (`chrome/focus-missing-selector`)
+   *
+   * Safe to call from extension code at any time.
+   */
+  focus(selector: string): void;
+  /**
+   * Announce a message to assistive technology via an aria-live region
+   * within the editor shell root.
+   *
+   * Creates a `.sr-only` container with `aria-live` and `aria-atomic`
+   * inside the shell root on first call.  Subsequent calls update the
+   * text content so screen readers re-announce.  If no shell root is
+   * mounted the message is logged to the console as a fallback.
+   *
+   * @param message     The text to announce.
+   * @param politeness  `'polite'` (default) or `'assertive'`.
+   */
+  announce(message: string, politeness?: 'polite' | 'assertive'): void;
 }
 
 // ---------------------------------------------------------------------------
@@ -395,6 +425,37 @@ export interface ExtensionContext {
 }
 
 // ---------------------------------------------------------------------------
+// Editor shell root registry (module-level, set by host shell on mount)
+// ---------------------------------------------------------------------------
+
+/**
+ * The currently-mounted editor shell root element, if any.
+ * Set by the host shell component via {@link setEditorShellRoot} and
+ * consumed by the chrome service's `focus()` and `announce()` methods.
+ */
+let _editorShellRoot: HTMLElement | null = null;
+
+/**
+ * Register (or clear) the editor shell root element.
+ *
+ * The host shell component should call this on mount with its outermost
+ * DOM element and on unmount with `null`.  The chrome service's
+ * `focus()` and `announce()` methods are no-ops (with diagnostics)
+ * when no root is set.
+ */
+export function setEditorShellRoot(element: HTMLElement | null): void {
+  _editorShellRoot = element;
+}
+
+/**
+ * Return the currently-registered editor shell root element, or `null`
+ * if no shell is mounted.
+ */
+export function getEditorShellRoot(): HTMLElement | null {
+  return _editorShellRoot;
+}
+
+// ---------------------------------------------------------------------------
 // ExtensionContext factory
 // ---------------------------------------------------------------------------
 
@@ -404,7 +465,7 @@ export interface ExtensionContext {
  * Exposes only the approved M1 members:
  * - `apiVersion: 1`
  * - Readonly extension metadata
- * - `chrome` (toast, progress, subscribe)
+ * - `chrome` (toast, progress, subscribe, focus, announce)
  * - `services.settings` (localStorage-backed, scoped per extension)
  * - `services.i18n` (minimal t() scaffolding)
  * - `services.diagnostics` (in-memory structured diagnostic reporting)
@@ -528,6 +589,32 @@ export function createExtensionContext(extension: ReighExtension): ExtensionCont
     Set<(payload: unknown) => void>
   >();
 
+  // ---- aria-live host node (created lazily on first announce) -------------
+  let _ariaLiveHost: HTMLElement | null = null;
+
+  /** Get or create the aria-live container inside the shell root. */
+  function getOrCreateAriaLiveHost(politeness: 'polite' | 'assertive'): HTMLElement | null {
+    const root = _editorShellRoot;
+    if (!root) return null;
+
+    if (_ariaLiveHost && root.contains(_ariaLiveHost)) {
+      _ariaLiveHost.setAttribute('aria-live', politeness);
+      return _ariaLiveHost;
+    }
+
+    // Clear stale reference if node was removed
+    _ariaLiveHost = null;
+
+    const host = document.createElement('div');
+    host.setAttribute('data-video-editor-aria-live', '');
+    host.setAttribute('aria-live', politeness);
+    host.setAttribute('aria-atomic', 'true');
+    host.className = 'sr-only';
+    root.appendChild(host);
+    _ariaLiveHost = host;
+    return host;
+  }
+
   const chromeService: ExtensionChromeService = {
     toast(message: string, severity: DiagnosticSeverity = 'info'): void {
       // Host-visible toast — dispatched via console + subscriber in dev
@@ -574,6 +661,69 @@ export function createExtensionContext(extension: ReighExtension): ExtensionCont
           eventSubs.delete(handler as (payload: unknown) => void);
         },
       };
+    },
+    focus(selector: string): void {
+      const root = _editorShellRoot;
+      if (!root) {
+        diagnosticsService.report({
+          severity: 'warning',
+          code: 'chrome/focus-no-shell',
+          message: `Cannot focus "${selector}": no editor shell root is mounted.`,
+        });
+        return;
+      }
+
+      // Try to find the element within the shell root
+      const element = root.querySelector(selector);
+      if (element instanceof HTMLElement) {
+        try {
+          element.focus();
+        } catch {
+          // focus() may throw on non-focusable elements in some environments
+          diagnosticsService.report({
+            severity: 'warning',
+            code: 'chrome/focus-not-focusable',
+            message: `Cannot focus "${selector}": element is not focusable.`,
+          });
+        }
+        return;
+      }
+
+      // Not found in shell root — check if it exists in the document
+      // (indicating a portal target or out-of-shell element)
+      if (document.querySelector(selector)) {
+        diagnosticsService.report({
+          severity: 'warning',
+          code: 'chrome/focus-out-of-shell',
+          message: `Cannot focus "${selector}": element found outside the editor shell root (possible portal target).`,
+        });
+        return;
+      }
+
+      // Not found anywhere
+      diagnosticsService.report({
+        severity: 'warning',
+        code: 'chrome/focus-missing-selector',
+        message: `Cannot focus "${selector}": no matching element found.`,
+      });
+    },
+    announce(message: string, politeness: 'polite' | 'assertive' = 'polite'): void {
+      const host = getOrCreateAriaLiveHost(politeness);
+      if (!host) {
+        // Fallback: log to console when no shell root is mounted
+        if (typeof console !== 'undefined') {
+          console.log(`[Extension ${extensionId} announce] ${message}`);
+        }
+        return;
+      }
+
+      // Clear first so repeated identical messages are re-announced
+      host.textContent = '';
+      // Force a reflow so the clear takes effect before setting new text.
+      // Use requestAnimationFrame so assistive tech registers the change.
+      requestAnimationFrame(() => {
+        host.textContent = message;
+      });
     },
   };
 
@@ -753,6 +903,7 @@ export const CONTRIBUTION_KIND_MILESTONE: Record<ContributionKind, string | unde
   dialog: 'M1',
   panel: 'M1',
   inspectorSection: 'M1',
+  timelineOverlay: 'M2',
   effect: 'M3',
   transition: 'M3',
   clipType: 'M3',
@@ -767,7 +918,7 @@ export const CONTRIBUTION_KIND_MILESTONE: Record<ContributionKind, string | unde
  */
 export function contributionKindNotYetBridged(kind: ContributionKind): string | null {
   const milestone = CONTRIBUTION_KIND_MILESTONE[kind];
-  if (milestone && milestone === 'M1') return null;
+  if (milestone && (milestone === 'M1' || milestone === 'M2')) return null;
   return milestone ?? 'unknown';
 }
 

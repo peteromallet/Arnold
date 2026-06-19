@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react';
 import { formatDistanceToNow } from 'date-fns';
 import { Download, Eye, GripHorizontal, History, Maximize2, Minimize2, Redo2, RefreshCw, Settings, SlidersHorizontal, Undo2, ZoomIn, ZoomOut } from 'lucide-react';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/shared/components/ui/alert-dialog.tsx';
@@ -18,6 +18,7 @@ import { ThemeChip } from '@/tools/video-editor/components/ThemeChip.tsx';
 import { TimelineEditor } from '@/tools/video-editor/components/TimelineEditor/TimelineEditor.tsx';
 import {
   useVideoEditorAssetPanels,
+  useVideoEditorDialogDescriptors,
   useVideoEditorRenderContext,
   useVideoEditorSlotRenderers,
 } from '@/tools/video-editor/runtime/useVideoEditorRenderContext.ts';
@@ -44,6 +45,10 @@ import {
   ContributionErrorBoundary,
   type ContributionErrorInfo,
 } from '@/tools/video-editor/runtime/ContributionErrorBoundary.tsx';
+import type { VideoEditorSlotName, VideoEditorRenderContext } from '@/tools/video-editor/runtime/extensionSurface';
+import { CodePanelCanary } from '@/tools/video-editor/components/Canary/CodePanelCanary';
+import { WritingPanelCanary } from '@/tools/video-editor/components/Canary/WritingPanelCanary';
+import { StagePanelCanary } from '@/tools/video-editor/components/Canary/StagePanelCanary';
 
 const MIN_TIMELINE_HEIGHT = 140;
 const MIN_PREVIEW_HEIGHT = 180;
@@ -72,6 +77,50 @@ const PHONE_MODE_ITEMS: Array<{ mode: Exclude<TimelineInteractionMode, 'precisio
   { mode: 'move', label: 'Move' },
   { mode: 'trim', label: 'Trim' },
 ];
+
+/** Slots reserved for future milestones — rendered as canaries. */
+const RESERVED_SLOT_NAMES: ReadonlySet<VideoEditorSlotName> = new Set([
+  'codePanel',
+  'writingPanel',
+  'stagePanel',
+]);
+
+/** Milestone labels for reserved slots. */
+const RESERVED_SLOT_MILESTONE: Readonly<Partial<Record<VideoEditorSlotName, string>>> = {
+  codePanel: 'M4',
+  writingPanel: 'M4',
+  stagePanel: 'M3',
+};
+
+/** Canary component for each reserved slot. */
+const RESERVED_SLOT_CANARY: Partial<Record<VideoEditorSlotName, (props: { context: VideoEditorRenderContext }) => ReactNode>> = {
+  codePanel: CodePanelCanary,
+  writingPanel: WritingPanelCanary,
+  stagePanel: StagePanelCanary,
+};
+
+/**
+ * Inert reserved placeholder rendered when a slot has no registered renderer.
+ * Displays the slot name and target milestone — non-interactive, keyboard-inert.
+ */
+function InertReservedPlaceholder({ slotName }: { slotName: VideoEditorSlotName }) {
+  const milestone = RESERVED_SLOT_MILESTONE[slotName] ?? 'future';
+  return (
+    <div
+      data-video-editor-slot={slotName}
+      data-video-editor-slot-inert="true"
+      data-video-editor-slot-milestone={milestone}
+      className="flex items-center justify-center rounded-md border border-dashed border-border/50 bg-muted/30 px-3 py-2 text-[10px] text-muted-foreground/60"
+      aria-hidden="true"
+      role="presentation"
+      tabIndex={-1}
+    >
+      <span className="select-none uppercase tracking-[0.14em]">
+        {slotName} — {milestone}
+      </span>
+    </div>
+  );
+}
 
 export interface TimelineEditorShellCoreProps {
   timelineId: string;
@@ -327,6 +376,7 @@ function TimelineEditorShellCoreComponent({
   const slotRenderers = useVideoEditorSlotRenderers();
   const renderContext = useVideoEditorRenderContext();
   const contributedAssetPanels = useVideoEditorAssetPanels();
+  const dialogDescriptors = useVideoEditorDialogDescriptors();
 
   const handleContributionError = useCallback((info: ContributionErrorInfo) => {
     // Host-owned diagnostics sink: log to console with structured data.
@@ -338,6 +388,46 @@ function TimelineEditorShellCoreComponent({
       );
     }
   }, []);
+
+  /**
+   * Resolve a surface slot renderer or return a canary for reserved slots.
+   * - If a renderer is registered → wrap in ContributionErrorBoundary
+   * - If the slot is reserved with a canary → render the canary
+   * - If the slot is reserved without a canary → render inert placeholder
+   * - Otherwise → null (slot is unclaimed)
+   */
+  const resolveSurfaceSlot = useCallback(
+    (slotName: VideoEditorSlotName, label: string) => {
+      const renderer = slotRenderers[slotName];
+      if (renderer) {
+        return (
+          <ContributionErrorBoundary
+            key={slotName}
+            contributionId={`slot:${slotName}`}
+            kind="slot"
+            label={label}
+            onError={handleContributionError}
+          >
+            {renderer(renderContext)}
+          </ContributionErrorBoundary>
+        );
+      }
+      if (RESERVED_SLOT_NAMES.has(slotName)) {
+        const CanaryComponent = RESERVED_SLOT_CANARY[slotName];
+        if (CanaryComponent) {
+          return (
+            <CanaryComponent
+              key={slotName}
+              context={renderContext}
+            />
+          );
+        }
+        return <InertReservedPlaceholder key={slotName} slotName={slotName} />;
+      }
+      return null;
+    },
+    [handleContributionError, renderContext, slotRenderers],
+  );
 
   const headerSlot = slotRenderers.header ? (
     <ContributionErrorBoundary
@@ -403,6 +493,25 @@ function TimelineEditorShellCoreComponent({
       onError={handleContributionError}
     >
       {slotRenderers.statusBar(renderContext)}
+    </ContributionErrorBoundary>
+  ) : null;
+
+  // ---- New M2 surface slots ------------------------------------------------
+  const leftPanelSlot = resolveSurfaceSlot('leftPanel', 'Left panel');
+  const rightPanelSlot = resolveSurfaceSlot('rightPanel', 'Right panel');
+  const codePanelSlot = resolveSurfaceSlot('codePanel', 'Code panel');
+  const writingPanelSlot = resolveSurfaceSlot('writingPanel', 'Writing panel');
+  const stagePanelSlot = resolveSurfaceSlot('stagePanel', 'Stage panel');
+
+  // ---- Dialog slot: render extension-contributed dialogs --------------------
+  const dialogsSlot = slotRenderers.dialogs ? (
+    <ContributionErrorBoundary
+      contributionId="slot:dialogs"
+      kind="slot"
+      label="Dialogs"
+      onError={handleContributionError}
+    >
+      {slotRenderers.dialogs(renderContext)}
     </ContributionErrorBoundary>
   ) : null;
 
@@ -866,24 +975,43 @@ function TimelineEditorShellCoreComponent({
         ) : (
           <main
             ref={containerRef}
-            className="grid h-full min-h-0 flex-1 animate-in fade-in duration-200 motion-reduce:animate-none motion-reduce:transition-none grid-cols-[minmax(0,1fr)_360px] gap-3 p-3 transition-[grid-template-rows,opacity] duration-300 ease-smooth"
-            style={{ gridTemplateRows }}
+            className="grid h-full min-h-0 flex-1 animate-in fade-in duration-200 motion-reduce:animate-none motion-reduce:transition-none gap-3 p-3 transition-[grid-template-rows,opacity] duration-300 ease-smooth"
+            style={{
+              gridTemplateRows,
+              gridTemplateColumns: leftPanelSlot
+                ? 'auto minmax(0,1fr) 360px'
+                : 'minmax(0,1fr) 360px',
+            }}
           >
+            {/* Left panel surface slot — host-owned placement */}
+            {leftPanelSlot && (
+              <div
+                className="row-span-2 min-h-0 w-14 overflow-hidden"
+                data-video-editor-shell-region="leftPanel"
+              >
+                {leftPanelSlot}
+              </div>
+            )}
+
             <div className="relative min-h-0">
               {previewOverlay}
               <PreviewPanel surface={previewSurface} />
             </div>
 
-            <div className="row-span-2 min-h-0 overflow-hidden">
-              {assetPanelSlot}
-              {inspectorPanelSlot ?? <PropertiesPanel />}
+            <div className="row-span-2 min-h-0 overflow-hidden" data-video-editor-shell-region="rightPanel">
+              {rightPanelSlot ?? (
+                <>
+                  {assetPanelSlot}
+                  {inspectorPanelSlot ?? <PropertiesPanel />}
+                </>
+              )}
             </div>
 
             <div ref={dividerRef} className="col-span-1">
               {toolbarSlot ?? toolbar}
             </div>
 
-            <div className="relative col-span-2 min-h-0 overflow-hidden">
+            <div className="relative min-h-0 overflow-hidden" style={{ gridColumn: leftPanelSlot ? '2 / span 2' : '1 / span 2' }}>
               <TimelineEditor onOpenSequenceCreator={() => setIsSequenceCreatorOpen(true)} />
               {timelineFooterSlot}
             </div>
@@ -891,12 +1019,24 @@ function TimelineEditorShellCoreComponent({
           </main>
         )}
         {statusBarSlot}
+
+        {/* Reserved surface slots rendered as canaries (host-owned footer region) */}
+        <div
+          className="flex flex-wrap items-center gap-2 border-t border-border/40 px-3 py-2"
+          data-video-editor-shell-region="reservedSlots"
+        >
+          {codePanelSlot}
+          {writingPanelSlot}
+          {stagePanelSlot}
+        </div>
       </div>
       {/* Render the shared preview portal here only when the layout uses
           a bare `previewSurface.slotRef` host (condensed/mobile single-pane).
           The full-pane path renders the same portal inside <PreviewPanel>,
           so guarding here prevents a duplicate <RemotionPreview> in tests. */}
       {(condensed || mobileSinglePane) && previewPortal}
+      {/* Extension-contributed dialog slot */}
+      {dialogsSlot}
       {isSequenceCreatorOpen && (
         <SequenceCreatorPanel
           open={isSequenceCreatorOpen}

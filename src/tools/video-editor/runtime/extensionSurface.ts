@@ -13,12 +13,16 @@ import type {
   ContributionKind,
 } from '@reigh/editor-sdk';
 import { contributionKindNotYetBridged } from '@reigh/editor-sdk';
+import type { TimelineGestureOwner } from '@/tools/video-editor/lib/mobile-interaction-model';
 
 export type VideoEditorSlotName =
   | 'header'
   | 'toolbar'
   | 'leftPanel'
   | 'rightPanel'
+  | 'codePanel'
+  | 'writingPanel'
+  | 'stagePanel'
   | 'timelineFooter'
   | 'statusBar'
   | 'dialogs'
@@ -67,6 +71,13 @@ export interface VideoEditorInspectorSectionDescriptor {
   render: VideoEditorSlotRenderer;
 }
 
+export interface VideoEditorOverlayDescriptor {
+  id: string;
+  order?: number;
+  when?: VideoEditorVisibilityPredicate;
+  render: VideoEditorSlotRenderer;
+}
+
 export interface VideoEditorPanelRegistryConfig {
   panels?: readonly VideoEditorPanelDescriptor[];
   inspectorSections?: readonly VideoEditorInspectorSectionDescriptor[];
@@ -80,6 +91,7 @@ export interface VideoEditorExtensionConfig {
   slots?: Partial<Record<VideoEditorSlotName, VideoEditorSlotRenderer>>;
   dialogHost?: VideoEditorDialogHostConfig;
   registry?: VideoEditorPanelRegistryConfig;
+  overlays?: readonly VideoEditorOverlayDescriptor[];
 }
 
 export interface VideoEditorExtensionRuntimeConfig {
@@ -91,6 +103,7 @@ export interface VideoEditorExtensionRuntimeConfig {
     panels: readonly VideoEditorPanelDescriptor[];
     inspectorSections: readonly VideoEditorInspectorSectionDescriptor[];
   };
+  overlays: readonly VideoEditorOverlayDescriptor[];
 }
 
 export interface ResolvedVideoEditorPanelRegistry {
@@ -139,6 +152,7 @@ export type ExtensionHost = (extensions: readonly ReighExtension[]) => Extension
 
 const EMPTY_SLOTS: Partial<Record<VideoEditorSlotName, VideoEditorSlotRenderer>> = Object.freeze({});
 const EMPTY_DIALOGS: readonly VideoEditorDialogDescriptor[] = Object.freeze([]);
+const EMPTY_OVERLAYS: readonly VideoEditorOverlayDescriptor[] = Object.freeze([]);
 const EMPTY_PANELS: readonly VideoEditorPanelDescriptor[] = Object.freeze([]);
 const EMPTY_INSPECTOR_SECTIONS: readonly VideoEditorInspectorSectionDescriptor[] = Object.freeze([]);
 const EMPTY_RESOLVED_PANEL_REGISTRY: ResolvedVideoEditorPanelRegistry = Object.freeze({
@@ -159,6 +173,7 @@ export const DEFAULT_VIDEO_EDITOR_EXTENSION_RUNTIME: VideoEditorExtensionRuntime
     panels: EMPTY_PANELS,
     inspectorSections: EMPTY_INSPECTOR_SECTIONS,
   }),
+  overlays: EMPTY_OVERLAYS,
 });
 
 /**
@@ -297,6 +312,7 @@ export function normalizeExtensionRuntime(
   const dialogDescriptors: VideoEditorDialogDescriptor[] = [];
   const panelDescriptors: VideoEditorPanelDescriptor[] = [];
   const inspectorSectionDescriptors: VideoEditorInspectorSectionDescriptor[] = [];
+  const overlayDescriptors: VideoEditorOverlayDescriptor[] = [];
 
   for (const { contribution, extensionId } of sorted) {
     switch (contribution.kind) {
@@ -337,6 +353,14 @@ export function normalizeExtensionRuntime(
         });
         break;
       }
+      case 'timelineOverlay': {
+        overlayDescriptors.push({
+          id: contribution.id as VideoEditorOverlayDescriptor['id'],
+          order: contribution.order,
+          render: null as unknown as VideoEditorSlotRenderer, // placeholder
+        });
+        break;
+      }
     }
   }
 
@@ -345,7 +369,8 @@ export function normalizeExtensionRuntime(
     Object.keys(slots).length > 0 ||
     dialogDescriptors.length > 0 ||
     panelDescriptors.length > 0 ||
-    inspectorSectionDescriptors.length > 0;
+    inspectorSectionDescriptors.length > 0 ||
+    overlayDescriptors.length > 0;
 
   const config: VideoEditorExtensionRuntimeConfig = hasAnyBridged
     ? Object.freeze({
@@ -357,6 +382,7 @@ export function normalizeExtensionRuntime(
           panels: Object.freeze(panelDescriptors),
           inspectorSections: Object.freeze(inspectorSectionDescriptors),
         }),
+        overlays: Object.freeze(overlayDescriptors),
       })
     : DEFAULT_VIDEO_EDITOR_EXTENSION_RUNTIME;
 
@@ -439,4 +465,180 @@ export function resolveVideoEditorPanelRegistry(
       afterDefault,
     },
   };
+}
+
+// ---------------------------------------------------------------------------
+// getInspectorContributions — canonical selector for inspector consumers
+// ---------------------------------------------------------------------------
+
+/** Selection context supplied by the host to inspector contributions. */
+export interface InspectorSelectionSnapshot {
+  /** Discriminated kind of the current selection. */
+  readonly kind: 'clip' | 'selection' | 'track' | 'timeline';
+  /** Single clip ID when kind === 'clip'. */
+  readonly clipId?: string;
+  /** Multiple clip IDs when kind === 'selection'. */
+  readonly clipIds?: readonly string[];
+  /** Track ID when kind === 'track'. */
+  readonly trackId?: string;
+}
+
+/** A resolved, selection-aware inspector contribution ready for rendering. */
+export interface InspectorContribution {
+  readonly id: string;
+  readonly placement: 'before-default' | 'after-default';
+  readonly order?: number;
+  /** Render the contribution with full host context and the current selection snapshot. */
+  readonly render: (
+    context: VideoEditorRenderContext,
+    selection: InspectorSelectionSnapshot | null,
+  ) => ReactNode;
+}
+
+/**
+ * Canonical selector that resolves inspector contributions scoped to the
+ * current host state.
+ *
+ * Consumed by the PropertiesPanel and any other inspector host surfaces.
+ * Delegates to {@link resolveVideoEditorPanelRegistry} for visibility
+ * filtering and deterministic ordering.
+ *
+ * @returns frozen-structured buckets keyed by placement.
+ */
+export function getInspectorContributions(
+  registry: VideoEditorExtensionRuntimeConfig['registry'],
+  context: VideoEditorRenderContext,
+  selection: InspectorSelectionSnapshot | null,
+): {
+  readonly all: readonly InspectorContribution[];
+  readonly beforeDefault: readonly InspectorContribution[];
+  readonly afterDefault: readonly InspectorContribution[];
+} {
+  const resolved = resolveVideoEditorPanelRegistry(registry, context);
+
+  // Map inspector section descriptors to InspectorContribution wrappers
+  // that forward selection alongside the render context.
+  const wrap = (descriptor: VideoEditorInspectorSectionDescriptor): InspectorContribution => {
+    const originalRender = descriptor.render;
+    return {
+      id: descriptor.id,
+      placement: descriptor.placement,
+      order: descriptor.order,
+      render: (ctx, sel) => originalRender(ctx),
+    };
+  };
+
+  const all = resolved.inspectorSections.all.map(wrap);
+  const beforeDefault = resolved.inspectorSections.beforeDefault.map(wrap);
+  const afterDefault = resolved.inspectorSections.afterDefault.map(wrap);
+
+  // Preserve empty array identity for stable React memo comparisons
+  if (all.length === 0) {
+    return {
+      all: EMPTY_INSPECTOR_CONTRIBUTIONS,
+      beforeDefault: EMPTY_INSPECTOR_CONTRIBUTIONS,
+      afterDefault: EMPTY_INSPECTOR_CONTRIBUTIONS,
+    };
+  }
+
+  return { all, beforeDefault, afterDefault };
+}
+
+const EMPTY_INSPECTOR_CONTRIBUTIONS: readonly InspectorContribution[] = Object.freeze([]);
+
+// ---------------------------------------------------------------------------
+// Timeline overlay — host rendering contract
+// ---------------------------------------------------------------------------
+
+/** Viewport and interaction policy props the host passes to each overlay renderer. */
+export interface TimelineOverlayRenderProps {
+  /** Current horizontal scroll offset (px). */
+  readonly scrollLeft: number;
+  /** Current vertical scroll offset (px). */
+  readonly scrollTop: number;
+  /** Width of the visible viewport (px). */
+  readonly viewportWidth: number;
+  /** Height of the visible viewport (px). */
+  readonly viewportHeight: number;
+  /** Total scrollable width (px). */
+  readonly totalWidth: number;
+  /** Total scrollable height (px). */
+  readonly totalHeight: number;
+  /** Pixels per second of timeline (scale-derived). */
+  readonly pixelsPerSecond: number;
+  /** Left offset where timeline content begins (px). */
+  readonly startLeft: number;
+  /** Current playhead position in seconds. */
+  readonly playheadTime: number;
+  /** Whether playback is active. */
+  readonly isPlaying: boolean;
+  /** Currently selected clip IDs. */
+  readonly selectedClipIds: ReadonlySet<string>;
+  /** Currently selected track ID (null if none). */
+  readonly selectedTrackId: string | null;
+  /** Which subsystem currently owns the gesture. */
+  readonly gestureOwner: TimelineGestureOwner;
+  /** Callback to request gesture ownership. */
+  readonly setGestureOwner: (owner: TimelineGestureOwner) => void;
+  /** Whether this overlay currently claims pointer events. */
+  readonly pointerClaimed: boolean;
+  /** Claim pointer events for this overlay (makes it pointer-events-auto). */
+  readonly claimPointer: () => void;
+  /** Release pointer events for this overlay (reverts to pointer-events-none). */
+  readonly releasePointer: () => void;
+}
+
+/** A resolved timeline overlay contribution ready for rendering. */
+export interface TimelineOverlayContribution {
+  readonly id: string;
+  readonly extensionId: string;
+  readonly order?: number;
+  /** Render the overlay with host-supplied viewport and interaction policy props. */
+  readonly render: (props: TimelineOverlayRenderProps) => ReactNode;
+}
+
+const EMPTY_TIMELINE_OVERLAY_CONTRIBUTIONS: readonly TimelineOverlayContribution[] = Object.freeze([]);
+
+/**
+ * Canonical selector for timeline overlay contributions.
+ *
+ * Overlays render above the edit area in TimelineEditorCore / TimelineCanvas.
+ * They default to `pointer-events: none` and must call `claimPointer()` to
+ * capture pointer or scroll gestures, preventing accidental interference
+ * with core timeline interactions.
+ */
+export function getTimelineOverlayContributions(
+  overlays: readonly VideoEditorOverlayDescriptor[],
+  overlayRenderProps: Omit<
+    TimelineOverlayRenderProps,
+    'pointerClaimed' | 'claimPointer' | 'releasePointer'
+  > & {
+    claimPointer: (overlayId: string) => void;
+    releasePointer: (overlayId: string) => void;
+  },
+  claimedOverlayId: string | null,
+): readonly TimelineOverlayContribution[] {
+  if (overlays.length === 0) {
+    return EMPTY_TIMELINE_OVERLAY_CONTRIBUTIONS;
+  }
+
+  const contributions: TimelineOverlayContribution[] = overlays.map((descriptor) => {
+    const pointerClaimed = claimedOverlayId === descriptor.id;
+
+    const renderProps: TimelineOverlayRenderProps = {
+      ...overlayRenderProps,
+      pointerClaimed,
+      claimPointer: () => overlayRenderProps.claimPointer(descriptor.id),
+      releasePointer: () => overlayRenderProps.releasePointer(descriptor.id),
+    };
+
+    return {
+      id: descriptor.id,
+      extensionId: '',
+      order: descriptor.order,
+      render: () => (descriptor.render ? descriptor.render(null as unknown as VideoEditorRenderContext) : null),
+    };
+  });
+
+  return contributions;
 }

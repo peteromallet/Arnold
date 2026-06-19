@@ -13,9 +13,13 @@ import { getFallbackClipTab, getSelectionDefaultClipTab } from '@/tools/video-ed
 import { getBulkVisibleTabs, getSharedNestedValue, getSharedValue } from '@/tools/video-editor/lib/bulk-utils.ts';
 import { VIDEO_EDITOR_THEME_VARS } from '@/tools/video-editor/lib/themeTokens.ts';
 import {
-  useVideoEditorInspectorSections,
+  useVideoEditorPanelRegistry,
   useVideoEditorRenderContext,
 } from '@/tools/video-editor/runtime/useVideoEditorRenderContext.ts';
+import {
+  getInspectorContributions,
+  type InspectorSelectionSnapshot,
+} from '@/tools/video-editor/runtime/extensionSurface.ts';
 import {
   ContributionErrorBoundary,
   type ContributionErrorInfo,
@@ -23,11 +27,22 @@ import {
 
 function InspectorRegistrySections({
   placement,
+  selection,
 }: {
   placement: 'before-default' | 'after-default';
+  selection: InspectorSelectionSnapshot | null;
 }) {
   const renderContext = useVideoEditorRenderContext();
-  const sections = useVideoEditorInspectorSections(placement);
+  const registry = useVideoEditorPanelRegistry();
+  const contributions = useMemo(
+    () => getInspectorContributions(registry, renderContext, selection),
+    [registry, renderContext, selection],
+  );
+
+  const sections =
+    placement === 'before-default'
+      ? contributions.beforeDefault
+      : contributions.afterDefault;
 
   if (sections.length === 0) {
     return null;
@@ -52,7 +67,7 @@ function InspectorRegistrySections({
           onError={handleContributionError}
         >
           <div data-video-editor-inspector-section-id={section.id}>
-            {section.render(renderContext)}
+            {section.render(renderContext, selection)}
           </div>
         </ContributionErrorBoundary>
       ))}
@@ -238,7 +253,7 @@ function PropertiesPanelComponent() {
           </div>
         </div>
       )}
-      <InspectorRegistrySections placement="before-default" />
+      <InspectorRegistrySections placement="before-default" selection={inspectorSelectionTarget} />
       <div className={`min-h-0 flex-1 overflow-auto rounded-xl border bg-card/80 p-3 transition-colors ${hasSelection ? 'border-[color:var(--video-editor-accent-border)] ring-1 ring-[var(--video-editor-accent-ring)]' : 'border-border'}`}>
         {selectedClipIds.size > 1 ? (
           <BulkClipPanel
@@ -318,7 +333,7 @@ function PropertiesPanelComponent() {
           />
         )}
       </div>
-      <InspectorRegistrySections placement="after-default" />
+      <InspectorRegistrySections placement="after-default" selection={inspectorSelectionTarget} />
     </div>
   );
 }
