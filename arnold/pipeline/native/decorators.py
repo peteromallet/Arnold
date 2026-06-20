@@ -129,6 +129,83 @@ def decision(
     return decorator
 
 
+class _ParallelBranchList(list):
+    """A list subclass that can carry parallel-block metadata.
+
+    Built-in ``list`` instances do not accept arbitrary attributes, so
+    this subclass exists solely to let :func:`parallel` attach the
+    compiler-introspection metadata it needs while still behaving like a
+    normal list.
+    """
+
+    __parallel_branches__: tuple[Callable[..., Any], ...] = ()
+    __parallel_reducer__: Callable[..., Any] | None = None
+    __parallel_name__: str | None = None
+
+
+def parallel(
+    branches: tuple[Callable[..., Any], ...] | list[Callable[..., Any]],
+    *,
+    reducer: Callable[..., Any] | None = None,
+    name: str | None = None,
+) -> _ParallelBranchList:
+    """Declare a parallel fan-out block for use in native pipelines.
+
+    Used inside a ``@pipeline``-decorated function with ``for`` syntax::
+
+        for branch in parallel([branch_a, branch_b], reducer=my_reducer):
+            state = yield branch(ctx)
+
+    Parameters
+    ----------
+    branches:
+        A list or tuple of ``@phase``-decorated callables.  Must be a
+        **literal** list/tuple — dynamic or non-literal branch sets are
+        rejected at compile time.
+    reducer:
+        Optional callable invoked after all branches complete.  Receives
+        a list of branch results (one per branch, in declaration order)
+        and must return a dict to merge into working state.
+    name:
+        Optional human-readable name for the parallel block (defaults to
+        a generated name like ``parallel_0``).
+
+    Returns
+    -------
+    _ParallelBranchList
+        The branch list (returned as a list-like object for iteration by
+        the compiler), with metadata attached for compile-time validation.
+    """
+    if not isinstance(branches, (tuple, list)):
+        raise TypeError(
+            f"parallel() expects a list or tuple of branches, got {type(branches).__name__}"
+        )
+    if len(branches) == 0:
+        raise ValueError("parallel() requires at least one branch")
+    seen: set[int] = set()
+    for i, b in enumerate(branches):
+        if not callable(b):
+            raise TypeError(
+                f"parallel() branch {i} is not callable: {b!r}"
+            )
+        if not is_phase(b):
+            raise TypeError(
+                f"parallel() branch {i} ({getattr(b, '__name__', b)!r}) is not a @phase-decorated function"
+            )
+        bid = id(b)
+        if bid in seen:
+            raise ValueError(
+                f"parallel() contains duplicate branch: {getattr(b, '__name__', b)!r}"
+            )
+        seen.add(bid)
+    # Attach metadata for compiler introspection
+    result = _ParallelBranchList(branches)
+    result.__parallel_branches__ = tuple(branches)
+    result.__parallel_reducer__ = reducer
+    result.__parallel_name__ = name
+    return result
+
+
 # ── Introspection helpers ───────────────────────────────────────────────
 
 

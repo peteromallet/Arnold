@@ -9,7 +9,7 @@ logic lives here.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Callable, FrozenSet
+from typing import Any, Callable, FrozenSet, Tuple
 
 
 @dataclass(frozen=True)
@@ -106,6 +106,44 @@ class NativePipeline:
     """Optional human-readable description."""
 
 
+# ── Parallel fan-out / fan-in IR ──────────────────────────────────────
+
+@dataclass(frozen=True)
+class ParallelInstruction:
+    """Metadata for a parallel fan-out / fan-in block.
+
+    Declares statically-bounded branches that execute concurrently
+    (or sequentially in milestone order), followed by an optional
+    reducer that combines results before advancing to the merge point.
+
+    This is pure metadata — the actual instruction stream uses
+    ``NativeInstruction(op="parallel", ...)`` to reference a parallel
+    block by index into :attr:`NativeProgram.parallel_blocks`.
+    """
+
+    name: str = ""
+    """Human-readable label for this parallel block."""
+
+    branches: tuple[str, ...] = ()
+    """Ordered branch names (derived from the callable names in the
+    literal branch list)."""
+
+    branch_funcs: tuple[Callable[..., Any], ...] = field(
+        default_factory=tuple, compare=False, hash=False
+    )
+    """Callables for each branch, in declaration order."""
+
+    reducer: Callable[..., Any] | None = field(
+        default=None, compare=False, hash=False
+    )
+    """Optional reducer callable for fan-in.  When ``None``, branch
+    results are collected into a list keyed by the parallel block name."""
+
+    merge_pc: int | None = None
+    """Program counter to advance to after all branches complete and
+    the reducer runs.  ``None`` means halt after the parallel block."""
+
+
 # ── Native instruction set (produced by compiler, consumed by runtime/graph) ──
 
 @dataclass(frozen=True)
@@ -122,7 +160,8 @@ class NativeInstruction:
     """Zero-based program counter — position in the instruction tuple."""
 
     op: str
-    """Operation code: ``'phase'``, ``'decision'``, ``'jump'``, ``'halt'``, or ``'subpipeline'``."""
+    """Operation code: ``'phase'``, ``'decision'``, ``'jump'``, ``'halt'``,
+    ``'subpipeline'``, or ``'parallel'``."""
 
     name: str = ""
     """Human-readable label for the instruction (phase/decision name)."""
@@ -175,6 +214,9 @@ class NativeProgram:
 
     loop_guards: tuple[NativeLoopGuard, ...] = ()
     """Loop guards used in ``while`` constructs."""
+
+    parallel_blocks: tuple[ParallelInstruction, ...] = ()
+    """Parallel fan-out / fan-in blocks referenced by ``parallel`` ops."""
 
     description: str = ""
     """Optional human-readable description."""

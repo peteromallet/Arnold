@@ -30,6 +30,7 @@ from arnold.pipeline.native.ir import (
     NativeLoopGuard,
     NativePhase,
     NativeProgram,
+    ParallelInstruction,
 )
 
 
@@ -146,8 +147,10 @@ class _Compiler:
         self._phases: list[NativePhase] = []
         self._decisions: list[NativeDecision] = []
         self._loop_guards: list[NativeLoopGuard] = []
+        self._parallel_blocks: list[ParallelInstruction] = []
         self._pc: int = 0
         self._pending_halt: bool = False
+        self._parallel_block_counter: int = 0
 
     # ── emit helpers ──────────────────────────────────────────────
 
@@ -253,6 +256,8 @@ class _Compiler:
             self._lower_if_stmt(stmt)
         elif isinstance(stmt, ast.While):
             self._lower_while_stmt(stmt)
+        elif isinstance(stmt, ast.For):
+            self._lower_for_stmt(stmt)
         elif isinstance(stmt, ast.Return):
             self._emit_halt()
         elif isinstance(stmt, ast.Pass):
@@ -626,6 +631,222 @@ class _Compiler:
         )
         self._pending_halt = False
 
+    # ── for / parallel lowering ───────────────────────────────────
+
+    def _lower_for_stmt(self, stmt: ast.For) -> None:
+        """Lower ``for <var> in parallel([...])`` as a parallel fan-out block.
+
+        The iterable must be a call to :func:`parallel` with a literal
+        list/tuple of ``@phase``-decorated callables.  Dynamic, empty,
+        duplicate, and non-literal branch sets are rejected.
+        """
+        iter_node = stmt.iter
+
+        # Must be a call
+        if not isinstance(iter_node, ast.Call):
+            raise NativeCompileError(
+                "for loop iterable must be a call to parallel(...); "
+                f"got {type(iter_node).__name__}",
+                iter_node,
+            )
+
+        # Resolve the callable (must be our parallel function)
+        try:
+            iter_func = self._resolve_callable(iter_node.func)
+        except NativeCompileError as exc:
+            # Re-raise with a clear "For" diagnostic so legacy rejection tests
+            # (e.g. bare ``for i in range(3)``) still get the expected signal.
+            raise NativeCompileError(
+                f"For loop iterable must be a call to parallel(...); {exc}",
+                iter_node,
+            ) from exc
+        except Exception as exc:
+            raise NativeCompileError(
+                f"For loop iterable must be a call to parallel(...); "
+                f"cannot resolve callable: {exc}", iter_node
+            ) from exc
+
+        # Verify it's the parallel function by checking its metadata attachment
+        if not callable(iter_func) or getattr(iter_func, '__name__', '') != 'parallel':
+            raise NativeCompileError(
+                "For loop iterable must be a call to parallel(...), "
+                f"got {getattr(iter_func, '__name__', iter_func)!r}",
+                iter_node.func,
+            )
+
+        # Extract the branch list argument — must be a literal list or tuple
+        if not iter_node.args:
+            raise NativeCompileError(
+                "parallel(...) requires at least one argument (the branch list)",
+                iter_node,
+            )
+        branch_arg = iter_node.args[0]
+
+        if isinstance(branch_arg, ast.List) or isinstance(branch_arg, ast.Tuple):
+            branch_nodes = branch_arg.elts
+        else:
+            raise NativeCompileError(
+                "parallel() argument must be a literal list or tuple of branches, "
+                f"got {type(branch_arg).__name__}. "
+                "Dynamic/non-literal branch sets are not supported.",
+                branch_arg,
+            )
+
+        if not branch_nodes:
+            raise NativeCompileError(
+                "parallel() branch list must not be empty",
+                branch_arg,
+            )
+
+        # Resolve all branch callables
+        branch_funcs: list[Callable[..., Any]] = []
+        branch_names: list[str] = []
+        seen_ids: set[int] = set()
+        for i, bn in enumerate(branch_nodes):
+            try:
+                bf = self._resolve_callable(bn)
+            except NativeCompileError:
+                raise
+            except Exception as exc:
+                raise NativeCompileError(
+                    f"Cannot resolve parallel branch {i}: {exc}", bn
+                ) from exc
+
+            if not is_phase(bf):
+                raise NativeCompileError(
+                    f"parallel() branch {i} ({getattr(bf, '__name__', bf)!r}) "
+                    "is not a @phase-decorated function",
+                    bn,
+                )
+
+            bid = id(bf)
+            if bid in seen_ids:
+                raise NativeCompileError(
+                    f"parallel() contains duplicate branch: "
+                    f"{getattr(bf, '__name__', bf)!r}",
+                    bn,
+                )
+            seen_ids.add(bid)
+            branch_funcs.append(bf)
+            meta = get_phase_meta(bf)
+            branch_names.append(meta["name"] if meta else getattr(bf, "__name__", f"branch_{i}"))
+
+        # Extract reducer and optional name from keyword arguments
+        reducer: Callable[..., Any] | None = None
+        explicit_name: str | None = None
+        for kw in iter_node.keywords:
+            if kw.arg == "reducer":
+                try:
+                    reducer = self._resolve_callable(kw.value)
+                except NativeCompileError:
+                    raise
+                except Exception as exc:
+                    raise NativeCompileError(
+                        f"Cannot resolve parallel reducer: {exc}", kw.value
+                    ) from exc
+                if not callable(reducer):
+                    raise NativeCompileError(
+                        "parallel() reducer must be callable", kw.value
+                    )
+            elif kw.arg == "name":
+                if isinstance(kw.value, ast.Constant) and isinstance(kw.value.value, str):
+                    explicit_name = kw.value.value
+                else:
+                    raise NativeCompileError(
+                        "parallel() name must be a string literal", kw.value
+                    )
+            else:
+                raise NativeCompileError(
+                    f"Unsupported parallel() keyword: {kw.arg!r}", kw
+                )
+
+        # Generate a block name
+        if explicit_name:
+            block_name = explicit_name
+        else:
+            block_name = f"parallel_{self._parallel_block_counter}"
+            self._parallel_block_counter += 1
+
+        # Emit the parallel instruction
+        parallel_pc = self._emit("parallel", name=block_name)
+
+        # Lower each branch body with the corresponding callable substituted
+        branch_start_pcs: list[int] = []
+        for i, bf in enumerate(branch_funcs):
+            branch_start_pcs.append(self._pc)
+            self._pending_halt = False
+            # Walk the for-body and substitute the iteration variable with the
+            # concrete branch callable.  The body expects ``yield branch(ctx)``
+            # where ``branch`` is the for-loop target variable.
+            target_var = stmt.target
+            if not isinstance(target_var, ast.Name):
+                raise NativeCompileError(
+                    "for loop target must be a simple name", target_var
+                )
+            self._lower_for_body_with_substitution(
+                stmt.body, target_var.id, bf
+            )
+            # After each branch body, jump to merge point (if body doesn't halt)
+            if not self._pending_halt and i < len(branch_funcs) - 1:
+                # Intermediate jump — placeholder, patched after merge is known
+                self._emit("jump", name=f"{block_name}_branch_{i}_exit")
+            elif not self._pending_halt:
+                # Last branch: fall through to merge, no jump needed
+                pass
+
+        # Merge point
+        merge_pc = self._pc
+
+        # Patch the intermediate jumps to point to merge
+        for instr in self._instructions:
+            if instr.op == "jump" and instr.name.startswith(f"{block_name}_branch_") and instr.name.endswith("_exit"):
+                if instr.next_pc is None:
+                    idx = instr.pc
+                    self._instructions[idx] = NativeInstruction(
+                        pc=instr.pc,
+                        op="jump",
+                        name=instr.name,
+                        next_pc=merge_pc,
+                        produces=(),
+                        consumes=(),
+                        decision_vocabulary=frozenset(),
+                    )
+
+        # Create the ParallelInstruction metadata
+        parallel_block = ParallelInstruction(
+            name=block_name,
+            branches=tuple(branch_names),
+            branch_funcs=tuple(branch_funcs),
+            reducer=reducer,
+            merge_pc=merge_pc,
+        )
+        self._parallel_blocks.append(parallel_block)
+
+    def _lower_for_body_with_substitution(
+        self,
+        body: list[ast.stmt],
+        var_name: str,
+        substitute_func: Callable[..., Any],
+    ) -> None:
+        """Lower a for-loop body with the iteration variable substituted.
+
+        Temporarily adds *substitute_func* to ``_pipeline_globals`` under
+        *var_name* so that ``_resolve_callable`` can find it when the body
+        contains ``yield <var_name>(ctx)``.
+        """
+        # Save the old globals entry (if any) and inject the substitute
+        old_value = self._pipeline_globals.get(var_name)
+        self._pipeline_globals[var_name] = substitute_func
+        try:
+            for stmt in body:
+                self._lower_stmt(stmt)
+        finally:
+            # Restore the old globals entry
+            if old_value is not None:
+                self._pipeline_globals[var_name] = old_value
+            else:
+                self._pipeline_globals.pop(var_name, None)
+
     # ── final assembly ────────────────────────────────────────────
 
     def emit(
@@ -638,7 +859,7 @@ class _Compiler:
 
         # Fix up sequential next_pc links for non-branch instructions
         for i, instr in enumerate(self._instructions):
-            if instr.op in ("phase", "jump") and instr.next_pc is None:
+            if instr.op in ("phase", "jump", "parallel") and instr.next_pc is None:
                 next_pc = i + 1
                 if next_pc < len(self._instructions):
                     self._instructions[i] = NativeInstruction(
@@ -659,5 +880,6 @@ class _Compiler:
             phases=tuple(self._phases),
             decisions=tuple(self._decisions),
             loop_guards=tuple(self._loop_guards),
+            parallel_blocks=tuple(self._parallel_blocks),
             description=description,
         )

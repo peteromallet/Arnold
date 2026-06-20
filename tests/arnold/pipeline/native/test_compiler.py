@@ -19,8 +19,10 @@ from arnold.pipeline.native import (
     NativeLoopGuard,
     NativePhase,
     NativeProgram,
+    ParallelInstruction,
     compile_pipeline,
     decision,
+    parallel,
     phase,
     pipeline,
 )
@@ -728,3 +730,165 @@ class TestCompileIRTrip:
         pcs = [i.pc for i in prog.instructions]
         assert pcs == sorted(pcs)
         assert pcs == list(range(len(pcs)))
+
+
+# ── parallel fan-out / fan-in compilation ─────────────────────────────
+
+
+class TestParallelCompilation:
+    """Compiler lowers ``for x in parallel([...])`` to parallel IR."""
+
+    def test_parallel_static_branches_compile(self) -> None:
+        @phase
+        def branch_a(ctx: object) -> dict:
+            return {"a": 1}
+
+        @phase
+        def branch_b(ctx: object) -> dict:
+            return {"b": 2}
+
+        @pipeline
+        def my_pipe(ctx: object) -> dict:
+            for branch in parallel([branch_a, branch_b], name="ab"):
+                state = yield branch(ctx)
+            return state
+
+        prog = compile_pipeline(my_pipe)
+        assert len(prog.parallel_blocks) == 1
+        block = prog.parallel_blocks[0]
+        assert isinstance(block, ParallelInstruction)
+        assert block.name == "ab"
+        assert block.branches == ("branch_a", "branch_b")
+        assert block.branch_funcs == (branch_a, branch_b)
+        assert block.merge_pc is not None
+
+        # A parallel op should appear in the instruction stream.
+        parallel_instr = [i for i in prog.instructions if i.op == "parallel"]
+        assert len(parallel_instr) == 1
+        assert parallel_instr[0].name == "ab"
+
+    def test_parallel_block_default_name(self) -> None:
+        @phase
+        def only(ctx: object) -> dict:
+            return {}
+
+        @pipeline
+        def my_pipe(ctx: object) -> dict:
+            for branch in parallel([only]):
+                state = yield branch(ctx)
+            return state
+
+        prog = compile_pipeline(my_pipe)
+        assert prog.parallel_blocks[0].name == "parallel_0"
+
+    def test_parallel_reducer_stored(self) -> None:
+        @phase
+        def branch_a(ctx: object) -> dict:
+            return {"a": 1}
+
+        @phase
+        def branch_b(ctx: object) -> dict:
+            return {"b": 2}
+
+        def reducer(results: list[object]) -> dict:
+            return {}
+
+        @pipeline
+        def my_pipe(ctx: object) -> dict:
+            for branch in parallel([branch_a, branch_b], reducer=reducer):
+                state = yield branch(ctx)
+            return state
+
+        prog = compile_pipeline(my_pipe)
+        assert prog.parallel_blocks[0].reducer is reducer
+
+    def test_parallel_branch_order_preserved(self) -> None:
+        @phase
+        def first(ctx: object) -> dict:
+            return {}
+
+        @phase
+        def second(ctx: object) -> dict:
+            return {}
+
+        @phase
+        def third(ctx: object) -> dict:
+            return {}
+
+        @pipeline
+        def my_pipe(ctx: object) -> dict:
+            for branch in parallel([first, second, third]):
+                state = yield branch(ctx)
+            return state
+
+        prog = compile_pipeline(my_pipe)
+        assert prog.parallel_blocks[0].branches == ("first", "second", "third")
+
+    def test_parallel_empty_rejected_at_declaration(self) -> None:
+        with pytest.raises(ValueError, match="at least one branch"):
+            parallel([])  # type: ignore[arg-type]
+
+    def test_parallel_duplicate_branch_rejected(self) -> None:
+        @phase
+        def dup(ctx: object) -> dict:
+            return {}
+
+        with pytest.raises(ValueError, match="duplicate branch"):
+            parallel([dup, dup])
+
+    def test_parallel_non_phase_branch_rejected(self) -> None:
+        def not_a_phase(ctx: object) -> dict:
+            return {}
+
+        with pytest.raises(TypeError, match="not a @phase"):
+            parallel([not_a_phase])  # type: ignore[list-item]
+
+    def test_parallel_non_callable_branch_rejected(self) -> None:
+        with pytest.raises(TypeError, match="not callable"):
+            parallel([42])  # type: ignore[list-item]
+
+    def test_parallel_dynamic_branches_rejected_at_compile(self) -> None:
+        @phase
+        def branch_a(ctx: object) -> dict:
+            return {}
+
+        dynamic = [branch_a]
+
+        @pipeline
+        def my_pipe(ctx: object) -> dict:
+            for branch in parallel(dynamic):  # type: ignore[arg-type]
+                state = yield branch(ctx)
+            return state
+
+        with pytest.raises(NativeCompileError) as exc_info:
+            compile_pipeline(my_pipe)
+        assert "parallel() argument must be a literal list or tuple" in str(exc_info.value)
+
+    def test_parallel_non_callable_iterable_rejected_at_compile(self) -> None:
+        @phase
+        def branch_a(ctx: object) -> dict:
+            return {}
+
+        @pipeline
+        def my_pipe(ctx: object) -> dict:
+            for branch in parallel(branch_a):  # type: ignore[arg-type]
+                state = yield branch(ctx)
+            return state
+
+        with pytest.raises(NativeCompileError) as exc_info:
+            compile_pipeline(my_pipe)
+        assert "literal list or tuple" in str(exc_info.value)
+
+    def test_parallel_returns_list_like_with_metadata(self) -> None:
+        @phase
+        def branch_a(ctx: object) -> dict:
+            return {}
+
+        @phase
+        def branch_b(ctx: object) -> dict:
+            return {}
+
+        result = parallel([branch_a, branch_b], name="ab")
+        assert list(result) == [branch_a, branch_b]
+        assert result.__parallel_branches__ == (branch_a, branch_b)
+        assert result.__parallel_name__ == "ab"

@@ -23,6 +23,7 @@ from arnold.pipeline.native.decorators import (
     is_decision,
     is_phase,
     is_pipeline,
+    parallel,
     phase,
     pipeline,
 )
@@ -39,6 +40,7 @@ from arnold.pipeline.native.ir import (
     NativePhase,
     NativePipeline,
     NativeProgram,
+    ParallelInstruction,
 )
 from arnold.pipeline.native.runtime import (
     NativeExecutionResult,
@@ -62,6 +64,7 @@ __all__ = [
     "NativeRuntimeHooks",
     "NativeTraceHooks",
     "NullNativeRuntimeHooks",
+    "ParallelInstruction",
     "compile_pipeline",
     "decision",
     "get_decision_meta",
@@ -71,6 +74,7 @@ __all__ = [
     "is_phase",
     "is_pipeline",
     "native_runtime_enabled",
+    "parallel",
     "persist_native_cursor",
     "phase",
     "pipeline",
