@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
+import dataclasses
+import io
 from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any
@@ -72,10 +75,146 @@ def resume_phase_args(cursor: Mapping[str, Any], plan: str) -> list[str]:
     return args
 
 
+class _RunPhaseCompatiblePipeline:
+    """Compatibility wrapper exposing legacy ``run_phase`` on native pipelines."""
+
+    def __init__(self, pipeline: Any) -> None:
+        self._pipeline = pipeline
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._pipeline, name)
+
+    def _phase_step_with_overrides(self, phase: str, overrides: Mapping[str, Any]) -> Any | None:
+        from arnold.pipelines.megaplan.stages.critique import CritiqueStep
+        from arnold.pipelines.megaplan.stages.execute import ExecuteStep
+        from arnold.pipelines.megaplan.stages.finalize import FinalizeStep
+        from arnold.pipelines.megaplan.stages.gate import GateStep
+        from arnold.pipelines.megaplan.stages.plan import PlanStep
+        from arnold.pipelines.megaplan.stages.prep import PrepStep
+        from arnold.pipelines.megaplan.stages.revise import ReviseStep
+        from arnold.pipelines.megaplan.stages.review import ReviewStep
+        from arnold.pipelines.megaplan.stages.tiebreaker import TiebreakerStep
+
+        factories: dict[str, Callable[..., Any]] = {
+            "prep": PrepStep,
+            "plan": PlanStep,
+            "critique": CritiqueStep,
+            "gate": GateStep,
+            "revise": ReviseStep,
+            "finalize": FinalizeStep,
+            "execute": ExecuteStep,
+            "review": ReviewStep,
+            "tiebreaker": TiebreakerStep,
+        }
+        factory = factories.get(phase)
+        if factory is None:
+            return None
+        return factory(arg_overrides=dict(overrides))
+
+    def run_phase(
+        self,
+        phase: str,
+        *,
+        plan: str,
+        cwd: Path | None = None,
+        plan_dir: Path | None = None,
+        argv: list[str] | tuple[str, ...] | None = None,
+        progress_env: dict[str, str] | None = None,
+    ) -> tuple[int, str, str]:
+        from arnold.pipelines.megaplan._core import find_plan_dir
+        from arnold.pipelines.megaplan._core.io import json_dump
+        from arnold.pipelines.megaplan._pipeline.types import (
+            StepContext,
+            _phase_arg_overrides,
+            _phase_namespace,
+            _read_phase_state,
+        )
+        from arnold.pipelines.megaplan.types import CliError
+
+        root = Path(cwd or Path.cwd())
+        resolved_plan_dir = Path(plan_dir) if plan_dir is not None else find_plan_dir(root, plan)
+        if resolved_plan_dir is None:
+            return 1, "", f"Plan {plan!r} does not exist"
+
+        stdout = io.StringIO()
+        stderr = io.StringIO()
+
+        try:
+            if phase == "feedback" and phase not in self.stages:
+                from arnold.pipelines.megaplan.cli.feedback import handle_feedback
+
+                args = _phase_namespace(
+                    phase,
+                    plan=plan,
+                    argv=argv,
+                    progress_env=progress_env,
+                )
+                with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+                    response = handle_feedback(root, args)
+                return 0, stdout.getvalue() or json_dump(response), stderr.getvalue()
+
+            if phase not in self.stages:
+                return 1, "", f"phase {phase!r} is not in pipeline; available: {sorted(self.stages)}"
+
+            node = self.stages[phase]
+            if not hasattr(node, "step"):
+                return 1, "", f"phase {phase!r} is not a single-stage phase"
+
+            state = _read_phase_state(resolved_plan_dir)
+            overrides = _phase_arg_overrides(phase, argv=argv)
+            step = node.step
+            if overrides:
+                if hasattr(step, "arg_overrides") and dataclasses.is_dataclass(step):
+                    current = getattr(step, "arg_overrides", {}) or {}
+                    step = dataclasses.replace(step, arg_overrides={**dict(current), **overrides})
+                else:
+                    override_step = self._phase_step_with_overrides(phase, overrides)
+                    if override_step is not None:
+                        step = override_step
+            ctx = StepContext(
+                plan_dir=resolved_plan_dir,
+                state=state,
+                profile={
+                    "root": root,
+                    "project_dir": (state.get("config") or {}).get("project_dir", str(root)),
+                },
+                mode=(state.get("config") or {}).get("mode", "code"),
+                inputs={"_pipeline": "megaplan", "_progress_env": progress_env or {}},
+            )
+            with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+                if hasattr(step, "run") and callable(step.run):
+                    result = step.run(ctx)
+                elif callable(step):
+                    result = step(ctx)
+                else:
+                    return 1, "", f"phase {phase!r} is not runnable"
+            payload = {
+                "success": True,
+                "step": phase,
+                "next": result.next,
+                "outputs": {key: str(value) for key, value in result.outputs.items()},
+            }
+            return 0, stdout.getvalue() or json_dump(payload), stderr.getvalue()
+        except CliError as error:
+            payload: dict[str, Any] = {
+                "success": False,
+                "error": error.code,
+                "message": error.message,
+            }
+            if error.extra:
+                payload["details"] = dict(error.extra)
+            return error.exit_code, stdout.getvalue(), stderr.getvalue() + json_dump(payload)
+        except Exception as error:  # noqa: BLE001 - preserve CLI-like failure surface.
+            return 1, stdout.getvalue(), stderr.getvalue() + f"{type(error).__name__}: {error}"
+
+
 def _pipeline():
     from arnold.pipelines.megaplan.pipeline import build_pipeline
 
-    return build_pipeline()
+    pipeline = build_pipeline()
+    if hasattr(pipeline, "run_phase"):
+        return pipeline
+    return _RunPhaseCompatiblePipeline(pipeline)
 
 
 def _invalid_request(message: str, **details: Any) -> OperationResult:
