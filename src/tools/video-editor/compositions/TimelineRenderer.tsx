@@ -1,8 +1,15 @@
 import { AbsoluteFill, Sequence } from 'remotion';
-import { Component, memo, useMemo, type FC, type ReactNode } from 'react';
+import { Component, memo, useContext, useMemo, useSyncExternalStore, type FC, type ReactNode } from 'react';
 import { getAudioTracks, getVisualTracks } from '@/tools/video-editor/lib/editor-utils.ts';
 import { getClipDurationInFrames, getTimelineDurationInFrames, secondsToFrames } from '@/tools/video-editor/lib/config-utils.ts';
-import { BUILTIN_CLIP_TYPES, type ParameterSchema, type ResolvedTimelineClip, type ResolvedTimelineConfig, type TrackDefinition } from '@/tools/video-editor/types/index.ts';
+import {
+  BUILTIN_CLIP_TYPES,
+  type ParameterSchema,
+  type ResolvedTimelineClip,
+  type ResolvedTimelineConfig,
+  type TimelineConfig,
+  type TrackDefinition,
+} from '@/tools/video-editor/types/index.ts';
 import { AudioTrack } from '@/tools/video-editor/compositions/AudioTrack.tsx';
 import { AudioAnalysisProvider } from '@/tools/video-editor/compositions/AudioAnalysisProvider.tsx';
 import { EffectLayerSequence } from '@/tools/video-editor/compositions/EffectLayerSequence.tsx';
@@ -29,8 +36,21 @@ import {
 } from '@/tools/video-editor/sequences/registry.ts';
 import { useSequenceComponentRegistrySnapshot } from '@/tools/video-editor/sequences/SequenceComponentRegistryContext.tsx';
 import { useClipTypeRegistrySnapshot } from '@/tools/video-editor/clip-types/ClipTypeRegistryContext.tsx';
-import type { ClipRendererProps, ClipTypeRegistryRecord } from '@/tools/video-editor/clip-types/ClipTypeRegistry.ts';
+import type {
+  ClipRendererLiveBinding,
+  ClipRendererLiveProps,
+  ClipRendererProps,
+  ClipTypeRegistryRecord,
+} from '@/tools/video-editor/clip-types/ClipTypeRegistry.ts';
 import { applyAutomationOverrides, resolveAnimatedParams } from '@/tools/video-editor/keyframes/index.ts';
+import { DataProviderContext } from '@/tools/video-editor/contexts/DataProviderContext.tsx';
+import {
+  scanTimelineLiveBindings,
+  type TimelineLiveBindingRecord,
+  type TimelineLiveSourceSnapshot,
+} from '@/tools/video-editor/lib/timeline-domain.ts';
+import type { LiveDataRegistry, LiveDataRegistrySnapshot } from '@/tools/video-editor/runtime/liveDataRegistry.ts';
+import type { LiveChannelDescriptor, LiveChannelMetadata, LiveSample, LiveSource } from '@reigh/editor-sdk';
 
 // Phase 4d (Sprint 5): EFFECT_REGISTRY dispatch.
 //
@@ -194,6 +214,569 @@ function interpolatedParamsToRecord(
   return record;
 }
 
+type LiveBindingRecordsByClip = ReadonlyMap<string, readonly TimelineLiveBindingRecord[]>;
+
+const LIVE_BINDING_PLACEHOLDER_STATUSES = new Set([
+  'inactive',
+  'missing',
+  'disposed',
+  'orphaned',
+  'partiallyBaked',
+  'malformed',
+]);
+
+type LiveFramePlaceholderState =
+  | 'inactive'
+  | 'permission-pending'
+  | 'pending'
+  | 'refining'
+  | 'cancelled'
+  | 'error'
+  | 'missing'
+  | 'orphaned'
+  | 'disposed'
+  | 'partiallyBaked'
+  | 'malformed';
+
+type LiveFrameReadResult =
+  | {
+      kind: 'frame';
+      sample: LiveSample;
+      src: string;
+      state: 'ready' | 'pending' | 'refining' | 'final';
+      progress?: number;
+    }
+  | {
+      kind: 'placeholder';
+      state: LiveFramePlaceholderState;
+      progress?: number;
+      detail?: string;
+    };
+
+function groupLiveBindingRecordsByClip(
+  records: readonly TimelineLiveBindingRecord[],
+): LiveBindingRecordsByClip {
+  const grouped = new Map<string, TimelineLiveBindingRecord[]>();
+  for (const record of records) {
+    const entries = grouped.get(record.clipId) ?? [];
+    entries.push(record);
+    grouped.set(record.clipId, entries);
+  }
+  return grouped;
+}
+
+function liveSourceSnapshotsFromRegistry(
+  snapshot: LiveDataRegistrySnapshot | undefined,
+): readonly TimelineLiveSourceSnapshot[] {
+  if (!snapshot) return Object.freeze([]);
+  return Object.freeze([
+    ...snapshot.sources.map((source) => ({
+      sourceId: source.id,
+      kind: source.kind,
+      status: source.status,
+    })),
+    ...snapshot.tombstones.map((tombstone) => ({
+      sourceId: tombstone.id,
+      kind: tombstone.kind,
+      status: tombstone.status,
+      ownerExtensionId: tombstone.extensionId,
+    })),
+  ]);
+}
+
+function deterministicRefsForRecord(record: TimelineLiveBindingRecord) {
+  return Object.freeze([
+    ...(record.binding.deterministicRefs ?? []),
+    ...(record.binding.bake?.deterministicRefs ?? []),
+  ]);
+}
+
+function toRendererLiveBinding(record: TimelineLiveBindingRecord): ClipRendererLiveBinding {
+  return Object.freeze({
+    bindingId: record.binding.bindingId,
+    sourceId: record.binding.sourceId,
+    channelId: record.binding.channelId,
+    targetParamName: record.binding.targetParamName,
+    status: record.status,
+    binding: record.binding,
+    deterministicRefs: deterministicRefsForRecord(record),
+    diagnostics: Object.freeze(record.diagnostics.map((diagnostic) => Object.freeze({
+      severity: diagnostic.severity,
+      code: diagnostic.code,
+      message: diagnostic.message,
+      path: diagnostic.path,
+    }))),
+  });
+}
+
+const isRecord = (value: unknown): value is Record<string, unknown> => (
+  value !== null && typeof value === 'object' && !Array.isArray(value)
+);
+
+function numericValue(value: unknown): number | undefined {
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  if (typeof value === 'string' && value.trim().length > 0) {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : undefined;
+  }
+  return undefined;
+}
+
+function normalizedProgress(value: unknown): number | undefined {
+  const numeric = numericValue(value);
+  if (numeric === undefined) return undefined;
+  const percent = numeric <= 1 ? numeric * 100 : numeric;
+  return Math.max(0, Math.min(100, Math.round(percent)));
+}
+
+function firstString(...values: unknown[]): string | undefined {
+  for (const value of values) {
+    if (typeof value === 'string' && value.length > 0) return value;
+  }
+  return undefined;
+}
+
+function sampleDataRecord(sample: LiveSample | undefined): Record<string, unknown> | undefined {
+  if (!sample) return undefined;
+  return isRecord(sample.frame.data) ? sample.frame.data : undefined;
+}
+
+function sampleMetadataRecord(sample: LiveSample | undefined): Record<string, unknown> | undefined {
+  if (!sample) return undefined;
+  return isRecord(sample.frame.metadata) ? sample.frame.metadata : undefined;
+}
+
+function sampleFrameSrc(sample: LiveSample | undefined): string | undefined {
+  const data = sampleDataRecord(sample);
+  const metadata = sampleMetadataRecord(sample);
+  return firstString(
+    data?.src,
+    data?.url,
+    data?.dataUrl,
+    data?.dataURL,
+    data?.uri,
+    metadata?.src,
+    metadata?.url,
+    metadata?.dataUrl,
+    metadata?.dataURL,
+    metadata?.uri,
+  );
+}
+
+function sampleFrameState(sample: LiveSample | undefined): 'pending' | 'refining' | 'final' | 'cancelled' | 'error' | undefined {
+  const data = sampleDataRecord(sample);
+  const metadata = sampleMetadataRecord(sample);
+  const raw = firstString(
+    metadata?.state,
+    metadata?.status,
+    metadata?.phase,
+    data?.state,
+    data?.status,
+    data?.phase,
+  )?.toLowerCase();
+
+  if (raw === 'pending' || raw === 'queued' || raw === 'requesting') return 'pending';
+  if (raw === 'refining' || raw === 'refine' || raw === 'progress' || raw === 'processing') return 'refining';
+  if (raw === 'final' || raw === 'ready' || raw === 'complete' || raw === 'completed') return 'final';
+  if (raw === 'cancelled' || raw === 'canceled') return 'cancelled';
+  if (raw === 'error' || raw === 'failed' || raw === 'failure') return 'error';
+  return undefined;
+}
+
+function sampleProgress(sample: LiveSample | undefined): number | undefined {
+  const data = sampleDataRecord(sample);
+  const metadata = sampleMetadataRecord(sample);
+  return normalizedProgress(
+    metadata?.progress
+      ?? metadata?.percent
+      ?? data?.progress
+      ?? data?.percent,
+  );
+}
+
+function bindingProgress(binding: TimelineLiveBindingRecord['binding']): number | undefined {
+  const placeholder = isRecord(binding.placeholder) ? binding.placeholder : undefined;
+  const metadata = isRecord(binding.metadata) ? binding.metadata : undefined;
+  return normalizedProgress(
+    placeholder?.progress
+      ?? placeholder?.percent
+      ?? metadata?.progress
+      ?? metadata?.percent,
+  );
+}
+
+function bindingPreviewHint(binding: TimelineLiveBindingRecord['binding']): string | undefined {
+  const placeholder = isRecord(binding.placeholder) ? binding.placeholder : undefined;
+  const metadata = isRecord(binding.metadata) ? binding.metadata : undefined;
+  return firstString(
+    placeholder?.kind,
+    placeholder?.preview,
+    placeholder?.reader,
+    metadata?.preview,
+    metadata?.previewReader,
+    metadata?.reader,
+    binding.targetParamName,
+  )?.toLowerCase();
+}
+
+function clipPreviewHint(clip: ResolvedTimelineClip): string | undefined {
+  const app = isRecord(clip.app) ? clip.app : undefined;
+  if (app?.livePreview === true || clip.params?.livePreview === true) return 'frame';
+  return firstString(
+    app?.livePreview,
+    app?.livePreviewReader,
+    clip.params?.livePreview,
+    clip.params?.livePreviewReader,
+  )?.toLowerCase();
+}
+
+function shouldUseLiveFramePreview(
+  clip: ResolvedTimelineClip,
+  records: readonly TimelineLiveBindingRecord[],
+): boolean {
+  if (records.length === 0) return false;
+  if (clip.clipType === 'live-frame-preview' || clip.clipType === 'live-visual-preview') return true;
+  const clipHint = clipPreviewHint(clip);
+  if (clipHint === 'frame' || clipHint === 'frame-preview' || clipHint === 'live-frame') return true;
+  return records.some((record) => {
+    const hint = bindingPreviewHint(record.binding);
+    return (
+      hint === 'frame'
+      || hint === 'frame-preview'
+      || hint === 'live-frame'
+      || hint === 'src'
+      || hint === 'image'
+      || hint === 'video'
+    );
+  });
+}
+
+function sampleFrameIndex(sample: LiveSample): number | undefined {
+  const data = sampleDataRecord(sample);
+  const metadata = sampleMetadataRecord(sample);
+  return numericValue(
+    metadata?.frame
+      ?? metadata?.frameIndex
+      ?? metadata?.frameNumber
+      ?? data?.frame
+      ?? data?.frameIndex
+      ?? data?.frameNumber,
+  );
+}
+
+function resolveTimeSample(samples: readonly LiveSample[], targetTimestampMs: number): LiveSample | undefined {
+  const ordered = [...samples].sort((left, right) => left.frame.timestamp - right.frame.timestamp);
+  let best: LiveSample | undefined;
+  for (const sample of ordered) {
+    if (sample.frame.timestamp <= targetTimestampMs) {
+      best = sample;
+    }
+  }
+  return best ?? ordered[0];
+}
+
+function resolveLiveFrameSample(
+  record: TimelineLiveBindingRecord,
+  clip: ResolvedTimelineClip,
+  fps: number,
+  liveDataRegistry: LiveDataRegistry,
+): LiveSample | undefined {
+  const live = createClipRendererLiveProps([record], liveDataRegistry);
+  const sourceId = record.binding.sourceId;
+  const channelId = record.binding.channelId;
+  const sampling = record.binding.sampling;
+
+  if (sampling?.mode === 'sequence') {
+    return live.readSampleAt(sourceId, sampling.frameOffset ?? 0, channelId);
+  }
+
+  if (sampling?.mode === 'frame') {
+    const targetFrame = sampling.frameOffset ?? secondsToFrames(clip.at, fps);
+    return live.readSamples(sourceId, channelId).find((sample) => sampleFrameIndex(sample) === targetFrame)
+      ?? live.readSampleAt(sourceId, targetFrame, channelId);
+  }
+
+  if (sampling?.mode === 'time') {
+    const targetTimestampMs = (clip.at * 1000) + (sampling.timeOffsetMs ?? 0);
+    return resolveTimeSample(live.readSamples(sourceId, channelId), targetTimestampMs);
+  }
+
+  return live.readLatestSample(sourceId, channelId);
+}
+
+function resolveLiveFrameReadResult(
+  records: readonly TimelineLiveBindingRecord[],
+  clip: ResolvedTimelineClip,
+  fps: number,
+  liveDataRegistry: LiveDataRegistry | undefined,
+): LiveFrameReadResult {
+  const record = records[0];
+  if (!record) {
+    return { kind: 'placeholder', state: 'missing' };
+  }
+
+  const source = liveDataRegistry?.getSource(record.binding.sourceId);
+  if (record.status === 'malformed') return { kind: 'placeholder', state: 'malformed' };
+  if (record.status === 'missing') return { kind: 'placeholder', state: 'missing' };
+  if (record.status === 'orphaned') return { kind: 'placeholder', state: 'orphaned' };
+  if (record.status === 'disposed') return { kind: 'placeholder', state: 'disposed' };
+  if (record.status === 'partiallyBaked') {
+    return { kind: 'placeholder', state: 'partiallyBaked', progress: bindingProgress(record.binding) };
+  }
+
+  if (!liveDataRegistry || record.status !== 'active') {
+    if (source?.permission?.state === 'prompt') {
+      return { kind: 'placeholder', state: 'permission-pending', progress: bindingProgress(record.binding) };
+    }
+    if (source?.status === 'error' || source?.permission?.state === 'denied' || source?.permission?.state === 'unavailable') {
+      return { kind: 'placeholder', state: 'error', detail: source.diagnostics[0]?.message };
+    }
+    return { kind: 'placeholder', state: 'inactive', progress: bindingProgress(record.binding) };
+  }
+
+  if (source?.status === 'error') {
+    return { kind: 'placeholder', state: 'error', detail: source.diagnostics[0]?.message };
+  }
+
+  const sample = resolveLiveFrameSample(record, clip, fps, liveDataRegistry);
+  if (!sample) {
+    return { kind: 'placeholder', state: 'pending', progress: bindingProgress(record.binding) };
+  }
+
+  const state = sampleFrameState(sample);
+  const progress = sampleProgress(sample) ?? bindingProgress(record.binding);
+  if (state === 'cancelled') return { kind: 'placeholder', state: 'cancelled', progress };
+  if (state === 'error') return { kind: 'placeholder', state: 'error', progress };
+
+  const src = sampleFrameSrc(sample);
+  if (!src) {
+    return {
+      kind: 'placeholder',
+      state: state === 'refining' ? 'refining' : 'pending',
+      progress,
+    };
+  }
+
+  return {
+    kind: 'frame',
+    sample,
+    src,
+    state: state ?? 'ready',
+    progress,
+  };
+}
+
+function createClipRendererLiveProps(
+  records: readonly TimelineLiveBindingRecord[],
+  liveDataRegistry: LiveDataRegistry | undefined,
+): ClipRendererLiveProps {
+  const rendererBindings = Object.freeze(records.map(toRendererLiveBinding));
+  const diagnostics = Object.freeze(rendererBindings.flatMap((binding) => binding.diagnostics));
+  const activeRecords = records.filter((record) => record.status === 'active');
+
+  const isActiveSourceBinding = (sourceId: string): boolean => (
+    activeRecords.some((record) => record.binding.sourceId === sourceId)
+  );
+
+  const resolveChannelId = (sourceId: string, channelId?: string): LiveChannelDescriptor | undefined => {
+    if (!liveDataRegistry || !isActiveSourceBinding(sourceId)) return undefined;
+    if (channelId) {
+      const channel = liveDataRegistry.getChannelMetadata(channelId as LiveChannelDescriptor);
+      return channel?.sourceId === sourceId ? channel.channelId : undefined;
+    }
+
+    const boundChannelId = activeRecords.find((record) => (
+      record.binding.sourceId === sourceId && typeof record.binding.channelId === 'string'
+    ))?.binding.channelId;
+    if (boundChannelId) {
+      const channel = liveDataRegistry.getChannelMetadata(boundChannelId as LiveChannelDescriptor);
+      if (channel?.sourceId === sourceId) return channel.channelId;
+    }
+
+    return liveDataRegistry.getSnapshot().channels.find((channel) => channel.sourceId === sourceId)?.channelId;
+  };
+
+  const getSource = (sourceId: string): LiveSource | undefined => {
+    if (!liveDataRegistry || !isActiveSourceBinding(sourceId)) return undefined;
+    return liveDataRegistry.getSource(sourceId);
+  };
+
+  const getChannelMetadata = (
+    sourceId: string,
+    channelId?: string,
+  ): LiveChannelMetadata | undefined => {
+    const resolvedChannelId = resolveChannelId(sourceId, channelId);
+    return resolvedChannelId ? liveDataRegistry?.getChannelMetadata(resolvedChannelId) : undefined;
+  };
+
+  const readLatestSample = (sourceId: string, channelId?: string): LiveSample | undefined => {
+    const resolvedChannelId = resolveChannelId(sourceId, channelId);
+    return resolvedChannelId ? liveDataRegistry?.getLatestSample(resolvedChannelId) : undefined;
+  };
+
+  const readSampleAt = (
+    sourceId: string,
+    sequenceNumber: number,
+    channelId?: string,
+  ): LiveSample | undefined => {
+    const resolvedChannelId = resolveChannelId(sourceId, channelId);
+    return resolvedChannelId ? liveDataRegistry?.getSampleAt(resolvedChannelId, sequenceNumber) : undefined;
+  };
+
+  const readSamples = (sourceId: string, channelId?: string): readonly LiveSample[] => {
+    const resolvedChannelId = resolveChannelId(sourceId, channelId);
+    return resolvedChannelId ? liveDataRegistry?.getSamples(resolvedChannelId) ?? Object.freeze([]) : Object.freeze([]);
+  };
+
+  const getSampleCount = (sourceId: string, channelId?: string): number => {
+    const resolvedChannelId = resolveChannelId(sourceId, channelId);
+    return resolvedChannelId ? liveDataRegistry?.getSampleCount(resolvedChannelId) ?? 0 : 0;
+  };
+
+  return Object.freeze({
+    bindings: rendererBindings,
+    diagnostics,
+    getSource,
+    getChannelMetadata,
+    readLatestSample,
+    readSampleAt,
+    readSamples,
+    getSampleCount,
+    resolveChannelId,
+  });
+}
+
+const LiveBindingPlaceholderSequence: FC<{
+  clip: ResolvedTimelineClip;
+  fps: number;
+  records: readonly TimelineLiveBindingRecord[];
+}> = ({ clip, fps, records }) => {
+  const durationInFrames = getClipDurationInFrames(clip, fps);
+  const from = Math.max(0, secondsToFrames(clip.at, fps));
+  const statuses = Array.from(new Set(records.map((record) => record.status))).join(',');
+  const bindingIds = records.map((record) => record.binding.bindingId).join(',');
+  return (
+    <Sequence key={clip.id} from={from} durationInFrames={durationInFrames}>
+      <AbsoluteFill
+        data-testid="live-binding-placeholder"
+        data-clip-id={clip.id}
+        data-live-binding-status={statuses}
+        data-live-binding-ids={bindingIds}
+        style={{
+          backgroundColor: '#3B1D0A',
+          borderTop: '2px solid #FB923C',
+          borderBottom: '2px solid #FB923C',
+          color: '#FED7AA',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          padding: '12px 24px',
+          textAlign: 'center',
+          fontFamily: 'ui-monospace, SFMono-Regular, "Roboto Mono", Menlo, Consolas, monospace',
+          fontSize: 14,
+          lineHeight: 1.4,
+          letterSpacing: '0.04em',
+        }}
+      >
+        <div
+          style={{
+            maxWidth: '80%',
+            padding: '8px 16px',
+            borderRadius: 4,
+            background: 'rgba(0, 0, 0, 0.45)',
+          }}
+        >
+          Live binding unresolved: {statuses || 'unknown'}
+        </div>
+      </AbsoluteFill>
+    </Sequence>
+  );
+};
+
+const LiveFramePlaceholderBody: FC<{
+  clip: ResolvedTimelineClip;
+  records: readonly TimelineLiveBindingRecord[];
+  result: Extract<LiveFrameReadResult, { kind: 'placeholder' }>;
+}> = ({ clip, records, result }) => {
+  const bindingIds = records.map((record) => record.binding.bindingId).join(',');
+  return (
+    <AbsoluteFill
+      data-testid="live-frame-placeholder"
+      data-clip-id={clip.id}
+      data-live-frame-state={result.state}
+      data-live-binding-ids={bindingIds}
+      data-live-frame-progress={result.progress === undefined ? undefined : String(result.progress)}
+      style={{
+        backgroundColor: '#101828',
+        borderTop: '2px solid #22c55e',
+        borderBottom: '2px solid #22c55e',
+        color: '#dcfce7',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        padding: '12px 24px',
+        textAlign: 'center',
+        fontFamily: 'ui-monospace, SFMono-Regular, "Roboto Mono", Menlo, Consolas, monospace',
+        fontSize: 14,
+        lineHeight: 1.4,
+        letterSpacing: '0.04em',
+      }}
+    >
+      <div
+        style={{
+          maxWidth: '80%',
+          padding: '8px 16px',
+          borderRadius: 4,
+          background: 'rgba(0, 0, 0, 0.45)',
+        }}
+      >
+        Live frame preview: {result.state}
+        {result.progress === undefined ? null : ` (${result.progress}%)`}
+      </div>
+    </AbsoluteFill>
+  );
+};
+
+const LiveFramePreviewSequence: FC<{
+  clip: ResolvedTimelineClip;
+  fps: number;
+  records: readonly TimelineLiveBindingRecord[];
+  liveDataRegistry?: LiveDataRegistry;
+}> = ({ clip, fps, records, liveDataRegistry }) => {
+  const durationInFrames = getClipDurationInFrames(clip, fps);
+  const from = Math.max(0, secondsToFrames(clip.at, fps));
+  const result = resolveLiveFrameReadResult(records, clip, fps, liveDataRegistry);
+
+  return (
+    <Sequence key={clip.id} from={from} durationInFrames={durationInFrames}>
+      {result.kind === 'placeholder' ? (
+        <LiveFramePlaceholderBody clip={clip} records={records} result={result} />
+      ) : (
+        <AbsoluteFill
+          data-testid="live-frame-preview"
+          data-clip-id={clip.id}
+          data-live-frame-state={result.state}
+          data-live-frame-progress={result.progress === undefined ? undefined : String(result.progress)}
+          data-live-frame-sequence={String(result.sample.sequenceNumber)}
+          data-live-frame-timestamp={String(result.sample.frame.timestamp)}
+          style={{ backgroundColor: 'black', overflow: 'hidden' }}
+        >
+          <img
+            alt=""
+            src={result.src}
+            style={{
+              width: '100%',
+              height: '100%',
+              objectFit: 'contain',
+              display: 'block',
+            }}
+          />
+        </AbsoluteFill>
+      )}
+    </Sequence>
+  );
+};
+
 /**
  * Error boundary that catches renderer crashes and shows a loud placeholder.
  * Extension renderers are trusted local code but may throw at runtime
@@ -225,6 +808,8 @@ interface ExtensionClipSequenceProps {
   resolution: string;
   /** All timeline clips (needed for automation override resolution). */
   allClips: readonly ResolvedTimelineClip[];
+  liveBindingRecords: readonly TimelineLiveBindingRecord[];
+  liveDataRegistry?: LiveDataRegistry;
 }
 
 /**
@@ -249,6 +834,8 @@ const ExtensionClipSequence: FC<ExtensionClipSequenceProps> = ({
   registryRecord,
   resolution,
   allClips,
+  liveBindingRecords,
+  liveDataRegistry,
 }) => {
   const durationInFrames = getClipDurationInFrames(clip, fps);
   const from = Math.max(0, secondsToFrames(clip.at, fps));
@@ -287,6 +874,7 @@ const ExtensionClipSequence: FC<ExtensionClipSequenceProps> = ({
     params: interpolatedParams,
     width,
     height,
+    live: createClipRendererLiveProps(liveBindingRecords, liveDataRegistry),
   };
 
   // Extension renderers are stored as `Record<string, unknown> | Function`.
@@ -319,12 +907,23 @@ interface VisualTrackProps {
   resolution: string;
   /** All timeline clips (needed for automation override resolution). */
   allClips: readonly ResolvedTimelineClip[];
+  liveBindingRecordsByClip: LiveBindingRecordsByClip;
+  liveDataRegistry?: LiveDataRegistry;
 }
 
 // Lifted into a component so we can call useSequenceComponentRegistrySnapshot
 // once per visual track. Keeps the dynamic-registry subscription out of the
 // per-clip dispatch loop.
-const VisualTrack: FC<VisualTrackProps> = ({ track, clips, fps, theme, resolution, allClips }) => {
+const VisualTrack: FC<VisualTrackProps> = ({
+  track,
+  clips,
+  fps,
+  theme,
+  resolution,
+  allClips,
+  liveBindingRecordsByClip,
+  liveDataRegistry,
+}) => {
   const { entries: dynamicEntries } = useSequenceComponentRegistrySnapshot();
   const clipTypeRegistry = useClipTypeRegistrySnapshot();
   const sortedClips = sortClipsByAt(clips);
@@ -341,6 +940,33 @@ const VisualTrack: FC<VisualTrackProps> = ({ track, clips, fps, theme, resolutio
       }}
     >
       {sortedClips.map((clip, index) => {
+        const liveBindingRecords = liveBindingRecordsByClip.get(clip.id) ?? Object.freeze([]);
+        if (shouldUseLiveFramePreview(clip, liveBindingRecords)) {
+          return (
+            <LiveFramePreviewSequence
+              key={clip.id}
+              clip={clip}
+              fps={fps}
+              records={liveBindingRecords}
+              liveDataRegistry={liveDataRegistry}
+            />
+          );
+        }
+
+        const livePlaceholderRecords = liveBindingRecords.filter((record) => (
+          LIVE_BINDING_PLACEHOLDER_STATUSES.has(record.status)
+        ));
+        if (livePlaceholderRecords.length > 0) {
+          return (
+            <LiveBindingPlaceholderSequence
+              key={clip.id}
+              clip={clip}
+              fps={fps}
+              records={livePlaceholderRecords}
+            />
+          );
+        }
+
         // Dynamic-aware capability lookup (FLAG-001/002). DB-stored sequence
         // components surface workerRender:false through this path.
         const descriptor = describeClipCapabilityWith(clip, dynamicEntries);
@@ -415,6 +1041,8 @@ const VisualTrack: FC<VisualTrackProps> = ({ track, clips, fps, theme, resolutio
                   registryRecord={extensionRecord}
                   resolution={resolution}
                   allClips={allClips}
+                  liveBindingRecords={liveBindingRecords}
+                  liveDataRegistry={liveDataRegistry}
                 />
               );
             }
@@ -517,6 +1145,13 @@ const VisualTrack: FC<VisualTrackProps> = ({ track, clips, fps, theme, resolutio
 };
 
 export const TimelineRenderer: FC<{ config: ResolvedTimelineConfig }> = memo(({ config }) => {
+  const runtime = useContext(DataProviderContext);
+  const liveDataRegistry = runtime?.liveDataRegistry;
+  const liveRegistrySnapshot = useSyncExternalStore(
+    (listener) => liveDataRegistry?.subscribe(listener).dispose ?? (() => {}),
+    () => liveDataRegistry?.getSnapshot(),
+    () => liveDataRegistry?.getSnapshot(),
+  );
   const renderConfig = useMemo(() => materializeResolvedSequenceConfig(config), [config]);
   const fps = renderConfig.output.fps;
   const theme = useMemo(() => resolveTimelineRenderTheme(renderConfig), [renderConfig]);
@@ -548,6 +1183,10 @@ export const TimelineRenderer: FC<{ config: ResolvedTimelineConfig }> = memo(({ 
       return groups;
     }, { regular: {}, effectLayers: {}, all: {} });
   }, [renderConfig]);
+  const liveBindingScan = scanTimelineLiveBindings(renderConfig as TimelineConfig, {
+    sources: liveSourceSnapshotsFromRegistry(liveRegistrySnapshot),
+  });
+  const liveBindingRecordsByClip = groupLiveBindingRecordsByClip(liveBindingScan.bindings);
 
   const visualContent = useMemo(() => {
     const resolution = renderConfig.output.resolution;
@@ -556,7 +1195,19 @@ export const TimelineRenderer: FC<{ config: ResolvedTimelineConfig }> = memo(({ 
     for (const track of visualTracks) {
       const trackClips = clipsByTrack.regular[track.id] ?? [];
       const trackContent: ReactNode = trackClips.length > 0
-        ? <VisualTrack key={track.id} track={track} clips={trackClips} fps={fps} theme={theme} resolution={resolution} allClips={renderConfig.clips} />
+        ? (
+            <VisualTrack
+              key={track.id}
+              track={track}
+              clips={trackClips}
+              fps={fps}
+              theme={theme}
+              resolution={resolution}
+              allClips={renderConfig.clips}
+              liveBindingRecordsByClip={liveBindingRecordsByClip}
+              liveDataRegistry={liveDataRegistry}
+            />
+          )
         : null;
       let lowerTrackContent: ReactNode = accumulated;
       const effectLayers = sortClipsByAt(clipsByTrack.effectLayers[track.id] ?? []);
@@ -577,7 +1228,17 @@ export const TimelineRenderer: FC<{ config: ResolvedTimelineConfig }> = memo(({ 
     }
 
     return accumulated;
-  }, [clipsByTrack.effectLayers, clipsByTrack.regular, fps, theme, visualTracks]);
+  }, [
+    clipsByTrack.effectLayers,
+    clipsByTrack.regular,
+    fps,
+    liveBindingRecordsByClip,
+    liveDataRegistry,
+    renderConfig.clips,
+    renderConfig.output.resolution,
+    theme,
+    visualTracks,
+  ]);
 
   return (
     <AudioAnalysisProvider clips={audioClips} fps={fps} totalDurationInFrames={totalDurationInFrames}>

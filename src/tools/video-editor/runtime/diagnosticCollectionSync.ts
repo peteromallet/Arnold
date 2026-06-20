@@ -2,6 +2,7 @@ import type {
   Diagnostic,
   DiagnosticCollection,
   ExtensionDiagnostic,
+  LiveSourceDiagnostic,
 } from '@reigh/editor-sdk';
 import type {
   CapabilityFinding,
@@ -13,6 +14,7 @@ export type DiagnosticCollectionSource =
   | 'extension-lifecycle'
   | 'command-registry'
   | 'clip-type-registry'
+  | 'live-registry'
   | 'export-guard'
   | 'render-planner';
 
@@ -101,5 +103,35 @@ export function syncPlannerDiagnosticsToCollection(
   collection.remove((diagnostic) => diagnostic.detail?.source === 'render-planner');
   items.forEach((item, index) => {
     collection.publish(plannerFindingToDiagnostic(item, index));
+  });
+}
+
+
+export function syncLiveDiagnosticsToCollection(
+  collection: DiagnosticCollection | undefined,
+  diagnostics: readonly LiveSourceDiagnostic[],
+): void {
+  if (!collection) return;
+  collection.remove((diagnostic) => diagnostic.detail?.source === 'live-registry');
+  diagnostics.forEach((diagnostic, index) => {
+    const id = [
+      'live-registry',
+      diagnostic.code,
+      diagnostic.sourceId ?? 'registry',
+      diagnostic.channelId ?? 'runtime',
+      index,
+    ].join(':');
+    collection.publish({
+      id,
+      severity: diagnostic.severity,
+      code: diagnostic.code,
+      message: diagnostic.message,
+      detail: {
+        ...(diagnostic.detail ?? {}),
+        source: 'live-registry',
+        ...(diagnostic.sourceId ? { sourceId: diagnostic.sourceId } : {}),
+        ...(diagnostic.channelId ? { channelId: diagnostic.channelId } : {}),
+      },
+    });
   });
 }

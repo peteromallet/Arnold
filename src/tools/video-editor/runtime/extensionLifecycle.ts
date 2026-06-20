@@ -18,6 +18,7 @@ import type {
   DiagnosticSeverity,
 } from '@reigh/editor-sdk';
 import { disposeExtensionContextServices } from '@reigh/editor-sdk';
+import type { LiveDataRegistry } from '@/tools/video-editor/runtime/liveDataRegistry.ts';
 
 // ---------------------------------------------------------------------------
 // Lifecycle state
@@ -488,12 +489,22 @@ export interface ExtensionLifecycleHost {
    * Called exactly once per lifecycle with its extension ID.
    */
   onLifecycleDisposed(callback: (extensionId: string) => void): DisposeHandle;
+
+  /** The live data registry associated with this host (if any). */
+  readonly liveDataRegistry: LiveDataRegistry | undefined;
 }
 
 /**
  * Create a new ExtensionLifecycleHost.
+ *
+ * @param liveDataRegistry  Optional live data registry. When provided, the host
+ *   will orphan-dispose live sources owned by extensions when they are removed
+ *   or when the host itself is disposed. Tombstones are preserved so that
+ *   orphaned/disposed bindings continue to be diagnosed after remount.
  */
-export function createExtensionLifecycleHost(): ExtensionLifecycleHost {
+export function createExtensionLifecycleHost(
+  liveDataRegistry?: LiveDataRegistry,
+): ExtensionLifecycleHost {
   const lifecycles = new Map<string, ExtensionLifecycle>();
   const hostDiagnostics: ExtensionDiagnostic[] = [];
   const disposedCallbacks = new Set<(extensionId: string) => void>();
@@ -547,6 +558,14 @@ export function createExtensionLifecycleHost(): ExtensionLifecycleHost {
           const oldId = existing.extensionId;
           existing.dispose();
           lifecycles.delete(id);
+          // Orphan-dispose live sources owned by the old lifecycle
+          if (liveDataRegistry && !liveDataRegistry.isDisposed) {
+            try {
+              liveDataRegistry.disposeExtensionSources(oldId);
+            } catch {
+              // Swallow registry errors during lifecycle cleanup
+            }
+          }
           notifyLifecycleDisposed(oldId);
           const newLc = createExtensionLifecycle(ext);
           lifecycles.set(id, newLc);
@@ -567,6 +586,14 @@ export function createExtensionLifecycleHost(): ExtensionLifecycleHost {
         const removedId = lc.extensionId;
         lc.dispose();
         lifecycles.delete(id);
+        // Orphan-dispose live sources owned by this extension
+        if (liveDataRegistry && !liveDataRegistry.isDisposed) {
+          try {
+            liveDataRegistry.disposeExtensionSources(removedId);
+          } catch {
+            // Swallow registry errors during lifecycle cleanup
+          }
+        }
         notifyLifecycleDisposed(removedId);
       }
     }
@@ -615,6 +642,17 @@ export function createExtensionLifecycleHost(): ExtensionLifecycleHost {
     }
     lifecycles.clear();
 
+    // Orphan-dispose all live sources for all disposed extensions
+    if (liveDataRegistry && !liveDataRegistry.isDisposed) {
+      for (const id of disposedIds) {
+        try {
+          liveDataRegistry.disposeExtensionSources(id);
+        } catch {
+          // Swallow registry errors during bulk cleanup
+        }
+      }
+    }
+
     for (const id of disposedIds) {
       notifyLifecycleDisposed(id);
     }
@@ -626,6 +664,9 @@ export function createExtensionLifecycleHost(): ExtensionLifecycleHost {
     },
     get diagnostics() {
       return computeDiagnostics();
+    },
+    get liveDataRegistry() {
+      return liveDataRegistry;
     },
     synchronize,
     disposeAll,

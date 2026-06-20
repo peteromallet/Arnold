@@ -9,11 +9,20 @@ import type { EffectRegistryRecord } from '@/tools/video-editor/effects/registry
 import { useEffectRegistryContext } from '@/tools/video-editor/effects/registry/EffectRegistryContext.tsx';
 import { useVideoEditorRuntime } from '@/tools/video-editor/contexts/DataProviderContext.tsx';
 import { EditorRuntimeProvider } from '@/tools/video-editor/contexts/EditorRuntimeProvider.tsx';
+import type { LiveDataRegistry } from '@/tools/video-editor/runtime/liveDataRegistry.ts';
+import type { LivePermissionService } from '@/tools/video-editor/runtime/livePermissions.ts';
 
 const mocks = vi.hoisted(() => {
   const syncSlices = vi.fn();
+  const timelineData = {
+    clips: [],
+    tracks: [],
+    registry: {},
+    config: {},
+  };
   return {
     syncSlices,
+    timelineData,
     useEffectRegistry: vi.fn(),
     emptyEffectCatalog: {
       data: { entrance: [], exit: [], continuous: [] },
@@ -42,7 +51,7 @@ const mocks = vi.hoisted(() => {
     },
     timelineStore: {
       getState: () => ({
-        data: { data: { clips: [], tracks: [], registry: {} } },
+        data: { data: timelineData },
         timelineOps: null,
         syncSlices,
       }),
@@ -425,6 +434,301 @@ describe('EditorRuntimeProvider effect registry lifecycle', () => {
         (diagnostic) => diagnostic.extensionId === extensionId,
       ) ?? [];
       expect(disabledOwnerDiagnostics).toEqual([]);
+    });
+  });
+});
+
+
+describe('EditorRuntimeProvider live data registry lifecycle', () => {
+  it('instantiates liveDataRegistry and livePermissionService on mount and disposes on unmount', async () => {
+    let capturedRegistry: LiveDataRegistry | null = null;
+    let capturedPermissionService: LivePermissionService | null = null;
+
+    function CaptureLiveServices() {
+      const runtime = useVideoEditorRuntime();
+      capturedRegistry = runtime.liveDataRegistry ?? null;
+      capturedPermissionService = runtime.livePermissionService ?? null;
+      return null;
+    }
+
+    const props = {
+      dataProvider: {} as DataProvider,
+      timelineId: 'timeline-1',
+      userId: 'user-1',
+      extensions: [],
+    };
+
+    const { unmount } = render(
+      <EditorRuntimeProvider {...props}>
+        <CaptureLiveServices />
+      </EditorRuntimeProvider>,
+    );
+
+    await waitFor(() => {
+      expect(capturedRegistry).not.toBeNull();
+      expect(capturedPermissionService).not.toBeNull();
+    });
+
+    // Verify registry is not disposed while mounted
+    expect(capturedRegistry?.isDisposed).toBe(false);
+    expect(capturedPermissionService?.isDisposed).toBe(false);
+
+    // Unmount should dispose both
+    unmount();
+
+    expect(capturedRegistry?.isDisposed).toBe(true);
+    expect(capturedPermissionService?.isDisposed).toBe(true);
+  });
+
+  it('exposes sessions through ctx.creative.sessions for extensions', async () => {
+    let capturedSessions: unknown = null;
+    const extensionId = 'com.example.live-sessions';
+
+    const extension = defineExtension({
+      manifest: {
+        id: extensionId as never,
+        version: '1.0.0',
+        label: 'Live sessions extension',
+      },
+      activate(ctx) {
+        capturedSessions = ctx.creative.sessions;
+        return { dispose() {} };
+      },
+    });
+
+    function CaptureContext() {
+      return null;
+    }
+
+    const props = {
+      dataProvider: {} as DataProvider,
+      timelineId: 'timeline-1',
+      userId: 'user-1',
+      extensions: [extension],
+    };
+
+    render(
+      <EditorRuntimeProvider {...props}>
+        <CaptureContext />
+      </EditorRuntimeProvider>,
+    );
+
+    await waitFor(() => {
+      expect(capturedSessions).not.toBeNull();
+    });
+
+    // Verify the sessions object has the expected LiveSessionsService methods
+    expect(typeof (capturedSessions as any)?.registerSource).toBe('function');
+    expect(typeof (capturedSessions as any)?.listSources).toBe('function');
+    expect(typeof (capturedSessions as any)?.openChannel).toBe('function');
+    expect(typeof (capturedSessions as any)?.pushSample).toBe('function');
+    expect(typeof (capturedSessions as any)?.getDiagnostics).toBe('function');
+  });
+
+  it('disposes active live sources on provider unmount', async () => {
+    let capturedRegistry: LiveDataRegistry | null = null;
+    const extensionId = 'com.example.live-dispose';
+
+    const extension = defineExtension({
+      manifest: {
+        id: extensionId as never,
+        version: '1.0.0',
+        label: 'Live dispose extension',
+      },
+      activate(ctx) {
+        const sessions = ctx.creative.sessions;
+        // Register a live source through the sessions API
+        sessions.registerSource({
+          id: 'test-source-1',
+          kind: 'generated',
+          label: 'Test Source',
+        });
+        return { dispose() {} };
+      },
+    });
+
+    function CaptureRegistry() {
+      const runtime = useVideoEditorRuntime();
+      capturedRegistry = runtime.liveDataRegistry ?? null;
+      return null;
+    }
+
+    const props = {
+      dataProvider: {} as DataProvider,
+      timelineId: 'timeline-1',
+      userId: 'user-1',
+      extensions: [extension],
+    };
+
+    const { unmount } = render(
+      <EditorRuntimeProvider {...props}>
+        <CaptureRegistry />
+      </EditorRuntimeProvider>,
+    );
+
+    // Wait for the source to be registered
+    await waitFor(() => {
+      const sources = capturedRegistry?.listSources() ?? [];
+      expect(sources.length).toBe(1);
+      expect(sources[0].id).toBe('test-source-1');
+    });
+
+    // Unmount the provider — should dispose the source
+    unmount();
+
+    // After unmount, the registry should be disposed and sources cleared
+    expect(capturedRegistry?.isDisposed).toBe(true);
+    // Tombstone should exist after disposal
+    const snapshot = (capturedRegistry as any)?.getSnapshot?.();
+    expect(snapshot?.tombstones?.some(
+      (t: any) => t.id === 'test-source-1' && t.extensionId === extensionId,
+    )).toBe(true);
+  });
+
+  it('orphan-disposes extension-owned live sources on extension removal without mutating persisted bindings', async () => {
+    let capturedRegistry: LiveDataRegistry | null = null;
+    const extensionId = 'com.example.live-orphan';
+    const sourceId = 'test-source-orphan';
+    const persistedLiveBindings = [
+      {
+        bindingId: 'binding-1',
+        sourceId,
+        targetClipId: 'clip-1',
+      },
+    ];
+    (mocks.timelineData.config as Record<string, unknown>).liveBindings = persistedLiveBindings;
+    const persistedBefore = JSON.stringify(persistedLiveBindings);
+
+    const extension = defineExtension({
+      manifest: {
+        id: extensionId as never,
+        version: '1.0.0',
+        label: 'Live orphan extension',
+      },
+      activate(ctx) {
+        ctx.creative.sessions.registerSource({
+          id: sourceId,
+          kind: 'generated',
+          label: 'Orphan Source',
+        });
+        return { dispose() {} };
+      },
+    });
+
+    function CaptureRegistry() {
+      const runtime = useVideoEditorRuntime();
+      capturedRegistry = runtime.liveDataRegistry ?? null;
+      return null;
+    }
+
+    const props = {
+      dataProvider: {} as DataProvider,
+      timelineId: 'timeline-1',
+      userId: 'user-1',
+    };
+
+    const { rerender } = render(
+      <EditorRuntimeProvider {...props} extensions={[extension]}>
+        <CaptureRegistry />
+      </EditorRuntimeProvider>,
+    );
+
+    await waitFor(() => {
+      expect(capturedRegistry?.listSources().map((source) => source.id)).toContain(sourceId);
+    });
+
+    (capturedRegistry as any)._addBinding({
+      bindingId: 'binding-1',
+      sourceId,
+      targetClipId: 'clip-1',
+      status: 'resolved',
+    });
+
+    rerender(
+      <EditorRuntimeProvider {...props} extensions={[]}>
+        <CaptureRegistry />
+      </EditorRuntimeProvider>,
+    );
+
+    await waitFor(() => {
+      expect(capturedRegistry?.listSources()).toEqual([]);
+      expect(capturedRegistry?.getSnapshot().tombstones.some(
+        (tombstone: any) =>
+          tombstone.id === sourceId && tombstone.extensionId === extensionId,
+      )).toBe(true);
+    });
+
+    expect(capturedRegistry?.resolveBinding('binding-1').status).toBe('orphaned');
+    expect(capturedRegistry?.getBindingMetadata().orphanedCount).toBe(1);
+    expect(JSON.stringify((mocks.timelineData.config as Record<string, unknown>).liveBindings)).toBe(persistedBefore);
+
+    rerender(
+      <EditorRuntimeProvider {...props} extensions={[extension]}>
+        <CaptureRegistry />
+      </EditorRuntimeProvider>,
+    );
+
+    await waitFor(() => {
+      expect(capturedRegistry?.resolveBinding('binding-1').status).toBe('orphaned');
+      expect(capturedRegistry?.getDiagnostics().some(
+        (diagnostic) =>
+          diagnostic.code === 'live/duplicate-source' && diagnostic.sourceId === sourceId,
+      )).toBe(true);
+    });
+  });
+
+  it('syncs live registry diagnostics to diagnosticCollection', async () => {
+    let capturedCollection: ReturnType<typeof useVideoEditorRuntime>['diagnosticCollection'] = null;
+    const sourceId = 'diagnostic-live-source';
+    const extension = defineExtension({
+      manifest: {
+        id: 'com.example.live-diagnostic' as never,
+        version: '1.0.0',
+        label: 'Live diagnostic extension',
+      },
+      activate(ctx) {
+        ctx.creative.sessions.registerSource({
+          id: sourceId,
+          kind: 'generated',
+          label: 'Diagnostic Source',
+        });
+        return { dispose() {} };
+      },
+    });
+
+    function CaptureDiagnostics() {
+      const runtime = useVideoEditorRuntime();
+      capturedCollection = runtime.diagnosticCollection ?? null;
+      return null;
+    }
+
+    const props = {
+      dataProvider: {} as DataProvider,
+      timelineId: 'timeline-1',
+      userId: 'user-1',
+      extensions: [extension],
+    };
+
+    render(
+      <EditorRuntimeProvider {...props}>
+        <CaptureDiagnostics />
+      </EditorRuntimeProvider>,
+    );
+
+    await waitFor(() => {
+      expect(capturedCollection).not.toBeNull();
+    });
+
+    await waitFor(() => {
+      const liveDiagnostics = capturedCollection?.getSnapshot().filter(
+        (d) => d.detail?.source === 'live-registry',
+      ) ?? [];
+      expect(liveDiagnostics.some(
+        (diagnostic) =>
+          diagnostic.code === 'live/source-registered'
+          && diagnostic.detail?.sourceId === sourceId,
+      )).toBe(true);
+      expect(liveDiagnostics.every((diagnostic) => diagnostic.extensionId === undefined)).toBe(true);
     });
   });
 });

@@ -1,0 +1,24 @@
+{
+  "manifest": {
+    "id": "com.reigh.examples.live-webcam-canary",
+    "version": "1.0.0",
+    "label": "Live Webcam Canary",
+    "description": "M11 canary for webcam permission, frame channels, live preview, bake, cleanup, and export-blocking live bindings.",
+    "apiVersion": 1,
+    "contributions": [
+      {
+        "id": "live-webcam-canary-preview",
+        "kind": "clipType",
+        "clipTypeId": "live-frame-preview",
+        "label": "Live Webcam Preview",
+        "description": "Preview clip metadata that reads the latest webcam frame channel sample through the built-in live-frame-preview renderer.",
+        "order": 10
+      }
+    ],
+    "messages": {
+      "activation.started": "Live Webcam Canary activating.",
+      "activation.ready": "Live Webcam Canary ready.",
+      "activation.disposed": "Live Webcam Canary disposed."
+    }
+  }
+}

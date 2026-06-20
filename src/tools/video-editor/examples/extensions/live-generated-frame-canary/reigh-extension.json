@@ -1,0 +1,25 @@
+{
+  "manifest": {
+    "id": "com.reigh.examples.live-generated-frame-canary",
+    "version": "1.0.0",
+    "label": "Live Generated Frame Canary",
+    "description": "M11 canary for generated frame GenerationSession live samples, steering, bake, and deterministic refs.",
+    "apiVersion": 1,
+    "contributions": [
+      {
+        "id": "generated-frame-session-contribution",
+        "kind": "agentTool",
+        "toolId": "generated-frame.session",
+        "label": "Live Generated Frame Canary",
+        "description": "Produces pending/refining/final generated frame samples through GenerationSession live delivery.",
+        "resultFamilies": ["generation/session"],
+        "order": 40
+      }
+    ],
+    "messages": {
+      "activation.started": "Live Generated Frame Canary activating.",
+      "activation.ready": "Live Generated Frame Canary ready.",
+      "activation.disposed": "Live Generated Frame Canary disposed."
+    }
+  }
+}

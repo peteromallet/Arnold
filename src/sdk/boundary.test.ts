@@ -25,6 +25,7 @@ import {
   contributionKindNotYetBridged,
   CONTRIBUTION_KIND_MILESTONE,
 } from '@/sdk/index';
+import * as sdkStar from '@/sdk/index';
 import type {
   ReighExtension,
   ExtensionManifest,
@@ -85,6 +86,14 @@ import type {
   GenerationSession,
   AgentToolRegistrationService,
   AgentToolHandler,
+  SteeringParameterHotness,
+  SteeringPriorSamplePolicy,
+  SteeringProvenance,
+  SteeringParameterChange,
+  SteeringLineage,
+  SteeringDecision,
+  GenerationSessionLiveDelivery,
+  LiveChannelDescriptor,
 } from '@/sdk/index';
 
 // ---------------------------------------------------------------------------
@@ -454,13 +463,15 @@ describe('ExtensionContext — no internal members exposed', () => {
 
   // ---- creative stubs are present but no real internals --------------------
 
-  it('creative has exactly 8 reserved stubs, all frozen', () => {
+  it('creative has exactly 10 reserved stubs, all frozen', () => {
     const creativeKeys = Object.keys(ctx.creative).sort();
     expect(creativeKeys).toEqual([
       'assets',
       'export',
       'materials',
       'project',
+      'proposals',
+      'reader',
       'sessions',
       'stage',
       'timeline',
@@ -1417,5 +1428,460 @@ describe('M10: Agent tool governance — no internal video-editor imports', () =
     expect(manifest.contributions).toHaveLength(2);
     expect(manifest.contributions![0].kind).toBe('slot');
     expect(manifest.contributions![1].kind).toBe('agentTool');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// M11: Live Data Bridge — boundary tests
+// ---------------------------------------------------------------------------
+
+describe('M11: live-data type interfaces are importable from @reigh/editor-sdk', () => {
+  it('LiveSourceKind sealed union covers all 10 documented values', () => {
+    const kinds: LiveSourceKind[] = [
+      'webcam', 'microphone', 'midi', 'serial', 'bluetooth',
+      'generated', 'screen-capture', 'audio-device', 'osc', 'custom',
+    ];
+    expect(kinds).toHaveLength(10);
+    // Verify each value is a valid LiveSourceKind
+    for (const k of kinds) {
+      const typed: LiveSourceKind = k;
+      expect(typeof typed).toBe('string');
+    }
+  });
+
+  it('LiveSource is constructable and sealed', () => {
+    const src: LiveSource = {
+      id: 'boundary-src-1',
+      kind: 'webcam',
+      status: 'active',
+      diagnostics: [{ severity: 'info', code: 'live/ok', message: 'Running' }],
+      label: 'Boundary Test Source',
+      permission: { state: 'granted', reason: 'Boundary test' },
+      recording: { active: true, mode: 'stream' },
+      learnMode: 'idle',
+    };
+    expect(src.id).toBe('boundary-src-1');
+    expect(src.kind).toBe('webcam');
+    expect(src.status).toBe('active');
+    expect(src.permission?.state).toBe('granted');
+    expect(src.recording?.active).toBe(true);
+    expect(src.learnMode).toBe('idle');
+  });
+
+  it('LiveChannelDescriptor is string-compatible across boundary', () => {
+    // Branded string type must remain string-compatible
+    const ch: LiveChannelDescriptor = 'boundary-channel' as LiveChannelDescriptor;
+    expect(typeof ch).toBe('string');
+    expect(ch.length).toBeGreaterThan(0);
+    // String methods work
+    expect(ch.toUpperCase()).toBe('BOUNDARY-CHANNEL');
+    // Can be used in string interpolation
+    expect(`channel: ${ch}`).toBe('channel: boundary-channel');
+    // Can be assigned to string variable
+    const plain: string = ch;
+    expect(plain).toBe('boundary-channel');
+  });
+
+  it('LiveSampleFrame covers all data formats', () => {
+    const rawFrame: LiveSampleFrame = {
+      timestamp: 0, data: new Uint8Array([1, 2, 3]), format: 'raw',
+    };
+    const jsonFrame: LiveSampleFrame = {
+      timestamp: 1, data: { key: 'value' }, format: 'json',
+    };
+    const binFrame: LiveSampleFrame = {
+      timestamp: 2, data: new ArrayBuffer(8), format: 'binary',
+    };
+    const encFrame: LiveSampleFrame = {
+      timestamp: 3, data: new Uint8Array([4, 5, 6]), format: 'encoded',
+    };
+    expect(rawFrame.format).toBe('raw');
+    expect(jsonFrame.format).toBe('json');
+    expect(binFrame.format).toBe('binary');
+    expect(encFrame.format).toBe('encoded');
+  });
+
+  it('LiveBakeSelection supports partial and full bake', () => {
+    const full: LiveBakeSelection = {
+      sourceId: 'src-1',
+      targets: [{ kind: 'asset', ref: 'out-1' }],
+    };
+    expect(full.channelIds).toBeUndefined();
+    expect(full.timeRange).toBeUndefined();
+
+    const partial: LiveBakeSelection = {
+      sourceId: 'src-1',
+      channelIds: ['ch-video' as LiveChannelDescriptor],
+      timeRange: [0, 5000],
+      frameRange: [12, 48],
+      sampleRange: [0, 150],
+      takeId: 'take-7',
+      targets: [
+        { kind: 'keyframe', ref: 'param.x', params: { interpolation: 'linear' } },
+        { kind: 'sidecar', ref: 'meta.json' },
+      ],
+    };
+    expect(partial.channelIds).toHaveLength(1);
+    expect(partial.frameRange).toEqual([12, 48]);
+    expect(partial.takeId).toBe('take-7');
+    expect(partial.targets).toHaveLength(2);
+    expect(partial.targets[0].kind).toBe('keyframe');
+    expect(partial.targets[1].kind).toBe('sidecar');
+  });
+
+  it('SteeringDecision covers supersede, fork, and reject', () => {
+    const lineageBase: SteeringLineage = {
+      generationIndex: 1,
+      steerHash: 'hash',
+      parentRefs: ['s0'],
+      producerVersion: '1.0.0',
+      provenance: { prompt: 'Prompt', model: 'model-a', seed: 1 },
+    };
+
+    const supersede: SteeringDecision = {
+      kind: 'supersede',
+      sessionId: 's1',
+      lineage: lineageBase,
+      replacementChannelId: 'ch-new' as LiveChannelDescriptor,
+    };
+    const fork: SteeringDecision = {
+      kind: 'fork',
+      sessionId: 's1',
+      lineage: { ...lineageBase, generationIndex: 2 },
+    };
+    const reject: SteeringDecision = {
+      kind: 'reject',
+      sessionId: 's1',
+      lineage: lineageBase,
+      reason: 'Quality below threshold',
+    };
+
+    expect(supersede.kind).toBe('supersede');
+    expect(fork.kind).toBe('fork');
+    expect(reject.kind).toBe('reject');
+    expect(supersede.replacementChannelId).toBeDefined();
+    expect(fork.replacementChannelId).toBeUndefined();
+    expect(reject.reason).toBe('Quality below threshold');
+  });
+
+  it('LiveBinding covers all resolution states', () => {
+    const states: BindingResolutionStatus[] = [
+      'resolved', 'unresolved', 'orphaned', 'disposed', 'missing',
+    ];
+    const bindings: LiveBinding[] = states.map((s, i) => ({
+      bindingId: `bind-${i}`,
+      sourceId: `src-${i}`,
+      status: s,
+      ...(s !== 'resolved' ? {
+        diagnostic: {
+          severity: 'warning' as const,
+          code: `live/${s}`,
+          message: `Binding is ${s}`,
+        },
+      } : {}),
+    }));
+    expect(bindings).toHaveLength(5);
+    expect(bindings[0].status).toBe('resolved');
+    expect(bindings[0].diagnostic).toBeUndefined();
+    expect(bindings[4].status).toBe('missing');
+    expect(bindings[4].diagnostic?.code).toBe('live/missing');
+  });
+
+  it('LiveBindingResolution resolves or diagnoses every state', () => {
+    const resolved: LiveBindingResolution = {
+      bindingId: 'b1',
+      status: 'resolved',
+      source: { id: 's1', kind: 'generated', status: 'active', diagnostics: [] },
+      channel: { channelId: 'ch' as LiveChannelDescriptor, kind: 'video', sourceId: 's1' },
+    };
+    expect(resolved.status).toBe('resolved');
+    expect(resolved.source).toBeDefined();
+    expect(resolved.channel).toBeDefined();
+
+    const missing: LiveBindingResolution = {
+      bindingId: 'b2',
+      status: 'missing',
+      diagnostic: { severity: 'error', code: 'live/missing-source', message: 'Source not found' },
+    };
+    expect(missing.status).toBe('missing');
+    expect(missing.source).toBeUndefined();
+    expect(missing.diagnostic?.code).toBe('live/missing-source');
+  });
+
+  it('LiveBindingMetadata reports aggregate counts', () => {
+    const meta: LiveBindingMetadata = {
+      bindings: [
+        { bindingId: 'b1', sourceId: 's1', status: 'resolved' },
+        { bindingId: 'b2', sourceId: 's2', status: 'orphaned' },
+        { bindingId: 'b3', sourceId: 's3', status: 'disposed' },
+        { bindingId: 'b4', sourceId: 's4', status: 'unresolved' },
+      ],
+      unresolvedCount: 1,
+      orphanedCount: 1,
+      disposedCount: 1,
+    };
+    expect(meta.bindings).toHaveLength(4);
+    expect(meta.unresolvedCount).toBe(1);
+    expect(meta.orphanedCount).toBe(1);
+    expect(meta.disposedCount).toBe(1);
+  });
+
+  it('LiveSessionsService has all required methods', () => {
+    // Compile-time proof: the interface is complete
+    const svc: LiveSessionsService = {
+      registerSource: () => ({ dispose() {} }),
+      getSource: () => undefined,
+      listSources: () => [],
+      openChannel: () => 'ch' as LiveChannelDescriptor,
+      closeChannel: () => {},
+      getChannelMetadata: () => undefined,
+      pushSample: () => {},
+      subscribeSamples: () => ({ dispose() {} }),
+      bake: () => ({ sourceId: '', targets: [], diagnostics: [], success: true }),
+      removeLiveBindings: () => {},
+      resolveBinding: () => ({ bindingId: '', status: 'missing' }),
+      getBindingMetadata: () => ({ bindings: [], unresolvedCount: 0, orphanedCount: 0, disposedCount: 0 }),
+      applySteeringDecision: () => {},
+      getDiagnostics: () => [],
+    };
+    expect(typeof svc.registerSource).toBe('function');
+    expect(typeof svc.openChannel).toBe('function');
+    expect(typeof svc.bake).toBe('function');
+    expect(typeof svc.removeLiveBindings).toBe('function');
+    expect(typeof svc.resolveBinding).toBe('function');
+    expect(typeof svc.getBindingMetadata).toBe('function');
+    expect(typeof svc.applySteeringDecision).toBe('function');
+  });
+});
+
+describe('M11: GenerationSession typed channel boundary', () => {
+  it('getSampleChannel returns LiveChannelDescriptor that is string-compatible', () => {
+    const session: GenerationSession = {
+      id: 'boundary-gen',
+      progress: 100,
+      cancelled: false,
+      done: true,
+      diagnostics: [],
+      onProgress: () => ({ dispose() {} }),
+      cancel: () => {},
+      getSampleChannel: () => 'boundary-gen-ch' as LiveChannelDescriptor,
+      onSample: () => ({ dispose() {} }),
+      getSteeringLineage: () => undefined,
+      complete: () => {},
+    };
+    const channel = session.getSampleChannel();
+    // String compatibility
+    expect(typeof channel).toBe('string');
+    // Can be used as plain string
+    const plain: string = channel;
+    expect(plain).toBe('boundary-gen-ch');
+  });
+
+  it('onSample delivers typed LiveSample', () => {
+    let delivered: LiveSample | undefined;
+    const session: GenerationSession = {
+      id: 'boundary-gen-2',
+      progress: 50,
+      cancelled: false,
+      done: false,
+      diagnostics: [],
+      onProgress: () => ({ dispose() {} }),
+      cancel: () => {},
+      getSampleChannel: () => 'ch' as LiveChannelDescriptor,
+      onSample: (listener) => {
+        listener({
+          channelId: 'ch' as LiveChannelDescriptor,
+          frame: { timestamp: 100, data: new Uint8Array([9]), format: 'raw' },
+          sequenceNumber: 7,
+        });
+        return { dispose() {} };
+      },
+      getSteeringLineage: () => ({
+        generationIndex: 1,
+        steerHash: 'abc',
+        parentRefs: ['boundary-gen-1'],
+        producerVersion: '1.0.0',
+        provenance: { prompt: 'Prompt', model: 'model-a', seed: 7 },
+      }),
+      complete: () => {},
+    };
+    session.onSample((s) => { delivered = s; });
+    expect(delivered).toBeDefined();
+    expect(delivered!.sequenceNumber).toBe(7);
+    expect(delivered!.frame.timestamp).toBe(100);
+  });
+
+  it('getSteeringLineage returns full lineage when steered', () => {
+    const lineage: SteeringLineage = {
+      generationIndex: 4,
+      steerHash: 'steer-hash-4',
+      parentRefs: ['gen-1', 'gen-2', 'gen-3'],
+      producerVersion: '3.0.0-beta',
+      provenance: { prompt: 'Prompt', model: 'model-a', seed: 4 },
+      provenanceTags: ['forked', 'quality-approved'],
+    };
+    const session: GenerationSession = {
+      id: 'boundary-gen-3',
+      progress: 100,
+      cancelled: false,
+      done: true,
+      diagnostics: [],
+      onProgress: () => ({ dispose() {} }),
+      cancel: () => {},
+      getSampleChannel: () => 'ch' as LiveChannelDescriptor,
+      onSample: () => ({ dispose() {} }),
+      getSteeringLineage: () => lineage,
+      complete: () => {},
+    };
+    const result = session.getSteeringLineage();
+    expect(result).toBe(lineage);
+    expect(result!.generationIndex).toBe(4);
+    expect(result!.parentRefs).toHaveLength(3);
+    expect(result!.provenanceTags).toContain('forked');
+  });
+
+  it('ToolGenerationSessionResult can carry explicit live delivery activation metadata', () => {
+    const steeringDecision: SteeringDecision = {
+      kind: 'supersede',
+      sessionId: 'boundary-live',
+      lineage: {
+        generationIndex: 1,
+        steerHash: 'hash-live',
+        parentRefs: ['boundary-parent'],
+        producerVersion: '1.0.0',
+        provenance: { prompt: 'Prompt', model: 'model-a', seed: 1 },
+      },
+      replacementChannelId: 'boundary-live:replacement' as LiveChannelDescriptor,
+    };
+    const liveDelivery: GenerationSessionLiveDelivery = {
+      origin: 'agent-tool',
+      steeringDecision,
+      activeChannels: ['boundary-live:frames' as LiveChannelDescriptor],
+      finalRefs: ['asset-final'],
+      bakedRefs: ['asset-baked'],
+    };
+    const result: ToolGenerationSessionResult = {
+      family: 'generation/session',
+      session: {
+        id: 'boundary-live',
+        progress: 25,
+        cancelled: false,
+        done: false,
+        diagnostics: [],
+        liveDelivery,
+        onProgress: () => ({ dispose() {} }),
+        cancel: () => {},
+        getSampleChannel: () => 'boundary-live:frames' as LiveChannelDescriptor,
+        onSample: () => ({ dispose() {} }),
+        getSteeringLineage: () => steeringDecision.lineage,
+        complete: () => {},
+      },
+      liveDelivery,
+    };
+
+    expect(result.liveDelivery?.steeringDecision.lineage.steerHash).toBe('hash-live');
+    expect(result.session.liveDelivery?.activeChannels).toEqual(['boundary-live:frames']);
+  });
+});
+
+describe('M11: CreativeContext sessions is typed as LiveSessionsService', () => {
+  it('CreativeContext.sessions is no longer unknown — accepts LiveSessionsService', () => {
+    // Type-level proof: we can assign a LiveSessionsService to CreativeContext.sessions
+    const sessionsSvc: LiveSessionsService = {
+      registerSource: () => ({ dispose() {} }),
+      getSource: () => undefined,
+      listSources: () => [],
+      openChannel: () => 'ch' as LiveChannelDescriptor,
+      closeChannel: () => {},
+      getChannelMetadata: () => undefined,
+      pushSample: () => {},
+      subscribeSamples: () => ({ dispose() {} }),
+      bake: () => ({ sourceId: '', targets: [], diagnostics: [], success: true }),
+      removeLiveBindings: () => {},
+      resolveBinding: () => ({ bindingId: '', status: 'missing' }),
+      getBindingMetadata: () => ({ bindings: [], unresolvedCount: 0, orphanedCount: 0, disposedCount: 0 }),
+      applySteeringDecision: () => {},
+      getDiagnostics: () => [],
+    };
+
+    const ctx: CreativeContext = {
+      project: {},
+      timeline: {} as any,
+      reader: {} as any,
+      proposals: {} as any,
+      assets: {} as any,
+      materials: {} as any,
+      sessions: sessionsSvc,
+      export: {} as any,
+      stage: {},
+      writing: {},
+    };
+    expect(ctx.sessions).toBe(sessionsSvc);
+    expect(typeof ctx.sessions.registerSource).toBe('function');
+  });
+});
+
+describe('M11: internal live-data types are NOT re-exported from @reigh/editor-sdk', () => {
+  const M11_INTERNAL_FORBIDDEN = [
+    // Live data registry internals
+    'liveRegistry',
+    'LiveRegistry',
+    'createLiveRegistry',
+    'liveDataRegistry',
+    // Ring buffer internals
+    'ringBuffer',
+    'RingBuffer',
+    'createRingBuffer',
+    'RingBufferConfig',
+    'RingBufferState',
+    // Binding scanner internals
+    'bindingScanner',
+    'BindingScanner',
+    'createBindingScanner',
+    'pureBindingScanner',
+    'scanBindings',
+    // Bake internals
+    'bakeExecutor',
+    'BakeExecutor',
+    'executeBake',
+    'bakePipeline',
+    // Steering internals
+    'steeringResolver',
+    'SteeringResolver',
+    'resolveSteering',
+    // Source lifecycle internals
+    'sourceManager',
+    'SourceManager',
+    'createSourceManager',
+    'sourceLifecycle',
+    // Channel internals
+    'channelManager',
+    'ChannelManager',
+    'openLiveChannel',
+    'closeLiveChannel',
+    // Sample ring buffer internals
+    'sampleRingBuffer',
+    'SampleRingBuffer',
+    // Export guard internals
+    'liveExportGuard',
+    'LiveExportGuard',
+    'checkLiveExportBlockers',
+    // Provider integration
+    'liveProviderBridge',
+    'LiveProviderBridge',
+  ];
+
+  it('none of the forbidden M11 internal names appear as SDK value exports', () => {
+    const valueExports = Object.keys(sdkStar);
+    for (const forbidden of M11_INTERNAL_FORBIDDEN) {
+      expect(valueExports).not.toContain(forbidden);
+    }
+  });
+
+  it('forbidden M11 internal names are not accessible on the SDK namespace', () => {
+    const ns = sdkStar as Record<string, unknown>;
+    for (const forbidden of M11_INTERNAL_FORBIDDEN) {
+      expect(ns[forbidden]).toBeUndefined();
+    }
   });
 });

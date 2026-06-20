@@ -187,6 +187,51 @@ describe('timeline data sequence clip persistence', () => {
     expect(() => validateSerializedConfig(serialized)).not.toThrow();
   });
 
+  it('preserves clip.app.live metadata through rowsToConfig without sample payloads', async () => {
+    const liveMetadata = {
+      live: {
+        bindings: [
+          {
+            bindingId: 'binding-app-live',
+            sourceId: 'source-app-live',
+            sourceKind: 'generated',
+            sourceStatus: 'active',
+          },
+        ],
+      },
+    };
+    const config: TimelineConfig = {
+      output: { resolution: '1920x1080', fps: 30, file: 'out.mp4' },
+      tracks: [{ id: 'V1', kind: 'visual', label: 'V1' }],
+      clips: [
+        {
+          id: 'clip-live',
+          at: 0,
+          track: 'V1',
+          clipType: 'hold',
+          hold: 2,
+          app: liveMetadata,
+        },
+      ],
+    };
+
+    const data = await buildTimelineData(config, registry);
+    expect(data.meta['clip-live'].app).toEqual(liveMetadata);
+
+    const roundTripped = rowsToConfig(
+      data.rows,
+      data.meta,
+      data.output,
+      data.clipOrder,
+      data.tracks,
+      data.config.pinnedShotGroups,
+      data.config,
+    );
+
+    expect(roundTripped.clips[0].app).toEqual(liveMetadata);
+    expect(() => validateSerializedConfig(roundTripped)).not.toThrow();
+  });
+
   it('keeps no-theme timelines valid when rows are serialized back to config', async () => {
     const config: TimelineConfig = {
       output: { resolution: '1920x1080', fps: 30, file: 'out.mp4' },
