@@ -12,6 +12,10 @@ import { Slider } from '@/shared/components/ui/slider.tsx';
 import { editorReplaceTimelineSelection } from '@/shared/state/selectionStore.ts';
 import { PreviewPanel } from '@/tools/video-editor/components/PreviewPanel/PreviewPanel.tsx';
 import { useVideoEditorPreviewSurface } from '@/tools/video-editor/components/PreviewPanel/useVideoEditorPreviewSurface.tsx';
+import {
+  LiveSourcesPanel,
+  removeLiveBindingsFromResolvedConfig,
+} from '@/tools/video-editor/components/LiveSourcesPanel/LiveSourcesPanel.tsx';
 import { PropertiesPanel } from '@/tools/video-editor/components/PropertiesPanel/PropertiesPanel.tsx';
 import { VideoEditorAssetPanelSurface } from '@/tools/video-editor/components/PropertiesPanel/VideoEditorAssetPanelSurface.tsx';
 import { SequenceCreatorPanel } from '@/tools/video-editor/components/SequenceCreator/SequenceCreatorPanel.tsx';
@@ -556,6 +560,17 @@ function TimelineEditorShellCoreComponent({
     return getTimelineDurationInFrames(editorData.resolvedConfig, editorData.resolvedConfig.output.fps) / editorData.resolvedConfig.output.fps;
   }, [editorData.resolvedConfig]);
 
+  const handleRemoveLiveSourceBindings = useCallback((sourceId: string) => {
+    const currentData = editorData.dataRef.current;
+    if (!currentData?.resolvedConfig) return;
+    const nextConfig = removeLiveBindingsFromResolvedConfig(currentData.resolvedConfig, sourceId);
+    if (!nextConfig) return;
+    editorOps.applyEdit(
+      { type: 'config', resolvedConfig: nextConfig },
+      { semantic: true },
+    );
+  }, [editorData.dataRef, editorOps]);
+
   const openInspector = useCallback(() => {
     editorOps.setInspectorTarget(inspectorTarget);
     editorOps.setContextTarget(inspectorTarget);
@@ -857,6 +872,11 @@ function TimelineEditorShellCoreComponent({
           </Button>
         )}
         {/* M6: Export dropdown — compile-only formats near render controls */}
+        <LiveSourcesPanel
+          timelineConfig={editorData.resolvedConfig}
+          onRemoveSourceBindings={handleRemoveLiveSourceBindings}
+          compact={condensed}
+        />
         {hasAnyExportFormat && (
           <DropdownMenu>
             <DropdownMenuTrigger asChild>

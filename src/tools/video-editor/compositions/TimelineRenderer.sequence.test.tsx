@@ -1,10 +1,18 @@
 // @vitest-environment jsdom
-import { render, screen } from '@testing-library/react';
+import { act, render, screen } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { TimelineRenderer } from '@/tools/video-editor/compositions/TimelineRenderer';
 import type { ResolvedTimelineConfig } from '@/tools/video-editor/types';
 import type { ClipRendererProps } from '@/tools/video-editor/clip-types/ClipTypeRegistry';
 import type { FC, PropsWithChildren } from 'react';
+import {
+  DataProviderWrapper,
+  type VideoEditorRuntimeContextValue,
+} from '@/tools/video-editor/contexts/DataProviderContext';
+import {
+  createLiveDataRegistry,
+  type LiveDataRegistry,
+} from '@/tools/video-editor/runtime/liveDataRegistry';
 
 const sequenceProps = vi.hoisted((): Array<Record<string, unknown>> => []);
 const visualClipMock = vi.hoisted(() => vi.fn());
@@ -552,6 +560,32 @@ function makeRegistryRecord(
   };
 }
 
+function runtimeWithLiveRegistry(liveDataRegistry?: LiveDataRegistry): VideoEditorRuntimeContextValue {
+  return {
+    provider: {},
+    assetResolver: {},
+    auth: {},
+    project: {},
+    shots: {},
+    mediaLightbox: {},
+    agentChat: {},
+    toast: {},
+    telemetry: {},
+    timelineId: 'timeline-test',
+    userId: 'user-test',
+    extensions: {},
+    liveDataRegistry,
+  } as unknown as VideoEditorRuntimeContextValue;
+}
+
+function renderWithLiveRegistry(config: ResolvedTimelineConfig, liveDataRegistry?: LiveDataRegistry) {
+  return render(
+    <DataProviderWrapper value={runtimeWithLiveRegistry(liveDataRegistry)}>
+      <TimelineRenderer config={config} />
+    </DataProviderWrapper>,
+  );
+}
+
 describe('TimelineRenderer — extension clip renderer dispatch (M9 T10)', () => {
   beforeEach(() => {
     sequenceProps.length = 0;
@@ -802,5 +836,403 @@ describe('TimelineRenderer — extension clip renderer dispatch (M9 T10)', () =>
     expect(screen.getByTestId('unknown-clip-placeholder')).toBeInTheDocument();
     expect(screen.queryByTestId('extension-clip-renderer')).not.toBeInTheDocument();
     expect(visualClipMock).not.toHaveBeenCalled();
+  });
+});
+
+describe('TimelineRenderer — live binding renderer facade (M11 T6)', () => {
+  beforeEach(() => {
+    sequenceProps.length = 0;
+    visualClipMock.mockClear();
+    textClipMock.mockClear();
+    mockClipTypeRegistryGet.mockReset();
+    mockClipTypeRegistryHas.mockReset();
+  });
+
+  const liveBuildConfig = (
+    clips: ResolvedTimelineConfig['clips'],
+  ): ResolvedTimelineConfig => ({
+    output: { resolution: '1920x1080', fps: 30, file: 'out.mp4' },
+    tracks: [{ id: 'V1', kind: 'visual', label: 'V1' }],
+    clips,
+    registry: {},
+  });
+
+  const liveClip = (
+    id: string,
+    liveBindings: unknown,
+  ): ResolvedTimelineConfig['clips'][number] => ({
+    id,
+    clipType: 'ext.live-clip',
+    track: 'V1',
+    at: 0,
+    hold: 2,
+    params: { liveBindings },
+  });
+
+  it('passes source-id keyed synchronous live read helpers into extension renderers', () => {
+    const registry = createLiveDataRegistry();
+    registry.registerSource({ id: 'source-live', kind: 'generated' });
+    const channelId = registry.openChannel('source-live', 'video');
+    registry.pushSample(channelId, {
+      timestamp: 100,
+      data: { value: 42 },
+      format: 'json',
+    });
+
+    const TestRenderer: FC<ClipRendererProps> = (props) => {
+      const sample = props.live.readLatestSample('source-live');
+      const sampleAt = props.live.readSampleAt('source-live', 0);
+      const samples = props.live.readSamples('source-live');
+      const source = props.live.getSource('source-live');
+      const latestReturn = props.live.readLatestSample('source-live');
+      const isPromise = Boolean(latestReturn && typeof (latestReturn as unknown as Promise<unknown>).then === 'function');
+      return (
+        <div
+          data-testid="extension-live-renderer"
+          data-sample-value={String((sample?.frame.data as Record<string, unknown> | undefined)?.value)}
+          data-sample-at-value={String((sampleAt?.frame.data as Record<string, unknown> | undefined)?.value)}
+          data-sample-count={props.live.getSampleCount('source-live')}
+          data-samples-length={samples.length}
+          data-source-id={source?.id}
+          data-resolved-channel={props.live.resolveChannelId('source-live')}
+          data-is-promise={String(isPromise)}
+        />
+      );
+    };
+
+    mockClipTypeRegistryGet.mockReturnValue(makeRegistryRecord({ clipTypeId: 'ext.live-clip', renderer: TestRenderer }));
+    mockClipTypeRegistryHas.mockReturnValue(true);
+
+    renderWithLiveRegistry(
+      liveBuildConfig([
+        liveClip('clip-live', [
+          {
+            bindingId: 'binding-live',
+            sourceId: 'source-live',
+            sourceKind: 'generated',
+            channelId,
+          },
+        ]),
+      ]),
+      registry,
+    );
+
+    const el = screen.getByTestId('extension-live-renderer');
+    expect(el).toHaveAttribute('data-sample-value', '42');
+    expect(el).toHaveAttribute('data-sample-at-value', '42');
+    expect(el).toHaveAttribute('data-sample-count', '1');
+    expect(el).toHaveAttribute('data-samples-length', '1');
+    expect(el).toHaveAttribute('data-source-id', 'source-live');
+    expect(el).toHaveAttribute('data-resolved-channel', channelId);
+    expect(el).toHaveAttribute('data-is-promise', 'false');
+    expect(screen.queryByTestId('live-binding-placeholder')).not.toBeInTheDocument();
+  });
+
+  it('renders live diagnostics placeholders for unresolved live binding states', () => {
+    const TestRenderer: FC<ClipRendererProps> = () => (
+      <div data-testid="extension-live-renderer" />
+    );
+
+    mockClipTypeRegistryGet.mockReturnValue(makeRegistryRecord({ clipTypeId: 'ext.live-clip', renderer: TestRenderer }));
+    mockClipTypeRegistryHas.mockReturnValue(true);
+
+    renderWithLiveRegistry(liveBuildConfig([
+      liveClip('clip-missing', [{ bindingId: 'binding-missing', sourceId: 'source-missing', sourceKind: 'generated' }]),
+      liveClip('clip-inactive', [{ bindingId: 'binding-inactive', sourceId: 'source-inactive', sourceKind: 'generated', sourceStatus: 'inactive' }]),
+      liveClip('clip-disposed', [{ bindingId: 'binding-disposed', sourceId: 'source-disposed', sourceKind: 'generated', sourceStatus: 'disposed' }]),
+      liveClip('clip-orphaned', [{ bindingId: 'binding-orphaned', sourceId: 'source-orphaned', sourceKind: 'generated', sourceStatus: 'orphaned' }]),
+      liveClip('clip-partial', [{
+        bindingId: 'binding-partial',
+        sourceId: 'source-partial',
+        sourceKind: 'generated',
+        bake: {
+          status: 'partial',
+          bakedRanges: [{ startFrame: 0, endFrame: 10 }],
+          unresolvedRanges: [{ startFrame: 11, endFrame: 20 }],
+        },
+      }]),
+    ]));
+
+    const placeholders = screen.getAllByTestId('live-binding-placeholder');
+    expect(placeholders).toHaveLength(5);
+    expect(placeholders.map((el) => el.getAttribute('data-live-binding-status'))).toEqual(
+      expect.arrayContaining(['missing', 'inactive', 'disposed', 'orphaned', 'partiallyBaked']),
+    );
+    expect(screen.queryByTestId('extension-live-renderer')).not.toBeInTheDocument();
+  });
+
+  it('treats baked deterministic refs as resolved and bypasses live sample reads', () => {
+    const registry = createLiveDataRegistry();
+    registry.registerSource({ id: 'source-live', kind: 'generated' });
+    const channelId = registry.openChannel('source-live', 'video');
+    registry.pushSample(channelId, { timestamp: 100, data: { value: 99 }, format: 'json' });
+    const latestSpy = vi.spyOn(registry, 'getLatestSample');
+
+    const TestRenderer: FC<ClipRendererProps> = (props) => {
+      const sample = props.live.readLatestSample('source-live');
+      const binding = props.live.bindings[0];
+      return (
+        <div
+          data-testid="extension-live-renderer"
+          data-binding-status={binding?.status}
+          data-ref={binding?.deterministicRefs[0]?.ref}
+          data-sample-present={String(Boolean(sample))}
+        />
+      );
+    };
+
+    mockClipTypeRegistryGet.mockReturnValue(makeRegistryRecord({ clipTypeId: 'ext.live-clip', renderer: TestRenderer }));
+    mockClipTypeRegistryHas.mockReturnValue(true);
+
+    renderWithLiveRegistry(
+      liveBuildConfig([
+        liveClip('clip-resolved', [{
+          bindingId: 'binding-resolved',
+          sourceId: 'source-live',
+          sourceKind: 'generated',
+          channelId,
+          bake: {
+            status: 'complete',
+            deterministicRefs: [{ kind: 'asset', ref: 'asset-baked-live' }],
+          },
+        }]),
+      ]),
+      registry,
+    );
+
+    const el = screen.getByTestId('extension-live-renderer');
+    expect(el).toHaveAttribute('data-binding-status', 'resolved');
+    expect(el).toHaveAttribute('data-ref', 'asset-baked-live');
+    expect(el).toHaveAttribute('data-sample-present', 'false');
+    expect(latestSpy).not.toHaveBeenCalled();
+    expect(screen.queryByTestId('live-binding-placeholder')).not.toBeInTheDocument();
+  });
+});
+
+describe('TimelineRenderer — built-in live frame preview reader (M11 T7)', () => {
+  beforeEach(() => {
+    sequenceProps.length = 0;
+    visualClipMock.mockClear();
+    textClipMock.mockClear();
+    mockClipTypeRegistryGet.mockReset();
+    mockClipTypeRegistryHas.mockReset();
+    mockClipTypeRegistryGet.mockReturnValue(undefined);
+    mockClipTypeRegistryHas.mockReturnValue(false);
+  });
+
+  const liveFrameBuildConfig = (
+    clips: ResolvedTimelineConfig['clips'],
+  ): ResolvedTimelineConfig => ({
+    output: { resolution: '1920x1080', fps: 30, file: 'out.mp4' },
+    tracks: [{ id: 'V1', kind: 'visual', label: 'V1' }],
+    clips,
+    registry: {},
+  });
+
+  const liveFrameClip = (
+    id: string,
+    binding: Record<string, unknown>,
+    at = 0,
+  ): ResolvedTimelineConfig['clips'][number] => ({
+    id,
+    clipType: 'live-frame-preview',
+    track: 'V1',
+    at,
+    hold: 2,
+    params: {
+      liveBindings: [binding],
+    },
+  });
+
+  it('reads latest, frame-indexed, and time-indexed frame samples synchronously', () => {
+    const registry = createLiveDataRegistry();
+    registry.registerSource({ id: 'source-frames', kind: 'generated' });
+    const channelId = registry.openChannel('source-frames', 'video');
+    registry.pushSample(channelId, {
+      timestamp: 0,
+      data: { src: 'data:image/png;base64,FRAME_ZERO', frameIndex: 10 },
+      format: 'json',
+    });
+    registry.pushSample(channelId, {
+      timestamp: 1000,
+      data: { src: 'data:image/png;base64,FRAME_ONE', frameIndex: 20 },
+      format: 'json',
+    });
+    const latestSpy = vi.spyOn(registry, 'getLatestSample');
+
+    renderWithLiveRegistry(
+      liveFrameBuildConfig([
+        liveFrameClip('clip-latest', {
+          bindingId: 'binding-latest',
+          sourceId: 'source-frames',
+          sourceKind: 'generated',
+          channelId,
+          sampling: { mode: 'latest' },
+        }),
+        liveFrameClip('clip-frame', {
+          bindingId: 'binding-frame',
+          sourceId: 'source-frames',
+          sourceKind: 'generated',
+          channelId,
+          sampling: { mode: 'frame', frameOffset: 10 },
+        }),
+        liveFrameClip('clip-time', {
+          bindingId: 'binding-time',
+          sourceId: 'source-frames',
+          sourceKind: 'generated',
+          channelId,
+          sampling: { mode: 'time', timeOffsetMs: 500 },
+        }),
+      ]),
+      registry,
+    );
+
+    const previews = screen.getAllByTestId('live-frame-preview');
+    const srcs = previews.map((preview) => preview.querySelector('img')?.getAttribute('src'));
+    expect(srcs).toEqual([
+      'data:image/png;base64,FRAME_ONE',
+      'data:image/png;base64,FRAME_ZERO',
+      'data:image/png;base64,FRAME_ZERO',
+    ]);
+    expect(previews.map((preview) => preview.getAttribute('data-live-frame-sequence'))).toEqual(['1', '0', '0']);
+    const latestReturn = latestSpy.mock.results[0]?.value;
+    expect(Boolean(latestReturn && typeof (latestReturn as Promise<unknown>).then === 'function')).toBe(false);
+    expect(screen.queryByTestId('unknown-clip-placeholder')).not.toBeInTheDocument();
+  });
+
+  it('renders visible placeholders for inactive, permission pending, generation, cancellation, error, missing, orphaned, disposed, and partial bake states', () => {
+    const registry = createLiveDataRegistry();
+    registry.registerSource({ id: 'source-inactive', kind: 'generated' });
+    registry.registerSource({
+      id: 'source-permission',
+      kind: 'webcam',
+      permission: { state: 'prompt', reason: 'Camera access' },
+    });
+    registry.registerSource({ id: 'source-pending', kind: 'generated' });
+    registry.openChannel('source-pending', 'video');
+    registry.transitionSource('source-pending', 'active');
+    registry.registerSource({ id: 'source-refining', kind: 'generated' });
+    const refiningChannel = registry.openChannel('source-refining', 'video');
+    registry.pushSample(refiningChannel, {
+      timestamp: 200,
+      data: { status: 'refining', progress: 0.6 },
+      format: 'json',
+    });
+    registry.registerSource({ id: 'source-cancelled', kind: 'generated' });
+    const cancelledChannel = registry.openChannel('source-cancelled', 'video');
+    registry.pushSample(cancelledChannel, {
+      timestamp: 300,
+      data: { status: 'cancelled', progress: 0.35 },
+      format: 'json',
+    });
+    registry.registerSource({ id: 'source-error', kind: 'generated' });
+    registry.openChannel('source-error', 'video');
+    registry.transitionSource('source-error', 'error', 'Generation failed');
+
+    renderWithLiveRegistry(
+      liveFrameBuildConfig([
+        liveFrameClip('clip-inactive', { bindingId: 'binding-inactive', sourceId: 'source-inactive', sourceKind: 'generated' }),
+        liveFrameClip('clip-permission', { bindingId: 'binding-permission', sourceId: 'source-permission', sourceKind: 'webcam' }),
+        liveFrameClip('clip-pending', {
+          bindingId: 'binding-pending',
+          sourceId: 'source-pending',
+          sourceKind: 'generated',
+          placeholder: { progress: 0.25 },
+        }),
+        liveFrameClip('clip-refining', {
+          bindingId: 'binding-refining',
+          sourceId: 'source-refining',
+          sourceKind: 'generated',
+          channelId: refiningChannel,
+        }),
+        liveFrameClip('clip-cancelled', {
+          bindingId: 'binding-cancelled',
+          sourceId: 'source-cancelled',
+          sourceKind: 'generated',
+          channelId: cancelledChannel,
+        }),
+        liveFrameClip('clip-error', { bindingId: 'binding-error', sourceId: 'source-error', sourceKind: 'generated' }),
+        liveFrameClip('clip-missing', { bindingId: 'binding-missing', sourceId: 'source-missing', sourceKind: 'generated' }),
+        liveFrameClip('clip-orphaned', { bindingId: 'binding-orphaned', sourceId: 'source-orphaned', sourceKind: 'generated', sourceStatus: 'orphaned' }),
+        liveFrameClip('clip-disposed', { bindingId: 'binding-disposed', sourceId: 'source-disposed', sourceKind: 'generated', sourceStatus: 'disposed' }),
+        liveFrameClip('clip-partial', {
+          bindingId: 'binding-partial',
+          sourceId: 'source-partial',
+          sourceKind: 'generated',
+          placeholder: { progress: 0.5 },
+          bake: {
+            status: 'partial',
+            bakedRanges: [{ startFrame: 0, endFrame: 10 }],
+            unresolvedRanges: [{ startFrame: 11, endFrame: 20 }],
+          },
+        }),
+      ]),
+      registry,
+    );
+
+    const placeholders = screen.getAllByTestId('live-frame-placeholder');
+    expect(placeholders.map((el) => el.getAttribute('data-live-frame-state'))).toEqual([
+      'inactive',
+      'permission-pending',
+      'pending',
+      'refining',
+      'cancelled',
+      'error',
+      'missing',
+      'orphaned',
+      'disposed',
+      'partiallyBaked',
+    ]);
+    expect(placeholders[2]).toHaveAttribute('data-live-frame-progress', '25');
+    expect(placeholders[3]).toHaveAttribute('data-live-frame-progress', '60');
+    expect(placeholders[4]).toHaveAttribute('data-live-frame-progress', '35');
+    expect(placeholders[9]).toHaveAttribute('data-live-frame-progress', '50');
+    expect(screen.queryByTestId('live-frame-preview')).not.toBeInTheDocument();
+  });
+
+  it('subscribes to ring-buffer changes so progressive frame replacement updates the preview without async reads', () => {
+    const registry = createLiveDataRegistry();
+    registry.registerSource({ id: 'source-progressive', kind: 'generated' });
+    const channelId = registry.openChannel('source-progressive', 'video');
+    registry.pushSample(channelId, {
+      timestamp: 0,
+      data: { src: 'data:image/png;base64,FIRST', status: 'refining', progress: 0.4 },
+      format: 'json',
+    });
+    const latestSpy = vi.spyOn(registry, 'getLatestSample');
+
+    renderWithLiveRegistry(
+      liveFrameBuildConfig([
+        liveFrameClip('clip-progressive', {
+          bindingId: 'binding-progressive',
+          sourceId: 'source-progressive',
+          sourceKind: 'generated',
+          channelId,
+        }),
+      ]),
+      registry,
+    );
+
+    const first = screen.getByTestId('live-frame-preview');
+    expect(first.querySelector('img')).toHaveAttribute('src', 'data:image/png;base64,FIRST');
+    expect(first).toHaveAttribute('data-live-frame-state', 'refining');
+    expect(first).toHaveAttribute('data-live-frame-progress', '40');
+
+    act(() => {
+      registry.pushSample(channelId, {
+        timestamp: 1000,
+        data: { src: 'data:image/png;base64,FINAL', status: 'final', progress: 1 },
+        format: 'json',
+      });
+    });
+
+    const updated = screen.getByTestId('live-frame-preview');
+    expect(updated.querySelector('img')).toHaveAttribute('src', 'data:image/png;base64,FINAL');
+    expect(updated).toHaveAttribute('data-live-frame-state', 'final');
+    expect(updated).toHaveAttribute('data-live-frame-progress', '100');
+    expect(updated).toHaveAttribute('data-live-frame-sequence', '1');
+    expect(latestSpy.mock.results.some((result) => Boolean(
+      result.value && typeof (result.value as Promise<unknown>).then === 'function',
+    ))).toBe(false);
   });
 });

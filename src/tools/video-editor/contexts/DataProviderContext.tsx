@@ -21,6 +21,8 @@ import type {
 import type { CommandRegistry } from '@/tools/video-editor/runtime/commandRegistry.ts';
 import type { AgentToolRegistry } from '@/tools/video-editor/runtime/agentToolRegistry.ts';
 import type { DiagnosticCollection } from '@reigh/editor-sdk';
+import type { LiveDataRegistry } from '@/tools/video-editor/runtime/liveDataRegistry.ts';
+import type { LivePermissionService } from '@/tools/video-editor/runtime/livePermissions.ts';
 
 export interface VideoEditorRuntimeContextValue {
   provider: DataProvider;
@@ -43,6 +45,10 @@ export interface VideoEditorRuntimeContextValue {
   commandRegistry?: CommandRegistry;
   /** M10: Provider-scoped agent tool registry for host-mediated, proposal-backed agent tools. */
   agentToolRegistry?: AgentToolRegistry;
+  /** M11: Provider-scoped live data registry for source lifecycle, channels, samples, and bake. */
+  liveDataRegistry?: LiveDataRegistry;
+  /** M11: Provider-scoped live permission service for browser-gated permission probes/requests. */
+  livePermissionService?: LivePermissionService;
   /** Provider-scoped diagnostics surfaced by status and diagnostic panels. */
   diagnosticCollection?: DiagnosticCollection;
 }
@@ -70,4 +76,8 @@ export function useVideoEditorRuntime(): VideoEditorRuntimeContextValue {
   }
 
   return context;
+}
+
+export function useOptionalVideoEditorRuntime(): VideoEditorRuntimeContextValue | null {
+  return useContext(DataProviderContext);
 }

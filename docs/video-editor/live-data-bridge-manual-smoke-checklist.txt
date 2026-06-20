@@ -1,0 +1,35 @@
+M11 Live Data Bridge Manual Smoke Checklist
+
+These checks are info-only manual smoke coverage for physical browser devices. They are not required for CI and should not replace the jsdom integration tests.
+
+Webcam
+
+- Browser prompts for camera access from the live webcam canary.
+- Granting access creates one live webcam source, opens a video frame channel, and updates the live-frame preview.
+- Denying access reports a permission diagnostic and leaves no open channel or active media track.
+- Removing or hot-reloading the extension stops all media tracks and leaves persisted timeline live binding metadata export-blocked until the user removes or bakes it.
+
+MIDI
+
+- A browser with Web MIDI support prompts through navigator.requestMIDIAccess.
+- Granting access can register a controller source and deliver control samples without adding per-sample timeline history entries.
+- Denying or disconnecting the device reports a diagnostic and leaves unresolved bindings blocked for export.
+
+Serial
+
+- A browser with Web Serial support prompts through navigator.serial.requestPort.
+- Granting access can register a serial source and deliver data samples through a bounded live channel.
+- Disconnecting the device reports a diagnostic and preserves unresolved binding metadata until explicit remove or bake.
+
+Bluetooth
+
+- A browser with Web Bluetooth support prompts through navigator.bluetooth.requestDevice.
+- Granting access can register a Bluetooth source and deliver data/control samples through the provider-scoped registry.
+- Cancelling the picker or losing the device reports a diagnostic and keeps export blocked for any unresolved persisted binding.
+
+Generated Frames
+
+- A generated-frame canary session shows explicit supersede or fork steering lineage before live delivery activates.
+- Pending, refining, and final frame samples update preview progressively.
+- Reject steering does not activate live delivery.
+- Partial bake leaves unresolved ranges export-blocked; full bake produces deterministic asset or RenderMaterial refs that clear the live export blocker.

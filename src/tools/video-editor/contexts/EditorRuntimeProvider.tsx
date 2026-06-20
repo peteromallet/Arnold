@@ -70,7 +70,12 @@ import type { AgentToolContribution, AgentToolRegistrationService, AgentToolHand
 import {
   removeExtensionDiagnosticsFromCollection,
   syncExtensionDiagnosticsToCollection,
+  syncLiveDiagnosticsToCollection,
 } from '@/tools/video-editor/runtime/diagnosticCollectionSync.ts';
+import { createLiveDataRegistry } from '@/tools/video-editor/runtime/liveDataRegistry.ts';
+import type { LiveDataRegistry } from '@/tools/video-editor/runtime/liveDataRegistry.ts';
+import { createLivePermissionService } from '@/tools/video-editor/runtime/livePermissions.ts';
+import type { LivePermissionService } from '@/tools/video-editor/runtime/livePermissions.ts';
 import {
   TransitionRegistryProvider,
   useTransitionRegistryContext,
@@ -91,6 +96,57 @@ export interface EditorRuntimeProviderProps {
   extensions?: readonly ReighExtension[];
   children: ReactNode;
 }
+
+function createExtensionLiveSessions(
+  registry: LiveDataRegistry,
+  extensionId: string,
+): CreativeContext['sessions'] {
+  return {
+    registerSource(source) {
+      return registry.registerSourceWithOwner(source, extensionId);
+    },
+    getSource(sourceId) {
+      return registry.getSource(sourceId);
+    },
+    listSources() {
+      return registry.listSources();
+    },
+    openChannel(sourceId, kind, metadata) {
+      return registry.openChannel(sourceId, kind, metadata);
+    },
+    closeChannel(channelId) {
+      registry.closeChannel(channelId);
+    },
+    getChannelMetadata(channelId) {
+      return registry.getChannelMetadata(channelId);
+    },
+    pushSample(channelId, frame) {
+      registry.pushSample(channelId, frame);
+    },
+    subscribeSamples(channelId, listener) {
+      return registry.subscribeSamples(channelId, listener);
+    },
+    bake(selection) {
+      return registry.bake(selection);
+    },
+    removeLiveBindings(sourceId) {
+      registry.removeLiveBindings(sourceId);
+    },
+    resolveBinding(bindingId) {
+      return registry.resolveBinding(bindingId);
+    },
+    getBindingMetadata() {
+      return registry.getBindingMetadata();
+    },
+    applySteeringDecision(decision) {
+      registry.applySteeringDecision(decision);
+    },
+    getDiagnostics(sourceId) {
+      return registry.getDiagnostics(sourceId);
+    },
+  };
+}
+
 function EditorRuntimeProviderInner({
   children,
   userId,
@@ -103,6 +159,7 @@ function EditorRuntimeProviderInner({
   transitionRegistryRef,
   clipTypeRegistryRef,
   agentToolRegistryRef,
+  liveDataRegistryRef,
 }: {
   children: ReactNode;
   userId: string | null;
@@ -115,6 +172,7 @@ function EditorRuntimeProviderInner({
   transitionRegistryRef: React.MutableRefObject<TransitionRegistry | null>;
   clipTypeRegistryRef: React.MutableRefObject<ClipTypeRegistry | null>;
   agentToolRegistryRef: React.MutableRefObject<AgentToolRegistry | null>;
+  liveDataRegistryRef: React.MutableRefObject<LiveDataRegistry | null>;
 }) {
   const effectsQuery = useEffects(userId, { enabled: !effectCatalog && Boolean(userId) });
   const effectResources = useResolvedEffectCatalog(userId, effectCatalog);
@@ -285,7 +343,14 @@ function EditorRuntimeProviderInner({
               },
             }
           : undefined;
-        return createExtensionContext(ext, liveCreativeOverrides, commandsService, effectsService, transitionsService, clipTypesService, agentToolsService);
+        const liveRegistry = liveDataRegistryRef.current;
+        const creativeOverrides = liveRegistry
+          ? {
+              ...liveCreativeOverrides,
+              sessions: createExtensionLiveSessions(liveRegistry, extId),
+            }
+          : liveCreativeOverrides;
+        return createExtensionContext(ext, creativeOverrides, commandsService, effectsService, transitionsService, clipTypesService, agentToolsService);
       },
     );
     syncExtensionDiagnosticsToCollection(diagnosticCollection, 'extension-lifecycle', [
@@ -293,6 +358,18 @@ function EditorRuntimeProviderInner({
       ...host.diagnostics,
     ], { activeExtensionIds });
   }, [activeExtensionIds, diagnosticCollection, lifecycleHostRef, extensionRuntime, liveCreativeOverrides, commandRegistryRef]);
+
+  // Sync live registry diagnostics into the provider diagnostic collection
+  useEffect(() => {
+    const registry = liveDataRegistryRef.current;
+    if (!registry || !diagnosticCollection) return;
+    const sync = () => {
+      syncLiveDiagnosticsToCollection(diagnosticCollection, registry.getDiagnostics());
+    };
+    sync();
+    const handle = registry.subscribe(sync);
+    return () => handle.dispose();
+  }, [diagnosticCollection, liveDataRegistryRef]);
 
   // Sync proposalRuntime to the store so host-owned UI (ProposalPanel) can access it.
   useEffect(() => {
@@ -518,9 +595,15 @@ export function EditorRuntimeProvider({
     [extensions],
   );
 
+  // ---- M11: live data registry (one per provider mount) -----------------------
+  const liveDataRegistryRef = useRef<LiveDataRegistry | null>(null);
+  if (!liveDataRegistryRef.current) {
+    liveDataRegistryRef.current = createLiveDataRegistry();
+  }
+
   const lifecycleHostRef = useRef<ExtensionLifecycleHost | null>(null);
   if (!lifecycleHostRef.current) {
-    lifecycleHostRef.current = createExtensionLifecycleHost();
+    lifecycleHostRef.current = createExtensionLifecycleHost(liveDataRegistryRef.current ?? undefined);
   }
 
   // ---- M4: command registry (one per provider mount) -----------------------
@@ -544,7 +627,15 @@ export function EditorRuntimeProvider({
   // ---- M10: agent tool registry (one per provider mount) ---------------------
   const agentToolRegistryRef = useRef<AgentToolRegistry | null>(null);
   if (!agentToolRegistryRef.current) {
-    agentToolRegistryRef.current = createAgentToolRegistry();
+    agentToolRegistryRef.current = createAgentToolRegistry({
+      liveDataRegistry: liveDataRegistryRef.current ?? undefined,
+    });
+  }
+
+  // ---- M11: live permission service (one per provider mount) ------------------
+  const livePermissionServiceRef = useRef<LivePermissionService | null>(null);
+  if (!livePermissionServiceRef.current) {
+    livePermissionServiceRef.current = createLivePermissionService();
   }
 
   const diagnosticCollectionRef = useRef<DiagnosticCollection | null>(null);
@@ -582,6 +673,9 @@ export function EditorRuntimeProvider({
     const host = lifecycleHostRef.current;
     return () => {
       host?.disposeAll();
+      // Dispose live data registry and permission service on provider unmount
+      liveDataRegistryRef.current?.dispose();
+      livePermissionServiceRef.current?.getDisposeHandle().dispose();
     };
   }, []);
 
@@ -641,6 +735,8 @@ export function EditorRuntimeProvider({
     extensionRuntime,
     commandRegistry: commandRegistryRef.current ?? undefined,
     agentToolRegistry: agentToolRegistryRef.current ?? undefined,
+    liveDataRegistry: liveDataRegistryRef.current ?? undefined,
+    livePermissionService: livePermissionServiceRef.current ?? undefined,
     diagnosticCollection: diagnosticCollectionRef.current ?? undefined,
   }), [
     dataProvider,
@@ -673,6 +769,7 @@ export function EditorRuntimeProvider({
         transitionRegistryRef={transitionRegistryRef}
         clipTypeRegistryRef={clipTypeRegistryRef}
         agentToolRegistryRef={agentToolRegistryRef}
+        liveDataRegistryRef={liveDataRegistryRef}
       >
         {children}
       </EditorRuntimeProviderInner>

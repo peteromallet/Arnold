@@ -26,11 +26,15 @@ import {
   type AgentToolRegistryCallbacks,
 } from '@/tools/video-editor/runtime/agentToolRegistry';
 import { validateToolResult } from '@/tools/video-editor/runtime/agentToolContracts';
+import { createLiveDataRegistry } from '@/tools/video-editor/runtime/liveDataRegistry';
 import type {
   AgentToolContribution,
   AgentToolHandler,
   AgentToolInvocationRequest,
   GenerationSession,
+  LiveChannelDescriptor,
+  LiveSample,
+  SteeringDecision,
   ToolResult,
   ToolResultDiagnostic,
   ToolMutationProposalResult,
@@ -157,6 +161,26 @@ function diagCodes(
   diags: readonly { code: string }[],
 ): string[] {
   return diags.map((d) => d.code);
+}
+
+function makeSteeringDecision(
+  overrides?: Partial<SteeringDecision>,
+): SteeringDecision {
+  return {
+    kind: 'supersede',
+    sessionId: 'live-session-1',
+    lineage: {
+      generationIndex: 2,
+      steerHash: 'steer-hash-2',
+      parentRefs: ['live-session-0'],
+      producerVersion: '1.0.0',
+      provenance: { prompt: 'Prompt', model: 'model-a', seed: 42 },
+      provenanceTags: ['agent-tool'],
+    },
+    replacementChannelId: 'live-session-1:replacement' as LiveChannelDescriptor,
+    reason: 'Preview update',
+    ...overrides,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -668,6 +692,136 @@ describe('session handles', () => {
     const snapshot = registry.getSnapshot();
     expect(snapshot.sessions.length).toBe(1);
     expect(snapshot.sessions[0].toolId).toBe('gen');
+  });
+
+  it('refuses GenerationSession live delivery activation without an explicit steering decision', () => {
+    const liveRegistry = createLiveDataRegistry({ emitLifecycleDiagnostics: false });
+    const registry = createAgentToolRegistry({ liveDataRegistry: liveRegistry });
+    const session = makeSession({
+      id: 'missing-steering',
+      liveDelivery: {
+        origin: 'agent-tool',
+      } as any,
+    });
+
+    registry.trackSession('tool-1', 'ext-a', session);
+
+    const snapshot = registry.getSnapshot();
+    expect(snapshot.sessions[0].liveDelivery?.canActivate).toBe(false);
+    expect(snapshot.sessions[0].liveDelivery?.diagnostics.map((d) => d.code)).toContain('live/steering-missing-decision');
+    expect(diagCodes(registry.diagnostics)).toContain('live/steering-missing-decision');
+    expect(liveRegistry.listSources()).toEqual([]);
+  });
+
+  it('activates typed GenerationSession sample delivery with lineage metadata in live ring buffers', async () => {
+    const liveRegistry = createLiveDataRegistry({ emitLifecycleDiagnostics: false });
+    const registry = createAgentToolRegistry({ liveDataRegistry: liveRegistry });
+    const decision = makeSteeringDecision();
+    let sampleListener: ((sample: LiveSample) => void) | null = null;
+    const progressListeners: Array<(progress: number, label?: string) => void> = [];
+    const session = makeSession({
+      id: 'live-session-1',
+      progress: 12,
+      progressLabel: 'Starting',
+      finalRefs: ['asset-final'],
+      bakedRefs: ['asset-baked'],
+      getSampleChannel: vi.fn(() => 'producer-channel' as LiveChannelDescriptor),
+      onSample: vi.fn((listener) => {
+        sampleListener = listener;
+        return { dispose: vi.fn() };
+      }),
+      onProgress: vi.fn((listener) => {
+        progressListeners.push(listener);
+        return { dispose: vi.fn() };
+      }),
+    });
+
+    const genResult: ToolResult = {
+      family: 'generation/session',
+      session,
+      liveDelivery: {
+        origin: 'agent-tool',
+        steeringDecision: decision,
+        activeChannels: ['producer-channel' as LiveChannelDescriptor],
+        finalRefs: ['asset-final'],
+        bakedRefs: ['asset-baked'],
+      },
+    } as ToolGenerationSessionResult;
+
+    registry.ingestAgentToolContribution('ext-a', makeContribution({ id: 'c-live', toolId: 'gen-live' }));
+    registry.registerTool('ext-a', 'gen-live', makeHandler(genResult));
+    await registry.invokeTool(makeRequest('gen-live', 'ext-a'));
+
+    const sessionEntry = registry.getSnapshot().sessions[0];
+    expect(sessionEntry.liveDelivery).toMatchObject({
+      canActivate: true,
+      origin: 'agent-tool',
+      progress: 12,
+      cancelled: false,
+      generationIndex: 2,
+      steerHash: 'steer-hash-2',
+      parentRefs: ['live-session-0'],
+      finalRefs: ['asset-final'],
+      bakedRefs: ['asset-baked'],
+    });
+
+    expect(liveRegistry.getSteeringLineage('live-session-1')?.steerHash).toBe('steer-hash-2');
+    const hostChannel = sessionEntry.liveDelivery!.activeChannels.find(
+      (channel) => channel.startsWith('generation-session:live-session-1:'),
+    )!;
+    expect(hostChannel).toBeDefined();
+
+    progressListeners[0]?.(44, 'Rendering');
+    expect(registry.getSnapshot().sessions[0].liveDelivery?.progress).toBe(44);
+
+    sampleListener?.({
+      channelId: 'producer-channel' as LiveChannelDescriptor,
+      frame: { timestamp: 123, data: { frameRef: 'frame-1' }, format: 'json' },
+      sequenceNumber: 7,
+    });
+
+    const sample = liveRegistry.getLatestSample(hostChannel as LiveChannelDescriptor);
+    expect(sample?.frame.metadata).toMatchObject({
+      origin: 'agent-tool',
+      sessionId: 'live-session-1',
+      toolId: 'gen-live',
+      extensionId: 'ext-a',
+      sourceChannelId: 'producer-channel',
+      sourceSequenceNumber: 7,
+      generationIndex: 2,
+      steerHash: 'steer-hash-2',
+      parentRefs: ['live-session-0'],
+      finalRefs: ['asset-final'],
+      bakedRefs: ['asset-baked'],
+      steeringDecision: 'supersede',
+    });
+    expect(registry.getSnapshot().sessions[0].liveDelivery?.sampleCount).toBe(1);
+  });
+
+  it('records cancellation metadata while preserving M10 cancellation cleanup', () => {
+    const liveRegistry = createLiveDataRegistry({ emitLifecycleDiagnostics: false });
+    const callbacks: AgentToolRegistryCallbacks = {
+      onToolCancelled: vi.fn(),
+    };
+    const configuredRegistry = createAgentToolRegistry({ liveDataRegistry: liveRegistry });
+    configuredRegistry.setCallbacks(callbacks);
+    const cancel = vi.fn();
+    const session = makeSession({
+      id: 'cancel-live',
+      cancel,
+      liveDelivery: {
+        origin: 'agent-tool',
+        steeringDecision: makeSteeringDecision({ sessionId: 'cancel-live' }),
+      },
+    });
+
+    configuredRegistry.trackSession('tool-1', 'ext-a', session);
+    const cancelled = configuredRegistry.cancelSessions('tool-1');
+
+    expect(cancelled).toBe(1);
+    expect(cancel).toHaveBeenCalled();
+    expect(configuredRegistry.getSnapshot().sessions).toHaveLength(0);
+    expect(callbacks.onToolCancelled).toHaveBeenCalledWith('tool-1', 'ext-a', 'cancel-live');
   });
 });
 

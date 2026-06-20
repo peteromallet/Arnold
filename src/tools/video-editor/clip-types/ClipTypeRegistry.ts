@@ -6,12 +6,25 @@
  * export) get a consistent integration surface.
  */
 
-import type { DisposeHandle, ExtensionDiagnostic, DiagnosticSeverity } from '@reigh/editor-sdk';
+import type {
+  DisposeHandle,
+  ExtensionDiagnostic,
+  DiagnosticSeverity,
+  LiveChannelDescriptor,
+  LiveChannelMetadata,
+  LiveSample,
+  LiveSource,
+} from '@reigh/editor-sdk';
 import type {
   ContributionRenderability,
   RenderCapability,
   DeterminismStatus,
 } from '@/tools/video-editor/runtime/renderability.ts';
+import type {
+  TimelineLiveBinding,
+  TimelineLiveBindingResolutionStatus,
+  TimelineLiveDeterministicRef,
+} from '@/tools/video-editor/types/index.ts';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -19,6 +32,52 @@ import type {
 
 /** Record status, matching the EffectRegistry vocabulary. */
 export type ClipTypeRegistryRecordStatus = 'active' | 'inactive' | 'error';
+
+export interface ClipRendererLiveBinding {
+  readonly bindingId: string;
+  readonly sourceId: string;
+  readonly channelId?: string;
+  readonly targetParamName?: string;
+  readonly status: TimelineLiveBindingResolutionStatus;
+  readonly binding: TimelineLiveBinding;
+  readonly deterministicRefs: readonly TimelineLiveDeterministicRef[];
+  readonly diagnostics: readonly {
+    readonly severity: 'info' | 'warning' | 'error';
+    readonly code: string;
+    readonly message: string;
+    readonly path: string;
+  }[];
+}
+
+/**
+ * Synchronous live data read facade for renderers.
+ *
+ * Helpers are source-ID first so extension renderers do not depend on transient
+ * registry/channel object identity. They intentionally return values directly,
+ * never promises, to keep React/Remotion rendering synchronous.
+ */
+export interface ClipRendererLiveProps {
+  readonly bindings: readonly ClipRendererLiveBinding[];
+  readonly diagnostics: readonly ClipRendererLiveBinding['diagnostics'][number][];
+  readonly getSource: (sourceId: string) => LiveSource | undefined;
+  readonly getChannelMetadata: (
+    sourceId: string,
+    channelId?: string,
+  ) => LiveChannelMetadata | undefined;
+  readonly readLatestSample: (sourceId: string, channelId?: string) => LiveSample | undefined;
+  readonly readSampleAt: (
+    sourceId: string,
+    sequenceNumber: number,
+    channelId?: string,
+  ) => LiveSample | undefined;
+  readonly readSamples: (sourceId: string, channelId?: string) => readonly LiveSample[];
+  readonly getSampleCount: (sourceId: string, channelId?: string) => number;
+  /**
+   * Escape hatch for integrations that need to persist a descriptor in
+   * renderer-owned state. Reads should still use the source-ID helpers above.
+   */
+  readonly resolveChannelId: (sourceId: string, channelId?: string) => LiveChannelDescriptor | undefined;
+}
 
 /**
  * Props the host passes to an extension clip renderer.
@@ -33,6 +92,7 @@ export interface ClipRendererProps {
   readonly params: Record<string, unknown>;
   readonly width: number;
   readonly height: number;
+  readonly live: ClipRendererLiveProps;
 }
 
 /**

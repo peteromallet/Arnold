@@ -132,6 +132,163 @@ export type ClipKeyframe = {
   interpolation: KeyframeInterpolation;
 };
 
+// M11: Timeline-resident live binding metadata. Runtime samples remain
+// provider-scoped and must never be persisted in these shapes.
+export type TimelineLiveSourceKind =
+  | 'webcam'
+  | 'microphone'
+  | 'midi'
+  | 'serial'
+  | 'bluetooth'
+  | 'generated'
+  | 'screen-capture'
+  | 'audio-device'
+  | 'osc'
+  | 'custom';
+
+export type TimelineLiveSourceStatus =
+  | 'inactive'
+  | 'activating'
+  | 'active'
+  | 'error'
+  | 'disposed'
+  | 'orphaned';
+
+export type TimelineLiveBindingResolutionStatus =
+  | 'active'
+  | 'inactive'
+  | 'missing'
+  | 'disposed'
+  | 'orphaned'
+  | 'partiallyBaked'
+  | 'resolved'
+  | 'malformed';
+
+export type TimelineLiveSamplingMode = 'latest' | 'time' | 'frame' | 'sequence';
+
+export type TimelineLiveBakeRange = {
+  start?: number;
+  end?: number;
+  startFrame?: number;
+  endFrame?: number;
+  startSample?: number;
+  endSample?: number;
+  takeId?: string;
+};
+
+export type TimelineLiveDeterministicRefKind =
+  | 'asset'
+  | 'keyframe'
+  | 'automation'
+  | 'clip'
+  | 'sidecar'
+  | 'render-material';
+
+export type TimelineLiveDeterministicRef = {
+  kind: TimelineLiveDeterministicRefKind;
+  ref: string;
+  range?: TimelineLiveBakeRange;
+  metadata?: Record<string, unknown>;
+};
+
+export type TimelineLiveBakeMetadata = {
+  status?: 'unbaked' | 'partial' | 'complete';
+  bakedRanges?: TimelineLiveBakeRange[];
+  unresolvedRanges?: TimelineLiveBakeRange[];
+  deterministicRefs?: TimelineLiveDeterministicRef[];
+};
+
+export type TimelineLiveBinding = {
+  bindingId: string;
+  sourceId: string;
+  sourceKind: TimelineLiveSourceKind;
+  channelId?: string;
+  targetParamName?: string;
+  targetEffectId?: string;
+  ownerExtensionId?: string;
+  sampling?: {
+    mode: TimelineLiveSamplingMode;
+    frameOffset?: number;
+    timeOffsetMs?: number;
+  };
+  sourceStatus?: TimelineLiveSourceStatus;
+  resolutionStatus?: TimelineLiveBindingResolutionStatus;
+  bake?: TimelineLiveBakeMetadata;
+  deterministicRefs?: TimelineLiveDeterministicRef[];
+  placeholder?: Record<string, unknown>;
+  metadata?: Record<string, unknown>;
+};
+
+export type TimelineLiveClipMetadata = {
+  bindings?: TimelineLiveBinding[];
+};
+
+export type TimelineLiveUniformBindingMappingKind =
+  | 'scalar'
+  | 'vector'
+  | 'fft-bin'
+  | 'rms-amplitude'
+  | 'onset-event'
+  | 'frame-ref'
+  | 'material-ref';
+
+export type TimelineLiveUniformVectorComponent = 'x' | 'y' | 'z' | 'w';
+
+export type TimelineLiveUniformBindingMapping =
+  | {
+      kind: 'scalar';
+      uniform: string;
+      sourcePath?: string;
+      scale?: number;
+      offset?: number;
+    }
+  | {
+      kind: 'vector';
+      uniform: string;
+      components: TimelineLiveUniformVectorComponent[];
+      sourcePaths?: string[];
+    }
+  | {
+      kind: 'fft-bin';
+      uniform: string;
+      bin: number;
+      fftSize?: number;
+      smoothing?: number;
+    }
+  | {
+      kind: 'rms-amplitude';
+      uniform: string;
+      windowMs?: number;
+      scale?: number;
+    }
+  | {
+      kind: 'onset-event';
+      uniform: string;
+      threshold?: number;
+      decayMs?: number;
+    }
+  | {
+      kind: 'frame-ref';
+      uniform: string;
+      ref: TimelineLiveDeterministicRef;
+    }
+  | {
+      kind: 'material-ref';
+      uniform: string;
+      ref: TimelineLiveDeterministicRef;
+    };
+
+export type TimelineLiveUniformBinding = {
+  bindingId: string;
+  sourceId: string;
+  sourceKind: TimelineLiveSourceKind;
+  channelId?: string;
+  targetMaterialId?: string;
+  targetParamName?: string;
+  mapping: TimelineLiveUniformBindingMapping;
+  metadata?: Record<string, unknown>;
+};
+
 export type TimelineClip = {
   id: string;
   at: number;

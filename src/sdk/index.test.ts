@@ -31,6 +31,41 @@ import type {
   MetadataFacetDescriptor,
   MetadataFacetValueKind,
   AssetDetailSectionDescriptor,
+  // M11 live-data types
+  LiveSourceKind,
+  LiveSourceStatus,
+  LiveSourceDiagnostic,
+  LiveSource,
+  LiveChannelKind,
+  LiveChannelDescriptor,
+  LiveChannelMetadata,
+  LiveSampleFormat,
+  LiveSampleFrame,
+  LiveSample,
+  LivePermissionState,
+  LiveSourcePermission,
+  LiveRecordingMode,
+  LiveRecordingState,
+  LiveLearnMode,
+  LiveBakeTargetKind,
+  LiveBakeTarget,
+  LiveBakeSelection,
+  LiveBakeResult,
+  SteeringDecisionKind,
+  SteeringParameterHotness,
+  SteeringPriorSamplePolicy,
+  SteeringProvenance,
+  SteeringParameterChange,
+  SteeringLineage,
+  SteeringDecision,
+  GenerationSessionLiveDelivery,
+  BindingResolutionStatus,
+  LiveBinding,
+  LiveBindingResolution,
+  LiveBindingMetadata,
+  LiveSessionsService,
+  GenerationSession,
+  CreativeContext,
 } from '@/sdk/index';
 
 // ---------------------------------------------------------------------------
@@ -222,8 +257,8 @@ describe('contributionKindNotYetBridged', () => {
     expect(contributionKindNotYetBridged('parser')).toBeNull();
     expect(contributionKindNotYetBridged('outputFormat')).toBe('M6');
     expect(contributionKindNotYetBridged('searchProvider')).toBe('M6');
-    expect(contributionKindNotYetBridged('agentTool')).toBe('M5');
-    expect(contributionKindNotYetBridged('agent')).toBe('M5');
+    expect(contributionKindNotYetBridged('agentTool')).toBeNull();
+    expect(contributionKindNotYetBridged('agent')).toBeNull();
   });
 
   it('parser is M6-active (returns null)', () => {
@@ -246,8 +281,8 @@ describe('contributionKindNotYetBridged', () => {
 
   it('unsupported contribution behavior is explicit (returns owning milestone)', () => {
     expect(contributionKindNotYetBridged('clipType')).toBeNull();
-    expect(contributionKindNotYetBridged('agentTool')).toBe('M5');
-    expect(contributionKindNotYetBridged('agent')).toBe('M5');
+    expect(contributionKindNotYetBridged('agentTool')).toBeNull();
+    expect(contributionKindNotYetBridged('agent')).toBeNull();
   });
 
   it('CONTRIBUTION_KIND_MILESTONE maps M6 kinds to M6', () => {
@@ -452,12 +487,12 @@ describe('M6: defineExtension accepts M6 contribution types', () => {
     expect(contributionKindNotYetBridged('clipType' as any)).toBeNull();
 
     const reservedKinds = [
-      { kind: 'agentTool', expectedMilestone: 'M5' },
-      { kind: 'agent', expectedMilestone: 'M5' },
+      { kind: 'agentTool', expectedMilestone: 'M10' },
+      { kind: 'agent', expectedMilestone: 'M10' },
     ];
     for (const { kind, expectedMilestone } of reservedKinds) {
       expect((CONTRIBUTION_KIND_MILESTONE as Record<string, string>)[kind]).toBe(expectedMilestone);
-      expect(contributionKindNotYetBridged(kind as any)).toBe(expectedMilestone);
+      expect(contributionKindNotYetBridged(kind as any)).toBeNull();
     }
   });
 });
@@ -634,13 +669,13 @@ describe('createExtensionContext', () => {
     }
   });
 
-  it('creative.sessions throws with M4 milestone', () => {
+  it('creative.sessions throws with M11 milestone', () => {
     expect(() => ctx.creative.sessions).toThrow(ExtensionNotImplementedError);
     try {
       ctx.creative.sessions;
     } catch (err) {
       expect((err as ExtensionNotImplementedError).feature).toBe('sessions');
-      expect((err as ExtensionNotImplementedError).milestone).toBe('M4');
+      expect((err as ExtensionNotImplementedError).milestone).toBe('M11');
     }
   });
 
@@ -1027,6 +1062,7 @@ describe('createExtensionContext', () => {
   it('has exactly the expected own property names', () => {
     const keys = Object.keys(ctx).sort();
     expect(keys).toEqual([
+      'agentTools',
       'apiVersion',
       'chrome',
       'clipTypes',
@@ -1169,7 +1205,7 @@ describe('createCreativeContextStubs', () => {
     }
   });
 
-  it('all 8 creative members are enumerable', () => {
+  it('all 10 creative members are enumerable', () => {
     const stubs = createCreativeContextStubs();
     const keys = Object.keys(stubs).sort();
     expect(keys).toEqual([
@@ -1177,6 +1213,8 @@ describe('createCreativeContextStubs', () => {
       'export',
       'materials',
       'project',
+      'proposals',
+      'reader',
       'sessions',
       'stage',
       'timeline',
@@ -1216,13 +1254,15 @@ describe('ExtensionNotImplementedError', () => {
 // ---------------------------------------------------------------------------
 
 describe('CREATIVE_MEMBER_MILESTONE', () => {
-  it('has entries for all 8 creative members', () => {
+  it('has entries for all 10 creative members', () => {
     const keys = Object.keys(CREATIVE_MEMBER_MILESTONE).sort();
     expect(keys).toEqual([
       'assets',
       'export',
       'materials',
       'project',
+      'proposals',
+      'reader',
       'sessions',
       'stage',
       'timeline',
@@ -1236,6 +1276,689 @@ describe('CREATIVE_MEMBER_MILESTONE', () => {
     }
   });
 });
+
+// ---------------------------------------------------------------------------
+// M11: Live Data Bridge — source, channel, sample, bake, permission,
+// recording, learn, steering, and binding-resolution type tests
+// ---------------------------------------------------------------------------
+
+describe('M11: LiveSourceKind', () => {
+  it('accepts all documented kind values', () => {
+    const kinds: LiveSourceKind[] = [
+      'webcam',
+      'microphone',
+      'midi',
+      'serial',
+      'bluetooth',
+      'generated',
+      'screen-capture',
+      'audio-device',
+      'osc',
+      'custom',
+    ];
+    expect(kinds).toHaveLength(10);
+    for (const k of kinds) {
+      expect(typeof k).toBe('string');
+    }
+  });
+});
+
+describe('M11: LiveSourceStatus', () => {
+  it('covers all lifecycle states', () => {
+    const states: LiveSourceStatus[] = [
+      'inactive',
+      'activating',
+      'active',
+      'error',
+      'disposed',
+      'orphaned',
+    ];
+    expect(states).toHaveLength(6);
+  });
+});
+
+describe('M11: LiveSourceDiagnostic', () => {
+  it('is constructable', () => {
+    const diag: LiveSourceDiagnostic = {
+      severity: 'error',
+      code: 'live/permission-denied',
+      message: 'Camera permission denied',
+      sourceId: 'src-1',
+      detail: { device: 'webcam-1' },
+    };
+    expect(diag.severity).toBe('error');
+    expect(diag.code).toBe('live/permission-denied');
+    expect(diag.sourceId).toBe('src-1');
+  });
+});
+
+describe('M11: LiveSource', () => {
+  it('is constructable (minimal)', () => {
+    const src: LiveSource = {
+      id: 'src-1',
+      kind: 'webcam',
+      status: 'active',
+      diagnostics: [],
+    };
+    expect(src.id).toBe('src-1');
+    expect(src.kind).toBe('webcam');
+    expect(src.status).toBe('active');
+    expect(src.diagnostics).toHaveLength(0);
+  });
+
+  it('is constructable (full)', () => {
+    const src: LiveSource = {
+      id: 'src-2',
+      kind: 'generated',
+      status: 'activating',
+      label: 'AI Generator',
+      diagnostics: [{ severity: 'info', code: 'live/starting', message: 'Starting...' }],
+      metadata: { model: 'v2' },
+      permission: { state: 'prompt', reason: 'Need camera access' },
+      recording: { active: true, mode: 'stream' },
+      learnMode: 'idle',
+    };
+    expect(src.label).toBe('AI Generator');
+    expect(src.permission?.state).toBe('prompt');
+    expect(src.recording?.active).toBe(true);
+    expect(src.learnMode).toBe('idle');
+  });
+});
+
+describe('M11: LiveChannelKind', () => {
+  it('covers all channel kinds', () => {
+    const kinds: LiveChannelKind[] = ['video', 'audio', 'midi', 'osc', 'data', 'control'];
+    expect(kinds).toHaveLength(6);
+  });
+});
+
+describe('M11: LiveChannelDescriptor', () => {
+  it('is string-compatible (branded string)', () => {
+    const ch: LiveChannelDescriptor = 'ch-1' as LiveChannelDescriptor;
+    // String operations work
+    expect(ch.length).toBe(4);
+    expect(ch.toUpperCase()).toBe('CH-1');
+    expect(typeof ch).toBe('string');
+  });
+
+  it('can be used as a map key', () => {
+    const ch: LiveChannelDescriptor = 'ch-map' as LiveChannelDescriptor;
+    const map = new Map<LiveChannelDescriptor, string>();
+    map.set(ch, 'value');
+    expect(map.get(ch)).toBe('value');
+  });
+});
+
+describe('M11: LiveChannelMetadata', () => {
+  it('is constructable', () => {
+    const meta: LiveChannelMetadata = {
+      channelId: 'ch-1' as LiveChannelDescriptor,
+      kind: 'video',
+      sourceId: 'src-1',
+      label: 'Webcam Feed',
+      metadata: { fps: 30 },
+    };
+    expect(meta.channelId).toBe('ch-1');
+    expect(meta.kind).toBe('video');
+    expect(meta.sourceId).toBe('src-1');
+    expect(meta.label).toBe('Webcam Feed');
+  });
+});
+
+describe('M11: LiveSampleFormat', () => {
+  it('covers all sample formats', () => {
+    const formats: LiveSampleFormat[] = ['raw', 'encoded', 'json', 'binary'];
+    expect(formats).toHaveLength(4);
+  });
+});
+
+describe('M11: LiveSampleFrame', () => {
+  it('is constructable with Uint8Array data', () => {
+    const frame: LiveSampleFrame = {
+      timestamp: 100,
+      data: new Uint8Array([1, 2, 3]),
+      format: 'raw',
+      metadata: { size: 3 },
+    };
+    expect(frame.timestamp).toBe(100);
+    expect(frame.format).toBe('raw');
+  });
+
+  it('is constructable with JSON data', () => {
+    const frame: LiveSampleFrame = {
+      timestamp: 200,
+      data: { value: 42 },
+      format: 'json',
+    };
+    expect(frame.timestamp).toBe(200);
+    expect((frame.data as Record<string, unknown>).value).toBe(42);
+  });
+});
+
+describe('M11: LiveSample', () => {
+  it('is constructable', () => {
+    const sample: LiveSample = {
+      channelId: 'ch-1' as LiveChannelDescriptor,
+      frame: { timestamp: 0, data: new Uint8Array(), format: 'raw' },
+      sequenceNumber: 42,
+    };
+    expect(sample.channelId).toBe('ch-1');
+    expect(sample.sequenceNumber).toBe(42);
+  });
+});
+
+describe('M11: LivePermissionState', () => {
+  it('covers all permission states', () => {
+    const states: LivePermissionState[] = ['prompt', 'granted', 'denied', 'unavailable'];
+    expect(states).toHaveLength(4);
+  });
+});
+
+describe('M11: LiveSourcePermission', () => {
+  it('is constructable', () => {
+    const perm: LiveSourcePermission = {
+      state: 'granted',
+      reason: 'Camera access for preview',
+      deviceLabel: 'FaceTime HD Camera',
+      requestedAt: '2026-06-20T00:00:00Z',
+    };
+    expect(perm.state).toBe('granted');
+    expect(perm.deviceLabel).toBe('FaceTime HD Camera');
+    expect(perm.requestedAt).toBe('2026-06-20T00:00:00Z');
+  });
+});
+
+describe('M11: LiveRecordingMode', () => {
+  it('covers all recording modes', () => {
+    const modes: LiveRecordingMode[] = ['stream', 'take', 'loop', 'trigger'];
+    expect(modes).toHaveLength(4);
+  });
+});
+
+describe('M11: LiveRecordingState', () => {
+  it('is constructable', () => {
+    const rec: LiveRecordingState = {
+      active: true,
+      mode: 'take',
+      startedAt: '2026-06-20T00:00:00Z',
+      duration: 5000,
+      takeIndex: 3,
+    };
+    expect(rec.active).toBe(true);
+    expect(rec.mode).toBe('take');
+    expect(rec.takeIndex).toBe(3);
+  });
+});
+
+describe('M11: LiveLearnMode', () => {
+  it('covers all learn modes', () => {
+    const modes: LiveLearnMode[] = ['idle', 'mapping', 'calibrating', 'tracking'];
+    expect(modes).toHaveLength(4);
+  });
+});
+
+describe('M11: LiveBakeTargetKind', () => {
+  it('covers all bake target kinds', () => {
+    const kinds: LiveBakeTargetKind[] = [
+      'asset',
+      'keyframe',
+      'automation',
+      'clip',
+      'sidecar',
+      'render-material',
+    ];
+    expect(kinds).toHaveLength(6);
+  });
+});
+
+describe('M11: LiveBakeTarget', () => {
+  it('is constructable', () => {
+    const target: LiveBakeTarget = {
+      kind: 'asset',
+      ref: 'asset-key-1',
+      params: { format: 'png' },
+    };
+    expect(target.kind).toBe('asset');
+    expect(target.ref).toBe('asset-key-1');
+    expect(target.params).toEqual({ format: 'png' });
+  });
+});
+
+describe('M11: LiveBakeSelection', () => {
+  it('is constructable (full)', () => {
+    const selection: LiveBakeSelection = {
+      sourceId: 'src-1',
+      channelIds: ['ch-1' as LiveChannelDescriptor],
+      timeRange: [0, 5000],
+      frameRange: [10, 120],
+      sampleRange: [0, 100],
+      takeId: 'take-a',
+      targets: [{ kind: 'keyframe', ref: 'param.opacity' }],
+    };
+    expect(selection.sourceId).toBe('src-1');
+    expect(selection.channelIds).toHaveLength(1);
+    expect(selection.timeRange).toEqual([0, 5000]);
+    expect(selection.frameRange).toEqual([10, 120]);
+    expect(selection.takeId).toBe('take-a');
+    expect(selection.targets).toHaveLength(1);
+  });
+
+  it('is constructable (minimal — all channels, all time)', () => {
+    const selection: LiveBakeSelection = {
+      sourceId: 'src-1',
+      targets: [{ kind: 'asset', ref: 'output-key' }],
+    };
+    expect(selection.channelIds).toBeUndefined();
+    expect(selection.timeRange).toBeUndefined();
+    expect(selection.frameRange).toBeUndefined();
+    expect(selection.sampleRange).toBeUndefined();
+    expect(selection.takeId).toBeUndefined();
+  });
+});
+
+describe('M11: LiveBakeResult', () => {
+  it('is constructable (success)', () => {
+    const result: LiveBakeResult = {
+      sourceId: 'src-1',
+      targets: [
+        {
+          target: { kind: 'asset', ref: 'output-key' },
+          outputRef: 'baked-asset-1',
+        },
+      ],
+      diagnostics: [],
+      success: true,
+    };
+    expect(result.success).toBe(true);
+    expect(result.targets).toHaveLength(1);
+    expect(result.targets[0].outputRef).toBe('baked-asset-1');
+  });
+
+  it('is constructable (failure)', () => {
+    const result: LiveBakeResult = {
+      sourceId: 'src-1',
+      targets: [
+        {
+          target: { kind: 'asset', ref: 'output-key' },
+          outputRef: '',
+          diagnostics: [{ severity: 'error', code: 'live/bake-failed', message: 'No samples to bake' }],
+        },
+      ],
+      diagnostics: [{ severity: 'error', code: 'live/bake-failed', message: 'Bake failed' }],
+      success: false,
+    };
+    expect(result.success).toBe(false);
+    expect(result.diagnostics).toHaveLength(1);
+  });
+});
+
+describe('M11: SteeringDecisionKind', () => {
+  it('covers all steering decision kinds', () => {
+    const kinds: SteeringDecisionKind[] = ['supersede', 'fork', 'reject'];
+    expect(kinds).toHaveLength(3);
+  });
+});
+
+describe('M11: Steering resolver contract types', () => {
+  it('covers parameter hotness, prior-sample policy, provenance, and changes', () => {
+    const hotness: SteeringParameterHotness[] = ['hot', 'non-hot'];
+    const policies: SteeringPriorSamplePolicy[] = ['replace', 'fork', 'retain', 'discard'];
+    const provenance: SteeringProvenance = {
+      prompt: 'A slow pan across clouds',
+      model: 'reigh-gen-v1',
+      seed: 42,
+      producerExtensionId: 'ext.generator',
+      tags: ['user-approved'],
+    };
+    const change: SteeringParameterChange = {
+      path: 'params.prompt',
+      previousValue: 'Clouds',
+      nextValue: 'Storm clouds',
+      hotness: 'hot',
+    };
+
+    expect(hotness).toHaveLength(2);
+    expect(policies).toHaveLength(4);
+    expect(provenance.model).toBe('reigh-gen-v1');
+    expect(change.hotness).toBe('hot');
+  });
+});
+
+describe('M11: SteeringLineage', () => {
+  it('is constructable', () => {
+    const lineage: SteeringLineage = {
+      generationIndex: 3,
+      steerHash: 'abc123',
+      parentRefs: ['session-1', 'session-2'],
+      producerVersion: '1.2.0',
+      provenance: {
+        prompt: 'A slow pan across clouds',
+        model: 'reigh-gen-v1',
+        seed: 42,
+        producerExtensionId: 'ext.generator',
+      },
+      provenanceTags: ['steered', 'user-approved'],
+    };
+    expect(lineage.generationIndex).toBe(3);
+    expect(lineage.steerHash).toBe('abc123');
+    expect(lineage.parentRefs).toEqual(['session-1', 'session-2']);
+    expect(lineage.producerVersion).toBe('1.2.0');
+    expect(lineage.provenanceTags).toEqual(['steered', 'user-approved']);
+  });
+});
+
+describe('M11: SteeringDecision', () => {
+  it('is constructable (supersede)', () => {
+    const decision: SteeringDecision = {
+      kind: 'supersede',
+      sessionId: 'session-1',
+      lineage: {
+        generationIndex: 1,
+        steerHash: 'hash1',
+        parentRefs: ['session-0'],
+        producerVersion: '1.0.0',
+        provenance: { prompt: 'Prompt', model: 'model-a', seed: 1 },
+      },
+      reason: 'Better quality available',
+      replacementChannelId: 'ch-new' as LiveChannelDescriptor,
+    };
+    expect(decision.kind).toBe('supersede');
+    expect(decision.sessionId).toBe('session-1');
+    expect(decision.replacementChannelId).toBe('ch-new');
+  });
+
+  it('is constructable (reject)', () => {
+    const decision: SteeringDecision = {
+      kind: 'reject',
+      sessionId: 'session-1',
+      lineage: {
+        generationIndex: 0,
+        steerHash: 'hash0',
+        parentRefs: ['session-0'],
+        producerVersion: '1.0.0',
+        provenance: { prompt: 'Prompt', model: 'model-a', seed: 1 },
+      },
+      reason: 'Generation failed quality check',
+    };
+    expect(decision.kind).toBe('reject');
+    expect(decision.replacementChannelId).toBeUndefined();
+  });
+});
+
+describe('M11: BindingResolutionStatus', () => {
+  it('covers all resolution states', () => {
+    const states: BindingResolutionStatus[] = [
+      'resolved',
+      'unresolved',
+      'orphaned',
+      'disposed',
+      'missing',
+    ];
+    expect(states).toHaveLength(5);
+  });
+});
+
+describe('M11: LiveBinding', () => {
+  it('is constructable (resolved)', () => {
+    const binding: LiveBinding = {
+      bindingId: 'bind-1',
+      sourceId: 'src-1',
+      channelId: 'ch-1' as LiveChannelDescriptor,
+      targetClipId: 'clip-1',
+      status: 'resolved',
+    };
+    expect(binding.bindingId).toBe('bind-1');
+    expect(binding.sourceId).toBe('src-1');
+    expect(binding.status).toBe('resolved');
+  });
+
+  it('is constructable (orphaned with diagnostic)', () => {
+    const binding: LiveBinding = {
+      bindingId: 'bind-2',
+      sourceId: 'src-orphan',
+      status: 'orphaned',
+      diagnostic: {
+        severity: 'warning',
+        code: 'live/orphaned-source',
+        message: 'Source extension was disposed',
+        sourceId: 'src-orphan',
+      },
+    };
+    expect(binding.status).toBe('orphaned');
+    expect(binding.diagnostic?.code).toBe('live/orphaned-source');
+  });
+});
+
+describe('M11: LiveBindingResolution', () => {
+  it('is constructable (resolved)', () => {
+    const resolution: LiveBindingResolution = {
+      bindingId: 'bind-1',
+      status: 'resolved',
+      source: {
+        id: 'src-1',
+        kind: 'webcam',
+        status: 'active',
+        diagnostics: [],
+      },
+      channel: {
+        channelId: 'ch-1' as LiveChannelDescriptor,
+        kind: 'video',
+        sourceId: 'src-1',
+      },
+    };
+    expect(resolution.status).toBe('resolved');
+    expect(resolution.source?.id).toBe('src-1');
+    expect(resolution.channel?.channelId).toBe('ch-1');
+  });
+
+  it('is constructable (unresolved with diagnostic)', () => {
+    const resolution: LiveBindingResolution = {
+      bindingId: 'bind-2',
+      status: 'unresolved',
+      diagnostic: {
+        severity: 'info',
+        code: 'live/source-inactive',
+        message: 'Source is not yet active',
+      },
+    };
+    expect(resolution.status).toBe('unresolved');
+    expect(resolution.source).toBeUndefined();
+    expect(resolution.diagnostic?.code).toBe('live/source-inactive');
+  });
+});
+
+describe('M11: LiveBindingMetadata', () => {
+  it('is constructable', () => {
+    const meta: LiveBindingMetadata = {
+      bindings: [
+        {
+          bindingId: 'bind-1',
+          sourceId: 'src-1',
+          status: 'resolved',
+        },
+        {
+          bindingId: 'bind-2',
+          sourceId: 'src-2',
+          status: 'orphaned',
+        },
+      ],
+      unresolvedCount: 0,
+      orphanedCount: 1,
+      disposedCount: 0,
+    };
+    expect(meta.bindings).toHaveLength(2);
+    expect(meta.orphanedCount).toBe(1);
+    expect(meta.unresolvedCount).toBe(0);
+  });
+});
+
+describe('M11: LiveSessionsService interface shape', () => {
+  it('can be implemented with a stub', () => {
+    const svc: LiveSessionsService = {
+      registerSource(_src) {
+        return { dispose() {} };
+      },
+      getSource(_id) { return undefined; },
+      listSources() { return []; },
+      openChannel(_sid, _kind, _meta) { return 'ch-1' as LiveChannelDescriptor; },
+      closeChannel(_ch) {},
+      getChannelMetadata(_ch) { return undefined; },
+      pushSample(_ch, _frame) {},
+      subscribeSamples(_ch, _listener) { return { dispose() {} }; },
+      bake(_sel) {
+        return { sourceId: '', targets: [], diagnostics: [], success: true };
+      },
+      removeLiveBindings(_sid) {},
+      resolveBinding(_bid) {
+        return { bindingId: _bid, status: 'missing' };
+      },
+      getBindingMetadata() {
+        return { bindings: [], unresolvedCount: 0, orphanedCount: 0, disposedCount: 0 };
+      },
+      applySteeringDecision(_dec) {},
+      getDiagnostics(_sid) { return []; },
+    };
+    expect(typeof svc.registerSource).toBe('function');
+    expect(typeof svc.openChannel).toBe('function');
+    expect(typeof svc.bake).toBe('function');
+    expect(typeof svc.resolveBinding).toBe('function');
+    expect(typeof svc.getBindingMetadata).toBe('function');
+  });
+});
+
+describe('M11: GenerationSession updated with typed channels', () => {
+  it('getSampleChannel returns LiveChannelDescriptor (string-compatible)', () => {
+    // Type-level proof: a GenerationSession can be implemented
+    const session: GenerationSession = {
+      id: 'gen-1',
+      progress: 50,
+      progressLabel: 'Generating...',
+      cancelled: false,
+      done: false,
+      diagnostics: [],
+      onProgress(_listener) { return { dispose() {} }; },
+      cancel() {},
+      getSampleChannel() { return 'gen-1-channel' as LiveChannelDescriptor; },
+      onSample(_listener) { return { dispose() {} }; },
+      getSteeringLineage() { return undefined; },
+      complete(_result) {},
+    };
+    // String compatibility: the returned value can be used as a string
+    const ch: LiveChannelDescriptor = session.getSampleChannel();
+    expect(typeof ch).toBe('string');
+    expect(ch.length).toBeGreaterThan(0);
+  });
+
+  it('onSample can be subscribed', () => {
+    let received: LiveSample | undefined;
+    const session: GenerationSession = {
+      id: 'gen-2',
+      progress: 0,
+      cancelled: false,
+      done: false,
+      diagnostics: [],
+      onProgress() { return { dispose() {} }; },
+      cancel() {},
+      getSampleChannel() { return 'ch' as LiveChannelDescriptor; },
+      onSample(listener) {
+        listener({
+          channelId: 'ch' as LiveChannelDescriptor,
+          frame: { timestamp: 0, data: new Uint8Array(), format: 'raw' },
+          sequenceNumber: 1,
+        });
+        return { dispose() {} };
+      },
+      getSteeringLineage() { return undefined; },
+      complete() {},
+    };
+    session.onSample((s) => { received = s; });
+    expect(received).toBeDefined();
+    expect(received!.sequenceNumber).toBe(1);
+  });
+
+  it('getSteeringLineage returns lineage when available', () => {
+    const lineage: SteeringLineage = {
+      generationIndex: 5,
+      steerHash: 'hash5',
+      parentRefs: ['gen-1', 'gen-2'],
+      producerVersion: '2.0.0',
+      provenance: { prompt: 'Prompt', model: 'model-a', seed: 5 },
+    };
+    const session: GenerationSession = {
+      id: 'gen-3',
+      progress: 100,
+      cancelled: false,
+      done: true,
+      diagnostics: [],
+      onProgress() { return { dispose() {} }; },
+      cancel() {},
+      getSampleChannel() { return 'ch' as LiveChannelDescriptor; },
+      onSample() { return { dispose() {} }; },
+      getSteeringLineage() { return lineage; },
+      complete() {},
+    };
+    const result = session.getSteeringLineage();
+    expect(result).toBeDefined();
+    expect(result!.generationIndex).toBe(5);
+    expect(result!.steerHash).toBe('hash5');
+  });
+
+  it('accepts explicit live delivery metadata on SDK session results', () => {
+    const steeringDecision: SteeringDecision = {
+      kind: 'fork',
+      sessionId: 'gen-live',
+      lineage: {
+        generationIndex: 2,
+        steerHash: 'hash2',
+        parentRefs: ['gen-previous'],
+        producerVersion: '1.0.0',
+        provenance: { prompt: 'Prompt', model: 'model-a', seed: 2 },
+      },
+      reason: 'Non-hot steering change',
+    };
+    const liveDelivery: GenerationSessionLiveDelivery = {
+      origin: 'agent-tool',
+      steeringDecision,
+      activeChannels: ['gen-live:frames' as LiveChannelDescriptor],
+      finalRefs: ['asset-final'],
+      bakedRefs: ['asset-baked'],
+    };
+    const session: GenerationSession = {
+      id: 'gen-live',
+      progress: 10,
+      cancelled: false,
+      done: false,
+      diagnostics: [],
+      liveDelivery,
+      finalRefs: ['asset-final'],
+      bakedRefs: ['asset-baked'],
+      onProgress() { return { dispose() {} }; },
+      cancel() {},
+      getSampleChannel() { return 'gen-live:frames' as LiveChannelDescriptor; },
+      onSample() { return { dispose() {} }; },
+      getSteeringLineage() { return steeringDecision.lineage; },
+      complete() {},
+    };
+
+    expect(session.liveDelivery?.steeringDecision.kind).toBe('fork');
+    expect(session.finalRefs).toEqual(['asset-final']);
+    expect(session.bakedRefs).toEqual(['asset-baked']);
+  });
+});
+
+describe('M11: Updated CREATIVE_MEMBER_MILESTONE', () => {
+  it('sessions milestone is M11', () => {
+    expect(CREATIVE_MEMBER_MILESTONE.sessions).toBe('M11');
+  });
+
+  it('other milestones are unchanged', () => {
+    expect(CREATIVE_MEMBER_MILESTONE.project).toBe('M2');
+    expect(CREATIVE_MEMBER_MILESTONE.timeline).toBe('M3');
+    expect(CREATIVE_MEMBER_MILESTONE.assets).toBe('M6');
+    expect(CREATIVE_MEMBER_MILESTONE.export).toBe('M2');
+  });
+});
+
 
 // ---------------------------------------------------------------------------
 // Helper

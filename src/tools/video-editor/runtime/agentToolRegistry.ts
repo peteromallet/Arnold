@@ -32,12 +32,17 @@ import type {
   ToolResultFamily,
   ToolResultDiagnostic,
   GenerationSession,
+  GenerationSessionLiveDelivery,
+  LiveChannelDescriptor,
+  LiveSourceDiagnostic,
 } from '@reigh/editor-sdk';
 import {
   validateAgentToolInputSchema,
   validateToolResult,
   isToolResultFamily,
 } from '@/tools/video-editor/runtime/agentToolContracts';
+import type { LiveDataRegistry } from '@/tools/video-editor/runtime/liveDataRegistry';
+import { evaluateGenerationSessionLiveDeliveryGate } from '@/tools/video-editor/runtime/liveSteering';
 
 // ---------------------------------------------------------------------------
 // Public registry shapes
@@ -91,6 +96,25 @@ export interface AgentToolSessionEntry {
   readonly extensionId: string;
   /** Creation timestamp (epoch ms). */
   readonly createdAt: number;
+  /** Live delivery activation metadata, when this generation session streams samples. */
+  readonly liveDelivery?: AgentToolSessionLiveDeliveryState;
+}
+
+export interface AgentToolSessionLiveDeliveryState {
+  readonly origin: string;
+  readonly sourceId?: string;
+  readonly activeChannels: readonly LiveChannelDescriptor[];
+  readonly progress: number;
+  readonly cancelled: boolean;
+  readonly steeringDecision?: GenerationSessionLiveDelivery['steeringDecision'];
+  readonly generationIndex?: number;
+  readonly steerHash?: string;
+  readonly parentRefs?: readonly string[];
+  readonly finalRefs?: readonly string[];
+  readonly bakedRefs?: readonly string[];
+  readonly sampleCount: number;
+  readonly canActivate: boolean;
+  readonly diagnostics: readonly LiveSourceDiagnostic[];
 }
 
 /** Frozen snapshot of the entire agent tool registry for external consumers. */
@@ -132,6 +156,35 @@ interface InternalRunStatus {
   lastRunAt: number;
   lastRunOk: boolean;
   lastError: string | null;
+}
+
+interface InternalSessionLiveDeliveryState {
+  origin: string;
+  sourceId?: string;
+  activeChannels: LiveChannelDescriptor[];
+  progress: number;
+  cancelled: boolean;
+  steeringDecision?: GenerationSessionLiveDelivery['steeringDecision'];
+  generationIndex?: number;
+  steerHash?: string;
+  parentRefs?: readonly string[];
+  finalRefs?: readonly string[];
+  bakedRefs?: readonly string[];
+  sampleCount: number;
+  canActivate: boolean;
+  diagnostics: LiveSourceDiagnostic[];
+}
+
+interface InternalSessionEntry {
+  session: GenerationSession;
+  toolId: string;
+  extensionId: string;
+  createdAt: number;
+  liveDelivery?: InternalSessionLiveDeliveryState;
+}
+
+export interface AgentToolRegistryConfig {
+  readonly liveDataRegistry?: LiveDataRegistry;
 }
 
 // ---------------------------------------------------------------------------
@@ -290,15 +343,16 @@ export interface AgentToolRegistry {
 // Factory
 // ---------------------------------------------------------------------------
 
-export function createAgentToolRegistry(): AgentToolRegistry {
+export function createAgentToolRegistry(config: AgentToolRegistryConfig = {}): AgentToolRegistry {
   // toolId → InternalTool
   const tools = new Map<string, InternalTool>();
 
   // toolId → InternalRunStatus
   const runStatuses = new Map<string, InternalRunStatus>();
 
-  // sessionId → AgentToolSessionEntry
-  const sessions = new Map<string, AgentToolSessionEntry>();
+  // sessionId → InternalSessionEntry
+  const sessions = new Map<string, InternalSessionEntry>();
+  const sessionDisposers = new Map<string, DisposeHandle[]>();
 
   const diagnostics: ExtensionDiagnostic[] = [];
   const listeners = new Set<() => void>();
@@ -587,9 +641,17 @@ export function createAgentToolRegistry(): AgentToolRegistry {
         typeof result === 'object' &&
         (result as unknown as Record<string, unknown>).family === 'generation/session'
       ) {
-        const sessionResult = result as { session: GenerationSession };
+        const sessionResult = result as {
+          session: GenerationSession;
+          liveDelivery?: GenerationSessionLiveDelivery;
+        };
         if (sessionResult.session && typeof sessionResult.session === 'object') {
-          trackSession(toolId, extensionId, sessionResult.session);
+          trackSession(
+            toolId,
+            extensionId,
+            sessionResult.session,
+            sessionResult.liveDelivery ?? sessionResult.session.liveDelivery,
+          );
         }
       }
 
@@ -631,6 +693,7 @@ export function createAgentToolRegistry(): AgentToolRegistry {
         } catch {
           // Cancel should never throw, but guard anyway
         }
+        cleanupSession(sessionId);
         sessions.delete(sessionId);
         callbacks.onToolCancelled?.(toolId, entry.extensionId, sessionId);
         count += 1;
@@ -651,6 +714,7 @@ export function createAgentToolRegistry(): AgentToolRegistry {
         } catch {
           // Cancel should never throw, but guard anyway
         }
+        cleanupSession(sessionId);
         sessions.delete(sessionId);
         callbacks.onToolCancelled?.(entry.toolId, extensionId, sessionId);
         count += 1;
@@ -668,31 +732,252 @@ export function createAgentToolRegistry(): AgentToolRegistry {
     toolId: string,
     extensionId: string,
     session: GenerationSession,
+    liveDelivery?: GenerationSessionLiveDelivery,
   ): void {
-    const entry: AgentToolSessionEntry = {
+    const entry: InternalSessionEntry = {
       session,
       toolId,
       extensionId,
       createdAt: Date.now(),
     };
     sessions.set(session.id, entry);
+    activateGenerationSessionLiveDelivery(entry, liveDelivery ?? session.liveDelivery);
 
     // Auto-untrack on completion
     const originalComplete = session.complete.bind(session);
     session.complete = (result?: Record<string, unknown>) => {
+      if (entry.liveDelivery) {
+        entry.liveDelivery.progress = 100;
+        entry.liveDelivery.finalRefs = readStringArray(result?.finalRefs) ?? entry.liveDelivery.finalRefs;
+        entry.liveDelivery.bakedRefs = readStringArray(result?.bakedRefs) ?? entry.liveDelivery.bakedRefs;
+      }
       originalComplete(result);
       untrackSession(session.id);
       callbacks.onToolCompleted?.(toolId, extensionId, session.id);
     };
 
+    if (entry.liveDelivery) {
+      const originalCancel = session.cancel.bind(session);
+      session.cancel = () => {
+        entry.liveDelivery.cancelled = true;
+        originalCancel();
+      };
+    }
+
     invalidateSnapshot();
   }
 
   function untrackSession(sessionId: string): void {
+    cleanupSession(sessionId);
     const existed = sessions.delete(sessionId);
     if (existed) {
       invalidateSnapshot();
     }
+  }
+
+  function cleanupSession(sessionId: string): void {
+    const disposers = sessionDisposers.get(sessionId);
+    if (!disposers) return;
+    for (const disposer of disposers) {
+      try {
+        disposer.dispose();
+      } catch {
+        // Ignore cleanup failures from extension-owned handles.
+      }
+    }
+    sessionDisposers.delete(sessionId);
+  }
+
+  function addSessionDisposer(sessionId: string, disposer: DisposeHandle): void {
+    const existing = sessionDisposers.get(sessionId) ?? [];
+    existing.push(disposer);
+    sessionDisposers.set(sessionId, existing);
+  }
+
+  function activateGenerationSessionLiveDelivery(
+    entry: InternalSessionEntry,
+    delivery: GenerationSessionLiveDelivery | undefined,
+  ): void {
+    if (!delivery) return;
+
+    const sessionId = entry.session.id;
+    const initialChannels = collectInitialChannels(entry.session, delivery);
+    const state: InternalSessionLiveDeliveryState = {
+      origin: isNonEmptyString(delivery.origin) ? delivery.origin : 'agent-tool',
+      sourceId: delivery.sourceId,
+      activeChannels: [...initialChannels],
+      progress: entry.session.progress,
+      cancelled: entry.session.cancelled,
+      steeringDecision: delivery.steeringDecision,
+      generationIndex: delivery.steeringDecision?.lineage?.generationIndex,
+      steerHash: delivery.steeringDecision?.lineage?.steerHash,
+      parentRefs: delivery.steeringDecision?.lineage?.parentRefs,
+      finalRefs: delivery.finalRefs ?? entry.session.finalRefs,
+      bakedRefs: delivery.bakedRefs ?? entry.session.bakedRefs,
+      sampleCount: 0,
+      canActivate: false,
+      diagnostics: [],
+    };
+    entry.liveDelivery = state;
+
+    const gate = evaluateGenerationSessionLiveDeliveryGate(delivery.steeringDecision);
+    state.diagnostics.push(...gate.diagnostics);
+    state.canActivate = gate.canActivate;
+    for (const diagnostic of gate.diagnostics) {
+      addDiagnostic(
+        diagnostic.severity,
+        diagnostic.code,
+        diagnostic.message,
+        entry.extensionId,
+        undefined,
+        diagnostic.detail,
+      );
+    }
+
+    if (!gate.canActivate) {
+      invalidateSnapshot();
+      return;
+    }
+
+    const liveRegistry = config.liveDataRegistry;
+    if (!liveRegistry) {
+      const diagnostic: LiveSourceDiagnostic = {
+        severity: 'error',
+        code: 'live/generation-session-registry-missing',
+        message: 'GenerationSession live delivery requires a live data registry.',
+        detail: { sessionId, toolId: entry.toolId },
+      };
+      state.diagnostics.push(diagnostic);
+      addDiagnostic(diagnostic.severity, diagnostic.code, diagnostic.message, entry.extensionId, undefined, diagnostic.detail);
+      state.canActivate = false;
+      invalidateSnapshot();
+      return;
+    }
+
+    liveRegistry.applySteeringDecision(delivery.steeringDecision);
+    const sourceId = delivery.sourceId ?? `generation-session:${sessionId}`;
+    state.sourceId = sourceId;
+
+    if (!liveRegistry.getSource(sourceId)) {
+      liveRegistry.registerSourceWithOwner({
+        id: sourceId,
+        kind: 'generated',
+        label: delivery.sourceLabel ?? `Generation session ${sessionId}`,
+        metadata: {
+          origin: state.origin,
+          sessionId,
+          toolId: entry.toolId,
+          extensionId: entry.extensionId,
+          generationIndex: state.generationIndex,
+          steerHash: state.steerHash,
+          parentRefs: state.parentRefs,
+          finalRefs: state.finalRefs,
+          bakedRefs: state.bakedRefs,
+          delivery: delivery.metadata,
+        },
+      }, entry.extensionId);
+    }
+
+    const hostChannelId = liveRegistry.openChannel(sourceId, delivery.channelKind ?? 'video', {
+      origin: state.origin,
+      sessionId,
+      toolId: entry.toolId,
+      extensionId: entry.extensionId,
+      sourceChannelId: initialChannels[0],
+      steeringDecision: delivery.steeringDecision.kind,
+      generationIndex: state.generationIndex,
+      steerHash: state.steerHash,
+      parentRefs: state.parentRefs,
+    });
+    state.activeChannels = [...new Set([...state.activeChannels, hostChannelId])];
+
+    try {
+      const progressHandle = entry.session.onProgress((progress) => {
+        state.progress = progress;
+        invalidateSnapshot();
+        reportProgress(entry.toolId, entry.extensionId, progress, entry.session.progressLabel);
+      });
+      addSessionDisposer(sessionId, progressHandle);
+    } catch (error) {
+      recordLiveDeliveryDiagnostic(entry, state, 'live/generation-session-progress-subscribe-failed', error);
+    }
+
+    try {
+      const sampleHandle = entry.session.onSample((sample) => {
+        if (state.cancelled || entry.session.cancelled || entry.session.done) return;
+        liveRegistry.pushSample(hostChannelId, {
+          ...sample.frame,
+          metadata: {
+            ...sample.frame.metadata,
+            origin: state.origin,
+            sessionId,
+            toolId: entry.toolId,
+            extensionId: entry.extensionId,
+            sourceChannelId: sample.channelId,
+            sourceSequenceNumber: sample.sequenceNumber,
+            generationIndex: state.generationIndex,
+            steerHash: state.steerHash,
+            parentRefs: state.parentRefs,
+            finalRefs: state.finalRefs,
+            bakedRefs: state.bakedRefs,
+            steeringDecision: delivery.steeringDecision.kind,
+          },
+        });
+        state.sampleCount += 1;
+        if (!state.activeChannels.includes(sample.channelId)) {
+          state.activeChannels = [...state.activeChannels, sample.channelId];
+        }
+        invalidateSnapshot();
+      });
+      addSessionDisposer(sessionId, sampleHandle);
+    } catch (error) {
+      recordLiveDeliveryDiagnostic(entry, state, 'live/generation-session-sample-subscribe-failed', error);
+    }
+  }
+
+  function recordLiveDeliveryDiagnostic(
+    entry: InternalSessionEntry,
+    state: InternalSessionLiveDeliveryState,
+    code: string,
+    error: unknown,
+  ): void {
+    const message = error instanceof Error ? error.message : String(error);
+    const diagnostic: LiveSourceDiagnostic = {
+      severity: 'error',
+      code,
+      message,
+      sourceId: state.sourceId,
+      detail: { sessionId: entry.session.id, toolId: entry.toolId },
+    };
+    state.diagnostics.push(diagnostic);
+    addDiagnostic(diagnostic.severity, diagnostic.code, diagnostic.message, entry.extensionId, undefined, diagnostic.detail);
+  }
+
+  function collectInitialChannels(
+    session: GenerationSession,
+    delivery: GenerationSessionLiveDelivery,
+  ): LiveChannelDescriptor[] {
+    const channels: LiveChannelDescriptor[] = [];
+    for (const channel of delivery.activeChannels ?? []) {
+      if (isNonEmptyString(channel)) channels.push(channel);
+    }
+    try {
+      const channel = session.getSampleChannel();
+      if (isNonEmptyString(channel)) channels.push(channel);
+    } catch {
+      // getSampleChannel is part of the typed contract, but legacy sessions may throw.
+    }
+    return [...new Set(channels)];
+  }
+
+  function readStringArray(value: unknown): readonly string[] | undefined {
+    if (!Array.isArray(value)) return undefined;
+    const strings = value.filter((item): item is string => typeof item === 'string' && item.length > 0);
+    return strings.length > 0 ? strings : undefined;
+  }
+
+  function isNonEmptyString(value: unknown): value is string {
+    return typeof value === 'string' && value.length > 0;
   }
 
   // ---- diagnostics & snapshot --------------------------------------------
@@ -734,7 +1019,22 @@ export function createAgentToolRegistry(): AgentToolRegistry {
     );
 
     const frozenSessions: readonly AgentToolSessionEntry[] = Object.freeze(
-      [...sessions.values()].map((s) => Object.freeze({ ...s })),
+      [...sessions.values()].map((s) => Object.freeze({
+        session: s.session,
+        toolId: s.toolId,
+        extensionId: s.extensionId,
+        createdAt: s.createdAt,
+        liveDelivery: s.liveDelivery
+          ? Object.freeze({
+              ...s.liveDelivery,
+              activeChannels: Object.freeze([...s.liveDelivery.activeChannels]),
+              parentRefs: s.liveDelivery.parentRefs ? Object.freeze([...s.liveDelivery.parentRefs]) : undefined,
+              finalRefs: s.liveDelivery.finalRefs ? Object.freeze([...s.liveDelivery.finalRefs]) : undefined,
+              bakedRefs: s.liveDelivery.bakedRefs ? Object.freeze([...s.liveDelivery.bakedRefs]) : undefined,
+              diagnostics: Object.freeze([...s.liveDelivery.diagnostics]),
+            })
+          : undefined,
+      })),
     );
 
     const frozenDiagnostics: readonly ExtensionDiagnostic[] = Object.freeze([...diagnostics]);
@@ -797,6 +1097,9 @@ export function createAgentToolRegistry(): AgentToolRegistry {
       } catch {
         // Ignore
       }
+    }
+    for (const sessionId of sessions.keys()) {
+      cleanupSession(sessionId);
     }
     sessions.clear();
 

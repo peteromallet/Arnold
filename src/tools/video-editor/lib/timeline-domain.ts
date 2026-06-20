@@ -8,6 +8,13 @@ import type {
   PinnedShotGroup,
   TimelineClip,
   TimelineConfig,
+  TimelineLiveBinding,
+  TimelineLiveBindingResolutionStatus,
+  TimelineLiveDeterministicRef,
+  TimelineLiveSourceKind,
+  TimelineLiveSourceStatus,
+  TimelineLiveUniformBinding,
+  TimelineLiveUniformBindingMappingKind,
   TrackDefinition,
 } from '../types/index.ts';
 import { validateAssetMetadata } from './assetMetadata';
@@ -36,7 +43,13 @@ export type TimelineDomainIssueCode =
   | 'legacy_transition_unresolvable'
   | 'legacy_transition_removed_contributed'
   | 'legacy_transition_params_repaired'
-  | 'legacy_transition_cleared';
+  | 'legacy_transition_cleared'
+  | 'live_binding_malformed_metadata'
+  | 'live_binding_missing_binding_id'
+  | 'live_binding_missing_source_id'
+  | 'live_binding_missing_source_kind'
+  | 'live_binding_unsupported_source_kind'
+  | 'live_binding_sample_payload_rejected';
 
 export interface TimelineDomainIssue {
   level: TimelineDomainContractLevel;
@@ -815,6 +828,874 @@ export const canonicalizeTimelinePair = (
 };
 
 // ---------------------------------------------------------------------------
+// M11 live binding metadata scan / resolution
+// ---------------------------------------------------------------------------
+
+export type TimelineLiveBindingDiagnosticSeverity = 'info' | 'warning' | 'error';
+export type TimelineLiveBindingDiagnosticCode =
+  | 'live-binding/malformed-metadata'
+  | 'live-binding/missing-binding-id'
+  | 'live-binding/missing-source-id'
+  | 'live-binding/missing-source-kind'
+  | 'live-binding/unsupported-source-kind'
+  | 'live-binding/sample-payload-rejected'
+  | 'live-binding/missing-source'
+  | 'live-binding/inactive-source'
+  | 'live-binding/disposed-source'
+  | 'live-binding/orphaned-source'
+  | 'live-binding/partially-baked'
+  | 'live-binding/resolved';
+
+export interface TimelineLiveBindingDiagnostic {
+  severity: TimelineLiveBindingDiagnosticSeverity;
+  code: TimelineLiveBindingDiagnosticCode;
+  message: string;
+  path: string;
+  clipId?: string;
+  bindingId?: string;
+  sourceId?: string;
+  details?: Record<string, unknown>;
+}
+
+export interface TimelineLiveSourceSnapshot {
+  sourceId: string;
+  kind: TimelineLiveSourceKind;
+  status: TimelineLiveSourceStatus;
+  ownerExtensionId?: string;
+}
+
+export interface TimelineLiveBindingScanOptions {
+  sources?: readonly TimelineLiveSourceSnapshot[];
+}
+
+export interface TimelineLiveBindingRecord {
+  binding: TimelineLiveBinding;
+  clipId: string;
+  path: string;
+  status: TimelineLiveBindingResolutionStatus;
+  diagnostics: readonly TimelineLiveBindingDiagnostic[];
+  blocksExport: boolean;
+}
+
+export interface TimelineLiveBindingScanResult {
+  bindings: readonly TimelineLiveBindingRecord[];
+  diagnostics: readonly TimelineLiveBindingDiagnostic[];
+  counts: Record<TimelineLiveBindingResolutionStatus, number>;
+  hasBlockingLiveBindings: boolean;
+}
+
+export type TimelineLiveUniformBindingDiagnosticCode =
+  | 'live-uniform-binding/malformed-metadata'
+  | 'live-uniform-binding/missing-binding-id'
+  | 'live-uniform-binding/missing-source-id'
+  | 'live-uniform-binding/missing-source-kind'
+  | 'live-uniform-binding/unsupported-source-kind'
+  | 'live-uniform-binding/sample-payload-rejected'
+  | 'live-uniform-binding/missing-mapping'
+  | 'live-uniform-binding/unsupported-mapping-kind'
+  | 'live-uniform-binding/missing-uniform'
+  | 'live-uniform-binding/invalid-vector-components'
+  | 'live-uniform-binding/invalid-fft-bin'
+  | 'live-uniform-binding/invalid-deterministic-ref';
+
+export interface TimelineLiveUniformBindingDiagnostic {
+  severity: TimelineLiveBindingDiagnosticSeverity;
+  code: TimelineLiveUniformBindingDiagnosticCode;
+  message: string;
+  path: string;
+  clipId?: string;
+  bindingId?: string;
+  sourceId?: string;
+  details?: Record<string, unknown>;
+}
+
+export interface TimelineLiveUniformBindingRecord {
+  binding: TimelineLiveUniformBinding;
+  clipId: string;
+  path: string;
+  diagnostics: readonly TimelineLiveUniformBindingDiagnostic[];
+}
+
+export interface TimelineLiveUniformBindingScanResult {
+  bindings: readonly TimelineLiveUniformBindingRecord[];
+  diagnostics: readonly TimelineLiveUniformBindingDiagnostic[];
+}
+
+const SUPPORTED_LIVE_SOURCE_KINDS = new Set<string>([
+  'webcam',
+  'microphone',
+  'midi',
+  'serial',
+  'bluetooth',
+  'generated',
+  'screen-capture',
+  'audio-device',
+  'osc',
+  'custom',
+]);
+
+const LIVE_SAMPLE_PAYLOAD_KEYS = new Set<string>([
+  'sample',
+  'samples',
+  'samplePayload',
+  'sample_payload',
+  'frame',
+  'frames',
+  'payload',
+  'ringBuffer',
+  'ring_buffer',
+  'buffer',
+]);
+
+const LIVE_UNIFORM_MAPPING_KINDS = new Set<TimelineLiveUniformBindingMappingKind>([
+  'scalar',
+  'vector',
+  'fft-bin',
+  'rms-amplitude',
+  'onset-event',
+  'frame-ref',
+  'material-ref',
+]);
+
+const LIVE_UNIFORM_VECTOR_COMPONENTS = new Set(['x', 'y', 'z', 'w']);
+
+const LIVE_BINDING_BLOCKING_STATUSES = new Set<TimelineLiveBindingResolutionStatus>([
+  'active',
+  'inactive',
+  'missing',
+  'disposed',
+  'orphaned',
+  'partiallyBaked',
+  'malformed',
+]);
+
+const emptyLiveBindingCounts = (): Record<TimelineLiveBindingResolutionStatus, number> => ({
+  active: 0,
+  inactive: 0,
+  missing: 0,
+  disposed: 0,
+  orphaned: 0,
+  partiallyBaked: 0,
+  resolved: 0,
+  malformed: 0,
+});
+
+const isRecord = (value: unknown): value is Record<string, unknown> => {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+};
+
+const createLiveBindingDiagnostic = (
+  severity: TimelineLiveBindingDiagnosticSeverity,
+  code: TimelineLiveBindingDiagnosticCode,
+  message: string,
+  path: string,
+  extra: Omit<TimelineLiveBindingDiagnostic, 'severity' | 'code' | 'message' | 'path'> = {},
+): TimelineLiveBindingDiagnostic => ({
+  severity,
+  code,
+  message,
+  path,
+  ...extra,
+});
+
+const isTimelineLiveSourceKind = (value: unknown): value is TimelineLiveSourceKind => {
+  return typeof value === 'string' && SUPPORTED_LIVE_SOURCE_KINDS.has(value);
+};
+
+const isTimelineLiveBindingResolutionStatus = (
+  value: unknown,
+): value is TimelineLiveBindingResolutionStatus => {
+  return (
+    value === 'active'
+    || value === 'inactive'
+    || value === 'missing'
+    || value === 'disposed'
+    || value === 'orphaned'
+    || value === 'partiallyBaked'
+    || value === 'resolved'
+    || value === 'malformed'
+  );
+};
+
+const hasForbiddenSamplePayload = (value: unknown): boolean => {
+  if (Array.isArray(value)) {
+    return value.some(hasForbiddenSamplePayload);
+  }
+
+  if (!isRecord(value)) {
+    return false;
+  }
+
+  for (const [key, child] of Object.entries(value)) {
+    if (LIVE_SAMPLE_PAYLOAD_KEYS.has(key)) {
+      return true;
+    }
+    if (hasForbiddenSamplePayload(child)) {
+      return true;
+    }
+  }
+
+  return false;
+};
+
+const getBindingArrayCandidates = (
+  value: unknown,
+): readonly { value: unknown; pathSuffix: string }[] => {
+  if (Array.isArray(value)) {
+    return [{ value, pathSuffix: '' }];
+  }
+
+  if (!isRecord(value)) {
+    return [];
+  }
+
+  if (Array.isArray(value.bindings)) {
+    return [{ value: value.bindings, pathSuffix: '.bindings' }];
+  }
+
+  if (Array.isArray(value.liveBindings)) {
+    return [{ value: value.liveBindings, pathSuffix: '.liveBindings' }];
+  }
+
+  if (typeof value.bindingId === 'string' || typeof value.sourceId === 'string') {
+    return [{ value: [value], pathSuffix: '' }];
+  }
+
+  return [];
+};
+
+const extractLiveBindingCandidates = (
+  clip: TimelineClip,
+): readonly { value: unknown; path: string }[] => {
+  const candidates: { value: unknown; path: string }[] = [];
+
+  const appLive = clip.app?.live;
+  if (appLive !== undefined) {
+    for (const candidate of getBindingArrayCandidates(appLive)) {
+      candidates.push({
+        value: candidate.value,
+        path: `clips.${clip.id}.app.live${candidate.pathSuffix}`,
+      });
+    }
+    if (candidates.length === 0) {
+      candidates.push({ value: appLive, path: `clips.${clip.id}.app.live` });
+    }
+  }
+
+  const paramsLiveBindings = clip.params?.liveBindings;
+  if (paramsLiveBindings !== undefined) {
+    candidates.push({ value: paramsLiveBindings, path: `clips.${clip.id}.params.liveBindings` });
+  }
+
+  return candidates;
+};
+
+const normalizeLiveBinding = (
+  rawBinding: unknown,
+  clip: TimelineClip,
+  path: string,
+): { binding?: TimelineLiveBinding; diagnostics: TimelineLiveBindingDiagnostic[] } => {
+  const diagnostics: TimelineLiveBindingDiagnostic[] = [];
+
+  if (!isRecord(rawBinding)) {
+    diagnostics.push(createLiveBindingDiagnostic(
+      'error',
+      'live-binding/malformed-metadata',
+      `Live binding metadata on clip '${clip.id}' must be an object.`,
+      path,
+      { clipId: clip.id },
+    ));
+    return { diagnostics };
+  }
+
+  if (hasForbiddenSamplePayload(rawBinding)) {
+    diagnostics.push(createLiveBindingDiagnostic(
+      'error',
+      'live-binding/sample-payload-rejected',
+      `Live binding '${String(rawBinding.bindingId ?? path)}' on clip '${clip.id}' contains sample payload data.`,
+      path,
+      { clipId: clip.id, bindingId: typeof rawBinding.bindingId === 'string' ? rawBinding.bindingId : undefined },
+    ));
+  }
+
+  const bindingId = rawBinding.bindingId;
+  if (typeof bindingId !== 'string' || bindingId.length === 0) {
+    diagnostics.push(createLiveBindingDiagnostic(
+      'error',
+      'live-binding/missing-binding-id',
+      `Live binding metadata on clip '${clip.id}' is missing bindingId.`,
+      path,
+      { clipId: clip.id },
+    ));
+  }
+
+  const sourceId = rawBinding.sourceId;
+  if (typeof sourceId !== 'string' || sourceId.length === 0) {
+    diagnostics.push(createLiveBindingDiagnostic(
+      'error',
+      'live-binding/missing-source-id',
+      `Live binding '${typeof bindingId === 'string' ? bindingId : path}' on clip '${clip.id}' is missing sourceId.`,
+      path,
+      { clipId: clip.id, bindingId: typeof bindingId === 'string' ? bindingId : undefined },
+    ));
+  }
+
+  const sourceKind = rawBinding.sourceKind ?? rawBinding.kind;
+  if (typeof sourceKind !== 'string' || sourceKind.length === 0) {
+    diagnostics.push(createLiveBindingDiagnostic(
+      'error',
+      'live-binding/missing-source-kind',
+      `Live binding '${typeof bindingId === 'string' ? bindingId : path}' on clip '${clip.id}' is missing sourceKind.`,
+      path,
+      {
+        clipId: clip.id,
+        bindingId: typeof bindingId === 'string' ? bindingId : undefined,
+        sourceId: typeof sourceId === 'string' ? sourceId : undefined,
+      },
+    ));
+  } else if (!isTimelineLiveSourceKind(sourceKind)) {
+    diagnostics.push(createLiveBindingDiagnostic(
+      'error',
+      'live-binding/unsupported-source-kind',
+      `Live binding '${typeof bindingId === 'string' ? bindingId : path}' references unsupported source kind '${sourceKind}'.`,
+      path,
+      {
+        clipId: clip.id,
+        bindingId: typeof bindingId === 'string' ? bindingId : undefined,
+        sourceId: typeof sourceId === 'string' ? sourceId : undefined,
+        details: { sourceKind },
+      },
+    ));
+  }
+
+  if (
+    typeof bindingId !== 'string'
+    || bindingId.length === 0
+    || typeof sourceId !== 'string'
+    || sourceId.length === 0
+    || !isTimelineLiveSourceKind(sourceKind)
+  ) {
+    return { diagnostics };
+  }
+
+  const binding: TimelineLiveBinding = {
+    ...(rawBinding as Omit<TimelineLiveBinding, 'bindingId' | 'sourceId' | 'sourceKind'>),
+    bindingId,
+    sourceId,
+    sourceKind,
+  };
+
+  return { binding, diagnostics };
+};
+
+const liveBindingDeterministicRefs = (
+  binding: TimelineLiveBinding,
+): readonly TimelineLiveDeterministicRef[] => [
+  ...(Array.isArray(binding.deterministicRefs) ? binding.deterministicRefs : []),
+  ...(Array.isArray(binding.bake?.deterministicRefs) ? binding.bake.deterministicRefs : []),
+];
+
+const liveBindingHasUnresolvedRanges = (binding: TimelineLiveBinding): boolean => (
+  Array.isArray(binding.bake?.unresolvedRanges) && binding.bake.unresolvedRanges.length > 0
+);
+
+const liveBindingHasRangedDeterministicRefs = (binding: TimelineLiveBinding): boolean => (
+  liveBindingDeterministicRefs(binding).some((ref) => ref.range !== undefined)
+);
+
+const liveBindingHasPartialBake = (binding: TimelineLiveBinding): boolean => {
+  return (
+    binding.resolutionStatus === 'partiallyBaked'
+    || binding.bake?.status === 'partial'
+    || liveBindingHasUnresolvedRanges(binding)
+    || (liveBindingHasRangedDeterministicRefs(binding) && binding.bake?.status !== 'complete')
+  );
+};
+
+const liveBindingHasCompleteBake = (binding: TimelineLiveBinding): boolean => {
+  return (
+    !liveBindingHasPartialBake(binding)
+    && (
+      binding.resolutionStatus === 'resolved'
+      || binding.bake?.status === 'complete'
+      || liveBindingDeterministicRefs(binding).length > 0
+    )
+  );
+};
+
+export const resolveTimelineLiveBinding = (
+  binding: TimelineLiveBinding,
+  sources: readonly TimelineLiveSourceSnapshot[] = [],
+): { status: TimelineLiveBindingResolutionStatus; diagnostics: TimelineLiveBindingDiagnostic[] } => {
+  const diagnostics: TimelineLiveBindingDiagnostic[] = [];
+
+  if (liveBindingHasPartialBake(binding)) {
+    diagnostics.push(createLiveBindingDiagnostic(
+      'warning',
+      'live-binding/partially-baked',
+      `Live binding '${binding.bindingId}' is only partially baked and remains export-blocking.`,
+      '',
+      {
+        bindingId: binding.bindingId,
+        sourceId: binding.sourceId,
+        details: {
+          bakedRanges: binding.bake?.bakedRanges?.length ?? 0,
+          unresolvedRanges: binding.bake?.unresolvedRanges?.length ?? 0,
+        },
+      },
+    ));
+    return { status: 'partiallyBaked', diagnostics };
+  }
+
+  if (liveBindingHasCompleteBake(binding)) {
+    diagnostics.push(createLiveBindingDiagnostic(
+      'info',
+      'live-binding/resolved',
+      `Live binding '${binding.bindingId}' has deterministic replacement metadata.`,
+      '',
+      { bindingId: binding.bindingId, sourceId: binding.sourceId },
+    ));
+    return { status: 'resolved', diagnostics };
+  }
+
+  if (isTimelineLiveBindingResolutionStatus(binding.resolutionStatus)) {
+    return { status: binding.resolutionStatus, diagnostics };
+  }
+
+  if (binding.sourceStatus === 'disposed' || binding.sourceStatus === 'orphaned') {
+    return { status: binding.sourceStatus, diagnostics };
+  }
+
+  const source = sources.find((candidate) => candidate.sourceId === binding.sourceId);
+  const sourceStatus = source?.status ?? binding.sourceStatus;
+
+  if (!sourceStatus) {
+    diagnostics.push(createLiveBindingDiagnostic(
+      'warning',
+      'live-binding/missing-source',
+      `Live binding '${binding.bindingId}' references missing source '${binding.sourceId}'.`,
+      '',
+      { bindingId: binding.bindingId, sourceId: binding.sourceId },
+    ));
+    return { status: 'missing', diagnostics };
+  }
+
+  if (sourceStatus === 'disposed' || sourceStatus === 'orphaned') {
+    diagnostics.push(createLiveBindingDiagnostic(
+      'warning',
+      sourceStatus === 'disposed' ? 'live-binding/disposed-source' : 'live-binding/orphaned-source',
+      `Live binding '${binding.bindingId}' references ${sourceStatus} source '${binding.sourceId}'.`,
+      '',
+      { bindingId: binding.bindingId, sourceId: binding.sourceId },
+    ));
+    return { status: sourceStatus, diagnostics };
+  }
+
+  if (sourceStatus === 'active') {
+    return { status: 'active', diagnostics };
+  }
+
+  diagnostics.push(createLiveBindingDiagnostic(
+    'warning',
+    'live-binding/inactive-source',
+    `Live binding '${binding.bindingId}' references inactive source '${binding.sourceId}'.`,
+    '',
+    { bindingId: binding.bindingId, sourceId: binding.sourceId, details: { sourceStatus } },
+  ));
+  return { status: 'inactive', diagnostics };
+};
+
+export const scanTimelineLiveBindings = (
+  config: TimelineConfig,
+  options: TimelineLiveBindingScanOptions = {},
+): TimelineLiveBindingScanResult => {
+  const records: TimelineLiveBindingRecord[] = [];
+  const diagnostics: TimelineLiveBindingDiagnostic[] = [];
+  const counts = emptyLiveBindingCounts();
+
+  for (const clip of config.clips) {
+    for (const candidate of extractLiveBindingCandidates(clip)) {
+      if (!Array.isArray(candidate.value)) {
+        const diagnostic = createLiveBindingDiagnostic(
+          'error',
+          'live-binding/malformed-metadata',
+          `Live binding metadata on clip '${clip.id}' must be an array or binding object.`,
+          candidate.path,
+          { clipId: clip.id },
+        );
+        diagnostics.push(diagnostic);
+        counts.malformed += 1;
+        records.push({
+          binding: {
+            bindingId: `${clip.id}:malformed:${records.length}`,
+            sourceId: '',
+            sourceKind: 'custom',
+            resolutionStatus: 'malformed',
+          },
+          clipId: clip.id,
+          path: candidate.path,
+          status: 'malformed',
+          diagnostics: Object.freeze([diagnostic]),
+          blocksExport: true,
+        });
+        continue;
+      }
+
+      candidate.value.forEach((rawBinding, index) => {
+        const path = `${candidate.path}.${index}`;
+        const normalized = normalizeLiveBinding(rawBinding, clip, path);
+
+        if (!normalized.binding) {
+          diagnostics.push(...normalized.diagnostics);
+          counts.malformed += 1;
+          records.push({
+            binding: {
+              bindingId: isRecord(rawBinding) && typeof rawBinding.bindingId === 'string'
+                ? rawBinding.bindingId
+                : `${clip.id}:malformed:${index}`,
+              sourceId: isRecord(rawBinding) && typeof rawBinding.sourceId === 'string' ? rawBinding.sourceId : '',
+              sourceKind: 'custom',
+              resolutionStatus: 'malformed',
+            },
+            clipId: clip.id,
+            path,
+            status: 'malformed',
+            diagnostics: Object.freeze(normalized.diagnostics),
+            blocksExport: true,
+          });
+          return;
+        }
+
+        const resolution = resolveTimelineLiveBinding(normalized.binding, options.sources);
+        const recordDiagnostics = [
+          ...normalized.diagnostics,
+          ...resolution.diagnostics.map((diagnostic) => ({
+            ...diagnostic,
+            path,
+            clipId: clip.id,
+          })),
+        ];
+        diagnostics.push(...recordDiagnostics);
+        counts[resolution.status] += 1;
+        records.push({
+          binding: normalized.binding,
+          clipId: clip.id,
+          path,
+          status: resolution.status,
+          diagnostics: Object.freeze(recordDiagnostics),
+          blocksExport: LIVE_BINDING_BLOCKING_STATUSES.has(resolution.status),
+        });
+      });
+    }
+  }
+
+  return {
+    bindings: Object.freeze(records),
+    diagnostics: Object.freeze(diagnostics),
+    counts,
+    hasBlockingLiveBindings: records.some((record) => record.blocksExport),
+  };
+};
+
+const createLiveUniformBindingDiagnostic = (
+  severity: TimelineLiveBindingDiagnosticSeverity,
+  code: TimelineLiveUniformBindingDiagnosticCode,
+  message: string,
+  path: string,
+  extra: Omit<TimelineLiveUniformBindingDiagnostic, 'severity' | 'code' | 'message' | 'path'> = {},
+): TimelineLiveUniformBindingDiagnostic => ({
+  severity,
+  code,
+  message,
+  path,
+  ...extra,
+});
+
+const getLiveUniformBindingArrayCandidates = (
+  value: unknown,
+): readonly { value: unknown; pathSuffix: string }[] => {
+  if (Array.isArray(value)) return [{ value, pathSuffix: '' }];
+  if (!isRecord(value)) return [];
+  if (Array.isArray(value.liveUniformBindings)) {
+    return [{ value: value.liveUniformBindings, pathSuffix: '.liveUniformBindings' }];
+  }
+  if (Array.isArray(value.uniformBindings)) {
+    return [{ value: value.uniformBindings, pathSuffix: '.uniformBindings' }];
+  }
+  return [];
+};
+
+const extractLiveUniformBindingCandidates = (
+  clip: TimelineClip,
+): readonly { value: unknown; path: string }[] => {
+  const candidates: { value: unknown; path: string }[] = [];
+
+  if (clip.app?.liveUniformBindings !== undefined) {
+    candidates.push({ value: clip.app.liveUniformBindings, path: `clips.${clip.id}.app.liveUniformBindings` });
+  }
+
+  if (clip.app?.live !== undefined) {
+    for (const candidate of getLiveUniformBindingArrayCandidates(clip.app.live)) {
+      candidates.push({
+        value: candidate.value,
+        path: `clips.${clip.id}.app.live${candidate.pathSuffix}`,
+      });
+    }
+  }
+
+  if (clip.params?.liveUniformBindings !== undefined) {
+    candidates.push({ value: clip.params.liveUniformBindings, path: `clips.${clip.id}.params.liveUniformBindings` });
+  }
+
+  return candidates;
+};
+
+const normalizeLiveUniformBinding = (
+  rawBinding: unknown,
+  clip: TimelineClip,
+  path: string,
+): { binding?: TimelineLiveUniformBinding; diagnostics: TimelineLiveUniformBindingDiagnostic[] } => {
+  const diagnostics: TimelineLiveUniformBindingDiagnostic[] = [];
+
+  if (!isRecord(rawBinding)) {
+    diagnostics.push(createLiveUniformBindingDiagnostic(
+      'error',
+      'live-uniform-binding/malformed-metadata',
+      `Live uniform binding metadata on clip '${clip.id}' must be an object.`,
+      path,
+      { clipId: clip.id },
+    ));
+    return { diagnostics };
+  }
+
+  if (hasForbiddenSamplePayload(rawBinding)) {
+    diagnostics.push(createLiveUniformBindingDiagnostic(
+      'error',
+      'live-uniform-binding/sample-payload-rejected',
+      `Live uniform binding '${String(rawBinding.bindingId ?? path)}' on clip '${clip.id}' contains sample payload data.`,
+      path,
+      { clipId: clip.id, bindingId: typeof rawBinding.bindingId === 'string' ? rawBinding.bindingId : undefined },
+    ));
+  }
+
+  const bindingId = rawBinding.bindingId;
+  if (typeof bindingId !== 'string' || bindingId.length === 0) {
+    diagnostics.push(createLiveUniformBindingDiagnostic(
+      'error',
+      'live-uniform-binding/missing-binding-id',
+      `Live uniform binding metadata on clip '${clip.id}' is missing bindingId.`,
+      path,
+      { clipId: clip.id },
+    ));
+  }
+
+  const sourceId = rawBinding.sourceId;
+  if (typeof sourceId !== 'string' || sourceId.length === 0) {
+    diagnostics.push(createLiveUniformBindingDiagnostic(
+      'error',
+      'live-uniform-binding/missing-source-id',
+      `Live uniform binding '${typeof bindingId === 'string' ? bindingId : path}' on clip '${clip.id}' is missing sourceId.`,
+      path,
+      { clipId: clip.id, bindingId: typeof bindingId === 'string' ? bindingId : undefined },
+    ));
+  }
+
+  const sourceKind = rawBinding.sourceKind ?? rawBinding.kind;
+  if (typeof sourceKind !== 'string' || sourceKind.length === 0) {
+    diagnostics.push(createLiveUniformBindingDiagnostic(
+      'error',
+      'live-uniform-binding/missing-source-kind',
+      `Live uniform binding '${typeof bindingId === 'string' ? bindingId : path}' on clip '${clip.id}' is missing sourceKind.`,
+      path,
+      {
+        clipId: clip.id,
+        bindingId: typeof bindingId === 'string' ? bindingId : undefined,
+        sourceId: typeof sourceId === 'string' ? sourceId : undefined,
+      },
+    ));
+  } else if (!isTimelineLiveSourceKind(sourceKind)) {
+    diagnostics.push(createLiveUniformBindingDiagnostic(
+      'error',
+      'live-uniform-binding/unsupported-source-kind',
+      `Live uniform binding '${typeof bindingId === 'string' ? bindingId : path}' references unsupported source kind '${sourceKind}'.`,
+      path,
+      {
+        clipId: clip.id,
+        bindingId: typeof bindingId === 'string' ? bindingId : undefined,
+        sourceId: typeof sourceId === 'string' ? sourceId : undefined,
+        details: { sourceKind },
+      },
+    ));
+  }
+
+  const mapping = rawBinding.mapping;
+  if (!isRecord(mapping)) {
+    diagnostics.push(createLiveUniformBindingDiagnostic(
+      'error',
+      'live-uniform-binding/missing-mapping',
+      `Live uniform binding '${typeof bindingId === 'string' ? bindingId : path}' is missing mapping metadata.`,
+      `${path}.mapping`,
+      {
+        clipId: clip.id,
+        bindingId: typeof bindingId === 'string' ? bindingId : undefined,
+        sourceId: typeof sourceId === 'string' ? sourceId : undefined,
+      },
+    ));
+  } else {
+    const kind = mapping.kind;
+    if (typeof kind !== 'string' || !LIVE_UNIFORM_MAPPING_KINDS.has(kind as TimelineLiveUniformBindingMappingKind)) {
+      diagnostics.push(createLiveUniformBindingDiagnostic(
+        'error',
+        'live-uniform-binding/unsupported-mapping-kind',
+        `Live uniform binding '${typeof bindingId === 'string' ? bindingId : path}' has unsupported mapping kind '${String(kind)}'.`,
+        `${path}.mapping.kind`,
+        {
+          clipId: clip.id,
+          bindingId: typeof bindingId === 'string' ? bindingId : undefined,
+          sourceId: typeof sourceId === 'string' ? sourceId : undefined,
+          details: { kind },
+        },
+      ));
+    }
+
+    if (typeof mapping.uniform !== 'string' || mapping.uniform.length === 0) {
+      diagnostics.push(createLiveUniformBindingDiagnostic(
+        'error',
+        'live-uniform-binding/missing-uniform',
+        `Live uniform binding '${typeof bindingId === 'string' ? bindingId : path}' mapping is missing uniform.`,
+        `${path}.mapping.uniform`,
+        {
+          clipId: clip.id,
+          bindingId: typeof bindingId === 'string' ? bindingId : undefined,
+          sourceId: typeof sourceId === 'string' ? sourceId : undefined,
+        },
+      ));
+    }
+
+    if (mapping.kind === 'vector') {
+      const components = mapping.components;
+      const validComponents = Array.isArray(components)
+        && components.length > 0
+        && components.length <= 4
+        && components.every((component) => (
+          typeof component === 'string' && LIVE_UNIFORM_VECTOR_COMPONENTS.has(component)
+        ));
+      if (!validComponents) {
+        diagnostics.push(createLiveUniformBindingDiagnostic(
+          'error',
+          'live-uniform-binding/invalid-vector-components',
+          `Live uniform binding '${typeof bindingId === 'string' ? bindingId : path}' vector mapping has invalid components.`,
+          `${path}.mapping.components`,
+          {
+            clipId: clip.id,
+            bindingId: typeof bindingId === 'string' ? bindingId : undefined,
+            sourceId: typeof sourceId === 'string' ? sourceId : undefined,
+          },
+        ));
+      }
+    }
+
+    if (mapping.kind === 'fft-bin' && (!Number.isInteger(mapping.bin) || Number(mapping.bin) < 0)) {
+      diagnostics.push(createLiveUniformBindingDiagnostic(
+        'error',
+        'live-uniform-binding/invalid-fft-bin',
+        `Live uniform binding '${typeof bindingId === 'string' ? bindingId : path}' fft-bin mapping must have a non-negative integer bin.`,
+        `${path}.mapping.bin`,
+        {
+          clipId: clip.id,
+          bindingId: typeof bindingId === 'string' ? bindingId : undefined,
+          sourceId: typeof sourceId === 'string' ? sourceId : undefined,
+        },
+      ));
+    }
+
+    if (
+      (mapping.kind === 'frame-ref' || mapping.kind === 'material-ref')
+      && (!isRecord(mapping.ref) || typeof mapping.ref.ref !== 'string' || mapping.ref.ref.length === 0)
+    ) {
+      diagnostics.push(createLiveUniformBindingDiagnostic(
+        'error',
+        'live-uniform-binding/invalid-deterministic-ref',
+        `Live uniform binding '${typeof bindingId === 'string' ? bindingId : path}' ${mapping.kind} mapping must include a deterministic ref.`,
+        `${path}.mapping.ref`,
+        {
+          clipId: clip.id,
+          bindingId: typeof bindingId === 'string' ? bindingId : undefined,
+          sourceId: typeof sourceId === 'string' ? sourceId : undefined,
+        },
+      ));
+    }
+  }
+
+  if (
+    diagnostics.some((diagnostic) => diagnostic.severity === 'error')
+    || typeof bindingId !== 'string'
+    || bindingId.length === 0
+    || typeof sourceId !== 'string'
+    || sourceId.length === 0
+    || !isTimelineLiveSourceKind(sourceKind)
+    || !isRecord(mapping)
+    || typeof mapping.kind !== 'string'
+    || !LIVE_UNIFORM_MAPPING_KINDS.has(mapping.kind as TimelineLiveUniformBindingMappingKind)
+    || typeof mapping.uniform !== 'string'
+    || mapping.uniform.length === 0
+  ) {
+    return { diagnostics };
+  }
+
+  return {
+    binding: {
+      ...(rawBinding as Omit<TimelineLiveUniformBinding, 'bindingId' | 'sourceId' | 'sourceKind'>),
+      bindingId,
+      sourceId,
+      sourceKind,
+    },
+    diagnostics,
+  };
+};
+
+export const scanTimelineLiveUniformBindings = (
+  config: TimelineConfig,
+): TimelineLiveUniformBindingScanResult => {
+  const records: TimelineLiveUniformBindingRecord[] = [];
+  const diagnostics: TimelineLiveUniformBindingDiagnostic[] = [];
+
+  for (const clip of config.clips) {
+    for (const candidate of extractLiveUniformBindingCandidates(clip)) {
+      if (!Array.isArray(candidate.value)) {
+        const diagnostic = createLiveUniformBindingDiagnostic(
+          'error',
+          'live-uniform-binding/malformed-metadata',
+          `Live uniform binding metadata on clip '${clip.id}' must be an array.`,
+          candidate.path,
+          { clipId: clip.id },
+        );
+        diagnostics.push(diagnostic);
+        continue;
+      }
+
+      candidate.value.forEach((rawBinding, index) => {
+        const path = `${candidate.path}.${index}`;
+        const normalized = normalizeLiveUniformBinding(rawBinding, clip, path);
+        diagnostics.push(...normalized.diagnostics);
+        if (!normalized.binding) return;
+        records.push({
+          binding: normalized.binding,
+          clipId: clip.id,
+          path,
+          diagnostics: Object.freeze(normalized.diagnostics),
+        });
+      });
+    }
+  }
+
+  return {
+    bindings: Object.freeze(records),
+    diagnostics: Object.freeze(diagnostics),
+  };
+};
+
+// ---------------------------------------------------------------------------
 // Transition validation / repair (T14: timeline-domain integration)
 // ---------------------------------------------------------------------------
 
@@ -1072,6 +1953,42 @@ const validateSerializedConfig = (
         ));
       }
     }
+  }
+
+  const liveBindingValidation = scanTimelineLiveBindings(config);
+  for (const diagnostic of liveBindingValidation.diagnostics) {
+    if (diagnostic.severity !== 'error') {
+      continue;
+    }
+    const code: TimelineDomainIssueCode =
+      diagnostic.code === 'live-binding/missing-binding-id'
+        ? 'live_binding_missing_binding_id'
+        : diagnostic.code === 'live-binding/missing-source-id'
+          ? 'live_binding_missing_source_id'
+          : diagnostic.code === 'live-binding/missing-source-kind'
+            ? 'live_binding_missing_source_kind'
+            : diagnostic.code === 'live-binding/unsupported-source-kind'
+              ? 'live_binding_unsupported_source_kind'
+              : diagnostic.code === 'live-binding/sample-payload-rejected'
+                ? 'live_binding_sample_payload_rejected'
+                : 'live_binding_malformed_metadata';
+    issues.push(createIssue(
+      level,
+      'error',
+      code,
+      diagnostic.message,
+      {
+        clipId: diagnostic.clipId,
+        path: diagnostic.path,
+        repairApplied: false,
+        details: {
+          bindingId: diagnostic.bindingId,
+          sourceId: diagnostic.sourceId,
+          diagnosticCode: diagnostic.code,
+          ...(diagnostic.details ?? {}),
+        },
+      },
+    ));
   }
 
   return {

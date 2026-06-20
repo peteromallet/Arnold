@@ -37,7 +37,6 @@ import {
   ChevronDown,
   ChevronRight,
   Play,
-  Square,
   Loader2,
   Zap,
   Wrench,
@@ -48,6 +47,7 @@ import {
 } from 'lucide-react';
 import { SchemaForm } from '@/tools/video-editor/components/SchemaForm/SchemaForm';
 import type { StandardSchema, StandardSchemaProperty } from '@/tools/video-editor/components/SchemaForm/SchemaForm';
+import { GenerationSessionPanel } from '@/tools/video-editor/components/GenerationSessionPanel/GenerationSessionPanel';
 import type {
   ToolResult,
   ToolResultDiagnostic,
@@ -688,72 +688,14 @@ export function AgentToolsPanel({
 
                           {/* Active sessions */}
                           {hasActiveSessions && (
-                            <div className="space-y-1">
-                              <div className="text-[10px] font-medium text-zinc-400">
-                                Active Sessions ({toolSessions.length})
-                              </div>
-                              {toolSessions.map((sessionEntry) => {
-                                const s = sessionEntry.session;
-                                return (
-                                  <div
-                                    key={s.id}
-                                    className="flex items-center gap-2 rounded border border-blue-500/20 bg-blue-500/5 px-2 py-1"
-                                    data-video-editor-agent-tool-session="true"
-                                  >
-                                    <Loader2
-                                      className="h-3 w-3 shrink-0 animate-spin text-blue-400"
-                                      aria-hidden="true"
-                                    />
-                                    <div className="min-w-0 flex-1">
-                                      <div className="text-[10px] text-zinc-300 truncate">
-                                        {s.id}
-                                      </div>
-                                      {/* Progress bar */}
-                                      <div className="mt-1 h-1 w-full rounded-full bg-zinc-800">
-                                        <div
-                                          className="h-1 rounded-full bg-blue-500 transition-all"
-                                          style={{
-                                            width: `${Math.min(100, Math.max(0, s.progress))}%`,
-                                          }}
-                                          role="progressbar"
-                                          aria-valuenow={s.progress}
-                                          aria-valuemin={0}
-                                          aria-valuemax={100}
-                                          aria-label={`Progress: ${s.progress}%`}
-                                        />
-                                      </div>
-                                      <div className="mt-0.5 text-[9px] text-zinc-500">
-                                        {s.progress}%
-                                        {s.progressLabel
-                                          ? ` — ${s.progressLabel}`
-                                          : ''}
-                                        {s.done && ' (complete)'}
-                                        {s.cancelled && ' (cancelled)'}
-                                      </div>
-                                    </div>
-                                    {!s.done && !s.cancelled && (
-                                      <button
-                                        type="button"
-                                        onClick={() => s.cancel()}
-                                        className="shrink-0 rounded p-0.5 text-zinc-500 hover:bg-red-500/10 hover:text-red-400 transition-colors"
-                                        aria-label={`Cancel session ${s.id}`}
-                                      >
-                                        <Square className="h-3 w-3" />
-                                      </button>
-                                    )}
-                                  </div>
-                                );
-                              })}
-                              {toolSessions.length > 0 && (
-                                <button
-                                  type="button"
-                                  onClick={() => handleCancel(tool.toolId)}
-                                  className="text-[10px] text-red-400 hover:text-red-300 transition-colors"
-                                >
-                                  Cancel all sessions for this tool
-                                </button>
-                              )}
-                            </div>
+                            <GenerationSessionPanel
+                              sessions={toolSessions}
+                              steeringSchema={standardSchema}
+                              steeringValues={invokeInputs[tool.toolId] ?? {}}
+                              onSteeringChange={handleInputChange(tool.toolId)}
+                              steeringDisabled={isInvoking}
+                              onCancelAll={() => handleCancel(tool.toolId)}
+                            />
                           )}
 
                           {/* Result display */}

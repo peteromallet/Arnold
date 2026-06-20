@@ -337,6 +337,110 @@ describe('scanExportConfig — known clip types', () => {
 });
 
 // ---------------------------------------------------------------------------
+// Export config scan — live binding blockers
+// ---------------------------------------------------------------------------
+
+describe('scanExportConfig — live binding blockers', () => {
+  const builtIn = collectBuiltInKnownIds();
+  const extIds = collectExtensionDeclaredIds([]);
+
+  function liveClip(
+    id: string,
+    binding: Record<string, unknown>,
+  ): ResolvedTimelineConfig['clips'][number] {
+    return makeClip(id, {
+      app: {
+        live: {
+          bindings: [binding],
+        },
+      },
+    } as Partial<ResolvedTimelineConfig['clips'][number]>);
+  }
+
+  it('blocks active, missing, disposed, orphaned, malformed, and partially baked live bindings', () => {
+    const config = makeConfig([
+      liveClip('active-clip', {
+        bindingId: 'active-binding',
+        sourceId: 'src-active',
+        sourceKind: 'generated',
+        resolutionStatus: 'active',
+      }),
+      liveClip('missing-clip', {
+        bindingId: 'missing-binding',
+        sourceId: 'src-missing',
+        sourceKind: 'generated',
+      }),
+      liveClip('disposed-clip', {
+        bindingId: 'disposed-binding',
+        sourceId: 'src-disposed',
+        sourceKind: 'generated',
+        sourceStatus: 'disposed',
+      }),
+      liveClip('orphaned-clip', {
+        bindingId: 'orphaned-binding',
+        sourceId: 'src-orphaned',
+        sourceKind: 'generated',
+        sourceStatus: 'orphaned',
+      }),
+      liveClip('partial-clip', {
+        bindingId: 'partial-binding',
+        sourceId: 'src-partial',
+        sourceKind: 'generated',
+        bake: {
+          status: 'partial',
+          unresolvedRanges: [{ startFrame: 10, endFrame: 20 }],
+        },
+      }),
+      liveClip('malformed-clip', {
+        sourceId: 'src-malformed',
+        sourceKind: 'generated',
+      }),
+    ]);
+
+    const result = scanExportConfig(config, builtIn, extIds);
+
+    expect(result.hasBlockingErrors).toBe(true);
+    expect(result.diagnostics.filter((diag) => diag.code === 'export/live-binding-unresolved')).toHaveLength(6);
+    expect(result.blockers.filter((blocker) => blocker.reason === 'live-unbaked')).toHaveLength(6);
+    expect(result.findings.map((finding) => finding.detail?.resolutionStatus).sort()).toEqual([
+      'active',
+      'disposed',
+      'malformed',
+      'missing',
+      'orphaned',
+      'partiallyBaked',
+    ]);
+  });
+
+  it('does not block fully baked deterministic live bindings', () => {
+    const config = makeConfig([
+      liveClip('baked-clip', {
+        bindingId: 'baked-binding',
+        sourceId: 'src-baked',
+        sourceKind: 'generated',
+        bake: {
+          status: 'complete',
+          deterministicRefs: [
+            {
+              kind: 'asset',
+              ref: 'asset:baked',
+              producerId: 'test-producer',
+              inputHash: 'sha256:baked',
+            },
+          ],
+        },
+      }),
+    ]);
+
+    const result = scanExportConfig(config, builtIn, extIds);
+
+    expect(result.diagnostics.filter((diag) => diag.code === 'export/live-binding-unresolved')).toEqual([]);
+    expect(result.blockers.filter((blocker) => blocker.reason === 'live-unbaked')).toEqual([]);
+    expect(result.hasBlockingErrors).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Export config scan — unknown clip type
 // ---------------------------------------------------------------------------
 

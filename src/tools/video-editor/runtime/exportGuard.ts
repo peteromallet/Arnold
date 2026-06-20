@@ -17,7 +17,11 @@ import type {
 } from '@reigh/editor-sdk';
 import { contributionKindNotYetBridged } from '@reigh/editor-sdk';
 import { BUILTIN_CLIP_TYPES } from '@/tools/video-editor/types/index.ts';
-import type { ResolvedTimelineClip, ResolvedTimelineConfig } from '@/tools/video-editor/types/index.ts';
+import type { ResolvedTimelineClip, ResolvedTimelineConfig, TimelineConfig } from '@/tools/video-editor/types/index.ts';
+import {
+  scanTimelineLiveBindings,
+  type TimelineLiveBindingRecord,
+} from '@/tools/video-editor/lib/timeline-domain.ts';
 import { TRUSTED_CLIP_TYPES } from '@/tools/video-editor/clip-types/registry.ts';
 import {
   entranceEffectTypes,
@@ -150,8 +154,8 @@ export function collectBuiltInKnownIds(): KnownIdCollection {
 // ---------------------------------------------------------------------------
 
 /**
- * Collect extension-declared known IDs from contributions whose kind is not
- * yet bridged in M1 (effect, transition, clipType, parser, agentTool, agent).
+ * Collect extension-declared known IDs from contributions whose kind should
+ * remain visible as inactive metadata to the export guard.
  *
  * The IDs are returned as metadata only — no extension render dispatch is
  * triggered.  Callers should pass the full list of contributions and this
@@ -167,7 +171,15 @@ export function collectExtensionDeclaredIds(
   const clipTypeIds = new Set<string>();
 
   for (const contrib of contributions) {
-    // Only consider contributions whose kind is not yet bridged
+    // Clip type declarations still act as inactive export metadata even though
+    // clipType is now bridged. Other bridged render kinds are skipped.
+    if (contrib.kind === 'clipType') {
+      if (contrib.clipTypeId) {
+        clipTypeIds.add(contrib.clipTypeId);
+      }
+      continue;
+    }
+
     const notBridged = contributionKindNotYetBridged(contrib.kind);
     if (notBridged === null) continue; // Already bridged — skip
 
@@ -180,11 +192,6 @@ export function collectExtensionDeclaredIds(
       case 'transition':
         if (contrib.transitionId) {
           transitionIds.add(contrib.transitionId);
-        }
-        break;
-      case 'clipType':
-        if (contrib.clipTypeId) {
-          clipTypeIds.add(contrib.clipTypeId);
         }
         break;
     }
@@ -269,6 +276,8 @@ export function scanExportConfig(
   const unknownTransitions = new Set<string>();
 
   if (config && config.clips.length > 0) {
+    scanLiveBindingExportBlockers(config, diagnostics, findings, blockers);
+
     const allKnown = buildAllKnown(builtIn, extIds, effectRegistrySnapshot, transitionRegistrySnapshot, clipTypeRegistrySnapshot);
 
     for (const clip of config.clips) {
@@ -292,6 +301,93 @@ export function scanExportConfig(
     unknownTransitions: Object.freeze([...unknownTransitions].sort()),
     inactiveExtensionIds: extIds,
     hasBlockingErrors,
+  });
+}
+
+function scanLiveBindingExportBlockers(
+  config: ResolvedTimelineConfig,
+  diagnostics: ExportDiagnostic[],
+  findings: CapabilityFinding[],
+  blockers: RenderBlocker[],
+): void {
+  const liveScan = scanTimelineLiveBindings(config as TimelineConfig);
+
+  for (const record of liveScan.bindings) {
+    if (!record.blocksExport) {
+      continue;
+    }
+    pushLiveBindingFindingAndBlocker(diagnostics, findings, blockers, record);
+  }
+}
+
+function liveBindingStatusMessage(record: TimelineLiveBindingRecord): string {
+  const bindingId = record.binding.bindingId;
+  switch (record.status) {
+    case 'active':
+      return `Live binding "${bindingId}" is active and must be baked or removed before export.`;
+    case 'inactive':
+      return `Live binding "${bindingId}" references an inactive source and must be baked or removed before export.`;
+    case 'missing':
+      return `Live binding "${bindingId}" references a missing source and must be baked or removed before export.`;
+    case 'disposed':
+      return `Live binding "${bindingId}" references a disposed source and must be baked or removed before export.`;
+    case 'orphaned':
+      return `Live binding "${bindingId}" references an orphaned source and must be baked or removed before export.`;
+    case 'partiallyBaked':
+      return `Live binding "${bindingId}" is partially baked; unresolved ranges must be baked or removed before export.`;
+    case 'malformed':
+      return `Live binding metadata on clip "${record.clipId}" is malformed and blocks export until fixed or removed.`;
+    case 'resolved':
+      return `Live binding "${bindingId}" has deterministic replacement metadata.`;
+  }
+}
+
+function pushLiveBindingFindingAndBlocker(
+  diagnostics: ExportDiagnostic[],
+  findings: CapabilityFinding[],
+  blockers: RenderBlocker[],
+  record: TimelineLiveBindingRecord,
+): void {
+  const message = liveBindingStatusMessage(record);
+  const id = `export.liveBinding.${record.clipId}.${record.binding.bindingId}.${record.status}`;
+  const detail = {
+    bindingId: record.binding.bindingId,
+    sourceId: record.binding.sourceId,
+    sourceKind: record.binding.sourceKind,
+    resolutionStatus: record.status,
+    path: record.path,
+    diagnostics: record.diagnostics.map((diagnostic) => ({
+      code: diagnostic.code,
+      message: diagnostic.message,
+      severity: diagnostic.severity,
+    })),
+  };
+
+  diagnostics.push({
+    severity: 'error',
+    code: 'export/live-binding-unresolved',
+    message,
+    detail: {
+      clipId: record.clipId,
+      ...detail,
+    },
+  });
+
+  const finding: CapabilityFinding = {
+    id,
+    severity: 'error',
+    route: 'browser-export',
+    reason: 'live-unbaked',
+    message,
+    clipId: record.clipId,
+    detail,
+  };
+  findings.push(finding);
+  blockers.push({
+    ...finding,
+    severity: 'error',
+    route: 'browser-export',
+    reason: 'live-unbaked',
   });
 }
 
