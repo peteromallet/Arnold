@@ -17,6 +17,6 @@
     "vendor/timeline-schema/tests/test_materialize_output.py::ValidateTimelineTests::test_validate_timeline_accepts_open_generation_defaults",
     "vendor/timeline-schema/tests/test_materialize_output.py::ValidateTimelineTests::test_validate_timeline_rejects_non_object_generation_defaults"
   ],
-  "captured_at_sha": "5169cd5bcc1d910ef256593094e79d7297d392fb",
-  "milestone": "m6-assets-astrid-output"
+  "captured_at_sha": "2e77958f1e5dca8bf028aa4e902fae0382720e8c",
+  "milestone": "m10-agent-tools"
 }

@@ -33,6 +33,9 @@ describe('Sprint 8 render-button router (decideRenderRoute)', () => {
     expect(decision.hasThemedClip).toBe(true);
     expect(decision.hasMediaClip).toBe(false);
     expect(decision.reason).toBe('themed_only');
+    expect(decision.planner.selectedPlannerRoute).toBe('worker-export');
+    expect(decision.planner.plannerResult.canBrowserExport).toBe(false);
+    expect(decision.planner.plannerResult.canWorkerExport).toBe(true);
   });
 
   it('routes locally-registered title-card timelines to banodoco_render_timeline', () => {
@@ -138,12 +141,16 @@ describe('Sprint 8 render-button router (decideRenderRoute)', () => {
   });
 
   it('blocks remotion_module clips with missing, empty, or non-string artifact ids', () => {
-    expect(decideRenderRoute({
+    const missingArtifact = decideRenderRoute({
       clips: [{ clipType: 'media', generation: { sequence_lane: 'remotion_module' } }],
-    })).toMatchObject({
+    });
+    expect(missingArtifact).toMatchObject({
       route: 'preview-only',
       reason: 'remotion_module_missing_artifact',
     });
+    expect(missingArtifact.planner.selectedPlannerRoute).toBe('preview');
+    expect(missingArtifact.planner.plannerResult.canBrowserExport).toBe(false);
+    expect(missingArtifact.planner.plannerResult.canWorkerExport).toBe(false);
 
     expect(decideRenderRoute({
       clips: [{ clipType: 'image-jump', generation: { sequence_lane: 'remotion_module', artifact_id: '' } }],

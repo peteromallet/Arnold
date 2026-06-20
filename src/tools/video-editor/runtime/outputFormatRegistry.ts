@@ -20,6 +20,7 @@ import type {
   AssetMetadata,
 } from '@reigh/editor-sdk';
 import {
+  assertFinalArtifactHasManifest,
   createCompileOnlyArtifact,
   type RenderArtifact,
 } from '@/tools/video-editor/runtime/renderability.ts';
@@ -157,6 +158,7 @@ export async function executeCompileOnlyOutput(
       data: new Uint8Array(0),
       mimeType: entry.contribution.outputMimeType ?? 'application/octet-stream',
       filename: `error.${entry.contribution.outputExtension}`,
+      outputFormatId: options.formatId,
       producerExtensionId: options.extensionId,
       producerVersion: options.extensionVersion,
       consumedAssetKeys: options.timeline.assetKeys as readonly string[],
@@ -170,6 +172,7 @@ export async function executeCompileOnlyOutput(
       }],
       hasBlockingErrors: true,
     });
+    assertFinalArtifactHasManifest(artifact, 'outputFormatRegistry.executeCompileOnlyOutput');
     return Object.freeze({
       artifact,
       data: new Uint8Array(0),
@@ -185,6 +188,7 @@ export async function executeCompileOnlyOutput(
     data: result.data,
     mimeType: result.mimeType,
     filename: result.filename,
+    outputFormatId: options.formatId,
     producerExtensionId: options.extensionId,
     producerVersion: options.extensionVersion,
     consumedAssetKeys,
@@ -199,6 +203,7 @@ export async function executeCompileOnlyOutput(
     })),
     hasBlockingErrors: result.hasBlockingErrors,
   });
+  assertFinalArtifactHasManifest(artifact, 'outputFormatRegistry.executeCompileOnlyOutput');
 
   return Object.freeze({
     artifact,
@@ -241,6 +246,7 @@ export function executeCompileOnlyOutputSync(
       data: new Uint8Array(0),
       mimeType: entry.contribution.outputMimeType ?? 'application/octet-stream',
       filename: `error.${entry.contribution.outputExtension}`,
+      outputFormatId: options.formatId,
       producerExtensionId: options.extensionId,
       producerVersion: options.extensionVersion,
       consumedAssetKeys: options.timeline.assetKeys as readonly string[],
@@ -254,6 +260,7 @@ export function executeCompileOnlyOutputSync(
       }],
       hasBlockingErrors: true,
     });
+    assertFinalArtifactHasManifest(artifact, 'outputFormatRegistry.executeCompileOnlyOutputSync');
     return Object.freeze({
       artifact,
       data: new Uint8Array(0),
@@ -277,6 +284,7 @@ export function executeCompileOnlyOutputSync(
     data: result.data,
     mimeType: result.mimeType,
     filename: result.filename,
+    outputFormatId: options.formatId,
     producerExtensionId: options.extensionId,
     producerVersion: options.extensionVersion,
     consumedAssetKeys,
@@ -291,6 +299,7 @@ export function executeCompileOnlyOutputSync(
     })),
     hasBlockingErrors: result.hasBlockingErrors,
   });
+  assertFinalArtifactHasManifest(artifact, 'outputFormatRegistry.executeCompileOnlyOutputSync');
 
   return Object.freeze({
     artifact,

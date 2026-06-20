@@ -30,7 +30,8 @@
               "done",
               "skipped",
               "completed",
-              "blocked"
+              "blocked",
+              "pending"
             ]
           },
           "executor_notes": {

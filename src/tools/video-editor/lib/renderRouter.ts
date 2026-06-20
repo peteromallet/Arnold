@@ -33,6 +33,14 @@ import {
   type GeneratedLaneClipShape,
 } from '@/tools/video-editor/lib/generated-lanes.ts';
 import { materializeSequenceConfig } from '@/tools/video-editor/sequences/materialize.ts';
+import {
+  planRender,
+  type RenderPlannerResult,
+} from '@/tools/video-editor/runtime/renderPlanner.ts';
+import type {
+  CapabilityRequirement,
+  RenderBlockerReason,
+} from '@reigh/editor-sdk';
 import type { ContributionRenderability } from '@/tools/video-editor/runtime/renderability.ts';
 
 /** Minimal clip shape we need from the resolved timeline. */
@@ -108,6 +116,15 @@ export interface RenderRouteDecision {
     | GeneratedRemotionModuleBlockReason;
 }
 
+interface PlannerRouteDecisionContext {
+  readonly plannerResult: RenderPlannerResult;
+  readonly selectedPlannerRoute: 'preview' | 'browser-export' | 'worker-export' | 'sidecar-export';
+}
+
+export interface PlannerBackedRenderRouteDecision extends RenderRouteDecision {
+  readonly planner: PlannerRouteDecisionContext;
+}
+
 const NATIVE_BUILTIN_CLIP_TYPES: ReadonlySet<string> = new Set([
   'media',
   'text',
@@ -160,11 +177,133 @@ function hasBrowserExportCapability(
   );
 }
 
+function sourceRefForClip(clipType: string | undefined): CapabilityRequirement['sourceRef'] {
+  return typeof clipType === 'string' && clipType.length > 0
+    ? { source: 'registry', contributionId: clipType }
+    : { source: 'built-in' };
+}
+
+function routeRequirement(
+  id: string,
+  route: CapabilityRequirement['route'],
+  clipType: string | undefined,
+  options?: {
+    readonly blocking?: boolean;
+    readonly reason?: RenderBlockerReason;
+    readonly message?: string;
+    readonly legacyReason?: RenderRouteDecision['reason'];
+    readonly requiredCapabilities?: readonly string[];
+  },
+): CapabilityRequirement {
+  const blocking = options?.blocking === true;
+  return {
+    id,
+    sourceRef: sourceRefForClip(clipType),
+    route,
+    requiredCapabilities: options?.requiredCapabilities ?? [route],
+    determinism: route === 'worker-export' ? 'process-dependent' : 'deterministic',
+    blocking,
+    routeFit: blocking
+      ? {
+          route,
+          fit: 'blocked',
+          reason: options?.reason ?? 'route-unsupported',
+          message: options?.message ?? `Clip type "${clipType ?? 'legacy'}" cannot render on ${route}.`,
+        }
+      : {
+          route,
+          fit: 'supported',
+        },
+    findings: blocking
+      ? [
+          {
+            id: `${id}.${route}.${options?.reason ?? 'route-unsupported'}`,
+            severity: 'error',
+            route,
+            reason: options?.reason ?? 'route-unsupported',
+            message: options?.message ?? `Clip type "${clipType ?? 'legacy'}" cannot render on ${route}.`,
+            detail: {
+              source: 'render-router',
+              clipType,
+              legacyReason: options?.legacyReason,
+            },
+          },
+        ]
+      : undefined,
+  };
+}
+
+function requirementsForWorkerOnlyClip(
+  clipType: string | undefined,
+  id: string,
+  reason: RenderRouteDecision['reason'],
+): CapabilityRequirement[] {
+  return [
+    routeRequirement(`${id}.browser-export`, 'browser-export', clipType, {
+      blocking: true,
+      reason: 'route-unsupported',
+      legacyReason: reason,
+      message: `Clip type "${clipType ?? 'generated'}" requires worker export.`,
+    }),
+    routeRequirement(`${id}.worker-export`, 'worker-export', clipType, {
+      requiredCapabilities: ['worker-export'],
+    }),
+  ];
+}
+
+function requirementsForBrowserOnlyClip(
+  clipType: string | undefined,
+  id: string,
+  reason: RenderRouteDecision['reason'],
+): CapabilityRequirement[] {
+  return [
+    routeRequirement(`${id}.browser-export`, 'browser-export', clipType),
+    routeRequirement(`${id}.worker-export`, 'worker-export', clipType, {
+      blocking: true,
+      reason: 'route-unsupported',
+      legacyReason: reason,
+      message: `Clip type "${clipType ?? 'contributed'}" cannot run on worker export.`,
+    }),
+  ];
+}
+
+function requirementsForBlockedClip(
+  clipType: string | undefined,
+  id: string,
+  reason: RenderRouteDecision['reason'],
+  blockerReason: RenderBlockerReason,
+): CapabilityRequirement[] {
+  return [
+    routeRequirement(`${id}.browser-export`, 'browser-export', clipType, {
+      blocking: true,
+      reason: blockerReason,
+      legacyReason: reason,
+      message: `Clip type "${clipType ?? 'generated'}" cannot be rendered until ${reason} is resolved.`,
+    }),
+    routeRequirement(`${id}.worker-export`, 'worker-export', clipType, {
+      blocking: true,
+      reason: blockerReason,
+      legacyReason: reason,
+      message: `Clip type "${clipType ?? 'generated'}" cannot be rendered until ${reason} is resolved.`,
+    }),
+  ];
+}
+
+function selectPlannerRoute(result: RenderPlannerResult): PlannerRouteDecisionContext {
+  if (result.canBrowserExport) {
+    return { plannerResult: result, selectedPlannerRoute: 'browser-export' };
+  }
+  if (result.canWorkerExport) {
+    return { plannerResult: result, selectedPlannerRoute: 'worker-export' };
+  }
+  return { plannerResult: result, selectedPlannerRoute: 'preview' };
+}
+
 /** Pure-decision routing — call this from a hook or test. */
 export function decideRenderRoute(
   timeline: RouterTimelineShape | null | undefined,
   contributedClipRecords?: ReadonlyArray<ContributedClipRecord>,
-): RenderRouteDecision {
+): PlannerBackedRenderRouteDecision {
   const clips = (timeline?.clips ?? []) as ReadonlyArray<RouterClipShape>;
   const contributedIndex = indexContributedRecords(contributedClipRecords);
 
@@ -175,9 +314,11 @@ export function decideRenderRoute(
       hasMediaClip: false,
       hasContributedClip: false,
       reason: 'no_clips',
+      planner: selectPlannerRoute(planRender({ requirements: [] })),
     };
   }
 
+  const requirements: CapabilityRequirement[] = [];
   let hasThemedClip = false;
   let hasMediaClip = false;
   let hasContributedClip = false;
@@ -185,20 +326,31 @@ export function decideRenderRoute(
   let hasNativeOrMediaClip = false;
   let hasGeneratedModuleClip = false;
   let hasOtherClip = false;
-  for (const clip of clips) {
+  let blockedReason: RenderRouteDecision['reason'] | null = null;
+  let blockedHasThemedClip = false;
+  let blockedHasMediaClip = false;
+  let blockedHasContributedClip = false;
+
+  clips.forEach((clip, index) => {
+    if (blockedReason) return;
+    const requirementId = `router.clip.${index}.${clip.clipType ?? 'legacy'}`;
     const moduleStatus = getGeneratedRemotionModuleStatus(clip);
     if (moduleStatus.kind === 'blocked_module') {
-      return {
-        route: 'preview-only',
-        hasThemedClip: false,
-        hasMediaClip: false,
-        hasContributedClip: false,
-        reason: moduleStatus.reason,
-      };
+      requirements.push(...requirementsForBlockedClip(
+        clip.clipType,
+        requirementId,
+        moduleStatus.reason,
+        moduleStatus.reason === 'remotion_module_missing_artifact'
+          ? 'missing-material'
+          : 'materialization-failed',
+      ));
+      blockedReason = moduleStatus.reason;
+      return;
     }
     if (moduleStatus.kind === 'valid_module') {
       hasGeneratedModuleClip = true;
-      continue;
+      requirements.push(...requirementsForWorkerOnlyClip(clip.clipType, requirementId, 'generated_remotion_module'));
+      return;
     }
 
     hasOtherClip = true;
@@ -214,19 +366,22 @@ export function decideRenderRoute(
         hasContributedClip = true;
         if (hasBrowserExportCapability(contributedRecord)) {
           hasBrowserCapableContributedClip = true;
+          requirements.push(...requirementsForBrowserOnlyClip(clipType, requirementId, 'browser_capable_contributed'));
         } else {
           // Contributed clip without browser-export capability is
           // immediately blocked — worker routes are out of scope
           // for contributed code and no other route is available.
-          return {
-            route: 'preview-only',
-            hasThemedClip: false,
-            hasMediaClip: false,
-            hasContributedClip: true,
-            reason: 'contributed_blocked_no_browser_capability',
-          };
+          requirements.push(...requirementsForBlockedClip(
+            clipType,
+            requirementId,
+            'contributed_blocked_no_browser_capability',
+            'route-unsupported',
+          ));
+          blockedReason = 'contributed_blocked_no_browser_capability';
+          blockedHasContributedClip = true;
+          return;
         }
-        continue;
+        return;
       }
     }
 
@@ -237,17 +392,23 @@ export function decideRenderRoute(
       // creates a conflict: themed clips need worker, contributed
       // clips can't go to worker.
       if (hasBrowserCapableContributedClip) {
-        return {
-          route: 'preview-only',
-          hasThemedClip: true,
-          hasMediaClip: true,
-          hasContributedClip: true,
-          reason: 'contributed_blocked_worker_route_conflict',
-        };
+        requirements.push(...requirementsForBlockedClip(
+          clip.clipType,
+          requirementId,
+          'contributed_blocked_worker_route_conflict',
+          'route-unsupported',
+        ));
+        blockedReason = 'contributed_blocked_worker_route_conflict';
+        blockedHasThemedClip = true;
+        blockedHasMediaClip = true;
+        blockedHasContributedClip = true;
+        return;
       }
+      requirements.push(...requirementsForWorkerOnlyClip(clip.clipType, requirementId, 'themed_only'));
     } else if (isNativeBuiltinClipType(clip?.clipType)) {
       hasMediaClip = true;
       hasNativeOrMediaClip = true;
+      requirements.push(routeRequirement(`${requirementId}.browser-export`, 'browser-export', clip.clipType));
     } else {
       // Unknown clipType (theme package not installed, typo). Treat as
       // media so the existing render path's loud-placeholder fallback
@@ -256,7 +417,21 @@ export function decideRenderRoute(
       // registered themes.
       hasMediaClip = true;
       hasNativeOrMediaClip = true;
+      requirements.push(routeRequirement(`${requirementId}.browser-export`, 'browser-export', clip.clipType));
     }
+  });
+
+  const planner = selectPlannerRoute(planRender({ requirements }));
+
+  if (blockedReason) {
+    return {
+      route: 'preview-only',
+      hasThemedClip: blockedHasThemedClip,
+      hasMediaClip: blockedHasMediaClip,
+      hasContributedClip: blockedHasContributedClip,
+      reason: blockedReason,
+      planner,
+    };
   }
 
   // Generated Remotion module clips always go to the worker pool if
@@ -266,12 +441,24 @@ export function decideRenderRoute(
   // the worker.
   if (hasGeneratedModuleClip) {
     if (hasBrowserCapableContributedClip) {
+      const conflictPlanner = selectPlannerRoute(planRender({
+        requirements: [
+          ...requirements,
+          ...requirementsForBlockedClip(
+            'generated-remotion-module',
+            'router.generated.contributed-conflict',
+            'contributed_blocked_worker_route_conflict',
+            'route-unsupported',
+          ),
+        ],
+      }));
       return {
         route: 'preview-only',
         hasThemedClip,
         hasMediaClip,
         hasContributedClip: true,
         reason: 'contributed_blocked_worker_route_conflict',
+        planner: conflictPlanner,
       };
     }
     return {
@@ -280,6 +467,7 @@ export function decideRenderRoute(
       hasMediaClip,
       hasContributedClip: false,
       reason: hasOtherClip ? 'mixed_generated_module_and_other' : 'generated_remotion_module',
+      planner,
     };
   }
 
@@ -296,6 +484,7 @@ export function decideRenderRoute(
         hasMediaClip: true,
         hasContributedClip: true,
         reason: 'contributed_blocked_worker_route_conflict',
+        planner,
       };
     }
     if (hasNativeOrMediaClip) {
@@ -307,6 +496,7 @@ export function decideRenderRoute(
         hasMediaClip: true,
         hasContributedClip: true,
         reason: 'mixed_browser_capable_contributed_and_native',
+        planner,
       };
     }
     // Pure browser-capable contributed clips
@@ -316,6 +506,7 @@ export function decideRenderRoute(
       hasMediaClip: false,
       hasContributedClip: true,
       reason: 'browser_capable_contributed',
+      planner,
     };
   }
 
@@ -326,6 +517,7 @@ export function decideRenderRoute(
       hasMediaClip,
       hasContributedClip: false,
       reason: 'mixed_themed_and_media',
+      planner,
     };
   }
   if (hasThemedClip) {
@@ -335,6 +527,7 @@ export function decideRenderRoute(
       hasMediaClip,
       hasContributedClip: false,
       reason: 'themed_only',
+      planner,
     };
   }
   return {
@@ -343,6 +536,7 @@ export function decideRenderRoute(
     hasMediaClip,
     hasContributedClip: false,
     reason: 'pure_native_clips',
+    planner,
   };
 }
 

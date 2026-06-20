@@ -187,6 +187,42 @@ export interface RenderArtifact {
   readonly determinism: DeterminismStatus;
   readonly boundary: ArtifactBoundary;
   readonly findings?: readonly CapabilityFinding[];
+  readonly sidecars?: readonly RenderArtifactSidecarDescriptor[];
+  readonly manifest?: RenderArtifactManifest;
+}
+
+export type ManifestedRenderArtifact = RenderArtifact & {
+  readonly manifest: RenderArtifactManifest;
+};
+
+export function assertFinalArtifactHasManifest(
+  artifact: RenderArtifact,
+  producer: string,
+): asserts artifact is ManifestedRenderArtifact {
+  if (!artifact.manifest) {
+    throw new Error(
+      `Final render artifact "${artifact.id}" from ${producer} is missing a render artifact manifest. ` +
+      'Route final artifact creation through createRenderArtifactManifest().',
+    );
+  }
+  if (artifact.manifest.artifactId !== artifact.id) {
+    throw new Error(
+      `Final render artifact "${artifact.id}" from ${producer} has manifest artifactId ` +
+      `"${artifact.manifest.artifactId}".`,
+    );
+  }
+  if (artifact.manifest.route !== artifact.route) {
+    throw new Error(
+      `Final render artifact "${artifact.id}" from ${producer} has manifest route ` +
+      `"${artifact.manifest.route}" but artifact route "${artifact.route}".`,
+    );
+  }
+  if (artifact.manifest.determinism !== artifact.determinism) {
+    throw new Error(
+      `Final render artifact "${artifact.id}" from ${producer} has manifest determinism ` +
+      `"${artifact.manifest.determinism}" but artifact determinism "${artifact.determinism}".`,
+    );
+  }
 }
 
 /** Contract a contribution declares for replacing live/runtime refs with artifacts. */
@@ -199,6 +235,179 @@ export interface BakeContract {
   readonly boundary: ArtifactBoundary;
   readonly replacementPolicy: RenderMaterialRef['replacementPolicy'];
   readonly blockers?: readonly RenderBlocker[];
+}
+
+export type RenderArtifactSidecarKind =
+  | 'metadata'
+  | 'thumbnail'
+  | 'scene-report'
+  | 'log'
+  | 'provenance'
+  | 'rendered-pass'
+  | 'cue'
+  | 'label'
+  | 'caption'
+  | 'diagnostics'
+  | 'manifest'
+  | 'other';
+
+/** Data-only descriptor for a downloadable or previewable sidecar artifact. */
+export interface RenderArtifactSidecarDescriptor {
+  readonly id?: string;
+  readonly filename: string;
+  readonly mimeType: string;
+  readonly kind: RenderArtifactSidecarKind;
+  readonly data?: Uint8Array;
+  readonly locator?: RenderStorageLocator;
+  readonly byteSize?: number;
+  readonly renderGroupId?: string;
+  readonly passName?: string;
+  readonly diagnostics?: readonly CapabilityFinding[];
+  readonly provenance?: Record<string, unknown>;
+}
+
+/** Stable manifest entry for a final render/export artifact. */
+export interface RenderArtifactManifest {
+  readonly id: string;
+  readonly schemaVersion: 1;
+  readonly artifactId: string;
+  readonly route: RenderRoute;
+  readonly determinism: DeterminismStatus;
+  readonly producerExtensionId?: string;
+  readonly producerVersion?: string;
+  readonly outputFormatId?: string;
+  readonly processId?: string;
+  readonly processVersion?: {
+    readonly semver: string;
+    readonly declaredBy?: string;
+    readonly contributionId?: string;
+  };
+  readonly operationId?: string;
+  readonly locator?: RenderStorageLocator;
+  readonly mediaKind?: RenderMaterialMediaKind;
+  readonly consumedMaterialRefs: readonly RenderMaterialRef[];
+  readonly sidecars: readonly RenderArtifactSidecarDescriptor[];
+  readonly diagnostics?: readonly CapabilityFinding[];
+  readonly provenance?: Record<string, unknown>;
+  readonly inputHashes?: Record<string, string>;
+  readonly renderGroupId?: string;
+  readonly passName?: string;
+  readonly createdAt?: string;
+  readonly metadata?: Record<string, unknown>;
+}
+
+export interface CreateRenderArtifactManifestParams {
+  readonly id?: string;
+  readonly artifactId: string;
+  readonly route: RenderRoute;
+  readonly determinism: DeterminismStatus;
+  readonly producerExtensionId?: string;
+  readonly producerVersion?: string;
+  readonly outputFormatId?: string;
+  readonly processId?: string;
+  readonly processVersion?: {
+    readonly semver: string;
+    readonly declaredBy?: string;
+    readonly contributionId?: string;
+  };
+  readonly operationId?: string;
+  readonly locator?: RenderStorageLocator;
+  readonly mediaKind?: RenderMaterialMediaKind;
+  readonly consumedMaterialRefs?: readonly RenderMaterialRef[];
+  readonly sidecars?: readonly RenderArtifactSidecarDescriptor[];
+  readonly diagnostics?: readonly CapabilityFinding[];
+  readonly provenance?: Record<string, unknown>;
+  readonly inputHashes?: Record<string, string>;
+  readonly renderGroupId?: string;
+  readonly passName?: string;
+  readonly createdAt?: string;
+  readonly metadata?: Record<string, unknown>;
+}
+
+/**
+ * Return a stable, frozen sidecar list. Missing sidecar IDs are derived from
+ * stable visible fields so manifests can reference sidecars consistently.
+ */
+export function normalizeRenderArtifactSidecars(
+  sidecars: readonly RenderArtifactSidecarDescriptor[] = [],
+): readonly RenderArtifactSidecarDescriptor[] {
+  return Object.freeze(
+    sidecars
+      .map((sidecar) => Object.freeze({
+        ...sidecar,
+        id: sidecar.id ?? `sidecar.${sidecar.kind}.${sidecar.filename}`,
+        byteSize: sidecar.byteSize ?? sidecar.data?.byteLength,
+      }))
+      .sort(compareSidecars),
+  );
+}
+
+/** Create a stable, frozen artifact manifest from render/export metadata. */
+export function createRenderArtifactManifest(
+  params: CreateRenderArtifactManifestParams,
+): RenderArtifactManifest {
+  const consumedMaterialRefs = Object.freeze(
+    [...(params.consumedMaterialRefs ?? [])].sort(compareMaterialRefs),
+  );
+  const sidecars = normalizeRenderArtifactSidecars(params.sidecars);
+  const diagnostics = params.diagnostics?.length
+    ? Object.freeze([...params.diagnostics].sort(compareFindings))
+    : undefined;
+
+  const manifest: RenderArtifactManifest = {
+    id: params.id ?? `manifest.${params.artifactId}`,
+    schemaVersion: 1,
+    artifactId: params.artifactId,
+    route: params.route,
+    determinism: params.determinism,
+    producerExtensionId: params.producerExtensionId,
+    producerVersion: params.producerVersion,
+    outputFormatId: params.outputFormatId,
+    processId: params.processId,
+    processVersion: params.processVersion,
+    operationId: params.operationId,
+    locator: params.locator,
+    mediaKind: params.mediaKind,
+    consumedMaterialRefs,
+    sidecars,
+    diagnostics,
+    provenance: params.provenance,
+    inputHashes: params.inputHashes ? Object.freeze({ ...params.inputHashes }) : undefined,
+    renderGroupId: params.renderGroupId,
+    passName: params.passName,
+    createdAt: params.createdAt,
+    metadata: params.metadata,
+  };
+
+  return Object.freeze(manifest);
+}
+
+/** Serialize a manifest with sorted object keys for byte-stable JSON output. */
+export function serializeRenderArtifactManifest(manifest: RenderArtifactManifest): string {
+  return JSON.stringify(toStableJsonValue(manifest));
+}
+
+/**
+ * Build the downloadable manifest sidecar for an already-created manifest.
+ * The sidecar bytes are exactly the stable serialized manifest payload.
+ */
+export function createRenderArtifactManifestSidecar(
+  manifest: RenderArtifactManifest,
+  filename = 'render-manifest.json',
+): RenderArtifactSidecarDescriptor {
+  const data = new TextEncoder().encode(serializeRenderArtifactManifest(manifest));
+  return Object.freeze({
+    id: `sidecar.manifest.${manifest.id}`,
+    filename,
+    mimeType: 'application/json',
+    kind: 'manifest',
+    data,
+    byteSize: data.byteLength,
+    provenance: Object.freeze({
+      manifestId: manifest.id,
+      artifactId: manifest.artifactId,
+    }),
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -225,10 +434,20 @@ export interface CompileOnlyArtifactParams {
   readonly mimeType: string;
   /** Suggested filename for the output. */
   readonly filename: string;
+  /** Output format contribution ID, when the artifact came from a format handler. */
+  readonly outputFormatId?: string;
   /** Extension that produced the output. */
   readonly producerExtensionId?: string;
   /** Extension version, if available. */
   readonly producerVersion?: string;
+  /** Sidecars emitted by the output handler or producer. */
+  readonly sidecars?: readonly RenderArtifactSidecarDescriptor[];
+  /** Optional provenance carried into the artifact manifest. */
+  readonly provenance?: Record<string, unknown>;
+  /** Optional input hash map carried into the artifact manifest. */
+  readonly inputHashes?: Record<string, string>;
+  /** Optional stable metadata carried into the artifact manifest. */
+  readonly metadata?: Record<string, unknown>;
   /** Asset keys consumed from the registry during compilation. */
   readonly consumedAssetKeys?: readonly string[];
   /**
@@ -284,28 +503,54 @@ export function createCompileOnlyArtifact(params: CompileOnlyArtifactParams): Re
     determinism: 'deterministic',
     replacementPolicy: 'preserve-live-ref',
   }));
+  const frozenConsumedMaterialRefs = Object.freeze(consumedMaterialRefs);
+  const sidecars = normalizeRenderArtifactSidecars(params.sidecars);
+  const locator: RenderStorageLocator = Object.freeze({
+    kind: 'inline',
+    uri: params.filename,
+    mimeType: params.mimeType,
+  });
+  const mediaKind = mimeTypeToMediaKind(params.mimeType);
+  const boundary: ArtifactBoundary = Object.freeze({
+    source: 'browser',
+    target: 'export-output',
+    route: COMPILE_ONLY_ARTIFACT_ROUTE,
+    failureBehavior: 'emit-diagnostic',
+  });
+  const frozenFindings = findings.length > 0 ? Object.freeze(findings) : undefined;
+  const manifest = createRenderArtifactManifest({
+    artifactId: params.artifactId,
+    route: COMPILE_ONLY_ARTIFACT_ROUTE,
+    determinism: 'deterministic',
+    producerExtensionId: params.producerExtensionId,
+    producerVersion: params.producerVersion,
+    outputFormatId: params.outputFormatId,
+    locator,
+    mediaKind,
+    consumedMaterialRefs: frozenConsumedMaterialRefs,
+    sidecars,
+    diagnostics: frozenFindings,
+    provenance: params.provenance,
+    inputHashes: params.inputHashes,
+    metadata: params.metadata,
+  });
 
   const artifact: RenderArtifact = {
     id: params.artifactId,
     route: COMPILE_ONLY_ARTIFACT_ROUTE,
-    locator: {
-      kind: 'inline',
-      uri: params.filename,
-      mimeType: params.mimeType,
-    },
-    mediaKind: mimeTypeToMediaKind(params.mimeType),
+    locator,
+    mediaKind,
     producerExtensionId: params.producerExtensionId,
     producerVersion: params.producerVersion,
-    consumedMaterialRefs,
+    consumedMaterialRefs: frozenConsumedMaterialRefs,
     determinism: 'deterministic',
-    boundary: {
-      source: 'browser',
-      target: 'export-output',
-      route: COMPILE_ONLY_ARTIFACT_ROUTE,
-      failureBehavior: 'emit-diagnostic',
-    },
-    findings: findings.length > 0 ? Object.freeze(findings) : undefined,
+    boundary,
+    findings: frozenFindings,
+    sidecars,
+    manifest,
   };
+
+  assertFinalArtifactHasManifest(artifact, 'createCompileOnlyArtifact');
 
   return Object.freeze(artifact);
 }
@@ -321,4 +566,44 @@ function mimeTypeToMediaKind(mimeType: string): RenderMaterialMediaKind {
   if (mimeType.startsWith('text/')) return 'text';
   if (mimeType === 'application/octet-stream') return 'binary';
   return 'unknown';
+}
+
+function compareSidecars(a: RenderArtifactSidecarDescriptor, b: RenderArtifactSidecarDescriptor): number {
+  return compareStrings(a.id ?? '', b.id ?? '')
+    || compareStrings(a.kind, b.kind)
+    || compareStrings(a.filename, b.filename);
+}
+
+function compareMaterialRefs(a: RenderMaterialRef, b: RenderMaterialRef): number {
+  return compareStrings(a.id, b.id)
+    || compareStrings(a.locator.uri, b.locator.uri)
+    || compareStrings(a.mediaKind, b.mediaKind);
+}
+
+function compareFindings(a: CapabilityFinding, b: CapabilityFinding): number {
+  return compareStrings(a.id, b.id)
+    || compareStrings(a.severity, b.severity)
+    || compareStrings(a.message, b.message);
+}
+
+function compareStrings(a: string, b: string): number {
+  return a < b ? -1 : a > b ? 1 : 0;
+}
+
+function toStableJsonValue(value: unknown): unknown {
+  if (value === undefined) return undefined;
+  if (value === null) return null;
+  if (value instanceof Uint8Array) return Array.from(value);
+  if (Array.isArray(value)) return value.map((item) => toStableJsonValue(item));
+  if (typeof value !== 'object') return value;
+
+  const record = value as Record<string, unknown>;
+  const stableRecord: Record<string, unknown> = {};
+  for (const key of Object.keys(record).sort()) {
+    const stableValue = toStableJsonValue(record[key]);
+    if (stableValue !== undefined) {
+      stableRecord[key] = stableValue;
+    }
+  }
+  return stableRecord;
 }

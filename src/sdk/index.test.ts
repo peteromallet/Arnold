@@ -24,6 +24,10 @@ import type {
   ParserContribution,
   OutputFormatContribution,
   SearchProviderContribution,
+  CompileOnlyOutputFormatContribution,
+  RenderDependentOutputFormatContribution,
+  RenderArtifactManifest,
+  RenderArtifactSidecarDescriptor,
   CompileOnlyOutputResult,
   ExportService,
   AssetReadSurface,
@@ -66,6 +70,24 @@ import type {
   LiveSessionsService,
   GenerationSession,
   CreativeContext,
+  // M12 planner requirement types
+  CapabilityVersion,
+  CapabilitySourceRef,
+  RouteFitMetadata,
+  CapabilityRequirement,
+  IntegrationCapabilities,
+  SamplingConfig,
+  SamplingResult,
+  TimelineRenderPassSummary,
+  ProcessSpec,
+  ProcessContribution,
+  ProcessStatus,
+  ProcessRoundtripRequest,
+  ProcessRoundtripResult,
+  DeterminismStatus,
+  RenderRoute,
+  RenderBlockerReason,
+  CapabilityFinding,
 } from '@/sdk/index';
 
 // ---------------------------------------------------------------------------
@@ -1959,6 +1981,464 @@ describe('M11: Updated CREATIVE_MEMBER_MILESTONE', () => {
   });
 });
 
+
+// ---------------------------------------------------------------------------
+// M12: Planner requirement contracts — constructability
+// ---------------------------------------------------------------------------
+
+describe('M12: CapabilityVersion is constructable', () => {
+  it('accepts minimal fields', () => {
+    const v: CapabilityVersion = { semver: '1.0.0' };
+    expect(v.semver).toBe('1.0.0');
+  });
+
+  it('accepts full provenance fields', () => {
+    const v: CapabilityVersion = {
+      semver: '2.1.0',
+      declaredBy: 'com.example.ext',
+      contributionId: 'my-effect',
+    };
+    expect(v.declaredBy).toBe('com.example.ext');
+    expect(v.contributionId).toBe('my-effect');
+  });
+});
+
+describe('M12: CapabilitySourceRef is constructable', () => {
+  it('accepts extension source ref', () => {
+    const ref: CapabilitySourceRef = {
+      source: 'extension',
+      extensionId: 'com.example.ext',
+      contributionId: 'my-effect',
+      version: { semver: '1.0.0' },
+    };
+    expect(ref.source).toBe('extension');
+    expect(ref.extensionId).toBe('com.example.ext');
+    expect(ref.version?.semver).toBe('1.0.0');
+  });
+
+  it('accepts built-in source ref', () => {
+    const ref: CapabilitySourceRef = { source: 'built-in' };
+    expect(ref.source).toBe('built-in');
+    expect(ref.extensionId).toBeUndefined();
+  });
+
+  it('accepts registry source ref', () => {
+    const ref: CapabilitySourceRef = { source: 'registry', contributionId: 'reg-1' };
+    expect(ref.source).toBe('registry');
+  });
+
+  it('accepts manifest source ref', () => {
+    const ref: CapabilitySourceRef = { source: 'manifest', extensionId: 'com.example.ext' };
+    expect(ref.source).toBe('manifest');
+  });
+
+  it('accepts provider source ref', () => {
+    const ref: CapabilitySourceRef = { source: 'provider' };
+    expect(ref.source).toBe('provider');
+  });
+});
+
+describe('M12: RouteFitMetadata is constructable', () => {
+  it('accepts supported fit', () => {
+    const fit: RouteFitMetadata = {
+      route: 'browser-export' as RenderRoute,
+      fit: 'supported',
+    };
+    expect(fit.route).toBe('browser-export');
+    expect(fit.fit).toBe('supported');
+  });
+
+  it('accepts blocked fit with reason', () => {
+    const fit: RouteFitMetadata = {
+      route: 'worker-export' as RenderRoute,
+      fit: 'blocked',
+      reason: 'route-unsupported' as RenderBlockerReason,
+      message: 'Worker export is not supported for this effect',
+    };
+    expect(fit.fit).toBe('blocked');
+    expect(fit.reason).toBe('route-unsupported');
+    expect(fit.message).toBe('Worker export is not supported for this effect');
+  });
+
+  it('accepts degraded fit', () => {
+    const fit: RouteFitMetadata = {
+      route: 'sidecar-export' as RenderRoute,
+      fit: 'degraded',
+      reason: 'missing-contribution' as RenderBlockerReason,
+    };
+    expect(fit.fit).toBe('degraded');
+  });
+
+  it('accepts unknown fit', () => {
+    const fit: RouteFitMetadata = {
+      route: 'preview' as RenderRoute,
+      fit: 'unknown',
+    };
+    expect(fit.fit).toBe('unknown');
+  });
+});
+
+describe('M12: CapabilityRequirement is constructable', () => {
+  const sourceRef: CapabilitySourceRef = {
+    source: 'extension',
+    extensionId: 'com.example.ext',
+  };
+
+  it('accepts minimal required fields', () => {
+    const req: CapabilityRequirement = {
+      id: 'req-1',
+      sourceRef,
+      route: 'browser-export' as RenderRoute,
+      requiredCapabilities: ['browser-export'],
+      determinism: 'deterministic' as DeterminismStatus,
+    };
+    expect(req.id).toBe('req-1');
+    expect(req.sourceRef.source).toBe('extension');
+    expect(req.route).toBe('browser-export');
+    expect(req.requiredCapabilities).toEqual(['browser-export']);
+    expect(req.determinism).toBe('deterministic');
+  });
+
+  it('accepts full fields with route-fit, version, findings, and blocking flag', () => {
+    const finding: CapabilityFinding = {
+      id: 'finding-1',
+      severity: 'warning',
+      route: 'browser-export' as RenderRoute,
+      reason: 'unknown' as RenderBlockerReason,
+      message: 'Capability not verified',
+    };
+    const req: CapabilityRequirement = {
+      id: 'req-2',
+      sourceRef,
+      route: 'worker-export' as RenderRoute,
+      requiredCapabilities: ['worker-export', 'sidecar-export'],
+      determinism: 'process-dependent' as DeterminismStatus,
+      routeFit: {
+        route: 'worker-export' as RenderRoute,
+        fit: 'blocked',
+        reason: 'route-unsupported' as RenderBlockerReason,
+        message: 'Not supported',
+      },
+      version: { semver: '2.0.0', declaredBy: 'com.example.ext' },
+      findings: [finding],
+      blocking: true,
+    };
+    expect(req.routeFit?.fit).toBe('blocked');
+    expect(req.version?.semver).toBe('2.0.0');
+    expect(req.findings).toHaveLength(1);
+    expect(req.blocking).toBe(true);
+  });
+
+  it('accepts empty requiredCapabilities', () => {
+    const req: CapabilityRequirement = {
+      id: 'req-3',
+      sourceRef: { source: 'built-in' },
+      route: 'preview' as RenderRoute,
+      requiredCapabilities: [],
+      determinism: 'unknown' as DeterminismStatus,
+    };
+    expect(req.requiredCapabilities).toHaveLength(0);
+  });
+});
+
+describe('M12: IntegrationCapabilities is constructable', () => {
+  const sourceRef: CapabilitySourceRef = { source: 'extension', extensionId: 'com.example.ext' };
+  const req: CapabilityRequirement = {
+    id: 'req-1',
+    sourceRef,
+    route: 'browser-export' as RenderRoute,
+    requiredCapabilities: ['browser-export'],
+    determinism: 'deterministic' as DeterminismStatus,
+  };
+
+  it('accepts minimal fields with empty arrays', () => {
+    const caps: IntegrationCapabilities = {
+      routes: [],
+      determinism: 'unknown' as DeterminismStatus,
+      capabilityRequirements: [],
+      sourceRefs: [],
+      fullySupported: true,
+      anyBlocked: false,
+    };
+    expect(caps.routes).toHaveLength(0);
+    expect(caps.fullySupported).toBe(true);
+    expect(caps.anyBlocked).toBe(false);
+  });
+
+  it('accepts scoped extension and contribution IDs', () => {
+    const caps: IntegrationCapabilities = {
+      extensionId: 'com.example.ext',
+      contributionId: 'my-effect',
+      routes: ['browser-export' as RenderRoute],
+      determinism: 'deterministic' as DeterminismStatus,
+      capabilityRequirements: [req],
+      sourceRefs: [sourceRef],
+      fullySupported: true,
+      anyBlocked: false,
+    };
+    expect(caps.extensionId).toBe('com.example.ext');
+    expect(caps.contributionId).toBe('my-effect');
+    expect(caps.capabilityRequirements).toHaveLength(1);
+  });
+
+  it('accepts multiple routes and requirements', () => {
+    const caps: IntegrationCapabilities = {
+      routes: ['browser-export' as RenderRoute, 'worker-export' as RenderRoute],
+      determinism: 'preview-only' as DeterminismStatus,
+      capabilityRequirements: [req],
+      sourceRefs: [sourceRef],
+      fullySupported: false,
+      anyBlocked: true,
+    };
+    expect(caps.routes).toHaveLength(2);
+    expect(caps.anyBlocked).toBe(true);
+  });
+});
+
+describe('M12: output, artifact, sampling, and process contracts are constructable', () => {
+  const finding: CapabilityFinding = {
+    id: 'finding-1',
+    severity: 'info',
+    route: 'browser-export' as RenderRoute,
+    message: 'Collected during manifest construction',
+  };
+
+  const materialRef = {
+    id: 'mat-main',
+    mediaKind: 'video' as const,
+    locator: { kind: 'asset-registry' as const, uri: 'asset://mat-main' },
+    determinism: 'deterministic' as DeterminismStatus,
+    replacementPolicy: 'preserve-live-ref' as const,
+  };
+
+  it('distinguishes compile-only and render-dependent output contributions', () => {
+    const compileOnly: CompileOnlyOutputFormatContribution = {
+      id: 'metadata-json' as any,
+      kind: 'outputFormat',
+      label: 'Metadata JSON',
+      requiresRender: false,
+      outputExtension: 'json',
+      outputMimeType: 'application/json',
+    };
+    const renderDependent: RenderDependentOutputFormatContribution = {
+      id: 'show-control' as any,
+      kind: 'outputFormat',
+      label: 'Show Control Package',
+      requiresRender: true,
+      outputExtension: 'zip',
+      outputMimeType: 'application/zip',
+      render: {
+        routes: ['browser-export' as RenderRoute, 'sidecar-export' as RenderRoute],
+        processId: 'show-control-process',
+        operationId: 'export-show-control',
+        requiredCapabilities: ['sidecar-export'],
+        determinism: 'process-dependent' as DeterminismStatus,
+      },
+    };
+
+    expect(compileOnly.requiresRender).toBe(false);
+    expect(renderDependent.requiresRender).toBe(true);
+    expect(renderDependent.render.processId).toBe('show-control-process');
+  });
+
+  it('keeps existing manifest acceptance for output formats and adds process contributions', () => {
+    const ext = defineExtension({
+      manifest: {
+        id: 'com.m12.contracts' as any,
+        version: '1.0.0',
+        label: 'M12 Contracts',
+        contributions: [
+          {
+            id: 'render-output' as any,
+            kind: 'outputFormat',
+            label: 'Rendered Output',
+            requiresRender: true,
+            outputExtension: 'mp4',
+            render: {
+              routes: ['browser-export' as RenderRoute],
+              determinism: 'deterministic' as DeterminismStatus,
+            },
+          } satisfies RenderDependentOutputFormatContribution,
+          {
+            id: 'local-process' as any,
+            kind: 'process',
+            spec: {
+              id: 'local-process',
+              label: 'Local Process',
+              spawn: {
+                command: 'node',
+                args: ['worker.js'],
+                env: { NODE_ENV: 'test' },
+              },
+              protocol: 'stdio-jsonrpc',
+              operations: [
+                {
+                  id: 'roundtrip',
+                  label: 'Roundtrip',
+                  outputKinds: ['material', 'sidecar'],
+                  routes: ['sidecar-export' as RenderRoute],
+                },
+              ],
+            },
+          } satisfies ProcessContribution,
+        ],
+      },
+    });
+
+    const processContribution = ext.manifest.contributions![1] as ProcessContribution;
+    expect(ext.manifest.contributions).toHaveLength(2);
+    expect(processContribution.kind).toBe('process');
+    expect(Object.isFrozen(ext.manifest.contributions)).toBe(true);
+    expect(Object.isFrozen(processContribution)).toBe(true);
+    expect(Object.isFrozen(processContribution.spec)).toBe(true);
+    expect(Object.isFrozen(processContribution.spec.spawn)).toBe(true);
+    expect(Object.isFrozen(processContribution.spec.spawn.args!)).toBe(true);
+    expect(Object.isFrozen(processContribution.spec.operations!)).toBe(true);
+    expect(Object.isFrozen(processContribution.spec.operations![0])).toBe(true);
+  });
+
+  it('constructs artifact manifests and sidecar descriptors', () => {
+    const sidecar: RenderArtifactSidecarDescriptor = {
+      filename: 'manifest.provenance.json',
+      mimeType: 'application/json',
+      kind: 'provenance',
+      byteSize: 42,
+      renderGroupId: 'group-main',
+      passName: 'beauty',
+    };
+    const manifest: RenderArtifactManifest = {
+      id: 'manifest-1',
+      schemaVersion: 1,
+      artifactId: 'artifact-1',
+      route: 'browser-export' as RenderRoute,
+      determinism: 'deterministic' as DeterminismStatus,
+      producerExtensionId: 'com.example.render',
+      producerVersion: '1.0.0',
+      outputFormatId: 'show-control',
+      consumedMaterialRefs: [materialRef],
+      sidecars: [sidecar],
+      diagnostics: [finding],
+      inputHashes: { 'asset://mat-main': 'sha256:abc' },
+      renderGroupId: 'group-main',
+      passName: 'beauty',
+    };
+
+    expect(manifest.sidecars[0].kind).toBe('provenance');
+    expect(manifest.consumedMaterialRefs[0].id).toBe('mat-main');
+    expect(manifest.inputHashes!['asset://mat-main']).toBe('sha256:abc');
+  });
+
+  it('constructs sampling config and result vocabulary', () => {
+    const config: SamplingConfig = {
+      id: 'dataset-config',
+      strategy: 'clip-slices',
+      sources: [{ kind: 'clip', id: 'clip-1', clipId: 'clip-1' }],
+      range: { startFrame: 0, endFrame: 48 },
+      fps: 24,
+      resolution: '1920x1080',
+      includeLabels: true,
+      includeCaptions: true,
+      includeProvenance: true,
+      attachments: [{ kind: 'cue', sidecarKind: 'cue', required: true }],
+    };
+    const result: SamplingResult = {
+      configId: 'dataset-config',
+      items: [
+        {
+          id: 'sample-1',
+          sourceRef: config.sources[0],
+          range: config.range,
+          frame: 24,
+          timestampSeconds: 1,
+          manifestEntryId: 'manifest-entry-1',
+        },
+      ],
+      manifestRefs: ['manifest-entry-1'],
+      diagnostics: [finding],
+    };
+
+    expect(config.strategy).toBe('clip-slices');
+    expect(result.items[0].timestampSeconds).toBe(1);
+    expect(result.manifestRefs).toEqual(['manifest-entry-1']);
+  });
+
+  it('constructs render-group pass summaries', () => {
+    const pass: TimelineRenderPassSummary = {
+      id: 'group-main.beauty',
+      passName: 'beauty',
+      required: true,
+      composable: true,
+      materialRefId: 'mat-main',
+      status: 'resolved',
+    };
+    expect(pass.required).toBe(true);
+    expect(pass.status).toBe('resolved');
+  });
+
+  it('constructs process specs, statuses, and roundtrip request/results', () => {
+    const spec: ProcessSpec = {
+      id: 'blender-mcp',
+      label: 'Blender MCP',
+      spawn: { command: 'blender-mcp', args: ['--stdio'] },
+      protocol: 'stdio-jsonrpc',
+      healthCheck: 'ping',
+      operations: [{ id: 'render-pass', label: 'Render Pass', outputKinds: ['material', 'sidecar'] }],
+    };
+    const statuses: ProcessStatus[] = [
+      { processId: spec.id, state: 'not-installed', installHint: 'Install blender-mcp' },
+      { processId: spec.id, state: 'stopped' },
+      { processId: spec.id, state: 'starting', startedAt: '2026-06-20T00:00:00.000Z' },
+      { processId: spec.id, state: 'ready', pid: 1234 },
+      {
+        processId: spec.id,
+        state: 'busy',
+        operationId: 'render-pass',
+        progress: { operationId: 'render-pass', percent: 50 },
+      },
+      { processId: spec.id, state: 'degraded', healthCheck: 'ping', diagnostics: [{ severity: 'warning', code: 'process/slow', message: 'Slow health check' }] },
+      { processId: spec.id, state: 'failed', errorCode: 'spawn-failed', recoverable: true },
+      { processId: spec.id, state: 'stopping', reason: 'user-requested' },
+    ];
+    const request: ProcessRoundtripRequest = {
+      id: 'roundtrip-1',
+      processId: spec.id,
+      operationId: 'render-pass',
+      inputMaterialRefs: [materialRef],
+      params: { passName: 'beauty' },
+      frameRange: { startFrame: 0, endFrame: 24 },
+      renderGroupId: 'group-main',
+      passNames: ['beauty'],
+    };
+    const result: ProcessRoundtripResult = {
+      requestId: request.id,
+      processId: spec.id,
+      operationId: request.operationId,
+      status: 'completed',
+      returnedMaterials: [
+        {
+          ...materialRef,
+          durationSeconds: 1,
+          metadata: { passName: 'beauty', renderGroupId: 'group-main' },
+        },
+      ],
+      sidecars: [{ filename: 'render.log', mimeType: 'text/plain', kind: 'log' }],
+      availableActions: ['insert-as-clip', 'create-proposal'],
+    };
+
+    expect(statuses.map((status) => status.state)).toEqual([
+      'not-installed',
+      'stopped',
+      'starting',
+      'ready',
+      'busy',
+      'degraded',
+      'failed',
+      'stopping',
+    ]);
+    expect(request.passNames).toEqual(['beauty']);
+    expect(result.returnedMaterials[0].metadata!.passName).toBe('beauty');
+  });
+});
 
 // ---------------------------------------------------------------------------
 // Helper

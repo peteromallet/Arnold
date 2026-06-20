@@ -12,6 +12,7 @@ import {
 } from '@/tools/video-editor/transitions/registry/index.ts';
 import { VisualClip } from '@/tools/video-editor/compositions/VisualClip.tsx';
 import type { ResolvedTimelineClip, TrackDefinition } from '@/tools/video-editor/types/index.ts';
+import type { RenderMaterialRef } from '@reigh/editor-sdk';
 
 // ---------------------------------------------------------------------------
 // Remotion mocks (mirrors ClipEffectsSnapshot.test.tsx)
@@ -92,6 +93,18 @@ function makeTransitionRecord(
   };
 }
 
+function materialRef(overrides: Partial<RenderMaterialRef> = {}): RenderMaterialRef {
+  return {
+    id: 'mat-1',
+    mediaKind: 'image',
+    locator: { kind: 'url', uri: 'https://example.test/material.png' },
+    producerExtensionId: 'ext.materials',
+    determinism: 'live-unbaked',
+    replacementPolicy: 'materialize-on-export',
+    ...overrides,
+  };
+}
+
 // Provider-mounted record helper: registers a transition into the provider
 // registry so it can be resolved by VisualClip.
 function ProviderRecord({
@@ -120,6 +133,62 @@ describe('VisualClip transition rendering', () => {
   afterEach(() => {
     currentFrame = 0;
     vi.restoreAllMocks();
+  });
+
+  it('renders pending, materializing, and failed material placeholders with diagnostics', () => {
+    const ref = materialRef();
+    const { rerender } = render(
+      <VisualClip
+        clip={mediaClip()}
+        track={track}
+        fps={30}
+        materialRefs={[ref]}
+        materialStatuses={[{ materialRefId: 'mat-1', state: 'unbaked', message: 'Queued for materialization' }]}
+      />,
+    );
+
+    expect(screen.getByTestId('pending-material-placeholder')).toHaveAttribute('data-material-state', 'unbaked');
+    expect(screen.getByText(/pending materialization: mat-1/)).toBeInTheDocument();
+
+    rerender(
+      <VisualClip
+        clip={mediaClip()}
+        track={track}
+        fps={30}
+        materialRefs={[ref]}
+        materialStatuses={[{ materialRefId: 'mat-1', state: 'stale', message: 'Refreshing bytes' }]}
+      />,
+    );
+    expect(screen.getByTestId('pending-material-placeholder')).toHaveAttribute('data-material-state', 'stale');
+    expect(screen.getByText('Refreshing bytes')).toBeInTheDocument();
+
+    rerender(
+      <VisualClip
+        clip={mediaClip()}
+        track={track}
+        fps={30}
+        materialRefs={[ref]}
+        materialStatuses={[{ materialRefId: 'mat-1', state: 'missing' }]}
+        materialDiagnostics={[{ id: 'diag-1', severity: 'error', materialRefId: 'mat-1', message: 'Materialization failed' }]}
+      />,
+    );
+    expect(screen.getByTestId('pending-material-placeholder')).toHaveAttribute('data-material-state', 'missing');
+    expect(screen.getByText('Materialization failed')).toBeInTheDocument();
+  });
+
+  it('renders concrete material-backed clips normally when material is resolved', async () => {
+    render(
+      <VisualClip
+        clip={mediaClip()}
+        track={track}
+        fps={30}
+        materialRefs={[materialRef({ determinism: 'deterministic' })]}
+        materialStatuses={[{ materialRefId: 'mat-1', state: 'resolved' }]}
+      />,
+    );
+
+    await waitFor(() => expect(screen.getByTestId('image-asset')).toBeInTheDocument());
+    expect(screen.queryByTestId('pending-material-placeholder')).not.toBeInTheDocument();
   });
 
   // -- Built-in transitions -------------------------------------------------

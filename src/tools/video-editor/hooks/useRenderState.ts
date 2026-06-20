@@ -18,9 +18,18 @@ import {
   collectExtensionDeclaredIds,
   scanExportConfig,
 } from '@/tools/video-editor/runtime/exportGuard.ts';
+import {
+  planRender,
+  type RenderPlannerResult,
+} from '@/tools/video-editor/runtime/renderPlanner.ts';
 import { DataProviderContext } from '@/tools/video-editor/contexts/DataProviderContext.tsx';
 import { syncPlannerDiagnosticsToCollection } from '@/tools/video-editor/runtime/diagnosticCollectionSync.ts';
-import type { Diagnostic } from '@reigh/editor-sdk';
+import type {
+  CapabilityFinding,
+  Diagnostic,
+  ExportDiagnostic,
+  RenderBlockerReason,
+} from '@reigh/editor-sdk';
 
 export type RenderStatus = 'idle' | 'rendering' | 'done' | 'error';
 
@@ -167,6 +176,69 @@ function exportDiagnosticId(diagnostic: ReturnType<typeof scanExportConfig>['dia
   ].join(':');
 }
 
+function blockerReasonForExportDiagnostic(diagnostic: ExportDiagnostic): RenderBlockerReason {
+  if (diagnostic.code.includes('unknown') || diagnostic.code.includes('missing')) {
+    return 'missing-contribution';
+  }
+  if (diagnostic.code.includes('inactive')) {
+    return 'inactive-extension';
+  }
+  if (diagnostic.code.includes('live-binding')) {
+    return 'live-unbaked';
+  }
+  return 'route-unsupported';
+}
+
+function exportDiagnosticToPlannerFinding(diagnostic: ExportDiagnostic, index: number): CapabilityFinding {
+  const route = diagnostic.detail?.renderRoute === 'worker-export' || diagnostic.detail?.renderRoute === 'preview'
+    ? diagnostic.detail.renderRoute
+    : 'browser-export';
+  const reason = diagnostic.severity === 'error'
+    ? blockerReasonForExportDiagnostic(diagnostic)
+    : undefined;
+
+  return {
+    id: exportDiagnosticId(diagnostic, index),
+    severity: diagnostic.severity,
+    route,
+    ...(reason ? { reason } : {}),
+    message: diagnostic.message,
+    ...(diagnostic.extensionId ? { extensionId: diagnostic.extensionId } : {}),
+    ...(diagnostic.contributionId ? { contributionId: diagnostic.contributionId } : {}),
+    detail: {
+      ...(diagnostic.detail ?? {}),
+      source: 'export-guard-compat',
+      code: diagnostic.code,
+    },
+  };
+}
+
+function planFromExportGuardResult(
+  guardResult: ReturnType<typeof scanExportConfig>,
+): RenderPlannerResult {
+  const diagnostics: CapabilityFinding[] = [
+    ...(guardResult.findings ?? []),
+    ...(guardResult.blockers ?? []),
+    ...guardResult.diagnostics.map(exportDiagnosticToPlannerFinding),
+  ];
+  return planRender({ diagnostics });
+}
+
+function outputFormatsForPlanning(extensionRuntime: ExtensionRuntime | undefined): readonly VideoEditorOutputFormatDescriptor[] {
+  const outputFormats = extensionRuntime?.outputFormats
+    ?? extensionRuntime?.config?.outputFormats
+    ?? [];
+  return outputFormats.map((format) => ({
+    ...format,
+    availableRoutes: format.availableRoutes ?? [],
+    routeRequirements: format.routeRequirements ?? [],
+    processRequirements: format.processRequirements ?? [],
+    blockers: format.blockers ?? [],
+    nextActions: format.nextActions ?? [],
+    sidecars: format.sidecars ?? [],
+  }));
+}
+
 function toCollectionDiagnostic(
   diagnostic: ReturnType<typeof scanExportConfig>['diagnostics'][number],
   index: number,
@@ -227,7 +299,7 @@ export function useRenderState(
   const clipTypeRegistrySnapshot = useClipTypeRegistrySnapshot();
   // M6: Derive export format categories from extension runtime
   const exportFormats = useMemo(() => {
-    const outputFormats = extensionRuntime?.config?.outputFormats ?? [];
+    const outputFormats = outputFormatsForPlanning(extensionRuntime);
     return categorizeExportFormats(outputFormats);
   }, [extensionRuntime]);
   const diagnosticCollection = useContext(DataProviderContext)?.diagnosticCollection;
@@ -286,18 +358,19 @@ export function useRenderState(
     const allContributions = extensionRuntime ? buildExtensionContributions(extensionRuntime) : [];
     const extIds = collectExtensionDeclaredIds(allContributions);
     const guardResult = scanExportConfig(resolvedConfig, builtIn, extIds, effectRegistrySnapshot, transitionRegistrySnapshot, clipTypeRegistrySnapshot);
+    const plannerResult = planFromExportGuardResult(guardResult);
 
     guardResult.diagnostics.forEach((diagnostic, index) => {
       diagnosticCollection?.publish(toCollectionDiagnostic(diagnostic, index));
     });
-    syncPlannerDiagnosticsToCollection(diagnosticCollection, guardResult.blockers ?? []);
+    syncPlannerDiagnosticsToCollection(diagnosticCollection, plannerResult.blockers);
 
     // Emit structured diagnostics as concise render log output
     const log = formatExportGuardLog(guardResult);
     setRenderLog(log);
 
-    if (guardResult.hasBlockingErrors) {
-      // M1 blocker: truly unknown IDs that cannot be rendered
+    if (plannerResult.blockers.length > 0) {
+      // Planner-owned blockers are the canonical readiness decision.
       setRenderStatus('error');
       setRenderProgress(null);
       setRenderDirty(false);
@@ -422,18 +495,40 @@ export function useRenderState(
       return;
     }
 
-    const fmt = exportFormats.compileOnly.find((f) => f.id === formatId);
-    if (!fmt) {
-      // Check if it's a render-dependent format
-      const rdFmt = exportFormats.renderDependent.find((f) => f.id === formatId);
-      if (rdFmt) {
-        setExportStatus('error');
-        setExportLogState(
-          `Export blocked: "${rdFmt.label}" requires render pipeline execution which is reserved for the Render button.` +
-          (rdFmt.disabledReason ? ` ${rdFmt.disabledReason}` : ''),
-        );
+    const plannerOutputFormats = outputFormatsForPlanning(extensionRuntime);
+    const outputPlan = planRender({
+      outputFormats: plannerOutputFormats,
+      processes: extensionRuntime?.processes ?? [],
+      request: {
+        outputFormatId: formatId,
+        routes: ['browser-export'],
+      },
+      diagnostics: plannerOutputFormats.find((candidate) => candidate.id === formatId)?.disabled
+        ? [{
+            id: `planner.outputFormat.${formatId}.disabled`,
+            severity: 'error',
+            route: 'browser-export',
+            reason: 'inactive-extension',
+            message: plannerOutputFormats.find((candidate) => candidate.id === formatId)?.disabledReason
+              ?? `Export format "${formatId}" is disabled.`,
+            contributionId: formatId,
+            detail: { source: 'output-format', outputFormatId: formatId },
+          }]
+        : [],
+    });
+    const browserOutputPlan = outputPlan.routePlans.find((routePlan) => routePlan.route === 'browser-export');
+    const fmt = plannerOutputFormats.find((f) => f.id === formatId && !f.requiresRender && !f.disabled);
+    if (!fmt || browserOutputPlan?.blocked) {
+      const requestedFormat = plannerOutputFormats.find((f) => f.id === formatId);
+      const blocker = outputPlan.blockers.find((candidate) => candidate.id === `planner.outputFormat.${formatId}.disabled`)
+        ?? browserOutputPlan?.blockers[0]
+        ?? outputPlan.blockers[0];
+      setExportStatus('error');
+      if (blocker) {
+        setExportLogState(`Export blocked: ${blocker.message}`);
+      } else if (requestedFormat) {
+        setExportLogState(`Export blocked: "${requestedFormat.label}" is not available for browser export.`);
       } else {
-        setExportStatus('error');
         setExportLogState(`Export format "${formatId}" not found.`);
       }
       return;
@@ -523,7 +618,7 @@ export function useRenderState(
       setExportStatus('error');
       setExportLogState(`Export failed: ${message}`);
     }
-  }, [resolvedConfig, exportFormats, runExportGuard]);
+  }, [resolvedConfig, extensionRuntime, runExportGuard]);
 
   return {
     renderStatus,

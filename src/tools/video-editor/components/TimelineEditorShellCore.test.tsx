@@ -11,6 +11,7 @@ import type { VideoEditorRenderContext } from '@/tools/video-editor/runtime/exte
 type SlotRendererFn = (context: VideoEditorRenderContext) => ReactNode;
 
 let __slotRenderers: Partial<Record<string, SlotRendererFn>> = {};
+const __startRender = vi.fn();
 
 function __setSlotRenderers(renderers: Partial<Record<string, SlotRendererFn>>) {
   __slotRenderers = { ...renderers };
@@ -63,7 +64,7 @@ vi.mock('@/tools/video-editor/hooks/timelineStore.ts', () => ({
     createManualCheckpoint: vi.fn(),
     timelineName: 'Test Timeline',
     setScaleWidth: vi.fn(),
-    startRender: vi.fn(),
+    startRender: __startRender,
     renderStatus: 'idle' as const,
     renderProgress: null,
     renderResultUrl: null,
@@ -649,6 +650,30 @@ describe('TimelineEditorShellCore — M6 export dropdown', () => {
     expect(renderButton).toBeTruthy();
     // Should not be disabled (idle state)
     expect(renderButton.closest('button')).not.toBeDisabled();
+  });
+
+  it('keeps Render as the canonical export trigger during the shell transition', () => {
+    const consoleLog = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+    __setExportExtensions({
+      outputFormats: [
+        { id: 'fmt-json', extensionId: 'ext-a', label: 'Metadata JSON', requiresRender: false, outputExtension: 'json', disabled: false },
+        { id: 'fmt-mp4', extensionId: 'ext-b', label: 'MP4 Video', requiresRender: true, outputExtension: 'mp4', disabled: false },
+      ],
+    });
+
+    render(<TimelineEditorShellCore timelineId="test-timeline" />);
+
+    fireEvent.click(screen.getByText('Export'));
+    fireEvent.click(screen.getByText('Metadata JSON'));
+
+    expect(consoleLog).toHaveBeenCalledWith('[Export] Compile-only format: fmt-json (Metadata JSON)');
+    expect(__startRender).not.toHaveBeenCalled();
+    expect(document.querySelector('[data-video-editor-render-blocker="true"]')).toBeNull();
+
+    fireEvent.click(screen.getByText('Render'));
+    expect(__startRender).toHaveBeenCalledTimes(1);
+
+    consoleLog.mockRestore();
   });
 });
 });

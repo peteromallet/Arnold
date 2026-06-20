@@ -25,6 +25,9 @@ import {
   resolveTransition,
 } from '@/tools/video-editor/transitions/catalog.ts';
 import type { ResolvedTimelineClip, TrackDefinition } from '@/tools/video-editor/types/index.ts';
+import { PendingMaterialPlaceholder } from '@/tools/video-editor/components/PendingMaterialPlaceholder.tsx';
+import type { CapabilityFinding, RenderMaterialRef } from '@reigh/editor-sdk';
+import type { RenderPlannerMaterialStatus } from '@/tools/video-editor/runtime/renderPlanner.ts';
 
 // SD-025 (Sprint 3): inline missing-asset placeholder body. Mirrors the
 // styling of UnknownClipPlaceholder so the two loud cases look like a pair.
@@ -148,6 +151,9 @@ type VisualClipProps = {
   fps: number;
   predecessor?: ResolvedTimelineClip | null;
   effectRegistrySnapshot?: EffectRegistrySnapshot;
+  materialRefs?: readonly RenderMaterialRef[];
+  materialStatuses?: readonly RenderPlannerMaterialStatus[];
+  materialDiagnostics?: readonly CapabilityFinding[];
 };
 
 const getClipBoxStyle = (
@@ -213,6 +219,29 @@ const getIntrinsicMediaSize = (
     height: clip.height ?? compositionHeight,
   };
 };
+
+const isRecord = (value: unknown): value is Record<string, unknown> => (
+  value !== null && typeof value === 'object' && !Array.isArray(value)
+);
+
+function materialRefsForClip(
+  clip: ResolvedTimelineClip,
+  materialRefs: readonly RenderMaterialRef[] | undefined,
+): readonly RenderMaterialRef[] {
+  if (materialRefs && materialRefs.length > 0) return materialRefs;
+  const app = isRecord(clip.app) ? clip.app : undefined;
+  const refs = app?.materialRefs ?? clip.params?.materialRefs;
+  return Array.isArray(refs) ? refs.filter(isRecord) as unknown as readonly RenderMaterialRef[] : [];
+}
+
+function statusForMaterial(material: RenderMaterialRef, statuses: readonly RenderPlannerMaterialStatus[] | undefined): RenderPlannerMaterialStatus {
+  return statuses?.find((status) => status.materialRefId === material.id)
+    ?? { materialRefId: material.id, state: material.determinism === 'deterministic' ? 'resolved' : 'unbaked' };
+}
+
+function shouldRenderMaterialPlaceholder(status: RenderPlannerMaterialStatus): boolean {
+  return status.state === 'missing' || status.state === 'stale' || status.state === 'unbaked';
+}
 
 const VisualAsset: FC<VisualClipProps> = ({ clip, track, fps }) => {
   const { width: compositionWidth, height: compositionHeight } = useVideoConfig();
@@ -363,7 +392,15 @@ const VisualAsset: FC<VisualClipProps> = ({ clip, track, fps }) => {
   );
 };
 
-export const VisualClip: FC<VisualClipProps> = ({ clip, track, fps, effectRegistrySnapshot }) => {
+export const VisualClip: FC<VisualClipProps> = ({
+  clip,
+  track,
+  fps,
+  effectRegistrySnapshot,
+  materialRefs,
+  materialStatuses,
+  materialDiagnostics,
+}) => {
   const providerRegistryContext = useOptionalEffectRegistryContext();
   const registrySnapshot = effectRegistrySnapshot ?? providerRegistryContext?.snapshot;
 
@@ -378,6 +415,22 @@ export const VisualClip: FC<VisualClipProps> = ({ clip, track, fps, effectRegist
 
   if (clip.clipType === 'effect-layer') {
     return null;
+  }
+
+  const pendingMaterial = materialRefsForClip(clip, materialRefs)
+    .map((material) => ({ material, status: statusForMaterial(material, materialStatuses) }))
+    .find(({ status }) => shouldRenderMaterialPlaceholder(status));
+
+  if (pendingMaterial) {
+    return (
+      <PendingMaterialPlaceholder
+        clipId={clip.id}
+        material={pendingMaterial.material}
+        status={pendingMaterial.status}
+        diagnostics={materialDiagnostics?.filter((diagnostic) =>
+          diagnostic.materialRefId === pendingMaterial.material.id || diagnostic.clipId === clip.id)}
+      />
+    );
   }
 
   const durationInFrames = getClipDurationInFrames(clip, fps);
@@ -436,7 +489,16 @@ const LazyGuard: FC<{ durationInFrames: number; children: ReactNode }> = ({ dura
   return <>{children}</>;
 };
 
-export const VisualClipSequence: FC<VisualClipProps> = ({ clip, track, fps, predecessor, effectRegistrySnapshot }) => {
+export const VisualClipSequence: FC<VisualClipProps> = ({
+  clip,
+  track,
+  fps,
+  predecessor,
+  effectRegistrySnapshot,
+  materialRefs,
+  materialStatuses,
+  materialDiagnostics,
+}) => {
   const durationInFrames = getClipDurationInFrames(clip, fps);
   const transitionFrames = predecessor && clip.transition
     ? secondsToFrames(clip.transition.duration, fps)
@@ -461,6 +523,9 @@ export const VisualClipSequence: FC<VisualClipProps> = ({ clip, track, fps, pred
           fps={fps}
           predecessor={predecessor}
           effectRegistrySnapshot={effectRegistrySnapshot}
+          materialRefs={materialRefs}
+          materialStatuses={materialStatuses}
+          materialDiagnostics={materialDiagnostics}
         />
       </LazyGuard>
     </Sequence>

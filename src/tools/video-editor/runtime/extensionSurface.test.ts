@@ -319,30 +319,37 @@ describe('normalizeExtensionRuntime — inactive reserved contributions', () => 
         { id: 'my-transition' as any, kind: 'transition', transitionId: 'dissolve' },
         { id: 'my-clip' as any, kind: 'clipType', clipTypeId: 'title' },
         { id: 'my-parser' as any, kind: 'parser' },
-        { id: 'my-agent-tool' as any, kind: 'agentTool' },
-        { id: 'my-agent' as any, kind: 'agent' },
+        { id: 'my-output' as any, kind: 'outputFormat', label: 'Output', requiresRender: false, outputExtension: 'json' },
+        { id: 'my-search' as any, kind: 'searchProvider', label: 'Search' },
+        {
+          id: 'my-process' as any,
+          kind: 'process',
+          spec: {
+            id: 'my-process',
+            label: 'My Process',
+            spawn: { command: 'my-process' },
+            protocol: 'stdio-jsonrpc',
+          },
+        },
       ],
     },
   });
 
   it('collects inactive reserved contributions', () => {
     const rt = normalizeExtensionRuntime([withReserved]);
-    // parser is M6-active (bridged), effect is M7-active (component-backed),
-    // transition is M8-active (renderer-backed) —
-    // only 3 reserved kinds remain
+    // parser/clip/effect/transition are active; output/search/process are
+    // declaration-only descriptors until their execution paths are bridged.
     expect(rt.inactiveReserved).toHaveLength(3);
     const kinds = rt.inactiveReserved.map((r: InactiveReservedContribution) => r.kind);
     expect(kinds.sort()).toEqual([
-      'agent', 'agentTool', 'clipType',
+      'outputFormat', 'process', 'searchProvider',
     ]);
   });
 
   it('emits info diagnostics for each reserved contribution', () => {
     const rt = normalizeExtensionRuntime([withReserved]);
     const infos = diagsOf(rt, 'runtime/contribution-kind-not-yet-bridged');
-    // parser is M6-active (bridged), effect is M7-active (component-backed),
-    // transition is M8-active (renderer-backed) —
-    // only 3 reserved diagnostics remain
+    // output/search/process are reserved as declaration-only descriptors.
     expect(infos).toHaveLength(3);
     for (const d of infos) {
       expect(d.severity).toBe('info');
@@ -352,7 +359,7 @@ describe('normalizeExtensionRuntime — inactive reserved contributions', () => 
 
   it('does not preserve DEFAULT when parser is bridged (M6-active)', () => {
     const rt = normalizeExtensionRuntime([withReserved]);
-    // parser is M6-active, so config includes assetParsers and is not DEFAULT
+    // parser is active, so config includes assetParsers and is not DEFAULT.
     expect(rt.config).not.toBe(DEFAULT_VIDEO_EDITOR_EXTENSION_RUNTIME);
     expect(rt.config.assetParsers).toHaveLength(1);
     expect(rt.config.assetParsers[0].id).toBe('my-parser');
@@ -374,8 +381,12 @@ describe('normalizeExtensionRuntime — inactive reserved contributions', () => 
     expect(rt.config.transitions).toHaveLength(1);
     expect(rt.config.transitions[0].id).toBe('my-transition');
     expect(rt.config.transitions[0].transitionId).toBe('dissolve');
-    const agent = rt.inactiveReserved.find((r) => r.kind === 'agent')!;
-    expect(agent.milestone).toBe('M5');
+    const output = rt.inactiveReserved.find((r) => r.kind === 'outputFormat')!;
+    expect(output.milestone).toBe('M6');
+    const search = rt.inactiveReserved.find((r) => r.kind === 'searchProvider')!;
+    expect(search.milestone).toBe('M6');
+    const process = rt.inactiveReserved.find((r) => r.kind === 'process')!;
+    expect(process.milestone).toBe('M12');
   });
 });
 
@@ -898,7 +909,7 @@ describe('normalizeExtensionRuntime — M6 asset detail section contributions', 
 });
 
 // ---------------------------------------------------------------------------
-// M6: OutputFormat contributions (reserved, surfaced as disabled diagnostics)
+// M6/M12: OutputFormat contributions (reserved, surfaced for planning)
 // ---------------------------------------------------------------------------
 
 describe('normalizeExtensionRuntime — M6 output format contributions', () => {
@@ -924,11 +935,28 @@ describe('normalizeExtensionRuntime — M6 output format contributions', () => {
     expect(of.disabledReason).toBeUndefined();
   });
 
-  it('surfaces render-dependent outputFormat as disabled with diagnostic', () => {
+  it('surfaces render-dependent outputFormat as planner-ready instead of permanently disabled', () => {
     const ex = ext('com.example.export', {
       manifest: {
         contributions: [
-          { id: 'mp4-video' as any, kind: 'outputFormat', label: 'MP4 Video', requiresRender: true, outputExtension: 'mp4', outputMimeType: 'video/mp4', description: 'Render timeline to MP4', order: 0 },
+          {
+            id: 'mp4-video' as any,
+            kind: 'outputFormat',
+            label: 'MP4 Video',
+            requiresRender: true,
+            outputExtension: 'mp4',
+            outputMimeType: 'video/mp4',
+            description: 'Render timeline to MP4',
+            order: 0,
+            render: {
+              routes: ['browser-export', 'sidecar-export'],
+              requiredCapabilities: ['video-encode'],
+              processId: 'ffmpeg-local',
+              operationId: 'render-mp4',
+              determinism: 'process-dependent',
+              unavailableMessage: 'Start FFmpeg before rendering MP4.',
+            },
+          },
         ],
       },
     });
@@ -937,9 +965,44 @@ describe('normalizeExtensionRuntime — M6 output format contributions', () => {
     const of = rt.config.outputFormats[0];
     expect(of.id).toBe('mp4-video');
     expect(of.requiresRender).toBe(true);
-    expect(of.disabled).toBe(true);
-    expect(of.disabledReason).toContain('requires render planning');
-    expect(of.disabledReason).toContain('not yet available in M6');
+    expect(of.disabled).toBe(false);
+    expect(of.disabledReason).toBeUndefined();
+    expect(of.availableRoutes).toEqual(['browser-export', 'sidecar-export']);
+    expect(of.routeRequirements).toEqual([
+      {
+        routes: ['browser-export', 'sidecar-export'],
+        requiredCapabilities: ['video-encode'],
+        processId: 'ffmpeg-local',
+        operationId: 'render-mp4',
+        determinism: 'process-dependent',
+        unavailableMessage: 'Start FFmpeg before rendering MP4.',
+      },
+    ]);
+    expect(of.processRequirements).toEqual([
+      {
+        processId: 'ffmpeg-local',
+        operationId: 'render-mp4',
+        requiredCapabilities: ['video-encode'],
+      },
+    ]);
+    expect(of.blockers).toEqual([]);
+    expect(of.nextActions.map((action) => action.kind)).toEqual([
+      'start-process',
+      'select-route',
+      'select-route',
+    ]);
+    expect(of.capabilities).toMatchObject({
+      extensionId: 'com.example.export',
+      contributionId: 'mp4-video',
+      routes: ['browser-export', 'sidecar-export'],
+      determinism: 'process-dependent',
+      fullySupported: true,
+      anyBlocked: false,
+    });
+    expect(of.capabilities?.capabilityRequirements.map((req) => req.route)).toEqual([
+      'browser-export',
+      'sidecar-export',
+    ]);
   });
 
   it('projects outputFormat into runtime.outputFormats (same as config)', () => {
@@ -1050,6 +1113,120 @@ describe('normalizeExtensionRuntime — M6 output format contributions', () => {
     const rt = normalizeExtensionRuntime([ex]);
     expect(rt.config.outputFormats[0].requiresRender).toBe(false);
     expect(rt.config.outputFormats[0].disabled).toBe(false);
+    expect(rt.config.outputFormats[0].availableRoutes).toEqual([]);
+    expect(rt.config.outputFormats[0].routeRequirements).toEqual([]);
+    expect(rt.config.outputFormats[0].processRequirements).toEqual([]);
+    expect(rt.config.outputFormats[0].blockers).toEqual([]);
+    expect(rt.config.outputFormats[0].nextActions).toEqual([]);
+  });
+
+  it('adds a planner blocker for malformed render-dependent output declarations without disabling the record', () => {
+    const ex = ext('com.example.export', {
+      manifest: {
+        contributions: [
+          { id: 'missing-render' as any, kind: 'outputFormat', label: 'Broken Video', requiresRender: true, outputExtension: 'mp4' },
+        ],
+      },
+    });
+    const rt = normalizeExtensionRuntime([ex]);
+    const of = rt.config.outputFormats[0];
+    expect(of.disabled).toBe(false);
+    expect(of.availableRoutes).toEqual([]);
+    expect(of.blockers).toHaveLength(1);
+    expect(of.blockers[0]).toMatchObject({
+      id: 'com.example.export.missing-render.missing-render-descriptor',
+      extensionId: 'com.example.export',
+      contributionId: 'missing-render',
+      reason: 'route-unsupported',
+    });
+    expect(of.nextActions).toEqual([of.blockers[0].nextAction]);
+    expect(of.capabilities?.anyBlocked).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// M12: Process contributions (reserved, surfaced as planner-ready descriptors)
+// ---------------------------------------------------------------------------
+
+describe('normalizeExtensionRuntime — M12 process contributions', () => {
+  it('surfaces process declarations with route, capability, and next-action data', () => {
+    const ex = ext('com.example.process', {
+      manifest: {
+        contributions: [
+          {
+            id: 'ffmpeg-process' as any,
+            kind: 'process',
+            label: 'FFmpeg',
+            order: 5,
+            spec: {
+              id: 'ffmpeg-local',
+              label: 'FFmpeg Local',
+              description: 'Local FFmpeg bridge',
+              spawn: { command: 'ffmpeg-bridge', args: ['--stdio'] },
+              protocol: 'stdio-jsonrpc',
+              operations: [
+                {
+                  id: 'render-mp4',
+                  label: 'Render MP4',
+                  routes: ['sidecar-export'],
+                  requiredCapabilities: ['video-encode'],
+                  determinism: 'process-dependent',
+                },
+              ],
+              capabilities: {
+                extensionId: 'com.example.process',
+                contributionId: 'ffmpeg-process',
+                routes: ['sidecar-export'],
+                determinism: 'process-dependent',
+                capabilityRequirements: [],
+                sourceRefs: [],
+                fullySupported: true,
+                anyBlocked: false,
+              },
+              requiredBy: [
+                {
+                  source: 'extension',
+                  extensionId: 'com.example.process',
+                  contributionId: 'mp4-video',
+                },
+              ],
+            },
+          },
+        ],
+      },
+    });
+    const rt = normalizeExtensionRuntime([ex]);
+    expect(rt.config.processes).toHaveLength(1);
+    expect(rt.processes).toBe(rt.config.processes);
+    const process = rt.processes[0];
+    expect(process).toMatchObject({
+      id: 'ffmpeg-process',
+      extensionId: 'com.example.process',
+      order: 5,
+      processId: 'ffmpeg-local',
+      label: 'FFmpeg',
+      description: 'Local FFmpeg bridge',
+      protocol: 'stdio-jsonrpc',
+      availableRoutes: ['sidecar-export'],
+    });
+    expect(process.operations.map((operation) => operation.id)).toEqual(['render-mp4']);
+    expect(process.requiredBy).toEqual([
+      {
+        source: 'extension',
+        extensionId: 'com.example.process',
+        contributionId: 'mp4-video',
+      },
+    ]);
+    expect(process.blockers).toEqual([]);
+    expect(process.nextActions).toEqual([
+      {
+        kind: 'start-process',
+        label: 'Start FFmpeg',
+        processId: 'ffmpeg-local',
+        message: 'Process execution is host-owned and must be activated before route planning can dispatch operations.',
+      },
+    ]);
+    expect(rt.inactiveReserved.filter((item) => item.kind === 'process')).toHaveLength(1);
   });
 });
 
@@ -1271,6 +1448,8 @@ describe('normalizeExtensionRuntime — M6 DEFAULT config fields', () => {
     expect(Object.isFrozen(DEFAULT_VIDEO_EDITOR_EXTENSION_RUNTIME.assetParsers)).toBe(true);
     expect(DEFAULT_VIDEO_EDITOR_EXTENSION_RUNTIME.outputFormats).toEqual([]);
     expect(Object.isFrozen(DEFAULT_VIDEO_EDITOR_EXTENSION_RUNTIME.outputFormats)).toBe(true);
+    expect(DEFAULT_VIDEO_EDITOR_EXTENSION_RUNTIME.processes).toEqual([]);
+    expect(Object.isFrozen(DEFAULT_VIDEO_EDITOR_EXTENSION_RUNTIME.processes)).toBe(true);
     expect(DEFAULT_VIDEO_EDITOR_EXTENSION_RUNTIME.searchProviders).toEqual([]);
     expect(Object.isFrozen(DEFAULT_VIDEO_EDITOR_EXTENSION_RUNTIME.searchProviders)).toBe(true);
     expect(DEFAULT_VIDEO_EDITOR_EXTENSION_RUNTIME.metadataFacets).toEqual([]);
@@ -1283,11 +1462,13 @@ describe('normalizeExtensionRuntime — M6 DEFAULT config fields', () => {
     const rt = normalizeExtensionRuntime([]);
     expect(rt.assetParsers).toEqual([]);
     expect(rt.outputFormats).toEqual([]);
+    expect(rt.processes).toEqual([]);
     expect(rt.searchProviders).toEqual([]);
     expect(rt.metadataFacets).toEqual([]);
     expect(rt.assetDetailSections).toEqual([]);
     expect(Object.isFrozen(rt.assetParsers)).toBe(true);
     expect(Object.isFrozen(rt.outputFormats)).toBe(true);
+    expect(Object.isFrozen(rt.processes)).toBe(true);
     expect(Object.isFrozen(rt.searchProviders)).toBe(true);
     expect(Object.isFrozen(rt.metadataFacets)).toBe(true);
     expect(Object.isFrozen(rt.assetDetailSections)).toBe(true);
@@ -1333,7 +1514,8 @@ describe('normalizeExtensionRuntime — M6 combined contributions', () => {
     expect(rt.config.outputFormats[0].id).toBe('b-output');
     expect(rt.config.outputFormats[0].disabled).toBe(false);
     expect(rt.config.outputFormats[1].id).toBe('b-render-output');
-    expect(rt.config.outputFormats[1].disabled).toBe(true);
+    expect(rt.config.outputFormats[1].disabled).toBe(false);
+    expect(rt.config.outputFormats[1].blockers).toHaveLength(1);
     expect(rt.config.searchProviders).toHaveLength(1);
     expect(rt.config.searchProviders[0].id).toBe('b-search');
 

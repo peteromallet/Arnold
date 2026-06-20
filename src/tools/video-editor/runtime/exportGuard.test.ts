@@ -5,6 +5,7 @@ import {
   collectExtensionDeclaredIds,
   scanExportConfig,
 } from '@/tools/video-editor/runtime/exportGuard.ts';
+import { planRender } from '@/tools/video-editor/runtime/renderPlanner.ts';
 import type {
   KnownIdCollection,
   InactiveKnownIds,
@@ -578,6 +579,26 @@ describe('scanExportConfig — unknown effects', () => {
         clipId: 'c1',
       }),
     ]);
+  });
+
+  it('keeps scan output as planner-compatible compatibility input', () => {
+    const clip = makeClip('c1', {
+      clipType: 'media',
+      entrance: { type: 'crazy-spin', duration: 0.5 },
+    });
+    const scan = scanExportConfig(makeConfig([clip]), builtIn, extIds);
+    const planned = planRender({ diagnostics: [...scan.findings, ...scan.blockers] });
+
+    expect(planned.canBrowserExport).toBe(false);
+    expect(planned.routePlans.find((routePlan) => routePlan.route === 'browser-export')).toMatchObject({
+      blocked: true,
+      blockers: [
+        expect.objectContaining({
+          id: 'export.effect.c1.entrance.crazy-spin.missing',
+          reason: 'missing-contribution',
+        }),
+      ],
+    });
   });
 
   it('emits error for unknown continuous effect', () => {

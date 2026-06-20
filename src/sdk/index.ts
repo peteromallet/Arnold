@@ -298,6 +298,8 @@ export type ContributionKind =
   | 'searchProvider'
   | 'metadataFacet'
   | 'assetDetailSection'
+  // M12: trusted local process descriptors
+  | 'process'
   // M7-M9: effect, transition, clip type, automation (bridged in their milestones)
   | 'effect'
   | 'transition'
@@ -574,6 +576,43 @@ export interface OutputFormatContribution {
   description?: string;
   /** Lower values sort first. Default 0. */
   order?: number;
+  /**
+   * Render-dependent output route requirements.
+   * Required when `requiresRender` is true; ignored for compile-only outputs.
+   */
+  render?: RenderDependentOutputDescriptor;
+  /** Optional declarative sampling defaults for export configuration. */
+  sampling?: SamplingConfig;
+  /** Sidecar kinds this output may emit. */
+  sidecars?: readonly RenderArtifactSidecarDescriptor[];
+}
+
+/** M12: Compile-only output formats never enter render planning. */
+export interface CompileOnlyOutputFormatContribution extends OutputFormatContribution {
+  requiresRender: false;
+  render?: never;
+}
+
+/** M12: Render-dependent output formats require planner-owned route execution. */
+export interface RenderDependentOutputFormatContribution extends OutputFormatContribution {
+  requiresRender: true;
+  render: RenderDependentOutputDescriptor;
+}
+
+/** M12: Route/process requirements for a render-dependent output format. */
+export interface RenderDependentOutputDescriptor {
+  /** Routes this output can accept after planning. */
+  readonly routes: readonly RenderRoute[];
+  /** Capabilities required before the output can execute. */
+  readonly requiredCapabilities?: readonly string[];
+  /** Optional local process needed to produce this output. */
+  readonly processId?: string;
+  /** Optional process operation needed to produce this output. */
+  readonly operationId?: string;
+  /** Determinism posture claimed by this output route. */
+  readonly determinism?: DeterminismStatus;
+  /** Human-readable planner hint shown when the route is unavailable. */
+  readonly unavailableMessage?: string;
 }
 
 /**
@@ -1262,19 +1301,105 @@ export type AgentToolHandler = (
 
 export interface ProcessSpawnConfig {
   command: string;
-  args?: string[];
+  args?: readonly string[];
   env?: Record<string, string>;
   cwd?: string;
 }
 
-export interface ProcessManifestEntry {
+export interface ProcessManifestEntry extends ProcessSpec {}
+
+/** M12: Declarative environment field for trusted local process configuration. */
+export interface ProcessEnvFieldSpec {
+  readonly key: string;
+  readonly label?: string;
+  readonly description?: string;
+  readonly required?: boolean;
+  readonly secret?: boolean;
+  readonly defaultValue?: string;
+  readonly platformDefaults?: Partial<Record<'darwin' | 'linux' | 'win32', string>>;
+}
+
+/** M12: Operation a trusted local process exposes to tools, render routes, or export formats. */
+export interface ProcessOperationSpec {
+  readonly id: string;
+  readonly label: string;
+  readonly description?: string;
+  readonly inputSchema?: AgentToolInputSchema;
+  readonly outputKinds?: readonly ('artifact' | 'material' | 'sidecar' | 'diagnostic' | 'planner-result' | 'tool-result')[];
+  readonly requiredCapabilities?: readonly string[];
+  readonly routes?: readonly RenderRoute[];
+  readonly determinism?: DeterminismStatus;
+}
+
+/** M12: Declarative trusted-local process specification. */
+export interface ProcessSpec {
   id: string;
   label: string;
+  description?: string;
   spawn: ProcessSpawnConfig;
   protocol: 'stdio-jsonrpc';
   healthCheck?: string;
   shutdown?: string;
   restartPolicy?: 'never' | 'always' | 'on-failure';
+  version?: CapabilityVersion;
+  env?: readonly ProcessEnvFieldSpec[];
+  operations?: readonly ProcessOperationSpec[];
+  capabilities?: IntegrationCapabilities;
+  requiredBy?: readonly CapabilitySourceRef[];
+}
+
+/** M12: Process contribution declared in an extension manifest. */
+export interface ProcessContribution {
+  readonly id: ContributionId;
+  readonly kind: 'process';
+  readonly label?: string;
+  readonly order?: number;
+  readonly spec: ProcessSpec;
+}
+
+export type ProcessLifecycleState =
+  | 'not-installed'
+  | 'stopped'
+  | 'starting'
+  | 'ready'
+  | 'busy'
+  | 'degraded'
+  | 'failed'
+  | 'stopping';
+
+export interface ProcessStatusBase {
+  readonly processId: string;
+  readonly state: ProcessLifecycleState;
+  readonly label?: string;
+  readonly message?: string;
+  readonly updatedAt?: string;
+  readonly blockingOperations?: readonly string[];
+  readonly diagnostics?: readonly ExtensionDiagnostic[];
+}
+
+export type ProcessStatus =
+  | (ProcessStatusBase & { readonly state: 'not-installed'; readonly installHint?: string })
+  | (ProcessStatusBase & { readonly state: 'stopped' })
+  | (ProcessStatusBase & { readonly state: 'starting'; readonly startedAt?: string })
+  | (ProcessStatusBase & { readonly state: 'ready'; readonly pid?: number; readonly version?: CapabilityVersion })
+  | (ProcessStatusBase & { readonly state: 'busy'; readonly operationId?: string; readonly progress?: ProcessProgressEvent })
+  | (ProcessStatusBase & { readonly state: 'degraded'; readonly healthCheck?: string })
+  | (ProcessStatusBase & { readonly state: 'failed'; readonly errorCode?: string; readonly recoverable?: boolean })
+  | (ProcessStatusBase & { readonly state: 'stopping'; readonly reason?: string });
+
+export interface ProcessProgressEvent {
+  readonly operationId: string;
+  readonly percent?: number;
+  readonly message?: string;
+  readonly currentStep?: string;
+  readonly totalSteps?: number;
+}
+
+export interface ProcessLogSummary {
+  readonly level: 'debug' | 'info' | 'warning' | 'error';
+  readonly message: string;
+  readonly at?: string;
+  readonly detail?: Record<string, unknown>;
 }
 
 // ---------------------------------------------------------------------------
@@ -1970,6 +2095,8 @@ export interface ExtensionManifest {
     | SearchProviderContribution
     | MetadataFacetContribution
     | AssetDetailSectionContribution
+    // M12: trusted local processes
+    | ProcessContribution
     // M7: trusted component effects
     | EffectContribution
     // M8: trusted component transitions
@@ -2931,6 +3058,22 @@ export interface DefineExtensionOptions {
   activate?: ExtensionActivateFn;
 }
 
+function freezeManifestValue<T>(value: T): T {
+  if (ArrayBuffer.isView(value) || value instanceof ArrayBuffer) {
+    return value;
+  }
+  if (Array.isArray(value)) {
+    return Object.freeze(value.map((item) => freezeManifestValue(item))) as T;
+  }
+  if (value && typeof value === 'object') {
+    const frozenEntries = Object.entries(value as Record<string, unknown>).map(
+      ([key, entry]) => [key, freezeManifestValue(entry)],
+    );
+    return Object.freeze(Object.fromEntries(frozenEntries)) as T;
+  }
+  return value;
+}
+
 /**
  * Create a frozen ReighExtension from a manifest and optional activate function.
  * Validates the extension ID and contribution IDs, and preserves literal IDs
@@ -2967,27 +3110,13 @@ export function defineExtension(options: DefineExtensionOptions): ReighExtension
   // Freeze the manifest deeply so literal IDs are preserved and the shape is immutable
   const frozenManifest: ExtensionManifest = Object.freeze({
     ...manifest,
-    contributions: manifest.contributions
-      ? Object.freeze(manifest.contributions.map((c) => Object.freeze({ ...c })))
-      : undefined,
-    permissions: manifest.permissions
-      ? Object.freeze(manifest.permissions.map((p) => Object.freeze({ ...p })))
-      : undefined,
-    processes: manifest.processes
-      ? Object.freeze(manifest.processes.map((p) => Object.freeze({ ...p })))
-      : undefined,
-    dependsOn: manifest.dependsOn
-      ? Object.freeze(manifest.dependsOn.map((d) => Object.freeze({ ...d })))
-      : undefined,
-    migrations: manifest.migrations
-      ? Object.freeze(manifest.migrations.map((m) => Object.freeze({ ...m })))
-      : undefined,
-    settingsDefaults: manifest.settingsDefaults
-      ? Object.freeze({ ...manifest.settingsDefaults })
-      : undefined,
-    messages: manifest.messages
-      ? Object.freeze({ ...manifest.messages })
-      : undefined,
+    contributions: manifest.contributions ? freezeManifestValue(manifest.contributions) : undefined,
+    permissions: manifest.permissions ? freezeManifestValue(manifest.permissions) : undefined,
+    processes: manifest.processes ? freezeManifestValue(manifest.processes) : undefined,
+    dependsOn: manifest.dependsOn ? freezeManifestValue(manifest.dependsOn) : undefined,
+    migrations: manifest.migrations ? freezeManifestValue(manifest.migrations) : undefined,
+    settingsDefaults: manifest.settingsDefaults ? freezeManifestValue(manifest.settingsDefaults) : undefined,
+    messages: manifest.messages ? freezeManifestValue(manifest.messages) : undefined,
   });
 
   const extension: ReighExtension = Object.freeze({
@@ -3021,6 +3150,7 @@ export const CONTRIBUTION_KIND_MILESTONE: Record<ContributionKind, string | unde
   searchProvider: 'M6',
   metadataFacet: 'M6',
   assetDetailSection: 'M6',
+  process: 'M12',
   effect: 'M7',
   transition: 'M8',
   // M9: clip type dispatch and basic keyframes
@@ -3101,6 +3231,299 @@ export interface ProjectExtensionRequirement {
 /** Container for project-scoped extension requirement metadata. */
 export interface ProjectExtensionRequirements {
   requirements: readonly ProjectExtensionRequirement[];
+}
+
+import type {
+  CapabilityFinding,
+  DeterminismStatus,
+  RenderArtifact,
+  RenderBlockerReason,
+  RenderMaterial,
+  RenderMaterialRef,
+  RenderRoute,
+  RenderStorageLocator,
+} from '@/tools/video-editor/runtime/renderability.ts';
+
+// ---------------------------------------------------------------------------
+// M12: Planner requirement contracts — capability requirements, source refs,
+// route-fit metadata, capability versioning, and integration capabilities
+// ---------------------------------------------------------------------------
+
+/**
+ * M12: Version descriptor for a capability or contribution declaration.
+ *
+ * Carries a semver version and declaration provenance so planners can
+ * detect version conflicts and stale registrations without importing
+ * registry internals.
+ */
+export interface CapabilityVersion {
+  /** Semantic version string (e.g. "1.0.0"). */
+  readonly semver: string;
+  /** Extension that declared this version, when applicable. */
+  readonly declaredBy?: string;
+  /** Contribution that declared this version, when applicable. */
+  readonly contributionId?: string;
+}
+
+/**
+ * M12: Source reference for a capability requirement.
+ *
+ * Identifies where a capability requirement originates so planners
+ * can attribute blockers and findings to the right extension,
+ * registry, or built-in source.
+ */
+export interface CapabilitySourceRef {
+  /** The kind of source that produced this capability. */
+  readonly source: 'extension' | 'built-in' | 'registry' | 'manifest' | 'provider';
+  /** Extension ID, when the source is an extension. */
+  readonly extensionId?: string;
+  /** Contribution ID, when the source is a specific contribution. */
+  readonly contributionId?: string;
+  /** Version of the capability declaration, when known. */
+  readonly version?: CapabilityVersion;
+}
+
+/**
+ * M12: Route-fit metadata describing how well a capability maps to a route.
+ *
+ * Planners use route-fit metadata to decide whether a contribution can
+ * authoritatively execute on a given route, or whether it must fall back
+ * or block.
+ */
+export interface RouteFitMetadata {
+  /** The route this fit metadata applies to. */
+  readonly route: RenderRoute;
+  /** Whether the capability supports, blocks, degrades, or is unknown for this route. */
+  readonly fit: 'supported' | 'blocked' | 'degraded' | 'unknown';
+  /** Reason for the fit, when not 'supported'. */
+  readonly reason?: RenderBlockerReason;
+  /** Human-readable message explaining the fit. */
+  readonly message?: string;
+}
+
+/**
+ * M12: A single capability requirement produced by the planner.
+ *
+ * Each CapabilityRequirement describes what a contribution needs for a
+ * specific route, its determinism posture, version, source provenance,
+ * and any findings discovered during planning. This is the primary
+ * record consumed by TimelineReader capability inspection and
+ * renderPlanner aggregation.
+ */
+export interface CapabilityRequirement {
+  /** Stable, unique identifier for this requirement. */
+  readonly id: string;
+  /** Where this requirement originates from. */
+  readonly sourceRef: CapabilitySourceRef;
+  /** The route this requirement applies to. */
+  readonly route: RenderRoute;
+  /** Required capabilities for this route (e.g. 'browser-export', 'worker-export'). */
+  readonly requiredCapabilities: readonly string[];
+  /** Determinism posture for this requirement. */
+  readonly determinism: DeterminismStatus;
+  /** Route-fit metadata describing how well this requirement fits the route. */
+  readonly routeFit?: RouteFitMetadata;
+  /** Version of the capability declaration, when known. */
+  readonly version?: CapabilityVersion;
+  /** Capability findings produced during planning. */
+  readonly findings?: readonly CapabilityFinding[];
+  /** Whether this requirement is a blocker for its route. */
+  readonly blocking?: boolean;
+}
+
+/**
+ * M12: Minimal integration capabilities consumed by TimelineReader and
+ * renderPlanner.
+ *
+ * Aggregates capability requirements, source references, and route
+ * summaries so planners can consume a single normalized capabilities
+ * record without importing registry internals or provider state.
+ */
+export interface IntegrationCapabilities {
+  /** Extension that owns these capabilities, when scoped to a single extension. */
+  readonly extensionId?: string;
+  /** Contribution that owns these capabilities, when scoped to a single contribution. */
+  readonly contributionId?: string;
+  /** Routes covered by these capabilities. */
+  readonly routes: readonly RenderRoute[];
+  /** Aggregate determinism posture across all capabilities. */
+  readonly determinism: DeterminismStatus;
+  /** Individual capability requirements collected during planning. */
+  readonly capabilityRequirements: readonly CapabilityRequirement[];
+  /** Source references for all capabilities in this integration record. */
+  readonly sourceRefs: readonly CapabilitySourceRef[];
+  /** Whether all routes are fully supported (no blockers). */
+  readonly fullySupported: boolean;
+  /** Whether any route is blocked. */
+  readonly anyBlocked: boolean;
+}
+
+// ---------------------------------------------------------------------------
+// M12: Artifact manifest, sidecar, sampling, and process roundtrip contracts
+// ---------------------------------------------------------------------------
+
+export type RenderArtifactSidecarKind =
+  | 'metadata'
+  | 'thumbnail'
+  | 'scene-report'
+  | 'log'
+  | 'provenance'
+  | 'rendered-pass'
+  | 'cue'
+  | 'label'
+  | 'caption'
+  | 'diagnostics'
+  | 'manifest'
+  | 'other';
+
+/** M12: Data-only descriptor for a downloadable or previewable sidecar artifact. */
+export interface RenderArtifactSidecarDescriptor {
+  readonly id?: string;
+  readonly filename: string;
+  readonly mimeType: string;
+  readonly kind: RenderArtifactSidecarKind;
+  readonly data?: Uint8Array;
+  readonly locator?: RenderStorageLocator;
+  readonly byteSize?: number;
+  readonly renderGroupId?: string;
+  readonly passName?: string;
+  readonly diagnostics?: readonly CapabilityFinding[];
+  readonly provenance?: Record<string, unknown>;
+}
+
+/** M12: Stable manifest entry for a final render/export artifact. */
+export interface RenderArtifactManifest {
+  readonly id: string;
+  readonly schemaVersion: 1;
+  readonly artifactId: string;
+  readonly route: RenderRoute;
+  readonly determinism: DeterminismStatus;
+  readonly producerExtensionId?: string;
+  readonly producerVersion?: string;
+  readonly outputFormatId?: string;
+  readonly processId?: string;
+  readonly processVersion?: CapabilityVersion;
+  readonly operationId?: string;
+  readonly locator?: RenderStorageLocator;
+  readonly mediaKind?: RenderMaterial['mediaKind'];
+  readonly consumedMaterialRefs: readonly RenderMaterialRef[];
+  readonly sidecars: readonly RenderArtifactSidecarDescriptor[];
+  readonly diagnostics?: readonly CapabilityFinding[];
+  readonly provenance?: Record<string, unknown>;
+  readonly inputHashes?: Record<string, string>;
+  readonly renderGroupId?: string;
+  readonly passName?: string;
+  readonly createdAt?: string;
+  readonly metadata?: Record<string, unknown>;
+}
+
+export type SamplingStrategy =
+  | 'whole-timeline'
+  | 'clip-slices'
+  | 'frame-extracts'
+  | 'thumbnail-grid'
+  | 'audio-windows'
+  | 'render-groups';
+
+export interface SamplingSourceRef {
+  readonly kind: 'timeline' | 'clip' | 'track' | 'asset' | 'material' | 'render-group';
+  readonly id: string;
+  readonly clipId?: string;
+  readonly trackId?: string;
+  readonly assetKey?: string;
+  readonly materialRefId?: string;
+  readonly renderGroupId?: string;
+}
+
+export interface SamplingRange {
+  readonly startFrame?: number;
+  readonly endFrame?: number;
+  readonly startSeconds?: number;
+  readonly endSeconds?: number;
+  readonly startSample?: number;
+  readonly endSample?: number;
+}
+
+export type SamplingAttachmentKind = 'label' | 'caption' | 'cue' | 'provenance' | 'metadata';
+
+export interface SamplingAttachmentRule {
+  readonly kind: SamplingAttachmentKind;
+  readonly fieldPath?: string;
+  readonly sidecarKind?: RenderArtifactSidecarKind;
+  readonly required?: boolean;
+}
+
+/** M12: Declarative sampling request consumed by planners and export shells. */
+export interface SamplingConfig {
+  readonly id?: string;
+  readonly strategy: SamplingStrategy;
+  readonly sources: readonly SamplingSourceRef[];
+  readonly range?: SamplingRange;
+  readonly fps?: number;
+  readonly sampleRate?: number;
+  readonly resolution?: string;
+  readonly sliceClips?: boolean;
+  readonly attachments?: readonly SamplingAttachmentRule[];
+  readonly includeLabels?: boolean;
+  readonly includeCaptions?: boolean;
+  readonly includeProvenance?: boolean;
+}
+
+export interface SamplingResultItem {
+  readonly id: string;
+  readonly sourceRef: SamplingSourceRef;
+  readonly range?: SamplingRange;
+  readonly frame?: number;
+  readonly timestampSeconds?: number;
+  readonly artifactId?: string;
+  readonly manifestEntryId?: string;
+  readonly sidecars?: readonly RenderArtifactSidecarDescriptor[];
+  readonly diagnostics?: readonly CapabilityFinding[];
+}
+
+/** M12: Result vocabulary for dry-runs and dataset/show-control exports. */
+export interface SamplingResult {
+  readonly configId?: string;
+  readonly items: readonly SamplingResultItem[];
+  readonly sidecars?: readonly RenderArtifactSidecarDescriptor[];
+  readonly manifestRefs?: readonly string[];
+  readonly diagnostics?: readonly CapabilityFinding[];
+}
+
+export interface ProcessRoundtripRequest {
+  readonly id: string;
+  readonly processId: string;
+  readonly operationId: string;
+  readonly inputMaterialRefs?: readonly RenderMaterialRef[];
+  readonly inputArtifactRefs?: readonly RenderArtifact[];
+  readonly params?: Record<string, unknown>;
+  readonly frameRange?: SamplingRange;
+  readonly renderGroupId?: string;
+  readonly passNames?: readonly string[];
+  readonly sampling?: SamplingConfig;
+}
+
+export type ProcessRoundtripAction =
+  | 'insert-as-clip'
+  | 'replace-clip'
+  | 'attach-to-clip'
+  | 'download-sidecar'
+  | 'discard'
+  | 'create-proposal';
+
+export interface ProcessRoundtripResult {
+  readonly requestId: string;
+  readonly processId: string;
+  readonly operationId: string;
+  readonly status: 'completed' | 'failed' | 'cancelled';
+  readonly returnedMaterials: readonly RenderMaterial[];
+  readonly artifacts?: readonly RenderArtifact[];
+  readonly sidecars?: readonly RenderArtifactSidecarDescriptor[];
+  readonly diagnostics?: readonly CapabilityFinding[];
+  readonly logs?: readonly ProcessLogSummary[];
+  readonly progress?: ProcessProgressEvent;
+  readonly availableActions?: readonly ProcessRoundtripAction[];
+  readonly metadata?: Record<string, unknown>;
 }
 
 // ---------------------------------------------------------------------------
@@ -3320,6 +3743,182 @@ export interface TimelinePreviewResult {
 }
 
 // ---------------------------------------------------------------------------
+// M12: Planner inspection contracts — effect, transition, live-binding,
+// material-ref, source-ref, render-group, and output-metadata summaries
+// ---------------------------------------------------------------------------
+
+/**
+ * M12: Lightweight effect summary extracted from a clip for planner inspection.
+ *
+ * Describes an effect applied to a clip without importing provider
+ * stores or raw timeline rows.
+ */
+export interface TimelineEffectSummary {
+  /** Unique identifier for this effect instance (e.g. `${clipId}.effect.${effectType}`). */
+  id: string;
+  /** The clip this effect belongs to. */
+  clipId: string;
+  /** The effect type identifier (e.g. 'fade_in', 'blur'). */
+  effectType?: string;
+  /** Effect parameters, when available. */
+  params?: Record<string, unknown>;
+  /** Whether this effect is managed by a registered extension. */
+  managed?: boolean;
+  /** Extension ID that manages this effect, if managed. */
+  managedBy?: string;
+}
+
+/**
+ * M12: Lightweight transition summary extracted from a clip for planner inspection.
+ *
+ * Describes a transition applied to a clip without importing provider
+ * stores or raw timeline rows.
+ */
+export interface TimelineTransitionSummary {
+  /** Unique identifier for this transition (e.g. `${clipId}.transition.${transitionType}`). */
+  id: string;
+  /** The clip this transition belongs to. */
+  clipId: string;
+  /** The transition type identifier (e.g. 'dissolve', 'wipe'). */
+  transitionType?: string;
+  /** Transition duration in seconds. */
+  duration: number;
+  /** Transition parameters, when available. */
+  params?: Record<string, unknown>;
+  /** Whether this transition is managed by a registered extension. */
+  managed?: boolean;
+  /** Extension ID that manages this transition, if managed. */
+  managedBy?: string;
+}
+
+/**
+ * M12: Lightweight live-binding summary extracted from clip metadata
+ * for planner inspection.
+ *
+ * Live bindings connect a clip parameter to a live data source.
+ * The planner uses these to detect live-unbaked or process-dependent
+ * requirements.
+ */
+export interface TimelineLiveBindingSummary {
+  /** Unique binding identifier. */
+  bindingId: string;
+  /** The clip this binding belongs to. */
+  clipId: string;
+  /** Source identifier for the live data source. */
+  sourceId: string;
+  /** Kind of live source (e.g. 'webcam', 'generated-frame', 'midi'). */
+  sourceKind: string;
+  /** Target parameter name on the clip, when applicable. */
+  targetParamName?: string;
+  /** Resolution status of the binding, when known. */
+  status?: string;
+}
+
+/**
+ * M12: Lightweight material-ref summary extracted from clip data
+ * for planner inspection.
+ *
+ * Material refs point at assets or generated materials consumed by a clip.
+ */
+export interface TimelineMaterialRefSummary {
+  /** Unique identifier for this material ref. */
+  id: string;
+  /** The clip that consumes this material. */
+  clipId: string;
+  /** Asset key in the timeline registry, when the material is an asset. */
+  assetKey?: string;
+  /** Media kind of the referenced material. */
+  mediaKind?: string;
+  /** Determinism posture for this material ref. */
+  determinism?: DeterminismStatus;
+  /** Render group this material contributes to, when part of a multi-pass group. */
+  renderGroupId?: string;
+  /** Pass name this material contributes, when known. */
+  passName?: string;
+  /** Whether this material can be composited into a render group. */
+  composable?: boolean;
+}
+
+/** M12: Render pass descriptor used by multi-pass render groups. */
+export interface TimelineRenderPassSummary {
+  /** Stable pass identifier within a render group. */
+  id: string;
+  /** Human-readable or process-declared pass name. */
+  passName: string;
+  /** Whether the group is blocked when this pass is missing or stale. */
+  required: boolean;
+  /** Whether this pass is composable into the final render group. */
+  composable: boolean;
+  /** Material ref currently satisfying this pass, if resolved. */
+  materialRefId?: string;
+  /** Current pass status from the planner/material registry projection. */
+  status?: 'missing' | 'stale' | 'resolved' | 'optional';
+}
+
+/**
+ * M12: Lightweight source-ref summary extracted from clip provenance
+ * for planner inspection.
+ *
+ * Source refs identify timeline inputs without exposing provider rows,
+ * live registry state, or extension store handles.
+ */
+export interface TimelineSourceRefSummary {
+  /** Unique identifier for this source ref. */
+  id: string;
+  /** The clip that carries this source provenance. */
+  clipId: string;
+  /** Kind of source provenance represented by this ref. */
+  sourceKind: 'asset' | 'generation' | 'extension' | 'provider' | 'unknown';
+  /** Raw timeline source UUID, when available. */
+  sourceUuid?: string;
+  /** Generation identifier, when available. */
+  generationId?: string;
+  /** Extension that owns this source ref, when known. */
+  extensionId?: string;
+  /** Determinism posture for this source ref. */
+  determinism?: DeterminismStatus;
+}
+
+/**
+ * M12: Lightweight render-group summary extracted from timeline data
+ * for planner inspection.
+ *
+ * Render groups collect clips that should be rendered together
+ * (e.g. pinned shot groups).
+ */
+export interface TimelineRenderGroupSummary {
+  /** Unique group identifier. */
+  id: string;
+  /** Clip IDs that belong to this render group. */
+  clipIds: readonly string[];
+  /** Type of the render group, when known. */
+  groupType?: string;
+  /** Required and optional passes that make up this render group. */
+  passes?: readonly TimelineRenderPassSummary[];
+  /** Required pass names, mirrored for compact planner checks. */
+  requiredPasses?: readonly string[];
+}
+
+/**
+ * M12: Output metadata extracted from the timeline config.
+ *
+ * Describes the target output resolution, FPS, and file settings
+ * so the planner can validate format compatibility.
+ */
+export interface TimelineOutputMetadata {
+  /** Output resolution string (e.g. '1920x1080'). */
+  resolution: string;
+  /** Frames per second. */
+  fps: number;
+  /** Target output filename. */
+  file: string;
+  /** Background color or null, when available. */
+  background?: string | null;
+  /** Background scale factor, when available. */
+  backgroundScale?: number | null;
+}
+
+// ---------------------------------------------------------------------------
 // M3: TimelineSnapshot / TimelineReader
 // ---------------------------------------------------------------------------
 
@@ -3357,6 +3956,20 @@ export interface TimelineSnapshot {
    * Each entry maps a timeline object to a source location.
    */
   sourceMapEntries?: readonly SourceMapEntry[];
+  /** M12: Ordered list of effect summaries extracted from clips. */
+  effects?: readonly TimelineEffectSummary[];
+  /** M12: Ordered list of transition summaries extracted from clips. */
+  transitions?: readonly TimelineTransitionSummary[];
+  /** M12: Live-binding summaries extracted from clip metadata. */
+  liveBindings?: readonly TimelineLiveBindingSummary[];
+  /** M12: Material-ref summaries extracted from clip data. */
+  materialRefs?: readonly TimelineMaterialRefSummary[];
+  /** M12: Source-ref summaries extracted from clip provenance. */
+  sourceRefs?: readonly TimelineSourceRefSummary[];
+  /** M12: Render-group summaries extracted from timeline data. */
+  renderGroups?: readonly TimelineRenderGroupSummary[];
+  /** M12: Output metadata extracted from the timeline config. */
+  outputMetadata?: TimelineOutputMetadata;
 }
 
 /** Lightweight clip summary for TimelineSnapshot projection. */
@@ -3373,6 +3986,16 @@ export interface TimelineClipSummary {
   managedBy?: string;
   /** Generated-object metadata attached by the owning extension, if any. */
   generatedMeta?: GeneratedObjectMeta;
+  /** M12: Effects applied to this clip. */
+  effects?: readonly TimelineEffectSummary[];
+  /** M12: Transition applied to this clip, if any. */
+  transition?: TimelineTransitionSummary;
+  /** M12: Live bindings attached to this clip. */
+  liveBindings?: readonly TimelineLiveBindingSummary[];
+  /** M12: Material refs consumed by this clip. */
+  materialRefs?: readonly TimelineMaterialRefSummary[];
+  /** M12: Source refs carried by this clip. */
+  sourceRefs?: readonly TimelineSourceRefSummary[];
 }
 
 /** Lightweight track summary for TimelineSnapshot projection. */
@@ -3394,6 +4017,236 @@ export interface TimelineTrackSummary {
 export interface TimelineReader {
   /** Take a point-in-time snapshot of the current timeline state. */
   snapshot(): TimelineSnapshot;
+}
+
+// ---------------------------------------------------------------------------
+// M12: getCapabilityRequirements — provider-free capability inspection
+// ---------------------------------------------------------------------------
+
+/**
+ * M12: Derive capability requirements from a TimelineSnapshot.
+ *
+ * Inspects clip types, effects, transitions, live bindings, and material
+ * refs present in the snapshot and emits {@link CapabilityRequirement}
+ * records without importing provider stores, raw timeline rows, or
+ * mutation APIs.
+ *
+ * The returned requirements are data-only; they carry route-fit metadata
+ * and determinism posture so planners can aggregate them without
+ * re-deriving the same information from raw timeline data.
+ *
+ * @param snapshot - A TimelineSnapshot produced by a TimelineReader.
+ * @returns Ordered array of CapabilityRequirement records.
+ */
+export function getCapabilityRequirements(
+  snapshot: TimelineSnapshot,
+): CapabilityRequirement[] {
+  const requirements: CapabilityRequirement[] = [];
+  let reqCounter = 0;
+
+  const nextId = (prefix: string): string => {
+    reqCounter += 1;
+    return `snapshot.${prefix}.${reqCounter}`;
+  };
+
+  // Guard: if snapshot has no clips, return empty.
+  if (!snapshot.clips || snapshot.clips.length === 0) {
+    return requirements;
+  }
+
+  // ── Clip-type requirements ──────────────────────────────────────────
+  const seenClipTypes = new Set<string>();
+  for (const clip of snapshot.clips) {
+    if (!clip.clipType || seenClipTypes.has(clip.clipType)) continue;
+    seenClipTypes.add(clip.clipType);
+
+    const sourceRef: CapabilitySourceRef = clip.managedBy
+      ? {
+          source: 'extension',
+          extensionId: clip.managedBy,
+        }
+      : { source: 'built-in' };
+
+    requirements.push({
+      id: nextId('clipType'),
+      sourceRef,
+      route: 'browser-export',
+      requiredCapabilities: ['browser-export'],
+      determinism: clip.managedBy ? 'preview-only' : 'deterministic',
+    });
+  }
+
+  // ── Effect requirements ─────────────────────────────────────────────
+  const seenEffects = new Set<string>();
+  for (const clip of snapshot.clips) {
+    if (!clip.effects) continue;
+    for (const effect of clip.effects) {
+      const effectKey = `${clip.id}.${effect.effectType ?? 'unknown'}`;
+      if (seenEffects.has(effectKey)) continue;
+      seenEffects.add(effectKey);
+
+      const sourceRef: CapabilitySourceRef = effect.managedBy
+        ? {
+            source: 'extension',
+            extensionId: effect.managedBy,
+          }
+        : { source: 'built-in' };
+
+      requirements.push({
+        id: nextId('effect'),
+        sourceRef,
+        route: 'browser-export',
+        requiredCapabilities: ['browser-export'],
+        determinism: effect.managedBy ? 'preview-only' : 'deterministic',
+        findings: effect.managedBy
+          ? undefined
+          : [
+              {
+                id: `builtin.effect.${effect.effectType ?? 'unknown'}.${clip.id}`,
+                severity: 'info',
+                route: 'browser-export',
+                message: `Built-in effect "${effect.effectType ?? 'unknown'}" on clip "${clip.id}" is deterministic for browser export.`,
+                clipId: clip.id,
+              },
+            ],
+      });
+    }
+  }
+
+  // ── Transition requirements ─────────────────────────────────────────
+  const seenTransitions = new Set<string>();
+  for (const clip of snapshot.clips) {
+    if (!clip.transition) continue;
+    const tKey = `${clip.id}.${clip.transition.transitionType ?? 'unknown'}`;
+    if (seenTransitions.has(tKey)) continue;
+    seenTransitions.add(tKey);
+
+    const sourceRef: CapabilitySourceRef = clip.transition.managedBy
+      ? {
+          source: 'extension',
+          extensionId: clip.transition.managedBy,
+        }
+      : { source: 'built-in' };
+
+    requirements.push({
+      id: nextId('transition'),
+      sourceRef,
+      route: 'browser-export',
+      requiredCapabilities: ['browser-export'],
+      determinism: clip.transition.managedBy ? 'preview-only' : 'deterministic',
+    });
+  }
+
+  // ── Live-binding requirements ───────────────────────────────────────
+  if (snapshot.liveBindings) {
+    const seenBindings = new Set<string>();
+    for (const binding of snapshot.liveBindings) {
+      if (seenBindings.has(binding.bindingId)) continue;
+      seenBindings.add(binding.bindingId);
+
+      const sourceRef: CapabilitySourceRef = {
+        source: 'provider',
+      };
+
+      const isBlocking = binding.status !== 'resolved';
+
+      requirements.push({
+        id: nextId('liveBinding'),
+        sourceRef,
+        route: 'browser-export',
+        requiredCapabilities: ['browser-export', 'sidecar-export'],
+        determinism: 'live-unbaked',
+        blocking: isBlocking,
+        routeFit: isBlocking
+          ? {
+              route: 'browser-export',
+              fit: 'blocked',
+              reason: 'live-unbaked',
+              message: `Live binding "${binding.bindingId}" on clip "${binding.clipId}" is not resolved.`,
+            }
+          : {
+              route: 'browser-export',
+              fit: 'supported',
+            },
+        findings: [
+          isBlocking
+            ? {
+                id: `liveBinding.${binding.bindingId}.${binding.clipId}`,
+                severity: 'warning',
+                route: 'browser-export',
+                reason: 'live-unbaked',
+                message: `Live binding "${binding.bindingId}" (source: ${binding.sourceKind}) on clip "${binding.clipId}" has status "${binding.status ?? 'unknown'}".`,
+                clipId: binding.clipId,
+              }
+            : {
+                id: `liveBinding.${binding.bindingId}.${binding.clipId}`,
+                severity: 'info',
+                route: 'browser-export',
+                message: `Live binding "${binding.bindingId}" on clip "${binding.clipId}" is resolved.`,
+                clipId: binding.clipId,
+              },
+        ],
+      });
+    }
+  }
+
+  // ── Material-ref requirements ───────────────────────────────────────
+  if (snapshot.materialRefs) {
+    for (const ref of snapshot.materialRefs) {
+      const sourceRef: CapabilitySourceRef = {
+        source: 'registry',
+      };
+
+      requirements.push({
+        id: nextId('materialRef'),
+        sourceRef,
+        route: 'browser-export',
+        requiredCapabilities: ['browser-export'],
+        determinism: ref.determinism ?? 'unknown',
+      });
+    }
+  }
+
+  // ── Source-ref requirements ────────────────────────────────────────
+  if (snapshot.sourceRefs) {
+    for (const ref of snapshot.sourceRefs) {
+      const sourceRef: CapabilitySourceRef = ref.extensionId
+        ? {
+            source: 'extension',
+            extensionId: ref.extensionId,
+          }
+        : {
+            source: ref.sourceKind === 'generation' ? 'provider' : 'registry',
+          };
+
+      const determinism = ref.determinism ?? 'unknown';
+      const blocksBrowserExport =
+        determinism === 'process-dependent' || determinism === 'live-unbaked';
+
+      requirements.push({
+        id: nextId('sourceRef'),
+        sourceRef,
+        route: 'browser-export',
+        requiredCapabilities: blocksBrowserExport
+          ? ['browser-export', 'sidecar-export']
+          : ['browser-export'],
+        determinism,
+        ...(blocksBrowserExport
+          ? {
+              blocking: true,
+              routeFit: {
+                route: 'browser-export',
+                fit: 'blocked',
+                reason: determinism,
+                message: `Source ref "${ref.id}" on clip "${ref.clipId}" requires materialization before browser export.`,
+              },
+            }
+          : {}),
+      });
+    }
+  }
+
+  return requirements;
 }
 
 // ---------------------------------------------------------------------------

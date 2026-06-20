@@ -58,6 +58,10 @@ import type {
   ParserContribution,
   OutputFormatContribution,
   SearchProviderContribution,
+  CompileOnlyOutputFormatContribution,
+  RenderDependentOutputFormatContribution,
+  RenderArtifactManifest,
+  RenderArtifactSidecarDescriptor,
   CompileOnlyOutputResult,
   ExportService,
   AssetReadSurface,
@@ -94,6 +98,20 @@ import type {
   SteeringDecision,
   GenerationSessionLiveDelivery,
   LiveChannelDescriptor,
+  // M12 planner requirement types
+  CapabilityVersion,
+  CapabilitySourceRef,
+  RouteFitMetadata,
+  CapabilityRequirement,
+  IntegrationCapabilities,
+  SamplingConfig,
+  SamplingResult,
+  TimelineRenderPassSummary,
+  ProcessSpec,
+  ProcessContribution,
+  ProcessStatus,
+  ProcessRoundtripRequest,
+  ProcessRoundtripResult,
 } from '@/sdk/index';
 
 // ---------------------------------------------------------------------------

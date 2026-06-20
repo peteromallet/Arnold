@@ -21,6 +21,18 @@ import type {
   TransitionContribution,
   AgentToolContribution,
   ToolResultFamily,
+  RenderRoute,
+  DeterminismStatus,
+  RenderBlockerReason,
+  RenderDependentOutputDescriptor,
+  SamplingConfig,
+  RenderArtifactSidecarDescriptor,
+  IntegrationCapabilities,
+  CapabilityRequirement,
+  CapabilitySourceRef,
+  ProcessContribution,
+  ProcessSpec,
+  ProcessOperationSpec,
 } from '@reigh/editor-sdk';
 import { contributionKindNotYetBridged } from '@reigh/editor-sdk';
 import type { TimelineGestureOwner } from '@/tools/video-editor/lib/mobile-interaction-model';
@@ -118,6 +130,8 @@ export interface VideoEditorExtensionRuntimeConfig {
   assetParsers: readonly VideoEditorAssetParserDescriptor[];
   /** M6: Normalized output format descriptors (disabled diagnostics for render-dependent). */
   outputFormats: readonly VideoEditorOutputFormatDescriptor[];
+  /** M12: Normalized process descriptors, declaration-only until host runtime activation. */
+  processes: readonly VideoEditorProcessDescriptor[];
   /** M6: Normalized search provider descriptors, declaration-only until execution is bridged. */
   searchProviders: readonly VideoEditorSearchProviderDescriptor[];
   /** M6: Normalized metadata facet descriptors for the asset panel. */
@@ -167,10 +181,82 @@ export interface VideoEditorOutputFormatDescriptor {
   outputExtension: string;
   outputMimeType?: string;
   description?: string;
-  /** When true, this format is declared but execution is not yet available. */
+  /** When true, direct compile-only execution is unavailable. */
   disabled: boolean;
   /** Reason for disabled state, surfaced in the export UI. */
   disabledReason?: string;
+  /** Planner-visible routes declared by render-dependent output formats. */
+  availableRoutes: readonly RenderRoute[];
+  /** Render route/process requirements for planner-owned execution. */
+  routeRequirements: readonly VideoEditorRouteRequirementDescriptor[];
+  /** Process requirements referenced by this output format. */
+  processRequirements: readonly VideoEditorProcessRequirementDescriptor[];
+  /** Declaration-time blockers that the planner should surface before execution. */
+  blockers: readonly VideoEditorPlannerBlockerDescriptor[];
+  /** Suggested planner actions for making this output executable. */
+  nextActions: readonly VideoEditorPlannerNextActionDescriptor[];
+  /** Aggregated capability metadata derived from the output declaration. */
+  capabilities?: IntegrationCapabilities;
+  /** Optional declarative sampling defaults for export configuration. */
+  sampling?: SamplingConfig;
+  /** Sidecar descriptors the output may produce. */
+  sidecars: readonly RenderArtifactSidecarDescriptor[];
+}
+
+/** A normalized route requirement record consumed by render planning. */
+export interface VideoEditorRouteRequirementDescriptor {
+  routes: readonly RenderRoute[];
+  requiredCapabilities: readonly string[];
+  processId?: string;
+  operationId?: string;
+  determinism: DeterminismStatus;
+  unavailableMessage?: string;
+}
+
+/** A normalized process dependency declared by an output or route. */
+export interface VideoEditorProcessRequirementDescriptor {
+  processId: string;
+  operationId?: string;
+  requiredCapabilities: readonly string[];
+}
+
+/** Declaration-time blocker metadata surfaced to the planner and UI. */
+export interface VideoEditorPlannerBlockerDescriptor {
+  id: string;
+  extensionId: string;
+  contributionId: string;
+  route?: RenderRoute;
+  reason: RenderBlockerReason;
+  message: string;
+  nextAction?: VideoEditorPlannerNextActionDescriptor;
+}
+
+/** Planner next-action metadata for resolving route/process/material blockers. */
+export interface VideoEditorPlannerNextActionDescriptor {
+  kind: 'select-route' | 'start-process' | 'resolve-blocker';
+  label: string;
+  route?: RenderRoute;
+  processId?: string;
+  operationId?: string;
+  message?: string;
+}
+
+/** A normalized trusted-local process descriptor produced by runtime normalization. */
+export interface VideoEditorProcessDescriptor {
+  id: string;
+  extensionId: string;
+  order?: number;
+  processId: string;
+  label: string;
+  description?: string;
+  spec: ProcessSpec;
+  protocol: ProcessSpec['protocol'];
+  operations: readonly ProcessOperationSpec[];
+  availableRoutes: readonly RenderRoute[];
+  capabilities?: IntegrationCapabilities;
+  requiredBy: readonly CapabilitySourceRef[];
+  blockers: readonly VideoEditorPlannerBlockerDescriptor[];
+  nextActions: readonly VideoEditorPlannerNextActionDescriptor[];
 }
 
 /** A normalized search provider descriptor produced by runtime normalization. */
@@ -303,6 +389,8 @@ export interface ExtensionRuntime {
   readonly assetParsers: readonly VideoEditorAssetParserDescriptor[];
   /** M6: Output format descriptors with disabled diagnostics for render-dependent formats. */
   readonly outputFormats: readonly VideoEditorOutputFormatDescriptor[];
+  /** M12: Process descriptors, declaration-only until host runtime activation. */
+  readonly processes: readonly VideoEditorProcessDescriptor[];
   /** M6: Search provider descriptors, declaration-only. */
   readonly searchProviders: readonly VideoEditorSearchProviderDescriptor[];
   /** M6: Metadata facet descriptors from all extensions. */
@@ -327,6 +415,7 @@ const EMPTY_PANELS: readonly VideoEditorPanelDescriptor[] = Object.freeze([]);
 const EMPTY_INSPECTOR_SECTIONS: readonly VideoEditorInspectorSectionDescriptor[] = Object.freeze([]);
 const EMPTY_ASSET_PARSERS: readonly VideoEditorAssetParserDescriptor[] = Object.freeze([]);
 const EMPTY_OUTPUT_FORMATS: readonly VideoEditorOutputFormatDescriptor[] = Object.freeze([]);
+const EMPTY_PROCESSES: readonly VideoEditorProcessDescriptor[] = Object.freeze([]);
 const EMPTY_SEARCH_PROVIDERS: readonly VideoEditorSearchProviderDescriptor[] = Object.freeze([]);
 const EMPTY_METADATA_FACETS: readonly VideoEditorMetadataFacetDescriptor[] = Object.freeze([]);
 const EMPTY_ASSET_DETAIL_SECTIONS: readonly VideoEditorAssetDetailSectionDescriptor[] = Object.freeze([]);
@@ -354,6 +443,7 @@ export const DEFAULT_VIDEO_EDITOR_EXTENSION_RUNTIME: VideoEditorExtensionRuntime
   overlays: EMPTY_OVERLAYS,
   assetParsers: EMPTY_ASSET_PARSERS,
   outputFormats: EMPTY_OUTPUT_FORMATS,
+  processes: EMPTY_PROCESSES,
   searchProviders: EMPTY_SEARCH_PROVIDERS,
   metadataFacets: EMPTY_METADATA_FACETS,
   assetDetailSections: EMPTY_ASSET_DETAIL_SECTIONS,
@@ -428,6 +518,7 @@ export function normalizeExtensionRuntime(
   // need to be surfaced as disabled/reserved descriptors in the runtime config.
   const m6ReservedOutputFormats: CollectedContribution[] = [];
   const m6ReservedSearchProviders: CollectedContribution[] = [];
+  const m12ReservedProcesses: CollectedContribution[] = [];
 
   const seenContributionIds = new Map<string, string>(); // contribId -> extensionId
 
@@ -565,6 +656,29 @@ export function normalizeExtensionRuntime(
         } else {
           m6ReservedSearchProviders.push({ contribution: contrib, extensionId: extId });
         }
+        continue;
+      }
+      if (notYetBridged !== null && contrib.kind === 'process') {
+        inactiveReserved.push({
+          extensionId: extId,
+          contributionId: contribId,
+          kind: contrib.kind,
+          milestone: notYetBridged,
+        });
+        diagnostics.push({
+          severity: 'info',
+          code: 'runtime/contribution-kind-not-yet-bridged',
+          message:
+            `Contribution "${contribId}" (kind: ${contrib.kind}) in extension "${extId}" ` +
+            `is reserved for ${notYetBridged}.`,
+          extensionId: extId,
+          contributionId: contribId,
+          milestone: notYetBridged,
+        });
+        if (contrib.render) {
+          knownRenderIds.add(contrib.render);
+        }
+        m12ReservedProcesses.push({ contribution: contrib, extensionId: extId });
         continue;
       }
       if (notYetBridged !== null) {
@@ -775,11 +889,17 @@ export function normalizeExtensionRuntime(
   }
 
   // ---- Phase 4b: project M6 reserved contributions --------------------------
-  // OutputFormat: surfaced with disabled diagnostics for render-dependent formats
+  // OutputFormat: surfaced with planner metadata for render-dependent formats.
   const outputFormatDescriptors: VideoEditorOutputFormatDescriptor[] = [];
   for (const { contribution, extensionId } of m6ReservedOutputFormats) {
     const of = contribution as unknown as OutputFormatContribution;
     const requiresRender = of.requiresRender ?? false;
+    const renderDescriptor = requiresRender ? of.render : undefined;
+    const routeRequirements = buildRouteRequirements(renderDescriptor);
+    const processRequirements = buildProcessRequirements(renderDescriptor);
+    const blockers = buildOutputFormatBlockers(extensionId, contribution.id as string, of, renderDescriptor);
+    const nextActions = buildOutputFormatNextActions(of, renderDescriptor, blockers);
+    const capabilities = buildOutputFormatCapabilities(extensionId, contribution.id as string, of, renderDescriptor, blockers);
     outputFormatDescriptors.push({
       id: contribution.id as string,
       extensionId,
@@ -789,15 +909,65 @@ export function normalizeExtensionRuntime(
       outputExtension: of.outputExtension,
       outputMimeType: of.outputMimeType,
       description: of.description,
-      disabled: requiresRender,
-      disabledReason: requiresRender
-        ? `Output format "${of.label ?? contribution.id}" requires render planning (not yet available in M6).`
-        : undefined,
+      disabled: false,
+      disabledReason: undefined,
+      availableRoutes: Object.freeze([...(renderDescriptor?.routes ?? [])]),
+      routeRequirements,
+      processRequirements,
+      blockers,
+      nextActions,
+      capabilities,
+      sampling: of.sampling,
+      sidecars: Object.freeze([...(of.sidecars ?? [])]),
     });
   }
 
   // Order output formats by extension order, then contribution order, then ID
   outputFormatDescriptors.sort((a, b) => {
+    const extOrderA = extensionOrder.get(a.extensionId) ?? Number.MAX_SAFE_INTEGER;
+    const extOrderB = extensionOrder.get(b.extensionId) ?? Number.MAX_SAFE_INTEGER;
+    if (extOrderA !== extOrderB) return extOrderA - extOrderB;
+    const orderA = a.order ?? 0;
+    const orderB = b.order ?? 0;
+    if (orderA !== orderB) return orderA - orderB;
+    return a.id.localeCompare(b.id);
+  });
+
+  // Process: surfaced as planner-visible declarations without runtime spawn.
+  const processDescriptors: VideoEditorProcessDescriptor[] = [];
+  for (const { contribution, extensionId } of m12ReservedProcesses) {
+    const processContrib = contribution as unknown as ProcessContribution;
+    const spec = processContrib.spec;
+    const operations = Object.freeze([...(spec.operations ?? [])]);
+    const availableRoutes = Object.freeze(
+      Array.from(new Set(operations.flatMap((operation) => operation.routes ?? []))),
+    );
+    processDescriptors.push({
+      id: contribution.id as string,
+      extensionId,
+      order: contribution.order,
+      processId: spec.id,
+      label: processContrib.label ?? spec.label ?? spec.id,
+      description: spec.description,
+      spec,
+      protocol: spec.protocol,
+      operations,
+      availableRoutes,
+      capabilities: spec.capabilities,
+      requiredBy: Object.freeze([...(spec.requiredBy ?? [])]),
+      blockers: Object.freeze([]),
+      nextActions: Object.freeze([
+        {
+          kind: 'start-process',
+          label: `Start ${processContrib.label ?? spec.label ?? spec.id}`,
+          processId: spec.id,
+          message: 'Process execution is host-owned and must be activated before route planning can dispatch operations.',
+        },
+      ]),
+    });
+  }
+
+  processDescriptors.sort((a, b) => {
     const extOrderA = extensionOrder.get(a.extensionId) ?? Number.MAX_SAFE_INTEGER;
     const extOrderB = extensionOrder.get(b.extensionId) ?? Number.MAX_SAFE_INTEGER;
     if (extOrderA !== extOrderB) return extOrderA - extOrderB;
@@ -842,6 +1012,7 @@ export function normalizeExtensionRuntime(
     overlayDescriptors.length > 0 ||
     assetParserDescriptors.length > 0 ||
     outputFormatDescriptors.length > 0 ||
+    processDescriptors.length > 0 ||
     searchProviderDescriptors.length > 0 ||
     metadataFacetDescriptors.length > 0 ||
     assetDetailSectionDescriptors.length > 0 ||
@@ -862,6 +1033,7 @@ export function normalizeExtensionRuntime(
         overlays: Object.freeze(overlayDescriptors),
         assetParsers: Object.freeze(assetParserDescriptors),
         outputFormats: Object.freeze(outputFormatDescriptors),
+        processes: Object.freeze(processDescriptors),
         searchProviders: Object.freeze(searchProviderDescriptors),
         metadataFacets: Object.freeze(metadataFacetDescriptors),
         assetDetailSections: Object.freeze(assetDetailSectionDescriptors),
@@ -884,6 +1056,7 @@ export function normalizeExtensionRuntime(
     ),
     assetParsers: Object.freeze(assetParserDescriptors),
     outputFormats: Object.freeze(outputFormatDescriptors),
+    processes: Object.freeze(processDescriptors),
     searchProviders: Object.freeze(searchProviderDescriptors),
     metadataFacets: Object.freeze(metadataFacetDescriptors),
     assetDetailSections: Object.freeze(assetDetailSectionDescriptors),
@@ -893,6 +1066,181 @@ export function normalizeExtensionRuntime(
   });
 
   return runtime;
+}
+
+function buildRouteRequirements(
+  renderDescriptor: RenderDependentOutputDescriptor | undefined,
+): readonly VideoEditorRouteRequirementDescriptor[] {
+  if (!renderDescriptor) return Object.freeze([]);
+
+  return Object.freeze([
+    Object.freeze({
+      routes: Object.freeze([...renderDescriptor.routes]),
+      requiredCapabilities: Object.freeze([...(renderDescriptor.requiredCapabilities ?? [])]),
+      processId: renderDescriptor.processId,
+      operationId: renderDescriptor.operationId,
+      determinism: renderDescriptor.determinism ?? 'unknown',
+      unavailableMessage: renderDescriptor.unavailableMessage,
+    }),
+  ]);
+}
+
+function buildProcessRequirements(
+  renderDescriptor: RenderDependentOutputDescriptor | undefined,
+): readonly VideoEditorProcessRequirementDescriptor[] {
+  if (!renderDescriptor?.processId) return Object.freeze([]);
+
+  return Object.freeze([
+    Object.freeze({
+      processId: renderDescriptor.processId,
+      operationId: renderDescriptor.operationId,
+      requiredCapabilities: Object.freeze([...(renderDescriptor.requiredCapabilities ?? [])]),
+    }),
+  ]);
+}
+
+function buildOutputFormatBlockers(
+  extensionId: string,
+  contributionId: string,
+  contribution: OutputFormatContribution,
+  renderDescriptor: RenderDependentOutputDescriptor | undefined,
+): readonly VideoEditorPlannerBlockerDescriptor[] {
+  if (!contribution.requiresRender || renderDescriptor) return Object.freeze([]);
+
+  const nextAction: VideoEditorPlannerNextActionDescriptor = Object.freeze({
+    kind: 'resolve-blocker',
+    label: 'Add render route requirements',
+    message: 'Render-dependent output formats must declare render routes before planning can execute them.',
+  });
+
+  return Object.freeze([
+    Object.freeze({
+      id: `${extensionId}.${contributionId}.missing-render-descriptor`,
+      extensionId,
+      contributionId,
+      reason: 'route-unsupported',
+      message: `Output format "${contribution.label ?? contributionId}" requires render planning but did not declare route requirements.`,
+      nextAction,
+    }),
+  ]);
+}
+
+function buildOutputFormatNextActions(
+  contribution: OutputFormatContribution,
+  renderDescriptor: RenderDependentOutputDescriptor | undefined,
+  blockers: readonly VideoEditorPlannerBlockerDescriptor[],
+): readonly VideoEditorPlannerNextActionDescriptor[] {
+  if (!contribution.requiresRender) return Object.freeze([]);
+  if (blockers[0]?.nextAction) return Object.freeze([blockers[0].nextAction]);
+
+  const actions: VideoEditorPlannerNextActionDescriptor[] = [];
+  if (renderDescriptor?.processId) {
+    actions.push(Object.freeze({
+      kind: 'start-process',
+      label: `Start process ${renderDescriptor.processId}`,
+      processId: renderDescriptor.processId,
+      operationId: renderDescriptor.operationId,
+      message: renderDescriptor.unavailableMessage,
+    }));
+  }
+
+  for (const route of renderDescriptor?.routes ?? []) {
+    actions.push(Object.freeze({
+      kind: 'select-route',
+      label: `Plan ${route}`,
+      route,
+      processId: renderDescriptor?.processId,
+      operationId: renderDescriptor?.operationId,
+      message: renderDescriptor?.unavailableMessage,
+    }));
+  }
+
+  return Object.freeze(actions);
+}
+
+function buildOutputFormatCapabilities(
+  extensionId: string,
+  contributionId: string,
+  contribution: OutputFormatContribution,
+  renderDescriptor: RenderDependentOutputDescriptor | undefined,
+  blockers: readonly VideoEditorPlannerBlockerDescriptor[],
+): IntegrationCapabilities | undefined {
+  const sourceRef: CapabilitySourceRef = Object.freeze({
+    source: 'extension',
+    extensionId,
+    contributionId,
+  });
+
+  if (!contribution.requiresRender) {
+    return Object.freeze({
+      extensionId,
+      contributionId,
+      routes: Object.freeze([]),
+      determinism: 'deterministic',
+      capabilityRequirements: Object.freeze([]),
+      sourceRefs: Object.freeze([sourceRef]),
+      fullySupported: true,
+      anyBlocked: false,
+    });
+  }
+
+  const routes = Object.freeze([...(renderDescriptor?.routes ?? [])]);
+  const determinism = renderDescriptor?.determinism ?? 'unknown';
+  const requiredCapabilities = Object.freeze([...(renderDescriptor?.requiredCapabilities ?? [])]);
+  const routeFit = renderDescriptor
+    ? undefined
+    : Object.freeze({
+        route: 'sidecar-export' as const,
+        fit: 'blocked' as const,
+        reason: 'route-unsupported' as const,
+        message: blockers[0]?.message,
+      });
+
+  const capabilityRequirements: CapabilityRequirement[] = routes.map((route) => Object.freeze({
+    id: `${extensionId}.${contributionId}.${route}`,
+    sourceRef,
+    route,
+    requiredCapabilities,
+    determinism,
+    routeFit: Object.freeze({
+      route,
+      fit: 'supported' as const,
+      message: renderDescriptor?.unavailableMessage,
+    }),
+    blocking: false,
+  }));
+
+  if (!renderDescriptor) {
+    capabilityRequirements.push(Object.freeze({
+      id: `${extensionId}.${contributionId}.missing-render-descriptor`,
+      sourceRef,
+      route: 'sidecar-export',
+      requiredCapabilities: Object.freeze([]),
+      determinism: 'unknown',
+      routeFit,
+      findings: Object.freeze(blockers.map((blocker) => Object.freeze({
+        id: blocker.id,
+        severity: 'error' as const,
+        route: blocker.route,
+        reason: blocker.reason,
+        message: blocker.message,
+        extensionId: blocker.extensionId,
+        contributionId: blocker.contributionId,
+      }))),
+      blocking: true,
+    }));
+  }
+
+  return Object.freeze({
+    extensionId,
+    contributionId,
+    routes,
+    determinism,
+    capabilityRequirements: Object.freeze(capabilityRequirements),
+    sourceRefs: Object.freeze([sourceRef]),
+    fullySupported: blockers.length === 0,
+    anyBlocked: blockers.length > 0,
+  });
 }
 
 /** Frozen empty runtime, preserving {@link DEFAULT_VIDEO_EDITOR_EXTENSION_RUNTIME} identity. */
@@ -905,6 +1253,7 @@ const EMPTY_EXTENSION_RUNTIME: ExtensionRuntime = Object.freeze({
   settingsDefaults: Object.freeze({}),
   assetParsers: EMPTY_ASSET_PARSERS,
   outputFormats: EMPTY_OUTPUT_FORMATS,
+  processes: EMPTY_PROCESSES,
   searchProviders: EMPTY_SEARCH_PROVIDERS,
   metadataFacets: EMPTY_METADATA_FACETS,
   assetDetailSections: EMPTY_ASSET_DETAIL_SECTIONS,

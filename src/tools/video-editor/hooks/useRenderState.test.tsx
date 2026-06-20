@@ -802,6 +802,55 @@ describe('useRenderState export guard', () => {
       expect(diagnostics.some((diagnostic) => diagnostic.detail?.source === 'export-guard')).toBe(true);
       expect(diagnostics.some((diagnostic) => diagnostic.detail?.source === 'render-planner')).toBe(true);
     });
+
+    it('uses planner blockers as the canonical render readiness decision', async () => {
+      const extRuntime = makeExtensionRuntime({
+        extensions: [
+          {
+            manifest: {
+              id: 'test-ext' as any,
+              version: '1.0.0',
+              contributions: [],
+            },
+          } as any,
+        ],
+      });
+
+      guardMocks.scanExportConfig.mockReturnValue({
+        ...cleanGuardResult(),
+        diagnostics: [],
+        blockers: [
+          {
+            id: 'planner.compat.effect.browser-export.missing',
+            severity: 'error',
+            route: 'browser-export',
+            reason: 'missing-contribution',
+            message: 'Planner says the effect contribution is missing.',
+          },
+        ],
+        hasBlockingErrors: false,
+      });
+
+      const { result } = renderHook(() => useRenderState(
+        buildConfig({
+          id: 'c1',
+          clipType: 'media',
+          track: 'V1',
+          at: 0,
+          hold: 1,
+        }),
+        null,
+        null,
+        extRuntime,
+      ));
+
+      await act(async () => {
+        await result.current.startRender();
+      });
+
+      expect(result.current.renderStatus).toBe('error');
+      expect(mocks.startClientRender).not.toHaveBeenCalled();
+    });
   });
 
   describe('export guard — warnings only (preserve native routing)', () => {
@@ -1867,7 +1916,7 @@ describe('useRenderState — M6 export behavior', () => {
 
   // ---- startExport — render-dependent rejection ----------------------------
 
-  it('rejects render-dependent format with descriptive error and does not invoke executeCompileOnlyOutput', async () => {
+  it('rejects render-dependent format from the planner route result and does not invoke executeCompileOnlyOutput', async () => {
     const extRuntime = makeExtensionRuntime({
       config: {
         slots: {},
@@ -1891,13 +1940,12 @@ describe('useRenderState — M6 export behavior', () => {
     });
 
     expect(result.current.exportStatus).toBe('error');
-    expect(result.current.exportLog).toContain('requires render pipeline execution');
+    expect(result.current.exportLog).toContain('not available on browser-export');
     expect(result.current.exportLog).toContain('MP4 Video');
-    expect(result.current.exportLog).toContain('reserved for the Render button');
     expect(exportMocks.executeCompileOnlyOutput).not.toHaveBeenCalled();
   });
 
-  it('rejects render-dependent format with disabledReason when provided', async () => {
+  it('rejects disabled output formats from planner diagnostics when disabledReason is provided', async () => {
     const extRuntime = makeExtensionRuntime({
       config: {
         slots: {},
@@ -1921,12 +1969,11 @@ describe('useRenderState — M6 export behavior', () => {
     });
 
     expect(result.current.exportStatus).toBe('error');
-    expect(result.current.exportLog).toContain('requires render pipeline execution');
     expect(result.current.exportLog).toContain('Needs real-time encoder integration');
     expect(exportMocks.executeCompileOnlyOutput).not.toHaveBeenCalled();
   });
 
-  it('rejects unknown format ID with not-found error', async () => {
+  it('rejects unknown format ID with planner missing-contribution error', async () => {
     const extRuntime = makeExtensionRuntime({
       config: {
         slots: {},
@@ -1950,7 +1997,7 @@ describe('useRenderState — M6 export behavior', () => {
     });
 
     expect(result.current.exportStatus).toBe('error');
-    expect(result.current.exportLog).toContain('not found');
+    expect(result.current.exportLog).toContain('not registered');
     expect(exportMocks.executeCompileOnlyOutput).not.toHaveBeenCalled();
   });
 

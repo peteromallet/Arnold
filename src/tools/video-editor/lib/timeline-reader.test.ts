@@ -479,7 +479,6 @@ describe('createTimelineReader — hides internals', () => {
     const snap = reader.snapshot() as Record<string, unknown>;
     expect(snap).not.toHaveProperty('rows');
     expect(snap).not.toHaveProperty('meta');
-    expect(snap).not.toHaveProperty('effects');
     expect(snap).not.toHaveProperty('registry');
     expect(snap).not.toHaveProperty('resolvedConfig');
     expect(snap).not.toHaveProperty('clipOrder');

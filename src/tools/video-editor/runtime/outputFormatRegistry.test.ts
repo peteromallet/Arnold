@@ -183,6 +183,14 @@ describe('executeCompileOnlyOutputSync', () => {
     expect(artifact.locator.kind).toBe('inline');
     expect(artifact.locator.mimeType).toBe('application/json');
     expect(artifact.locator.uri).toBe('output.json');
+    expect(artifact.manifest).toMatchObject({
+      artifactId: 'compile-only.metadata-json',
+      route: COMPILE_ONLY_ARTIFACT_ROUTE,
+      determinism: 'deterministic',
+      outputFormatId: 'metadata-json',
+      producerExtensionId: 'com.example.metadata',
+      producerVersion: '1.2.3',
+    });
     expect(artifact.boundary.source).toBe('browser');
     expect(artifact.boundary.target).toBe('export-output');
     expect(artifact.boundary.failureBehavior).toBe('emit-diagnostic');
@@ -1383,6 +1391,13 @@ describe('M6: artifact compatibility proof', () => {
     expect(a.consumedMaterialRefs).toBeDefined();
     expect(a.determinism).toBeDefined();
     expect(a.boundary).toBeDefined();
+    expect(a.manifest).toMatchObject({
+      artifactId: a.id,
+      route: a.route,
+      determinism: a.determinism,
+      producerExtensionId: 'com.example.art',
+      outputFormatId: 'full-artifact',
+    });
   });
 
   it('consumedMaterialRefs use asset-registry locator kind', () => {
