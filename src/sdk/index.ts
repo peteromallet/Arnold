@@ -2844,6 +2844,14 @@ export { runSettingsMigration, getManifestSettingsSchemaVersion, findSettingsMig
 export type { ExtensionSettingsServiceFactoryResult, CreateExtensionSettingsServiceOptions, SettingsMigrationConfig } from './extensionSettingsService';
 export type { SettingsMigrationHandler, SettingsMigrationResult, RunSettingsMigrationOptions } from './extensionSettingsMigration';
 
+// SDK-owned state repository contracts (used by settings services)
+export type {
+  SettingsSnapshot,
+  LifecycleEvent,
+  StateRepository,
+} from './contracts';
+export { createLifecycleEvent } from './contracts';
+
 /** i18n service: minimal t() scaffolding with namespace fallback. */
 export interface ExtensionI18nService {
   t(key: string, replacements?: Record<string, string | number>): string;

@@ -113,16 +113,15 @@ async function withStore<T>(
       };
 
       request.addEventListener('success', () => {
-        // Store result but don't resolve yet — wait for transaction complete
+        if (!settled) {
+          settled = true;
+          resolve(request.result);
+        }
       });
       request.addEventListener('error', () => fail(request.error ?? new Error('IndexedDB request failed')));
       transaction.addEventListener('abort', () => fail(transaction.error ?? new Error('IndexedDB transaction aborted')));
       transaction.addEventListener('error', () => fail(transaction.error ?? new Error('IndexedDB transaction failed')));
       transaction.addEventListener('complete', () => {
-        if (!settled) {
-          settled = true;
-          resolve(request.result);
-        }
         database?.close();
         database = null;
       });

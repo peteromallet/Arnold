@@ -1,0 +1,70 @@
+{
+  "id": "log_0e02d9359d08",
+  "level": "debug",
+  "category": "system",
+  "event_type": "authority_divergence",
+  "message": "authority_divergence emitted",
+  "details": {
+    "event": {
+      "seq": 6467,
+      "schema_version": 1,
+      "ts_utc": "2026-06-20T19:01:05.738722+00:00",
+      "ts_rel_init_s": 7840.211812,
+      "kind": "authority_divergence",
+      "phase": "execute",
+      "payload": {
+        "diagnostic_version": 1,
+        "task_id": "T16",
+        "raw_terminal_status": "done",
+        "authority_status": "unknown",
+        "authoritative": false,
+        "reason": "stale_evidence:missing_head:task_commands_run",
+        "missing_outputs": [],
+        "stale_evidence": [
+          "missing_head:task_commands_run",
+          "missing_head:task_commands_run",
+          "missing_head:task_commands_run",
+          "missing_head:task_commands_run",
+          "missing_head:task_commands_run",
+          "missing_head:task_commands_run",
+          "missing_head:task_commands_run",
+          "missing_head:task_commands_run"
+        ],
+        "would_block_reasons": [
+          "stale_evidence:missing_head:task_commands_run"
+        ],
+        "error": null,
+        "diagnostics": {
+          "task_id": "T16",
+          "declared_outputs": {
+            "commands_run": [
+              "vitest run --config vitest.boundary.config.ts (252 tests, 4 pre-existing failures)",
+              "vitest run src/sdk/examples-governance.test.ts (385 tests, all passed)",
+              "vitest run (18 frontend closure component test files, 379 tests, all passed)",
+              "vitest run src/sdk/index.test.ts + sdk-boundary (521 tests, 4 pre-existing failures)",
+              "check-extension-contract-recheck.mjs --audit (PASSED)",
+              "check-extension-deferred-claims.mjs --audit (PASSED, 4 pre-existing warnings)",
+              "check-sdk-public-exports.mjs --audit (PASSED)",
+              "check-extension-example-readiness.mjs --audit (PASSED, 8 pre-existing warnings)"
+            ]
+          },
+          "linked_evidence_count": 16,
+          "evidence_count": 196,
+          "normalization": "iterable",
+          "status": "unknown",
+          "evidence_sources": [
+            "plan_artifacts"
+          ],
+          "loaded_evidence_count": 196,
+          "raw_terminal_status": "done"
+        },
+        "ts_utc": "2026-06-20T19:01:05.738352+00:00"
+      },
+      "transaction_id": "a138e371bf91c9cc",
+      "store_method": "log_system_event"
+    }
+  },
+  "turn_id": null,
+  "epic_id": "m15-hardening-compatibility-20260620-1850",
+  "occurred_at": "2026-06-20T19:01:05.738759Z"
+}

@@ -1,0 +1,64 @@
+{
+  "id": "log_f66b7024ddbf",
+  "level": "debug",
+  "category": "system",
+  "event_type": "authority_divergence",
+  "message": "authority_divergence emitted",
+  "details": {
+    "event": {
+      "seq": 6215,
+      "schema_version": 1,
+      "ts_utc": "2026-06-20T18:56:26.649159+00:00",
+      "ts_rel_init_s": 7561.122249,
+      "kind": "authority_divergence",
+      "phase": "execute",
+      "payload": {
+        "diagnostic_version": 1,
+        "task_id": "T14",
+        "raw_terminal_status": "done",
+        "authority_status": "unknown",
+        "authoritative": false,
+        "reason": "stale_evidence:missing_head:task_files_changed",
+        "missing_outputs": [],
+        "stale_evidence": [
+          "missing_head:task_files_changed",
+          "missing_head:task_commands_run",
+          "missing_head:task_commands_run",
+          "missing_head:task_commands_run"
+        ],
+        "would_block_reasons": [
+          "stale_evidence:missing_head:task_files_changed",
+          "stale_evidence:missing_head:task_commands_run"
+        ],
+        "error": null,
+        "diagnostics": {
+          "task_id": "T14",
+          "declared_outputs": {
+            "files_changed": [
+              "scripts/quality/check-extension-example-readiness.mjs"
+            ],
+            "commands_run": [
+              "node scripts/quality/check-extension-example-readiness.mjs --audit",
+              "node scripts/quality/check-extension-example-readiness.mjs --release"
+            ]
+          },
+          "linked_evidence_count": 8,
+          "evidence_count": 180,
+          "normalization": "iterable",
+          "status": "unknown",
+          "evidence_sources": [
+            "plan_artifacts"
+          ],
+          "loaded_evidence_count": 180,
+          "raw_terminal_status": "done"
+        },
+        "ts_utc": "2026-06-20T18:56:26.648621+00:00"
+      },
+      "transaction_id": "b136821f2a5f7739",
+      "store_method": "log_system_event"
+    }
+  },
+  "turn_id": null,
+  "epic_id": "m15-hardening-compatibility-20260620-1850",
+  "occurred_at": "2026-06-20T18:56:26.649222Z"
+}

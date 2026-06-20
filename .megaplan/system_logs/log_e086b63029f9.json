@@ -1,0 +1,73 @@
+{
+  "id": "log_e086b63029f9",
+  "level": "debug",
+  "category": "system",
+  "event_type": "authority_divergence",
+  "message": "authority_divergence emitted",
+  "details": {
+    "event": {
+      "seq": 6458,
+      "schema_version": 1,
+      "ts_utc": "2026-06-20T19:01:03.903072+00:00",
+      "ts_rel_init_s": 7838.376162,
+      "kind": "authority_divergence",
+      "phase": "execute",
+      "payload": {
+        "diagnostic_version": 1,
+        "task_id": "T7",
+        "raw_terminal_status": "done",
+        "authority_status": "unknown",
+        "authoritative": false,
+        "reason": "stale_evidence:missing_head:task_commands_run",
+        "missing_outputs": [],
+        "stale_evidence": [
+          "missing_head:task_commands_run",
+          "missing_head:task_files_changed",
+          "missing_head:task_files_changed",
+          "missing_head:task_files_changed",
+          "missing_head:task_files_changed",
+          "missing_head:task_commands_run",
+          "missing_head:task_commands_run",
+          "missing_head:task_commands_run",
+          "missing_head:task_commands_run"
+        ],
+        "would_block_reasons": [
+          "stale_evidence:missing_head:task_commands_run",
+          "stale_evidence:missing_head:task_files_changed"
+        ],
+        "error": null,
+        "diagnostics": {
+          "task_id": "T7",
+          "declared_outputs": {
+            "files_changed": [
+              "src/sdk/contracts.ts",
+              "src/sdk/extensionSettingsService.ts",
+              "src/sdk/extensionSettingsMigration.ts",
+              "src/sdk/index.ts"
+            ],
+            "commands_run": [
+              "node scripts/quality/check-sdk-public-exports.mjs --audit",
+              "npx tsc --noEmit",
+              "npx vitest run src/sdk/extensionSettingsService.test.ts src/sdk/extensionSettingsMigration.test.ts --reporter=verbose"
+            ]
+          },
+          "linked_evidence_count": 18,
+          "evidence_count": 196,
+          "normalization": "iterable",
+          "status": "unknown",
+          "evidence_sources": [
+            "plan_artifacts"
+          ],
+          "loaded_evidence_count": 196,
+          "raw_terminal_status": "done"
+        },
+        "ts_utc": "2026-06-20T19:01:03.902611+00:00"
+      },
+      "transaction_id": "8b5e638493ef814a",
+      "store_method": "log_system_event"
+    }
+  },
+  "turn_id": null,
+  "epic_id": "m15-hardening-compatibility-20260620-1850",
+  "occurred_at": "2026-06-20T19:01:03.903118Z"
+}

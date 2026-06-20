@@ -1,8 +1,8 @@
 # Provider Compatibility Matrix — M3 TimelinePatch & Proposals
 
-**Status:** Active (M3)
-**Last updated:** 2026-06-19
-**Scope:** Every DataProvider implementation that the video editor can run against, evaluated for M3 TimelinePatch, TimelineOps, ProposalRuntime, and golden replay semantics.
+**Status:** Active (M15 hardening)
+**Last updated:** 2026-06-20
+**Scope:** Every DataProvider implementation that the video editor can run against, evaluated for M3 TimelinePatch, TimelineOps, ProposalRuntime, golden replay semantics, and environment-impossible provider checks.
 
 ---
 
@@ -165,3 +165,140 @@ The `SourceMapRuntime` stores entries in extension project-data under `__sm__:<e
 | `AstridBridgeDataProvider.test.ts` (22 pass / 3 pre-existing) | N/A | N/A | ✓ 22 pass |
 | `proposal-runtime.test.ts` (39 tests) | ✓ All pass | N/A (in-memory runtime) | N/A (in-memory runtime) |
 | `source-map-runtime.test.ts` (31 tests) | ✓ All pass | N/A (project-data backed) | N/A (project-data backed) |
+
+---
+
+## 10. Environment-impossible provider checks
+
+This section documents every provider compatibility test that **cannot run** in one or more environments (headless CI, local dev without credentials, Node.js without browser APIs). For each impossible or skipped case, the resolution (mock, skip flag, partial suite, or delegated coverage) is explicitly listed and linked to the relevant contract-recheck rows. No provider check is silently skipped — every gap is traceable to a documented reason.
+
+### 10.1 SupabaseDataProvider — environment prerequisites
+
+| Requirement | Why it's needed | Unavailable in |
+|---|---|---|
+| `VITE_REIGH_APPEND_SERVICE_URL` env var | Constructs the append-service endpoint URL; provider throws at construction time without it | Local CI without service URL; dev environments without Supabase project |
+| Supabase auth JWT (`getSession` / `readAccessTokenFromStorage`) | `saveTimeline` and `syncTimeline` require authenticated user | Local CI without auth tokens; anonymous browser sessions |
+| Supabase database (`timelines`, `timeline_events`, `sync_bookmarks` tables) | Load/version/sync queries read from materialized DB rows | Local dev without Supabase project; environments without DB access |
+| IndexedDB (`syncLedgerIndexedDb`) | Sync bookmark and keep-both artifact persistence | Environments without IndexedDB (Node.js pre-21, some test runners) |
+| Network access to append service | `saveTimeline` POSTs to append-service for CAS-enforced writes | Offline environments; CI without network allowlist |
+
+**How skipped tests are handled:**
+
+The `providerCompatibility.supabase.test.ts` suite (416 lines) does **not** use the shared `runProviderCompatibilitySuite` helper. Instead, it supplies a manually written subset of tests backed by heavy mocking:
+
+- IndexedDB is mocked via `fake-indexeddb` and `vi.stubGlobal('indexedDB', ...)`.
+- Supabase client methods (`getSession`, `from`) are mocked with `vi.hoisted` mocks.
+- `VITE_REIGH_APPEND_SERVICE_URL` is stubbed via `vi.stubEnv`.
+- The append-service `fetch` is stubbed with `vi.stubGlobal('fetch', ...)`.
+- The shared suite's `versionConflictIsSoft=false` path is **delegated** to the InMemory compatibility test.
+
+**Skipped shared-suite sections (Supabase):**
+
+| Shared suite section | Skipped? | Reason | Coverage delegated to |
+|---|---|---|---|
+| versioned load/save (full CAS) | Partial — only versioned load + versioned save manually tested | Supabase mocks are too intricate for the generic `ProviderFactory` seed pattern; the shared suite's atomic-save loop would need per-call mock maturation | `SupabaseDataProvider.test.ts` (18 tests, full save/conflict coverage) |
+| version conflict handling (strict CAS) | Yes — strict CAS path skipped | The shared suite's `versionConflictIsSoft=false` branch requires atomic expectedVersion rejection loops that need per-call mock state mutation | InMemory compatibility test (`providerCompatibility.inmemory.test.ts`) |
+| checkpoints | Yes — not tested in shared suite | Supabase implements `saveCheckpoint` / `loadCheckpoints` but the shared suite's checkpoint tests are gated by `skipCheckpoints` flag; the Supabase compat test does not invoke the shared suite | `SupabaseDataProvider.test.ts` (18 tests) |
+| registerAsset | Yes — not tested in shared suite | `registerAsset` is provider-specific and the Supabase compat test does not invoke the shared suite's `registerAsset` section | `SupabaseDataProvider.test.ts` |
+| resolveAssetUrl | Partial — manually tested in compat suite | Supabase uses storage bucket public URLs; the shared suite's generic `resolveAssetUrl` section is not invoked | `providerCompatibility.supabase.test.ts` (manual test) |
+| missing-timeline error types | Partial — `TimelineNotFoundError` detection tested manually | Supabase's `loadTimeline` returns a default config for missing timelines instead of throwing `TimelineNotFoundError` | `SupabaseDataProvider.test.ts` |
+| extension requirements | Partial — manually tested in compat suite | Extension-owned app data round-trip is tested manually; the shared suite's version is not invoked | `providerCompatibility.supabase.test.ts` |
+
+**Contract-recheck row links:**
+
+| Contract-recheck row | How Supabase satisfies it despite environment impossibility |
+|---|---|
+| [CR:M3-007](./extension-platform-contract-recheck.md#24-m3--timelinepatch-atomic-ops-proposals) — Provider version behaviors tested | `SupabaseDataProvider.test.ts` (18 tests) covers versioned load/save/conflict; InMemory covers strict CAS path |
+| [CR:M3-009](./extension-platform-contract-recheck.md#24-m3--timelinepatch-atomic-ops-proposals) — Golden patch replay across providers | `timeline-golden-replay.test.ts` (81 tests) covers InMemory and Supabase structural equivalence |
+| [CR:M3-010](./extension-platform-contract-recheck.md#24-m3--timelinepatch-atomic-ops-proposals) — Provider compatibility matrix updated | This document §2–§9 covers all M3 behaviors across providers |
+| [CR:X-007](./extension-platform-contract-recheck.md#216-cross-milestone--structural-claims) — Provider compatibility documented | This document + this section (§10) provide the complete environment-impossible audit trail |
+
+### 10.2 AstridBridgeDataProvider — environment prerequisites
+
+| Requirement | Why it's needed | Unavailable in |
+|---|---|---|
+| File System Access API (`showDirectoryPicker`, `getDirectoryHandle`, `requestPermission`) | Reads/writes `assembly.json` and `registry.json` from user-granted local directory | Headless CI (Node.js, no browser); browsers without File System Access API (Firefox, Safari < 15) |
+| Local bridge process (HTTP server, default port `17333`) | Serves asset files and accepts save/config API calls | CI environments; dev machines without Astrid bridge installed |
+| User-granted directory permissions (`ensurePermission`, `saveDirectoryHandle`) | Persists the local project root handle across sessions | Headless environments; first-run browser contexts |
+| `localStorage` (for `PersistedLocalDirectoryHandle`) | Stores the directory handle for reconnection on reload | Environments without `localStorage` (some test runners) |
+| Network access to `127.0.0.1:17333` | Fetches asset files and timeline config from the bridge | CI without loopback network; remote dev environments |
+
+**How skipped tests are handled:**
+
+The `providerCompatibility.astrid.test.ts` suite (167 lines) uses the shared `runProviderCompatibilitySuite` with these environment-aware flags:
+
+| Flag | Value | Reason |
+|---|---|---|
+| `skipCheckpoints` | `true` | Astrid does not persist checkpoints; `saveCheckpoint` returns a synthetic ID and `loadCheckpoints` returns `[]` |
+| `versionConflictIsSoft` | `true` | Astrid has **no server-side CAS** — version is incremented locally after save; concurrent writes from another bridge instance silently overwrite |
+| `skipMissingTimelineTests` | `true` | Astrid is a **single-timeline bridge** — `loadTimeline` always returns the bridge's current timeline; "nonexistent timeline" errors are not meaningful |
+| `skipRegisterAsset` | `false` | `registerAsset` is supported via the bridge API (asset registration PUTs to bridge) |
+
+All bridge API calls are mocked via `vi.stubGlobal('fetch', createAstridFetchMock())`. The mock maintains a stateful `storedState` object that simulates the bridge's in-memory config/registry. Module-level dependencies (`localHandleStore`, `mediaMetadata`, `generationAssetResolver`) are mocked via `vi.mock`.
+
+**Skipped shared-suite sections (Astrid):**
+
+| Shared suite section | Skipped? | Reason | Coverage delegated to |
+|---|---|---|---|
+| checkpoints | Yes (`skipCheckpoints: true`) | No checkpoint persistence — `saveCheckpoint` returns synthetic ID, `loadCheckpoints` returns `[]` | `AstridBridgeDataProvider.test.ts` (22 pass / 3 pre-existing) |
+| missing-timeline error types | Yes (`skipMissingTimelineTests: true`) | Single-timeline bridge — `loadTimeline` always returns the bridge's current payload; `TimelineNotFoundError` never thrown for load | Documented limitation in §4.3 |
+| strict CAS version conflict | Behaviorally adapted (`versionConflictIsSoft: true`) | No server-side CAS — version conflict tests assert soft behavior: mismatched `expectedVersion` succeeds, version is not checked against remote head | Documented limitation in §3.3 and §4.3 |
+
+**Contract-recheck row links:**
+
+| Contract-recheck row | How Astrid satisfies it despite environment impossibility |
+|---|---|
+| [CR:M3-007](./extension-platform-contract-recheck.md#24-m3--timelinepatch-atomic-ops-proposals) — Provider version behaviors tested | `providerCompatibility.astrid.test.ts` exercises the shared suite with `versionConflictIsSoft: true`; `AstridBridgeDataProvider.test.ts` covers full integration (22 pass) |
+| [CR:M3-009](./extension-platform-contract-recheck.md#24-m3--timelinepatch-atomic-ops-proposals) — Golden patch replay across providers | Listed as N/A in test coverage summary (§9); golden replay not available locally because the bridge requires File System Access API |
+| [CR:M3-010](./extension-platform-contract-recheck.md#24-m3--timelinepatch-atomic-ops-proposals) — Provider compatibility matrix updated | This document §§2–4.3 document all Astrid limitations; this section (§10.2) provides the environment-impossible audit trail |
+| [CR:M6-004](./extension-platform-contract-recheck.md#27-m6--asset-metadata-parser-contributions-astrid-loop) — Astrid local-first demo/test | `AstridBridgeDataProvider.test.ts` (22 pass) covers extension mutation and persistence |
+| [CR:X-007](./extension-platform-contract-recheck.md#216-cross-milestone--structural-claims) — Provider compatibility documented | This document + this section (§10) provide the complete environment-impossible audit trail |
+
+### 10.3 InMemoryDataProvider — no environment restrictions
+
+Both InMemory variants (**testing** and **browser-runtime**) have no environment prerequisites. They run identically in all environments:
+
+| Variant | Test file | Shared suite flags | Environment notes |
+|---|---|---|---|
+| Testing (`src/tools/video-editor/testing/InMemoryDataProvider`) | `providerCompatibility.inmemory.test.ts` | `skipCheckpoints: false`, `versionConflictIsSoft: false`, `skipRegisterAsset: false` | Pure Map-backed; no env dependencies; canonical shared-suite baseline |
+| Browser-runtime (`src/tools/video-editor/lib/browser-runtime`) | `providerCompatibility.browserInMemory.test.ts` | `skipCheckpoints: false`, `versionConflictIsSoft: false`, `skipRegisterAsset: false` | Uses `createLocalAssetResolver`; works in any JS environment (Node, browser, CI) |
+
+**Contract-recheck row links:**
+
+| Contract-recheck row | How InMemory satisfies it |
+|---|---|
+| [CR:M3-007](./extension-platform-contract-recheck.md#24-m3--timelinepatch-atomic-ops-proposals) | Both variants pass the full shared suite; InMemory is the canonical CAS-semantics reference |
+| [CR:M3-009](./extension-platform-contract-recheck.md#24-m3--timelinepatch-atomic-ops-proposals) | InMemory is the **Reference** for golden replay determinism (81 tests, 3× compile consistency) |
+| [CR:M3-010](./extension-platform-contract-recheck.md#24-m3--timelinepatch-atomic-ops-proposals) | This document §2 defines InMemory as "Full" M3 support |
+| [CR:X-007](./extension-platform-contract-recheck.md#216-cross-milestone--structural-claims) | This document + all sections cover InMemory as the canonical baseline |
+
+### 10.4 Cross-provider impossibility summary
+
+| Provider | Environment-impossible scenario | Resolution | Skipped suite sections | Contract-recheck rows |
+|---|---|---|---|---|
+| **Supabase** | No auth, no DB, no append-service URL | Manual test subset with heavy mocking; strict CAS delegated to InMemory | version conflict (strict CAS), checkpoints, registerAsset, shared-suite versioned save loop | CR:M3-007, CR:M3-009, CR:M3-010, CR:X-007 |
+| **Astrid Bridge** | No File System Access API, no bridge process | Mocked bridge API via `vi.stubGlobal('fetch')`; shared suite with `skipCheckpoints`, `versionConflictIsSoft`, `skipMissingTimelineTests` | checkpoints, missing-timeline errors, strict CAS conflict | CR:M3-007, CR:M3-009, CR:M3-010, CR:M6-004, CR:X-007 |
+| **InMemory (both)** | None | Full shared suite, no skips | None | CR:M3-007, CR:M3-009, CR:M3-010, CR:X-007 |
+
+### 10.5 Gate semantics for environment-impossible checks
+
+Per the shared matrix helper (SD1), the `providerCompatibility` shared suite is a **contract gate**, not a release gate. The following status semantics apply:
+
+| Status | Definition | Example |
+|---|---|---|
+| **pass** | The shared suite passes with all applicable flags in the provider's documented environment | InMemory (both): full pass, no skips |
+| **deferred** | The shared suite section was skipped via a documented flag (`skipCheckpoints`, `skipMissingTimelineTests`, `versionConflictIsSoft`) and the skip reason is linked to a contract-recheck row or blocker entry | Astrid: checkpoints deferred (no persistence), missing-timeline deferred (single-timeline bridge) |
+| **gap** | The shared suite section was not exercised and no alternative coverage exists | N/A — all current gaps have alternative coverage or documented deferral |
+| **blocked** | The shared suite cannot exercise a section and no alternative coverage or deferral exists | None currently — all environment-impossible cases have documented resolutions |
+| **release-blocking** | A gap without documented resolution that affects V1 supported claims | None — see [contract-recheck blocker section](./extension-platform-contract-recheck.md#3-blocker-section) for M14/M12/M11 blockers that are independent of provider compatibility |
+
+**Cross-validation rule:** Every `skip*` flag or `versionConflictIsSoft` usage in a provider compatibility test file must have a corresponding row in this section (§10) linking to contract-recheck rows. The deferred-claims checker (SD2) enforces this: a deferred classification is valid only when backed by an absence check or explicit blocker entry. This section serves as the absence-check evidence for environment-impossible provider skips.
+
+---
+
+## 11. Version History
+
+| Date | Change |
+|---|---|
+| 2026-06-19 | Initial provider compatibility matrix. Coverage: M3 TimelinePatch, Proposals, golden replay across InMemory, Supabase, Astrid. |
+| 2026-06-20 | Added §10: environment-impossible provider checks with contract-recheck row links. Documents every skip flag, mock strategy, and delegated coverage path for Supabase and Astrid Bridge. InMemory (both variants) confirmed as environment-unrestricted canonical baseline. Added §11: version history.

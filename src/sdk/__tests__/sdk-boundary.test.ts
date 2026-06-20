@@ -2021,3 +2021,1513 @@ describe('M9: automation clip contracts are importable from @reigh/editor-sdk', 
     expect(params.keyframes).toHaveLength(0);
   });
 });
+
+// ---------------------------------------------------------------------------
+// M5: Renderability, blocker, material, and artifact type interfaces
+// ---------------------------------------------------------------------------
+
+import type {
+  DeterminismStatus,
+  RenderBlockerReason,
+  RenderRoute,
+  RenderCapability,
+  RenderCapabilityStatus,
+  ContributionRenderability,
+  CapabilityFinding,
+  CapabilityFindingSeverity,
+  RenderBlocker,
+  ShaderMaterializerRequirementScope,
+  RenderMaterial,
+  RenderMaterialRef,
+  RenderMaterialMediaKind,
+  RenderLocatorKind,
+  RenderStorageLocator,
+  RenderArtifact,
+  ArtifactBoundary,
+  BakeContract,
+} from '@reigh/editor-sdk';
+
+import {
+  DETERMINISM_STATUSES,
+  RENDER_BLOCKER_REASONS,
+  RENDER_ROUTES,
+} from '@reigh/editor-sdk';
+
+describe('M5: renderability type interfaces are importable from @reigh/editor-sdk', () => {
+  it('RenderRoute union covers preview, browser-export, worker-export, sidecar-export', () => {
+    const routes: RenderRoute[] = ['preview', 'browser-export', 'worker-export', 'sidecar-export'];
+    expect(routes).toHaveLength(4);
+    expect(routes).toContain('preview');
+    expect(routes).toContain('browser-export');
+    expect(routes).toContain('worker-export');
+    expect(routes).toContain('sidecar-export');
+  });
+
+  it('RENDER_ROUTES const is a frozen array of all four routes', () => {
+    expect(Array.isArray(RENDER_ROUTES)).toBe(true);
+    expect(RENDER_ROUTES).toHaveLength(4);
+    expect(RENDER_ROUTES).toContain('preview');
+    expect(Object.isFrozen(RENDER_ROUTES)).toBe(true);
+  });
+
+  it('DeterminismStatus covers all six statuses', () => {
+    const statuses: DeterminismStatus[] = [
+      'deterministic',
+      'process-dependent',
+      'preview-only',
+      'sampling-required',
+      'unknown',
+      'deferred',
+    ];
+    expect(statuses).toHaveLength(6);
+  });
+
+  it('DETERMINISM_STATUSES is a frozen array', () => {
+    expect(Array.isArray(DETERMINISM_STATUSES)).toBe(true);
+    expect(DETERMINISM_STATUSES.length).toBeGreaterThan(0);
+    expect(Object.isFrozen(DETERMINISM_STATUSES)).toBe(true);
+  });
+
+  it('RenderBlockerReason covers all blocker codes', () => {
+    const reasons: RenderBlockerReason[] = [
+      'route-unsupported',
+      'missing-contribution',
+      'missing-materializer',
+      'process-unavailable',
+      'insufficient-capability',
+      'unknown',
+    ];
+    expect(reasons).toHaveLength(6);
+  });
+
+  it('RENDER_BLOCKER_REASONS is a frozen array', () => {
+    expect(Array.isArray(RENDER_BLOCKER_REASONS)).toBe(true);
+    expect(RENDER_BLOCKER_REASONS.length).toBeGreaterThan(0);
+    expect(Object.isFrozen(RENDER_BLOCKER_REASONS)).toBe(true);
+  });
+
+  it('RenderCapability shape is constructable', () => {
+    const cap: RenderCapability = {
+      route: 'browser-export' as RenderRoute,
+      status: 'supported',
+    };
+    expect(cap.route).toBe('browser-export');
+    expect(cap.status).toBe('supported');
+  });
+
+  it('RenderCapabilityStatus covers supported, blocked, unknown', () => {
+    const statuses: RenderCapabilityStatus[] = ['supported', 'blocked', 'unknown'];
+    expect(statuses).toHaveLength(3);
+  });
+
+  it('ContributionRenderability shape is constructable', () => {
+    const renderability: ContributionRenderability = {
+      capabilities: [
+        { route: 'preview' as RenderRoute, status: 'supported' },
+        { route: 'browser-export' as RenderRoute, status: 'blocked' },
+      ],
+    };
+    expect(renderability.capabilities).toHaveLength(2);
+  });
+
+  it('CapabilityFinding shape is constructable', () => {
+    const finding: CapabilityFinding = {
+      id: 'cf-1',
+      severity: 'warning',
+      route: 'worker-export' as RenderRoute,
+      reason: 'route-unsupported' as RenderBlockerReason,
+      message: 'Worker export is not supported',
+    };
+    expect(finding.id).toBe('cf-1');
+    expect(finding.severity).toBe('warning');
+    expect(finding.route).toBe('worker-export');
+    expect(finding.reason).toBe('route-unsupported');
+  });
+
+  it('CapabilityFindingSeverity covers error, warning, info', () => {
+    const severities: CapabilityFindingSeverity[] = ['error', 'warning', 'info'];
+    expect(severities).toHaveLength(3);
+  });
+
+  it('RenderBlocker extends CapabilityFinding', () => {
+    const blocker: RenderBlocker = {
+      id: 'rb-1',
+      severity: 'error',
+      route: 'browser-export' as RenderRoute,
+      reason: 'missing-materializer' as RenderBlockerReason,
+      message: 'No materializer available',
+    };
+    expect(blocker.severity).toBe('error');
+    expect(blocker.reason).toBe('missing-materializer');
+  });
+
+  it('RenderMaterialRef shape is constructable', () => {
+    const ref: RenderMaterialRef = {
+      id: 'mat-1',
+      mediaKind: 'video' as RenderMaterialMediaKind,
+      locator: { kind: 'asset-registry' as RenderLocatorKind, uri: 'asset://mat-1' },
+      determinism: 'deterministic' as DeterminismStatus,
+    };
+    expect(ref.id).toBe('mat-1');
+    expect(ref.mediaKind).toBe('video');
+    expect(ref.locator.kind).toBe('asset-registry');
+  });
+
+  it('RenderMaterial extends RenderMaterialRef with duration and metadata', () => {
+    const mat: RenderMaterial = {
+      id: 'mat-2',
+      mediaKind: 'image' as RenderMaterialMediaKind,
+      locator: { kind: 'inline' as RenderLocatorKind, uri: 'data:image/png;base64,' },
+      determinism: 'deterministic' as DeterminismStatus,
+      durationSeconds: 5,
+      metadata: { resolution: '1920x1080' },
+    };
+    expect(mat.durationSeconds).toBe(5);
+    expect(mat.metadata?.resolution).toBe('1920x1080');
+  });
+
+  it('RenderMaterialMediaKind covers video, image, audio, sidecar, placeholder', () => {
+    const kinds: RenderMaterialMediaKind[] = ['video', 'image', 'audio', 'sidecar', 'placeholder'];
+    expect(kinds).toHaveLength(5);
+  });
+
+  it('RenderLocatorKind covers asset-registry, inline, temp, virtual', () => {
+    const kinds: RenderLocatorKind[] = ['asset-registry', 'inline', 'temp', 'virtual'];
+    expect(kinds).toHaveLength(4);
+  });
+
+  it('RenderStorageLocator shape is constructable', () => {
+    const loc: RenderStorageLocator = {
+      kind: 'asset-registry' as RenderLocatorKind,
+      uri: 'asset://key-1',
+    };
+    expect(loc.kind).toBe('asset-registry');
+    expect(loc.uri).toBe('asset://key-1');
+  });
+
+  it('ShaderMaterializerRequirementScope covers clip and postprocess', () => {
+    const scopes: ShaderMaterializerRequirementScope[] = ['clip', 'postprocess'];
+    expect(scopes).toHaveLength(2);
+  });
+
+  it('RenderArtifact shape is constructable (compile-only)', () => {
+    const artifact: RenderArtifact = {
+      route: 'browser-export' as RenderRoute,
+      determinism: 'deterministic' as DeterminismStatus,
+      manifestId: 'manifest-1',
+      manifest: {
+        id: 'manifest-1',
+        schemaVersion: 1,
+        artifactId: 'artifact-1',
+        route: 'browser-export' as RenderRoute,
+        determinism: 'deterministic' as DeterminismStatus,
+        producerExtensionId: 'com.example.ext',
+        producerVersion: '1.0.0',
+        consumedMaterialRefs: [],
+        sidecars: [],
+        diagnostics: [],
+      },
+      materials: [],
+      sidecars: [],
+      diagnostics: [],
+    };
+    expect(artifact.route).toBe('browser-export');
+    expect(artifact.manifest.schemaVersion).toBe(1);
+  });
+
+  it('ArtifactBoundary shape is constructable', () => {
+    const boundary: ArtifactBoundary = {
+      artifactId: 'artifact-1',
+      route: 'browser-export' as RenderRoute,
+      mainBytes: 1024,
+      sidecarBytes: new Map(),
+    };
+    expect(boundary.artifactId).toBe('artifact-1');
+    expect(boundary.mainBytes).toBe(1024);
+  });
+
+  it('BakeContract shape is constructable', () => {
+    const contract: BakeContract = {
+      kind: 'asset',
+      targetRef: 'asset-key',
+      bakeAt: '2026-06-20T00:00:00Z',
+    };
+    expect(contract.kind).toBe('asset');
+    expect(contract.targetRef).toBe('asset-key');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// M10: Agent tool type interfaces
+// ---------------------------------------------------------------------------
+
+import type {
+  AgentToolContribution,
+  AgentToolInvocationRequest,
+  AgentToolRequestContext,
+  AgentToolExportContext,
+  AgentToolHandler,
+  AgentToolRegistrationService,
+  AgentToolInputSchema,
+  AgentToolInputProperty,
+  ToolResultFamily,
+  ToolResult,
+  ToolMutationProposalResult,
+  ToolGenerationSessionResult,
+  ToolMaterialArtifactResult,
+  ToolEnrichmentSearchResult,
+  ToolExportResult,
+  ToolProcessResult,
+  ToolUISummaryResult,
+  ToolSourceRef,
+  ToolArtifactRef,
+  ToolSearchResultMatch,
+  ToolResultDiagnostic,
+  GenerationSession,
+  GenerationSessionLiveDelivery,
+  SteeringDecision,
+  SteeringDecisionKind,
+  SteeringLineage,
+  SteeringProvenance,
+  SteeringParameterChange,
+  SteeringParameterHotness,
+  SteeringPriorSamplePolicy,
+  ProcessSpawnConfig,
+} from '@reigh/editor-sdk';
+
+describe('M10: agent tool type interfaces are importable from @reigh/editor-sdk', () => {
+  it('AgentToolContribution shape is constructable (minimal)', () => {
+    const contrib: AgentToolContribution = {
+      id: 'myTool' as ContributionId,
+      kind: 'agentTool',
+      toolId: 'tool.summarize',
+      label: 'Summarize Timeline',
+    };
+    expect(contrib.kind).toBe('agentTool');
+    expect(contrib.toolId).toBe('tool.summarize');
+    expect(contrib.label).toBe('Summarize Timeline');
+  });
+
+  it('AgentToolContribution shape is constructable (full)', () => {
+    const contrib: AgentToolContribution = {
+      id: 'fullTool' as ContributionId,
+      kind: 'agentTool',
+      toolId: 'tool.full',
+      label: 'Full Tool',
+      description: 'A fully specified agent tool',
+      order: 5,
+      when: 'editorHasSelection',
+      resultFamilies: ['mutation/proposal', 'ui/summary'],
+    };
+    expect(contrib.description).toBe('A fully specified agent tool');
+    expect(contrib.resultFamilies).toEqual(['mutation/proposal', 'ui/summary']);
+  });
+
+  it('AgentToolInputSchema shape is constructable', () => {
+    const schema: AgentToolInputSchema = {
+      type: 'object',
+      title: 'Tool Input',
+      properties: {
+        query: { type: 'string', title: 'Query', description: 'Search query' },
+        count: { type: 'number', title: 'Count', default: 10 },
+      },
+      required: ['query'],
+    };
+    expect(schema.type).toBe('object');
+    expect(schema.properties?.query.type).toBe('string');
+    expect(schema.required).toEqual(['query']);
+  });
+
+  it('AgentToolInputProperty covers string, number, boolean, object types', () => {
+    const types: AgentToolInputProperty['type'][] = ['string', 'number', 'boolean', 'object'];
+    expect(types).toHaveLength(4);
+  });
+
+  it('AgentToolInputProperty with nested object is constructable', () => {
+    const prop: AgentToolInputProperty = {
+      type: 'object',
+      title: 'Nested Config',
+      properties: {
+        enabled: { type: 'boolean', title: 'Enabled' },
+      },
+      required: ['enabled'],
+    };
+    expect(prop.type).toBe('object');
+    expect(prop.properties?.enabled.type).toBe('boolean');
+  });
+
+  it('ToolResultFamily covers all seven families', () => {
+    const families: ToolResultFamily[] = [
+      'mutation/proposal',
+      'generation/session',
+      'material/artifact',
+      'enrichment/search',
+      'export',
+      'process',
+      'ui/summary',
+    ];
+    expect(families).toHaveLength(7);
+  });
+
+  it('ToolMutationProposalResult is constructable', () => {
+    const result: ToolMutationProposalResult = {
+      family: 'mutation/proposal',
+      rationale: 'Reorder clips for pacing',
+      patches: [{ version: 1, operations: [] }],
+      affectedObjectIds: ['clip-1', 'clip-2'],
+    };
+    expect(result.family).toBe('mutation/proposal');
+    expect(result.patches).toHaveLength(1);
+  });
+
+  it('ToolGenerationSessionResult is constructable', () => {
+    const session: GenerationSession = {
+      id: 'gen-1',
+      progress: 0,
+      cancelled: false,
+      done: false,
+      diagnostics: [],
+      onProgress: () => ({ dispose() {} }),
+      cancel: () => {},
+      getSampleChannel: () => 'ch' as any,
+      onSample: () => ({ dispose() {} }),
+      getSteeringLineage: () => undefined,
+      complete: () => {},
+    };
+    const result: ToolGenerationSessionResult = {
+      family: 'generation/session',
+      session,
+      rationale: 'Generate a slow-pan effect',
+    };
+    expect(result.family).toBe('generation/session');
+    expect(result.session.id).toBe('gen-1');
+  });
+
+  it('ToolMaterialArtifactResult is constructable', () => {
+    const refs: ToolArtifactRef[] = [
+      { ref: 'asset-1', kind: 'asset', label: 'Generated Image' },
+    ];
+    const result: ToolMaterialArtifactResult = {
+      family: 'material/artifact',
+      refs,
+      rationale: 'Generated background layer',
+    };
+    expect(result.family).toBe('material/artifact');
+    expect(result.refs[0].ref).toBe('asset-1');
+  });
+
+  it('ToolEnrichmentSearchResult is constructable', () => {
+    const result: ToolEnrichmentSearchResult = {
+      family: 'enrichment/search',
+      suggestions: { 'asset-1': { tags: ['sunset'] } },
+    };
+    expect(result.family).toBe('enrichment/search');
+    expect(result.suggestions!['asset-1'].tags).toEqual(['sunset']);
+  });
+
+  it('ToolExportResult is constructable', () => {
+    const result: ToolExportResult = {
+      family: 'export',
+      findings: [{ id: 'f1', severity: 'info', route: 'browser-export', message: 'Ready' }],
+      rationale: 'Export checklist complete',
+    };
+    expect(result.family).toBe('export');
+    expect(result.findings).toHaveLength(1);
+  });
+
+  it('ToolProcessResult is constructable with pending diagnostic', () => {
+    const result: ToolProcessResult = {
+      family: 'process',
+      diagnostics: [{
+        severity: 'info',
+        code: 'agent-tool/process-unavailable',
+        message: 'Process execution is not available until M12',
+      }],
+    };
+    expect(result.family).toBe('process');
+    expect(result.diagnostics[0].code).toBe('agent-tool/process-unavailable');
+  });
+
+  it('ToolUISummaryResult is constructable', () => {
+    const result: ToolUISummaryResult = {
+      family: 'ui/summary',
+      summary: 'The timeline contains 5 clips across 2 tracks.',
+      detail: { clipCount: 5, trackCount: 2 },
+    };
+    expect(result.family).toBe('ui/summary');
+    expect(result.summary).toContain('5 clips');
+  });
+
+  it('ToolResult discriminated union accepts all variant shapes', () => {
+    const mutationResult: ToolResult = { family: 'mutation/proposal', patches: [] };
+    const genResult: ToolResult = {
+      family: 'generation/session',
+      session: {
+        id: 'g', progress: 0, cancelled: false, done: false, diagnostics: [],
+        onProgress: () => ({ dispose() {} }), cancel: () => {},
+        getSampleChannel: () => 'c' as any, onSample: () => ({ dispose() {} }),
+        getSteeringLineage: () => undefined, complete: () => {},
+      },
+    };
+    const summaryResult: ToolResult = { family: 'ui/summary', summary: 'Done' };
+
+    expect(mutationResult.family).toBe('mutation/proposal');
+    expect(genResult.family).toBe('generation/session');
+    expect(summaryResult.family).toBe('ui/summary');
+  });
+
+  it('ToolSourceRef is constructable', () => {
+    const ref: ToolSourceRef = {
+      sourceId: 'clip-1',
+      outputId: 'asset-1',
+      description: 'Generated from clip preview',
+    };
+    expect(ref.sourceId).toBe('clip-1');
+    expect(ref.outputId).toBe('asset-1');
+  });
+
+  it('ToolArtifactRef covers asset, material, placeholder kinds', () => {
+    const kinds: ToolArtifactRef['kind'][] = ['asset', 'material', 'placeholder'];
+    expect(kinds).toHaveLength(3);
+  });
+
+  it('ToolSearchResultMatch is constructable', () => {
+    const match: ToolSearchResultMatch = {
+      key: 'asset-1',
+      score: 0.95,
+      label: 'Sunset image',
+    };
+    expect(match.key).toBe('asset-1');
+    expect(match.score).toBe(0.95);
+  });
+
+  it('ToolResultDiagnostic has agent-tool/ prefixed codes', () => {
+    const diag: ToolResultDiagnostic = {
+      severity: 'error',
+      code: 'agent-tool/invalid-input',
+      message: 'Invalid input schema',
+    };
+    expect(diag.code).toBe('agent-tool/invalid-input');
+    expect(diag.severity).toBe('error');
+  });
+
+  it('AgentToolInvocationRequest shape is constructable', () => {
+    const req: AgentToolInvocationRequest = {
+      toolId: 'tool.summarize',
+      extensionId: 'com.example.ext',
+      contributionId: 'myTool',
+      input: { maxClips: 5 },
+    };
+    expect(req.toolId).toBe('tool.summarize');
+    expect(req.extensionId).toBe('com.example.ext');
+    expect(req.input?.maxClips).toBe(5);
+  });
+
+  it('AgentToolRequestContext shape is constructable', () => {
+    const ctx: AgentToolRequestContext = {
+      timeline: {
+        projectId: 'proj-1',
+        baseVersion: 1,
+        currentVersion: 1,
+        extensionRequirements: [],
+        clips: [],
+        tracks: [],
+        assetKeys: [],
+        app: {},
+      },
+      assets: [{ key: 'asset-1', metadata: { width: 1920 } }],
+      materials: [{ key: 'mat-1' }],
+      meta: { source: 'command-palette' },
+    };
+    expect(ctx.timeline?.projectId).toBe('proj-1');
+    expect(ctx.assets?.[0].key).toBe('asset-1');
+  });
+
+  it('AgentToolExportContext shape is constructable', () => {
+    const exportCtx: AgentToolExportContext = {
+      outputFormatId: 'mp4-export',
+      blockers: [{ reason: 'missing-materializer', message: 'Wait for M12' }],
+      contributionIds: ['myTool'],
+    };
+    expect(exportCtx.outputFormatId).toBe('mp4-export');
+    expect(exportCtx.blockers).toHaveLength(1);
+  });
+
+  it('AgentToolHandler typed function is callable (sync)', () => {
+    const handler: AgentToolHandler = (_req) => ({
+      family: 'ui/summary' as const,
+      summary: 'OK',
+    });
+    const result = handler({
+      toolId: 't', extensionId: 'e', contributionId: 'c',
+    });
+    expect(result.family).toBe('ui/summary');
+  });
+
+  it('AgentToolHandler typed function handles async', async () => {
+    const handler: AgentToolHandler = async (_req) => ({
+      family: 'ui/summary' as const,
+      summary: 'Async OK',
+    });
+    const result = await handler({
+      toolId: 't', extensionId: 'e', contributionId: 'c',
+    });
+    expect((result as ToolUISummaryResult).summary).toBe('Async OK');
+  });
+
+  it('AgentToolRegistrationService interface has registerTool and invokeProcess', () => {
+    const svc: AgentToolRegistrationService = {
+      registerTool(_toolId, _handler) { return { dispose() {} }; },
+      invokeProcess(_toolId, _config) {
+        return Promise.resolve({
+          family: 'process',
+          diagnostics: [{ severity: 'info', code: 'agent-tool/process-unavailable', message: 'Not available' }],
+        });
+      },
+    };
+    expect(typeof svc.registerTool).toBe('function');
+    expect(typeof svc.invokeProcess).toBe('function');
+  });
+
+  it('GenerationSession shape covers progress, cancel, onSample, getSteeringLineage', () => {
+    const session: GenerationSession = {
+      id: 'gen-s1',
+      progress: 42,
+      progressLabel: 'Rendering...',
+      cancelled: false,
+      done: false,
+      diagnostics: [],
+      finalRefs: ['ref-1'],
+      bakedRefs: ['baked-1'],
+      onProgress: () => ({ dispose() {} }),
+      cancel: () => {},
+      getSampleChannel: () => 'ch-gen' as any,
+      onSample: () => ({ dispose() {} }),
+      getSteeringLineage: () => undefined,
+      complete: () => {},
+    };
+    expect(session.progress).toBe(42);
+    expect(session.finalRefs).toEqual(['ref-1']);
+    expect(session.bakedRefs).toEqual(['baked-1']);
+  });
+
+  it('GenerationSessionLiveDelivery is constructable', () => {
+    const steeringDecision: SteeringDecision = {
+      kind: 'fork',
+      sessionId: 'gen-1',
+      lineage: {
+        generationIndex: 1,
+        steerHash: 'hash1',
+        parentRefs: ['gen-0'],
+        producerVersion: '1.0.0',
+        provenance: { prompt: 'P', model: 'M', seed: 1 },
+      },
+      reason: 'Non-hot change',
+    };
+    const delivery: GenerationSessionLiveDelivery = {
+      origin: 'agent-tool',
+      steeringDecision,
+      activeChannels: ['ch-1' as any],
+      finalRefs: ['asset-1'],
+      bakedRefs: ['baked-1'],
+    };
+    expect(delivery.origin).toBe('agent-tool');
+    expect(delivery.steeringDecision.kind).toBe('fork');
+  });
+
+  it('SteeringDecisionKind covers supersede, fork, reject', () => {
+    const kinds: SteeringDecisionKind[] = ['supersede', 'fork', 'reject'];
+    expect(kinds).toHaveLength(3);
+  });
+
+  it('SteeringParameterHotness covers hot, non-hot', () => {
+    const hotness: SteeringParameterHotness[] = ['hot', 'non-hot'];
+    expect(hotness).toHaveLength(2);
+  });
+
+  it('SteeringPriorSamplePolicy covers replace, fork, retain, discard', () => {
+    const policies: SteeringPriorSamplePolicy[] = ['replace', 'fork', 'retain', 'discard'];
+    expect(policies).toHaveLength(4);
+  });
+
+  it('SteeringProvenance is constructable', () => {
+    const provenance: SteeringProvenance = {
+      prompt: 'A slow pan across clouds',
+      model: 'reigh-gen-v1',
+      seed: 42,
+      producerExtensionId: 'ext.generator',
+      tags: ['user-approved'],
+    };
+    expect(provenance.prompt).toBe('A slow pan across clouds');
+    expect(provenance.model).toBe('reigh-gen-v1');
+  });
+
+  it('SteeringParameterChange is constructable', () => {
+    const change: SteeringParameterChange = {
+      path: 'params.prompt',
+      previousValue: 'Clouds',
+      nextValue: 'Storm clouds',
+      hotness: 'hot',
+    };
+    expect(change.path).toBe('params.prompt');
+    expect(change.nextValue).toBe('Storm clouds');
+    expect(change.hotness).toBe('hot');
+  });
+
+  it('SteeringLineage is constructable', () => {
+    const lineage: SteeringLineage = {
+      generationIndex: 3,
+      steerHash: 'abc123',
+      parentRefs: ['session-1', 'session-2'],
+      producerVersion: '1.2.0',
+      provenance: {
+        prompt: 'A slow pan across clouds',
+        model: 'reigh-gen-v1',
+        seed: 42,
+        producerExtensionId: 'ext.generator',
+      },
+      provenanceTags: ['user-approved'],
+    };
+    expect(lineage.generationIndex).toBe(3);
+    expect(lineage.steerHash).toBe('abc123');
+  });
+
+  it('ProcessSpawnConfig is constructable', () => {
+    const config: ProcessSpawnConfig = {
+      command: 'node',
+      args: ['--version'],
+      env: { NODE_ENV: 'test' },
+      cwd: '/tmp',
+    };
+    expect(config.command).toBe('node');
+    expect(config.env?.NODE_ENV).toBe('test');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// M12: Process spec, contribution, status, roundtrip type interfaces
+// ---------------------------------------------------------------------------
+
+import type {
+  ProcessLifecycleState,
+  ProcessProgressEvent,
+  ProcessLogSummary,
+  ProcessEnvFieldSpec,
+  ProcessOperationSpec,
+  ProcessStatusBase,
+} from '@reigh/editor-sdk';
+
+describe('M12: process type interfaces are importable from @reigh/editor-sdk', () => {
+  it('ProcessLifecycleState covers all 8 states', () => {
+    const states: ProcessLifecycleState[] = [
+      'not-installed', 'stopped', 'starting', 'ready',
+      'busy', 'degraded', 'failed', 'stopping',
+    ];
+    expect(states).toHaveLength(8);
+  });
+
+  it('ProcessSpec shape is constructable', () => {
+    const spec: ProcessSpec = {
+      id: 'blender-mcp',
+      label: 'Blender MCP',
+      spawn: { command: 'blender-mcp', args: ['--stdio'] },
+      protocol: 'stdio-jsonrpc',
+      healthCheck: 'ping',
+      shutdown: 'SIGTERM',
+      restartPolicy: 'on-failure',
+    };
+    expect(spec.id).toBe('blender-mcp');
+    expect(spec.protocol).toBe('stdio-jsonrpc');
+    expect(spec.spawn.command).toBe('blender-mcp');
+  });
+
+  it('ProcessSpec with operations and capabilities is constructable', () => {
+    const op: ProcessOperationSpec = {
+      id: 'render-pass',
+      label: 'Render Pass',
+      outputKinds: ['material', 'sidecar'],
+      routes: ['browser-export' as RenderRoute],
+      determinism: 'deterministic' as DeterminismStatus,
+    };
+    const spec: ProcessSpec = {
+      id: 'full-process',
+      label: 'Full Process',
+      spawn: { command: 'node', args: ['worker.js'] },
+      protocol: 'stdio-jsonrpc',
+      operations: [op],
+      capabilities: {
+        routes: ['browser-export' as RenderRoute],
+        determinism: 'deterministic' as DeterminismStatus,
+        capabilityRequirements: [],
+        sourceRefs: [],
+        fullySupported: true,
+        anyBlocked: false,
+      },
+    };
+    expect(spec.operations).toHaveLength(1);
+    expect(spec.operations![0].id).toBe('render-pass');
+    expect(spec.capabilities?.fullySupported).toBe(true);
+  });
+
+  it('ProcessContribution shape is constructable', () => {
+    const contrib: ProcessContribution = {
+      id: 'proc-contrib' as ContributionId,
+      kind: 'process',
+      label: 'My Process',
+      spec: {
+        id: 'my-process',
+        label: 'My Process',
+        spawn: { command: 'echo', args: ['hello'] },
+        protocol: 'stdio-jsonrpc',
+      },
+    };
+    expect(contrib.kind).toBe('process');
+    expect(contrib.spec.id).toBe('my-process');
+  });
+
+  it('ProcessStatus discriminated union covers not-installed variant', () => {
+    const status: ProcessStatus = {
+      processId: 'p1',
+      state: 'not-installed',
+      installHint: 'Run: npm install -g my-tool',
+    };
+    expect(status.state).toBe('not-installed');
+    if (status.state === 'not-installed') {
+      expect(status.installHint).toBe('Run: npm install -g my-tool');
+    }
+  });
+
+  it('ProcessStatus discriminated union covers ready variant', () => {
+    const status: ProcessStatus = {
+      processId: 'p1',
+      state: 'ready',
+      pid: 1234,
+      version: { semver: '1.0.0' },
+    };
+    expect(status.state).toBe('ready');
+    if (status.state === 'ready') {
+      expect(status.pid).toBe(1234);
+    }
+  });
+
+  it('ProcessStatus discriminated union covers busy variant', () => {
+    const status: ProcessStatus = {
+      processId: 'p1',
+      state: 'busy',
+      operationId: 'render-pass',
+      progress: { operationId: 'render-pass', percent: 50 },
+    };
+    expect(status.state).toBe('busy');
+    if (status.state === 'busy') {
+      expect(status.progress?.percent).toBe(50);
+    }
+  });
+
+  it('ProcessStatus discriminated union covers failed variant', () => {
+    const status: ProcessStatus = {
+      processId: 'p1',
+      state: 'failed',
+      errorCode: 'spawn-failed',
+      recoverable: true,
+    };
+    expect(status.state).toBe('failed');
+    if (status.state === 'failed') {
+      expect(status.errorCode).toBe('spawn-failed');
+      expect(status.recoverable).toBe(true);
+    }
+  });
+
+  it('ProcessRoundtripRequest shape is constructable', () => {
+    const req: ProcessRoundtripRequest = {
+      id: 'roundtrip-1',
+      processId: 'blender-mcp',
+      operationId: 'render-pass',
+      inputMaterialRefs: [],
+      params: { passName: 'beauty' },
+      frameRange: { startFrame: 0, endFrame: 24 },
+    };
+    expect(req.processId).toBe('blender-mcp');
+    expect(req.operationId).toBe('render-pass');
+    expect(req.frameRange?.endFrame).toBe(24);
+  });
+
+  it('ProcessRoundtripResult shape is constructable', () => {
+    const result: ProcessRoundtripResult = {
+      requestId: 'roundtrip-1',
+      processId: 'blender-mcp',
+      operationId: 'render-pass',
+      status: 'completed',
+      returnedMaterials: [],
+      sidecars: [],
+      availableActions: ['insert-as-clip'],
+    };
+    expect(result.status).toBe('completed');
+    expect(result.availableActions).toEqual(['insert-as-clip']);
+  });
+
+  it('ProcessProgressEvent shape is constructable', () => {
+    const evt: ProcessProgressEvent = {
+      operationId: 'render-pass',
+      percent: 75,
+      message: 'Rendering frame 18/24',
+      currentStep: 'render',
+      totalSteps: 24,
+    };
+    expect(evt.operationId).toBe('render-pass');
+    expect(evt.percent).toBe(75);
+  });
+
+  it('ProcessLogSummary shape is constructable', () => {
+    const log: ProcessLogSummary = {
+      level: 'info',
+      message: 'Process started',
+      at: '2026-06-20T00:00:00.000Z',
+      detail: { pid: 1234 },
+    };
+    expect(log.level).toBe('info');
+    expect(log.message).toBe('Process started');
+  });
+
+  it('ProcessEnvFieldSpec shape is constructable', () => {
+    const env: ProcessEnvFieldSpec = {
+      key: 'API_KEY',
+      label: 'API Key',
+      description: 'API key for external service',
+      required: true,
+      secret: true,
+      defaultValue: '',
+      platformDefaults: { darwin: '/usr/local/bin/tool' },
+    };
+    expect(env.key).toBe('API_KEY');
+    expect(env.secret).toBe(true);
+  });
+
+  it('ProcessOperationSpec shape is constructable', () => {
+    const op: ProcessOperationSpec = {
+      id: 'export-show-control',
+      label: 'Export Show Control',
+      description: 'Export a show-control package',
+      outputKinds: ['material', 'sidecar', 'diagnostic'],
+      requiredCapabilities: ['sidecar-export'],
+      routes: ['sidecar-export' as RenderRoute],
+      determinism: 'process-dependent' as DeterminismStatus,
+    };
+    expect(op.id).toBe('export-show-control');
+    expect(op.outputKinds).toEqual(['material', 'sidecar', 'diagnostic']);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// M13: Shader type interfaces (SDK boundary proof)
+// ---------------------------------------------------------------------------
+
+import type {
+  ShaderContribution,
+  ShaderRegistrationService,
+  ShaderRegistrationOptions,
+  ShaderInlineSource,
+  ShaderSourceDescriptor,
+  ShaderPassKind,
+  ShaderPassDescriptor,
+  ShaderColorSpace,
+  ShaderFallbackBehavior,
+  ShaderTextureSourceKind,
+  ShaderTextureFilter,
+  ShaderTextureWrap,
+  ShaderUniformDefinition,
+  ShaderUniformType,
+  ShaderUniformEnumOption,
+  ShaderTextureRef,
+  ShaderUniformDefaultValue,
+  ShaderTextureDefinition,
+  ShaderUniformSchema,
+  ShaderTextureSchema,
+  ShaderMaterializerDescriptor,
+} from '@reigh/editor-sdk';
+
+describe('M13: shader type interfaces are importable from @reigh/editor-sdk', () => {
+  it('ShaderPassKind covers clip, overlay, postprocess', () => {
+    const kinds: ShaderPassKind[] = ['clip', 'overlay', 'postprocess'];
+    expect(kinds).toHaveLength(3);
+  });
+
+  it('ShaderColorSpace covers srgb and linear', () => {
+    const spaces: ShaderColorSpace[] = ['srgb', 'linear'];
+    expect(spaces).toHaveLength(2);
+  });
+
+  it('ShaderFallbackBehavior covers bypass, transparent, solid-black', () => {
+    const fallbacks: ShaderFallbackBehavior[] = ['bypass', 'transparent', 'solid-black'];
+    expect(fallbacks).toHaveLength(3);
+  });
+
+  it('ShaderTextureSourceKind covers clip-frame, static-image-asset, live-generated-frame', () => {
+    const kinds: ShaderTextureSourceKind[] = ['clip-frame', 'static-image-asset', 'live-generated-frame'];
+    expect(kinds).toHaveLength(3);
+  });
+
+  it('ShaderTextureFilter covers nearest and linear', () => {
+    const filters: ShaderTextureFilter[] = ['nearest', 'linear'];
+    expect(filters).toHaveLength(2);
+  });
+
+  it('ShaderTextureWrap covers clamp-to-edge, repeat, mirrored-repeat', () => {
+    const wraps: ShaderTextureWrap[] = ['clamp-to-edge', 'repeat', 'mirrored-repeat'];
+    expect(wraps).toHaveLength(3);
+  });
+
+  it('ShaderInlineSource is constructable', () => {
+    const src: ShaderInlineSource = {
+      kind: 'inline',
+      fragment: 'void main() { gl_FragColor = vec4(1.0); }',
+      vertex: 'attribute vec2 position; void main() { gl_Position = vec4(position, 0.0, 1.0); }',
+    };
+    expect(src.kind).toBe('inline');
+    expect(src.fragment).toContain('gl_FragColor');
+    expect(src.vertex).toContain('gl_Position');
+  });
+
+  it('ShaderPassDescriptor is constructable', () => {
+    const pass: ShaderPassDescriptor = {
+      kind: 'clip',
+      inputTextureUniform: 'u_clip',
+      colorSpace: 'srgb',
+      alpha: 'preserve',
+    };
+    expect(pass.kind).toBe('clip');
+    expect(pass.inputTextureUniform).toBe('u_clip');
+    expect(pass.alpha).toBe('preserve');
+  });
+
+  it('ShaderUniformType covers all 11 V1 types', () => {
+    const types: ShaderUniformType[] = [
+      'float', 'int', 'bool', 'vec2', 'vec3', 'vec4',
+      'color', 'enum', 'textureRef', 'frame', 'time',
+    ];
+    expect(types).toHaveLength(11);
+  });
+
+  it('ShaderUniformDefinition is constructable (float)', () => {
+    const def: ShaderUniformDefinition = {
+      name: 'u_intensity',
+      label: 'Intensity',
+      type: 'float',
+      default: 0.5,
+      min: 0,
+      max: 1,
+      step: 0.01,
+    };
+    expect(def.name).toBe('u_intensity');
+    expect(def.default).toBe(0.5);
+  });
+
+  it('ShaderUniformDefinition is constructable (enum)', () => {
+    const def: ShaderUniformDefinition = {
+      name: 'u_mode',
+      label: 'Mode',
+      type: 'enum',
+      default: 'blend',
+      options: [
+        { label: 'Blend', value: 'blend' },
+        { label: 'Add', value: 'add' },
+      ],
+    };
+    expect(def.type).toBe('enum');
+    expect(def.options).toHaveLength(2);
+  });
+
+  it('ShaderUniformDefinition is constructable (textureRef)', () => {
+    const ref: ShaderTextureRef = { kind: 'clip-frame' };
+    const def: ShaderUniformDefinition = {
+      name: 'u_source',
+      label: 'Source',
+      type: 'textureRef',
+      default: ref,
+    };
+    expect(def.type).toBe('textureRef');
+    expect((def.default as ShaderTextureRef).kind).toBe('clip-frame');
+  });
+
+  it('ShaderTextureRef covers all source kinds', () => {
+    const refs: ShaderTextureRef[] = [
+      { kind: 'clip-frame' },
+      { kind: 'static-image-asset', ref: 'asset-1' },
+      { kind: 'live-generated-frame', ref: 'gen-frame-1' },
+    ];
+    expect(refs).toHaveLength(3);
+  });
+
+  it('ShaderTextureDefinition is constructable', () => {
+    const tex: ShaderTextureDefinition = {
+      name: 'clipFrame',
+      uniform: 'u_clip',
+      sourceKind: 'clip-frame',
+      required: true,
+      colorSpace: 'srgb',
+      filter: 'linear',
+      wrap: 'clamp-to-edge',
+    };
+    expect(tex.name).toBe('clipFrame');
+    expect(tex.required).toBe(true);
+  });
+
+  it('ShaderContribution shape is constructable', () => {
+    const contrib: ShaderContribution = {
+      id: 'shader-glow' as ContributionId,
+      kind: 'shader',
+      shaderId: 'shader.clipGlow',
+      label: 'Clip Glow',
+      pass: { kind: 'clip', inputTextureUniform: 'u_clip' },
+      source: { kind: 'inline', fragment: 'void main() {}' },
+      uniforms: [{ name: 'u_intensity', label: 'Intensity', type: 'float', default: 0.5 }],
+      textures: [{ name: 'clipFrame', sourceKind: 'clip-frame' }],
+      fallback: 'bypass',
+    };
+    expect(contrib.kind).toBe('shader');
+    expect(contrib.shaderId).toBe('shader.clipGlow');
+    expect(contrib.uniforms).toHaveLength(1);
+  });
+
+  it('ShaderRegistrationOptions is constructable', () => {
+    const opts: ShaderRegistrationOptions = {
+      label: 'My Shader',
+      pass: 'clip',
+      uniforms: [{ name: 'u_t', label: 'Time', type: 'time' }],
+      fallback: 'transparent',
+    };
+    expect(opts.label).toBe('My Shader');
+    expect(opts.pass).toBe('clip');
+  });
+
+  it('ShaderRegistrationService interface has registerShader', () => {
+    const svc: ShaderRegistrationService = {
+      registerShader(_shaderId, _source, _options) {
+        return { dispose() {} };
+      },
+    };
+    expect(typeof svc.registerShader).toBe('function');
+    const handle = svc.registerShader('shader.test', { kind: 'inline', fragment: 'void main() {}' });
+    expect(typeof handle.dispose).toBe('function');
+  });
+
+  it('ShaderMaterializerDescriptor is constructable', () => {
+    const desc: ShaderMaterializerDescriptor = {
+      routes: ['browser-export' as RenderRoute],
+      requiredCapabilities: ['browser-export'],
+      unavailableMessage: 'Materializer not available until render planning',
+    };
+    expect(desc.routes).toEqual(['browser-export']);
+    expect(desc.unavailableMessage).toBeDefined();
+  });
+
+  it('ShaderUniformEnumOption is constructable', () => {
+    const option: ShaderUniformEnumOption = { label: 'Blend', value: 'blend' };
+    expect(option.label).toBe('Blend');
+    expect(option.value).toBe('blend');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Diagnostics, migration, packaging, settings type interfaces
+// ---------------------------------------------------------------------------
+
+import type {
+  DiagnosticSeverity,
+  DiagnosticSourceRange,
+  Diagnostic,
+  DiagnosticCollection,
+  ExportDiagnostic,
+  ExtensionDiagnosticsService,
+  ExtensionChromeService,
+  ChromeEvent,
+  ChromeToastPayload,
+  ChromeProgressPayload,
+  ChromeEventPayload,
+  ExtensionI18nService,
+  MigrationHookKind,
+  MigrationDeclaration,
+  ExtensionDependency,
+  DependencyPosture,
+  ExtensionSettingsSchema,
+  IntegrityAlgorithm,
+  IntegrityHash,
+  InstalledExtensionMetadata,
+  InstalledExtensionPackage,
+  ManifestValidationMode,
+  ManifestValidationResult,
+  ExtensionPermissionDeclaration,
+} from '@reigh/editor-sdk';
+
+describe('SDK diagnostics types are importable from @reigh/editor-sdk', () => {
+  it('DiagnosticSeverity covers error, warning, info', () => {
+    const severities: DiagnosticSeverity[] = ['error', 'warning', 'info'];
+    expect(severities).toHaveLength(3);
+  });
+
+  it('DiagnosticSourceRange is constructable', () => {
+    const range: DiagnosticSourceRange = {
+      startLine: 10,
+      startCol: 5,
+      endLine: 15,
+      endCol: 20,
+    };
+    expect(range.startLine).toBe(10);
+    expect(range.endCol).toBe(20);
+  });
+
+  it('Diagnostic is constructable', () => {
+    const diag: Diagnostic = {
+      id: 'diag-1',
+      severity: 'error',
+      code: 'test/error',
+      message: 'Test diagnostic',
+      extensionId: 'com.test.ext',
+      sourceRange: { startLine: 1, startCol: 1, endLine: 1, endCol: 10 },
+      relatedRanges: [{ startLine: 2, startCol: 1, endLine: 2, endCol: 5 }],
+      detail: { clipId: 'clip-1' },
+    };
+    expect(diag.id).toBe('diag-1');
+    expect(diag.sourceRange?.startLine).toBe(1);
+    expect(diag.relatedRanges).toHaveLength(1);
+  });
+
+  it('ExportDiagnostic has export/-prefixed codes', () => {
+    const diag: ExportDiagnostic = {
+      severity: 'warning',
+      code: 'export/unknown-clip-type',
+      message: 'Clip type not registered for export',
+      detail: { clipId: 'clip-1', clipType: 'custom-clip' },
+    };
+    expect(diag.code).toBe('export/unknown-clip-type');
+    expect(diag.detail?.clipId).toBe('clip-1');
+    expect(diag.detail?.clipType).toBe('custom-clip');
+  });
+
+  it('ExportDiagnostic detail includes shader scope fields', () => {
+    const diag: ExportDiagnostic = {
+      severity: 'error',
+      code: 'export/missing-shader-materializer',
+      message: 'Shader has no materializer for export route',
+      detail: {
+        shaderId: 'shader.glow',
+        shaderScope: 'clip' as ShaderMaterializerRequirementScope,
+      },
+    };
+    expect(diag.detail?.shaderId).toBe('shader.glow');
+    expect(diag.detail?.shaderScope).toBe('clip');
+  });
+
+  it('ExtensionDiagnosticsService interface shape is correct', () => {
+    const svc: ExtensionDiagnosticsService = {
+      report(_diag) {},
+      diagnostics: [],
+    };
+    expect(typeof svc.report).toBe('function');
+    expect(Array.isArray(svc.diagnostics)).toBe(true);
+  });
+
+  it('ExtensionChromeService interface shape is correct', () => {
+    const svc: ExtensionChromeService = {
+      toast(_msg, _severity) {},
+      progress(_percent, _label) {},
+      subscribe(_event, _handler) { return { dispose() {} }; },
+      focus(_selector) {},
+      announce(_message, _politeness) {},
+    };
+    expect(typeof svc.toast).toBe('function');
+    expect(typeof svc.progress).toBe('function');
+    expect(typeof svc.subscribe).toBe('function');
+    expect(typeof svc.focus).toBe('function');
+    expect(typeof svc.announce).toBe('function');
+  });
+
+  it('ChromeEvent covers toast, progress, save, renderStatus', () => {
+    const events: ChromeEvent[] = ['toast', 'progress', 'save', 'renderStatus'];
+    expect(events).toHaveLength(4);
+  });
+
+  it('ChromeEventPayload maps toast to ChromeToastPayload', () => {
+    const payload: ChromeEventPayload<'toast'> = {
+      message: 'Hello',
+      severity: 'info',
+    };
+    expect(payload.message).toBe('Hello');
+    expect(payload.severity).toBe('info');
+  });
+
+  it('ChromeEventPayload maps progress to ChromeProgressPayload', () => {
+    const payload: ChromeEventPayload<'progress'> = {
+      percent: 75,
+      label: 'Exporting...',
+    };
+    expect(payload.percent).toBe(75);
+    expect(payload.label).toBe('Exporting...');
+  });
+
+  it('ExtensionI18nService interface shape is correct', () => {
+    const svc: ExtensionI18nService = {
+      t(key, _replacements) { return key; },
+    };
+    expect(typeof svc.t).toBe('function');
+    expect(svc.t('hello')).toBe('hello');
+  });
+});
+
+describe('SDK migration types are importable from @reigh/editor-sdk', () => {
+  it('MigrationHookKind covers settings, contribution, manifest', () => {
+    const kinds: MigrationHookKind[] = ['settings', 'contribution', 'manifest'];
+    expect(kinds).toHaveLength(3);
+  });
+
+  it('MigrationDeclaration shape is constructable', () => {
+    const migration: MigrationDeclaration = {
+      kind: 'settings',
+      fromVersion: '1.0.0',
+      toVersion: '2.0.0',
+      handler: 'migrateSettings',
+      description: 'Migrate settings from v1 to v2',
+    };
+    expect(migration.kind).toBe('settings');
+    expect(migration.fromVersion).toBe('1.0.0');
+    expect(migration.toVersion).toBe('2.0.0');
+    expect(migration.handler).toBe('migrateSettings');
+  });
+});
+
+describe('SDK packaging types are importable from @reigh/editor-sdk', () => {
+  it('DependencyPosture covers required and optional', () => {
+    const postures: DependencyPosture[] = ['required', 'optional'];
+    expect(postures).toHaveLength(2);
+  });
+
+  it('ExtensionDependency shape is constructable', () => {
+    const dep: ExtensionDependency = {
+      extensionId: 'com.example.lib',
+      versionRange: '^1.0.0',
+      posture: 'required',
+    };
+    expect(dep.extensionId).toBe('com.example.lib');
+    expect(dep.versionRange).toBe('^1.0.0');
+    expect(dep.posture).toBe('required');
+  });
+
+  it('ExtensionDependency with optional and contributionIds is constructable', () => {
+    const dep: ExtensionDependency = {
+      extensionId: 'com.example.optional',
+      versionRange: '>=1.0.0',
+      optional: true,
+      posture: 'optional',
+      contributionIds: ['toolbar-main'],
+    };
+    expect(dep.optional).toBe(true);
+    expect(dep.contributionIds).toEqual(['toolbar-main']);
+  });
+
+  it('IntegrityAlgorithm is only sha256', () => {
+    const algo: IntegrityAlgorithm = 'sha256';
+    expect(algo).toBe('sha256');
+  });
+
+  it('IntegrityHash shape is constructable', () => {
+    const hash: IntegrityHash = {
+      algorithm: 'sha256',
+      value: 'dGVzdC1oYXNo',
+    };
+    expect(hash.algorithm).toBe('sha256');
+    expect(hash.value).toBe('dGVzdC1oYXNo');
+  });
+
+  it('ExtensionSettingsSchema shape is constructable', () => {
+    const schema: ExtensionSettingsSchema = {
+      version: 1,
+      schema: { type: 'object', properties: {} },
+    };
+    expect(schema.version).toBe(1);
+    expect(schema.schema?.type).toBe('object');
+  });
+
+  it('InstalledExtensionMetadata shape is constructable', () => {
+    const meta: InstalledExtensionMetadata = {
+      extensionId: 'com.example.ext' as ExtensionId,
+      version: '1.0.0',
+      integrity: { algorithm: 'sha256', value: 'abc' },
+      enabled: true,
+      publisher: 'Example Corp',
+      license: 'MIT',
+    };
+    expect(meta.extensionId).toBe('com.example.ext');
+    expect(meta.enabled).toBe(true);
+    expect(meta.publisher).toBe('Example Corp');
+  });
+
+  it('InstalledExtensionPackage shape is constructable', () => {
+    const pkg: InstalledExtensionPackage = {
+      metadata: {
+        extensionId: 'com.example.ext' as ExtensionId,
+        version: '1.0.0',
+        integrity: { algorithm: 'sha256', value: 'abc' },
+        enabled: true,
+      },
+      manifest: {
+        id: 'com.example.ext' as ExtensionId,
+        version: '1.0.0',
+        label: 'Test Extension',
+        publisher: 'Example Corp',
+        license: 'MIT',
+      },
+      bundleContent: 'export function activate() {}',
+    };
+    expect(pkg.metadata.extensionId).toBe('com.example.ext');
+    expect(pkg.manifest.id).toBe('com.example.ext');
+    expect(pkg.bundleContent).toContain('export function activate');
+  });
+
+  it('ManifestValidationMode covers dev and installed', () => {
+    const modes: ManifestValidationMode[] = ['dev', 'installed'];
+    expect(modes).toHaveLength(2);
+  });
+
+  it('ManifestValidationResult shape is constructable', () => {
+    const result: ManifestValidationResult = {
+      valid: true,
+      errors: [],
+      warnings: [],
+    };
+    expect(result.valid).toBe(true);
+    expect(result.errors).toHaveLength(0);
+  });
+
+  it('ExtensionPermissionDeclaration shape is constructable', () => {
+    const perm: ExtensionPermissionDeclaration = {
+      reason: 'Needs network access for API calls',
+      posture: { network: true },
+    };
+    expect(perm.reason).toContain('network');
+    expect(perm.posture?.network).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// M10: Internal agent tool types are NOT leaked through @reigh/editor-sdk
+// ---------------------------------------------------------------------------
+
+describe('M10: internal agent tool types are NOT re-exported from @reigh/editor-sdk', () => {
+  const M10_INTERNAL_FORBIDDEN = [
+    'agentToolRegistry',
+    'AgentToolRegistry',
+    'registerAgentTool',
+    'resolveAgentTool',
+    'executeAgentTool',
+    'AgentToolExecutor',
+    'agentToolStore',
+    'createAgentToolRegistrationService',
+  ];
+
+  it('none of the forbidden M10 internal names appear as SDK value exports', () => {
+    const valueExports = Object.keys(sdkStar);
+    for (const forbidden of M10_INTERNAL_FORBIDDEN) {
+      expect(valueExports).not.toContain(forbidden);
+    }
+  });
+
+  it('forbidden M10 internal names are not accessible on the SDK namespace', () => {
+    const ns = sdkStar as Record<string, unknown>;
+    for (const forbidden of M10_INTERNAL_FORBIDDEN) {
+      expect(ns[forbidden]).toBeUndefined();
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// M5/M12: Internal renderability types are NOT leaked
+// ---------------------------------------------------------------------------
+
+describe('M5/M12: internal renderability types are NOT re-exported from @reigh/editor-sdk', () => {
+  const M5_M12_INTERNAL_FORBIDDEN = [
+    'renderabilityRegistry',
+    'RenderabilityChecker',
+    'createRenderabilityChecker',
+    'resolveRenderRoute',
+    'executeRenderPlan',
+    'RenderPipeline',
+    'RenderPipelineExecutor',
+    'materializeEffect',
+    'materializeTransition',
+    'isMaterializerAvailable',
+    'processRegistry',
+    'ProcessRegistry',
+    'createProcessRegistry',
+    'registerProcess',
+    'resolveProcess',
+    'spawnProcess',
+    'killProcess',
+  ];
+
+  it('none of the forbidden renderability/process internal names appear as SDK value exports', () => {
+    const valueExports = Object.keys(sdkStar);
+    for (const forbidden of M5_M12_INTERNAL_FORBIDDEN) {
+      expect(valueExports).not.toContain(forbidden);
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Semver-sensitive SDK export snapshot
+// ---------------------------------------------------------------------------
+
+describe('semver-sensitive SDK export snapshot', () => {
+  it('SDK value exports include semver-aware constants and API version gate', () => {
+    const valueExports = Object.keys(sdkStar);
+    // Contract: SDK must export CONTRIBUTION_KIND_MILESTONE mapping each kind to its
+    // owning milestone so extensions can feature-detect by milestone string.
+    expect(valueExports).toContain('CONTRIBUTION_KIND_MILESTONE');
+    expect(valueExports).toContain('CREATIVE_MEMBER_MILESTONE');
+
+    // Contract: SDK must export the extension defines / validation surface.
+    expect(valueExports).toContain('defineExtension');
+    expect(valueExports).toContain('validateExtensionId');
+    expect(valueExports).toContain('validateManifest');
+    expect(valueExports).toContain('validateInstalledPackage');
+
+    // Contract: SDK must export the contribution bridging gate.
+    expect(valueExports).toContain('contributionKindNotYetBridged');
+
+    // Contract: SDK must export renderability constants for cross-milestone
+    // blocker/reason enumeration.
+    expect(valueExports).toContain('DETERMINISM_STATUSES');
+    expect(valueExports).toContain('RENDER_BLOCKER_REASONS');
+    expect(valueExports).toContain('RENDER_ROUTES');
+
+    // Contract: SDK must export the migration surface for semver-sensitive upgrades.
+    expect(valueExports).toContain('runSettingsMigration');
+    expect(valueExports).toContain('getManifestSettingsSchemaVersion');
+
+    // Contract: SDK must export the settings service factory.
+    expect(valueExports).toContain('createExtensionSettingsService');
+  });
+
+  it('CONTRIBUTION_KIND_MILESTONE maps all known kinds to milestone strings', () => {
+    const mandatoryKinds = [
+      'slot', 'dialog', 'panel', 'inspectorSection',
+      'command', 'keybinding', 'contextMenuItem',
+      'parser', 'outputFormat', 'searchProvider',
+      'effect', 'transition', 'clipType', 'shader',
+      'automation', 'agentTool', 'agent', 'process',
+      'timelineOverlay', 'metadataFacet', 'assetDetailSection',
+    ];
+    for (const kind of mandatoryKinds) {
+      expect(CONTRIBUTION_KIND_MILESTONE).toHaveProperty(kind);
+      expect(CONTRIBUTION_KIND_MILESTONE[kind as keyof typeof CONTRIBUTION_KIND_MILESTONE]).toMatch(/^M\d+$/);
+    }
+  });
+
+  it('SDK value export count remains within semver-safe public surface range', () => {
+    // After adding the new re-exports (renderability constants, migration, settings
+    // service) the count may increase, but it must stay under a reasonable ceiling
+    // to prevent accidental surface expansion.
+    const valueCount = Object.keys(sdkStar).length;
+    // Updated ceiling to account for expanded legitimate public surface
+    expect(valueCount).toBeLessThan(200);
+    expect(valueCount).toBeGreaterThan(0);
+  });
+});

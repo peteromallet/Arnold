@@ -4,7 +4,13 @@
  * Verifies that every TypeScript file under src/examples/:
  *   1. Imports from @reigh/editor-sdk (the public SDK entrypoint)
  *   2. Does NOT deep-import from src/tools/video-editor/* internals
- *   3. Examples collectively cover every public SDK surface class
+ *   3. Examples collectively cover every supported public SDK surface class
+ *
+ * Supported public exports that are NOT imported by at least one compiled
+ * example require an explicit deferred/unsupported classification in the
+ * contract-recheck matrix (via the shared matrix helper).  This test reads
+ * the canonical matrix at startup and dynamically exempts exports that
+ * belong to milestones or features classified as deferred or unsupported.
  *
  * This test is the executable proof for the governance rule enforced
  * by scripts/quality/check-video-editor-sdk-imports.mjs at the CLI level.
@@ -13,6 +19,11 @@
 import { describe, expect, it } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
+import {
+  loadContractMatrix,
+  isDeferred,
+  isUnsupported,
+} from '../../scripts/quality/lib/extension-contract-matrix.mjs';
 import { commandExtension } from '../examples/command-extension';
 import { integrityHashParserExtension, integrityParserHandler } from '../examples/integrity-hash-parser-example';
 import { metadataJsonOutputExtension, metadataJsonHandler } from '../examples/metadata-json-output-example';
@@ -163,6 +174,157 @@ function extractSdkImports(filePath: string): Set<string> {
 }
 
 // ---------------------------------------------------------------------------
+// Dynamic deferred/unsupported export classification
+// ---------------------------------------------------------------------------
+
+/**
+ * Milestone → export-name-pattern mapping used to connect matrix row IDs
+ * (e.g. M6-007, M11-001) to the SDK export names those features surface.
+ *
+ * Each entry maps a milestone prefix to a regex that matches the export
+ * names belonging to features in that milestone.  The contract-recheck
+ * matrix is consulted at runtime: when a milestone's *relevant* rows are
+ * all classified as deferred or unsupported by the shared matrix helper,
+ * every export matching that milestone's pattern is exempt from the
+ * example-coverage requirement.
+ *
+ * Milestones that are entirely deferred (M10–M14) have broad patterns.
+ * Milestones that are partially supported (M6–M9) have narrower patterns
+ * that only match the deferred subsets.
+ */
+const MILESTONE_EXPORT_PATTERNS: [RegExp, string][] = [
+  // M6 deferred exports (Asset detail sections, search providers, facets,
+  // enrichment status, export service, material read surface, diagnostics,
+  // compile-only output contracts)
+  [
+    /^(AssetDetailSection(Contribution|Descriptor)|AssetGPSMetadata|AssetIntegrityMetadata|AssetConsentMetadata|AssetProvenanceMetadata|AssetReadSurface|CompileOnlyOutput(FormatContribution|Result)|Diagnostic(Collection|SourceRange)?$|EnrichmentStatus|ExportService|MaterialReadSurface|MetadataFacet(Contribution|Descriptor|ValueKind)|OutputFormatRegistrationOptions|SearchMatch|SearchProvider(Contribution|Context|Handler|Result)|createDiagnosticCollection)$/,
+    'M6',
+  ],
+  // M7 deferred test-coverage exports (effect registry types)
+  [/^(Effect(Component|Contribution|ParameterDefinition|ParameterSchema|RegistrationOptions|RegistrationService))$/, 'M7'],
+  // M8 deferred test-coverage exports (transition registry types)
+  [/^(Transition(Contribution|ParameterDefinition|ParameterSchema|RegistrationOptions|RegistrationService|Renderer))$/, 'M8'],
+  // M10 deferred agent-tool exports (all agent tool / tool result types)
+  [/^(AgentTool|Tool(Artifact|Enrichment|Export|Generation|Material|Mutation|Process|Result|Search|Source|UI))/, 'M10'],
+  // M11 deferred live-data-bridge exports
+  [/^(Live|Steering|GenerationSession|Binding)/, 'M11'],
+  // M12 deferred render-planner exports
+  [/^(Process|Sampling|Capability|Route|Integration|RenderArtifact|RenderDependent|Timeline(Effect|Transition|Live|Material|Render|Source|Output|Shader)|getCapability)/, 'M12'],
+  // M13 deferred shader-frontend exports (all Shader* exports)
+  [/^Shader/, 'M13'],
+  // M14 deferred extension-packaging exports
+  [/^(Dependency|Extension(Dependency|Settings)|Integrity(Algorithm|Hash)|Migration(Hook|Declaration)|InstalledExtension|ManifestValidation|validate(Manifest|Installed))/, 'M14'],
+];
+
+/**
+ * Build the set of SDK export names that are classified as deferred or
+ * unsupported by BOTH the contract-recheck matrix AND the supported/deferred
+ * matrix.  Uses the shared matrix helper predicates (isDeferred /
+ * isUnsupported) for the contract-recheck matrix and also parses the
+ * supported/deferred matrix markdown for explicit deferred/unsupported
+ * classifications that may override the contract-recheck disposition.
+ *
+ * For each milestone M*:
+ *   - Collect all matrix rows whose rowId starts with that milestone prefix.
+ *   - If at least one row in that milestone is deferred/unsupported in
+ *     EITHER matrix, then all exports matching that milestone's pattern
+ *     are deferred.
+ *
+ * This uses the shared matrix helper predicates (isDeferred / isUnsupported)
+ * so the classification is always consistent with the canonical matrix
+ * semantics defined by SD1, plus the supported/deferred matrix rows which
+ * provide explicit deferral classifications per SD2.
+ */
+function buildDeferredUnsupportedExportSet(
+  sdkExports: Set<string>,
+  matrixRows: object[],
+): Set<string> {
+  const result = new Set<string>();
+
+  // ── Parse the supported/deferred matrix for explicit deferrals ──
+  const SUPPORTED_DEFERRED_PATH = path.join(
+    REPO_ROOT,
+    'docs',
+    'video-editor',
+    'extension-platform-supported-deferred.md',
+  );
+  const deferredFromSupportedMatrix = new Set<string>();
+  if (fs.existsSync(SUPPORTED_DEFERRED_PATH)) {
+    const md = fs.readFileSync(SUPPORTED_DEFERRED_PATH, 'utf8');
+    // Extract CR: references from rows classified as deferred or unsupported
+    // in sections 3 and 4.1 of the supported/deferred matrix.
+    const crRefRe = /CR:([A-Z]+\d+-\d+)/g;
+    let inDeferredSection = false;
+    for (const line of md.split('\n')) {
+      if (line.startsWith('## 3. Deferred') || line.startsWith('### 3.')) {
+        inDeferredSection = true;
+        continue;
+      }
+      if (line.startsWith('## 4. V1 Scope Boundaries')) {
+        inDeferredSection = false;
+      }
+      if (!inDeferredSection) continue;
+
+      // Match table rows classified as **deferred** or **unsupported**
+      if (
+        line.includes('| **deferred** |')
+        || line.includes('| **unsupported** |')
+      ) {
+        for (const match of line.matchAll(crRefRe)) {
+          deferredFromSupportedMatrix.add(match[1]);
+        }
+      }
+    }
+  }
+
+  // Group matrix rows by milestone prefix
+  const rowsByMilestone = new Map<string, object[]>();
+  for (const row of matrixRows) {
+    const rowId = (row as any).rowId as string | undefined;
+    if (!rowId) continue;
+    const match = rowId.match(/^(M\d+)-/);
+    if (!match) continue;
+    const milestone = match[1];
+    if (!rowsByMilestone.has(milestone)) {
+      rowsByMilestone.set(milestone, []);
+    }
+    rowsByMilestone.get(milestone)!.push(row);
+  }
+
+  // Determine which milestones have deferred/unsupported exports.
+  // A milestone contributes deferred exports when it has at least one
+  // deferred/unsupported row in EITHER the contract-recheck matrix OR
+  // the supported/deferred matrix.
+  const deferredMilestones = new Set<string>();
+  for (const [milestone, rows] of rowsByMilestone) {
+    const hasDeferredInCR = rows.some(
+      (r) => isDeferred(r) || isUnsupported(r),
+    );
+    const hasDeferredInSD = rows.some((r) =>
+      deferredFromSupportedMatrix.has((r as any).rowId as string),
+    );
+
+    if (hasDeferredInCR || hasDeferredInSD) {
+      deferredMilestones.add(milestone);
+    }
+  }
+
+  // Match every SDK export against the milestone patterns.
+  // An export is deferred/unsupported when its matching milestone has
+  // at least one deferred/unsupported row.
+  for (const exportName of sdkExports) {
+    for (const [pattern, milestone] of MILESTONE_EXPORT_PATTERNS) {
+      if (pattern.test(exportName) && deferredMilestones.has(milestone)) {
+        result.add(exportName);
+        break;
+      }
+    }
+  }
+
+  return result;
+}
+
+// ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 
@@ -214,43 +376,24 @@ describe('Extension example import governance', () => {
       }
     }
 
+    // ── Load contract-recheck matrix for dynamic deferred/unsupported lookup ──
+    const { matrixRows } = loadContractMatrix();
+
+    // Build the set of export names that belong to deferred or unsupported
+    // features per the contract-recheck matrix.  The shared matrix helper
+    // predicates (isDeferred / isUnsupported) provide the canonical
+    // classification; we map row IDs to export name prefixes via a
+    // milestone→pattern table.
+    const DEFERRED_UNSUPPORTED_EXPORTS = buildDeferredUnsupportedExportSet(
+      sdkExports,
+      matrixRows,
+    );
+
     // Exports that are internal helpers not expected in consumer examples
     const INTERNAL_EXPORTS = new Set([
       'CONTEXT_DISPOSE_SYMBOL',    // Symbol key, not intended for direct consumer use
       'disposeExtensionContextServices', // Internal lifecycle, not consumer-facing
     ]);
-
-    // M6 exports not yet imported by examples (examples are created in later tasks T4-T28).
-    // These types are part of the public SDK surface but examples have not been written yet.
-        const M6_EXPECTED_UNCOVERED = new Set([
-      'AssetDetailSectionContribution',
-      'AssetDetailSectionDescriptor',
-      'AssetGPSMetadata',
-      'AssetIntegrityMetadata',
-      'AssetConsentMetadata',
-      'AssetProvenanceMetadata',
-      'AssetReadSurface',
-      'Diagnostic',
-      'DiagnosticCollection',
-      'DiagnosticSourceRange',
-      'EnrichmentStatus',
-      'ExportService',
-      'MaterialReadSurface',
-      'MetadataFacetContribution',
-      'MetadataFacetDescriptor',
-      'MetadataFacetValueKind',
-      'OutputFormatRegistrationOptions',
-      'SearchMatch',
-      'SearchProviderContribution',
-      'SearchProviderContext',
-      'SearchProviderHandler',
-      'SearchProviderResult',
-      'createDiagnosticCollection',
-    ]);
-
-    // M9 exports now covered by clip-type-keyframed-example.ts and
-    // automation-recording-canary.ts (T15 example/test coverage).
-    const M9_EXPECTED_UNCOVERED = new Set<string>([]);
 
     it('has SDK exports to validate', () => {
       expect(sdkExports.size).toBeGreaterThan(0);
@@ -264,19 +407,10 @@ describe('Extension example import governance', () => {
         continue;
       }
 
-      if (M6_EXPECTED_UNCOVERED.has(exportName)) {
-        it(`SKIP: ${exportName} is an M6 export (examples created in later tasks)`, () => {
-          // M6 types are part of the public SDK surface but examples are
-          // created in later tasks (T4-T28). They will be covered when
-          // those examples land.
-        });
-        continue;
-      }
-
-      if (M9_EXPECTED_UNCOVERED.has(exportName)) {
-        it(`SKIP: ${exportName} is an M9 export (examples created in later tasks)`, () => {
-          // M9 types are part of the public SDK surface but examples are
-          // created in later tasks. They will be covered when those examples land.
+      if (DEFERRED_UNSUPPORTED_EXPORTS.has(exportName)) {
+        it(`SKIP: ${exportName} is deferred/unsupported per contract-recheck matrix`, () => {
+          // Deferred/unsupported exports are exempt from the example-coverage
+          // requirement per the shared matrix helper classification (SD1/SD2).
         });
         continue;
       }

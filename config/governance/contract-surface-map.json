@@ -22,6 +22,8 @@
     "config/governance/video-editor-sdk-import-allowlist.json",
     "src/integrations/supabase/client.ts",
     "src/shared/lib/errorHandling/runtimeError.ts",
-    "src/shared/components/ui/contracts/cn.ts"
+    "src/shared/components/ui/contracts/cn.ts",
+    "scripts/quality/check-sdk-public-exports.mjs",
+    "config/governance/sdk-public-export-allowlist.json"
   ]
 }

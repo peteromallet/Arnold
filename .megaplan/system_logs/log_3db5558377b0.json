@@ -1,0 +1,70 @@
+{
+  "id": "log_3db5558377b0",
+  "level": "debug",
+  "category": "system",
+  "event_type": "authority_divergence",
+  "message": "authority_divergence emitted",
+  "details": {
+    "event": {
+      "seq": 5840,
+      "schema_version": 1,
+      "ts_utc": "2026-06-20T18:49:38.801040+00:00",
+      "ts_rel_init_s": 7153.27413,
+      "kind": "authority_divergence",
+      "phase": "execute",
+      "payload": {
+        "diagnostic_version": 1,
+        "task_id": "T5",
+        "raw_terminal_status": "done",
+        "authority_status": "unknown",
+        "authoritative": false,
+        "reason": "stale_evidence:missing_head:task_files_changed",
+        "missing_outputs": [],
+        "stale_evidence": [
+          "missing_head:task_files_changed",
+          "missing_head:task_files_changed",
+          "missing_head:task_files_changed",
+          "missing_head:task_commands_run",
+          "missing_head:task_commands_run",
+          "missing_head:task_commands_run",
+          "missing_head:task_files_changed",
+          "missing_head:task_files_changed"
+        ],
+        "would_block_reasons": [
+          "stale_evidence:missing_head:task_files_changed",
+          "stale_evidence:missing_head:task_commands_run"
+        ],
+        "error": null,
+        "diagnostics": {
+          "task_id": "T5",
+          "declared_outputs": {
+            "files_changed": [
+              "scripts/quality/check-extension-deferred-claims.mjs",
+              "package.json"
+            ],
+            "commands_run": [
+              "node scripts/quality/check-extension-deferred-claims.mjs --audit",
+              "node scripts/quality/check-extension-deferred-claims.mjs --release",
+              "npm run check:deferred-claims"
+            ]
+          },
+          "linked_evidence_count": 16,
+          "evidence_count": 170,
+          "normalization": "iterable",
+          "status": "unknown",
+          "evidence_sources": [
+            "plan_artifacts"
+          ],
+          "loaded_evidence_count": 170,
+          "raw_terminal_status": "done"
+        },
+        "ts_utc": "2026-06-20T18:49:38.800583+00:00"
+      },
+      "transaction_id": "f3828a236ce66ea1",
+      "store_method": "log_system_event"
+    }
+  },
+  "turn_id": null,
+  "epic_id": "m15-hardening-compatibility-20260620-1850",
+  "occurred_at": "2026-06-20T18:49:38.801089Z"
+}

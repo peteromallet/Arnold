@@ -13,11 +13,11 @@ import type {
   MigrationDeclaration,
 } from '@/sdk/index';
 import type {
-  ExtensionStateRepository,
-  ExtensionSettingsSnapshot,
-  ExtensionLifecycleEvent,
-} from '@/tools/video-editor/runtime/extensionStateRepository';
-import { createLifecycleEvent } from '@/tools/video-editor/runtime/extensionStateRepository';
+  StateRepository,
+  SettingsSnapshot,
+  LifecycleEvent,
+} from './contracts';
+import { createLifecycleEvent } from './contracts';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -55,7 +55,7 @@ export interface SettingsMigrationResult {
   /** True when settings were reset to manifest defaults (no handler or handler failed). */
   readonly resetToDefaults: boolean;
   /** Lifecycle events emitted during migration (for repository persistence). */
-  readonly lifecycleEvents: readonly ExtensionLifecycleEvent[];
+  readonly lifecycleEvents: readonly LifecycleEvent[];
 }
 
 /**
@@ -65,7 +65,7 @@ export interface RunSettingsMigrationOptions {
   /** The extension manifest (for settingsSchema/Defaults and migration declarations). */
   readonly manifest: ExtensionManifest;
   /** The persisted settings snapshot (may have an older schema version). */
-  readonly snapshot: ExtensionSettingsSnapshot;
+  readonly snapshot: SettingsSnapshot;
   /**
    * Optional map of migration handler names to implementations.
    * Keys should match the `handler` field in MigrationDeclaration entries.
@@ -76,7 +76,7 @@ export interface RunSettingsMigrationOptions {
    * When provided, lifecycle events are appended (serialized awaits to
    * avoid read-modify-write races in non-transactional stores).
    */
-  readonly repository?: ExtensionStateRepository;
+  readonly repository?: StateRepository;
 }
 
 // ---------------------------------------------------------------------------
@@ -182,11 +182,11 @@ export async function runSettingsMigration(
     (manifest.settingsDefaults as Record<string, unknown> | undefined) ?? {};
 
   const currentValues: Record<string, unknown> = { ...(snapshot.values as Record<string, unknown>) };
-  const lifecycleEvents: ExtensionLifecycleEvent[] = [];
+  const lifecycleEvents: LifecycleEvent[] = [];
 
   /** Append a lifecycle event, optionally persisting to repository (serialized). */
   async function emitEvent(
-    kind: ExtensionLifecycleEvent['kind'],
+    kind: string,
     message: string,
     detail?: Record<string, unknown>,
   ): Promise<void> {

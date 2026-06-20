@@ -1,0 +1,70 @@
+{
+  "id": "log_b8264a9d46ff",
+  "level": "debug",
+  "category": "system",
+  "event_type": "authority_divergence",
+  "message": "authority_divergence emitted",
+  "details": {
+    "event": {
+      "seq": 6214,
+      "schema_version": 1,
+      "ts_utc": "2026-06-20T18:56:26.436952+00:00",
+      "ts_rel_init_s": 7560.910042,
+      "kind": "authority_divergence",
+      "phase": "execute",
+      "payload": {
+        "diagnostic_version": 1,
+        "task_id": "T13",
+        "raw_terminal_status": "done",
+        "authority_status": "unknown",
+        "authoritative": false,
+        "reason": "stale_evidence:missing_head:task_commands_run",
+        "missing_outputs": [],
+        "stale_evidence": [
+          "missing_head:task_commands_run",
+          "missing_head:task_commands_run",
+          "missing_head:task_commands_run",
+          "missing_head:task_commands_run",
+          "missing_head:task_commands_run",
+          "missing_head:task_commands_run",
+          "missing_head:task_commands_run",
+          "missing_head:task_commands_run",
+          "missing_head:task_commands_run"
+        ],
+        "would_block_reasons": [
+          "stale_evidence:missing_head:task_commands_run"
+        ],
+        "error": null,
+        "diagnostics": {
+          "task_id": "T13",
+          "declared_outputs": {
+            "commands_run": [
+              "python3 -m pytest vendor/timeline-schema/tests/ --tb=short -q --no-header",
+              "npx vitest run --config config/testing/vitest.config.ts src/sdk/examples-governance.test.ts --reporter=verbose",
+              "npx vitest run --config config/testing/vitest.config.ts src/sdk/__tests__/sdk-boundary.test.ts --reporter=verbose",
+              "npx vitest run --config config/testing/vitest.config.ts src/sdk/index.test.ts --reporter=verbose",
+              "npx vitest run --config config/testing/vitest.config.ts src/sdk/extensionSettingsService.test.ts src/sdk/extensionSettingsMigration.test.ts --reporter=verbose",
+              "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/examples/extensions/__tests__/flagship-local-transition.test.ts src/tools/video-editor/examples/extensions/__tests__/live-webcam-canary.test.ts src/tools/video-editor/examples/extensions/__tests__/live-generated-frame-canary.test.ts --reporter=verbose",
+              "npx tsc --noEmit"
+            ]
+          },
+          "linked_evidence_count": 18,
+          "evidence_count": 180,
+          "normalization": "iterable",
+          "status": "unknown",
+          "evidence_sources": [
+            "plan_artifacts"
+          ],
+          "loaded_evidence_count": 180,
+          "raw_terminal_status": "done"
+        },
+        "ts_utc": "2026-06-20T18:56:26.436455+00:00"
+      },
+      "transaction_id": "c67207eb0511b8bb",
+      "store_method": "log_system_event"
+    }
+  },
+  "turn_id": null,
+  "epic_id": "m15-hardening-compatibility-20260620-1850",
+  "occurred_at": "2026-06-20T18:56:26.436999Z"
+}

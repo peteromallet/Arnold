@@ -1,0 +1,72 @@
+{
+  "id": "log_81817a43ccb3",
+  "level": "debug",
+  "category": "system",
+  "event_type": "authority_divergence",
+  "message": "authority_divergence emitted",
+  "details": {
+    "event": {
+      "seq": 6015,
+      "schema_version": 1,
+      "ts_utc": "2026-06-20T18:52:53.644300+00:00",
+      "ts_rel_init_s": 7348.11739,
+      "kind": "authority_divergence",
+      "phase": "execute",
+      "payload": {
+        "diagnostic_version": 1,
+        "task_id": "T3",
+        "raw_terminal_status": "done",
+        "authority_status": "unknown",
+        "authoritative": false,
+        "reason": "stale_evidence:missing_head:task_files_changed",
+        "missing_outputs": [],
+        "stale_evidence": [
+          "missing_head:task_files_changed",
+          "missing_head:task_files_changed",
+          "missing_head:task_commands_run",
+          "missing_head:task_commands_run",
+          "missing_head:task_commands_run",
+          "missing_head:task_commands_run",
+          "missing_head:task_files_changed",
+          "missing_head:task_files_changed",
+          "missing_head:task_files_changed"
+        ],
+        "would_block_reasons": [
+          "stale_evidence:missing_head:task_files_changed",
+          "stale_evidence:missing_head:task_commands_run"
+        ],
+        "error": null,
+        "diagnostics": {
+          "task_id": "T3",
+          "declared_outputs": {
+            "files_changed": [
+              "scripts/quality/check-extension-contract-recheck.mjs",
+              "package.json"
+            ],
+            "commands_run": [
+              "node scripts/quality/check-extension-contract-recheck.mjs --audit",
+              "node scripts/quality/check-extension-contract-recheck.mjs --release",
+              "npm run check:contract-recheck",
+              "npm run check:contract-recheck:release"
+            ]
+          },
+          "linked_evidence_count": 18,
+          "evidence_count": 176,
+          "normalization": "iterable",
+          "status": "unknown",
+          "evidence_sources": [
+            "plan_artifacts"
+          ],
+          "loaded_evidence_count": 176,
+          "raw_terminal_status": "done"
+        },
+        "ts_utc": "2026-06-20T18:52:53.643891+00:00"
+      },
+      "transaction_id": "10a6fda9bce50ddb",
+      "store_method": "log_system_event"
+    }
+  },
+  "turn_id": null,
+  "epic_id": "m15-hardening-compatibility-20260620-1850",
+  "occurred_at": "2026-06-20T18:52:53.644350Z"
+}

@@ -1,0 +1,42 @@
+{
+  "$schema": "../schemas/sdk-public-export-allowlist.schema.json",
+  "description": "Allowlist for @reigh/editor-sdk public re-exports that originate from internal paths outside src/sdk/. Every entry must include a justification explaining why the re-export belongs on the public boundary.",
+  "allowlist": [
+    {
+      "sourcePath": "@/tools/video-editor/runtime/renderability.ts",
+      "kind": "value",
+      "exports": [
+        "DETERMINISM_STATUSES",
+        "RENDER_BLOCKER_REASONS",
+        "RENDER_ROUTES",
+        "shaderMissingMaterializerBlockerMessage"
+      ],
+      "justification": "M5 renderability contracts: these are stable runtime constants used by extension authors to classify render blockers, determinism statuses, and planner-owned render routes. The matcher message helper is a pure function that produces a diagnostic string from a shaderId and scope — it has no side effects and no internal coupling."
+    },
+    {
+      "sourcePath": "@/tools/video-editor/runtime/renderability.ts",
+      "kind": "type",
+      "exports": [
+        "ArtifactBoundary",
+        "BakeContract",
+        "CapabilityFinding",
+        "CapabilityFindingSeverity",
+        "ContributionRenderability",
+        "DeterminismStatus",
+        "RenderArtifact",
+        "RenderBlocker",
+        "RenderBlockerReason",
+        "RenderCapability",
+        "RenderCapabilityStatus",
+        "RenderLocatorKind",
+        "RenderMaterial",
+        "RenderMaterialMediaKind",
+        "RenderMaterialRef",
+        "RenderRoute",
+        "RenderStorageLocator",
+        "ShaderMaterializerRequirementScope"
+      ],
+      "justification": "M5 renderability type contracts: these types define the public vocabulary for render blockers, material refs, artifact boundaries, capability findings, and shader scopes. Extension authors reference these when implementing export-level contracts, and the SDK must expose them to avoid duplicate type taxonomies."
+    }
+  ]
+}

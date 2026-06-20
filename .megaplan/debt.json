@@ -3435,6 +3435,40 @@
       "resolved": false,
       "resolved_by": null,
       "resolved_at": null
+    },
+    {
+      "id": "DEBT-203",
+      "subsystem": "success-criteria",
+      "concern": "criterion 13 ('every documented v1 api behavior is manually reviewed against compiled examples') requires human verification and subjective judgment that cannot be fully automated.",
+      "flag_ids": [
+        "recurring_subjective_criteria-13"
+      ],
+      "plan_ids": [
+        "m15-hardening-compatibility-20260620-1850"
+      ],
+      "occurrence_count": 1,
+      "created_at": "2026-06-20T17:05:38Z",
+      "updated_at": "2026-06-20T17:05:38Z",
+      "resolved": false,
+      "resolved_by": null,
+      "resolved_at": null
+    },
+    {
+      "id": "DEBT-204",
+      "subsystem": "success-criteria",
+      "concern": "criterion 14 ('docs avoid aspirational or future-tense promises') involves linguistic judgment that cannot be fully automated.",
+      "flag_ids": [
+        "recurring_subjective_criteria-14"
+      ],
+      "plan_ids": [
+        "m15-hardening-compatibility-20260620-1850"
+      ],
+      "occurrence_count": 1,
+      "created_at": "2026-06-20T17:05:38Z",
+      "updated_at": "2026-06-20T17:05:38Z",
+      "resolved": false,
+      "resolved_by": null,
+      "resolved_at": null
     }
   ]
 }

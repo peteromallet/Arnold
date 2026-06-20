@@ -174,10 +174,11 @@ class FakeIndex {
 }
 
 class FakeObjectStore {
-  constructor(records, transaction, indexes) {
+  constructor(records, transaction, indexes, keyPath) {
     this.records = records;
     this.transaction = transaction;
     this._indexes = indexes ?? new Map();
+    this.keyPath = keyPath ?? null;
   }
 
   get indexNames() {
@@ -186,7 +187,10 @@ class FakeObjectStore {
 
   put(value, key) {
     return this.transaction.runRequest(() => {
-      const effectiveKey = key ?? value.key;
+      let effectiveKey = key;
+      if (effectiveKey === undefined) {
+        effectiveKey = this.keyPath ? value[this.keyPath] : value.key;
+      }
       this.records.set(effectiveKey, value);
       return effectiveKey;
     });
@@ -263,11 +267,12 @@ class FakeObjectStore {
 }
 
 class FakeTransaction extends FakeEventTarget {
-  constructor(recordsByStore, storeName, indexesByStore) {
+  constructor(recordsByStore, storeName, indexesByStore, storeOptionsByStore) {
     super();
     this.recordsByStore = recordsByStore;
     this.storeName = storeName;
     this.indexesByStore = indexesByStore ?? new Map();
+    this.storeOptionsByStore = storeOptionsByStore ?? new Map();
     this.pendingRequests = 0;
     this.completeQueued = false;
     this.error = null;
@@ -279,7 +284,8 @@ class FakeTransaction extends FakeEventTarget {
     }
 
     const storeIndexes = this.indexesByStore.get(name) ?? new Map();
-    return new FakeObjectStore(this.recordsByStore.get(name), this, storeIndexes);
+    const storeOptions = this.storeOptionsByStore.get(name) ?? {};
+    return new FakeObjectStore(this.recordsByStore.get(name), this, storeIndexes, storeOptions.keyPath ?? null);
   }
 
   runRequest(executor) {
@@ -316,11 +322,12 @@ class FakeTransaction extends FakeEventTarget {
 }
 
 class FakeDatabase {
-  constructor(name, version, recordsByStore, indexesByStore) {
+  constructor(name, version, recordsByStore, indexesByStore, storeOptionsByStore) {
     this.name = name;
     this.version = version;
     this.recordsByStore = recordsByStore;
     this.indexesByStore = indexesByStore ?? new Map();
+    this.storeOptionsByStore = storeOptionsByStore ?? new Map();
     this._closed = false;
   }
 
@@ -340,6 +347,7 @@ class FakeDatabase {
       keyPath: options?.keyPath ?? null,
       autoIncrement: options?.autoIncrement ?? false,
     };
+    this.storeOptionsByStore.set(name, storeOptions);
 
     return {
       name,
@@ -364,6 +372,7 @@ class FakeDatabase {
   deleteObjectStore(name) {
     this.recordsByStore.delete(name);
     this.indexesByStore.delete(name);
+    this.storeOptionsByStore.delete(name);
   }
 
   transaction(nameOrNames, _mode) {
@@ -373,7 +382,7 @@ class FakeDatabase {
       throw new Error(`Unknown object store: ${name}`);
     }
 
-    return new FakeTransaction(this.recordsByStore, name, this.indexesByStore);
+    return new FakeTransaction(this.recordsByStore, name, this.indexesByStore, this.storeOptionsByStore);
   }
 
   close() {
@@ -394,12 +403,14 @@ class FakeIndexedDBFactory {
       const shouldUpgrade = !existing || version > existing.version;
       const recordsByStore = existing?.recordsByStore ?? new Map();
       const indexesByStore = existing?.indexesByStore ?? new Map();
-      const database = new FakeDatabase(name, version, recordsByStore, indexesByStore);
+      const storeOptionsByStore = existing?.storeOptionsByStore ?? new Map();
+      const database = new FakeDatabase(name, version, recordsByStore, indexesByStore, storeOptionsByStore);
 
       this.databases.set(name, {
         version,
         recordsByStore,
         indexesByStore,
+        storeOptionsByStore,
       });
 
       request.result = database;

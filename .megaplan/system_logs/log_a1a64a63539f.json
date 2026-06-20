@@ -1,0 +1,106 @@
+{
+  "id": "log_a1a64a63539f",
+  "level": "debug",
+  "category": "system",
+  "event_type": "authority_divergence",
+  "message": "authority_divergence emitted",
+  "details": {
+    "event": {
+      "seq": 6735,
+      "schema_version": 1,
+      "ts_utc": "2026-06-20T19:05:33.490832+00:00",
+      "ts_rel_init_s": 8107.963922,
+      "kind": "authority_divergence",
+      "phase": "execute",
+      "payload": {
+        "diagnostic_version": 1,
+        "task_id": "T21",
+        "raw_terminal_status": "done",
+        "authority_status": "unknown",
+        "authoritative": false,
+        "reason": "stale_evidence:missing_head:task_commands_run",
+        "missing_outputs": [],
+        "stale_evidence": [
+          "missing_head:task_commands_run",
+          "missing_head:task_commands_run",
+          "missing_head:task_commands_run",
+          "missing_head:task_commands_run",
+          "missing_head:task_commands_run",
+          "missing_head:task_commands_run",
+          "missing_head:task_commands_run",
+          "missing_head:task_commands_run",
+          "missing_head:task_commands_run",
+          "missing_head:task_commands_run",
+          "missing_head:task_commands_run",
+          "missing_head:task_commands_run",
+          "missing_head:task_commands_run",
+          "missing_head:task_commands_run",
+          "missing_head:task_commands_run",
+          "missing_head:task_commands_run",
+          "missing_head:task_commands_run",
+          "missing_head:task_commands_run",
+          "missing_head:task_commands_run",
+          "missing_head:task_commands_run",
+          "missing_head:task_commands_run",
+          "missing_head:task_commands_run",
+          "missing_head:task_commands_run",
+          "missing_head:task_commands_run",
+          "missing_head:task_commands_run",
+          "missing_head:task_commands_run",
+          "missing_head:task_commands_run",
+          "missing_head:task_commands_run",
+          "missing_head:task_commands_run",
+          "missing_head:task_commands_run",
+          "missing_head:task_commands_run",
+          "missing_head:task_commands_run",
+          "missing_head:task_commands_run",
+          "missing_head:task_commands_run",
+          "missing_head:task_commands_run",
+          "missing_head:task_commands_run",
+          "missing_head:task_commands_run",
+          "missing_head:task_commands_run",
+          "missing_head:task_commands_run"
+        ],
+        "would_block_reasons": [
+          "stale_evidence:missing_head:task_commands_run"
+        ],
+        "error": null,
+        "diagnostics": {
+          "task_id": "T21",
+          "declared_outputs": {
+            "commands_run": [
+              "npm run check:contract-recheck",
+              "npm run check:deferred-claims",
+              "npm run check:sdk-public-exports",
+              "npm run check:frontend-closure",
+              "npm run check:example-readiness",
+              "npm run check:release-checklist",
+              "python3 -m pytest vendor/timeline-schema/tests/ --tb=short -q --no-header",
+              "npx vitest run --config config/testing/vitest.boundary.config.ts --reporter=verbose",
+              "npx vitest run --config config/testing/vitest.config.ts src/sdk/examples-governance.test.ts --reporter=verbose",
+              "npx vitest run --config config/testing/vitest.config.ts src/sdk/index.test.ts --reporter=verbose",
+              "npx tsc --noEmit",
+              "npx vitest run --config config/testing/vitest.config.ts src/sdk/extensionSettingsService.test.ts src/sdk/extensionSettingsMigration.test.ts --reporter=verbose",
+              "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/testing/__tests__/providerCompatibility.inmemory.test.ts src/tools/video-editor/testing/__tests__/providerCompatibility.browserInMemory.test.ts src/tools/video-editor/testing/__tests__/providerCompatibility.supabase.test.ts src/tools/video-editor/testing/__tests__/providerCompatibility.astrid.test.ts --reporter=verbose"
+            ]
+          },
+          "linked_evidence_count": 78,
+          "evidence_count": 250,
+          "normalization": "iterable",
+          "status": "unknown",
+          "evidence_sources": [
+            "plan_artifacts"
+          ],
+          "loaded_evidence_count": 250,
+          "raw_terminal_status": "done"
+        },
+        "ts_utc": "2026-06-20T19:05:33.490380+00:00"
+      },
+      "transaction_id": "00f4139cbbddd355",
+      "store_method": "log_system_event"
+    }
+  },
+  "turn_id": null,
+  "epic_id": "m15-hardening-compatibility-20260620-1850",
+  "occurred_at": "2026-06-20T19:05:33.490868Z"
+}

@@ -41,9 +41,9 @@
 import type { ExtensionSettingsService } from '@/sdk/index';
 import type { ExtensionManifest } from '@/sdk/index';
 import type {
-  ExtensionStateRepository,
-  ExtensionSettingsSnapshot,
-} from '@/tools/video-editor/runtime/extensionStateRepository';
+  StateRepository,
+  SettingsSnapshot,
+} from './contracts';
 import {
   runSettingsMigration,
   getManifestSettingsSchemaVersion,
@@ -94,8 +94,8 @@ export interface SettingsMigrationConfig {
  *   handlers are invoked and lifecycle events are emitted.
  */
 export interface CreateExtensionSettingsServiceOptions {
-  readonly repository?: ExtensionStateRepository;
-  readonly initialSnapshot?: ExtensionSettingsSnapshot;
+  readonly repository?: StateRepository;
+  readonly initialSnapshot?: SettingsSnapshot;
   readonly migration?: SettingsMigrationConfig;
 }
 
@@ -482,7 +482,7 @@ export function createExtensionSettingsService(
     const repo = options?.repository;
     if (repo && !repo.isDisposed) {
       const merged = buildMergedSettings();
-      const snapshot: ExtensionSettingsSnapshot = Object.freeze({
+      const snapshot: SettingsSnapshot = Object.freeze({
         extensionId,
         schemaVersion: snapshotSchemaVersion,
         values: Object.freeze({ ...merged }),

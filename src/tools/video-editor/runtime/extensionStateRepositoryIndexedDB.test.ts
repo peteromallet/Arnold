@@ -11,10 +11,11 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { createFakeIndexedDB, resetFakeIndexedDB } from 'fake-indexeddb';
+import { createFakeIndexedDB, IDBKeyRange, resetFakeIndexedDB } from 'fake-indexeddb';
 
 // Install fake-indexeddb BEFORE importing the module under test
 (globalThis as Record<string, unknown>).indexedDB = createFakeIndexedDB();
+(globalThis as Record<string, unknown>).IDBKeyRange = IDBKeyRange;
 
 import {
   IndexedDBExtensionStateRepository,

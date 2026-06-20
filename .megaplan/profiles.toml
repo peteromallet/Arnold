@@ -1,13 +1,31 @@
-[profiles.all-codex]
-prep                  = "codex"
-plan                  = "codex"
-critique              = "codex"
-gate                  = "codex"
-revise                = "codex"
-finalize              = "codex"
-execute               = "codex"
-loop_plan             = "codex"
-loop_execute          = "codex"
-review                = "codex"
-tiebreaker_researcher = "codex"
-tiebreaker_challenger = "codex"
+# Project override: run partnered-5 with high reasoning effort on Codex.
+[profiles.partnered-5]
+adaptive_critique = true
+plan                  = "premium:high"
+prep                  = "hermes:deepseek:deepseek-v4-pro"
+critique              = "hermes:deepseek:deepseek-v4-pro"
+critique_evaluator    = "premium:high"
+revise                = "premium:high"
+gate                  = "hermes:deepseek:deepseek-v4-pro"
+finalize              = "premium:high"
+execute               = "hermes:deepseek:deepseek-v4-pro"
+feedback              = "premium:high"
+loop_plan             = "premium:high"
+loop_execute          = "hermes:deepseek:deepseek-v4-pro"
+review                = "premium:high"
+tiebreaker_researcher = "premium:high"
+tiebreaker_challenger = "premium:high"
+
+[profiles.partnered-5.tier_models.execute]
+1 = "hermes:deepseek:deepseek-v4-flash"
+2 = "hermes:deepseek:deepseek-v4-pro"
+3 = "hermes:deepseek:deepseek-v4-pro"
+4 = "codex:gpt-5.4"
+5 = "codex:gpt-5.5"
+
+[profiles.partnered-5.tier_models.critique]
+1 = "hermes:deepseek:deepseek-v4-flash"
+2 = "hermes:deepseek:deepseek-v4-pro"
+3 = "hermes:deepseek:deepseek-v4-pro"
+4 = "claude:claude-sonnet-4-6"
+5 = "claude:claude-opus-4-7"

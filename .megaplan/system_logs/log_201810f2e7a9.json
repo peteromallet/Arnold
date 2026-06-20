@@ -1,0 +1,56 @@
+{
+  "id": "log_201810f2e7a9",
+  "level": "debug",
+  "category": "system",
+  "event_type": "authority_divergence",
+  "message": "authority_divergence emitted",
+  "details": {
+    "event": {
+      "seq": 5496,
+      "schema_version": 1,
+      "ts_utc": "2026-06-20T18:43:18.041093+00:00",
+      "ts_rel_init_s": 6772.514183,
+      "kind": "authority_divergence",
+      "phase": "execute",
+      "payload": {
+        "diagnostic_version": 1,
+        "task_id": "T10",
+        "raw_terminal_status": "done",
+        "authority_status": "unknown",
+        "authoritative": false,
+        "reason": "stale_evidence:missing_head:task_files_changed",
+        "missing_outputs": [],
+        "stale_evidence": [
+          "missing_head:task_files_changed"
+        ],
+        "would_block_reasons": [
+          "stale_evidence:missing_head:task_files_changed"
+        ],
+        "error": null,
+        "diagnostics": {
+          "task_id": "T10",
+          "declared_outputs": {
+            "files_changed": [
+              "docs/video-editor/provider-compatibility-matrix.md"
+            ]
+          },
+          "linked_evidence_count": 2,
+          "evidence_count": 144,
+          "normalization": "iterable",
+          "status": "unknown",
+          "evidence_sources": [
+            "plan_artifacts"
+          ],
+          "loaded_evidence_count": 144,
+          "raw_terminal_status": "done"
+        },
+        "ts_utc": "2026-06-20T18:43:18.040763+00:00"
+      },
+      "transaction_id": "aa2bc2bf3b617c24",
+      "store_method": "log_system_event"
+    }
+  },
+  "turn_id": null,
+  "epic_id": "m15-hardening-compatibility-20260620-1850",
+  "occurred_at": "2026-06-20T18:43:18.041132Z"
+}

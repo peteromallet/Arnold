@@ -1,0 +1,63 @@
+{
+  "id": "log_867fa11fad8a",
+  "level": "debug",
+  "category": "system",
+  "event_type": "authority_divergence",
+  "message": "authority_divergence emitted",
+  "details": {
+    "event": {
+      "seq": 813,
+      "schema_version": 1,
+      "ts_utc": "2026-06-20T17:13:04.314458+00:00",
+      "ts_rel_init_s": 1358.787548,
+      "kind": "authority_divergence",
+      "phase": "execute",
+      "payload": {
+        "diagnostic_version": 1,
+        "task_id": "T1",
+        "raw_terminal_status": "done",
+        "authority_status": "unknown",
+        "authoritative": false,
+        "reason": "stale_evidence:missing_head:task_files_changed",
+        "missing_outputs": [],
+        "stale_evidence": [
+          "missing_head:task_files_changed",
+          "missing_head:task_commands_run",
+          "missing_head:task_commands_run"
+        ],
+        "would_block_reasons": [
+          "stale_evidence:missing_head:task_files_changed",
+          "stale_evidence:missing_head:task_commands_run"
+        ],
+        "error": null,
+        "diagnostics": {
+          "task_id": "T1",
+          "declared_outputs": {
+            "files_changed": [
+              "docs/video-editor/extension-platform-contract-recheck.md"
+            ],
+            "commands_run": [
+              "wc -l docs/video-editor/extension-platform-contract-recheck.md",
+              "git status --short"
+            ]
+          },
+          "linked_evidence_count": 6,
+          "evidence_count": 6,
+          "normalization": "iterable",
+          "status": "unknown",
+          "evidence_sources": [
+            "plan_artifacts"
+          ],
+          "loaded_evidence_count": 6,
+          "raw_terminal_status": "done"
+        },
+        "ts_utc": "2026-06-20T17:13:04.313838+00:00"
+      },
+      "transaction_id": "6fd17a43817e4b35",
+      "store_method": "log_system_event"
+    }
+  },
+  "turn_id": null,
+  "epic_id": "m15-hardening-compatibility-20260620-1850",
+  "occurred_at": "2026-06-20T17:13:04.315119Z"
+}
