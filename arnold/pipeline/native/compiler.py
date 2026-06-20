@@ -252,6 +252,8 @@ class _Compiler:
             self._lower_expr_stmt(stmt)
         elif isinstance(stmt, ast.Assign):
             self._lower_assign_stmt(stmt)
+        elif isinstance(stmt, ast.AnnAssign):
+            self._lower_ann_assign_stmt(stmt)
         elif isinstance(stmt, ast.If):
             self._lower_if_stmt(stmt)
         elif isinstance(stmt, ast.While):
@@ -278,6 +280,11 @@ class _Compiler:
         """Handle an assignment statement; value may contain yield."""
         self._lower_expr(stmt.value)
 
+    def _lower_ann_assign_stmt(self, stmt: ast.AnnAssign) -> None:
+        """Handle an annotated assignment; value may contain yield."""
+        if stmt.value is not None:
+            self._lower_expr(stmt.value)
+
     def _lower_expr(self, expr: ast.expr) -> None:
         """Lower an expression, recognising ``yield <phase_call>``."""
         if isinstance(expr, ast.Yield):
@@ -294,6 +301,22 @@ class _Compiler:
         elif isinstance(expr, ast.Tuple) or isinstance(expr, ast.List):
             for elt in expr.elts:
                 self._lower_expr(elt)
+        elif isinstance(expr, ast.Call):
+            # Non-yield calls (e.g. ``results.append(r)`` inside a parallel body)
+            # are allowed as no-ops; we just validate their arguments.
+            self._lower_expr(expr.func)
+            for arg in expr.args:
+                self._lower_expr(arg)
+            for kw in expr.keywords:
+                self._lower_expr(kw.value)
+        elif isinstance(expr, ast.Attribute):
+            self._lower_expr(expr.value)
+        elif isinstance(expr, ast.Name):
+            pass
+        elif isinstance(expr, ast.Subscript):
+            self._lower_expr(expr.value)
+            if expr.slice is not None:
+                self._lower_expr(expr.slice)
         else:
             raise NativeCompileError(
                 f"Unsupported expression type: {type(expr).__name__}",
@@ -324,6 +347,18 @@ class _Compiler:
             ) from exc
 
         if not is_phase(func):
+            # Special-case the common mistake ``yield parallel([...])`` so the
+            # diagnostic points users to the supported ``for`` syntax.
+            if (
+                callable(func)
+                and getattr(func, "__name__", "") == "parallel"
+            ):
+                raise NativeCompileError(
+                    "yield parallel([...]) is not supported. "
+                    "Use the fan-out syntax: "
+                    "for branch in parallel([phase_a, phase_b]): state = yield branch(ctx)",
+                    func_node,
+                )
             raise NativeCompileError(
                 f"yield target {getattr(func, '__name__', func)!r} is not a @phase-decorated function",
                 func_node,
@@ -770,14 +805,14 @@ class _Compiler:
         # Emit the parallel instruction
         parallel_pc = self._emit("parallel", name=block_name)
 
-        # Lower each branch body with the corresponding callable substituted
+        # Lower each branch body with the corresponding callable substituted.
+        # For the M5a sequential baseline, branches are emitted back-to-back
+        # after the parallel marker; the marker is a runtime no-op and each
+        # branch executes in declaration order.
         branch_start_pcs: list[int] = []
-        for i, bf in enumerate(branch_funcs):
+        for bf in branch_funcs:
             branch_start_pcs.append(self._pc)
             self._pending_halt = False
-            # Walk the for-body and substitute the iteration variable with the
-            # concrete branch callable.  The body expects ``yield branch(ctx)``
-            # where ``branch`` is the for-loop target variable.
             target_var = stmt.target
             if not isinstance(target_var, ast.Name):
                 raise NativeCompileError(
@@ -786,31 +821,9 @@ class _Compiler:
             self._lower_for_body_with_substitution(
                 stmt.body, target_var.id, bf
             )
-            # After each branch body, jump to merge point (if body doesn't halt)
-            if not self._pending_halt and i < len(branch_funcs) - 1:
-                # Intermediate jump — placeholder, patched after merge is known
-                self._emit("jump", name=f"{block_name}_branch_{i}_exit")
-            elif not self._pending_halt:
-                # Last branch: fall through to merge, no jump needed
-                pass
 
-        # Merge point
+        # Merge point is the PC immediately after the last branch body.
         merge_pc = self._pc
-
-        # Patch the intermediate jumps to point to merge
-        for instr in self._instructions:
-            if instr.op == "jump" and instr.name.startswith(f"{block_name}_branch_") and instr.name.endswith("_exit"):
-                if instr.next_pc is None:
-                    idx = instr.pc
-                    self._instructions[idx] = NativeInstruction(
-                        pc=instr.pc,
-                        op="jump",
-                        name=instr.name,
-                        next_pc=merge_pc,
-                        produces=(),
-                        consumes=(),
-                        decision_vocabulary=frozenset(),
-                    )
 
         # Create the ParallelInstruction metadata
         parallel_block = ParallelInstruction(

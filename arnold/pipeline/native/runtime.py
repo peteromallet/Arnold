@@ -645,6 +645,13 @@ def run_native_pipeline(
             forward_visited.add(pc)
             pc = next_pc
 
+        elif instr.op == "parallel":
+            # M5a: parallel blocks are compiled into sequential branch
+            # instructions after this marker.  The marker itself is a
+            # no-op at runtime; future milestones may add true fan-out.
+            pc = instr.next_pc if instr.next_pc is not None else pc + 1
+            continue
+
         elif instr.op == "subpipeline":
             child_program = getattr(instr, 'subprogram', None)
             if child_program is not None:

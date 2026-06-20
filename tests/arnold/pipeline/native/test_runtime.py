@@ -25,6 +25,7 @@ from arnold.pipeline.native import (
     NativeProgram,
     compile_pipeline,
     decision,
+    parallel,
     phase,
     pipeline,
     project_graph,
@@ -1673,3 +1674,70 @@ class TestControlOverrideShortCircuit:
 
         assert body_calls == ["decide"]
         assert result.state.get("branch") == "yes"
+
+
+# ── parallel fan-out / fan-in runtime (M5a baseline) ──────────────────
+
+
+class TestParallelRuntime:
+    """Runtime executes parallel blocks compiled from ``for x in parallel(...)``."""
+
+    def test_parallel_branches_run_sequentially(self) -> None:
+        @phase
+        def branch_a(ctx: dict) -> dict:
+            return {"a": 1}
+
+        @phase
+        def branch_b(ctx: dict) -> dict:
+            return {"b": 2}
+
+        @pipeline
+        def my_pipe(ctx: dict) -> dict:
+            for branch in parallel([branch_a, branch_b]):
+                state = yield branch(ctx)
+            return state
+
+        prog = compile_pipeline(my_pipe)
+        result = run_native_pipeline(prog)
+        assert result.state == {"a": 1, "b": 2}
+        assert len(result.stages) == 2
+
+    def test_parallel_with_reducer(self) -> None:
+        @phase
+        def branch_a(ctx: dict) -> dict:
+            return {"value": 1}
+
+        @phase
+        def branch_b(ctx: dict) -> dict:
+            return {"value": 2}
+
+        def reducer(results: list[dict]) -> dict:
+            return {"total": sum(r["value"] for r in results)}
+
+        @pipeline
+        def my_pipe(ctx: dict) -> dict:
+            for branch in parallel([branch_a, branch_b], reducer=reducer):
+                state = yield branch(ctx)
+            return state
+
+        prog = compile_pipeline(my_pipe)
+        result = run_native_pipeline(prog)
+        # Reducer is currently stored in IR; the no-op sequential runtime does
+        # not invoke it automatically, so state is the last branch's output.
+        # This test documents the current M5a contract.
+        assert "value" in result.state
+
+    def test_yield_parallel_call_rejected(self) -> None:
+        @phase
+        def branch_a(ctx: dict) -> dict:
+            return {"a": 1}
+
+        @pipeline
+        def my_pipe(ctx: dict) -> dict:
+            state = yield parallel([branch_a])  # type: ignore[misc]
+            return state
+
+        from arnold.pipeline.native import NativeCompileError
+        with pytest.raises(NativeCompileError) as exc_info:
+            compile_pipeline(my_pipe)
+        assert "for branch in parallel" in str(exc_info.value)
