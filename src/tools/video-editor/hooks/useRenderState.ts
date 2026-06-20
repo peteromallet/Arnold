@@ -16,6 +16,7 @@ import { useClipTypeRegistrySnapshot } from '@/tools/video-editor/clip-types/Cli
 import {
   collectBuiltInKnownIds,
   collectExtensionDeclaredIds,
+  hasTimelineShaderMetadata,
   scanExportConfig,
 } from '@/tools/video-editor/runtime/exportGuard.ts';
 import {
@@ -124,6 +125,8 @@ function formatExportGuardLog(
           ? ` transition \"${diag.detail.transitionType}\"`
           : diag.detail?.clipType
             ? ` clip type \"${diag.detail.clipType}\"`
+            : diag.detail?.shaderId
+              ? ` shader \"${diag.detail.shaderId}\"`
             : '';
       const route = diag.detail?.renderRoute ? ` (${diag.detail.renderRoute})` : '';
       lines.push(`  [${diag.code}]${name}${route}: ${diag.message}`);
@@ -139,6 +142,8 @@ function formatExportGuardLog(
           ? ` transition \"${diag.detail.transitionType}\"`
           : diag.detail?.clipType
             ? ` clip type \"${diag.detail.clipType}\"`
+            : diag.detail?.shaderId
+              ? ` shader \"${diag.detail.shaderId}\"`
             : '';
       const route = diag.detail?.renderRoute ? ` (${diag.detail.renderRoute})` : '';
       lines.push(`  [${diag.code}]${name}${route}: ${diag.message}`);
@@ -155,6 +160,8 @@ function formatExportGuardLog(
         ? `"${finding.detail.effectType}"`
         : finding.detail?.transitionType
           ? `"${finding.detail.transitionType}"`
+          : finding.detail?.shaderId
+            ? `"${finding.detail.shaderId}"`
           : 'unknown';
       const route = finding.route ?? 'unknown-route';
       lines.push(`  ${name} blocked on ${route}: ${finding.message}`);
@@ -172,7 +179,7 @@ function exportDiagnosticId(diagnostic: ReturnType<typeof scanExportConfig>['dia
     diagnostic.extensionId ?? 'host',
     diagnostic.contributionId ?? 'timeline',
     detail.clipId ?? 'no-clip',
-    detail.effectType ?? detail.transitionType ?? detail.clipType ?? index,
+    detail.effectType ?? detail.transitionType ?? detail.clipType ?? detail.shaderId ?? index,
   ].join(':');
 }
 
@@ -185,6 +192,9 @@ function blockerReasonForExportDiagnostic(diagnostic: ExportDiagnostic): RenderB
   }
   if (diagnostic.code.includes('live-binding')) {
     return 'live-unbaked';
+  }
+  if (diagnostic.code.includes('shader')) {
+    return 'missing-material';
   }
   return 'route-unsupported';
 }
@@ -346,7 +356,13 @@ export function useRenderState(
     diagnosticCollection?.remove((diagnostic) => diagnostic.detail?.source === 'render-planner');
 
     // Skip guard work only when there is no active extension/provider registry input.
-    if (isExtensionRuntimeEmpty(extensionRuntime) && effectRegistrySnapshot.records.length === 0 && transitionRegistrySnapshot.records.length === 0 && clipTypeRegistrySnapshot.records.length === 0) {
+    if (
+      isExtensionRuntimeEmpty(extensionRuntime)
+      && effectRegistrySnapshot.records.length === 0
+      && transitionRegistrySnapshot.records.length === 0
+      && clipTypeRegistrySnapshot.records.length === 0
+      && !hasTimelineShaderMetadata(resolvedConfig)
+    ) {
       return true; // no blocker
     }
 

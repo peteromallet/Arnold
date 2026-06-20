@@ -19,6 +19,14 @@ import type {
   MetadataFacetValueKind,
   EffectContribution,
   TransitionContribution,
+  ShaderContribution,
+  ShaderFallbackBehavior,
+  ShaderMaterializerDescriptor,
+  ShaderPassDescriptor,
+  ShaderPassKind,
+  ShaderSourceDescriptor,
+  ShaderTextureSchema,
+  ShaderUniformSchema,
   AgentToolContribution,
   ToolResultFamily,
   RenderRoute,
@@ -142,6 +150,8 @@ export interface VideoEditorExtensionRuntimeConfig {
   effects: readonly VideoEditorEffectDescriptor[];
   /** M8: Normalized component-backed transition descriptors, provider-scoped and deterministically ordered. */
   transitions: readonly VideoEditorTransitionDescriptor[];
+  /** M13: Normalized WebGL shader descriptors, provider-scoped and deterministically ordered. */
+  shaders: readonly VideoEditorShaderDescriptor[];
   /** M10: Normalized agent tool descriptors, provider-scoped and deterministically ordered. */
   agentTools: readonly VideoEditorAgentToolDescriptor[];
 }
@@ -335,6 +345,31 @@ export interface VideoEditorTransitionDescriptor {
 }
 
 // ---------------------------------------------------------------------------
+// M13: WebGL shader descriptors
+// ---------------------------------------------------------------------------
+
+/** A normalized WebGL shader descriptor produced by runtime normalization. */
+export interface VideoEditorShaderDescriptor {
+  id: string;
+  extensionId: string;
+  order?: number;
+  /** The shader identifier that must match registerShader calls. */
+  shaderId: string;
+  /** Human-readable label, falling back to shaderId. */
+  label: string;
+  description?: string;
+  /** V1 shader pass scope. */
+  pass: ShaderPassKind | ShaderPassDescriptor;
+  source?: ShaderSourceDescriptor;
+  uniforms?: ShaderUniformSchema;
+  textures?: ShaderTextureSchema;
+  fallback?: ShaderFallbackBehavior;
+  materializer?: ShaderMaterializerDescriptor;
+  /** Whether the contribution included declaration-time source metadata. */
+  hasSourceMetadata: boolean;
+}
+
+// ---------------------------------------------------------------------------
 // M10: Agent tool descriptors
 // ---------------------------------------------------------------------------
 
@@ -401,6 +436,8 @@ export interface ExtensionRuntime {
   readonly effects: readonly VideoEditorEffectDescriptor[];
   /** M8: Normalized component-backed transition descriptors. */
   readonly transitions: readonly VideoEditorTransitionDescriptor[];
+  /** M13: Normalized WebGL shader descriptors. */
+  readonly shaders: readonly VideoEditorShaderDescriptor[];
   /** M10: Normalized agent tool descriptors. */
   readonly agentTools: readonly VideoEditorAgentToolDescriptor[];
 }
@@ -421,6 +458,7 @@ const EMPTY_METADATA_FACETS: readonly VideoEditorMetadataFacetDescriptor[] = Obj
 const EMPTY_ASSET_DETAIL_SECTIONS: readonly VideoEditorAssetDetailSectionDescriptor[] = Object.freeze([]);
 const EMPTY_EFFECTS: readonly VideoEditorEffectDescriptor[] = Object.freeze([]);
 const EMPTY_TRANSITIONS: readonly VideoEditorTransitionDescriptor[] = Object.freeze([]);
+const EMPTY_SHADERS: readonly VideoEditorShaderDescriptor[] = Object.freeze([]);
 const EMPTY_AGENT_TOOLS: readonly VideoEditorAgentToolDescriptor[] = Object.freeze([]);
 const EMPTY_RESOLVED_PANEL_REGISTRY: ResolvedVideoEditorPanelRegistry = Object.freeze({
   assetPanels: EMPTY_PANELS,
@@ -449,6 +487,7 @@ export const DEFAULT_VIDEO_EDITOR_EXTENSION_RUNTIME: VideoEditorExtensionRuntime
   assetDetailSections: EMPTY_ASSET_DETAIL_SECTIONS,
   effects: EMPTY_EFFECTS,
   transitions: EMPTY_TRANSITIONS,
+  shaders: EMPTY_SHADERS,
   agentTools: EMPTY_AGENT_TOOLS,
 });
 
@@ -576,7 +615,7 @@ export function normalizeExtensionRuntime(
             severity: 'warn',
             code: 'runtime/effect-missing-component-metadata',
             message:
-              `Effect contribution \"${contribId}\" in extension \"${extId}\" ` +
+              `Effect contribution "${contribId}" in extension "${extId}" ` +
               `has no effectId (component metadata). The effect will be inactive.`,
             extensionId: extId,
             contributionId: contribId,
@@ -738,6 +777,7 @@ export function normalizeExtensionRuntime(
   const assetDetailSectionDescriptors: VideoEditorAssetDetailSectionDescriptor[] = [];
   const effectDescriptors: VideoEditorEffectDescriptor[] = [];
   const transitionDescriptors: VideoEditorTransitionDescriptor[] = [];
+  const shaderDescriptors: VideoEditorShaderDescriptor[] = [];
   const agentToolDescriptors: VideoEditorAgentToolDescriptor[] = [];
 
   for (const { contribution, extensionId } of sorted) {
@@ -865,6 +905,38 @@ export function normalizeExtensionRuntime(
           });
         }
         // Transitions without transitionId are filtered in Phase 2; they never reach here.
+        break;
+      }
+      // M13: shader — bridge dedicated WebGL shader contributions into shaders
+      case 'shader': {
+        const shaderContrib = contribution as unknown as ShaderContribution;
+        if (shaderContrib.shaderId) {
+          shaderDescriptors.push({
+            id: contribution.id as string,
+            extensionId,
+            order: contribution.order,
+            shaderId: shaderContrib.shaderId,
+            label: shaderContrib.label ?? shaderContrib.shaderId,
+            description: shaderContrib.description,
+            pass: shaderContrib.pass,
+            source: shaderContrib.source,
+            uniforms: shaderContrib.uniforms,
+            textures: shaderContrib.textures,
+            fallback: shaderContrib.fallback,
+            materializer: shaderContrib.materializer,
+            hasSourceMetadata: shaderContrib.source !== undefined,
+          });
+        } else {
+          diagnostics.push({
+            severity: 'error',
+            code: 'runtime/shader-missing-shader-id',
+            message:
+              `Shader contribution "${contribution.id as string}" in extension "${extensionId}" ` +
+              'has no shaderId. The shader will be inactive.',
+            extensionId,
+            contributionId: contribution.id as string,
+          });
+        }
         break;
       }
       // M10: agentTool — bridge agent tool contributions into agentTools
@@ -1018,6 +1090,7 @@ export function normalizeExtensionRuntime(
     assetDetailSectionDescriptors.length > 0 ||
     effectDescriptors.length > 0 ||
     transitionDescriptors.length > 0 ||
+    shaderDescriptors.length > 0 ||
     agentToolDescriptors.length > 0;
 
   const config: VideoEditorExtensionRuntimeConfig = hasAnyConfigurableContent
@@ -1039,6 +1112,7 @@ export function normalizeExtensionRuntime(
         assetDetailSections: Object.freeze(assetDetailSectionDescriptors),
         effects: Object.freeze(effectDescriptors),
         transitions: Object.freeze(transitionDescriptors),
+        shaders: Object.freeze(shaderDescriptors),
         agentTools: Object.freeze(agentToolDescriptors),
       })
     : DEFAULT_VIDEO_EDITOR_EXTENSION_RUNTIME;
@@ -1062,6 +1136,7 @@ export function normalizeExtensionRuntime(
     assetDetailSections: Object.freeze(assetDetailSectionDescriptors),
     effects: Object.freeze(effectDescriptors),
     transitions: Object.freeze(transitionDescriptors),
+    shaders: Object.freeze(shaderDescriptors),
     agentTools: Object.freeze(agentToolDescriptors),
   });
 
@@ -1259,6 +1334,7 @@ const EMPTY_EXTENSION_RUNTIME: ExtensionRuntime = Object.freeze({
   assetDetailSections: EMPTY_ASSET_DETAIL_SECTIONS,
   effects: EMPTY_EFFECTS,
   transitions: EMPTY_TRANSITIONS,
+  shaders: EMPTY_SHADERS,
   agentTools: EMPTY_AGENT_TOOLS,
 });
 
@@ -1324,13 +1400,21 @@ export function resolveVideoEditorPanelRegistry(
 /** Selection context supplied by the host to inspector contributions. */
 export interface InspectorSelectionSnapshot {
   /** Discriminated kind of the current selection. */
-  readonly kind: 'clip' | 'selection' | 'track' | 'timeline';
+  readonly kind: 'clip' | 'selection' | 'track' | 'timeline' | 'shader';
   /** Single clip ID when kind === 'clip'. */
   readonly clipId?: string;
   /** Multiple clip IDs when kind === 'selection'. */
   readonly clipIds?: readonly string[];
   /** Track ID when kind === 'track'. */
   readonly trackId?: string;
+  /** Shader scope when kind === 'shader'. */
+  readonly shaderScope?: 'clip' | 'postprocess';
+  /** Shader ID when kind === 'shader'. */
+  readonly shaderId?: string;
+  /** Owning extension ID when kind === 'shader'. */
+  readonly extensionId?: string;
+  /** Contribution ID when kind === 'shader'. */
+  readonly contributionId?: string;
 }
 
 /** A resolved, selection-aware inspector contribution ready for rendering. */
@@ -1358,7 +1442,7 @@ export interface InspectorContribution {
 export function getInspectorContributions(
   registry: VideoEditorExtensionRuntimeConfig['registry'],
   context: VideoEditorRenderContext,
-  selection: InspectorSelectionSnapshot | null,
+  _selection: InspectorSelectionSnapshot | null,
 ): {
   readonly all: readonly InspectorContribution[];
   readonly beforeDefault: readonly InspectorContribution[];
@@ -1374,7 +1458,7 @@ export function getInspectorContributions(
       id: descriptor.id,
       placement: descriptor.placement,
       order: descriptor.order,
-      render: (ctx, sel) => originalRender(ctx),
+      render: (ctx, _sel) => originalRender(ctx),
     };
   };
 
@@ -1475,7 +1559,7 @@ export function getTimelineOverlayContributions(
   const contributions: TimelineOverlayContribution[] = overlays.map((descriptor) => {
     const pointerClaimed = claimedOverlayId === descriptor.id;
 
-    const renderProps: TimelineOverlayRenderProps = {
+    const _renderProps: TimelineOverlayRenderProps = {
       ...overlayRenderProps,
       pointerClaimed,
       claimPointer: () => overlayRenderProps.claimPointer(descriptor.id),

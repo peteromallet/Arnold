@@ -13,12 +13,29 @@ import {
 import { VisualClip } from '@/tools/video-editor/compositions/VisualClip.tsx';
 import type { ResolvedTimelineClip, TrackDefinition } from '@/tools/video-editor/types/index.ts';
 import type { RenderMaterialRef } from '@reigh/editor-sdk';
+import type { ShaderEffectRegistryRecord, ShaderEffectRegistrySnapshot } from '@/tools/video-editor/shaders/registry/types.ts';
 
 // ---------------------------------------------------------------------------
 // Remotion mocks (mirrors ClipEffectsSnapshot.test.tsx)
 // ---------------------------------------------------------------------------
 
 let currentFrame = 0;
+let currentEnvironment = {
+  isRendering: false,
+  isClientSideRendering: false,
+};
+
+const previewSurfaceInstances: Array<{
+  input: Record<string, unknown>;
+  surface: {
+    canvas: HTMLCanvasElement;
+    setUniformValues: ReturnType<typeof vi.fn>;
+    setTextureValues: ReturnType<typeof vi.fn>;
+    resize: ReturnType<typeof vi.fn>;
+    renderFrame: ReturnType<typeof vi.fn>;
+    dispose: ReturnType<typeof vi.fn>;
+  };
+}> = [];
 
 vi.mock('remotion', async () => ({
   AbsoluteFill: ({ children, style, ...props }: PropsWithChildren<Record<string, unknown>>) => (
@@ -32,7 +49,23 @@ vi.mock('remotion', async () => ({
   ),
   interpolate: () => 0.5,
   useCurrentFrame: () => currentFrame,
+  useRemotionEnvironment: () => currentEnvironment,
   useVideoConfig: () => ({ fps: 30, width: 1920, height: 1080 }),
+}));
+
+vi.mock('@/tools/video-editor/shaders/preview/WebGLShaderPreviewSurface.ts', () => ({
+  createWebGLShaderPreviewSurface: vi.fn((input: Record<string, unknown>) => {
+    const surface = {
+      canvas: document.createElement('canvas'),
+      setUniformValues: vi.fn(),
+      setTextureValues: vi.fn(),
+      resize: vi.fn(),
+      renderFrame: vi.fn(() => true),
+      dispose: vi.fn(),
+    };
+    previewSurfaceInstances.push({ input, surface });
+    return surface;
+  }),
 }));
 
 vi.mock('@remotion/media', () => ({
@@ -105,6 +138,52 @@ function materialRef(overrides: Partial<RenderMaterialRef> = {}): RenderMaterial
   };
 }
 
+function shaderRecord(overrides: Partial<ShaderEffectRegistryRecord> = {}): ShaderEffectRegistryRecord {
+  return {
+    shaderId: 'shader.preview.clip',
+    ownerExtensionId: 'ext.shader',
+    contributionId: 'ext.shader.clip',
+    label: 'Preview Clip Shader',
+    source: {
+      kind: 'inline',
+      fragment: 'precision mediump float; void main(){ gl_FragColor = vec4(1.0); }',
+    },
+    pass: 'clip',
+    uniforms: [
+      { name: 'intensity', label: 'Intensity', type: 'float', default: 0.5 },
+    ],
+    provenance: 'trusted-loader',
+    renderability: {
+      defaultRoute: 'preview',
+      determinism: 'preview-only',
+      capabilities: [
+        {
+          route: 'preview',
+          status: 'supported',
+          determinism: 'preview-only',
+        },
+      ],
+    },
+    status: 'active',
+    ...overrides,
+  };
+}
+
+function shaderSnapshot(record: ShaderEffectRegistryRecord): ShaderEffectRegistrySnapshot {
+  return {
+    records: [record],
+    diagnostics: [],
+    get: (shaderId, ownerExtensionId) => (
+      shaderId === record.shaderId && ownerExtensionId === record.ownerExtensionId ? record : undefined
+    ),
+    getByLookup: (lookup) => (
+      lookup.shaderId === record.shaderId && lookup.ownerExtensionId === record.ownerExtensionId ? record : undefined
+    ),
+    has: (shaderId, ownerExtensionId) => shaderId === record.shaderId && ownerExtensionId === record.ownerExtensionId,
+    hasByLookup: (lookup) => lookup.shaderId === record.shaderId && lookup.ownerExtensionId === record.ownerExtensionId,
+  };
+}
+
 // Provider-mounted record helper: registers a transition into the provider
 // registry so it can be resolved by VisualClip.
 function ProviderRecord({
@@ -132,7 +211,93 @@ function ProviderRecord({
 describe('VisualClip transition rendering', () => {
   afterEach(() => {
     currentFrame = 0;
+    currentEnvironment = {
+      isRendering: false,
+      isClientSideRendering: false,
+    };
+    previewSurfaceInstances.length = 0;
     vi.restoreAllMocks();
+  });
+
+  it('renders clip-local shader preview in browser mode and updates current clip time and frame', () => {
+    const record = shaderRecord();
+    const clip = mediaClip({
+      app: {
+        shader: {
+          scope: 'clip',
+          extensionId: 'ext.shader',
+          contributionId: 'ext.shader.clip',
+          shaderId: 'shader.preview.clip',
+          uniforms: { intensity: 0.75 },
+        },
+      },
+    });
+
+    currentFrame = 15;
+    const { rerender } = render(
+      <VisualClip
+        clip={clip}
+        track={track}
+        fps={30}
+        shaderRegistrySnapshot={shaderSnapshot(record)}
+      />,
+    );
+
+    expect(screen.getByTestId('visual-clip-shader-preview')).toHaveAttribute('data-shader-frame', '15');
+    expect(screen.getByTestId('visual-clip-shader-preview')).toHaveAttribute('data-shader-time', '0.5');
+    expect(previewSurfaceInstances).toHaveLength(1);
+    expect(previewSurfaceInstances[0].input).toMatchObject({
+      shaderId: 'shader.preview.clip',
+      width: 1920,
+      height: 1080,
+      uniformValues: { intensity: 0.75 },
+    });
+    expect(previewSurfaceInstances[0].surface.renderFrame).toHaveBeenLastCalledWith(0.5, 15);
+
+    currentFrame = 30;
+    rerender(
+      <VisualClip
+        clip={clip}
+        track={track}
+        fps={30}
+        shaderRegistrySnapshot={shaderSnapshot(record)}
+      />,
+    );
+
+    expect(screen.getByTestId('visual-clip-shader-preview')).toHaveAttribute('data-shader-frame', '30');
+    expect(screen.getByTestId('visual-clip-shader-preview')).toHaveAttribute('data-shader-time', '1');
+    expect(previewSurfaceInstances[0].surface.renderFrame).toHaveBeenLastCalledWith(1, 30);
+  });
+
+  it('keeps Remotion export honest by showing clip shaders as unsupported instead of running WebGL preview', () => {
+    currentEnvironment = {
+      isRendering: true,
+      isClientSideRendering: false,
+    };
+
+    render(
+      <VisualClip
+        clip={mediaClip({
+          app: {
+            shader: {
+              scope: 'clip',
+              extensionId: 'ext.shader',
+              contributionId: 'ext.shader.clip',
+              shaderId: 'shader.preview.clip',
+            },
+          },
+        })}
+        track={track}
+        fps={30}
+        shaderRegistrySnapshot={shaderSnapshot(shaderRecord())}
+      />,
+    );
+
+    expect(screen.queryByTestId('visual-clip-shader-preview')).not.toBeInTheDocument();
+    expect(previewSurfaceInstances).toHaveLength(0);
+    expect(screen.getByTestId('unsupported-clip-shader-export')).toHaveTextContent(
+      'export requires a shader materializer that produces RenderMaterial',
+    );
   });
 
   it('renders pending, materializing, and failed material placeholders with diagnostics', () => {

@@ -10,6 +10,7 @@ const useVideoEditorRenderContextMock = vi.fn();
 const useVideoEditorPanelRegistryMock = vi.fn();
 const getInspectorContributionsMock = vi.fn();
 const useVideoEditorAssetPanelsMock = vi.fn();
+const useShaderEffectRegistrySnapshotMock = vi.fn();
 
 vi.mock('@/tools/video-editor/hooks/timelineStore', () => ({
   useTimelineEditorData: () => useTimelineEditorDataMock(),
@@ -21,6 +22,10 @@ vi.mock('@/tools/video-editor/runtime/useVideoEditorRenderContext', () => ({
   useVideoEditorRenderContext: () => useVideoEditorRenderContextMock(),
   useVideoEditorPanelRegistry: () => useVideoEditorPanelRegistryMock(),
   useVideoEditorAssetPanels: () => useVideoEditorAssetPanelsMock(),
+}));
+
+vi.mock('@/tools/video-editor/shaders/registry/ShaderEffectRegistryContext.tsx', () => ({
+  useShaderEffectRegistrySnapshot: () => useShaderEffectRegistrySnapshotMock(),
 }));
 
 // Mock getInspectorContributions so the test controls what sections appear
@@ -130,6 +135,7 @@ function createBaseEditorData() {
     selectedTrack: null,
     selectedTrackId: null,
     selectedClipHasPredecessor: false,
+    inspectorTarget: null,
     compositionSize: { width: 1280, height: 720 },
     preferences: {
       activeClipTab: 'effects',
@@ -139,6 +145,41 @@ function createBaseEditorData() {
         hidden: [],
       },
     },
+  };
+}
+
+function createShaderSnapshot() {
+  const record = {
+    ownerExtensionId: 'ext.shader',
+    contributionId: 'post-grade',
+    shaderId: 'shader.post.grade',
+    label: 'Post Grade',
+    pass: 'postprocess',
+    status: 'active',
+    source: { kind: 'inline', fragment: 'void main() {}' },
+    uniforms: [
+      {
+        name: 'intensity',
+        label: 'Intensity',
+        type: 'float',
+        default: 0.5,
+      },
+    ],
+    textures: [],
+    diagnostics: [],
+  };
+
+  return {
+    records: [record],
+    diagnostics: [],
+    get: (shaderId: string, ownerExtensionId?: string) => (
+      shaderId === record.shaderId && ownerExtensionId === record.ownerExtensionId ? record : undefined
+    ),
+    getByLookup: (lookup: { shaderId: string; ownerExtensionId?: string }) => (
+      lookup.shaderId === record.shaderId && lookup.ownerExtensionId === record.ownerExtensionId ? record : undefined
+    ),
+    has: (shaderId: string, ownerExtensionId?: string) => shaderId === record.shaderId && ownerExtensionId === record.ownerExtensionId,
+    hasByLookup: (lookup: { shaderId: string; ownerExtensionId?: string }) => lookup.shaderId === record.shaderId && lookup.ownerExtensionId === record.ownerExtensionId,
   };
 }
 
@@ -203,6 +244,7 @@ describe('PropertiesPanel registry surfaces', () => {
     useTimelineEditorDataMock.mockReturnValue(createBaseEditorData());
     useTimelineEditorOpsMock.mockReturnValue(createEditorOps());
     useVideoEditorPanelRegistryMock.mockReturnValue({ panels: [], inspectorSections: [] });
+    useShaderEffectRegistrySnapshotMock.mockReturnValue(createShaderSnapshot());
     getInspectorContributionsMock.mockImplementation(
       (_registry: unknown, _context: unknown, _selection: unknown) => createInspectorContributions(),
     );
@@ -281,6 +323,7 @@ describe('PropertiesPanel — selection propagation', () => {
     useTimelineEditorOpsMock.mockReturnValue(createEditorOps());
     useVideoEditorPanelRegistryMock.mockReturnValue({ panels: [], inspectorSections: [] });
     useVideoEditorAssetPanelsMock.mockReturnValue([]);
+    useShaderEffectRegistrySnapshotMock.mockReturnValue(createShaderSnapshot());
 
     // Capture the selection argument passed to getInspectorContributions
     getInspectorContributionsMock.mockImplementation(
@@ -382,6 +425,51 @@ describe('PropertiesPanel — selection propagation', () => {
       expect.anything(),
       expect.anything(),
       expect.objectContaining({ kind: 'timeline' }),
+    );
+  });
+
+  it('opens postprocess shader controls for the shader inspector target', () => {
+    useTimelineEditorDataMock.mockReturnValue({
+      ...createBaseEditorData(),
+      resolvedConfig: {
+        ...createBaseEditorData().resolvedConfig,
+        app: {
+          shaderPostprocess: {
+            scope: 'postprocess',
+            extensionId: 'ext.shader',
+            contributionId: 'post-grade',
+            shaderId: 'shader.post.grade',
+            label: 'Post Grade',
+          },
+        },
+      },
+      selectedClip: null,
+      selectedClipIds: new Set<string>(),
+      selectedTrackId: null,
+      inspectorTarget: {
+        kind: 'shader',
+        shaderScope: 'postprocess',
+        shaderId: 'shader.post.grade',
+        extensionId: 'ext.shader',
+        contributionId: 'post-grade',
+      },
+    });
+
+    render(<PropertiesPanel />);
+
+    expect(screen.getByTestId('shader-inspector')).toBeInTheDocument();
+    expect(screen.getByText('Postprocess Shader')).toBeInTheDocument();
+    expect(screen.getByText('Post Grade')).toBeInTheDocument();
+    expect(screen.getByTestId('schema-form-field-intensity')).toHaveTextContent('Intensity');
+    expect(screen.getByTestId('schema-form-widget-intensity')).toBeInTheDocument();
+    expect(getInspectorContributionsMock).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      expect.objectContaining({
+        kind: 'shader',
+        shaderScope: 'postprocess',
+        shaderId: 'shader.post.grade',
+      }),
     );
   });
 

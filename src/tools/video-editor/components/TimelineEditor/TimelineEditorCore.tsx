@@ -35,8 +35,9 @@ import {
   convertOverhangToHold,
   detectClipOverhang,
 } from '@/tools/video-editor/lib/overhang.ts';
+import { getTimelinePostprocessShader } from '@/tools/video-editor/lib/timeline-domain.ts';
 import type { TimelineActionResizeStart, TimelineClipEdgeResizeEnd } from '@/tools/video-editor/hooks/useTimelineState.types.ts';
-import type { ResolvedTimelineClip, TrackDefinition } from '@/tools/video-editor/types/index.ts';
+import type { ResolvedTimelineClip, TimelinePostprocessShaderMetadata, TrackDefinition } from '@/tools/video-editor/types/index.ts';
 import type { TimelineAction, TimelineRow } from '@/tools/video-editor/types/timeline-canvas.ts';
 import type {
   TimelineOverlayContribution,
@@ -285,6 +286,8 @@ function TimelineEditorCoreComponent({
     onClickTimeArea,
     setGestureOwner,
     setInputModalityFromPointerType,
+    setContextTarget,
+    setInspectorTarget,
     onActionResizeStart,
     onClipEdgeResizeEnd,
     onTimelineDragOver,
@@ -315,6 +318,8 @@ function TimelineEditorCoreComponent({
     onClickTimeArea: ops.onClickTimeArea,
     setGestureOwner: ops.setGestureOwner,
     setInputModalityFromPointerType: ops.setInputModalityFromPointerType,
+    setContextTarget: ops.setContextTarget,
+    setInspectorTarget: ops.setInspectorTarget,
     onActionResizeStart: ops.onActionResizeStart,
     onClipEdgeResizeEnd: ops.onClipEdgeResizeEnd,
     onTimelineDragOver: ops.onTimelineDragOver,
@@ -440,6 +445,22 @@ function TimelineEditorCoreComponent({
     userSelectTimelineClip(clipId, { additive: false });
     setSelectedTrackId(trackId);
   }, [setSelectedTrackId]);
+  const postprocessShader = resolvedConfig
+    ? getTimelinePostprocessShader(resolvedConfig)
+    : undefined;
+  const handlePostprocessShaderSelect = useCallback((shader: TimelinePostprocessShaderMetadata) => {
+    clearSelection();
+    setSelectedTrackId(null);
+    const target = {
+      kind: 'shader' as const,
+      shaderScope: 'postprocess' as const,
+      shaderId: shader.shaderId,
+      extensionId: shader.extensionId,
+      contributionId: shader.contributionId,
+    };
+    setContextTarget(target);
+    setInspectorTarget(target);
+  }, [clearSelection, setContextTarget, setInspectorTarget, setSelectedTrackId]);
 
   const { pixelToTime, pixelsPerSecond } = useTimelineScale({
     scale,
@@ -913,6 +934,8 @@ function TimelineEditorCoreComponent({
           onClearUnusedTracks={handleClearUnusedTracks}
           newTrackDropLabel={newTrackDropLabel}
           onScroll={handleOverlayScroll}
+          postprocessShader={postprocessShader}
+          onSelectPostprocessShader={handlePostprocessShaderSelect}
         />
         {/* Timeline overlay host — renders extension overlays above the edit area.
             Defaults to pointer-events-none so overlays don't steal gestures unless

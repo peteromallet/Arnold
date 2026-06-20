@@ -2,16 +2,19 @@ import { memo, useEffect, useMemo, useRef } from 'react';
 import { Button } from '@/shared/components/ui/button.tsx';
 import { BulkClipPanel } from '@/tools/video-editor/components/PropertiesPanel/BulkClipPanel.tsx';
 import { ClipPanel, getVisibleClipTabs, NO_EFFECT } from '@/tools/video-editor/components/PropertiesPanel/ClipPanel.tsx';
+import { ShaderInspector } from '@/tools/video-editor/components/ShaderInspector/ShaderInspector.tsx';
 import {
   useTimelineEditorData,
   useTimelineEditorOps,
   useTimelinePlaybackContext,
 } from '@/tools/video-editor/hooks/timelineStore.ts';
+import { useShaderEffectRegistrySnapshot } from '@/tools/video-editor/shaders/registry/ShaderEffectRegistryContext.tsx';
 import { useStaleVariants } from '@/tools/video-editor/hooks/useStaleVariants.ts';
 import { useAddVariantAsGeneration } from '@/tools/video-editor/hooks/useAddVariantAsGeneration.ts';
 import { useRenderDiagnostic } from '@/tools/video-editor/hooks/usePerfDiagnostics.ts';
 import { getFallbackClipTab, getSelectionDefaultClipTab } from '@/tools/video-editor/lib/clip-inspector.ts';
 import { getBulkVisibleTabs, getSharedNestedValue, getSharedValue } from '@/tools/video-editor/lib/bulk-utils.ts';
+import { getTimelinePostprocessShader } from '@/tools/video-editor/lib/timeline-domain.ts';
 import { VIDEO_EDITOR_THEME_VARS } from '@/tools/video-editor/lib/themeTokens.ts';
 import {
   useVideoEditorPanelRegistry,
@@ -91,6 +94,7 @@ function PropertiesPanelComponent() {
     selectedClipHasPredecessor,
     compositionSize,
     preferences,
+    inspectorTarget,
   } = useTimelineEditorData();
   const { currentTime } = useTimelinePlaybackContext();
   const {
@@ -115,7 +119,9 @@ function PropertiesPanelComponent() {
     setPrecisionEnabled,
     patchRegistry,
     registerAsset,
+    applyEdit,
   } = useTimelineEditorOps();
+  const shaderSnapshot = useShaderEffectRegistrySnapshot();
   const { staleAssetKeys, dismissedAssetKeys, dismissAsset, updateAssetToCurrentVariant, applyVariantToAsset } = useStaleVariants({
     registry: resolvedConfig?.registry,
     patchRegistry,
@@ -125,6 +131,21 @@ function PropertiesPanelComponent() {
   const prevClipIdRef = useRef(selectedClip?.id);
   const selectedClipIdsList = useMemo(() => [...selectedClipIds], [selectedClipIds]);
   const inspectorSelectionTarget = useMemo(() => {
+    if (
+      inspectorTarget?.kind === 'shader'
+      && inspectorTarget.shaderScope === 'postprocess'
+      && selectedClipIdsList.length === 0
+      && !selectedTrackId
+    ) {
+      return {
+        kind: 'shader' as const,
+        shaderScope: 'postprocess' as const,
+        shaderId: inspectorTarget.shaderId ?? undefined,
+        extensionId: inspectorTarget.extensionId ?? undefined,
+        contributionId: inspectorTarget.contributionId ?? undefined,
+      };
+    }
+
     if (selectedClipIdsList.length > 1) {
       return { kind: 'selection' as const, clipIds: selectedClipIdsList };
     }
@@ -138,7 +159,14 @@ function PropertiesPanelComponent() {
     }
 
     return { kind: 'timeline' as const };
-  }, [selectedClip, selectedClipIdsList, selectedTrackId]);
+  }, [inspectorTarget, selectedClip, selectedClipIdsList, selectedTrackId]);
+  const selectedPostprocessShader = useMemo(() => {
+    if (inspectorSelectionTarget.kind !== 'shader' || inspectorSelectionTarget.shaderScope !== 'postprocess') {
+      return undefined;
+    }
+
+    return resolvedConfig ? getTimelinePostprocessShader(resolvedConfig) : undefined;
+  }, [inspectorSelectionTarget, resolvedConfig]);
   const bulkSelectedClips = resolvedConfig?.clips.filter((clip) => selectedClipIds.has(clip.id)) ?? [];
   const bulkVisibleTabs = getBulkVisibleTabs(bulkSelectedClips, data?.resolvedConfig?.tracks ?? []);
   const bulkEntrance = getSharedNestedValue(bulkSelectedClips, (clip) => clip.entrance);
@@ -342,6 +370,23 @@ function PropertiesPanelComponent() {
           />
         )}
       </div>
+      {selectedClipIds.size === 1 && (
+        <ShaderInspector
+          clip={selectedClip}
+          resolvedConfig={resolvedConfig}
+          shaderSnapshot={shaderSnapshot}
+          applyEdit={applyEdit}
+        />
+      )}
+      {selectedPostprocessShader && (
+        <ShaderInspector
+          clip={null}
+          postprocessShader={selectedPostprocessShader}
+          resolvedConfig={resolvedConfig}
+          shaderSnapshot={shaderSnapshot}
+          applyEdit={applyEdit}
+        />
+      )}
       <InspectorRegistrySections placement="after-default" selection={inspectorSelectionTarget} />
     </div>
   );

@@ -81,6 +81,7 @@ export function useVideoEditorPreviewSurface({
         config={resolvedConfig}
         compact={compact}
         initialTime={currentTime}
+        currentTime={currentTime}
         onTimeUpdate={onPreviewTimeUpdate}
         playerContainerRef={playerContainerRef}
       />,

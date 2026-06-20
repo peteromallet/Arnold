@@ -16,6 +16,7 @@ export type TimelineGestureOwner =
 
 export type TimelineInteractionTargetKind =
   | 'clip'
+  | 'shader'
   | 'track'
   | 'timeline'
   | 'selection'
@@ -28,6 +29,10 @@ export interface TimelineInteractionTarget {
   clipId?: string | null;
   trackId?: string | null;
   clipIds?: string[];
+  shaderScope?: 'clip' | 'postprocess';
+  shaderId?: string | null;
+  extensionId?: string | null;
+  contributionId?: string | null;
 }
 
 export type TimelineContextTarget = TimelineInteractionTarget | null;

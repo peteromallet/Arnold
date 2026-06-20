@@ -7,6 +7,7 @@ import type { ResolvedTimelineConfig } from '@/tools/video-editor/types';
 
 const playerListeners = new Map<string, Set<(...args: any[]) => void>>();
 const playerPropsHistory: Array<{ config: ResolvedTimelineConfig }> = [];
+const playerHandles: Array<{ seekTo: ReturnType<typeof vi.fn> }> = [];
 
 vi.mock('@remotion/player', async () => {
   const React = await import('react');
@@ -24,7 +25,11 @@ vi.mock('@remotion/player', async () => {
         removeEventListener: (name: string, listener: (...args: any[]) => void) => {
           playerListeners.get(name)?.delete(listener);
         },
-        seekTo: vi.fn(),
+        seekTo: (() => {
+          const seekTo = vi.fn();
+          playerHandles.push({ seekTo });
+          return seekTo;
+        })(),
         play: vi.fn(),
         pause: vi.fn(),
         toggle: vi.fn(),
@@ -71,6 +76,7 @@ describe('RemotionPreview', () => {
     vi.useFakeTimers();
     playerListeners.clear();
     playerPropsHistory.length = 0;
+    playerHandles.length = 0;
   });
 
   afterEach(() => {
@@ -122,5 +128,48 @@ describe('RemotionPreview', () => {
     await act(async () => {});
 
     expect(playerPropsHistory.at(-1)?.config).toBe(nextConfig);
+  });
+
+  it('seeks the player when timeline playback context currentTime changes outside playback', () => {
+    const onTimeUpdate = vi.fn();
+    const playerContainerRef = createRef<HTMLDivElement>();
+    const config = makeConfig('seek');
+
+    const { rerender } = render(
+      <RemotionPreview
+        config={config}
+        currentTime={0}
+        onTimeUpdate={onTimeUpdate}
+        playerContainerRef={playerContainerRef}
+      />,
+    );
+
+    expect(playerHandles.at(-1)?.seekTo).toHaveBeenLastCalledWith(0);
+
+    rerender(
+      <RemotionPreview
+        config={config}
+        currentTime={0.5}
+        onTimeUpdate={onTimeUpdate}
+        playerContainerRef={playerContainerRef}
+      />,
+    );
+
+    expect(playerHandles.at(-1)?.seekTo).toHaveBeenLastCalledWith(15);
+
+    act(() => {
+      emitPlayerEvent('play');
+    });
+
+    rerender(
+      <RemotionPreview
+        config={config}
+        currentTime={0.75}
+        onTimeUpdate={onTimeUpdate}
+        playerContainerRef={playerContainerRef}
+      />,
+    );
+
+    expect(playerHandles.at(-1)?.seekTo).not.toHaveBeenLastCalledWith(23);
   });
 });

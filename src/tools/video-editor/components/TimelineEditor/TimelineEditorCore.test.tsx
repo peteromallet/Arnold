@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import React from 'react';
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { TimelineEditorCore } from '@/tools/video-editor/components/TimelineEditor/TimelineEditorCore';
 import {
@@ -84,14 +84,14 @@ const defaultResolvedConfig = {
 };
 
 /** Creates a fresh timeline store with all slices wired for overlay tests. */
-function createOverlayTestStore() {
+function createOverlayTestStore(options: { resolvedConfig?: typeof defaultResolvedConfig & { app?: Record<string, unknown> } } = {}) {
   const store = createTimelineStore();
   const selectedClipIds = new Set<string>();
   const selectedClipIdsRef = { current: new Set<string>() };
   store.getState().syncSlices({
     data: {
       data: defaultData,
-      resolvedConfig: defaultResolvedConfig,
+      resolvedConfig: options.resolvedConfig ?? defaultResolvedConfig,
       deviceClass: 'desktop' as const,
       inputModality: 'mouse' as const,
       interactionMode: 'browse' as const,
@@ -171,6 +171,8 @@ function createOverlayTestStore() {
       onClickTimeArea: vi.fn(),
       setGestureOwner,
       setInputModalityFromPointerType: vi.fn(() => 'mouse'),
+      setContextTarget: vi.fn(),
+      setInspectorTarget: vi.fn(),
       onActionResizeStart: vi.fn(),
       onClipEdgeResizeEnd: vi.fn(),
       onTimelineDragOver: vi.fn(),
@@ -190,8 +192,8 @@ function createOverlayTestStore() {
   return store;
 }
 
-function renderWithStore(ui: React.ReactElement) {
-  const store = createOverlayTestStore();
+function renderWithStore(ui: React.ReactElement, options: { resolvedConfig?: typeof defaultResolvedConfig & { app?: Record<string, unknown> } } = {}) {
+  const store = createOverlayTestStore(options);
   return {
     store,
     ...render(
@@ -277,6 +279,46 @@ describe('TimelineEditorCore — overlay host', () => {
     it('reads currentTime from playback context for overlay render props', () => {
       const { container } = renderWithStore(<TimelineEditorCore />);
       expect(container.querySelector('.timeline-wrapper')).toBeInTheDocument();
+    });
+
+    it('selects the postprocess shader inspector target from the timeline badge', () => {
+      const resolvedConfig = {
+        ...defaultResolvedConfig,
+        app: {
+          shaderPostprocess: {
+            scope: 'postprocess',
+            extensionId: 'ext.shader',
+            contributionId: 'post-grade',
+            shaderId: 'shader.post.grade',
+            label: 'Post Grade',
+          },
+        },
+      } as typeof defaultResolvedConfig & { app: Record<string, unknown> };
+      const { container, store } = renderWithStore(<TimelineEditorCore />, { resolvedConfig });
+
+      const badge = container.querySelector('[data-postprocess-shader-badge="true"]');
+      if (!(badge instanceof HTMLElement)) {
+        throw new Error('expected postprocess shader badge');
+      }
+
+      fireEvent.click(badge);
+
+      expect(store.getState().ops.clearSelection).toHaveBeenCalledTimes(1);
+      expect(store.getState().ops.setSelectedTrackId).toHaveBeenCalledWith(null);
+      expect(store.getState().ops.setInspectorTarget).toHaveBeenCalledWith({
+        kind: 'shader',
+        shaderScope: 'postprocess',
+        shaderId: 'shader.post.grade',
+        extensionId: 'ext.shader',
+        contributionId: 'post-grade',
+      });
+      expect(store.getState().ops.setContextTarget).toHaveBeenCalledWith({
+        kind: 'shader',
+        shaderScope: 'postprocess',
+        shaderId: 'shader.post.grade',
+        extensionId: 'ext.shader',
+        contributionId: 'post-grade',
+      });
     });
   });
 });

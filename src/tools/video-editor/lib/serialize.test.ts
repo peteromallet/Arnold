@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { repairConfig } from '@/tools/video-editor/lib/migrate';
 import { serializeClipForDisk, serializeForDisk, validateSerializedConfig } from '@/tools/video-editor/lib/serialize';
 import {
+  TIMELINE_POSTPROCESS_SHADER_APP_KEY,
   TimelineDomainError,
   serializeTimelineConfigSnapshot,
   serializeTimelinePair,
@@ -590,6 +591,52 @@ describe('video-editor serialization', () => {
 
     const serialized = serializeForDisk(resolved);
     expect(serialized.clips[0].transition?.params).toEqual({});
+    expect(() => validateSerializedConfig(serialized)).not.toThrow();
+  });
+
+  // ── M13: Shader metadata persistence ─────────────────────────────────
+
+  it('round-trips clip-local and postprocess shader metadata through disk serialization', () => {
+    const clipShader = {
+      scope: 'clip',
+      extensionId: 'com.example.shader',
+      contributionId: 'clip-glow-shader',
+      shaderId: 'shader.clipGlow',
+      label: 'Clip glow',
+      uniforms: { intensity: 0.75, tint: '#ffcc00' },
+      enabled: true,
+    } as const;
+    const postprocessShader = {
+      scope: 'postprocess',
+      extensionId: 'com.example.shader',
+      contributionId: 'grade-postprocess-shader',
+      shaderId: 'shader.postGrade',
+      label: 'Post grade',
+      uniforms: { exposure: 0.2 },
+      enabled: true,
+    } as const;
+    const resolved = {
+      output: { resolution: '1920x1080', fps: 30, file: 'out.mp4' },
+      tracks: [{ id: 'V1', kind: 'visual', label: 'V1' }],
+      clips: [
+        {
+          id: 'clip-shader',
+          at: 0,
+          track: 'V1',
+          clipType: 'hold',
+          hold: 3,
+          app: { shader: clipShader, untouched: { survives: true } },
+        },
+      ],
+      registry: {},
+      app: { [TIMELINE_POSTPROCESS_SHADER_APP_KEY]: postprocessShader },
+    } as unknown as ResolvedTimelineConfig;
+
+    const serialized = serializeForDisk(resolved);
+
+    expect(serialized.clips[0].app?.shader).toEqual(clipShader);
+    expect(serialized.clips[0].app?.untouched).toEqual({ survives: true });
+    expect(serialized.app?.[TIMELINE_POSTPROCESS_SHADER_APP_KEY]).toEqual(postprocessShader);
     expect(() => validateSerializedConfig(serialized)).not.toThrow();
   });
 

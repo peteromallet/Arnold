@@ -134,7 +134,12 @@ function PreviewPanelComponent({
               Mode {interactionMode}. Precision {precisionEnabled ? 'enabled' : 'disabled'}.
             </div>
             {overlay}
-            <div ref={surface.slotRef} className="flex h-full w-full min-h-0 items-center justify-center" />
+            <div
+              ref={surface.slotRef}
+              className="flex h-full w-full min-h-0 items-center justify-center"
+              data-testid="video-editor-preview-surface"
+              data-current-time={currentTime}
+            />
             {showOverlayEditor ? (
               <OverlayEditor
                 rows={data.rows}

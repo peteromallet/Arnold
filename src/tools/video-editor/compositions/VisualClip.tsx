@@ -1,5 +1,5 @@
 import { useMemo, type CSSProperties, type FC, type ReactNode } from 'react';
-import { AbsoluteFill, Img, Sequence, interpolate, useCurrentFrame, useVideoConfig } from 'remotion';
+import { AbsoluteFill, Img, Sequence, interpolate, useCurrentFrame, useRemotionEnvironment, useVideoConfig } from 'remotion';
 import { Video } from '@remotion/media';
 import {
   getClipDurationInFrames,
@@ -25,9 +25,15 @@ import {
   resolveTransition,
 } from '@/tools/video-editor/transitions/catalog.ts';
 import type { ResolvedTimelineClip, TrackDefinition } from '@/tools/video-editor/types/index.ts';
+import { getTimelineClipShader } from '@/tools/video-editor/lib/timeline-domain.ts';
 import { PendingMaterialPlaceholder } from '@/tools/video-editor/components/PendingMaterialPlaceholder.tsx';
 import type { CapabilityFinding, RenderMaterialRef } from '@reigh/editor-sdk';
 import type { RenderPlannerMaterialStatus } from '@/tools/video-editor/runtime/renderPlanner.ts';
+import { ClipShaderPreviewCanvas } from '@/tools/video-editor/shaders/preview/ClipShaderPreviewCanvas.tsx';
+import {
+  useOptionalShaderEffectRegistryContext,
+  type ShaderEffectRegistrySnapshot,
+} from '@/tools/video-editor/shaders/registry/index.ts';
 
 // SD-025 (Sprint 3): inline missing-asset placeholder body. Mirrors the
 // styling of UnknownClipPlaceholder so the two loud cases look like a pair.
@@ -145,12 +151,47 @@ const UnsupportedAssetBody: FC<{ clipId: string; clipType: string; assetType?: s
   </AbsoluteFill>
 );
 
+const UnsupportedClipShaderExportBody: FC<{ clipId: string; shaderId: string }> = ({ clipId, shaderId }) => (
+  <AbsoluteFill
+    data-testid="unsupported-clip-shader-export"
+    data-clip-id={clipId}
+    data-shader-id={shaderId}
+    style={{
+      backgroundColor: 'rgba(20, 20, 20, 0.72)',
+      borderTop: '2px solid #38BDF8',
+      borderBottom: '2px solid #38BDF8',
+      color: '#E0F2FE',
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'center',
+      padding: '12px 24px',
+      textAlign: 'center',
+      fontFamily:
+        'ui-monospace, SFMono-Regular, "Roboto Mono", Menlo, Consolas, monospace',
+      fontSize: 13,
+      lineHeight: 1.4,
+    }}
+  >
+    <div
+      style={{
+        maxWidth: '80%',
+        padding: '8px 16px',
+        borderRadius: 4,
+        background: 'rgba(0, 0, 0, 0.45)',
+      }}
+    >
+      {`shader '${shaderId}' is browser-preview only — export requires a shader materializer that produces RenderMaterial`}
+    </div>
+  </AbsoluteFill>
+);
+
 type VisualClipProps = {
   clip: ResolvedTimelineClip;
   track: TrackDefinition;
   fps: number;
   predecessor?: ResolvedTimelineClip | null;
   effectRegistrySnapshot?: EffectRegistrySnapshot;
+  shaderRegistrySnapshot?: ShaderEffectRegistrySnapshot;
   materialRefs?: readonly RenderMaterialRef[];
   materialStatuses?: readonly RenderPlannerMaterialStatus[];
   materialDiagnostics?: readonly CapabilityFinding[];
@@ -397,12 +438,17 @@ export const VisualClip: FC<VisualClipProps> = ({
   track,
   fps,
   effectRegistrySnapshot,
+  shaderRegistrySnapshot,
   materialRefs,
   materialStatuses,
   materialDiagnostics,
 }) => {
+  const environment = useRemotionEnvironment();
   const providerRegistryContext = useOptionalEffectRegistryContext();
   const registrySnapshot = effectRegistrySnapshot ?? providerRegistryContext?.snapshot;
+  const providerShaderRegistryContext = useOptionalShaderEffectRegistryContext();
+  const shaderSnapshot = shaderRegistrySnapshot ?? providerShaderRegistryContext?.snapshot;
+  const { width: compositionWidth, height: compositionHeight } = useVideoConfig();
 
   // Transition registry: resolve through the unified catalog (built-ins +
   // provider-scoped contributed transitions). No silent fallback to crossfade
@@ -435,6 +481,22 @@ export const VisualClip: FC<VisualClipProps> = ({
 
   const durationInFrames = getClipDurationInFrames(clip, fps);
   const frame = useCurrentFrame();
+  const shader = getTimelineClipShader(clip);
+  const shaderRecord = shader
+    ? shaderSnapshot?.get(shader.shaderId, shader.extensionId)
+    : undefined;
+  const renderBrowserShaderPreview = Boolean(
+    shader
+    && shader.enabled !== false
+    && shaderRecord
+    && !environment.isRendering
+    && !environment.isClientSideRendering,
+  );
+  const renderUnsupportedShaderExport = Boolean(
+    shader
+    && shader.enabled !== false
+    && (environment.isRendering || environment.isClientSideRendering),
+  );
 
   let transitionStyle: CSSProperties | undefined;
   if (clip.transition) {
@@ -471,6 +533,25 @@ export const VisualClip: FC<VisualClipProps> = ({
   const content: ReactNode = (
     <AbsoluteFill style={{ overflow: 'hidden', ...transitionStyle }}>
       <VisualAsset clip={clip} track={track} fps={fps} />
+      {renderUnsupportedShaderExport && shader ? (
+        <UnsupportedClipShaderExportBody clipId={clip.id} shaderId={shader.shaderId} />
+      ) : null}
+      {renderBrowserShaderPreview && shader && shaderRecord ? (
+        <ClipShaderPreviewCanvas
+          shader={shader}
+          record={shaderRecord}
+          timeSeconds={frame / fps}
+          frame={frame}
+          width={compositionWidth}
+          height={compositionHeight}
+          testId="visual-clip-shader-preview"
+          style={{
+            position: 'absolute',
+            inset: 0,
+            pointerEvents: 'none',
+          }}
+        />
+      ) : null}
     </AbsoluteFill>
   );
 
@@ -495,6 +576,7 @@ export const VisualClipSequence: FC<VisualClipProps> = ({
   fps,
   predecessor,
   effectRegistrySnapshot,
+  shaderRegistrySnapshot,
   materialRefs,
   materialStatuses,
   materialDiagnostics,
@@ -523,6 +605,7 @@ export const VisualClipSequence: FC<VisualClipProps> = ({
           fps={fps}
           predecessor={predecessor}
           effectRegistrySnapshot={effectRegistrySnapshot}
+          shaderRegistrySnapshot={shaderRegistrySnapshot}
           materialRefs={materialRefs}
           materialStatuses={materialStatuses}
           materialDiagnostics={materialDiagnostics}

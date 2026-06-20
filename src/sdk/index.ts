@@ -184,6 +184,8 @@ export interface ExportDiagnostic extends ExtensionDiagnostic {
     clipType?: string;
     effectType?: string;
     transitionType?: string;
+    shaderId?: string;
+    shaderScope?: ShaderMaterializerRequirementScope;
   };
 }
 
@@ -195,6 +197,7 @@ export {
   DETERMINISM_STATUSES,
   RENDER_BLOCKER_REASONS,
   RENDER_ROUTES,
+  shaderMissingMaterializerBlockerMessage,
 } from '@/tools/video-editor/runtime/renderability.ts';
 
 export type {
@@ -215,6 +218,7 @@ export type {
   RenderMaterialRef,
   RenderRoute,
   RenderStorageLocator,
+  ShaderMaterializerRequirementScope,
 } from '@/tools/video-editor/runtime/renderability.ts';
 
 // ---------------------------------------------------------------------------
@@ -304,6 +308,8 @@ export type ContributionKind =
   | 'effect'
   | 'transition'
   | 'clipType'
+  // M13: dedicated shader/WebGL contributions
+  | 'shader'
   // M9: automation clip type (host-owned)
   | 'automation'
   // M10: agent tool contributions (host-mediated, proposal-backed)
@@ -351,6 +357,8 @@ export interface ExtensionContribution {
   transitionId?: string;
   /** Reserved for future clip-type descriptors. */
   clipTypeId?: string;
+  /** M13: Shader identifier declared by the extension. */
+  shaderId?: string;
   /** M6: Parser identifier declared by the extension. */
   parserId?: string;
   /** M6: Output format identifier declared by the extension. */
@@ -820,6 +828,200 @@ export interface ClipTypeRegistrationService {
     renderer: ClipRenderer,
     inspector?: ClipInspector,
     options?: ClipTypeRegistrationOptions,
+  ): DisposeHandle;
+}
+
+// ---------------------------------------------------------------------------
+// M13: Shader/WebGL contributions
+// ---------------------------------------------------------------------------
+
+/** M13: Shader pass scopes supported by the V1 WebGL bridge. */
+export type ShaderPassKind = 'clip' | 'overlay' | 'postprocess';
+
+/** M13: Color-space posture declared by a shader pass or texture input. */
+export type ShaderColorSpace = 'srgb' | 'linear';
+
+/** M13: Host-owned fallback posture when a shader cannot compile or preview. */
+export type ShaderFallbackBehavior = 'bypass' | 'transparent' | 'solid-black';
+
+/** M13: Texture source categories supported by the V1 shader bridge. */
+export type ShaderTextureSourceKind =
+  | 'clip-frame'
+  | 'static-image-asset'
+  | 'live-generated-frame';
+
+/** M13: Texture sampling filter used by the WebGL preview bridge. */
+export type ShaderTextureFilter = 'nearest' | 'linear';
+
+/** M13: Texture coordinate wrapping policy used by the WebGL preview bridge. */
+export type ShaderTextureWrap = 'clamp-to-edge' | 'repeat' | 'mirrored-repeat';
+
+/**
+ * M13: Shader source supplied inline by the manifest or during registration.
+ *
+ * Fragment source is required for inline programs. Vertex source is optional
+ * because the host can provide the default fullscreen-triangle vertex shader.
+ */
+export interface ShaderInlineSource {
+  readonly kind: 'inline';
+  readonly fragment: string;
+  readonly vertex?: string;
+}
+
+/** M13: Shader source resolved by the extension runtime from a module export. */
+export interface ShaderModuleSource {
+  readonly kind: 'module';
+  readonly specifier: string;
+  readonly exportName?: string;
+}
+
+/** M13: Public shader source descriptor. */
+export type ShaderSourceDescriptor = ShaderInlineSource | ShaderModuleSource;
+
+/**
+ * M13: Shader pass descriptor.
+ *
+ * V1 supports a single shader per clip scope and one active postprocess shader.
+ * Ordered stacks, multipass FBO chains, feedback buffers, and shader transitions
+ * remain outside this SDK contract.
+ */
+export interface ShaderPassDescriptor {
+  readonly kind: ShaderPassKind;
+  /** Uniform name of the host-provided input texture for this pass, if any. */
+  readonly inputTextureUniform?: string;
+  /** Expected color space for input and output conversion. */
+  readonly colorSpace?: ShaderColorSpace;
+  /** Whether the output alpha is preserved or treated as opaque by the host. */
+  readonly alpha?: 'preserve' | 'opaque';
+}
+
+/** M13: Supported shader uniform control/value kinds for V1. */
+export type ShaderUniformType =
+  | 'float'
+  | 'int'
+  | 'bool'
+  | 'vec2'
+  | 'vec3'
+  | 'vec4'
+  | 'color'
+  | 'enum'
+  | 'textureRef'
+  | 'frame'
+  | 'time';
+
+/** M13: Enum option for shader uniform controls. */
+export interface ShaderUniformEnumOption {
+  readonly label: string;
+  readonly value: string;
+}
+
+/** M13: Texture reference value used by textureRef uniforms. */
+export interface ShaderTextureRef {
+  readonly kind: ShaderTextureSourceKind;
+  /** Asset key, live source ID, generated frame ID, or host-defined frame ref. */
+  readonly ref?: string;
+}
+
+/** M13: Default values accepted by shader uniform definitions. */
+export type ShaderUniformDefaultValue =
+  | number
+  | boolean
+  | string
+  | readonly number[]
+  | ShaderTextureRef;
+
+/** M13: A host-rendered shader uniform definition. */
+export interface ShaderUniformDefinition {
+  readonly name: string;
+  readonly label: string;
+  readonly description?: string;
+  readonly type: ShaderUniformType;
+  readonly default?: ShaderUniformDefaultValue;
+  readonly min?: number;
+  readonly max?: number;
+  readonly step?: number;
+  readonly options?: readonly ShaderUniformEnumOption[];
+}
+
+/** M13: Ordered shader uniform schema. */
+export type ShaderUniformSchema = readonly ShaderUniformDefinition[];
+
+/** M13: A host-provided texture input binding for a shader. */
+export interface ShaderTextureDefinition {
+  readonly name: string;
+  readonly label?: string;
+  readonly description?: string;
+  /** The sampler uniform that receives this texture. Defaults to `name`. */
+  readonly uniform?: string;
+  readonly sourceKind: ShaderTextureSourceKind;
+  readonly required?: boolean;
+  readonly colorSpace?: ShaderColorSpace;
+  readonly filter?: ShaderTextureFilter;
+  readonly wrap?: ShaderTextureWrap;
+}
+
+/** M13: Ordered shader texture binding schema. */
+export type ShaderTextureSchema = readonly ShaderTextureDefinition[];
+
+/**
+ * M13: Optional materializer metadata.
+ *
+ * This descriptor advertises where a later planner may look for a route that
+ * produces RenderMaterial. It does not make browser preview exportable.
+ */
+export interface ShaderMaterializerDescriptor {
+  readonly routes?: readonly RenderRoute[];
+  readonly requiredCapabilities?: readonly string[];
+  readonly processId?: string;
+  readonly operationId?: string;
+  readonly unavailableMessage?: string;
+}
+
+/** M13: A shader/WebGL contribution declared in an extension manifest. */
+export interface ShaderContribution {
+  /** Unique within the extension. */
+  id: ContributionId;
+  kind: 'shader';
+  /** Identifier used in ctx.shaders.registerShader(). */
+  shaderId: string;
+  /** Human-readable label for picker, inspector, and diagnostics. */
+  label: string;
+  readonly description?: string;
+  /** Pass scope; use a descriptor when color/alpha/input details matter. */
+  pass: ShaderPassKind | ShaderPassDescriptor;
+  readonly source?: ShaderSourceDescriptor;
+  readonly uniforms?: ShaderUniformSchema;
+  readonly textures?: ShaderTextureSchema;
+  readonly fallback?: ShaderFallbackBehavior;
+  readonly materializer?: ShaderMaterializerDescriptor;
+  /** Lower values sort first. Default 0. */
+  readonly order?: number;
+  /** Optional visibility predicate (evaluated by host). */
+  readonly when?: string;
+}
+
+/** M13: Options for imperative shader registration via ctx.shaders.registerShader(). */
+export interface ShaderRegistrationOptions {
+  readonly label?: string;
+  readonly pass?: ShaderPassKind | ShaderPassDescriptor;
+  readonly uniforms?: ShaderUniformSchema;
+  readonly textures?: ShaderTextureSchema;
+  readonly fallback?: ShaderFallbackBehavior;
+  readonly materializer?: ShaderMaterializerDescriptor;
+}
+
+/**
+ * M13: Shader registration service available as `ctx.shaders` during activate().
+ *
+ * Shaders are registered through a dedicated WebGL bridge surface, not through
+ * `ctx.effects.registerComponent()`. The `shaderId` must match a
+ * {@link ShaderContribution} in the extension manifest.
+ */
+export interface ShaderRegistrationService {
+  registerShader(
+    shaderId: string,
+    source: ShaderSourceDescriptor,
+    options?: ShaderRegistrationOptions,
   ): DisposeHandle;
 }
 
@@ -2103,6 +2305,8 @@ export interface ExtensionManifest {
     | TransitionContribution
     // M9: contributed clip types
     | ClipTypeContribution
+    // M13: shader/WebGL contributions
+    | ShaderContribution
     // M10: agent tool contributions
     | AgentToolContribution
   )[];
@@ -2572,6 +2776,8 @@ export interface ExtensionContext {
   readonly transitions: TransitionRegistrationService;
   /** M9: Clip-type registration service for contributed clip types. */
   readonly clipTypes: ClipTypeRegistrationService;
+  /** M13: Shader registration service for dedicated WebGL shader passes. */
+  readonly shaders: ShaderRegistrationService;
   /** M10: Agent tool registration service for host-mediated agent tools. */
   readonly agentTools: AgentToolRegistrationService;
 }
@@ -2634,6 +2840,7 @@ export function createExtensionContext(
   transitions?: TransitionRegistrationService,
   clipTypes?: ClipTypeRegistrationService,
   agentTools?: AgentToolRegistrationService,
+  shaders?: ShaderRegistrationService,
 ): ExtensionContext {
   const extensionId = extension.manifest.id as string;
   const manifest = extension.manifest; // Already frozen by defineExtension
@@ -2943,6 +3150,18 @@ export function createExtensionContext(
     },
   };
 
+  // ---- shaders service (optional, wired by provider) ------------------------
+  const shadersService: ShaderRegistrationService = shaders ?? {
+    registerShader(_shaderId: string, _source: ShaderSourceDescriptor, _options?: ShaderRegistrationOptions): DisposeHandle {
+      diagnosticsService.report({
+        severity: 'error',
+        code: 'shaders/not-wired',
+        message: `Cannot register shader \"${_shaderId}\" — the ShaderRegistry has not been wired by the host provider.`,
+      });
+      return { dispose() {} };
+    },
+  };
+
   // ---- agentTools service (optional, wired by provider) ----------------------
   const agentToolsService: AgentToolRegistrationService = agentTools ?? {
     registerTool(_toolId: string, _handler: AgentToolHandler): DisposeHandle {
@@ -2986,6 +3205,7 @@ export function createExtensionContext(
     effects: effectsService,
     transitions: transitionsService,
     clipTypes: clipTypesService,
+    shaders: shadersService,
     agentTools: agentToolsService,
   } as ExtensionContext;
 
@@ -3155,6 +3375,7 @@ export const CONTRIBUTION_KIND_MILESTONE: Record<ContributionKind, string | unde
   transition: 'M8',
   // M9: clip type dispatch and basic keyframes
   clipType: 'M9',
+  shader: 'M13',
   automation: 'M9',
   agentTool: 'M10',
   agent: 'M10',
@@ -3210,6 +3431,11 @@ export function contributionKindNotYetBridged(kind: ContributionKind): string | 
     return null;
   }
 
+  // M13: shader is bridged as a dedicated WebGL contribution kind.
+  if (milestone === 'M13' && kind === 'shader') {
+    return null;
+  }
+
   return milestone;
 }
 
@@ -3242,7 +3468,9 @@ import type {
   RenderMaterialRef,
   RenderRoute,
   RenderStorageLocator,
+  ShaderMaterializerRequirementScope,
 } from '@/tools/video-editor/runtime/renderability.ts';
+import { shaderMissingMaterializerBlockerMessage } from '@/tools/video-editor/runtime/renderability.ts';
 
 // ---------------------------------------------------------------------------
 // M12: Planner requirement contracts — capability requirements, source refs,
@@ -3966,6 +4194,8 @@ export interface TimelineSnapshot {
   materialRefs?: readonly TimelineMaterialRefSummary[];
   /** M12: Source-ref summaries extracted from clip provenance. */
   sourceRefs?: readonly TimelineSourceRefSummary[];
+  /** M13: Shader metadata persisted on clips or timeline postprocess app data. */
+  shaders?: readonly TimelineShaderSummary[];
   /** M12: Render-group summaries extracted from timeline data. */
   renderGroups?: readonly TimelineRenderGroupSummary[];
   /** M12: Output metadata extracted from the timeline config. */
@@ -4008,6 +4238,17 @@ export interface TimelineTrackSummary {
   app?: Record<string, unknown>;
   /** Generated-object metadata attached by the owning extension, if any. */
   generatedMeta?: GeneratedObjectMeta;
+}
+
+/** Lightweight shader metadata summary for provider-free planner inspection. */
+export interface TimelineShaderSummary {
+  id: string;
+  shaderId: string;
+  scope: ShaderMaterializerRequirementScope;
+  clipId?: string;
+  extensionId: string;
+  contributionId: string;
+  enabled: boolean;
 }
 
 /**
@@ -4243,6 +4484,42 @@ export function getCapabilityRequirements(
             }
           : {}),
       });
+    }
+  }
+
+  // ── Shader materializer requirements ───────────────────────────────
+  if (snapshot.shaders) {
+    for (const shader of snapshot.shaders) {
+      if (shader.enabled === false) continue;
+
+      const sourceRef: CapabilitySourceRef = {
+        source: 'extension',
+        extensionId: shader.extensionId,
+        contributionId: shader.contributionId,
+      };
+      const routes: readonly RenderRoute[] = ['browser-export', 'worker-export'];
+
+      for (const route of routes) {
+        const message = shaderMissingMaterializerBlockerMessage(
+          shader.shaderId,
+          shader.scope,
+          shader.clipId,
+        );
+        requirements.push({
+          id: nextId('shader'),
+          sourceRef,
+          route,
+          requiredCapabilities: ['render-material', 'shader-materializer'],
+          determinism: 'preview-only',
+          blocking: true,
+          routeFit: {
+            route,
+            fit: 'blocked',
+            reason: 'missing-material',
+            message,
+          },
+        });
+      }
     }
   }
 

@@ -32,6 +32,7 @@ vi.mock('remotion', async () => ({
   ),
   interpolate: () => ({}),
   useCurrentFrame: () => currentFrame,
+  useRemotionEnvironment: () => ({ isRendering: false, isClientSideRendering: false }),
   useVideoConfig: () => ({ fps: 30, width: 1920, height: 1080 }),
 }));
 

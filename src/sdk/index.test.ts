@@ -88,6 +88,9 @@ import type {
   RenderRoute,
   RenderBlockerReason,
   CapabilityFinding,
+  ShaderContribution,
+  ShaderInlineSource,
+  ShaderRegistrationService,
 } from '@/sdk/index';
 
 // ---------------------------------------------------------------------------
@@ -303,8 +306,14 @@ describe('contributionKindNotYetBridged', () => {
 
   it('unsupported contribution behavior is explicit (returns owning milestone)', () => {
     expect(contributionKindNotYetBridged('clipType')).toBeNull();
+    expect(contributionKindNotYetBridged('shader')).toBeNull();
     expect(contributionKindNotYetBridged('agentTool')).toBeNull();
     expect(contributionKindNotYetBridged('agent')).toBeNull();
+  });
+
+  it('shader is M13-active as its own contribution kind', () => {
+    expect(CONTRIBUTION_KIND_MILESTONE.shader).toBe('M13');
+    expect(contributionKindNotYetBridged('shader')).toBeNull();
   });
 
   it('CONTRIBUTION_KIND_MILESTONE maps M6 kinds to M6', () => {
@@ -321,6 +330,143 @@ describe('contributionKindNotYetBridged', () => {
     expect(contributionKindNotYetBridged('command')).toBeNull();
     expect(contributionKindNotYetBridged('keybinding')).toBeNull();
     expect(contributionKindNotYetBridged('contextMenuItem')).toBeNull();
+    expect(contributionKindNotYetBridged('shader')).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// M13: defineExtension accepts dedicated shader contributions
+// ---------------------------------------------------------------------------
+
+describe('M13: shader SDK contracts', () => {
+  const inlineShaderSource: ShaderInlineSource = {
+    kind: 'inline',
+    fragment: 'void main() { gl_FragColor = vec4(1.0); }',
+  };
+
+  const shaderContribution: ShaderContribution = {
+    id: 'clip-glow-shader' as any,
+    kind: 'shader',
+    shaderId: 'shader.clipGlow',
+    label: 'Clip Glow Shader',
+    pass: {
+      kind: 'clip',
+      inputTextureUniform: 'u_clip',
+      colorSpace: 'srgb',
+      alpha: 'preserve',
+    },
+    source: inlineShaderSource,
+    uniforms: [
+      {
+        name: 'u_intensity',
+        label: 'Intensity',
+        type: 'float',
+        default: 0.5,
+        min: 0,
+        max: 1,
+        step: 0.01,
+      },
+      {
+        name: 'u_tint',
+        label: 'Tint',
+        type: 'color',
+        default: '#ffcc00',
+      },
+      {
+        name: 'u_source',
+        label: 'Source',
+        type: 'textureRef',
+        default: { kind: 'clip-frame' },
+      },
+    ],
+    textures: [
+      {
+        name: 'clipFrame',
+        uniform: 'u_clip',
+        sourceKind: 'clip-frame',
+        required: true,
+        colorSpace: 'srgb',
+        filter: 'linear',
+        wrap: 'clamp-to-edge',
+      },
+    ],
+    fallback: 'bypass',
+  };
+
+  it('preserves shader contribution metadata without normalizing to effect', () => {
+    const ext = defineExtension({
+      manifest: {
+        id: 'com.example.shader' as any,
+        version: '1.0.0',
+        label: 'Shader Extension',
+        contributions: [shaderContribution],
+      },
+    });
+
+    const contribution = ext.manifest.contributions![0] as ShaderContribution;
+    expect(contribution.kind).toBe('shader');
+    expect(contribution.shaderId).toBe('shader.clipGlow');
+    expect((contribution as unknown as { effectId?: string }).effectId).toBeUndefined();
+    expect(Object.isFrozen(contribution.uniforms!)).toBe(true);
+    expect(Object.isFrozen(contribution.textures!)).toBe(true);
+  });
+
+  it('ctx.shaders is a dedicated registration service and does not call ctx.effects', () => {
+    const ext = defineExtension({
+      manifest: {
+        id: 'com.example.shader-service' as any,
+        version: '1.0.0',
+        label: 'Shader Service Extension',
+        contributions: [shaderContribution],
+      },
+    });
+    const effectCalls: string[] = [];
+    const shaderCalls: string[] = [];
+    const shaderService: ShaderRegistrationService = {
+      registerShader(shaderId, source) {
+        shaderCalls.push(`${shaderId}:${source.kind}`);
+        return { dispose() {} };
+      },
+    };
+
+    const ctx = createExtensionContext(
+      ext,
+      undefined,
+      undefined,
+      {
+        registerComponent(effectId) {
+          effectCalls.push(effectId);
+          return { dispose() {} };
+        },
+      },
+      undefined,
+      undefined,
+      undefined,
+      shaderService,
+    );
+
+    const handle = ctx.shaders.registerShader('shader.clipGlow', inlineShaderSource);
+    expect(typeof handle.dispose).toBe('function');
+    expect(shaderCalls).toEqual(['shader.clipGlow:inline']);
+    expect(effectCalls).toEqual([]);
+  });
+
+  it('unwired shader registration reports shader diagnostics, not effect diagnostics', () => {
+    const ext = defineExtension({
+      manifest: {
+        id: 'com.example.shader-unwired' as any,
+        version: '1.0.0',
+        label: 'Shader Unwired Extension',
+        contributions: [shaderContribution],
+      },
+    });
+    const ctx = createExtensionContext(ext);
+
+    ctx.shaders.registerShader('shader.clipGlow', inlineShaderSource);
+
+    const codes = ctx.services.diagnostics.diagnostics.map((diagnostic) => diagnostic.code);
+    expect(codes).toContain('shaders/not-wired');
+    expect(codes).not.toContain('effects/not-wired');
   });
 });
 
@@ -1093,6 +1239,7 @@ describe('createExtensionContext', () => {
       'effects',
       'extension',
       'services',
+      'shaders',
       'transitions',
     ]);
   });

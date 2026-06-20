@@ -23,10 +23,11 @@ interface RemotionPreviewProps {
   playerContainerRef: RefObject<HTMLDivElement>;
   compact?: boolean;
   initialTime?: number;
+  currentTime?: number;
 }
 
 const RemotionPreviewComponent = forwardRef<PreviewHandle, RemotionPreviewProps>(function RemotionPreview(
-  { config, onTimeUpdate, playerContainerRef, compact = false, initialTime = 0 },
+  { config, onTimeUpdate, playerContainerRef, compact = false, initialTime = 0, currentTime },
   ref,
 ) {
   const playerRef = useRef<PlayerRef>(null);
@@ -119,6 +120,17 @@ const RemotionPreviewComponent = forwardRef<PreviewHandle, RemotionPreviewProps>
       return playerRef.current?.isPlaying() ?? isPlaying;
     },
   }), [isPlaying, metadata.fps]);
+
+  useEffect(() => {
+    if (isPlaying || currentTime === undefined) {
+      return;
+    }
+
+    playerRef.current?.seekTo(Math.min(
+      Math.max(0, Math.round(currentTime * metadata.fps)),
+      Math.max(0, metadata.durationInFrames - 1),
+    ));
+  }, [currentTime, isPlaying, metadata.durationInFrames, metadata.fps]);
 
   return (
     <div

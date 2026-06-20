@@ -1,0 +1,141 @@
+{
+  "manifest": {
+    "id": "com.reigh.examples.postprocess-shader-canary",
+    "version": "1.0.0",
+    "label": "Postprocess Shader Canary",
+    "description": "M13 canary for timeline postprocess WebGL shader registration, uniforms, diagnostics, preview, and planner behavior.",
+    "apiVersion": 1,
+    "contributions": [
+      {
+        "id": "postprocess-shader-canary",
+        "kind": "shader",
+        "shaderId": "shader.postprocessCanary.scanline",
+        "label": "Postprocess Shader Canary",
+        "description": "Preview-only timeline postprocess WebGL shader canary with editable uniforms.",
+        "pass": {
+          "kind": "postprocess",
+          "inputTextureUniform": "u_composite",
+          "colorSpace": "srgb",
+          "alpha": "preserve"
+        },
+        "source": {
+          "kind": "inline",
+          "fragment": "precision mediump float; uniform vec2 u_resolution; uniform float u_time; uniform float u_frame; uniform float intensity; uniform vec4 tint; uniform vec3 lift; uniform vec2 center; uniform bool showScanlines; uniform int bandCount; uniform float holdFrame; uniform float holdTime; uniform float blendMode; varying vec2 vUv; void main() { vec2 pixel = vUv * u_resolution; float bands = max(float(bandCount), 1.0); float scanline = showScanlines ? step(0.5, fract((pixel.y + u_frame + holdFrame) / bands)) : 0.0; float radial = 1.0 - smoothstep(0.0, 0.85, distance(vUv, center)); float pulse = 0.5 + 0.5 * sin((u_time + holdTime) * 6.2831853); vec3 base = vec3(vUv.x, vUv.y, pulse); vec3 graded = mix(base, tint.rgb + lift * 0.15, clamp(intensity * radial, 0.0, 1.0)); graded = mix(graded, vec3(1.0) - graded, clamp(blendMode, 0.0, 1.0) * 0.12); gl_FragColor = vec4(mix(graded, vec3(1.0), scanline * 0.16), tint.a); }"
+        },
+        "uniforms": [
+          {
+            "name": "intensity",
+            "label": "Intensity",
+            "type": "float",
+            "default": 0.42,
+            "min": 0,
+            "max": 1,
+            "step": 0.01
+          },
+          {
+            "name": "tint",
+            "label": "Tint",
+            "type": "color",
+            "default": [1, 0.45, 0.2, 1]
+          },
+          {
+            "name": "lift",
+            "label": "Lift",
+            "type": "vec3",
+            "default": [0.15, 0.25, 0.45]
+          },
+          {
+            "name": "center",
+            "label": "Center",
+            "type": "vec2",
+            "default": [0.5, 0.5]
+          },
+          {
+            "name": "showScanlines",
+            "label": "Scanlines",
+            "type": "bool",
+            "default": true
+          },
+          {
+            "name": "bandCount",
+            "label": "Bands",
+            "type": "int",
+            "default": 6,
+            "min": 2,
+            "max": 24,
+            "step": 1
+          },
+          {
+            "name": "holdFrame",
+            "label": "Frame Hold",
+            "type": "frame",
+            "default": 9
+          },
+          {
+            "name": "holdTime",
+            "label": "Time Hold",
+            "type": "time",
+            "default": 0.2
+          },
+          {
+            "name": "blendMode",
+            "label": "Blend Mode",
+            "type": "enum",
+            "default": "screen",
+            "options": [
+              { "label": "Screen", "value": "screen" },
+              { "label": "Invert Drift", "value": "invert-drift" }
+            ]
+          },
+          {
+            "name": "u_composite",
+            "label": "Composite Frame",
+            "type": "textureRef",
+            "default": { "kind": "clip-frame" }
+          }
+        ],
+        "textures": [
+          {
+            "name": "u_composite",
+            "label": "Composite frame",
+            "uniform": "u_composite",
+            "sourceKind": "clip-frame",
+            "required": false,
+            "filter": "linear",
+            "wrap": "clamp-to-edge",
+            "colorSpace": "srgb"
+          }
+        ],
+        "fallback": "bypass",
+        "order": 60
+      },
+      {
+        "id": "postprocess-shader-canary-diagnostic",
+        "kind": "shader",
+        "shaderId": "shader.postprocessCanary.diagnostic",
+        "label": "Postprocess Shader Canary Diagnostic",
+        "description": "Deliberately invalid postprocess shader contribution used to prove diagnostic surfacing.",
+        "pass": "postprocess",
+        "source": {
+          "kind": "inline",
+          "fragment": "precision mediump float; varying vec2 v_uv; void main() { gl_FragColor = vec4(v_uv, 1.0, 1.0); }"
+        },
+        "uniforms": [
+          {
+            "name": "invalidShape",
+            "label": "Invalid Shape",
+            "type": "matrix3",
+            "default": [1, 0, 0, 0, 1, 0, 0, 0, 1]
+          }
+        ],
+        "fallback": "transparent",
+        "order": 61
+      }
+    ],
+    "messages": {
+      "activation.started": "Postprocess Shader Canary activating.",
+      "activation.ready": "Postprocess Shader Canary ready.",
+      "activation.disposed": "Postprocess Shader Canary disposed."
+    }
+  }
+}

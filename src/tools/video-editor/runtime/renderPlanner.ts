@@ -10,6 +10,7 @@ import {
   type RenderRoute,
   RENDER_ROUTES,
   type TimelineSnapshot,
+  type TimelineShaderSummary,
 } from '@reigh/editor-sdk';
 import type {
   ExtensionRuntime,
@@ -19,6 +20,7 @@ import type {
   VideoEditorProcessDescriptor,
   VideoEditorProcessRequirementDescriptor,
   VideoEditorRouteRequirementDescriptor,
+  VideoEditorShaderDescriptor,
 } from '@/tools/video-editor/runtime/extensionSurface.ts';
 
 export interface RenderPlannerRequest {
@@ -40,9 +42,10 @@ export interface RenderPlannerMaterialStatus {
 export interface RenderPlannerInput {
   readonly snapshot?: TimelineSnapshot | null;
   readonly requirements?: readonly CapabilityRequirement[];
-  readonly extensionRuntime?: Pick<ExtensionRuntime, 'outputFormats' | 'processes'>;
+  readonly extensionRuntime?: Pick<ExtensionRuntime, 'outputFormats' | 'processes' | 'shaders'>;
   readonly outputFormats?: readonly VideoEditorOutputFormatDescriptor[];
   readonly processes?: readonly VideoEditorProcessDescriptor[];
+  readonly shaders?: readonly VideoEditorShaderDescriptor[];
   readonly processStatuses?: readonly ProcessStatus[];
   readonly materialRefs?: readonly RenderMaterialRef[];
   readonly materialStatuses?: readonly RenderPlannerMaterialStatus[];
@@ -250,6 +253,226 @@ function collectRequirement(acc: PlanAccumulator, requirement: CapabilityRequire
   acc.findings.push(routeFit);
   const blocker = blockerForFinding(routeFit);
   if (blocker) acc.blockers.push(blocker);
+}
+
+function shaderDescriptorKey(extensionId: string | undefined, contributionId: string | undefined): string {
+  return `${extensionId ?? ''}:${contributionId ?? ''}`;
+}
+
+function createShaderDescriptorMap(
+  descriptors: readonly VideoEditorShaderDescriptor[],
+): ReadonlyMap<string, VideoEditorShaderDescriptor> {
+  return new Map(descriptors.map((descriptor) => [
+    shaderDescriptorKey(descriptor.extensionId, descriptor.id),
+    descriptor,
+  ]));
+}
+
+function createProcessDescriptorMap(
+  descriptors: readonly VideoEditorProcessDescriptor[],
+): ReadonlyMap<string, VideoEditorProcessDescriptor> {
+  return new Map(descriptors.map((descriptor) => [descriptor.processId, descriptor]));
+}
+
+function isShaderMaterializerRequirement(requirement: CapabilityRequirement): boolean {
+  return requirement.sourceRef.source === 'extension'
+    && requirement.requiredCapabilities.includes('shader-materializer')
+    && requirement.requiredCapabilities.includes('render-material');
+}
+
+function processOperationSupportsMaterializerRoute(
+  process: VideoEditorProcessDescriptor | undefined,
+  operationId: string | undefined,
+  route: RenderRoute,
+): boolean {
+  if (!process) return false;
+  return process.operations.some((operation) => {
+    if (operationId && operation.id !== operationId) return false;
+    if (!operation.routes?.includes(route)) return false;
+    return !operation.outputKinds || operation.outputKinds.includes('material');
+  });
+}
+
+function shaderMaterializerSupportsRoute(
+  descriptor: VideoEditorShaderDescriptor,
+  requirement: CapabilityRequirement,
+  processById: ReadonlyMap<string, VideoEditorProcessDescriptor>,
+): boolean {
+  const materializer = descriptor.materializer;
+  if (!materializer) return false;
+  if (materializer.routes?.includes(requirement.route)) return true;
+  if (!materializer.processId) return false;
+  return processOperationSupportsMaterializerRoute(
+    processById.get(materializer.processId),
+    materializer.operationId,
+    requirement.route,
+  );
+}
+
+function shaderMaterializationMessage(
+  descriptor: VideoEditorShaderDescriptor,
+  requirement: CapabilityRequirement,
+): string {
+  if (descriptor.materializer?.unavailableMessage) return descriptor.materializer.unavailableMessage;
+  if (descriptor.materializer?.processId) {
+    return `Shader "${descriptor.shaderId}" has a materializer route for ${requirement.route}; ` +
+      `run process "${descriptor.materializer.processId}" to produce RenderMaterial.`;
+  }
+  return `Shader "${descriptor.shaderId}" has a materializer route for ${requirement.route}; ` +
+    'materialize it to produce RenderMaterial.';
+}
+
+function shaderMaterializationAction(
+  descriptor: VideoEditorShaderDescriptor,
+  requirement: CapabilityRequirement,
+  message: string,
+): VideoEditorPlannerNextActionDescriptor {
+  return {
+    kind: 'resolve-blocker',
+    label: `Materialize shader ${descriptor.shaderId}`,
+    route: requirement.route,
+    processId: descriptor.materializer?.processId,
+    operationId: descriptor.materializer?.operationId,
+    message,
+  };
+}
+
+function shaderMaterializerFinding(
+  descriptor: VideoEditorShaderDescriptor,
+  requirement: CapabilityRequirement,
+  action: VideoEditorPlannerNextActionDescriptor,
+  processStatus: ProcessStatus | undefined,
+): CapabilityFinding {
+  return {
+    id: `${requirement.id}.${requirement.route}.shader-materializer.discovered`,
+    severity: 'info',
+    route: requirement.route,
+    message: `Shader materializer route discovered for "${descriptor.shaderId}" on ${requirement.route}.`,
+    extensionId: descriptor.extensionId,
+    contributionId: descriptor.id,
+    detail: {
+      source: 'shader-materializer',
+      shaderId: descriptor.shaderId,
+      processId: descriptor.materializer?.processId,
+      operationId: descriptor.materializer?.operationId,
+      processState: processStatus?.state ?? 'unknown',
+      materializationState: processStatus?.state === 'busy' ? 'in-progress' : 'pending',
+      nextAction: action,
+    },
+  };
+}
+
+function collectShaderMaterializerRequirement(
+  acc: PlanAccumulator,
+  requirement: CapabilityRequirement,
+  descriptor: VideoEditorShaderDescriptor,
+  processStatusById: ReadonlyMap<string, ProcessStatus>,
+): void {
+  const processStatus = descriptor.materializer?.processId
+    ? processStatusById.get(descriptor.materializer.processId)
+    : undefined;
+  const message = shaderMaterializationMessage(descriptor, requirement);
+  const action = shaderMaterializationAction(descriptor, requirement, message);
+
+  collectRequirement(acc, {
+    ...requirement,
+    determinism: 'process-dependent',
+    blocking: true,
+    routeFit: {
+      route: requirement.route,
+      fit: 'supported',
+      reason: 'process-dependent',
+      message,
+    },
+    findings: [
+      ...(requirement.findings ?? []),
+      shaderMaterializerFinding(descriptor, requirement, action, processStatus),
+    ],
+  });
+  acc.nextActions.push(action);
+}
+
+function shaderCompositionKey(shader: TimelineShaderSummary): string | undefined {
+  if (shader.enabled === false) return undefined;
+  if (shader.scope === 'clip') return `clip:${shader.clipId ?? ''}`;
+  return 'postprocess';
+}
+
+function shaderCompositionScopeMessage(
+  existing: TimelineShaderSummary,
+  incoming: TimelineShaderSummary,
+): string {
+  if (incoming.scope === 'clip') {
+    const target = incoming.clipId ? `clip "${incoming.clipId}"` : 'the clip scope';
+    return `Cannot add shader "${incoming.shaderId}" to ${target} because shader "${existing.shaderId}" is already assigned. ` +
+      'V1 supports one clip shader per clip. Remove the existing shader before assigning another.';
+  }
+
+  return `Cannot add postprocess shader "${incoming.shaderId}" because postprocess shader "${existing.shaderId}" is already assigned. ` +
+    'V1 supports one timeline postprocess shader. Remove the existing postprocess shader before assigning another.';
+}
+
+function shaderCompositionScopeLabel(shader: TimelineShaderSummary): string {
+  return shader.scope === 'clip' ? `clip:${shader.clipId ?? 'unknown'}` : 'postprocess';
+}
+
+function diagnoseSnapshotShaderComposition(
+  snapshot: TimelineSnapshot | null | undefined,
+): { snapshot: TimelineSnapshot | null | undefined; findings: CapabilityFinding[] } {
+  if (!snapshot?.shaders || snapshot.shaders.length === 0) {
+    return { snapshot, findings: [] };
+  }
+
+  const firstByScope = new Map<string, TimelineShaderSummary>();
+  const findings: CapabilityFinding[] = [];
+  const filteredShaders: TimelineShaderSummary[] = [];
+
+  for (const shader of snapshot.shaders) {
+    const scopeKey = shaderCompositionKey(shader);
+    if (!scopeKey) {
+      filteredShaders.push(shader);
+      continue;
+    }
+
+    const existing = firstByScope.get(scopeKey);
+    if (!existing) {
+      firstByScope.set(scopeKey, shader);
+      filteredShaders.push(shader);
+      continue;
+    }
+
+    const message = shaderCompositionScopeMessage(existing, shader);
+    for (const route of ['browser-export', 'worker-export'] as const satisfies readonly RenderRoute[]) {
+      findings.push({
+        id: `planner.shaderComposition.${shaderCompositionScopeLabel(shader)}.${shader.shaderId}.${route}.scope-occupied`,
+        severity: 'error',
+        route,
+        reason: 'unknown',
+        message,
+        extensionId: shader.extensionId,
+        contributionId: shader.contributionId,
+        detail: {
+          source: 'shader-composition-limit',
+          scope: shader.scope,
+          clipId: shader.clipId,
+          existingShaderId: existing.shaderId,
+          incomingShaderId: shader.shaderId,
+        },
+      });
+    }
+  }
+
+  if (findings.length === 0) {
+    return { snapshot, findings };
+  }
+
+  return {
+    snapshot: {
+      ...snapshot,
+      shaders: filteredShaders.length > 0 ? filteredShaders : undefined,
+    },
+    findings,
+  };
 }
 
 function sortedRoutes(routes: readonly RenderRoute[]): readonly RenderRoute[] {
@@ -694,16 +917,35 @@ function emptyGuard(
 
 export function planRender(input: RenderPlannerInput): RenderPlannerResult {
   const acc = createAccumulator();
-  const requirements = input.requirements ?? (input.snapshot ? getCapabilityRequirements(input.snapshot) : []);
+  const shaderComposition = diagnoseSnapshotShaderComposition(input.snapshot);
+  const requirements = input.requirements ?? (shaderComposition.snapshot
+    ? getCapabilityRequirements(shaderComposition.snapshot)
+    : []);
   const outputFormats = input.outputFormats ?? input.extensionRuntime?.outputFormats ?? [];
   const processes = input.processes ?? input.extensionRuntime?.processes ?? [];
+  const shaders = input.shaders ?? input.extensionRuntime?.shaders ?? [];
   const processStatusById = createProcessStatusMap(input.processStatuses);
+  const processById = createProcessDescriptorMap(processes);
+  const shaderBySourceRef = createShaderDescriptorMap(shaders);
   const materialStatusById = createMaterialStatusMap(input.materialStatuses);
   const requestedOutputFormat = input.request?.outputFormatId
     ? outputFormats.find((format) => format.id === input.request?.outputFormatId)
     : undefined;
 
   for (const requirement of requirements) {
+    const shaderDescriptor = isShaderMaterializerRequirement(requirement)
+      ? shaderBySourceRef.get(shaderDescriptorKey(
+        requirement.sourceRef.extensionId,
+        requirement.sourceRef.contributionId,
+      ))
+      : undefined;
+    if (
+      shaderDescriptor
+      && shaderMaterializerSupportsRoute(shaderDescriptor, requirement, processById)
+    ) {
+      collectShaderMaterializerRequirement(acc, requirement, shaderDescriptor, processStatusById);
+      continue;
+    }
     collectRequirement(acc, requirement);
   }
   collectRequestCapabilities(acc, input.request);
@@ -719,6 +961,7 @@ export function planRender(input: RenderPlannerInput): RenderPlannerResult {
     collectMaterialRef(acc, materialRef, materialStatusById);
   }
   collectRenderGroups(acc, input.snapshot);
+  acc.findings.push(...shaderComposition.findings);
   acc.findings.push(...(input.diagnostics ?? []));
 
   if (input.request?.outputFormatId && !outputFormats.some((format) => format.id === input.request?.outputFormatId)) {

@@ -17,6 +17,14 @@ import {
 const sequenceProps = vi.hoisted((): Array<Record<string, unknown>> => []);
 const visualClipMock = vi.hoisted(() => vi.fn());
 const textClipMock = vi.hoisted(() => vi.fn());
+const postprocessPreviewMock = vi.hoisted(() => vi.fn());
+const mockShaderRegistryGet = vi.hoisted(() => vi.fn());
+const mockShaderRegistryHas = vi.hoisted(() => vi.fn());
+let currentFrame = 0;
+let currentEnvironment = {
+  isRendering: false,
+  isClientSideRendering: false,
+};
 
 vi.mock('remotion', async () => {
   return {
@@ -33,6 +41,8 @@ vi.mock('remotion', async () => {
       sequenceProps.push(props);
       return <div data-testid="sequence">{children}</div>;
     },
+    useCurrentFrame: () => currentFrame,
+    useRemotionEnvironment: () => currentEnvironment,
   };
 });
 
@@ -142,6 +152,41 @@ vi.mock('@/tools/video-editor/compositions/TextClip', () => ({
   },
 }));
 
+vi.mock('@/tools/video-editor/shaders/preview/PostprocessShaderPreviewCanvas.tsx', () => ({
+  PostprocessShaderPreviewCanvas: (props: Record<string, unknown>) => {
+    postprocessPreviewMock(props);
+    return (
+      <div
+        data-testid={String(props.testId ?? 'timeline-postprocess-shader-preview')}
+        data-shader-id={String((props.shader as { shaderId?: string })?.shaderId ?? '')}
+        data-frame={String(props.frame)}
+        data-time-seconds={String(props.timeSeconds)}
+      />
+    );
+  },
+}));
+
+vi.mock('@/tools/video-editor/shaders/registry/index.ts', async () => {
+  const actual = await vi.importActual<typeof import('@/tools/video-editor/shaders/registry/index.ts')>(
+    '@/tools/video-editor/shaders/registry/index.ts',
+  );
+  return {
+    ...actual,
+    useShaderEffectRegistrySnapshot: () => ({
+      records: Object.freeze([]),
+      diagnostics: Object.freeze([]),
+      get: mockShaderRegistryGet,
+      getByLookup: (lookup: { shaderId: string; ownerExtensionId?: string }) => (
+        mockShaderRegistryGet(lookup.shaderId, lookup.ownerExtensionId)
+      ),
+      has: mockShaderRegistryHas,
+      hasByLookup: (lookup: { shaderId: string; ownerExtensionId?: string }) => (
+        mockShaderRegistryHas(lookup.shaderId, lookup.ownerExtensionId)
+      ),
+    }),
+  };
+});
+
 vi.mock('@banodoco/timeline-composition/theme-api', async () => {
   const React = await import('react');
   const DEFAULT_THEME = {
@@ -247,6 +292,17 @@ const buildConfig = (
   ],
   registry: {},
   ...extras,
+});
+
+beforeEach(() => {
+  currentFrame = 0;
+  currentEnvironment = {
+    isRendering: false,
+    isClientSideRendering: false,
+  };
+  postprocessPreviewMock.mockClear();
+  mockShaderRegistryGet.mockReset();
+  mockShaderRegistryHas.mockReset();
 });
 
 describe('TimelineRenderer registered sequences', () => {
@@ -491,6 +547,90 @@ describe('TimelineRenderer registered sequences', () => {
     expect(screen.queryByTestId('registered-sequence')).not.toBeInTheDocument();
     expect(visualClipMock).not.toHaveBeenCalled();
     expect(textClipMock).not.toHaveBeenCalled();
+  });
+});
+
+describe('TimelineRenderer postprocess shader preview', () => {
+  beforeEach(() => {
+    sequenceProps.length = 0;
+    visualClipMock.mockClear();
+    textClipMock.mockClear();
+  });
+
+  const postprocessShader = {
+    scope: 'postprocess',
+    extensionId: 'ext.shader',
+    contributionId: 'ext.shader.post',
+    shaderId: 'shader.preview.post',
+    uniforms: { intensity: 0.6 },
+  } as const;
+
+  const postprocessRecord = {
+    shaderId: 'shader.preview.post',
+    ownerExtensionId: 'ext.shader',
+    contributionId: 'ext.shader.post',
+    label: 'Postprocess Preview',
+    source: {
+      kind: 'inline',
+      fragment: 'precision mediump float; void main(){ gl_FragColor = vec4(1.0); }',
+    },
+    pass: 'postprocess',
+    provenance: 'trusted-loader',
+    renderability: {
+      defaultRoute: 'preview',
+      determinism: 'preview-only',
+      capabilities: [
+        {
+          route: 'preview',
+          status: 'supported',
+          determinism: 'preview-only',
+        },
+      ],
+    },
+    status: 'active',
+  };
+
+  it('mounts one timeline-scope postprocess preview layer in browser preview coordinates', () => {
+    currentFrame = 45;
+    mockShaderRegistryGet.mockReturnValue(postprocessRecord);
+
+    render(<TimelineRenderer config={{
+      ...buildConfig({ theme: '2rp' }),
+      app: { shaderPostprocess: postprocessShader },
+    }} />);
+
+    expect(screen.getByTestId('timeline-postprocess-shader-preview')).toHaveAttribute(
+      'data-shader-id',
+      'shader.preview.post',
+    );
+    expect(postprocessPreviewMock).toHaveBeenCalledWith(expect.objectContaining({
+      shader: postprocessShader,
+      record: postprocessRecord,
+      frame: 45,
+      timeSeconds: 1.5,
+      width: 1920,
+      height: 1080,
+    }));
+    expect(screen.queryByTestId('unsupported-postprocess-shader-export')).not.toBeInTheDocument();
+  });
+
+  it('keeps postprocess shaders preview-only during Remotion export rendering', () => {
+    currentEnvironment = {
+      isRendering: true,
+      isClientSideRendering: false,
+    };
+    mockShaderRegistryGet.mockReturnValue(postprocessRecord);
+
+    render(<TimelineRenderer config={{
+      ...buildConfig({ theme: '2rp' }),
+      app: { shaderPostprocess: postprocessShader },
+    }} />);
+
+    expect(postprocessPreviewMock).not.toHaveBeenCalled();
+    expect(screen.queryByTestId('timeline-postprocess-shader-preview')).not.toBeInTheDocument();
+    expect(screen.getByTestId('unsupported-postprocess-shader-export')).toHaveTextContent(
+      'export requires a shader materializer that produces RenderMaterial',
+    );
   });
 });
 

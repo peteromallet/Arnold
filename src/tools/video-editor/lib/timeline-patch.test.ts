@@ -10,12 +10,17 @@ import {
   compileTimelinePatch,
   previewTimelinePatch,
 } from '@/tools/video-editor/lib/timeline-patch';
+import { TIMELINE_POSTPROCESS_SHADER_APP_KEY } from '@/tools/video-editor/lib/timeline-domain';
 import type { PatchMergeMode } from '@/tools/video-editor/lib/timeline-patch';
 import type {
   TimelinePatch,
   TimelinePatchOperation,
   TimelinePatchAnyOpFamily,
 } from '@/sdk/index';
+import type {
+  TimelineClipShaderMetadata,
+  TimelinePostprocessShaderMetadata,
+} from '@/tools/video-editor/types';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -1808,6 +1813,36 @@ function makeMinimalTimelineData(overrides: Record<string, unknown> = {}) {
   } as any; // eslint-disable-line @typescript-eslint/no-explicit-any
 }
 
+const clipShader: TimelineClipShaderMetadata = {
+  scope: 'clip',
+  extensionId: 'com.example.shader',
+  contributionId: 'clip-glow-shader',
+  shaderId: 'shader.clipGlow',
+  uniforms: { intensity: 0.5 },
+};
+
+const replacementClipShader: TimelineClipShaderMetadata = {
+  scope: 'clip',
+  extensionId: 'com.example.shader',
+  contributionId: 'clip-edge-shader',
+  shaderId: 'shader.clipEdge',
+};
+
+const postprocessShader: TimelinePostprocessShaderMetadata = {
+  scope: 'postprocess',
+  extensionId: 'com.example.shader',
+  contributionId: 'post-grade-shader',
+  shaderId: 'shader.postGrade',
+  uniforms: { exposure: 0.15 },
+};
+
+const replacementPostprocessShader: TimelinePostprocessShaderMetadata = {
+  scope: 'postprocess',
+  extensionId: 'com.example.shader',
+  contributionId: 'post-vignette-shader',
+  shaderId: 'shader.postVignette',
+};
+
 describe('compileTimelinePatch — merge/replace for clip.update', () => {
   it('merge mode (default) preserves unspecified clip fields in metaUpdates', () => {
     const data = makeMinimalTimelineData({
@@ -1864,6 +1899,92 @@ describe('compileTimelinePatch — merge/replace for clip.update', () => {
     const entry = result.diff.entries.find((e: any) => e.target === 'c1');
     expect(entry).toBeDefined();
     expect(entry!.after).toHaveProperty('mode', 'replace');
+  });
+});
+
+describe('compileTimelinePatch — shader metadata scope limits', () => {
+  it('patches and persists a clip-local shader through clip.update', () => {
+    const data = makeMinimalTimelineData({
+      tracks: [{ id: 'V1', kind: 'visual', label: 'V1' }],
+      clips: [{ id: 'c1', track: 'V1', at: 0, hold: 10 }],
+    });
+
+    const result = compileTimelinePatch(
+      makePatch({
+        operations: [makeOp('clip.update', 'c1', { app: { shader: clipShader } })],
+      }),
+      data,
+    );
+
+    expect(result.valid).toBe(true);
+    expect(result.diagnostics.filter((diagnostic) => diagnostic.severity === 'error')).toHaveLength(0);
+    expect(result.nextData!.config.clips.find((clip: any) => clip.id === 'c1')!.app.shader).toEqual(clipShader);
+    expect(result.mutation!.metaUpdates!['c1'].app).toEqual({ shader: clipShader });
+  });
+
+  it('refuses to replace an occupied clip-local shader scope', () => {
+    const data = makeMinimalTimelineData({
+      tracks: [{ id: 'V1', kind: 'visual', label: 'V1' }],
+      clips: [{ id: 'c1', track: 'V1', at: 0, hold: 10, app: { shader: clipShader } }],
+    });
+
+    const result = compileTimelinePatch(
+      makePatch({
+        operations: [makeOp('clip.update', 'c1', { app: { shader: replacementClipShader } })],
+      }),
+      data,
+    );
+
+    expect(result.diagnostics).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        code: 'timeline-patch/shader-scope-occupied',
+        severity: 'error',
+        message: 'Cannot add shader "shader.clipEdge" to clip "c1" because shader "shader.clipGlow" is already assigned. V1 supports one clip shader per clip. Remove the existing shader before assigning another.',
+      }),
+    ]));
+    expect(result.nextData!.config.clips.find((clip: any) => clip.id === 'c1')!.app.shader).toEqual(clipShader);
+  });
+
+  it('patches and persists the timeline postprocess shader through app.update', () => {
+    const data = makeMinimalTimelineData({
+      tracks: [{ id: 'V1', kind: 'visual', label: 'V1' }],
+      clips: [{ id: 'c1', track: 'V1', at: 0, hold: 10 }],
+    });
+
+    const result = compileTimelinePatch(
+      makePatch({
+        operations: [makeOp('app.update', TIMELINE_POSTPROCESS_SHADER_APP_KEY, { ...postprocessShader })],
+      }),
+      data,
+    );
+
+    expect(result.valid).toBe(true);
+    expect(result.diagnostics.filter((diagnostic) => diagnostic.severity === 'error')).toHaveLength(0);
+    expect(result.nextData!.config.app![TIMELINE_POSTPROCESS_SHADER_APP_KEY]).toEqual(postprocessShader);
+  });
+
+  it('refuses to replace an occupied postprocess shader scope', () => {
+    const data = makeMinimalTimelineData({
+      tracks: [{ id: 'V1', kind: 'visual', label: 'V1' }],
+      clips: [{ id: 'c1', track: 'V1', at: 0, hold: 10 }],
+      app: { [TIMELINE_POSTPROCESS_SHADER_APP_KEY]: postprocessShader },
+    });
+
+    const result = compileTimelinePatch(
+      makePatch({
+        operations: [makeOp('app.update', TIMELINE_POSTPROCESS_SHADER_APP_KEY, { ...replacementPostprocessShader })],
+      }),
+      data,
+    );
+
+    expect(result.diagnostics).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        code: 'timeline-patch/shader-scope-occupied',
+        severity: 'error',
+        message: 'Cannot add postprocess shader "shader.postVignette" because postprocess shader "shader.postGrade" is already assigned. V1 supports one timeline postprocess shader. Remove the existing postprocess shader before assigning another.',
+      }),
+    ]));
+    expect(result.nextData!.config.app![TIMELINE_POSTPROCESS_SHADER_APP_KEY]).toEqual(postprocessShader);
   });
 });
 

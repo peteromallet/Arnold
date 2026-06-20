@@ -62,7 +62,7 @@ import {
   type SourceNavigateToTimelineDetail,
 } from '@/tools/video-editor/lib/timeline-viewport-events.ts';
 import { VIDEO_EDITOR_THEME_VARS } from '@/tools/video-editor/lib/themeTokens.ts';
-import type { TrackDefinition } from '@/tools/video-editor/types/index.ts';
+import type { TimelinePostprocessShaderMetadata, TrackDefinition } from '@/tools/video-editor/types/index.ts';
 import type { TimelineAction, TimelineCanvasHandle, TimelineRow } from '@/tools/video-editor/types/timeline-canvas.ts';
 import type { DragSession } from '@/tools/video-editor/hooks/useClipDrag.ts';
 import type { ClipEdgeResizeEndTarget } from '@/tools/video-editor/hooks/useClipResize.ts';
@@ -142,6 +142,10 @@ export interface TimelineCanvasProps {
   ghostEntries?: readonly TimelineGhostEntry[];
   /** Set of clip IDs that have stale source-map entries (for stale badge rendering). */
   sourceMapStaleClipIds?: ReadonlySet<string>;
+  /** Active timeline-scoped postprocess shader shown as a selectable timeline badge. */
+  postprocessShader?: TimelinePostprocessShaderMetadata;
+  /** Selects the timeline-scoped postprocess shader inspector target. */
+  onSelectPostprocessShader?: (shader: TimelinePostprocessShaderMetadata) => void;
 }
 
 const clamp = (value: number, min: number, max: number): number => Math.min(max, Math.max(min, value));
@@ -269,6 +273,8 @@ export const TimelineCanvas = forwardRef<TimelineCanvasHandle, TimelineCanvasPro
   newTrackDropLabel,
   ghostEntries,
   sourceMapStaleClipIds,
+  postprocessShader,
+  onSelectPostprocessShader,
 }: TimelineCanvasProps, ref) {
   useRenderBudget('TimelineCanvas', 3);
   const { dataRef } = useTimelineMutableAdapters();
@@ -534,6 +540,15 @@ export const TimelineCanvas = forwardRef<TimelineCanvasHandle, TimelineCanvasPro
     });
   }, [commandRegistry, extensions]);
 
+  const handlePostprocessShaderBadgeClick = useCallback((event: React.MouseEvent<HTMLButtonElement>) => {
+    event.preventDefault();
+    event.stopPropagation();
+    if (!postprocessShader) {
+      return;
+    }
+    onSelectPostprocessShader?.(postprocessShader);
+  }, [onSelectPostprocessShader, postprocessShader]);
+
   const syncCursor = useCallback((time = timeRef.current) => {
     const cursor = cursorRef.current;
     if (!cursor) {
@@ -615,6 +630,24 @@ export const TimelineCanvas = forwardRef<TimelineCanvasHandle, TimelineCanvasPro
         unusedTrackCount={unusedTrackCount}
         onClearUnusedTracks={onClearUnusedTracks}
       />
+      {postprocessShader && onSelectPostprocessShader && (
+        <button
+          type="button"
+          className="absolute top-1 z-30 flex max-w-[min(24rem,calc(100%-12rem))] items-center gap-1.5 rounded-md border border-emerald-400/50 bg-emerald-500/15 px-2 py-1 text-[10px] font-medium text-emerald-100 shadow-sm transition-colors hover:border-emerald-300 hover:bg-emerald-500/25"
+          style={{ left: LABEL_WIDTH + 8 }}
+          data-postprocess-shader-badge="true"
+          data-shader-scope="postprocess"
+          data-shader-id={postprocessShader.shaderId}
+          data-extension-id={postprocessShader.extensionId}
+          aria-label={`Open postprocess shader controls for ${postprocessShader.label ?? postprocessShader.shaderId}`}
+          title={`Postprocess shader: ${postprocessShader.label ?? postprocessShader.shaderId}`}
+          onClick={handlePostprocessShaderBadgeClick}
+        >
+          <Sparkles className="h-3 w-3 shrink-0" />
+          <span className="shrink-0 uppercase tracking-[0.12em]">Postprocess</span>
+          <span className="truncate text-foreground/90">{postprocessShader.label ?? postprocessShader.shaderId}</span>
+        </button>
+      )}
       <ShotGroupLabels
         positionedShotGroups={positionedShotGroups}
         hidden={hideShotGroups}

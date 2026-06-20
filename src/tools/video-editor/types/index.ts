@@ -289,6 +289,48 @@ export type TimelineLiveUniformBinding = {
   metadata?: Record<string, unknown>;
 };
 
+// M13: Host-owned shader metadata persisted on the timeline. V1 stores one
+// clip-local shader in clip.app.shader and one postprocess shader in
+// config.app.shaderPostprocess.
+export type TimelineShaderScope = 'clip' | 'postprocess';
+
+export type TimelineShaderUniformValues = Record<string, unknown>;
+
+export type TimelineShaderTextureRef = {
+  kind: 'clip-frame' | 'static-image-asset' | 'live-generated-frame';
+  ref?: string;
+};
+
+export type TimelineShaderTextureValues = Record<string, TimelineShaderTextureRef>;
+
+export type TimelineShaderBaseMetadata = {
+  extensionId: string;
+  contributionId: string;
+  shaderId: string;
+  label?: string;
+  uniforms?: TimelineShaderUniformValues;
+  textures?: TimelineShaderTextureValues;
+  enabled?: boolean;
+  sourceHash?: string;
+  metadata?: Record<string, unknown>;
+};
+
+export type TimelineClipShaderMetadata = TimelineShaderBaseMetadata & {
+  scope: 'clip';
+};
+
+export type TimelinePostprocessShaderMetadata = TimelineShaderBaseMetadata & {
+  scope: 'postprocess';
+};
+
+export type TimelineClipAppMetadata = Record<string, unknown> & {
+  shader?: TimelineClipShaderMetadata;
+};
+
+export type TimelineConfigAppMetadata = Record<string, unknown> & {
+  shaderPostprocess?: TimelinePostprocessShaderMetadata;
+};
+
 export type TimelineClip = {
   id: string;
   at: number;
@@ -323,7 +365,7 @@ export type TimelineClip = {
   clip_order?: number;
   source_uuid?: string;
   generation?: Record<string, unknown>;
-  app?: Record<string, unknown>;
+  app?: TimelineClipAppMetadata;
   // M9: Host-owned keyframes keyed by parameter name.
   // Each parameter maps to an ordered array of keyframes.
   keyframes?: Record<string, ClipKeyframe[]>;
@@ -412,7 +454,7 @@ export type TimelineConfig = {
   theme?: string;
   theme_overrides?: ThemeOverrides;
   generation_defaults?: GenerationDefaults;
-  app?: Record<string, unknown>;
+  app?: TimelineConfigAppMetadata;
 };
 
 // ---------------------------------------------------------------------------
@@ -518,7 +560,7 @@ export type ResolvedTimelineConfig = {
   theme?: string;
   theme_overrides?: ThemeOverrides;
   generation_defaults?: GenerationDefaults;
-  app?: Record<string, unknown>;
+  app?: TimelineConfigAppMetadata;
 };
 
 export type TimelineCompositionProps = {

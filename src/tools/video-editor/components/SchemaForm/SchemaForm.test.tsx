@@ -2,13 +2,14 @@
 import { render, screen, fireEvent } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import React from 'react';
-import { SchemaForm } from '@/tools/video-editor/components/SchemaForm/SchemaForm';
+import { SchemaForm, type SchemaFormSchema } from '@/tools/video-editor/components/SchemaForm/SchemaForm';
 import { createSchemaCapabilityRegistry } from '@/tools/video-editor/runtime/schemaCapabilityRegistry';
 import type {
   SchemaCapabilityRegistry,
   SchemaCapabilityEntry,
 } from '@/tools/video-editor/runtime/schemaCapabilityRegistry';
 import type { ExtensionDiagnostic } from '@reigh/editor-sdk';
+import type { ShaderUniformSchema } from '@reigh/editor-sdk';
 import type { ParameterDefinition, ParameterSchema } from '@/tools/video-editor/types';
 
 // ---------------------------------------------------------------------------
@@ -30,7 +31,7 @@ function parameterDef(overrides: Partial<ParameterDefinition> = {}): ParameterDe
 }
 
 function renderForm(props: {
-  schema?: ParameterSchema;
+  schema?: SchemaFormSchema;
   values?: Record<string, unknown>;
   onChange?: (name: string, value: unknown) => void;
   disabled?: boolean;
@@ -143,6 +144,179 @@ describe('fields rendering', () => {
   it('returns null for empty schema', () => {
     const { container } = renderForm({ schema: [] });
     expect(container.querySelector('[data-testid="schema-form"]')).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Shader uniform controls
+// ---------------------------------------------------------------------------
+
+describe('shader uniform controls', () => {
+  function shaderUniform(overrides: ShaderUniformSchema[number]): ShaderUniformSchema[number] {
+    return overrides;
+  }
+
+  it('renders and persists float uniforms through a compact number input', () => {
+    const onChange = vi.fn();
+    renderForm({
+      schema: [shaderUniform({
+        name: 'u_gain',
+        label: 'Gain',
+        description: 'Gain control',
+        type: 'float',
+        default: 0.5,
+        min: 0,
+        max: 1,
+        step: 0.01,
+      })],
+      values: { u_gain: 0.5 },
+      onChange,
+    });
+
+    const input = screen.getByTestId('schema-form-widget-u_gain') as HTMLInputElement;
+    expect(input.value).toBe('0.5');
+    fireEvent.change(input, { target: { value: '0.75' } });
+    expect(onChange).toHaveBeenCalledWith('u_gain', 0.75);
+  });
+
+  it('renders and persists int uniforms as integer values', () => {
+    const onChange = vi.fn();
+    renderForm({
+      schema: [shaderUniform({ name: 'u_count', label: 'Count', type: 'int', default: 2 })],
+      values: { u_count: 2 },
+      onChange,
+    });
+
+    const input = screen.getByTestId('schema-form-widget-u_count') as HTMLInputElement;
+    fireEvent.change(input, { target: { value: '7.9' } });
+    expect(onChange).toHaveBeenCalledWith('u_count', 7);
+  });
+
+  it('renders and persists bool uniforms through the boolean switch', () => {
+    const onChange = vi.fn();
+    renderForm({
+      schema: [shaderUniform({ name: 'u_enabled', label: 'Enabled', type: 'bool', default: false })],
+      values: { u_enabled: false },
+      onChange,
+    });
+
+    const field = screen.getByTestId('schema-form-field-u_enabled');
+    expect(field.dataset.fieldType).toBe('bool');
+    fireEvent.click(screen.getByTestId('schema-form-widget-u_enabled'));
+    expect(onChange).toHaveBeenCalledWith('u_enabled', true);
+  });
+
+  it('renders and persists vec2 uniforms with compact component inputs', () => {
+    const onChange = vi.fn();
+    renderForm({
+      schema: [shaderUniform({ name: 'u_offset', label: 'Offset', type: 'vec2', default: [0, 1] })],
+      values: { u_offset: [0, 1] },
+      onChange,
+    });
+
+    fireEvent.change(screen.getByTestId('schema-form-widget-u_offset-x'), { target: { value: '0.25' } });
+    expect(onChange).toHaveBeenCalledWith('u_offset', [0.25, 1]);
+  });
+
+  it('renders and persists vec3 uniforms with compact component inputs', () => {
+    const onChange = vi.fn();
+    renderForm({
+      schema: [shaderUniform({ name: 'u_axis', label: 'Axis', type: 'vec3', default: [0, 1, 0] })],
+      values: { u_axis: [0, 1, 0] },
+      onChange,
+    });
+
+    fireEvent.change(screen.getByTestId('schema-form-widget-u_axis-z'), { target: { value: '1' } });
+    expect(onChange).toHaveBeenCalledWith('u_axis', [0, 1, 1]);
+  });
+
+  it('renders and persists vec4 uniforms with compact component inputs', () => {
+    const onChange = vi.fn();
+    renderForm({
+      schema: [shaderUniform({ name: 'u_bounds', label: 'Bounds', type: 'vec4', default: [0, 0, 1, 1] })],
+      values: { u_bounds: [0, 0, 1, 1] },
+      onChange,
+    });
+
+    fireEvent.change(screen.getByTestId('schema-form-widget-u_bounds-w'), { target: { value: '0.5' } });
+    expect(onChange).toHaveBeenCalledWith('u_bounds', [0, 0, 1, 0.5]);
+  });
+
+  it('renders and persists color uniforms as RGBA vectors without using the hex color picker', () => {
+    const onChange = vi.fn();
+    renderForm({
+      schema: [shaderUniform({ name: 'u_tint', label: 'Tint', type: 'color', default: [1, 0, 0, 1] })],
+      values: { u_tint: [1, 0, 0, 1] },
+      onChange,
+    });
+
+    expect(screen.queryByTestId('schema-form-widget-u_tint')).toBeNull();
+    fireEvent.change(screen.getByTestId('schema-form-widget-u_tint-g'), { target: { value: '0.5' } });
+    expect(onChange).toHaveBeenCalledWith('u_tint', [1, 0.5, 0, 1]);
+  });
+
+  it('renders enum uniforms as select controls', () => {
+    renderForm({
+      schema: [shaderUniform({
+        name: 'u_mode',
+        label: 'Mode',
+        type: 'enum',
+        default: 'soft',
+        options: [
+          { label: 'Soft', value: 'soft' },
+          { label: 'Hard', value: 'hard' },
+        ],
+      })],
+      values: { u_mode: 'soft' },
+    });
+
+    const field = screen.getByTestId('schema-form-field-u_mode');
+    expect(field.dataset.fieldType).toBe('enum');
+    expect(screen.getByTestId('schema-form-widget-u_mode')).toBeTruthy();
+  });
+
+  it('renders textureRef uniforms as unsupported diagnostics without crashing', () => {
+    const onDiagnostics = vi.fn();
+    renderForm({
+      schema: [shaderUniform({
+        name: 'u_texture',
+        label: 'Texture',
+        type: 'textureRef',
+        default: { kind: 'static-image-asset', ref: 'asset-1' },
+      })],
+      values: { u_texture: { kind: 'static-image-asset', ref: 'asset-1' } },
+      onDiagnostics,
+    });
+
+    expect(screen.getByTestId('schema-form-unsupported-u_texture')).toBeTruthy();
+    expect(screen.getByTestId('schema-form-diagnostic-u_texture').textContent).toContain('textureRef uniforms are not editable');
+    const diagnostics = onDiagnostics.mock.calls[0][0] as ExtensionDiagnostic[];
+    expect(diagnostics[0].code).toBe('schema/texture-ref-unsupported');
+    expect(diagnostics[0].detail).toMatchObject({ fieldName: 'u_texture', unsupportedType: 'textureRef' });
+  });
+
+  it('renders and persists frame uniforms as compact number inputs', () => {
+    const onChange = vi.fn();
+    renderForm({
+      schema: [shaderUniform({ name: 'u_frame', label: 'Frame', type: 'frame', default: 12 })],
+      values: { u_frame: 12 },
+      onChange,
+    });
+
+    fireEvent.change(screen.getByTestId('schema-form-widget-u_frame'), { target: { value: '24' } });
+    expect(onChange).toHaveBeenCalledWith('u_frame', 24);
+  });
+
+  it('renders and persists time uniforms as compact number inputs', () => {
+    const onChange = vi.fn();
+    renderForm({
+      schema: [shaderUniform({ name: 'u_time', label: 'Time', type: 'time', default: 1.5 })],
+      values: { u_time: 1.5 },
+      onChange,
+    });
+
+    fireEvent.change(screen.getByTestId('schema-form-widget-u_time'), { target: { value: '2.25' } });
+    expect(onChange).toHaveBeenCalledWith('u_time', 2.25);
   });
 });
 

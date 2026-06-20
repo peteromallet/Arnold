@@ -18,6 +18,7 @@ import type {
   TimelineLiveBindingSummary,
   TimelineMaterialRefSummary,
   TimelineSourceRefSummary,
+  TimelineShaderSummary,
   TimelineRenderGroupSummary,
   TimelineOutputMetadata,
   ProjectExtensionRequirement,
@@ -30,6 +31,8 @@ import { getCapabilityRequirements as sdkGetCapabilityRequirements } from '@/sdk
 import type { TimelineData, ClipMeta } from '@/tools/video-editor/lib/timeline-data';
 import type {
   TimelineClip,
+  TimelineClipShaderMetadata,
+  TimelinePostprocessShaderMetadata,
   TimelineLiveBindingResolutionStatus,
   TimelineLiveSourceKind,
   TimelineLiveSourceStatus,
@@ -242,6 +245,30 @@ function collectLiveBindingRecords(data: TimelineData): TimelineLiveBindingRecor
   return records;
 }
 
+function isClipShaderMetadata(value: unknown): value is TimelineClipShaderMetadata {
+  return Boolean(
+    value
+    && typeof value === 'object'
+    && !Array.isArray(value)
+    && (value as Record<string, unknown>).scope === 'clip'
+    && typeof (value as Record<string, unknown>).shaderId === 'string'
+    && typeof (value as Record<string, unknown>).extensionId === 'string'
+    && typeof (value as Record<string, unknown>).contributionId === 'string',
+  );
+}
+
+function isPostprocessShaderMetadata(value: unknown): value is TimelinePostprocessShaderMetadata {
+  return Boolean(
+    value
+    && typeof value === 'object'
+    && !Array.isArray(value)
+    && (value as Record<string, unknown>).scope === 'postprocess'
+    && typeof (value as Record<string, unknown>).shaderId === 'string'
+    && typeof (value as Record<string, unknown>).extensionId === 'string'
+    && typeof (value as Record<string, unknown>).contributionId === 'string',
+  );
+}
+
 // ---------------------------------------------------------------------------
 // createTimelineReader
 // ---------------------------------------------------------------------------
@@ -300,6 +327,7 @@ export function createTimelineReader(
       const liveBindingSummaries: TimelineLiveBindingSummary[] = [];
       const materialRefSummaries: TimelineMaterialRefSummary[] = [];
       const sourceRefSummaries: TimelineSourceRefSummary[] = [];
+      const shaderSummaries: TimelineShaderSummary[] = [];
       const liveBindingsByClip = new Map<string, TimelineLiveBindingRecord[]>();
 
       for (const record of collectLiveBindingRecords(data)) {
@@ -316,6 +344,21 @@ export function createTimelineReader(
 
         const generatedMeta: GeneratedObjectMeta | undefined =
           extractGeneratedMeta(clip.app);
+
+        const clipShader = isClipShaderMetadata(clip.app?.shader)
+          ? clip.app.shader
+          : undefined;
+        if (clipShader) {
+          shaderSummaries.push({
+            id: `${clip.id}:shader:${clipShader.shaderId}`,
+            shaderId: clipShader.shaderId,
+            scope: 'clip',
+            clipId: clip.id,
+            extensionId: clipShader.extensionId,
+            contributionId: clipShader.contributionId,
+            enabled: clipShader.enabled !== false,
+          });
+        }
 
         // ── Extract effects ──────────────────────────────────────────
         const clipEffects: TimelineEffectSummary[] = [];
@@ -527,6 +570,19 @@ export function createTimelineReader(
       const app: Record<string, unknown> = config.app !== undefined
         ? { ...config.app }
         : {};
+      const postprocessShader = isPostprocessShaderMetadata(app.shaderPostprocess)
+        ? app.shaderPostprocess
+        : undefined;
+      if (postprocessShader) {
+        shaderSummaries.push({
+          id: `postprocess:shader:${postprocessShader.shaderId}`,
+          shaderId: postprocessShader.shaderId,
+          scope: 'postprocess',
+          extensionId: postprocessShader.extensionId,
+          contributionId: postprocessShader.contributionId,
+          enabled: postprocessShader.enabled !== false,
+        });
+      }
 
       // ── Source-map entries ─────────────────────────────────────────
       const sourceMapEntries: SourceMapEntry[] = [];
@@ -607,6 +663,8 @@ export function createTimelineReader(
           materialRefSummaries.length > 0 ? materialRefSummaries : undefined,
         sourceRefs:
           sourceRefSummaries.length > 0 ? sourceRefSummaries : undefined,
+        shaders:
+          shaderSummaries.length > 0 ? shaderSummaries : undefined,
         renderGroups:
           renderGroups.length > 0 ? renderGroups : undefined,
         outputMetadata: output,

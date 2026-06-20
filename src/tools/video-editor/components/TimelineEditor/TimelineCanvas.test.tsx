@@ -7,7 +7,7 @@ import { DataProviderWrapper, type VideoEditorRuntimeContextValue } from '@/tool
 import { createInteractionState, onInteractionEnd } from '@/tools/video-editor/lib/interaction-state';
 import { requestCenterTimelineClip } from '@/tools/video-editor/lib/timeline-viewport-events';
 import { createCommandRegistry, type CommandRegistry } from '@/tools/video-editor/runtime/commandRegistry';
-import type { TrackDefinition } from '@/tools/video-editor/types';
+import type { TimelinePostprocessShaderMetadata, TrackDefinition } from '@/tools/video-editor/types';
 import type { TimelineAction, TimelineRow } from '@/tools/video-editor/types/timeline-canvas';
 import type { ReighExtension } from '@reigh/editor-sdk';
 
@@ -327,6 +327,8 @@ function renderCanvas(params?: {
   onAddTextAt?: React.ComponentProps<typeof TimelineCanvas>['onAddTextAt'];
   onOpenSequenceCreator?: React.ComponentProps<typeof TimelineCanvas>['onOpenSequenceCreator'];
   commandRegistry?: CommandRegistry;
+  postprocessShader?: TimelinePostprocessShaderMetadata;
+  onSelectPostprocessShader?: React.ComponentProps<typeof TimelineCanvas>['onSelectPostprocessShader'];
 }) {
   const dataRef = params?.dataRef ?? { current: null };
   const trackDefinitions = params?.tracks ?? [params?.track ?? track];
@@ -382,6 +384,8 @@ function renderCanvas(params?: {
       interactionStateRef={params?.interactionStateRef}
       onAddTextAt={params?.onAddTextAt}
       onOpenSequenceCreator={params?.onOpenSequenceCreator}
+      postprocessShader={params?.postprocessShader}
+      onSelectPostprocessShader={params?.onSelectPostprocessShader}
       dragSessionRef={{ current: null }}
     />
   );
@@ -463,6 +467,39 @@ describe('TimelineCanvas floating tools', () => {
 
     fireEvent.click(sequenceTool);
     expect(onOpenSequenceCreator).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('TimelineCanvas postprocess shader badge', () => {
+  const postprocessShader: TimelinePostprocessShaderMetadata = {
+    scope: 'postprocess',
+    extensionId: 'ext.shader',
+    contributionId: 'post-grade',
+    shaderId: 'shader.post.grade',
+    label: 'Post Grade',
+  };
+
+  it('renders a stable postprocess shader badge and selects the shader target', () => {
+    const onSelectPostprocessShader = vi.fn();
+    const { container } = renderCanvas({
+      postprocessShader,
+      onSelectPostprocessShader,
+    });
+
+    const badge = container.querySelector('[data-postprocess-shader-badge="true"]');
+    if (!(badge instanceof HTMLElement)) {
+      throw new Error('expected postprocess shader badge');
+    }
+
+    expect(badge).toHaveAttribute('data-shader-scope', 'postprocess');
+    expect(badge).toHaveAttribute('data-shader-id', 'shader.post.grade');
+    expect(badge).toHaveTextContent('Postprocess');
+    expect(badge).toHaveTextContent('Post Grade');
+
+    fireEvent.click(badge);
+
+    expect(onSelectPostprocessShader).toHaveBeenCalledTimes(1);
+    expect(onSelectPostprocessShader).toHaveBeenCalledWith(postprocessShader);
   });
 });
 

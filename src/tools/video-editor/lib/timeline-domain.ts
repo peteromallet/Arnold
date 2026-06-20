@@ -8,6 +8,7 @@ import type {
   PinnedShotGroup,
   TimelineClip,
   TimelineConfig,
+  TimelineClipShaderMetadata,
   TimelineLiveBinding,
   TimelineLiveBindingResolutionStatus,
   TimelineLiveDeterministicRef,
@@ -15,6 +16,8 @@ import type {
   TimelineLiveSourceStatus,
   TimelineLiveUniformBinding,
   TimelineLiveUniformBindingMappingKind,
+  TimelinePostprocessShaderMetadata,
+  TimelineShaderScope,
   TrackDefinition,
 } from '../types/index.ts';
 import { validateAssetMetadata } from './assetMetadata';
@@ -49,7 +52,8 @@ export type TimelineDomainIssueCode =
   | 'live_binding_missing_source_id'
   | 'live_binding_missing_source_kind'
   | 'live_binding_unsupported_source_kind'
-  | 'live_binding_sample_payload_rejected';
+  | 'live_binding_sample_payload_rejected'
+  | 'shader_scope_occupied';
 
 export interface TimelineDomainIssue {
   level: TimelineDomainContractLevel;
@@ -135,6 +139,7 @@ const LEGACY_ASSET_EFFECTS: Record<
 
 const TIMELINE_TIME_PRECISION = 4;
 const CONTIGUITY_EPSILON = 0.001;
+export const TIMELINE_POSTPROCESS_SHADER_APP_KEY = 'shaderPostprocess';
 
 export const TIMELINE_CLIP_FIELDS = [
   'id',
@@ -279,6 +284,133 @@ export const cloneAssetRegistry = (registry: AssetRegistry): AssetRegistry => ({
     Object.entries(registry.assets ?? {}).map(([assetId, entry]) => [assetId, sanitizeAssetRegistryEntry(entry)]),
   ),
 });
+
+export type TimelineShaderMetadata = TimelineClipShaderMetadata | TimelinePostprocessShaderMetadata;
+
+export type TimelineShaderAssignmentResult<T> =
+  | { ok: true; value: T }
+  | {
+      ok: false;
+      code: 'shader_scope_occupied';
+      scope: TimelineShaderScope;
+      existing: TimelineShaderMetadata;
+      incoming: TimelineShaderMetadata;
+      message: string;
+    };
+
+const isRecord = (value: unknown): value is Record<string, unknown> => (
+  value !== null && typeof value === 'object' && !Array.isArray(value)
+);
+
+const isTimelineShaderMetadata = <Scope extends TimelineShaderScope>(
+  value: unknown,
+  scope: Scope,
+): value is Scope extends 'clip' ? TimelineClipShaderMetadata : TimelinePostprocessShaderMetadata => {
+  return (
+    isRecord(value)
+    && value.scope === scope
+    && typeof value.extensionId === 'string'
+    && value.extensionId.length > 0
+    && typeof value.contributionId === 'string'
+    && value.contributionId.length > 0
+    && typeof value.shaderId === 'string'
+    && value.shaderId.length > 0
+  );
+};
+
+export const getTimelineClipShader = (clip: Pick<TimelineClip, 'app'>): TimelineClipShaderMetadata | undefined => {
+  const shader = clip.app?.shader;
+  return isTimelineShaderMetadata(shader, 'clip') ? shader : undefined;
+};
+
+export const getTimelinePostprocessShader = (
+  config: Pick<TimelineConfig, 'app'>,
+): TimelinePostprocessShaderMetadata | undefined => {
+  const shader = config.app?.[TIMELINE_POSTPROCESS_SHADER_APP_KEY];
+  return isTimelineShaderMetadata(shader, 'postprocess') ? shader : undefined;
+};
+
+export const sameTimelineShaderIdentity = (
+  left: TimelineShaderMetadata,
+  right: TimelineShaderMetadata,
+): boolean => (
+  left.scope === right.scope
+  && left.extensionId === right.extensionId
+  && left.contributionId === right.contributionId
+  && left.shaderId === right.shaderId
+);
+
+export const timelineShaderScopeOccupiedMessage = (
+  scope: TimelineShaderScope,
+  existingShaderId: string,
+  incomingShaderId: string,
+  clipId?: string,
+): string => {
+  if (scope === 'clip') {
+    const target = clipId ? `clip "${clipId}"` : 'the clip scope';
+    return `Cannot add shader "${incomingShaderId}" to ${target} because shader "${existingShaderId}" is already assigned. ` +
+      'V1 supports one clip shader per clip. Remove the existing shader before assigning another.';
+  }
+
+  return `Cannot add postprocess shader "${incomingShaderId}" because postprocess shader "${existingShaderId}" is already assigned. ` +
+    'V1 supports one timeline postprocess shader. Remove the existing postprocess shader before assigning another.';
+};
+
+const createShaderScopeOccupiedResult = <T>(
+  scope: TimelineShaderScope,
+  existing: TimelineShaderMetadata,
+  incoming: TimelineShaderMetadata,
+  clipId?: string,
+): TimelineShaderAssignmentResult<T> => ({
+  ok: false,
+  code: 'shader_scope_occupied',
+  scope,
+  existing,
+  incoming,
+  message: timelineShaderScopeOccupiedMessage(scope, existing.shaderId, incoming.shaderId, clipId),
+});
+
+export const assignTimelineClipShader = (
+  clip: TimelineClip,
+  shader: TimelineClipShaderMetadata,
+): TimelineShaderAssignmentResult<TimelineClip> => {
+  const existing = getTimelineClipShader(clip);
+  if (existing && !sameTimelineShaderIdentity(existing, shader)) {
+    return createShaderScopeOccupiedResult('clip', existing, shader, clip.id);
+  }
+
+  return {
+    ok: true,
+    value: {
+      ...clip,
+      app: {
+        ...(clip.app ?? {}),
+        shader,
+      },
+    },
+  };
+};
+
+export const assignTimelinePostprocessShader = (
+  config: TimelineConfig,
+  shader: TimelinePostprocessShaderMetadata,
+): TimelineShaderAssignmentResult<TimelineConfig> => {
+  const existing = getTimelinePostprocessShader(config);
+  if (existing && !sameTimelineShaderIdentity(existing, shader)) {
+    return createShaderScopeOccupiedResult('postprocess', existing, shader);
+  }
+
+  return {
+    ok: true,
+    value: {
+      ...config,
+      app: {
+        ...(config.app ?? {}),
+        [TIMELINE_POSTPROCESS_SHADER_APP_KEY]: shader,
+      },
+    },
+  };
+};
 
 const createIssue = (
   level: TimelineDomainContractLevel,
@@ -979,10 +1111,6 @@ const emptyLiveBindingCounts = (): Record<TimelineLiveBindingResolutionStatus, n
   resolved: 0,
   malformed: 0,
 });
-
-const isRecord = (value: unknown): value is Record<string, unknown> => {
-  return value !== null && typeof value === 'object' && !Array.isArray(value);
-};
 
 const createLiveBindingDiagnostic = (
   severity: TimelineLiveBindingDiagnosticSeverity,
@@ -1935,6 +2063,33 @@ const validateSerializedConfig = (
         ));
       }
     }
+
+    const clipApp = clip.app as Record<string, unknown> | undefined;
+    if (Array.isArray(clipApp?.shader)) {
+      const shaderStack = clipApp.shader;
+      const existing = shaderStack[0] as { shaderId?: unknown } | undefined;
+      const incoming = shaderStack[1] as { shaderId?: unknown } | undefined;
+      issues.push(createIssue(
+        level,
+        'error',
+        'shader_scope_occupied',
+        timelineShaderScopeOccupiedMessage(
+          'clip',
+          typeof existing?.shaderId === 'string' ? existing.shaderId : 'unknown',
+          typeof incoming?.shaderId === 'string' ? incoming.shaderId : 'unknown',
+          clip.id,
+        ),
+        {
+          clipId: clip.id,
+          path: `clips.${clip.id}.app.shader`,
+          repairApplied: false,
+          details: {
+            scope: 'clip',
+            shaderCount: shaderStack.length,
+          },
+        },
+      ));
+    }
   }
 
   const allowedTrackKeys = new Set<string>(TRACK_DEFINITION_FIELDS);
@@ -1986,6 +2141,30 @@ const validateSerializedConfig = (
           sourceId: diagnostic.sourceId,
           diagnosticCode: diagnostic.code,
           ...(diagnostic.details ?? {}),
+        },
+      },
+    ));
+  }
+
+  const postprocessShaderValue = (config.app as Record<string, unknown> | undefined)?.[TIMELINE_POSTPROCESS_SHADER_APP_KEY];
+  if (Array.isArray(postprocessShaderValue)) {
+    const existing = postprocessShaderValue[0] as { shaderId?: unknown } | undefined;
+    const incoming = postprocessShaderValue[1] as { shaderId?: unknown } | undefined;
+    issues.push(createIssue(
+      level,
+      'error',
+      'shader_scope_occupied',
+      timelineShaderScopeOccupiedMessage(
+        'postprocess',
+        typeof existing?.shaderId === 'string' ? existing.shaderId : 'unknown',
+        typeof incoming?.shaderId === 'string' ? incoming.shaderId : 'unknown',
+      ),
+      {
+        path: `app.${TIMELINE_POSTPROCESS_SHADER_APP_KEY}`,
+        repairApplied: false,
+        details: {
+          scope: 'postprocess',
+          shaderCount: postprocessShaderValue.length,
         },
       },
     ));

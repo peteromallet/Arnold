@@ -33,6 +33,8 @@ vi.mock('remotion', async () => ({
   Sequence: ({ children, ...props }: PropsWithChildren<Record<string, unknown>>) => (
     <div data-testid="sequence" {...props}>{children}</div>
   ),
+  useCurrentFrame: () => 0,
+  useRemotionEnvironment: () => ({ isRendering: false, isClientSideRendering: false }),
 }));
 
 vi.mock('@banodoco/timeline-composition/theme-api', async () => {

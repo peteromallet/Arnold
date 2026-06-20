@@ -1,0 +1,135 @@
+{
+  "manifest": {
+    "id": "com.reigh.examples.clip-local-shader-canary",
+    "version": "1.0.0",
+    "label": "Clip Local Shader Canary",
+    "description": "M13 canary for clip-local WebGL shader registration, uniforms, diagnostics, preview, picker, and planner behavior.",
+    "apiVersion": 1,
+    "contributions": [
+      {
+        "id": "clip-local-shader-canary",
+        "kind": "shader",
+        "shaderId": "shader.clipLocalCanary.grade",
+        "label": "Clip Local Shader Canary",
+        "description": "Preview-only clip-local WebGL shader canary with editable uniforms and clip-frame texture input.",
+        "pass": {
+          "kind": "clip",
+          "inputTextureUniform": "u_source",
+          "colorSpace": "srgb",
+          "alpha": "preserve"
+        },
+        "source": {
+          "kind": "inline",
+          "fragment": "precision mediump float; uniform sampler2D u_source; uniform vec2 u_resolution; uniform float u_time; uniform float u_frame; uniform float intensity; uniform vec4 tint; uniform vec2 center; uniform bool showGrid; uniform int bandCount; uniform float holdFrame; uniform float holdTime; uniform float blendMode; varying vec2 v_uv; void main() { vec4 base = texture2D(u_source, v_uv); vec2 delta = abs(v_uv - center); float vignette = smoothstep(0.85, 0.15, max(delta.x, delta.y)); float grid = showGrid ? step(0.97, fract((v_uv.x + v_uv.y + u_time * 0.05) * float(bandCount))) : 0.0; float pulse = 0.5 + 0.5 * sin((u_frame + holdFrame + holdTime * 30.0) * 0.06); vec3 graded = mix(base.rgb, tint.rgb, clamp(intensity * vignette * pulse, 0.0, 1.0)); graded = mix(graded, vec3(1.0) - graded, clamp(blendMode, 0.0, 1.0) * 0.18); gl_FragColor = vec4(mix(graded, vec3(1.0), grid * 0.18), base.a); }"
+        },
+        "uniforms": [
+          {
+            "name": "intensity",
+            "label": "Intensity",
+            "type": "float",
+            "default": 0.35,
+            "min": 0,
+            "max": 1,
+            "step": 0.01
+          },
+          {
+            "name": "tint",
+            "label": "Tint",
+            "type": "color",
+            "default": [0.2, 0.7, 1, 1]
+          },
+          {
+            "name": "center",
+            "label": "Center",
+            "type": "vec2",
+            "default": [0.5, 0.5]
+          },
+          {
+            "name": "showGrid",
+            "label": "Grid",
+            "type": "bool",
+            "default": true
+          },
+          {
+            "name": "bandCount",
+            "label": "Bands",
+            "type": "int",
+            "default": 8,
+            "min": 2,
+            "max": 24,
+            "step": 1
+          },
+          {
+            "name": "holdFrame",
+            "label": "Frame Hold",
+            "type": "frame",
+            "default": 12
+          },
+          {
+            "name": "holdTime",
+            "label": "Time Hold",
+            "type": "time",
+            "default": 0.25
+          },
+          {
+            "name": "blendMode",
+            "label": "Blend Mode",
+            "type": "enum",
+            "default": "soft",
+            "options": [
+              { "label": "Soft", "value": "soft" },
+              { "label": "Invert Lift", "value": "invert-lift" }
+            ]
+          },
+          {
+            "name": "u_source",
+            "label": "Source Frame",
+            "type": "textureRef",
+            "default": { "kind": "clip-frame" }
+          }
+        ],
+        "textures": [
+          {
+            "name": "u_source",
+            "label": "Clip frame",
+            "uniform": "u_source",
+            "sourceKind": "clip-frame",
+            "required": true,
+            "filter": "linear",
+            "wrap": "clamp-to-edge",
+            "colorSpace": "srgb"
+          }
+        ],
+        "fallback": "bypass",
+        "order": 50
+      },
+      {
+        "id": "clip-local-shader-canary-diagnostic",
+        "kind": "shader",
+        "shaderId": "shader.clipLocalCanary.diagnostic",
+        "label": "Clip Local Shader Canary Diagnostic",
+        "description": "Deliberately invalid clip-local shader contribution used to prove diagnostic surfacing.",
+        "pass": "clip",
+        "source": {
+          "kind": "inline",
+          "fragment": "precision mediump float; varying vec2 v_uv; void main() { gl_FragColor = vec4(v_uv, 0.0, 1.0); }"
+        },
+        "uniforms": [
+          {
+            "name": "invalidShape",
+            "label": "Invalid Shape",
+            "type": "matrix3",
+            "default": [1, 0, 0, 0, 1, 0, 0, 0, 1]
+          }
+        ],
+        "fallback": "transparent",
+        "order": 51
+      }
+    ],
+    "messages": {
+      "activation.started": "Clip Local Shader Canary activating.",
+      "activation.ready": "Clip Local Shader Canary ready.",
+      "activation.disposed": "Clip Local Shader Canary disposed."
+    }
+  }
+}

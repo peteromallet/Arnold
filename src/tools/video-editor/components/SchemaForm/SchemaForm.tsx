@@ -20,11 +20,11 @@ import { Slider } from '@/shared/components/ui/slider.tsx';
 import { Switch } from '@/shared/components/ui/switch.tsx';
 import { cn } from '@/shared/components/ui/contracts/cn.ts';
 import type { AudioBindingValue, ParameterDefinition, ParameterSchema } from '@/tools/video-editor/types/index.ts';
+import type { ShaderUniformSchema } from '@reigh/editor-sdk';
 import {
   createSchemaCapabilityRegistry,
   type SchemaCapabilityRegistry,
   type SchemaCapabilityEntry,
-  type SchemaWidgetType,
 } from '@/tools/video-editor/runtime/schemaCapabilityRegistry';
 import type { ExtensionDiagnostic } from '@reigh/editor-sdk';
 
@@ -56,7 +56,7 @@ export interface StandardSchema {
 // ---------------------------------------------------------------------------
 
 /** Union of schema formats accepted by SchemaForm. */
-export type SchemaFormSchema = ParameterSchema | StandardSchema;
+export type SchemaFormSchema = ParameterSchema | StandardSchema | ShaderUniformSchema;
 
 /** Props for SchemaForm.  Mirrors ParameterControlsProps + extensions. */
 export interface SchemaFormProps {
@@ -103,7 +103,7 @@ interface NormalizedField {
   step?: number;
   options?: Array<{ label: string; value: string }>;
   isRequired: boolean;
-  _source: 'parameter' | 'standardschema';
+  _source: 'parameter' | 'standardschema' | 'shader';
   _capability: SchemaCapabilityEntry;
 }
 
@@ -124,6 +124,44 @@ function isAudioBindingValue(value: unknown): value is AudioBindingValue {
   );
 }
 
+function isFiniteNumber(value: unknown): value is number {
+  return typeof value === 'number' && Number.isFinite(value);
+}
+
+function getVectorLength(type: string): number | null {
+  switch (type) {
+    case 'vec2':
+      return 2;
+    case 'vec3':
+      return 3;
+    case 'vec4':
+      return 4;
+    case 'color':
+      return 4;
+    default:
+      return null;
+  }
+}
+
+function isNumberVector(value: unknown, length: number): value is number[] {
+  return Array.isArray(value) && value.length === length && value.every(isFiniteNumber);
+}
+
+function getVectorFallback(field: NormalizedField): number[] {
+  const length = getVectorLength(field.type) ?? 0;
+  if (isNumberVector(field.default, length)) {
+    return [...field.default];
+  }
+  if (field.type === 'color') {
+    return [1, 1, 1, 1];
+  }
+  return Array.from({ length }, () => 0);
+}
+
+function isShaderColorValue(field: NormalizedField, value: unknown): value is number[] {
+  return field.type === 'color' && Array.isArray(value);
+}
+
 // ---------------------------------------------------------------------------
 // Fallback values (mirrors ParameterControls)
 // ---------------------------------------------------------------------------
@@ -131,6 +169,20 @@ function isAudioBindingValue(value: unknown): value is AudioBindingValue {
 function getFallbackValue(field: NormalizedField): unknown {
   if (field.default !== undefined) return field.default;
   switch (field.type) {
+    case 'float':
+    case 'frame':
+    case 'time':
+      return field.min ?? 0;
+    case 'int':
+      return Math.trunc(field.min ?? 0);
+    case 'vec2':
+    case 'vec3':
+    case 'vec4':
+      return getVectorFallback(field);
+    case 'enum':
+      return field.options?.[0]?.value ?? '';
+    case 'bool':
+      return false;
     case 'number':
       return field.min ?? 0;
     case 'select':
@@ -152,6 +204,10 @@ function getDisplayValue(field: NormalizedField, value: unknown): unknown {
   if (value !== undefined) {
     if (field.type === 'audio-binding') {
       return isAudioBindingValue(value) ? value : getFallbackValue(field);
+    }
+    const vectorLength = getVectorLength(field.type);
+    if (vectorLength !== null && Array.isArray(value)) {
+      return isNumberVector(value, vectorLength) ? value : getVectorFallback(field);
     }
     return value;
   }
@@ -189,21 +245,35 @@ function normalizeSchema(
   registry: SchemaCapabilityRegistry,
 ): NormalizedField[] {
   if (Array.isArray(schema)) {
-    // ParameterSchema — array of ParameterDefinition
+    // ParameterSchema / ShaderUniformSchema — arrays of field definitions
     return schema.map((param) => {
       const capability = registry.resolve(param.type);
+      const type = param.type;
+      const isShader = (
+        type === 'float'
+        || type === 'int'
+        || type === 'bool'
+        || type === 'vec2'
+        || type === 'vec3'
+        || type === 'vec4'
+        || type === 'enum'
+        || type === 'textureRef'
+        || type === 'frame'
+        || type === 'time'
+        || (type === 'color' && Array.isArray(param.default))
+      );
       return {
         name: param.name,
         label: param.label,
-        description: param.description,
-        type: param.type,
+        description: param.description ?? '',
+        type,
         default: param.default,
         min: param.min,
         max: param.max,
         step: param.step,
-        options: param.options,
+        options: param.options ? Array.from(param.options) : undefined,
         isRequired: true,
-        _source: 'parameter' as const,
+        _source: isShader ? 'shader' as const : 'parameter' as const,
         _capability: capability,
       };
     });
@@ -458,6 +528,27 @@ export function SchemaForm({
               />
             )}
 
+            {/* Compact shader scalar widget */}
+            {field._capability.widgetType === 'shader-number' && (
+              <input
+                type="number"
+                inputMode={field.type === 'int' || field.type === 'frame' ? 'numeric' : 'decimal'}
+                value={typeof value === 'number' ? value : Number(value) || 0}
+                min={field.min}
+                max={field.max}
+                step={field.step ?? (field.type === 'int' || field.type === 'frame' ? 1 : 0.01)}
+                onChange={(event) => {
+                  const nextValue = Number(event.target.value);
+                  if (Number.isFinite(nextValue)) {
+                    onChange(field.name, field.type === 'int' ? Math.trunc(nextValue) : nextValue);
+                  }
+                }}
+                disabled={disabled}
+                data-testid={`schema-form-widget-${field.name}`}
+                className="flex h-9 w-full rounded-md border border-input bg-background px-2.5 py-1.5 text-sm tabular-nums ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+              />
+            )}
+
             {/* Number widget (fallback for number without slider — StandardSchema number with widgetType 'number') */}
             {field._capability.widgetType === 'number' && (
               <NumberInput
@@ -488,6 +579,48 @@ export function SchemaForm({
               </div>
             )}
 
+            {/* Compact shader vector widget */}
+            {(field._capability.widgetType === 'vector' || isShaderColorValue(field, value)) && (() => {
+              const vectorLength = getVectorLength(field.type) ?? 0;
+              const vectorValue = isNumberVector(value, vectorLength) ? value : getVectorFallback(field);
+              const labels = field.type === 'color'
+                ? ['r', 'g', 'b', 'a']
+                : ['x', 'y', 'z', 'w'].slice(0, vectorLength);
+
+              return (
+                <div
+                  className="grid gap-2"
+                  style={{ gridTemplateColumns: `repeat(${Math.max(vectorLength, 1)}, minmax(0, 1fr))` }}
+                >
+                  {labels.map((label, index) => (
+                    <label key={`${field.name}:${label}`} className="min-w-0 space-y-1">
+                      <span className="block text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+                        {label}
+                      </span>
+                      <input
+                        type="number"
+                        inputMode="decimal"
+                        value={vectorValue[index] ?? 0}
+                        step={field.step ?? 0.01}
+                        min={field.min}
+                        max={field.max}
+                        onChange={(event) => {
+                          const nextComponent = Number(event.target.value);
+                          if (!Number.isFinite(nextComponent)) return;
+                          const nextValue = [...vectorValue];
+                          nextValue[index] = nextComponent;
+                          onChange(field.name, nextValue);
+                        }}
+                        disabled={disabled}
+                        data-testid={`schema-form-widget-${field.name}-${label}`}
+                        className="h-9 w-full rounded-md border border-input bg-background px-2 py-1.5 text-sm tabular-nums ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+                      />
+                    </label>
+                  ))}
+                </div>
+              );
+            })()}
+
             {/* Select widget */}
             {field._capability.widgetType === 'select' && (
               <Select
@@ -509,7 +642,7 @@ export function SchemaForm({
             )}
 
             {/* Color widget */}
-            {field._capability.widgetType === 'color' && (
+            {field._capability.widgetType === 'color' && !isShaderColorValue(field, value) && (
               <div className="flex items-center gap-3">
                 <input
                   type="color"

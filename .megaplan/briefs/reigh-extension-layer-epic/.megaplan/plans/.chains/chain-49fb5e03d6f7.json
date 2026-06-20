@@ -1,9 +1,9 @@
 {
   "schema_version": 0,
-  "current_milestone_index": 12,
-  "current_plan_name": "m12-render-capability-20260620-0634",
+  "current_milestone_index": 13,
+  "current_plan_name": "m13-shader-and-webgl-bridge-20260620-0904",
   "last_state": "milestone_complete",
-  "pr_number": 39,
+  "pr_number": 40,
   "pr_state": "open",
   "completed": [
     {
@@ -167,11 +167,20 @@
       "pr_state": "merged",
       "plan_name": "m11-live-data-bridge-ring-20260620-0157",
       "merged_at": "2026-06-20T04:34:36.603595Z"
+    },
+    {
+      "label": "m12-render-capabilities-sidecars",
+      "index": 12,
+      "status": "done",
+      "pr_number": 39,
+      "pr_state": "merged",
+      "plan_name": "m12-render-capability-20260620-0634",
+      "merged_at": "2026-06-20T06:52:12Z"
     }
   ],
-  "branch_head": "9ba2e8b87951039f5474a90b342f4b23b1a4e514",
-  "pr_head": "9ba2e8b87951039f5474a90b342f4b23b1a4e514",
-  "last_pushed_commit": "9ba2e8b87951039f5474a90b342f4b23b1a4e514",
+  "branch_head": "e4523bc668b8fb32c2ea46ec036602c452bec48d",
+  "pr_head": "e4523bc668b8fb32c2ea46ec036602c452bec48d",
+  "last_pushed_commit": "e4523bc668b8fb32c2ea46ec036602c452bec48d",
   "dirty_flag": true,
   "sync_state": "dirty",
   "extra_repos": [],
@@ -195,7 +204,7 @@
       "target_root": "/Users/peteromalley/Documents/.megaplan-worktrees/reigh-extension-layer-epic",
       "work_dir": "/Users/peteromalley/Documents/.megaplan-worktrees/reigh-extension-layer-epic",
       "engine_root": "/Users/peteromalley/Documents/megaplan",
-      "target_head": "9ba2e8b87951039f5474a90b342f4b23b1a4e514",
+      "target_head": "8344b73c9a8cd01fd653be171da9852dd1a4e85f",
       "target_base": "2e77958f1e5dca8bf028aa4e902fae0382720e8c",
       "target_base_ref": "main",
       "target_fallback_reason": null

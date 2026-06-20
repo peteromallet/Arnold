@@ -3,10 +3,14 @@ import { useEffect } from 'react';
 import type { FC, ReactNode } from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import { defineExtension } from '@reigh/editor-sdk';
-import type { ExtensionContribution } from '@reigh/editor-sdk';
+import type { Diagnostic, ExtensionContribution } from '@reigh/editor-sdk';
 import type { DataProvider } from '@/tools/video-editor/data/DataProvider.ts';
 import type { EffectRegistryRecord } from '@/tools/video-editor/effects/registry/types.ts';
 import { useEffectRegistryContext } from '@/tools/video-editor/effects/registry/EffectRegistryContext.tsx';
+import { useTransitionRegistryContext } from '@/tools/video-editor/transitions/registry/index.ts';
+import type { TransitionRegistryRecord } from '@/tools/video-editor/transitions/registry/types.ts';
+import { useShaderEffectRegistryContext } from '@/tools/video-editor/shaders/registry/index.ts';
+import type { ShaderEffectRegistryRecord } from '@/tools/video-editor/shaders/registry/types.ts';
 import { useVideoEditorRuntime } from '@/tools/video-editor/contexts/DataProviderContext.tsx';
 import { EditorRuntimeProvider } from '@/tools/video-editor/contexts/EditorRuntimeProvider.tsx';
 import type { LiveDataRegistry } from '@/tools/video-editor/runtime/liveDataRegistry.ts';
@@ -89,6 +93,10 @@ vi.mock('@/tools/video-editor/hooks/useTimelineState.ts', () => ({
 
 const Component: FC<{ children: ReactNode }> = ({ children }) => children;
 const ReplacementComponent: FC<{ children: ReactNode }> = ({ children }) => children;
+const SHADER_SOURCE = Object.freeze({
+  kind: 'inline' as const,
+  fragment: 'void main() { gl_FragColor = vec4(1.0); }',
+});
 
 interface TrustedLocalEffectPack {
   readonly extensionId: string;
@@ -127,6 +135,37 @@ function effectRecord(
   };
 }
 
+function shaderRecord(
+  shaderId: string,
+  ownerExtensionId: string,
+  diagnostics: readonly Diagnostic[],
+  dispose: () => void,
+): ShaderEffectRegistryRecord {
+  return {
+    shaderId,
+    contributionId: `${ownerExtensionId}.shader`,
+    label: shaderId,
+    source: SHADER_SOURCE,
+    pass: 'postprocess',
+    provenance: 'trusted-loader',
+    ownerExtensionId,
+    status: 'error',
+    diagnostics,
+    renderability: {
+      defaultRoute: 'preview',
+      determinism: 'preview-only',
+      capabilities: [
+        {
+          route: 'preview',
+          status: 'supported',
+          determinism: 'preview-only',
+        },
+      ],
+    },
+    dispose,
+  };
+}
+
 function TrustedLocalEffectPackLoader({ packs }: { packs: readonly TrustedLocalEffectPack[] }) {
   const { registry } = useEffectRegistryContext();
 
@@ -152,6 +191,111 @@ function TrustedLocalEffectPackLoader({ packs }: { packs: readonly TrustedLocalE
 }
 
 describe('EditorRuntimeProvider effect registry lifecycle', () => {
+  it('activates and cleans up shader registrations without changing effect or transition registration', async () => {
+    const extensionId = 'com.example.shader-runtime';
+    const effectId = 'shader-runtime-effect';
+    const transitionId = 'shader-runtime-transition';
+    const shaderId = 'shader.runtime.grade';
+    let latestEffectRecords: readonly EffectRegistryRecord[] = [];
+    let latestTransitionRecords: readonly TransitionRegistryRecord[] = [];
+    let latestShaderRecords: readonly ShaderEffectRegistryRecord[] = [];
+
+    const extension = defineExtension({
+      manifest: {
+        id: extensionId as never,
+        version: '1.0.0',
+        label: 'Shader runtime extension',
+        contributions: [
+          {
+            id: 'shader-runtime.effect' as never,
+            kind: 'effect',
+            effectId,
+            label: 'Runtime Effect',
+          },
+          {
+            id: 'shader-runtime.transition' as never,
+            kind: 'transition',
+            transitionId,
+            label: 'Runtime Transition',
+          },
+          {
+            id: 'shader-runtime.shader' as never,
+            kind: 'shader',
+            shaderId,
+            label: 'Runtime Shader',
+            pass: 'postprocess',
+            source: SHADER_SOURCE,
+          },
+        ],
+      },
+      activate(ctx) {
+        const effectHandle = ctx.effects.registerComponent(effectId, Component);
+        const transitionHandle = ctx.transitions.registerRenderer(transitionId, () => null);
+        const shaderHandle = ctx.shaders.registerShader(shaderId, SHADER_SOURCE);
+
+        return {
+          dispose() {
+            shaderHandle.dispose();
+            transitionHandle.dispose();
+            effectHandle.dispose();
+          },
+        };
+      },
+    });
+
+    function CaptureRegistries() {
+      latestEffectRecords = useEffectRegistryContext().snapshot.records;
+      latestTransitionRecords = useTransitionRegistryContext().snapshot.records;
+      latestShaderRecords = useShaderEffectRegistryContext().snapshot.records;
+      return null;
+    }
+
+    function Host({ enabled }: { enabled: boolean }) {
+      return (
+        <EditorRuntimeProvider
+          dataProvider={{} as DataProvider}
+          timelineId="timeline-1"
+          userId="user-1"
+          extensions={enabled ? [extension] : []}
+        >
+          <CaptureRegistries />
+        </EditorRuntimeProvider>
+      );
+    }
+
+    const { rerender } = render(<Host enabled />);
+
+    await waitFor(() => {
+      expect(latestEffectRecords.map((record) => record.effectId)).toContain(effectId);
+      expect(latestTransitionRecords.map((record) => record.transitionId)).toContain(transitionId);
+      expect(latestShaderRecords.map((record) => record.shaderId)).toContain(shaderId);
+    });
+
+    expect(latestEffectRecords.map((record) => record.effectId)).not.toContain(shaderId);
+    expect(latestShaderRecords[0]).toMatchObject({
+      shaderId,
+      ownerExtensionId: extensionId,
+      contributionId: 'shader-runtime.shader',
+      provenance: 'bundled-extension',
+      status: 'active',
+    });
+    expect(latestShaderRecords[0].renderability.capabilities).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ route: 'preview', status: 'supported' }),
+        expect.objectContaining({ route: 'browser-export', status: 'blocked' }),
+        expect.objectContaining({ route: 'worker-export', status: 'blocked' }),
+      ]),
+    );
+
+    rerender(<Host enabled={false} />);
+
+    await waitFor(() => {
+      expect(latestEffectRecords.map((record) => record.effectId)).not.toContain(effectId);
+      expect(latestTransitionRecords.map((record) => record.transitionId)).not.toContain(transitionId);
+      expect(latestShaderRecords.map((record) => record.shaderId)).not.toContain(shaderId);
+    });
+  });
+
   it('cleans extension-owned effect records and command contributions on removal after HMR replacement', async () => {
     const extensionId = 'com.example.lifecycle';
     const commandId = `${extensionId}.run`;
@@ -320,6 +464,7 @@ describe('EditorRuntimeProvider effect registry lifecycle', () => {
 
   it('feeds provider diagnostic collection from lifecycle, command, and registry sources', async () => {
     const extensionId = 'com.example.diagnostics';
+    const shaderId = 'diagnostics.shader';
     let collection = null as ReturnType<typeof useVideoEditorRuntime>['diagnosticCollection'] | null;
 
     const extension = defineExtension({
@@ -350,6 +495,7 @@ describe('EditorRuntimeProvider effect registry lifecycle', () => {
     function CaptureDiagnostics({ enabled }: { enabled: boolean }) {
       const runtime = useVideoEditorRuntime();
       const { registry } = useEffectRegistryContext();
+      const { registry: shaderRegistry } = useShaderEffectRegistryContext();
       collection = runtime.diagnosticCollection ?? null;
 
       useEffect(() => {
@@ -374,11 +520,30 @@ describe('EditorRuntimeProvider effect registry lifecycle', () => {
         });
         const first = registry.register(effectRecord('diagnostics-duplicate', extensionId, vi.fn()));
         const second = registry.register(effectRecord('diagnostics-duplicate', extensionId, vi.fn()));
+        const shader = shaderRegistry.register(shaderRecord(
+          shaderId,
+          extensionId,
+          [{
+            id: 'diagnostics-shader-compile-error',
+            severity: 'error',
+            code: 'shader/compile-error',
+            message: 'Shader compile failed',
+            sourceRange: {
+              startLine: 4,
+              startCol: 9,
+              endLine: 4,
+              endCol: 17,
+            },
+            detail: { source: 'fragment', phase: 'fragment' },
+          }],
+          vi.fn(),
+        ));
         return () => {
+          shader.dispose();
           first.dispose();
           second.dispose();
         };
-      }, [enabled, registry, runtime.diagnosticCollection]);
+      }, [enabled, registry, runtime.diagnosticCollection, shaderRegistry]);
 
       return null;
     }
@@ -414,6 +579,17 @@ describe('EditorRuntimeProvider effect registry lifecycle', () => {
         (diagnostic) =>
           diagnostic.detail?.source === 'effect-registry'
           && diagnostic.code === 'effect-registry/duplicate-effect',
+      )).toBe(true);
+      expect(diagnostics.some(
+        (diagnostic) =>
+          diagnostic.detail?.source === 'shader-effect-registry'
+          && diagnostic.code === 'shader/compile-error'
+          && diagnostic.extensionId === extensionId
+          && diagnostic.contributionId === `${extensionId}.shader`
+          && diagnostic.detail?.shaderId === shaderId
+          && diagnostic.detail?.diagnosticSource === 'fragment'
+          && diagnostic.sourceRange?.startLine === 4
+          && diagnostic.sourceRange?.startCol === 9,
       )).toBe(true);
       expect(diagnostics.some(
         (diagnostic) =>

@@ -7,6 +7,8 @@
  *
  * - Supported types (string, number, boolean, select, color) map to
  *   native host widgets.
+ * - Shader uniform types map to compact shader controls where they do
+ *   not overlap legacy parameter widgets.
  * - Custom types (audio-binding) map to host-approved placeholder
  *   widgets during migration — they render real controls but are
  *   tracked as custom so future StandardSchema alignment is visible.
@@ -33,7 +35,9 @@ export type SchemaWidgetType =
   | 'slider'     // <Slider> — ranged number with min/max/step
   | 'boolean'    // <Switch> — toggle
   | 'select'     // <Select> — enumerated dropdown
-  | 'color';     // <input type="color"> — hex color picker
+  | 'color'      // <input type="color"> — hex color picker
+  | 'vector'     // Compact numeric vector inputs
+  | 'shader-number'; // Compact numeric shader uniform input
 
 // ---------------------------------------------------------------------------
 // Capability status
@@ -127,17 +131,54 @@ export interface SchemaCapabilityRegistry {
 /** Severity used for unsupported-type diagnostics. */
 const UNSUPPORTED_SEVERITY: DiagnosticSeverity = 'warning';
 
-function unsupportedDiagnostic(type: string): ExtensionDiagnostic {
+function unsupportedDiagnostic(type: string, message?: string, detail?: Record<string, unknown>): ExtensionDiagnostic {
   return Object.freeze({
     severity: UNSUPPORTED_SEVERITY,
     code: 'schema/unsupported-type',
-    message: `Schema type "${type}" is not supported by the host. `
-      + 'The parameter will render as a diagnostic placeholder.',
-    detail: { unsupportedType: type },
+    message: message ?? (`Schema type "${type}" is not supported by the host. `
+      + 'The parameter will render as a diagnostic placeholder.'),
+    detail: detail ?? { unsupportedType: type },
   });
 }
 
-const BUILTIN_CAPABILITIES: ReadonlyMap<ParameterType, SchemaCapabilityEntry> = new Map([
+function unsupportedTextureRefDiagnostic(): ExtensionDiagnostic {
+  return Object.freeze({
+    severity: UNSUPPORTED_SEVERITY,
+    code: 'schema/texture-ref-unsupported',
+    message: 'Shader textureRef uniforms are not editable in SchemaForm yet. '
+      + 'Bind textures through the host shader texture picker.',
+    detail: { unsupportedType: 'textureRef' },
+  });
+}
+
+function isFiniteNumber(value: unknown): value is number {
+  return typeof value === 'number' && Number.isFinite(value);
+}
+
+function isFiniteNumberVector(value: unknown, length: number): value is readonly number[] {
+  return Array.isArray(value) && value.length === length && value.every(isFiniteNumber);
+}
+
+const BUILTIN_TYPE_KEYS = new Set<string>([
+  'string',
+  'number',
+  'boolean',
+  'select',
+  'color',
+  'audio-binding',
+  'float',
+  'int',
+  'bool',
+  'vec2',
+  'vec3',
+  'vec4',
+  'enum',
+  'textureRef',
+  'frame',
+  'time',
+]);
+
+const BUILTIN_CAPABILITIES: ReadonlyMap<string, SchemaCapabilityEntry> = new Map([
   ['string' as ParameterType, Object.freeze<SchemaCapabilityEntry>({
     type: 'string',
     widgetType: 'text',
@@ -187,6 +228,86 @@ const BUILTIN_CAPABILITIES: ReadonlyMap<ParameterType, SchemaCapabilityEntry> = 
     diagnostic: null, // No diagnostic — it renders via its custom widget
     isCustomPlaceholder: true,
   })],
+  ['float', Object.freeze<SchemaCapabilityEntry>({
+    type: 'float',
+    widgetType: 'shader-number',
+    status: 'supported',
+    label: 'Float',
+    diagnostic: null,
+    isCustomPlaceholder: false,
+  })],
+  ['int', Object.freeze<SchemaCapabilityEntry>({
+    type: 'int',
+    widgetType: 'shader-number',
+    status: 'supported',
+    label: 'Integer',
+    diagnostic: null,
+    isCustomPlaceholder: false,
+  })],
+  ['bool', Object.freeze<SchemaCapabilityEntry>({
+    type: 'bool',
+    widgetType: 'boolean',
+    status: 'supported',
+    label: 'Boolean',
+    diagnostic: null,
+    isCustomPlaceholder: false,
+  })],
+  ['vec2', Object.freeze<SchemaCapabilityEntry>({
+    type: 'vec2',
+    widgetType: 'vector',
+    status: 'supported',
+    label: 'Vector 2',
+    diagnostic: null,
+    isCustomPlaceholder: false,
+  })],
+  ['vec3', Object.freeze<SchemaCapabilityEntry>({
+    type: 'vec3',
+    widgetType: 'vector',
+    status: 'supported',
+    label: 'Vector 3',
+    diagnostic: null,
+    isCustomPlaceholder: false,
+  })],
+  ['vec4', Object.freeze<SchemaCapabilityEntry>({
+    type: 'vec4',
+    widgetType: 'vector',
+    status: 'supported',
+    label: 'Vector 4',
+    diagnostic: null,
+    isCustomPlaceholder: false,
+  })],
+  ['enum', Object.freeze<SchemaCapabilityEntry>({
+    type: 'enum',
+    widgetType: 'select',
+    status: 'supported',
+    label: 'Enum',
+    diagnostic: null,
+    isCustomPlaceholder: false,
+  })],
+  ['textureRef', Object.freeze<SchemaCapabilityEntry>({
+    type: 'textureRef',
+    widgetType: undefined,
+    status: 'unsupported',
+    label: 'Texture Reference',
+    diagnostic: unsupportedTextureRefDiagnostic(),
+    isCustomPlaceholder: false,
+  })],
+  ['frame', Object.freeze<SchemaCapabilityEntry>({
+    type: 'frame',
+    widgetType: 'shader-number',
+    status: 'supported',
+    label: 'Frame',
+    diagnostic: null,
+    isCustomPlaceholder: false,
+  })],
+  ['time', Object.freeze<SchemaCapabilityEntry>({
+    type: 'time',
+    widgetType: 'shader-number',
+    status: 'supported',
+    label: 'Time',
+    diagnostic: null,
+    isCustomPlaceholder: false,
+  })],
 ]);
 
 // ---------------------------------------------------------------------------
@@ -214,11 +335,64 @@ function buildValidationPaths(): ReadonlyMap<string, ValidationPathEntry> {
         return null;
       },
     }],
+    // Shader scalar uniforms
+    ['shader-scalar-path', {
+      path: 'shader-scalar-path',
+      validate(value: unknown, def: ParameterDefinition): string | null {
+        const type = def.type as string;
+        if (type !== 'float' && type !== 'int' && type !== 'frame' && type !== 'time') {
+          return null;
+        }
+        if (value === undefined || value === null) return null;
+        if (!isFiniteNumber(value)) {
+          return `"${def.label}" must be a finite number.`;
+        }
+        if (type === 'int' && !Number.isInteger(value)) {
+          return `"${def.label}" must be an integer.`;
+        }
+        if (def.min !== undefined && value < def.min) {
+          return `"${def.label}" must be at least ${def.min}.`;
+        }
+        if (def.max !== undefined && value > def.max) {
+          return `"${def.label}" must be at most ${def.max}.`;
+        }
+        return null;
+      },
+    }],
+    // Shader vector uniforms
+    ['shader-vector-path', {
+      path: 'shader-vector-path',
+      validate(value: unknown, def: ParameterDefinition): string | null {
+        const vectorLengthByType: Record<string, number> = {
+          vec2: 2,
+          vec3: 3,
+          vec4: 4,
+        };
+        const length = vectorLengthByType[def.type as string];
+        if (!length) return null;
+        if (value === undefined || value === null) return null;
+        if (!isFiniteNumberVector(value, length)) {
+          return `"${def.label}" must be a ${length}-number vector.`;
+        }
+        return null;
+      },
+    }],
+    // Shader color uniforms use vec4 RGBA arrays; legacy parameter colors use hex strings.
+    ['shader-color-vector-path', {
+      path: 'shader-color-vector-path',
+      validate(value: unknown, def: ParameterDefinition): string | null {
+        if ((def.type as string) !== 'color' || !Array.isArray(value)) return null;
+        if (!isFiniteNumberVector(value, 4)) {
+          return `"${def.label}" must be a 4-number RGBA vector.`;
+        }
+        return null;
+      },
+    }],
     // Boolean: must be boolean-ish
     ['boolean-path', {
       path: 'boolean-path',
       validate(value: unknown, def: ParameterDefinition): string | null {
-        if (def.type !== 'boolean') return null;
+        if ((def.type as string) !== 'boolean' && (def.type as string) !== 'bool') return null;
         if (value === undefined || value === null) return null;
         if (typeof value !== 'boolean') {
           return `"${def.label}" must be true or false.`;
@@ -230,7 +404,7 @@ function buildValidationPaths(): ReadonlyMap<string, ValidationPathEntry> {
     ['select-path', {
       path: 'select-path',
       validate(value: unknown, def: ParameterDefinition): string | null {
-        if (def.type !== 'select') return null;
+        if ((def.type as string) !== 'select' && (def.type as string) !== 'enum') return null;
         if (value === undefined || value === null) return null;
         if (typeof value !== 'string') {
           return `"${def.label}" must be a string option value.`;
@@ -246,7 +420,7 @@ function buildValidationPaths(): ReadonlyMap<string, ValidationPathEntry> {
     ['color-path', {
       path: 'color-path',
       validate(value: unknown, def: ParameterDefinition): string | null {
-        if (def.type !== 'color') return null;
+        if ((def.type as string) !== 'color' || Array.isArray(value)) return null;
         if (value === undefined || value === null) return null;
         if (typeof value !== 'string') {
           return `"${def.label}" must be a hex color string.`;
@@ -314,7 +488,7 @@ export function createSchemaCapabilityRegistry(
   const validationPaths = new Map<string, ValidationPathEntry>(buildValidationPaths());
 
   function makeDiagnostic(type: string): ExtensionDiagnostic {
-    const d = unsupportedDiagnostic(type);
+    const d = type === 'textureRef' ? unsupportedTextureRefDiagnostic() : unsupportedDiagnostic(type);
     if (ownerExtensionId) {
       return Object.freeze({ ...d, extensionId: ownerExtensionId });
     }
@@ -333,7 +507,15 @@ export function createSchemaCapabilityRegistry(
   const registry: SchemaCapabilityRegistry = {
     resolve(type: string): SchemaCapabilityEntry {
       const entry = entries.get(type);
-      if (entry) return entry;
+      if (entry) {
+        if (entry.status === 'unsupported' && entry.diagnostic) {
+          return Object.freeze({
+            ...entry,
+            diagnostic: makeDiagnostic(type),
+          });
+        }
+        return entry;
+      }
 
       // Return an ephemeral unsupported entry with diagnostic
       return {
@@ -362,12 +544,17 @@ export function createSchemaCapabilityRegistry(
 
     getDiagnostic(type: string): ExtensionDiagnostic | null {
       const entry = entries.get(type);
-      if (entry) return entry.diagnostic;
+      if (entry) {
+        if (entry.status === 'unsupported' && entry.diagnostic) {
+          return makeDiagnostic(type);
+        }
+        return entry.diagnostic;
+      }
       return makeDiagnostic(type);
     },
 
     registerCustom(type: string, entry: SchemaCapabilityEntry): void {
-      if (BUILTIN_CAPABILITIES.has(type as ParameterType)) {
+      if (BUILTIN_TYPE_KEYS.has(type)) {
         throw new Error(
           `Cannot register custom type "${type}": it is a built-in type. `
           + 'Built-in types cannot be overridden.',

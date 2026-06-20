@@ -49,8 +49,16 @@ import { buildDataFromCurrentRegistry } from '@/tools/video-editor/lib/timeline-
 
 import type {
   TimelineClip,
+  TimelineClipShaderMetadata,
+  TimelinePostprocessShaderMetadata,
   TrackDefinition,
 } from '@/tools/video-editor/types/index';
+
+import {
+  TIMELINE_POSTPROCESS_SHADER_APP_KEY,
+  assignTimelineClipShader,
+  assignTimelinePostprocessShader,
+} from '@/tools/video-editor/lib/timeline-domain';
 
 
 
@@ -831,6 +839,29 @@ const CLIP_MUTABLE_FIELDS: ReadonlySet<string> = new Set([
   'generation', 'app',
 ]);
 
+const getIncomingClipShader = (payload: Record<string, unknown>): TimelineClipShaderMetadata | undefined => {
+  const app = payload.app;
+  if (!app || typeof app !== 'object' || Array.isArray(app)) {
+    return undefined;
+  }
+  const shader = (app as { shader?: unknown }).shader;
+  return shader && typeof shader === 'object' && !Array.isArray(shader)
+    ? shader as TimelineClipShaderMetadata
+    : undefined;
+};
+
+const getIncomingPostprocessShader = (
+  target: string,
+  payload: Record<string, unknown>,
+): TimelinePostprocessShaderMetadata | undefined => {
+  if (target !== TIMELINE_POSTPROCESS_SHADER_APP_KEY) {
+    return undefined;
+  }
+  return payload && typeof payload === 'object' && !Array.isArray(payload)
+    ? payload as TimelinePostprocessShaderMetadata
+    : undefined;
+};
+
 /** Mutable track fields (excludes structural id). */
 const TRACK_MUTABLE_FIELDS: ReadonlySet<string> = new Set([
   'kind', 'label', 'scale', 'fit', 'opacity', 'volume',
@@ -1084,6 +1115,25 @@ export function compileTimelinePatch(
 
         const payload = op.payload ?? {};
         const mode = (payload.mode as PatchMergeMode | undefined) ?? 'merge';
+        const incomingShader = getIncomingClipShader(payload);
+        if (incomingShader) {
+          const assignment = assignTimelineClipShader(existingClip, incomingShader);
+          if (!assignment.ok) {
+            compileDiags.push(
+              diag('error', 'timeline-patch/shader-scope-occupied', assignment.message, {
+                operationIndex: originalIndex,
+                op: family,
+                target: op.target,
+                detail: {
+                  scope: assignment.scope,
+                  existingShaderId: assignment.existing.shaderId,
+                  incomingShaderId: assignment.incoming.shaderId,
+                },
+              }),
+            );
+            break;
+          }
+        }
 
         if (mode === 'replace') {
           // Replace mode: preserve structural fields, clear mutable fields, then apply payload
@@ -1122,7 +1172,7 @@ export function compileTimelinePatch(
               || key === 'entrance' || key === 'exit' || key === 'continuous' || key === 'transition'
               || key === 'effects' || key === 'params' || key === 'pool_id' || key === 'clip_order'
               || key === 'source_uuid' || key === 'generation' || key === 'cropTop' || key === 'cropBottom'
-              || key === 'cropLeft' || key === 'cropRight' || key === 'asset'
+              || key === 'cropLeft' || key === 'cropRight' || key === 'asset' || key === 'app'
             ) {
               // eslint-disable-next-line @typescript-eslint/no-explicit-any
               (existingMeta as unknown as Record<string, unknown>)[key] = value;
@@ -1508,6 +1558,29 @@ export function compileTimelinePatch(
         const updateData: Record<string, unknown> = {};
         for (const [k, v] of Object.entries(payload)) {
           if (k !== 'mode') updateData[k] = v;
+        }
+
+        const incomingPostprocessShader = getIncomingPostprocessShader(extId, updateData);
+        if (incomingPostprocessShader) {
+          const assignment = assignTimelinePostprocessShader(
+            { ...data.config, app: configApp },
+            incomingPostprocessShader,
+          );
+          if (!assignment.ok) {
+            compileDiags.push(
+              diag('error', 'timeline-patch/shader-scope-occupied', assignment.message, {
+                operationIndex: originalIndex,
+                op: family,
+                target: op.target,
+                detail: {
+                  scope: assignment.scope,
+                  existingShaderId: assignment.existing.shaderId,
+                  incomingShaderId: assignment.incoming.shaderId,
+                },
+              }),
+            );
+            break;
+          }
         }
 
         if (mode === 'replace') {

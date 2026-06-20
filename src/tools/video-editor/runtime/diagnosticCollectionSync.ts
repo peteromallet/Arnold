@@ -13,14 +13,18 @@ export type DiagnosticCollectionSource =
   | 'effect-registry'
   | 'extension-lifecycle'
   | 'command-registry'
+  | 'transition-registry'
+  | 'shader-effect-registry'
   | 'clip-type-registry'
   | 'live-registry'
   | 'export-guard'
   | 'render-planner';
 
+type ExtensionDiagnosticWithRanges = ExtensionDiagnostic & Pick<Partial<Diagnostic>, 'sourceRange' | 'relatedRanges'>;
+
 function diagnosticId(
   source: DiagnosticCollectionSource,
-  diagnostic: ExtensionDiagnostic,
+  diagnostic: ExtensionDiagnosticWithRanges,
   index: number,
 ): string {
   const detail = diagnostic.detail ?? {};
@@ -29,15 +33,18 @@ function diagnosticId(
     diagnostic.code,
     diagnostic.extensionId ?? 'host',
     diagnostic.contributionId ?? 'runtime',
-    detail.clipId ?? detail.effectType ?? detail.clipType ?? detail.transitionType ?? index,
+    detail.clipId ?? detail.effectType ?? detail.shaderId ?? detail.clipType ?? detail.transitionType ?? index,
   ].join(':');
 }
 
 export function extensionDiagnosticToCollectionDiagnostic(
   source: DiagnosticCollectionSource,
-  diagnostic: ExtensionDiagnostic,
+  diagnostic: ExtensionDiagnosticWithRanges,
   index: number,
 ): Diagnostic {
+  const detail = diagnostic.detail ?? {};
+  const originalSource = detail.source;
+
   return {
     id: diagnosticId(source, diagnostic, index),
     severity: diagnostic.severity,
@@ -46,14 +53,20 @@ export function extensionDiagnosticToCollectionDiagnostic(
     ...(diagnostic.extensionId ? { extensionId: diagnostic.extensionId } : {}),
     ...(diagnostic.contributionId ? { contributionId: diagnostic.contributionId } : {}),
     ...(diagnostic.milestone ? { milestone: diagnostic.milestone } : {}),
-    detail: { ...(diagnostic.detail ?? {}), source },
+    ...(diagnostic.sourceRange ? { sourceRange: diagnostic.sourceRange } : {}),
+    ...(diagnostic.relatedRanges ? { relatedRanges: diagnostic.relatedRanges } : {}),
+    detail: {
+      ...detail,
+      ...(originalSource !== undefined ? { diagnosticSource: originalSource } : {}),
+      source,
+    },
   };
 }
 
 export function syncExtensionDiagnosticsToCollection(
   collection: DiagnosticCollection | undefined,
   source: DiagnosticCollectionSource,
-  diagnostics: readonly ExtensionDiagnostic[],
+  diagnostics: readonly ExtensionDiagnosticWithRanges[],
   options: { activeExtensionIds?: ReadonlySet<string> } = {},
 ): void {
   if (!collection) return;

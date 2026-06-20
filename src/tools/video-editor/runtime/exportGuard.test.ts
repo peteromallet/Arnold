@@ -1378,6 +1378,75 @@ describe('scanExportConfig — clip-type registry snapshot', () => {
     expect(result.hasBlockingErrors).toBe(false);
   });
 
+  it('emits exact missing materializer blockers for clip and postprocess shader metadata', () => {
+    const clipShaderMessage = 'Shader "shader.preview.clip" cannot export because no shader materializer produced RenderMaterial for clip "c1".';
+    const postprocessShaderMessage = 'Shader "shader.preview.post" cannot export because no shader materializer produced RenderMaterial for timeline postprocess.';
+    const clip = makeClip('c1', {
+      app: {
+        shader: {
+          scope: 'clip',
+          extensionId: 'ext.shader',
+          contributionId: 'ext.shader.clip',
+          shaderId: 'shader.preview.clip',
+        },
+      },
+    });
+    const config = {
+      ...makeConfig([clip]),
+      app: {
+        shaderPostprocess: {
+          scope: 'postprocess',
+          extensionId: 'ext.shader',
+          contributionId: 'ext.shader.post',
+          shaderId: 'shader.preview.post',
+        },
+      },
+    };
+
+    const result = scanExportConfig(config, builtIn, extIds);
+
+    expect(result.diagnostics).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        severity: 'error',
+        code: 'export/unrenderable-shader',
+        message: clipShaderMessage,
+        extensionId: 'ext.shader',
+        contributionId: 'ext.shader.clip',
+        detail: expect.objectContaining({
+          clipId: 'c1',
+          shaderId: 'shader.preview.clip',
+          shaderScope: 'clip',
+          renderRoute: 'browser-export',
+        }),
+      }),
+      expect.objectContaining({
+        severity: 'error',
+        code: 'export/unrenderable-shader',
+        message: postprocessShaderMessage,
+        extensionId: 'ext.shader',
+        contributionId: 'ext.shader.post',
+        detail: expect.objectContaining({
+          shaderId: 'shader.preview.post',
+          shaderScope: 'postprocess',
+          renderRoute: 'browser-export',
+        }),
+      }),
+    ]));
+    expect(result.blockers).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        route: 'browser-export',
+        reason: 'missing-material',
+        message: clipShaderMessage,
+      }),
+      expect.objectContaining({
+        route: 'browser-export',
+        reason: 'missing-material',
+        message: postprocessShaderMessage,
+      }),
+    ]));
+    expect(planRender({ diagnostics: result.findings }).canBrowserExport).toBe(false);
+  });
+
   it('registry snapshot clip type with missing browser-export capability emits blocker', () => {
     const clip = makeClip('c1', { clipType: 'worker-only-clip' });
     const snapshot = clipTypeSnapshotWith([

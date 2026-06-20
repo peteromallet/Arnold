@@ -1,4 +1,4 @@
-import { AbsoluteFill, Sequence } from 'remotion';
+import { AbsoluteFill, Sequence, useCurrentFrame, useRemotionEnvironment } from 'remotion';
 import { Component, memo, useContext, useMemo, useSyncExternalStore, type FC, type ReactNode } from 'react';
 import { getAudioTracks, getVisualTracks } from '@/tools/video-editor/lib/editor-utils.ts';
 import { getClipDurationInFrames, getTimelineDurationInFrames, secondsToFrames } from '@/tools/video-editor/lib/config-utils.ts';
@@ -45,12 +45,15 @@ import type {
 import { applyAutomationOverrides, resolveAnimatedParams } from '@/tools/video-editor/keyframes/index.ts';
 import { DataProviderContext } from '@/tools/video-editor/contexts/DataProviderContext.tsx';
 import {
+  getTimelinePostprocessShader,
   scanTimelineLiveBindings,
   type TimelineLiveBindingRecord,
   type TimelineLiveSourceSnapshot,
 } from '@/tools/video-editor/lib/timeline-domain.ts';
 import type { LiveDataRegistry, LiveDataRegistrySnapshot } from '@/tools/video-editor/runtime/liveDataRegistry.ts';
 import type { LiveChannelDescriptor, LiveChannelMetadata, LiveSample, LiveSource } from '@reigh/editor-sdk';
+import { PostprocessShaderPreviewCanvas } from '@/tools/video-editor/shaders/preview/PostprocessShaderPreviewCanvas.tsx';
+import { useShaderEffectRegistrySnapshot } from '@/tools/video-editor/shaders/registry/index.ts';
 
 // Phase 4d (Sprint 5): EFFECT_REGISTRY dispatch.
 //
@@ -777,6 +780,41 @@ const LiveFramePreviewSequence: FC<{
   );
 };
 
+const UnsupportedPostprocessShaderExportBody: FC<{ shaderId: string }> = ({ shaderId }) => (
+  <AbsoluteFill
+    data-testid="unsupported-postprocess-shader-export"
+    data-shader-id={shaderId}
+    style={{
+      pointerEvents: 'none',
+      backgroundColor: 'rgba(17, 24, 39, 0.72)',
+      borderTop: '2px solid #f97316',
+      borderBottom: '2px solid #f97316',
+      color: '#ffedd5',
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'center',
+      padding: '12px 24px',
+      textAlign: 'center',
+      fontFamily: 'ui-monospace, SFMono-Regular, "Roboto Mono", Menlo, Consolas, monospace',
+      fontSize: 14,
+      lineHeight: 1.4,
+      letterSpacing: '0.04em',
+      zIndex: 30,
+    }}
+  >
+    <div
+      style={{
+        maxWidth: '80%',
+        padding: '8px 16px',
+        borderRadius: 4,
+        background: 'rgba(0, 0, 0, 0.45)',
+      }}
+    >
+      {`postprocess shader '${shaderId}' is browser-preview only; export requires a shader materializer that produces RenderMaterial`}
+    </div>
+  </AbsoluteFill>
+);
+
 /**
  * Error boundary that catches renderer crashes and shows a loud placeholder.
  * Extension renderers are trusted local code but may throw at runtime
@@ -1146,6 +1184,8 @@ const VisualTrack: FC<VisualTrackProps> = ({
 
 export const TimelineRenderer: FC<{ config: ResolvedTimelineConfig }> = memo(({ config }) => {
   const runtime = useContext(DataProviderContext);
+  const environment = useRemotionEnvironment();
+  const frame = useCurrentFrame();
   const liveDataRegistry = runtime?.liveDataRegistry;
   const liveRegistrySnapshot = useSyncExternalStore(
     (listener) => liveDataRegistry?.subscribe(listener).dispose ?? (() => {}),
@@ -1153,6 +1193,7 @@ export const TimelineRenderer: FC<{ config: ResolvedTimelineConfig }> = memo(({ 
     () => liveDataRegistry?.getSnapshot(),
   );
   const renderConfig = useMemo(() => materializeResolvedSequenceConfig(config), [config]);
+  const shaderSnapshot = useShaderEffectRegistrySnapshot();
   const fps = renderConfig.output.fps;
   const theme = useMemo(() => resolveTimelineRenderTheme(renderConfig), [renderConfig]);
   const visualTracks = useMemo(() => [...getVisualTracks(renderConfig)].reverse(), [renderConfig]);
@@ -1187,6 +1228,23 @@ export const TimelineRenderer: FC<{ config: ResolvedTimelineConfig }> = memo(({ 
     sources: liveSourceSnapshotsFromRegistry(liveRegistrySnapshot),
   });
   const liveBindingRecordsByClip = groupLiveBindingRecordsByClip(liveBindingScan.bindings);
+  const postprocessShader = getTimelinePostprocessShader(renderConfig as TimelineConfig);
+  const postprocessRecord = postprocessShader
+    ? shaderSnapshot.get(postprocessShader.shaderId, postprocessShader.extensionId)
+    : undefined;
+  const { width: compositionWidth, height: compositionHeight } = parseResolution(renderConfig.output.resolution);
+  const renderBrowserPostprocessPreview = Boolean(
+    postprocessShader
+    && postprocessShader.enabled !== false
+    && postprocessRecord
+    && !environment.isRendering
+    && !environment.isClientSideRendering,
+  );
+  const renderUnsupportedPostprocessExport = Boolean(
+    postprocessShader
+    && postprocessShader.enabled !== false
+    && (environment.isRendering || environment.isClientSideRendering),
+  );
 
   const visualContent = useMemo(() => {
     const resolution = renderConfig.output.resolution;
@@ -1244,7 +1302,29 @@ export const TimelineRenderer: FC<{ config: ResolvedTimelineConfig }> = memo(({ 
     <AudioAnalysisProvider clips={audioClips} fps={fps} totalDurationInFrames={totalDurationInFrames}>
       <AbsoluteFill style={{ backgroundColor: 'black', overflow: 'hidden' }}>
         <AbsoluteFill style={{ justifyContent: 'center', alignItems: 'center' }}>
-          <AbsoluteFill style={{ position: 'relative', overflow: 'hidden' }}>{visualContent}</AbsoluteFill>
+          <AbsoluteFill style={{ position: 'relative', overflow: 'hidden' }}>
+            {visualContent}
+            {renderUnsupportedPostprocessExport && postprocessShader ? (
+              <UnsupportedPostprocessShaderExportBody shaderId={postprocessShader.shaderId} />
+            ) : null}
+            {renderBrowserPostprocessPreview && postprocessShader && postprocessRecord ? (
+              <PostprocessShaderPreviewCanvas
+                shader={postprocessShader}
+                record={postprocessRecord}
+                timeSeconds={frame / fps}
+                frame={frame}
+                width={compositionWidth}
+                height={compositionHeight}
+                testId="timeline-postprocess-shader-preview"
+                style={{
+                  position: 'absolute',
+                  inset: 0,
+                  pointerEvents: 'none',
+                  zIndex: 20,
+                }}
+              />
+            ) : null}
+          </AbsoluteFill>
         </AbsoluteFill>
         {audioTracks.map((track) => (
           <AudioTrack

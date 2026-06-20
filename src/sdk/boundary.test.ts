@@ -112,6 +112,9 @@ import type {
   ProcessStatus,
   ProcessRoundtripRequest,
   ProcessRoundtripResult,
+  ShaderContribution,
+  ShaderInlineSource,
+  ShaderRegistrationService,
 } from '@/sdk/index';
 
 // ---------------------------------------------------------------------------
@@ -394,6 +397,7 @@ describe('ExtensionContext — no internal members exposed', () => {
       'effects',
       'extension',
       'services',
+      'shaders',
       'transitions',
     ]);
   });
@@ -410,6 +414,7 @@ describe('ExtensionContext — no internal members exposed', () => {
       'effects',
       'transitions',
       'clipTypes',
+      'shaders',
     ]);
     for (const key of Object.keys(ctx)) {
       expect(allowed.has(key)).toBe(true);
@@ -609,6 +614,7 @@ describe('ExtensionContext — type safety guard', () => {
       'effects',
       'transitions',
       'clipTypes',
+      'shaders',
     ];
 
     const actualKeys = Object.keys(ctx).sort();
@@ -1376,6 +1382,125 @@ describe('M10: Contribution kind bridging — agentTool and agent active', () =>
     expect(contributionKindNotYetBridged('transition')).toBeNull();
     expect(contributionKindNotYetBridged('clipType')).toBeNull();
     expect(contributionKindNotYetBridged('parser')).toBeNull();
+    expect(contributionKindNotYetBridged('shader')).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// M13: Dedicated shader contribution and registration boundary
+// ---------------------------------------------------------------------------
+
+describe('M13: shader contributions stay separate from component effects', () => {
+  const shaderSource: ShaderInlineSource = {
+    kind: 'inline',
+    fragment: 'void main() { gl_FragColor = vec4(1.0); }',
+  };
+
+  const shaderContribution: ShaderContribution = {
+    id: 'postprocess-grade' as any,
+    kind: 'shader',
+    shaderId: 'shader.postprocessGrade',
+    label: 'Postprocess Grade',
+    pass: 'postprocess',
+    source: shaderSource,
+    uniforms: [
+      { name: 'u_time', label: 'Time', type: 'time', default: 0 },
+      {
+        name: 'u_mode',
+        label: 'Mode',
+        type: 'enum',
+        default: 'warm',
+        options: [
+          { label: 'Warm', value: 'warm' },
+          { label: 'Cool', value: 'cool' },
+        ],
+      },
+    ],
+    textures: [
+      {
+        name: 'compositedFrame',
+        uniform: 'u_frame',
+        sourceKind: 'clip-frame',
+      },
+    ],
+    fallback: 'bypass',
+  };
+
+  it('normalizes kind: shader as bridged M13 metadata', () => {
+    expect(CONTRIBUTION_KIND_MILESTONE.shader).toBe('M13');
+    expect(contributionKindNotYetBridged('shader')).toBeNull();
+  });
+
+  it('defineExtension preserves shader shape and does not create effect metadata', () => {
+    const ext = defineExtension({
+      manifest: {
+        id: 'com.m13.shader' as any,
+        version: '1.0.0',
+        label: 'M13 Shader Boundary',
+        contributions: [shaderContribution],
+      },
+    });
+    const contribution = ext.manifest.contributions![0] as ShaderContribution;
+    expect(contribution.kind).toBe('shader');
+    expect(contribution.shaderId).toBe('shader.postprocessGrade');
+    expect((contribution as unknown as { effectId?: string }).effectId).toBeUndefined();
+  });
+
+  it('ctx.shaders registration does not call ctx.effects.registerComponent', () => {
+    const ext = defineExtension({
+      manifest: {
+        id: 'com.m13.shader-service' as any,
+        version: '1.0.0',
+        label: 'M13 Shader Service',
+        contributions: [shaderContribution],
+      },
+    });
+    const effectCalls: string[] = [];
+    const shaderCalls: string[] = [];
+    const shaderService: ShaderRegistrationService = {
+      registerShader(shaderId, source) {
+        shaderCalls.push(`${shaderId}:${source.kind}`);
+        return { dispose() {} };
+      },
+    };
+
+    const ctx = createExtensionContext(
+      ext,
+      undefined,
+      undefined,
+      {
+        registerComponent(effectId) {
+          effectCalls.push(effectId);
+          return { dispose() {} };
+        },
+      },
+      undefined,
+      undefined,
+      undefined,
+      shaderService,
+    );
+
+    ctx.shaders.registerShader('shader.postprocessGrade', shaderSource);
+    expect(shaderCalls).toEqual(['shader.postprocessGrade:inline']);
+    expect(effectCalls).toEqual([]);
+  });
+
+  it('unwired shader registration emits only shader not-wired diagnostics', () => {
+    const ext = defineExtension({
+      manifest: {
+        id: 'com.m13.shader-unwired' as any,
+        version: '1.0.0',
+        label: 'M13 Shader Unwired',
+        contributions: [shaderContribution],
+      },
+    });
+    const ctx = createExtensionContext(ext);
+
+    ctx.shaders.registerShader('shader.postprocessGrade', shaderSource);
+
+    const codes = ctx.services.diagnostics.diagnostics.map((diagnostic) => diagnostic.code);
+    expect(codes).toContain('shaders/not-wired');
+    expect(codes).not.toContain('effects/not-wired');
   });
 });
 

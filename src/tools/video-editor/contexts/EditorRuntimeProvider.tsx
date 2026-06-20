@@ -62,11 +62,13 @@ import { createEffectRegistrationService } from '@/tools/video-editor/runtime/ef
 import type { EffectRegistry } from '@/tools/video-editor/effects/registry/types.ts';
 import { createTransitionRegistrationService } from '@/tools/video-editor/runtime/transitionRegistrationService.ts';
 import type { TransitionRegistry } from '@/tools/video-editor/transitions/registry/types.ts';
+import { createShaderRegistrationService } from '@/tools/video-editor/runtime/shaderRegistrationService.ts';
+import type { ShaderEffectRegistry } from '@/tools/video-editor/shaders/registry/types.ts';
 import { createClipTypeRegistrationService } from '@/tools/video-editor/runtime/clipTypeRegistrationService.ts';
 import type { ClipTypeRegistry } from '@/tools/video-editor/clip-types/ClipTypeRegistry.ts';
 import { createAgentToolRegistry, type AgentToolRegistry } from '@/tools/video-editor/runtime/agentToolRegistry.ts';
 import { createAgentToolInvocationService, type AgentToolInvocationService } from '@/tools/video-editor/runtime/agentToolInvocationService.ts';
-import type { AgentToolContribution, AgentToolRegistrationService, AgentToolHandler } from '@reigh/editor-sdk';
+import type { AgentToolContribution, AgentToolRegistrationService, AgentToolHandler, ShaderRegistrationService } from '@reigh/editor-sdk';
 import {
   removeExtensionDiagnosticsFromCollection,
   syncExtensionDiagnosticsToCollection,
@@ -84,6 +86,10 @@ import {
   ClipTypeRegistryProvider,
   useClipTypeRegistryContext,
 } from '@/tools/video-editor/clip-types/index.ts';
+import {
+  ShaderEffectRegistryProvider,
+  useShaderEffectRegistryContext,
+} from '@/tools/video-editor/shaders/registry/index.ts';
 
 export interface EditorRuntimeProviderProps {
   dataProvider: DataProvider;
@@ -157,6 +163,7 @@ function EditorRuntimeProviderInner({
   commandRegistryRef,
   effectRegistryRef,
   transitionRegistryRef,
+  shaderRegistryRef,
   clipTypeRegistryRef,
   agentToolRegistryRef,
   liveDataRegistryRef,
@@ -170,6 +177,7 @@ function EditorRuntimeProviderInner({
   commandRegistryRef: React.MutableRefObject<CommandRegistry | null>;
   effectRegistryRef: React.MutableRefObject<EffectRegistry | null>;
   transitionRegistryRef: React.MutableRefObject<TransitionRegistry | null>;
+  shaderRegistryRef: React.MutableRefObject<ShaderEffectRegistry | null>;
   clipTypeRegistryRef: React.MutableRefObject<ClipTypeRegistry | null>;
   agentToolRegistryRef: React.MutableRefObject<AgentToolRegistry | null>;
   liveDataRegistryRef: React.MutableRefObject<LiveDataRegistry | null>;
@@ -282,6 +290,7 @@ function EditorRuntimeProviderInner({
         const extId = ext.manifest.id as string;
         const effectRegistry = effectRegistryRef.current;
         const transitionRegistry = transitionRegistryRef.current;
+        const shaderRegistry = shaderRegistryRef.current;
         const clipTypeRegistry = clipTypeRegistryRef.current;
         const agentToolRegistry = agentToolRegistryRef.current;
         // Create per-extension commands service backed by the shared registry
@@ -310,6 +319,15 @@ function EditorRuntimeProviderInner({
           ? createTransitionRegistrationService({
               extension: ext,
               transitionRegistry,
+              diagnosticsService:
+                host.lifecycles.get(extId)?.diagnosticsService ??
+                createExtensionDiagnosticsService(extId),
+            })
+          : undefined;
+        const shadersService: ShaderRegistrationService | undefined = shaderRegistry
+          ? createShaderRegistrationService({
+              extension: ext,
+              shaderRegistry,
               diagnosticsService:
                 host.lifecycles.get(extId)?.diagnosticsService ??
                 createExtensionDiagnosticsService(extId),
@@ -350,14 +368,23 @@ function EditorRuntimeProviderInner({
               sessions: createExtensionLiveSessions(liveRegistry, extId),
             }
           : liveCreativeOverrides;
-        return createExtensionContext(ext, creativeOverrides, commandsService, effectsService, transitionsService, clipTypesService, agentToolsService);
+        return createExtensionContext(
+          ext,
+          creativeOverrides,
+          commandsService,
+          effectsService,
+          transitionsService,
+          clipTypesService,
+          agentToolsService,
+          shadersService,
+        );
       },
     );
     syncExtensionDiagnosticsToCollection(diagnosticCollection, 'extension-lifecycle', [
       ...extensionRuntime.diagnostics,
       ...host.diagnostics,
     ], { activeExtensionIds });
-  }, [activeExtensionIds, diagnosticCollection, lifecycleHostRef, extensionRuntime, liveCreativeOverrides, commandRegistryRef]);
+  }, [activeExtensionIds, diagnosticCollection, lifecycleHostRef, extensionRuntime, liveCreativeOverrides, commandRegistryRef, shaderRegistryRef]);
 
   // Sync live registry diagnostics into the provider diagnostic collection
   useEffect(() => {
@@ -388,38 +415,45 @@ function EditorRuntimeProviderInner({
   return (
     <EffectRegistryProvider>
       <TransitionRegistryProvider>
-        <ClipTypeRegistryProvider>
-        <EffectCatalogProvider value={effectResources}>
-          <EditorRuntimeEffectRegistryLifecycle
-            effectsQueryData={effectsQuery.data}
-            effectResources={effectResources.effects}
-            lifecycleHostRef={lifecycleHostRef}
-            commandRegistryRef={commandRegistryRef}
-            effectRegistryRef={effectRegistryRef}
-            agentToolRegistryRef={agentToolRegistryRef}
-            activeExtensionIds={activeExtensionIds}
-          />
-          <EditorRuntimeTransitionRegistryLifecycle
-            lifecycleHostRef={lifecycleHostRef}
-            commandRegistryRef={commandRegistryRef}
-            transitionRegistryRef={transitionRegistryRef}
-            activeExtensionIds={activeExtensionIds}
-          />
-          <EditorRuntimeClipTypeRegistryLifecycle
-            lifecycleHostRef={lifecycleHostRef}
-            commandRegistryRef={commandRegistryRef}
-            clipTypeRegistryRef={clipTypeRegistryRef}
-            activeExtensionIds={activeExtensionIds}
-          />
-          <SequenceComponentCatalogProvider value={sequenceComponentResources}>
-            <SequenceComponentRegistryProvider components={sequenceComponentResources.components}>
-              <TimelineStoreProvider store={store}>
-                {children}
-              </TimelineStoreProvider>
-            </SequenceComponentRegistryProvider>
-          </SequenceComponentCatalogProvider>
-        </EffectCatalogProvider>
-        </ClipTypeRegistryProvider>
+        <ShaderEffectRegistryProvider>
+          <ClipTypeRegistryProvider>
+            <EffectCatalogProvider value={effectResources}>
+              <EditorRuntimeEffectRegistryLifecycle
+                effectsQueryData={effectsQuery.data}
+                effectResources={effectResources.effects}
+                lifecycleHostRef={lifecycleHostRef}
+                commandRegistryRef={commandRegistryRef}
+                effectRegistryRef={effectRegistryRef}
+                agentToolRegistryRef={agentToolRegistryRef}
+                activeExtensionIds={activeExtensionIds}
+              />
+              <EditorRuntimeTransitionRegistryLifecycle
+                lifecycleHostRef={lifecycleHostRef}
+                commandRegistryRef={commandRegistryRef}
+                transitionRegistryRef={transitionRegistryRef}
+                activeExtensionIds={activeExtensionIds}
+              />
+              <EditorRuntimeShaderRegistryLifecycle
+                lifecycleHostRef={lifecycleHostRef}
+                shaderRegistryRef={shaderRegistryRef}
+                activeExtensionIds={activeExtensionIds}
+              />
+              <EditorRuntimeClipTypeRegistryLifecycle
+                lifecycleHostRef={lifecycleHostRef}
+                commandRegistryRef={commandRegistryRef}
+                clipTypeRegistryRef={clipTypeRegistryRef}
+                activeExtensionIds={activeExtensionIds}
+              />
+              <SequenceComponentCatalogProvider value={sequenceComponentResources}>
+                <SequenceComponentRegistryProvider components={sequenceComponentResources.components}>
+                  <TimelineStoreProvider store={store}>
+                    {children}
+                  </TimelineStoreProvider>
+                </SequenceComponentRegistryProvider>
+              </SequenceComponentCatalogProvider>
+            </EffectCatalogProvider>
+          </ClipTypeRegistryProvider>
+        </ShaderEffectRegistryProvider>
       </TransitionRegistryProvider>
     </EffectRegistryProvider>
   );
@@ -538,6 +572,56 @@ function EditorRuntimeTransitionRegistryLifecycle({
   return null;
 }
 
+function EditorRuntimeShaderRegistryLifecycle({
+  lifecycleHostRef,
+  shaderRegistryRef,
+  activeExtensionIds,
+}: {
+  lifecycleHostRef: React.MutableRefObject<ExtensionLifecycleHost | null>;
+  shaderRegistryRef: React.MutableRefObject<ShaderEffectRegistry | null>;
+  activeExtensionIds: ReadonlySet<string>;
+}) {
+  const { registry: shaderRegistry, snapshot: shaderRegistrySnapshot } = useShaderEffectRegistryContext();
+  shaderRegistryRef.current = shaderRegistry;
+  const diagnosticCollection = useVideoEditorRuntime().diagnosticCollection;
+
+  useEffect(() => {
+    const host = lifecycleHostRef.current;
+    if (!host) return;
+    const handle = host.onLifecycleDisposed((extensionId: string) => {
+      shaderRegistry.unregisterOwner(extensionId);
+      removeExtensionDiagnosticsFromCollection(diagnosticCollection, extensionId);
+    });
+    return () => handle.dispose();
+  }, [diagnosticCollection, shaderRegistry, lifecycleHostRef]);
+
+  useEffect(() => {
+    const shaderDiagnostics = [
+      ...shaderRegistrySnapshot.diagnostics,
+      ...shaderRegistrySnapshot.records.flatMap((record) =>
+        (record.diagnostics ?? []).map((diagnostic) => ({
+          ...diagnostic,
+          extensionId: diagnostic.extensionId ?? record.ownerExtensionId,
+          contributionId: diagnostic.contributionId ?? record.contributionId,
+          detail: {
+            shaderId: record.shaderId,
+            ...(diagnostic.detail ?? {}),
+          },
+        })),
+      ),
+    ];
+
+    syncExtensionDiagnosticsToCollection(
+      diagnosticCollection,
+      'shader-effect-registry',
+      shaderDiagnostics,
+      { activeExtensionIds },
+    );
+  }, [activeExtensionIds, diagnosticCollection, shaderRegistrySnapshot]);
+
+  return null;
+}
+
 function EditorRuntimeClipTypeRegistryLifecycle({
   lifecycleHostRef,
   commandRegistryRef,
@@ -619,6 +703,10 @@ export function EditorRuntimeProvider({
   // ---- M8: transition registry ref (registry is created by TransitionRegistryProvider,
   //        exposed via context and stored here for the synchronize effect) ----
   const transitionRegistryRef = useRef<TransitionRegistry | null>(null);
+
+  // ---- M13: shader registry ref (registry is created by ShaderEffectRegistryProvider,
+  //        exposed via context and stored here for the synchronize effect) ----
+  const shaderRegistryRef = useRef<ShaderEffectRegistry | null>(null);
 
   // ---- M9: clip-type registry ref (registry is created by ClipTypeRegistryProvider,
   //        exposed via context and stored here for the synchronize effect) ----
@@ -767,6 +855,7 @@ export function EditorRuntimeProvider({
         commandRegistryRef={commandRegistryRef}
         effectRegistryRef={effectRegistryRef}
         transitionRegistryRef={transitionRegistryRef}
+        shaderRegistryRef={shaderRegistryRef}
         clipTypeRegistryRef={clipTypeRegistryRef}
         agentToolRegistryRef={agentToolRegistryRef}
         liveDataRegistryRef={liveDataRegistryRef}

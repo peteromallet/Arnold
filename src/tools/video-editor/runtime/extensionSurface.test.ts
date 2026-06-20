@@ -1456,6 +1456,8 @@ describe('normalizeExtensionRuntime — M6 DEFAULT config fields', () => {
     expect(Object.isFrozen(DEFAULT_VIDEO_EDITOR_EXTENSION_RUNTIME.metadataFacets)).toBe(true);
     expect(DEFAULT_VIDEO_EDITOR_EXTENSION_RUNTIME.assetDetailSections).toEqual([]);
     expect(Object.isFrozen(DEFAULT_VIDEO_EDITOR_EXTENSION_RUNTIME.assetDetailSections)).toBe(true);
+    expect(DEFAULT_VIDEO_EDITOR_EXTENSION_RUNTIME.shaders).toEqual([]);
+    expect(Object.isFrozen(DEFAULT_VIDEO_EDITOR_EXTENSION_RUNTIME.shaders)).toBe(true);
   });
 
   it('has all M6 fields in EMPTY_EXTENSION_RUNTIME matching DEFAULT', () => {
@@ -1466,12 +1468,128 @@ describe('normalizeExtensionRuntime — M6 DEFAULT config fields', () => {
     expect(rt.searchProviders).toEqual([]);
     expect(rt.metadataFacets).toEqual([]);
     expect(rt.assetDetailSections).toEqual([]);
+    expect(rt.shaders).toEqual([]);
     expect(Object.isFrozen(rt.assetParsers)).toBe(true);
     expect(Object.isFrozen(rt.outputFormats)).toBe(true);
     expect(Object.isFrozen(rt.processes)).toBe(true);
     expect(Object.isFrozen(rt.searchProviders)).toBe(true);
     expect(Object.isFrozen(rt.metadataFacets)).toBe(true);
     expect(Object.isFrozen(rt.assetDetailSections)).toBe(true);
+    expect(Object.isFrozen(rt.shaders)).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// M13: Shader contributions
+// ---------------------------------------------------------------------------
+
+describe('normalizeExtensionRuntime — M13 shader contributions', () => {
+  it('projects shader contributions into config.shaders without routing through effects', () => {
+    const shaderSource = {
+      kind: 'inline' as const,
+      fragment: 'void main() { gl_FragColor = vec4(1.0); }',
+    };
+    const ex = ext('com.example.shader-runtime', {
+      manifest: {
+        contributions: [
+          {
+            id: 'grade-shader' as any,
+            kind: 'shader',
+            shaderId: 'shader.grade',
+            label: 'Grade Shader',
+            description: 'Preview grade pass',
+            pass: 'postprocess' as const,
+            source: shaderSource,
+            uniforms: [
+              {
+                name: 'mix',
+                label: 'Mix',
+                type: 'float' as const,
+                default: 0.5,
+              },
+            ],
+            order: 2,
+          },
+          {
+            id: 'legacy-effect' as any,
+            kind: 'effect',
+            effectId: 'legacy.effect',
+            label: 'Legacy Effect',
+          },
+          {
+            id: 'legacy-transition' as any,
+            kind: 'transition',
+            transitionId: 'legacy.transition',
+            label: 'Legacy Transition',
+          },
+        ],
+      },
+    });
+
+    const rt = normalizeExtensionRuntime([ex]);
+
+    expect(rt.config.shaders).toHaveLength(1);
+    expect(rt.shaders).toBe(rt.config.shaders);
+    expect(rt.config.shaders[0]).toMatchObject({
+      id: 'grade-shader',
+      extensionId: 'com.example.shader-runtime',
+      shaderId: 'shader.grade',
+      label: 'Grade Shader',
+      description: 'Preview grade pass',
+      pass: 'postprocess',
+      source: shaderSource,
+      hasSourceMetadata: true,
+    });
+    expect(rt.config.effects.map((descriptor) => descriptor.effectId)).toEqual(['legacy.effect']);
+    expect(rt.config.transitions.map((descriptor) => descriptor.transitionId)).toEqual(['legacy.transition']);
+    expect(rt.inactiveReserved.some((entry) => entry.kind === 'shader')).toBe(false);
+  });
+
+  it('orders shader descriptors by extension order, contribution order, then ID', () => {
+    const extA = ext('com.example.first-shaders', {
+      manifest: {
+        contributions: [
+          {
+            id: 'z-shader' as any,
+            kind: 'shader',
+            shaderId: 'shader.z',
+            label: 'Z',
+            pass: 'clip' as const,
+            order: 0,
+          },
+          {
+            id: 'a-shader' as any,
+            kind: 'shader',
+            shaderId: 'shader.a',
+            label: 'A',
+            pass: 'clip' as const,
+            order: 0,
+          },
+        ],
+      },
+    });
+    const extB = ext('com.example.second-shaders', {
+      manifest: {
+        contributions: [
+          {
+            id: 'early-shader' as any,
+            kind: 'shader',
+            shaderId: 'shader.early',
+            label: 'Early',
+            pass: 'postprocess' as const,
+            order: -10,
+          },
+        ],
+      },
+    });
+
+    const rt = normalizeExtensionRuntime([extA, extB]);
+
+    expect(rt.config.shaders.map((descriptor) => descriptor.id)).toEqual([
+      'a-shader',
+      'z-shader',
+      'early-shader',
+    ]);
   });
 });
 

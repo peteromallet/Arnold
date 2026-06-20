@@ -37,6 +37,15 @@ describe('supported widgets', () => {
     { type: 'boolean', widgetType: 'boolean', label: 'Boolean' },
     { type: 'select', widgetType: 'select', label: 'Select' },
     { type: 'color', widgetType: 'color', label: 'Color' },
+    { type: 'float', widgetType: 'shader-number', label: 'Float' },
+    { type: 'int', widgetType: 'shader-number', label: 'Integer' },
+    { type: 'bool', widgetType: 'boolean', label: 'Boolean' },
+    { type: 'vec2', widgetType: 'vector', label: 'Vector 2' },
+    { type: 'vec3', widgetType: 'vector', label: 'Vector 3' },
+    { type: 'vec4', widgetType: 'vector', label: 'Vector 4' },
+    { type: 'enum', widgetType: 'select', label: 'Enum' },
+    { type: 'frame', widgetType: 'shader-number', label: 'Frame' },
+    { type: 'time', widgetType: 'shader-number', label: 'Time' },
   ] as const;
 
   for (const { type, widgetType, label } of supportedTypes) {
@@ -55,12 +64,25 @@ describe('supported widgets', () => {
     });
   }
 
-  it('exposes all five supported types in entries map', () => {
+  it('exposes supported built-in types in entries map', () => {
     const reg = fresh();
-    expect(reg.entries.size).toBe(6); // 5 supported + audio-binding custom
+    expect(reg.entries.size).toBe(16); // supported controls + audio-binding + unsupported textureRef
     for (const { type } of supportedTypes) {
       expect(reg.entries.has(type)).toBe(true);
     }
+  });
+
+  it('resolves textureRef as a built-in unsupported diagnostic placeholder', () => {
+    const reg = fresh();
+    expect(reg.isSupported('textureRef')).toBe(false);
+    expect(reg.isCustom('textureRef')).toBe(false);
+
+    const entry = reg.resolve('textureRef');
+    expect(entry.status).toBe('unsupported');
+    expect(entry.label).toBe('Texture Reference');
+    expect(entry.diagnostic?.code).toBe('schema/texture-ref-unsupported');
+    expect(entry.diagnostic?.message).toContain('not editable');
+    expect(reg.entries.has('textureRef')).toBe(true);
   });
 });
 
@@ -197,12 +219,15 @@ describe('unsupported type diagnostics', () => {
 // ---------------------------------------------------------------------------
 
 describe('validation path mapping', () => {
-  it('built-in validation paths cover number, boolean, select, color, audio-binding', () => {
+  it('built-in validation paths cover number, shader scalars, vectors, boolean, select, color, audio-binding', () => {
     const reg = fresh();
     const paths = [...reg.validationPaths.keys()];
     // At least the five type-specific paths should exist
-    expect(paths.length).toBeGreaterThanOrEqual(5);
+    expect(paths.length).toBeGreaterThanOrEqual(8);
     expect(reg.validationPaths.has('*')).toBe(true);
+    expect(reg.validationPaths.has('shader-scalar-path')).toBe(true);
+    expect(reg.validationPaths.has('shader-vector-path')).toBe(true);
+    expect(reg.validationPaths.has('shader-color-vector-path')).toBe(true);
     expect(reg.validationPaths.has('boolean-path')).toBe(true);
     expect(reg.validationPaths.has('select-path')).toBe(true);
     expect(reg.validationPaths.has('color-path')).toBe(true);
@@ -259,6 +284,30 @@ describe('validation path mapping', () => {
     expect(path.validate(true, makeDef({ type: 'boolean' }))).toBeNull();
     expect(path.validate(false, makeDef({ type: 'boolean' }))).toBeNull();
     expect(path.validate(undefined, makeDef({ type: 'boolean' }))).toBeNull();
+  });
+
+  it('shader scalar validation covers float, int, frame, and time', () => {
+    const reg = fresh();
+    const path = reg.validationPaths.get('shader-scalar-path')!;
+
+    expect(path.validate(0.5, makeDef({ type: 'float' as const, label: 'Gain' }))).toBeNull();
+    expect(path.validate(12, makeDef({ type: 'frame' as const, label: 'Frame' }))).toBeNull();
+    expect(path.validate(1.25, makeDef({ type: 'time' as const, label: 'Time' }))).toBeNull();
+    expect(path.validate(3.2, makeDef({ type: 'int' as const, label: 'Count' }))).toBe('"Count" must be an integer.');
+    expect(path.validate(Number.NaN, makeDef({ type: 'float' as const, label: 'Gain' }))).toBe('"Gain" must be a finite number.');
+  });
+
+  it('shader vector validation covers vec2, vec3, vec4, and color vectors', () => {
+    const reg = fresh();
+    const vectorPath = reg.validationPaths.get('shader-vector-path')!;
+    const colorPath = reg.validationPaths.get('shader-color-vector-path')!;
+
+    expect(vectorPath.validate([1, 2], makeDef({ type: 'vec2' as const, label: 'Offset' }))).toBeNull();
+    expect(vectorPath.validate([1, 2, 3], makeDef({ type: 'vec3' as const, label: 'Axis' }))).toBeNull();
+    expect(vectorPath.validate([1, 2, 3, 4], makeDef({ type: 'vec4' as const, label: 'Bounds' }))).toBeNull();
+    expect(vectorPath.validate([1, 2], makeDef({ type: 'vec3' as const, label: 'Axis' }))).toBe('"Axis" must be a 3-number vector.');
+    expect(colorPath.validate([1, 0.5, 0, 1], makeDef({ type: 'color', label: 'Tint' }))).toBeNull();
+    expect(colorPath.validate([1, 0.5, 0], makeDef({ type: 'color', label: 'Tint' }))).toBe('"Tint" must be a 4-number RGBA vector.');
   });
 
   it('select validation: returns error for invalid option', () => {
@@ -412,6 +461,13 @@ describe('registry isolation', () => {
     const reg = createSchemaCapabilityRegistry('ext-abc');
     const diag = reg.getDiagnostic('unknown-type')!;
     expect(diag.extensionId).toBe('ext-abc');
+  });
+
+  it('ownerExtensionId is reflected in built-in unsupported textureRef diagnostics', () => {
+    const reg = createSchemaCapabilityRegistry('ext-abc');
+    const entry = reg.resolve('textureRef');
+    expect(entry.diagnostic?.extensionId).toBe('ext-abc');
+    expect(reg.getDiagnostic('textureRef')?.extensionId).toBe('ext-abc');
   });
 
   it('ownerExtensionId null yields diagnostics without extensionId', () => {

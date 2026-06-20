@@ -60,12 +60,14 @@ vi.mock('@/tools/video-editor/lib/renderRouter', () => ({
 const guardMocks = vi.hoisted(() => ({
   collectBuiltInKnownIds: vi.fn(),
   collectExtensionDeclaredIds: vi.fn(),
+  hasTimelineShaderMetadata: vi.fn(),
   scanExportConfig: vi.fn(),
 }));
 
 vi.mock('@/tools/video-editor/runtime/exportGuard', () => ({
   collectBuiltInKnownIds: guardMocks.collectBuiltInKnownIds,
   collectExtensionDeclaredIds: guardMocks.collectExtensionDeclaredIds,
+  hasTimelineShaderMetadata: guardMocks.hasTimelineShaderMetadata,
   scanExportConfig: guardMocks.scanExportConfig,
 }));
 
@@ -477,6 +479,76 @@ describe('useRenderState export guard', () => {
       expect(guardMocks.scanExportConfig).not.toHaveBeenCalled();
       // Native routing preserved
       expect(mocks.startClientRender).toHaveBeenCalledTimes(1);
+    });
+
+    it('does not let timeline shader preview metadata bypass export readiness', async () => {
+      const message = 'Shader "shader.preview.clip" cannot export because no shader materializer produced RenderMaterial for clip "c1".';
+      guardMocks.hasTimelineShaderMetadata.mockReturnValueOnce(true);
+      guardMocks.scanExportConfig.mockReturnValue({
+        ...cleanGuardResult(),
+        diagnostics: [
+          {
+            severity: 'error',
+            code: 'export/unrenderable-shader',
+            message,
+            extensionId: 'ext.shader',
+            contributionId: 'ext.shader.clip',
+            detail: {
+              clipId: 'c1',
+              shaderId: 'shader.preview.clip',
+              shaderScope: 'clip',
+              renderRoute: 'browser-export',
+            },
+          },
+        ],
+        blockers: [
+          {
+            id: 'export.shader.clip.c1.shader.preview.clip.browser-export.missing-materializer',
+            severity: 'error',
+            route: 'browser-export',
+            reason: 'missing-material',
+            message,
+            clipId: 'c1',
+            extensionId: 'ext.shader',
+            contributionId: 'ext.shader.clip',
+            detail: {
+              shaderId: 'shader.preview.clip',
+              shaderScope: 'clip',
+            },
+          },
+        ],
+        hasBlockingErrors: true,
+      });
+
+      const { result } = renderHook(() => useRenderState(
+        buildConfig({
+          id: 'c1',
+          clipType: 'media',
+          track: 'V1',
+          at: 0,
+          hold: 1,
+          app: {
+            shader: {
+              scope: 'clip',
+              extensionId: 'ext.shader',
+              contributionId: 'ext.shader.clip',
+              shaderId: 'shader.preview.clip',
+            },
+          },
+        }),
+        null,
+        null,
+        emptyExtensionRuntime(),
+      ));
+
+      await act(async () => {
+        await result.current.startRender();
+      });
+
+      expect(guardMocks.scanExportConfig).toHaveBeenCalledTimes(1);
+      expect(result.current.renderStatus).toBe('error');
+      expect(result.current.renderLog).toContain(message);
+      expect(mocks.startClientRender).not.toHaveBeenCalled();
     });
 
     it('skips guard work when resolvedConfig is null even with extensions', async () => {

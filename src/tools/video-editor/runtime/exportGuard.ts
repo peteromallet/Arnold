@@ -41,6 +41,10 @@ import type {
   RenderCapability,
   RenderRoute,
 } from '@/tools/video-editor/runtime/renderability.ts';
+import {
+  shaderMissingMaterializerBlockerMessage,
+  type ShaderMaterializerRequirementScope,
+} from '@/tools/video-editor/runtime/renderability.ts';
 import type { TransitionRegistryRecord, TransitionRegistrySnapshot } from '@/tools/video-editor/transitions/registry/types.ts';
 import type {
   ClipTypeRegistryRecord,
@@ -277,6 +281,7 @@ export function scanExportConfig(
 
   if (config && config.clips.length > 0) {
     scanLiveBindingExportBlockers(config, diagnostics, findings, blockers);
+    scanTimelineShaderExportBlockers(config, diagnostics, findings, blockers);
 
     const allKnown = buildAllKnown(builtIn, extIds, effectRegistrySnapshot, transitionRegistrySnapshot, clipTypeRegistrySnapshot);
 
@@ -317,6 +322,124 @@ function scanLiveBindingExportBlockers(
       continue;
     }
     pushLiveBindingFindingAndBlocker(diagnostics, findings, blockers, record);
+  }
+}
+
+function hasTimelineShaderMetadata(config: ResolvedTimelineConfig | null | undefined): boolean {
+  if (!config) return false;
+  if (isTimelineShaderMetadata(config.app?.shaderPostprocess, 'postprocess')) return true;
+  return config.clips.some((clip) => isTimelineShaderMetadata(clip.app?.shader, 'clip'));
+}
+
+export { hasTimelineShaderMetadata };
+
+function isTimelineShaderMetadata(
+  value: unknown,
+  scope: ShaderMaterializerRequirementScope,
+): value is {
+  readonly scope: ShaderMaterializerRequirementScope;
+  readonly shaderId: string;
+  readonly extensionId: string;
+  readonly contributionId: string;
+  readonly enabled?: boolean;
+} {
+  return Boolean(
+    value
+    && typeof value === 'object'
+    && !Array.isArray(value)
+    && (value as Record<string, unknown>).scope === scope
+    && typeof (value as Record<string, unknown>).shaderId === 'string'
+    && typeof (value as Record<string, unknown>).extensionId === 'string'
+    && typeof (value as Record<string, unknown>).contributionId === 'string',
+  );
+}
+
+function scanTimelineShaderExportBlockers(
+  config: ResolvedTimelineConfig,
+  diagnostics: ExportDiagnostic[],
+  findings: CapabilityFinding[],
+  blockers: RenderBlocker[],
+): void {
+  for (const clip of config.clips) {
+    const shader = isTimelineShaderMetadata(clip.app?.shader, 'clip') ? clip.app.shader : undefined;
+    if (!shader || shader.enabled === false) continue;
+    pushShaderMaterializerFindingAndBlocker(diagnostics, findings, blockers, {
+      shaderId: shader.shaderId,
+      extensionId: shader.extensionId,
+      contributionId: shader.contributionId,
+      scope: 'clip',
+      clipId: clip.id,
+    });
+  }
+
+  const postprocessShader = isTimelineShaderMetadata(config.app?.shaderPostprocess, 'postprocess')
+    ? config.app.shaderPostprocess
+    : undefined;
+  if (postprocessShader && postprocessShader.enabled !== false) {
+    pushShaderMaterializerFindingAndBlocker(diagnostics, findings, blockers, {
+      shaderId: postprocessShader.shaderId,
+      extensionId: postprocessShader.extensionId,
+      contributionId: postprocessShader.contributionId,
+      scope: 'postprocess',
+    });
+  }
+}
+
+function pushShaderMaterializerFindingAndBlocker(
+  diagnostics: ExportDiagnostic[],
+  findings: CapabilityFinding[],
+  blockers: RenderBlocker[],
+  input: {
+    readonly shaderId: string;
+    readonly extensionId: string;
+    readonly contributionId: string;
+    readonly scope: ShaderMaterializerRequirementScope;
+    readonly clipId?: string;
+  },
+): void {
+  const routes: readonly RenderRoute[] = ['browser-export', 'worker-export'];
+
+  for (const route of routes) {
+    const message = shaderMissingMaterializerBlockerMessage(input.shaderId, input.scope, input.clipId);
+    const id = `export.shader.${input.scope}.${input.clipId ?? 'timeline'}.${input.shaderId}.${route}.missing-materializer`;
+    const detail = {
+      shaderId: input.shaderId,
+      shaderScope: input.scope,
+      renderRoute: route,
+      ...(input.clipId ? { clipId: input.clipId } : {}),
+    };
+
+    diagnostics.push({
+      severity: 'error',
+      code: 'export/unrenderable-shader',
+      message,
+      extensionId: input.extensionId,
+      contributionId: input.contributionId,
+      detail,
+    });
+
+    const finding: CapabilityFinding = {
+      id,
+      severity: 'error',
+      route,
+      reason: 'missing-material',
+      message,
+      ...(input.clipId ? { clipId: input.clipId } : {}),
+      extensionId: input.extensionId,
+      contributionId: input.contributionId,
+      detail: {
+        shaderId: input.shaderId,
+        shaderScope: input.scope,
+        source: 'timeline-shader-metadata',
+      },
+    };
+    findings.push(finding);
+    blockers.push({
+      ...finding,
+      severity: 'error',
+      route,
+      reason: 'missing-material',
+    });
   }
 }
 
