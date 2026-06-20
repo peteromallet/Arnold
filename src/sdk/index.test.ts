@@ -3,6 +3,8 @@ import {
   defineExtension,
   validateExtensionId,
   validateContributionId,
+  validateManifest,
+  validateInstalledPackage,
   contributionKindNotYetBridged,
   CONTRIBUTION_KIND_MILESTONE,
   createExtensionContext,
@@ -91,6 +93,18 @@ import type {
   ShaderContribution,
   ShaderInlineSource,
   ShaderRegistrationService,
+  // M14 packaging types
+  DependencyPosture,
+  ExtensionDependency,
+  ExtensionSettingsSchema,
+  IntegrityAlgorithm,
+  IntegrityHash,
+  MigrationHookKind,
+  MigrationDeclaration,
+  InstalledExtensionMetadata,
+  InstalledExtensionPackage,
+  ManifestValidationMode,
+  ManifestValidationResult,
 } from '@/sdk/index';
 
 // ---------------------------------------------------------------------------
@@ -2586,6 +2600,607 @@ describe('M12: output, artifact, sampling, and process contracts are constructab
     expect(result.returnedMaterials[0].metadata!.passName).toBe('beauty');
   });
 });
+
+// ---------------------------------------------------------------------------
+// M14: validateManifest
+// ---------------------------------------------------------------------------
+
+describe('M14: validateManifest', () => {
+  const baseManifest = (): ExtensionManifest => ({
+    id: 'com.example.m14test' as any,
+    version: '1.0.0',
+    label: 'M14 Test Extension',
+  });
+
+  it('accepts a valid minimal manifest in dev mode', () => {
+    const result = validateManifest(baseManifest(), 'dev');
+    expect(result.valid).toBe(true);
+    expect(result.errors).toHaveLength(0);
+    // Dev mode warns about missing M14 fields
+    expect(result.warnings.length).toBeGreaterThanOrEqual(1);
+    expect(result.warnings.some(w => w.code === 'manifest/dev-missing-publisher')).toBe(true);
+    expect(result.warnings.some(w => w.code === 'manifest/dev-missing-license')).toBe(true);
+    expect(result.warnings.some(w => w.code === 'manifest/dev-missing-settings-schema')).toBe(true);
+  });
+
+  it('accepts a valid minimal manifest in installed mode (with publisher+license)', () => {
+    const manifest: ExtensionManifest = {
+      ...baseManifest(),
+      publisher: 'Example Corp',
+      license: 'MIT',
+    };
+    const result = validateManifest(manifest, 'installed');
+    expect(result.valid).toBe(true);
+    expect(result.errors).toHaveLength(0);
+  });
+
+  // ---- Errors (both modes) ----
+
+  it('rejects missing id', () => {
+    const result = validateManifest({ id: '' as any, version: '1.0.0', label: 'Test' }, 'dev');
+    expect(result.valid).toBe(false);
+    expect(result.errors.some(e => e.code === 'manifest/invalid-id')).toBe(true);
+  });
+
+  it('rejects missing version', () => {
+    const result = validateManifest({ id: 'com.test' as any, version: '', label: 'Test' }, 'dev');
+    expect(result.valid).toBe(false);
+    expect(result.errors.some(e => e.code === 'manifest/missing-version')).toBe(true);
+  });
+
+  it('rejects invalid semver version', () => {
+    const result = validateManifest({ id: 'com.test' as any, version: 'not-semver', label: 'Test' }, 'dev');
+    expect(result.valid).toBe(false);
+    expect(result.errors.some(e => e.code === 'manifest/invalid-version')).toBe(true);
+  });
+
+  it('rejects missing label', () => {
+    const result = validateManifest({ id: 'com.test' as any, version: '1.0.0', label: '  ' }, 'dev');
+    expect(result.valid).toBe(false);
+    expect(result.errors.some(e => e.code === 'manifest/missing-label')).toBe(true);
+  });
+
+  it('rejects invalid apiVersion', () => {
+    const result = validateManifest({ ...baseManifest(), apiVersion: -1 }, 'dev');
+    expect(result.valid).toBe(false);
+    expect(result.errors.some(e => e.code === 'manifest/invalid-api-version')).toBe(true);
+  });
+
+  it('accepts valid apiVersion', () => {
+    const result = validateManifest({ ...baseManifest(), apiVersion: 1 }, 'dev');
+    expect(result.valid).toBe(true);
+  });
+
+  it('rejects duplicate contribution IDs', () => {
+    const result = validateManifest(
+      {
+        ...baseManifest(),
+        contributions: [
+          { id: 'dup' as any, kind: 'command' as any },
+          { id: 'dup' as any, kind: 'command' as any },
+        ],
+      },
+      'dev',
+    );
+    expect(result.valid).toBe(false);
+    expect(result.errors.some(e => e.code === 'manifest/duplicate-contribution-id')).toBe(true);
+  });
+
+  it('rejects invalid contribution ID format', () => {
+    const result = validateManifest(
+      {
+        ...baseManifest(),
+        contributions: [{ id: 'BAD!' as any, kind: 'command' as any }],
+      },
+      'dev',
+    );
+    expect(result.valid).toBe(false);
+    expect(result.errors.some(e => e.code === 'manifest/invalid-contribution-id')).toBe(true);
+  });
+
+  // ---- Dependency validation ----
+
+  it('rejects invalid dependency ID', () => {
+    const result = validateManifest(
+      {
+        ...baseManifest(),
+        dependsOn: [{ extensionId: 'BAD!' }],
+      },
+      'dev',
+    );
+    expect(result.valid).toBe(false);
+    expect(result.errors.some(e => e.code === 'manifest/invalid-dependency-id')).toBe(true);
+  });
+
+  it('rejects self-dependency', () => {
+    const result = validateManifest(
+      {
+        ...baseManifest(),
+        dependsOn: [{ extensionId: 'com.example.m14test' }],
+      },
+      'dev',
+    );
+    expect(result.valid).toBe(false);
+    expect(result.errors.some(e => e.code === 'manifest/self-dependency')).toBe(true);
+  });
+
+  it('rejects invalid dependency posture value', () => {
+    const result = validateManifest(
+      {
+        ...baseManifest(),
+        dependsOn: [{ extensionId: 'com.example.dep', posture: 'invalid' as any }],
+      },
+      'dev',
+    );
+    expect(result.valid).toBe(false);
+    expect(result.errors.some(e => e.code === 'manifest/invalid-dependency-posture')).toBe(true);
+  });
+
+  it('warns on optional=true + posture=required mismatch', () => {
+    const result = validateManifest(
+      {
+        ...baseManifest(),
+        dependsOn: [{ extensionId: 'com.example.dep', optional: true, posture: 'required' }],
+      },
+      'dev',
+    );
+    expect(result.valid).toBe(true);
+    expect(result.warnings.some(w => w.code === 'manifest/dependency-posture-mismatch')).toBe(true);
+  });
+
+  it('warns on unrecognised version range', () => {
+    const result = validateManifest(
+      {
+        ...baseManifest(),
+        dependsOn: [{ extensionId: 'com.example.dep', versionRange: 'garbage' }],
+      },
+      'dev',
+    );
+    expect(result.warnings.some(w => w.code === 'manifest/invalid-dependency-version-range')).toBe(true);
+  });
+
+  it('accepts valid semver range patterns', () => {
+    const ranges = ['^1.0.0', '~1.2.3', '>=2.0.0', '1.0.0 - 2.0.0', '1.x', '*', '>=1.0.0 <2.0.0', '^1.0.0 || ^2.0.0'];
+    for (const range of ranges) {
+      const result = validateManifest(
+        {
+          ...baseManifest(),
+          dependsOn: [{ extensionId: 'com.example.dep', versionRange: range }],
+        },
+        'dev',
+      );
+      expect(result.warnings.some(w => w.code === 'manifest/invalid-dependency-version-range')).toBe(false);
+    }
+  });
+
+  // ---- Settings schema validation ----
+
+  it('rejects invalid settingsSchema.version', () => {
+    const result = validateManifest(
+      {
+        ...baseManifest(),
+        settingsSchema: { version: -1 },
+      },
+      'dev',
+    );
+    expect(result.valid).toBe(false);
+    expect(result.errors.some(e => e.code === 'manifest/invalid-settings-schema-version')).toBe(true);
+  });
+
+  it('accepts valid settingsSchema', () => {
+    const result = validateManifest(
+      {
+        ...baseManifest(),
+        settingsSchema: { version: 2, schema: { type: 'object' } },
+      },
+      'dev',
+    );
+    expect(result.valid).toBe(true);
+  });
+
+  // ---- Migration validation ----
+
+  it('warns on legacy migration shape in dev mode', () => {
+    const result = validateManifest(
+      {
+        ...baseManifest(),
+        migrations: [{ old: 'stuff' } as any],
+      },
+      'dev',
+    );
+    expect(result.warnings.some(w => w.code === 'manifest/legacy-migration-shape')).toBe(true);
+  });
+
+  it('errors on legacy migration shape in installed mode', () => {
+    const result = validateManifest(
+      {
+        ...baseManifest(),
+        publisher: 'Test',
+        license: 'MIT',
+        migrations: [{ old: 'stuff' } as any],
+      },
+      'installed',
+    );
+    expect(result.errors.some(e => e.code === 'manifest/legacy-migration-shape')).toBe(true);
+  });
+
+  it('rejects invalid migration kind', () => {
+    const result = validateManifest(
+      {
+        ...baseManifest(),
+        migrations: [{ kind: 'bad-kind', fromVersion: '1.0.0', toVersion: '2.0.0' } as any],
+      },
+      'dev',
+    );
+    expect(result.errors.some(e => e.code === 'manifest/invalid-migration-kind')).toBe(true);
+  });
+
+  it('rejects invalid migration fromVersion', () => {
+    const result = validateManifest(
+      {
+        ...baseManifest(),
+        migrations: [{ kind: 'settings', fromVersion: 'bad', toVersion: '2.0.0' } as any],
+      },
+      'dev',
+    );
+    expect(result.errors.some(e => e.code === 'manifest/invalid-migration-from-version')).toBe(true);
+  });
+
+  it('rejects invalid migration toVersion', () => {
+    const result = validateManifest(
+      {
+        ...baseManifest(),
+        migrations: [{ kind: 'manifest', fromVersion: '1.0.0', toVersion: 'bad' } as any],
+      },
+      'dev',
+    );
+    expect(result.errors.some(e => e.code === 'manifest/invalid-migration-to-version')).toBe(true);
+  });
+
+  it('accepts valid migration declarations', () => {
+    const result = validateManifest(
+      {
+        ...baseManifest(),
+        migrations: [
+          { kind: 'settings', fromVersion: '1.0.0', toVersion: '2.0.0', handler: 'migrateSettings' },
+          { kind: 'manifest', fromVersion: '1.0.0', toVersion: '1.1.0', description: 'Add new contribution' },
+        ],
+      },
+      'dev',
+    );
+    expect(result.errors).toHaveLength(0);
+  });
+
+  // ---- Installed-mode strict errors ----
+
+  it('errors on missing publisher in installed mode', () => {
+    const manifest: ExtensionManifest = { ...baseManifest(), license: 'MIT' };
+    const result = validateManifest(manifest, 'installed');
+    expect(result.valid).toBe(false);
+    expect(result.errors.some(e => e.code === 'manifest/installed-missing-publisher')).toBe(true);
+  });
+
+  it('errors on missing license in installed mode', () => {
+    const manifest: ExtensionManifest = { ...baseManifest(), publisher: 'Test' };
+    const result = validateManifest(manifest, 'installed');
+    expect(result.valid).toBe(false);
+    expect(result.errors.some(e => e.code === 'manifest/installed-missing-license')).toBe(true);
+  });
+
+  it('warns on missing settingsSchema in installed mode', () => {
+    const manifest: ExtensionManifest = { ...baseManifest(), publisher: 'Test', license: 'MIT' };
+    const result = validateManifest(manifest, 'installed');
+    expect(result.warnings.some(w => w.code === 'manifest/installed-missing-settings-schema')).toBe(true);
+  });
+
+  it('errors on invalid integrity algorithm in installed mode', () => {
+    const manifest: ExtensionManifest = {
+      ...baseManifest(),
+      publisher: 'Test',
+      license: 'MIT',
+      integrity: { algorithm: 'md5' as any, value: 'abc123' },
+    } as any;
+    const result = validateManifest(manifest, 'installed');
+    expect(result.errors.some(e => e.code === 'manifest/installed-invalid-integrity-algorithm')).toBe(true);
+  });
+
+  it('errors on missing integrity value in installed mode', () => {
+    const manifest: ExtensionManifest = {
+      ...baseManifest(),
+      publisher: 'Test',
+      license: 'MIT',
+      integrity: { algorithm: 'sha256', value: '' },
+    } as any;
+    const result = validateManifest(manifest, 'installed');
+    expect(result.errors.some(e => e.code === 'manifest/installed-missing-integrity-value')).toBe(true);
+  });
+
+  it('accepts valid manifest with all installed-mode requirements', () => {
+    const manifest: ExtensionManifest = {
+      ...baseManifest(),
+      publisher: 'Example Corp',
+      license: 'MIT',
+      settingsSchema: { version: 1 },
+    };
+    const result = validateManifest(manifest, 'installed');
+    expect(result.valid).toBe(true);
+    expect(result.errors).toHaveLength(0);
+  });
+
+  // ---- Dev mode: old M1 manifests produce warnings, not errors ----
+
+  it('accepts old M1-style manifest (no publisher, license, settingsSchema) with warnings only', () => {
+    const m1Manifest: ExtensionManifest = {
+      id: 'com.example.old-ext' as any,
+      version: '0.1.0',
+      label: 'Old Extension',
+      contributions: [{ id: 'panel1' as any, kind: 'panel' as any, slot: 'leftPanel' as any }],
+    };
+    const result = validateManifest(m1Manifest, 'dev');
+    expect(result.valid).toBe(true);
+    expect(result.errors).toHaveLength(0);
+    expect(result.warnings.length).toBeGreaterThanOrEqual(1);
+  });
+
+  // ---- ManifestValidationResult is frozen ----
+
+  it('returns frozen errors and warnings arrays', () => {
+    const result = validateManifest(baseManifest(), 'dev');
+    expect(Object.isFrozen(result.errors)).toBe(true);
+    expect(Object.isFrozen(result.warnings)).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// M14: validateInstalledPackage
+// ---------------------------------------------------------------------------
+
+describe('M14: validateInstalledPackage', () => {
+  const baseManifest = (): ExtensionManifest => ({
+    id: 'com.example.pkg' as any,
+    version: '1.0.0',
+    label: 'Package Extension',
+    publisher: 'Example Corp',
+    license: 'MIT',
+    settingsSchema: { version: 1 },
+  });
+
+  const baseMetadata = (): InstalledExtensionMetadata => ({
+    extensionId: 'com.example.pkg' as any,
+    version: '1.0.0',
+    integrity: { algorithm: 'sha256', value: 'dGVzdC1oYXNo' },
+    enabled: true,
+  });
+
+  const validPackage = (): InstalledExtensionPackage => ({
+    metadata: baseMetadata(),
+    manifest: baseManifest(),
+    bundleContent: 'export function activate() {}',
+  });
+
+  it('accepts a valid installed package', () => {
+    const result = validateInstalledPackage(validPackage());
+    expect(result.valid).toBe(true);
+    expect(result.errors).toHaveLength(0);
+  });
+
+  it('rejects missing metadata', () => {
+    const pack = { ...validPackage(), metadata: null as any };
+    const result = validateInstalledPackage(pack);
+    expect(result.valid).toBe(false);
+    expect(result.errors.some(e => e.code === 'package/missing-metadata')).toBe(true);
+  });
+
+  it('rejects missing manifest', () => {
+    const pack = { ...validPackage(), manifest: null as any };
+    const result = validateInstalledPackage(pack);
+    expect(result.valid).toBe(false);
+    expect(result.errors.some(e => e.code === 'package/missing-manifest')).toBe(true);
+  });
+
+  it('rejects empty bundleContent', () => {
+    const pack = { ...validPackage(), bundleContent: '  ' };
+    const result = validateInstalledPackage(pack);
+    expect(result.valid).toBe(false);
+    expect(result.errors.some(e => e.code === 'package/missing-bundle')).toBe(true);
+  });
+
+  it('rejects metadata/manifest id mismatch', () => {
+    const pack = validPackage();
+    pack.metadata.extensionId = 'com.other' as any;
+    const result = validateInstalledPackage(pack);
+    expect(result.valid).toBe(false);
+    expect(result.errors.some(e => e.code === 'package/id-mismatch')).toBe(true);
+  });
+
+  it('rejects metadata/manifest version mismatch', () => {
+    const pack = validPackage();
+    pack.metadata.version = '2.0.0';
+    const result = validateInstalledPackage(pack);
+    expect(result.valid).toBe(false);
+    expect(result.errors.some(e => e.code === 'package/version-mismatch')).toBe(true);
+  });
+
+  it('rejects missing integrity', () => {
+    const pack = validPackage();
+    (pack.metadata as any).integrity = null;
+    const result = validateInstalledPackage(pack);
+    expect(result.valid).toBe(false);
+    expect(result.errors.some(e => e.code === 'package/missing-integrity')).toBe(true);
+  });
+
+  it('rejects invalid integrity algorithm', () => {
+    const pack = validPackage();
+    (pack.metadata.integrity as any).algorithm = 'md5';
+    const result = validateInstalledPackage(pack);
+    expect(result.valid).toBe(false);
+    expect(result.errors.some(e => e.code === 'package/invalid-integrity-algorithm')).toBe(true);
+  });
+
+  it('rejects empty integrity value', () => {
+    const pack = validPackage();
+    pack.metadata.integrity.value = '';
+    const result = validateInstalledPackage(pack);
+    expect(result.valid).toBe(false);
+    expect(result.errors.some(e => e.code === 'package/missing-integrity-value')).toBe(true);
+  });
+
+  it('rejects non-boolean enabled', () => {
+    const pack = validPackage();
+    (pack.metadata as any).enabled = 'yes';
+    const result = validateInstalledPackage(pack);
+    expect(result.valid).toBe(false);
+    expect(result.errors.some(e => e.code === 'package/invalid-enabled')).toBe(true);
+  });
+
+  it('forwards manifest validation errors from installed mode', () => {
+    const pack = validPackage();
+    (pack.manifest as any).publisher = ''; // empty publisher fails installed mode
+    const result = validateInstalledPackage(pack);
+    expect(result.valid).toBe(false);
+    expect(result.errors.some(e => e.code === 'manifest/installed-missing-publisher')).toBe(true);
+  });
+
+  it('returns frozen errors and warnings', () => {
+    const result = validateInstalledPackage(validPackage());
+    expect(Object.isFrozen(result.errors)).toBe(true);
+    expect(Object.isFrozen(result.warnings)).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// M14: Type shapes are constructable
+// ---------------------------------------------------------------------------
+
+describe('M14: Type shapes are constructable', () => {
+  it('DependencyPosture accepts required and optional', () => {
+    const r: DependencyPosture = 'required';
+    const o: DependencyPosture = 'optional';
+    expect(r).toBe('required');
+    expect(o).toBe('optional');
+  });
+
+  it('ExtensionDependency with posture is constructable', () => {
+    const dep: ExtensionDependency = {
+      extensionId: 'com.example.dep',
+      versionRange: '^1.0.0',
+      contributionIds: ['c1', 'c2'],
+      optional: false,
+      posture: 'required',
+    };
+    expect(dep.posture).toBe('required');
+    expect(dep.contributionIds).toEqual(['c1', 'c2']);
+  });
+
+  it('ExtensionDependency with optional posture is constructable', () => {
+    const dep: ExtensionDependency = {
+      extensionId: 'com.example.opt',
+      optional: true,
+      posture: 'optional',
+    };
+    expect(dep.posture).toBe('optional');
+    expect(dep.optional).toBe(true);
+  });
+
+  it('ExtensionSettingsSchema is constructable', () => {
+    const schema: ExtensionSettingsSchema = {
+      version: 1,
+      schema: { type: 'object', properties: { theme: { type: 'string' } } },
+    };
+    expect(schema.version).toBe(1);
+    expect(schema.schema).toBeDefined();
+  });
+
+  it('IntegrityHash is constructable', () => {
+    const hash: IntegrityHash = { algorithm: 'sha256', value: 'YWJjMTIz' };
+    expect(hash.algorithm).toBe('sha256');
+    expect(hash.value).toBe('YWJjMTIz');
+  });
+
+  it('MigrationHookKind accepts valid values', () => {
+    const kinds: MigrationHookKind[] = ['settings', 'contribution', 'manifest'];
+    expect(kinds).toHaveLength(3);
+  });
+
+  it('MigrationDeclaration is constructable', () => {
+    const migration: MigrationDeclaration = {
+      kind: 'settings',
+      fromVersion: '1.0.0',
+      toVersion: '2.0.0',
+      handler: 'migrateSettings',
+      description: 'Migrate settings from v1 to v2',
+    };
+    expect(migration.kind).toBe('settings');
+    expect(migration.fromVersion).toBe('1.0.0');
+    expect(migration.toVersion).toBe('2.0.0');
+    expect(migration.handler).toBe('migrateSettings');
+    expect(migration.description).toBe('Migrate settings from v1 to v2');
+  });
+
+  it('InstalledExtensionMetadata is constructable', () => {
+    const meta: InstalledExtensionMetadata = {
+      extensionId: 'com.example.pkg' as any,
+      version: '1.0.0',
+      apiVersion: 1,
+      integrity: { algorithm: 'sha256', value: 'dGVzdA==' },
+      installedAt: '2026-06-20T00:00:00.000Z',
+      enabled: true,
+      settingsSchemaVersion: 1,
+      dependencies: [{ extensionId: 'com.example.dep', posture: 'required' }],
+      settings: { theme: 'dark' },
+      publisher: 'Example Corp',
+      license: 'MIT',
+      icon: 'https://example.com/icon.png',
+    };
+    expect(meta.extensionId).toBe('com.example.pkg');
+    expect(meta.integrity.algorithm).toBe('sha256');
+    expect(meta.enabled).toBe(true);
+    expect(meta.publisher).toBe('Example Corp');
+  });
+
+  it('InstalledExtensionPackage is constructable', () => {
+    const pkg: InstalledExtensionPackage = {
+      metadata: {
+        extensionId: 'com.example.pkg' as any,
+        version: '1.0.0',
+        integrity: { algorithm: 'sha256', value: 'dGVzdA==' },
+        enabled: true,
+        publisher: 'Example Corp',
+        license: 'MIT',
+      },
+      manifest: {
+        id: 'com.example.pkg' as any,
+        version: '1.0.0',
+        label: 'Package',
+        publisher: 'Example Corp',
+        license: 'MIT',
+      },
+      bundleContent: 'export function activate(ctx) { return { dispose() {} }; }',
+    };
+    expect(pkg.metadata.extensionId).toBe('com.example.pkg');
+    expect(pkg.manifest.id).toBe('com.example.pkg');
+    expect(pkg.bundleContent.length).toBeGreaterThan(0);
+  });
+
+  it('ManifestValidationMode is constructable', () => {
+    const dev: ManifestValidationMode = 'dev';
+    const installed: ManifestValidationMode = 'installed';
+    expect(dev).toBe('dev');
+    expect(installed).toBe('installed');
+  });
+
+  it('ManifestValidationResult is constructable', () => {
+    const result: ManifestValidationResult = {
+      valid: true,
+      errors: [],
+      warnings: [{ severity: 'warning', code: 'test/warn', message: 'Test warning' }],
+    };
+    expect(result.valid).toBe(true);
+    expect(result.errors).toHaveLength(0);
+    expect(result.warnings).toHaveLength(1);
+  });
+});
+
 
 // ---------------------------------------------------------------------------
 // Helper

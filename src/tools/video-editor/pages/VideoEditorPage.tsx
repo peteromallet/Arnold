@@ -19,6 +19,7 @@ import { AstridBridgeDataProvider } from '@/tools/video-editor/data/AstridBridge
 import type { DataProvider } from '@/tools/video-editor/data/DataProvider.ts';
 import { SupabaseDataProvider } from '@/tools/video-editor/data/SupabaseDataProvider.ts';
 import { VideoEditorProvider } from '@/tools/video-editor/contexts/VideoEditorProvider.tsx';
+import { useExtensionLoaderWiring } from '@/tools/video-editor/runtime/useExtensionLoaderWiring';
 import { ReighVideoEditorShell } from '@/tools/video-editor/components/ReighVideoEditorShell.tsx';
 import { useTimelinesList } from '@/tools/video-editor/hooks/useTimelinesList.ts';
 import type { SaveStatus } from '@/tools/video-editor/hooks/useTimelinePersistence.ts';
@@ -421,6 +422,20 @@ function TimelineList({ onSelect }: { onSelect: (timelineId: string) => void }) 
 
 export default function VideoEditorPage() {
   const { selectedProjectId } = useProjectSelectionContext();
+
+  // ---- M14: extension loader wiring (host-owned) --------------------------
+  // Resolves direct-local extensions + optional repository state through the
+  // ExtensionLoader pipeline.  When no repository is provided, direct-local
+  // extensions pass through unchanged (backward compatible).
+  const {
+    resolvedExtensions,
+    diagnostics: loaderDiagnostics,
+    isResolving: loaderIsResolving,
+  } = useExtensionLoaderWiring({
+    directExtensions: undefined,
+    repository: null,
+    bundleStore: null,
+  });
   const { userId } = useAuth();
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -844,6 +859,7 @@ export default function VideoEditorPage() {
               timelineName={providerSelection.timelineName}
               userId={providerSelection.userId}
               onSaveStatusChange={setMountedSaveStatus}
+              extensions={resolvedExtensions}
             >
               <ReighVideoEditorShell
                 mode="full"
@@ -908,6 +924,7 @@ export default function VideoEditorPage() {
           timelineName={providerSelection.timelineName}
           userId={providerSelection.userId}
           onSaveStatusChange={setMountedSaveStatus}
+          extensions={resolvedExtensions}
         >
           <ReighVideoEditorShell
             mode="full"

@@ -32,7 +32,9 @@ import type {
   ExtensionContext,
   DisposeHandle,
   ExtensionDiagnostic,
+  ContributionId,
 } from '@reigh/editor-sdk';
+import type { LiveDataRegistry } from '@/tools/video-editor/runtime/liveDataRegistry';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -2221,3 +2223,1014 @@ describe('ExtensionLifecycle — mutations through public SDK contracts only', (
   });
 });
 
+
+// ---------------------------------------------------------------------------
+// T16: Contribution cleanup matrix — per-contribution-kind DisposeHandle verification
+// ---------------------------------------------------------------------------
+
+describe('ExtensionLifecycle — contribution cleanup matrix (T16)', () => {
+  /** Helper: create an extension that "registers" a set of contributions and
+   *  returns a DisposeHandle whose dispose() tracks per-contribution cleanup. */
+  function extWithContributions(
+    id: string,
+    contributions: Array<{
+      contribId: string;
+      kind: string;
+      cleanup: ReturnType<typeof vi.fn>;
+    }>,
+  ): ReighExtension {
+    const cleanupFns = contributions.map((c) => c.cleanup);
+    return ext(id, {
+      contributions: contributions.map((c) => ({
+        id: c.contribId as ContributionId,
+        kind: c.kind as any,
+      })),
+      activate: () => ({
+        dispose: () => {
+          for (const fn of cleanupFns) fn();
+        },
+      }),
+    });
+  }
+
+  // ---- command cleanup -------------------------------------------------------
+
+  it('cleans up command contribution on extension removal (disable/unload)', () => {
+    const commandCleanup = vi.fn();
+    const host = createExtensionLifecycleHost();
+    const e1 = extWithContributions('com.example.cmd', [
+      { contribId: 'my-command', kind: 'command', cleanup: commandCleanup },
+    ]);
+
+    host.synchronize([e1], (ext) =>
+      makeCtx({ extension: { id: ext.manifest.id as any, version: '1.0.0', label: ext.manifest.label, manifest: ext.manifest } }),
+    );
+    expect(host.lifecycles.size).toBe(1);
+    expect(commandCleanup).not.toHaveBeenCalled();
+
+    // Remove extension — command cleanup must fire
+    host.synchronize([], () => makeCtx());
+    expect(host.lifecycles.size).toBe(0);
+    expect(commandCleanup).toHaveBeenCalledTimes(1);
+  });
+
+  it('cleans up command contribution on disposeAll (provider teardown)', () => {
+    const commandCleanup = vi.fn();
+    const host = createExtensionLifecycleHost();
+    const e1 = extWithContributions('com.example.cmd2', [
+      { contribId: 'cmd-disposeAll', kind: 'command', cleanup: commandCleanup },
+    ]);
+
+    host.synchronize([e1], (ext) =>
+      makeCtx({ extension: { id: ext.manifest.id as any, version: '1.0.0', label: ext.manifest.label, manifest: ext.manifest } }),
+    );
+    host.disposeAll();
+    expect(commandCleanup).toHaveBeenCalledTimes(1);
+    expect(host.lifecycles.size).toBe(0);
+  });
+
+  it('cleanup happens without provider remount — deactivation is synchronous within synchronize()', () => {
+    const commandCleanup = vi.fn();
+    const host = createExtensionLifecycleHost();
+    const e1 = extWithContributions('com.example.noremount', [
+      { contribId: 'no-remount-cmd', kind: 'command', cleanup: commandCleanup },
+    ]);
+    const e2 = ext('com.example.stays');
+
+    // Activate both
+    host.synchronize([e1, e2], (ext) =>
+      makeCtx({ extension: { id: ext.manifest.id as any, version: '1.0.0', label: ext.manifest.label, manifest: ext.manifest } }),
+    );
+    // Now remove e1 while keeping e2 — no remount needed
+    host.synchronize([e2], (ext) =>
+      makeCtx({ extension: { id: ext.manifest.id as any, version: '1.0.0', label: ext.manifest.label, manifest: ext.manifest } }),
+    );
+    expect(commandCleanup).toHaveBeenCalledTimes(1);
+    expect(host.lifecycles.has('com.example.stays')).toBe(true);
+    expect(host.lifecycles.has('com.example.noremount')).toBe(false);
+  });
+
+  // ---- effect cleanup --------------------------------------------------------
+
+  it('cleans up effect contribution on extension removal', () => {
+    const effectCleanup = vi.fn();
+    const host = createExtensionLifecycleHost();
+    const e1 = extWithContributions('com.example.effect', [
+      { contribId: 'my-effect', kind: 'effect', cleanup: effectCleanup },
+    ]);
+
+    host.synchronize([e1], (ext) =>
+      makeCtx({ extension: { id: ext.manifest.id as any, version: '1.0.0', label: ext.manifest.label, manifest: ext.manifest } }),
+    );
+    host.synchronize([], () => makeCtx());
+    expect(effectCleanup).toHaveBeenCalledTimes(1);
+  });
+
+  it('cleans up effect contribution on disposeAll', () => {
+    const effectCleanup = vi.fn();
+    const host = createExtensionLifecycleHost();
+    const e1 = extWithContributions('com.example.effect2', [
+      { contribId: 'fx-disposeAll', kind: 'effect', cleanup: effectCleanup },
+    ]);
+
+    host.synchronize([e1], (ext) =>
+      makeCtx({ extension: { id: ext.manifest.id as any, version: '1.0.0', label: ext.manifest.label, manifest: ext.manifest } }),
+    );
+    host.disposeAll();
+    expect(effectCleanup).toHaveBeenCalledTimes(1);
+  });
+
+  // ---- transition cleanup ---------------------------------------------------
+
+  it('cleans up transition contribution on extension removal', () => {
+    const transitionCleanup = vi.fn();
+    const host = createExtensionLifecycleHost();
+    const e1 = extWithContributions('com.example.trans', [
+      { contribId: 'my-transition', kind: 'transition', cleanup: transitionCleanup },
+    ]);
+
+    host.synchronize([e1], (ext) =>
+      makeCtx({ extension: { id: ext.manifest.id as any, version: '1.0.0', label: ext.manifest.label, manifest: ext.manifest } }),
+    );
+    host.synchronize([], () => makeCtx());
+    expect(transitionCleanup).toHaveBeenCalledTimes(1);
+  });
+
+  // ---- shader cleanup -------------------------------------------------------
+
+  it('cleans up shader contribution on extension removal', () => {
+    const shaderCleanup = vi.fn();
+    const host = createExtensionLifecycleHost();
+    const e1 = extWithContributions('com.example.shader', [
+      { contribId: 'my-shader', kind: 'shader', cleanup: shaderCleanup },
+    ]);
+
+    host.synchronize([e1], (ext) =>
+      makeCtx({ extension: { id: ext.manifest.id as any, version: '1.0.0', label: ext.manifest.label, manifest: ext.manifest } }),
+    );
+    host.synchronize([], () => makeCtx());
+    expect(shaderCleanup).toHaveBeenCalledTimes(1);
+  });
+
+  // ---- clipType cleanup -----------------------------------------------------
+
+  it('cleans up clipType contribution on extension removal', () => {
+    const clipTypeCleanup = vi.fn();
+    const host = createExtensionLifecycleHost();
+    const e1 = extWithContributions('com.example.cliptype', [
+      { contribId: 'my-cliptype', kind: 'clipType', cleanup: clipTypeCleanup },
+    ]);
+
+    host.synchronize([e1], (ext) =>
+      makeCtx({ extension: { id: ext.manifest.id as any, version: '1.0.0', label: ext.manifest.label, manifest: ext.manifest } }),
+    );
+    host.synchronize([], () => makeCtx());
+    expect(clipTypeCleanup).toHaveBeenCalledTimes(1);
+  });
+
+  // ---- agentTool cleanup ----------------------------------------------------
+
+  it('cleans up agentTool contribution on extension removal', () => {
+    const agentToolCleanup = vi.fn();
+    const host = createExtensionLifecycleHost();
+    const e1 = extWithContributions('com.example.agent', [
+      { contribId: 'my-agent-tool', kind: 'agentTool', cleanup: agentToolCleanup },
+    ]);
+
+    host.synchronize([e1], (ext) =>
+      makeCtx({ extension: { id: ext.manifest.id as any, version: '1.0.0', label: ext.manifest.label, manifest: ext.manifest } }),
+    );
+    host.synchronize([], () => makeCtx());
+    expect(agentToolCleanup).toHaveBeenCalledTimes(1);
+  });
+
+  // ---- live-data cleanup (via liveDataRegistry) ------------------------------
+
+  it('cleans up live-data sources on extension removal via lifecycle host', () => {
+    // Live data is managed through the LiveDataRegistry passed to the host.
+    // When an extension is removed, the host calls disposeExtensionSources().
+    const disposeSources = vi.fn();
+    const mockRegistry = {
+      isDisposed: false,
+      disposeExtensionSources: disposeSources,
+    } as unknown as LiveDataRegistry;
+
+    const liveDataCleanup = vi.fn();
+    const host = createExtensionLifecycleHost(mockRegistry);
+    const e1 = extWithContributions('com.example.livedata', [
+      { contribId: 'live-source', kind: 'slot', cleanup: liveDataCleanup },
+    ]);
+
+    host.synchronize([e1], (ext) =>
+      makeCtx({ extension: { id: ext.manifest.id as any, version: '1.0.0', label: ext.manifest.label, manifest: ext.manifest } }),
+    );
+    expect(host.lifecycles.size).toBe(1);
+
+    // Remove extension — liveDataRegistry.disposeExtensionSources should be called
+    host.synchronize([], () => makeCtx());
+    expect(disposeSources).toHaveBeenCalledTimes(1);
+    expect(disposeSources).toHaveBeenCalledWith('com.example.livedata');
+    expect(liveDataCleanup).toHaveBeenCalledTimes(1); // dispose handle also fires
+  });
+
+  it('cleans up live-data sources for all extensions on disposeAll', () => {
+    const disposeSources = vi.fn();
+    const mockRegistry = {
+      isDisposed: false,
+      disposeExtensionSources: disposeSources,
+    } as unknown as LiveDataRegistry;
+
+    const host = createExtensionLifecycleHost(mockRegistry);
+    const e1 = ext('com.example.ld1');
+    const e2 = ext('com.example.ld2');
+
+    host.synchronize([e1, e2], (ext) =>
+      makeCtx({ extension: { id: ext.manifest.id as any, version: '1.0.0', label: ext.manifest.label, manifest: ext.manifest } }),
+    );
+
+    host.disposeAll();
+    expect(disposeSources).toHaveBeenCalledTimes(2);
+    expect(disposeSources).toHaveBeenCalledWith('com.example.ld1');
+    expect(disposeSources).toHaveBeenCalledWith('com.example.ld2');
+  });
+
+  it('skips live-data cleanup when registry is already disposed', () => {
+    const disposeSources = vi.fn();
+    const mockRegistry = {
+      isDisposed: true, // already disposed
+      disposeExtensionSources: disposeSources,
+    } as unknown as LiveDataRegistry;
+
+    const host = createExtensionLifecycleHost(mockRegistry);
+    const e1 = ext('com.example.ld-disposed');
+
+    host.synchronize([e1], (ext) =>
+      makeCtx({ extension: { id: ext.manifest.id as any, version: '1.0.0', label: ext.manifest.label, manifest: ext.manifest } }),
+    );
+    host.synchronize([], () => makeCtx());
+    // Registry is already disposed so disposeExtensionSources should not be called
+    expect(disposeSources).not.toHaveBeenCalled();
+  });
+
+  // ---- diagnostics entries cleanup ------------------------------------------
+
+  it('diagnostics entries are properly cleaned up when extension is removed', () => {
+    const host = createExtensionLifecycleHost();
+    const diagCleanup = vi.fn();
+    const e1 = ext('com.example.diag-cleanup', {
+      activate: () => {
+        return { dispose: diagCleanup };
+      },
+    });
+
+    host.synchronize([e1], (ext) =>
+      makeCtx({ extension: { id: ext.manifest.id as any, version: '1.0.0', label: ext.manifest.label, manifest: ext.manifest } }),
+    );
+
+    // The lifecycle's own diagnostics track activation events
+    const lc = host.lifecycles.get('com.example.diag-cleanup')!;
+    expect(lc.state).toBe('active');
+
+    // Diagnostic entries from the lifecycle (activating, activated) are in host aggregation
+    const activatingDiags = host.diagnostics.filter(
+      (d) => d.extensionId === 'com.example.diag-cleanup' && d.code === 'lifecycle/activating',
+    );
+    const activatedDiags = host.diagnostics.filter(
+      (d) => d.extensionId === 'com.example.diag-cleanup' && d.code === 'lifecycle/activated',
+    );
+    expect(activatingDiags).toHaveLength(1);
+    expect(activatedDiags).toHaveLength(1);
+
+    // Remove extension — dispose handle fires
+    host.synchronize([], () => makeCtx());
+    expect(diagCleanup).toHaveBeenCalledTimes(1);
+
+    // After removal, the lifecycle is gone from the map — its diagnostics
+    // (activating, activated) are no longer in the live aggregation snapshot
+    const afterActivating = host.diagnostics.filter(
+      (d) => d.extensionId === 'com.example.diag-cleanup' && d.code === 'lifecycle/activating',
+    );
+    expect(afterActivating).toHaveLength(0);
+  });
+
+  // ---- combined: all contribution types in one extension ---------------------
+
+  it('cleans up ALL contribution types when an extension is removed (full matrix)', () => {
+    const cleanup: Record<string, ReturnType<typeof vi.fn>> = {
+      command: vi.fn(),
+      effect: vi.fn(),
+      transition: vi.fn(),
+      shader: vi.fn(),
+      clipType: vi.fn(),
+      agentTool: vi.fn(),
+    };
+
+    const host = createExtensionLifecycleHost();
+    const e1 = ext('com.example.all-kinds', {
+      contributions: [
+        { id: 'c-cmd' as ContributionId, kind: 'command' as any },
+        { id: 'c-fx' as ContributionId, kind: 'effect' as any },
+        { id: 'c-trans' as ContributionId, kind: 'transition' as any },
+        { id: 'c-shader' as ContributionId, kind: 'shader' as any },
+        { id: 'c-clip' as ContributionId, kind: 'clipType' as any },
+        { id: 'c-agent' as ContributionId, kind: 'agentTool' as any },
+      ],
+      activate: () => ({
+        dispose: () => {
+          cleanup.command();
+          cleanup.effect();
+          cleanup.transition();
+          cleanup.shader();
+          cleanup.clipType();
+          cleanup.agentTool();
+        },
+      }),
+    });
+
+    host.synchronize([e1], (ext) =>
+      makeCtx({ extension: { id: ext.manifest.id as any, version: '1.0.0', label: ext.manifest.label, manifest: ext.manifest } }),
+    );
+    expect(host.lifecycles.size).toBe(1);
+    for (const key of Object.keys(cleanup)) {
+      expect(cleanup[key]).not.toHaveBeenCalled();
+    }
+
+    // Remove — all cleanups must fire
+    host.synchronize([], () => makeCtx());
+    for (const key of Object.keys(cleanup)) {
+      expect(cleanup[key]).toHaveBeenCalledTimes(1);
+    }
+    expect(host.lifecycles.size).toBe(0);
+  });
+
+  it('cleans up all contribution types on disposeAll', () => {
+    const cleanup: Record<string, ReturnType<typeof vi.fn>> = {
+      command: vi.fn(),
+      shader: vi.fn(),
+      agentTool: vi.fn(),
+    };
+
+    const host = createExtensionLifecycleHost();
+    const e1 = ext('com.example.all-disposeAll', {
+      contributions: [
+        { id: 'd-cmd' as ContributionId, kind: 'command' as any },
+        { id: 'd-shader' as ContributionId, kind: 'shader' as any },
+        { id: 'd-agent' as ContributionId, kind: 'agentTool' as any },
+      ],
+      activate: () => ({
+        dispose: () => {
+          cleanup.command();
+          cleanup.shader();
+          cleanup.agentTool();
+        },
+      }),
+    });
+
+    host.synchronize([e1], (ext) =>
+      makeCtx({ extension: { id: ext.manifest.id as any, version: '1.0.0', label: ext.manifest.label, manifest: ext.manifest } }),
+    );
+    host.disposeAll();
+    for (const key of Object.keys(cleanup)) {
+      expect(cleanup[key]).toHaveBeenCalledTimes(1);
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// T16: Lifecycle event assertions — activation failure, disable, unload, integrity failure
+// ---------------------------------------------------------------------------
+
+describe('ExtensionLifecycle — lifecycle event assertions (T16)', () => {
+  // ---- activation failure events --------------------------------------------
+
+  it('emits activation-failed diagnostic with error details on activation failure', () => {
+    const activationError = new Error('INTEGRITY_CHECK_FAILED: bundle hash mismatch');
+    const lc = createExtensionLifecycle(
+      ext('com.example.integrity-fail', {
+        activate: () => {
+          throw activationError;
+        },
+      }),
+    );
+    lc.activate(makeCtx({ extension: { id: 'com.example.integrity-fail' as any, version: '1.0.0', label: 'IF', manifest: {} as any } }));
+
+    expect(lc.state).toBe('failed');
+    expect(lc.failure).toBe(activationError);
+
+    const failDiags = diagsOf(lc, 'lifecycle/activation-failed');
+    expect(failDiags).toHaveLength(1);
+    expect(failDiags[0].severity).toBe('error');
+    expect(failDiags[0].message).toContain('INTEGRITY_CHECK_FAILED');
+    expect(failDiags[0].detail).toBeDefined();
+    expect((failDiags[0].detail as any).originalError).toContain('INTEGRITY_CHECK_FAILED');
+    expect((failDiags[0].detail as any).stack).toBeDefined();
+  });
+
+  it('emits activation-failed diagnostic for non-Error throws with integrity context', () => {
+    const lc = createExtensionLifecycle(
+      ext('com.example.integrity-string', {
+        activate: () => {
+          throw 'INTEGRITY: manifest signature verification failed';
+        },
+      }),
+    );
+    lc.activate(makeCtx({ extension: { id: 'com.example.integrity-string' as any, version: '1.0.0', label: 'IS', manifest: {} as any } }));
+
+    expect(lc.state).toBe('failed');
+    expect(lc.failure).toBeInstanceOf(Error);
+
+    const failDiags = diagsOf(lc, 'lifecycle/activation-failed');
+    expect(failDiags).toHaveLength(1);
+    expect(failDiags[0].message).toContain('manifest signature verification failed');
+  });
+
+  it('activation-failed diagnostic includes extensionId', () => {
+    const lc = createExtensionLifecycle(
+      ext('com.example.fail-eid', {
+        activate: () => {
+          throw new Error('activation error');
+        },
+      }),
+    );
+    lc.activate(makeCtx({ extension: { id: 'com.example.fail-eid' as any, version: '1.0.0', label: 'FE', manifest: {} as any } }));
+
+    const failDiags = diagsOf(lc, 'lifecycle/activation-failed');
+    expect(failDiags[0].extensionId).toBe('com.example.fail-eid');
+  });
+
+  it('activation failure within host synchronize keeps extension in failed state', () => {
+    const host = createExtensionLifecycleHost();
+    const e1 = ext('com.example.host-activation-fail', {
+      activate: () => {
+        throw new Error('host-level activation integrity failure');
+      },
+    });
+
+    host.synchronize([e1], (ext) =>
+      makeCtx({ extension: { id: ext.manifest.id as any, version: '1.0.0', label: ext.manifest.label, manifest: ext.manifest } }),
+    );
+
+    // Extension stays in the map in failed state
+    expect(host.lifecycles.size).toBe(1);
+    const lc = host.lifecycles.get('com.example.host-activation-fail')!;
+    expect(lc.state).toBe('failed');
+    expect(lc.failure).toBeTruthy();
+
+    // Failure diagnostic is accessible via host
+    const failDiags = host.diagnostics.filter(
+      (d) => d.extensionId === 'com.example.host-activation-fail' && d.code === 'lifecycle/activation-failed',
+    );
+    expect(failDiags).toHaveLength(1);
+  });
+
+  it('retry-after-failure emits lifecycle/retry-activate then succeeds', () => {
+    let shouldFail = true;
+    const activateFn = vi.fn(() => {
+      if (shouldFail) throw new Error('transient integrity failure');
+    });
+    const lc = createExtensionLifecycle(ext('com.example.retry-integrity', { activate: activateFn }));
+    const ctx = makeCtx({ extension: { id: 'com.example.retry-integrity' as any, version: '1.0.0', label: 'RI', manifest: {} as any } });
+
+    // First attempt — fails
+    lc.activate(ctx);
+    expect(lc.state).toBe('failed');
+    expect(diagsOf(lc, 'lifecycle/activation-failed')).toHaveLength(1);
+
+    // Second attempt — succeeds
+    shouldFail = false;
+    lc.activate(ctx);
+    expect(lc.state).toBe('active');
+    expect(lc.failure).toBeNull();
+    expect(diagsOf(lc, 'lifecycle/retry-activate')).toHaveLength(1);
+    expect(diagsOf(lc, 'lifecycle/activated')).toHaveLength(1);
+  });
+
+  // ---- disable events (deactivation) ----------------------------------------
+
+  it('emits deactivating and disposed diagnostics on deactivate() (disable)', () => {
+    const lc = createExtensionLifecycle(ext('com.example.disable-events'));
+    lc.activate(makeCtx({ extension: { id: 'com.example.disable-events' as any, version: '1.0.0', label: 'DE', manifest: {} as any } }));
+    expect(lc.state).toBe('active');
+
+    lc.deactivate();
+
+    const deactivating = diagsOf(lc, 'lifecycle/deactivating');
+    const disposed = diagsOf(lc, 'lifecycle/disposed');
+    expect(deactivating).toHaveLength(1);
+    expect(deactivating[0].severity).toBe('info');
+    expect(deactivating[0].message).toContain('deactivating');
+    expect(disposed).toHaveLength(1);
+    expect(disposed[0].severity).toBe('info');
+    expect(disposed[0].message).toContain('disposed');
+  });
+
+  it('emits disposed-inactive diagnostic when deactivating never-activated extension', () => {
+    const lc = createExtensionLifecycle(ext('com.example.never-active'));
+    expect(lc.state).toBe('inactive');
+
+    lc.deactivate();
+    expect(lc.state).toBe('disposed');
+
+    const diags = diagsOf(lc, 'lifecycle/disposed-inactive');
+    expect(diags).toHaveLength(1);
+    expect(diags[0].message).toContain('was never activated');
+  });
+
+  it('disable (deactivate) from failed state emits deactivating and disposed', () => {
+    const lc = createExtensionLifecycle(
+      ext('com.example.fail-then-disable', {
+        activate: () => {
+          throw new Error('pre-disable failure');
+        },
+      }),
+    );
+    lc.activate(makeCtx({ extension: { id: 'com.example.fail-then-disable' as any, version: '1.0.0', label: 'FD', manifest: {} as any } }));
+    expect(lc.state).toBe('failed');
+
+    lc.deactivate();
+    expect(lc.state).toBe('disposed');
+    expect(diagsOf(lc, 'lifecycle/deactivating')).toHaveLength(1);
+    expect(diagsOf(lc, 'lifecycle/disposed')).toHaveLength(1);
+  });
+
+  it('disable via host synchronize emits lifecycle events and calls dispose handle', () => {
+    const disposeCalled = vi.fn();
+    const host = createExtensionLifecycleHost();
+    const e1 = ext('com.example.host-disable', {
+      activate: () => ({ dispose: disposeCalled }),
+    });
+
+    host.synchronize([e1], (ext) =>
+      makeCtx({ extension: { id: ext.manifest.id as any, version: '1.0.0', label: ext.manifest.label, manifest: ext.manifest } }),
+    );
+
+    const lc = host.lifecycles.get('com.example.host-disable')!;
+    expect(lc.state).toBe('active');
+
+    // Remove extension (disable) — synchronize calls lc.dispose() which emits 'lifecycle/disposed'
+    host.synchronize([], () => makeCtx());
+    expect(disposeCalled).toHaveBeenCalledTimes(1);
+    // The lifecycle is removed from the map but its local diagnostics object
+    // still holds the disposed event emitted during dispose()
+    const dispDiags = lc.diagnostics.filter((d) => d.code === 'lifecycle/disposed');
+    expect(dispDiags).toHaveLength(1);
+    expect(dispDiags[0].message).toContain('disposed');
+  });
+
+  // ---- unload events (dispose) ----------------------------------------------
+
+  it('emits disposed diagnostic on dispose() (unload)', () => {
+    const lc = createExtensionLifecycle(ext('com.example.unload-events'));
+    lc.activate(makeCtx({ extension: { id: 'com.example.unload-events' as any, version: '1.0.0', label: 'UE', manifest: {} as any } }));
+    expect(lc.state).toBe('active');
+
+    lc.dispose();
+
+    const disposed = diagsOf(lc, 'lifecycle/disposed');
+    expect(disposed).toHaveLength(1);
+    expect(disposed[0].message).toContain('disposed');
+    expect(disposed[0].message).toContain('was active');
+  });
+
+  it('emits disposed-inactive diagnostic on dispose() when never activated (unload unused)', () => {
+    const lc = createExtensionLifecycle(ext('com.example.unload-never'));
+    expect(lc.state).toBe('inactive');
+
+    lc.dispose();
+    expect(lc.state).toBe('disposed');
+    expect(diagsOf(lc, 'lifecycle/disposed-inactive')).toHaveLength(1);
+  });
+
+  it('unload (dispose) from failed state records previous state in diagnostic', () => {
+    const lc = createExtensionLifecycle(
+      ext('com.example.unload-failed', {
+        activate: () => {
+          throw new Error('integrity check failed at activation');
+        },
+      }),
+    );
+    lc.activate(makeCtx({ extension: { id: 'com.example.unload-failed' as any, version: '1.0.0', label: 'UF', manifest: {} as any } }));
+    expect(lc.state).toBe('failed');
+
+    lc.dispose();
+    expect(lc.state).toBe('disposed');
+
+    const disposed = diagsOf(lc, 'lifecycle/disposed');
+    expect(disposed).toHaveLength(1);
+    expect(disposed[0].message).toContain('was failed');
+  });
+
+  it('unload via disposeAll emits disposed diagnostics for every extension', () => {
+    const host = createExtensionLifecycleHost();
+    const e1 = ext('com.example.unload-all-1');
+    const e2 = ext('com.example.unload-all-2');
+
+    host.synchronize([e1, e2], (ext) =>
+      makeCtx({ extension: { id: ext.manifest.id as any, version: '1.0.0', label: ext.manifest.label, manifest: ext.manifest } }),
+    );
+
+    const lc1 = host.lifecycles.get('com.example.unload-all-1')!;
+    const lc2 = host.lifecycles.get('com.example.unload-all-2')!;
+
+    host.disposeAll();
+
+    // Both lifecycles have disposed diagnostics
+    expect(diagsOf(lc1, 'lifecycle/disposed')).toHaveLength(1);
+    expect(diagsOf(lc2, 'lifecycle/disposed')).toHaveLength(1);
+    expect(host.lifecycles.size).toBe(0);
+  });
+
+  it('unload (dispose) calls DisposeHandle and captures any teardown errors', () => {
+    const lc = createExtensionLifecycle(
+      ext('com.example.unload-teardown-error', {
+        activate: () => ({
+          dispose: () => {
+            throw new Error('teardown: failed to flush live-data buffers');
+          },
+        }),
+      }),
+    );
+    lc.activate(makeCtx({ extension: { id: 'com.example.unload-teardown-error' as any, version: '1.0.0', label: 'UTE', manifest: {} as any } }));
+
+    lc.dispose();
+    expect(lc.state).toBe('disposed');
+
+    // Teardown error is captured in diagnostics, not thrown
+    const errors = diagsOf(lc, 'lifecycle/dispose-handle-error');
+    expect(errors).toHaveLength(1);
+    expect(errors[0].message).toContain('flush live-data buffers');
+  });
+
+  // ---- integrity failure events ---------------------------------------------
+
+  it('activation failure diagnostic captures integrity failure message', () => {
+    const lc = createExtensionLifecycle(
+      ext('com.example.integrity-event', {
+        activate: () => {
+          throw new Error('SRI_CHECK_FAILED: bundle content hash does not match manifest integrity hash');
+        },
+      }),
+    );
+    lc.activate(makeCtx({ extension: { id: 'com.example.integrity-event' as any, version: '1.0.0', label: 'IE', manifest: {} as any } }));
+
+    expect(lc.state).toBe('failed');
+
+    const failDiags = diagsOf(lc, 'lifecycle/activation-failed');
+    expect(failDiags).toHaveLength(1);
+    expect(failDiags[0].severity).toBe('error');
+    expect(failDiags[0].message).toContain('SRI_CHECK_FAILED');
+    expect(failDiags[0].detail).toBeDefined();
+  });
+
+  it('integrity failure event includes stack trace in detail', () => {
+    const integrityError = new Error('CORRUPTED_BUNDLE: unpacked content failed integrity verification');
+    const lc = createExtensionLifecycle(
+      ext('com.example.corrupted', {
+        activate: () => {
+          throw integrityError;
+        },
+      }),
+    );
+    lc.activate(makeCtx({ extension: { id: 'com.example.corrupted' as any, version: '1.0.0', label: 'CB', manifest: {} as any } }));
+
+    const failDiags = diagsOf(lc, 'lifecycle/activation-failed');
+    expect((failDiags[0].detail as any).stack).toBe(integrityError.stack);
+  });
+
+  it('context factory error (integrity-like) is captured as host-level diagnostic', () => {
+    const host = createExtensionLifecycleHost();
+    const e1 = ext('com.example.ctx-integrity-fail');
+
+    host.synchronize([e1], () => {
+      throw new Error('INTEGRITY: cannot resolve bundle content ref — content missing from store');
+    });
+
+    // Context factory error is a host-level diagnostic that persists
+    const ctxErrors = hostDiagsOf(host, 'lifecycle/context-factory-error');
+    expect(ctxErrors).toHaveLength(1);
+    expect(ctxErrors[0].severity).toBe('error');
+    expect(ctxErrors[0].message).toContain('INTEGRITY');
+    expect(ctxErrors[0].message).toContain('content missing from store');
+  });
+
+  it('integrity failure diagnostic is immediately visible in host aggregation', () => {
+    const host = createExtensionLifecycleHost();
+    const e1 = ext('com.example.visible-fail', {
+      activate: () => {
+        throw new Error('MANIFEST_SIGNATURE_INVALID: publisher key mismatch');
+      },
+    });
+
+    host.synchronize([e1], (ext) =>
+      makeCtx({ extension: { id: ext.manifest.id as any, version: '1.0.0', label: ext.manifest.label, manifest: ext.manifest } }),
+    );
+
+    // The failure must be visible immediately after synchronize
+    const failDiags = host.diagnostics.filter((d) => d.code === 'lifecycle/activation-failed');
+    expect(failDiags).toHaveLength(1);
+    expect(failDiags[0].message).toContain('MANIFEST_SIGNATURE_INVALID');
+  });
+
+  // ---- combined lifecycle event sequence ------------------------------------
+
+  it('produces correct lifecycle event sequence: activate → fail → retry → active → disable → disposed', () => {
+    let shouldFail = true;
+    const lc = createExtensionLifecycle(
+      ext('com.example.full-sequence', {
+        activate: () => {
+          if (shouldFail) throw new Error('integrity: first activation rejected');
+        },
+      }),
+    );
+    const ctx = makeCtx({ extension: { id: 'com.example.full-sequence' as any, version: '1.0.0', label: 'FS', manifest: {} as any } });
+
+    // 1. Activate → fails
+    lc.activate(ctx);
+    expect(lc.state).toBe('failed');
+    expect(diagsOf(lc, 'lifecycle/activating')).toHaveLength(1);
+    expect(diagsOf(lc, 'lifecycle/activation-failed')).toHaveLength(1);
+
+    // 2. Retry → succeeds
+    shouldFail = false;
+    lc.activate(ctx);
+    expect(lc.state).toBe('active');
+    expect(diagsOf(lc, 'lifecycle/retry-activate')).toHaveLength(1);
+    expect(diagsOf(lc, 'lifecycle/activated')).toHaveLength(1);
+
+    // 3. Disable → disposed
+    lc.deactivate();
+    expect(lc.state).toBe('disposed');
+    expect(diagsOf(lc, 'lifecycle/deactivating')).toHaveLength(1);
+    expect(diagsOf(lc, 'lifecycle/disposed')).toHaveLength(1);
+
+    // Verify full event order
+    const codes = lc.diagnostics.map((d) => d.code);
+    expect(codes).toEqual([
+      'lifecycle/activating',
+      'lifecycle/activation-failed',
+      'lifecycle/retry-activate',
+      'lifecycle/activating',
+      'lifecycle/activated',
+      'lifecycle/deactivating',
+      'lifecycle/disposed',
+    ]);
+  });
+
+  it('produces correct lifecycle event sequence for never-activated extension: dispose → disposed-inactive', () => {
+    const lc = createExtensionLifecycle(ext('com.example.never-sequence'));
+
+    lc.dispose();
+    expect(lc.state).toBe('disposed');
+
+    const codes = lc.diagnostics.map((d) => d.code);
+    expect(codes).toEqual(['lifecycle/disposed-inactive']);
+  });
+
+  it('activation-failed diagnostic is emitted BEFORE console.error in event sequence', () => {
+    const lc = createExtensionLifecycle(
+      ext('com.example.diag-before-console', {
+        activate: () => {
+          throw new Error('integrity: diagnostic ordering check');
+        },
+      }),
+    );
+    lc.activate(makeCtx({ extension: { id: 'com.example.diag-before-console' as any, version: '1.0.0', label: 'DBC', manifest: {} as any } }));
+
+    const failIdx = lc.diagnostics.findIndex((d) => d.code === 'lifecycle/activation-failed');
+    const activatingIdx = lc.diagnostics.findIndex((d) => d.code === 'lifecycle/activating');
+    expect(activatingIdx).toBeLessThan(failIdx);
+    // activation-failed is the last lifecycle diagnostic (console.error happens after in finally)
+    expect(failIdx).toBe(lc.diagnostics.length - 1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// T16: Disable/unload cleanup without provider remount
+// ---------------------------------------------------------------------------
+
+describe('ExtensionLifecycle — cleanup without provider remount (T16)', () => {
+  it('removes extension contributions via synchronize() without remounting the provider', () => {
+    // The provider calls synchronize() when extensions prop changes.
+    // This test proves that removing an extension from the list cleans up
+    // all its contributions without needing to remount the provider/host.
+    const host = createExtensionLifecycleHost();
+    const commandCleanup = vi.fn();
+    const effectCleanup = vi.fn();
+
+    const e1 = ext('com.example.keep');
+    const e2 = ext('com.example.remove-me', {
+      contributions: [
+        { id: 'rm-cmd' as ContributionId, kind: 'command' as any },
+        { id: 'rm-fx' as ContributionId, kind: 'effect' as any },
+      ],
+      activate: () => ({
+        dispose: () => {
+          commandCleanup();
+          effectCleanup();
+        },
+      }),
+    });
+
+    // Initial sync — both extensions active
+    host.synchronize([e1, e2], (ext) =>
+      makeCtx({ extension: { id: ext.manifest.id as any, version: '1.0.0', label: ext.manifest.label, manifest: ext.manifest } }),
+    );
+    expect(host.lifecycles.size).toBe(2);
+
+    // Remove e2 — synchronize with just e1
+    host.synchronize([e1], (ext) =>
+      makeCtx({ extension: { id: ext.manifest.id as any, version: '1.0.0', label: ext.manifest.label, manifest: ext.manifest } }),
+    );
+
+    // e1 still active, e2 removed with cleanup
+    expect(host.lifecycles.size).toBe(1);
+    expect(host.lifecycles.has('com.example.keep')).toBe(true);
+    expect(host.lifecycles.has('com.example.remove-me')).toBe(false);
+    expect(commandCleanup).toHaveBeenCalledTimes(1);
+    expect(effectCleanup).toHaveBeenCalledTimes(1);
+  });
+
+  it('multiple extension additions and removals within single provider lifecycle', () => {
+    const host = createExtensionLifecycleHost();
+    const cleanups: Array<ReturnType<typeof vi.fn>> = [];
+
+    function makeCleanableExt(id: string, kind: string): ReighExtension {
+      const fn = vi.fn();
+      cleanups.push(fn);
+      return ext(id, {
+        contributions: [{ id: `${id}-contrib` as ContributionId, kind: kind as any }],
+        activate: () => ({ dispose: fn }),
+      });
+    }
+
+    const extA = makeCleanableExt('com.example.a', 'command');
+    const extB = makeCleanableExt('com.example.b', 'effect');
+    const extC = makeCleanableExt('com.example.c', 'shader');
+
+    // Add A and B
+    host.synchronize([extA, extB], (ext) =>
+      makeCtx({ extension: { id: ext.manifest.id as any, version: '1.0.0', label: ext.manifest.label, manifest: ext.manifest } }),
+    );
+    expect(host.lifecycles.size).toBe(2);
+
+    // Swap B for C within same host (no remount)
+    host.synchronize([extA, extC], (ext) =>
+      makeCtx({ extension: { id: ext.manifest.id as any, version: '1.0.0', label: ext.manifest.label, manifest: ext.manifest } }),
+    );
+    expect(host.lifecycles.size).toBe(2);
+    expect(host.lifecycles.has('com.example.a')).toBe(true);
+    expect(host.lifecycles.has('com.example.b')).toBe(false);
+    expect(host.lifecycles.has('com.example.c')).toBe(true);
+
+    // B's cleanup fired, A and C's cleanups have not
+    expect(cleanups[0]).not.toHaveBeenCalled(); // A still active
+    expect(cleanups[1]).toHaveBeenCalledTimes(1); // B removed
+    expect(cleanups[2]).not.toHaveBeenCalled(); // C still active
+
+    // Remove all
+    host.synchronize([], () => makeCtx());
+    expect(host.lifecycles.size).toBe(0);
+    expect(cleanups[0]).toHaveBeenCalledTimes(1); // A removed
+    expect(cleanups[2]).toHaveBeenCalledTimes(1); // C removed
+  });
+
+  it('manifest change triggers cleanup of old contributions and reactivation of new', () => {
+    const oldCleanup = vi.fn();
+    const newActivate = vi.fn(() => ({ dispose: vi.fn() }));
+
+    const extV1 = ext('com.example.versioned', {
+      contributions: [{ id: 'v1-cmd' as ContributionId, kind: 'command' as any }],
+      activate: () => ({ dispose: oldCleanup }),
+    });
+
+    const extV2 = ext('com.example.versioned', {
+      contributions: [{ id: 'v2-cmd' as ContributionId, kind: 'command' as any }],
+      activate: newActivate,
+    });
+
+    const host = createExtensionLifecycleHost();
+
+    // Activate v1
+    host.synchronize([extV1], (ext) =>
+      makeCtx({ extension: { id: ext.manifest.id as any, version: '1.0.0', label: ext.manifest.label, manifest: ext.manifest } }),
+    );
+    expect(host.lifecycles.size).toBe(1);
+
+    // Manifest change detected — v1 cleanup fires, v2 activates
+    host.synchronize([extV2], (ext) =>
+      makeCtx({ extension: { id: ext.manifest.id as any, version: '1.0.0', label: ext.manifest.label, manifest: ext.manifest } }),
+    );
+    expect(oldCleanup).toHaveBeenCalledTimes(1);
+    expect(newActivate).toHaveBeenCalledTimes(1);
+    expect(host.lifecycles.size).toBe(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// T16: Lifecycle event assertions for onLifecycleDisposed callback
+// ---------------------------------------------------------------------------
+
+describe('ExtensionLifecycleHost — onLifecycleDisposed callback (T16)', () => {
+  it('calls onLifecycleDisposed callback when extension is removed via synchronize', () => {
+    const host = createExtensionLifecycleHost();
+    const disposedIds: string[] = [];
+    host.onLifecycleDisposed((id) => disposedIds.push(id));
+
+    const e1 = ext('com.example.cb1');
+    const e2 = ext('com.example.cb2');
+
+    host.synchronize([e1, e2], (ext) =>
+      makeCtx({ extension: { id: ext.manifest.id as any, version: '1.0.0', label: ext.manifest.label, manifest: ext.manifest } }),
+    );
+
+    // Remove e1
+    host.synchronize([e2], (ext) =>
+      makeCtx({ extension: { id: ext.manifest.id as any, version: '1.0.0', label: ext.manifest.label, manifest: ext.manifest } }),
+    );
+    expect(disposedIds).toContain('com.example.cb1');
+    expect(disposedIds).not.toContain('com.example.cb2');
+  });
+
+  it('calls onLifecycleDisposed callback for all extensions on disposeAll', () => {
+    const host = createExtensionLifecycleHost();
+    const disposedIds: string[] = [];
+    host.onLifecycleDisposed((id) => disposedIds.push(id));
+
+    const e1 = ext('com.example.cb-all-1');
+    const e2 = ext('com.example.cb-all-2');
+
+    host.synchronize([e1, e2], (ext) =>
+      makeCtx({ extension: { id: ext.manifest.id as any, version: '1.0.0', label: ext.manifest.label, manifest: ext.manifest } }),
+    );
+    host.disposeAll();
+
+    expect(disposedIds).toContain('com.example.cb-all-1');
+    expect(disposedIds).toContain('com.example.cb-all-2');
+    expect(disposedIds).toHaveLength(2);
+  });
+
+  it('calls onLifecycleDisposed callback for manifest-change disposals', () => {
+    const host = createExtensionLifecycleHost();
+    const disposedIds: string[] = [];
+    host.onLifecycleDisposed((id) => disposedIds.push(id));
+
+    const extV1 = ext('com.example.cb-change', {
+      contributions: [{ id: 'old' as ContributionId, kind: 'command' as any }],
+    });
+    const extV2 = ext('com.example.cb-change', {
+      contributions: [{ id: 'new' as ContributionId, kind: 'effect' as any }],
+    });
+
+    host.synchronize([extV1], (ext) =>
+      makeCtx({ extension: { id: ext.manifest.id as any, version: '1.0.0', label: ext.manifest.label, manifest: ext.manifest } }),
+    );
+    host.synchronize([extV2], (ext) =>
+      makeCtx({ extension: { id: ext.manifest.id as any, version: '1.0.0', label: ext.manifest.label, manifest: ext.manifest } }),
+    );
+
+    // The old lifecycle was disposed due to manifest change
+    expect(disposedIds).toContain('com.example.cb-change');
+    expect(disposedIds).toHaveLength(1);
+  });
+
+  it('onLifecycleDisposed returns a DisposeHandle that unregisters the callback', () => {
+    const host = createExtensionLifecycleHost();
+    const disposedIds: string[] = [];
+    const handle = host.onLifecycleDisposed((id) => disposedIds.push(id));
+
+    const e1 = ext('com.example.cb-unreg');
+
+    host.synchronize([e1], (ext) =>
+      makeCtx({ extension: { id: ext.manifest.id as any, version: '1.0.0', label: ext.manifest.label, manifest: ext.manifest } }),
+    );
+
+    // Unregister the callback
+    handle.dispose();
+
+    // Remove extension — callback should NOT fire
+    host.synchronize([], () => makeCtx());
+    expect(disposedIds).toHaveLength(0);
+  });
+
+  it('onLifecycleDisposed callback errors do not propagate', () => {
+    const host = createExtensionLifecycleHost();
+    const errorSpy = vi.fn();
+
+    host.onLifecycleDisposed(() => {
+      throw new Error('callback error');
+    });
+    host.onLifecycleDisposed((id) => {
+      errorSpy(id);
+    });
+
+    const e1 = ext('com.example.cb-error');
+
+    host.synchronize([e1], (ext) =>
+      makeCtx({ extension: { id: ext.manifest.id as any, version: '1.0.0', label: ext.manifest.label, manifest: ext.manifest } }),
+    );
+
+    // Remove — first callback throws, second should still fire
+    host.synchronize([], () => makeCtx());
+    expect(errorSpy).toHaveBeenCalledWith('com.example.cb-error');
+  });
+});

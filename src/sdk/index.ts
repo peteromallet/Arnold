@@ -8,6 +8,9 @@
  * @publicContract
  */
 
+import { createExtensionSettingsService } from './extensionSettingsService';
+import { runSettingsMigration, getManifestSettingsSchemaVersion } from './extensionSettingsMigration';
+
 // ---------------------------------------------------------------------------
 // ID validation
 // ---------------------------------------------------------------------------
@@ -2274,6 +2277,493 @@ export interface ExtensionPermissionDeclaration {
 }
 
 // ---------------------------------------------------------------------------
+// M14: Packaging, integrity, settings-schema, and dependency contracts
+// ---------------------------------------------------------------------------
+
+/** Posture of a dependency: required blocks activation, optional degrades. */
+export type DependencyPosture = 'required' | 'optional';
+
+/** A typed dependency declared by an extension. */
+export interface ExtensionDependency {
+  /** Extension ID this dependency references. */
+  extensionId: string;
+  /** Semver range (e.g. "^1.2.0", ">=2.0.0 <3.0.0"). */
+  versionRange?: string;
+  /** Specific contribution IDs required from the dependency. */
+  contributionIds?: readonly string[];
+  /** Whether this dependency was originally declared as optional. */
+  optional?: boolean;
+  /** Dependency posture: required blocks activation, optional allows degraded activation. */
+  posture?: DependencyPosture;
+}
+
+/** Settings schema descriptor with version for migration tracking. */
+export interface ExtensionSettingsSchema {
+  /** Monotonic version number; increments when the settings shape changes. */
+  version: number;
+  /** Optional JSON Schema-like shape descriptor (subset). */
+  schema?: Record<string, unknown>;
+}
+
+/** Supported integrity algorithms. */
+export type IntegrityAlgorithm = 'sha256';
+
+/** An SRI-style integrity hash. */
+export interface IntegrityHash {
+  algorithm: IntegrityAlgorithm;
+  /** Base64-encoded hash value (without algorithm prefix). */
+  value: string;
+}
+
+/** Kinds of migration hooks an extension may declare. */
+export type MigrationHookKind = 'settings' | 'contribution' | 'manifest';
+
+/** A typed migration declaration for extension upgrades. */
+export interface MigrationDeclaration {
+  kind: MigrationHookKind;
+  /** Semver of the source version being migrated from. */
+  fromVersion: string;
+  /** Semver of the target version being migrated to. */
+  toVersion: string;
+  /** Handler identifier (module export name or inline function name). */
+  handler?: string;
+  /** Human-readable description of the migration. */
+  description?: string;
+}
+
+/** Metadata recorded when an extension is installed as a trusted bundle. */
+export interface InstalledExtensionMetadata {
+  extensionId: ExtensionId;
+  version: string;
+  apiVersion?: number;
+  /** Required: SHA-256 SRI integrity of the installed bundle. */
+  integrity: IntegrityHash;
+  /** ISO 8601 timestamp of installation. */
+  installedAt?: string;
+  /** Whether the extension is currently enabled. */
+  enabled: boolean;
+  /** Settings schema version at install time. */
+  settingsSchemaVersion?: number;
+  /** Resolved dependency graph at install time. */
+  dependencies?: readonly ExtensionDependency[];
+  /** Stored extension-scoped settings keyed by key. */
+  settings?: Record<string, unknown>;
+  /** Optional publisher identity for installed extensions. */
+  publisher?: string;
+  /** Optional SPDX license identifier. */
+  license?: string;
+  /** Optional icon URL or data URI. */
+  icon?: string;
+}
+
+/** A full installed extension package: manifest + bundle + tracked metadata. */
+export interface InstalledExtensionPackage {
+  metadata: InstalledExtensionMetadata;
+  manifest: ExtensionManifest;
+  /** Raw trusted bundle source (bundle.mjs content). */
+  bundleContent: string;
+}
+
+/** Validation mode: 'dev' produces warnings, 'installed' produces strict errors. */
+export type ManifestValidationMode = 'dev' | 'installed';
+
+/** Result of validating an extension manifest. */
+export interface ManifestValidationResult {
+  /** True when no blocking errors exist. */
+  valid: boolean;
+  /** Blocking diagnostics (strict errors in installed mode). */
+  errors: readonly ExtensionDiagnostic[];
+  /** Non-blocking diagnostics (warnings in dev mode, supplemental in installed mode). */
+  warnings: readonly ExtensionDiagnostic[];
+}
+
+/**
+ * Validate an extension manifest against the expected contract.
+ *
+ * In 'dev' mode, missing installed-only fields emit warnings.
+ * In 'installed' mode, missing required installed metadata fields
+ * (integrity, publisher, license) emit blocking errors.
+ *
+ * Contribution ID uniqueness, ID format, version format, and
+ * dependency posture are validated in both modes.
+ */
+export function validateManifest(
+  manifest: ExtensionManifest,
+  _mode?: ManifestValidationMode,
+): ManifestValidationResult {
+  const errors: ExtensionDiagnostic[] = [];
+  const warnings: ExtensionDiagnostic[] = [];
+  const mode: ManifestValidationMode = _mode ?? 'dev';
+
+  const extId = manifest.id as string;
+
+  // -----------------------------------------------------------------------
+  // Helpers
+  // -----------------------------------------------------------------------
+
+  const isValidSemver = (v: string): boolean => /^\d+\.\d+\.\d+/.test(v);
+
+  /** Basic semver-range check: accepts npm-style range strings. */
+  const isValidSemverRange = (range: string): boolean => {
+    // Accept common patterns: ^x.y.z, ~x.y.z, >=x.y.z, x.y.z - y.z.w, x, x.y
+    return /^(\*|[\^~><=]*(?:\d+|\*|x)(?:\.(?:\d+|\*|x))?(?:\.(?:\d+|\*|x))?)(\s+(?:-?\s*)?[\^~><=]*(?:\d+|\*|x)(?:\.(?:\d+|\*|x))?(?:\.(?:\d+|\*|x))?)*(\s+\|\|\s+[\^~><=]*(?:\d+|\*|x)(?:\.(?:\d+|\*|x))?(?:\.(?:\d+|\*|x))?)*\s*$/.test(range.trim());
+  };
+
+  const pushErr = (code: string, message: string, contributionId?: string): void => {
+    errors.push({
+      severity: 'error',
+      code,
+      message,
+      extensionId: extId,
+      ...(contributionId ? { contributionId } : {}),
+    });
+  };
+
+  const pushWarn = (code: string, message: string, contributionId?: string): void => {
+    warnings.push({
+      severity: 'warning',
+      code,
+      message,
+      extensionId: extId,
+      ...(contributionId ? { contributionId } : {}),
+    });
+  };
+
+  // -----------------------------------------------------------------------
+  // ID validation
+  // -----------------------------------------------------------------------
+  const idErrors = validateExtensionId(extId);
+  for (const msg of idErrors) {
+    pushErr('manifest/invalid-id', msg);
+  }
+
+  // -----------------------------------------------------------------------
+  // Version validation
+  // -----------------------------------------------------------------------
+  if (!manifest.version || typeof manifest.version !== 'string') {
+    pushErr('manifest/missing-version', 'Manifest must include a semver version string');
+  } else if (!isValidSemver(manifest.version)) {
+    pushErr('manifest/invalid-version', `Version "${manifest.version}" does not match semver format`);
+  }
+
+  // -----------------------------------------------------------------------
+  // Label validation
+  // -----------------------------------------------------------------------
+  if (!manifest.label || typeof manifest.label !== 'string' || manifest.label.trim().length === 0) {
+    pushErr('manifest/missing-label', 'Manifest must include a non-empty label');
+  }
+
+  // -----------------------------------------------------------------------
+  // API version validation
+  // -----------------------------------------------------------------------
+  if (manifest.apiVersion !== undefined) {
+    if (typeof manifest.apiVersion !== 'number' || !Number.isInteger(manifest.apiVersion) || manifest.apiVersion < 1) {
+      pushErr('manifest/invalid-api-version', `apiVersion must be a positive integer, got ${manifest.apiVersion}`);
+    }
+  }
+
+  // -----------------------------------------------------------------------
+  // Contribution ID uniqueness
+  // -----------------------------------------------------------------------
+  if (manifest.contributions && manifest.contributions.length > 0) {
+    const seen = new Set<string>();
+    for (const contribution of manifest.contributions) {
+      const cId = (contribution as any).id as string;
+      const cErrors = validateContributionId(cId);
+      for (const msg of cErrors) {
+        pushErr('manifest/invalid-contribution-id', `Contribution "${cId}": ${msg}`, cId);
+      }
+      if (seen.has(cId)) {
+        pushErr('manifest/duplicate-contribution-id', `Duplicate contribution ID "${cId}"`, cId);
+      }
+      seen.add(cId);
+    }
+  }
+
+  // -----------------------------------------------------------------------
+  // Dependency validation
+  // -----------------------------------------------------------------------
+  if (manifest.dependsOn && manifest.dependsOn.length > 0) {
+    for (const dep of manifest.dependsOn) {
+      // Dependency ID validation
+      const depIdErrors = validateExtensionId(dep.extensionId);
+      for (const msg of depIdErrors) {
+        pushErr('manifest/invalid-dependency-id', `Dependency "${dep.extensionId}": ${msg}`);
+      }
+
+      // Self-dependency check
+      if (dep.extensionId === extId) {
+        pushErr('manifest/self-dependency', `Extension "${extId}" declares a dependency on itself`);
+      }
+
+      // Posture validation
+      if (dep.posture !== undefined && dep.posture !== 'required' && dep.posture !== 'optional') {
+        pushErr(
+          'manifest/invalid-dependency-posture',
+          `Dependency "${dep.extensionId}" has invalid posture "${dep.posture}"; must be "required" or "optional"`,
+        );
+      }
+
+      // optional vs posture consistency
+      if (dep.optional === true && dep.posture === 'required') {
+        pushWarn(
+          'manifest/dependency-posture-mismatch',
+          `Dependency "${dep.extensionId}" is marked optional=true but posture is "required"; posture takes precedence`,
+        );
+      }
+
+      // Version range validation
+      if (dep.versionRange !== undefined && typeof dep.versionRange === 'string' && dep.versionRange.length > 0) {
+        if (!isValidSemverRange(dep.versionRange)) {
+          pushWarn(
+            'manifest/invalid-dependency-version-range',
+            `Dependency "${dep.extensionId}" has an unrecognised version range "${dep.versionRange}"`,
+          );
+        }
+      }
+    }
+  }
+
+  // -----------------------------------------------------------------------
+  // Settings schema validation
+  // -----------------------------------------------------------------------
+  if (manifest.settingsSchema) {
+    const version = (manifest.settingsSchema as any).version;
+    if (typeof version !== 'number' || !Number.isInteger(version) || version < 0) {
+      pushErr(
+        'manifest/invalid-settings-schema-version',
+        `settingsSchema.version must be a non-negative integer, got ${version}`,
+      );
+    }
+  }
+
+  // -----------------------------------------------------------------------
+  // Migration declarations validation
+  // -----------------------------------------------------------------------
+  const VALID_MIGRATION_KINDS: ReadonlySet<string> = new Set(['settings', 'contribution', 'manifest']);
+  if (manifest.migrations && manifest.migrations.length > 0) {
+    for (const migration of manifest.migrations) {
+      // Legacy shape detection (plain object without 'kind')
+      if (typeof migration !== 'object' || migration === null || !('kind' in migration)) {
+        // In dev mode these are warnings; in installed mode typed declarations are required
+        if (mode === 'installed') {
+          pushErr(
+            'manifest/legacy-migration-shape',
+            'Migration entry lacks "kind"; typed MigrationDeclaration is required for installed extensions',
+          );
+        } else {
+          pushWarn(
+            'manifest/legacy-migration-shape',
+            'Migration entry is a plain object without "kind"; typed MigrationDeclaration is preferred',
+          );
+        }
+        break; // one diagnostic per manifest
+      }
+
+      const m = migration as Record<string, unknown>;
+
+      // Validate kind
+      if (!VALID_MIGRATION_KINDS.has(m.kind as string)) {
+        pushErr(
+          'manifest/invalid-migration-kind',
+          `Migration kind "${m.kind}" is not valid; must be one of: settings, contribution, manifest`,
+        );
+      }
+
+      // Validate fromVersion
+      if (typeof m.fromVersion !== 'string' || !isValidSemver(m.fromVersion)) {
+        pushErr(
+          'manifest/invalid-migration-from-version',
+          `Migration fromVersion "${m.fromVersion}" must be a valid semver`,
+        );
+      }
+
+      // Validate toVersion
+      if (typeof m.toVersion !== 'string' || !isValidSemver(m.toVersion)) {
+        pushErr(
+          'manifest/invalid-migration-to-version',
+          `Migration toVersion "${m.toVersion}" must be a valid semver`,
+        );
+      }
+    }
+  }
+
+  // -----------------------------------------------------------------------
+  // Mode-specific checks: installed vs dev
+  // -----------------------------------------------------------------------
+  if (mode === 'installed') {
+    // ---- Installed-mode required identity fields ----
+
+    // Publisher is required for installed extensions
+    if (!manifest.publisher || typeof manifest.publisher !== 'string' || manifest.publisher.trim().length === 0) {
+      pushErr(
+        'manifest/installed-missing-publisher',
+        'Installed extensions must declare a publisher',
+      );
+    }
+
+    // License is required for installed extensions
+    if (!manifest.license || typeof manifest.license !== 'string' || manifest.license.trim().length === 0) {
+      pushErr(
+        'manifest/installed-missing-license',
+        'Installed extensions must declare an SPDX license identifier',
+      );
+    }
+
+    // Settings schema is recommended for installed extensions
+    if (!manifest.settingsSchema) {
+      pushWarn(
+        'manifest/installed-missing-settings-schema',
+        'Installed extensions should declare a settingsSchema for migration tracking',
+      );
+    }
+
+    // Integrity is expected to be validated externally (on InstalledExtensionMetadata),
+    // but if integrity is passed as a top-level field on manifest we validate the shape.
+    const integrity = (manifest as any).integrity as IntegrityHash | undefined;
+    if (integrity) {
+      if (!integrity.algorithm || integrity.algorithm !== 'sha256') {
+        pushErr(
+          'manifest/installed-invalid-integrity-algorithm',
+          `Integrity algorithm "${integrity.algorithm}" is not supported; only "sha256" is allowed`,
+        );
+      }
+      if (!integrity.value || typeof integrity.value !== 'string' || integrity.value.trim().length === 0) {
+        pushErr(
+          'manifest/installed-missing-integrity-value',
+          'Integrity hash value is required',
+        );
+      }
+    }
+  } else {
+    // ---- Dev mode: compatibility warnings for legacy (M1/local) manifests ----
+
+    // Warn about missing M14-required fields so extension authors see what will be
+    // required for installed-pack compatibility.
+    if (!manifest.publisher) {
+      pushWarn(
+        'manifest/dev-missing-publisher',
+        'Publisher is not declared; installed extensions require a publisher',
+      );
+    }
+    if (!manifest.license) {
+      pushWarn(
+        'manifest/dev-missing-license',
+        'License is not declared; installed extensions require an SPDX license identifier',
+      );
+    }
+    if (!manifest.settingsSchema) {
+      pushWarn(
+        'manifest/dev-missing-settings-schema',
+        'settingsSchema is not declared; installed extensions should declare one for migration tracking',
+      );
+    }
+  }
+
+  // -----------------------------------------------------------------------
+  return {
+    valid: errors.length === 0,
+    errors: Object.freeze([...errors]),
+    warnings: Object.freeze([...warnings]),
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Installed package validation
+// ---------------------------------------------------------------------------
+
+/**
+ * Validate a full installed extension package.
+ *
+ * Checks package structure, metadata/manifest cross-references,
+ * integrity hash presence, and delegates manifest-level validation
+ * to {@link validateManifest} in 'installed' mode.
+ */
+export function validateInstalledPackage(
+  pack: InstalledExtensionPackage,
+): ManifestValidationResult {
+  const errors: ExtensionDiagnostic[] = [];
+  const warnings: ExtensionDiagnostic[] = [];
+
+  const extId = pack.metadata?.extensionId as string ?? '(unknown)';
+
+  const pushErr = (code: string, message: string): void => {
+    errors.push({ severity: 'error', code, message, extensionId: extId });
+  };
+
+  const pushWarn = (code: string, message: string): void => {
+    warnings.push({ severity: 'warning', code, message, extensionId: extId });
+  };
+
+  // Structural checks
+  if (!pack.metadata) {
+    pushErr('package/missing-metadata', 'Installed package must include metadata');
+    return { valid: false, errors: Object.freeze([...errors]), warnings: Object.freeze([...warnings]) };
+  }
+
+  if (!pack.manifest) {
+    pushErr('package/missing-manifest', 'Installed package must include a manifest');
+    return { valid: false, errors: Object.freeze([...errors]), warnings: Object.freeze([...warnings]) };
+  }
+
+  if (typeof pack.bundleContent !== 'string' || pack.bundleContent.trim().length === 0) {
+    pushErr('package/missing-bundle', 'Installed package must include non-empty bundleContent');
+  }
+
+  // Cross-reference: metadata.extensionId === manifest.id
+  if (pack.metadata.extensionId !== pack.manifest.id) {
+    pushErr(
+      'package/id-mismatch',
+      `Metadata extensionId "${pack.metadata.extensionId}" does not match manifest.id "${pack.manifest.id}"`,
+    );
+  }
+
+  // Cross-reference: metadata.version === manifest.version
+  if (pack.metadata.version !== pack.manifest.version) {
+    pushErr(
+      'package/version-mismatch',
+      `Metadata version "${pack.metadata.version}" does not match manifest.version "${pack.manifest.version}"`,
+    );
+  }
+
+  // Integrity validation
+  if (!pack.metadata.integrity) {
+    pushErr('package/missing-integrity', 'Installed package metadata must include integrity hash');
+  } else {
+    if (!pack.metadata.integrity.algorithm || pack.metadata.integrity.algorithm !== 'sha256') {
+      pushErr(
+        'package/invalid-integrity-algorithm',
+        `Integrity algorithm "${pack.metadata.integrity.algorithm}" is not supported; only "sha256" is allowed`,
+      );
+    }
+    if (!pack.metadata.integrity.value || typeof pack.metadata.integrity.value !== 'string' || pack.metadata.integrity.value.trim().length === 0) {
+      pushErr('package/missing-integrity-value', 'Integrity hash value is required');
+    }
+  }
+
+  // Enabled must be boolean
+  if (typeof pack.metadata.enabled !== 'boolean') {
+    pushErr('package/invalid-enabled', 'Metadata enabled must be a boolean');
+  }
+
+  // Delegate to manifest validation in installed mode
+  const manifestResult = validateManifest(pack.manifest, 'installed');
+  for (const err of manifestResult.errors) {
+    errors.push(err);
+  }
+  for (const warn of manifestResult.warnings) {
+    warnings.push(warn);
+  }
+
+  return {
+    valid: errors.length === 0,
+    errors: Object.freeze([...errors]),
+    warnings: Object.freeze([...warnings]),
+  };
+}
+
+
+// ---------------------------------------------------------------------------
 // Extension manifest
 // ---------------------------------------------------------------------------
 
@@ -2310,27 +2800,30 @@ export interface ExtensionManifest {
     // M10: agent tool contributions
     | AgentToolContribution
   )[];
-  /** Reserved: descriptive permission metadata. */
+  /** Descriptive permission metadata. */
   permissions?: readonly ExtensionPermissionDeclaration[];
-  /** Reserved: process declarations. */
+  /** Process declarations. */
   processes?: readonly ProcessManifestEntry[];
-  /** Reserved: migration hooks. */
-  migrations?: readonly Record<string, unknown>[];
-  /** Reserved: human-readable comments. */
+  /** Typed migration hooks (preferred); legacy Record<string, unknown>[] accepted. */
+  migrations?: readonly (MigrationDeclaration | Record<string, unknown>)[];
+  /** Human-readable comments. */
   comments?: string;
-  /** Reserved: dependency declarations. */
-  dependsOn?: readonly {
-    extensionId: string;
-    versionRange?: string;
-    contributionIds?: readonly string[];
-    optional?: boolean;
-  }[];
-  /** Reserved: renderability descriptors. */
+  /** Typed dependency declarations. */
+  dependsOn?: readonly ExtensionDependency[];
+  /** Renderability descriptors. */
   renderability?: Record<string, unknown>;
   /** Extension-scoped settings defaults applied when no stored value exists. */
   settingsDefaults?: Record<string, unknown>;
+  /** Settings schema with version for migration tracking. */
+  settingsSchema?: ExtensionSettingsSchema;
   /** Bundled i18n messages keyed by locale-neutral key. */
   messages?: Record<string, string>;
+  /** Publisher identity (required for installed extensions). */
+  publisher?: string;
+  /** SPDX license identifier (recommended for installed extensions). */
+  license?: string;
+  /** Icon URL or data URI. */
+  icon?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -2344,6 +2837,12 @@ export interface ExtensionSettingsService {
   delete(key: string): void;
   keys(): readonly string[];
 }
+
+// Re-export the injectable settings service factory (T8)
+export { createExtensionSettingsService, getSettingsPrefix } from './extensionSettingsService';
+export { runSettingsMigration, getManifestSettingsSchemaVersion, findSettingsMigrationDeclarations } from './extensionSettingsMigration';
+export type { ExtensionSettingsServiceFactoryResult, CreateExtensionSettingsServiceOptions, SettingsMigrationConfig } from './extensionSettingsService';
+export type { SettingsMigrationHandler, SettingsMigrationResult, RunSettingsMigrationOptions } from './extensionSettingsMigration';
 
 /** i18n service: minimal t() scaffolding with namespace fallback. */
 export interface ExtensionI18nService {
@@ -2860,75 +3359,9 @@ export function createExtensionContext(
     },
   };
 
-  // ---- settings service (localStorage-backed, with manifest defaults) -------
-  const settingsPrefix = `reigh.ext.${extensionId}.`;
-  const settingsDefaults: Record<string, unknown> =
-    (manifest.settingsDefaults as Record<string, unknown> | undefined) ?? {};
-
-  /** Track keys set via this service so they can be cleaned up on dispose. */
-  const writtenKeys = new Set<string>();
-
-  const settingsService: ExtensionSettingsService = {
-    get<T = unknown>(key: string): T | undefined {
-      try {
-        const raw = localStorage.getItem(settingsPrefix + key);
-        if (raw !== null) return JSON.parse(raw) as T;
-        // Fall back to manifest defaults
-        if (key in settingsDefaults) return settingsDefaults[key] as T;
-        return undefined;
-      } catch {
-        // Fall back to manifest defaults on parse error
-        if (key in settingsDefaults) return settingsDefaults[key] as T;
-        return undefined;
-      }
-    },
-    set<T = unknown>(key: string, value: T): void {
-      try {
-        localStorage.setItem(settingsPrefix + key, JSON.stringify(value));
-        writtenKeys.add(key);
-      } catch {
-        // localStorage quota exceeded or unavailable — silently no-op
-      }
-    },
-    delete(key: string): void {
-      try {
-        localStorage.removeItem(settingsPrefix + key);
-        writtenKeys.delete(key);
-      } catch {
-        // localStorage unavailable — silently no-op
-      }
-    },
-    keys(): readonly string[] {
-      try {
-        const result: string[] = [];
-        for (let i = 0; i < localStorage.length; i++) {
-          const lsKey = localStorage.key(i);
-          if (lsKey && lsKey.startsWith(settingsPrefix)) {
-            result.push(lsKey.slice(settingsPrefix.length));
-          }
-        }
-        // Also include manifest default keys not yet written
-        for (const dk of Object.keys(settingsDefaults)) {
-          if (!result.includes(dk)) result.push(dk);
-        }
-        return result;
-      } catch {
-        return Object.keys(settingsDefaults);
-      }
-    },
-  };
-
-  /** Clean up all localStorage keys written by this extension's settings service. */
-  function disposeSettings(): void {
-    try {
-      writtenKeys.forEach((key) => {
-        localStorage.removeItem(settingsPrefix + key);
-      });
-      writtenKeys.clear();
-    } catch {
-      // localStorage unavailable — silently no-op
-    }
-  }
+  // ---- settings service (injectable factory, localStorage-backed) -----------
+  const { service: settingsService, dispose: disposeSettings } =
+    createExtensionSettingsService(extensionId, manifest);
 
   // ---- i18n service (with manifest message bundle fallback) ----------------
   const messages: Record<string, string> | undefined =
@@ -3336,6 +3769,7 @@ export function defineExtension(options: DefineExtensionOptions): ReighExtension
     dependsOn: manifest.dependsOn ? freezeManifestValue(manifest.dependsOn) : undefined,
     migrations: manifest.migrations ? freezeManifestValue(manifest.migrations) : undefined,
     settingsDefaults: manifest.settingsDefaults ? freezeManifestValue(manifest.settingsDefaults) : undefined,
+    settingsSchema: manifest.settingsSchema ? freezeManifestValue(manifest.settingsSchema) : undefined,
     messages: manifest.messages ? freezeManifestValue(manifest.messages) : undefined,
   });
 

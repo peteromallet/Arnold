@@ -23,12 +23,25 @@ import { GenerationSection } from "./sections/GenerationSection";
 import { useWorkerLaunchConfig } from "./hooks/useWorkerLaunchConfig";
 import { PreferencesSection } from "./sections/PreferencesSection";
 import { TransactionsSection } from "./sections/TransactionsSection";
+import { ExtensionsSection } from "./sections/ExtensionsSection";
 import type { SettingsModalProps } from "./types";
 
 const SettingsModal: React.FC<SettingsModalProps> = ({
   isOpen,
   onOpenChange,
   creditsTab = "purchase",
+  extensions,
+  extensionsLoading = false,
+  onEnableExtension,
+  onDisableExtension,
+  onInstallExtension,
+  onUseLocalSource,
+  onRevertToInstalled,
+  allLifecycleEvents,
+  onUpdateSettings,
+  onUninstallExtension,
+  pendingUninstallReport,
+  isUninstalling,
 }) => {
   const isMobile = useIsMobile();
 
@@ -54,7 +67,7 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
   const { config: launchConfig, setters: launchSetters } = useWorkerLaunchConfig();
 
   // Settings section toggle (Generation vs Transactions vs Preferences)
-  const [settingsSection, setSettingsSection] = useState<'app' | 'transactions' | 'preferences'>('app');
+  const [settingsSection, setSettingsSection] = useState<'app' | 'transactions' | 'preferences' | 'extensions'>('app');
 
   // Lock modal height based on first section content
   const [lockedHeight, setLockedHeight] = useState<number | null>(null);
@@ -186,6 +199,16 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
                 >
                   Preferences
                 </button>
+                <button
+                  onClick={() => setSettingsSection('extensions')}
+                  className={`${isMobile ? 'px-2 py-0.5 text-[11px]' : 'px-3 py-1 text-xs'} font-medium rounded-full transition-all duration-200 focus:outline-none ${
+                    settingsSection === 'extensions'
+                      ? 'bg-background text-foreground shadow-sm'
+                      : 'text-muted-foreground hover:text-foreground'
+                  }`}
+                >
+                  Extensions
+                </button>
               </div>
             </div>
           </DialogHeader>
@@ -196,6 +219,25 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
           ref={scrollRef}
           className={`${modal.scrollClass} ${modal.isMobile ? 'px-2' : 'px-2'} overflow-x-hidden [scrollbar-gutter:stable_both-edges] [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none] sm:[&::-webkit-scrollbar]:block sm:[-ms-overflow-style:auto] sm:[scrollbar-width:auto] sm:pr-4`}
         >
+          {/* Extensions Section */}
+          {settingsSection === 'extensions' && (
+            <ExtensionsSection
+              isMobile={isMobile}
+              extensions={extensions}
+              isLoading={extensionsLoading}
+              onEnableExtension={onEnableExtension}
+              onDisableExtension={onDisableExtension}
+              onInstallExtension={onInstallExtension}
+              onUseLocalSource={onUseLocalSource}
+              onRevertToInstalled={onRevertToInstalled}
+              allLifecycleEvents={allLifecycleEvents}
+              onUpdateSettings={onUpdateSettings}
+              onUninstallExtension={onUninstallExtension}
+              pendingUninstallReport={pendingUninstallReport}
+              isUninstalling={isUninstalling}
+            />
+          )}
+
           {/* Transactions Section */}
           {settingsSection === 'transactions' && <TransactionsSection />}
 

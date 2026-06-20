@@ -10,6 +10,9 @@ import type {
   VideoEditorHostContext,
 } from '@/tools/video-editor/lib/browser-runtime.ts';
 import type { ReighExtension } from '@reigh/editor-sdk';
+import { useExtensionLoaderWiring } from '@/tools/video-editor/runtime/useExtensionLoaderWiring';
+import type { ExtensionStateRepository } from '@/tools/video-editor/runtime/extensionStateRepository';
+import type { BundleContentStore } from '@/tools/video-editor/runtime/useExtensionLoaderWiring';
 
 export interface BrowserVideoEditorProviderProps {
   dataProvider: DataProvider;
@@ -21,6 +24,10 @@ export interface BrowserVideoEditorProviderProps {
   exporter?: VideoEditorExporter | null;
   hostContext?: VideoEditorHostContext | null;
   extensions?: readonly ReighExtension[];
+  /** M14: Optional extension state repository for installed pack resolution. */
+  repository?: ExtensionStateRepository | null;
+  /** M14: Optional bundle content store for installed pack bytes (IndexedDB). */
+  bundleStore?: BundleContentStore | null;
   queryClient?: QueryClient;
   initialEntries?: string[];
   children: ReactNode;
@@ -51,11 +58,23 @@ export function BrowserVideoEditorProvider({
   exporter = null,
   hostContext = null,
   extensions,
+  repository,
+  bundleStore,
   queryClient,
   initialEntries,
   children,
 }: BrowserVideoEditorProviderProps) {
   const [ownedQueryClient] = useState(() => queryClient ?? createDefaultQueryClient());
+
+  // ---- M14: extension loader wiring (host-owned) --------------------------
+  const {
+    resolvedExtensions,
+    isResolving: _loaderIsResolving,
+  } = useExtensionLoaderWiring({
+    directExtensions: extensions,
+    repository: repository ?? null,
+    bundleStore: bundleStore ?? null,
+  });
 
   return (
     <QueryClientProvider client={ownedQueryClient}>
@@ -67,7 +86,7 @@ export function BrowserVideoEditorProvider({
           userId={userId}
           effectCatalog={effectCatalog}
           runtime={{ assetResolver, exporter, hostContext }}
-          extensions={extensions}
+          extensions={resolvedExtensions}
         >
           {children}
         </EditorRuntimeProvider>
