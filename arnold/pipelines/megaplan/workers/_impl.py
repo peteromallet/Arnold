@@ -1233,11 +1233,11 @@ def _codex_exec_mode_flags(step: str) -> list[str]:
         return []
     # All non-execute phases (plan, prep, critique, revise, gate, finalize,
     # review) need to write template artifacts (plan markdown, metadata JSON,
-    # critique/review JSON, finalize.json). Without --full-auto codex defaults
-    # to on-request approval, which fails silently when stdin is the prompt
-    # (no tty). Default everything to --full-auto and let the workspace-write
-    # sandbox plus writable_roots configuration constrain actual writes.
-    return ["--full-auto"]
+    # critique/review JSON, finalize.json). Without an explicit sandbox codex
+    # defaults to on-request approval, which fails silently when stdin is the
+    # prompt (no tty). Default everything to workspace-write sandbox mode so
+    # codex auto-approves writes within configured writable_roots.
+    return ["--sandbox", "workspace-write"]
 
 
 _ROLLOUT_MISSING_PATTERNS = (

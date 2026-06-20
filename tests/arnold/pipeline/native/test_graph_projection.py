@@ -20,7 +20,7 @@ from arnold.pipeline.native import (
     pipeline,
     project_graph,
 )
-from arnold.pipeline.types import Pipeline, Stage
+from arnold.pipeline.types import ParallelStage, Pipeline, Stage
 from arnold.pipeline.validator import validate
 
 
@@ -1232,3 +1232,587 @@ class TestPhaseKeyedProjection:
         for name, stage in graph.stages.items():
             assert hasattr(stage.step, "run"), f"Stage {name} has no run method"
             assert callable(stage.step.run)
+
+
+# ── parallel projection ───────────────────────────────────────────────
+
+
+# Captured topology hashes for parallel native programs (2026-06-20).
+# These pin the canonical projection output so any structural regression
+# is caught immediately.
+EXPECTED_SIMPLE_PARALLEL_TOPOLOGY_HASH: str = (
+    "sha256:dcaa4e51611cff5e5bc334c66d98c3898697695facd78555ebedf4e99da7caae"
+)
+EXPECTED_SIMPLE_PARALLEL_PHASE_KEYED_TOPOLOGY_HASH: str = (
+    "sha256:111211e838814c447fcd8535205b71f46d91c2e88d22fa132b63bf9a11faa8b3"
+)
+EXPECTED_TYPED_PARALLEL_TOPOLOGY_HASH: str = (
+    "sha256:4c5023b0ae3f8c086227e8c393da23c989562bc147264e945b17a1ec5459e979"
+)
+EXPECTED_SEQ_PARALLEL_TOPOLOGY_HASH: str = (
+    "sha256:33a5b6d75f4d2bff5664496e2d85a37e4b70a55465293d38aa66a5d1d4b0dac3"
+)
+
+
+class TestParallelProjection:
+    """Graph projection for native parallel(…) blocks."""
+
+    def test_simple_two_branch_parallel_produces_parallelstage(self) -> None:
+        """A two-branch parallel block projects into a single ParallelStage."""
+        from arnold.pipeline.native import parallel as p_func
+
+        @phase
+        def branch_a(ctx: object) -> dict:
+            return {"a": 1}
+
+        @phase
+        def branch_b(ctx: object) -> dict:
+            return {"b": 2}
+
+        @pipeline
+        def my_pipe(ctx: object) -> dict:
+            for branch in p_func([branch_a, branch_b]):
+                state = yield branch(ctx)
+            return state
+
+        prog = compile_pipeline(my_pipe)
+        graph = project_graph(prog)
+
+        assert len(graph.stages) == 1
+        stage = list(graph.stages.values())[0]
+        assert isinstance(stage, ParallelStage)
+        assert len(stage.steps) == 2
+        assert stage.steps[0].name == "branch_a"
+        assert stage.steps[1].name == "branch_b"
+
+    def test_parallel_stage_has_join(self) -> None:
+        """ParallelStage.join is a callable (default join or reducer)."""
+        from arnold.pipeline.native import parallel as p_func
+
+        @phase
+        def branch_a(ctx: object) -> dict:
+            return {"a": 1}
+
+        @phase
+        def branch_b(ctx: object) -> dict:
+            return {"b": 2}
+
+        @pipeline
+        def my_pipe(ctx: object) -> dict:
+            for branch in p_func([branch_a, branch_b]):
+                state = yield branch(ctx)
+            return state
+
+        prog = compile_pipeline(my_pipe)
+        graph = project_graph(prog)
+        stage = list(graph.stages.values())[0]
+        assert callable(stage.join)
+
+    def test_parallel_stage_edges_to_halt_when_no_successor(self) -> None:
+        """A terminal parallel block has a halt edge."""
+        from arnold.pipeline.native import parallel as p_func
+
+        @phase
+        def branch_a(ctx: object) -> dict:
+            return {"a": 1}
+
+        @phase
+        def branch_b(ctx: object) -> dict:
+            return {"b": 2}
+
+        @pipeline
+        def my_pipe(ctx: object) -> dict:
+            for branch in p_func([branch_a, branch_b]):
+                state = yield branch(ctx)
+            return state
+
+        prog = compile_pipeline(my_pipe)
+        graph = project_graph(prog)
+        stage = list(graph.stages.values())[0]
+        edges = [(e.label, e.target) for e in stage.edges]
+        assert ("halt", "halt") in edges
+
+    def test_parallel_with_reducer_uses_custom_join(self) -> None:
+        """When a reducer is supplied, ParallelStage.join is the reducer."""
+        from arnold.pipeline.native import parallel as p_func
+
+        @phase
+        def step_a(ctx: object) -> dict:
+            return {"x": 10}
+
+        @phase
+        def step_b(ctx: object) -> dict:
+            return {"x": 20}
+
+        def my_reducer(results: list, ctx: object) -> dict:
+            return {"x": sum(r.outputs.get("x", 0) for r in results)}
+
+        @pipeline
+        def my_pipe(ctx: object) -> dict:
+            for branch in p_func([step_a, step_b], reducer=my_reducer, name="sum_x"):
+                state = yield branch(ctx)
+            return state
+
+        prog = compile_pipeline(my_pipe)
+        graph = project_graph(prog)
+        stage = list(graph.stages.values())[0]
+        assert stage.join is my_reducer
+
+    def test_parallel_pipeline_validates(self) -> None:
+        """A projected parallel pipeline passes validation."""
+        from arnold.pipeline.native import parallel as p_func
+
+        @phase
+        def branch_a(ctx: object) -> dict:
+            return {"a": 1}
+
+        @phase
+        def branch_b(ctx: object) -> dict:
+            return {"b": 2}
+
+        @pipeline
+        def my_pipe(ctx: object) -> dict:
+            for branch in p_func([branch_a, branch_b]):
+                state = yield branch(ctx)
+            return state
+
+        prog = compile_pipeline(my_pipe)
+        graph = project_graph(prog)
+        result = validate(graph)
+        assert len(result.defects) == 0
+
+    def test_sequential_before_parallel_edges_correctly(self) -> None:
+        """A Stage before a ParallelStage has an edge targeting it."""
+        from arnold.pipeline.native import parallel as p_func
+
+        @phase
+        def setup(ctx: object) -> dict:
+            return {"ready": True}
+
+        @phase
+        def branch_a(ctx: object) -> dict:
+            return {"a": 1}
+
+        @phase
+        def branch_b(ctx: object) -> dict:
+            return {"b": 2}
+
+        @pipeline
+        def my_pipe(ctx: object) -> dict:
+            state = yield setup(ctx)
+            for branch in p_func([branch_a, branch_b]):
+                state = yield branch(ctx)
+            return state
+
+        prog = compile_pipeline(my_pipe)
+        graph = project_graph(prog)
+
+        assert len(graph.stages) == 2
+        parallel_name = [
+            n for n, s in graph.stages.items() if isinstance(s, ParallelStage)
+        ][0]
+        setup_stage = [
+            s for s in graph.stages.values() if isinstance(s, Stage)
+        ][0]
+        setup_targets = [e.target for e in setup_stage.edges]
+        assert parallel_name in setup_targets, (
+            f"Setup edges should target parallel stage {parallel_name!r}, "
+            f"got targets {setup_targets!r}"
+        )
+
+    def test_multiple_parallel_blocks_in_sequence(self) -> None:
+        """Two sequential parallel blocks each project to a ParallelStage."""
+        from arnold.pipeline.native import parallel as p_func
+
+        @phase
+        def work_a(ctx: object) -> dict:
+            return {"a": 1}
+
+        @phase
+        def work_b(ctx: object) -> dict:
+            return {"b": 2}
+
+        @phase
+        def work_c(ctx: object) -> dict:
+            return {"c": 3}
+
+        @phase
+        def work_d(ctx: object) -> dict:
+            return {"d": 4}
+
+        @pipeline
+        def my_pipe(ctx: object) -> dict:
+            for branch in p_func([work_a, work_b], name="batch1"):
+                state = yield branch(ctx)
+            for branch in p_func([work_c, work_d], name="batch2"):
+                state = yield branch(ctx)
+            return state
+
+        prog = compile_pipeline(my_pipe)
+        graph = project_graph(prog)
+
+        assert len(graph.stages) == 2
+        for s in graph.stages.values():
+            assert isinstance(s, ParallelStage)
+            assert len(s.steps) == 2
+
+        # First parallel stage should have edge to second
+        names = list(graph.stages.keys())
+        stage0 = graph.stages[names[0]]
+        stage0_targets = [e.target for e in stage0.edges]
+        assert names[1] in stage0_targets, (
+            f"First parallel stage should target {names[1]!r}, "
+            f"got {stage0_targets!r}"
+        )
+
+    def test_parallel_with_typed_ports_preserves_produces(self) -> None:
+        """Typed ports on branch phases are unioned on the ParallelStage."""
+        from arnold.pipeline.native import parallel as p_func
+        from arnold.pipeline.types import Port
+
+        port_a = Port(name="result_a", content_type="text/plain")
+        port_b = Port(name="result_b", content_type="text/plain")
+
+        @phase(produces=(port_a,))
+        def typed_a(ctx: object) -> dict:
+            return {"result_a": "hello"}
+
+        @phase(produces=(port_b,))
+        def typed_b(ctx: object) -> dict:
+            return {"result_b": "world"}
+
+        @pipeline
+        def my_pipe(ctx: object) -> dict:
+            for branch in p_func([typed_a, typed_b], name="typed_batch"):
+                state = yield branch(ctx)
+            return state
+
+        prog = compile_pipeline(my_pipe)
+        graph = project_graph(prog)
+        stage = list(graph.stages.values())[0]
+        prod_names = {p.name for p in stage.produces}
+        assert "result_a" in prod_names
+        assert "result_b" in prod_names
+
+    def test_phase_keyed_parallel_stage_name(self) -> None:
+        """Phase-keyed projection uses the parallel block name."""
+        from arnold.pipeline.native import parallel as p_func
+
+        @phase
+        def branch_a(ctx: object) -> dict:
+            return {"a": 1}
+
+        @phase
+        def branch_b(ctx: object) -> dict:
+            return {"b": 2}
+
+        @pipeline
+        def my_pipe(ctx: object) -> dict:
+            for branch in p_func([branch_a, branch_b], name="my_block"):
+                state = yield branch(ctx)
+            return state
+
+        prog = compile_pipeline(my_pipe)
+        graph = project_graph(prog, key_mode="phase")
+        assert "my_block" in graph.stages
+        assert isinstance(graph.stages["my_block"], ParallelStage)
+
+    def test_phase_keyed_parallel_validates(self) -> None:
+        """Phase-keyed parallel projection passes validation."""
+        from arnold.pipeline.native import parallel as p_func
+
+        @phase
+        def branch_a(ctx: object) -> dict:
+            return {"a": 1}
+
+        @phase
+        def branch_b(ctx: object) -> dict:
+            return {"b": 2}
+
+        @pipeline
+        def my_pipe(ctx: object) -> dict:
+            for branch in p_func([branch_a, branch_b]):
+                state = yield branch(ctx)
+            return state
+
+        prog = compile_pipeline(my_pipe)
+        graph = project_graph(prog, key_mode="phase")
+        result = validate(graph)
+        assert len(result.defects) == 0
+
+    def test_phase_keyed_parallel_with_reducer(self) -> None:
+        """Phase-keyed parallel with custom reducer preserves join."""
+        from arnold.pipeline.native import parallel as p_func
+
+        @phase
+        def step_a(ctx: object) -> dict:
+            return {"x": 10}
+
+        @phase
+        def step_b(ctx: object) -> dict:
+            return {"x": 20}
+
+        def my_reducer(results: list, ctx: object) -> dict:
+            return {"x": sum(r.outputs.get("x", 0) for r in results)}
+
+        @pipeline
+        def my_pipe(ctx: object) -> dict:
+            for branch in p_func([step_a, step_b], reducer=my_reducer, name="sum_x"):
+                state = yield branch(ctx)
+            return state
+
+        prog = compile_pipeline(my_pipe)
+        graph = project_graph(prog, key_mode="phase")
+        stage = graph.stages["sum_x"]
+        assert isinstance(stage, ParallelStage)
+        assert stage.join is my_reducer
+
+    def test_phase_keyed_parallel_with_typed_ports(self) -> None:
+        """Phase-keyed parallel with typed ports preserves produces/consumes."""
+        from arnold.pipeline.native import parallel as p_func
+        from arnold.pipeline.types import Port
+
+        port_a = Port(name="result_a", content_type="text/plain")
+        port_b = Port(name="result_b", content_type="text/plain")
+
+        @phase(produces=(port_a,))
+        def typed_a(ctx: object) -> dict:
+            return {"result_a": "hello"}
+
+        @phase(produces=(port_b,))
+        def typed_b(ctx: object) -> dict:
+            return {"result_b": "world"}
+
+        @pipeline
+        def my_pipe(ctx: object) -> dict:
+            for branch in p_func([typed_a, typed_b], name="typed_batch"):
+                state = yield branch(ctx)
+            return state
+
+        prog = compile_pipeline(my_pipe)
+        graph = project_graph(prog, key_mode="phase")
+        stage = graph.stages["typed_batch"]
+        prod_names = {p.name for p in stage.produces}
+        assert "result_a" in prod_names
+        assert "result_b" in prod_names
+
+    # ── topology hash coverage ────────────────────────────────────
+
+    def test_simple_parallel_topology_hash_matches_baseline(self) -> None:
+        """compute_topology_hash on a simple parallel pipeline matches the pinned baseline."""
+        from arnold.pipeline.native import parallel as p_func
+        from arnold.pipeline.topology import compute_topology_hash
+
+        @phase
+        def branch_a(ctx: object) -> dict:
+            return {"a": 1}
+
+        @phase
+        def branch_b(ctx: object) -> dict:
+            return {"b": 2}
+
+        @pipeline
+        def my_pipe(ctx: object) -> dict:
+            for branch in p_func([branch_a, branch_b]):
+                state = yield branch(ctx)
+            return state
+
+        prog = compile_pipeline(my_pipe)
+        graph = project_graph(prog)
+        actual = compute_topology_hash(graph)
+        assert actual == EXPECTED_SIMPLE_PARALLEL_TOPOLOGY_HASH, (
+            f"Topology hash mismatch!\n"
+            f"  expected: {EXPECTED_SIMPLE_PARALLEL_TOPOLOGY_HASH}\n"
+            f"  actual:   {actual}\n"
+            f"If the graph was intentionally changed, update "
+            f"EXPECTED_SIMPLE_PARALLEL_TOPOLOGY_HASH in this file."
+        )
+
+    def test_simple_parallel_topology_hash_is_stable(self) -> None:
+        """Multiple projections of the same program produce the same topology hash."""
+        from arnold.pipeline.native import parallel as p_func
+        from arnold.pipeline.topology import compute_topology_hash
+
+        @phase
+        def branch_a(ctx: object) -> dict:
+            return {"a": 1}
+
+        @phase
+        def branch_b(ctx: object) -> dict:
+            return {"b": 2}
+
+        @pipeline
+        def my_pipe(ctx: object) -> dict:
+            for branch in p_func([branch_a, branch_b]):
+                state = yield branch(ctx)
+            return state
+
+        prog = compile_pipeline(my_pipe)
+        hashes = {compute_topology_hash(project_graph(prog)) for _ in range(5)}
+        assert len(hashes) == 1, (
+            f"Expected 1 unique hash across 5 builds, got {len(hashes)}"
+        )
+
+    def test_phase_keyed_parallel_topology_hash_matches_baseline(self) -> None:
+        """compute_topology_hash on phase-keyed parallel projection matches pinned baseline."""
+        from arnold.pipeline.native import parallel as p_func
+        from arnold.pipeline.topology import compute_topology_hash
+
+        @phase
+        def branch_a(ctx: object) -> dict:
+            return {"a": 1}
+
+        @phase
+        def branch_b(ctx: object) -> dict:
+            return {"b": 2}
+
+        @pipeline
+        def my_pipe(ctx: object) -> dict:
+            for branch in p_func([branch_a, branch_b]):
+                state = yield branch(ctx)
+            return state
+
+        prog = compile_pipeline(my_pipe)
+        graph = project_graph(prog, key_mode="phase")
+        actual = compute_topology_hash(graph)
+        assert actual == EXPECTED_SIMPLE_PARALLEL_PHASE_KEYED_TOPOLOGY_HASH, (
+            f"Phase-keyed topology hash mismatch!\n"
+            f"  expected: {EXPECTED_SIMPLE_PARALLEL_PHASE_KEYED_TOPOLOGY_HASH}\n"
+            f"  actual:   {actual}\n"
+            f"If the graph was intentionally changed, update "
+            f"EXPECTED_SIMPLE_PARALLEL_PHASE_KEYED_TOPOLOGY_HASH in this file."
+        )
+
+    def test_typed_parallel_topology_hash_matches_baseline(self) -> None:
+        """compute_topology_hash on parallel with typed ports matches pinned baseline."""
+        from arnold.pipeline.native import parallel as p_func
+        from arnold.pipeline.topology import compute_topology_hash
+        from arnold.pipeline.types import Port
+
+        port_a = Port(name="result_a", content_type="text/plain")
+        port_b = Port(name="result_b", content_type="text/plain")
+
+        @phase(produces=(port_a,))
+        def typed_a(ctx: object) -> dict:
+            return {"result_a": "hello"}
+
+        @phase(produces=(port_b,))
+        def typed_b(ctx: object) -> dict:
+            return {"result_b": "world"}
+
+        @pipeline
+        def my_pipe(ctx: object) -> dict:
+            for branch in p_func([typed_a, typed_b], name="typed_batch"):
+                state = yield branch(ctx)
+            return state
+
+        prog = compile_pipeline(my_pipe)
+        graph = project_graph(prog)
+        actual = compute_topology_hash(graph)
+        assert actual == EXPECTED_TYPED_PARALLEL_TOPOLOGY_HASH, (
+            f"Typed parallel topology hash mismatch!\n"
+            f"  expected: {EXPECTED_TYPED_PARALLEL_TOPOLOGY_HASH}\n"
+            f"  actual:   {actual}"
+        )
+
+    def test_sequential_parallel_topology_hash_matches_baseline(self) -> None:
+        """compute_topology_hash on sequential + parallel matches pinned baseline."""
+        from arnold.pipeline.native import parallel as p_func
+        from arnold.pipeline.topology import compute_topology_hash
+
+        @phase
+        def setup(ctx: object) -> dict:
+            return {"ready": True}
+
+        @phase
+        def branch_a(ctx: object) -> dict:
+            return {"a": 1}
+
+        @phase
+        def branch_b(ctx: object) -> dict:
+            return {"b": 2}
+
+        @pipeline
+        def my_pipe(ctx: object) -> dict:
+            state = yield setup(ctx)
+            for branch in p_func([branch_a, branch_b]):
+                state = yield branch(ctx)
+            return state
+
+        prog = compile_pipeline(my_pipe)
+        graph = project_graph(prog)
+        actual = compute_topology_hash(graph)
+        assert actual == EXPECTED_SEQ_PARALLEL_TOPOLOGY_HASH, (
+            f"Sequential+parallel topology hash mismatch!\n"
+            f"  expected: {EXPECTED_SEQ_PARALLEL_TOPOLOGY_HASH}\n"
+            f"  actual:   {actual}"
+        )
+
+    def test_topology_hash_format(self) -> None:
+        """Parallel topology hash has the canonical sha256:<hex> form."""
+        from arnold.pipeline.native import parallel as p_func
+        from arnold.pipeline.topology import compute_topology_hash
+
+        @phase
+        def branch_a(ctx: object) -> dict:
+            return {"a": 1}
+
+        @phase
+        def branch_b(ctx: object) -> dict:
+            return {"b": 2}
+
+        @pipeline
+        def my_pipe(ctx: object) -> dict:
+            for branch in p_func([branch_a, branch_b]):
+                state = yield branch(ctx)
+            return state
+
+        prog = compile_pipeline(my_pipe)
+        graph = project_graph(prog)
+        h = compute_topology_hash(graph)
+        assert h.startswith("sha256:"), f"Missing sha256: prefix: {h[:20]!r}..."
+        assert len(h) == 71, f"Expected 71 chars, got {len(h)}"
+        hex_part = h[7:]
+        assert all(c in "0123456789abcdef" for c in hex_part), "Non-hex in digest"
+
+    # ── binding map coverage ──────────────────────────────────────
+
+    def test_parallel_binding_map_with_matching_ports(self) -> None:
+        """derive_binding_map sees parallel-stage produces/consumes."""
+        from arnold.pipeline.native import parallel as p_func
+        from arnold.pipeline.declaration_lowering import derive_binding_map
+        from arnold.pipeline.types import Port, PortRef
+
+        port_out = Port(name="shared", content_type="text/plain")
+        port_in = PortRef(port_name="shared", content_type="text/plain")
+
+        @phase(produces=(port_out,))
+        def producer(ctx: object) -> dict:
+            return {"shared": "val"}
+
+        @phase(consumes=(port_in,))
+        def consumer(ctx: object) -> dict:
+            return {}
+
+        @pipeline
+        def my_pipe(ctx: object) -> dict:
+            for branch in p_func([producer, consumer], name="batch"):
+                state = yield branch(ctx)
+            return state
+
+        prog = compile_pipeline(my_pipe)
+        graph = project_graph(prog)
+
+        edge_pairs = [
+            (src, edge.target)
+            for src, stage in graph.stages.items()
+            for edge in stage.edges
+            if edge.target != "halt"
+        ]
+        binding_map = derive_binding_map(graph.stages, edge_pairs)
+        # With a single ParallelStage containing both producer and consumer,
+        # derive_binding_map may return None (no cross-stage edges to bind)
+        # or an empty dict — both are acceptable.
+        assert binding_map is None or binding_map == {}, (
+            f"Expected None or empty dict, got {binding_map!r}"
+        )

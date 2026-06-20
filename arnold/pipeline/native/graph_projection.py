@@ -15,9 +15,10 @@ from collections.abc import Iterable, Mapping
 from typing import Any, Callable
 
 from arnold.pipeline.declaration_lowering import derive_binding_map
-from arnold.pipeline.native.ir import NativeInstruction, NativeProgram
+from arnold.pipeline.native.ir import NativeInstruction, NativeProgram, ParallelInstruction
 from arnold.pipeline.types import (
     Edge,
+    ParallelStage,
     Pipeline,
     Port,
     PortRef,
@@ -84,6 +85,23 @@ class _NativeDecisionStep:
         return StepResult(next=next_label)
 
 
+# ── default parallel join ───────────────────────────────────────────
+
+
+def _default_parallel_join(results: list[StepResult], ctx: StepContext) -> StepResult:
+    """Default fan-in join: collect all branch outputs into a merged dict.
+
+    When a :class:`ParallelInstruction` has no custom ``reducer``, this
+    default collects the outputs from every completed branch into a
+    single ``StepResult`` that the runtime can merge into working state.
+    """
+    merged: dict[str, Any] = {}
+    for r in results:
+        if r.outputs:
+            merged.update(r.outputs)
+    return StepResult(outputs=merged, next="halt")
+
+
 # ── public entry point ──────────────────────────────────────────────
 
 
@@ -92,7 +110,10 @@ def project_graph(program: NativeProgram, key_mode: str = "pc") -> Pipeline:
 
     Only ``phase`` and ``decision`` instructions become stages.
     ``jump`` and ``halt`` instructions route edges but do not create
-    their own stages.
+    their own stages.  ``parallel`` markers project into
+    :class:`ParallelStage` entries whose ``steps`` are the inlined
+    branch phases and whose ``join`` is the reducer (or a default
+    collector).
 
     Args:
         program: A :class:`NativeProgram` from :func:`compile_pipeline`.
@@ -115,6 +136,27 @@ def project_graph(program: NativeProgram, key_mode: str = "pc") -> Pipeline:
 
     prefix = _safe_name(program.name)
 
+    # ── pre-scan: parallel blocks ─────────────────────────────────
+    # Identify every parallel marker, the branch-phase PCs that belong to
+    # it, and the merge PC.  Branch PCs are absorbed into a ParallelStage
+    # and must not become standalone Stage entries.
+    parallel_blocks: dict[int, ParallelInstruction] = {}  # marker_pc -> ParallelInstruction
+    parallel_branch_pcs: set[int] = set()
+    parallel_merge_pcs: dict[int, int] = {}  # marker_pc -> merge_pc
+
+    for i, instr in enumerate(instructions):
+        if instr.op == "parallel" and instr.subprogram is not None:
+            if isinstance(instr.subprogram, ParallelInstruction):
+                pi = instr.subprogram
+                parallel_blocks[instr.pc] = pi
+                parallel_merge_pcs[instr.pc] = pi.merge_pc if pi.merge_pc is not None else len(instructions)
+                # Branch phases lie between marker_pc+1 and merge_pc-1
+                merge = pi.merge_pc if pi.merge_pc is not None else len(instructions)
+                for j in range(instr.pc + 1, merge):
+                    if j < len(instructions):
+                        parallel_branch_pcs.add(j)
+
+    # ── loop header detection ─────────────────────────────────────
     loop_header_pcs: set[int] = set()
     for i, instr in enumerate(instructions):
         if instr.op == "jump" and instr.next_pc is not None:
@@ -122,13 +164,30 @@ def project_graph(program: NativeProgram, key_mode: str = "pc") -> Pipeline:
             if target_pc < i and target_pc >= 0:
                 loop_header_pcs.add(target_pc)
 
-    duplicate_names = _duplicate_public_names(instructions, key_mode=key_mode)
+    duplicate_names = _duplicate_public_names(
+        instructions, key_mode=key_mode, parallel_branch_pcs=parallel_branch_pcs
+    )
 
+    # ── build real_instrs + pc_to_stage ───────────────────────────
     real_instrs: list[NativeInstruction] = []
     pc_to_stage: dict[int, str] = {}
+
     for instr in instructions:
+        # Parallel markers become ParallelStage entries.
+        if instr.op == "parallel":
+            pi = parallel_blocks.get(instr.pc)
+            block_name = pi.name if pi is not None else f"parallel_{instr.pc}"
+            stage_name = _parallel_stage_name(
+                block_name, instr.pc, key_mode=key_mode, prefix=prefix
+            )
+            pc_to_stage[instr.pc] = stage_name
+            real_instrs.append(instr)
+            continue
+
         if instr.op not in ("phase", "decision"):
             continue
+        if instr.pc in parallel_branch_pcs:
+            continue  # Absorbed into a ParallelStage
         func = instr.func
         if func is not None and _projection_flag(func, "skip_stage", False):
             continue
@@ -144,8 +203,10 @@ def project_graph(program: NativeProgram, key_mode: str = "pc") -> Pipeline:
     if not real_instrs:
         raise ValueError("NativeProgram has no phase or decision instructions")
 
+    # ── edge-resolution helpers ───────────────────────────────────
+
     def _resolve_next_real_pc(start_pc: int) -> int | None:
-        """Follow jumps to find the next phase/decision pc, or None for halt."""
+        """Follow jumps to find the next phase/decision/parallel pc, or None for halt."""
         visited: set[int] = set()
         cur = start_pc
         while cur >= 0 and cur < len(instructions):
@@ -153,7 +214,7 @@ def project_graph(program: NativeProgram, key_mode: str = "pc") -> Pipeline:
                 return None
             visited.add(cur)
             instr = instructions[cur]
-            if instr.op in ("phase", "decision"):
+            if instr.op in ("phase", "decision", "parallel"):
                 return cur
             if instr.op == "halt":
                 return None
@@ -182,15 +243,89 @@ def project_graph(program: NativeProgram, key_mode: str = "pc") -> Pipeline:
                 cur += 1
         return None
 
-    stages: dict[str, Stage] = {}
+    # ── build stages ──────────────────────────────────────────────
+    stages: dict[str, Stage | ParallelStage] = {}
     edges_by_src: dict[str, list[Edge]] = {}
     entry: str | None = None
+    # Track which marker PCs have already been processed (avoid double-processing
+    # when a parallel instruction appears in real_instrs alongside its branches).
+    processed_parallel_markers: set[int] = set()
 
     for instr in real_instrs:
         src_name = pc_to_stage[instr.pc]
         if entry is None:
             entry = src_name
 
+        # ── parallel stage ──────────────────────────────────────
+        if instr.op == "parallel":
+            if instr.pc in processed_parallel_markers:
+                continue
+            processed_parallel_markers.add(instr.pc)
+
+            pi = parallel_blocks.get(instr.pc)
+            if pi is None:
+                # Degenerate: parallel marker without metadata — skip
+                continue
+
+            # Collect branch-phase steps from the instruction stream.
+            merge = pi.merge_pc if pi.merge_pc is not None else len(instructions)
+            branch_steps: list[Step] = []
+            branch_produces: tuple[Port, ...] = ()
+            branch_consumes: tuple[PortRef, ...] = ()
+            for j in range(instr.pc + 1, merge):
+                if j >= len(instructions):
+                    break
+                binstr = instructions[j]
+                if binstr.op != "phase":
+                    continue
+                bf = binstr.func
+                bname = binstr.name
+                bproduces = getattr(binstr, "produces", ()) or ()
+                bconsumes = getattr(binstr, "consumes", ()) or ()
+                if bf is not None:
+                    branch_steps.append(
+                        _NativePhaseStep(
+                            name=bname,
+                            func=bf,
+                            produces=bproduces,
+                            consumes=bconsumes,
+                        )
+                    )
+                    branch_produces = _merge_unique(branch_produces, bproduces)
+                    branch_consumes = _merge_unique(branch_consumes, bconsumes)
+                else:
+                    branch_steps.append(
+                        _NativePhaseStep(name=bname, func=lambda _: {})
+                    )
+
+            if not branch_steps:
+                # Parallel block with no branch phases — skip
+                continue
+
+            # Build edges for the parallel stage (to merge point).
+            edges = _projected_parallel_edges(
+                pi=pi,
+                merge_pc=merge,
+                pc_to_stage=pc_to_stage,
+                resolve_next_real_pc=_resolve_next_real_pc,
+                resolve_next_public_pc=_resolve_next_public_pc,
+            )
+
+            join_func = pi.reducer if pi.reducer is not None else _default_parallel_join
+
+            parallel_stage = ParallelStage(
+                name=src_name,
+                steps=tuple(branch_steps),
+                join=join_func,
+                edges=tuple(edges),
+                produces=branch_produces,
+                consumes=branch_consumes,
+            )
+            stages[src_name] = parallel_stage
+            edges_by_src[src_name] = list(edges)
+            continue
+
+        # ── regular phase / decision stage (existing logic) ──────
         func = instr.func
         edges = _projected_edges_for_instruction(
             instr,
@@ -250,6 +385,21 @@ def project_graph(program: NativeProgram, key_mode: str = "pc") -> Pipeline:
 
         if src_name in stages:
             existing = stages[src_name]
+            if not isinstance(existing, Stage):
+                # Should not happen: only Stage entries use duplicate names
+                stages[src_name] = Stage(
+                    name=src_name,
+                    step=step,
+                    edges=tuple(edges),
+                    loop_condition=loop_condition,
+                    decision_vocabulary=instr_vocab,
+                    override_vocabulary=override_vocab,
+                    decision_routes=decision_routes,
+                    produces=phase_produces,
+                    consumes=phase_consumes,
+                )
+                edges_by_src[src_name] = list(edges)
+                continue
             merged_edges = _merge_edges(existing.edges, edges)
             merged_vocab = frozenset(existing.decision_vocabulary | instr_vocab)
             merged_override = frozenset(existing.override_vocabulary | override_vocab)
@@ -284,6 +434,7 @@ def project_graph(program: NativeProgram, key_mode: str = "pc") -> Pipeline:
         )
         edges_by_src[src_name] = list(edges)
 
+    # ── binding map ───────────────────────────────────────────────
     binding_map = None
     if not any(
         instr.func is not None and _projection_flag(instr.func, "disable_binding_map", False)
@@ -361,12 +512,16 @@ def _duplicate_public_names(
     instructions: Iterable[NativeInstruction],
     *,
     key_mode: str,
+    parallel_branch_pcs: set[int] | None = None,
 ) -> frozenset[str]:
     if key_mode != "phase":
         return frozenset()
+    skip_pcs = parallel_branch_pcs or set()
     counts: dict[str, int] = {}
     for instr in instructions:
         if instr.op not in ("phase", "decision"):
+            continue
+        if instr.pc in skip_pcs:
             continue
         func = instr.func
         if func is not None and _projection_flag(func, "skip_stage", False):
@@ -381,6 +536,20 @@ def _duplicate_public_names(
         )
         counts[public_name] = counts.get(public_name, 0) + 1
     return frozenset(name for name, count in counts.items() if count > 1)
+
+
+def _parallel_stage_name(
+    block_name: str,
+    pc: int,
+    *,
+    key_mode: str,
+    prefix: str,
+) -> str:
+    """Return a stable stage name for a parallel block."""
+    safe_block = block_name.replace(" ", "_").replace("-", "_")
+    if key_mode == "pc":
+        return f"{prefix}__{safe_block}__pc{pc}"
+    return safe_block
 
 
 def _stage_name_for_instruction(
@@ -405,6 +574,29 @@ def _stage_name_for_instruction(
     if public_name in duplicate_names:
         return f"{public_name}__pc{instr.pc}"
     return public_name
+
+
+def _projected_parallel_edges(
+    pi: ParallelInstruction,
+    merge_pc: int,
+    *,
+    pc_to_stage: Mapping[int, str],
+    resolve_next_real_pc: Callable[[int], int | None],
+    resolve_next_public_pc: Callable[[int], int | None],
+) -> list[Edge]:
+    """Build outgoing edges for a parallel block's ParallelStage.
+
+    The merge point is the PC immediately after the last branch body.
+    If a next public stage exists at or after the merge point, the edge
+    targets that stage; otherwise the edge targets ``"halt"``.
+    """
+    next_real = resolve_next_public_pc(merge_pc)
+    if next_real is None:
+        next_real = resolve_next_real_pc(merge_pc)
+    if next_real is not None and next_real in pc_to_stage:
+        target = pc_to_stage[next_real]
+        return [Edge(label=target, target=target)]
+    return [Edge(label="halt", target="halt")]
 
 
 def _projected_edges_for_instruction(
