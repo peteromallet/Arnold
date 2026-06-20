@@ -107,7 +107,7 @@ const EXAMPLE_PROCESS_SPEC: ProcessSpec = {
   protocol: 'stdio-jsonrpc',
   healthCheck: 'health',
   restartPolicy: 'on-failure',
-  version: '1.0.0',
+  version: { semver: '1.0.0' },
   env: EXAMPLE_PROCESS_ENV,
   operations: EXAMPLE_PROCESS_OPERATIONS,
 };

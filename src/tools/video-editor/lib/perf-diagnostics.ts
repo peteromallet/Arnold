@@ -90,7 +90,7 @@ const createWindowDetector = (
 
       const time = now();
       const map = states ?? (states = new Map());
-      let state = map.get(id);
+      const state = map.get(id);
       if (!state) {
         map.set(id, { count: 1, start: time, fired: false });
         return;
@@ -120,7 +120,7 @@ export const RafLoopDetector = {
 
     const time = now();
     const map = rafStates ?? (rafStates = new Map());
-    let state = map.get(id);
+    const state = map.get(id);
     if (!state) {
       map.set(id, { count: 1, start: time, last: time, fired: false });
       return;

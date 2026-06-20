@@ -137,7 +137,7 @@ function makeSlotExtension(
   });
 }
 
-/** Create an extension with an inactive/reserved contribution (effect kind). */
+/** Create an extension with an inactive/reserved contribution (outputFormat kind). */
 function makeInactiveExtension(
   id: string,
   label: string,
@@ -151,9 +151,10 @@ function makeInactiveExtension(
       contributions: [
         {
           id: contributionId as never,
-          kind: 'effect',
-          effectId: 'some-effect',
-          label: `${label} effect`,
+          kind: 'outputFormat',
+          label: `${label} output`,
+          requiresRender: false,
+          outputExtension: 'json',
         },
       ],
     },
@@ -177,10 +178,11 @@ function makeMixedExtension(
           label: `${label} panel`,
         },
         {
-          id: `${id}.effect` as never,
-          kind: 'effect',
-          effectId: 'some-effect',
-          label: `${label} effect`,
+          id: `${id}.output` as never,
+          kind: 'outputFormat',
+          label: `${label} output`,
+          requiresRender: false,
+          outputExtension: 'json',
         },
       ],
     },
@@ -268,7 +270,7 @@ describe('useExtensionStatusInventory', () => {
 
     expect(inventory!.extensions).toHaveLength(1);
     expect(inventory!.extensions[0].contributions[0].status).toBe('inactive');
-    expect(inventory!.extensions[0].contributions[0].kind).toBe('effect');
+    expect(inventory!.extensions[0].contributions[0].kind).toBe('outputFormat');
     expect(inventory!.extensions[0].contributions[0].milestone).toBeDefined();
     expect(inventory!.summary.inactiveContributions).toBe(1);
     expect(inventory!.summary.activeContributions).toBe(0);
@@ -296,9 +298,9 @@ describe('useExtensionStatusInventory', () => {
     const contribs = inventory!.extensions[0].contributions;
     expect(contribs).toHaveLength(2);
     const panel = contribs.find((c) => c.kind === 'panel');
-    const effect = contribs.find((c) => c.kind === 'effect');
+    const output = contribs.find((c) => c.kind === 'outputFormat');
     expect(panel!.status).toBe('active');
-    expect(effect!.status).toBe('inactive');
+    expect(output!.status).toBe('inactive');
     expect(inventory!.summary.activeContributions).toBe(1);
     expect(inventory!.summary.inactiveContributions).toBe(1);
     expect(inventory!.summary.totalContributions).toBe(2);

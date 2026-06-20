@@ -67,8 +67,7 @@ export const writingCanaryExample: ReighExtension = defineExtension({
     // Demonstrate ExtensionNotImplementedError for a future member
     let stageNotReady = false;
     try {
-      // eslint-disable-next-line @typescript-eslint/no-unused-expressions
-      stubs.stage;
+      void stubs.stage;
     } catch (err) {
       stageNotReady = err instanceof ExtensionNotImplementedError;
       ctx.services.diagnostics.report({

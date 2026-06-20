@@ -150,7 +150,9 @@ export const ModelAndLoraSection: React.FC<ModelAndLoraSectionProps> = ({
           <Select
             value={state.qwenEditModel}
             onValueChange={(value) => {
-              value && state.setQwenEditModel(value);
+              if (value) {
+                state.setQwenEditModel(value);
+              }
             }}
           >
             <SelectTrigger

@@ -352,9 +352,9 @@ describe('TimelineGhostLayer', () => {
     });
 
     it('does not mutate scalar props after rendering', () => {
-      let rowHeight = 48;
-      let startLeft = 100;
-      let pixelsPerSecond = 50;
+      const rowHeight = 48;
+      const startLeft = 100;
+      const pixelsPerSecond = 50;
 
       const ghosts: TimelineGhostEntry[] = [
         { id: 'ghost-1', trackId: 'V1', start: 0, end: 2, kind: 'added' },

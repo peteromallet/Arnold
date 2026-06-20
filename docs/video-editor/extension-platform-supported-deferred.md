@@ -61,12 +61,14 @@ This document is the downstream consumer of the [M15 Contract-Recheck Matrix](./
 | S-015 | HMR-safe re-registration and stale component cleanup | **supported** | CR:M5-003; provider-scoped lifecycle with `DisposeHandle` |
 | S-016 | Activation/deactivation wrapped in visible console grouping | **supported** | DOC:extensions-trust-envelope.md§4; `console.groupCollapsed`/`console.groupEnd` in lifecycle host |
 | S-017 | Lifecycle teardown failures captured as diagnostics, never thrown | **supported** | DOC:extensions-trust-envelope.md§2 (Dispose row); `lifecycle/teardown-error` diagnostics |
+| S-018 | Minimal manifest-only extension compiles and exports through public SDK | **supported** | CR:M0-001; EX:hello-world-extension.ts |
+| S-019 | Settings schema-version migration declaration and handler | **supported** | CR:M1-007; EX:settings-migration-example.ts |
 
 ### 2.3 Contribution Surfaces & Host Slots
 
 | Row ID | Behavior | Classification | Evidence |
 |---|---|---|---|
-| S-020 | Public surface classes: toolbar, inspector, overlay, status, code panel, dialogs | **supported** | CR:M2-001; EX:toolbar-example.ts, inspector-example.ts, overlay-example.ts, status-surface-example.ts, code-panel-diagnostics-example.ts, surface-coverage.ts |
+| S-020 | Public surface classes: toolbar, inspector, overlay, status, code panel, dialogs | **supported** | CR:M2-001; EX:toolbar-example.ts, toolbar-extension.ts, inspector-example.ts, overlay-example.ts, status-surface-example.ts, code-panel-diagnostics-example.ts, surface-coverage.ts |
 | S-021 | Inspector and overlay contributions update on host state changes | **supported** | CR:M2-003; EX:inspector-example.ts, overlay-example.ts; TEST:Canary.test.tsx |
 | S-022 | `SchemaForm` renders and validates common schema subset | **supported** | CR:M2-006; `SchemaForm` host primitive; `src/sdk/index.ts` parameter schema types |
 | S-023 | Diagnostic fallback links open `DiagnosticPanel` filtered to failing extension | **supported** | CR:M2-008; DOC:frontend-closure-checklist.md§3.2 |
@@ -130,6 +132,7 @@ This document is the downstream consumer of the [M15 Contract-Recheck Matrix](./
 | S-082 | Params editable through parameter-schema UI | **supported** | CR:M7-003; effect parameter schema reuse |
 | S-083 | Export guard blocks unsupported worker export with clear reason | **supported** | CR:M7-004; `allowBrowserExport`/`allowWorkerExport` in SDK |
 | S-084 | Applied contributed effects removable, resettable, survive undo/redo | **supported** | CR:M7-005; remove/reset controls via history system |
+| S-085 | Effect contribution manifest and registration example | **supported** | CR:M7-001; EX:effect-example.ts |
 
 ### 2.9 Transition Contributions
 
@@ -137,6 +140,7 @@ This document is the downstream consumer of the [M15 Contract-Recheck Matrix](./
 |---|---|---|---|
 | S-090 | Extension transition selectable, configurable, persisted, rendered, repairable | **supported** | CR:M8-001; EXT:__tests__/flagship-local-transition.test.ts |
 | S-091 | Missing transition IDs produce diagnostics and export blockers | **supported** | CR:M8-003; export guard integration |
+| S-092 | Transition contribution manifest and registration example | **supported** | CR:M8-001; EX:transition-example.ts |
 
 ### 2.10 Clip-Type Dispatch & Keyframes
 
@@ -156,6 +160,8 @@ This document is the downstream consumer of the [M15 Contract-Recheck Matrix](./
 | S-110 | Agent tool produces proposal; user can preview/accept/reject | **supported** | CR:M10-001; EXT:agent-tools-canary/, agent-tools-copilot/, agent-tools-export/ |
 | S-111 | Tool registry is provider-scoped and HMR-safe | **supported** | CR:M10-003; provider-scoped registry pattern |
 | S-112 | `invokeProcess` stub returns structured not-available diagnostic | **supported** | CR:M10-007; `src/sdk/index.ts` |
+| S-113 | Agent tool contribution manifest and handler registration example | **supported** | CR:M10-001; EX:agent-tool-example.ts |
+| S-114 | Process manifest declaration example (execution deferred) | **supported** | CR:M10-007; EX:process-example.ts |
 
 ### 2.12 Live Data Bridge
 
@@ -165,6 +171,7 @@ This document is the downstream consumer of the [M15 Contract-Recheck Matrix](./
 | S-121 | Timeline mutation/history does not grow per sample | **supported** | CR:M11-002; ring-buffer sample delivery outside history |
 | S-122 | Bake creates deterministic data: assets, keyframes, automation clips, sidecars, RenderMaterial refs | **supported** | CR:M11-003; bake semantics in runtime |
 | S-123 | Export blocked before bake, follows normal route after bake | **supported** | CR:M11-004; export guard detects active live sources |
+| S-124 | Live source declaration and registration example | **supported** | CR:M11-001; EX:live-preview-example.ts |
 
 ### 2.13 Shader & WebGL Bridge
 
@@ -320,8 +327,8 @@ This document is the downstream consumer of the [M15 Contract-Recheck Matrix](./
 | Row ID | Behavior | Classification | Evidence |
 |---|---|---|---|
 | D-120 | Runtime permission enforcement (network, filesystem, env, processes gating) | **deferred** | DOC:extensions-trust-envelope.md§3; ABSENCE:grep -r 'permission enforcement' src/tools/video-editor/runtime/ |
-| D-121 | Sandboxed extension execution (iframe, Worker, ShadowRealm isolation) | **deferred** | DOC:extensions-trust-envelope.md§§5-6; planned M4–M5 |
-| D-122 | Dynamic package loading (npm / CDN / `import()` for extension code) | **deferred** | DOC:extensions-trust-envelope.md§2; extensions statically bundled with host |
+| D-121 | Sandboxed extension execution (iframe, Worker, ShadowRealm isolation) | **deferred** | DOC:extensions-trust-envelope.md§§5-6; ABSENCE:grep -r 'sandbox' src/tools/video-editor/runtime/; planned M4–M5 |
+| D-122 | Dynamic package loading (npm / CDN / `import()` for extension code) | **deferred** | DOC:extensions-trust-envelope.md§2; ABSENCE:grep -r 'CDN.*extension' src/tools/video-editor/runtime/; extensions statically bundled with host |
 | D-123 | Marketplace, cloud loading, or third-party extension registry | **unsupported** | CR:X-006; consistently OUT of scope for all milestones; ABSENCE:grep -r 'marketplace' src/sdk/ |
 
 ### 3.13 Structural Deferrals
@@ -371,21 +378,21 @@ These behaviors are documented as unsupported across all milestones and have no 
 | Category | Count |
 |---|---|
 | SDK Scaffold & Public Boundary | 6 |
-| Extension Runtime & Lifecycle | 8 |
+| Extension Runtime & Lifecycle | 10 |
 | Contribution Surfaces & Host Slots | 8 |
 | TimelinePatch & Proposal System | 11 |
 | Commands, Keybindings & Context Menus | 2 |
 | Provider-Scoped Registry | 6 |
 | Asset Metadata & Parsers | 7 |
-| Component Effects | 5 |
-| Transition Contributions | 2 |
+| Component Effects | 6 |
+| Transition Contributions | 3 |
 | Clip-Type Dispatch & Keyframes | 6 |
-| Agent Tool Contributions | 3 |
-| Live Data Bridge | 4 |
+| Agent Tool Contributions | 5 |
+| Live Data Bridge | 5 |
 | Shader & WebGL Bridge | 6 |
 | Provider Compatibility | 4 |
 | Cross-Cutting Guarantees | 6 |
-| **Total supported** | **84** |
+| **Total supported** | **91** |
 
 ### 5.2 Deferred V1 behaviors
 

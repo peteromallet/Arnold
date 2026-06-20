@@ -37,6 +37,17 @@
         "ShaderMaterializerRequirementScope"
       ],
       "justification": "M5 renderability type contracts: these types define the public vocabulary for render blockers, material refs, artifact boundaries, capability findings, and shader scopes. Extension authors reference these when implementing export-level contracts, and the SDK must expose them to avoid duplicate type taxonomies."
+    },
+    {
+      "sourcePath": "@/tools/video-editor/index.ts",
+      "kind": "value",
+      "exports": [
+        "BUILTIN_CLIP_TYPES",
+        "getStableConfigSignature",
+        "TimelineVersionConflictError",
+        "isTimelineVersionConflictError"
+      ],
+      "justification": "Public SDK boundary re-exports from the video-editor barrel: BUILTIN_CLIP_TYPES (M9 clip type contracts), getStableConfigSignature (M5 config utility), and TimelineVersionConflictError / isTimelineVersionConflictError (M6 data provider contracts). These stable values are exposed through the canonical public entrypoint so extensions and host code can consume them without deep-importing internals."
     }
   ]
 }

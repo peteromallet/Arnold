@@ -253,7 +253,7 @@ function EditorRuntimeProviderInner({
       reader: timelineReader,
       proposals: proposals as any,
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+     
   }, [timelineReader, store]);
 
   useEffect(() => {

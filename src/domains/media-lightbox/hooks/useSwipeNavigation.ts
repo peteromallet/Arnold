@@ -142,6 +142,7 @@ export function useSwipeNavigation({
     try {
       (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
     } catch {
+      // Pointer capture can fail if the element is no longer active.
     }
   }, [disabled]);
   

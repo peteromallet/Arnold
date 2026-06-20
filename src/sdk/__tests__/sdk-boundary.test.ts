@@ -999,10 +999,11 @@ describe('M6: contribution kind bridging for parser/output/search', () => {
     // Each reserved/unsupported kind returns its owning milestone name,
     // so consumers get a clear diagnostic rather than silent ignorance.
     // M9 clipType and automation are now bridged, returning null.
+    // M10 agentTool and agent are also bridged, returning null.
     expect(contributionKindNotYetBridged('clipType')).toBeNull();
     expect(contributionKindNotYetBridged('automation')).toBeNull();
-    expect(contributionKindNotYetBridged('agentTool')).toBe('M5');
-    expect(contributionKindNotYetBridged('agent')).toBe('M5');
+    expect(contributionKindNotYetBridged('agentTool')).toBeNull();
+    expect(contributionKindNotYetBridged('agent')).toBeNull();
   });
 
   it('CONTRIBUTION_KIND_MILESTONE maps M6 kinds to M6 milestone', () => {

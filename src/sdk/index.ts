@@ -203,6 +203,13 @@ export {
   shaderMissingMaterializerBlockerMessage,
 } from '@/tools/video-editor/runtime/renderability.ts';
 
+export {
+  BUILTIN_CLIP_TYPES,
+  TimelineVersionConflictError,
+  isTimelineVersionConflictError,
+  getStableConfigSignature,
+} from '@/tools/video-editor';
+
 export type {
   ArtifactBoundary,
   BakeContract,
@@ -1511,7 +1518,7 @@ export interface ProcessSpawnConfig {
   cwd?: string;
 }
 
-export interface ProcessManifestEntry extends ProcessSpec {}
+export type ProcessManifestEntry = ProcessSpec;
 
 /** M12: Declarative environment field for trusted local process configuration. */
 export interface ProcessEnvFieldSpec {
@@ -3549,7 +3556,7 @@ export function createExtensionContext(
       diagnosticsService.report({
         severity: 'error',
         code: 'commands/not-wired',
-        message: `Cannot register command \"${_commandId}\" — the CommandRegistry has not been wired by the host provider.`,
+        message: `Cannot register command "${_commandId}" — the CommandRegistry has not been wired by the host provider.`,
       });
       return { dispose() {} };
     },
@@ -3561,7 +3568,7 @@ export function createExtensionContext(
       diagnosticsService.report({
         severity: 'error',
         code: 'effects/not-wired',
-        message: `Cannot register effect component \"${_effectId}\" — the EffectRegistry has not been wired by the host provider.`,
+        message: `Cannot register effect component "${_effectId}" — the EffectRegistry has not been wired by the host provider.`,
       });
       return { dispose() {} };
     },
@@ -3573,7 +3580,7 @@ export function createExtensionContext(
       diagnosticsService.report({
         severity: 'error',
         code: 'transitions/not-wired',
-        message: `Cannot register transition renderer \"${_transitionId}\" — the TransitionRegistry has not been wired by the host provider.`,
+        message: `Cannot register transition renderer "${_transitionId}" — the TransitionRegistry has not been wired by the host provider.`,
       });
       return { dispose() {} };
     },
@@ -3585,7 +3592,7 @@ export function createExtensionContext(
       diagnosticsService.report({
         severity: 'error',
         code: 'clipTypes/not-wired',
-        message: `Cannot register clip type \"${_clipTypeId}\" — the ClipTypeRegistry has not been wired by the host provider.`,
+        message: `Cannot register clip type "${_clipTypeId}" — the ClipTypeRegistry has not been wired by the host provider.`,
       });
       return { dispose() {} };
     },
@@ -3597,7 +3604,7 @@ export function createExtensionContext(
       diagnosticsService.report({
         severity: 'error',
         code: 'shaders/not-wired',
-        message: `Cannot register shader \"${_shaderId}\" — the ShaderRegistry has not been wired by the host provider.`,
+        message: `Cannot register shader "${_shaderId}" — the ShaderRegistry has not been wired by the host provider.`,
       });
       return { dispose() {} };
     },
@@ -3609,7 +3616,7 @@ export function createExtensionContext(
       diagnosticsService.report({
         severity: 'error',
         code: 'agentTools/not-wired',
-        message: `Cannot register agent tool \"${_toolId}\" — the AgentToolRegistry has not been wired by the host provider.`,
+        message: `Cannot register agent tool "${_toolId}" — the AgentToolRegistry has not been wired by the host provider.`,
       });
       return { dispose() {} };
     },
@@ -3619,7 +3626,7 @@ export function createExtensionContext(
         diagnostics: [{
           severity: 'info',
           code: 'agent-tool/process-not-available',
-          message: `Process invocation for tool \"${_toolId}\" is not available until M12.`,
+          message: `Process invocation for tool "${_toolId}" is not available until M12.`,
         }],
       };
     },

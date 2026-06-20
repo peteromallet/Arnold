@@ -120,13 +120,13 @@ function formatExportGuardLog(
   for (const diag of guardResult.diagnostics) {
     if (diag.severity === 'error') {
       const name = diag.detail?.effectType
-        ? ` effect \"${diag.detail.effectType}\"`
+        ? ` effect "${diag.detail.effectType}"`
         : diag.detail?.transitionType
-          ? ` transition \"${diag.detail.transitionType}\"`
+          ? ` transition "${diag.detail.transitionType}"`
           : diag.detail?.clipType
-            ? ` clip type \"${diag.detail.clipType}\"`
+            ? ` clip type "${diag.detail.clipType}"`
             : diag.detail?.shaderId
-              ? ` shader \"${diag.detail.shaderId}\"`
+              ? ` shader "${diag.detail.shaderId}"`
             : '';
       const route = diag.detail?.renderRoute ? ` (${diag.detail.renderRoute})` : '';
       lines.push(`  [${diag.code}]${name}${route}: ${diag.message}`);
@@ -137,13 +137,13 @@ function formatExportGuardLog(
   for (const diag of guardResult.diagnostics) {
     if (diag.severity === 'warning') {
       const name = diag.detail?.effectType
-        ? ` effect \"${diag.detail.effectType}\"`
+        ? ` effect "${diag.detail.effectType}"`
         : diag.detail?.transitionType
-          ? ` transition \"${diag.detail.transitionType}\"`
+          ? ` transition "${diag.detail.transitionType}"`
           : diag.detail?.clipType
-            ? ` clip type \"${diag.detail.clipType}\"`
+            ? ` clip type "${diag.detail.clipType}"`
             : diag.detail?.shaderId
-              ? ` shader \"${diag.detail.shaderId}\"`
+              ? ` shader "${diag.detail.shaderId}"`
             : '';
       const route = diag.detail?.renderRoute ? ` (${diag.detail.renderRoute})` : '';
       lines.push(`  [${diag.code}]${name}${route}: ${diag.message}`);

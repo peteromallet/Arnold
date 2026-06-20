@@ -86,7 +86,7 @@ function makeMinimalTimelineData(overrides: Record<string, unknown> = {}) {
     registry,
     configVersion: 1,
     resolvedConfig: { registry: assets },
-  } as any; // eslint-disable-line @typescript-eslint/no-explicit-any
+  } as any;  
 }
 
 /** Deep-serialize a compile result to a stable JSON string for replay comparison. */

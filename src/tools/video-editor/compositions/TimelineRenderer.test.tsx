@@ -36,7 +36,7 @@ describe('Sprint 5 EFFECT_REGISTRY dispatch (Phase 4d)', () => {
   });
 
   it('clip types not in the registry surface as undefined (placeholder fallback)', () => {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+     
     const result = (THEME_PACKAGE_REGISTRY as any)['theme:not-installed'];
     expect(result).toBeUndefined();
   });

@@ -166,7 +166,6 @@ export class ContributionErrorBoundary extends Component<
   ): void {
     // Reset error state when children change (e.g. HMR or extension replacement).
     if (prevState.error !== null && this.props.children !== _prevProps.children) {
-      // eslint-disable-next-line react/no-did-update-set-state -- intentional reset
       this.setState({ error: null });
     }
   }

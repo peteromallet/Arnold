@@ -65,6 +65,7 @@ export class RealtimeConnection {
       try {
         await this.channel.unsubscribe();
       } catch {
+        // Ignore unsubscribe failures during disconnect cleanup.
       }
       this.channel = null;
     }
@@ -378,6 +379,7 @@ export class RealtimeConnection {
         try {
           await this.channel.unsubscribe();
         } catch {
+          // Ignore unsubscribe failures before retrying the connection.
         }
         this.channel = null;
       }

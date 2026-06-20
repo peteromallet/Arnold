@@ -142,8 +142,8 @@ describe('OverlayEditor', () => {
 
     const { container } = render(<OverlayEditor {...props} />);
 
-    expect(container.querySelector('[class*=\"cursor-ew-resize\"]')).toBeNull();
-    expect(container.querySelector('[class*=\"cursor-ns-resize\"]')).toBeNull();
+    expect(container.querySelector('[class*="cursor-ew-resize"]')).toBeNull();
+    expect(container.querySelector('[class*="cursor-ns-resize"]')).toBeNull();
   });
 
   it('opens the asset lightbox on media double-click instead of entering text edit mode', () => {
@@ -177,7 +177,7 @@ describe('OverlayEditor', () => {
 
     const { container } = render(<OverlayEditor {...props} />);
 
-    expect(container.querySelector('[data-overlay-hit=\"true\"]')).toBeNull();
+    expect(container.querySelector('[data-overlay-hit="true"]')).toBeNull();
     expect(screen.queryByRole('button')).not.toBeInTheDocument();
   });
 });

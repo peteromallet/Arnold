@@ -54,6 +54,23 @@
     ],
     "src/tools/travel-between-images/hooks/video/useShotFinalVideos.ts": [
       "src/tools/video-editor/lib/finalVideoAssets.ts"
+    ],
+    "src/shared/components/SettingsModal/sections/ExtensionsSection.tsx": [
+      "src/tools/video-editor/runtime/extensionReferenceReport.ts"
+    ],
+    "src/shared/components/SettingsModal/types.ts": [
+      "src/tools/video-editor/runtime/extensionReferenceReport.ts"
+    ],
+    "supabase/functions/ai-generate-sequence/sequence-validation.ts": [
+      "src/tools/video-editor/sequences/metadata.ts",
+      "src/tools/video-editor/sequences/validation.ts"
+    ],
+    "supabase/functions/complete_task/handler.ts": [
+      "src/tools/video-editor/types/index.ts"
+    ],
+    "supabase/functions/complete_task/placement.ts": [
+      "src/tools/video-editor/lib/timeline-domain.ts",
+      "src/tools/video-editor/types/index.ts"
     ]
   }
 }

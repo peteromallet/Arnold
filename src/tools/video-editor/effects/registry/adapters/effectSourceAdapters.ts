@@ -55,7 +55,7 @@ export interface EffectResourceAdapterOptions extends EffectAdapterOptions {
   readonly provenance?: EffectRegistryProvenance;
 }
 
-export interface EffectCatalogAdapterOptions extends EffectResourceAdapterOptions {}
+export type EffectCatalogAdapterOptions = EffectResourceAdapterOptions;
 
 export function normalizeEffectRegistryId(effectId: string): string {
   return effectId.startsWith('custom:') ? effectId.slice('custom:'.length) : effectId;

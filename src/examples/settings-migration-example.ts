@@ -110,7 +110,7 @@ export const settingsMigrationManifest: ExtensionManifest = {
  * Real implementations would persist to IndexedDB, Supabase, or Astrid bridge.
  */
 export function createExampleRepository(): StateRepository {
-  let disposed = false;
+  const disposed = false;
   const snapshots: SettingsSnapshot[] = [];
   const events: LifecycleEvent[] = [];
 

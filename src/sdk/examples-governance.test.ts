@@ -415,7 +415,7 @@ describe('Extension example import governance', () => {
         continue;
       }
 
-      it(`public export \"${exportName}\" is imported by at least one example`, () => {
+      it(`public export "${exportName}" is imported by at least one example`, () => {
         expect(allSdkImports.has(exportName)).toBe(true);
       });
     }

@@ -310,7 +310,7 @@ export function useTimelineTrackManagement({
       duration,
       clipId,
     );
-    let effectiveStart = snapResult.snapped ? snapResult.time : nextStart;
+    const effectiveStart = snapResult.snapped ? snapResult.time : nextStart;
     let finalTrackId = snapResult.snapped
       ? targetRow.id
       : findNearestFreeTrack(

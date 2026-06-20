@@ -194,7 +194,7 @@ describe('overlayBridge', () => {
   });
 
   it('stays usable from hooks-only consumers that only need the current overlay handle', () => {
-    const wrapper = ({ children }: React.PropsWithChildren) => {
+    const Wrapper = ({ children }: React.PropsWithChildren) => {
       const bridge = useOverlayBridge({ id: 'menu-a', type: 'menu' });
       return (
         <OverlayInstanceProvider value={bridge}>
@@ -203,7 +203,7 @@ describe('overlayBridge', () => {
       );
     };
 
-    const { result } = renderHook(() => useCurrentOverlayHandle(), { wrapper });
+    const { result } = renderHook(() => useCurrentOverlayHandle(), { wrapper: Wrapper });
 
     expect(result.current.id).toBe('menu-a');
     act(() => {

@@ -720,7 +720,7 @@ export function validateTimelinePatch(
         case 'track.remove':
           // No mandatory payload fields
           break;
-        case 'asset.update':
+        case 'asset.update': {
           // target is asset key; no strict format constraint beyond non-empty
           if (op.payload && op.payload.mode !== undefined && op.payload.mode !== 'merge' && op.payload.mode !== 'replace') {
             diagnostics.push(
@@ -743,6 +743,7 @@ export function validateTimelinePatch(
             );
           }
           break;
+        }
         case 'asset.remove':
           // No mandatory payload fields
           break;
@@ -1174,7 +1175,7 @@ export function compileTimelinePatch(
               || key === 'source_uuid' || key === 'generation' || key === 'cropTop' || key === 'cropBottom'
               || key === 'cropLeft' || key === 'cropRight' || key === 'asset' || key === 'app'
             ) {
-              // eslint-disable-next-line @typescript-eslint/no-explicit-any
+               
               (existingMeta as unknown as Record<string, unknown>)[key] = value;
             }
           }

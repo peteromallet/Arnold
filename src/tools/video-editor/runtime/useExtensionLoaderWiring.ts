@@ -269,6 +269,8 @@ export function useExtensionLoaderWiring(
 
         if (cancelled) return;
 
+        lastResolvedKeyRef.current = resolveKey;
+
         setState({
           resolvedExtensions: loadResult.loadedExtensions,
           diagnostics: [
@@ -296,10 +298,6 @@ export function useExtensionLoaderWiring(
     return () => {
       cancelled = true;
     };
-    if (!cancelled) {
-      lastResolvedKeyRef.current = resolveKey;
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [directKey]);
 
   return {

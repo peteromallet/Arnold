@@ -98,7 +98,7 @@ export const codePanelDiagnosticsExample: ReighExtension = defineExtension({
     // Demonstrate export diagnostic shape (export-prefixed code)
     ctx.services.diagnostics.report({
       severity: 'warning' as DiagnosticSeverity,
-      code: 'export/unknown-clip-type' as 'export/unknown-clip-type',
+      code: 'export/unknown-clip-type' as const,
       message: 'Clip type "customEffect" is not recognized during export.',
       contributionId: 'm2-code-panel',
       detail: {

@@ -17,6 +17,10 @@ import {
   getManifestSettingsSchemaVersion,
   findSettingsMigrationDeclarations,
   createDiagnosticCollection,
+  createExtensionSettingsService,
+  DETERMINISM_STATUSES,
+  RENDER_BLOCKER_REASONS,
+  RENDER_ROUTES,
 } from '@/sdk/index';
 import type {
   ReighExtension,
@@ -3503,7 +3507,7 @@ describe('semver-sensitive SDK exports (index)', () => {
     // the createExtensionSettingsService factory is re-exported from src/sdk/index.ts
     // and confirmed accessible via ESM imports.
     // Here we verify the downstream surface is stable.
-    expect(true).toBe(true); // surface validated via context creation tests
+    expect(typeof createExtensionSettingsService).toBe('function');
   });
 
   it('SDK exports renderability constants via re-exports', () => {
@@ -3511,7 +3515,9 @@ describe('semver-sensitive SDK exports (index)', () => {
     // re-exported from tools/video-editor/runtime/renderability.ts.
     // Validated by the boundary test; here we verify the index re-export path works.
     // These are ESM import-only (type/value), confirmed via boundary imports.
-    expect(true).toBe(true); // surface validated via boundary test
+    expect(Array.isArray(DETERMINISM_STATUSES)).toBe(true);
+    expect(Array.isArray(RENDER_BLOCKER_REASONS)).toBe(true);
+    expect(Array.isArray(RENDER_ROUTES)).toBe(true);
   });
 
   it('SDK exports contribution kind bridging gate', () => {

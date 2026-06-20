@@ -12,6 +12,7 @@ import { registerDebugGlobal } from '@/shared/runtime/debugRegistry';
 import {
   classifyRealtimeFetchError,
   toUserFriendlyRealtimeErrorMessage,
+  type RealtimeFetchErrorType,
 } from '@/shared/realtime/dataFreshness/errorPolicy';
 
 type QueryKeyLike = readonly unknown[];
@@ -243,7 +244,7 @@ class DataFreshnessManager {
   private reportCircuitBreakerError(input: {
     queryKey: string;
     failureCount: number;
-    errorType: string;
+    errorType: RealtimeFetchErrorType;
     error: Error;
   }) {
     const userMessage = toUserFriendlyRealtimeErrorMessage(input.errorType, input.failureCount);

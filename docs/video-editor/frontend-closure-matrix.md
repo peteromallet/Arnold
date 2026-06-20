@@ -4,7 +4,7 @@
 **Last updated:** 2026-06-20
 **Scope:** Every required public frontend primitive in the video editor extension surface layer. Maps each primitive to its host affordance, UI states, accessibility expectation, evidence, status, disposition, and contract-recheck row ID.
 
-> **Supersedes:** This matrix replaces the previous `frontend-closure-checklist.md` (§ 2–3) with a structured classification of every public primitive. The old checklist's five-section governance assertion is preserved in `frontend-closure-checklist.md` as a transitional bridge satisfying `examples-governance.test.ts`.
+> **Supersedes:** This matrix replaces the previous `docs/video-editor/frontend-closure-checklist.md` (§ 2–3) with a structured classification of every public primitive. The old checklist's five-section governance assertion is preserved in `docs/video-editor/frontend-closure-checklist.md` as a transitional bridge satisfying `examples-governance.test.ts`.
 
 ---
 
@@ -51,7 +51,7 @@ This matrix classifies every public frontend primitive that is part of the Reigh
   - **Error:** ■ `ContributionErrorBoundary` catches render errors per-slot with extension/contribution ID and "View diagnostics" action.
   - **Disabled:** — Shell itself is never disabled; individual slots use `InertReservedPlaceholder`.
 - **Accessibility:** Shell container uses `role="region"` with `aria-label="Video editor"`. Each slot wrapper uses `data-video-editor-slot` attribute for testability.
-- **Evidence:** `src/tools/video-editor/components/TimelineEditorShellCore.tsx` (1262 lines); `TimelineEditorShellCore.test.tsx` (679 lines).
+- **Evidence:** `src/tools/video-editor/components/TimelineEditorShellCore.tsx` (1262 lines); `src/tools/video-editor/components/TimelineEditorShellCore.test.tsx` (679 lines).
 - **Status:** `pass`
 - **Disposition:** `supported`
 - **Contract-recheck:** CR:M2-013, CR:M1-002
@@ -65,7 +65,7 @@ This matrix classifies every public frontend primitive that is part of the Reigh
   - **Error:** ■ Catches render throws, displays compact fallback with extension ID, contribution ID, and "View diagnostics" action.
   - **Disabled:** — Not applicable.
 - **Accessibility:** Fallback uses `role="alert"` for screen-reader announcement. "View diagnostics" button is keyboard-accessible.
-- **Evidence:** `src/tools/video-editor/components/TimelineEditorShellCore.tsx` (error boundary wrapper); `TimelineEditorShellCore.test.tsx`; documented in `frontend-closure-checklist.md` § 3.2.
+- **Evidence:** `src/tools/video-editor/components/TimelineEditorShellCore.tsx` (error boundary wrapper); `src/tools/video-editor/components/TimelineEditorShellCore.test.tsx`; documented in `docs/video-editor/frontend-closure-checklist.md` § 3.2.
 - **Status:** `pass`
 - **Disposition:** `supported`
 - **Contract-recheck:** CR:M1-002, CR:M2-008
@@ -79,7 +79,7 @@ This matrix classifies every public frontend primitive that is part of the Reigh
   - **Error:** — Not applicable.
   - **Disabled:** ■ Uses `aria-hidden="true"`, `role="presentation"`, `tabIndex={-1}`. Non-interactive, keyboard-inert.
 - **Accessibility:** `aria-hidden="true"`, `role="presentation"`, `tabIndex={-1}`. No focusable children. `data-video-editor-slot-inert="true"` attribute.
-- **Evidence:** `src/tools/video-editor/components/TimelineEditorShellCore.tsx` (lines 111–128); `TimelineEditorShellCore.test.tsx`.
+- **Evidence:** `src/tools/video-editor/components/TimelineEditorShellCore.tsx` (lines 111–128); `src/tools/video-editor/components/TimelineEditorShellCore.test.tsx`.
 - **Status:** `pass`
 - **Disposition:** `supported`
 - **Contract-recheck:** CR:M2-013
@@ -97,7 +97,7 @@ This matrix classifies every public frontend primitive that is part of the Reigh
   - **Error:** ■ `ContributionErrorBoundary` wraps each toolbar item.
   - **Disabled:** — Toolbar slot itself is never disabled; individual items can be disabled via `when` predicates.
 - **Accessibility:** Toolbar uses `role="toolbar"` with `aria-label="Editor toolbar"`. Individual buttons are keyboard-accessible (Tab, Enter/Space).
-- **Evidence:** `src/examples/toolbar-example.ts`; `src/examples/toolbar-extension.ts`; `src/examples/hello-world-extension.ts`; registered via `extensionSurface.ts` slot map.
+- **Evidence:** `src/examples/toolbar-example.ts`; `src/examples/toolbar-extension.ts`; `src/examples/hello-world-extension.ts`; registered via `src/tools/video-editor/runtime/extensionSurface.ts` slot map.
 - **Status:** `pass`
 - **Disposition:** `supported`
 - **Contract-recheck:** CR:M2-001, CR:M1-001, CR:M1-016
@@ -111,7 +111,7 @@ This matrix classifies every public frontend primitive that is part of the Reigh
   - **Error:** ■ `ContributionErrorBoundary` wraps inspector sections.
   - **Disabled:** □ Disabled/empty inspector sections render without explicit inert placeholder; layout does not collapse.
 - **Accessibility:** Inspector panel uses `role="complementary"` with `aria-label="Inspector"`. Section headers are keyboard-navigable.
-- **Evidence:** `src/examples/inspector-example.ts`; `src/tools/video-editor/components/PropertiesPanel/PropertiesPanel.test.tsx`; `ClipPanel.sequence.test.tsx`, `ClipPanel.transition.test.tsx`, `ClipPanel.shader.test.tsx`.
+- **Evidence:** `src/examples/inspector-example.ts`; `src/tools/video-editor/components/PropertiesPanel/PropertiesPanel.test.tsx`; `src/tools/video-editor/components/PropertiesPanel/ClipPanel.sequence.test.tsx`, `src/tools/video-editor/components/PropertiesPanel/ClipPanel.transition.test.tsx`, `src/tools/video-editor/components/PropertiesPanel/ClipPanel.shader.test.tsx`.
 - **Status:** `pass`
 - **Disposition:** `supported`
 - **Contract-recheck:** CR:M2-001, CR:M2-003, CR:S-021
@@ -125,7 +125,7 @@ This matrix classifies every public frontend primitive that is part of the Reigh
   - **Error:** ■ `ContributionErrorBoundary` wraps each overlay.
   - **Disabled:** — Overlays hidden via `when` predicates.
 - **Accessibility:** Overlay container uses `role="region"` with `aria-label="Timeline overlay"`. Content within overlays should follow standard ARIA patterns.
-- **Evidence:** `src/examples/overlay-example.ts`; `src/tools/video-editor/components/PreviewPanel/OverlayEditor.test.tsx`; `TimelineEditor/ShotGroupOverlay.test.tsx`, `WaveformOverlay.test.tsx`.
+- **Evidence:** `src/examples/overlay-example.ts`; `src/tools/video-editor/components/PreviewPanel/OverlayEditor.test.tsx`; `src/tools/video-editor/components/TimelineEditor/ShotGroupOverlay.test.tsx`, `src/tools/video-editor/components/TimelineEditor/WaveformOverlay.test.tsx`.
 - **Status:** `pass`
 - **Disposition:** `supported`
 - **Contract-recheck:** CR:M2-001, CR:M2-003
@@ -139,7 +139,7 @@ This matrix classifies every public frontend primitive that is part of the Reigh
   - **Error:** ■ Error status text renders via diagnostic integration.
   - **Disabled:** — Not applicable.
 - **Accessibility:** Status bar uses `role="status"` with `aria-live="polite"` for dynamic updates.
-- **Evidence:** `src/examples/status-surface-example.ts`; documented in `surface-coverage.ts`.
+- **Evidence:** `src/examples/status-surface-example.ts`; documented in `src/examples/surface-coverage.ts`.
 - **Status:** `pass`
 - **Disposition:** `supported`
 - **Contract-recheck:** CR:M2-001
@@ -153,7 +153,7 @@ This matrix classifies every public frontend primitive that is part of the Reigh
   - **Error:** ■ `ContributionErrorBoundary` wraps panel renderer.
   - **Disabled:** — Not applicable.
 - **Accessibility:** Panel uses `role="complementary"` with `aria-label="Left panel"`.
-- **Evidence:** Slot defined in `VideoEditorSlotName` union; registration via `extensionSurface.ts` slot map.
+- **Evidence:** Slot defined in `VideoEditorSlotName` union; registration via `src/tools/video-editor/runtime/extensionSurface.ts` slot map.
 - **Status:** `pass`
 - **Disposition:** `supported`
 - **Contract-recheck:** CR:M2-001
@@ -167,7 +167,7 @@ This matrix classifies every public frontend primitive that is part of the Reigh
   - **Error:** ■ `ContributionErrorBoundary` wraps panel renderer.
   - **Disabled:** — Not applicable.
 - **Accessibility:** Panel uses `role="complementary"` with `aria-label="Right panel"`.
-- **Evidence:** Slot defined in `VideoEditorSlotName` union; registration via `extensionSurface.ts` slot map.
+- **Evidence:** Slot defined in `VideoEditorSlotName` union; registration via `src/tools/video-editor/runtime/extensionSurface.ts` slot map.
 - **Status:** `pass`
 - **Disposition:** `supported`
 - **Contract-recheck:** CR:M2-001
@@ -181,7 +181,7 @@ This matrix classifies every public frontend primitive that is part of the Reigh
   - **Error:** ■ `ContributionErrorBoundary` wraps each header item.
   - **Disabled:** — Not applicable.
 - **Accessibility:** Header uses `role="banner"` with `aria-label="Editor header"`.
-- **Evidence:** Slot defined in `VideoEditorSlotName` union; registration via `extensionSurface.ts` slot map.
+- **Evidence:** Slot defined in `VideoEditorSlotName` union; registration via `src/tools/video-editor/runtime/extensionSurface.ts` slot map.
 - **Status:** `pass`
 - **Disposition:** `supported`
 - **Contract-recheck:** CR:M2-001
@@ -195,7 +195,7 @@ This matrix classifies every public frontend primitive that is part of the Reigh
   - **Error:** ■ `ContributionErrorBoundary` wraps footer renderer.
   - **Disabled:** — Not applicable.
 - **Accessibility:** Footer uses `role="contentinfo"` with `aria-label="Timeline footer"`.
-- **Evidence:** Slot defined in `VideoEditorSlotName` union; registration via `extensionSurface.ts` slot map.
+- **Evidence:** Slot defined in `VideoEditorSlotName` union; registration via `src/tools/video-editor/runtime/extensionSurface.ts` slot map.
 - **Status:** `pass`
 - **Disposition:** `supported`
 - **Contract-recheck:** CR:M2-001
@@ -223,7 +223,7 @@ This matrix classifies every public frontend primitive that is part of the Reigh
   - **Error:** ■ `ContributionErrorBoundary` wraps each dialog.
   - **Disabled:** — Dialogs hidden via `when` predicates.
 - **Accessibility:** Modal dialogs use `role="dialog"` with `aria-modal="true"`, `aria-labelledby`, focus trap. Overlay dialogs use `role="dialog"` with `aria-label`.
-- **Evidence:** Slot defined in `VideoEditorSlotName`; dialog host config in `extensionSurface.ts`; `ModalContainer` in shared components.
+- **Evidence:** Slot defined in `VideoEditorSlotName`; dialog host config in `src/tools/video-editor/runtime/extensionSurface.ts`; `ModalContainer` in shared components.
 - **Status:** `pass`
 - **Disposition:** `supported`
 - **Contract-recheck:** CR:M2-001
@@ -241,7 +241,7 @@ This matrix classifies every public frontend primitive that is part of the Reigh
   - **Error:** ■ `ContributionErrorBoundary` wrapping in shell catches render errors.
   - **Disabled:** ■ Slot renders `InertReservedPlaceholder` when no canary is active. `aria-hidden="true"`, `role="presentation"`, `tabIndex={-1}`.
 - **Accessibility:** Canary missing explicit `role` and `aria-label` (gap noted in checklist). Diagnostic banner missing `role="alert"`. `InertReservedPlaceholder` satisfies disabled/inert requirements.
-- **Evidence:** `src/tools/video-editor/components/Canary/CodePanelCanary.tsx`; `Canary.test.tsx` (268 lines, 7 tests); `src/examples/code-panel-diagnostics-example.ts`.
+- **Evidence:** `src/tools/video-editor/components/Canary/CodePanelCanary.tsx`; `src/tools/video-editor/components/Canary/Canary.test.tsx` (268 lines, 7 tests); `src/examples/code-panel-diagnostics-example.ts`.
 - **Status:** `gap`
 - **Disposition:** `deferred`
 - **Contract-recheck:** CR:M2-004 (a11y gap), CR:M2-010, CR:M2-011, CR:M2-012
@@ -255,7 +255,7 @@ This matrix classifies every public frontend primitive that is part of the Reigh
   - **Error:** ■ `ContributionErrorBoundary` wraps slot renderer.
   - **Disabled:** ■ `InertReservedPlaceholder` when no canary active.
 - **Accessibility:** Canary uses `data-video-editor-slot="writingPanel"` and `data-video-editor-canary="true"`. Missing explicit `role` and `aria-label` (gap).
-- **Evidence:** `src/tools/video-editor/components/Canary/WritingPanelCanary.tsx`; `Canary.test.tsx`; `src/examples/writing-canary-example.ts`.
+- **Evidence:** `src/tools/video-editor/components/Canary/WritingPanelCanary.tsx`; `src/tools/video-editor/components/Canary/Canary.test.tsx`; `src/examples/writing-canary-example.ts`.
 - **Status:** `gap`
 - **Disposition:** `deferred`
 - **Contract-recheck:** CR:M2-004, CR:M2-014
@@ -269,7 +269,7 @@ This matrix classifies every public frontend primitive that is part of the Reigh
   - **Error:** ■ `ContributionErrorBoundary` wraps slot renderer.
   - **Disabled:** ■ `InertReservedPlaceholder` when no canary active.
 - **Accessibility:** Canary uses `data-video-editor-slot="stagePanel"` and `data-video-editor-canary="true"`. Missing explicit `role` and `aria-label` (gap).
-- **Evidence:** `src/tools/video-editor/components/Canary/StagePanelCanary.tsx`; `Canary.test.tsx`; `src/examples/stage-canary-example.ts`.
+- **Evidence:** `src/tools/video-editor/components/Canary/StagePanelCanary.tsx`; `src/tools/video-editor/components/Canary/Canary.test.tsx`; `src/examples/stage-canary-example.ts`.
 - **Status:** `gap`
 - **Disposition:** `deferred`
 - **Contract-recheck:** CR:M2-004, CR:M2-014
@@ -301,7 +301,7 @@ This matrix classifies every public frontend primitive that is part of the Reigh
   - **Error:** ■ Error diagnostics render as red banners with code and message.
   - **Disabled:** — Not applicable.
 - **Accessibility:** Error/warning banners use `role="alert"` or `role="status"` (gap: CodePanelCanary diagnostic banner missing `role="alert"`). Source ranges should be announced.
-- **Evidence:** `Canary.test.tsx` (diagnostic banner tests); diagnostic rendering patterns in `code-panel-diagnostics-example.ts`.
+- **Evidence:** `src/tools/video-editor/components/Canary/Canary.test.tsx` (diagnostic banner tests); diagnostic rendering patterns in `src/examples/code-panel-diagnostics-example.ts`.
 - **Status:** `gap` (a11y role gap on CodePanelCanary banner)
 - **Disposition:** `supported`
 - **Contract-recheck:** CR:M2-004, CR:M2-005, CR:M2-010
@@ -355,7 +355,7 @@ This matrix classifies every public frontend primitive that is part of the Reigh
   - **Error:** ■ Stale base version rejection shows clear error with version conflict detail.
   - **Disabled:** □ Accept/reject buttons disabled during apply but explicit disabled-state tests not identified.
 - **Accessibility:** Panel uses `role="region"` with `aria-label="Proposal review"`. Accept/reject buttons are keyboard-accessible.
-- **Evidence:** `src/tools/video-editor/components/ProposalPanel/ProposalPanel.test.tsx`; `proposal-runtime.test.ts` (39 tests).
+- **Evidence:** `src/tools/video-editor/components/ProposalPanel/ProposalPanel.test.tsx`; `src/tools/video-editor/lib/proposal-runtime.test.ts` (39 tests).
 - **Status:** `gap` (UI component tests: CR:M3-006 = deferred D-130)
 - **Disposition:** `supported` (runtime); `deferred` (UI test coverage: D-130)
 - **Contract-recheck:** CR:M3-002, CR:M3-003, CR:M3-006, CR:M3-008
@@ -373,7 +373,7 @@ This matrix classifies every public frontend primitive that is part of the Reigh
   - **Error:** ■ Missing clip-type IDs produce diagnostics; export guard blocks unsupported clips.
   - **Disabled:** ■ Panel disabled when no clip is selected.
 - **Accessibility:** Panel uses `role="region"` with `aria-label="Clip properties"`. Parameter fields use SchemaForm accessibility patterns.
-- **Evidence:** `src/tools/video-editor/components/PropertiesPanel/ClipPanel.sequence.test.tsx`, `ClipPanel.transition.test.tsx`, `ClipPanel.shader.test.tsx`; `PropertiesPanel.test.tsx`.
+- **Evidence:** `src/tools/video-editor/components/PropertiesPanel/ClipPanel.sequence.test.tsx`, `src/tools/video-editor/components/PropertiesPanel/ClipPanel.transition.test.tsx`, `src/tools/video-editor/components/PropertiesPanel/ClipPanel.shader.test.tsx`; `src/tools/video-editor/components/PropertiesPanel/PropertiesPanel.test.tsx`.
 - **Status:** `pass`
 - **Disposition:** `supported`
 - **Contract-recheck:** CR:M9-001, CR:M9-003, CR:M8-001
@@ -401,7 +401,7 @@ This matrix classifies every public frontend primitive that is part of the Reigh
   - **Error:** ■ Invalid effect schema produces diagnostics.
   - **Disabled:** □ Effect picker disabled when no clip selected; explicit disabled-state tests not identified.
 - **Accessibility:** Panel uses `role="region"` with `aria-label="Effect creator"`. Effect list items are keyboard-navigable.
-- **Evidence:** `src/tools/video-editor/components/EffectCreatorPanel.test.tsx`; `src/examples/effect-example.ts`; `flagship-local/FlagshipEffectComponent.tsx`.
+- **Evidence:** `src/tools/video-editor/components/EffectCreatorPanel.test.tsx`; `src/examples/effect-example.ts`; `src/tools/video-editor/examples/extensions/flagship-local/FlagshipEffectComponent.tsx`.
 - **Status:** `pass`
 - **Disposition:** `supported`
 - **Contract-recheck:** CR:M7-001, CR:M7-003, CR:M7-006 (gap for comprehensive tests)
@@ -419,7 +419,7 @@ This matrix classifies every public frontend primitive that is part of the Reigh
   - **Error:** ■ Dialog renders warning with overwrite detail.
   - **Disabled:** — Not applicable.
 - **Accessibility:** Dialog uses `role="alertdialog"` with `aria-modal="true"`, `aria-labelledby`. Confirm/cancel buttons are keyboard-accessible.
-- **Evidence:** `src/tools/video-editor/components/ManagedObjectConfirmationDialog/ManagedObjectConfirmationDialog.test.tsx`; `managed-object-guard.test.ts`.
+- **Evidence:** `src/tools/video-editor/components/ManagedObjectConfirmationDialog/ManagedObjectConfirmationDialog.test.tsx`; `src/tools/video-editor/lib/managed-object-guard.test.ts`.
 - **Status:** `pass`
 - **Disposition:** `supported`
 - **Contract-recheck:** CR:M3-014, CR:M3-015 (gap for diff rendering)
@@ -437,7 +437,7 @@ This matrix classifies every public frontend primitive that is part of the Reigh
   - **Error:** ■ Render errors caught by preview error boundaries; export guard blocks unsupported render paths.
   - **Disabled:** — Preview always renders when timeline is loaded.
 - **Accessibility:** Preview canvas uses `role="img"` with `aria-label="Video preview"`. Playback controls are keyboard-accessible.
-- **Evidence:** `src/tools/video-editor/components/PreviewPanel/RemotionPreview.test.tsx`; `OverlayEditor.test.tsx`.
+- **Evidence:** `src/tools/video-editor/components/PreviewPanel/RemotionPreview.test.tsx`; `src/tools/video-editor/components/PreviewPanel/OverlayEditor.test.tsx`.
 - **Status:** `pass`
 - **Disposition:** `supported`
 - **Contract-recheck:** CR:M7-002, CR:M1-003
@@ -464,18 +464,18 @@ These primitives have SDK vocabulary defined but frontend implementation, test c
 
 | Primitive | Host Affordance | UI States | Accessibility | Evidence | Status | Disposition | Contract-Recheck |
 |---|---|---|---|---|---|---|---|
-| **AgentToolsPanel / AgentChat** | Host-owned panel for agent tool invocation and chat | □ States not tested in standalone frontend tests | □ Role/label expectations documented but not verified | `AgentToolsPanel.test.tsx`, `AgentChat.test.tsx`, `agent-tools-canary/` | `gap` | `deferred` | CR:M10-001, CR:M10-005 (D-041) |
-| **CopilotPrompt** | Host-owned copilot prompt surface for timeline-aware generation | □ States not tested in standalone frontend tests | □ Role/label expectations documented but not verified | `CopilotPrompt.test.tsx`, `agent-tools-copilot/` | `gap` | `deferred` | CR:M10-006 (D-042) |
-| **GenerationSessionPanel** | Host-owned panel for long-running generation with progress/cancel/proposal-ready | □ States not tested in standalone frontend tests | □ Role/label expectations documented but not verified | `GenerationSessionPanel.test.tsx` | `gap` | `deferred` | CR:M10-008 (D-043), CR:M10-009 (D-044) |
-| **LiveSourcesPanel** | Host-owned panel for live data source management, bake, and export readiness | □ States not tested in standalone frontend tests | □ Role/label expectations documented but not verified | `LiveSourcesPanel.test.tsx`, `live-webcam-canary/`, `live-generated-frame-canary/` | `gap` | `deferred` | CR:M11-006 (D-030), CR:M11-007 (D-031) |
-| **ShaderInspector** | Host-owned panel for shader uniform editing, texture binding, and compilation diagnostics | □ States not tested in standalone frontend tests | □ Role/label expectations documented but not verified | `ShaderInspector.test.tsx`, `clip-local-shader-canary/`, `postprocess-shader-canary/` | `gap` | `deferred` | CR:M13-004, CR:M13-007 (D-101), CR:M13-009 (D-102) |
-| **MaterialBrowser** | Host-owned browser for `RenderMaterial` entries with filtering and detail views | □ States not tested in standalone frontend tests | □ Role/label expectations documented but not verified | `MaterialBrowser.test.tsx` | `gap` | `deferred` | CR:M12-011 (part of D-023) |
-| **ProcessSettingsForm** | Host-owned form for process configuration, environment widgets, and operation discovery | □ States not tested in standalone frontend tests | □ Role/label expectations documented but not verified | `ProcessSettingsForm.test.tsx` | `gap` | `deferred` | CR:M12-004, CR:M12-010 (D-023) |
-| **RoundtripResultsPanel** | Host-owned panel for process roundtrip results, sidecar previews, and download actions | □ States not tested in standalone frontend tests | □ Role/label expectations documented but not verified | `RoundtripResultsPanel.test.tsx` | `gap` | `deferred` | CR:M12-005, CR:M12-006 (D-025) |
-| **SidecarPreview** | Host-owned preview for sidecar/manifest artifacts | □ States not tested in standalone frontend tests | □ Role/label expectations documented but not verified | `SidecarPreview.test.tsx` | `gap` | `deferred` | CR:M12-006 (D-025) |
-| **SidecarEditingWidgets** | Host-owned widgets for editing sidecar metadata (captions, labels, cue lists) | □ States not tested in standalone frontend tests | □ Role/label expectations documented but not verified | `SidecarEditingWidgets.test.tsx` | `gap` | `deferred` | CR:M12-011 (part of D-023) |
-| **SequenceCreatorPanel** | Host-owned panel for sequence creation with controls manifest layout | □ States not tested in standalone frontend tests | □ Role/label expectations documented but not verified | `SequenceCreatorPanel.test.tsx`, `ControlsManifestLayout.test.tsx` | `gap` | `deferred` | CR:M12-011 (part of D-023) |
-| **Extension Manager UI** | Host-owned extension manager (install, enable/disable, settings edit) | □ Full UI not confirmed as complete in current `main` | □ Role/label expectations documented but not verified | M14-001 through M14-011 | `gap` | `deferred` | CR:M14-001, BLOCKER:B-001 (D-001–D-010) |
+| **AgentToolsPanel / AgentChat** | Host-owned panel for agent tool invocation and chat | □ States not tested in standalone frontend tests | □ Role/label expectations documented but not verified | DEFER:D-041; `src/tools/video-editor/examples/extensions/agent-tools-canary/index.ts`, `src/tools/video-editor/examples/extensions/agent-tools-copilot/index.ts` | `gap` | `deferred` | CR:M10-001, CR:M10-005 (D-041) |
+| **CopilotPrompt** | Host-owned copilot prompt surface for timeline-aware generation | □ States not tested in standalone frontend tests | □ Role/label expectations documented but not verified | DEFER:D-042; `src/tools/video-editor/examples/extensions/agent-tools-copilot/index.ts` | `gap` | `deferred` | CR:M10-006 (D-042) |
+| **GenerationSessionPanel** | Host-owned panel for long-running generation with progress/cancel/proposal-ready | □ States not tested in standalone frontend tests | □ Role/label expectations documented but not verified | DEFER:D-043, D-044; `src/tools/video-editor/examples/extensions/agent-tools-canary/index.ts` | `gap` | `deferred` | CR:M10-008 (D-043), CR:M10-009 (D-044) |
+| **LiveSourcesPanel** | Host-owned panel for live data source management, bake, and export readiness | □ States not tested in standalone frontend tests | □ Role/label expectations documented but not verified | DEFER:D-030, D-031; `src/tools/video-editor/examples/extensions/live-webcam-canary/index.ts`, `src/tools/video-editor/examples/extensions/live-generated-frame-canary/index.ts` | `gap` | `deferred` | CR:M11-006 (D-030), CR:M11-007 (D-031) |
+| **ShaderInspector** | Host-owned panel for shader uniform editing, texture binding, and compilation diagnostics | □ States not tested in standalone frontend tests | □ Role/label expectations documented but not verified | DEFER:D-101, D-102; `src/tools/video-editor/examples/extensions/clip-local-shader-canary/index.ts`, `src/tools/video-editor/examples/extensions/postprocess-shader-canary/index.ts` | `gap` | `deferred` | CR:M13-004, CR:M13-007 (D-101), CR:M13-009 (D-102) |
+| **MaterialBrowser** | Host-owned browser for `RenderMaterial` entries with filtering and detail views | □ States not tested in standalone frontend tests | □ Role/label expectations documented but not verified | DEFER:D-023; `src/examples/process-example.ts` | `gap` | `deferred` | CR:M12-011 (part of D-023) |
+| **ProcessSettingsForm** | Host-owned form for process configuration, environment widgets, and operation discovery | □ States not tested in standalone frontend tests | □ Role/label expectations documented but not verified | DEFER:D-023; `src/examples/process-example.ts` | `gap` | `deferred` | CR:M12-004, CR:M12-010 (D-023) |
+| **RoundtripResultsPanel** | Host-owned panel for process roundtrip results, sidecar previews, and download actions | □ States not tested in standalone frontend tests | □ Role/label expectations documented but not verified | DEFER:D-025; `src/examples/process-example.ts` | `gap` | `deferred` | CR:M12-005, CR:M12-006 (D-025) |
+| **SidecarPreview** | Host-owned preview for sidecar/manifest artifacts | □ States not tested in standalone frontend tests | □ Role/label expectations documented but not verified | DEFER:D-025; `src/examples/process-example.ts` | `gap` | `deferred` | CR:M12-006 (D-025) |
+| **SidecarEditingWidgets** | Host-owned widgets for editing sidecar metadata (captions, labels, cue lists) | □ States not tested in standalone frontend tests | □ Role/label expectations documented but not verified | DEFER:D-023; `src/examples/process-example.ts` | `gap` | `deferred` | CR:M12-011 (part of D-023) |
+| **SequenceCreatorPanel** | Host-owned panel for sequence creation with controls manifest layout | □ States not tested in standalone frontend tests | □ Role/label expectations documented but not verified | DEFER:D-023; `src/examples/process-example.ts` | `gap` | `deferred` | CR:M12-011 (part of D-023) |
+| **Extension Manager UI** | Host-owned extension manager (install, enable/disable, settings edit) | □ Full UI not confirmed as complete in current `main` | □ Role/label expectations documented but not verified | BLOCKER:B-001; `src/examples/hello-world-extension.ts` | `gap` | `deferred` | CR:M14-001, BLOCKER:B-001 (D-001–D-010) |
 
 ---
 
@@ -546,7 +546,7 @@ Supported primitives map to rows S-020–S-027, S-050–S-051, S-060–S-065 in 
 | [extension-platform-supported-deferred.md](./extension-platform-supported-deferred.md) | Canonical supported/deferred V1 behavior classification |
 | [extensions-trust-envelope.md](./extensions-trust-envelope.md) | V1 trusted-local execution model |
 | [provider-compatibility-matrix.md](./provider-compatibility-matrix.md) | DataProvider compatibility matrix |
-| [frontend-closure-checklist.md](./frontend-closure-checklist.md) | Transitional checklist (superseded by this matrix) |
+| [docs/video-editor/frontend-closure-checklist.md](./frontend-closure-checklist.md) | Transitional checklist (superseded by this matrix) |
 
 ---
 
@@ -554,4 +554,4 @@ Supported primitives map to rows S-020–S-027, S-050–S-051, S-060–S-065 in 
 
 | Date | Change |
 |---|---|
-| 2026-06-20 | Initial frontend closure matrix for M15. Replaces the checklist format (§ 2–3 of `frontend-closure-checklist.md`) with a comprehensive matrix covering 39 public primitives across core shell, active surfaces, canary surfaces, diagnostic system, forms, commands, proposals, inspectors, confirmation, preview/export, and deferred primitives. |
+| 2026-06-20 | Initial frontend closure matrix for M15. Replaces the checklist format (§ 2–3 of `docs/video-editor/frontend-closure-checklist.md`) with a comprehensive matrix covering 39 public primitives across core shell, active surfaces, canary surfaces, diagnostic system, forms, commands, proposals, inspectors, confirmation, preview/export, and deferred primitives. |

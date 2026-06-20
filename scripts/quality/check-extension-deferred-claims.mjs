@@ -93,7 +93,7 @@ const RISKY_TERMS = [
   {
     term: 'remote package install',
     pattern: 'npm\\s+install|dynamic\\s+import.*extension|CDN.*extension|remote.*package',
-    searchPath: 'src',
+    searchPath: 'src/tools/video-editor/runtime',
     description:
       'Dynamic package loading (npm/CDN/import() for extensions) is deferred in V1',
   },

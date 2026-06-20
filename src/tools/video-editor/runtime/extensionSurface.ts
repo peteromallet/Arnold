@@ -41,6 +41,7 @@ import type {
   ProcessContribution,
   ProcessSpec,
   ProcessOperationSpec,
+  ProjectExtensionRequirement,
 } from '@reigh/editor-sdk';
 import { contributionKindNotYetBridged } from '@reigh/editor-sdk';
 import type { TimelineGestureOwner } from '@/tools/video-editor/lib/mobile-interaction-model';
@@ -440,6 +441,8 @@ export interface ExtensionRuntime {
   readonly shaders: readonly VideoEditorShaderDescriptor[];
   /** M10: Normalized agent tool descriptors. */
   readonly agentTools: readonly VideoEditorAgentToolDescriptor[];
+  /** Project-level extension requirements referenced by the active extensions. */
+  readonly requirements: readonly ProjectExtensionRequirement[];
 }
 
 /** Signature for host-owned runtime normalization. */
@@ -612,7 +615,7 @@ export function normalizeExtensionRuntime(
             milestone: notYetBridged ?? 'unknown',
           });
           diagnostics.push({
-            severity: 'warn',
+            severity: 'warning',
             code: 'runtime/effect-missing-component-metadata',
             message:
               `Effect contribution "${contribId}" in extension "${extId}" ` +
@@ -647,7 +650,7 @@ export function normalizeExtensionRuntime(
             milestone: notYetBridged ?? 'unknown',
           });
           diagnostics.push({
-            severity: 'warn',
+            severity: 'warning',
             code: 'runtime/transition-missing-renderer-metadata',
             message:
               `Transition contribution "${contribId}" in extension "${extId}" ` +
@@ -1138,6 +1141,7 @@ export function normalizeExtensionRuntime(
     transitions: Object.freeze(transitionDescriptors),
     shaders: Object.freeze(shaderDescriptors),
     agentTools: Object.freeze(agentToolDescriptors),
+    requirements: Object.freeze([]),
   });
 
   return runtime;
@@ -1336,6 +1340,7 @@ const EMPTY_EXTENSION_RUNTIME: ExtensionRuntime = Object.freeze({
   transitions: EMPTY_TRANSITIONS,
   shaders: EMPTY_SHADERS,
   agentTools: EMPTY_AGENT_TOOLS,
+  requirements: Object.freeze([]),
 });
 
 type RegistryDescriptor = {

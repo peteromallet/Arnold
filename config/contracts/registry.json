@@ -255,8 +255,10 @@
         "@publicContract"
       ],
       "expectedExports": [
+        "DEFAULT_OUTPUT",
         "DEFAULT_VIDEO_TRACKS",
         "createDefaultTimelineConfig",
+        "withDefaultTimelineOutput",
         "AGENT_WORKFLOW_SHOT_ID",
         "AGENT_WORKFLOW_TIMELINE_ID",
         "AGENT_WORKFLOW_TIMELINE_NAME",

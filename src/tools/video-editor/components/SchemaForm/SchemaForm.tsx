@@ -568,7 +568,7 @@ export function SchemaForm({
             {field._capability.widgetType === 'boolean' && (
               <div className="flex items-center justify-between rounded-md border border-border/70 px-3 py-2">
                 <div className="text-sm text-foreground">
-                  {Boolean(value) ? 'Enabled' : 'Disabled'}
+                  {value ? 'Enabled' : 'Disabled'}
                 </div>
                 <Switch
                   checked={Boolean(value)}

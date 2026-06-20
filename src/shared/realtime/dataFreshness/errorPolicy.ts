@@ -1,4 +1,4 @@
-type RealtimeFetchErrorType =
+export type RealtimeFetchErrorType =
   | 'CONNECTION_CLOSED'
   | 'NETWORK_ERROR'
   | 'TIMEOUT'

@@ -96,7 +96,7 @@ function createMockProposalRuntime(
     rejectError,
   } = options;
 
-  let proposals = new Map<string, TimelineProposal>();
+  const proposals = new Map<string, TimelineProposal>();
   for (const p of initialProposals) {
     proposals.set(p.id, p);
   }

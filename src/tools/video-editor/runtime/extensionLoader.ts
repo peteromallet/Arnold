@@ -763,7 +763,7 @@ export function createExtensionLoader(
   repository?: ExtensionStateRepository,
 ): ExtensionLoader {
   const repo = repository ?? null;
-  let disposed = false;
+  const disposed = false;
 
   // ---- helpers ----------------------------------------------------------
 

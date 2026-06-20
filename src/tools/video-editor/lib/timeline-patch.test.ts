@@ -1810,7 +1810,7 @@ function makeMinimalTimelineData(overrides: Record<string, unknown> = {}) {
     registry,
     configVersion: 1,
     resolvedConfig: { registry: assets },
-  } as any; // eslint-disable-line @typescript-eslint/no-explicit-any
+  } as any;  
 }
 
 const clipShader: TimelineClipShaderMetadata = {

@@ -36,7 +36,7 @@ export function useProjectDefaults({
   // fetchProjects is also excluded because it rebuilds when selectedProjectId
   // changes after the first fetch, which would trigger a cascade re-fetch.
   // The mobile timeout fallback below handles any stalled initial fetch.
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+   
   useEffect(() => {
     if (userId) {
       fetchProjects();

@@ -21,7 +21,7 @@ describe('scheduleBoundedTargetWait', () => {
       queryTarget,
       resumeDelayMs: 5,
       scheduleTimeout,
-      selector: '[data-tour=\"first-shot\"]',
+      selector: '[data-tour="first-shot"]',
       setIsPaused,
       setStepIndex,
     });
@@ -48,7 +48,7 @@ describe('scheduleBoundedTargetWait', () => {
       queryTarget,
       resumeDelayMs: 5,
       scheduleTimeout,
-      selector: '[data-tour=\"missing\"]',
+      selector: '[data-tour="missing"]',
       setIsPaused,
       setStepIndex,
     });

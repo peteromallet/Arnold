@@ -549,8 +549,8 @@ function scanClip(
           severity: isExtDeclared ? 'warning' : 'error',
           code: 'export/unknown-clip-type',
           message: isExtDeclared
-            ? `Clip type \"${clip.clipType}\" is declared by an inactive extension and may not be available at export time.`
-            : `Clip type \"${clip.clipType}\" is not recognised. Ensure the required extension or registry is installed.`,
+            ? `Clip type "${clip.clipType}" is declared by an inactive extension and may not be available at export time.`
+            : `Clip type "${clip.clipType}" is not recognised. Ensure the required extension or registry is installed.`,
           detail: { clipId: clip.id, clipType: clip.clipType },
         });
 
@@ -561,7 +561,7 @@ function scanClip(
           pushClipTypeFindingAndBlocker(findings, blockers, {
             id: `export.clipType.${clip.id}.${clip.clipType}.missing`,
             reason: 'missing-contribution',
-            message: `Clip type \"${clip.clipType}\" is not recognised. Ensure the required extension or registry is installed.`,
+            message: `Clip type "${clip.clipType}" is not recognised. Ensure the required extension or registry is installed.`,
             clipId: clip.id,
             clipType: clip.clipType,
             route: 'browser-export',
@@ -593,8 +593,8 @@ function scanClip(
         severity: isExtDeclared ? 'warning' : 'error',
         code: 'export/unknown-transition-type',
         message: isExtDeclared
-          ? `Transition \"${tType}\" is declared by an inactive extension and may not be available at export time.`
-          : `Transition \"${tType}\" is not recognised. Ensure the required extension or registry is installed.`,
+          ? `Transition "${tType}" is declared by an inactive extension and may not be available at export time.`
+          : `Transition "${tType}" is not recognised. Ensure the required extension or registry is installed.`,
         detail: { clipId: clip.id, transitionType: tType },
       });
 
@@ -603,7 +603,7 @@ function scanClip(
         pushTransitionFindingAndBlocker(findings, blockers, {
           id: `export.transition.${clip.id}.${tType}.missing`,
           reason: 'missing-contribution',
-          message: `Transition \"${tType}\" is not recognised. Ensure the required extension or registry is installed.`,
+          message: `Transition "${tType}" is not recognised. Ensure the required extension or registry is installed.`,
           clipId: clip.id,
           transitionType: tType,
           route: 'browser-export',
@@ -654,8 +654,8 @@ function scanEffect(
   if (!known.effectTypes.has(effectType) && !snapshotRecord) {
     const isExtDeclared = known.extensionEffectIds.has(effectType);
     const message = isExtDeclared
-      ? `${capitalise(slot)} effect \"${effectType}\" is declared by an inactive extension and may not be available at export time.`
-      : `${capitalise(slot)} effect \"${effectType}\" is not recognised. Ensure the required extension or registry is installed.`;
+      ? `${capitalise(slot)} effect "${effectType}" is declared by an inactive extension and may not be available at export time.`
+      : `${capitalise(slot)} effect "${effectType}" is not recognised. Ensure the required extension or registry is installed.`;
 
     diagnostics.push({
       severity: isExtDeclared ? 'warning' : 'error',
@@ -694,7 +694,7 @@ function scanEffectRecordRenderability(
   blockers: RenderBlocker[],
 ): void {
   if (record.status !== 'active') {
-    const message = `${capitalise(slot)} effect \"${effectType}\" is registered but inactive and cannot be used for export or preview.`;
+    const message = `${capitalise(slot)} effect "${effectType}" is registered but inactive and cannot be used for export or preview.`;
     diagnostics.push({
       severity: 'error',
       code: 'export/unrenderable-effect',
@@ -714,7 +714,7 @@ function scanEffectRecordRenderability(
       pushEffectFindingAndBlocker(findings, blockers, {
         id: `export.effect.${clip.id}.${slot}.${effectType}.inactive.${route}`,
         reason: 'inactive-extension',
-        message: `${capitalise(slot)} effect \"${effectType}\" on route \"${route}\" is registered but inactive.`,
+        message: `${capitalise(slot)} effect "${effectType}" on route "${route}" is registered but inactive.`,
         clipId: clip.id,
         effectType,
         slot,
@@ -742,7 +742,7 @@ function scanEffectRecordRenderability(
     if (capability.status === 'unknown') {
       // Unknown support — emit a warning finding (non-blocking).
       const message = capability.message
-        ?? `${capitalise(slot)} effect \"${effectType}\" has unknown support for ${route}.`;
+        ?? `${capitalise(slot)} effect "${effectType}" has unknown support for ${route}.`;
       diagnostics.push({
         severity: 'warning',
         code: 'export/unknown-route-support',
@@ -779,7 +779,7 @@ function scanEffectRecordRenderability(
     // status === 'blocked' — emit error diagnostic, finding, and blocker.
     const reason = capability.blockerReason ?? firstRouteBlockerReason(record, route) ?? 'route-unsupported';
     const message = capability.message
-      ?? `${capitalise(slot)} effect \"${effectType}\" does not support ${route}.`;
+      ?? `${capitalise(slot)} effect "${effectType}" does not support ${route}.`;
 
     diagnostics.push({
       severity: 'error',
@@ -869,7 +869,7 @@ function scanTransitionRecordRenderability(
   blockers: RenderBlocker[],
 ): void {
   if (record.status !== 'active') {
-    const message = `Transition \"${transitionType}\" is registered but inactive and cannot be used for export or preview.`;
+    const message = `Transition "${transitionType}" is registered but inactive and cannot be used for export or preview.`;
     diagnostics.push({
       severity: 'error',
       code: 'export/unrenderable-transition',
@@ -888,7 +888,7 @@ function scanTransitionRecordRenderability(
       pushTransitionFindingAndBlocker(findings, blockers, {
         id: `export.transition.${clip.id}.${transitionType}.inactive.${route}`,
         reason: 'inactive-extension',
-        message: `Transition \"${transitionType}\" on route \"${route}\" is registered but inactive.`,
+        message: `Transition "${transitionType}" on route "${route}" is registered but inactive.`,
         clipId: clip.id,
         transitionType,
         route,
@@ -904,7 +904,7 @@ function scanTransitionRecordRenderability(
     if (!capability) {
       // No capability declared for this route — this is a blocker for worker-export by default
       if (route === 'worker-export') {
-        const message = `Transition \"${transitionType}\" does not declare ${route} support. Worker export is blocked by default.`;
+        const message = `Transition "${transitionType}" does not declare ${route} support. Worker export is blocked by default.`;
         diagnostics.push({
           severity: 'error',
           code: 'export/unrenderable-transition',
@@ -936,7 +936,7 @@ function scanTransitionRecordRenderability(
 
     if (capability.status === 'unknown') {
       const message = capability.message
-        ?? `Transition \"${transitionType}\" has unknown support for ${route}.`;
+        ?? `Transition "${transitionType}" has unknown support for ${route}.`;
       diagnostics.push({
         severity: 'warning',
         code: 'export/unknown-route-support',
@@ -972,7 +972,7 @@ function scanTransitionRecordRenderability(
     // status === 'blocked'
     const reason = capability.blockerReason ?? firstTransitionRouteBlockerReason(record, route) ?? 'route-unsupported';
     const message = capability.message
-      ?? `Transition \"${transitionType}\" does not support ${route}.`;
+      ?? `Transition "${transitionType}" does not support ${route}.`;
 
     diagnostics.push({
       severity: 'error',
@@ -1059,7 +1059,7 @@ function scanClipTypeRecordRenderability(
   blockers: RenderBlocker[],
 ): void {
   if (record.status !== 'active') {
-    const message = `Clip type \"${clipType}\" is registered but inactive and cannot be used for export or preview.`;
+    const message = `Clip type "${clipType}" is registered but inactive and cannot be used for export or preview.`;
     diagnostics.push({
       severity: 'error',
       code: 'export/unrenderable-clip-type',
@@ -1079,7 +1079,7 @@ function scanClipTypeRecordRenderability(
       pushClipTypeFindingAndBlocker(findings, blockers, {
         id: `export.clipType.${clip.id}.${clipType}.inactive.${route}`,
         reason: 'inactive-extension',
-        message: `Clip type \"${clipType}\" on route \"${route}\" is registered but inactive.`,
+        message: `Clip type "${clipType}" on route "${route}" is registered but inactive.`,
         clipId: clip.id,
         clipType,
         route,
@@ -1106,7 +1106,7 @@ function scanClipTypeRecordRenderability(
     if (capability.status === 'unknown') {
       // Unknown support — emit a warning finding (non-blocking).
       const message = capability.message
-        ?? `Clip type \"${clipType}\" has unknown support for ${route}.`;
+        ?? `Clip type "${clipType}" has unknown support for ${route}.`;
       diagnostics.push({
         severity: 'warning',
         code: 'export/unknown-route-support',
@@ -1142,7 +1142,7 @@ function scanClipTypeRecordRenderability(
     // status === 'blocked' — emit error diagnostic, finding, and blocker.
     const reason = capability.blockerReason ?? firstClipTypeRouteBlockerReason(record, route) ?? 'route-unsupported';
     const message = capability.message
-      ?? `Clip type \"${clipType}\" does not support ${route}.`;
+      ?? `Clip type "${clipType}" does not support ${route}.`;
 
     diagnostics.push({
       severity: 'error',

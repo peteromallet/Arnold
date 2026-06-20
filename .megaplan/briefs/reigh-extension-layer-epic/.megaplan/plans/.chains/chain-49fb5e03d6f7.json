@@ -1,10 +1,10 @@
 {
   "schema_version": 0,
-  "current_milestone_index": 13,
-  "current_plan_name": "m13-shader-and-webgl-bridge-20260620-0904",
-  "last_state": "milestone_complete",
-  "pr_number": 40,
-  "pr_state": "open",
+  "current_milestone_index": 16,
+  "current_plan_name": null,
+  "last_state": "done",
+  "pr_number": null,
+  "pr_state": null,
   "completed": [
     {
       "label": "m0-workspace-scaffold",
@@ -176,13 +176,31 @@
       "pr_state": "merged",
       "plan_name": "m12-render-capability-20260620-0634",
       "merged_at": "2026-06-20T06:52:12Z"
+    },
+    {
+      "label": "m14-packaging-loader-manager",
+      "index": 14,
+      "status": "done",
+      "pr_number": 41,
+      "pr_state": "merged",
+      "plan_name": "m14-packaging-runtime-loader-20260620-1453",
+      "merged_at": "2026-06-20T16:44:56Z"
+    },
+    {
+      "label": "m15-hardening-docs",
+      "index": 15,
+      "status": "done",
+      "pr_number": 42,
+      "pr_state": "merged",
+      "plan_name": "m15-hardening-compatibility-20260620-1850",
+      "merged_at": "2026-06-20T19:10:55Z"
     }
   ],
-  "branch_head": "e4523bc668b8fb32c2ea46ec036602c452bec48d",
-  "pr_head": "e4523bc668b8fb32c2ea46ec036602c452bec48d",
-  "last_pushed_commit": "e4523bc668b8fb32c2ea46ec036602c452bec48d",
-  "dirty_flag": true,
-  "sync_state": "dirty",
+  "branch_head": null,
+  "pr_head": null,
+  "last_pushed_commit": null,
+  "dirty_flag": false,
+  "sync_state": "clean",
   "extra_repos": [],
   "chain_session": null,
   "resolved_workspace": null,
@@ -199,13 +217,13 @@
     "execution_environment": {
       "schema_version": 1,
       "created_phase": "chain_start",
-      "last_observed_phase": "chain_start",
+      "last_observed_phase": "chain_done",
       "project_root": "/Users/peteromalley/Documents/.megaplan-worktrees/reigh-extension-layer-epic",
       "target_root": "/Users/peteromalley/Documents/.megaplan-worktrees/reigh-extension-layer-epic",
       "work_dir": "/Users/peteromalley/Documents/.megaplan-worktrees/reigh-extension-layer-epic",
       "engine_root": "/Users/peteromalley/Documents/megaplan",
-      "target_head": "8344b73c9a8cd01fd653be171da9852dd1a4e85f",
-      "target_base": "2e77958f1e5dca8bf028aa4e902fae0382720e8c",
+      "target_head": "687c6dc66625ad6a69695aa34416c91a6d60ff12",
+      "target_base": "9c3f86d6d3e2b6e557940856bd3b99fbcbc8d625",
       "target_base_ref": "main",
       "target_fallback_reason": null
     }

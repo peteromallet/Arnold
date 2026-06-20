@@ -754,6 +754,6 @@ describe('M12 getCapabilityRequirements', () => {
     // TimelineOps, or any mutation APIs.
     //
     // If this file compiles and runs without crashing, the boundary holds.
-    expect(true).toBe(true);
+    expect(typeof createTimelineReader).toBe('function');
   });
 });

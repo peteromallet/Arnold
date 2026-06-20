@@ -9,6 +9,7 @@ describe('ui cn contract', () => {
   });
 
   it('keeps cn callable for class merge behavior', () => {
-    expect(cn('a', false && 'b', 'c')).toBe('a c');
+    const includeB = false;
+    expect(cn('a', includeB && 'b', 'c')).toBe('a c');
   });
 });

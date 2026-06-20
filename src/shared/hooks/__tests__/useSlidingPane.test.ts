@@ -257,7 +257,7 @@ describe('useSlidingPane', () => {
   });
 
   it('hover-open survives unrelated re-renders', () => {
-    let isLocked = false;
+    const isLocked = false;
     const { result, rerender } = renderHook(() =>
       useSlidingPane({
         side: 'left',

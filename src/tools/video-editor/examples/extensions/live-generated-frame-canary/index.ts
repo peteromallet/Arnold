@@ -415,7 +415,6 @@ export function startLiveGeneratedFrameCanary(
 ): LiveGeneratedFrameCanaryController {
   let disposed = false;
   let lastSession: LiveGeneratedFrameSession | undefined;
-  let toolHandle: DisposeHandle | undefined;
 
   const createSession = (
     request: Partial<AgentToolInvocationRequest> = {},
@@ -510,7 +509,7 @@ export function startLiveGeneratedFrameCanary(
     return createSession(request);
   };
 
-  toolHandle = ctx.agentTools.registerTool(TOOL_ID, handler);
+  const toolHandle = ctx.agentTools.registerTool(TOOL_ID, handler);
   ctx.services.diagnostics.report({
     severity: 'info',
     code: 'live-generated-frame/activated',

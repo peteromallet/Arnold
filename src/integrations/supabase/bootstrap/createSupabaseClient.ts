@@ -57,7 +57,7 @@ export function createSupabaseClient() {
       }
       return fetchWithTimeout(input as Parameters<typeof fetchWithTimeout>[0], { ...init, headers });
     };
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+     
     (client as unknown as { rest: { fetch: typeof dataFetch } }).rest.fetch = dataFetch;
 
     // Keep the cached token in sync with auth state changes.
