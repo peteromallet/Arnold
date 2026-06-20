@@ -31,6 +31,15 @@ def test_offline_object_info_cache_exposes_custom_pack_schema() -> None:
     assert class_output_count("WanVideoSampler") >= 1
 
 
+def test_curated_output_fallback_repairs_dual_clip_loader_gguf_zero_output_cache_entry() -> None:
+    schema = get_class("DualCLIPLoaderGGUF")
+
+    assert schema is not None
+    assert output_names("DualCLIPLoaderGGUF") == ["CLIP"]
+    assert class_output_count("DualCLIPLoaderGGUF") == 1
+    assert class_has_list_output("DualCLIPLoaderGGUF") is False
+
+
 def test_offline_object_info_cache_marks_list_outputs() -> None:
     list_output_classes = [
         class_type

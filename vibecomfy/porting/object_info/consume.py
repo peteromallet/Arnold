@@ -56,6 +56,7 @@ _CURATED_OUTPUTS: dict[str, list[dict[str, str]]] = {
     "DepthAnything_V2": [{"name": "image", "type": "IMAGE"}],
     "DownloadAndLoadDepthAnythingV2Model": [{"name": "da_v2_model", "type": "MODEL"}],
     "DualCLIPLoader": [{"name": "CLIP", "type": "CLIP"}],
+    "DualCLIPLoaderGGUF": [{"name": "CLIP", "type": "CLIP"}],
     "EmptyAceStep1.5LatentAudio": [{"name": "LATENT", "type": "LATENT"}],
     "EmptyLTXVLatentVideo": [{"name": "LATENT", "type": "LATENT"}],
     "EmptySD3LatentImage": [{"name": "LATENT", "type": "LATENT"}],
