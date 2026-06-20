@@ -171,7 +171,11 @@ class NativeInstruction:
 
     subprogram: Any = field(default=None, compare=False, hash=False)
     """For ``subpipeline`` ops: the child :class:`NativeProgram` to execute.
+    For ``parallel`` ops: the :class:`ParallelInstruction` metadata block.
     Excluded from equality/hash; ignored for other ops."""
+
+    parallel_index: int | None = None
+    """For ``parallel`` ops: index into :attr:`NativeProgram.parallel_blocks`."""
 
     next_pc: int | None = None
     """Program counter of the next instruction for sequential fall-through."""

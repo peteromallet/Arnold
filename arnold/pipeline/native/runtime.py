@@ -38,6 +38,7 @@ from arnold.pipeline.native.hooks import (
 from arnold.pipeline.native.ir import (
     NativeInstruction,
     NativeProgram,
+    ParallelInstruction,
 )
 from arnold.pipeline.native.trace import NativeTraceHooks
 

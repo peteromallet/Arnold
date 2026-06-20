@@ -165,6 +165,8 @@ class _Compiler:
         produces: tuple = (),
         consumes: tuple = (),
         decision_vocabulary: frozenset[str] | None = None,
+        subprogram: Any | None = None,
+        parallel_index: int | None = None,
     ) -> int:
         """Append an instruction and return its PC."""
         pc = self._pc
@@ -178,6 +180,8 @@ class _Compiler:
             produces=produces,
             consumes=consumes,
             decision_vocabulary=decision_vocabulary if decision_vocabulary is not None else frozenset(),
+            subprogram=subprogram,
+            parallel_index=parallel_index,
         )
         self._instructions.append(instr)
         self._pc = pc + 1
@@ -347,16 +351,10 @@ class _Compiler:
             ) from exc
 
         if not is_phase(func):
-            # Special-case the common mistake ``yield parallel([...])`` so the
-            # diagnostic points users to the supported ``for`` syntax.
-            if (
-                callable(func)
-                and getattr(func, "__name__", "") == "parallel"
-            ):
+            if callable(func) and getattr(func, "__name__", "") == "parallel":
                 raise NativeCompileError(
-                    "yield parallel([...]) is not supported. "
-                    "Use the fan-out syntax: "
-                    "for branch in parallel([phase_a, phase_b]): state = yield branch(ctx)",
+                    "yield parallel([...]) is not supported; use "
+                    "'for branch in parallel([...]): state = yield branch(ctx)'",
                     func_node,
                 )
             raise NativeCompileError(
@@ -668,54 +666,45 @@ class _Compiler:
 
     # ── for / parallel lowering ───────────────────────────────────
 
-    def _lower_for_stmt(self, stmt: ast.For) -> None:
-        """Lower ``for <var> in parallel([...])`` as a parallel fan-out block.
+    def _parse_parallel_call(
+        self,
+        call_node: ast.Call,
+        *,
+        context_name: str = "parallel(...)",
+    ) -> tuple[list[Callable[..., Any]], list[str], Callable[..., Any] | None, str | None]:
+        """Validate a ``parallel([...])`` call and return its components.
 
-        The iterable must be a call to :func:`parallel` with a literal
-        list/tuple of ``@phase``-decorated callables.  Dynamic, empty,
-        duplicate, and non-literal branch sets are rejected.
+        Returns ``(branch_funcs, branch_names, reducer, explicit_name)``.
+        Raises ``NativeCompileError`` for invalid branch sets, reducers, or
+        unsupported keyword arguments.
         """
-        iter_node = stmt.iter
-
-        # Must be a call
-        if not isinstance(iter_node, ast.Call):
-            raise NativeCompileError(
-                "for loop iterable must be a call to parallel(...); "
-                f"got {type(iter_node).__name__}",
-                iter_node,
-            )
-
         # Resolve the callable (must be our parallel function)
         try:
-            iter_func = self._resolve_callable(iter_node.func)
+            func = self._resolve_callable(call_node.func)
         except NativeCompileError as exc:
-            # Re-raise with a clear "For" diagnostic so legacy rejection tests
-            # (e.g. bare ``for i in range(3)``) still get the expected signal.
             raise NativeCompileError(
-                f"For loop iterable must be a call to parallel(...); {exc}",
-                iter_node,
+                f"{context_name} must be a call to parallel(...); {exc}",
+                call_node,
             ) from exc
         except Exception as exc:
             raise NativeCompileError(
-                f"For loop iterable must be a call to parallel(...); "
-                f"cannot resolve callable: {exc}", iter_node
+                f"{context_name} must be a call to parallel(...); "
+                f"cannot resolve callable: {exc}", call_node
             ) from exc
 
-        # Verify it's the parallel function by checking its metadata attachment
-        if not callable(iter_func) or getattr(iter_func, '__name__', '') != 'parallel':
+        if not callable(func) or getattr(func, "__name__", "") != "parallel":
             raise NativeCompileError(
-                "For loop iterable must be a call to parallel(...), "
-                f"got {getattr(iter_func, '__name__', iter_func)!r}",
-                iter_node.func,
+                f"{context_name} must be a call to parallel(...), "
+                f"got {getattr(func, '__name__', func)!r}",
+                call_node.func,
             )
 
-        # Extract the branch list argument — must be a literal list or tuple
-        if not iter_node.args:
+        if not call_node.args:
             raise NativeCompileError(
                 "parallel(...) requires at least one argument (the branch list)",
-                iter_node,
+                call_node,
             )
-        branch_arg = iter_node.args[0]
+        branch_arg = call_node.args[0]
 
         if isinstance(branch_arg, ast.List) or isinstance(branch_arg, ast.Tuple):
             branch_nodes = branch_arg.elts
@@ -733,7 +722,6 @@ class _Compiler:
                 branch_arg,
             )
 
-        # Resolve all branch callables
         branch_funcs: list[Callable[..., Any]] = []
         branch_names: list[str] = []
         seen_ids: set[int] = set()
@@ -764,12 +752,13 @@ class _Compiler:
             seen_ids.add(bid)
             branch_funcs.append(bf)
             meta = get_phase_meta(bf)
-            branch_names.append(meta["name"] if meta else getattr(bf, "__name__", f"branch_{i}"))
+            branch_names.append(
+                meta["name"] if meta else getattr(bf, "__name__", f"branch_{i}")
+            )
 
-        # Extract reducer and optional name from keyword arguments
         reducer: Callable[..., Any] | None = None
         explicit_name: str | None = None
-        for kw in iter_node.keywords:
+        for kw in call_node.keywords:
             if kw.arg == "reducer":
                 try:
                     reducer = self._resolve_callable(kw.value)
@@ -784,7 +773,10 @@ class _Compiler:
                         "parallel() reducer must be callable", kw.value
                     )
             elif kw.arg == "name":
-                if isinstance(kw.value, ast.Constant) and isinstance(kw.value.value, str):
+                if (
+                    isinstance(kw.value, ast.Constant)
+                    and isinstance(kw.value.value, str)
+                ):
                     explicit_name = kw.value.value
                 else:
                     raise NativeCompileError(
@@ -795,20 +787,48 @@ class _Compiler:
                     f"Unsupported parallel() keyword: {kw.arg!r}", kw
                 )
 
-        # Generate a block name
-        if explicit_name:
-            block_name = explicit_name
-        else:
-            block_name = f"parallel_{self._parallel_block_counter}"
-            self._parallel_block_counter += 1
+        return branch_funcs, branch_names, reducer, explicit_name
 
-        # Emit the parallel instruction
+    def _new_parallel_block_name(self, explicit_name: str | None) -> str:
+        if explicit_name:
+            return explicit_name
+        name = f"parallel_{self._parallel_block_counter}"
+        self._parallel_block_counter += 1
+        return name
+
+    def _lower_for_stmt(self, stmt: ast.For) -> None:
+        """Lower ``for <var> in parallel([...])`` as a parallel fan-out block.
+
+        The iterable must be a call to :func:`parallel` with a literal
+        list/tuple of ``@phase``-decorated callables.  Dynamic, empty,
+        duplicate, and non-literal branch sets are rejected.
+        """
+        iter_node = stmt.iter
+        if not isinstance(iter_node, ast.Call):
+            raise NativeCompileError(
+                "For loop iterable must be a call to parallel(...); "
+                f"got {type(iter_node).__name__}",
+                iter_node,
+            )
+
+        (
+            branch_funcs,
+            branch_names,
+            reducer,
+            explicit_name,
+        ) = self._parse_parallel_call(
+            iter_node, context_name="For loop iterable"
+        )
+        block_name = self._new_parallel_block_name(explicit_name)
+
+        # Emit the parallel instruction as a placeholder; its metadata is
+        # patched after branch bodies are lowered.  At runtime the marker is a
+        # no-op, so sequential fall-through executes the inlined bodies.
         parallel_pc = self._emit("parallel", name=block_name)
 
         # Lower each branch body with the corresponding callable substituted.
         # For the M5a sequential baseline, branches are emitted back-to-back
-        # after the parallel marker; the marker is a runtime no-op and each
-        # branch executes in declaration order.
+        # after the parallel marker and execute in declaration order.
         branch_start_pcs: list[int] = []
         for bf in branch_funcs:
             branch_start_pcs.append(self._pc)
@@ -825,7 +845,8 @@ class _Compiler:
         # Merge point is the PC immediately after the last branch body.
         merge_pc = self._pc
 
-        # Create the ParallelInstruction metadata
+        # Create the ParallelInstruction metadata and patch the marker.
+        parallel_index = len(self._parallel_blocks)
         parallel_block = ParallelInstruction(
             name=block_name,
             branches=tuple(branch_names),
@@ -834,6 +855,20 @@ class _Compiler:
             merge_pc=merge_pc,
         )
         self._parallel_blocks.append(parallel_block)
+        old_marker = self._instructions[parallel_pc]
+        self._instructions[parallel_pc] = NativeInstruction(
+            pc=old_marker.pc,
+            op=old_marker.op,
+            name=old_marker.name,
+            func=old_marker.func,
+            next_pc=old_marker.next_pc,
+            branches=old_marker.branches,
+            produces=old_marker.produces,
+            consumes=old_marker.consumes,
+            decision_vocabulary=old_marker.decision_vocabulary,
+            subprogram=parallel_block,
+            parallel_index=parallel_index,
+        )
 
     def _lower_for_body_with_substitution(
         self,
@@ -885,6 +920,8 @@ class _Compiler:
                         produces=instr.produces,
                         consumes=instr.consumes,
                         decision_vocabulary=instr.decision_vocabulary,
+                        subprogram=instr.subprogram,
+                        parallel_index=instr.parallel_index,
                     )
 
         return NativeProgram(

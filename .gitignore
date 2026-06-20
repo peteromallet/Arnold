@@ -11,6 +11,7 @@ __pycache__/
 .megaplan/briefs/**/.megaplan/
 .megaplan/.state-locks/
 .megaplan/cloud-chain.log
+.megaplan/system_logs/
 .megaplan/debt.json
 .megaplan/epics/
 .megaplan/profiles.toml
