@@ -3075,8 +3075,8 @@ export function contributionKindNotYetBridged(kind: ContributionKind): string | 
     return null;
   }
 
-  // M10: agentTool is bridged.
-  if (milestone === 'M10' && kind === 'agentTool') {
+  // M10: agentTool and agent are bridged.
+  if (milestone === 'M10' && (kind === 'agentTool' || kind === 'agent')) {
     return null;
   }
 

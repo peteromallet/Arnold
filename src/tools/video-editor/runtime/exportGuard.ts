@@ -154,8 +154,8 @@ export function collectBuiltInKnownIds(): KnownIdCollection {
 // ---------------------------------------------------------------------------
 
 /**
- * Collect extension-declared known IDs from contributions whose kind is not
- * yet bridged in M1 (effect, transition, clipType, parser, agentTool, agent).
+ * Collect extension-declared known IDs from contributions whose kind should
+ * remain visible as inactive metadata to the export guard.
  *
  * The IDs are returned as metadata only — no extension render dispatch is
  * triggered.  Callers should pass the full list of contributions and this
@@ -171,7 +171,15 @@ export function collectExtensionDeclaredIds(
   const clipTypeIds = new Set<string>();
 
   for (const contrib of contributions) {
-    // Only consider contributions whose kind is not yet bridged
+    // Clip type declarations still act as inactive export metadata even though
+    // clipType is now bridged. Other bridged render kinds are skipped.
+    if (contrib.kind === 'clipType') {
+      if (contrib.clipTypeId) {
+        clipTypeIds.add(contrib.clipTypeId);
+      }
+      continue;
+    }
+
     const notBridged = contributionKindNotYetBridged(contrib.kind);
     if (notBridged === null) continue; // Already bridged — skip
 
@@ -184,11 +192,6 @@ export function collectExtensionDeclaredIds(
       case 'transition':
         if (contrib.transitionId) {
           transitionIds.add(contrib.transitionId);
-        }
-        break;
-      case 'clipType':
-        if (contrib.clipTypeId) {
-          clipTypeIds.add(contrib.clipTypeId);
         }
         break;
     }

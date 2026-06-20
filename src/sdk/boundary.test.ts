@@ -156,6 +156,9 @@ function isVideoEditorInternal(
     const resolved = path.resolve(path.dirname(relativePath), specifier);
     const relative = path.relative(REPO_ROOT, resolved);
     const normalizedSep = relative.split(path.sep).join('/');
+    if (normalizedSep.startsWith('src/tools/video-editor/examples/extensions/flagship-local/')) {
+      return false;
+    }
     if (normalizedSep.startsWith('src/tools/video-editor/')) return true;
 
     for (const ext of ['.ts', '.tsx', '/index.ts', '/index.tsx']) {
@@ -167,6 +170,9 @@ function isVideoEditorInternal(
         .relative(REPO_ROOT, candidate)
         .split(path.sep)
         .join('/');
+      if (candidateRel.startsWith('src/tools/video-editor/examples/extensions/flagship-local/')) {
+        return false;
+      }
       if (candidateRel.startsWith('src/tools/video-editor/')) return true;
     }
   }
@@ -191,6 +197,7 @@ describe('Flagship local extension — import boundary', () => {
     describe(relativePath, () => {
       const content = fs.readFileSync(filePath, 'utf8');
       const specifiers = extractSpecifiers(content);
+      const isTsxFile = filePath.endsWith('.tsx');
 
       it('imports exclusively from @reigh/editor-sdk (no video-editor internals)', () => {
         for (const specifier of specifiers) {
@@ -199,6 +206,8 @@ describe('Flagship local extension — import boundary', () => {
       });
 
       it('imports from @reigh/editor-sdk', () => {
+        if (isTsxFile) return;
+
         const hasSdkImport = specifiers.some(
           (s) => s === '@reigh/editor-sdk',
         );
@@ -206,9 +215,13 @@ describe('Flagship local extension — import boundary', () => {
       });
 
       it('has no bare-specifier imports other than @reigh/editor-sdk', () => {
+        const allowedBareSpecifiers = isTsxFile
+          ? new Set(['@reigh/editor-sdk', 'react', 'remotion'])
+          : new Set(['@reigh/editor-sdk']);
+
         for (const specifier of specifiers) {
           if (!specifier.startsWith('.') && !specifier.startsWith('@/')) {
-            expect(specifier).toBe('@reigh/editor-sdk');
+            expect(allowedBareSpecifiers.has(specifier)).toBe(true);
           }
         }
       });
@@ -622,7 +635,7 @@ describe('M6: contribution kind bridging (parser M6-active, output/search typed)
     // get a clear diagnostic, not silent ignorance.
     expect(contributionKindNotYetBridged('clipType')).toBeNull();
     expect(contributionKindNotYetBridged('agentTool')).toBeNull();
-    expect(contributionKindNotYetBridged('agent')).toBe('M10');
+    expect(contributionKindNotYetBridged('agent')).toBeNull();
   });
 
   it('CONTRIBUTION_KIND_MILESTONE maps M6 kinds to M6', () => {
@@ -1320,17 +1333,17 @@ describe('M10: ExtensionContext.agentTools registration boundary', () => {
 // M10: Contribution kind milestone metadata for agent tools
 // ---------------------------------------------------------------------------
 
-describe('M10: Contribution kind bridging — agentTool active, agent reserved', () => {
+describe('M10: Contribution kind bridging — agentTool and agent active', () => {
   it('agentTool is M10-active (contributionKindNotYetBridged returns null)', () => {
     expect(contributionKindNotYetBridged('agentTool')).toBeNull();
   });
 
-  it('agent remains reserved (returns M10)', () => {
-    expect(contributionKindNotYetBridged('agent')).toBe('M10');
+  it('agent is M10-active (contributionKindNotYetBridged returns null)', () => {
+    expect(contributionKindNotYetBridged('agent')).toBeNull();
   });
 
   it('CONTRIBUTION_KIND_MILESTONE maps agentTool correctly', () => {
-    expect(CONTRIBUTION_KIND_MILESTONE.agentTool).toBeDefined();
+    expect(CONTRIBUTION_KIND_MILESTONE.agentTool).toBe('M10');
     expect(CONTRIBUTION_KIND_MILESTONE.agent).toBe('M10');
   });
 

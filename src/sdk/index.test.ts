@@ -257,8 +257,8 @@ describe('contributionKindNotYetBridged', () => {
     expect(contributionKindNotYetBridged('parser')).toBeNull();
     expect(contributionKindNotYetBridged('outputFormat')).toBe('M6');
     expect(contributionKindNotYetBridged('searchProvider')).toBe('M6');
-    expect(contributionKindNotYetBridged('agentTool')).toBe('M5');
-    expect(contributionKindNotYetBridged('agent')).toBe('M5');
+    expect(contributionKindNotYetBridged('agentTool')).toBeNull();
+    expect(contributionKindNotYetBridged('agent')).toBeNull();
   });
 
   it('parser is M6-active (returns null)', () => {
@@ -281,8 +281,8 @@ describe('contributionKindNotYetBridged', () => {
 
   it('unsupported contribution behavior is explicit (returns owning milestone)', () => {
     expect(contributionKindNotYetBridged('clipType')).toBeNull();
-    expect(contributionKindNotYetBridged('agentTool')).toBe('M5');
-    expect(contributionKindNotYetBridged('agent')).toBe('M5');
+    expect(contributionKindNotYetBridged('agentTool')).toBeNull();
+    expect(contributionKindNotYetBridged('agent')).toBeNull();
   });
 
   it('CONTRIBUTION_KIND_MILESTONE maps M6 kinds to M6', () => {
@@ -487,12 +487,12 @@ describe('M6: defineExtension accepts M6 contribution types', () => {
     expect(contributionKindNotYetBridged('clipType' as any)).toBeNull();
 
     const reservedKinds = [
-      { kind: 'agentTool', expectedMilestone: 'M5' },
-      { kind: 'agent', expectedMilestone: 'M5' },
+      { kind: 'agentTool', expectedMilestone: 'M10' },
+      { kind: 'agent', expectedMilestone: 'M10' },
     ];
     for (const { kind, expectedMilestone } of reservedKinds) {
       expect((CONTRIBUTION_KIND_MILESTONE as Record<string, string>)[kind]).toBe(expectedMilestone);
-      expect(contributionKindNotYetBridged(kind as any)).toBe(expectedMilestone);
+      expect(contributionKindNotYetBridged(kind as any)).toBeNull();
     }
   });
 });
@@ -1062,6 +1062,7 @@ describe('createExtensionContext', () => {
   it('has exactly the expected own property names', () => {
     const keys = Object.keys(ctx).sort();
     expect(keys).toEqual([
+      'agentTools',
       'apiVersion',
       'chrome',
       'clipTypes',
