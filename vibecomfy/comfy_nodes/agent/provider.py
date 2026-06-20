@@ -246,6 +246,7 @@ def build_batch_messages(
     conversation_messages: list[dict[str, Any]] | None = None,
     research_summary: str = "",
     graph_report: str = "",
+    precedent_adaptation_plan: str = "",
 ) -> list[dict[str, str]]:
     """Build messages for the batch-REPL wire protocol.
 
@@ -260,56 +261,67 @@ def build_batch_messages(
     ``done()`` and ``clarify(\"...\")`` as in-batch calls.  It does **not**
     mention JSON delta response requirements.
     """
+    code_signature_available = "vibecomfy.exec" in (signature_catalog or "")
+    if code_signature_available:
+        code_node_instruction = (
+            "Use the included `vibecomfy.exec` signature; do not search for it. "
+        )
+    else:
+        code_node_instruction = (
+            "If its signature is not included, search "
+            "`search(focus_types=[\"vibecomfy.exec\"])` first. "
+        )
     system = (
         "You edit a ComfyUI canvas as live Python objects.\n"
-        "Each node is a variable with assignable attributes; wiring reads\n"
-        "`.OUTPUT` slots from other variables.\n\n"
+        "Each node is a variable; wiring uses `.OUTPUT` from other variables.\n\n"
         "Two moves:\n"
         "- Add: `x = NodeType(field=val, input=other.OUTPUT)`\n"
         "- Change: `obj.attr = value`\n\n"
         "Privileged calls:\n"
         "- `del x`\n"
-        "- `node.mode = \"bypassed\" | \"muted\" | \"enabled\"`\n"
-        "  (bypass does NOT pass input through)\n"
-        "- `search(focus_types=[\"ClassName\"])` — query without applying\n"
-        "- `python()` — view full current workflow Python without applying\n"
-        "- `done()` — commit after last successful edit\n\n"
+        "- `node.mode = \"bypassed\" | \"muted\" | \"enabled\"` (bypass does NOT pass input through)\n"
+        "- `search(focus_types=[\"ClassName\"])` — discovery only; no edit lands\n"
+        "- `python()` — view current workflow Python\n"
+        "- `done()` — commit landed edits\n\n"
         "Output rule:\n"
         "Always name the output slot: write `up.IMAGE`, never bare `up`.\n"
-        "Bare references to multi-output or same-type-output nodes are rejected.\n\n"
+        "Bare ambiguous refs are rejected.\n\n"
         "Known limits:\n"
-        "- `attr = None` disconnects a wire (not a null literal)\n"
-        "- List sockets, reorder/group, cross-subgraph: out of scope\n\n"
+        "- `attr = None` disconnects a wire\n"
+        "- No list sockets/reorder/group/cross-subgraph edits\n\n"
         "Question / explanation mode:\n"
-        "If Research or Graph inspection appears below, answer using it and end with `done()`. "
-        "Otherwise edit the graph.\n\n"
+        "If Research or Graph inspection appears below and the user asked only a question, "
+        "answer from it and end with `done()`. Otherwise use it only to support the edit.\n\n"
         "Code node rule:\n"
-        "For code-node, Python, PIL, or custom image-processing requests, construct "
-        "exactly `vibecomfy.exec` — never `vibecomfy.code`, `ImageCode`, "
-        "`PythonCode`, or another guessed class. Search "
-        "`search(focus_types=[\"vibecomfy.exec\"])` first. Use JSON-list "
-        "`io={\"inputs\": [[\"image\", \"IMAGE\"]], \"outputs\": [[\"image\", \"IMAGE\"]]}`, "
-        "connect the decoded image through `in_0`, return `{\"image\": processed}` "
-        "from `source`, and wire `out_0` downstream.\n\n"
+        "For code-node, Python, PIL, or custom image-processing requests, use exactly "
+        "`vibecomfy.exec` — never `vibecomfy.code`, `ImageCode`, `PythonCode`, or a "
+        "guessed class. "
+        f"{code_node_instruction}"
+        "Use `io={...}`, route decoded image through `in_0`, return "
+        "`{\"image\": processed}` from `source`, and wire `out_0` downstream.\n\n"
         "Use the graph's real names:\n"
-        "Reference EXISTING nodes by EXACT names in Current scratchpad Python. "
-        "NEVER invent names or copy the worked-example placeholders.\n\n"
+        "Reference EXISTING nodes by EXACT names in Current scratchpad Python. NEVER invent "
+        "names or copy placeholders.\n\n"
         "Search first (only when needed):\n"
-        "The existing nodes are already shown above — do NOT search for them.\n"
-        "Only `search(focus_types=[\"X\"])` for a NEW node TYPE you want to ADD when you\n"
-        "need its signature. One search is enough; don't repeat it. Then construct\n"
-        "and wire the node in the SAME or next batch.\n\n"
+        "Existing nodes are already shown above, so do NOT search for them.\n"
+        "Only `search(focus_types=[\"X\"])` for a NEW node TYPE you want to ADD when "
+        "you need its signature. One search is enough. Then edit the graph or "
+        "`clarify(\"...\")` if no defensible edit exists.\n\n"
+        "Precedent research (when useful):\n"
+        "For ambiguous or model-family-specific edits, adapt the closest validated "
+        "precedent from a relevant workflow family, then land the edit.\n\n"
         "Placement:\n"
-        "Optional `near=anchor_var` placement hint; never set coordinates.\n\n"
+        "Optional `near=anchor_var` hint; never set coordinates.\n\n"
         "Envelope:\n"
         "Start with one user-facing prose sentence, then exactly one ```batch fence.\n"
-        "Never respond with only a fenced block. No JSON. One batch per turn.\n"
-        "`clarify(\"...\")` only when intent is missing after graph, recent context, "
-        "and schema/search; use a single valid CHOICE/default instead of asking.\n"
-        "Prose may use Markdown; no extra fenced blocks/lists before the required ```batch fence.\n\n"
+        "Never respond with only a fenced block.\n"
+        "`clarify(\"...\")` is terminal and creates no candidate. Use it only when no "
+        "defensible edit is possible after graph, recent context, precedent research, "
+        "and schema/search. Prefer one valid default over asking.\n"
+        "No extra fenced blocks before the required ```batch fence.\n\n"
         f"Budget: {budget_remaining} turn(s) remaining out of {max_batches}.\n\n"
         "Worked example (PLACEHOLDER names):\n"
-        "Add 2x upscale after decode, feed the existing save node:\n"
+        "Add 2x upscale after decode, feed save:\n"
         "```batch\n"
         "up = ImageScaleBy(image=decode.IMAGE, scale_by=2.0)\n"
         "save.images = up.IMAGE\n"
@@ -405,6 +417,12 @@ def build_batch_messages(
             graph_report_block = (
                 f"\n\nDetailed graph inspection:\n{graph_report}"
             )
+        precedent_adaptation_block = ""
+        if precedent_adaptation_plan:
+            precedent_adaptation_block = (
+                "\n\nPrecedent adaptation plan (structured):\n"
+                f"{precedent_adaptation_plan}"
+            )
         user = (
             f"{conversation_block}"
             f"{clarification_block}"
@@ -417,6 +435,7 @@ def build_batch_messages(
             f"{catalog_block}"
             f"{names_block}"
             f"{research_block}"
+            f"{precedent_adaptation_block}"
             f"{graph_report_block}"
         )
     else:
@@ -458,6 +477,12 @@ def build_batch_messages(
             graph_report_block = (
                 f"\n\nDetailed graph inspection:\n{graph_report}"
             )
+        precedent_adaptation_block = ""
+        if precedent_adaptation_plan:
+            precedent_adaptation_block = (
+                "\n\nPrecedent adaptation plan (structured):\n"
+                f"{precedent_adaptation_plan}"
+            )
         user = (
             f"User request:\n{task}\n"
             f"{render_block}"
@@ -466,6 +491,7 @@ def build_batch_messages(
             f"{diff_block}"
             f"{report_block}"
             f"{research_block}"
+            f"{precedent_adaptation_block}"
             f"{graph_report_block}"
             f"\n\nBudget: {budget_remaining} turn(s) remaining out of {max_batches}."
         )

@@ -325,3 +325,14 @@ class _GatesMixin:
         expanded.update(_api_one_hop_neighbors(candidate_api, region))
         expanded.update(_api_one_hop_neighbors(original_api, region | removed_ids))
         return {node_id for node_id in expanded if node_id in live_ids}
+
+
+def _route_gate_c_suffix(route: str | None) -> str:
+    """Return a route-aware suffix for gate C edit summaries.
+
+    direct_edit is a focused, targeted change — the summary reflects that.
+    Other routes return an empty suffix (no change to existing summaries).
+    """
+    if route == "direct_edit":
+        return " Change focus verified."
+    return ""

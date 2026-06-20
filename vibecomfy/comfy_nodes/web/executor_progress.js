@@ -63,12 +63,51 @@ export const EXECUTOR_INTENTS = Object.freeze([
   "respond",
 ]);
 
+const EXECUTOR_ROUTES = Object.freeze([
+  "direct_edit",
+  "inspect_only",
+  "asset_lookup",
+  "diagnose_repair",
+  "subgraph_preview",
+  "precedent_research",
+  "clarify",
+]);
+
+const EXECUTOR_TASKS = Object.freeze([
+  "edit_graph",
+  "inspect_graph",
+  "find_assets",
+  "diagnose",
+  "preview_subgraph",
+  "research_precedent",
+  "respond",
+  "research_nodes",
+]);
+
 /**
  * All four progress stages must be present with one of the canonical values
  * for the snapshot to be considered valid.
  */
 const REQUIRED_PROGRESS_STAGES = new Set(EXECUTOR_PROGRESS_STAGES);
 const VALID_PROGRESS_VALUES = new Set(EXECUTOR_PROGRESS_VALUES);
+const VALID_EXECUTOR_ROUTES = new Set(EXECUTOR_ROUTES);
+const VALID_EXECUTOR_TASKS = new Set(EXECUTOR_TASKS);
+
+function normalizeAllowedString(value, allowedValues) {
+  const normalized = typeof value === "string" ? value.trim().toLowerCase() : "";
+  return normalized && allowedValues.has(normalized) ? normalized : null;
+}
+
+function executorRouteLabel(route) {
+  if (route === "direct_edit") return "Direct edit";
+  if (route === "inspect_only") return "Inspect graph";
+  if (route === "asset_lookup") return "Look up assets";
+  if (route === "diagnose_repair") return "Diagnose and repair";
+  if (route === "subgraph_preview") return "Preview subgraph";
+  if (route === "precedent_research") return "Research precedents";
+  if (route === "clarify") return "Ask for clarification";
+  return null;
+}
 
 // ── Normalizers ─────────────────────────────────────────────────────────────
 
@@ -93,6 +132,8 @@ export function normalizeExecutorPhasePayload(raw) {
     return null;
   }
   const intent = asString(payload.intent);
+  const route = normalizeAllowedString(payload.route, VALID_EXECUTOR_ROUTES);
+  const task = normalizeAllowedString(payload.task, VALID_EXECUTOR_TASKS);
 
   const normalized = compactObject({
     // Phase (required)
@@ -113,6 +154,8 @@ export function normalizeExecutorPhasePayload(raw) {
     // Classify decision metadata (optional; emitted once the decision exists)
     plan_summary: asString(payload.plan_summary),
     intent: intent && EXECUTOR_INTENTS.includes(intent) ? intent : null,
+    route,
+    task,
   });
 
   return Object.freeze(normalized);
@@ -127,6 +170,13 @@ export function executorDecisionLabel(normalized) {
     : "";
   if (summary) {
     return `Deciding: ${summary}`;
+  }
+  const route = typeof normalized.route === "string"
+    ? normalized.route
+    : "";
+  const routeLabel = executorRouteLabel(route);
+  if (routeLabel) {
+    return `Deciding: ${routeLabel}`;
   }
   const intent = typeof normalized.intent === "string"
     ? normalized.intent
@@ -187,12 +237,14 @@ export function normalizeExecutorProgressSnapshot(raw) {
     return null;
   }
 
-  return Object.freeze({
+  return Object.freeze(compactObject({
     decide,
     research,
     execute,
     review,
-  });
+    route: normalizeAllowedString(raw.route, VALID_EXECUTOR_ROUTES),
+    task: normalizeAllowedString(raw.task, VALID_EXECUTOR_TASKS),
+  }));
 }
 
 /**
@@ -203,12 +255,14 @@ export function normalizeExecutorProgressSnapshot(raw) {
  * @returns {object} frozen progress snapshot
  */
 export function createExecutorProgressSnapshot(overrides = {}) {
-  const snapshot = {
+  const snapshot = compactObject({
     decide: EXECUTOR_PROGRESS_VALUES.includes(overrides.decide) ? overrides.decide : "pending",
     research: EXECUTOR_PROGRESS_VALUES.includes(overrides.research) ? overrides.research : "pending",
     execute: EXECUTOR_PROGRESS_VALUES.includes(overrides.execute) ? overrides.execute : "pending",
     review: EXECUTOR_PROGRESS_VALUES.includes(overrides.review) ? overrides.review : "pending",
-  };
+    route: normalizeAllowedString(overrides.route, VALID_EXECUTOR_ROUTES),
+    task: normalizeAllowedString(overrides.task, VALID_EXECUTOR_TASKS),
+  });
   return Object.freeze(snapshot);
 }
 
@@ -224,6 +278,10 @@ export function progressFromExecutorPhase(normalized) {
   }
   const phase = String(normalized.phase || "").toLowerCase();
   const status = String(normalized.status || "start").toLowerCase();
+  const extras = {
+    route: normalizeAllowedString(normalized.route, VALID_EXECUTOR_ROUTES),
+    task: normalizeAllowedString(normalized.task, VALID_EXECUTOR_TASKS),
+  };
 
   if (status === "done") {
     if (phase === "classify") {
@@ -232,6 +290,7 @@ export function progressFromExecutorPhase(normalized) {
         research: "pending",
         execute: "pending",
         review: "pending",
+        ...extras,
       });
     }
     if (phase === "research") {
@@ -240,6 +299,7 @@ export function progressFromExecutorPhase(normalized) {
         research: "done",
         execute: "pending",
         review: "pending",
+        ...extras,
       });
     }
     if (phase === "implement") {
@@ -248,6 +308,7 @@ export function progressFromExecutorPhase(normalized) {
         research: "done",
         execute: "done",
         review: "pending",
+        ...extras,
       });
     }
     if (phase === "reply") {
@@ -256,6 +317,7 @@ export function progressFromExecutorPhase(normalized) {
         research: "done",
         execute: "done",
         review: "done",
+        ...extras,
       });
     }
   }
@@ -268,6 +330,7 @@ export function progressFromExecutorPhase(normalized) {
         research: "pending",
         execute: "pending",
         review: "pending",
+        ...extras,
       });
     }
     if (phase === "implement") {
@@ -276,6 +339,7 @@ export function progressFromExecutorPhase(normalized) {
         research: "done",
         execute: "pending",
         review: "pending",
+        ...extras,
       });
     }
     // classify skipped means the executor skipped classification entirely
@@ -285,6 +349,7 @@ export function progressFromExecutorPhase(normalized) {
         research: "pending",
         execute: "pending",
         review: "pending",
+        ...extras,
       });
     }
   }
@@ -296,6 +361,7 @@ export function progressFromExecutorPhase(normalized) {
       research: "pending",
       execute: "pending",
       review: "pending",
+      ...extras,
     });
   }
   if (phase === "research") {
@@ -304,6 +370,7 @@ export function progressFromExecutorPhase(normalized) {
       research: "active",
       execute: "pending",
       review: "pending",
+      ...extras,
     });
   }
   if (phase === "implement") {
@@ -312,6 +379,7 @@ export function progressFromExecutorPhase(normalized) {
       research: "done",
       execute: "active",
       review: "pending",
+      ...extras,
     });
   }
   if (phase === "reply") {
@@ -320,6 +388,7 @@ export function progressFromExecutorPhase(normalized) {
       research: "done",
       execute: "done",
       review: "active",
+      ...extras,
     });
   }
 
@@ -365,7 +434,9 @@ export function executorProgressLabel(snapshot) {
   if (!norm) {
     return "Unknown";
   }
-  if (norm.decide === "active") return "Decide";
+  if (norm.decide === "active") {
+    return executorRouteLabel(norm.route) || "Decide";
+  }
   if (norm.research === "active") return "Research";
   if (norm.execute === "active") return "Execute";
   if (norm.review === "active") return "Review";

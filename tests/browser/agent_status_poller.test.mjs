@@ -689,7 +689,7 @@ test("persistAgentSettings — persists when READY", async () => {
 
   await persistAgentSettings(panel, { includeCredential: false }, deps);
 
-  assert.equal(panel.state.settingsMessage, "Saved settings: openrouter / gpt-4o.");
+  assert.equal(panel.state.settingsMessage, "✓ Saved openrouter / gpt-4o.");
   assert.equal(panel.state.settingsMessageKind, "success");
   assert.equal(getPersistedAgentProvider(), "openrouter");
   assert.equal(refreshCalled, true);
@@ -737,6 +737,47 @@ test("persistAgentSettings — persists with credential when includeCredential=t
   assert.equal(getPersistedAgentProvider(), "openrouter");
   assert.equal(panel.state.lastAutoSavedOpenRouterKey, "sk-new-key");
   assert.ok(panel.state.settingsMessage.includes("Stored OpenRouter API key"), `got: ${panel.state.settingsMessage}`);
+});
+
+test("persistAgentSettings — does not post browser credential for routes that reject browser keys", async () => {
+  globalThis.localStorage._clear();
+
+  const panel = makePanel({
+    fields: { route: makeSelectElement("openai-codex"), model: { value: "" }, apiKey: { value: "sk-should-not-post" } },
+    state: {
+      routeStatus: { kind: ROUTE_STATUS_KIND.READY, requestedRoute: "openai-codex" },
+      statusSnapshot: {
+        ok: true,
+        route: "arnold",
+        requested_route: "openai-codex",
+        route_options: {
+          "openai-codex": {
+            normalized_route: "arnold",
+            browser_api_key_allowed: false,
+            guidance: "Browser keys are not accepted.",
+          },
+        },
+      },
+    },
+  });
+
+  let posted = false;
+  const deps = makeDeps({
+    refreshAgentStatus: async () => {},
+    clearCredentialInput: (p) => { p.fields.apiKey.value = ""; },
+  });
+
+  mockFetch((url) => {
+    if (url === "/vibecomfy/agent/credentials") posted = true;
+    return makeFetchResponse({ error: "unexpected" }, { status: 404 });
+  });
+
+  await persistAgentSettings(panel, { includeCredential: true }, deps);
+
+  assert.equal(posted, false);
+  assert.equal(panel.fields.apiKey.value, "");
+  assert.equal(panel.state.settingsMessageKind, "error");
+  assert.match(panel.state.settingsMessage, /Browser keys are not accepted/);
 });
 
 // ═══════════════════════════════════════════════════════════════════════════

@@ -33,6 +33,9 @@ from vibecomfy.search.scorer import SearchResult
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
 
+none_found_warning = "precedent research: no workflow/template precedents found in local corpus or Hivemind results"
+
+
 def _make_entry(
     class_type: str = "KSampler",
     pack: str | None = "core",
@@ -337,7 +340,8 @@ class TestHivemindErrors:
     def test_hivemind_none_client_skips_silently(self, mock_corpus) -> None:
         mock_corpus.return_value = [_make_entry("KSampler")]
         result = research("KSampler", hivemind_client=None)
-        assert result.warnings == ()
+        assert none_found_warning in result.warnings
+        assert len(result.warnings) == 1
 
     @patch("vibecomfy.executor.research.build_search_corpus")
     def test_zero_timeout_disables_hivemind(self, mock_corpus) -> None:
@@ -348,7 +352,8 @@ class TestHivemindErrors:
             hivemind_timeout=0,
         )
         # Zero timeout → Hivemind tier never invoked.
-        assert result.warnings == ()
+        assert none_found_warning in result.warnings
+        assert len(result.warnings) == 1
 
     @patch("vibecomfy.executor.research.build_search_corpus")
     def test_negative_timeout_disables_hivemind(self, mock_corpus) -> None:
@@ -358,7 +363,8 @@ class TestHivemindErrors:
             hivemind_client=self._timeout_client,
             hivemind_timeout=-1.0,
         )
-        assert result.warnings == ()
+        assert none_found_warning in result.warnings
+        assert len(result.warnings) == 1
 
 
 # ── Hivemind merge behaviour ─────────────────────────────────────────────────
@@ -601,7 +607,8 @@ class TestResearchIntegration:
     def test_local_only_no_warnings(self, mock_corpus) -> None:
         mock_corpus.return_value = [_make_entry("KSampler")]
         result = research("KSampler", hivemind_client=None)
-        assert result.warnings == ()
+        assert none_found_warning in result.warnings
+        assert len(result.warnings) == 1
         assert len(result.sources) >= 1
 
     @patch("vibecomfy.executor.research.build_search_corpus")
@@ -721,3 +728,465 @@ class TestHivemindClientProtocol:
 
         with pytest.raises(RuntimeError):
             _run_hivemind_research("test", client=exploding_client, timeout=1.0)
+
+
+# ── Structured precedent tests (T11) ─────────────────────────────────────────
+# Verify _build_inspection_summary, _build_precedent_slices,
+# _build_adaptation_plan, and the research() function's precedent output
+# when usable candidates exist vs. when no precedent is found.
+
+from vibecomfy.executor.contracts import (
+    InspectionSummary,
+    PrecedentAdaptationPlan,
+    WorkflowSlice,
+)
+from vibecomfy.executor.research import (
+    _build_adaptation_plan,
+    _build_inspection_summary,
+    _build_precedent_slices,
+)
+
+
+class TestBuildInspectionSummary:
+    """Graph inspection → InspectionSummary conversion."""
+
+    def test_none_graph_returns_none(self) -> None:
+        assert _build_inspection_summary(None) is None
+
+    def test_empty_graph_no_nodes(self) -> None:
+        result = _build_inspection_summary({"nodes": []})
+        assert isinstance(result, InspectionSummary)
+        assert result.node_count == 0
+        assert result.node_types == ()
+        assert result.has_dangling_inputs is False
+        assert result.has_dangling_outputs is False
+        assert "0 node" in result.summary
+
+    def test_no_nodes_key_returns_summary(self) -> None:
+        result = _build_inspection_summary({})
+        assert isinstance(result, InspectionSummary)
+        assert result.node_count == 0
+        assert "no node list" in result.summary.lower()
+
+    def test_single_node_with_class_type(self) -> None:
+        graph = {"nodes": [{"id": 1, "class_type": "KSampler"}]}
+        result = _build_inspection_summary(graph)
+        assert result.node_count == 1
+        assert result.node_types == ("KSampler",)
+        assert "KSampler" in result.summary
+        assert result.has_dangling_inputs is False
+        assert result.has_dangling_outputs is False
+
+    def test_node_with_widget_values(self) -> None:
+        graph = {"nodes": [{"id": 1, "type": "KSampler", "widgets_values": [42, 7.5]}]}
+        result = _build_inspection_summary(graph)
+        assert result.node_count == 1
+        assert len(result.key_widget_values) == 1
+        assert result.key_widget_values[0] == {"w0": 42, "w1": 7.5}
+
+    def test_dangling_input_detected(self) -> None:
+        graph = {
+            "nodes": [
+                {
+                    "id": 1,
+                    "type": "KSampler",
+                    "inputs": [
+                        {"name": "model", "link": None},
+                        {"name": "latent", "link": 5},
+                    ],
+                }
+            ]
+        }
+        result = _build_inspection_summary(graph)
+        assert result.has_dangling_inputs is True
+        assert "dangling input" in result.summary.lower()
+
+    def test_dangling_output_detected(self) -> None:
+        graph = {
+            "nodes": [
+                {"id": 1, "type": "VAEDecode"},
+                {"id": 2, "type": "SaveImage"},
+            ],
+            "links": [{"origin_id": 1, "target_id": 2}],
+        }
+        # Node 2 has no outgoing links → dangling output
+        result = _build_inspection_summary(graph)
+        assert result.has_dangling_outputs is True
+        assert "dangling output" in result.summary.lower()
+
+    def test_five_max_node_types_in_summary(self) -> None:
+        graph = {
+            "nodes": [
+                {"id": i, "type": f"Node{i}"} for i in range(8)
+            ]
+        }
+        result = _build_inspection_summary(graph)
+        assert result.node_count == 8
+        assert "Node0, Node1, Node2, Node3, Node4" in result.summary
+        assert "3 more" in result.summary
+
+
+class TestBuildPrecedentSlices:
+    """Building WorkflowSlice placeholders from research sources."""
+
+    def test_empty_sources_returns_empty_tuple(self) -> None:
+        result = _build_precedent_slices(())
+        assert result == ()
+
+    def test_non_workflow_sources_produce_no_slices(self) -> None:
+        sources = (
+            {"class_type": "KSampler", "source": "object_info", "path": None},
+            {"class_type": "VAEDecode", "source": "curated", "path": None},
+        )
+        result = _build_precedent_slices(sources)
+        assert result == ()
+
+    def test_workflow_source_with_py_path_creates_slice(self) -> None:
+        sources = (
+            {
+                "class_type": "video/ltx2_3_t2v",
+                "source": "ready_template",
+                "path": "ready_templates/video/ltx2_3_t2v.py",
+            },
+        )
+        result = _build_precedent_slices(sources)
+        assert len(result) == 1
+        assert isinstance(result[0], WorkflowSlice)
+        assert result[0].source_class_type == "video/ltx2_3_t2v"
+        assert result[0].python_path == "ready_templates/video/ltx2_3_t2v.py"
+        assert result[0].node_ids == ()
+        assert result[0].entry_anchor is None
+        assert result[0].exit_anchor is None
+
+    def test_hivemind_workflow_source_creates_slice(self) -> None:
+        sources = (
+            {
+                "class_type": "video/ltx2_3_runexx_custom_audio",
+                "source": "hivemind_workflow",
+                "path": "ready_templates/video/ltx2_3_runexx_custom_audio.py",
+            },
+        )
+        result = _build_precedent_slices(sources)
+        assert len(result) == 1
+        assert result[0].source_class_type == "video/ltx2_3_runexx_custom_audio"
+        assert result[0].python_path == "ready_templates/video/ltx2_3_runexx_custom_audio.py"
+
+    def test_source_workflow_creates_slice(self) -> None:
+        sources = (
+            {
+                "class_type": "ltx2_3_source",
+                "source": "source_workflow",
+                "path": "ready_templates/sources/custom_nodes/ltxvideo/ltx2_3.py",
+            },
+        )
+        result = _build_precedent_slices(sources)
+        assert len(result) == 1
+        assert result[0].source_class_type == "ltx2_3_source"
+
+    def test_external_workflow_creates_slice(self) -> None:
+        sources = (
+            {
+                "class_type": "external_template",
+                "source": "external_workflow",
+                "path": "some/path/external.py",
+            },
+        )
+        result = _build_precedent_slices(sources)
+        assert len(result) == 1
+
+    def test_mixed_sources_only_workflows_produce_slices(self) -> None:
+        sources = (
+            {"class_type": "KSampler", "source": "object_info", "path": None},
+            {
+                "class_type": "video/ltx2_3_t2v",
+                "source": "ready_template",
+                "path": "ready_templates/video/ltx2_3_t2v.py",
+            },
+            {"class_type": "VAEDecode", "source": "curated", "path": None},
+            {
+                "class_type": "audio_lipsync",
+                "source": "hivemind_workflow",
+                "path": "ready_templates/audio_lipsync.py",
+            },
+        )
+        result = _build_precedent_slices(sources)
+        assert len(result) == 2
+        class_types = {s.source_class_type for s in result}
+        assert class_types == {"video/ltx2_3_t2v", "audio_lipsync"}
+
+    def test_duplicate_class_type_deduplicated(self) -> None:
+        sources = (
+            {
+                "class_type": "video/ltx2_3_t2v",
+                "source": "ready_template",
+                "path": "ready_templates/a.py",
+            },
+            {
+                "class_type": "video/ltx2_3_t2v",
+                "source": "hivemind_workflow",
+                "path": "ready_templates/b.py",
+            },
+        )
+        result = _build_precedent_slices(sources)
+        # Deduplication by class_type: only one slice
+        assert len(result) == 1
+
+    def test_workflow_source_without_py_path_skipped(self) -> None:
+        sources = (
+            {
+                "class_type": "some_workflow",
+                "source": "ready_template",
+                "path": "ready_templates/some_workflow.json",
+            },
+        )
+        result = _build_precedent_slices(sources)
+        # ready_template IS a workflow source kind, so it creates a slice even with .json path
+        assert len(result) == 1
+        assert result[0].python_path == "ready_templates/some_workflow.json"
+
+    def test_workflow_source_no_path_still_creates_if_source_workflow(self) -> None:
+        """source_workflow + .py path are OR'd: either the source kind or .py path qualifies."""
+        sources = (
+            {
+                "class_type": "source_only",
+                "source": "source_workflow",
+                "path": None,
+            },
+        )
+        result = _build_precedent_slices(sources)
+        # source_workflow is in workflow_source_kinds, so it qualifies
+        assert len(result) == 1
+        assert result[0].python_path is None
+
+
+class TestBuildAdaptationPlan:
+    """PrecedentAdaptationPlan construction from slices."""
+
+    def test_no_slices_returns_none(self) -> None:
+        result = _build_adaptation_plan(
+            query="test",
+            graph=None,
+            inspection=None,
+            slices=(),
+        )
+        assert result is None
+
+    def test_single_slice_creates_minimal_plan(self) -> None:
+        ws = WorkflowSlice(
+            source_class_type="video/ltx2_3_t2v",
+            python_path="ready_templates/video/ltx2_3_t2v.py",
+        )
+        result = _build_adaptation_plan(
+            query="add video",
+            graph=None,
+            inspection=None,
+            slices=(ws,),
+        )
+        assert isinstance(result, PrecedentAdaptationPlan)
+        assert result.selected_slice == ws
+        assert result.anchor_bindings == ()
+        assert result.required_new_nodes == ()
+        assert result.required_rewires == ()
+        assert result.edit_ops == ()
+        assert result.candidate_graph is None
+        assert result.structural_validation == "not_evaluated"
+        assert result.semantic_validation == "not_evaluated"
+
+    def test_multiple_slices_selects_first(self) -> None:
+        ws1 = WorkflowSlice(source_class_type="first", python_path="a.py")
+        ws2 = WorkflowSlice(source_class_type="second", python_path="b.py")
+        result = _build_adaptation_plan(
+            query="test",
+            graph=None,
+            inspection=None,
+            slices=(ws1, ws2),
+        )
+        assert result is not None
+        assert result.selected_slice == ws1
+
+    def test_plan_is_serializable(self) -> None:
+        ws = WorkflowSlice(source_class_type="test", python_path="test.py")
+        plan = _build_adaptation_plan(
+            query="test",
+            graph=None,
+            inspection=None,
+            slices=(ws,),
+        )
+        assert plan is not None
+        d = plan.to_dict()
+        assert "selected_slice" in d
+        assert d["selected_slice"]["source_class_type"] == "test"
+        assert d["structural_validation"] == "not_evaluated"
+
+
+def _normalize_sources_for_test(entries):
+    """Convert SearchEntry list to normalized source dicts like _normalize_source."""
+    from vibecomfy.search.scorer import SearchResult
+    results = [SearchResult(entry=e, score=10, reasons=("class_type",)) for e in entries]
+    from vibecomfy.executor.research import _normalize_source
+    return tuple(_normalize_source(r) for r in results)
+
+
+class TestResearchPrecedentOutput:
+    """The research() function produces precedent_slices and adaptation_plan."""
+
+    def _workflow_corpus(self) -> list:
+        """Return a corpus with a workflow source."""
+        return [
+            _make_entry(
+                class_type="KSampler",
+                description="Sampling node",
+                source="object_info",
+            ),
+            _make_entry(
+                class_type="video/ltx2_3_t2v",
+                description="LTX video workflow",
+                source="ready_template",
+                path="ready_templates/video/ltx2_3_t2v.py",
+                pack="ltxvideo",
+            ),
+        ]
+
+    @patch("vibecomfy.executor.research.build_search_corpus")
+    def test_usable_candidate_produces_slices_and_plan(self, mock_corpus) -> None:
+        """When a workflow source exists, research() produces slices + adaptation plan."""
+        mock_corpus.return_value = self._workflow_corpus()
+        result = research("ltx video workflow", hivemind_client=None)
+
+        # Precedent slices should be present
+        assert len(result.precedent_slices) >= 1
+        assert isinstance(result.precedent_slices[0], WorkflowSlice)
+        assert any(
+            "ltx2_3_t2v" in s.source_class_type for s in result.precedent_slices
+        )
+
+        # Adaptation plan should be present
+        assert result.adaptation_plan is not None
+        assert isinstance(result.adaptation_plan, PrecedentAdaptationPlan)
+        assert result.adaptation_plan.selected_slice.source_class_type == "video/ltx2_3_t2v"
+
+        # No none-found warning when a candidate exists
+        assert not any(
+            "no workflow/template precedents found" in w.lower()
+            for w in result.warnings
+        )
+
+    @patch("vibecomfy.executor.research.build_search_corpus")
+    def test_no_candidate_produces_none_found_warning(self, mock_corpus) -> None:
+        """When no workflow sources exist, research() produces a none-found warning."""
+        mock_corpus.return_value = [
+            _make_entry("KSampler", source="object_info"),
+            _make_entry("VAEDecode", source="object_info"),
+        ]
+        result = research("sampler node", hivemind_client=None)
+
+        # No precedent slices
+        assert result.precedent_slices == ()
+
+        # Adaptation plan is None (no candidate)
+        assert result.adaptation_plan is None
+
+        # Precedent warnings are now correctly merged into result.warnings
+        assert none_found_warning in result.warnings
+
+    @patch("vibecomfy.executor.research.build_search_corpus")
+    def test_empty_corpus_none_found_warning(self, mock_corpus) -> None:
+        """Empty corpus → no slices, no plan, none-found warning."""
+        mock_corpus.return_value = []
+        result = research("anything", hivemind_client=None)
+
+        assert result.precedent_slices == ()
+        assert result.adaptation_plan is None
+        # Precedent warnings are now correctly merged into result.warnings
+        assert none_found_warning in result.warnings
+
+    @patch("vibecomfy.executor.research.build_search_corpus")
+    def test_to_dict_includes_precedent_fields_when_populated(self, mock_corpus) -> None:
+        """to_dict() emits precedent_slices and adaptation_plan when populated."""
+        mock_corpus.return_value = self._workflow_corpus()
+        result = research("ltx video", hivemind_client=None)
+        d = result.to_dict()
+
+        assert "precedent_slices" in d
+        assert isinstance(d["precedent_slices"], list)
+        assert len(d["precedent_slices"]) >= 1
+        assert d["precedent_slices"][0]["source_class_type"] == "video/ltx2_3_t2v"
+
+        assert "adaptation_plan" in d
+        assert d["adaptation_plan"]["structural_validation"] == "not_evaluated"
+
+    @patch("vibecomfy.executor.research.build_search_corpus")
+    def test_to_dict_omits_adaptation_plan_when_none(self, mock_corpus) -> None:
+        """to_dict() omits adaptation_plan key when None."""
+        mock_corpus.return_value = [
+            _make_entry("KSampler", source="object_info"),
+        ]
+        result = research("KSampler", hivemind_client=None)
+        d = result.to_dict()
+
+        # precedent_slices key only present when non-empty (to_dict omits empty)
+        assert "precedent_slices" not in d
+
+        # adaptation_plan absent when None (to_dict omits it)
+        assert "adaptation_plan" not in d
+
+    @patch("vibecomfy.executor.research.build_search_corpus")
+    def test_multiple_workflow_sources_all_in_slices(self, mock_corpus) -> None:
+        """Multiple workflow sources → multiple slices, plan selects first."""
+        mock_corpus.return_value = [
+            _make_entry(
+                class_type="wf_a",
+                source="ready_template",
+                path="a.py",
+            ),
+            _make_entry(
+                class_type="wf_b",
+                source="hivemind_workflow",
+                path="b.py",
+            ),
+            _make_entry(
+                class_type="wf_c",
+                source="source_workflow",
+                path="c.py",
+            ),
+        ]
+        # Use _build_precedent_slices directly since research() scorer may
+        # not match arbitrary class_types; we test the slice construction logic.
+        sources = _normalize_sources_for_test(mock_corpus.return_value)
+        result_slices = _build_precedent_slices(sources)
+
+        assert len(result_slices) == 3
+        class_types = {s.source_class_type for s in result_slices}
+        assert class_types == {"wf_a", "wf_b", "wf_c"}
+
+        # Build adaptation plan from slices to verify first-slice selection
+        plan = _build_adaptation_plan(query="test", graph=None, inspection=None, slices=result_slices)
+        assert plan is not None
+        assert plan.selected_slice.source_class_type == "wf_a"
+
+    @patch("vibecomfy.executor.research.build_search_corpus")
+    def test_hivemind_workflow_without_py_path_still_produces_slice(self, mock_corpus) -> None:
+        """hivemind_workflow source without .py path should still produce a slice."""
+        mock_corpus.return_value = [
+            _make_entry(
+                class_type="hm_wf",
+                source="hivemind_workflow",
+                path=None,
+            ),
+        ]
+        result = research("hm_wf", hivemind_client=None)
+
+        # hivemind_workflow IS in workflow_source_kinds, so it qualifies
+        assert len(result.precedent_slices) == 1  # class_type matches query
+        assert result.adaptation_plan is not None
+
+    @patch("vibecomfy.executor.research.build_search_corpus")
+    def test_non_dict_sources_are_skipped(self, mock_corpus) -> None:
+        """Non-dict entries in sources are safely skipped."""
+        # This can't easily happen through research() since sources are always dicts,
+        # but _build_precedent_slices guards against it.
+        slices = _build_precedent_slices((
+            {"class_type": "valid", "source": "ready_template", "path": "valid.py"},
+            "not-a-dict",  # type: ignore[arg-type]
+        ))
+        assert len(slices) == 1

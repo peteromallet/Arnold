@@ -872,6 +872,12 @@ test("VibeComfy loadGraphData fallback repairs dynamic exec links after async Co
     assert.equal(execNode.inputs[0].name, "in_0");
     assert.equal(execNode.inputs[0].link, 43);
     assert.deepEqual(harness.getLiveLinks()["43"].asSerialisable(), [43, 8, 0, 19, 0, "IMAGE"]);
+    assert.doesNotThrow(() => harness.app.canvas.graph.remove(execNode));
+    assert.equal(
+      harness.getLiveNodes().some((node) => node.type === "vibecomfy.exec"),
+      false,
+      "refreshed exec node should remain deletable after live-link repair",
+    );
   } finally {
     await harness.dispose();
   }

@@ -2,8 +2,9 @@
 
 Proves:
 - The build helper creates a physical web_dist/<hash>/ copy with extracted modules.
-- The newest valid dist is selected by WEB_DIRECTORY.
+- The dist matching current web/ content is selected by WEB_DIRECTORY.
 - Fallback to './web' works when no valid dist exists.
+- Arbitrary older dists are never selected.
 """
 
 from __future__ import annotations
@@ -385,8 +386,8 @@ class TestWebDirectoryResolver:
                 shutil.rmtree(WEB_DIST)
             self._restore_web_dist()
 
-    def test_selects_newest_when_multiple_valid(self):
-        """When multiple valid dists exist, the one with max mtime wins."""
+    def test_falls_back_to_web_when_matching_source_hash_missing(self):
+        """Older valid dists are ignored when none match the current source hash."""
         self._save_web_dist()
         WEB_DIST.mkdir(exist_ok=True)
 
@@ -405,8 +406,8 @@ class TestWebDirectoryResolver:
                 os.utime(str(d), (1000.0 + i * 100, 1000.0 + i * 100))
 
             val = _get_web_directory()
-            assert val == "./web_dist/test-c-third", (
-                f"Expected './web_dist/test-c-third' (max mtime), got {val!r}"
+            assert val == "./web", (
+                f"Expected './web' when current source hash is missing, got {val!r}"
             )
         finally:
             for d in dirs:
@@ -416,20 +417,15 @@ class TestWebDirectoryResolver:
                 shutil.rmtree(WEB_DIST)
             self._restore_web_dist()
 
-    def test_uses_real_dist_when_present(self):
-        """WEB_DIRECTORY resolves to an existing dist path when web_dist/ is populated."""
-        # The real web_dist should exist from the build script output
+    def test_uses_real_matching_dist_when_present(self):
+        """WEB_DIRECTORY resolves to the real dist matching current web/ content."""
+        # The real web_dist should exist from the build script output.
         assert WEB_DIST.exists(), "Real web_dist/ must exist for this test"
-        subdirs = [
-            d for d in WEB_DIST.iterdir()
-            if d.is_dir() and any(p.is_file() for p in d.iterdir())
-        ]
-        assert subdirs, "web_dist/ must contain at least one valid subdir"
+        matching = WEB_DIST / _source_hash()
+        assert matching.is_dir(), "web_dist/ must contain the current source hash"
 
         val = _get_web_directory()
-        assert val.startswith("./web_dist/"), (
-            f"Expected WEB_DIRECTORY to start with './web_dist/', got {val!r}"
-        )
+        assert val == f"./web_dist/{matching.name}"
         # Verify the resolved path actually exists on disk
         resolved = WEB_DIST.parent / val.lstrip("./")
         assert resolved.is_dir(), (

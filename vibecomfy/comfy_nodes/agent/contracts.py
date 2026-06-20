@@ -102,6 +102,7 @@ class FailureKind(str, Enum):
     MALFORMED_MODEL_JSON = "MalformedModelJSON"
     MISSING_REQUIRED_FIELD = "MissingRequiredField"
     PROVIDER_ERROR = "ProviderError"
+    PROVIDER_CREDIT_ERROR = "ProviderCreditError"
     AGENT_RUNTIME_UNAVAILABLE = "AgentRuntimeUnavailable"
     AUTH_ERROR = "AuthError"
     TIMEOUT_ERROR = "TimeoutError"
@@ -234,6 +235,15 @@ FAILURE_SPECS: Mapping[FailureKind, FailureSpec] = MappingProxyType(
             graph_unchanged=True,
             user_facing_message=(
                 "The model provider is temporarily unavailable. The graph is unchanged."
+            ),
+        ),
+        FailureKind.PROVIDER_CREDIT_ERROR: FailureSpec(
+            retryable=False,
+            next_action="add OpenRouter credits or lower VIBECOMFY_OPENROUTER_MAX_TOKENS",
+            graph_unchanged=True,
+            user_facing_message=(
+                "OpenRouter rejected the request because the account does not have "
+                "enough credits for the requested token budget. The graph is unchanged."
             ),
         ),
         FailureKind.AGENT_RUNTIME_UNAVAILABLE: FailureSpec(
@@ -1112,6 +1122,17 @@ def _is_runtime_unavailable(exc_or_issue: Any, lower_message: str) -> bool:
     return "no module named" in lower_message
 
 
+def _is_provider_credit_error(status_code: int | None, lower_message: str) -> bool:
+    if status_code == 402:
+        return True
+    return (
+        "payment required" in lower_message
+        or "requires more credits" in lower_message
+        or "can only afford" in lower_message
+        or "openrouter.ai/settings/credits" in lower_message
+    )
+
+
 def _context_ids(context: TurnContext | Mapping[str, Any] | None) -> dict[str, Any]:
     if isinstance(context, TurnContext):
         return {
@@ -1159,6 +1180,16 @@ def classify_failure(
 
     exc_name = type(exc_or_issue).__name__
     lower_message = str(exc_or_issue).lower()
+    if _is_provider_credit_error(status_code, lower_message):
+        return failure_envelope(
+            FailureKind.PROVIDER_CREDIT_ERROR,
+            stage,
+            context,
+            agent_failure_context={
+                "explanation": str(exc_or_issue),
+                "http_status": status_code or 402,
+            },
+        )
     if exc_name == "RefusedEmit":
         return failure_envelope(
             FailureKind.REFUSED_EMIT,

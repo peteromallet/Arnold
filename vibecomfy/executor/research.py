@@ -22,7 +22,12 @@ from typing import Any, Callable
 from vibecomfy.search.index import build_search_corpus
 from vibecomfy.search.scorer import search_entries, SearchResult
 
-from .contracts import ResearchResult
+from .contracts import (
+    InspectionSummary,
+    PrecedentAdaptationPlan,
+    ResearchResult,
+    WorkflowSlice,
+)
 
 LOGGER = logging.getLogger(__name__)
 
@@ -552,6 +557,168 @@ def _run_web_search(
     )
 
 
+# ── Structured precedent helpers (SD2) ────────────────────────────────────────
+
+
+def _build_inspection_summary(graph: dict | None) -> InspectionSummary | None:
+    """Build an :class:`InspectionSummary` from raw graph inspection.
+
+    Returns ``None`` when no graph is attached so callers can distinguish
+    "no graph" from "empty graph".
+    """
+    if graph is None:
+        return None
+    nodes = graph.get("nodes")
+    if not isinstance(nodes, list):
+        return InspectionSummary(node_count=0, summary="Graph has no node list.")
+
+    node_count = len(nodes)
+    node_types: list[str] = []
+    has_dangling_inputs = False
+    has_dangling_outputs = False
+    key_widget_values: list[dict] = []
+
+    for node in nodes:
+        if not isinstance(node, dict):
+            continue
+        ct = node.get("class_type") or node.get("type")
+        if isinstance(ct, str) and ct.strip():
+            node_types.append(ct.strip())
+
+        # Check for dangling inputs
+        inputs = node.get("inputs")
+        if isinstance(inputs, list):
+            for inp in inputs:
+                if isinstance(inp, dict) and inp.get("link") is None:
+                    has_dangling_inputs = True
+                    break
+
+        # Collect key widget values (first few non-None values)
+        widgets = node.get("widgets_values")
+        if isinstance(widgets, list):
+            widget_info: dict[str, object] = {}
+            for j, w in enumerate(widgets[:5]):
+                if w is not None:
+                    widget_info[f"w{j}"] = w
+            if widget_info:
+                key_widget_values.append(widget_info)
+
+    # Check for dangling outputs (nodes with no outgoing links in graph links)
+    links = graph.get("links")
+    if isinstance(links, list) and nodes:
+        linked_ids: set = set()
+        for link in links:
+            if isinstance(link, dict):
+                origin = link.get("origin_id")
+                if origin is not None:
+                    linked_ids.add(origin)
+            elif isinstance(link, list) and len(link) >= 4:
+                linked_ids.add(link[1])
+        node_ids = {
+            node.get("id") for node in nodes
+            if isinstance(node, dict) and node.get("id") is not None
+        }
+        dangling = node_ids - linked_ids
+        has_dangling_outputs = len(dangling) > 0 and len(linked_ids) > 0
+
+    # Build compact summary
+    type_summary = ", ".join(node_types[:5])
+    if len(node_types) > 5:
+        type_summary += f", and {len(node_types) - 5} more"
+    summary = (
+        f"Graph with {node_count} node(s): {type_summary}. "
+        f"{'Has' if has_dangling_inputs else 'No'} dangling input(s), "
+        f"{'has' if has_dangling_outputs else 'no'} dangling output(s)."
+    )
+
+    return InspectionSummary(
+        node_count=node_count,
+        node_types=tuple(node_types),
+        has_dangling_inputs=has_dangling_inputs,
+        has_dangling_outputs=has_dangling_outputs,
+        key_widget_values=tuple(key_widget_values),
+        summary=summary,
+    )
+
+
+def _build_precedent_slices(
+    sources: tuple[dict, ...],
+) -> tuple[WorkflowSlice, ...]:
+    """Build :class:`WorkflowSlice` placeholders from research sources.
+
+    Only sources that reference workflow-level paths (``.py`` files from
+    ready templates, source workflows, or Hivemind workflow resources)
+    produce a slice.  Each slice is a minimal placeholder — the
+    *node_ids*, *entry_anchor*, and *exit_anchor* are empty/absent
+    because full slice extraction is deferred to a later sprint (SD3).
+    """
+    workflow_source_kinds = {
+        "ready_template",
+        "source_workflow",
+        "external_workflow",
+        "hivemind_workflow",
+    }
+    slices: list[WorkflowSlice] = []
+    seen: set[str] = set()
+
+    for source in sources:
+        if not isinstance(source, dict):
+            continue
+        source_kind = str(source.get("source", ""))
+        path = source.get("path")
+        class_type = str(source.get("class_type", ""))
+
+        # Only create a slice for workflow sources with a .py path
+        is_workflow = source_kind in workflow_source_kinds
+        has_py_path = isinstance(path, str) and path.endswith(".py")
+        if not is_workflow and not has_py_path:
+            continue
+        if not class_type or class_type in seen:
+            continue
+        seen.add(class_type)
+
+        slices.append(
+            WorkflowSlice(
+                source_class_type=class_type,
+                node_ids=(),  # placeholder — slice extraction deferred
+                entry_anchor=None,
+                exit_anchor=None,
+                python_path=path if isinstance(path, str) else None,
+            )
+        )
+
+    return tuple(slices)
+
+
+def _build_adaptation_plan(
+    query: str,
+    graph: dict | None,
+    inspection: InspectionSummary | None,
+    slices: tuple[WorkflowSlice, ...],
+) -> PrecedentAdaptationPlan | None:
+    """Build a conservative :class:`PrecedentAdaptationPlan` or ``None``.
+
+    When no precedent slices were found, returns ``None`` — the caller
+    should produce an explicit none-found warning.  When slices exist,
+    returns a minimal plan that selects the first slice with empty
+    bindings/rewires/edit-ops.  Full adaptation construction is deferred
+    to a later sprint (SD3).
+    """
+    if not slices:
+        return None
+
+    return PrecedentAdaptationPlan(
+        selected_slice=slices[0],
+        anchor_bindings=(),
+        required_new_nodes=(),
+        required_rewires=(),
+        edit_ops=(),
+        candidate_graph=None,
+        structural_validation="not_evaluated",
+        semantic_validation="not_evaluated",
+    )
+
+
 # ── Public API ───────────────────────────────────────────────────────────────
 
 
@@ -675,10 +842,30 @@ def research(
     # Rebuild summary with merged results.
     summary = _build_summary(tuple(sources))
 
+    # ── Build structured precedent output (SD2) ──────────────────────────
+    # Graph is not directly available in research(), so inspection and
+    # adaptation plan are left empty.  The executor wires graph inspection
+    # into the research phase externally (see core._run_research).
+    precedent_slices = _build_precedent_slices(tuple(sources))
+    adaptation_plan = _build_adaptation_plan(
+        query=query,
+        graph=None,
+        inspection=None,
+        slices=precedent_slices,
+    )
+    precedent_warnings: list[str] = []
+    if not precedent_slices:
+        precedent_warnings.append(
+            "precedent research: no workflow/template precedents found in "
+            "local corpus or Hivemind results"
+        )
+
     return ResearchResult(
         summary=summary,
         sources=tuple(sources),
-        warnings=tuple(warnings),
+        warnings=tuple(list(warnings) + precedent_warnings),
+        precedent_slices=precedent_slices,
+        adaptation_plan=adaptation_plan,
     )
 
 
@@ -687,6 +874,9 @@ __all__ = [
     "HivemindError",
     "WebSearchClient",
     "WebSearchError",
+    "_build_adaptation_plan",
+    "_build_inspection_summary",
+    "_build_precedent_slices",
     "_default_hivemind_client",
     "_default_web_search_client",
     "research",

@@ -578,3 +578,204 @@ test("normalizeAgentEditResponse is idempotent (double-normalize returns same re
   assert.equal(first.outcome.kind, "candidate");
   assert.equal(second.outcome.kind, "candidate");
 });
+
+// ── T18: inspect_only / pure clarify no-candidate / no-Apply normalization ──
+
+test("normalizeAgentEditResponse handles inspect_only-like noop with explicit no-candidate contract", () => {
+  const raw = {
+    ok: true,
+    message: "Graph inspection complete.",
+    outcome: {
+      kind: "noop",
+      reason: "graph inspection complete — no edits requested",
+    },
+    graph: {
+      nodes: [{ id: 1, type: "KSampler" }, { id: 2, type: "SaveImage" }],
+      links: [[1, 1, 0, 2, 0, "IMAGE"]],
+    },
+    candidate: null,
+    candidate_graph: null,
+    graph_unchanged: true,
+    canvas_apply_allowed: false,
+    apply_allowed: false,
+    queue_allowed: false,
+    apply_eligibility: {
+      applyable: false,
+      reason: "no_candidate",
+      message: "No candidate is available to apply — inspect_only route never produces edits.",
+      warnings: [],
+    },
+  };
+
+  const normalized = normalizeAgentEditResponse(raw, { endpoint: "/vibecomfy/agent-edit" });
+
+  assert.equal(normalized.outcome.kind, "noop");
+  assert.equal(normalized.outcome.reason, "graph inspection complete — no edits requested");
+  assert.equal(normalized.candidateGraph, null);
+  assert.equal(normalized.candidate, null);
+  assert.equal(normalized.canvasApplyAllowed, false);
+  assert.equal(normalized.applyAllowed, false);
+  assert.equal(normalized.queueAllowed, false);
+  assert.equal(normalized.graphUnchanged, true);
+  assert.deepEqual(normalized.eligibility, {
+    applyable: false,
+    reason: "no_candidate",
+    message: "No candidate is available to apply — inspect_only route never produces edits.",
+    warnings: [],
+  });
+});
+
+test("normalizeAgentEditResponse handles pure clarify with explicit no-candidate eligibility", () => {
+  const raw = {
+    ok: true,
+    message: "Which audio source should I use?",
+    outcome: {
+      kind: "clarify",
+      question: "Which audio source should I use?",
+    },
+    graph: {
+      nodes: [{ id: 7, type: "LoadAudio" }],
+      links: [],
+    },
+    candidate: null,
+    candidate_graph: null,
+    graph_unchanged: true,
+    canvas_apply_allowed: false,
+    apply_allowed: false,
+    queue_allowed: false,
+    apply_eligibility: {
+      applyable: false,
+      reason: "no_candidate",
+      message: "No candidate is available to apply.",
+      warnings: [],
+    },
+  };
+
+  const normalized = normalizeAgentEditResponse(raw, { endpoint: "/vibecomfy/agent-edit" });
+
+  assert.equal(normalized.outcome.kind, "clarify");
+  assert.equal(normalized.outcome.question, "Which audio source should I use?");
+  assert.deepEqual(normalized.outcome.clarification, {
+    message: "Which audio source should I use?",
+  });
+  // Must not expose candidate
+  assert.equal(normalized.candidateGraph, null);
+  assert.equal(normalized.candidate, null);
+  // Apply must be blocked
+  assert.equal(normalized.canvasApplyAllowed, false);
+  assert.equal(normalized.applyAllowed, false);
+  assert.equal(normalized.queueAllowed, false);
+  assert.equal(normalized.graphUnchanged, true);
+  // Eligibility must reflect no_candidate
+  assert.deepEqual(normalized.eligibility, {
+    applyable: false,
+    reason: "no_candidate",
+    message: "No candidate is available to apply.",
+    warnings: [],
+  });
+});
+
+test("readCandidateGraph returns null for non-candidate outcome even with graph present", () => {
+  const raw = {
+    ok: true,
+    outcome: { kind: "noop", reason: "inspection only" },
+    graph: { nodes: [{ id: 8, type: "PreviewImage" }], links: [] },
+    candidate_graph: { nodes: [{ id: 9, type: "Note" }], links: [] },
+  };
+
+  const graph = readCandidateGraph(raw, { endpoint: "/submit" });
+  assert.equal(graph, null, "non-candidate outcome must yield null candidateGraph");
+});
+
+test("readCandidate returns null for non-candidate outcome even with candidate payload", () => {
+  const raw = {
+    ok: true,
+    outcome: { kind: "clarify", question: "Which node?" },
+    candidate: {
+      graph: { nodes: [{ id: 10, type: "KSampler" }], links: [] },
+      metadata: { created: "2025-01-01" },
+    },
+  };
+
+  const candidate = readCandidate(raw, { endpoint: "/submit" });
+  assert.equal(candidate, null, "clarify outcome must yield null candidate");
+});
+
+test("normalizeAgentEditResponse preserves apply eligibility for valid candidate with gate context", () => {
+  const raw = {
+    ok: true,
+    message: "Candidate ready.",
+    outcome: {
+      kind: "candidate",
+      changes: [{ uid: "ksampler", field_path: "steps", old: 20, new: 26 }],
+    },
+    candidate: {
+      graph: { nodes: [{ id: 11, type: "KSampler" }], links: [] },
+    },
+    candidate_graph_hash: "candidate-hash-valid",
+    canvas_apply_allowed: true,
+    apply_allowed: true,
+    queue_allowed: false,
+    apply_eligibility: {
+      applyable: true,
+      reason: "queue_blocked_warning",
+      message: "Apply is allowed, but Queue remains blocked for this candidate.",
+      warnings: ["queue_blocked"],
+    },
+  };
+
+  const normalized = normalizeAgentEditResponse(raw, { endpoint: "/vibecomfy/agent-edit" });
+
+  assert.equal(normalized.outcome.kind, "candidate");
+  assert.ok(normalized.candidateGraph, "candidate graph must be present for candidate outcome");
+  assert.ok(normalized.candidate, "candidate envelope must be present");
+  assert.deepEqual(normalized.eligibility, {
+    applyable: true,
+    reason: "queue_blocked_warning",
+    message: "Apply is allowed, but Queue remains blocked for this candidate.",
+    warnings: ["queue_blocked"],
+  });
+  assert.equal(normalized.canvasApplyAllowed, true);
+  assert.equal(normalized.applyAllowed, true);
+  assert.equal(normalized.queueAllowed, false);
+});
+
+test("normalizeAgentEditResponse handles direct_edit-like candidate with full apply eligibility", () => {
+  const raw = {
+    ok: true,
+    message: "Applied the requested edit.",
+    outcome: {
+      kind: "candidate",
+      changes: [{ uid: "node-1", field_path: "widgets.seed", old: 7, new: 42 }],
+    },
+    graph: { nodes: [{ id: 12, type: "KSampler" }], links: [] },
+    candidate_graph_hash: "hash-direct-edit",
+    canvas_apply_allowed: true,
+    apply_allowed: true,
+    queue_allowed: true,
+    apply_eligibility: {
+      applyable: true,
+      reason: "applyable",
+      message: "Ready to apply.",
+      warnings: [],
+    },
+    change_focus: "Focused change",
+  };
+
+  const normalized = normalizeAgentEditResponse(raw, { endpoint: "/vibecomfy/agent-edit" });
+
+  assert.equal(normalized.outcome.kind, "candidate");
+  assert.equal(normalized.outcome.changes.length, 1);
+  assert.equal(normalized.outcome.changes[0].uid, "node-1");
+  assert.ok(normalized.candidateGraph, "candidate graph must be present");
+  assert.ok(normalized.candidate, "candidate envelope must be present");
+  assert.deepEqual(normalized.eligibility, {
+    applyable: true,
+    reason: "applyable",
+    message: "Ready to apply.",
+    warnings: [],
+  });
+  assert.equal(normalized.canvasApplyAllowed, true);
+  assert.equal(normalized.applyAllowed, true);
+  assert.equal(normalized.queueAllowed, true);
+});

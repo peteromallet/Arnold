@@ -40,6 +40,7 @@ def test_failure_kind_enum_matches_closed_contract_exactly() -> None:
         "MalformedModelJSON",
         "MissingRequiredField",
         "ProviderError",
+        "ProviderCreditError",
         "AgentRuntimeUnavailable",
         "AuthError",
         "TimeoutError",
@@ -801,6 +802,26 @@ def test_classify_agent_response_provider_error_fallback() -> None:
     ctx = TurnContext(session_id="s1")
     fe = classify_failure("agent_response", RuntimeError("something unexpected"), ctx)
     assert fe.kind is FailureKind.PROVIDER_ERROR
+
+
+def test_classify_openrouter_credit_error_is_specific_and_non_retryable() -> None:
+    ctx = TurnContext(session_id="s1")
+    fe = classify_failure(
+        "agent_response",
+        RuntimeError(
+            "ValueError: Agent returned an empty batch_repl response.\n\n"
+            "Worker output tail:\n"
+            "Error code: 402 - This request requires more credits, or fewer max_tokens. "
+            "You requested up to 8192 tokens, but can only afford 3590. "
+            "To increase, visit https://openrouter.ai/settings/credits"
+        ),
+        ctx,
+    )
+
+    assert fe.kind is FailureKind.PROVIDER_CREDIT_ERROR
+    assert fe.retryable is False
+    assert "OpenRouter" in fe.user_facing_message
+    assert "temporarily unavailable" not in fe.user_facing_message
 
 
 def test_classify_ingest_stale_state() -> None:

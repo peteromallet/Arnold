@@ -1411,6 +1411,59 @@ test("normalizeExecutorPhasePayload preserves classify plan metadata for Decide 
   assert.equal(executorDecisionLabel(normalized), "Deciding: Research node choices, then edit the workflow.");
 });
 
+test("normalizeExecutorPhasePayload preserves known route/task metadata", () => {
+  const normalized = normalizeExecutorPhasePayload({
+    phase: "classify",
+    status: "progress",
+    route: "DIRECT_EDIT",
+    task: "EDIT_GRAPH",
+  });
+
+  assert.ok(normalized);
+  assert.equal(normalized.route, "direct_edit");
+  assert.equal(normalized.task, "edit_graph");
+});
+
+test("normalizeExecutorPhasePayload ignores unknown route/task metadata", () => {
+  const normalized = normalizeExecutorPhasePayload({
+    phase: "classify",
+    status: "progress",
+    route: "totally_new_route",
+    task: "totally_new_task",
+    intent: "respond",
+  });
+
+  assert.ok(normalized);
+  assert.equal("route" in normalized, false);
+  assert.equal("task" in normalized, false);
+  assert.equal(executorDecisionLabel(normalized), "Deciding: Reply to the request.");
+});
+
+test("executorDecisionLabel derives route-aware fallback from classify route", () => {
+  const normalized = normalizeExecutorPhasePayload({
+    phase: "classify",
+    status: "progress",
+    route: "precedent_research",
+    task: "research_precedent",
+  });
+
+  assert.ok(normalized);
+  assert.equal(executorDecisionLabel(normalized), "Deciding: Research precedents");
+});
+
+test("executorDecisionLabel prefers plan_summary over route-aware fallback", () => {
+  const normalized = normalizeExecutorPhasePayload({
+    phase: "classify",
+    status: "progress",
+    plan_summary: "Direct edit - patch the workflow in place.",
+    route: "direct_edit",
+    task: "edit_graph",
+  });
+
+  assert.ok(normalized);
+  assert.equal(executorDecisionLabel(normalized), "Deciding: Direct edit - patch the workflow in place.");
+});
+
 test("executorDecisionLabel derives short fallback from classify intent", () => {
   const normalized = normalizeExecutorPhasePayload({
     phase: "classify",
@@ -1421,6 +1474,26 @@ test("executorDecisionLabel derives short fallback from classify intent", () => 
 
   assert.ok(normalized);
   assert.equal(executorDecisionLabel(normalized), "Deciding: Research relevant context before replying.");
+});
+
+test("progressFromExecutorPhase preserves route/task metadata for route-aware decide labels", () => {
+  const normalized = normalizeExecutorPhasePayload({
+    phase: "classify",
+    status: "start",
+    route: "inspect_only",
+    task: "inspect_graph",
+  });
+
+  assert.ok(normalized);
+  const progress = progressFromExecutorPhase(normalized);
+  assert.ok(progress);
+  assert.equal(progress.route, "inspect_only");
+  assert.equal(progress.task, "inspect_graph");
+  assert.equal(executorProgressLabel(progress), "Inspect graph");
+
+  const validated = normalizeExecutorProgressSnapshot(progress);
+  assert.ok(validated);
+  assert.deepEqual(validated, progress);
 });
 
 test("executorPhaseToCanonicalProgress — phase-only legacy: research fixture yields research=active", () => {

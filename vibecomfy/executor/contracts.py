@@ -29,6 +29,305 @@ def _thaw_jsonish(value: Any) -> Any:
     return value
 
 
+# ── classify decision ────────────────────────────────────────────────────────
+
+# Canonical route vocabulary (SD1).  Empty string means "no route specified —
+# derive from legacy booleans".
+_ALLOWED_ROUTES = frozenset({
+    "",
+    "direct_edit",
+    "inspect_only",
+    "asset_lookup",
+    "diagnose_repair",
+    "subgraph_preview",
+    "precedent_research",
+    "clarify",
+})
+
+# Normalized task vocabulary carried alongside route.
+_ALLOWED_TASKS = frozenset({
+    "",
+    "edit_graph",
+    "inspect_graph",
+    "find_assets",
+    "diagnose",
+    "preview_subgraph",
+    "research_precedent",
+    "respond",
+    "research_nodes",
+})
+
+_ROUTE_DESCRIPTIONS: dict[str, str] = {
+    "direct_edit": "simple graph edit, no research needed.",
+    "inspect_only": "inspect/explain a graph without editing.",
+    "asset_lookup": "find assets, models, or nodes.",
+    "diagnose_repair": "diagnose and fix a broken graph.",
+    "subgraph_preview": "preview a subgraph or node group.",
+    "precedent_research": "research precedent templates/techniques before editing.",
+    "clarify": "ask a clarifying question or respond without editing.",
+}
+
+_TASK_DESCRIPTIONS: dict[str, str] = {
+    "edit_graph": "modify the current graph.",
+    "inspect_graph": "inspect or explain a graph without editing.",
+    "find_assets": "find assets, models, or nodes.",
+    "diagnose": "diagnose workflow problems.",
+    "preview_subgraph": "preview a subgraph or node group.",
+    "research_precedent": "research precedent templates or techniques.",
+    "respond": "reply without graph actions.",
+    "research_nodes": "research nodes or workflow techniques.",
+}
+
+if set(_ROUTE_DESCRIPTIONS) != (_ALLOWED_ROUTES - {""}):
+    raise ValueError("Route descriptions must cover every non-empty allowed route exactly once.")
+
+if set(_TASK_DESCRIPTIONS) != (_ALLOWED_TASKS - {""}):
+    raise ValueError("Task descriptions must cover every non-empty allowed task exactly once.")
+
+
+def format_route_options_for_prompt() -> str:
+    """Return the route options block for the classify system prompt."""
+    lines = [
+        '  "route": string (optional) — the precise execution route.  Choose from:\n',
+    ]
+    for route, description in _ROUTE_DESCRIPTIONS.items():
+        lines.append(f'    "{route}" — {description}\n')
+    lines.append('    Omit or use "" when the legacy booleans are sufficient.\n')
+    return "".join(lines)
+
+
+def format_task_options_for_prompt() -> str:
+    """Return the task options block for the classify system prompt."""
+    tasks = list(_TASK_DESCRIPTIONS)
+    lines = [
+        '  "task": string (optional) — normalized task class.  Choose from:\n',
+    ]
+    for idx in range(0, len(tasks), 4):
+        chunk = ", ".join(f'"{task}"' for task in tasks[idx:idx + 4])
+        suffix = ",\n" if idx + 4 < len(tasks) else ".\n"
+        lines.append(f"    {chunk}{suffix}")
+    lines.append('    Omit or use "" when the legacy booleans are sufficient.\n')
+    return "".join(lines)
+
+
+@dataclass(frozen=True)
+class ClassifyDecision:
+    """Model-driven classification result for an executor request.
+
+    This is always produced by a model call (SD1: no heuristic shortcut).
+
+    **Legacy fields (backward compatible)**
+    ``research`` and ``implement`` are booleans that drive whether those phases
+    run; ``reply`` is True when the executor should produce a user-facing
+    message.  ``intent`` is the legacy coarse classification.
+
+    **Route-aware fields (new, SD1)**
+    ``route`` is the authoritative phase-routing label.  When the classifier
+    model omits it (or returns an empty string), the parser derives a
+    normalized route from the legacy ``research`` / ``implement`` / ``intent``
+    fields so downstream executor gates can use route helpers without
+    inspecting legacy booleans directly.
+
+    ``task`` is a normalized task-class label (e.g. ``"edit_graph"``,
+    ``"inspect_graph"``).  It is derived from legacy fields when absent, and
+    defaults to ``""`` (unknown) when derivation is ambiguous.
+
+    ``effort`` is a coarse hint from the model ("low" / "medium" / "high")
+    that downstream phases may use to select models or token budgets.
+    """
+
+    # ── legacy boolean gates ─────────────────────────────────────────────
+    research: bool = False
+    implement: bool = False
+    reply: bool = True
+    effort: str = "low"
+    plan_summary: str = ""
+    intent: str = "respond"
+
+    # ── route-aware fields (SD1) ─────────────────────────────────────────
+    route: str = ""
+    task: str = ""
+
+    # ── route-aware metadata (SD1) ─────────────────────────────────────
+    research_goal: str = ""
+    model_families: tuple[str, ...] = ()
+    pattern_category: str = ""
+    change_goal: str = ""
+    clarification_question: str = ""
+    clarification_options: tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        if self.effort not in ("low", "medium", "high"):
+            object.__setattr__(self, "effort", "low")
+
+        allowed_intents = {"edit", "research", "explain_graph", "respond"}
+        if self.intent not in allowed_intents:
+            object.__setattr__(self, "intent", "respond")
+
+        # Clamp route to allowed values.
+        if self.route not in _ALLOWED_ROUTES:
+            object.__setattr__(self, "route", "")
+
+        # Clamp task to allowed values.
+        if self.task not in _ALLOWED_TASKS:
+            object.__setattr__(self, "task", "")
+
+        # Freeze tuple fields.
+        object.__setattr__(self, "model_families", tuple(self.model_families))
+        object.__setattr__(self, "clarification_options", tuple(self.clarification_options))
+
+    # ── derived helpers ──────────────────────────────────────────────────
+
+    @property
+    def effective_route(self) -> str:
+        """Return the normalized route, deriving from legacy fields when empty."""
+        if self.route:
+            return self.route
+        return _derive_route(
+            research=self.research,
+            implement=self.implement,
+            intent=self.intent,
+        )
+
+    @property
+    def effective_task(self) -> str:
+        """Return the normalized task, deriving from legacy fields when empty."""
+        if self.task:
+            return self.task
+        return _derive_task(
+            research=self.research,
+            implement=self.implement,
+            intent=self.intent,
+        )
+
+    # ── serialization ────────────────────────────────────────────────────
+
+    def to_dict(self) -> dict[str, Any]:
+        result: dict[str, Any] = {
+            "research": self.research,
+            "implement": self.implement,
+            "reply": self.reply,
+            "effort": self.effort,
+            "plan_summary": self.plan_summary,
+            "intent": self.intent,
+        }
+        # Only emit route/task when non-empty so legacy consumers see the
+        # same shape they always have.
+        if self.route:
+            result["route"] = self.route
+        if self.task:
+            result["task"] = self.task
+        # Emit metadata fields only when non-empty.
+        if self.research_goal:
+            result["research_goal"] = self.research_goal
+        if self.model_families:
+            result["model_families"] = list(self.model_families)
+        if self.pattern_category:
+            result["pattern_category"] = self.pattern_category
+        if self.change_goal:
+            result["change_goal"] = self.change_goal
+        if self.clarification_question:
+            result["clarification_question"] = self.clarification_question
+        if self.clarification_options:
+            result["clarification_options"] = list(self.clarification_options)
+        return result
+
+    # ── convenience constructors ─────────────────────────────────────────
+
+    @classmethod
+    def respond_only(
+        cls,
+        *,
+        effort: str = "low",
+        plan_summary: str = "",
+        route: str = "",
+        task: str = "",
+    ) -> "ClassifyDecision":
+        """Convenience: classify as a respond-only turn (no research, no edit)."""
+        return cls(
+            research=False,
+            implement=False,
+            reply=True,
+            effort=effort,
+            plan_summary=plan_summary,
+            intent="respond",
+            route=route,
+            task=task,
+        )
+
+    @classmethod
+    def edit(
+        cls,
+        *,
+        research: bool = True,
+        effort: str = "medium",
+        plan_summary: str = "",
+        route: str = "",
+        task: str = "",
+    ) -> "ClassifyDecision":
+        """Convenience: classify as an edit turn (with research by default)."""
+        return cls(
+            research=research,
+            implement=True,
+            reply=True,
+            effort=effort,
+            plan_summary=plan_summary,
+            intent="edit",
+            route=route,
+            task=task,
+        )
+
+
+# ── route / task derivation (legacy compatibility) ───────────────────────────
+
+
+def _derive_route(*, research: bool, implement: bool, intent: str) -> str:
+    """Derive a normalized route from legacy boolean + intent fields.
+
+    This is intentionally conservative: it only produces a route when the
+    legacy fields unambiguously map to a single route.  Ambiguous cases
+    (e.g. research=True + implement=True) return ``""`` so the caller knows
+    no explicit route was set.
+
+    The mapping follows the hard gate rules in SD2:
+    * direct_edit → implement without research
+    * inspect_only → research/inspect without implementation
+    * clarify → neither research nor implementation
+    * precedent_research is NOT derived — it requires an explicit ``route``
+      because legacy ``research=true, implement=true`` is ambiguous.
+    """
+    if implement and not research:
+        # Edit with no research requirement → direct_edit.
+        return "direct_edit"
+    if research and not implement:
+        # Research/inspect without implementation → inspect_only.
+        return "inspect_only"
+    if not research and not implement:
+        # Neither research nor implementation → clarify.
+        return "clarify"
+    # research=True, implement=True → ambiguous; do not derive.
+    return ""
+
+
+def _derive_task(*, research: bool, implement: bool, intent: str) -> str:
+    """Derive a normalized task label from legacy fields.
+
+    Returns ``""`` when the mapping is ambiguous.
+    """
+    if implement and not research:
+        return "edit_graph"
+    if research and not implement:
+        if intent == "explain_graph":
+            return "inspect_graph"
+        if intent == "research":
+            return "research_nodes"
+        return "inspect_graph"
+    if not research and not implement:
+        return "respond"
+    # research=True, implement=True → ambiguous.
+    return ""
+
+
 # ── request ──────────────────────────────────────────────────────────────────
 
 
@@ -86,56 +385,141 @@ class ExecutorRequest:
         )
 
 
-# ── classify decision ────────────────────────────────────────────────────────
 
+
+
+# ── structured precedent contracts (SD2) ──────────────────────────────────────
 
 @dataclass(frozen=True)
-class ClassifyDecision:
-    """Model-driven classification result for an executor request.
+class InspectionSummary:
+    """Minimal typed contract for a graph inspection pass.
 
-    This is always produced by a model call (SD1: no heuristic shortcut).
-    ``research`` and ``implement`` are booleans that drive whether those phases
-    run; ``reply`` is True when the executor should produce a user-facing
-    message (it is always True for respond-only and edit requests alike).
-
-    ``effort`` is a coarse hint from the model ("low" / "medium" / "high")
-    that downstream phases may use to select models or token budgets.
+    Produced by graph-native inspection (``_graph_inspection``) and carried
+    alongside research results so downstream phases can reference concrete
+    node-level findings without re-parsing the raw graph dict.
     """
 
-    research: bool = False
-    implement: bool = False
-    reply: bool = True
-    effort: str = "low"
-    plan_summary: str = ""
-    intent: str = "respond"
+    node_count: int = 0
+    node_types: tuple[str, ...] = ()
+    has_dangling_inputs: bool = False
+    has_dangling_outputs: bool = False
+    key_widget_values: tuple[dict[str, Any], ...] = ()
+    summary: str = ""
 
     def __post_init__(self) -> None:
-        if self.effort not in ("low", "medium", "high"):
-            object.__setattr__(self, "effort", "low")
-        allowed_intents = {"edit", "research", "explain_graph", "respond"}
-        if self.intent not in allowed_intents:
-            object.__setattr__(self, "intent", "respond")
+        object.__setattr__(self, "node_types", tuple(self.node_types))
+        object.__setattr__(self, "key_widget_values", tuple(
+            MappingProxyType({str(k): v for k, v in w.items()})
+            if isinstance(w, Mapping) else w
+            for w in self.key_widget_values
+        ))
 
     def to_dict(self) -> dict[str, Any]:
         return {
-            "research": self.research,
-            "implement": self.implement,
-            "reply": self.reply,
-            "effort": self.effort,
-            "plan_summary": self.plan_summary,
-            "intent": self.intent,
+            "node_count": self.node_count,
+            "node_types": list(self.node_types),
+            "has_dangling_inputs": self.has_dangling_inputs,
+            "has_dangling_outputs": self.has_dangling_outputs,
+            "key_widget_values": _thaw_jsonish(self.key_widget_values),
+            "summary": self.summary,
         }
 
-    @classmethod
-    def respond_only(cls, *, effort: str = "low", plan_summary: str = "") -> "ClassifyDecision":
-        """Convenience: classify as a respond-only turn (no research, no edit)."""
-        return cls(research=False, implement=False, reply=True, effort=effort, plan_summary=plan_summary, intent="respond")
 
-    @classmethod
-    def edit(cls, *, research: bool = True, effort: str = "medium", plan_summary: str = "") -> "ClassifyDecision":
-        """Convenience: classify as an edit turn (with research by default)."""
-        return cls(research=research, implement=True, reply=True, effort=effort, plan_summary=plan_summary, intent="edit")
+@dataclass(frozen=True)
+class WorkflowSlice:
+    """Identifies a selected slice of a workflow (precedent or current graph).
 
+    Points at a specific region of a workflow — a contiguous set of nodes and
+    their internal wiring — that can be adapted into the current graph.  The
+    *entry_anchor* and *exit_anchor* describe where the slice connects to the
+    rest of the graph; they are node ids in the source workflow that map to
+    node ids in the target graph via anchor bindings.
+    """
+
+    source_class_type: str = ""
+    node_ids: tuple[str, ...] = ()
+    entry_anchor: str | None = None
+    exit_anchor: str | None = None
+    python_path: str | None = None
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "node_ids", tuple(self.node_ids))
+
+    def to_dict(self) -> dict[str, Any]:
+        payload: dict[str, Any] = {
+            "source_class_type": self.source_class_type,
+            "node_ids": list(self.node_ids),
+        }
+        if self.entry_anchor is not None:
+            payload["entry_anchor"] = self.entry_anchor
+        if self.exit_anchor is not None:
+            payload["exit_anchor"] = self.exit_anchor
+        if self.python_path is not None:
+            payload["python_path"] = self.python_path
+        return payload
+
+
+@dataclass(frozen=True)
+class PrecedentAdaptationPlan:
+    """Structured plan for adapting a workflow precedent into the current graph.
+
+    This is the typed handoff between precedent research and implementation
+    (SD2).  It records exactly which slice was selected, how its anchors bind
+    to the current graph, what new nodes/rewires are required, and the concrete
+    edit operations needed to produce the candidate graph.
+
+    *structural_validation* and *semantic_validation* capture validation notes
+    (may be ``"not_evaluated"`` when validation is deferred to a later sprint).
+    """
+
+    selected_slice: WorkflowSlice = field(default_factory=WorkflowSlice)
+    anchor_bindings: tuple[dict[str, str], ...] = ()
+    required_new_nodes: tuple[dict[str, Any], ...] = ()
+    required_rewires: tuple[dict[str, Any], ...] = ()
+    edit_ops: tuple[dict[str, Any], ...] = ()
+    candidate_graph: dict[str, Any] | None = None
+    structural_validation: str = "not_evaluated"
+    semantic_validation: str = "not_evaluated"
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "anchor_bindings", tuple(
+            MappingProxyType({str(k): str(v) for k, v in b.items()})
+            if isinstance(b, Mapping) else b
+            for b in self.anchor_bindings
+        ))
+        object.__setattr__(self, "required_new_nodes", tuple(
+            MappingProxyType({str(k): _freeze_jsonish(v) for k, v in n.items()})
+            if isinstance(n, Mapping) else n
+            for n in self.required_new_nodes
+        ))
+        object.__setattr__(self, "required_rewires", tuple(
+            MappingProxyType({str(k): _freeze_jsonish(v) for k, v in r.items()})
+            if isinstance(r, Mapping) else r
+            for r in self.required_rewires
+        ))
+        object.__setattr__(self, "edit_ops", tuple(
+            MappingProxyType({str(k): _freeze_jsonish(v) for k, v in op.items()})
+            if isinstance(op, Mapping) else op
+            for op in self.edit_ops
+        ))
+        if self.structural_validation not in ("not_evaluated", "pass", "fail", "advisory"):
+            object.__setattr__(self, "structural_validation", "not_evaluated")
+        if self.semantic_validation not in ("not_evaluated", "pass", "fail", "advisory"):
+            object.__setattr__(self, "semantic_validation", "not_evaluated")
+
+    def to_dict(self) -> dict[str, Any]:
+        payload: dict[str, Any] = {
+            "selected_slice": self.selected_slice.to_dict(),
+            "anchor_bindings": _thaw_jsonish(self.anchor_bindings),
+            "required_new_nodes": _thaw_jsonish(self.required_new_nodes),
+            "required_rewires": _thaw_jsonish(self.required_rewires),
+            "edit_ops": _thaw_jsonish(self.edit_ops),
+            "structural_validation": self.structural_validation,
+            "semantic_validation": self.semantic_validation,
+        }
+        if self.candidate_graph is not None:
+            payload["candidate_graph"] = self.candidate_graph
+        return payload
 
 # ── research result ──────────────────────────────────────────────────────────
 
@@ -153,16 +537,25 @@ class ResearchResult:
     sources: tuple[dict[str, Any], ...] = ()
     warnings: tuple[str, ...] = ()
 
+    # ── structured precedent fields (SD2, optional) ──────────────────
+    precedent_slices: tuple[WorkflowSlice, ...] = ()
+    adaptation_plan: PrecedentAdaptationPlan | None = None
+
     def __post_init__(self) -> None:
         object.__setattr__(self, "sources", tuple(self.sources))
         object.__setattr__(self, "warnings", tuple(self.warnings))
-
+        object.__setattr__(self, "precedent_slices", tuple(self.precedent_slices))
     def to_dict(self) -> dict[str, Any]:
-        return {
+        result = {
             "summary": self.summary,
             "sources": _thaw_jsonish(self.sources),
             "warnings": list(self.warnings),
         }
+        if self.precedent_slices:
+            result["precedent_slices"] = [s.to_dict() for s in self.precedent_slices]
+        if self.adaptation_plan is not None:
+            result["adaptation_plan"] = self.adaptation_plan.to_dict()
+        return result
 
 
 # ── implementation result ────────────────────────────────────────────────────
@@ -287,6 +680,9 @@ __all__ = [
     "ExecutorRequest",
     "ExecutorResult",
     "ImplementationResult",
+    "InspectionSummary",
+    "PrecedentAdaptationPlan",
     "Report",
     "ResearchResult",
+    "WorkflowSlice",
 ]

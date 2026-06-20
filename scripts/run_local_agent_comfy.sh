@@ -44,6 +44,14 @@ if [[ "$(readlink "${_link}" 2>/dev/null)" != "${_want}" ]]; then
   ln -sfn "${_want}" "${_link}" || true
 fi
 
+# 1a. Build the exact content-hash frontend asset directory before ComfyUI
+#     imports the custom node. The Python entry point deliberately refuses to
+#     select an arbitrary older web_dist/, so a local launch must keep the
+#     cache-busted dist in sync with web/.
+if [[ "${VIBECOMFY_BUILD_WEB_DIST:-1}" == "1" ]]; then
+  bash "${REPO_ROOT}/scripts/build_web_cache_bust.sh" --hash --force
+fi
+
 # 2. Make the vibecomfy package importable by ComfyUI's python.
 export PYTHONPATH="${REPO_ROOT}:${PYTHONPATH:-}"
 

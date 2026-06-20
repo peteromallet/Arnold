@@ -4571,7 +4571,7 @@ test("VibeComfy in-place apply decorates intent nodes with persistent styling, t
   }
 });
 
-test("VibeComfy provider settings normalize routes, use DeepSeek-only password entry, and surface soft rejections without re-rendering raw keys", async () => {
+test("VibeComfy provider settings autosave OpenRouter credentials and surface soft rejections without re-rendering raw keys", async () => {
   const credentialBodies = [];
   const routeOptions = {
     auto: {
@@ -4581,11 +4581,11 @@ test("VibeComfy provider settings normalize routes, use DeepSeek-only password e
       guidance: "Use local Arnold/Hermes setup for this route. Browser-submitted API keys are not stored.",
       tos_acknowledgement_required: false,
     },
-    deepseek: {
-      requested_route: "deepseek",
-      normalized_route: "deepseek",
+    openrouter: {
+      requested_route: "openrouter",
+      normalized_route: "openrouter",
       browser_api_key_allowed: true,
-      guidance: "DeepSeek browser key submission is supported and stored locally.",
+      guidance: "OpenRouter browser key submission is supported and stored locally.",
       tos_acknowledgement_required: false,
     },
     anthropic: {
@@ -4620,23 +4620,23 @@ test("VibeComfy provider settings normalize routes, use DeepSeek-only password e
           route_options: routeOptions,
         },
       },
-      "/vibecomfy/agent/status?route=deepseek": {
+      "/vibecomfy/agent/status?route=openrouter": {
         status: 200,
         body: {
           ok: true,
           provider_available: true,
-          route: "deepseek",
-          requested_route: "deepseek",
+          route: "openrouter",
+          requested_route: "openrouter",
           route_options: routeOptions,
         },
       },
-      "/vibecomfy/agent/status?route=deepseek&model=agent-model": {
+      "/vibecomfy/agent/status?route=openrouter&model=agent-model": {
         status: 200,
         body: {
           ok: true,
           provider_available: true,
-          route: "deepseek",
-          requested_route: "deepseek",
+          route: "openrouter",
+          requested_route: "openrouter",
           model: "agent-model",
           route_options: routeOptions,
         },
@@ -4666,10 +4666,10 @@ test("VibeComfy provider settings normalize routes, use DeepSeek-only password e
       "/vibecomfy/agent/credentials": async ({ options }) => {
         const body = JSON.parse(options.body);
         credentialBodies.push(body);
-        if (body.provider === "deepseek") {
+        if (body.provider === "openrouter") {
           return {
             status: 200,
-            body: { ok: true, stored: true, provider: "deepseek" },
+            body: { ok: true, stored: true, provider: "openrouter" },
           };
         }
         return {
@@ -4693,38 +4693,38 @@ test("VibeComfy provider settings normalize routes, use DeepSeek-only password e
     await waitFor(() => harness.requests.some((entry) => entry.url === "/vibecomfy/agent/status?route=auto"));
 
     const routeSelect = harness.document.getElementById("vibecomfy-agent-panel-route");
-    assert.deepEqual(routeSelect.children.map((entry) => entry.value), ["auto", "deepseek", "anthropic", "openai-codex"]);
+    assert.deepEqual(routeSelect.children.map((entry) => entry.value), ["auto", "openrouter", "anthropic", "openai-codex"]);
+    assert.equal(harness.getButton("Save Settings"), null);
 
-    routeSelect.value = "deepseek";
-    routeSelect.onchange();
-    await waitFor(() => harness.requests.some((entry) => entry.url === "/vibecomfy/agent/status?route=deepseek"));
+    routeSelect.value = "openrouter";
+    await routeSelect.onchange();
+    await waitFor(() => harness.requests.some((entry) => entry.url === "/vibecomfy/agent/status?route=openrouter"));
     const apiKeyInput = harness.document.getElementById("vibecomfy-agent-panel-api-key");
     assert.notEqual(apiKeyInput?.style.display, "none");
     assert.equal(apiKeyInput?.type, "password");
 
     harness.document.getElementById("vibecomfy-agent-panel-model").value = "agent-model";
     apiKeyInput.value = "deepseek-secret";
-    await harness.clickButton("Save Settings");
+    await apiKeyInput.onchange();
     await waitFor(() => credentialBodies.length === 1);
-    assert.deepEqual(credentialBodies[0], { provider: "deepseek", api_key: "deepseek-secret" });
+    assert.deepEqual(credentialBodies[0], { provider: "openrouter", api_key: "deepseek-secret" });
     assert.equal(apiKeyInput.value, "");
-    assert.match(harness.textDump(), /Stored browser credential for deepseek/);
+    assert.match(harness.textDump(), /Stored browser credential for openrouter/);
     assert.doesNotMatch(harness.textDump(), /deepseek-secret/);
 
     routeSelect.value = "anthropic";
-    routeSelect.onchange();
+    await routeSelect.onchange();
     await waitFor(() => harness.requests.some((entry) => entry.url === "/vibecomfy/agent/status?route=anthropic&model=agent-model"));
     assert.equal(harness.document.getElementById("vibecomfy-agent-panel-api-key")?.style.display, "none");
     assert.match(harness.textDump(), /Claude runs through your local CLI setup/);
 
     routeSelect.value = "openai-codex";
-    routeSelect.onchange();
+    await routeSelect.onchange();
     await waitFor(() => harness.requests.some((entry) => entry.url === "/vibecomfy/agent/status?route=openai-codex&model=agent-model"));
     harness.document.getElementById("vibecomfy-agent-panel-api-key").value = "codex-secret";
-    await harness.clickButton("Save Settings");
-    await waitFor(() => credentialBodies.length === 2);
-    assert.deepEqual(credentialBodies[1], { provider: "openai-codex", api_key: "codex-secret" });
-    assert.equal(harness.document.getElementById("vibecomfy-agent-panel-api-key").value, "");
+    await harness.document.getElementById("vibecomfy-agent-panel-api-key").onchange();
+    await waitFor(() => /Browser keys are not accepted/.test(harness.textDump()));
+    assert.equal(credentialBodies.length, 1);
     assert.match(harness.textDump(), /Browser keys are not accepted/);
     assert.doesNotMatch(harness.textDump(), /codex-secret/);
   } finally {
@@ -6844,6 +6844,119 @@ test("VibeComfy preview diff computes named-port link deltas and drawPreviewOver
     assert.equal(harness.graphConfigureCalls.length, 0, "graph.configure must not be called during preview");
     assert.equal(harness.loadGraphDataCalls.length, 0, "loadGraphData must not be called during preview");
     assert.equal(harness.graphClearCalls.length, 0, "graph.clear must not be called during preview");
+  } finally {
+    await harness.dispose();
+  }
+});
+
+test("VibeComfy preview diff does not mark unchanged links as added when live nodes are missing vibecomfy_uid", async () => {
+  const liveGraph = {
+    nodes: [
+      {
+        id: 1,
+        type: "LoadImage",
+        pos: [80, 180],
+        size: [240, 100],
+        properties: {},
+        inputs: [],
+        outputs: [{ name: "IMAGE" }],
+      },
+      {
+        id: 2,
+        type: "SaveImage",
+        pos: [380, 120],
+        size: [240, 100],
+        properties: {},
+        inputs: [{ name: "images" }],
+        outputs: [],
+      },
+      {
+        id: 3,
+        type: "PreviewImage",
+        pos: [380, 280],
+        size: [240, 124],
+        properties: {},
+        inputs: [{ name: "images" }],
+        outputs: [],
+      },
+    ],
+    links: [[1, 0, 2, 0, "IMAGE"]],
+  };
+
+  const candidateGraph = {
+    nodes: [
+      {
+        id: 1,
+        type: "LoadImage",
+        pos: [80, 180],
+        size: [240, 100],
+        properties: { vibecomfy_uid: "uid-1" },
+        inputs: [],
+        outputs: [{ name: "IMAGE" }],
+      },
+      {
+        id: 2,
+        type: "SaveImage",
+        pos: [380, 120],
+        size: [240, 100],
+        properties: { vibecomfy_uid: "uid-2" },
+        inputs: [{ name: "images" }],
+        outputs: [],
+      },
+      {
+        id: 3,
+        type: "PreviewImage",
+        pos: [380, 280],
+        size: [240, 124],
+        properties: { vibecomfy_uid: "uid-3" },
+        inputs: [{ name: "images" }],
+        outputs: [],
+      },
+    ],
+    links: [
+      [1, 0, 2, 0, "IMAGE"],
+      [1, 0, 3, 0, "IMAGE"],
+    ],
+  };
+
+  const candidateReport = {
+    change: {
+      content_edits: {
+        preserved: ["uid-1", "uid-2"],
+        new_auto_placed: ["uid-3"],
+        edited: [],
+        removed_named: [],
+      },
+    },
+    recovery: [],
+  };
+
+  const harness = await createBrowserHarness({
+    graph: liveGraph,
+    responses: {
+      "/system_stats": {
+        status: 200,
+        body: { system: { comfyui_frontend_package: "1.39.19" } },
+      },
+    },
+  });
+
+  try {
+    const extensionModule = await harness.loadExtension();
+    await harness.setup();
+
+    const diff = extensionModule.computePreviewDiff(candidateGraph, candidateReport);
+
+    assert.deepEqual(
+      diff.added_links,
+      ["uid-1::IMAGE->uid-3::images"],
+      "only the genuinely new preview link should be highlighted as added",
+    );
+    assert.deepEqual(
+      diff.removed_links,
+      [],
+      "the unchanged existing link must not be treated as removed",
+    );
   } finally {
     await harness.dispose();
   }

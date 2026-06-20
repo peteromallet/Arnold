@@ -1446,195 +1446,23 @@ def emit_ready_template_python(
     raw_workflow: dict[str, Any] | None = None,
     variable_name_locks: Mapping[str, str] | None = None,
     strict_variable_name_locks: bool = False,
+    object_info_identities: dict[str, Any] | None = None,
 ) -> str:
-    metadata = dict(ready_metadata)
-    requirements = dict(ready_requirements)
-    if apply_overrides:
-        for key, value in (apply_overrides.get("metadata_overrides") or {}).items():
-            metadata[key] = value
-    _apply_ready_template_metadata_defaults(metadata, template_id)
+    from vibecomfy.porting.emit_ready import emit_ready_template_python as _emit_ready_template_python  # noqa: PLC0415
 
-    # Ensure sageattention is declared when SageAttention nodes are present.
-    _sage_class_types = frozenset({
-        "LTX2MemoryEfficientSageAttentionPatch",
-        "PathchSageAttentionKJ",
-    })
-    if any(
-        node.class_type in _sage_class_types
-        for node in workflow.nodes.values()
-    ):
-        existing = metadata.get("runtime_packages")
-        if not (
-            isinstance(existing, list)
-            and any(
-                isinstance(pkg, dict) and pkg.get("name") == "sageattention"
-                for pkg in existing
-            )
-        ):
-            entry = {
-                "name": "sageattention",
-                "reason": (
-                    "Required by LTX2MemoryEfficientSageAttentionPatch / "
-                    "PathchSageAttentionKJ for memory-efficient attention on "
-                    "compatible GPUs."
-                ),
-                "source": "SageAttention-ada",
-            }
-            if isinstance(existing, list):
-                metadata["runtime_packages"] = [*existing, entry]
-            else:
-                metadata["runtime_packages"] = [entry]
-
-    raw_workflow = raw_workflow or _raw_workflow_from_metadata(metadata)
-    subgraph_definitions = _subgraph_definitions_from_raw(raw_workflow, source_path=_source_workflow_path(metadata))
-    prepared = _prepare_workflow_for_emit(
+    return _emit_ready_template_python(
         workflow,
-        apply_overrides=apply_overrides,
+        ready_metadata=ready_metadata,
+        ready_requirements=ready_requirements,
         template_id=template_id,
-        variable_name_locks=variable_name_locks,
-        strict_variable_name_locks=strict_variable_name_locks,
-        diagnostics=diagnostics,
-    )
-    prepared["subgraph_definitions"] = subgraph_definitions
-    _apply_subgraph_names_to_prepared(prepared)
-    has_ltx_tail = _has_ltx_lowvram_tail(template_id)
-
-    workflow_nodes = prepared["nodes"]
-    edges_in = prepared["edges_in"]
-    ordering_edges_in = _edges_in_with_subgraph_external_refs(prepared, workflow_nodes, edges_in)
-    var_names = prepared["var_names"]
-
-    # Hoist constants and build section groups
-    constant_lines, constant_map = _hoist_constants(workflow_nodes, edges_in, var_names)
-    constant_lines, constant_map = _drop_output_prefix_constants(constant_lines, constant_map)
-    section_groups = _build_section_groups(workflow_nodes, edges_in)
-    wrapper_imports = _wrapper_imports_for_nodes(_all_nodes_for_imports(workflow_nodes, subgraph_definitions))
-    output_var_names = prepared["output_var_names"]
-    public_inputs = _public_input_specs(
-        workflow_nodes,
-        edges_in,
-        var_names,
-        output_var_names,
         registered_inputs=registered_inputs,
-        constant_map=constant_map,
-    )
-    model_assets = _model_assets_for_emit(metadata, requirements)
-    custom_node_packs = _custom_node_packs_for_emit(workflow_nodes, metadata, requirements)
-    has_public_inputs = bool(public_inputs)
-    metadata["_has_public_inputs_for_emit"] = has_public_inputs
-
-    out_lines: list[str] = []
-    out_lines.append(GENERATED_HEADER.rstrip("\n"))
-    out_lines.append('"""Auto-generated ready_template — use python -m vibecomfy.cli copy-to-recipe <id> for hand-editing."""')
-    out_lines.append("from __future__ import annotations")
-    out_lines.append("")
-    out_lines.append(
-        "from vibecomfy.templates import InputSpec, ModelAsset, ReadyMetadata, finalize, new_workflow, node as raw_call, ref"
-    )
-    for module_name, names in sorted(wrapper_imports.items()):
-        out_lines.append(f"from vibecomfy.nodes.{module_name} import {', '.join(names)}")
-    if has_ltx_tail:
-        out_lines.extend(LTX2_3_TAIL_PATCHES)
-    out_lines.append("")
-    # -- constants section ----------------------------------------------------
-    if constant_lines:
-        out_lines.append("")
-        out_lines.extend(constant_lines)
-        out_lines.append("")
-    model_lines = _format_models_block(model_assets)
-    if model_lines:
-        out_lines.append("")
-        out_lines.extend(model_lines)
-        out_lines.append("")
-    public_inputs_for_metadata = _remap_public_inputs_for_materialized_subgraphs(
-        public_inputs,
-        workflow_nodes,
-        subgraph_definitions,
-    )
-    # Compute which subgraph node IDs are referenced by PUBLIC_INPUT_METADATA.
-    # Only those nodes need explicit _id= kwargs in emitted subgraph functions.
-    required_ids_by_subgraph: dict[str, set[str]] = {}
-    for spec in public_inputs_for_metadata:
-        try:
-            ref_str = ast.literal_eval(spec.metadata_node_ref)
-        except Exception:
-            continue
-        if ":" not in ref_str:
-            continue
-        prefix, inner_id = ref_str.split(":", 1)
-        for subgraph_id in subgraph_definitions:
-            if _short_subgraph_id_prefix(subgraph_id) == prefix:
-                required_ids_by_subgraph.setdefault(subgraph_id, set()).add(inner_id)
-                break
-    public_input_metadata_lines = _format_public_inputs_block(public_inputs_for_metadata, metadata=True)
-    if public_input_metadata_lines:
-        out_lines.append("")
-        out_lines.extend(public_input_metadata_lines)
-        out_lines.append("")
-    output_node_ids = _terminal_output_node_ids(workflow_nodes, edges_in)
-    output_node_cls: str | None = (
-        str(workflow_nodes[output_node_ids[0]].class_type) if output_node_ids and output_node_ids[0] in workflow_nodes else None
-    )
-    out_lines.extend(
-        _format_ready_metadata_build(
-            metadata,
-            requirements,
-            has_models=bool(model_assets),
-            has_public_inputs=has_public_inputs,
-            custom_node_packs=custom_node_packs,
-            output_node_class_type=output_node_cls,
-        )
-    )
-    out_lines.append("")
-    subgraph_lines = _emit_subgraph_functions(
-        prepared,
+        apply_overrides=apply_overrides,
         diagnostics=diagnostics,
-        constant_map=constant_map,
-        required_ids_by_subgraph=required_ids_by_subgraph,
+        raw_workflow=raw_workflow,
         variable_name_locks=variable_name_locks,
         strict_variable_name_locks=strict_variable_name_locks,
+        object_info_identities=object_info_identities,
     )
-    if subgraph_lines:
-        out_lines.extend(subgraph_lines)
-        out_lines.append("")
-    out_lines.extend(
-        _emit_build_function(
-            prepared,
-            workflow_id_expr="READY_METADATA",
-            source_path_expr="__file__",
-            source_type="ready_template",
-            source_provenance=None,
-            registered_inputs=registered_inputs,
-            public_inputs=public_inputs,
-            tail_lines=_ready_template_tail_lines(
-                has_ltx_tail,
-                workflow_nodes,
-                edges_in,
-                var_names,
-                output_var_names,
-                metadata,
-            ),
-            diagnostics=diagnostics,
-            use_shared_helpers=True,
-            constant_map=constant_map,
-            section_groups=section_groups,
-        )
-    )
-    out_lines.append("")
-
-    combined = "\n".join(out_lines) + "\n"
-    combined = _strip_unused_template_imports(combined)
-
-    # -- readability diagnostic: generated_template_not_formatted -------------
-    if diagnostics is not None:
-        _check_template_formatting(combined, workflow_nodes, section_groups, diagnostics)
-
-    # Validate syntax with ast.parse
-    try:
-        ast.parse(combined)
-    except SyntaxError as exc:
-        raise RuntimeError(f"Generated ready-template code failed syntax check: {exc}") from exc
-    return combined
 
 
 def emit_scratchpad_python(
@@ -1703,44 +1531,15 @@ def emit_agent_edit_python(
     same lower-level workflow preparation and locked variable-name plumbing, but
     emits a compact edit surface rather than runnable scratchpad code.
     """
-    from vibecomfy.workflow import VibeWorkflow
+    from vibecomfy.porting.emit_agent_edit import emit_agent_edit_python as _emit_agent_edit_python  # noqa: PLC0415
 
-    if not isinstance(workflow, VibeWorkflow):
-        raise TypeError(
-            f"emit_agent_edit_python requires VibeWorkflow, got {type(workflow).__name__}. "
-            "Raw LiteGraph UI JSON must be converted before emitter calls."
-        )
-
-    prepared = _prepare_workflow_for_emit(
+    return _emit_agent_edit_python(
         workflow,
-        apply_overrides=None,
-        keep_virtual_wires=True,
-        prune_dead_branches=False,
-        variable_name_locks=variable_name_locks,
-        strict_variable_name_locks=strict_variable_name_locks,
         diagnostics=diagnostics,
-    )
-    if raw_workflow is not None:
-        subgraph_definitions = _subgraph_definitions_from_raw(raw_workflow, source_path=None)
-        if subgraph_definitions:
-            prepared["subgraph_definitions"] = subgraph_definitions
-            _apply_subgraph_names_to_prepared(prepared)
-    lines = _emit_agent_edit_lines(prepared)
-    subgraph_lines = _emit_subgraph_functions(
-        prepared,
-        diagnostics=diagnostics,
-        constant_map={},
+        raw_workflow=raw_workflow,
         variable_name_locks=variable_name_locks,
         strict_variable_name_locks=strict_variable_name_locks,
     )
-    if subgraph_lines:
-        lines.extend(["", *subgraph_lines])
-    source = "\n".join(lines) + "\n"
-    try:
-        ast.parse(source)
-    except SyntaxError as exc:
-        raise RuntimeError(f"Generated agent-edit Python failed syntax check: {exc}") from exc
-    return source
 
 
 _VIRTUAL_WIRE_EMITTER_CLASS_TYPES: frozenset[str] = frozenset({"SetNode", "GetNode", "Reroute"})
@@ -1796,6 +1595,17 @@ def _prepare_workflow_for_emit(
         for nid, node in workflow.nodes.items()
         if node.class_type not in UI_ONLY_CLASS_TYPES or str(nid) in ui_only_passthroughs
     }
+    from vibecomfy.porting.emit_ready import _declared_exec_outputs  # noqa: PLC0415
+
+    for node in workflow_nodes.values():
+        declared_exec_outputs = _declared_exec_outputs(node)
+        if declared_exec_outputs is None:
+            continue
+        metadata = getattr(node, "metadata", None)
+        if not isinstance(metadata, dict):
+            continue
+        metadata["output_names"] = [name for name, _type_name in declared_exec_outputs]
+        metadata["output_types"] = [output_type or "*" for _name, output_type in declared_exec_outputs]
     edges_in: dict[str, list[Any]] = {}
     for edge in workflow.edges:
         if edge.from_node not in workflow_nodes or edge.to_node not in workflow_nodes:

@@ -650,3 +650,35 @@ def _schema_accepts_dict(spec: Any) -> bool:
     if typ is None:
         return False
     return str(typ).strip().upper() in {"DICT", "JSON", "*"}
+
+
+def advisory_validation_for_precedent(
+    issues: list[Any],
+    *,
+    route: str | None = None,
+) -> list[dict[str, Any]]:
+    """Build advisory task-satisfaction entries from validation issues.
+
+    When *route* is precedent_research, every validation issue is recast
+    as an advisory task-satisfaction entry with satisfaction="advisory"
+    so the precedent-adaptation path can surface schema concerns without
+    blocking Apply or Queue.
+
+    When *route* is anything else, returns an empty list (issues remain
+    structural gate blockers).
+    """
+    if route != "precedent_research":
+        return []
+    entries: list[dict[str, Any]] = []
+    for issue in issues:
+        code = getattr(issue, "code", None) or (issue.get("code") if isinstance(issue, dict) else None)
+        message = getattr(issue, "message", None) or (issue.get("message") if isinstance(issue, dict) else str(issue))
+        entries.append(
+            {
+                "check": f"schema:{code}" if code else "schema:validation",
+                "status": "advisory",
+                "satisfaction": "advisory",
+                "description": str(message)[:500],
+            }
+        )
+    return entries

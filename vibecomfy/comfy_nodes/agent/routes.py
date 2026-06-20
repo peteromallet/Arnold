@@ -10,9 +10,49 @@ from typing import Any, Mapping
 
 _LOGGER = logging.getLogger(__name__)
 
-from .contracts import FailureKind, classify_failure, failure_envelope
+from .audit import artifact_ref_for_path, write_audit
+from .edit import DEFAULT_CHAT_DISPLAY_MESSAGES, _SESSION_ROOT
+from .contracts import (
+    ApplyEligibility,
+    FailureKind,
+    TurnContext,
+    apply_eligibility_payload,
+    classify_failure,
+    ensure_agent_edit_response_contract,
+    failure_envelope,
+)
 from .provider import readiness, handle_credential_submission
 from .hivemind_feedback import submit_hivemind_feedback
+from .session import (
+    accept_turn as _session_accept_turn,
+    rebaseline_session as _session_rebaseline_session,
+    reject_turn as _session_reject_turn,
+    session_dir_for,
+)
+
+
+def handle_agent_edit(*args: Any, **kwargs: Any) -> dict[str, Any]:
+    from .edit import handle_agent_edit as _handle_agent_edit_impl  # noqa: PLC0415
+
+    return _handle_agent_edit_impl(*args, **kwargs)
+
+
+def read_session_chat(*args: Any, **kwargs: Any) -> dict[str, Any]:
+    from .edit import read_session_chat as _read_session_chat_impl  # noqa: PLC0415
+
+    return _read_session_chat_impl(*args, **kwargs)
+
+
+def accept_turn(*args: Any, **kwargs: Any) -> dict[str, Any]:
+    return _session_accept_turn(*args, **kwargs)
+
+
+def reject_turn(*args: Any, **kwargs: Any) -> dict[str, Any]:
+    return _session_reject_turn(*args, **kwargs)
+
+
+def rebaseline_session(*args: Any, **kwargs: Any) -> dict[str, Any]:
+    return _session_rebaseline_session(*args, **kwargs)
 
 
 def _handle_roundtrip(
@@ -96,6 +136,435 @@ def _handle_agent_status(params: dict[str, Any] | None = None) -> dict[str, Any]
         list(status.get("route_options", {}).keys()),
     )
     return status
+
+
+def _handle_agent_edit(
+    payload: Any,
+    *,
+    schema_provider: Any = None,
+    deepseek_client: Any = None,
+    session_root: Any = None,
+    client_id: str | None = None,
+) -> dict[str, Any]:
+    try:
+        result = handle_agent_edit(
+            payload,
+            schema_provider=schema_provider,
+            deepseek_client=deepseek_client,
+            session_root=Path(session_root) if session_root is not None else None,
+            client_id=client_id,
+        )
+    except Exception as exc:
+        return classify_failure("route", exc).to_dict()
+    if isinstance(result, dict):
+        return result
+    return failure_envelope(
+        FailureKind.VALIDATION_ERROR,
+        "route",
+        agent_failure_context={"explanation": "handle_agent_edit returned a non-dict result."},
+    ).to_dict()
+
+
+def _session_root_path(session_root: Any) -> Path:
+    return Path(session_root) if session_root is not None else _SESSION_ROOT
+
+
+def _coerce_chat_max_messages(raw_value: Any) -> int:
+    if isinstance(raw_value, str):
+        value = raw_value.strip()
+        if not value:
+            return DEFAULT_CHAT_DISPLAY_MESSAGES
+        try:
+            parsed = int(value)
+        except ValueError:
+            return DEFAULT_CHAT_DISPLAY_MESSAGES
+    elif isinstance(raw_value, int):
+        parsed = raw_value
+    else:
+        return DEFAULT_CHAT_DISPLAY_MESSAGES
+    if parsed <= 0:
+        return DEFAULT_CHAT_DISPLAY_MESSAGES
+    return min(parsed, DEFAULT_CHAT_DISPLAY_MESSAGES)
+
+
+def _handle_agent_edit_chat(
+    payload: Any,
+    *,
+    session_root: Any = None,
+) -> dict[str, Any]:
+    if not isinstance(payload, dict):
+        return failure_envelope(
+            FailureKind.MISSING_REQUIRED_FIELD,
+            "chat",
+            agent_failure_context={"explanation": "Request body must be a JSON object."},
+        ).to_dict()
+    session_id = payload.get("session_id")
+    max_messages = _coerce_chat_max_messages(payload.get("max_messages"))
+    try:
+        result = read_session_chat(
+            Path(session_root) if session_root is not None else _SESSION_ROOT,
+            session_id if isinstance(session_id, str) else None,
+            max_messages=max_messages,
+        )
+    except Exception as exc:
+        return classify_failure("chat", exc).to_dict()
+    if not isinstance(result, dict):
+        return failure_envelope(
+            FailureKind.VALIDATION_ERROR,
+            "chat",
+            agent_failure_context={"explanation": "read_session_chat returned a non-dict result."},
+        ).to_dict()
+    latest_candidate = result.get("latest_candidate")
+    outcome = (
+        latest_candidate.get("outcome")
+        if isinstance(latest_candidate, Mapping) and isinstance(latest_candidate.get("outcome"), Mapping)
+        else {"kind": "noop"}
+    )
+    response = dict(result)
+    response["ok"] = True
+    response["outcome"] = dict(outcome) if isinstance(outcome, Mapping) else {"kind": "noop"}
+    return response
+
+
+def _json_response_writer(path: Path):  # type: ignore[no-untyped-def]
+    def _write(response: dict[str, Any]) -> Path:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            json.dumps(response, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        return path
+
+    return _write
+
+
+def _stamp_action_success(
+    response: Mapping[str, Any],
+    *,
+    eligibility_reason: str,
+    eligibility_message: str,
+) -> dict[str, Any]:
+    stamped = dict(response)
+    stamped["outcome"] = {"kind": "noop"}
+    stamped.update(
+        apply_eligibility_payload(
+            ApplyEligibility(
+                applyable=False,
+                reason=eligibility_reason,
+                message=eligibility_message,
+            ),
+            canvas_apply_allowed=False,
+            queue_allowed=False,
+        )
+    )
+    return ensure_agent_edit_response_contract(stamped, stage=str(stamped.get("action") or "route"))
+
+
+def _ensure_stale_recovery(response: Mapping[str, Any]) -> dict[str, Any]:
+    if response.get("kind") != FailureKind.STALE_STATE_MISMATCH.value:
+        return dict(response)
+    if isinstance(response.get("rebaseline_recovery"), Mapping):
+        return dict(response)
+    agent_failure_context = response.get("agent_failure_context")
+    issues = []
+    if isinstance(agent_failure_context, Mapping) and isinstance(agent_failure_context.get("issues"), list):
+        issues = [
+            dict(issue)
+            for issue in agent_failure_context["issues"]
+            if isinstance(issue, Mapping)
+        ]
+    reason = (
+        agent_failure_context.get("reason")
+        if isinstance(agent_failure_context, Mapping) and isinstance(agent_failure_context.get("reason"), str)
+        else "stale_state_recovery"
+    )
+    recovery = {
+        "action": "rebaseline",
+        "endpoint": "/vibecomfy/agent-edit/rebaseline",
+        "reason": reason,
+        "last_known_baseline_graph_hash": response.get("expected_baseline_graph_hash"),
+        "submit_structural_graph_hash": response.get("submit_structural_graph_hash"),
+    }
+    if issues:
+        issues[0].setdefault("rebaseline_recovery", dict(recovery))
+    else:
+        issues = [
+            {
+                "message": (
+                    agent_failure_context.get("explanation")
+                    if isinstance(agent_failure_context, Mapping)
+                    else response.get("message")
+                ),
+                "rebaseline_recovery": dict(recovery),
+            }
+        ]
+    failure_context = dict(agent_failure_context) if isinstance(agent_failure_context, Mapping) else {}
+    failure_context["issues"] = issues
+    stamped = dict(response)
+    stamped["agent_failure_context"] = failure_context
+    stamped["rebaseline_recovery"] = dict(recovery)
+    outcome = stamped.get("outcome")
+    if isinstance(outcome, Mapping):
+        outcome_payload = dict(outcome)
+        outcome_payload["rebaseline_recovery"] = dict(recovery)
+        stamped["outcome"] = outcome_payload
+    return stamped
+
+
+def _normalize_action_response(
+    result: Any,
+    *,
+    stage: str,
+    success_reason: str | None = None,
+    success_message: str | None = None,
+) -> dict[str, Any]:
+    serialized = _to_serializable(result)
+    if serialized.get("ok") is True:
+        if success_reason is not None and success_message is not None:
+            return _stamp_action_success(
+                serialized,
+                eligibility_reason=success_reason,
+                eligibility_message=success_message,
+            )
+        return serialized
+    return _validated_failure_response(stage, serialized)
+
+
+def _validated_failure_response(stage: str, failure: Any) -> dict[str, Any]:
+    serialized = _to_serializable(failure)
+    try:
+        stamped = ensure_agent_edit_response_contract(serialized, stage=stage)
+    except Exception:
+        stamped = serialized
+    return _ensure_stale_recovery(stamped)
+
+
+def _audit_path_for_action(session_root: Path, session_id: str, turn_id: str, action: str) -> Path:
+    return session_dir_for(session_root, session_id) / "turns" / turn_id / f"{action}_audit" / "audit.json"
+
+
+def _attach_action_audit(
+    response: dict[str, Any],
+    *,
+    request_payload: Mapping[str, Any],
+    session_root: Path,
+    action: str,
+) -> dict[str, Any]:
+    session_id = response.get("session_id")
+    turn_id = response.get("turn_id")
+    if not isinstance(session_id, str) or not isinstance(turn_id, str):
+        return response
+    audit_path = _audit_path_for_action(session_root, session_id, turn_id, action)
+    if not audit_path.is_file():
+        write_audit(
+            audit_path.parent,
+            context=TurnContext(
+                session_id=session_id,
+                turn_id=turn_id,
+                baseline_turn_id=response.get("baseline_turn_id")
+                if isinstance(response.get("baseline_turn_id"), str)
+                else None,
+            ),
+            turn_state=response.get("accepted_state") if isinstance(response.get("accepted_state"), str) else None,
+            response=response,
+            artifacts={"request": dict(request_payload)},
+            metadata={"action": action},
+        )
+    result = dict(response)
+    result["audit_ref"] = artifact_ref_for_path(audit_path).to_dict()
+    return result
+
+
+def _handle_agent_edit_accept(
+    payload: Any,
+    *,
+    session_root: Any = None,
+) -> dict[str, Any]:
+    if not isinstance(payload, dict):
+        return failure_envelope(
+            FailureKind.MISSING_REQUIRED_FIELD,
+            "accept",
+            agent_failure_context={"explanation": "Request body must be a JSON object."},
+        ).to_dict()
+    turn_id = payload.get("turn_id")
+    if not isinstance(turn_id, str) or not turn_id.strip():
+        return failure_envelope(
+            FailureKind.MISSING_REQUIRED_FIELD,
+            "accept",
+            agent_failure_context={"explanation": "turn_id is required."},
+        ).to_dict()
+    root = _session_root_path(session_root)
+    session_id = payload.get("session_id")
+    try:
+        result = accept_turn(
+            session_root=root,
+            session_id=session_id if isinstance(session_id, str) else "",
+            turn_id=turn_id,
+            client_graph_hash=payload.get("client_graph_hash")
+            if isinstance(payload.get("client_graph_hash"), str)
+            else None,
+            request_payload=payload,
+            idempotency_key=payload.get("idempotency_key")
+            if isinstance(payload.get("idempotency_key"), str)
+            else None,
+            response_writer=_json_response_writer(root / session_id / "turns" / turn_id / "accept_response.json")
+            if isinstance(session_id, str)
+            else None,
+        )
+    except Exception as exc:
+        return classify_failure("accept", exc).to_dict()
+    serialized = _normalize_action_response(
+        result,
+        stage="accept",
+        success_reason="superseded",
+        success_message="This candidate has been superseded.",
+    )
+    if serialized.get("ok") is True:
+        try:
+            return _attach_action_audit(
+                serialized,
+                request_payload=payload,
+                session_root=root,
+                action="accept",
+            )
+        except Exception as exc:
+            return classify_failure("audit", exc).to_dict()
+    return serialized
+
+
+def _handle_agent_edit_reject(
+    payload: Any,
+    *,
+    session_root: Any = None,
+) -> dict[str, Any]:
+    if not isinstance(payload, dict):
+        return failure_envelope(
+            FailureKind.MISSING_REQUIRED_FIELD,
+            "reject",
+            agent_failure_context={"explanation": "Request body must be a JSON object."},
+        ).to_dict()
+    turn_id = payload.get("turn_id")
+    if not isinstance(turn_id, str) or not turn_id.strip():
+        return failure_envelope(
+            FailureKind.MISSING_REQUIRED_FIELD,
+            "reject",
+            agent_failure_context={"explanation": "turn_id is required."},
+        ).to_dict()
+    root = _session_root_path(session_root)
+    session_id = payload.get("session_id")
+    try:
+        result = reject_turn(
+            session_root=root,
+            session_id=session_id if isinstance(session_id, str) else "",
+            turn_id=turn_id,
+            client_graph_hash=payload.get("client_graph_hash")
+            if isinstance(payload.get("client_graph_hash"), str)
+            else None,
+            request_payload=payload,
+            idempotency_key=payload.get("idempotency_key")
+            if isinstance(payload.get("idempotency_key"), str)
+            else None,
+            response_writer=_json_response_writer(root / session_id / "turns" / turn_id / "reject_response.json")
+            if isinstance(session_id, str)
+            else None,
+        )
+    except Exception as exc:
+        return classify_failure("reject", exc).to_dict()
+    serialized = _normalize_action_response(
+        result,
+        stage="reject",
+        success_reason="superseded",
+        success_message="This candidate has been superseded.",
+    )
+    if serialized.get("ok") is True:
+        try:
+            return _attach_action_audit(
+                serialized,
+                request_payload=payload,
+                session_root=root,
+                action="reject",
+            )
+        except Exception as exc:
+            return classify_failure("audit", exc).to_dict()
+    return serialized
+
+
+def _handle_agent_edit_rebaseline(
+    payload: Any,
+    *,
+    session_root: Any = None,
+) -> dict[str, Any]:
+    if not isinstance(payload, dict):
+        return failure_envelope(
+            FailureKind.MISSING_REQUIRED_FIELD,
+            "rebaseline",
+            agent_failure_context={"explanation": "Request body must be a JSON object."},
+        ).to_dict()
+    try:
+        result = rebaseline_session(
+            session_root=_session_root_path(session_root),
+            session_id=payload.get("session_id") if isinstance(payload.get("session_id"), str) else "",
+            request_payload=payload,
+            idempotency_key=payload.get("idempotency_key")
+            if isinstance(payload.get("idempotency_key"), str)
+            else None,
+        )
+    except Exception as exc:
+        return classify_failure("rebaseline", exc).to_dict()
+    return _normalize_action_response(
+        result,
+        stage="rebaseline",
+        success_reason="no_candidate",
+        success_message="No candidate is available to apply.",
+    )
+
+
+def _handle_agent_edit_audit(
+    payload: Any,
+    *,
+    session_root: Any = None,
+) -> dict[str, Any]:
+    if not isinstance(payload, dict):
+        return failure_envelope(
+            FailureKind.MISSING_REQUIRED_FIELD,
+            "audit",
+            agent_failure_context={"explanation": "Request body must be a JSON object."},
+        ).to_dict()
+    session_id = payload.get("session_id")
+    turn_id = payload.get("turn_id")
+    action = payload.get("action")
+    if not isinstance(session_id, str) or not session_id.strip():
+        return failure_envelope(
+            FailureKind.MISSING_REQUIRED_FIELD,
+            "audit",
+            agent_failure_context={"explanation": "session_id is required."},
+        ).to_dict()
+    if not isinstance(turn_id, str) or not turn_id.strip():
+        return failure_envelope(
+            FailureKind.MISSING_REQUIRED_FIELD,
+            "audit",
+            agent_failure_context={"explanation": "turn_id is required."},
+        ).to_dict()
+    if action not in {"accept", "reject", "rebaseline"}:
+        return failure_envelope(
+            FailureKind.MISSING_REQUIRED_FIELD,
+            "audit",
+            agent_failure_context={"explanation": "action must be one of accept, reject, or rebaseline."},
+        ).to_dict()
+    audit_path = _audit_path_for_action(_session_root_path(session_root), session_id, turn_id, action)
+    try:
+        body = audit_path.read_bytes()
+    except OSError as exc:
+        return classify_failure("audit", exc).to_dict()
+    return {
+        "ok": True,
+        "headers": {
+            "Content-Type": "application/json",
+            "Content-Disposition": f'attachment; filename="{session_id}-{turn_id}-{action}_audit.json"',
+            "X-Content-Type-Options": "nosniff",
+        },
+        "body": body,
+    }
 
 
 

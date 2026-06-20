@@ -12,7 +12,9 @@ contracts module) — raw exceptions never leak out of this module.
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass
 from datetime import datetime, timezone
+from types import MappingProxyType
 from typing import Any
 
 from vibecomfy.comfy_nodes.agent.contracts import (
@@ -42,6 +44,7 @@ from .contracts import (
     ImplementationResult,
     Report,
     ResearchResult,
+    _ALLOWED_ROUTES,
 )
 from .profiles import (
     AgentSpecShape,
@@ -56,6 +59,135 @@ def _spec_fields(spec: AgentSpecShape | None) -> dict[str, Any]:
     if spec is None:
         return {}
     return {"route": spec.agent, "model": spec.model}
+
+# ── route-aware behavior helpers (SD2) ───────────────────────────────────────
+
+
+@dataclass(frozen=True)
+class RouteBehavior:
+    needs_research: bool
+    needs_implement: bool
+    plan_summary: str
+    clears_result_graph: bool
+    reply_uses_graph_inspection: bool
+
+
+_ROUTE_BEHAVIORS = MappingProxyType({
+    "direct_edit": RouteBehavior(
+        needs_research=False,
+        needs_implement=True,
+        plan_summary="Direct edit — apply changes without research.",
+        clears_result_graph=False,
+        reply_uses_graph_inspection=False,
+    ),
+    "inspect_only": RouteBehavior(
+        needs_research=False,
+        needs_implement=False,
+        plan_summary="Inspect the graph without editing.",
+        clears_result_graph=True,
+        reply_uses_graph_inspection=True,
+    ),
+    "asset_lookup": RouteBehavior(
+        needs_research=False,
+        needs_implement=True,
+        plan_summary="Look up model/asset configurations.",
+        clears_result_graph=False,
+        reply_uses_graph_inspection=False,
+    ),
+    "diagnose_repair": RouteBehavior(
+        needs_research=True,
+        needs_implement=True,
+        plan_summary="Diagnose and repair graph issues.",
+        clears_result_graph=False,
+        reply_uses_graph_inspection=False,
+    ),
+    "subgraph_preview": RouteBehavior(
+        needs_research=False,
+        needs_implement=False,
+        plan_summary="Preview intermediate subgraph output.",
+        clears_result_graph=False,
+        reply_uses_graph_inspection=False,
+    ),
+    "precedent_research": RouteBehavior(
+        needs_research=True,
+        needs_implement=True,
+        plan_summary="Research workflow precedents, then adapt to current graph.",
+        clears_result_graph=False,
+        reply_uses_graph_inspection=False,
+    ),
+    "clarify": RouteBehavior(
+        needs_research=False,
+        needs_implement=False,
+        plan_summary="Ask a clarifying question before proceeding.",
+        clears_result_graph=False,
+        reply_uses_graph_inspection=False,
+    ),
+})
+
+if set(_ROUTE_BEHAVIORS) != (_ALLOWED_ROUTES - {""}):
+    raise ValueError("Route behaviors must cover every non-empty allowed route exactly once.")
+
+
+def _route_behavior(plan: ClassifyDecision) -> RouteBehavior:
+    """Resolve the route behavior for *plan*.
+
+    Explicit routes use the centralized behavior registry. When no explicit
+    route is present, the legacy booleans and intent determine the behavior so
+    older classifier outputs keep their historical semantics.
+    """
+    if plan.route:
+        return _ROUTE_BEHAVIORS[plan.effective_route]
+
+    if plan.implement and plan.research:
+        return RouteBehavior(
+            needs_research=True,
+            needs_implement=True,
+            plan_summary="Research relevant context, then edit the graph.",
+            clears_result_graph=False,
+            reply_uses_graph_inspection=False,
+        )
+    if plan.implement:
+        return RouteBehavior(
+            needs_research=False,
+            needs_implement=True,
+            plan_summary="Edit the graph.",
+            clears_result_graph=False,
+            reply_uses_graph_inspection=False,
+        )
+    if plan.intent == "explain_graph":
+        return RouteBehavior(
+            needs_research=True,
+            needs_implement=False,
+            plan_summary="Inspect the attached graph and explain it.",
+            clears_result_graph=False,
+            reply_uses_graph_inspection=False,
+        )
+    if plan.research:
+        return RouteBehavior(
+            needs_research=True,
+            needs_implement=False,
+            plan_summary="Research relevant context before replying.",
+            clears_result_graph=False,
+            reply_uses_graph_inspection=False,
+        )
+    return RouteBehavior(
+        needs_research=False,
+        needs_implement=False,
+        plan_summary="Reply to the request.",
+        clears_result_graph=False,
+        reply_uses_graph_inspection=False,
+    )
+
+
+def _should_research(plan: ClassifyDecision) -> bool:
+    """Determine if the research phase should run for *plan*."""
+    return _route_behavior(plan).needs_research
+
+
+def _should_implement(plan: ClassifyDecision) -> bool:
+    """Determine if the implement phase should run for *plan*."""
+    return _route_behavior(plan).needs_implement
+
 
 # ── graph summary helpers ────────────────────────────────────────────────────
 
@@ -241,6 +373,8 @@ def _run_research(
                 summary=summary,
                 sources=result.sources,
                 warnings=result.warnings,
+                precedent_slices=result.precedent_slices,
+                adaptation_plan=result.adaptation_plan,
             )
         return result
     except Exception as exc:
@@ -293,6 +427,13 @@ def _run_implement(
         payload["research_summary"] = research_payload.get("summary", "")
         payload["research_sources"] = research_payload.get("sources", [])
         payload["executor_research"] = research_payload
+        # Forward structured precedent data to the edit engine (SD2).
+        if research_result.precedent_slices:
+            payload["precedent_slices"] = [
+                s.to_dict() for s in research_result.precedent_slices
+            ]
+        if research_result.adaptation_plan is not None:
+            payload["adaptation_plan"] = research_result.adaptation_plan.to_dict()
     if request.session_id:
         payload["session_id"] = request.session_id
 
@@ -364,8 +505,13 @@ def _run_reply(
     plan: ClassifyDecision,
     research_result: ResearchResult | None = None,
     implementation_result: ImplementationResult | None = None,
+    graph_inspection: str | None = None,
 ) -> str:
     """Run the reply model turn.
+
+    When *graph_inspection* is provided (inspect-only route), the model
+    receives detailed node-by-node graph structure and is instructed to
+    describe the workflow without suggesting edits.
 
     Converts provider exceptions through ``classify_failure``.
     """
@@ -377,14 +523,21 @@ def _run_reply(
     )
     graph_summary = _graph_summary(request.graph)
 
+    # For inspect-only, replace the compact graph summary with the detailed
+    # inspection evidence so the reply model can describe the workflow
+    # step-by-step without suggesting edits.
+    effective_graph_context: str | None = graph_summary
+    if graph_inspection:
+        effective_graph_context = graph_inspection
+
     try:
-        reply_kwargs = {
+        reply_kwargs: dict[str, Any] = {
             "route": spec.agent,
             "model": spec.model,
             "plan": plan,
             "research_summary": research_summary,
             "implementation_message": implementation_message,
-            "graph_summary": graph_summary,
+            "graph_summary": effective_graph_context,
         }
         try:
             result = run_reply_turn(request.query, **reply_kwargs)
@@ -507,6 +660,8 @@ def _emit_executor_phase_event(
     if phase == "classify" and plan is not None:
         payload["plan_summary"] = _classification_plan_summary(plan)
         payload["intent"] = plan.intent
+        payload["route"] = plan.effective_route
+        payload["task"] = plan.effective_task
     _ws_send("vibecomfy.executor.phase", payload, client_id=client_id)
 
 
@@ -514,15 +669,7 @@ def _classification_plan_summary(plan: ClassifyDecision) -> str:
     summary = plan.plan_summary.strip()
     if summary:
         return summary
-    if plan.implement and plan.research:
-        return "Research relevant context, then edit the graph."
-    if plan.implement:
-        return "Edit the graph."
-    if plan.intent == "explain_graph":
-        return "Inspect the attached graph and explain it."
-    if plan.research:
-        return "Research relevant context before replying."
-    return "Reply to the request."
+    return _route_behavior(plan).plan_summary
 
 
 def run_executor(
@@ -599,6 +746,8 @@ def run_executor(
                 plan_research=plan.research,
                 plan_implement=plan.implement,
                 plan_reply=plan.reply,
+                plan_route=plan.effective_route,
+                plan_task=plan.effective_task,
             )
         _emit_executor_phase_event(
             request,
@@ -618,7 +767,7 @@ def run_executor(
         )
 
     # ── Phase 2: research (optional) ─────────────────────────────────────
-    if plan.research:
+    if _should_research(plan):
         try:
             research_spec = _resolve_spec(request.profile, "research")
         except Exception:
@@ -679,7 +828,7 @@ def run_executor(
         )
 
     # ── Phase 3: implement (optional) ────────────────────────────────────
-    if plan.implement:
+    if _should_implement(plan):
         try:
             implement_spec = _resolve_spec(request.profile, "implement")
         except Exception as exc:
@@ -751,6 +900,7 @@ def run_executor(
         )
 
     # ── Phase 4: reply (always via model) ────────────────────────────────
+    route_behavior = _route_behavior(plan)
     try:
         _emit_executor_phase_event(
             request,
@@ -772,6 +922,9 @@ def run_executor(
                 plan=plan,
                 research_result=research_result,
                 implementation_result=implementation_result,
+                graph_inspection=_graph_inspection(request.graph)
+                if route_behavior.reply_uses_graph_inspection
+                else None,
             )
             span.update(reply_preview=short_text(reply_text))
     except _ExecutorPhaseError as exc:
@@ -786,6 +939,10 @@ def run_executor(
             message=str(exc),
             report=report,
         )
+
+    # ── Guard: inspect_only must never return an edited graph ────────────
+    if route_behavior.clears_result_graph:
+        graph = None
 
     # ── Assemble success result ──────────────────────────────────────────
     report = Report(

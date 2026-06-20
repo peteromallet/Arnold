@@ -23,6 +23,7 @@ from .audit import (
     write_json_artifact,
 )
 from .contracts import (
+    ApplyEligibility,
     ArtifactRef,
     FailureEnvelope,
     FailureKind,
@@ -129,6 +130,8 @@ class AgentEditState:
     batch_signature_catalog: str = ""
     executor_research_summary: str = ""
     executor_research_sources: tuple[dict[str, Any], ...] = ()
+    executor_precedent_slices: tuple[dict[str, Any], ...] = ()
+    executor_adaptation_plan: dict[str, Any] | None = None
     batch_turns: list[dict[str, Any]] = field(default_factory=list)
     batch_field_changes: tuple[FieldChange, ...] = ()
     batch_noop_field_changes: tuple[FieldChange, ...] = ()
@@ -141,6 +144,9 @@ class AgentEditState:
     batch_exit_mode: str = ""
     batch_done_summary: str = ""
     lint_noop_messages: tuple[str, ...] = ()
+    # T15: route label carried on state so response builders can apply route-aware
+    # validation/reporting without changing their call signatures.
+    route: str | None = None
 
 
 class _StageBlocked(Exception):
@@ -1048,7 +1054,15 @@ def _format_batch_report(
         f"{budget_remaining} turn(s) remaining, "
         f"{consecutive_errors} consecutive error turn(s)."
     )
-    lines = [summary, *statement_lines, *diagnostic_lines]
+    query_only_note = ""
+    statements = tuple(batch_result.statements or ())
+    if statements and landed_count == 0 and all((statement.op_kind or "") == "query" for statement in statements):
+        query_only_note = (
+            "No edits were made this turn. Search/query output is discovery only. "
+            "If it returned a usable signature or precedent, construct and wire the edit now; "
+            "do not search again unless the last query failed to identify a usable path."
+        )
+    lines = [summary, *statement_lines, query_only_note, *diagnostic_lines]
     return "\n".join(line for line in lines if line)
 
 
@@ -2556,6 +2570,17 @@ _GRAPH_EXPLAIN_TRIGGER_TERMS = (
     "inspect this graph", "inspect the graph", "what does this graph do",
 )
 
+_CODE_NODE_TRIGGER_TERMS = (
+    "code node",
+    "python",
+    "pil",
+    "pillow",
+    "custom image-processing",
+    "custom image processing",
+    "process images",
+    "image processing",
+)
+
 
 def _task_mentions_any(task: str, terms: tuple[str, ...]) -> bool:
     lowered = task.lower()
@@ -2568,6 +2593,10 @@ def _is_research_intent(task: str) -> bool:
 
 def _is_graph_explain_intent(task: str) -> bool:
     return _task_mentions_any(task, _GRAPH_EXPLAIN_TRIGGER_TERMS)
+
+
+def _is_code_node_intent(task: str) -> bool:
+    return _task_mentions_any(task, _CODE_NODE_TRIGGER_TERMS)
 
 
 def _build_graph_report(graph: dict[str, Any] | None) -> str:
@@ -2623,6 +2652,232 @@ def _build_graph_report(graph: dict[str, Any] | None) -> str:
     return f"{len(nodes)} node(s):\n" + "\n".join(lines)
 
 
+
+def _build_precedent_adaptation_prompt(
+    adaptation_plan: dict[str, Any] | None,
+    precedent_slices: tuple[dict[str, Any], ...] = (),
+) -> str:
+    """Build a compact precedent adaptation prompt for batch REPL injection.
+
+    Only invoked for the `precedent_research` route.  Includes anchors,
+    required nodes/rewires, socket evidence, avoid patterns, and semantic
+    checks from the structured adaptation plan, but never the full
+    candidate_graph to avoid biasing the model toward a single solution.
+    """
+    if not adaptation_plan:
+        return ""
+
+    parts: list[str] = []
+
+    # ── selected slice ──
+    selected_slice = adaptation_plan.get("selected_slice")
+    if isinstance(selected_slice, dict):
+        source_class = selected_slice.get("source_class_type", "")
+        node_ids = selected_slice.get("node_ids") or []
+        entry = selected_slice.get("entry_anchor")
+        exit_ = selected_slice.get("exit_anchor")
+        py_path = selected_slice.get("python_path")
+        slice_desc = f"Source: {source_class}" if source_class else "Source: (unnamed)"
+        if isinstance(node_ids, list) and node_ids:
+            slice_desc += f", {len(node_ids)} node(s): [{', '.join(str(n) for n in node_ids[:8])}]"
+            if len(node_ids) > 8:
+                slice_desc += f" (+{len(node_ids) - 8} more)"
+        if entry:
+            slice_desc += f", entry_anchor={entry}"
+        if exit_:
+            slice_desc += f", exit_anchor={exit_}"
+        if py_path:
+            slice_desc += f", path={py_path}"
+        parts.append(f"Selected slice: {slice_desc}")
+
+    # ── anchor bindings ──
+    anchor_bindings = adaptation_plan.get("anchor_bindings")
+    if isinstance(anchor_bindings, list) and anchor_bindings:
+        binding_lines = []
+        for b in anchor_bindings:
+            if isinstance(b, dict):
+                binding_lines.append(", ".join(f"{k} → {v}" for k, v in b.items()))
+        if binding_lines:
+            parts.append("Anchor bindings: " + "; ".join(binding_lines))
+
+    # ── required new nodes ──
+    required_new_nodes = adaptation_plan.get("required_new_nodes")
+    if isinstance(required_new_nodes, list) and required_new_nodes:
+        node_lines = []
+        for n in required_new_nodes[:10]:
+            if isinstance(n, dict):
+                class_type = n.get("class_type") or n.get("type") or "node"
+                node_id = n.get("id") or n.get("node_id") or "?"
+                slot_info = ""
+                inputs = n.get("inputs")
+                if isinstance(inputs, dict):
+                    slot_info = ", ".join(f"{k}={v}" for k, v in list(inputs.items())[:3])
+                desc = f"{class_type}(id={node_id}"
+                if n.get("widget_values"):
+                    desc += f", values={json.dumps(n['widget_values'])[:80]}"
+                if slot_info:
+                    desc += f", inputs={{{slot_info}}}"
+                desc += ")"
+                node_lines.append(desc)
+        if node_lines:
+            parts.append("Required new nodes: " + "; ".join(node_lines))
+
+    # ── required rewires ──
+    required_rewires = adaptation_plan.get("required_rewires")
+    if isinstance(required_rewires, list) and required_rewires:
+        rewire_lines = []
+        for r in required_rewires[:6]:
+            if isinstance(r, dict):
+                src = r.get("from") or r.get("source") or "?"
+                tgt = r.get("to") or r.get("target") or "?"
+                slot = r.get("slot") or r.get("input_slot") or ""
+                desc = f"{src} → {tgt}"
+                if slot:
+                    desc += f".{slot}"
+                rewire_lines.append(desc)
+        if rewire_lines:
+            parts.append("Required rewires: " + "; ".join(rewire_lines))
+
+    # ── edit ops (compact) ──
+    edit_ops = adaptation_plan.get("edit_ops")
+    if isinstance(edit_ops, list) and edit_ops:
+        op_lines = []
+        for op in edit_ops[:6]:
+            if isinstance(op, dict):
+                op_kind = op.get("kind") or op.get("op") or "edit"
+                op_target = op.get("target") or op.get("node_id") or "?"
+                op_value = op.get("value")
+                desc = f"{op_kind} {op_target}"
+                if op_value is not None:
+                    desc += f"={json.dumps(op_value)[:40]}"
+                op_lines.append(desc)
+        if op_lines:
+            parts.append("Edit ops: " + "; ".join(op_lines))
+
+    # ── socket evidence (from slices) ──
+    if precedent_slices:
+        socket_lines = []
+        for s in precedent_slices[:4]:
+            if isinstance(s, dict):
+                class_type = s.get("source_class_type") or "node"
+                entry = s.get("entry_anchor")
+                exit_ = s.get("exit_anchor")
+                node_ids = s.get("node_ids") or []
+                desc = class_type
+                if entry or exit_:
+                    anchors = []
+                    if entry:
+                        anchors.append(f"in={entry}")
+                    if exit_:
+                        anchors.append(f"out={exit_}")
+                    desc += f" ({', '.join(anchors)})"
+                socket_lines.append(desc)
+        if socket_lines:
+            parts.append("Socket evidence (workflow slices): " + "; ".join(socket_lines))
+
+    # ── avoid patterns (derived from structural validation) ──
+    structural_val = adaptation_plan.get("structural_validation", "")
+    if structural_val == "fail":
+        parts.append("AVOID: structural validation FAILED — the precedent slice may not be structurally compatible. Prefer a different precedent or adapt conservatively.")
+    elif structural_val == "advisory":
+        parts.append("NOTE: structural validation has advisories — verify wiring compatibility before landing edits.")
+
+    # ── semantic checks ──
+    semantic_val = adaptation_plan.get("semantic_validation", "")
+    if semantic_val == "pass":
+        parts.append("Semantic validation: PASS — the adaptation is semantically sound.")
+    elif semantic_val == "fail":
+        parts.append("AVOID: semantic validation FAILED — the precedent may not produce the expected behavior. Consider an alternative.")
+    elif semantic_val == "advisory":
+        parts.append("Semantic validation advisories present — review model compatibility and slot types.")
+
+    if not parts:
+        return ""
+
+    return "\n".join(parts)
+
+
+def _route_blocks_apply(route: str | None) -> bool:
+    """Return True when *route* forbids Apply eligibility.
+
+    inspect_only routes only observe the graph without modifying it.
+    clarify routes ask the user a question and do not produce a candidate.
+    Both are semantically inapplicable for Apply.
+    """
+    return route in ("inspect_only", "clarify")
+
+
+def _route_change_focus_label(route: str | None) -> str:
+    """Return a short change-focus label for *route* when reporting edits.
+
+    direct_edit is a focused, targeted change — the label makes that
+    explicit in user-facing summaries.
+    """
+    if route == "direct_edit":
+        return "Focused change"
+    return ""
+
+
+def _build_precedent_semantic_check_entries(
+    state: "AgentEditState",
+) -> list[dict[str, Any]]:
+    """Build task-satisfaction entries from the precedent adaptation plan.
+
+    Semantic and structural validation fields are mapped to task satisfaction
+    entries with a satisfaction key of advisory (for advisory warnings)
+    or not_evaluated (for fields the plan did not evaluate).  These entries
+    provide route-level observability without blocking Apply or Queue.
+    """
+    plan = state.executor_adaptation_plan
+    if not isinstance(plan, dict):
+        return []
+
+    entries: list[dict[str, Any]] = []
+
+    structural_val = plan.get("structural_validation")
+    if structural_val in ("pass", "fail", "advisory", "not_evaluated"):
+        entries.append(
+            {
+                "check": "structural_validation",
+                "status": structural_val,
+                "satisfaction": structural_val if structural_val != "not_evaluated" else "not_evaluated",
+                "description": _structural_validation_description(structural_val),
+            }
+        )
+
+    semantic_val = plan.get("semantic_validation")
+    if semantic_val in ("pass", "fail", "advisory", "not_evaluated"):
+        entries.append(
+            {
+                "check": "semantic_validation",
+                "status": semantic_val,
+                "satisfaction": semantic_val if semantic_val != "not_evaluated" else "not_evaluated",
+                "description": _semantic_validation_description(semantic_val),
+            }
+        )
+
+    return entries
+
+
+def _structural_validation_description(status: str) -> str:
+    if status == "pass":
+        return "Precedent slice is structurally compatible with the current graph."
+    if status == "fail":
+        return "Precedent slice has structural incompatibilities — adapt conservatively."
+    if status == "advisory":
+        return "Precedent slice has structural advisories — verify wiring compatibility."
+    return "Structural validation was not evaluated for the precedent slice."
+
+
+def _semantic_validation_description(status: str) -> str:
+    if status == "pass":
+        return "Precedent adaptation is semantically sound."
+    if status == "fail":
+        return "Precedent may not produce expected behavior — consider alternatives."
+    if status == "advisory":
+        return "Semantic advisories present — review model compatibility and slot types."
+    return "Semantic validation was not evaluated for the precedent adaptation."
+
 def _prefetch_research_summary(task: str) -> str:
     try:
         from vibecomfy.executor.research import (
@@ -2654,7 +2909,10 @@ def _stage_agent_batch_repl(
     state.batch_session = session
     initial_render = session.render()
     present_types = _present_class_types(session)
-    signature_catalog = session.search(focus_types=present_types, formatted=True)
+    focus_types = set(present_types)
+    if _is_code_node_intent(state.task):
+        focus_types.add("vibecomfy.exec")
+    signature_catalog = session.search(focus_types=sorted(focus_types), formatted=True)
     available_node_names = _format_available_node_names(session.search(formatted=False))
     state.python_before = initial_render
     state.before_py_path.write_text(initial_render, encoding="utf-8")
@@ -2689,6 +2947,13 @@ def _stage_agent_batch_repl(
     prefetch_graph_report = (
         _build_graph_report(state.graph) if prefetch_explain else ""
     )
+    # Build compact adaptation plan prompt for precedent_research route (T13)
+    precedent_adaptation_prompt = ""
+    if route == "precedent_research" and state.executor_adaptation_plan:
+        precedent_adaptation_prompt = _build_precedent_adaptation_prompt(
+            state.executor_adaptation_plan,
+            state.executor_precedent_slices,
+        )
 
     max_batches = max(1, int(state.batch_max_turns or 1))
     max_consecutive_errors = max(1, int(state.batch_max_consecutive_errors or 1))
@@ -2743,6 +3008,7 @@ def _stage_agent_batch_repl(
             conversation_messages=conversation_messages if turn_number == 0 else None,
             research_summary=prefetch_research_summary if turn_number == 0 else "",
             graph_report=prefetch_graph_report if turn_number == 0 else "",
+            precedent_adaptation_plan=precedent_adaptation_prompt if turn_number == 0 else "",
         )
         request_entry = {
             "turn_number": turn_number,
@@ -2757,15 +3023,40 @@ def _stage_agent_batch_repl(
             {"response_contract": "batch_repl", "turns": request_log},
         )
 
-        if deepseek_client is not None:
-            turn_result = _normalize_test_client_batch_response(deepseek_client(messages))
-        else:
-            turn_result = run_agent_turn_batch(
-                state.task,
-                messages,
-                route=route,
-                model=model,
-        )
+        try:
+            if deepseek_client is not None:
+                turn_result = _normalize_test_client_batch_response(deepseek_client(messages))
+            else:
+                turn_result = run_agent_turn_batch(
+                    state.task,
+                    messages,
+                    route=route,
+                    model=model,
+                )
+        except Exception as exc:
+            error_record = {
+                "turn_number": turn_number,
+                "task": state.task,
+                "message": "",
+                "batch": "",
+                "error": str(exc),
+                "error_type": type(exc).__name__,
+                "request_messages": messages,
+            }
+            response_log.append(
+                {
+                    "turn_number": turn_number,
+                    "error": {
+                        "type": type(exc).__name__,
+                        "message": str(exc),
+                    },
+                }
+            )
+            write_json_artifact(state.model_response_path, {"turns": response_log})
+            state.messages_path.open("a", encoding="utf-8").write(
+                json.dumps(error_record, sort_keys=True) + "\n"
+            )
+            raise
 
         state.provider_metadata = dict(turn_result.audit_metadata or {})
         state.user_message = turn_result.message
@@ -2907,6 +3198,15 @@ def _stage_agent_batch_repl(
                 schema_provider=state.schema_provider,
             )
 
+            landed_add_uids = {
+                str(item.detail.get("minted_uid"))
+                for item in batch_result.statements
+                if item.ok
+                and str(item.op_kind or "") == "node_call"
+                and isinstance(item.detail, Mapping)
+                and item.detail.get("minted_uid") is not None
+            }
+
             # Build (uid, field_path) identities for lint-dropped ops.
             _dropped_keys: list[tuple[str, str]] = []
             for norm in lint_result.normalizations:
@@ -2944,8 +3244,16 @@ def _stage_agent_batch_repl(
                     "source": "lint",
                 }
 
+            lint_issues = tuple(
+                issue
+                for issue in lint_result.issues
+                if not (
+                    issue.code == "unknown_target"
+                    and issue.uid in landed_add_uids
+                )
+            )
             lint_diag_dicts = tuple(
-                _lint_issue_to_dict(issue) for issue in lint_result.issues
+                _lint_issue_to_dict(issue) for issue in lint_issues
             )
 
         raw_landed = len(batch_result.landed_ops)
@@ -4009,6 +4317,13 @@ def _build_batch_repl_response(
         has_candidate=has_candidate,
         candidate_state="candidate",
     )
+    # T15: inspect_only and clarify routes cannot be Apply-eligible
+    if _route_blocks_apply(state.route):
+        response_apply_eligibility = ApplyEligibility(
+            applyable=False,
+            reason="no_candidate",
+            message=f"Apply is not available for {state.route} routes.",
+        )
     response = success_envelope(
         context,
         message=state.user_message,
@@ -4080,6 +4395,15 @@ def _build_batch_repl_response(
     elif state.batch_done_summary:
         response["done_summary"] = state.batch_done_summary
     response["batch_turns"] = _json_safe(state.batch_turns)
+    # T15: precedent_research carries semantic checks as advisory/not_evaluated
+    if state.route == "precedent_research":
+        semantic_entries = _build_precedent_semantic_check_entries(state)
+        if semantic_entries:
+            response.setdefault("task_satisfaction", []).extend(semantic_entries)
+    # T15: direct_edit reports change focus
+    change_focus = _route_change_focus_label(state.route)
+    if change_focus:
+        response["change_focus"] = change_focus
     return response
 
 
@@ -4095,6 +4419,13 @@ def _build_dev_success_response(
         has_candidate=True,
         candidate_state="candidate",
     )
+    # T15: inspect_only and clarify routes cannot be Apply-eligible
+    if _route_blocks_apply(state.route):
+        eligibility = ApplyEligibility(
+            applyable=False,
+            reason="no_candidate",
+            message=f"Apply is not available for {state.route} routes.",
+        )
     response = success_envelope(
         context,
         message=state.user_message,
@@ -4107,18 +4438,28 @@ def _build_dev_success_response(
     )
     response.update(compatibility_fields)
     response.update(_session_artifact_response_fields(state))
-    internal_outcome = TurnOutcome.edit()
+    # T17: no-candidate routes (inspect_only, clarify) must not produce a
+    # candidate outcome or candidate payload even in dev/delta paths.
+    if _route_blocks_apply(state.route):
+        has_candidate = False
+        if state.route == "clarify":
+            internal_outcome = TurnOutcome.clarify(question=state.user_message or None)
+        else:
+            internal_outcome = TurnOutcome.noop(reason=state.user_message or None)
+    else:
+        has_candidate = True
+        internal_outcome = TurnOutcome.edit()
     response.update(
         turn_envelope(
             message=state.user_message,
             outcome=public_outcome_from_turn_outcome(
                 internal_outcome,
-                response={"candidate": {"graph_hash": compatibility_fields["candidate_graph_hash"]}},
+                response={"candidate": {"graph_hash": compatibility_fields["candidate_graph_hash"]}} if has_candidate else None,
             ),
             candidate=_build_candidate_payload(
                 state,
                 compatibility_fields=compatibility_fields,
-                has_candidate=True,
+                has_candidate=has_candidate,
             ),
             eligibility=eligibility,
             audit_ref=None,
@@ -4134,6 +4475,15 @@ def _build_dev_success_response(
         from vibecomfy.porting.edit.ops import op_to_dict
 
         response["delta_ops"] = [op_to_dict(op) for op in state.delta_ops]
+    # T15: precedent_research carries semantic checks as advisory/not_evaluated
+    if state.route == "precedent_research":
+        semantic_entries = _build_precedent_semantic_check_entries(state)
+        if semantic_entries:
+            response.setdefault("task_satisfaction", []).extend(semantic_entries)
+    # T15: direct_edit reports change focus
+    change_focus = _route_change_focus_label(state.route)
+    if change_focus:
+        response["change_focus"] = change_focus
     return response
 
 
@@ -4530,6 +4880,15 @@ def handle_agent_edit(
         state.executor_research_sources = tuple(
             source for source in research_sources if isinstance(source, dict)
         )
+    # Extract structured precedent data from payload (SD2)
+    precedent_slices = payload.get("precedent_slices")
+    if isinstance(precedent_slices, list):
+        state.executor_precedent_slices = tuple(
+            s for s in precedent_slices if isinstance(s, dict)
+        )
+    adaptation_plan = payload.get("adaptation_plan")
+    if isinstance(adaptation_plan, dict):
+        state.executor_adaptation_plan = adaptation_plan
     if isinstance(payload.get("max_batches"), int) and payload["max_batches"] > 0:
         state.batch_max_turns = int(payload["max_batches"])
     if (
@@ -4612,6 +4971,9 @@ def handle_agent_edit(
             turn_id=context.turn_id,
         )
         return response
+
+    # T15: carry route on state so response builders can apply route-aware gating
+    state.route = route
 
     if contract == "delta":
         response = _validated_agent_edit_response(

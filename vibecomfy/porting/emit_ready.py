@@ -1001,12 +1001,14 @@ def _emit_build_function(
 
     # Build ordered list of (section_name, nid) for topological-sorted nodes
     topo_order = _topological_node_order(workflow_nodes, ordering_edges_in)
+    sorted_id_order = sorted(workflow_nodes, key=_id_sort_key)
     section_order_map: dict[str, str] = {}  # nid -> section_name
     for section_name in _SECTION_ORDER:
         for nid in section_groups.get(section_name, []):
             section_order_map[nid] = section_name
 
     is_subgraph_function = function_name != "build"
+    emit_top_level_ids = use_shared_helpers and not is_subgraph_function and topo_order != sorted_id_order
     out_lines: list[str] = []
     if function_signature is not None:
         out_lines.extend(function_signature.splitlines())
@@ -1152,7 +1154,10 @@ def _emit_build_function(
                 if is_subgraph_function and node_id_prefix is not None:
                     if _subgraph_node_id_required(node_id_prefix, nid, required_ids):
                         all_args.append(("_id", repr(_subgraph_emitted_node_id(node_id_prefix, nid))))
-                elif not is_subgraph_function:
+                elif emit_top_level_ids:
+                    # Preserve source node ids only when emission order differs from
+                    # the source id order; otherwise auto-assigned ids stay stable
+                    # and the explicit _id noise is unnecessary.
                     all_args.append(("_id", repr(str(nid))))
                 all_args.extend((_wrapper_kwarg_name(key), expr) for key, expr in ready_kwargs)
                 if uid_arg is not None:
@@ -1541,6 +1546,9 @@ def _node_local_output_names(node: Any) -> list[str]:
     from vibecomfy.porting.emit.emitter import _identity_for_node, _record_lookup_warning  # noqa: PLC0415
     from vibecomfy.porting.object_info import output_names as _class_output_names, resolve_class_entry  # noqa: PLC0415
     class_type = str(node.class_type)
+    declared_exec_outputs = _declared_exec_outputs(node)
+    if declared_exec_outputs is not None:
+        return [name for name, _type_name in declared_exec_outputs]
     identity = _identity_for_node(node)
     if identity is not None:
         try:
@@ -1568,6 +1576,25 @@ def _node_local_arity_check(node: Any, ui_output_count: int | None) -> int:
     from vibecomfy.porting.emit.emitter import _identity_for_node, _record_lookup_warning  # noqa: PLC0415
     from vibecomfy.porting.object_info import resolve_class_entry, check_output_arity_consensus  # noqa: PLC0415
     class_type = str(node.class_type)
+    declared_exec_outputs = _declared_exec_outputs(node)
+    if declared_exec_outputs is not None:
+        declared_count = len(declared_exec_outputs)
+        if ui_output_count is not None and declared_count != ui_output_count:
+            from vibecomfy.errors import ArityDisagreementError as _AD  # noqa: PLC0415
+            raise _AD(
+                (
+                    f"output arity disagreement for {class_type}: declared io.outputs "
+                    f"has {declared_count} outputs but UI declares {ui_output_count}. "
+                    "Refresh the node UI metadata."
+                ),
+                class_type=class_type,
+                snapshot_pack=None,
+                snapshot_version=None,
+                snapshot_output_count=declared_count,
+                ui_output_count=ui_output_count,
+                next_action="refresh the vibecomfy.exec node UI",
+            )
+        return declared_count
     identity = _identity_for_node(node)
     if identity is not None:
         try:
@@ -1599,6 +1626,49 @@ def _node_local_arity_check(node: Any, ui_output_count: int | None) -> int:
             )
         return cached_count
     return check_output_arity_consensus(class_type, ui_output_count)
+
+
+def _exec_node_field(node: Any, key: str) -> Any:
+    node_widgets = getattr(node, "widgets", None)
+    if isinstance(node_widgets, Mapping) and key in node_widgets:
+        return node_widgets[key]
+    node_inputs = getattr(node, "inputs", None)
+    if isinstance(node_inputs, Mapping) and key in node_inputs:
+        return node_inputs[key]
+    return None
+
+
+def _declared_exec_outputs(node: Any) -> list[tuple[str, str | None]] | None:
+    """Return declared ``vibecomfy.exec`` outputs from inline ``io`` when present."""
+    if getattr(node, "class_type", None) != "vibecomfy.exec":
+        return None
+    raw_io = _exec_node_field(node, "io")
+    if isinstance(raw_io, str):
+        try:
+            raw_io = json.loads(raw_io)
+        except (TypeError, ValueError):
+            return None
+    if not isinstance(raw_io, Mapping):
+        return None
+    raw_outputs = raw_io.get("outputs")
+    if not isinstance(raw_outputs, list):
+        return None
+    outputs: list[tuple[str, str | None]] = []
+    for item in raw_outputs:
+        if isinstance(item, Mapping):
+            name = item.get("name")
+            output_type = item.get("type")
+        elif isinstance(item, (list, tuple)) and 1 <= len(item) <= 2:
+            name = item[0]
+            output_type = item[1] if len(item) == 2 else None
+        else:
+            return None
+        if not isinstance(name, str) or not name:
+            return None
+        if output_type is not None and not isinstance(output_type, str):
+            return None
+        outputs.append((name, output_type if isinstance(output_type, str) and output_type else None))
+    return outputs
 
 
 # ---------------------------------------------------------------------------

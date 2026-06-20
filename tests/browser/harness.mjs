@@ -315,17 +315,80 @@ export async function createBrowserHarness({
   var TITLE_H = (globalThis.window?.LiteGraph?.NODE_TITLE_HEIGHT) || 30;
   var SLOT_H = (globalThis.window?.LiteGraph?.NODE_SLOT_HEIGHT) || 20;
 
+  function _decorateLiveLinkRecord(link) {
+    var record;
+    if (Array.isArray(link)) {
+      record = {
+        id: link[0],
+        origin_id: link[1],
+        origin_slot: Number(link[2]),
+        target_id: link[3],
+        target_slot: Number(link[4]),
+        type: link.length > 5 ? link[5] : null,
+      };
+    } else if (link && typeof link === "object") {
+      record = {
+        id: link.id,
+        origin_id: link.origin_id,
+        origin_slot: Number(link.origin_slot),
+        target_id: link.target_id,
+        target_slot: Number(link.target_slot),
+        type: link.type ?? null,
+      };
+    } else {
+      return null;
+    }
+    if (typeof record.asSerialisable !== "function") {
+      Object.defineProperty(record, "asSerialisable", {
+        enumerable: false,
+        configurable: true,
+        value() {
+          return [
+            this.id,
+            this.origin_id,
+            this.origin_slot,
+            this.target_id,
+            this.target_slot,
+            this.type,
+          ];
+        },
+      });
+    }
+    if (typeof record.serialize !== "function") {
+      Object.defineProperty(record, "serialize", {
+        enumerable: false,
+        configurable: true,
+        value() {
+          return this.asSerialisable();
+        },
+      });
+    }
+    if (typeof record.disconnect !== "function") {
+      Object.defineProperty(record, "disconnect", {
+        enumerable: false,
+        configurable: true,
+        value(network) {
+          if (!network) {
+            return;
+          }
+          if (network.links && typeof network.links === "object" && !Array.isArray(network.links)) {
+            delete network.links[String(this.id)];
+          }
+        },
+      });
+    }
+    return record;
+  }
+
   function _buildLiveLinkMap(linksArray) {
     var map = {};
     if (Array.isArray(linksArray)) {
       for (var _li = 0; _li < linksArray.length; _li += 1) {
         var link = linksArray[_li];
-        if (Array.isArray(link)) {
-          map[String(link[0])] = link;
-        } else if (link && typeof link === 'object') {
-          var linkId = link.id ?? _li;
-          map[String(linkId)] = link;
-        }
+        var record = _decorateLiveLinkRecord(link);
+        if (!record) continue;
+        var linkId = record.id ?? _li;
+        map[String(linkId)] = record;
       }
     }
     return map;
@@ -483,24 +546,51 @@ export async function createBrowserHarness({
             operationLog.push({ kind: "graph.remove", nodeId, alreadyAbsent: true });
             return;
           }
+          var links = app.canvas.graph.links;
+          var nodes = app.canvas.graph._nodes;
+          if (Array.isArray(node.inputs)) {
+            for (var _ii = 0; _ii < node.inputs.length; _ii += 1) {
+              var input = node.inputs[_ii];
+              if (input?.link == null) continue;
+              var incomingLink = links?.[String(input.link)] || null;
+              if (!incomingLink || typeof incomingLink.disconnect !== "function") {
+                throw new TypeError("a.disconnect is not a function");
+              }
+              var sourceNode = nodes.find((entry) => String(entry?.id) === String(incomingLink.origin_id));
+              var sourceOutput = Array.isArray(sourceNode?.outputs) ? sourceNode.outputs[incomingLink.origin_slot] : null;
+              if (Array.isArray(sourceOutput?.links)) {
+                sourceOutput.links = sourceOutput.links.filter((entry) => String(entry) !== String(incomingLink.id));
+                if (!sourceOutput.links.length) {
+                  sourceOutput.links = null;
+                }
+              }
+              input.link = null;
+              incomingLink.disconnect(app.canvas.graph, "output");
+            }
+          }
+          if (Array.isArray(node.outputs)) {
+            for (var _oi = 0; _oi < node.outputs.length; _oi += 1) {
+              var output = node.outputs[_oi];
+              var outputLinks = Array.isArray(output?.links) ? output.links.slice() : [];
+              for (var _li = 0; _li < outputLinks.length; _li += 1) {
+                var linkId = outputLinks[_li];
+                var outgoingLink = links?.[String(linkId)] || null;
+                if (!outgoingLink || typeof outgoingLink.disconnect !== "function") {
+                  throw new TypeError("a.disconnect is not a function");
+                }
+                var targetNode = nodes.find((entry) => String(entry?.id) === String(outgoingLink.target_id));
+                var targetInput = Array.isArray(targetNode?.inputs) ? targetNode.inputs[outgoingLink.target_slot] : null;
+                if (targetInput) {
+                  targetInput.link = null;
+                }
+                outgoingLink.disconnect(app.canvas.graph);
+              }
+              output.links = null;
+            }
+          }
           app.canvas.graph._nodes.splice(index, 1);
           graphRemoveCalls.push(clone(node));
           operationLog.push({ kind: "graph.remove", nodeId });
-          // Clean up links connected to the removed node.
-          var links = app.canvas.graph.links;
-          if (links && typeof links === "object") {
-            var keysToDelete = [];
-            for (var _key in links) {
-              if (!Object.prototype.hasOwnProperty.call(links, _key)) continue;
-              var link = links[_key];
-              if (link && (String(link.origin_id) === String(nodeId) || String(link.target_id) === String(nodeId))) {
-                keysToDelete.push(_key);
-              }
-            }
-            for (var _ki = 0; _ki < keysToDelete.length; _ki += 1) {
-              delete links[keysToDelete[_ki]];
-            }
-          }
         },
       },
       draw(fg, bg) {

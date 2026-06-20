@@ -839,6 +839,149 @@ def test_handle_agent_edit_preserves_stage_blocked_from_extracted_product_runner
     assert result["agent_failure_context"]["explanation"] == "runner blocked"
 
 
+def test_batch_repl_provider_error_writes_messages_artifact(tmp_path: Path) -> None:
+    from vibecomfy.comfy_nodes.agent import edit as agent_edit_module
+
+    state = AgentEditState(
+        task="add a code node that processes images with PIL",
+        graph=_ui_graph(),
+        request_payload={},
+        schema_provider=_batch_repl_provider(),
+        baseline_graph_hash=None,
+        submit_graph_hash=None,
+        submit_structural_graph_hash=None,
+        submitted_client_graph_hash=None,
+        submitted_client_structural_graph_hash=None,
+        session_dir=tmp_path,
+        turn_dir=tmp_path,
+        request_path=tmp_path / "request.json",
+        original_ui_path=tmp_path / "original.ui.json",
+        before_py_path=tmp_path / "before.py",
+        after_py_path=tmp_path / "after.py",
+        projection_path=tmp_path / "projection.txt",
+        model_request_path=tmp_path / "model_request.json",
+        model_response_path=tmp_path / "model_response.json",
+        candidate_ui_path=tmp_path / "candidate.ui.json",
+        messages_path=tmp_path / "messages.jsonl",
+    )
+    context = TurnContext(session_id="provider-error-session", turn_id="0001")
+
+    def _provider_error(_messages):
+        raise ProviderError("Agent returned an empty batch_repl response.")
+
+    with pytest.raises(ProviderError):
+        agent_edit_module._stage_agent_batch_repl(
+            state,
+            context,
+            deepseek_client=_provider_error,
+        )
+
+    assert state.model_request_path.is_file()
+    assert state.model_response_path.is_file()
+    assert state.messages_path.is_file()
+
+    message_line = json.loads(state.messages_path.read_text(encoding="utf-8").strip())
+    assert message_line["error_type"] == "ProviderError"
+    assert "empty batch_repl" in message_line["error"]
+    assert message_line["request_messages"]
+
+    response = json.loads(state.model_response_path.read_text(encoding="utf-8"))
+    assert response["turns"][0]["error"]["type"] == "ProviderError"
+
+
+def test_batch_repl_exec_insert_done_ignores_lint_false_positive_for_new_uid(
+    tmp_path: Path,
+) -> None:
+    source = (
+        "from PIL import ImageOps\n"
+        "processed = ImageOps.autocontrast(image)\n"
+        "return {\"image\": processed}"
+    )
+    batch = (
+        f"code_node = vibecomfy.exec(source={source!r}, "
+        "io={\"inputs\": [[\"image\", \"IMAGE\"]], \"outputs\": [[\"image\", \"IMAGE\"]]}, "
+        "in_0=loadimage.image)\n"
+        "saveimage.images = code_node.out_0\n"
+        "done()"
+    )
+
+    def _client(_messages):
+        return {
+            "message": "Inserted a PIL processing code node.",
+            "batch": batch,
+        }
+
+    result = handle_agent_edit(
+        {
+            "graph": _ui_graph(),
+            "task": "Add a code node that processes images with PIL",
+            "session_id": "batch-exec-insert",
+        },
+        schema_provider=_batch_repl_provider(),
+        deepseek_client=_client,
+        session_root=tmp_path,
+    )
+
+    assert result["ok"] is True
+    assert result["apply_allowed"] is True
+    assert len(result["batch_turns"]) == 1
+    assert "unknown_target" not in result["batch_turns"][0]["report"]
+    assert result["debug"]["batch_repl"]["exit_mode"] == "done"
+    assert result["debug"]["batch_repl"]["done_summary"]
+
+
+def test_batch_repl_code_task_prefetches_vibecomfy_exec_signature(
+    tmp_path: Path,
+) -> None:
+    provider = _Provider(
+        {
+            **_batch_repl_provider().schemas(),
+            "vibecomfy.exec": NodeSchema(
+                class_type="vibecomfy.exec",
+                pack=None,
+                inputs={
+                    "source": InputSpec("STRING", required=True),
+                    "io": InputSpec("JSON", required=True),
+                    "in_0": InputSpec("IMAGE", required=True),
+                },
+                outputs=[OutputSpec("IMAGE", "out_0")],
+                source_provider="test",
+                confidence=1.0,
+            ),
+        }
+    )
+    captured_messages: list[list[dict[str, str]]] = []
+
+    def _client(messages):
+        captured_messages.append(messages)
+        return {"batch": "done()", "message": "No changes needed."}
+
+    handle_agent_edit(
+        {
+            "graph": _ui_graph(),
+            "task": "Add a code node that processes images with PIL",
+            "session_id": "batch-code-prefetch",
+            "max_batches": 1,
+        },
+        schema_provider=provider,
+        deepseek_client=_client,
+        session_root=tmp_path,
+    )
+
+    system = captured_messages[0][0]["content"]
+    user = captured_messages[0][1]["content"]
+    catalog = user.split("Signatures for nodes currently in the graph:", 1)[1].split(
+        "Other available node type names", 1
+    )[0]
+
+    assert "def vibecomfy.exec" in catalog
+    assert "source: STRING" in catalog
+    assert "in_0:" in catalog
+    assert "out_0:" in catalog
+    assert "Use the included `vibecomfy.exec` signature" in system
+    assert 'search(focus_types=["vibecomfy.exec"])` first' not in system
+
+
 def test_handle_agent_edit_batch_repl_uses_product_response_builder_only(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -8296,3 +8439,1250 @@ def test_classify_genuine_provider_outage_stays_retryable_provider_error():
     env = classify_failure("agent_response", ProviderError("502 upstream gateway timeout"))
     assert env.kind is FailureKind.PROVIDER_ERROR
     assert env.retryable is True
+
+
+# ── Precedent adaptation prompt assembly tests (T14) ────────────────────────
+# Verify that prompt assembly injects precedent context only for
+# precedent_research route and keeps direct-edit prompts clean.
+
+
+def test_build_precedent_adaptation_prompt_returns_empty_for_none_plan() -> None:
+    """_build_precedent_adaptation_prompt returns '' when adaptation_plan is None."""
+    from vibecomfy.comfy_nodes.agent.edit import _build_precedent_adaptation_prompt
+
+    result = _build_precedent_adaptation_prompt(None)
+    assert result == ""
+
+    result = _build_precedent_adaptation_prompt(None, precedent_slices=())
+    assert result == ""
+
+
+def test_build_precedent_adaptation_prompt_returns_empty_for_empty_dict() -> None:
+    """_build_precedent_adaptation_prompt returns '' when adaptation_plan is empty dict."""
+    from vibecomfy.comfy_nodes.agent.edit import _build_precedent_adaptation_prompt
+
+    result = _build_precedent_adaptation_prompt({})
+    assert result == ""
+
+
+def test_build_precedent_adaptation_prompt_includes_selected_slice_info() -> None:
+    """_build_precedent_adaptation_prompt includes selected_slice details."""
+    from vibecomfy.comfy_nodes.agent.edit import _build_precedent_adaptation_prompt
+
+    plan = {
+        "selected_slice": {
+            "source_class_type": "AudioLipsyncWorkflow",
+            "node_ids": [1, 2, 3],
+            "entry_anchor": "input_audio",
+            "exit_anchor": "output_video",
+            "python_path": "/templates/audio_lipsync.py",
+        },
+    }
+    result = _build_precedent_adaptation_prompt(plan)
+    assert "AudioLipsyncWorkflow" in result
+    assert "3 node(s)" in result
+    assert "entry_anchor=input_audio" in result
+    assert "exit_anchor=output_video" in result
+    assert "path=/templates/audio_lipsync.py" in result
+
+
+def test_build_precedent_adaptation_prompt_includes_anchor_bindings() -> None:
+    """_build_precedent_adaptation_prompt includes anchor bindings section."""
+    from vibecomfy.comfy_nodes.agent.edit import _build_precedent_adaptation_prompt
+
+    plan = {
+        "selected_slice": {"source_class_type": "TestWorkflow"},
+        "anchor_bindings": [
+            {"input_audio": "node_5"},
+            {"output_video": "node_10"},
+        ],
+    }
+    result = _build_precedent_adaptation_prompt(plan)
+    assert "Anchor bindings:" in result
+    assert "input_audio → node_5" in result
+    assert "output_video → node_10" in result
+
+
+def test_build_precedent_adaptation_prompt_includes_required_new_nodes() -> None:
+    """_build_precedent_adaptation_prompt includes required new nodes."""
+    from vibecomfy.comfy_nodes.agent.edit import _build_precedent_adaptation_prompt
+
+    plan = {
+        "selected_slice": {"source_class_type": "TestWorkflow"},
+        "required_new_nodes": [
+            {"class_type": "VAEDecode", "id": "node_new_1"},
+            {"class_type": "SaveImage", "id": "node_new_2"},
+        ],
+    }
+    result = _build_precedent_adaptation_prompt(plan)
+    assert "Required new nodes:" in result
+    assert "VAEDecode" in result
+    assert "SaveImage" in result
+
+
+def test_build_precedent_adaptation_prompt_includes_required_rewires() -> None:
+    """_build_precedent_adaptation_prompt includes required rewires."""
+    from vibecomfy.comfy_nodes.agent.edit import _build_precedent_adaptation_prompt
+
+    plan = {
+        "selected_slice": {"source_class_type": "TestWorkflow"},
+        "required_rewires": [
+            {"from": "node_1", "to": "node_new_1", "slot": "LATENT"},
+        ],
+    }
+    result = _build_precedent_adaptation_prompt(plan)
+    assert "Required rewires:" in result
+    assert "node_1 → node_new_1.LATENT" in result
+
+
+def test_build_precedent_adaptation_prompt_includes_edit_ops() -> None:
+    """_build_precedent_adaptation_prompt includes edit ops."""
+    from vibecomfy.comfy_nodes.agent.edit import _build_precedent_adaptation_prompt
+
+    plan = {
+        "selected_slice": {"source_class_type": "TestWorkflow"},
+        "edit_ops": [
+            {"kind": "set_field", "target": "node_1.seed", "value": 42},
+        ],
+    }
+    result = _build_precedent_adaptation_prompt(plan)
+    assert "Edit ops:" in result
+    assert "set_field" in result
+    assert "42" in result
+
+
+def test_build_precedent_adaptation_prompt_includes_socket_evidence_from_slices() -> None:
+    """_build_precedent_adaptation_prompt includes socket evidence from precedent_slices."""
+    from vibecomfy.comfy_nodes.agent.edit import _build_precedent_adaptation_prompt
+
+    plan = {"selected_slice": {"source_class_type": "MainWorkflow"}}
+    slices = (
+        {"source_class_type": "HelperA", "entry_anchor": "in1", "exit_anchor": "out1"},
+        {"source_class_type": "HelperB"},
+    )
+    result = _build_precedent_adaptation_prompt(plan, precedent_slices=slices)
+    assert "Socket evidence" in result
+    assert "HelperA (in=in1, out=out1)" in result
+    assert "HelperB" in result
+
+
+def test_build_precedent_adaptation_prompt_includes_structural_validation() -> None:
+    """_build_precedent_adaptation_prompt includes structural validation warnings."""
+    from vibecomfy.comfy_nodes.agent.edit import _build_precedent_adaptation_prompt
+
+    plan_fail = {"selected_slice": {"source_class_type": "BadWF"}, "structural_validation": "fail"}
+    result = _build_precedent_adaptation_prompt(plan_fail)
+    assert "AVOID" in result
+    assert "structural validation FAILED" in result
+
+    plan_advisory = {"selected_slice": {"source_class_type": "WarnWF"}, "structural_validation": "advisory"}
+    result = _build_precedent_adaptation_prompt(plan_advisory)
+    assert "NOTE:" in result
+    assert "structural validation has advisories" in result
+
+
+def test_build_precedent_adaptation_prompt_includes_semantic_validation() -> None:
+    """_build_precedent_adaptation_prompt includes semantic validation status."""
+    from vibecomfy.comfy_nodes.agent.edit import _build_precedent_adaptation_prompt
+
+    plan_pass = {"selected_slice": {"source_class_type": "GoodWF"}, "semantic_validation": "pass"}
+    result = _build_precedent_adaptation_prompt(plan_pass)
+    assert "Semantic validation: PASS" in result
+
+    plan_fail = {"selected_slice": {"source_class_type": "BadWF"}, "semantic_validation": "fail"}
+    result = _build_precedent_adaptation_prompt(plan_fail)
+    assert "AVOID" in result
+    assert "semantic validation FAILED" in result
+
+
+def test_build_batch_messages_no_precedent_text_when_empty() -> None:
+    """build_batch_messages does not include 'Precedent adaptation plan' when
+    precedent_adaptation_plan is empty string."""
+    from vibecomfy.comfy_nodes.agent.provider import build_batch_messages
+
+    messages = build_batch_messages(
+        task="change seed to 42",
+        turn_number=0,
+        python_source="x = LoadImage()",
+        signature_catalog="LoadImage(image)",
+        available_node_names="LoadImage, SaveImage",
+        precedent_adaptation_plan="",  # Empty — should NOT appear
+    )
+    user_content = messages[1]["content"]
+    assert "Precedent adaptation plan" not in user_content
+    assert "precedent" not in user_content.lower()
+
+
+def test_build_batch_messages_includes_precedent_text_when_provided() -> None:
+    """build_batch_messages includes 'Precedent adaptation plan' block when
+    precedent_adaptation_plan is non-empty."""
+    from vibecomfy.comfy_nodes.agent.provider import build_batch_messages
+
+    plan_text = "Selected slice: AudioWorkflow\nRequired new nodes: VAEDecode, SaveImage"
+    messages = build_batch_messages(
+        task="adapt audio workflow",
+        turn_number=0,
+        python_source="x = LoadAudio()",
+        signature_catalog="LoadAudio(audio)",
+        available_node_names="LoadAudio, VAEDecode, SaveImage",
+        precedent_adaptation_plan=plan_text,
+    )
+    user_content = messages[1]["content"]
+    assert "Precedent adaptation plan (structured):" in user_content
+    assert "AudioWorkflow" in user_content
+    assert "VAEDecode" in user_content
+
+
+def test_build_batch_messages_no_precedent_text_in_later_turn_when_empty() -> None:
+    """build_batch_messages does not include precedent text in later turns
+    when precedent_adaptation_plan is empty."""
+    from vibecomfy.comfy_nodes.agent.provider import build_batch_messages
+
+    messages = build_batch_messages(
+        task="continue editing",
+        turn_number=1,
+        python_source="",
+        diff="+x.seed = 42",
+        report="Previous turn applied seed change.",
+        precedent_adaptation_plan="",  # Empty
+    )
+    user_content = messages[1]["content"]
+    assert "Precedent adaptation plan" not in user_content
+
+
+def test_build_batch_messages_direct_edit_scenario_no_precedent_leak() -> None:
+    """build_batch_messages with typical direct-edit parameters does not
+    inject the structured precedent adaptation plan block into the prompt."""
+    from vibecomfy.comfy_nodes.agent.provider import build_batch_messages
+
+    messages = build_batch_messages(
+        task="change the sampler seed to 42",
+        turn_number=0,
+        python_source="sampler = KSampler(seed=0)",
+        signature_catalog="KSampler(seed, steps, cfg, sampler_name, scheduler, denoise)",
+        available_node_names="LoadImage, KSampler, VAEDecode, SaveImage",
+        research_summary="",  # No research context
+        graph_report="",
+        precedent_adaptation_plan="",  # No precedent context
+    )
+    # The system prompt may contain general guidance about precedents,
+    # but the structured precedent adaptation plan block must NOT be injected.
+    user_content = messages[1]["content"]
+    assert "Precedent adaptation plan (structured):" not in user_content
+    # Research context should also be absent when empty
+    assert "Research findings (external + local corpus):" not in user_content
+
+# ── T16: route-specific validation/reporting tests ─────────────────────────
+
+# ── _route_blocks_apply unit tests ─────────────────────────────────────────
+
+
+def test_route_blocks_apply_inspect_only() -> None:
+    """_route_blocks_apply returns True for inspect_only route."""
+    from vibecomfy.comfy_nodes.agent.edit import _route_blocks_apply
+    assert _route_blocks_apply("inspect_only") is True
+
+
+def test_route_blocks_apply_clarify() -> None:
+    """_route_blocks_apply returns True for clarify route."""
+    from vibecomfy.comfy_nodes.agent.edit import _route_blocks_apply
+    assert _route_blocks_apply("clarify") is True
+
+
+def test_route_blocks_apply_direct_edit() -> None:
+    """_route_blocks_apply returns False for direct_edit route."""
+    from vibecomfy.comfy_nodes.agent.edit import _route_blocks_apply
+    assert _route_blocks_apply("direct_edit") is False
+
+
+def test_route_blocks_apply_precedent_research() -> None:
+    """_route_blocks_apply returns False for precedent_research route."""
+    from vibecomfy.comfy_nodes.agent.edit import _route_blocks_apply
+    assert _route_blocks_apply("precedent_research") is False
+
+
+def test_route_blocks_apply_asset_lookup() -> None:
+    """_route_blocks_apply returns False for asset_lookup route."""
+    from vibecomfy.comfy_nodes.agent.edit import _route_blocks_apply
+    assert _route_blocks_apply("asset_lookup") is False
+
+
+def test_route_blocks_apply_diagnose_repair() -> None:
+    """_route_blocks_apply returns False for diagnose_repair route."""
+    from vibecomfy.comfy_nodes.agent.edit import _route_blocks_apply
+    assert _route_blocks_apply("diagnose_repair") is False
+
+
+def test_route_blocks_apply_subgraph_preview() -> None:
+    """_route_blocks_apply returns False for subgraph_preview route."""
+    from vibecomfy.comfy_nodes.agent.edit import _route_blocks_apply
+    assert _route_blocks_apply("subgraph_preview") is False
+
+
+def test_route_blocks_apply_none_route() -> None:
+    """_route_blocks_apply returns False for None route."""
+    from vibecomfy.comfy_nodes.agent.edit import _route_blocks_apply
+    assert _route_blocks_apply(None) is False
+
+
+def test_route_blocks_apply_empty_string_route() -> None:
+    """_route_blocks_apply returns False for empty string route."""
+    from vibecomfy.comfy_nodes.agent.edit import _route_blocks_apply
+    assert _route_blocks_apply("") is False
+
+
+def test_route_blocks_apply_unknown_route() -> None:
+    """_route_blocks_apply returns False for an unrecognized route string."""
+    from vibecomfy.comfy_nodes.agent.edit import _route_blocks_apply
+    assert _route_blocks_apply("some_future_route") is False
+
+
+# ── _route_change_focus_label unit tests ────────────────────────────────────
+
+
+def test_route_change_focus_label_direct_edit() -> None:
+    """_route_change_focus_label returns 'Focused change' for direct_edit."""
+    from vibecomfy.comfy_nodes.agent.edit import _route_change_focus_label
+    assert _route_change_focus_label("direct_edit") == "Focused change"
+
+
+def test_route_change_focus_label_inspect_only() -> None:
+    """_route_change_focus_label returns '' for inspect_only."""
+    from vibecomfy.comfy_nodes.agent.edit import _route_change_focus_label
+    assert _route_change_focus_label("inspect_only") == ""
+
+
+def test_route_change_focus_label_clarify() -> None:
+    """_route_change_focus_label returns '' for clarify."""
+    from vibecomfy.comfy_nodes.agent.edit import _route_change_focus_label
+    assert _route_change_focus_label("clarify") == ""
+
+
+def test_route_change_focus_label_precedent_research() -> None:
+    """_route_change_focus_label returns '' for precedent_research."""
+    from vibecomfy.comfy_nodes.agent.edit import _route_change_focus_label
+    assert _route_change_focus_label("precedent_research") == ""
+
+
+def test_route_change_focus_label_none() -> None:
+    """_route_change_focus_label returns '' for None route."""
+    from vibecomfy.comfy_nodes.agent.edit import _route_change_focus_label
+    assert _route_change_focus_label(None) == ""
+
+
+def test_route_change_focus_label_empty_string() -> None:
+    """_route_change_focus_label returns '' for empty string."""
+    from vibecomfy.comfy_nodes.agent.edit import _route_change_focus_label
+    assert _route_change_focus_label("") == ""
+
+
+def test_route_change_focus_label_unknown_route() -> None:
+    """_route_change_focus_label returns '' for an unknown route."""
+    from vibecomfy.comfy_nodes.agent.edit import _route_change_focus_label
+    assert _route_change_focus_label("other_route") == ""
+
+
+# ── _build_precedent_semantic_check_entries unit tests ──────────────────────
+
+
+def test_precedent_semantic_entries_empty_for_none_plan() -> None:
+    """Returns empty list when executor_adaptation_plan is None."""
+    from vibecomfy.comfy_nodes.agent.edit import _build_precedent_semantic_check_entries
+    state = _make_state(executor_adaptation_plan=None)
+    assert _build_precedent_semantic_check_entries(state) == []
+
+
+def test_precedent_semantic_entries_empty_for_non_dict_plan() -> None:
+    """Returns empty list when executor_adaptation_plan is not a dict."""
+    from vibecomfy.comfy_nodes.agent.edit import _build_precedent_semantic_check_entries
+    state = _make_state(executor_adaptation_plan="not_a_dict")
+    assert _build_precedent_semantic_check_entries(state) == []
+
+
+def test_precedent_semantic_entries_empty_for_empty_dict_plan() -> None:
+    """Returns empty list when plan is an empty dict."""
+    from vibecomfy.comfy_nodes.agent.edit import _build_precedent_semantic_check_entries
+    state = _make_state(executor_adaptation_plan={})
+    assert _build_precedent_semantic_check_entries(state) == []
+
+
+def test_precedent_semantic_entries_both_validation_pass() -> None:
+    """Produces two entries when both structural and semantic validation pass."""
+    from vibecomfy.comfy_nodes.agent.edit import _build_precedent_semantic_check_entries
+    plan = {"structural_validation": "pass", "semantic_validation": "pass"}
+    state = _make_state(executor_adaptation_plan=plan)
+    entries = _build_precedent_semantic_check_entries(state)
+    assert len(entries) == 2
+    structural = [e for e in entries if e["check"] == "structural_validation"][0]
+    assert structural["status"] == "pass"
+    assert structural["satisfaction"] == "pass"
+    assert "compatible" in structural["description"]
+    semantic = [e for e in entries if e["check"] == "semantic_validation"][0]
+    assert semantic["status"] == "pass"
+    assert semantic["satisfaction"] == "pass"
+    assert "sound" in semantic["description"]
+
+
+def test_precedent_semantic_entries_both_validation_fail() -> None:
+    """Produces entries with fail status for both validations."""
+    from vibecomfy.comfy_nodes.agent.edit import _build_precedent_semantic_check_entries
+    plan = {"structural_validation": "fail", "semantic_validation": "fail"}
+    state = _make_state(executor_adaptation_plan=plan)
+    entries = _build_precedent_semantic_check_entries(state)
+    assert len(entries) == 2
+    structural = [e for e in entries if e["check"] == "structural_validation"][0]
+    assert structural["status"] == "fail"
+    assert structural["satisfaction"] == "fail"
+    semantic = [e for e in entries if e["check"] == "semantic_validation"][0]
+    assert semantic["status"] == "fail"
+    assert semantic["satisfaction"] == "fail"
+
+
+def test_precedent_semantic_entries_advisory_status() -> None:
+    """Advisory status maps to advisory satisfaction."""
+    from vibecomfy.comfy_nodes.agent.edit import _build_precedent_semantic_check_entries
+    plan = {"structural_validation": "advisory", "semantic_validation": "advisory"}
+    state = _make_state(executor_adaptation_plan=plan)
+    entries = _build_precedent_semantic_check_entries(state)
+    assert len(entries) == 2
+    for entry in entries:
+        assert entry["status"] == "advisory"
+        assert entry["satisfaction"] == "advisory"
+
+
+def test_precedent_semantic_entries_not_evaluated_status() -> None:
+    """not_evaluated status maps to not_evaluated satisfaction."""
+    from vibecomfy.comfy_nodes.agent.edit import _build_precedent_semantic_check_entries
+    plan = {"structural_validation": "not_evaluated", "semantic_validation": "not_evaluated"}
+    state = _make_state(executor_adaptation_plan=plan)
+    entries = _build_precedent_semantic_check_entries(state)
+    assert len(entries) == 2
+    for entry in entries:
+        assert entry["status"] == "not_evaluated"
+        assert entry["satisfaction"] == "not_evaluated"
+
+
+def test_precedent_semantic_entries_only_structural_present() -> None:
+    """When only structural_validation is present, produces one entry."""
+    from vibecomfy.comfy_nodes.agent.edit import _build_precedent_semantic_check_entries
+    plan = {"structural_validation": "pass"}
+    state = _make_state(executor_adaptation_plan=plan)
+    entries = _build_precedent_semantic_check_entries(state)
+    assert len(entries) == 1
+    assert entries[0]["check"] == "structural_validation"
+
+
+def test_precedent_semantic_entries_only_semantic_present() -> None:
+    """When only semantic_validation is present, produces one entry."""
+    from vibecomfy.comfy_nodes.agent.edit import _build_precedent_semantic_check_entries
+    plan = {"semantic_validation": "advisory"}
+    state = _make_state(executor_adaptation_plan=plan)
+    entries = _build_precedent_semantic_check_entries(state)
+    assert len(entries) == 1
+    assert entries[0]["check"] == "semantic_validation"
+
+
+def test_precedent_semantic_entries_skips_unknown_validation_values() -> None:
+    """Validation fields with unknown values are silently skipped."""
+    from vibecomfy.comfy_nodes.agent.edit import _build_precedent_semantic_check_entries
+    plan = {"structural_validation": "unknown_value", "semantic_validation": "other"}
+    state = _make_state(executor_adaptation_plan=plan)
+    entries = _build_precedent_semantic_check_entries(state)
+    assert entries == []
+
+
+def test_precedent_semantic_entries_mixed_known_unknown() -> None:
+    """Known validation values produce entries; unknown values are skipped."""
+    from vibecomfy.comfy_nodes.agent.edit import _build_precedent_semantic_check_entries
+    plan = {"structural_validation": "pass", "semantic_validation": "bogus"}
+    state = _make_state(executor_adaptation_plan=plan)
+    entries = _build_precedent_semantic_check_entries(state)
+    assert len(entries) == 1
+    assert entries[0]["check"] == "structural_validation"
+
+
+# ── Integration: _build_batch_repl_response route-specific behavior ─────────
+
+
+def test_batch_repl_response_direct_edit_includes_change_focus() -> None:
+    """direct_edit route injects change_focus into batch repl response."""
+    from vibecomfy.comfy_nodes.agent.edit import _build_batch_repl_response
+    from vibecomfy.comfy_nodes.agent.contracts import TurnContext
+
+    state = _make_state(
+        route="direct_edit",
+        ui_payload={"nodes": []},
+        batch_exit_mode="done",
+        batch_done_summary="applied seed change",
+    )
+    context = TurnContext(session_id="t16-d1", turn_id="0001")
+    response = _build_batch_repl_response(state, context)
+    assert response["change_focus"] == "Focused change"
+    # No research leak: task_satisfaction should not contain precedent entries
+    task_sat = response.get("task_satisfaction", [])
+    precedent_entries = [e for e in task_sat if "precedent" in e.get("check", "").lower()
+                         or "validation" in e.get("check", "")]
+    assert precedent_entries == []
+
+
+def test_batch_repl_response_direct_edit_apply_not_blocked() -> None:
+    """direct_edit route does not block Apply eligibility."""
+    from vibecomfy.comfy_nodes.agent.edit import _build_batch_repl_response
+    from vibecomfy.comfy_nodes.agent.contracts import TurnContext
+
+    state = _make_state(
+        route="direct_edit",
+        ui_payload={"nodes": [{"id": 1}]},
+        batch_exit_mode="done",
+        batch_done_summary="applied change",
+    )
+    context = TurnContext(session_id="t16-d2", turn_id="0001")
+    response = _build_batch_repl_response(state, context)
+    # direct_edit should NOT be blocked - Apply should be derivable
+    assert response.get("apply_eligibility", {}).get("reason") != "no_candidate"
+    # change_focus is present
+    assert response.get("change_focus") == "Focused change"
+
+
+def test_batch_repl_response_inspect_only_apply_blocked() -> None:
+    """inspect_only route blocks Apply eligibility in batch repl response."""
+    from vibecomfy.comfy_nodes.agent.edit import _build_batch_repl_response
+    from vibecomfy.comfy_nodes.agent.contracts import TurnContext
+
+    state = _make_state(
+        route="inspect_only",
+        ui_payload={"nodes": [{"id": 1}]},
+        batch_exit_mode="done",
+        batch_done_summary="inspection complete",
+    )
+    context = TurnContext(session_id="t16-i1", turn_id="0001")
+    response = _build_batch_repl_response(state, context)
+    eligibility = response.get("apply_eligibility", {})
+    assert eligibility.get("applyable") is False
+    assert eligibility.get("reason") == "no_candidate"
+    assert "inspect_only" in eligibility.get("message", "")
+    # No change_focus for inspect_only
+    assert "change_focus" not in response
+
+
+def test_batch_repl_response_clarify_apply_blocked() -> None:
+    """clarify route blocks Apply eligibility in batch repl response."""
+    from vibecomfy.comfy_nodes.agent.edit import _build_batch_repl_response
+    from vibecomfy.comfy_nodes.agent.contracts import TurnContext
+
+    state = _make_state(
+        route="clarify",
+        ui_payload={"nodes": []},
+        batch_exit_mode="pure_clarify",
+        batch_done_summary="",
+    )
+    context = TurnContext(session_id="t16-c1", turn_id="0001")
+    response = _build_batch_repl_response(state, context)
+    eligibility = response.get("apply_eligibility", {})
+    assert eligibility.get("applyable") is False
+    assert eligibility.get("reason") == "no_candidate"
+    # No change_focus for clarify
+    assert "change_focus" not in response
+
+
+def test_batch_repl_response_precedent_research_includes_semantic_checks() -> None:
+    """precedent_research route injects semantic check entries."""
+    from vibecomfy.comfy_nodes.agent.edit import _build_batch_repl_response
+    from vibecomfy.comfy_nodes.agent.contracts import TurnContext
+
+    plan = {"structural_validation": "advisory", "semantic_validation": "not_evaluated"}
+    state = _make_state(
+        route="precedent_research",
+        ui_payload={"nodes": [{"id": 1}]},
+        batch_exit_mode="done",
+        batch_done_summary="adaptation applied",
+        executor_adaptation_plan=plan,
+    )
+    context = TurnContext(session_id="t16-p1", turn_id="0001")
+    response = _build_batch_repl_response(state, context)
+    task_sat = response.get("task_satisfaction", [])
+    assert len(task_sat) == 2
+    checks = {e["check"] for e in task_sat}
+    assert "structural_validation" in checks
+    assert "semantic_validation" in checks
+    # No change_focus for precedent_research
+    assert "change_focus" not in response
+
+
+def test_batch_repl_response_precedent_research_apply_not_blocked() -> None:
+    """precedent_research route does not block Apply eligibility."""
+    from vibecomfy.comfy_nodes.agent.edit import _build_batch_repl_response
+    from vibecomfy.comfy_nodes.agent.contracts import TurnContext
+
+    plan = {"structural_validation": "pass", "semantic_validation": "pass"}
+    state = _make_state(
+        route="precedent_research",
+        ui_payload={"nodes": [{"id": 1}]},
+        batch_exit_mode="done",
+        batch_done_summary="adapted precedent",
+        executor_adaptation_plan=plan,
+    )
+    context = TurnContext(session_id="t16-p2", turn_id="0001")
+    response = _build_batch_repl_response(state, context)
+    eligibility = response.get("apply_eligibility", {})
+    # precedent_research should NOT be blocked from Apply
+    assert eligibility.get("reason") != "no_candidate"
+
+
+def test_batch_repl_response_precedent_empty_plan_no_semantic_checks() -> None:
+    """precedent_research without adaptation_plan does not inject entries."""
+    from vibecomfy.comfy_nodes.agent.edit import _build_batch_repl_response
+    from vibecomfy.comfy_nodes.agent.contracts import TurnContext
+
+    state = _make_state(
+        route="precedent_research",
+        ui_payload={"nodes": []},
+        batch_exit_mode="done",
+        batch_done_summary="no adaptation",
+        executor_adaptation_plan=None,
+    )
+    context = TurnContext(session_id="t16-p3", turn_id="0001")
+    response = _build_batch_repl_response(state, context)
+    task_sat = response.get("task_satisfaction", [])
+    assert task_sat == []
+
+
+def test_batch_repl_response_none_route_no_route_effects() -> None:
+    """None route produces no change_focus, no task_satisfaction, no apply block."""
+    from vibecomfy.comfy_nodes.agent.edit import _build_batch_repl_response
+    from vibecomfy.comfy_nodes.agent.contracts import TurnContext
+
+    state = _make_state(
+        route=None,
+        ui_payload={"nodes": [{"id": 1}]},
+        batch_exit_mode="done",
+        batch_done_summary="done",
+    )
+    context = TurnContext(session_id="t16-n1", turn_id="0001")
+    response = _build_batch_repl_response(state, context)
+    assert "change_focus" not in response
+    assert "task_satisfaction" not in response  # not added for non-precedent routes
+
+
+# ── Integration: _build_dev_success_response route-specific behavior ────────
+
+
+def test_dev_success_response_direct_edit_includes_change_focus() -> None:
+    """direct_edit route injects change_focus into dev success response."""
+    from vibecomfy.comfy_nodes.agent.edit import _build_dev_success_response
+    from vibecomfy.comfy_nodes.agent.contracts import TurnContext
+
+    state = _make_state(
+        route="direct_edit",
+        ui_payload={"nodes": []},
+    )
+    context = TurnContext(session_id="t16-dd1", turn_id="0001")
+    response = _build_dev_success_response(state, context, contract="full")
+    assert response["change_focus"] == "Focused change"
+
+
+def test_dev_success_response_inspect_only_apply_blocked() -> None:
+    """inspect_only route blocks Apply eligibility in dev success response."""
+    from vibecomfy.comfy_nodes.agent.edit import _build_dev_success_response
+    from vibecomfy.comfy_nodes.agent.contracts import TurnContext
+
+    state = _make_state(
+        route="inspect_only",
+        ui_payload={"nodes": []},
+    )
+    context = TurnContext(session_id="t16-di1", turn_id="0001")
+    response = _build_dev_success_response(state, context, contract="full")
+    eligibility = response.get("apply_eligibility", {})
+    assert eligibility.get("applyable") is False
+    assert eligibility.get("reason") == "no_candidate"
+    assert "change_focus" not in response
+
+
+def test_dev_success_response_clarify_apply_blocked() -> None:
+    """clarify route blocks Apply eligibility in dev success response."""
+    from vibecomfy.comfy_nodes.agent.edit import _build_dev_success_response
+    from vibecomfy.comfy_nodes.agent.contracts import TurnContext
+
+    state = _make_state(
+        route="clarify",
+        ui_payload={"nodes": []},
+    )
+    context = TurnContext(session_id="t16-dc1", turn_id="0001")
+    response = _build_dev_success_response(state, context, contract="full")
+    eligibility = response.get("apply_eligibility", {})
+    assert eligibility.get("applyable") is False
+    assert eligibility.get("reason") == "no_candidate"
+    assert "change_focus" not in response
+
+
+def test_dev_success_response_precedent_research_includes_semantic_checks() -> None:
+    """precedent_research injects semantic checks into dev success response."""
+    from vibecomfy.comfy_nodes.agent.edit import _build_dev_success_response
+    from vibecomfy.comfy_nodes.agent.contracts import TurnContext
+
+    plan = {"structural_validation": "pass", "semantic_validation": "advisory"}
+    state = _make_state(
+        route="precedent_research",
+        ui_payload={"nodes": []},
+        executor_adaptation_plan=plan,
+    )
+    context = TurnContext(session_id="t16-dp1", turn_id="0001")
+    response = _build_dev_success_response(state, context, contract="full")
+    task_sat = response.get("task_satisfaction", [])
+    assert len(task_sat) == 2
+    checks = {e["check"] for e in task_sat}
+    assert "structural_validation" in checks
+    assert "semantic_validation" in checks
+
+
+def test_dev_success_response_precedent_empty_plan_no_entries() -> None:
+    """precedent_research without plan does not inject task_satisfaction."""
+    from vibecomfy.comfy_nodes.agent.edit import _build_dev_success_response
+    from vibecomfy.comfy_nodes.agent.contracts import TurnContext
+
+    state = _make_state(
+        route="precedent_research",
+        ui_payload={"nodes": []},
+        executor_adaptation_plan=None,
+    )
+    context = TurnContext(session_id="t16-dp2", turn_id="0001")
+    response = _build_dev_success_response(state, context, contract="full")
+    task_sat = response.get("task_satisfaction", [])
+    assert task_sat == []
+
+
+def test_dev_success_response_none_route_no_route_effects() -> None:
+    """None route dev success response has no change_focus or task_satisfaction."""
+    from vibecomfy.comfy_nodes.agent.edit import _build_dev_success_response
+    from vibecomfy.comfy_nodes.agent.contracts import TurnContext
+
+    state = _make_state(
+        route=None,
+        ui_payload={"nodes": []},
+    )
+    context = TurnContext(session_id="t16-dn1", turn_id="0001")
+    response = _build_dev_success_response(state, context, contract="full")
+    assert "change_focus" not in response
+    assert "task_satisfaction" not in response
+
+
+# ── Integration: no research leak in direct_edit reports ────────────────────
+
+
+def test_batch_repl_direct_edit_no_research_context_leak() -> None:
+    """direct_edit reports must not carry accidental research/precedent keys."""
+    from vibecomfy.comfy_nodes.agent.edit import _build_batch_repl_response
+    from vibecomfy.comfy_nodes.agent.contracts import TurnContext
+
+    state = _make_state(
+        route="direct_edit",
+        ui_payload={"nodes": [{"id": 1}]},
+        batch_exit_mode="done",
+        batch_done_summary="applied change",
+    )
+    context = TurnContext(session_id="t16-nl1", turn_id="0001")
+    response = _build_batch_repl_response(state, context)
+
+    # String-scan for research/precedent leaks in the entire response JSON
+    response_str = json.dumps(response, sort_keys=True)
+    assert "precedent" not in response_str.lower(), (
+        "direct_edit response accidentally leaked 'precedent' text"
+    )
+    # The change_focus label is "Focused change", which is fine
+    assert response.get("change_focus") == "Focused change"
+
+
+def test_dev_success_direct_edit_no_research_context_leak() -> None:
+    """direct_edit dev success reports must not carry accidental research keys."""
+    from vibecomfy.comfy_nodes.agent.edit import _build_dev_success_response
+    from vibecomfy.comfy_nodes.agent.contracts import TurnContext
+
+    state = _make_state(
+        route="direct_edit",
+        ui_payload={"nodes": [{"id": 1}]},
+    )
+    context = TurnContext(session_id="t16-nl2", turn_id="0001")
+    response = _build_dev_success_response(state, context, contract="full")
+
+    response_str = json.dumps(response, sort_keys=True)
+    assert "precedent" not in response_str.lower(), (
+        "direct_edit dev response accidentally leaked 'precedent' text"
+    )
+
+
+# ── Structural validation descriptions ──────────────────────────────────────
+
+
+def test_structural_validation_description_pass() -> None:
+    from vibecomfy.comfy_nodes.agent.edit import _structural_validation_description
+    desc = _structural_validation_description("pass")
+    assert "compatible" in desc
+
+
+def test_structural_validation_description_fail() -> None:
+    from vibecomfy.comfy_nodes.agent.edit import _structural_validation_description
+    desc = _structural_validation_description("fail")
+    assert "incompatibilities" in desc.lower()
+
+
+def test_structural_validation_description_advisory() -> None:
+    from vibecomfy.comfy_nodes.agent.edit import _structural_validation_description
+    desc = _structural_validation_description("advisory")
+    assert "advisories" in desc.lower() or "verify" in desc.lower()
+
+
+def test_structural_validation_description_not_evaluated() -> None:
+    from vibecomfy.comfy_nodes.agent.edit import _structural_validation_description
+    desc = _structural_validation_description("not_evaluated")
+    assert "not evaluated" in desc.lower()
+
+
+def test_structural_validation_description_unknown_falls_back() -> None:
+    from vibecomfy.comfy_nodes.agent.edit import _structural_validation_description
+    desc = _structural_validation_description("bogus")
+    assert "not evaluated" in desc.lower()
+
+
+def test_semantic_validation_description_pass() -> None:
+    from vibecomfy.comfy_nodes.agent.edit import _semantic_validation_description
+    desc = _semantic_validation_description("pass")
+    assert "sound" in desc.lower()
+
+
+def test_semantic_validation_description_fail() -> None:
+    from vibecomfy.comfy_nodes.agent.edit import _semantic_validation_description
+    desc = _semantic_validation_description("fail")
+    assert "alternative" in desc.lower() or "expected" in desc.lower()
+
+
+def test_semantic_validation_description_advisory() -> None:
+    from vibecomfy.comfy_nodes.agent.edit import _semantic_validation_description
+    desc = _semantic_validation_description("advisory")
+    assert "review" in desc.lower() or "advisories" in desc.lower()
+
+
+def test_semantic_validation_description_not_evaluated() -> None:
+    from vibecomfy.comfy_nodes.agent.edit import _semantic_validation_description
+    desc = _semantic_validation_description("not_evaluated")
+    assert "not evaluated" in desc.lower()
+
+
+def test_semantic_validation_description_unknown_falls_back() -> None:
+    from vibecomfy.comfy_nodes.agent.edit import _semantic_validation_description
+    desc = _semantic_validation_description("bogus")
+    assert "not evaluated" in desc.lower()
+
+
+# ── T18: latest_candidate skips non-candidate (inspect_only / clarify) turns ─
+
+def test_latest_candidate_skips_clarify_outcome_even_with_candidate_state(
+    tmp_path: Path,
+) -> None:
+    """_latest_session_candidate_payload skips turns whose outcome.kind
+    is 'clarify', even when the turn state is 'candidate'."""
+    from vibecomfy.comfy_nodes.agent.edit import _latest_session_candidate_payload
+
+    session_id = "t18-lc-clarify"
+    session_dir = session_dir_for(tmp_path, session_id)
+    graph = {"nodes": [{"id": 1, "type": "KSampler"}], "links": []}
+
+    td = session_dir / "turns" / "0000"
+    td.mkdir(parents=True)
+    (td / "request.json").write_text(
+        json.dumps({"task": "clarify task"}), encoding="utf-8"
+    )
+    (td / "response.json").write_text(
+        json.dumps({
+            "ok": True,
+            "turn_id": "0000",
+            "graph": graph,
+            "canvas_apply_allowed": False,
+            "apply_allowed": False,
+            "queue_allowed": False,
+            "apply_eligibility": {
+                "applyable": False,
+                "reason": "no_candidate",
+                "message": "No candidate is available to apply.",
+            },
+            "outcome": {
+                "kind": "clarify",
+                "question": "Which model should I use?",
+            },
+        }),
+        encoding="utf-8",
+    )
+    (td / "candidate.ui.json").write_text(
+        json.dumps(graph), encoding="utf-8"
+    )
+
+    (session_dir / "session_state.json").write_text(
+        json.dumps({
+            "turns": {
+                "0000": {
+                    "state": "candidate",
+                    "candidate_graph_hash": "hash-clarify",
+                }
+            }
+        }),
+        encoding="utf-8",
+    )
+
+    result = _latest_session_candidate_payload(session_dir, ["0000"])
+    # Clarify outcomes must be skipped — no candidate should be returned
+    assert result is None, (
+        "clarify outcome must be skipped by _latest_session_candidate_payload"
+    )
+
+
+def test_latest_candidate_skips_noop_outcome_with_candidate_state(
+    tmp_path: Path,
+) -> None:
+    """_latest_session_candidate_payload skips turns whose outcome.kind
+    is 'noop' (inspect_only-like), even when the turn state is 'candidate'."""
+    from vibecomfy.comfy_nodes.agent.edit import _latest_session_candidate_payload
+
+    session_id = "t18-lc-noop-candidate-state"
+    session_dir = session_dir_for(tmp_path, session_id)
+    graph = {"nodes": [{"id": 2, "type": "SaveImage"}], "links": []}
+
+    td = session_dir / "turns" / "0000"
+    td.mkdir(parents=True)
+    (td / "request.json").write_text(
+        json.dumps({"task": "inspect graph"}), encoding="utf-8"
+    )
+    (td / "response.json").write_text(
+        json.dumps({
+            "ok": True,
+            "turn_id": "0000",
+            "graph": graph,
+            "graph_unchanged": True,
+            "canvas_apply_allowed": False,
+            "apply_allowed": False,
+            "queue_allowed": False,
+            "apply_eligibility": {
+                "applyable": False,
+                "reason": "no_candidate",
+                "message": "No candidate is available to apply.",
+            },
+            "outcome": {
+                "kind": "noop",
+                "reason": "graph inspection complete — no edits requested",
+            },
+        }),
+        encoding="utf-8",
+    )
+    (td / "candidate.ui.json").write_text(
+        json.dumps(graph), encoding="utf-8"
+    )
+
+    (session_dir / "session_state.json").write_text(
+        json.dumps({
+            "turns": {
+                "0000": {
+                    "state": "candidate",
+                    "candidate_graph_hash": "hash-noop",
+                }
+            }
+        }),
+        encoding="utf-8",
+    )
+
+    result = _latest_session_candidate_payload(session_dir, ["0000"])
+    # Noop (inspect_only) outcomes must be skipped
+    assert result is None, (
+        "noop outcome must be skipped by _latest_session_candidate_payload"
+    )
+
+
+def test_latest_candidate_skips_non_candidate_state_turns(
+    tmp_path: Path,
+) -> None:
+    """_latest_session_candidate_payload skips turns whose state is not
+    'candidate', regardless of outcome."""
+    from vibecomfy.comfy_nodes.agent.edit import _latest_session_candidate_payload
+
+    session_id = "t18-lc-non-candidate-state"
+    session_dir = session_dir_for(tmp_path, session_id)
+    graph = {"nodes": [{"id": 3, "type": "CLIPTextEncode"}], "links": []}
+
+    td = session_dir / "turns" / "0000"
+    td.mkdir(parents=True)
+    (td / "request.json").write_text(
+        json.dumps({"task": "some task"}), encoding="utf-8"
+    )
+    (td / "response.json").write_text(
+        json.dumps({
+            "ok": True,
+            "turn_id": "0000",
+            "graph": graph,
+            "canvas_apply_allowed": True,
+            "apply_allowed": True,
+            "outcome": {"kind": "candidate", "changes": []},
+        }),
+        encoding="utf-8",
+    )
+    (td / "candidate.ui.json").write_text(
+        json.dumps(graph), encoding="utf-8"
+    )
+
+    (session_dir / "session_state.json").write_text(
+        json.dumps({
+            "turns": {
+                "0000": {
+                    "state": "accepted",  # not "candidate"
+                    "candidate_graph_hash": "hash-accepted",
+                }
+            }
+        }),
+        encoding="utf-8",
+    )
+
+    result = _latest_session_candidate_payload(session_dir, ["0000"])
+    # Non-"candidate" state turns must be skipped
+    assert result is None, (
+        "non-candidate state turns must be skipped"
+    )
+
+
+def test_latest_candidate_finds_valid_candidate_after_skipping_clarify_and_noop(
+    tmp_path: Path,
+) -> None:
+    """_latest_session_candidate_payload skips clarify and noop turns and
+    returns the most recent valid candidate turn."""
+    from vibecomfy.comfy_nodes.agent.edit import _latest_session_candidate_payload
+
+    session_id = "t18-lc-skip-multiple"
+    session_dir = session_dir_for(tmp_path, session_id)
+    graph = {"nodes": [{"id": 4, "type": "PreviewImage"}], "links": []}
+
+    # Turn 0000: clarify (should be skipped)
+    td0 = session_dir / "turns" / "0000"
+    td0.mkdir(parents=True)
+    (td0 / "request.json").write_text(
+        json.dumps({"task": "clarify"}), encoding="utf-8"
+    )
+    (td0 / "response.json").write_text(
+        json.dumps({
+            "ok": True,
+            "outcome": {"kind": "clarify", "question": "Which node?"},
+            "apply_eligibility": {
+                "applyable": False,
+                "reason": "no_candidate",
+                "message": "No candidate.",
+            },
+        }),
+        encoding="utf-8",
+    )
+
+    # Turn 0001: noop / inspect_only (should be skipped)
+    td1 = session_dir / "turns" / "0001"
+    td1.mkdir(parents=True)
+    (td1 / "request.json").write_text(
+        json.dumps({"task": "inspect"}), encoding="utf-8"
+    )
+    (td1 / "response.json").write_text(
+        json.dumps({
+            "ok": True,
+            "outcome": {"kind": "noop", "reason": "inspection only"},
+            "apply_eligibility": {
+                "applyable": False,
+                "reason": "no_candidate",
+                "message": "No candidate.",
+            },
+        }),
+        encoding="utf-8",
+    )
+
+    # Turn 0002: real candidate (should be found)
+    td2 = session_dir / "turns" / "0002"
+    td2.mkdir(parents=True)
+    (td2 / "request.json").write_text(
+        json.dumps({"task": "real edit"}), encoding="utf-8"
+    )
+    (td2 / "response.json").write_text(
+        json.dumps({
+            "ok": True,
+            "turn_id": "0002",
+            "message": "Real candidate.",
+            "graph": graph,
+            "canvas_apply_allowed": True,
+            "apply_allowed": True,
+            "queue_allowed": False,
+            "apply_eligibility": {
+                "applyable": True,
+                "reason": "queue_blocked_warning",
+                "message": "Apply allowed.",
+            },
+            "outcome": {
+                "kind": "candidate",
+                "changes": [
+                    {"uid": "4", "field_path": "type", "old": "Note", "new": "PreviewImage"}
+                ],
+            },
+        }),
+        encoding="utf-8",
+    )
+    (td2 / "candidate.ui.json").write_text(
+        json.dumps(graph), encoding="utf-8"
+    )
+
+    (session_dir / "session_state.json").write_text(
+        json.dumps({
+            "turns": {
+                "0000": {"state": "completed"},
+                "0001": {"state": "completed"},
+                "0002": {"state": "candidate"},
+            }
+        }),
+        encoding="utf-8",
+    )
+
+    result = _latest_session_candidate_payload(session_dir, ["0002", "0001", "0000"])
+    assert result is not None, "should find the real candidate"
+    assert result["turn_id"] == "0002", "should skip clarify and noop turns"
+    assert result["outcome"]["kind"] == "candidate"
+
+
+# ── T18: browser-level normalization contract tests (Python-side equivalents) ─
+
+def test_batch_repl_response_inspect_only_blocks_apply_even_if_graph_changes() -> None:
+    """inspect_only route blocks Apply eligibility even when a graph is
+    present. The graph may be present for inspection purposes, but the
+    eligibility reason is always 'no_candidate' and canvas_apply_allowed is
+    False. This is the server-side counterpart to browser normalization
+    that strips candidateGraph for non-candidate outcomes."""
+    from vibecomfy.comfy_nodes.agent.edit import _build_batch_repl_response
+    from vibecomfy.comfy_nodes.agent.contracts import TurnContext
+
+    state = _make_state(
+        route="inspect_only",
+        ui_payload={"nodes": [{"id": 1, "type": "KSampler"}], "links": []},
+        batch_exit_mode="done",
+        batch_done_summary="inspection complete",
+    )
+    context = TurnContext(session_id="t18-ii1", turn_id="0001")
+    response = _build_batch_repl_response(state, context)
+
+    # Apply must be blocked regardless of graph presence
+    eligibility = response.get("apply_eligibility", {})
+    assert eligibility.get("applyable") is False
+    assert eligibility.get("reason") == "no_candidate"
+    assert "inspect_only" in eligibility.get("message", "")
+    # canvas_apply_allowed must be False for inspect_only
+    assert response.get("canvas_apply_allowed") is False
+    assert response.get("apply_allowed") is False
+    # No change_focus for inspect_only
+    assert "change_focus" not in response
+
+
+def test_batch_repl_response_no_candidate_for_pure_clarify() -> None:
+    """Pure clarify (no edit+clarify) produces no candidate, Apply blocked,
+    graph_unchanged True, canvas_apply_allowed False."""
+    from vibecomfy.comfy_nodes.agent.edit import _build_batch_repl_response
+    from vibecomfy.comfy_nodes.agent.contracts import TurnContext
+
+    state = _make_state(
+        route="clarify",
+        ui_payload={"nodes": [{"id": 2, "type": "LoadAudio"}], "links": []},
+        batch_exit_mode="pure_clarify",
+        batch_done_summary="",
+    )
+    context = TurnContext(session_id="t18-cc1", turn_id="0001")
+    response = _build_batch_repl_response(state, context)
+
+    # No candidate
+    assert response.get("candidate") is None
+    assert response.get("candidate_graph") is None
+    # Apply blocked
+    eligibility = response.get("apply_eligibility", {})
+    assert eligibility.get("applyable") is False
+    assert eligibility.get("reason") == "no_candidate"
+    # No Apply affordance
+    assert response.get("canvas_apply_allowed") is False
+    assert response.get("apply_allowed") is False
+    # Graph unchanged
+    assert response.get("graph_unchanged") is True
+
+
+def test_batch_repl_response_direct_edit_applyable_with_graph_changes_and_gates() -> None:
+    """direct_edit produces a candidate with Apply eligibility when graph
+    changes and gates allow. The candidate is present and applyable."""
+    from vibecomfy.comfy_nodes.agent.edit import _build_batch_repl_response
+    from vibecomfy.comfy_nodes.agent.contracts import TurnContext
+
+    state = _make_state(
+        route="direct_edit",
+        ui_payload={"nodes": [{"id": 3, "type": "KSampler"}], "links": []},
+        batch_exit_mode="done",
+        batch_done_summary="applied seed change",
+    )
+    context = TurnContext(session_id="t18-de1", turn_id="0001")
+    # Simulate passing gates
+    context.set_gate("python_load_ok", True, evidence={"ok": True})
+    context.set_gate("lower_ok", True, evidence={"ok": True})
+    context.set_gate("ir_validate_ok", True, evidence={"ok": True})
+    response = _build_batch_repl_response(state, context)
+
+    # Candidate should be present (graph wasn't None + route allows Apply)
+    # Apply should NOT be blocked
+    eligibility = response.get("apply_eligibility", {})
+    assert eligibility.get("reason") != "no_candidate", (
+        "direct_edit with gates passing should not be blocked"
+    )
+    # change_focus marks it as direct_edit
+    assert response.get("change_focus") == "Focused change"
+
+
+def test_batch_repl_response_precedent_research_applyable_with_valid_candidate() -> None:
+    """precedent_research produces Apply-eligible candidate when adaptation
+    produces a valid graph and gates pass."""
+    from vibecomfy.comfy_nodes.agent.edit import _build_batch_repl_response
+    from vibecomfy.comfy_nodes.agent.contracts import TurnContext
+
+    plan = {"structural_validation": "pass", "semantic_validation": "pass"}
+    state = _make_state(
+        route="precedent_research",
+        ui_payload={"nodes": [{"id": 4, "type": "KSampler"}], "links": []},
+        batch_exit_mode="done",
+        batch_done_summary="adapted precedent",
+        executor_adaptation_plan=plan,
+    )
+    context = TurnContext(session_id="t18-pr1", turn_id="0001")
+    response = _build_batch_repl_response(state, context)
+
+    # Apply should NOT be blocked
+    eligibility = response.get("apply_eligibility", {})
+    assert eligibility.get("reason") != "no_candidate", (
+        "precedent_research with valid graph should not be blocked from Apply"
+    )
+    # semantic checks should be present
+    task_sat = response.get("task_satisfaction", [])
+    assert len(task_sat) >= 1
+    checks = {e["check"] for e in task_sat}
+    assert "structural_validation" in checks
+
+
+def test_batch_repl_response_noop_has_no_candidate_no_apply() -> None:
+    """A noop outcome (no graph changes) produces no candidate and no Apply,
+    regardless of route. This is the browser normalization baseline."""
+    from vibecomfy.comfy_nodes.agent.edit import _build_batch_repl_response
+    from vibecomfy.comfy_nodes.agent.contracts import TurnContext
+
+    state = _make_state(
+        route=None,  # legacy no-route path
+        ui_payload=None,  # no graph
+        batch_exit_mode="noop",
+        batch_done_summary="no changes needed",
+    )
+    context = TurnContext(session_id="t18-no1", turn_id="0001")
+    response = _build_batch_repl_response(state, context)
+
+    # No candidate
+    assert response.get("candidate") is None
+    assert response.get("candidate_graph") is None
+    # No Apply
+    eligibility = response.get("apply_eligibility", {})
+    assert eligibility.get("applyable") is False
+    assert eligibility.get("reason") == "no_candidate"
+    assert response.get("canvas_apply_allowed") is False
+    assert response.get("graph_unchanged") is True

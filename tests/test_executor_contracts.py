@@ -16,8 +16,11 @@ from vibecomfy.executor.contracts import (
     ExecutorRequest,
     ExecutorResult,
     ImplementationResult,
+    InspectionSummary,
+    PrecedentAdaptationPlan,
     Report,
     ResearchResult,
+    WorkflowSlice,
 )
 from vibecomfy.executor.prompts import (
     build_classify_messages,
@@ -129,6 +132,146 @@ class TestClassifyDecision:
 
     def test_edit_no_research(self) -> None:
         d = ClassifyDecision.edit(research=False)
+        assert d.research is False
+        assert d.implement is True
+
+
+    def test_to_dict_with_route_and_task(self) -> None:
+        """to_dict() emits route and task fields when they are non-empty."""
+        d = ClassifyDecision(
+            research=False,
+            implement=True,
+            reply=True,
+            effort="medium",
+            plan_summary="simple edit",
+            route="direct_edit",
+            task="edit_graph",
+        )
+        out = d.to_dict()
+        assert out["route"] == "direct_edit"
+        assert out["task"] == "edit_graph"
+        # Legacy fields still present
+        assert out["research"] is False
+        assert out["implement"] is True
+
+    def test_to_dict_omits_empty_route_and_task(self) -> None:
+        """to_dict() omits route/task when they are empty (preserving legacy shape)."""
+        d = ClassifyDecision(
+            research=False,
+            implement=False,
+            route="",
+            task="",
+        )
+        out = d.to_dict()
+        assert "route" not in out
+        assert "task" not in out
+
+    def test_effective_route_property(self) -> None:
+        """effective_route derives correctly from legacy booleans when route is empty."""
+        # implement=True, research=False → direct_edit
+        assert ClassifyDecision(research=False, implement=True).effective_route == "direct_edit"
+        # research=True, implement=False → inspect_only
+        assert ClassifyDecision(research=True, implement=False).effective_route == "inspect_only"
+        # research=False, implement=False → clarify
+        assert ClassifyDecision(research=False, implement=False).effective_route == "clarify"
+        # research=True, implement=True → ambiguous (empty)
+        assert ClassifyDecision(research=True, implement=True).effective_route == ""
+
+    def test_effective_route_explicit_wins(self) -> None:
+        """Explicit route takes precedence over derived route."""
+        d = ClassifyDecision(
+            research=True,
+            implement=True,  # ambiguous legacy → derived ""
+            route="precedent_research",
+        )
+        assert d.effective_route == "precedent_research"
+
+    def test_effective_task_property(self) -> None:
+        """effective_task derives correctly from legacy booleans when task is empty."""
+        # implement=True, research=False → edit_graph
+        assert ClassifyDecision(research=False, implement=True).effective_task == "edit_graph"
+        # research=True, implement=False, intent=explain_graph → inspect_graph
+        assert ClassifyDecision(research=True, implement=False, intent="explain_graph").effective_task == "inspect_graph"
+        # research=True, implement=False, intent=research → research_nodes
+        assert ClassifyDecision(research=True, implement=False, intent="research").effective_task == "research_nodes"
+        # research=False, implement=False → respond
+        assert ClassifyDecision(research=False, implement=False).effective_task == "respond"
+        # research=True, implement=True → ambiguous (empty)
+        assert ClassifyDecision(research=True, implement=True).effective_task == ""
+
+    def test_effective_task_explicit_wins(self) -> None:
+        """Explicit task takes precedence over derived task."""
+        d = ClassifyDecision(
+            research=True,
+            implement=True,  # ambiguous → derived ""
+            task="edit_graph",
+        )
+        assert d.effective_task == "edit_graph"
+
+    def test_route_clamped_to_empty(self) -> None:
+        """Invalid route is clamped to empty string in __post_init__."""
+        d = ClassifyDecision(route="bogus_route")
+        assert d.route == ""
+
+    def test_route_allows_all_valid_values(self) -> None:
+        """All canonical route values are accepted."""
+        valid_routes = [
+            "", "direct_edit", "inspect_only", "asset_lookup",
+            "diagnose_repair", "subgraph_preview", "precedent_research", "clarify",
+        ]
+        for r in valid_routes:
+            d = ClassifyDecision(route=r)
+            assert d.route == r, f"route={r!r} was clamped"
+
+    def test_task_clamped_to_empty(self) -> None:
+        """Invalid task is clamped to empty string in __post_init__."""
+        d = ClassifyDecision(task="bogus_task")
+        assert d.task == ""
+
+    def test_task_allows_all_valid_values(self) -> None:
+        """All canonical task values are accepted."""
+        valid_tasks = [
+            "", "edit_graph", "inspect_graph", "find_assets",
+            "diagnose", "preview_subgraph", "research_precedent", "respond", "research_nodes",
+        ]
+        for t in valid_tasks:
+            d = ClassifyDecision(task=t)
+            assert d.task == t, f"task={t!r} was clamped"
+
+    def test_intent_clamped_to_respond(self) -> None:
+        """Invalid intent is clamped to 'respond' in __post_init__."""
+        d = ClassifyDecision(intent="bogus_intent")
+        assert d.intent == "respond"
+
+    def test_intent_allows_all_valid_values(self) -> None:
+        """All canonical intent values are accepted."""
+        for intent in ("edit", "research", "explain_graph", "respond"):
+            d = ClassifyDecision(intent=intent)
+            assert d.intent == intent
+
+    def test_respond_only_with_explicit_route(self) -> None:
+        """respond_only convenience accepts explicit route and task."""
+        d = ClassifyDecision.respond_only(
+            route="clarify",
+            task="respond",
+            plan_summary="clarifying question",
+        )
+        assert d.route == "clarify"
+        assert d.task == "respond"
+        assert d.research is False
+        assert d.implement is False
+        assert d.reply is True
+
+    def test_edit_convenience_with_explicit_route(self) -> None:
+        """edit convenience accepts explicit route and task."""
+        d = ClassifyDecision.edit(
+            research=False,
+            route="direct_edit",
+            task="edit_graph",
+            plan_summary="set seed",
+        )
+        assert d.route == "direct_edit"
+        assert d.task == "edit_graph"
         assert d.research is False
         assert d.implement is True
 
@@ -433,6 +576,157 @@ class TestParseClassifyResponse:
         assert d.plan_summary == "hello world"
 
 
+    def test_parse_with_route_and_task(self) -> None:
+        """Parser correctly extracts route and task from JSON."""
+        raw = json.dumps({
+            "research": False,
+            "implement": True,
+            "reply": True,
+            "effort": "low",
+            "plan_summary": "simple edit",
+            "intent": "edit",
+            "route": "direct_edit",
+            "task": "edit_graph",
+        })
+        d = parse_classify_response(raw)
+        assert d.route == "direct_edit"
+        assert d.task == "edit_graph"
+        assert d.effective_route == "direct_edit"
+        assert d.effective_task == "edit_graph"
+
+    def test_parse_with_route_only(self) -> None:
+        """Parser handles JSON with route but no task field."""
+        raw = json.dumps({
+            "research": True,
+            "implement": False,
+            "reply": True,
+            "effort": "low",
+            "plan_summary": "inspect graph",
+            "intent": "explain_graph",
+            "route": "inspect_only",
+        })
+        d = parse_classify_response(raw)
+        assert d.route == "inspect_only"
+        assert d.task == ""
+        assert d.effective_route == "inspect_only"
+        # task derived from legacy
+        assert d.effective_task == "inspect_graph"
+
+    def test_parse_with_precedent_research_route(self) -> None:
+        """Parser handles precedent_research route with both research and implement true."""
+        raw = json.dumps({
+            "research": True,
+            "implement": True,
+            "reply": True,
+            "effort": "high",
+            "plan_summary": "research then edit",
+            "intent": "edit",
+            "route": "precedent_research",
+            "task": "research_precedent",
+        })
+        d = parse_classify_response(raw)
+        assert d.route == "precedent_research"
+        assert d.task == "research_precedent"
+        assert d.research is True
+        assert d.implement is True
+        # effective_route uses explicit route
+        assert d.effective_route == "precedent_research"
+        assert d.effective_task == "research_precedent"
+
+    def test_parse_clarify_route(self) -> None:
+        """Parser handles clarify route with no research or implement."""
+        raw = json.dumps({
+            "research": False,
+            "implement": False,
+            "reply": True,
+            "effort": "low",
+            "plan_summary": "clarifying question",
+            "intent": "respond",
+            "route": "clarify",
+            "task": "respond",
+        })
+        d = parse_classify_response(raw)
+        assert d.route == "clarify"
+        assert d.task == "respond"
+        assert d.effective_route == "clarify"
+        assert d.effective_task == "respond"
+
+    def test_parse_old_json_no_route_fields_still_works(self) -> None:
+        """Legacy JSON without route/task keys parses and derives correctly."""
+        raw = json.dumps({
+            "research": False,
+            "implement": True,
+            "reply": True,
+            "effort": "medium",
+            "plan_summary": "edit seed",
+            "intent": "edit",
+        })
+        d = parse_classify_response(raw)
+        assert d.route == ""
+        assert d.task == ""
+        # Derived from legacy
+        assert d.effective_route == "direct_edit"
+        assert d.effective_task == "edit_graph"
+
+    def test_parse_intent_derived_from_legacy_booleans(self) -> None:
+        """When intent is missing or invalid, parser derives from research/implement."""
+        # Missing intent, implement=True → intent="edit"
+        raw = json.dumps({
+            "research": False,
+            "implement": True,
+            "reply": True,
+            "effort": "low",
+            "plan_summary": "edit",
+        })
+        d = parse_classify_response(raw)
+        assert d.intent == "edit"
+
+        # Missing intent, research=True, implement=False → intent="research"
+        raw2 = json.dumps({
+            "research": True,
+            "implement": False,
+            "reply": True,
+            "effort": "low",
+            "plan_summary": "research",
+        })
+        d2 = parse_classify_response(raw2)
+        assert d2.intent == "research"
+
+        # Invalid intent, research=False, implement=False → intent="respond"
+        raw3 = json.dumps({
+            "research": False,
+            "implement": False,
+            "reply": True,
+            "effort": "low",
+            "plan_summary": "chat",
+            "intent": "bogus",
+        })
+        d3 = parse_classify_response(raw3)
+        assert d3.intent == "respond"
+
+    def test_parse_route_stripped_of_whitespace(self) -> None:
+        """Route field is whitespace-stripped during parsing."""
+        raw = json.dumps({
+            "research": False,
+            "implement": True,
+            "reply": True,
+            "effort": "low",
+            "plan_summary": "edit",
+            "route": "  direct_edit  ",
+            "task": "  edit_graph  ",
+        })
+        d = parse_classify_response(raw)
+        assert d.route == "direct_edit"
+        assert d.task == "edit_graph"
+
+    def test_parse_route_non_string_coerced_to_empty(self) -> None:
+        """Non-string route values are coerced to empty string."""
+        raw = '{"research": false, "implement": false, "reply": true, "effort": "low", "plan_summary": "", "route": 123, "task": null}'
+        d = parse_classify_response(raw)
+        assert d.route == ""
+        assert d.task == ""
+
+
 class TestParseReplyResponse:
     def test_valid_reply(self) -> None:
         raw = '{"reply": "I have set the seed to 42."}'
@@ -509,6 +803,394 @@ class TestClassifyRoundtrip:
 
 # ── ExecutorResult round-trip ────────────────────────────────────────────────
 
+    def test_roundtrip_with_route_and_task(self) -> None:
+        """Full roundtrip with explicit route and task fields."""
+        decision = ClassifyDecision(
+            research=False,
+            implement=True,
+            reply=True,
+            effort="low",
+            plan_summary="simple edit",
+            intent="edit",
+            route="direct_edit",
+            task="edit_graph",
+        )
+        raw = json.dumps(decision.to_dict())
+        parsed = parse_classify_response(raw)
+        assert parsed == decision
+        assert parsed.route == "direct_edit"
+        assert parsed.task == "edit_graph"
+
+    def test_roundtrip_precedent_research(self) -> None:
+        """Roundtrip with precedent_research route and both research/implement true."""
+        decision = ClassifyDecision(
+            research=True,
+            implement=True,
+            reply=True,
+            effort="high",
+            plan_summary="research precedent then edit",
+            intent="edit",
+            route="precedent_research",
+            task="research_precedent",
+        )
+        raw = json.dumps(decision.to_dict())
+        parsed = parse_classify_response(raw)
+        assert parsed == decision
+        assert parsed.route == "precedent_research"
+        assert parsed.task == "research_precedent"
+
+    def test_roundtrip_clarify(self) -> None:
+        """Roundtrip with clarify route."""
+        decision = ClassifyDecision(
+            research=False,
+            implement=False,
+            reply=True,
+            effort="low",
+            plan_summary="clarifying question",
+            intent="respond",
+            route="clarify",
+            task="respond",
+        )
+        raw = json.dumps(decision.to_dict())
+        parsed = parse_classify_response(raw)
+        assert parsed == decision
+
+    def test_roundtrip_inspect_only(self) -> None:
+        """Roundtrip with inspect_only route."""
+        decision = ClassifyDecision(
+            research=True,
+            implement=False,
+            reply=True,
+            effort="medium",
+            plan_summary="inspect graph structure",
+            intent="explain_graph",
+            route="inspect_only",
+            task="inspect_graph",
+        )
+        raw = json.dumps(decision.to_dict())
+        parsed = parse_classify_response(raw)
+        assert parsed == decision
+
+    def test_roundtrip_old_json_shape_still_works(self) -> None:
+        """Old JSON without route/task still round-trips correctly."""
+        decision = ClassifyDecision(
+            research=False,
+            implement=True,
+            reply=True,
+            effort="medium",
+            plan_summary="edit seed",
+            intent="edit",
+        )
+        raw = json.dumps(decision.to_dict())
+        assert "route" not in json.loads(raw)
+        assert "task" not in json.loads(raw)
+        parsed = parse_classify_response(raw)
+        assert parsed == decision
+        # effective properties still work
+        assert parsed.effective_route == "direct_edit"
+        assert parsed.effective_task == "edit_graph"
+
+
+
+# ── Route classification scenario fixtures (10 documented classes) ──────────
+
+# These 10 scenarios are sourced from docs/plans/workflow-precedent-scenario-coverage.md.
+# Each fixture asserts the normalized route, legacy booleans, intent, effort,
+# task, and key metadata for a documented user-task class without making any
+# live model call.
+
+_SCENARIO_FIXTURES = [
+    # ── 1. seed/prefix widget update ──────────────────────────────────────
+    pytest.param(
+        "seed/prefix widget update",
+        dict(
+            research=False, implement=True, reply=True, effort="low",
+            plan_summary="update seed/prefix widget parameter",
+            intent="edit", route="direct_edit", task="edit_graph",
+        ),
+        "direct_edit",  # expected effective_route
+        False,          # expected research
+        True,           # expected implement
+        "edit",         # expected intent
+        "low",          # expected effort
+        "edit_graph",   # expected effective_task
+        id="sc01_seed_prefix_widget",
+    ),
+    # ── 2. PreviewImage tap ──────────────────────────────────────────────
+    pytest.param(
+        "PreviewImage tap",
+        dict(
+            research=False, implement=False, reply=True, effort="low",
+            plan_summary="preview intermediate PreviewImage node output",
+            intent="explain_graph", route="subgraph_preview", task="preview_subgraph",
+        ),
+        "subgraph_preview",
+        False,
+        False,
+        "explain_graph",
+        "low",
+        "preview_subgraph",
+        id="sc02_preview_image_tap",
+    ),
+    # ── 3. explain current graph ─────────────────────────────────────────
+    pytest.param(
+        "explain current graph",
+        dict(
+            research=True, implement=False, reply=True, effort="medium",
+            plan_summary="explain current graph structure and connections",
+            intent="explain_graph", route="inspect_only", task="inspect_graph",
+        ),
+        "inspect_only",
+        True,
+        False,
+        "explain_graph",
+        "medium",
+        "inspect_graph",
+        id="sc03_explain_graph",
+    ),
+    # ── 4. LTX user audio path (external workflow precedent) ─────────────
+    pytest.param(
+        "LTX user audio path",
+        dict(
+            research=True, implement=True, reply=True, effort="high",
+            plan_summary="add LTX audio pipeline from external workflow precedent",
+            intent="edit", route="precedent_research", task="research_precedent",
+        ),
+        "precedent_research",
+        True,
+        True,
+        "edit",
+        "high",
+        "research_precedent",
+        id="sc04_ltx_audio_path",
+    ),
+    # ── 5. ambiguous audio ───────────────────────────────────────────────
+    pytest.param(
+        "ambiguous audio request",
+        dict(
+            research=False, implement=False, reply=True, effort="low",
+            plan_summary="clarify ambiguous audio request before routing",
+            intent="respond", route="clarify", task="respond",
+        ),
+        "clarify",
+        False,
+        False,
+        "respond",
+        "low",
+        "respond",
+        id="sc05_ambiguous_audio",
+    ),
+    # ── 6. asset swap ────────────────────────────────────────────────────
+    pytest.param(
+        "model/asset config swap",
+        dict(
+            research=False, implement=True, reply=True, effort="medium",
+            plan_summary="swap model/asset configuration using registry",
+            intent="edit", route="asset_lookup", task="find_assets",
+        ),
+        "asset_lookup",
+        False,
+        True,
+        "edit",
+        "medium",
+        "find_assets",
+        id="sc06_asset_swap",
+    ),
+    # ── 7. dangling audio repair ─────────────────────────────────────────
+    pytest.param(
+        "dangling audio node repair",
+        dict(
+            research=True, implement=True, reply=True, effort="high",
+            plan_summary="diagnose and repair dangling audio connections",
+            intent="edit", route="diagnose_repair", task="diagnose",
+        ),
+        "diagnose_repair",
+        True,
+        True,
+        "edit",
+        "high",
+        "diagnose",
+        id="sc07_dangling_audio_repair",
+    ),
+    # ── 8. runtime preview ───────────────────────────────────────────────
+    pytest.param(
+        "runtime subgraph preview",
+        dict(
+            research=False, implement=False, reply=True, effort="low",
+            plan_summary="evaluate subgraph at runtime without mutating canvas",
+            intent="explain_graph", route="subgraph_preview", task="preview_subgraph",
+        ),
+        "subgraph_preview",
+        False,
+        False,
+        "explain_graph",
+        "low",
+        "preview_subgraph",
+        id="sc08_runtime_preview",
+    ),
+    # ── 9. composite / decompose ─────────────────────────────────────────
+    pytest.param(
+        "composite multi-pattern edit",
+        dict(
+            research=True, implement=True, reply=True, effort="high",
+            plan_summary="decompose composite edit into per-subgoal precedent research",
+            intent="edit", route="precedent_research", task="research_precedent",
+        ),
+        "precedent_research",
+        True,
+        True,
+        "edit",
+        "high",
+        "research_precedent",
+        id="sc09_composite_decompose",
+    ),
+    # ── 10. respond-only ──────────────────────────────────────────────────
+    pytest.param(
+        "respond-only informational turn",
+        dict(
+            research=False, implement=False, reply=True, effort="low",
+            plan_summary="informational response only, no research or edit",
+            intent="respond", route="clarify", task="respond",
+        ),
+        "clarify",
+        False,
+        False,
+        "respond",
+        "low",
+        "respond",
+        id="sc10_respond_only",
+    ),
+]
+
+
+class TestRouteScenarioFixtures:
+    """Focused route-classification fixtures for the 10 documented scenario classes.
+
+    Each test constructs a ClassifyDecision for one scenario and asserts the
+    normalized effective_route, legacy research/implement booleans, intent,
+    effort, and effective_task  without making any live model call.
+    """
+
+    @pytest.mark.parametrize(
+        "scenario_name,kwargs,expected_route,expected_research,expected_implement,"
+        "expected_intent,expected_effort,expected_task",
+        _SCENARIO_FIXTURES,
+    )
+    def test_scenario_fixture_normalized_route_and_metadata(
+        self,
+        scenario_name: str,
+        kwargs: dict,
+        expected_route: str,
+        expected_research: bool,
+        expected_implement: bool,
+        expected_intent: str,
+        expected_effort: str,
+        expected_task: str,
+    ) -> None:
+        """Each documented scenario class maps to the correct route + metadata."""
+        decision = ClassifyDecision(**kwargs)
+
+        # Effective route is the authoritative phase gate.
+        assert decision.effective_route == expected_route, (
+            f"{scenario_name}: expected effective_route={expected_route}, "
+            f"got {decision.effective_route}"
+        )
+
+        # Legacy booleans remain correct.
+        assert decision.research == expected_research, (
+            f"{scenario_name}: research mismatch"
+        )
+        assert decision.implement == expected_implement, (
+            f"{scenario_name}: implement mismatch"
+        )
+
+        # Intent.
+        assert decision.intent == expected_intent, (
+            f"{scenario_name}: intent mismatch"
+        )
+
+        # Effort hint.
+        assert decision.effort == expected_effort, (
+            f"{scenario_name}: effort mismatch"
+        )
+
+        # Normalized task.
+        assert decision.effective_task == expected_task, (
+            f"{scenario_name}: expected effective_task={expected_task}, "
+            f"got {decision.effective_task}"
+        )
+
+        # Reply is always True for these scenarios (executor should produce a reply).
+        assert decision.reply is True, (
+            f"{scenario_name}: reply should be True"
+        )
+
+    @pytest.mark.parametrize(
+        "scenario_name,kwargs,expected_route,expected_research,expected_implement,"
+        "expected_intent,expected_effort,expected_task",
+        _SCENARIO_FIXTURES,
+    )
+    def test_scenario_fixture_roundtrip_through_parser(
+        self,
+        scenario_name: str,
+        kwargs: dict,
+        expected_route: str,
+        expected_research: bool,
+        expected_implement: bool,
+        expected_intent: str,
+        expected_effort: str,
+        expected_task: str,
+    ) -> None:
+        """Each scenario fixture survives a JSON serialize -> parse round-trip."""
+        decision = ClassifyDecision(**kwargs)
+        raw = json.dumps(decision.to_dict())
+        parsed = parse_classify_response(raw)
+
+        assert parsed == decision, (
+            f"{scenario_name}: round-trip mismatch"
+        )
+
+        # Re-assert key fields on the parsed instance.
+        assert parsed.effective_route == expected_route
+        assert parsed.research == expected_research
+        assert parsed.implement == expected_implement
+        assert parsed.intent == expected_intent
+        assert parsed.effort == expected_effort
+        assert parsed.effective_task == expected_task
+
+    @pytest.mark.parametrize(
+        "scenario_name,kwargs,expected_route,expected_research,expected_implement,"
+        "expected_intent,expected_effort,expected_task",
+        _SCENARIO_FIXTURES,
+    )
+    def test_scenario_fixture_to_dict_includes_route_and_task(
+        self,
+        scenario_name: str,
+        kwargs: dict,
+        expected_route: str,
+        expected_research: bool,
+        expected_implement: bool,
+        expected_intent: str,
+        expected_effort: str,
+        expected_task: str,
+    ) -> None:
+        """to_dict() emits route and task when non-empty."""
+        decision = ClassifyDecision(**kwargs)
+        d = decision.to_dict()
+
+        assert d["route"] == expected_route, (
+            f"{scenario_name}: route not emitted correctly"
+        )
+        assert d["task"] == expected_task, (
+            f"{scenario_name}: task not emitted correctly"
+        )
+
+    def test_all_10_scenarios_accounted_for(self) -> None:
+        """Smoke check: the fixture list has exactly 10 entries."""
+        assert len(_SCENARIO_FIXTURES) == 10, (
+            f"Expected 10 scenario fixtures, got {len(_SCENARIO_FIXTURES)}"
+        )
+
 
 class TestExecutorResultRoundtrip:
     def test_full_success_roundtrip(self) -> None:
@@ -540,3 +1222,432 @@ class TestExecutorResultRoundtrip:
         assert d["failure_stage"] == "classify"
         assert d["failure_message"] == "timeout"
         assert d["report"]["executor"]["plan"]["reply"] is True
+
+# ── InspectionSummary contract tests (T9) ────────────────────────────────────
+
+
+class TestInspectionSummary:
+    """Round-trip and edge-case tests for InspectionSummary dataclass."""
+
+    def test_defaults(self) -> None:
+        s = InspectionSummary()
+        assert s.node_count == 0
+        assert s.node_types == ()
+        assert s.has_dangling_inputs is False
+        assert s.has_dangling_outputs is False
+        assert s.key_widget_values == ()
+        assert s.summary == ""
+
+    def test_to_dict_defaults(self) -> None:
+        s = InspectionSummary()
+        d = s.to_dict()
+        assert d == {
+            "node_count": 0,
+            "node_types": [],
+            "has_dangling_inputs": False,
+            "has_dangling_outputs": False,
+            "key_widget_values": [],
+            "summary": "",
+        }
+
+    def test_to_dict_with_data(self) -> None:
+        s = InspectionSummary(
+            node_count=5,
+            node_types=("KSampler", "VAEDecode", "CLIPTextEncode"),
+            has_dangling_inputs=True,
+            has_dangling_outputs=False,
+            key_widget_values=({"seed": 42}, {"steps": 20}),
+            summary="3 core nodes, 1 dangling input",
+        )
+        d = s.to_dict()
+        assert d["node_count"] == 5
+        assert d["node_types"] == ["KSampler", "VAEDecode", "CLIPTextEncode"]
+        assert d["has_dangling_inputs"] is True
+        assert d["has_dangling_outputs"] is False
+        assert d["key_widget_values"] == [{"seed": 42}, {"steps": 20}]
+        assert d["summary"] == "3 core nodes, 1 dangling input"
+
+    def test_key_widget_values_are_frozen(self) -> None:
+        s = InspectionSummary(
+            node_count=1,
+            key_widget_values=({"seed": 42},),
+        )
+        # Tuples are immutable; frozen dataclass prevents field reassignment
+        with pytest.raises(Exception):
+            s.key_widget_values = ()  # type: ignore[misc]
+
+    def test_node_types_coerced_to_tuple(self) -> None:
+        s = InspectionSummary(node_types=["KSampler", "VAEDecode"])
+        assert isinstance(s.node_types, tuple)
+        assert s.node_types == ("KSampler", "VAEDecode")
+
+
+# ── WorkflowSlice contract tests (T9) ────────────────────────────────────────
+
+
+class TestWorkflowSlice:
+    """Round-trip and edge-case tests for WorkflowSlice dataclass."""
+
+    def test_defaults(self) -> None:
+        ws = WorkflowSlice()
+        assert ws.source_class_type == ""
+        assert ws.node_ids == ()
+        assert ws.entry_anchor is None
+        assert ws.exit_anchor is None
+        assert ws.python_path is None
+
+    def test_to_dict_defaults(self) -> None:
+        ws = WorkflowSlice()
+        d = ws.to_dict()
+        assert d == {
+            "source_class_type": "",
+            "node_ids": [],
+        }
+        # Optional fields are omitted when None
+        assert "entry_anchor" not in d
+        assert "exit_anchor" not in d
+        assert "python_path" not in d
+
+    def test_to_dict_with_all_fields(self) -> None:
+        ws = WorkflowSlice(
+            source_class_type="LTXRuneXXCustomAudioLipsync",
+            node_ids=("45", "46", "47"),
+            entry_anchor="45",
+            exit_anchor="47",
+            python_path="custom_nodes/ltxvideo/LTX_audio_lipsync.py",
+        )
+        d = ws.to_dict()
+        assert d["source_class_type"] == "LTXRuneXXCustomAudioLipsync"
+        assert d["node_ids"] == ["45", "46", "47"]
+        assert d["entry_anchor"] == "45"
+        assert d["exit_anchor"] == "47"
+        assert d["python_path"] == "custom_nodes/ltxvideo/LTX_audio_lipsync.py"
+
+    def test_to_dict_none_anchors_omitted(self) -> None:
+        ws = WorkflowSlice(
+            source_class_type="KSampler",
+            node_ids=("10",),
+            entry_anchor=None,
+            exit_anchor=None,
+            python_path=None,
+        )
+        d = ws.to_dict()
+        assert d == {
+            "source_class_type": "KSampler",
+            "node_ids": ["10"],
+        }
+
+    def test_node_ids_coerced_to_tuple(self) -> None:
+        ws = WorkflowSlice(node_ids=["1", "2", "3"])
+        assert isinstance(ws.node_ids, tuple)
+        assert ws.node_ids == ("1", "2", "3")
+
+    def test_immutable(self) -> None:
+        ws = WorkflowSlice(source_class_type="KSampler", node_ids=("1",))
+        with pytest.raises(Exception):
+            ws.source_class_type = "Other"  # type: ignore[misc]
+
+
+# ── PrecedentAdaptationPlan contract tests (T9) ──────────────────────────────
+
+
+class TestPrecedentAdaptationPlan:
+    """Round-trip and edge-case tests for PrecedentAdaptationPlan dataclass."""
+
+    def test_defaults(self) -> None:
+        pap = PrecedentAdaptationPlan()
+        assert isinstance(pap.selected_slice, WorkflowSlice)
+        assert pap.selected_slice.source_class_type == ""
+        assert pap.anchor_bindings == ()
+        assert pap.required_new_nodes == ()
+        assert pap.required_rewires == ()
+        assert pap.edit_ops == ()
+        assert pap.candidate_graph is None
+        assert pap.structural_validation == "not_evaluated"
+        assert pap.semantic_validation == "not_evaluated"
+
+    def test_to_dict_defaults(self) -> None:
+        pap = PrecedentAdaptationPlan()
+        d = pap.to_dict()
+        assert d["selected_slice"] == {"source_class_type": "", "node_ids": []}
+        assert d["anchor_bindings"] == []
+        assert d["required_new_nodes"] == []
+        assert d["required_rewires"] == []
+        assert d["edit_ops"] == []
+        assert d["structural_validation"] == "not_evaluated"
+        assert d["semantic_validation"] == "not_evaluated"
+        # candidate_graph omitted when None
+        assert "candidate_graph" not in d
+
+    def test_to_dict_with_all_fields(self) -> None:
+        ws = WorkflowSlice(
+            source_class_type="LTXAudioLipsync",
+            node_ids=("100", "101"),
+            entry_anchor="100",
+            exit_anchor="101",
+        )
+        pap = PrecedentAdaptationPlan(
+            selected_slice=ws,
+            anchor_bindings=(
+                {"source": "100", "target": "LoadImage.output"},
+                {"source": "101", "target": "VAEDecode.input"},
+            ),
+            required_new_nodes=(
+                {"class_type": "AudioLoader", "widget_values": {"file": "audio.wav"}},
+            ),
+            required_rewires=(
+                {"from_node": "100", "from_output": 0, "to_node": "AudioLoader", "to_input": 0},
+            ),
+            edit_ops=(
+                {"op": "add_node", "class_type": "AudioLoader"},
+                {"op": "rewire", "from": "100", "to": "AudioLoader"},
+            ),
+            candidate_graph={"nodes": [{"id": 1, "type": "LoadImage"}, {"id": 2, "type": "AudioLoader"}]},
+            structural_validation="pass",
+            semantic_validation="advisory",
+        )
+        d = pap.to_dict()
+        assert d["selected_slice"]["source_class_type"] == "LTXAudioLipsync"
+        assert len(d["anchor_bindings"]) == 2
+        assert d["anchor_bindings"][0]["source"] == "100"
+        assert len(d["required_new_nodes"]) == 1
+        assert d["required_new_nodes"][0]["class_type"] == "AudioLoader"
+        assert len(d["required_rewires"]) == 1
+        assert len(d["edit_ops"]) == 2
+        assert d["edit_ops"][0]["op"] == "add_node"
+        assert d["candidate_graph"] == {"nodes": [{"id": 1, "type": "LoadImage"}, {"id": 2, "type": "AudioLoader"}]}
+        assert d["structural_validation"] == "pass"
+        assert d["semantic_validation"] == "advisory"
+
+    def test_validation_values_are_clamped(self) -> None:
+        """Invalid validation values are clamped to 'not_evaluated'."""
+        pap = PrecedentAdaptationPlan(
+            structural_validation="bogus",
+            semantic_validation="invalid",
+        )
+        assert pap.structural_validation == "not_evaluated"
+        assert pap.semantic_validation == "not_evaluated"
+
+    def test_validation_allows_all_valid_values(self) -> None:
+        """All canonical validation values are accepted."""
+        for val in ("not_evaluated", "pass", "fail", "advisory"):
+            pap = PrecedentAdaptationPlan(structural_validation=val)
+            assert pap.structural_validation == val
+            pap2 = PrecedentAdaptationPlan(semantic_validation=val)
+            assert pap2.semantic_validation == val
+
+    def test_candidate_graph_omitted_when_none(self) -> None:
+        pap = PrecedentAdaptationPlan()
+        d = pap.to_dict()
+        assert "candidate_graph" not in d
+
+    def test_immutable(self) -> None:
+        pap = PrecedentAdaptationPlan()
+        with pytest.raises(Exception):
+            pap.structural_validation = "pass"  # type: ignore[misc]
+
+
+# ── ResearchResult precedent field contract tests (T9) ───────────────────────
+
+
+class TestResearchResultPrecedentFields:
+    """Verify ResearchResult.to_dict() legacy shape is unchanged and
+    new structured precedent fields are predictable when populated."""
+
+    # ── Legacy shape preservation ────────────────────────────────────────
+
+    def test_legacy_to_dict_no_precedent_fields(self) -> None:
+        """No precedent_slices or adaptation_plan → legacy output shape only."""
+        rr = ResearchResult(
+            summary="Found 3 templates for KSampler",
+            sources=(
+                {"class_type": "KSampler", "pack": "core"},
+                {"class_type": "KSamplerAdvanced", "pack": "efficiency"},
+            ),
+            warnings=("hivemind timeout",),
+        )
+        d = rr.to_dict()
+        # Legacy keys
+        assert d["summary"] == "Found 3 templates for KSampler"
+        assert d["sources"] == [
+            {"class_type": "KSampler", "pack": "core"},
+            {"class_type": "KSamplerAdvanced", "pack": "efficiency"},
+        ]
+        assert d["warnings"] == ["hivemind timeout"]
+        # New keys must NOT leak into legacy output
+        assert "precedent_slices" not in d
+        assert "adaptation_plan" not in d
+
+    def test_legacy_to_dict_empty_defaults(self) -> None:
+        """Default ResearchResult (all empty) produces only legacy keys."""
+        rr = ResearchResult()
+        d = rr.to_dict()
+        assert d == {
+            "summary": "",
+            "sources": [],
+            "warnings": [],
+        }
+
+    def test_legacy_to_dict_with_only_summary(self) -> None:
+        """Summary-only result preserves legacy shape."""
+        rr = ResearchResult(summary="No relevant local results found.")
+        d = rr.to_dict()
+        assert d == {
+            "summary": "No relevant local results found.",
+            "sources": [],
+            "warnings": [],
+        }
+        assert "precedent_slices" not in d
+        assert "adaptation_plan" not in d
+
+    def test_legacy_to_dict_with_sources_no_warnings(self) -> None:
+        """Sources present, no warnings → legacy shape preserved."""
+        rr = ResearchResult(
+            summary="research output",
+            sources=({"name": "node1"}, {"name": "node2"}),
+        )
+        d = rr.to_dict()
+        assert "summary" in d
+        assert "sources" in d
+        assert "warnings" in d
+        assert "precedent_slices" not in d
+        assert "adaptation_plan" not in d
+
+    # ── Populated precedent fields ───────────────────────────────────────
+
+    def test_to_dict_with_precedent_slices(self) -> None:
+        """precedent_slices present → included in output."""
+        ws = WorkflowSlice(
+            source_class_type="LTXAudioLipsync",
+            node_ids=("10", "11"),
+            entry_anchor="10",
+            exit_anchor="11",
+        )
+        rr = ResearchResult(
+            summary="Found 1 matching precedent",
+            sources=(),
+            warnings=(),
+            precedent_slices=(ws,),
+        )
+        d = rr.to_dict()
+        # Legacy keys still present
+        assert d["summary"] == "Found 1 matching precedent"
+        assert d["sources"] == []
+        assert d["warnings"] == []
+        # New key present
+        assert "precedent_slices" in d
+        assert len(d["precedent_slices"]) == 1
+        assert d["precedent_slices"][0]["source_class_type"] == "LTXAudioLipsync"
+        # adaptation_plan still absent
+        assert "adaptation_plan" not in d
+
+    def test_to_dict_with_multiple_precedent_slices(self) -> None:
+        """Multiple precedent slices are serialized correctly."""
+        ws1 = WorkflowSlice(source_class_type="KSampler", node_ids=("1",))
+        ws2 = WorkflowSlice(source_class_type="VAEDecode", node_ids=("2",))
+        rr = ResearchResult(
+            summary="Multiple precedents",
+            sources=(),
+            warnings=(),
+            precedent_slices=(ws1, ws2),
+        )
+        d = rr.to_dict()
+        assert len(d["precedent_slices"]) == 2
+        assert d["precedent_slices"][0]["source_class_type"] == "KSampler"
+        assert d["precedent_slices"][1]["source_class_type"] == "VAEDecode"
+
+    def test_to_dict_with_adaptation_plan(self) -> None:
+        """adaptation_plan present → included in output."""
+        ws = WorkflowSlice(
+            source_class_type="LTXAudioLipsync",
+            node_ids=("100", "101"),
+            entry_anchor="100",
+            exit_anchor="101",
+        )
+        pap = PrecedentAdaptationPlan(
+            selected_slice=ws,
+            structural_validation="pass",
+            semantic_validation="pass",
+        )
+        rr = ResearchResult(
+            summary="Precedent adapted",
+            sources=(),
+            warnings=(),
+            adaptation_plan=pap,
+        )
+        d = rr.to_dict()
+        assert d["summary"] == "Precedent adapted"
+        assert "adaptation_plan" in d
+        assert d["adaptation_plan"]["selected_slice"]["source_class_type"] == "LTXAudioLipsync"
+        assert d["adaptation_plan"]["structural_validation"] == "pass"
+        # precedent_slices still absent when empty
+        assert "precedent_slices" not in d
+
+    def test_to_dict_with_both_precedent_fields(self) -> None:
+        """Both precedent_slices and adaptation_plan populated."""
+        ws = WorkflowSlice(
+            source_class_type="HotshotXL",
+            node_ids=("5", "6", "7"),
+            entry_anchor="5",
+            exit_anchor="7",
+        )
+        pap = PrecedentAdaptationPlan(
+            selected_slice=ws,
+            anchor_bindings=({"source": "5", "target": "SVD_XT.output"},),
+            structural_validation="advisory",
+        )
+        rr = ResearchResult(
+            summary="HotshotXL → SVD-XT adaptation plan",
+            sources=({"class_type": "HotshotXL"},),
+            warnings=("Some nodes may need custom import",),
+            precedent_slices=(ws,),
+            adaptation_plan=pap,
+        )
+        d = rr.to_dict()
+        assert d["summary"] == "HotshotXL → SVD-XT adaptation plan"
+        assert d["sources"] == [{"class_type": "HotshotXL"}]
+        assert d["warnings"] == ["Some nodes may need custom import"]
+        # Both new fields present
+        assert "precedent_slices" in d
+        assert len(d["precedent_slices"]) == 1
+        assert d["precedent_slices"][0]["source_class_type"] == "HotshotXL"
+        assert "adaptation_plan" in d
+        assert d["adaptation_plan"]["selected_slice"]["node_ids"] == ["5", "6", "7"]
+
+    # ── Round-trip: fields survive construction + to_dict ────────────────
+
+    def test_empty_precedent_slices_not_in_output(self) -> None:
+        """Empty precedent_slices tuple is omitted from serialization."""
+        rr = ResearchResult(
+            summary="test",
+            precedent_slices=(),
+        )
+        d = rr.to_dict()
+        assert "precedent_slices" not in d
+
+    def test_none_adaptation_plan_not_in_output(self) -> None:
+        """None adaptation_plan is omitted from serialization."""
+        rr = ResearchResult(
+            summary="test",
+            adaptation_plan=None,
+        )
+        d = rr.to_dict()
+        assert "adaptation_plan" not in d
+
+    def test_precedent_slices_preserved_as_tuples(self) -> None:
+        """precedent_slices are stored as tuples internally."""
+        ws1 = WorkflowSlice(source_class_type="NodeA", node_ids=("1",))
+        ws2 = WorkflowSlice(source_class_type="NodeB", node_ids=("2",))
+        rr = ResearchResult(
+            summary="test",
+            precedent_slices=(ws1, ws2),
+        )
+        assert isinstance(rr.precedent_slices, tuple)
+        assert len(rr.precedent_slices) == 2
+
+    def test_research_result_is_immutable(self) -> None:
+        """ResearchResult is a frozen dataclass."""
+        rr = ResearchResult(summary="test")
+        with pytest.raises(Exception):
+            rr.summary = "modified"  # type: ignore[misc]
+

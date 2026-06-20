@@ -21,7 +21,7 @@ def test_openrouter_agent_kwargs_use_openrouter_model_slug(monkeypatch: pytest.M
     assert kwargs["provider"] == "openrouter"
     assert kwargs["base_url"] == "https://openrouter.ai/api/v1"
     assert kwargs["model"] == "deepseek/deepseek-v4-pro"
-    assert kwargs["max_tokens"] == 8192
+    assert kwargs["max_tokens"] == 2048
 
 
 def test_agent_edit_contract_model_uses_openrouter_default(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -116,6 +116,35 @@ def test_run_worker_mirrors_openrouter_key_into_backend_env_aliases(
     assert captured_env["OPENROUTER_API_KEY"] == "sk-or-v1-test-key"
     assert captured_env["OPENAI_API_KEY"] == "sk-or-v1-test-key"
     assert captured_env["HERMES_API_KEY"] == "sk-or-v1-test-key"
+
+
+def test_run_worker_preserves_stdout_stderr_tail_on_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(runtime, "_resolve_openrouter_key", lambda: "sk-or-v1-test-key")
+
+    def fake_run(args, **kwargs):
+        with open(args[3], "w", encoding="utf-8") as fh:
+            json.dump({"error": "Agent returned an empty batch_repl response.", "error_type": "ValueError"}, fh)
+        return subprocess.CompletedProcess(
+            args,
+            0,
+            stdout="Error code: 402 - This request requires more credits",
+            stderr="HTTP/1.1 402 Payment Required",
+        )
+
+    monkeypatch.setattr(runtime.subprocess, "run", fake_run)
+
+    result = runtime._run_worker(
+        {"api_key": "sk-or-v1-test-key"},
+        "system",
+        "user",
+        response_contract="batch_repl",
+        agent_id="hermes",
+    )
+
+    assert result["worker_stdout_tail"] == "Error code: 402 - This request requires more credits"
+    assert result["worker_stderr_tail"] == "HTTP/1.1 402 Payment Required"
 
 
 def test_openrouter_empty_batch_response_surfaces_worker_error(

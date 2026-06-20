@@ -54,7 +54,7 @@ LOGGER = logging.getLogger(__name__)
 
 _OPENROUTER_MODEL = os.getenv("VIBECOMFY_OPENROUTER_MODEL", "openrouter:deepseek/deepseek-v4-pro")
 _OPENROUTER_BASE_URL = os.getenv("VIBECOMFY_OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1")
-_OPENROUTER_MAX_TOKENS = int(os.getenv("VIBECOMFY_OPENROUTER_MAX_TOKENS", "8192"))
+_OPENROUTER_MAX_TOKENS = int(os.getenv("VIBECOMFY_OPENROUTER_MAX_TOKENS", "2048"))
 
 # Arnold/Hermes (Claude etc.) default model when a non-browser-key route is used.
 _ARNOLD_MODEL = os.getenv("VIBECOMFY_ARNOLD_MODEL", "anthropic/claude-opus-4.6")
@@ -160,6 +160,13 @@ def _is_runtime_unavailable(result: Mapping[str, Any]) -> bool:
 
 def _raise_worker_error(result: Mapping[str, Any]) -> None:
     err = str(result.get("error") or "agent worker failed")
+    output_tail = "\n".join(
+        str(result.get(key) or "").strip()
+        for key in ("worker_stdout_tail", "worker_stderr_tail")
+        if result.get(key)
+    ).strip()
+    if output_tail:
+        err = f"{err}\n\nWorker output tail:\n{output_tail}"
     error_type = str(result.get("error_type") or "").strip()
     message = f"{error_type}: {err}" if error_type and error_type not in err else err
     lowered = message.lower()
@@ -389,6 +396,11 @@ def _run_worker(
                     worker_profile=worker_profile if isinstance(worker_profile, dict) else None,
                     result_keys=sorted(result.keys()) if isinstance(result, dict) else None,
                 )
+                if isinstance(result, dict) and "error" in result:
+                    if proc.stdout:
+                        result.setdefault("worker_stdout_tail", proc.stdout[-4000:])
+                    if proc.stderr:
+                        result.setdefault("worker_stderr_tail", proc.stderr[-4000:])
                 return result
         except (FileNotFoundError, json.JSONDecodeError) as exc:
             tail = (proc.stderr or proc.stdout or "")[-800:]

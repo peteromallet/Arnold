@@ -39,8 +39,9 @@ from vibecomfy.contracts.intent_nodes import KIND_TO_CLASS_TYPE
 _MAX_DYNAMIC_PORTS = 16
 
 # Resolve WEB_DIRECTORY to the cache-busted web_dist/<hash>/ copy matching the
-# current web/ source content when available, falling back to the newest valid
-# dist and then ./web for development/no-build scenarios.
+# current web/ source content when available. Never fall back to an arbitrary
+# older dist: serving stale ESM modules is worse than using ./web directly in
+# development.
 _MODULE_DIR = Path(__file__).resolve().parent
 _WEB_SRC_DIR = _MODULE_DIR / "web"
 _WEB_DIST_DIR = _MODULE_DIR / "web_dist"
@@ -67,24 +68,14 @@ def _web_source_hash() -> str | None:
 
 
 if _WEB_DIST_DIR.is_dir():
-    _best: "tuple[float, str] | None" = None
     _source_hash = _web_source_hash()
-    for _entry in _WEB_DIST_DIR.iterdir():
-        if not _entry.is_dir():
-            continue
+    _matching_dist = _WEB_DIST_DIR / _source_hash if _source_hash else None
+    if _matching_dist is not None and _matching_dist.is_dir():
         try:
-            _has_file = any(_p.is_file() for _p in _entry.iterdir())
+            if any(_p.is_file() for _p in _matching_dist.iterdir()):
+                _WEB_DIRECTORY = f"./web_dist/{_matching_dist.name}"
         except OSError:
-            continue
-        if _has_file:
-            if _source_hash and _entry.name == _source_hash:
-                _best = (_entry.stat().st_mtime, _entry.name)
-                break
-            _mtime = _entry.stat().st_mtime
-            if _best is None or (_mtime, _entry.name) > _best:
-                _best = (_mtime, _entry.name)
-    if _best is not None:
-        _WEB_DIRECTORY = f"./web_dist/{_best[1]}"
+            pass
 WEB_DIRECTORY = _WEB_DIRECTORY
 _LOGGER.info("VibeComfy custom node loading. WEB_DIRECTORY=%s", WEB_DIRECTORY)
 

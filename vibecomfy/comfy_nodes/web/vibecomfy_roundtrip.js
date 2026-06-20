@@ -1272,6 +1272,32 @@ function ensureLiveGraphLinkStore(graph) {
   return graph.links;
 }
 
+function removeCompatibleLiveLinkFromNetwork(network, linkId) {
+  if (!network) {
+    return;
+  }
+  if (Array.isArray(network.links)) {
+    network.links = network.links.filter((entry) => String(entry?.id ?? entry?.[0]) !== String(linkId));
+  } else if (network.links && typeof network.links.delete === "function") {
+    network.links.delete(linkId);
+    const numericId = Number(linkId);
+    if (Number.isFinite(numericId)) {
+      network.links.delete(numericId);
+    }
+    network.links.delete(String(linkId));
+  } else if (network.links && typeof network.links === "object") {
+    delete network.links[String(linkId)];
+  }
+  if (network._links && typeof network._links.delete === "function") {
+    network._links.delete(linkId);
+    const numericId = Number(linkId);
+    if (Number.isFinite(numericId)) {
+      network._links.delete(numericId);
+    }
+    network._links.delete(String(linkId));
+  }
+}
+
 function liveLinkRecord(link) {
   const record = {
     id: link.id,
@@ -1294,6 +1320,15 @@ function liveLinkRecord(link) {
           this.target_slot,
           this.type,
         ];
+      },
+    });
+  }
+  if (typeof record.disconnect !== "function") {
+    Object.defineProperty(record, "disconnect", {
+      enumerable: false,
+      configurable: true,
+      value(network) {
+        removeCompatibleLiveLinkFromNetwork(network, this.id);
       },
     });
   }
@@ -3853,21 +3888,49 @@ function createAgentPanelShell() {
     gap: "8px",
     flexWrap: "wrap",
   });
-  const settingsSave = button("Save Settings", () => saveAgentSettings(currentAgentPanel()));
-  settingsSave.id = PANEL_IDS.settingsSave;
   const settingsTest = button("Test Provider", () => testAgentSettings(currentAgentPanel()));
   settingsTest.id = PANEL_IDS.settingsTest;
   routeSelect.onchange = () => {
     const panel = currentAgentPanel();
     if (panel) {
       panel.fields.route.value = normalizeRoutePreference(routeSelect.value);
-      panel.state.settingsMessage = null;
-      panel.state.settingsMessageKind = null;
-      renderAgentPanel(panel, { dirtySections: SETTINGS_STATUS_RENDER_SECTIONS });
-      refreshAgentStatus(panel, { quiet: true });
+      return autoSaveAgentSettings(panel);
     }
+    return undefined;
   };
-  settingsButtons.appendChild(settingsSave);
+  modelInput.onchange = () => {
+    const panel = currentAgentPanel();
+    if (panel) {
+      panel.fields.model.value = modelInput.value;
+      return autoSaveAgentSettings(panel);
+    }
+    return undefined;
+  };
+  modelInput.onblur = () => {
+    const panel = currentAgentPanel();
+    if (panel && modelInput.value !== normalizeModelPreference(panel.state.lastAutosavedModel || "")) {
+      panel.fields.model.value = modelInput.value;
+      panel.state.lastAutosavedModel = modelInput.value;
+      return autoSaveAgentSettings(panel);
+    }
+    return undefined;
+  };
+  apiKeyInput.onchange = () => {
+    const panel = currentAgentPanel();
+    if (panel) {
+      panel.fields.apiKey.value = apiKeyInput.value;
+      return autoSaveAgentSettings(panel, { includeCredential: true });
+    }
+    return undefined;
+  };
+  apiKeyInput.onblur = () => {
+    const panel = currentAgentPanel();
+    if (panel && String(apiKeyInput.value || "").trim()) {
+      panel.fields.apiKey.value = apiKeyInput.value;
+      return autoSaveAgentSettings(panel, { includeCredential: true });
+    }
+    return undefined;
+  };
   settingsButtons.appendChild(settingsTest);
   settingsRegion.body.appendChild(routeSelect);
   settingsRegion.body.appendChild(modelInput);
@@ -3977,7 +4040,6 @@ function createAgentPanelShell() {
       reject: rejectBtn,
       undo: undoBtn,
       close: closeBtn,
-      settingsSave,
       settingsTest,
       stop: stopBtn,
       newConversation: newConvBtn,
@@ -4008,6 +4070,8 @@ function createAgentPanelShell() {
       undoStack: [],
       settingsMessage: null,
       settingsMessageKind: null,
+      settingsAutosaveToken: 0,
+      lastAutosavedModel: "",
       providerTestInFlight: false,
       developerExpanded: false,
       statusSnapshot: null,
@@ -6027,7 +6091,8 @@ export function computePreviewDiff(candidateGraph, candidateReport) {
     }
     const liveUidById = new Map();
     for (const node of liveNodes) {
-      const uid = getUid(node);
+      const uid = getUid(node)
+        || (node.id != null ? candidateUidById.get(String(node.id)) : null);
       if (uid && node.id != null) {
         liveUidById.set(String(node.id), uid);
       }
@@ -8401,10 +8466,15 @@ async function saveAgentSettings(panel) {
   const apiKey = panel.fields.apiKey.value;
 
   setPersistedAgentProvider(route);
-  let savedMessage = `Saved settings: ${route}${model ? ` / ${model}` : " / default model"}.`;
+  let savedMessage = `✓ Saved ${route}${model ? ` / ${model}` : " / default model"}.`;
   panel.state.settingsMessage = savedMessage;
   panel.state.settingsMessageKind = "success";
-  if (apiKey) {
+  if (apiKey && !descriptor.browser_api_key_allowed) {
+    savedMessage = descriptor.guidance || "Browser credential was not stored.";
+    panel.state.settingsMessage = savedMessage;
+    panel.state.settingsMessageKind = "error";
+    clearCredentialInput(panel);
+  } else if (apiKey) {
     try {
       const res = await fetch("/vibecomfy/agent/credentials", {
         method: "POST",
@@ -8413,7 +8483,7 @@ async function saveAgentSettings(panel) {
       });
       const result = await res.json();
       savedMessage = result?.stored
-        ? `Stored browser credential for ${result.provider || route}.`
+        ? `✓ Stored browser credential for ${result.provider || route}.`
         : (result?.reason || descriptor.guidance || "Browser credential was not stored.");
       panel.state.settingsMessage = savedMessage;
       panel.state.settingsMessageKind = result?.stored ? "success" : "error";
@@ -8427,6 +8497,22 @@ async function saveAgentSettings(panel) {
   }
   await refreshAgentStatus(panel, { quiet: Boolean(apiKey) });
   panel.state.settingsMessage = savedMessage;
+  renderAgentPanel(panel, { dirtySections: SETTINGS_STATUS_RENDER_SECTIONS });
+}
+
+async function autoSaveAgentSettings(panel, { includeCredential = false } = {}) {
+  if (!panel) {
+    return;
+  }
+  const token = (panel.state.settingsAutosaveToken || 0) + 1;
+  panel.state.settingsAutosaveToken = token;
+  panel.state.settingsMessage = includeCredential ? "Saving credential…" : "Saving settings…";
+  panel.state.settingsMessageKind = "pending";
+  renderAgentPanel(panel, { dirtySections: SETTINGS_STATUS_RENDER_SECTIONS });
+  await saveAgentSettings(panel);
+  if (panel.state.settingsAutosaveToken !== token) {
+    return;
+  }
   renderAgentPanel(panel, { dirtySections: SETTINGS_STATUS_RENDER_SECTIONS });
 }
 

@@ -118,6 +118,7 @@ def run_reply_turn(
     research_summary: str | None = None,
     implementation_message: str | None = None,
     graph_summary: str | None = None,
+    graph_inspection: str | None = None,
 ) -> str:
     """Run a single reply model turn through the provider seam.
 
@@ -141,6 +142,10 @@ def run_reply_turn(
         Optional implementation result message.
     graph_summary:
         Optional compact summary of the attached graph.
+    graph_inspection:
+        Optional detailed node-by-node graph inspection for inspect-only
+        replies.  When provided, the model should describe the graph
+        structure without suggesting edits.
     """
     messages = build_reply_messages(
         query,
@@ -148,6 +153,7 @@ def run_reply_turn(
         research_summary=research_summary,
         implementation_message=implementation_message,
         graph_summary=graph_summary,
+        graph_inspection=graph_inspection,
     )
     model_turn_id = new_profile_id("model")
     with profiler_span(

@@ -3162,31 +3162,59 @@ def test_agent_provider_run_agent_turn_surfaces_unavailable_runtime_as_provider_
 
 
 def test_agent_provider_status_reports_unavailable_without_secret_values(monkeypatch) -> None:
+    env_names = ("ARNOLD_API_KEY", "DEEPSEEK_API_KEY", "OPENROUTER_API_KEY")
+    original_env = {name: os.environ.get(name) for name in env_names}
+    had_env = {name: name in os.environ for name in env_names}
     monkeypatch.setenv("ARNOLD_API_KEY", "secret-value")
     monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+    monkeypatch.setattr(agent_provider, "_env_key_present", lambda name: bool(os.getenv(name)))
+    monkeypatch.setattr(
+        agent_provider,
+        "_openrouter_key_present",
+        lambda: bool(os.getenv("OPENROUTER_API_KEY")),
+    )
+    monkeypatch.setattr(
+        agent_provider,
+        "_credential_presence",
+        lambda: {
+            "arnold_api_key": True,
+            "hermes_api_key": False,
+            "deepseek_api_key": False,
+        },
+    )
 
-    def _missing():
-        raise agent_provider.ProviderError("not installed")
+    try:
+        def _missing():
+            raise agent_provider.ProviderError("not installed")
 
-    monkeypatch.setattr(agent_provider, "_load_arnold_runtime", _missing)
+        monkeypatch.setattr(agent_provider, "_load_arnold_runtime", _missing)
 
-    status = agent_provider.get_agent_status(route="openai-codex", model="m1")
+        status = agent_provider.get_agent_status(route="openai-codex", model="m1")
 
-    assert status["ok"] is False
-    assert status["ready"] is False
-    assert status["reason"] == "not installed"
-    assert status["provider_available"] is False
-    assert status["route"] == "arnold"
-    assert status["requested_route"] == "openai-codex"
-    assert status["route_metadata"]["normalized_route"] == "arnold"
-    assert status["route_metadata"]["browser_api_key_allowed"] is False
-    assert "openai-codex" in status["route_options"]
-    assert status["credential_presence"] == {
-        "arnold_api_key": True,
-        "hermes_api_key": False,
-        "deepseek_api_key": False,
-    }
-    assert "secret-value" not in json.dumps(status)
+        assert status["ok"] is False
+        assert status["ready"] is False
+        assert status["reason"] == "not installed"
+        assert status["provider_available"] is False
+        assert status["route"] == "arnold"
+        assert status["requested_route"] == "openai-codex"
+        assert status["route_metadata"]["normalized_route"] == "arnold"
+        assert status["route_metadata"]["browser_api_key_allowed"] is False
+        assert "openai-codex" in status["route_options"]
+        assert status["credential_presence"] == {
+            "arnold_api_key": True,
+            "hermes_api_key": False,
+            "deepseek_api_key": False,
+        }
+        assert "secret-value" not in json.dumps(status)
+    finally:
+        for name in env_names:
+            if had_env[name]:
+                value = original_env[name]
+                assert value is not None
+                monkeypatch.setenv(name, value)
+            else:
+                monkeypatch.delenv(name, raising=False)
 
 
 def test_agent_provider_maps_malformed_and_missing_fields(monkeypatch) -> None:
@@ -3251,36 +3279,80 @@ def test_agent_provider_delta_maps_malformed_missing_and_bad_ops(monkeypatch) ->
 
 def test_agent_provider_status_uses_runtime_status_without_leaking_secrets(monkeypatch) -> None:
     calls: list[dict[str, object]] = []
+    env_names = (
+        "ARNOLD_API_KEY",
+        "HERMES_API_KEY",
+        "DEEPSEEK_API_KEY",
+        "OPENROUTER_API_KEY",
+    )
+    original_env = {name: os.environ.get(name) for name in env_names}
+    had_env = {name: name in os.environ for name in env_names}
 
     monkeypatch.setenv("ARNOLD_API_KEY", "secret-value")
     monkeypatch.setenv("HERMES_API_KEY", "hermes-secret")
     monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+    monkeypatch.setattr(agent_provider, "_env_key_present", lambda name: bool(os.getenv(name)))
+    monkeypatch.setattr(
+        agent_provider,
+        "_openrouter_key_present",
+        lambda: bool(os.getenv("OPENROUTER_API_KEY")),
+    )
+    monkeypatch.setattr(
+        agent_provider,
+        "_credential_presence",
+        lambda: {
+            "arnold_api_key": True,
+            "hermes_api_key": True,
+            "deepseek_api_key": False,
+        },
+    )
+    monkeypatch.setattr(
+        agent_provider,
+        "_resolve_agent_route",
+        lambda route: agent_provider.AgentRouteDescriptor(
+            requested_route=(route or agent_provider.DEFAULT_ROUTE).strip().lower()
+            or agent_provider.DEFAULT_ROUTE,
+            normalized_route="deepseek",
+            browser_api_key_allowed=True,
+            guidance="OpenRouter browser key submission is supported and stored locally.",
+        ),
+    )
 
-    class Runtime:
-        @staticmethod
-        def get_agent_status(**kwargs):
-            calls.append(kwargs)
-            return {"ok": True, "route": "runtime-route", "detail": "healthy"}
+    try:
+        class Runtime:
+            @staticmethod
+            def get_agent_status(**kwargs):
+                calls.append(kwargs)
+                return {"ok": True, "route": "runtime-route", "detail": "healthy"}
 
-    monkeypatch.setattr(agent_provider, "_load_arnold_runtime", lambda: Runtime)
+        monkeypatch.setattr(agent_provider, "_load_arnold_runtime", lambda: Runtime)
 
-    status = agent_provider.get_agent_status(route="deepseek", model="m1")
+        status = agent_provider.get_agent_status(route="deepseek", model="m1")
 
-    assert status["ok"] is True
-    assert status["ready"] is True
-    assert status["reason"] == "healthy"
-    assert status["provider_available"] is True
-    assert calls == [{"route": "deepseek", "model": "m1"}]
-    assert status["route"] == "deepseek"
-    assert status["requested_route"] == "deepseek"
-    assert status["route_metadata"]["browser_api_key_allowed"] is True
-    assert status["credential_presence"] == {
-        "arnold_api_key": True,
-        "hermes_api_key": True,
-        "deepseek_api_key": False,
-    }
-    assert "secret-value" not in json.dumps(status)
-    assert "hermes-secret" not in json.dumps(status)
+        assert status["ok"] is True
+        assert status["ready"] is True
+        assert status["reason"] == "healthy"
+        assert status["provider_available"] is True
+        assert calls == [{"route": "deepseek", "model": "m1"}]
+        assert status["route"] == "deepseek"
+        assert status["requested_route"] == "deepseek"
+        assert status["route_metadata"]["browser_api_key_allowed"] is True
+        assert status["credential_presence"] == {
+            "arnold_api_key": True,
+            "hermes_api_key": True,
+            "deepseek_api_key": False,
+        }
+        assert "secret-value" not in json.dumps(status)
+        assert "hermes-secret" not in json.dumps(status)
+    finally:
+        for name in env_names:
+            if had_env[name]:
+                value = original_env[name]
+                assert value is not None
+                monkeypatch.setenv(name, value)
+            else:
+                monkeypatch.delenv(name, raising=False)
 
 
 def test_agent_provider_readiness_prefers_runtime_readiness_and_status_derives_ok(monkeypatch) -> None:
@@ -3402,25 +3474,39 @@ def test_agent_provider_saves_only_deepseek_key_atomically(
     env_path = tmp_path / ".hermes" / ".env"
     env_path.parent.mkdir(parents=True)
     env_path.write_text("EXISTING=value\nDEEPSEEK_API_KEY=old\n", encoding="utf-8")
+    env_names = ("DEEPSEEK_API_KEY", "OPENROUTER_API_KEY")
+    original_env = {name: os.environ.get(name) for name in env_names}
+    had_env = {name: name in os.environ for name in env_names}
     monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+    monkeypatch.setattr(agent_provider, "save_openrouter_api_key", agent_provider.save_deepseek_api_key)
 
-    result = agent_provider.handle_credential_submission(
-        {"provider": "deepseek", "api_key": "deepseek-secret"},
-        env_path=env_path,
-    )
+    try:
+        result = agent_provider.handle_credential_submission(
+            {"provider": "deepseek", "api_key": "deepseek-secret"},
+            env_path=env_path,
+        )
 
-    assert result == {
-        "ok": True,
-        "stored": True,
-        "provider": "deepseek",
-        "key_name": "DEEPSEEK_API_KEY",
-        "path": str(env_path),
-    }
-    text = env_path.read_text(encoding="utf-8")
-    assert "EXISTING=value" in text
-    assert "DEEPSEEK_API_KEY=deepseek-secret" in text
-    assert "deepseek-secret" not in json.dumps(result)
-    assert os.environ.get("DEEPSEEK_API_KEY") != "deepseek-secret"
+        assert result == {
+            "ok": True,
+            "stored": True,
+            "provider": "deepseek",
+            "key_name": "DEEPSEEK_API_KEY",
+            "path": str(env_path),
+        }
+        text = env_path.read_text(encoding="utf-8")
+        assert "EXISTING=value" in text
+        assert "DEEPSEEK_API_KEY=deepseek-secret" in text
+        assert "deepseek-secret" not in json.dumps(result)
+        assert os.environ.get("DEEPSEEK_API_KEY") != "deepseek-secret"
+    finally:
+        for name in env_names:
+            if had_env[name]:
+                value = original_env[name]
+                assert value is not None
+                monkeypatch.setenv(name, value)
+            else:
+                monkeypatch.delenv(name, raising=False)
 
 
 def test_agent_provider_ignores_claude_and_codex_key_submissions(tmp_path: Path) -> None:
@@ -3770,6 +3856,20 @@ def test_build_batch_messages_system_prompt_names_real_code_node_class() -> None
     assert 'search(focus_types=["vibecomfy.exec"])' in system
     assert "out_0" in system
     assert "PIL" in system
+
+
+def test_build_batch_messages_system_prompt_uses_included_code_node_signature() -> None:
+    """When the exact code-node signature is already present, do not spend a search turn."""
+    messages = agent_provider.build_batch_messages(
+        task="Add a code node that processes images with PIL",
+        python_source="vaedecode = VAEDecode()\nsaveimage = SaveImage(images=vaedecode.image)",
+        signature_catalog=(
+            "def vibecomfy.exec(source: STRING, io: JSON, in_0: IMAGE) -> out_0: IMAGE:"
+        ),
+    )
+    system = messages[0]["content"]
+    assert "Use the included `vibecomfy.exec` signature" in system
+    assert 'search(focus_types=["vibecomfy.exec"])` first' not in system
 
 
 def test_build_batch_messages_system_prompt_no_execution_semantics() -> None:

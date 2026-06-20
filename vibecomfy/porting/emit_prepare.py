@@ -34,6 +34,7 @@ from vibecomfy.porting.emit_kwargs import (
     _declared_ui_output_names,
 )
 from vibecomfy.porting.emit_ready import (
+    _declared_exec_outputs,
     _node_local_arity_check,
     _node_local_output_names,
 )
@@ -61,6 +62,12 @@ def _prepare_workflow_for_emit(
     diagnostics: list[Any] | None = None,
     scope_path: str = "",
 ) -> dict[str, Any]:
+    # Preserve fully disconnected canvases. Dead-branch pruning is useful when
+    # trimming a real graph, but on a no-edge workflow it collapses the emission
+    # to arbitrary terminal nodes and drops section/comment coverage entirely.
+    if prune_dead_branches and not getattr(workflow, "edges", ()):
+        prune_dead_branches = False
+
     # Defensive assertion: resolver MUST have eliminated all helper nodes before emission.
     # If any RESOLVABLE_HELPER_CLASS_TYPES node survives, the resolver has a bug.
     # Exception: when keep_virtual_wires=True, GetNode/SetNode/Reroute are intentionally
@@ -99,6 +106,7 @@ def _prepare_workflow_for_emit(
         for nid, node in workflow.nodes.items()
         if node.class_type not in UI_ONLY_CLASS_TYPES or str(nid) in ui_only_passthroughs
     }
+    _sync_declared_exec_output_metadata(workflow_nodes)
     edges_in: dict[str, list[Any]] = {}
     for edge in workflow.edges:
         if edge.from_node not in workflow_nodes or edge.to_node not in workflow_nodes:
@@ -179,6 +187,17 @@ def _agent_edit_output_aliases(node: Any) -> dict[int, str]:
 def _agent_edit_raw_output_names(node: Any) -> dict[int, str]:
     ui_names = _declared_ui_output_names(node)
     metadata_names = getattr(node, "metadata", {}).get("output_names") if hasattr(node, "metadata") else None
+    declared_exec_outputs = _declared_exec_outputs(node)
+    if declared_exec_outputs is not None:
+        ui_output_count = len(ui_names) if ui_names else None
+        _node_local_arity_check(node, ui_output_count)
+        if ui_names:
+            return {index: name for index, name in enumerate(ui_names) if name}
+        return {
+            index: name
+            for index, (name, _type_name) in enumerate(declared_exec_outputs)
+            if name
+        }
     if ui_names and isinstance(metadata_names, (list, tuple)) and len(ui_names) != len(metadata_names):
         raise ArityDisagreementError(
             (
@@ -205,6 +224,19 @@ def _agent_edit_raw_output_names(node: Any) -> dict[int, str]:
         return result
     schema_names = _node_local_output_names(node)
     return {index: name for index, name in enumerate(schema_names) if isinstance(name, str) and name}
+
+
+def _sync_declared_exec_output_metadata(workflow_nodes: Mapping[str, Any]) -> None:
+    """Keep ``vibecomfy.exec`` metadata aligned with its declared inline ``io``."""
+    for node in workflow_nodes.values():
+        declared_exec_outputs = _declared_exec_outputs(node)
+        if declared_exec_outputs is None:
+            continue
+        metadata = getattr(node, "metadata", None)
+        if not isinstance(metadata, dict):
+            continue
+        metadata["output_names"] = [name for name, _type_name in declared_exec_outputs]
+        metadata["output_types"] = [output_type or "*" for _name, output_type in declared_exec_outputs]
 
 
 def _title_canonical(s: str) -> str:
@@ -332,7 +364,15 @@ def _emit_agent_edit_lines(prepared: dict[str, Any]) -> list[str]:
 
         comment = _agent_edit_comment(nid, node, output_aliases.get(nid, {}), var_name=var)
         call_name = str(node.class_type)
-        if call_name.isidentifier() and not keyword.iskeyword(call_name):
+        dotted_parts = call_name.split(".")
+        dotted_callable = (
+            len(dotted_parts) > 1
+            and all(part.isidentifier() and not keyword.iskeyword(part) for part in dotted_parts)
+        )
+        if (
+            call_name.isidentifier()
+            and not keyword.iskeyword(call_name)
+        ) or dotted_callable:
             call_head = f"{var} = {call_name}("
             positional: list[str] = []
         else:
@@ -351,4 +391,3 @@ def _emit_agent_edit_lines(prepared: dict[str, Any]) -> list[str]:
             lines.append(f"    {arg},")
         lines.append(f"){comment}")
     return lines
-

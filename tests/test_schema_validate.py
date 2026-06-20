@@ -354,3 +354,124 @@ def test_snapshot_api_workflows_validate_against_permissive_local_schema(snapsho
     report = workflow.validate(schema_provider=provider)
 
     assert report.ok, [f"{issue.code}: {issue.message}" for issue in report.issues]
+
+# ── T16: advisory_validation_for_precedent tests ────────────────────────────
+
+
+def test_advisory_validation_for_precedent_returns_empty_for_none_route() -> None:
+    """Returns empty list when route is None."""
+    from vibecomfy.schema.validate import advisory_validation_for_precedent
+    issues = [type("Issue", (), {"code": "missing_required_input", "message": "missing text"})()]
+    result = advisory_validation_for_precedent(issues, route=None)
+    assert result == []
+
+
+def test_advisory_validation_for_precedent_returns_empty_for_direct_edit() -> None:
+    """Returns empty list when route is direct_edit (structural gate applies)."""
+    from vibecomfy.schema.validate import advisory_validation_for_precedent
+    issues = [type("Issue", (), {"code": "missing_required_input", "message": "missing text"})()]
+    result = advisory_validation_for_precedent(issues, route="direct_edit")
+    assert result == []
+
+
+def test_advisory_validation_for_precedent_returns_empty_for_inspect_only() -> None:
+    """Returns empty list when route is inspect_only."""
+    from vibecomfy.schema.validate import advisory_validation_for_precedent
+    issues = [type("Issue", (), {"code": "unsatisfied_input", "message": "input missing"})()]
+    result = advisory_validation_for_precedent(issues, route="inspect_only")
+    assert result == []
+
+
+def test_advisory_validation_for_precedent_returns_empty_for_clarify() -> None:
+    """Returns empty list when route is clarify."""
+    from vibecomfy.schema.validate import advisory_validation_for_precedent
+    issues = [type("Issue", (), {"code": "schema_gap", "message": "unknown node"})()]
+    result = advisory_validation_for_precedent(issues, route="clarify")
+    assert result == []
+
+
+def test_advisory_validation_for_precedent_converts_issues_for_precedent_research() -> None:
+    """precedent_research route maps validation issues to advisory entries."""
+    from vibecomfy.schema.validate import advisory_validation_for_precedent
+    issues = [
+        type("Issue", (), {"code": "missing_required_input", "message": "missing 'text' input"})()
+    ]
+    result = advisory_validation_for_precedent(issues, route="precedent_research")
+    assert len(result) == 1
+    assert result[0]["check"] == "schema:missing_required_input"
+    assert result[0]["status"] == "advisory"
+    assert result[0]["satisfaction"] == "advisory"
+    assert "missing 'text' input" in result[0]["description"]
+
+
+def test_advisory_validation_for_precedent_multiple_issues() -> None:
+    """Multiple validation issues produce multiple advisory entries."""
+    from vibecomfy.schema.validate import advisory_validation_for_precedent
+    issues = [
+        type("Issue", (), {"code": "missing_required_input", "message": "missing input"})(),
+        type("Issue", (), {"code": "unsatisfied_input", "message": "unsatisfied link"})(),
+    ]
+    result = advisory_validation_for_precedent(issues, route="precedent_research")
+    assert len(result) == 2
+    assert result[0]["check"] == "schema:missing_required_input"
+    assert result[1]["check"] == "schema:unsatisfied_input"
+    for entry in result:
+        assert entry["status"] == "advisory"
+        assert entry["satisfaction"] == "advisory"
+
+
+def test_advisory_validation_for_precedent_handles_issue_without_code() -> None:
+    """Issue without a code attribute uses 'schema:validation' as check key."""
+    from vibecomfy.schema.validate import advisory_validation_for_precedent
+    # Object with message but no code
+    issue = type("Issue", (), {"message": "some problem"})()
+    result = advisory_validation_for_precedent([issue], route="precedent_research")
+    assert len(result) == 1
+    assert result[0]["check"] == "schema:validation"
+
+
+def test_advisory_validation_for_precedent_handles_dict_issues() -> None:
+    """Issues passed as dicts are handled correctly."""
+    from vibecomfy.schema.validate import advisory_validation_for_precedent
+    issues = [{"code": "schema_gap", "message": "node not in registry"}]
+    result = advisory_validation_for_precedent(issues, route="precedent_research")
+    assert len(result) == 1
+    assert result[0]["check"] == "schema:schema_gap"
+    assert result[0]["description"] == "node not in registry"
+
+
+def test_advisory_validation_for_precedent_truncates_long_messages() -> None:
+    """Descriptions are truncated at 500 characters."""
+    from vibecomfy.schema.validate import advisory_validation_for_precedent
+    long_message = "x" * 1000
+    issues = [type("Issue", (), {"code": "E1", "message": long_message})()]
+    result = advisory_validation_for_precedent(issues, route="precedent_research")
+    assert len(result) == 1
+    assert len(result[0]["description"]) <= 500
+
+
+def test_advisory_validation_for_precedent_empty_issues() -> None:
+    """Empty issues list returns empty list."""
+    from vibecomfy.schema.validate import advisory_validation_for_precedent
+    result = advisory_validation_for_precedent([], route="precedent_research")
+    assert result == []
+
+
+def test_advisory_validation_for_precedent_does_not_block_structural_gates() -> None:
+    """precedent semantic checks are advisory only and do not alter structural gating.
+    
+    When route is precedent_research, issues are downgraded to advisory entries
+    but the original validation issues list is unchanged — the caller still owns
+    the structural gate decision.
+    """
+    from vibecomfy.schema.validate import advisory_validation_for_precedent
+    issues = [
+        type("Issue", (), {"code": "missing_required_input", "message": "missing input"})(),
+        type("Issue", (), {"code": "unsatisfied_input", "message": "unsatisfied link"})(),
+    ]
+    original_count = len(issues)
+    result = advisory_validation_for_precedent(issues, route="precedent_research")
+    # The advisory entries exist for observability
+    assert len(result) == original_count
+    # But the original issues list length is unchanged (caller still owns gating)
+    assert len(issues) == original_count

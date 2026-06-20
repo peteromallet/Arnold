@@ -581,6 +581,7 @@ export async function persistAgentSettings(panel, {
     return;
   }
   const {
+    clearCredentialInput,
     renderAgentPanel,
     SETTINGS_STATUS_RENDER_SECTIONS,
     refreshAgentStatus: refreshFn,
@@ -602,13 +603,23 @@ export async function persistAgentSettings(panel, {
   const apiKey = String(panel.fields.apiKey.value || "").trim();
 
   setPersistedAgentProvider(route);
-  let savedMessage = `Saved settings: ${route}${model ? ` / ${model}` : " / default model"}.`;
+  let savedMessage = `✓ Saved ${route}${model ? ` / ${model}` : " / default model"}.`;
   panel.state.settingsMessage = savedMessage;
   panel.state.settingsMessageKind = "success";
 
-  if (includeCredential && apiKey && apiKey !== panel.state.lastAutoSavedOpenRouterKey) {
+  if (includeCredential && apiKey && !descriptor.browser_api_key_allowed) {
+    savedMessage = descriptor.guidance || "Browser credential was not stored.";
+    panel.state.settingsMessage = savedMessage;
+    panel.state.settingsMessageKind = "error";
+    if (typeof clearCredentialInput === "function") {
+      clearCredentialInput(panel);
+    }
+  } else if (includeCredential && apiKey && apiKey !== panel.state.lastAutoSavedOpenRouterKey) {
     const result = await storeOpenRouterCredential(panel, apiKey, descriptor);
-    savedMessage = result.message;
+    if (result.stored && typeof clearCredentialInput === "function") {
+      clearCredentialInput(panel);
+    }
+    savedMessage = result.stored ? `✓ ${result.message}` : result.message;
   }
 
   if (typeof refreshFn === "function") {
