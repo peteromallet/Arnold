@@ -14,7 +14,7 @@ import sys
 # ---------------------------------------------------------------------------
 from arnold.agent.providers.pool import (  # noqa: F401
     KeyEntry,
-    KeyPool,
+    KeyPool as _BaseKeyPool,
     minimax_openrouter_model,
     resolve_kimi_base_url,
     _DEFAULT_BASE_URLS,
@@ -44,36 +44,46 @@ class _MegaplanKeyPathSource:
             if path.exists():
                 return path
         return candidates[0]
+
+
+class KeyPool(_BaseKeyPool):
+    """Megaplan-aware key pool that charges the active Governor on acquire."""
+
+    current_envelope = staticmethod(lambda: _current_envelope())
+
+    def acquire(self, provider: str) -> str:
+        key = super().acquire(provider)
+        if key:
+            _charge_governor_for_current_envelope(self)
+        return key
+
+
 _pool = KeyPool(keys_path_source=_MegaplanKeyPathSource())
 
 
-def _current_envelope():  # type: ignore[no-untyped-def]
+def _current_envelope(*_args):  # type: ignore[no-untyped-def]
     """Return the envelope visible to this task via ContextVar, or ``None``.
 
     Wired onto _pool so governor/envelope integration works without subclassing.
     """
-    from arnold.pipelines.megaplan._pipeline.envelope import _envelope_ctx
+    from arnold.runtime.envelope import _envelope_ctx
 
     return _envelope_ctx.get()
-
-
-# Attach envelope accessor to the pool instance so downstream callers that do
-# ``_pool.current_envelope()`` continue to work.
-_pool.current_envelope = _current_envelope  # type: ignore[method-assign]
 
 
 def _load_hermes_env() -> dict[str, str]:
     return _pool.load_hermes_env()
 def _get_api_credential(env_var: str, hermes_env: dict[str, str] | None = None) -> str:
     return _pool.get_api_credential(env_var, hermes_env)
-def _charge_governor_for_current_envelope() -> None:
+def _charge_governor_for_current_envelope(pool: KeyPool | None = None) -> None:
     """Charge the governor for the current task envelope if one is active.
 
     Invoked outside the KeyPool lock so a BudgetExceeded raised here
     does not strand the pool lock.  charge() is a no-op when no governor
     is attached to this execution tree.
     """
-    envelope = _pool.current_envelope()
+    active_pool = pool or _pool
+    envelope = active_pool.current_envelope()
     if envelope is not None:
         from arnold.pipelines.megaplan.runtime.governor import current_governor
 
@@ -83,10 +93,7 @@ def _charge_governor_for_current_envelope() -> None:
 
 
 def acquire_key(provider: str) -> str:
-    key = _pool.acquire(provider)
-    if key:
-        _charge_governor_for_current_envelope()
-    return key
+    return _pool.acquire(provider)
 def report_429(provider: str, key: str, cooldown_secs: float = 60) -> None:
     _pool.report_429(provider, key, cooldown_secs)
 def report_failure(provider: str, key: str) -> None:
