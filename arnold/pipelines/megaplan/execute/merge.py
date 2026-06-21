@@ -392,10 +392,10 @@ def _merge_batch_results(
         array_fields = ("sections_written", "stance_violations")
     else:
         required_fields = ("task_id", "status", "executor_notes", "files_changed", "commands_run")
-        merge_fields = ("status", "executor_notes", "files_changed", "commands_run")
+        merge_fields = ("status", "executor_notes", "files_changed", "commands_run", "head_sha", "code_hash")
         array_fields = ("files_changed", "commands_run")
         object_fields = ()
-        optional_fields = ()
+        optional_fields = ("head_sha", "code_hash")
     merged_count, _ = _validate_and_merge_batch(
         payload.get("task_updates"),
         required_fields=required_fields,
