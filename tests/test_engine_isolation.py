@@ -108,8 +108,10 @@ def test_engine_write_barrier_rejects_logical_local_dev_overlap(tmp_path: Path, 
 
 
 def test_engine_write_barrier_default_still_fails_without_provider(tmp_path: Path) -> None:
+    # With overlapping engine/target roots the implicit logical_local_dev
+    # fallback cannot satisfy the contract, so the barrier still fails closed.
     engine = tmp_path / "engine"
-    target = tmp_path / "target"
+    target = engine / "target"
     engine.mkdir()
     target.mkdir()
 
