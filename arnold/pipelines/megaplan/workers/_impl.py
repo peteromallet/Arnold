@@ -836,8 +836,29 @@ def run_command(
             for thread in threads:
                 thread.start()
             if process.stdin is not None and stdin_text is not None:
-                process.stdin.write(stdin_text.encode("utf-8"))
-                process.stdin.close()
+                # Write stdin asynchronously so the watchdog loop can enforce
+                # pre-first-byte / idle timeouts even when the child does not
+                # drain its stdin promptly (e.g. codex wedged at startup with a
+                # large prompt). A synchronous write here can block forever on a
+                # full pipe buffer while the child is idle, preventing timeouts
+                # from firing.
+                stdin_bytes = stdin_text.encode("utf-8")
+                stdin_error: list[Exception] = []
+
+                def _write_stdin() -> None:
+                    try:
+                        process.stdin.write(stdin_bytes)  # type: ignore[union-attr]
+                        process.stdin.close()  # type: ignore[union-attr]
+                    except (BrokenPipeError, OSError) as exc:
+                        # Child exited or pipe closed before/while writing.
+                        try:
+                            process.stdin.close()  # type: ignore[union-attr]
+                        except Exception:
+                            pass
+                        stdin_error.append(exc)
+
+                stdin_writer = threading.Thread(target=_write_stdin, daemon=True)
+                stdin_writer.start()
 
             def _coerce_timeout_output(parts: list[bytes]) -> str:
                 return b"".join(parts).decode("utf-8", errors="replace")
