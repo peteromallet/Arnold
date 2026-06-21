@@ -745,7 +745,7 @@ SCHEMAS: dict[str, dict[str, Any]] = {
                     "type": "object",
                     "properties": {
                         "task_id": {"type": "string"},
-                        "status": {"type": "string", "enum": ["done", "skipped", "completed", "blocked"]},
+                        "status": {"type": "string", "enum": ["done", "skipped", "completed", "blocked", "pending"]},
                         "executor_notes": {"type": "string"},
                         "files_changed": {"type": "array", "items": {"type": "string"}},
                         "commands_run": {"type": "array", "items": {"type": "string"}},
