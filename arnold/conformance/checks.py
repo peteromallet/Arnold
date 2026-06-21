@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import ast
 import copy
+import fnmatch
 from pathlib import Path
 from typing import Any, Callable, Collection, Mapping
 
@@ -589,11 +590,22 @@ def check_never_port_artifacts(
     root = repo_root or _DEFAULT_ARNOLD_ROOT.parent
     allowed = set(allowlist or set())
     unexpected: dict[str, tuple[str, ...]] = {}
+
+    def _is_allowed(rel: str) -> bool:
+        for pattern in allowed:
+            if pattern == rel:
+                return True
+            if pattern.endswith("/**") and rel.startswith(pattern[:-3] + "/"):
+                return True
+            if fnmatch.fnmatch(rel, pattern):
+                return True
+        return False
+
     for path in sorted(root.rglob("*")):
         if not path.is_file():
             continue
         rel = path.relative_to(root).as_posix()
-        if rel in allowed:
+        if _is_allowed(rel):
             continue
         reason: str | None = None
         if rel.startswith(".megaplan/_archived-plans/"):
