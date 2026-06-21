@@ -746,6 +746,11 @@ def resume_plan(
     if not isinstance(stored_manifest_hash, str) or not stored_manifest_hash:
         stored_manifest_hash = None
     current_manifest_hash = _current_manifest_hash_for(pipeline_name)
+    # The canonical Megaplan pipeline is declared natively and does not carry
+    # a static manifest hash.  Treat a missing current hash as matching the
+    # stored legacy sentinel so resume can proceed for dynamic megaplan plans.
+    if pipeline_name == "megaplan" and not current_manifest_hash:
+        current_manifest_hash = stored_manifest_hash
     if stored_manifest_hash:
         if not current_manifest_hash:
             raise CliError(
