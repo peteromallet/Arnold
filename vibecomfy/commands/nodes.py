@@ -13,6 +13,7 @@ import sys
 
 from vibecomfy.analysis.corpus import build_corpus_snapshot
 from vibecomfy.analysis.node_coverage import build_workflow_coverage
+from vibecomfy.commands._diagnostics import Diagnostic, diagnostics_to_json, diagnostics_to_text
 from vibecomfy.commands._output import emit
 from vibecomfy.commands._index_files import IndexReadError, print_index_error, read_index_json
 from vibecomfy.porting.workbench import load_port_source
@@ -532,22 +533,49 @@ def _cmd_nodes_drift(args: argparse.Namespace) -> int:
 
     # Find affected templates
     affected_templates: list[str] = []
+    affected_template_diagnostics: list[Diagnostic] = []
     all_modified_classes = {m["class"] for m in modified} | added | removed
     if all_modified_classes:
         try:
             snapshot = build_corpus_snapshot()
+        except Exception as exc:  # noqa: BLE001 - report incomplete impact analysis
+            affected_template_diagnostics.append(
+                _affected_template_diagnostic(
+                    "affected_template_snapshot_failed",
+                    (
+                        "Class diff completed, but affected-template analysis could not "
+                        "build the ready-template corpus snapshot."
+                    ),
+                    path=None,
+                    exception=exc,
+                )
+            )
+        else:
             for tpl in snapshot.templates_list:
                 tpl_path = Path(tpl["path"])
-                if tpl_path.is_file():
+                if not tpl_path.is_file():
+                    continue
+                try:
                     source = tpl_path.read_text(encoding="utf-8")
-                    for ct in all_modified_classes:
-                        if f"'{ct}'" in source or f'"{ct}"' in source:
-                            affected_templates.append(tpl["id"])
-                            break
-        except Exception:
-            pass
+                except Exception as exc:  # noqa: BLE001 - continue scanning, but surface partial analysis
+                    affected_template_diagnostics.append(
+                        _affected_template_diagnostic(
+                            "affected_template_read_failed",
+                            "Class diff completed, but an affected-template source file could not be read.",
+                            path=tpl_path,
+                            exception=exc,
+                        )
+                    )
+                    continue
+                for ct in all_modified_classes:
+                    if f"'{ct}'" in source or f'"{ct}"' in source:
+                        affected_templates.append(tpl["id"])
+                        break
+
+    partial = bool(affected_template_diagnostics)
 
     payload = {
+        "status": "partial" if partial else "ok",
         "pack": pack_name,
         "from_ref": from_ref,
         "to_ref": to_ref,
@@ -556,6 +584,9 @@ def _cmd_nodes_drift(args: argparse.Namespace) -> int:
         "modified_classes": modified,
         "affected_templates": sorted(set(affected_templates)),
     }
+    if partial:
+        payload["partial"] = True
+        payload["diagnostics"] = diagnostics_to_json(affected_template_diagnostics)
 
     if args.json:
         print(json.dumps(payload, indent=2, sort_keys=True))
@@ -575,7 +606,32 @@ def _cmd_nodes_drift(args: argparse.Namespace) -> int:
                 print(f"  {tid}")
         else:
             print("\nAffected templates: (none)")
-    return 0
+        if partial:
+            print("\nClass diff completed, but affected-template analysis did not complete.")
+            print(diagnostics_to_text(affected_template_diagnostics))
+    return 1 if partial else 0
+
+
+def _affected_template_diagnostic(
+    code: str,
+    message: str,
+    *,
+    path: Path | None,
+    exception: BaseException,
+) -> Diagnostic:
+    details: dict[str, Any] = {
+        "exception_type": type(exception).__name__,
+        "exception": str(exception),
+    }
+    if path is not None:
+        details["path"] = str(path)
+    return Diagnostic(
+        code=code,
+        message=message,
+        severity="error",
+        recoverable=True,
+        details=details,
+    )
 
 
 def _extract_pack_python_api(pack_dir: Path, ref: str) -> str | None:

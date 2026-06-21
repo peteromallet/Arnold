@@ -4,8 +4,9 @@ import subprocess
 from pathlib import Path
 from typing import Sequence
 
-from vibecomfy._git_utils import git_head, git_stdout
+from vibecomfy._git_utils import git_head, git_stdout, git_stdout_result
 from vibecomfy._compile._graph import UI_ONLY_CLASS_TYPES, is_api_link, node_id_sort_key
+from vibecomfy.commands._diagnostics import Diagnostic, diagnostic_to_json, diagnostic_to_text
 
 
 def test_ui_only_class_types_matches_legacy_strip_set() -> None:
@@ -116,9 +117,20 @@ def test_node_id_sort_key_treats_compound_ids_as_tail_when_disallowed() -> None:
 
 
 class FakeGitRunner:
-    def __init__(self, *, stdout: str = "abc123\n", fail: bool = False) -> None:
+    def __init__(
+        self,
+        *,
+        stdout: str = "abc123\n",
+        stderr: str = "",
+        fail: bool = False,
+        returncode: int = 1,
+        os_error: OSError | None = None,
+    ) -> None:
         self.stdout = stdout
+        self.stderr = stderr
         self.fail = fail
+        self.returncode = returncode
+        self.os_error = os_error
         self.calls: list[tuple[list[str], bool, bool, bool]] = []
 
     def __call__(
@@ -131,9 +143,38 @@ class FakeGitRunner:
     ) -> subprocess.CompletedProcess[str]:
         call = list(args)
         self.calls.append((call, check, capture_output, text))
+        if self.os_error is not None:
+            raise self.os_error
         if self.fail:
-            raise subprocess.CalledProcessError(1, call, stderr="boom")
-        return subprocess.CompletedProcess(call, 0, stdout=self.stdout, stderr="")
+            raise subprocess.CalledProcessError(self.returncode, call, stderr=self.stderr)
+        return subprocess.CompletedProcess(call, 0, stdout=self.stdout, stderr=self.stderr)
+
+
+def test_command_diagnostic_json_omits_missing_details() -> None:
+    diagnostic = Diagnostic(
+        code="partial_result",
+        message="Some data is unavailable",
+        severity="warning",
+        recoverable=True,
+    )
+
+    assert diagnostic_to_json(diagnostic) == {
+        "code": "partial_result",
+        "message": "Some data is unavailable",
+        "severity": "warning",
+        "recoverable": True,
+    }
+
+
+def test_command_diagnostic_text_includes_recoverable_marker() -> None:
+    diagnostic = Diagnostic(
+        code="partial_result",
+        message="Some data is unavailable",
+        severity="warning",
+        recoverable=True,
+    )
+
+    assert diagnostic_to_text(diagnostic) == "warning: partial_result (recoverable): Some data is unavailable"
 
 
 def test_git_stdout_uses_injected_runner_and_returns_stdout() -> None:
@@ -159,6 +200,41 @@ def test_git_helpers_return_none_on_failed_git_calls() -> None:
 
     assert git_stdout(Path("/tmp/pack"), ["rev-parse", "HEAD"], runner=runner) is None
     assert git_head(Path("/tmp/pack"), runner=runner) is None
+
+
+def test_git_stdout_result_retains_return_code_and_stderr_on_failure() -> None:
+    runner = FakeGitRunner(fail=True, returncode=128, stderr="not a repository\n")
+
+    result = git_stdout_result(Path("/tmp/pack"), ["rev-parse", "HEAD"], runner=runner)
+
+    assert result.stdout is None
+    assert result.diagnostic is not None
+    assert result.diagnostic.code == "git_command_failed"
+    assert result.diagnostic.message == "git command failed with exit code 128"
+    assert result.diagnostic.severity == "error"
+    assert result.diagnostic.recoverable is True
+    assert result.diagnostic.details == {
+        "command": ["git", "-C", "/tmp/pack", "rev-parse", "HEAD"],
+        "returncode": 128,
+        "stderr": "not a repository\n",
+    }
+
+
+def test_git_stdout_result_retains_os_error_details() -> None:
+    runner = FakeGitRunner(os_error=FileNotFoundError(2, "No such file or directory", "git"))
+
+    result = git_stdout_result(Path("/tmp/pack"), ["status"], runner=runner)
+
+    assert result.stdout is None
+    assert result.diagnostic is not None
+    assert result.diagnostic.code == "git_command_os_error"
+    assert result.diagnostic.severity == "error"
+    assert result.diagnostic.recoverable is True
+    assert result.diagnostic.details == {
+        "command": ["git", "-C", "/tmp/pack", "status"],
+        "error": "FileNotFoundError",
+        "errno": 2,
+    }
 
 
 def test_git_stdout_resolves_subprocess_run_inside_function(monkeypatch) -> None:

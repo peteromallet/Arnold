@@ -38,6 +38,29 @@ The full suite has known baseline failures in this checkout. Use focused tests
 for structure-only changes, and use `--known-failures-audit` when changing test
 names, paths, or baseline ownership.
 
+## Quarantine Retirement
+
+Scoped quarantine files live in `tests/quarantine/`. Each file must keep
+`# owner:` and `# reason:` metadata, and every active non-comment line must be a
+single pytest function nodeid. `tests/known_failures.txt` is legacy
+documentation only; do not add active entries there.
+
+To retire a quarantine entry:
+
+1. Fix the underlying failure.
+2. Remove the exact nodeid from the owning `tests/quarantine/*.txt` file.
+3. Run the focused quarantine suite:
+
+```bash
+pytest tests/test_comfy_nodes_browser.py tests/test_quarantine_loader.py tests/test_quarantine_policy.py tests/characterization/test_known_failures_audit.py -q
+```
+
+4. Run the stale-entry audit before merging:
+
+```bash
+pytest --known-failures-audit -q
+```
+
 ## Generated Baselines
 
 Generated baselines under `tests/snapshots/`, `tests/characterization/goldens/`,

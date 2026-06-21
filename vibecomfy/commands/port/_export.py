@@ -7,6 +7,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from vibecomfy.commands._diagnostics import Diagnostic, diagnostics_to_json, diagnostics_to_text
 from vibecomfy.porting.layout_store import read_store, store_from_ui_json, write_store
 from vibecomfy.porting.latency import FALLBACK_LATENCY_BUDGET_MS
 from vibecomfy.porting.emit.ui import default_output_path
@@ -553,8 +554,36 @@ def _cmd_port_export(args: argparse.Namespace) -> int:
             if not dry_run:
                 try:
                     write_store(py_path, store_from_ui_json(ui_payload))
-                except Exception:
-                    pass  # Sidecar write is best-effort; never block the main export
+                except Exception as exc:  # noqa: BLE001 - main UI JSON remains authoritative
+                    sidecar_path = py_path.with_suffix(".layout.json")
+                    sidecar_diagnostic = Diagnostic(
+                        code="sidecar_write_failed",
+                        message=(
+                            f"UI JSON export succeeded, but layout sidecar {sidecar_path} "
+                            f"could not be written: {type(exc).__name__}: {exc}"
+                        ),
+                        severity="warning",
+                        recoverable=True,
+                        details={
+                            "path": str(sidecar_path),
+                            "exception_type": type(exc).__name__,
+                            "exception": str(exc),
+                        },
+                    )
+                    if getattr(args, "json", False):
+                        print(
+                            json.dumps(
+                                {
+                                    "status": "partial",
+                                    "partial": True,
+                                    "diagnostics": diagnostics_to_json([sidecar_diagnostic]),
+                                },
+                                indent=2,
+                                sort_keys=True,
+                            )
+                        )
+                    else:
+                        print(diagnostics_to_text([sidecar_diagnostic]), file=sys.stderr)
 
             # --- Change report ---
             if change_report_out:

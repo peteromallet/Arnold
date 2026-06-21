@@ -103,7 +103,6 @@ allow-direct-references = true
 [tool.coverage.run]
 source = ["vibecomfy"]
 branch = false
-omit = ["vibecomfy/comfy_nodes/*"]
 
 [tool.coverage.report]
 skip_empty = true

@@ -8,6 +8,7 @@ from pathlib import Path
 
 import pytest
 
+import vibecomfy.commands.nodes as nodes_cmd
 import vibecomfy.node_packs as node_packs_install
 from vibecomfy.commands.nodes import (
     _cmd_nodes_compatible_with,
@@ -57,6 +58,48 @@ def test_workflows_source_info_json_reports_pure_python_source(
     assert payload["template_id"] == "image/z_image"
     assert payload["source_mode"] == "pure_python"
     assert payload["runtime_source_of_truth"] is True
+
+
+def test_workflows_list_ready_missing_index_falls_back_exit_zero(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        "vibecomfy.commands.workflows.repo_ready_template_ids",
+        lambda: ["image/fallback"],
+    )
+    monkeypatch.setattr(
+        "vibecomfy.commands.workflows.dynamic_ready_template_rows",
+        lambda *, exclude_ids: [],
+    )
+
+    code = _cmd_workflows_list(argparse.Namespace(ready=True, limit=10, json=True, include_dynamic=False))
+
+    payload = json.loads(capsys.readouterr().out)
+    assert code == 0
+    assert payload[0]["id"] == "image/fallback"
+    assert payload[0]["indexed"] is False
+
+
+def test_workflows_list_ready_schema_invalid_index_returns_error_text(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    (tmp_path / "template_index.json").write_text(
+        json.dumps({"templates": [{"path": "missing-id.py"}]}),
+        encoding="utf-8",
+    )
+    monkeypatch.chdir(tmp_path)
+
+    code = _cmd_workflows_list(argparse.Namespace(ready=True, limit=10, json=False, include_dynamic=False))
+
+    captured = capsys.readouterr()
+    assert code == 1
+    assert "template_index_schema_invalid" in captured.err
+    assert "template_index.json" in captured.err
 
 
 def test_workflows_source_info_accepts_policy_applied_python_fork(
@@ -801,3 +844,38 @@ def test_nodes_drift_unavailable_pack_returns_zero(capsys: pytest.CaptureFixture
     assert code == 0
     assert payload["status"] == "unavailable"
     assert payload["pack"] == "NonexistentPackXYZ123"
+
+
+def test_nodes_drift_partial_when_affected_template_snapshot_fails(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    pack_dir = tmp_path / "CustomPack"
+    (pack_dir / ".git").mkdir(parents=True)
+    monkeypatch.setattr(node_packs_install, "DEFAULT_INSTALL_ROOT", tmp_path)
+    monkeypatch.setattr(
+        nodes_cmd,
+        "_extract_pack_python_api",
+        lambda pack_dir, ref: (
+            "class ChangedNode:\n    pass\n"
+            if ref == "old"
+            else 'class ChangedNode:\n    def INPUT_TYPES():\n        return {"required": {"seed": ("INT",)}}\n'
+        ),
+    )
+
+    def fail_snapshot() -> object:
+        raise RuntimeError("corpus unavailable")
+
+    monkeypatch.setattr(nodes_cmd, "build_corpus_snapshot", fail_snapshot)
+
+    code = _cmd_nodes_drift(argparse.Namespace(pack="CustomPack", json=True, from_ref="old", to_ref="new"))
+
+    payload = json.loads(capsys.readouterr().out)
+    assert code == 1
+    assert payload["status"] == "partial"
+    assert payload["partial"] is True
+    assert payload["modified_classes"][0]["class"] == "ChangedNode"
+    diagnostic = payload["diagnostics"][0]
+    assert diagnostic["code"] == "affected_template_snapshot_failed"
+    assert diagnostic["details"]["exception_type"] == "RuntimeError"

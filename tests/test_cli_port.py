@@ -9,6 +9,7 @@ from pathlib import Path
 import pytest
 
 import vibecomfy.commands.port as port_commands
+import vibecomfy.commands.port._export as port_export_cmd
 from vibecomfy.cli import build_parser
 from vibecomfy.commands.port import _cmd_port_check, _cmd_port_convert, _cmd_port_doctor_all, _cmd_port_export, _cmd_port_lint, _cmd_port_rules, _cmd_port_simulate, _cmd_port_validate_call, _cmd_port_widgets
 
@@ -122,6 +123,137 @@ def test_port_export_ready_template_subprocess_json_matches_compile() -> None:
     payload = json.loads(result.stdout)
     assert result.returncode == 0
     assert payload["api"] == load_workflow_any("image/z_image").compile("api")
+
+
+def test_port_export_ui_sidecar_write_failure_reports_partial_json(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    workflow_path = tmp_path / "scratch.py"
+    workflow_path.write_text("from vibecomfy.workflow import VibeWorkflow\n", encoding="utf-8")
+    out_path = tmp_path / "out.json"
+
+    class _Source:
+        path = str(workflow_path)
+
+    class _Workflow:
+        source = _Source()
+
+    ui_payload = {
+        "nodes": [
+            {
+                "id": 1,
+                "pos": [0, 0],
+                "size": [100, 50],
+                "properties": {"vibecomfy_uid": "node-1"},
+            }
+        ]
+    }
+
+    def fail_write_store(py_path: Path, store_envelope: dict[str, object]) -> Path:
+        raise PermissionError("denied")
+
+    monkeypatch.setattr(port_commands, "_build_conversion_provider", lambda args: object())
+    monkeypatch.setattr(port_commands, "load_workflow_reference", lambda *args, **kwargs: _Workflow())
+    monkeypatch.setattr(port_commands, "emit_ui_json", lambda *args, **kwargs: ui_payload)
+    monkeypatch.setattr(port_export_cmd, "_resolve_preserve_source", lambda *args, **kwargs: (None, None, {}, None))
+    monkeypatch.setattr(port_export_cmd, "write_store", fail_write_store)
+
+    code = _cmd_port_export(
+        argparse.Namespace(
+            workflow=str(workflow_path),
+            ready=False,
+            to="ui",
+            out=str(out_path),
+            json=True,
+            object_info_cache=None,
+            no_object_info_cache=True,
+            from_path=None,
+            fresh=True,
+            strict=False,
+            main_positions=False,
+            no_virtual_wires=False,
+            force_drop=False,
+            dry_run=False,
+        )
+    )
+
+    captured = capsys.readouterr()
+    assert code == 0
+    assert out_path.exists()
+    assert json.loads(out_path.read_text(encoding="utf-8")) == ui_payload
+    assert "wrote" in captured.out
+    partial_payload = json.loads(captured.out[captured.out.find("{"):])
+    assert partial_payload["status"] == "partial"
+    diagnostic = partial_payload["diagnostics"][0]
+    assert diagnostic["code"] == "sidecar_write_failed"
+    assert diagnostic["details"]["path"] == str(workflow_path.with_suffix(".layout.json"))
+    assert diagnostic["details"]["exception_type"] == "PermissionError"
+
+
+def test_port_export_ui_sidecar_write_failure_reports_warning_text(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    workflow_path = tmp_path / "scratch.py"
+    workflow_path.write_text("from vibecomfy.workflow import VibeWorkflow\n", encoding="utf-8")
+    out_path = tmp_path / "out.json"
+
+    class _Source:
+        path = str(workflow_path)
+
+    class _Workflow:
+        source = _Source()
+
+    monkeypatch.setattr(port_commands, "_build_conversion_provider", lambda args: object())
+    monkeypatch.setattr(port_commands, "load_workflow_reference", lambda *args, **kwargs: _Workflow())
+    monkeypatch.setattr(
+        port_commands,
+        "emit_ui_json",
+        lambda *args, **kwargs: {
+            "nodes": [
+                {
+                    "id": 1,
+                    "pos": [0, 0],
+                    "size": [100, 50],
+                    "properties": {"vibecomfy_uid": "node-1"},
+                }
+            ]
+        },
+    )
+    monkeypatch.setattr(port_export_cmd, "_resolve_preserve_source", lambda *args, **kwargs: (None, None, {}, None))
+    monkeypatch.setattr(
+        port_export_cmd,
+        "write_store",
+        lambda py_path, store_envelope: (_ for _ in ()).throw(PermissionError("denied")),
+    )
+
+    code = _cmd_port_export(
+        argparse.Namespace(
+            workflow=str(workflow_path),
+            ready=False,
+            to="ui",
+            out=str(out_path),
+            json=False,
+            object_info_cache=None,
+            no_object_info_cache=True,
+            from_path=None,
+            fresh=True,
+            strict=False,
+            main_positions=False,
+            no_virtual_wires=False,
+            force_drop=False,
+            dry_run=False,
+        )
+    )
+
+    captured = capsys.readouterr()
+    assert code == 0
+    assert out_path.exists()
+    assert str(workflow_path.with_suffix(".layout.json")) in captured.err
+    assert "PermissionError" in captured.err
 
 
 def test_port_export_rejects_unsupported_target(capsys: pytest.CaptureFixture[str]) -> None:
