@@ -127,14 +127,27 @@ def _resolve_resume_cursor(
     artifact_root: Path,
     resume_cursor: Mapping[str, Any] | str | None,
 ) -> dict[str, Any]:
-    if resume_cursor is None:
-        cursor = read_resume_cursor(artifact_root)
-        if cursor is None:
-            raise EvidencePackResumeError(f"missing resume cursor under {artifact_root}")
-        return dict(cursor)
-    if isinstance(resume_cursor, str):
-        return {"stage": resume_cursor, "resume_cursor": None}
-    return dict(resume_cursor)
+    if resume_cursor is not None:
+        if isinstance(resume_cursor, str):
+            return {"stage": resume_cursor, "resume_cursor": None}
+        return dict(resume_cursor)
+
+    # Prefer a native-first resume cursor when available; otherwise fall back to
+    # the legacy graph cursor shape so older tooling that overwrites the cursor
+    # still produces a valid human_review gate check.
+    try:
+        from arnold.pipeline.native.checkpoint import read_native_cursor
+
+        native_cursor = read_native_cursor(artifact_root)
+        if native_cursor is not None:
+            return dict(native_cursor)
+    except Exception:
+        pass
+
+    cursor = read_resume_cursor(artifact_root)
+    if cursor is None:
+        raise EvidencePackResumeError(f"missing resume cursor under {artifact_root}")
+    return dict(cursor)
 
 
 def _continuation_state(
