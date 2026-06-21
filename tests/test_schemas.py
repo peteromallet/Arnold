@@ -557,7 +557,7 @@ def test_execution_schema_requires_task_updates() -> None:
     assert "sense_check_acknowledgments" in execution["properties"]
     assert "sense_check_acknowledgments" in execution["required"]
     item_schema = execution["properties"]["task_updates"]["items"]
-    assert item_schema["properties"]["status"]["enum"] == ["done", "skipped", "completed", "blocked"]
+    assert item_schema["properties"]["status"]["enum"] == ["done", "skipped", "completed", "blocked", "pending"]
     assert "files_changed" in item_schema["properties"]
     assert "commands_run" in item_schema["properties"]
     assert "auto_attributed_files" in item_schema["properties"]
@@ -1264,7 +1264,7 @@ def test_prep_schema_validates_open_questions_without_assumption() -> None:
 
 def test_execution_schema_status_enum_rejects_non_canonical() -> None:
     """Prove the execution schema's task_updates status enum is exactly
-    {done, skipped, completed, blocked} and rejects non-canonical values
+    {done, skipped, completed, blocked, pending} and rejects non-canonical values
     like ``verified`` and ``finished`` at the schema level.
 
     The alias normalizer in ``status_constants``/``merge.py`` remaps
@@ -1279,8 +1279,8 @@ def test_execution_schema_status_enum_rejects_non_canonical() -> None:
     status_enum = item_schema["properties"]["status"]["enum"]
 
     # 1) Exact set equality — no drift, no additions, no deletions.
-    assert set(status_enum) == {"done", "skipped", "completed", "blocked"}
-    assert len(status_enum) == 4
+    assert set(status_enum) == {"done", "skipped", "completed", "blocked", "pending"}
+    assert len(status_enum) == 5
 
     # 2) Schema-level rejection of non-canonical values.
     for bad_status in ("verified", "finished"):
