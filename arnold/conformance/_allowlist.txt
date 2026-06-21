@@ -115,3 +115,5 @@ semantic-coupling arnold.supervisor.outcomes
 
 public-workflow-layering arnold.pipelines.evidence_pack.steps
 public-workflow-layering arnold.pipelines.evidence_pack.hooks
+
+never-port-artifacts .megaplan/plans/**
