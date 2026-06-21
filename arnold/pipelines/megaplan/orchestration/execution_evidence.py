@@ -46,13 +46,16 @@ def validate_execution_evidence(
 
 def _evidence_window(project_dir: Path, base_ref: str | None = None) -> dict[str, Any]:
     def _rev_parse(ref: str) -> str | None:
-        completed = subprocess.run(
-            ["git", "rev-parse", ref],
-            cwd=project_dir,
-            text=True,
-            capture_output=True,
-            check=False,
-        )
+        try:
+            completed = subprocess.run(
+                ["git", "rev-parse", ref],
+                cwd=project_dir,
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+        except (FileNotFoundError, subprocess.TimeoutExpired):
+            return None
         if completed.returncode != 0:
             return None
         return completed.stdout.strip() or None
@@ -68,13 +71,16 @@ def _evidence_window(project_dir: Path, base_ref: str | None = None) -> dict[str
 def _resolve_ref_sha(project_dir: Path, ref: str | None) -> str | None:
     if not ref:
         return None
-    completed = subprocess.run(
-        ["git", "rev-parse", "--verify", ref],
-        cwd=project_dir,
-        text=True,
-        capture_output=True,
-        check=False,
-    )
+    try:
+        completed = subprocess.run(
+            ["git", "rev-parse", "--verify", ref],
+            cwd=project_dir,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return None
     if completed.returncode != 0:
         return None
     return completed.stdout.strip() or None
@@ -85,13 +91,16 @@ def _git_rev_parse_head(project_dir: Path) -> str | None:
 
 
 def _collect_declared_committed_paths(project_dir: Path, base_sha: str) -> set[str]:
-    completed = subprocess.run(
-        ["git", "diff", "--name-only", f"{base_sha}..HEAD"],
-        cwd=project_dir,
-        text=True,
-        capture_output=True,
-        check=False,
-    )
+    try:
+        completed = subprocess.run(
+            ["git", "diff", "--name-only", f"{base_sha}..HEAD"],
+            cwd=project_dir,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return set()
     if completed.returncode != 0:
         return set()
     return {
