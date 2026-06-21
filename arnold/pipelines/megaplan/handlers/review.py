@@ -296,6 +296,40 @@ def _prepare_review_payload(
             payload[key] = []
         else:
             payload.setdefault(key, [])
+    rework_items = payload.get("rework_items")
+    if isinstance(rework_items, list):
+        for item in rework_items:
+            if not isinstance(item, dict):
+                continue
+            task_id = item.get("task_id")
+            task_id_str = task_id if isinstance(task_id, str) and task_id else None
+            target = item.get("target")
+            if isinstance(target, dict):
+                kind = target.get("kind")
+                if not isinstance(kind, str) or not kind:
+                    target["kind"] = "task" if task_id_str else "global"
+                if "task_id" not in target:
+                    target["task_id"] = task_id_str
+                if "task_ids" not in target:
+                    target["task_ids"] = [task_id_str] if task_id_str else []
+                if "id" not in target:
+                    target["id"] = None
+            elif "target" not in item:
+                item["target"] = (
+                    {
+                        "kind": "task",
+                        "task_id": task_id_str,
+                        "task_ids": [task_id_str],
+                        "id": None,
+                    }
+                    if task_id_str
+                    else None
+                )
+            if "deterministic_check" not in item:
+                item["deterministic_check"] = None
+            deterministic_check = item.get("deterministic_check")
+            if isinstance(deterministic_check, dict):
+                deterministic_check.setdefault("evidence_file", None)
     return payload
 
 
@@ -868,6 +902,7 @@ def _synthesize_review_rework_items(checks: list[dict[str, Any]]) -> list[dict[s
                     check_id,
                 )
                 concerned_task_ids = [f"REVIEW-{check_id}"]
+            task_ids = [str(candidate) for candidate in concerned_task_ids if isinstance(candidate, str) and candidate]
             for task_id in concerned_task_ids:
                 item = {
                     "task_id": task_id,
@@ -877,10 +912,18 @@ def _synthesize_review_rework_items(checks: list[dict[str, Any]]) -> list[dict[s
                     "evidence_file": evidence_file,
                     "flag_id": f"REVIEW-{check_id}",
                     "source": f"review_{check_id}",
+                    "target": {
+                        "kind": "task",
+                        "task_id": task_id,
+                        "task_ids": task_ids,
+                        "id": None,
+                    },
                 }
                 deterministic_check = finding.get("deterministic_check")
                 if isinstance(deterministic_check, dict):
                     item["deterministic_check"] = deterministic_check
+                else:
+                    item["deterministic_check"] = None
                 rework_items.append(item)
     return rework_items
 
@@ -1328,13 +1371,6 @@ def handle_review(root: Path, args: argparse.Namespace) -> StepResponse:
             worker.payload = _promoted
             # ──────────────────────────────────────────────────────────
 
-            _audit_review_payload_or_raise(
-                plan_dir=plan_dir,
-                state=state,
-                payload=worker.payload,
-                raw_output=worker.raw_output,
-                duration_ms=worker.duration_ms,
-            )
             _prepare_review_payload(worker.payload, pre_check_flags=pre_check_flags)
             _audit_review_payload_or_raise(
                 plan_dir=plan_dir,
@@ -1394,13 +1430,6 @@ def handle_review(root: Path, args: argparse.Namespace) -> StepResponse:
                 worker.payload = _promoted
                 # ──────────────────────────────────────────────────────────────
 
-                _audit_review_payload_or_raise(
-                    plan_dir=plan_dir,
-                    state=state,
-                    payload=worker.payload,
-                    raw_output=worker.raw_output,
-                    duration_ms=worker.duration_ms,
-                )
                 _prepare_review_payload(worker.payload)
                 _audit_review_payload_or_raise(
                     plan_dir=plan_dir,
@@ -1466,6 +1495,7 @@ def handle_review(root: Path, args: argparse.Namespace) -> StepResponse:
                             existing_issues.add(item["issue"])
                     merged_payload["review_verdict"] = "needs_rework"
 
+                _prepare_review_payload(merged_payload, pre_check_flags=pre_check_flags)
                 _audit_review_payload_or_raise(
                     plan_dir=plan_dir,
                     state=state,
