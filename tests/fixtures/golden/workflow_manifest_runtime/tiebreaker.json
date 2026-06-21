@@ -1,0 +1,23 @@
+{
+  "case": "tiebreaker",
+  "normalization": {
+    "ordering": "stable-id",
+    "seed": null,
+    "volatile_fields": [
+      "absolute_path",
+      "duration_ms",
+      "event_id",
+      "model_latency",
+      "run_id",
+      "timestamp",
+      "token_count"
+    ]
+  },
+  "routes": [
+    "branch-a",
+    "branch-b",
+    "tiebreaker"
+  ],
+  "schema_version": "workflow-manifest-runtime.golden.v1",
+  "source_golden": "mainline-route-inventory"
+}
