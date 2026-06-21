@@ -9,6 +9,7 @@ from arnold.pipelines.megaplan import handlers as _pkg
 from arnold.pipelines.megaplan.orchestration.gate_checks import (
     build_gate_artifact,
     build_orchestrator_guidance,
+    has_high_complexity_unverifiable_checks,
     only_agent_availability_preflight_failed,
     run_gate_checks,
 )
@@ -871,6 +872,29 @@ def handle_gate(root: Path, args: argparse.Namespace) -> StepResponse:
             orchestrator_guidance=guidance,
         )
         gate_summary["reprompted"] = False
+
+        # Layer 0 backstop: a high-complexity unverifiable check means a
+        # load-bearing assumption could not be verified. Route to revise rather
+        # than letting the gate worker PROCEED past it without explicit override.
+        hc_unverifiable = has_high_complexity_unverifiable_checks(signals_artifact["signals"])
+        if hc_unverifiable and gate_summary["recommendation"] == "PROCEED":
+            ids = ", ".join(str(item.get("id", "?")) for item in hc_unverifiable)
+            gate_summary["recommendation"] = "ITERATE"
+            gate_summary["passed"] = False
+            gate_summary["rationale"] = (
+                f"{gate_summary['rationale']} "
+                f"[Auto-downgraded from PROCEED: high-complexity unverifiable check(s) {ids} "
+                "must be resolved or explicitly overridden before finalizing.]"
+            )
+            gate_summary["orchestrator_guidance"] = (
+                "Gate auto-downgraded to ITERATE because high-complexity critique check(s) "
+                f"could not be verified ({ids}). Revise the plan or use force-proceed."
+            )
+            gate_summary["warnings"] = [
+                *gate_summary.get("warnings", []),
+                f"High-complexity unverifiable check(s) blocked PROCEED: {ids}",
+            ]
+
         if len(state["meta"].get("weighted_scores", [])) < iteration:
             _append_to_meta(state, "weighted_scores", gate_signals["signals"]["weighted_score"])
         result, next_step, summary, blocking_unresolved_ids = _apply_gate_outcome(

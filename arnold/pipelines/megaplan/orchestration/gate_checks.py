@@ -14,6 +14,18 @@ from arnold.pipelines.megaplan._core import latest_plan_meta_path, load_flag_reg
 AGENT_AVAILABILITY_PREFLIGHT_CHECKS = frozenset({"claude_available", "codex_available"})
 
 
+def has_high_complexity_unverifiable_checks(signals: dict[str, Any]) -> list[dict[str, Any]]:
+    """Return high-complexity unverifiable checks that should block gate PROCEED."""
+    unverifiable = signals.get("unverifiable_checks")
+    if not isinstance(unverifiable, list):
+        return []
+    return [
+        check
+        for check in unverifiable
+        if isinstance(check, dict) and check.get("attention") == "high_complexity_unverifiable"
+    ]
+
+
 def run_gate_checks(
     plan_dir: Path,
     state: PlanState,
