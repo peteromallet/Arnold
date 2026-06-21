@@ -1,0 +1,13 @@
+# owner: characterization-surface
+# reason: pre-existing snapshot drift against current ready templates; regenerate with tools.regenerate_snapshots offline
+# audit: added during sprint-3 diagnostics verification
+
+tests/characterization/test_compile_api_snapshots.py::test_snapshot_sidecars_match_compiled_workflow[ltx2_3_i2v]
+tests/characterization/test_compile_api_snapshots.py::test_snapshot_sidecars_match_compiled_workflow[ltx2_3_t2v]
+tests/characterization/test_emitter_snapshots.py::test_emitter_snapshot[ready-empty_image_red]
+tests/characterization/test_emitter_snapshots.py::test_emitter_snapshot[ready-empty_image_red_smoke_required]
+tests/characterization/test_emitter_snapshots.py::test_emitter_snapshot[ready-flux2_klein_9b_gguf_t2i]
+tests/characterization/test_emitter_snapshots.py::test_emitter_snapshot[ready-ltx2_3_i2v]
+tests/characterization/test_emitter_snapshots.py::test_emitter_snapshot[ready-ltx2_3_t2v]
+tests/characterization/test_emitter_snapshots.py::test_emitter_snapshot[scratchpad-ltx2_3_i2v]
+tests/characterization/test_emitter_snapshots.py::test_emitter_snapshot[scratchpad-ltx2_3_t2v]

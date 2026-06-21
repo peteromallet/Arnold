@@ -73,22 +73,23 @@ def git_stdout_result(
             ),
         )
 
-    if completed.returncode != 0:
+    returncode = getattr(completed, "returncode", 0)
+    if returncode != 0:
         return GitStdoutResult(
             stdout=None,
             diagnostic=Diagnostic(
                 code="git_command_failed",
-                message=f"git command failed with exit code {completed.returncode}",
+                message=f"git command failed with exit code {returncode}",
                 severity="error",
                 recoverable=True,
                 details={
                     "command": _stringify_command(command),
-                    "returncode": completed.returncode,
-                    "stderr": _stringify_output(completed.stderr),
+                    "returncode": returncode,
+                    "stderr": _stringify_output(getattr(completed, "stderr", None)),
                 },
             ),
         )
-    return GitStdoutResult(stdout=completed.stdout)
+    return GitStdoutResult(stdout=getattr(completed, "stdout", ""))
 
 
 def git_stdout(pack_dir: Path, args: Sequence[str], *, runner: GitRunner | None = None) -> str | None:

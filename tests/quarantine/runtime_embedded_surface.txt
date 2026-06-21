@@ -1,0 +1,12 @@
+# owner: runtime-embedded-surface
+# reason: pre-existing runtime tests require live ComfyUI context offline
+# audit: added during sprint-3 diagnostics verification
+
+tests/test_runtime_run.py::test_run_embedded_ignores_comfy_kitchen_cleanup_bug_after_success[cleanup_error0]
+tests/test_runtime_run.py::test_run_embedded_ignores_comfy_kitchen_cleanup_bug_after_success[cleanup_error1]
+tests/test_runtime_run.py::test_run_embedded_ignores_hiddenswitch_cleanup_bug_after_success
+tests/test_runtime_run.py::test_run_embedded_resolves_comfy_filename_outputs_against_configured_output_directory
+tests/test_runtime_session_embedded.py::test_auto_flush_truth_table
+tests/test_runtime_session_embedded.py::test_embedded_session_reuses_single_comfy_context
+tests/test_runtime_session_embedded.py::test_warm_policy_always_never_auto_flushes
+tests/test_runtime_session_embedded.py::test_warm_policy_never_flushes_before_every_run
