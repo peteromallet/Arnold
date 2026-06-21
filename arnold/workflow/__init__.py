@@ -2,11 +2,29 @@
 
 from __future__ import annotations
 
+from arnold.workflow.compiler import CompileDiagnosticError, compile_pipeline
+from arnold.workflow.dry_run import dry_run, to_data
+from arnold.workflow.dsl import (
+    INTERNAL_EXPORTS,
+    PROVISIONAL_EXPORTS,
+    PUBLIC_EXPORTS,
+    Capability,
+    Input,
+    Output,
+    Pipeline,
+    Route,
+    Step,
+)
+from arnold.workflow.expressions import ExpressionRef, expression_ref
+from arnold.workflow.inspect import inspect_manifest, to_dot, to_yaml
 from arnold.workflow.refs import (
     EdgeRef,
+    HookRef,
+    ImportRef,
     ManifestCoordinate,
     ManifestCursor,
     NodeRef,
+    RefDiagnosticError,
     SourceRef,
     SourceSpan,
     ValueRef,
@@ -19,7 +37,6 @@ from arnold.workflow.manifests import (
     FanoutPolicy,
     LoopPolicy,
     RetryPolicy,
-    SourceSpan,
     SubpipelineRef,
     SuspensionRoute,
     WorkflowEdge,
@@ -37,12 +54,26 @@ from arnold.workflow.validation import (
 )
 
 __all__ = [
+    "Capability",
+    "CompileDiagnosticError",
     "EdgeRef",
+    "ExpressionRef",
+    "HookRef",
+    "INTERNAL_EXPORTS",
+    "ImportRef",
+    "Input",
     "ManifestCoordinate",
     "ManifestCursor",
     "NodeRef",
+    "Output",
+    "PUBLIC_EXPORTS",
+    "PROVISIONAL_EXPORTS",
+    "Pipeline",
+    "Route",
+    "RefDiagnosticError",
     "SourceRef",
     "SourceSpan",
+    "Step",
     "ValueRef",
     "BudgetPolicy",
     "CapabilityRequirement",
@@ -59,8 +90,15 @@ __all__ = [
     "canonical_json",
     "canonical_alias",
     "check_neutral_import_boundary",
+    "compile_pipeline",
     "compute_manifest_hash",
     "compute_topology_hash",
+    "dry_run",
+    "expression_ref",
+    "inspect_manifest",
     "manifest_coordinate",
+    "to_data",
+    "to_dot",
+    "to_yaml",
     "validate_manifest",
 ]

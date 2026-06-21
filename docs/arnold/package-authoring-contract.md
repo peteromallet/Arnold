@@ -7,6 +7,21 @@ package modules. It is derived from the two reference packages —
 `arnold/pipeline/discovery/manifest.py` and
 `arnold/pipelines/megaplan/_pipeline/registry.py`.
 
+## M2 Workflow Authoring Contract
+
+The M2 explicit-node authoring target is `arnold.workflow.Pipeline`.  A
+package's `build_pipeline()` entrypoint must return a `workflow.Pipeline`
+instance authored with stable node IDs and durable refs.  `WorkflowManifest` is
+the compiler output produced by `arnold.workflow.compile_pipeline()` and must
+not be hand-authored as package source.  See
+[`workflow-authoring.md`](workflow-authoring.md) for the full M2 authoring
+surface, loop/reentry rules, and stable inspect/dry-run fields.
+
+Legacy `arnold.pipeline` graph-builder docs and examples that use
+`PipelineBuilder`, `Stage`, public `Edge`, fluent chaining, or decorators remain
+supported at runtime for existing packages but are not canonical for new M2
+authoring.
+
 ## Field Table
 
 | Field | Required | Description | Accepts |
@@ -17,7 +32,7 @@ package modules. It is derived from the two reference packages —
 | `capabilities` | **required** | Labels used by the CLI, Capsule contracts, and registry filtering to classify what the pipeline can do. | `tuple[str, ...]` |
 | `driver` | **required** | Declares the execution driver shape. Accepts a plain string or a tuple of strings. Evidence-pack uses `"in_process"` (bare string); Megaplan uses `("megaplan", "planning")` (tuple). | `str` \| `tuple[str, ...]` |
 | `entrypoint` | **required** | The callable that returns a `Pipeline`. Two formats are accepted: a bare name (e.g. `"build_pipeline"`) resolved from the module's top-level namespace, or a `"module:name"` string (e.g. `"arnold.pipelines.evidence_pack:build_pipeline"`) where the part after the colon is the bare name. Evidence-pack uses the colon form; Megaplan uses a bare name. | `str` (bare or `"module:name"`) |
-| `build_pipeline` | **required** | The nullary (or effectively nullary) entrypoint callable. Must be importable and callable with no arguments from the registry's perspective. Aliased bindings (e.g. `build_pipeline = build_initial_pipeline`) are valid — the runtime validator uses `import` + `getattr`, not AST parsing. | `Callable[[], Pipeline]` |
+| `build_pipeline` | **required** | The nullary (or effectively nullary) entrypoint callable. For M2 authoring it returns `arnold.workflow.Pipeline`. Must be importable and callable with no arguments from the registry's perspective. Aliased bindings (e.g. `build_pipeline = build_initial_pipeline`) are valid — the runtime validator uses `import` + `getattr`, not AST parsing. | `Callable[[], Pipeline]` |
 | `default_profile` | **recommended** | The default profile name when the caller does not specify one. May be `None`. Evidence-pack omits this field; Megaplan declares `default_profile: str \| None = None`. | `str` \| `None` |
 | `supported_modes` | **recommended** | Tuple of mode strings the pipeline explicitly supports (e.g. `("code", "doc", "creative", "joke")`). Evidence-pack omits this field; Megaplan declares it. | `tuple[str, ...]` |
 | `hooks` | **recommended** | A module-level `Hooks` class or instance implementing lifecycle callbacks (`on_step_start`, `on_step_end`, `on_suspension`, etc.). Evidence-pack exposes `EvidencePackHooks`; Megaplan does not expose hooks at module level (hooks are internal). | `type[ExecutorHooks]` |
@@ -121,12 +136,23 @@ Authors should ensure both paths succeed for their package.
 | `resume` | ✓ | absent (internal) |
 | `build_continuation_pipeline` | ✓ | absent |
 
+## SKILL.md Expectations
+
+Every discoverable package should ship a sibling `SKILL.md` that describes the
+workflow's purpose, required capabilities, inputs/outputs, suspension and
+resume semantics, and any human-in-the-loop expectations.  The skill file is
+consumed by agentic callers and is not a substitute for the machine-readable
+module metadata above, but it must stay consistent with the `capabilities`,
+`driver`, and `build_pipeline` contract.
+
 ## Cross-References
 
 - [`package-contract.md`](package-contract.md) — narrative contract for package
   layout, entrypoint rules, static identity, and Capsule interaction.
+- [`workflow-authoring.md`](workflow-authoring.md) — M2 explicit-node authoring
+  contract and stable inspect/dry-run fields.
 - [`authoring-guide.md`](authoring-guide.md) — hands-on guide for scaffolding
-  modules, building graphs, and validating locally.
+  legacy graph-builder modules.  Non-canonical for M2 authoring.
 - [`arnold/pipeline/discovery/manifest.py`](../arnold/pipeline/discovery/manifest.py) —
   static manifest reader and `REQUIRED_FIELDS` definition.
 - [`arnold/pipelines/megaplan/_pipeline/registry.py`](../arnold/pipelines/megaplan/_pipeline/registry.py) —

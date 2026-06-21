@@ -1,0 +1,313 @@
+# Canonical Megaplan-shaped semantic fixture matrix.
+#
+# This file stores deterministic expected shapes for the M2 explicit-node DSL
+# compiler conformance suite.  Each shape is a product-neutral subset of nodes
+# and edges that a compiled manifest must contain.  Node and edge IDs are
+# prefixed by shape name to keep the matrix composable into a single pipeline.
+# Full manifest hashes are intentionally omitted; conformance tests compare
+# topology, refs, capabilities, suspension points, and control routes.
+
+shapes:
+  branch:
+    description: A branch node routes to explicit then/else targets.
+    nodes:
+      - id: branch-decide
+        kind: branch
+      - id: branch-plan
+        kind: agent
+      - id: branch-fallback
+        kind: agent
+    edges:
+      - id: branch-decide-branch-plan
+        source: branch-decide
+        target: branch-plan
+        label: then
+        condition_ref: tests.arnold.patterns._fixtures:decide_condition
+      - id: branch-decide-branch-fallback
+        source: branch-decide
+        target: branch-fallback
+        label: else
+        condition_ref: "tests.arnold.patterns._fixtures:decide_condition:negated"
+
+  loop_revise:
+    description: Bounded loop/revise uses explicit reentry edges, not arbitrary cycles.
+    nodes:
+      - id: loop
+        kind: loop
+      - id: loop-body
+        kind: agent
+      - id: revise
+        kind: revise
+      - id: draft
+        kind: agent
+    edges:
+      - id: loop-loop-body
+        source: loop
+        target: loop-body
+        label: go
+        condition_ref: null
+      - id: loop-body-loop
+        source: loop-body
+        target: loop
+        label: reentry
+        condition_ref: retry
+      - id: draft-revise
+        source: draft
+        target: revise
+        label: revise
+        condition_ref: retry-revise
+    policies:
+      loop:
+        loop:
+          max_iterations: 3
+          until_ref: tests.arnold.patterns._fixtures:decide_condition
+        suspension_routes:
+          - route_id: loop-reentry
+            capability_id: null
+            reentry_id: retry
+      revise:
+        loop:
+          max_iterations: 4
+          until_ref: tests.arnold.patterns._fixtures:decide_condition
+        suspension_routes:
+          - route_id: revise-reentry
+            capability_id: null
+            reentry_id: retry-revise
+
+  fanout_panel:
+    description: Fanout branches to parallel agents joined by a merge node.
+    nodes:
+      - id: fan
+        kind: fanout
+      - id: fan-branch-a
+        kind: agent
+      - id: fan-branch-b
+        kind: agent
+      - id: fan-merged
+        kind: merge
+    edges:
+      - id: fan-fan-branch-a
+        source: fan
+        target: fan-branch-a
+        label: branch
+      - id: fan-fan-branch-b
+        source: fan
+        target: fan-branch-b
+        label: branch
+      - id: fan-branch-a-fan-merged
+        source: fan-branch-a
+        target: fan-merged
+        label: join
+      - id: fan-branch-b-fan-merged
+        source: fan-branch-b
+        target: fan-merged
+        label: join
+    policies:
+      fan:
+        fanout:
+          mode: static
+          reducer_ref: tests.arnold.patterns._fixtures:reducer
+
+  retry:
+    description: Bounded retry wraps a fragile step with explicit reentry.
+    nodes:
+      - id: retry
+        kind: retry
+      - id: retry-fragile
+        kind: agent
+    edges:
+      - id: retry-retry-fragile
+        source: retry
+        target: retry-fragile
+        label: attempt
+      - id: retry-fragile-retry
+        source: retry-fragile
+        target: retry
+        label: retry
+        condition_ref: retry:retry
+    policies:
+      retry:
+        retry:
+          max_attempts: 3
+          backoff: none
+          retry_on:
+            - error
+        loop:
+          max_iterations: 3
+        suspension_routes:
+          - route_id: retry-reentry
+            capability_id: null
+            reentry_id: retry:retry
+
+  subpipeline:
+    description: Subpipeline step references a nested manifest by hash.
+    nodes:
+      - id: inner
+        kind: subpipeline
+    subpipelines:
+      inner:
+        manifest_hash: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        alias: nested
+
+  suspension_capability:
+    description: Generic suspension step is gated by a capability and reentry id.
+    nodes:
+      - id: gate
+        kind: suspension
+        capabilities:
+          - capability_id: human:operator
+            route: default
+            required: true
+    policies:
+      gate:
+        suspension_routes:
+          - route_id: gate-gate
+            capability_id: human:operator
+            reentry_id: resume
+
+  override_fallback:
+    description: Override edge labels allow fallback routing without changing ids.
+    nodes:
+      - id: override-decide
+        kind: branch
+      - id: override-primary
+        kind: agent
+      - id: override-fallback
+        kind: agent
+    edges:
+      - id: override-decide-override-primary
+        source: override-decide
+        target: override-primary
+        label: default
+      - id: override-decide-override-fallback
+        source: override-decide
+        target: override-fallback
+        label: fallback
+
+  escalation:
+    description: Escalation target receives a labeled control route.
+    nodes:
+      - id: escalate-review
+        kind: review
+      - id: escalate-supervisor
+        kind: agent
+    edges:
+      - id: escalate-review-escalate-supervisor
+        source: escalate-review
+        target: escalate-supervisor
+        label: escalate
+
+  compensation:
+    description: Compensation target receives a labeled rollback route.
+    nodes:
+      - id: compensate-fragile
+        kind: agent
+      - id: compensate-target
+        kind: agent
+    edges:
+      - id: compensate-fragile-compensate-target
+        source: compensate-fragile
+        target: compensate-target
+        label: compensate
+
+  supervisor_promotion:
+    description: Supervisor promotion is a labeled route to an elevated agent.
+    nodes:
+      - id: promote-gate
+        kind: suspension
+      - id: promote-supervisor
+        kind: agent
+    edges:
+      - id: promote-gate-promote-supervisor
+        source: promote-gate
+        target: promote-supervisor
+        label: promote
+
+  feedback:
+    description: Feedback loop routes output back to an earlier step.
+    nodes:
+      - id: feedback-review
+        kind: review
+      - id: feedback-plan
+        kind: agent
+    edges:
+      - id: feedback-review-feedback-plan
+        source: feedback-review
+        target: feedback-plan
+        label: feedback
+
+  robustness_budget:
+    description: Robustness policy slots are carried on nodes.
+    nodes:
+      - id: robust-plan
+        kind: agent
+    policies:
+      robust-plan:
+        budget:
+          max_cost: 1.0
+          max_seconds: 30.0
+          max_attempts: 2
+          token_budget: 1000
+
+  dynamic_topology_overlay:
+    description: Dynamic overlay event slots are neutral metadata, not runtime code.
+    nodes:
+      - id: overlay
+        kind: agent
+    metadata:
+      overlay:
+        dynamic_events:
+          - event: on_branch
+            slot: branch
+          - event: on_suspend
+            slot: suspension
+
+  tournament:
+    description: Tournament lowers two full tiebreaker rounds to explicit nodes/routes.
+    nodes:
+      - id: tourney-judge
+        kind: branch
+      - id: tourney-tiebreak-1
+        kind: branch
+      - id: tourney-tiebreak-2
+        kind: branch
+      - id: tourney-winner
+        kind: merge
+      - id: tourney-candidate-a
+        kind: agent
+      - id: tourney-candidate-b
+        kind: agent
+    edges:
+      - id: tourney-candidate-a-tourney-judge
+        source: tourney-candidate-a
+        target: tourney-judge
+        label: candidate
+      - id: tourney-candidate-b-tourney-judge
+        source: tourney-candidate-b
+        target: tourney-judge
+        label: candidate
+      - id: tourney-judge-tourney-tiebreak-1
+        source: tourney-judge
+        target: tourney-tiebreak-1
+        label: tie
+        condition_ref: tests.arnold.patterns._fixtures:decide_condition
+      - id: tourney-judge-tourney-winner
+        source: tourney-judge
+        target: tourney-winner
+        label: winner
+        condition_ref: tests.arnold.patterns._fixtures:judge_winner
+      - id: tourney-tiebreak-1-tourney-tiebreak-2
+        source: tourney-tiebreak-1
+        target: tourney-tiebreak-2
+        label: tie
+        condition_ref: tests.arnold.patterns._fixtures:decide_condition
+      - id: tourney-tiebreak-1-tourney-winner
+        source: tourney-tiebreak-1
+        target: tourney-winner
+        label: winner
+        condition_ref: tests.arnold.patterns._fixtures:judge_winner
+      - id: tourney-tiebreak-2-tourney-winner
+        source: tourney-tiebreak-2
+        target: tourney-winner
+        label: winner
+        condition_ref: tests.arnold.patterns._fixtures:judge_winner
