@@ -100,7 +100,11 @@ from arnold.pipelines.megaplan.planning.state import (
     STATE_EXECUTED,
     STATE_FINALIZED,
 )
-from arnold.pipelines.megaplan.bakeoff.channel_shadow import maybe_run_channel_shadow
+try:
+    from arnold.pipelines.megaplan.bakeoff.channel_shadow import maybe_run_channel_shadow
+except ImportError:  # pragma: no cover - exercised by import-isolation subprocess tests
+    def maybe_run_channel_shadow(**_kwargs: Any) -> None:
+        return None
 from arnold.pipelines.megaplan.workers import WorkerResult
 from arnold.pipelines.megaplan.workers.result_metadata import aggregate_rate_limits
 
@@ -432,11 +436,27 @@ def _strip_provider_prefix(model: str | None) -> str | None:
     return value
 
 
+def _claude_tier(model: str | None) -> str | None:
+    """Return the Claude tier name encoded in *model*, if any."""
+    bare = _strip_provider_prefix(model)
+    if not isinstance(bare, str):
+        return None
+    lowered = bare.lower()
+    for tier in ("haiku", "sonnet", "opus"):
+        if lowered == tier or f"-{tier}" in lowered or lowered.startswith(f"{tier}-"):
+            return tier
+    return None
+
+
 def _models_match(selected: str | None, actual: str | None) -> bool:
     if not selected or not actual:
         return True
     if selected == actual or _strip_provider_prefix(selected) == _strip_provider_prefix(actual):
         return True
+    selected_tier = _claude_tier(selected)
+    actual_tier = _claude_tier(actual)
+    if selected_tier is not None or actual_tier is not None:
+        return selected_tier is not None and selected_tier == actual_tier
     selected_bare = _strip_provider_prefix(selected)
     actual_bare = _strip_provider_prefix(actual)
     return bool(
