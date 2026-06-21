@@ -1499,13 +1499,14 @@ def _codex_writable_roots(
 
     seen: set[str] = set()
     filtered: list[str] = []
+    trusted = _trusted_container()
     for root, source in roots:
         root_str = str(root)
         if root_str in seen:
             continue
         seen.add(root_str)
         overlap = classify_path_overlap(root, env.engine_root)
-        if overlap != "disjoint":
+        if overlap != "disjoint" and not trusted:
             if source == "auto" and not (root / ".git").exists():
                 continue
             raise isolation_cli_error(
