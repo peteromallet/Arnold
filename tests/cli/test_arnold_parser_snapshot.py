@@ -9,14 +9,20 @@ EXPECTED_SURFACE = {
     "top_level": ["auto", "override", "pipelines", "run", "<module>"],
     "discovered_modules": [
         "creative",
+        "deliberation",
         "doc",
         "epic-blitz",
+        "evidence-pack",
+        "folder-audit",
         "jokes",
+        "live-supervisor",
         "megaplan",
         "select-tournament",
+        "simplify-writing",
+        "vibecomfy-executor",
         "writing-panel-strict",
     ],
-    "pipelines_actions": ["check", "doctor", "list", "new"],
+    "pipelines_actions": ["check", "describe", "doctor", "list", "new"],
     "module_verbs": ["run", "check", "doctor", "describe", "auto"],
     "planning_module_verbs": ["run", "check", "doctor", "describe", "auto", "override"],
     "umbrella_override_actions": [
@@ -35,6 +41,7 @@ EXPECTED_SURFACE = {
     ],
     "megaplan_override_actions": [
         "abort",
+        "adopt-execution",
         "force-proceed",
         "add-note",
         "replan",
@@ -47,11 +54,13 @@ EXPECTED_SURFACE = {
     ],
     "megaplan_override_options": {
         "effort": {"option_strings": ["--effort"], "choices": None, "action": "_StoreAction"},
+        "expires_after_runs": {"option_strings": ["--expires-after-runs"], "choices": None, "action": "_StoreAction"},
         "model": {"option_strings": ["--model"], "choices": None, "action": "_StoreAction"},
         "note": {"option_strings": ["--note"], "choices": None, "action": "_StoreAction"},
         "phase": {"option_strings": ["--phase"], "choices": None, "action": "_StoreAction"},
         "plan": {"option_strings": ["--plan"], "choices": None, "action": "_StoreAction"},
         "profile": {"option_strings": ["--profile"], "choices": None, "action": "_StoreAction"},
+        "project_dir": {"option_strings": ["--project-dir"], "choices": None, "action": "_StoreAction"},
         "reason": {"option_strings": ["--reason"], "choices": None, "action": "_StoreAction"},
         "robustness": {
             "option_strings": ["--robustness"],
@@ -73,6 +82,7 @@ EXPECTED_SURFACE = {
             "choices": ["user", "driver"],
             "action": "_StoreAction",
         },
+        "target_root": {"option_strings": ["--target-root"], "choices": None, "action": "_StoreAction"},
         "user_approved": {
             "option_strings": ["--user-approved"],
             "choices": None,
@@ -115,7 +125,7 @@ def _current_surface() -> dict[str, object]:
     return {
         "top_level": ["auto", "override", "pipelines", "run", "<module>"],
         "discovered_modules": sorted(arnold._discovered_module_names()),
-        "pipelines_actions": ["check", "doctor", "list", "new"],
+        "pipelines_actions": ["check", "describe", "doctor", "list", "new"],
         "module_verbs": list(arnold.MODULE_VERBS),
         "planning_module_verbs": list(arnold.PLANNING_MODULE_VERBS),
         "umbrella_override_actions": list(arnold.UMBRELLA_OVERRIDE_ACTIONS),
