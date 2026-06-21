@@ -846,6 +846,20 @@ def _normalize_critique_payload_for_recovery(payload: dict[str, Any]) -> dict[st
         if not isinstance(check, dict):
             clean_checks.append(check)
             continue
+        # Strip unknown check-level keys as a defense against template/schema drift.
+        allowed_check_keys = {
+            "id",
+            "question",
+            "guidance",
+            "prior_findings",
+            "findings",
+            "status",
+            "unverifiable_reason",
+        }
+        check_extra_keys = set(check) - allowed_check_keys
+        if check_extra_keys:
+            check = {k: v for k, v in check.items() if k in allowed_check_keys}
+            changed = True
         findings = check.get("findings")
         if not isinstance(findings, list):
             clean_checks.append(check)
