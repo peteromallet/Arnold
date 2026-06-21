@@ -69,6 +69,33 @@ _wrappers_lock = threading.Lock()
 _wrapped_originals: dict[str, object] = {}
 
 
+def _load_tool_registry():
+    """Return the active tool registry, including legacy SDK module shims.
+
+    Tests and older SDK integrations install a ``tools.registry`` module in
+    ``sys.modules``.  Prefer that explicit shim when present; otherwise use the
+    migrated Arnold registry.
+    """
+    import sys
+
+    legacy_module = sys.modules.get("tools.registry")
+    legacy_registry = getattr(legacy_module, "registry", None) if legacy_module else None
+    if legacy_registry is not None:
+        return legacy_registry
+
+    try:
+        from arnold.agent.tools.registry import registry as arnold_registry  # type: ignore
+        return arnold_registry
+    except Exception:
+        pass
+
+    try:
+        from tools.registry import registry as sdk_registry  # type: ignore
+        return sdk_registry
+    except Exception:
+        return None
+
+
 def _ensure_wrappers_installed():
     """Install sandbox wrappers on tool registry handlers exactly once.
 
@@ -81,12 +108,10 @@ def _ensure_wrappers_installed():
     with _wrappers_lock:
         if _wrappers_installed:
             return
-        try:
-            from arnold.agent.tools.registry import registry as _registry  # type: ignore
-        except Exception as exc:
+        _registry = _load_tool_registry()
+        if _registry is None:
             logger.debug(
-                "sandbox: tool registry unavailable, wrapper installation skipped: %s",
-                exc,
+                "sandbox: tool registry unavailable, wrapper installation skipped"
             )
             _wrappers_installed = True
             return
@@ -112,9 +137,8 @@ def _unwrap_all_for_tests():
     don't carry stale wrapped state between tests.
     """
     global _wrappers_installed
-    try:
-        from arnold.agent.tools.registry import registry as _registry  # type: ignore
-    except Exception:
+    _registry = _load_tool_registry()
+    if _registry is None:
         _wrappers_installed = False
         _wrapped_originals.clear()
         return
