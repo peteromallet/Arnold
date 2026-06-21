@@ -127,6 +127,25 @@ def test_acceptance_discover_dynamic_opt_in_marks_unindexed_rows(
     assert payload[1]["public_outputs"] == []
 
 
+def test_acceptance_discover_corrupt_ready_index_returns_structured_error(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    (tmp_path / "template_index.json").write_text("{not-json", encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+
+    code = _cmd_workflows_list(argparse.Namespace(ready=True, limit=10, json=True, include_dynamic=False))
+
+    payload = _read_json(capsys)
+    assert code == 1
+    assert payload["status"] == "error"
+    diagnostic = payload["diagnostics"][0]
+    assert diagnostic["code"] == "template_index_corrupt"
+    assert "template_index.json" in diagnostic["message"]
+    assert diagnostic["details"]["path"] == "template_index.json"
+
+
 def test_acceptance_inspect_contract_and_doctor_surfaces_align_for_z_image(
     capsys: pytest.CaptureFixture[str],
 ) -> None:

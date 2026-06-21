@@ -1,0 +1,5 @@
+# owner: schema-oracle-surface
+# reason: pre-existing schema provider selection needs ComfyUI oracle offline
+# audit: added during sprint-3 diagnostics verification
+
+tests/test_schema.py::test_get_schema_provider_auto_selection

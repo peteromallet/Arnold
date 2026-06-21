@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 from pathlib import Path
 from typing import Any
 
 import vibecomfy.fetch as fetch_assets
+from vibecomfy.commands._diagnostics import Diagnostic, diagnostics_to_json, diagnostics_to_text
 from vibecomfy.commands._output import emit
 from vibecomfy.commands._index_files import IndexReadError, print_index_error
 from vibecomfy.commands._workflow_path import load_workflow_index_rows
@@ -24,7 +26,22 @@ CONTRACT_SHAPE = "workflow_runtime_contract.v1.public_descriptors.v2"
 def _cmd_workflows_list(args: argparse.Namespace) -> int:
     rows = []
     if args.ready:
-        index_rows = _ready_rows_from_template_index()
+        index_rows, index_diagnostic = _ready_rows_from_template_index()
+        if index_diagnostic is not None:
+            if args.json:
+                print(
+                    json.dumps(
+                        {
+                            "status": "error",
+                            "diagnostics": diagnostics_to_json([index_diagnostic]),
+                        },
+                        indent=2,
+                        sort_keys=True,
+                    )
+                )
+            else:
+                print(diagnostics_to_text([index_diagnostic]), file=sys.stderr)
+            return 1
         if index_rows:
             rows = index_rows[: args.limit]
             if getattr(args, "include_dynamic", False):
@@ -41,20 +58,38 @@ def _cmd_workflows_list(args: argparse.Namespace) -> int:
     return emit(rows[: args.limit], json=args.json, text_renderer=_render_workflow_rows)
 
 
-def _ready_rows_from_template_index() -> list[dict[str, Any]]:
+def _ready_rows_from_template_index() -> tuple[list[dict[str, Any]], Diagnostic | None]:
     if not TEMPLATE_INDEX_PATH.exists():
-        return []
+        return [], None
     try:
         payload = json.loads(TEMPLATE_INDEX_PATH.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return []
+    except OSError as exc:
+        return [], _template_index_diagnostic(
+            "template_index_unreadable",
+            f"template_index.json could not be read: {type(exc).__name__}: {exc}",
+            exception=exc,
+        )
+    except json.JSONDecodeError as exc:
+        return [], _template_index_diagnostic(
+            "template_index_corrupt",
+            f"template_index.json contains invalid JSON: {exc}",
+            exception=exc,
+            extra_details={"line": exc.lineno, "column": exc.colno},
+        )
     templates = payload.get("templates") if isinstance(payload, dict) else None
     if not isinstance(templates, list):
-        return []
+        return [], _template_index_diagnostic(
+            "template_index_schema_invalid",
+            "template_index.json must be an object with a list field named `templates`.",
+        )
     rows: list[dict[str, Any]] = []
-    for item in templates:
+    for idx, item in enumerate(templates):
         if not isinstance(item, dict) or not isinstance(item.get("id"), str):
-            continue
+            return [], _template_index_diagnostic(
+                "template_index_schema_invalid",
+                "template_index.json template entries must be objects with string `id` fields.",
+                extra_details={"template_index": idx},
+            )
         rows.append(
             {
                 "media_type": "ready",
@@ -76,7 +111,28 @@ def _ready_rows_from_template_index() -> list[dict[str, Any]]:
                 "strict_ready_diagnostic_counts": item.get("strict_ready_diagnostic_counts") or {},
             }
         )
-    return rows
+    return rows, None
+
+
+def _template_index_diagnostic(
+    code: str,
+    message: str,
+    *,
+    exception: BaseException | None = None,
+    extra_details: dict[str, Any] | None = None,
+) -> Diagnostic:
+    details: dict[str, Any] = {"path": str(TEMPLATE_INDEX_PATH)}
+    if exception is not None:
+        details.update({"exception_type": type(exception).__name__, "exception": str(exception)})
+    if extra_details:
+        details.update(extra_details)
+    return Diagnostic(
+        code=code,
+        message=message,
+        severity="error",
+        recoverable=False,
+        details=details,
+    )
 
 
 def _ready_rows_without_index() -> list[dict[str, Any]]:
