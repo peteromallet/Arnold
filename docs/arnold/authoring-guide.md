@@ -1,5 +1,12 @@
 # Arnold Authoring Guide
 
+> **M2 canonical note:** This guide documents the legacy `arnold.pipeline`
+> graph-builder surface (`PipelineBuilder`, `Stage`, public `Edge`, fluent
+> chaining, decorators).  Existing runtime packages continue to work, but new
+> M2 authoring should follow the explicit-node contract in
+> [`workflow-authoring.md`](workflow-authoring.md).  `build_pipeline()` for M2
+> returns `arnold.workflow.Pipeline`; `WorkflowManifest` is compiler output.
+
 Arnold is the module-oriented face of Megaplan pipelines. Use it when a workflow
 should be discoverable as a named module, runnable from the CLI, inspectable by
 the pipeline checker, and documented for agents through a sibling `SKILL.md`.
