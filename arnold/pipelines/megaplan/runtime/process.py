@@ -30,7 +30,15 @@ from arnold.runtime.process import (  # noqa: F401
 
 
 def megaplan_engine_root() -> Path:
-    """Return the repository root for the currently imported Arnold engine."""
+    """Return the repository root for the currently imported Arnold engine.
+
+    Honors ``MEGAPLAN_ENGINE_ROOT`` when set, so local worktree runs can
+    point the isolation machinery at the editable engine checkout even when
+    Python imports ``arnold`` from the target worktree directory.
+    """
+    explicit = os.environ.get("MEGAPLAN_ENGINE_ROOT", "").strip()
+    if explicit:
+        return Path(explicit).expanduser().resolve()
     return Path(__file__).resolve().parents[4]
 
 
