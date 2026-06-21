@@ -725,11 +725,26 @@ def run_command(
                 duration_ms=int((time.monotonic() - started) * 1000),
             )
 
+        stdin_path: Path | None = None
+        stdin_file: Any | None = None
         try:
+            if stdin_text is not None:
+                # Large prompts written to a PIPE can deadlock: the producer
+                # blocks when the pipe buffer fills before the consumer has
+                # started draining stdin. Writing the prompt to a temp file and
+                # letting the child read directly from that file avoids the
+                # pipe-buffer race entirely.
+                stdin_handle = tempfile.NamedTemporaryFile("w+", encoding="utf-8", delete=False)
+                stdin_handle.write(stdin_text)
+                stdin_handle.flush()
+                stdin_handle.close()
+                stdin_path = Path(stdin_handle.name)
+                stdin_file = open(stdin_path, "rb")
+
             process = spawn(
                 command,
                 cwd=str(cwd),
-                stdin=subprocess.PIPE if stdin_text is not None else subprocess.DEVNULL,
+                stdin=stdin_file if stdin_file is not None else subprocess.DEVNULL,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 env=env,
@@ -835,30 +850,6 @@ def run_command(
             threads.append(threading.Thread(target=_heartbeat, daemon=True))
             for thread in threads:
                 thread.start()
-            if process.stdin is not None and stdin_text is not None:
-                # Write stdin asynchronously so the watchdog loop can enforce
-                # pre-first-byte / idle timeouts even when the child does not
-                # drain its stdin promptly (e.g. codex wedged at startup with a
-                # large prompt). A synchronous write here can block forever on a
-                # full pipe buffer while the child is idle, preventing timeouts
-                # from firing.
-                stdin_bytes = stdin_text.encode("utf-8")
-                stdin_error: list[Exception] = []
-
-                def _write_stdin() -> None:
-                    try:
-                        process.stdin.write(stdin_bytes)  # type: ignore[union-attr]
-                        process.stdin.close()  # type: ignore[union-attr]
-                    except (BrokenPipeError, OSError) as exc:
-                        # Child exited or pipe closed before/while writing.
-                        try:
-                            process.stdin.close()  # type: ignore[union-attr]
-                        except Exception:
-                            pass
-                        stdin_error.append(exc)
-
-                stdin_writer = threading.Thread(target=_write_stdin, daemon=True)
-                stdin_writer.start()
 
             def _coerce_timeout_output(parts: list[bytes]) -> str:
                 return b"".join(parts).decode("utf-8", errors="replace")
@@ -1157,6 +1148,20 @@ def run_command(
             duration_ms=int((time.monotonic() - started) * 1000),
         )
     finally:
+        # Guard against UnboundLocalError when an early exception prevents
+        # the stdin temp-file variables from being bound.
+        stdin_file_local = locals().get("stdin_file")
+        if stdin_file_local is not None:
+            try:
+                stdin_file_local.close()
+            except Exception:
+                pass
+        stdin_path_local = locals().get("stdin_path")
+        if stdin_path_local is not None:
+            try:
+                stdin_path_local.unlink(missing_ok=True)
+            except Exception:
+                pass
         if tmux_session:
             tmux_session.teardown()
 
