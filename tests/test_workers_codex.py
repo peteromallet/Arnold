@@ -97,9 +97,12 @@ def test_run_codex_execute_enters_engine_write_barrier(
     assert [phase for _env, phase in _allow_engine_write_barrier_for_codex_worker_tests] == ["execute"]
 
 
-def test_codex_writable_roots_refuse_engine_overlap_and_keep_non_overlapping_sibling(tmp_path: Path) -> None:
+def test_codex_writable_roots_refuse_engine_overlap_and_keep_non_overlapping_sibling(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     from arnold.pipelines.megaplan.runtime.execution_environment import resolve_execution_environment
+    from arnold.pipelines.megaplan.workers import _impl
     from arnold.pipelines.megaplan.workers._impl import _codex_writable_roots
+
+    monkeypatch.setattr(_impl, "_trusted_container", lambda: False)
 
     plan_dir, state = _mock_state(tmp_path)
     del plan_dir
@@ -124,9 +127,12 @@ def test_codex_writable_roots_refuse_engine_overlap_and_keep_non_overlapping_sib
     assert excinfo.value.extra["overlap"] == "equal"
 
 
-def test_codex_writable_roots_refuse_engine_child_and_engine_containing_ancestor(tmp_path: Path) -> None:
+def test_codex_writable_roots_refuse_engine_child_and_engine_containing_ancestor(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     from arnold.pipelines.megaplan.runtime.execution_environment import resolve_execution_environment
+    from arnold.pipelines.megaplan.workers import _impl
     from arnold.pipelines.megaplan.workers._impl import _codex_writable_roots
+
+    monkeypatch.setattr(_impl, "_trusted_container", lambda: False)
 
     plan_dir, state = _mock_state(tmp_path)
     del plan_dir
@@ -147,9 +153,12 @@ def test_codex_writable_roots_refuse_engine_child_and_engine_containing_ancestor
     assert excinfo.value.extra["overlap"] == "left_contains_right"
 
 
-def test_codex_writable_root_refuses_target_engine_overlap(tmp_path: Path) -> None:
+def test_codex_writable_root_refuses_target_engine_overlap(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     from arnold.pipelines.megaplan.runtime.execution_environment import resolve_execution_environment
+    from arnold.pipelines.megaplan.workers import _impl
     from arnold.pipelines.megaplan.workers._impl import _codex_writable_roots
+
+    monkeypatch.setattr(_impl, "_trusted_container", lambda: False)
 
     plan_dir, state = _mock_state(tmp_path)
     del plan_dir
@@ -162,9 +171,31 @@ def test_codex_writable_root_refuses_target_engine_overlap(tmp_path: Path) -> No
     assert excinfo.value.extra["writable_root_source"] == "target_work_dir"
 
 
-def test_codex_writable_roots_fail_fast_when_auto_widening_would_include_engine(tmp_path: Path) -> None:
+def test_codex_writable_roots_allow_engine_overlap_in_trusted_container(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     from arnold.pipelines.megaplan.runtime.execution_environment import resolve_execution_environment
+    from arnold.pipelines.megaplan.workers import _impl
     from arnold.pipelines.megaplan.workers._impl import _codex_writable_roots
+
+    monkeypatch.setattr(_impl, "_trusted_container", lambda: True)
+
+    plan_dir, state = _mock_state(tmp_path)
+    del plan_dir
+    project_dir = Path(state["config"]["project_dir"]).resolve()
+    engine = tmp_path.parent / f"{tmp_path.name}-engine"
+    engine.mkdir()
+    env = resolve_execution_environment(root=tmp_path, state=state, engine_root=engine)
+
+    state["config"]["extra_writable_roots"] = [str(engine)]
+    roots = _codex_writable_roots(project_dir, state, env)
+    assert str(engine.resolve()) in roots
+
+
+def test_codex_writable_roots_fail_fast_when_auto_widening_would_include_engine(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from arnold.pipelines.megaplan.runtime.execution_environment import resolve_execution_environment
+    from arnold.pipelines.megaplan.workers import _impl
+    from arnold.pipelines.megaplan.workers._impl import _codex_writable_roots
+
+    monkeypatch.setattr(_impl, "_trusted_container", lambda: False)
 
     (tmp_path / ".git").mkdir()
     plan_dir, state = _mock_state(tmp_path)
@@ -183,10 +214,12 @@ def test_codex_writable_roots_fail_fast_when_auto_widening_would_include_engine(
     assert excinfo.value.extra["overlap"] == "left_contains_right"
 
 
-def test_codex_execute_command_uses_filtered_writable_roots(tmp_path: Path) -> None:
+def test_codex_execute_command_uses_filtered_writable_roots(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     from arnold.pipelines.megaplan._core import ensure_runtime_layout
     from arnold.pipelines.megaplan.workers import CommandResult, run_codex_step
+    from arnold.pipelines.megaplan.workers import _impl
 
+    monkeypatch.setattr(_impl, "_trusted_container", lambda: False)
     ensure_runtime_layout(tmp_path)
     plan_dir, state = _mock_state(tmp_path)
     project_dir = Path(state["config"]["project_dir"]).resolve()
