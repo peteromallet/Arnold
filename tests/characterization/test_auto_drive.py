@@ -713,6 +713,19 @@ _BRANCHES: list[dict[str, Any]] = [
             "R4-addition: max_iterations exceeded (L2622-2640)"
         ),
     },
+    # ── infrastructure_error ────────────────────────────────────────────
+    {
+        "name": "infrastructure_error",
+        "auto_py_line": 3702,
+        "exit_kind_or_status": "infrastructure_error",
+        "phase_result_payload": None,
+        "status_override": (None, "finalized"),
+        "status_raises": False,
+        "expected_exit_code": 9,
+        "oracle_role": (
+            "terminal arm: phase refused by non-retryable infrastructure preflight"
+        ),
+    },
 ]
 
 
@@ -1850,6 +1863,38 @@ _GOLDEN_RECIPES: list[dict[str, Any]] = [
                 "stderr": "",
                 "write_phase_result": "success",
                 "phase": "finalize",
+            },
+        ],
+    },
+    # ── infrastructure_error ────────────────────────────────────────────
+    #
+    # Phase subprocess reports internal_error and stderr contains a
+    # non-retryable infrastructure CliError (engine_write_isolation_unverified).
+    # auto.py:3659-3708 routes this to an infrastructure_error outcome.
+    {
+        "name": "infrastructure_error",
+        "branch_ref": "infrastructure_error",
+        "mode": "stateful_run",
+        "status_sequence": [
+            {
+                "success": True,
+                "step": "status",
+                "state": "finalized",
+                "iteration": 1,
+                "summary": "Plan finalized — ready to execute.",
+                "next_step": "execute",
+                "valid_next": ["execute"],
+            },
+        ],
+        "run_side_effects": [
+            {
+                "code": 0,
+                "stdout": "",
+                "stderr": (
+                    '{"error": "engine_write_isolation_unverified", '
+                    '"message": "engine write isolation is not verified"}'
+                ),
+                "write_phase_result": "internal_error",
             },
         ],
     },
