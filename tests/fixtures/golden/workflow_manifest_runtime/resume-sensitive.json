@@ -1,0 +1,23 @@
+{
+  "case": "resume-sensitive",
+  "normalization": {
+    "ordering": "stable-id",
+    "seed": null,
+    "volatile_fields": [
+      "absolute_path",
+      "duration_ms",
+      "event_id",
+      "model_latency",
+      "run_id",
+      "timestamp",
+      "token_count"
+    ]
+  },
+  "routes": [
+    "legacy-cursor",
+    "manifest-coordinate-cursor",
+    "resume"
+  ],
+  "schema_version": "workflow-manifest-runtime.golden.v1",
+  "source_golden": "tests/fixtures/golden/pipeline_resume_after_finalize.json"
+}

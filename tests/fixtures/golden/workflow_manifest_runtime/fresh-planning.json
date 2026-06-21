@@ -1,0 +1,23 @@
+{
+  "case": "fresh-planning",
+  "normalization": {
+    "ordering": "stable-id",
+    "seed": null,
+    "volatile_fields": [
+      "absolute_path",
+      "duration_ms",
+      "event_id",
+      "model_latency",
+      "run_id",
+      "timestamp",
+      "token_count"
+    ]
+  },
+  "routes": [
+    "prep",
+    "plan",
+    "review"
+  ],
+  "schema_version": "workflow-manifest-runtime.golden.v1",
+  "source_golden": "tests/fixtures/golden/pipeline_fresh_run.json"
+}
