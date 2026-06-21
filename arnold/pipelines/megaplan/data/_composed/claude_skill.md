@@ -11,7 +11,6 @@ description: AI agent harness for coordinating Claude and GPT to make and execut
 
 Route every step through the Arnold CLI's Megaplan subcommands. Never call agents directly.
 Before the first CLI call, resolve a working launcher and reuse it for the whole run. Do not assume the removed `megaplan` entrypoint is on `PATH`; command presence alone is not enough. Prove the launcher works by successfully running a harmless CLI call with it first. In the instructions below, treat `<launcher>` as that verified command.
-Only use bare `megaplan ...` if that exact form already succeeded during this check.
 Launcher resolution order:
 1. Try `python -m arnold.pipelines.megaplan config show`.
 2. If that fails, try `./.venv/bin/python -m arnold.pipelines.megaplan config show`.

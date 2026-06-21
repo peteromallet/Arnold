@@ -2103,6 +2103,11 @@ def _setup_chain_worktree(args: argparse.Namespace) -> None:
 
     set_work_dir_override(target)
 
+    # Point engine-isolation at the invoking (engine) checkout.  The target
+    # worktree shadows the editable install when Python resolves ``arnold`` from
+    # cwd, so ``megaplan_engine_root()`` needs an explicit anchor.
+    os.environ["MEGAPLAN_ENGINE_ROOT"] = str(invoking_repo)
+
     print(
         f"Created chain worktree at {target} on branch {name} "
         f"(base {base_sha[:12]}); running chain inside it...",
