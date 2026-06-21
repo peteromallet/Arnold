@@ -337,6 +337,15 @@ class AgentResult:
     provenance: ResultProvenance | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
 
+    def __post_init__(self) -> None:
+        # Transitional fallback: callers that still stash rate-limit state in
+        # metadata (older workers, serialized envelopes) should still see it on
+        # the direct field.
+        if self.rate_limit is None:
+            meta_value = self.metadata.get("rate_limit")
+            if isinstance(meta_value, dict):
+                object.__setattr__(self, "rate_limit", meta_value)
+
     @property
     def tokens(self) -> TokenUsage:
         return TokenUsage(
