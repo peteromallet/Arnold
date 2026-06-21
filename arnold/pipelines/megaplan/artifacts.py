@@ -30,11 +30,57 @@ def slugify(value: str, *, max_length: int = 80, allow_dots: bool = False) -> st
     return slug.strip(".-" if allow_dots else "-")[:max_length]
 
 
-def artifact_dir(repo_root: str | Path, kind: str) -> Path:
-    """Return and create ``.megaplan/<kind>/`` inside *repo_root*."""
-    path = Path(repo_root) / ".megaplan" / kind
+def _root_for_artifacts(repo_root: Any) -> Path:
+    plan_dir = getattr(repo_root, "plan_dir", None)
+    if plan_dir is not None:
+        return Path(plan_dir)
+    return Path(repo_root) / ".megaplan"
+
+
+def artifact_dir(repo_root: str | Path | Any, kind: str) -> Path:
+    """Return and create the artifact directory for *kind*.
+
+    Path-like inputs use ``<repo>/.megaplan/<kind>``. Megaplan ``StepContext``
+    inputs use ``ctx.plan_dir/<kind>`` for per-run artifacts.
+    """
+    path = _root_for_artifacts(repo_root) / kind
     path.mkdir(parents=True, exist_ok=True)
     return path
+
+
+def versioned_artifacts(ctx: Any, kind: str, extension: str) -> Iterator[Path]:
+    """Yield ``vN.<extension>`` artifacts for *kind* in numeric order."""
+    suffix = extension.lstrip(".")
+    root = artifact_dir(ctx, kind)
+    indexed: list[tuple[int, Path]] = []
+    for path in root.glob(f"v*.{suffix}"):
+        match = re.fullmatch(r"v(\d+)\." + re.escape(suffix), path.name)
+        if match:
+            indexed.append((int(match.group(1)), path))
+    for _version, path in sorted(indexed):
+        yield path
+
+
+def latest_version(ctx: Any, kind: str, extension: str) -> int:
+    """Return the highest existing version number for *kind* and *extension*."""
+    latest = 0
+    for path in versioned_artifacts(ctx, kind, extension):
+        match = re.fullmatch(r"v(\d+)\." + re.escape(extension.lstrip(".")), path.name)
+        if match:
+            latest = max(latest, int(match.group(1)))
+    return latest
+
+
+def next_version_path(ctx: Any, kind: str, extension: str) -> Path:
+    """Return the next ``vN.<extension>`` artifact path for *kind*."""
+    suffix = extension.lstrip(".")
+    return artifact_dir(ctx, kind) / f"v{latest_version(ctx, kind, suffix) + 1}.{suffix}"
+
+
+def latest_artifact_path(ctx: Any, kind: str, extension: str) -> Path | None:
+    """Return the newest versioned artifact path, or ``None`` when absent."""
+    items = list(versioned_artifacts(ctx, kind, extension))
+    return items[-1] if items else None
 
 
 def parse_markdown_artifact(path: str | Path) -> MarkdownArtifact | None:
