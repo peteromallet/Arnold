@@ -2531,8 +2531,9 @@ def test_checkout_milestone_branch_starts_from_configured_base_branch(tmp_path: 
 
     assert commands == [
         ["git", "reset", "--hard", "HEAD"],
+        ["git", "clean", "-fd", "-e", ".megaplan"],
         ["git", "checkout", "-B", "mp/m1", "setup/cloud"],
-        ["git", "push", "-u", "origin", "mp/m1"],
+        ["git", "push", "--no-verify", "-u", "origin", "mp/m1"],
     ]
 
 
@@ -2563,7 +2564,7 @@ def test_checkout_milestone_branch_forks_from_origin_when_from_origin(tmp_path: 
 
     assert ["git", "checkout", "-B", "mp/m2", "origin/main"] in commands
     assert ["git", "checkout", "-B", "mp/m2", "main"] not in commands
-    assert ["git", "push", "-u", "origin", "mp/m2"] in commands
+    assert ["git", "push", "--no-verify", "-u", "origin", "mp/m2"] in commands
 
 
 def test_checkout_milestone_branch_falls_back_to_local_base_when_fetch_fails(

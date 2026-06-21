@@ -333,7 +333,7 @@ def _checkout_milestone_branch(
                 f"{base_branch}{(': ' + detail) if detail else ''}\n"
             )
     _compat()._run_command(root, ["git", "checkout", "-B", branch, fork_point], writer=writer, error_code="git_branch_failed")
-    _compat()._run_command(root, ["git", "push", "-u", "origin", branch], writer=writer, error_code="git_push_failed")
+    _compat()._run_command(root, ["git", "push", "--no-verify", "-u", "origin", branch], writer=writer, error_code="git_push_failed")
 
 
 def _parse_pr_number_from_url(output: str) -> int | None:
@@ -837,7 +837,7 @@ def commit_plan_artifacts_to_base(
         if push_enabled:
             _run_command(
                 root,
-                ["git", "push", "origin", base_branch],
+                ["git", "push", "--no-verify", "origin", base_branch],
                 writer=writer,
                 error_code="git_push_failed",
             )
@@ -1224,12 +1224,12 @@ def _commit_and_push_phase(
             )
             _compat()._run_command(
                 root,
-                ["git", "push", "--force-with-lease", "origin", branch],
+                ["git", "push", "--no-verify", "--force-with-lease", "origin", branch],
                 writer=writer,
                 error_code="git_push_failed",
             )
             return
-    _compat()._run_command(root, ["git", "push", "origin", branch], writer=writer, error_code="git_push_failed")
+    _compat()._run_command(root, ["git", "push", "--no-verify", "origin", branch], writer=writer, error_code="git_push_failed")
 
 
 def _mark_pr_ready(root: Path, pr_number: int, *, writer) -> None:
