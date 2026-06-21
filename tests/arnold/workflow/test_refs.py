@@ -4,15 +4,42 @@ import pytest
 
 from arnold.workflow import (
     EdgeRef,
+    ExpressionRef,
+    HookRef,
+    ImportRef,
     NodeRef,
+    RefDiagnosticError,
     SourceRef,
     SourceSpan,
     ValueRef,
+    expression_ref,
     manifest_coordinate,
 )
 
 HASH_A = "sha256:" + "a" * 64
 HASH_B = "sha256:" + "b" * 64
+
+
+def module_level_hook() -> str:
+    return "ok"
+
+
+class HookFixtures:
+    def method_hook(self) -> str:
+        return "method"
+
+    @staticmethod
+    def static_hook() -> str:
+        return "static"
+
+    @classmethod
+    def class_hook(cls) -> str:
+        return "class"
+
+
+class CallableHook:
+    def __call__(self) -> str:
+        return "callable"
 
 
 def test_node_and_edge_refs_have_stable_canonical_keys() -> None:
@@ -79,6 +106,68 @@ def test_manifest_cursor_composes_coordinate_with_refs() -> None:
     )
 
 
+def test_import_and_hook_refs_accept_stable_module_and_class_functions() -> None:
+    module_ref = ImportRef.from_callable(module_level_hook, node_id="decide", field="condition_ref")
+    static_ref = HookRef.from_callable(HookFixtures.static_hook, node_id="reduce", field="reducer_ref")
+    method_ref = HookRef.from_callable(HookFixtures.method_hook, node_id="inspect", field="prompt_ref")
+
+    assert module_ref.spec == f"{__name__}:module_level_hook"
+    assert module_ref.key == f"import:{__name__}:module_level_hook"
+    assert module_ref.resolve() is module_level_hook
+    assert static_ref.spec == f"{__name__}:HookFixtures.static_hook"
+    assert static_ref.key == f"hook:{__name__}:HookFixtures.static_hook"
+    assert static_ref.resolve() is HookFixtures.static_hook
+    assert method_ref.resolve() is HookFixtures.method_hook
+    assert HookRef.parse(module_ref.spec).resolve() is module_level_hook
+
+
+def test_import_ref_rejects_unstable_callable_identities_with_diagnostics() -> None:
+    captured = "state"
+
+    def closure() -> str:
+        return captured
+
+    def local_function() -> str:
+        return "local"
+
+    cases = [
+        (lambda: "lambda", "lambdas"),
+        (closure, "closures"),
+        (local_function, "ambiguous local functions"),
+        (HookFixtures().method_hook, "bound methods"),
+        (HookFixtures.class_hook, "bound methods"),
+        (CallableHook(), "callable instances"),
+        (object(), "live objects"),
+    ]
+
+    for target, reason in cases:
+        with pytest.raises(RefDiagnosticError) as exc_info:
+            HookRef.from_callable(target, node_id="review", field="condition_ref")
+
+        message = str(exc_info.value)
+        assert "node 'review' field 'condition_ref'" in message
+        assert reason in message
+        assert "module-level function or class/static function" in message
+
+
+def test_hook_ref_parse_rejects_string_refs_to_unstable_callables() -> None:
+    with pytest.raises(RefDiagnosticError, match="bound methods"):
+        HookRef.parse(f"{__name__}:HookFixtures.class_hook")
+
+
+def test_expression_refs_are_inert_and_dependency_only() -> None:
+    hook = HookRef.from_callable(module_level_hook)
+    ref = expression_ref("ready", dependencies=["plan.draft", "review:score"], hook=hook)
+
+    assert ref == ExpressionRef("ready", dependencies=("plan.draft", "review:score"), hook=hook)
+    assert ref.key == f"expr:ready@hook:{__name__}:module_level_hook"
+    assert ref.dependencies == ("plan.draft", "review:score")
+    with pytest.raises(TypeError, match="inert reference"):
+        bool(ref)
+    with pytest.raises(TypeError, match="inert reference"):
+        bool(hook)
+
+
 @pytest.mark.parametrize(
     ("factory", "message"),
     [
@@ -88,6 +177,8 @@ def test_manifest_cursor_composes_coordinate_with_refs() -> None:
         (lambda: SourceSpan("x.py", 0), "start_line"),
         (lambda: ValueRef(NodeRef("a"), "payload", schema_hash="sha256:not-a-hash"), "manifest_hash"),
         (lambda: manifest_coordinate("1-invalid", HASH_A), "workflow alias"),
+        (lambda: ImportRef.parse("missing-colon"), "module:qualname"),
+        (lambda: expression_ref("bad/id"), "ref alphabet"),
     ],
 )
 def test_refs_fail_closed_on_ambiguous_identity(factory, message: str) -> None:
