@@ -3,10 +3,24 @@
 from __future__ import annotations
 
 import hashlib
+import json
+import re
 from dataclasses import dataclass
+from enum import StrEnum
 from pathlib import PurePosixPath
 
 from arnold.kernel.content_types import ContentTypeRegistration, RetentionPin
+
+_VERSIONED_NAME_RE = re.compile(
+    r"^v(?P<version>[1-9][0-9]*)\.(?P<ext>[A-Za-z0-9][A-Za-z0-9._-]*)$"
+)
+
+
+class ArtifactRootKind(StrEnum):
+    """Neutral logical root shapes supported by the artifact contract."""
+
+    REPO_ARTIFACT_ROOT = "repo_artifact_root"
+    PLAN_ARTIFACT_ROOT = "plan_artifact_root"
 
 
 @dataclass(frozen=True)
@@ -15,6 +29,7 @@ class ArtifactRoot:
 
     root_id: str
     path: str
+    kind: ArtifactRootKind = ArtifactRootKind.PLAN_ARTIFACT_ROOT
 
 
 @dataclass(frozen=True)
@@ -38,15 +53,23 @@ class GeneratedArtifactProvenance:
 
     @property
     def provenance_hash(self) -> str:
-        payload = "|".join(
-            (
-                self.generator_module,
-                self.generator_source_hash,
-                self.manifest_contract_version,
-                self.generated_at,
-                ",".join(self.input_hashes),
-                ",".join(parent.content_hash for parent in self.parents),
-            )
+        payload = json.dumps(
+            {
+                "generated_at": self.generated_at,
+                "generator_module": self.generator_module,
+                "generator_source_hash": self.generator_source_hash,
+                "input_hashes": list(self.input_hashes),
+                "manifest_contract_version": self.manifest_contract_version,
+                "parents": [
+                    {
+                        "artifact_id": parent.artifact_id,
+                        "content_hash": parent.content_hash,
+                    }
+                    for parent in self.parents
+                ],
+            },
+            sort_keys=True,
+            separators=(",", ":"),
         )
         return "sha256:" + hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
@@ -68,9 +91,9 @@ def versioned_artifact_name(stem: str, version: int, extension: str) -> str:
 
     if version < 1:
         raise ValueError("artifact version must be >= 1")
-    ext = extension[1:] if extension.startswith(".") else extension
     if stem:
-        return f"{stem}.v{version}.{ext}"
+        raise ValueError("versioned artifact names are canonicalized as vN.<ext>")
+    ext = extension[1:] if extension.startswith(".") else extension
     return f"v{version}.{ext}"
 
 
@@ -81,16 +104,18 @@ def latest_version(paths: tuple[str, ...], extension: str) -> int | None:
     versions: list[int] = []
     for raw in paths:
         name = PurePosixPath(raw).name
-        if not name.endswith("." + ext):
-            continue
-        for part in name.split("."):
-            if part.startswith("v") and part[1:].isdigit():
-                versions.append(int(part[1:]))
+        match = _VERSIONED_NAME_RE.match(name)
+        if match and match.group("ext") == ext:
+            versions.append(int(match.group("version")))
     return max(versions) if versions else None
 
 
-def next_version_path(directory: str, stem: str, extension: str, existing: tuple[str, ...]) -> str:
+def next_version_path(
+    directory: str, stem: str, extension: str, existing: tuple[str, ...]
+) -> str:
     """Return the next canonical versioned artifact path."""
 
     version = (latest_version(existing, extension) or 0) + 1
-    return str(PurePosixPath(directory) / versioned_artifact_name(stem, version, extension))
+    return str(
+        PurePosixPath(directory) / versioned_artifact_name(stem, version, extension)
+    )

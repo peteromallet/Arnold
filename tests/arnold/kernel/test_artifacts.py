@@ -1,23 +1,68 @@
 from __future__ import annotations
 
+import pytest
+
 from arnold.kernel import (
     ArtifactBinding,
     ArtifactRoot,
+    ArtifactRootKind,
     ContentTypeRegistration,
+    ContentTypeRegistry,
     GeneratedArtifactProvenance,
+    ProvenanceParent,
+    RetentionPin,
     RetentionPolicy,
     latest_version,
     next_version_path,
+    schema_hash,
     versioned_artifact_name,
 )
 
 
 def test_versioned_artifact_naming_and_next_path() -> None:
-    existing = ("artifacts/report.v1.md", "artifacts/report.v2.md")
+    existing = ("artifacts/v1.md", "artifacts/v2.md", "artifacts/report.v9.md")
 
-    assert versioned_artifact_name("report", 3, ".md") == "report.v3.md"
+    assert versioned_artifact_name("", 3, ".md") == "v3.md"
     assert latest_version(existing, "md") == 2
-    assert next_version_path("artifacts", "report", "md", existing) == "artifacts/report.v3.md"
+    assert next_version_path("artifacts", "", "md", existing) == "artifacts/v3.md"
+    with pytest.raises(ValueError):
+        versioned_artifact_name("report", 1, "md")
+
+
+def test_latest_version_is_extension_specific_and_next_starts_at_v1() -> None:
+    existing = ("artifacts/v1.md", "artifacts/v4.json", "artifacts/v2.md.tmp")
+
+    assert latest_version(existing, "md") == 1
+    assert latest_version(existing, ".json") == 4
+    assert latest_version((), "md") is None
+    assert next_version_path("artifacts", "", ".json", ()) == "artifacts/v1.json"
+
+
+def test_content_type_registry_hashes_schema_and_rejects_conflicts() -> None:
+    schema = {"required": ["body"], "type": "object"}
+    registration = ContentTypeRegistration(
+        type_id="markdown.report",
+        schema_version="v1",
+        schema_hash=schema_hash(schema),
+        retention_policy=RetentionPolicy.AUDIT,
+    )
+    registry = ContentTypeRegistry()
+
+    assert registry.register(registration) == registration
+    assert registry.require("markdown.report") == registration
+    assert (
+        schema_hash({"type": "object", "required": ["body"]})
+        == registration.schema_hash
+    )
+
+    with pytest.raises(ValueError):
+        registry.register(
+            ContentTypeRegistration(
+                type_id="markdown.report",
+                schema_version="v2",
+                schema_hash=schema_hash({"type": "string"}),
+            )
+        )
 
 
 def test_artifact_binding_carries_logical_root_and_provenance() -> None:
@@ -33,14 +78,53 @@ def test_artifact_binding_carries_logical_root_and_provenance() -> None:
         manifest_contract_version="arnold.workflow.manifest.v1",
         generated_at="2026-06-22T00:00:00Z",
         input_hashes=("sha256:" + "4" * 64,),
+        parents=(
+            ProvenanceParent(
+                artifact_id="source-report",
+                content_hash="sha256:" + "5" * 64,
+            ),
+        ),
     )
     binding = ArtifactBinding(
         artifact_id="report",
-        root=ArtifactRoot("repo-megaplan", ".megaplan/reports"),
-        relative_path="report.v1.md",
+        root=ArtifactRoot(
+            "repo-megaplan",
+            ".megaplan/reports",
+            kind=ArtifactRootKind.REPO_ARTIFACT_ROOT,
+        ),
+        relative_path="v1.md",
         content_type=content_type,
         provenance=provenance,
+        retention_pins=(
+            RetentionPin(policy=RetentionPolicy.AUDIT, reason="golden evidence"),
+        ),
     )
 
     assert binding.root.root_id == "repo-megaplan"
+    assert binding.root.kind == ArtifactRootKind.REPO_ARTIFACT_ROOT
+    assert binding.relative_path == "v1.md"
+    assert binding.retention_pins[0].policy == RetentionPolicy.AUDIT
     assert provenance.provenance_hash.startswith("sha256:")
+
+
+def test_provenance_parent_artifact_id_participates_in_hash() -> None:
+    base = GeneratedArtifactProvenance(
+        generator_module="arnold.docs.generator",
+        generator_source_hash="sha256:" + "3" * 64,
+        manifest_contract_version="arnold.workflow.manifest.v1",
+        generated_at="2026-06-22T00:00:00Z",
+        parents=(
+            ProvenanceParent("source-a", "sha256:" + "5" * 64),
+        ),
+    )
+    changed_parent = GeneratedArtifactProvenance(
+        generator_module=base.generator_module,
+        generator_source_hash=base.generator_source_hash,
+        manifest_contract_version=base.manifest_contract_version,
+        generated_at=base.generated_at,
+        parents=(
+            ProvenanceParent("source-b", "sha256:" + "5" * 64),
+        ),
+    )
+
+    assert base.provenance_hash != changed_parent.provenance_hash

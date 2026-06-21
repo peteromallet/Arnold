@@ -5,6 +5,7 @@ from __future__ import annotations
 from arnold.kernel.artifacts import (
     ArtifactBinding,
     ArtifactRoot,
+    ArtifactRootKind,
     GeneratedArtifactProvenance,
     ProvenanceParent,
     latest_version,
@@ -12,7 +13,13 @@ from arnold.kernel.artifacts import (
     versioned_artifact_name,
 )
 from arnold.kernel.capabilities import CapabilityCheck, CapabilityId, DispatchKey
-from arnold.kernel.content_types import ContentTypeRegistration, RetentionPin, RetentionPolicy
+from arnold.kernel.content_types import (
+    ContentTypeRegistration,
+    ContentTypeRegistry,
+    RetentionPin,
+    RetentionPolicy,
+    schema_hash,
+)
 from arnold.kernel.control import (
     ControlBinding,
     ControlTarget,
@@ -31,9 +38,11 @@ from arnold.kernel.suspension import SuspendCapabilityRoute, SuspensionRecord, S
 __all__ = [
     "ArtifactBinding",
     "ArtifactRoot",
+    "ArtifactRootKind",
     "CapabilityCheck",
     "CapabilityId",
     "ContentTypeRegistration",
+    "ContentTypeRegistry",
     "ControlBinding",
     "ControlTarget",
     "ControlTransition",
@@ -66,5 +75,6 @@ __all__ = [
     "derive_pipeline_identity",
     "latest_version",
     "next_version_path",
+    "schema_hash",
     "versioned_artifact_name",
 ]
