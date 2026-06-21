@@ -867,7 +867,8 @@ def test_run_codex_step_uses_full_auto_for_critique_template_writes(tmp_path: Pa
     }
 
     def fake_run_command(command: list[str], **kwargs: object) -> CommandResult:
-        assert "--full-auto" in command
+        assert "--sandbox" in command
+        assert "workspace-write" in command
         add_dir_idx = command.index("--add-dir") + 1
         assert Path(command[add_dir_idx]) == plan_dir
         output_idx = command.index("-o") + 1
