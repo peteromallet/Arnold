@@ -80,20 +80,33 @@ def _derive_name(module_file: Path) -> str:
 def _skill_md_sibling(module_file: Path) -> Path:
     """Resolve the SKILL.md path for *module_file*.
 
-    Layout:
-    * Sibling-file modules → ``<parent>/<cli-name>/SKILL.md``
-      (e.g. ``pipelines/writing-panel-strict/SKILL.md``
-      for ``writing_panel_strict.py``).
-    * Package modules → ``<parent>/SKILL.md``.
+    Layout (per-pipeline skills):
+    * Sibling-file modules → ``<parent>/<cli-name>/skills/<cli-name>/SKILL.md``
+      (e.g. ``pipelines/writing-panel-strict/skills/writing-panel-strict/SKILL.md``).
+    * Package modules → ``<parent>/skills/<name>/SKILL.md``.
+
+    Falls back to the legacy flat locations for backwards compatibility.
     """
+    parent = module_file.parent
     if module_file.name == "__init__.py":
-        return module_file.parent / "SKILL.md"
-    resource_dir_skill = (
-        module_file.parent / module_file.stem.replace("_", "-") / "SKILL.md"
-    )
-    if resource_dir_skill.is_file():
-        return resource_dir_skill
-    return module_file.parent / "SKILL.md"
+        # Skill directories use the CLI-visible (hyphenated) form of the
+        # package directory name.
+        name = parent.name.replace("_", "-")
+        candidates = [
+            parent / "skills" / name / "SKILL.md",
+            parent / "SKILL.md",
+        ]
+    else:
+        name = module_file.stem.replace("_", "-")
+        candidates = [
+            parent / name / "skills" / name / "SKILL.md",
+            parent / name / "SKILL.md",
+            parent / "SKILL.md",
+        ]
+    for candidate in candidates:
+        if candidate.is_file():
+            return candidate
+    return candidates[0]
 
 
 def _extract_top_level_constants(
