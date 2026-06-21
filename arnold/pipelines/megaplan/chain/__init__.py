@@ -1563,6 +1563,7 @@ def run_chain(
     one: bool = False,
     mode: str = "start",
     full_suite_backstop_mode: str | None = None,
+    fresh: bool = False,
 ) -> dict[str, Any]:
     """Drive the full chain. Returns a structured JSON-serializable result."""
     root = root.resolve(strict=False)
@@ -2412,6 +2413,15 @@ def _add_chain_worktree_args(parser: Any) -> None:
         ),
     )
     parser.add_argument(
+        "--fresh",
+        action="store_true",
+        default=False,
+        help=(
+            "With --in-worktree: remove an existing registered worktree/branch "
+            "for this name before creating the new chain worktree."
+        ),
+    )
+    parser.add_argument(
         "--clean-worktree",
         action="store_true",
         default=False,
@@ -2525,6 +2535,7 @@ def run_chain_cli(root: Path, args: argparse.Namespace, *, writer=sys.stderr.wri
     no_git_refresh = bool(getattr(args, "no_git_refresh", False))
     no_push = bool(getattr(args, "no_push", False))
     one = bool(getattr(args, "one", False))
+    fresh = bool(getattr(args, "fresh", False))
     try:
         if supervisor_tier_routing_on():
             from arnold.pipelines.megaplan.supervisor.chain_runner import run_chain as supervisor_run_chain
@@ -2542,6 +2553,7 @@ def run_chain_cli(root: Path, args: argparse.Namespace, *, writer=sys.stderr.wri
                 no_git_refresh=no_git_refresh,
                 no_push=no_push,
                 one=one,
+                fresh=fresh,
             )
     except CliError as exc:
         return _emit_error(exc)
