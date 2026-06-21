@@ -1,0 +1,83 @@
+{
+  "id": "log_af6edc23bd1b",
+  "level": "debug",
+  "category": "system",
+  "event_type": "authority_divergence",
+  "message": "authority_divergence emitted",
+  "details": {
+    "event": {
+      "seq": 306,
+      "schema_version": 1,
+      "ts_utc": "2026-06-20T19:23:53.125851+00:00",
+      "ts_rel_init_s": 2914.919125,
+      "kind": "authority_divergence",
+      "phase": "execute",
+      "payload": {
+        "diagnostic_version": 1,
+        "task_id": "T5",
+        "raw_terminal_status": "done",
+        "authority_status": "unknown",
+        "authoritative": false,
+        "reason": "stale_evidence:missing_head:task_files_changed",
+        "missing_outputs": [],
+        "stale_evidence": [
+          "missing_head:task_files_changed",
+          "missing_head:task_files_changed",
+          "missing_head:task_files_changed",
+          "missing_head:task_files_changed",
+          "missing_head:task_files_changed",
+          "missing_head:task_files_changed",
+          "missing_head:task_files_changed",
+          "missing_head:task_files_changed",
+          "missing_head:task_files_changed",
+          "missing_head:task_commands_run",
+          "missing_head:task_commands_run",
+          "missing_head:task_commands_run",
+          "missing_head:task_commands_run"
+        ],
+        "would_block_reasons": [
+          "stale_evidence:missing_head:task_files_changed",
+          "stale_evidence:missing_head:task_commands_run"
+        ],
+        "error": null,
+        "diagnostics": {
+          "task_id": "T5",
+          "declared_outputs": {
+            "files_changed": [
+              "arnold/pipeline/__init__.py",
+              "arnold/pipeline/native/decorators.py",
+              "arnold/pipeline/pattern_joins.py",
+              "arnold/pipeline/pattern_topology.py",
+              "arnold/pipelines/megaplan/patterns.py",
+              "arnold/pipelines/megaplan/pipeline.py",
+              "arnold/pipelines/megaplan/pipelines/doc/__init__.py",
+              "tests/arnold/pipeline/test_pattern_topology.py",
+              ".megaplan/plans/m7_native_purge_codex/execution_batch_5.json"
+            ],
+            "commands_run": [
+              "python - <<'PY'\nfrom arnold.pipeline.pattern_topology import critique_revise_gate_loop, panel_parallel, phase_zero_gate\nfrom arnold.pipelines.megaplan.pipeline import build_pipeline\np = build_pipeline()\nprint(type(p).__name__, p.entry, sorted(p.stages)[:3])\nprint(critique_revise_gate_loop.__name__, panel_parallel.__name__, phase_zero_gate.__name__)\nPY",
+              "rg \"_pipeline\\.patterns|_pipeline\\.pattern_\" -n arnold --glob '*.py' --glob '!arnold/pipelines/megaplan/_pipeline/**'",
+              "python -m compileall -q arnold/pipeline/pattern_topology.py arnold/pipelines/megaplan/pipeline.py arnold/pipelines/megaplan/patterns.py arnold/pipelines/megaplan/pipelines/doc/__init__.py tests/arnold/pipeline/test_pattern_topology.py",
+              "python -m pytest tests/arnold/pipeline/test_pattern_topology.py tests/arnold/pipeline/test_pattern_joins.py"
+            ]
+          },
+          "linked_evidence_count": 26,
+          "evidence_count": 56,
+          "normalization": "iterable",
+          "status": "unknown",
+          "evidence_sources": [
+            "plan_artifacts"
+          ],
+          "loaded_evidence_count": 56,
+          "raw_terminal_status": "done"
+        },
+        "ts_utc": "2026-06-20T19:23:53.125543+00:00"
+      },
+      "transaction_id": "966464378d263bb6",
+      "store_method": "log_system_event"
+    }
+  },
+  "turn_id": null,
+  "epic_id": "m7_native_purge_codex",
+  "occurred_at": "2026-06-20T19:23:53.125893Z"
+}

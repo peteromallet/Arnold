@@ -1,0 +1,90 @@
+{
+  "id": "log_86dd30184469",
+  "level": "debug",
+  "category": "system",
+  "event_type": "authority_divergence",
+  "message": "authority_divergence emitted",
+  "details": {
+    "event": {
+      "seq": 325,
+      "schema_version": 1,
+      "ts_utc": "2026-06-20T19:28:44.291721+00:00",
+      "ts_rel_init_s": 3206.084995,
+      "kind": "authority_divergence",
+      "phase": "execute",
+      "payload": {
+        "diagnostic_version": 1,
+        "task_id": "T6",
+        "raw_terminal_status": "done",
+        "authority_status": "unknown",
+        "authoritative": false,
+        "reason": "stale_evidence:missing_head:task_files_changed",
+        "missing_outputs": [],
+        "stale_evidence": [
+          "missing_head:task_files_changed",
+          "missing_head:task_files_changed",
+          "missing_head:task_files_changed",
+          "missing_head:task_files_changed",
+          "missing_head:task_files_changed",
+          "missing_head:task_files_changed",
+          "missing_head:task_files_changed",
+          "missing_head:task_files_changed",
+          "missing_head:task_files_changed",
+          "missing_head:task_files_changed",
+          "missing_head:task_files_changed",
+          "missing_head:task_files_changed",
+          "missing_head:task_files_changed",
+          "missing_head:task_files_changed",
+          "missing_head:task_files_changed",
+          "missing_head:task_files_changed",
+          "missing_head:task_commands_run"
+        ],
+        "would_block_reasons": [
+          "stale_evidence:missing_head:task_files_changed",
+          "stale_evidence:missing_head:task_commands_run"
+        ],
+        "error": null,
+        "diagnostics": {
+          "task_id": "T6",
+          "declared_outputs": {
+            "files_changed": [
+              ".megaplan/plans/m7_native_purge_codex/execution_batch_6.json",
+              "arnold/pipelines/megaplan/_pipeline/builder.py",
+              "arnold/pipelines/megaplan/_pipeline/pattern_dynamic.py",
+              "arnold/pipelines/megaplan/_pipeline/pattern_topology.py",
+              "arnold/pipelines/megaplan/_pipeline/patterns.py",
+              "arnold/pipelines/megaplan/_pipeline/subloop.py",
+              "arnold/pipelines/megaplan/native_hooks.py",
+              "arnold/pipelines/megaplan/pattern_dynamic.py",
+              "arnold/pipelines/megaplan/patterns.py",
+              "arnold/pipelines/megaplan/stages/tiebreaker.py",
+              "arnold/pipelines/megaplan/subloop.py",
+              "tests/pipelines/test_doc_pipeline.py",
+              "tests/test_envelope_fanout_keypool.py",
+              "tests/test_governor_budget.py",
+              "tests/test_pipeline_tiebreaker_subloop.py"
+            ],
+            "commands_run": [
+              "python -m pytest -q tests/pipelines/test_doc_pipeline.py tests/test_pipeline_tiebreaker_subloop.py tests/test_governor_budget.py tests/test_envelope_fanout_keypool.py tests/test_pipeline_subloop.py"
+            ]
+          },
+          "linked_evidence_count": 34,
+          "evidence_count": 88,
+          "normalization": "iterable",
+          "status": "unknown",
+          "evidence_sources": [
+            "plan_artifacts"
+          ],
+          "loaded_evidence_count": 88,
+          "raw_terminal_status": "done"
+        },
+        "ts_utc": "2026-06-20T19:28:44.291352+00:00"
+      },
+      "transaction_id": "5718a0d4f97289d9",
+      "store_method": "log_system_event"
+    }
+  },
+  "turn_id": null,
+  "epic_id": "m7_native_purge_codex",
+  "occurred_at": "2026-06-20T19:28:44.291755Z"
+}

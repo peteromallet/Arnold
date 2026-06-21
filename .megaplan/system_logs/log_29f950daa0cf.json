@@ -1,0 +1,73 @@
+{
+  "id": "log_29f950daa0cf",
+  "level": "debug",
+  "category": "system",
+  "event_type": "authority_divergence",
+  "message": "authority_divergence emitted",
+  "details": {
+    "event": {
+      "seq": 765,
+      "schema_version": 1,
+      "ts_utc": "2026-06-20T15:32:06.961386+00:00",
+      "ts_rel_init_s": 1049.280562,
+      "kind": "authority_divergence",
+      "phase": "execute",
+      "payload": {
+        "diagnostic_version": 1,
+        "task_id": "T1",
+        "raw_terminal_status": "done",
+        "authority_status": "unknown",
+        "authoritative": false,
+        "reason": "stale_evidence:missing_head:task_files_changed",
+        "missing_outputs": [],
+        "stale_evidence": [
+          "missing_head:task_files_changed",
+          "missing_head:task_files_changed",
+          "missing_head:task_files_changed",
+          "missing_head:task_commands_run",
+          "missing_head:task_commands_run",
+          "missing_head:task_commands_run",
+          "missing_head:task_commands_run",
+          "missing_head:task_commands_run"
+        ],
+        "would_block_reasons": [
+          "stale_evidence:missing_head:task_files_changed",
+          "stale_evidence:missing_head:task_commands_run"
+        ],
+        "error": null,
+        "diagnostics": {
+          "task_id": "T1",
+          "declared_outputs": {
+            "files_changed": [
+              "arnold/pipeline/types.py",
+              "arnold/pipeline/builder.py",
+              "arnold/pipeline/native/graph_projection.py"
+            ],
+            "commands_run": [
+              "python -c type checks for Pipeline, PipelineBuilder, project_graph",
+              "pytest tests/arnold/pipeline/test_executor_selection.py -x -v (17 passed)",
+              "pytest tests/arnold/pipeline/ -x --ignore=tests/arnold/pipeline/test_cli_pipeline_check.py -v (1974 passed)",
+              "pytest tests/arnold/pipeline/native/ -x -v (422 passed)",
+              "pytest tests/arnold/pipeline/native/test_graph_projection.py -v (62 passed)"
+            ]
+          },
+          "linked_evidence_count": 16,
+          "evidence_count": 16,
+          "normalization": "iterable",
+          "status": "unknown",
+          "evidence_sources": [
+            "plan_artifacts"
+          ],
+          "loaded_evidence_count": 16,
+          "raw_terminal_status": "done"
+        },
+        "ts_utc": "2026-06-20T15:32:06.960968+00:00"
+      },
+      "transaction_id": "76f0147c66eee905",
+      "store_method": "log_system_event"
+    }
+  },
+  "turn_id": null,
+  "epic_id": "native-pipelines-completion",
+  "occurred_at": "2026-06-20T15:32:06.961459Z"
+}

@@ -1,0 +1,67 @@
+{
+  "id": "log_5a566700dc5f",
+  "level": "debug",
+  "category": "system",
+  "event_type": "authority_divergence",
+  "message": "authority_divergence emitted",
+  "details": {
+    "event": {
+      "seq": 283,
+      "schema_version": 1,
+      "ts_utc": "2026-06-20T19:16:56.671157+00:00",
+      "ts_rel_init_s": 2498.464431,
+      "kind": "authority_divergence",
+      "phase": "execute",
+      "payload": {
+        "diagnostic_version": 1,
+        "task_id": "T4",
+        "raw_terminal_status": "done",
+        "authority_status": "unknown",
+        "authoritative": false,
+        "reason": "stale_evidence:missing_head:task_files_changed",
+        "missing_outputs": [],
+        "stale_evidence": [
+          "missing_head:task_files_changed",
+          "missing_head:task_files_changed",
+          "missing_head:task_files_changed",
+          "missing_head:task_commands_run",
+          "missing_head:task_commands_run"
+        ],
+        "would_block_reasons": [
+          "stale_evidence:missing_head:task_files_changed",
+          "stale_evidence:missing_head:task_commands_run"
+        ],
+        "error": null,
+        "diagnostics": {
+          "task_id": "T4",
+          "declared_outputs": {
+            "files_changed": [
+              "arnold/pipelines/megaplan/pipeline_types.py",
+              "arnold/pipelines/megaplan/__init__.py",
+              "tests/arnold/pipeline/test_exports.py"
+            ],
+            "commands_run": [
+              "pytest tests/arnold/pipeline/test_exports.py",
+              "rg \"arnold\\\\.pipelines\\\\.megaplan\\\\._pipeline\\\\.types|megaplan\\\\._pipeline\\\\.types\" -n arnold --glob '!arnold/pipelines/megaplan/_pipeline/**'"
+            ]
+          },
+          "linked_evidence_count": 10,
+          "evidence_count": 30,
+          "normalization": "iterable",
+          "status": "unknown",
+          "evidence_sources": [
+            "plan_artifacts"
+          ],
+          "loaded_evidence_count": 30,
+          "raw_terminal_status": "done"
+        },
+        "ts_utc": "2026-06-20T19:16:56.670689+00:00"
+      },
+      "transaction_id": "0b3bbd045942ea01",
+      "store_method": "log_system_event"
+    }
+  },
+  "turn_id": null,
+  "epic_id": "m7_native_purge_codex",
+  "occurred_at": "2026-06-20T19:16:56.671208Z"
+}

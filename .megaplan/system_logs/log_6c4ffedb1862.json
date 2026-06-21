@@ -1,0 +1,65 @@
+{
+  "id": "log_6c4ffedb1862",
+  "level": "debug",
+  "category": "system",
+  "event_type": "authority_divergence",
+  "message": "authority_divergence emitted",
+  "details": {
+    "event": {
+      "seq": 266,
+      "schema_version": 1,
+      "ts_utc": "2026-06-20T19:12:19.272659+00:00",
+      "ts_rel_init_s": 2221.065933,
+      "kind": "authority_divergence",
+      "phase": "execute",
+      "payload": {
+        "diagnostic_version": 1,
+        "task_id": "T2",
+        "raw_terminal_status": "done",
+        "authority_status": "unknown",
+        "authoritative": false,
+        "reason": "stale_evidence:missing_head:task_files_changed",
+        "missing_outputs": [],
+        "stale_evidence": [
+          "missing_head:task_files_changed",
+          "missing_head:task_files_changed",
+          "missing_head:task_files_changed",
+          "missing_head:task_commands_run"
+        ],
+        "would_block_reasons": [
+          "stale_evidence:missing_head:task_files_changed",
+          "stale_evidence:missing_head:task_commands_run"
+        ],
+        "error": null,
+        "diagnostics": {
+          "task_id": "T2",
+          "declared_outputs": {
+            "files_changed": [
+              "arnold/pipeline/native/routing.py",
+              "arnold/pipelines/megaplan/_pipeline/_bridge.py",
+              "tests/arnold/pipeline/native/test_resume_routing.py"
+            ],
+            "commands_run": [
+              "python -m pytest tests/arnold/pipeline/native/test_resume_routing.py -q"
+            ]
+          },
+          "linked_evidence_count": 8,
+          "evidence_count": 20,
+          "normalization": "iterable",
+          "status": "unknown",
+          "evidence_sources": [
+            "plan_artifacts"
+          ],
+          "loaded_evidence_count": 20,
+          "raw_terminal_status": "done"
+        },
+        "ts_utc": "2026-06-20T19:12:19.272425+00:00"
+      },
+      "transaction_id": "4f0d26ff4b91f5bf",
+      "store_method": "log_system_event"
+    }
+  },
+  "turn_id": null,
+  "epic_id": "m7_native_purge_codex",
+  "occurred_at": "2026-06-20T19:12:19.272683Z"
+}
