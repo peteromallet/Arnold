@@ -528,6 +528,33 @@ def _write_gate_json(plan_dir: Path, payload: dict[str, Any]) -> str:
     return _write_json_artifact(plan_dir, "gate.json", payload)
 
 
+def _normalize_plan_text(plan_text: str) -> str:
+    """Decode escaped newlines some models emit inside JSON plan strings.
+
+    When a model returns a JSON object whose ``plan`` field contains literal
+    ``\\n`` (or ``\\r\\n``) characters instead of real newlines, the Markdown
+    validator sees a single physical line and fails to find step headings.
+    Detect that pattern and decode the escapes so the plan is valid Markdown.
+    """
+    # Fast path: already contains real newlines; leave it alone.
+    if "\n" in plan_text:
+        return plan_text
+    # If the text contains literal \\n but no real newlines, decode them.
+    if "\\n" in plan_text or "\\r" in plan_text:
+        decoded = plan_text.encode("utf-8").decode("unicode_escape")
+        # unicode_escape may turn actual Unicode into latin-1 approximations in
+        # some Python versions; re-encode/decode via raw_unicode_escape to keep
+        # the original code points. Fall back to the decoded string if that fails.
+        try:
+            decoded = decoded.encode("raw_unicode_escape").decode("utf-8")
+        except (UnicodeEncodeError, UnicodeDecodeError):
+            pass
+        decoded = decoded.replace("\r\n", "\n").replace("\r", "\n")
+        if "\n" in decoded:
+            return decoded
+    return plan_text
+
+
 def _write_plan_version(
     *,
     plan_dir: Path,
@@ -539,6 +566,7 @@ def _write_plan_version(
     meta_fields: dict[str, Any],
     plan_filename: str | None = None,
 ) -> tuple[str, str, dict[str, Any]]:
+    plan_text = _normalize_plan_text(plan_text)
     resolved_plan_filename = plan_filename or next_plan_artifact_name(plan_dir, version)
     meta_filename = (
         f"plan_v{version}.meta.json"
