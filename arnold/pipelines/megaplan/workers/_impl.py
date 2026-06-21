@@ -421,6 +421,12 @@ class WorkerResult:
     @classmethod
     def from_agent_result(cls, agent_result: Any) -> WorkerResult:
         """Project a runtime ``AgentResult`` into the worker compatibility type."""
+        metadata = getattr(agent_result, "metadata", {}) or {}
+        rate_limit = getattr(agent_result, "rate_limit", None)
+        if rate_limit is None:
+            rate_limit = metadata.get("rate_limit")
+            if not isinstance(rate_limit, dict):
+                rate_limit = None
         return cls(
             payload=agent_result.payload,
             raw_output=agent_result.raw_output,
@@ -434,16 +440,26 @@ class WorkerResult:
             completion_tokens=agent_result.completion_tokens,
             total_tokens=agent_result.total_tokens,
             shannon_plan=agent_result.shannon_plan,
-            rate_limit=agent_result.rate_limit,
-            worker_channel=(getattr(agent_result, "metadata", {}) or {}).get("worker_channel"),
-            auth_channel=(getattr(agent_result, "metadata", {}) or {}).get("auth_channel"),
-            auth_metadata=(getattr(agent_result, "metadata", {}) or {}).get("auth_metadata"),
+            rate_limit=rate_limit,
+            worker_channel=metadata.get("worker_channel"),
+            auth_channel=metadata.get("auth_channel"),
+            auth_metadata=metadata.get("auth_metadata"),
         )
 
     def to_agent_result(self) -> Any:
         """Project the worker compatibility type into the runtime ``AgentResult``."""
         from arnold.pipelines.megaplan.agent_runtime import AgentResult
 
+        metadata = {
+            key: value
+            for key, value in {
+                "rate_limit": self.rate_limit,
+                "worker_channel": self.worker_channel,
+                "auth_channel": self.auth_channel,
+                "auth_metadata": self.auth_metadata,
+            }.items()
+            if value is not None
+        }
         return AgentResult(
             payload=self.payload,
             raw_output=self.raw_output,
@@ -458,15 +474,7 @@ class WorkerResult:
             total_tokens=self.total_tokens,
             shannon_plan=self.shannon_plan,
             rate_limit=self.rate_limit,
-            metadata={
-                key: value
-                for key, value in {
-                    "worker_channel": self.worker_channel,
-                    "auth_channel": self.auth_channel,
-                    "auth_metadata": self.auth_metadata,
-                }.items()
-                if value is not None
-            },
+            metadata=metadata,
         )
 
 
