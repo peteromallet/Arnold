@@ -42,7 +42,8 @@ VALID_FAILURE_ACTIONS = (
     "bump_profile",
     "bump_robustness",
 )
-VALID_MERGE_POLICIES = ("auto", "review")
+VALID_MERGE_POLICIES = ("auto", "review", "manual")
+VALID_CHAIN_DEEPSEEK_PROVIDER_CHOICES = ("direct", "fireworks")
 
 # Autonomy-ladder bump ordering. These are the *one-tier-up* escalation maps
 # the chain applies when a milestone exhausts its retry budget. There is no
@@ -241,7 +242,7 @@ class MilestoneSpec:
         deepseek_provider = _optional_choice(
             raw,
             "deepseek_provider",
-            VALID_DEEPSEEK_PROVIDER_CHOICES,
+            VALID_CHAIN_DEEPSEEK_PROVIDER_CHOICES,
             index=index,
         )
         with_prep = _optional_bool(raw, "with_prep", index=index)
@@ -346,6 +347,23 @@ class ChainSpec:
     def from_dict(cls, raw: dict[str, Any]) -> "ChainSpec":
         if not isinstance(raw, dict):
             raise CliError("invalid_spec", "chain spec must be a YAML mapping")
+        allowed_keys = {
+            "base_branch",
+            "driver",
+            "merge_policy",
+            "milestones",
+            "on_escalate",
+            "on_failure",
+            "prerequisite_policy",
+            "review_policy",
+            "seed",
+            "validation_policy",
+        }
+        unknown_keys = sorted(set(raw) - allowed_keys)
+        if unknown_keys:
+            key = unknown_keys[0]
+            hint = "; did you mean `base_branch`" if key == "base" else ""
+            raise CliError("invalid_spec", f"Unknown chain spec key `{key}`{hint}")
         base_branch = raw.get("base_branch", "main")
         if not isinstance(base_branch, str) or not base_branch.strip():
             raise CliError("invalid_spec", "`base_branch` must be a non-empty string")
@@ -402,6 +420,9 @@ class ChainSpec:
                 "invalid_spec",
                 f"merge_policy must be one of {VALID_MERGE_POLICIES}; got {merge_policy!r}",
             )
+        # "manual" is an operator-facing synonym for human-reviewed merge.
+        if merge_policy == "manual":
+            merge_policy = "review"
 
         prerequisite_policy = raw.get("prerequisite_policy", "none")
         if prerequisite_policy not in VALID_PREREQUISITE_POLICIES:
@@ -485,6 +506,7 @@ class ChainState:
 
     current_milestone_index: int = -1
     current_plan_name: str | None = None
+    current_milestone_base_sha: str | None = None
     last_state: str | None = None
     pr_number: int | None = None
     pr_state: str | None = None
@@ -514,6 +536,7 @@ class ChainState:
             "schema_version": self.schema_version,
             "current_milestone_index": self.current_milestone_index,
             "current_plan_name": self.current_plan_name,
+            "current_milestone_base_sha": self.current_milestone_base_sha,
             "last_state": self.last_state,
             "pr_number": self.pr_number,
             "pr_state": self.pr_state,
@@ -601,6 +624,7 @@ class ChainState:
         return cls(
             current_milestone_index=int(raw.get("current_milestone_index", -1)),
             current_plan_name=raw.get("current_plan_name"),
+            current_milestone_base_sha=raw.get("current_milestone_base_sha"),
             last_state=raw.get("last_state"),
             pr_number=int(raw["pr_number"]) if raw.get("pr_number") is not None else None,
             pr_state=raw.get("pr_state"),
