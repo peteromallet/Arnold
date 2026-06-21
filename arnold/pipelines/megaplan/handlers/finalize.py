@@ -4,6 +4,7 @@ import argparse
 import logging
 import os
 import re
+import shlex
 import sys
 from pathlib import Path
 from typing import Any
@@ -40,10 +41,15 @@ from arnold.pipelines.megaplan._pipeline.schema_registry_adapter import create_s
 from arnold.pipelines.megaplan.orchestration.plan_contracts import normalize_contract_payload
 from arnold.pipelines.megaplan.orchestration.test_selection import (
     compute_test_blast_radius,
+    read_plan_blast_radius,
     resolve_baseline_test_selection,
 )
 from arnold.pipelines.megaplan.store import write_plan_artifact_json
-from arnold.pipelines.megaplan.execute.quality import capture_uncommitted_baseline
+from arnold.pipelines.megaplan.execute.quality import (
+    _capture_git_status_snapshot_recursive,
+    _is_harness_generated_path,
+    capture_uncommitted_baseline,
+)
 
 from .shared import _finish_step, _raise_step_validation_error, _run_worker
 
@@ -798,6 +804,7 @@ def _capture_test_baseline(project_dir: Path, config: dict[str, Any]) -> dict[st
             config,
             phase="baseline",
             deadline_seconds=deadline,
+            idle_seconds=idle_seconds,
         )
     plan_dir_str = config.get("plan_dir")
     if plan_dir_str:
@@ -1175,6 +1182,115 @@ def _resolve_evidence_base_ref(project_dir: Path) -> str | None:
     return None
 
 
+def _current_plan_changed_files(project_dir: Path, state: PlanState) -> tuple[list[str], str | None]:
+    snapshot, error = _capture_git_status_snapshot_recursive(project_dir)
+    if error is not None:
+        return [], error
+
+    meta = state.get("meta") if isinstance(state, dict) else {}
+    baseline = (
+        meta.get("execution_baseline")
+        if isinstance(meta, dict) and isinstance(meta.get("execution_baseline"), dict)
+        else None
+    )
+    baseline_paths = baseline.get("paths") if isinstance(baseline, dict) else None
+    if not isinstance(baseline_paths, dict):
+        baseline_paths = None
+
+    changed: list[str] = []
+    for path, current_hash in sorted(snapshot.items()):
+        if path.endswith("/") or _is_harness_generated_path(path):
+            continue
+        # Plan artifacts are harness churn; counting them here would turn a
+        # missing metadata blast-radius into a non-Python full-suite fallback.
+        if path == ".megaplan" or path.startswith(".megaplan/"):
+            continue
+        if baseline_paths is not None and baseline_paths.get(path) == current_hash:
+            continue
+        changed.append(path)
+    return changed, None
+
+
+def _scoped_command_from_blast_radius(radius: dict[str, Any]) -> str | None:
+    if radius.get("strategy") != "scoped":
+        return None
+    selectors = radius.get("selectors")
+    if not isinstance(selectors, list) or not selectors:
+        return None
+
+    paths: list[str] = []
+    seen: set[str] = set()
+    for selector in selectors:
+        if not isinstance(selector, dict) or selector.get("kind") != "path":
+            return None
+        value = selector.get("value")
+        if not isinstance(value, str) or not value.strip():
+            continue
+        path = value.strip()
+        if path in seen:
+            continue
+        seen.add(path)
+        paths.append(path)
+    if not paths:
+        return None
+    return "pytest " + " ".join(shlex.quote(path) for path in paths)
+
+
+def _fallback_baseline_test_selection(
+    plan_dir: Path,
+    state: PlanState,
+    project_dir: Path,
+    resolved: dict[str, Any],
+) -> dict[str, Any]:
+    config = state.get("config", {}) if isinstance(state, dict) else {}
+    if config.get("test_selection", "scoped") == "full":
+        return resolved
+    if resolved.get("command_override"):
+        return resolved
+    if read_plan_blast_radius(plan_dir, state).is_present:
+        return resolved
+
+    changed_files, error = _current_plan_changed_files(project_dir, state)
+    if error is not None:
+        return {
+            **resolved,
+            "fallback_attempted": True,
+            "fallback_reason": f"Could not inspect git status for fallback blast radius: {error}",
+        }
+    if not changed_files:
+        return {
+            **resolved,
+            "fallback_attempted": True,
+            "fallback_reason": "No changed files found for fallback blast-radius computation.",
+        }
+
+    radius = compute_test_blast_radius(changed_files, project_dir)
+    command = _scoped_command_from_blast_radius(radius)
+    if command is None:
+        return {
+            **resolved,
+            "fallback_attempted": True,
+            "fallback_changed_files": changed_files,
+            "fallback_blast_radius": radius,
+            "fallback_reason": (
+                "Fallback blast radius did not produce concrete scoped pytest path selectors."
+            ),
+        }
+
+    return {
+        "mode": "scoped",
+        "reason": (
+            "No test_blast_radius in plan metadata; computed scoped pytest command "
+            f"from {len(changed_files)} current changed file(s)."
+        ),
+        "command_override": command,
+        "selectors_used": radius.get("selectors", []),
+        "fallback_attempted": True,
+        "fallback_changed_files": changed_files,
+        "fallback_blast_radius": radius,
+    }
+
+
 def _write_finalize_artifacts(plan_dir: Path, payload: dict[str, Any], state: PlanState) -> str:
     contract_payload = normalize_contract_payload(
         {"provides": payload.get("provides", []), "assumes": payload.get("assumes", [])},
@@ -1191,19 +1307,23 @@ def _write_finalize_artifacts(plan_dir: Path, payload: dict[str, Any], state: Pl
         _config["plan_dir"] = str(plan_dir)
 
         # ── M4 T5: Resolve plan blast radius before baseline capture ──────
-        test_selection = resolve_baseline_test_selection(plan_dir, state)
+        project_dir = Path(_config["project_dir"])
+        test_selection = _fallback_baseline_test_selection(
+            plan_dir,
+            state,
+            project_dir,
+            resolve_baseline_test_selection(plan_dir, state),
+        )
         if test_selection["mode"] == "scoped" and test_selection.get("command_override"):
             _config["test_command"] = test_selection["command_override"]
         payload["test_selection"] = test_selection
         # ──────────────────────────────────────────────────────────────────
 
         # ── M4 T8: Compute evidence base_ref for downstream consumers ─────
-        payload["evidence_base_ref"] = _resolve_evidence_base_ref(
-            Path(_config["project_dir"])
-        )
+        payload["evidence_base_ref"] = _resolve_evidence_base_ref(project_dir)
         # ──────────────────────────────────────────────────────────────────
 
-        baseline = _capture_test_baseline_for_plan(plan_dir, Path(_config["project_dir"]), _config)
+        baseline = _capture_test_baseline_for_plan(plan_dir, project_dir, _config)
         payload.update(baseline)
         _ensure_user_actions_pre_gate_task(payload, state)
         _ensure_user_actions_post_gate_task(payload, state)
