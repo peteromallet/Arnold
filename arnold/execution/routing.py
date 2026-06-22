@@ -106,9 +106,12 @@ def _summary_from_events(events: tuple[EventEnvelope, ...]) -> _EventSummary:
             retry_attempts[key] = retry_attempts.get(key, 1) + 1
         elif event.kind == "node_suspended":
             suspended.add(coordinate)
+        elif event.kind == "node_resumed":
+            suspended.discard(coordinate.replace(attempt=1, iteration=1, child_key=None))
         elif event.kind == "loop_iteration":
-            loop_iterations[coordinate] = max(
-                loop_iterations.get(coordinate, 1),
+            base = coordinate.replace(iteration=1)
+            loop_iterations[base] = max(
+                loop_iterations.get(base, 1),
                 iteration,
             )
         elif event.kind == "branch_selected":
@@ -405,6 +408,8 @@ def project_routing_state(
                         ready_set.add(next_attempt)
                 continue
             if attempt_coord in completed:
+                continue
+            if retry_proj.current_attempt > retry_proj.max_attempts:
                 continue
             if _is_ready_linear(node, scope_stack, summary, edges):
                 ready_set.add(attempt_coord)
