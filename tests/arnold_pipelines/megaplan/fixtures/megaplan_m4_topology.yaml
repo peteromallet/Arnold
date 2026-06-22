@@ -1,0 +1,63 @@
+# Canonical M4 Megaplan explicit-node manifest topology.
+#
+# This fixture locks the compiled output of
+# ``arnold_pipelines.megaplan.pipeline.build_and_compile_pipeline()``.
+# If the manifest or topology hash changes, update
+# ``docs/arnold/workflow-manifest-amendments.md`` with an M4 amendment
+# and update the locked hashes below.
+
+manifest_id: megaplan
+manifest_hash: sha256:245a06ac778caf20c645772b7c0570655af7a79a0d00eda959b19d2cf01a3eba
+topology_hash: sha256:2705e157e12fc074301afa8f5aec4e48d9820814ebaaa77535d152a8cc381fd4
+version: m4-phase3
+
+nodes:
+  - prep
+  - plan
+  - critique
+  - gate
+  - revise
+  - tiebreaker_run
+  - tiebreaker_decide
+  - finalize
+  - execute
+  - review
+  - halt
+  - override
+
+capabilities:
+  - megaplan:planning
+  - human:gate
+  - human:review
+
+gate_targets:
+  - label: proceed
+    target: finalize
+  - label: iterate
+    target: revise
+  - label: tiebreaker
+    target: tiebreaker_run
+  - label: escalate
+    target: override
+  - label: abort
+    target: halt
+  - label: suspend
+    target: halt
+  - label: blocked_preflight
+    target: override
+  - label: force_proceed
+    target: finalize
+
+tiebreaker_targets:
+  - label: iterate
+    target: critique
+  - label: proceed
+    target: finalize
+  - label: escalate
+    target: override
+
+review_targets:
+  - label: default
+    target: halt
+  - label: rework
+    target: revise

@@ -1,35 +1,53 @@
+"""Source and import-runtime boundary tests for ``arnold_pipelines.megaplan``.
+
+These tests sit alongside ``test_import_boundaries.py`` and verify runtime
+package boundaries in addition to the static source scan.
+"""
+
 from __future__ import annotations
 
 import ast
+import sys
 from pathlib import Path
 
+import pytest
 
-# New-package modules that are explicitly allowed to import the legacy
-# `arnold.pipelines.megaplan` surface during M4.  These are parity adapters
-# around the vendored Hermes agent runtime, which is intentionally left in
-# the legacy tree until M6.
+# Static parity adapters explicitly allowed to import the legacy package.
 M4_PARITY_ADAPTER_PATHS = {
     "arnold_pipelines/megaplan/workers/_impl.py",
     "arnold_pipelines/megaplan/workers/hermes.py",
 }
 
 
-def _collect_import_violations(package_root: Path) -> dict[str, list[str]]:
+def _collect_runtime_imports_of_legacy() -> set[str]:
+    """Import arnold_pipelines.megaplan and record which legacy modules load."""
+
+    before = set(sys.modules.keys())
+    import arnold_pipelines.megaplan  # noqa: F401
+    imported = set(sys.modules.keys()) - before
+    return {m for m in imported if m.startswith("arnold.pipelines.megaplan.")}
+
+
+def test_importing_new_package_only_loads_allowed_legacy_adapters() -> None:
+    loaded = _collect_runtime_imports_of_legacy()
+    # The new package should not statically import legacy modules. Dynamic
+    # forwards from vendored agent adapters are a separate concern covered by
+    # the arnold.agent boundary test.
+    assert loaded == set(), f"arnold_pipelines.megaplan loaded legacy modules: {loaded}"
+
+
+def test_new_package_source_does_not_import_legacy_except_adapters() -> None:
+    root = Path(__file__).parents[3] / "arnold_pipelines" / "megaplan"
     violations: dict[str, list[str]] = {}
 
-    for source in sorted(package_root.rglob("*.py")):
-        rel = source.relative_to(package_root.parent.parent)
-        if str(rel) in M4_PARITY_ADAPTER_PATHS:
+    for source in sorted(root.rglob("*.py")):
+        rel = str(source.relative_to(root.parent.parent))
+        if rel in M4_PARITY_ADAPTER_PATHS:
             continue
-
         try:
             tree = ast.parse(source.read_text(encoding="utf-8"), filename=str(source))
         except SyntaxError:
-            # Skip files that fail to parse (e.g. vendored debris that may
-            # contain syntax oddities).  The package boundary test is about
-            # intentional imports, not vendored parseability.
             continue
-
         bad: list[str] = []
         for node in ast.walk(tree):
             if isinstance(node, ast.Import):
@@ -44,43 +62,35 @@ def _collect_import_violations(package_root: Path) -> dict[str, list[str]]:
                     or node.module.startswith("arnold.pipelines.megaplan.")
                 ):
                     bad.append(node.module)
-
         if bad:
-            violations[str(rel)] = bad
+            violations[rel] = bad
 
-    return violations
+    assert violations == {}, f"new-package source imports legacy package: {violations}"
 
 
-def test_new_package_does_not_import_legacy_megaplan() -> None:
+def test_new_package_has_no_unlisted_parity_adapters() -> None:
     root = Path(__file__).parents[3] / "arnold_pipelines" / "megaplan"
-    violations = _collect_import_violations(root)
-    assert violations == {}, f"new-package code imports legacy package: {violations}"
-
-
-def test_parity_adapters_are_explicitly_listed() -> None:
-    root = Path(__file__).parents[3] / "arnold_pipelines" / "megaplan"
-    all_legacy_importers: set[str] = set()
+    importers: set[str] = set()
 
     for source in sorted(root.rglob("*.py")):
         try:
             tree = ast.parse(source.read_text(encoding="utf-8"), filename=str(source))
         except SyntaxError:
             continue
-
         for node in ast.walk(tree):
             if isinstance(node, ast.Import):
                 for alias in node.names:
                     if alias.name == "arnold.pipelines.megaplan" or alias.name.startswith(
                         "arnold.pipelines.megaplan."
                     ):
-                        all_legacy_importers.add(str(source.relative_to(root.parent.parent)))
+                        importers.add(str(source.relative_to(root.parent.parent)))
             elif isinstance(node, ast.ImportFrom):
                 if node.module and (
                     node.module == "arnold.pipelines.megaplan"
                     or node.module.startswith("arnold.pipelines.megaplan.")
                 ):
-                    all_legacy_importers.add(str(source.relative_to(root.parent.parent)))
+                    importers.add(str(source.relative_to(root.parent.parent)))
 
-    assert all_legacy_importers.issubset(M4_PARITY_ADAPTER_PATHS), (
-        f"found unlisted legacy importers: {all_legacy_importers - M4_PARITY_ADAPTER_PATHS}"
+    assert importers.issubset(M4_PARITY_ADAPTER_PATHS), (
+        f"unlisted legacy importers: {importers - M4_PARITY_ADAPTER_PATHS}"
     )

@@ -178,10 +178,6 @@ class MegaplanManifestBackend(LocalJournalBackend):
         """Translate a Megaplan StepResponse into a neutral NodeOutcome."""
 
         success = bool(response.get("success", True))
-        state = NodeState.COMPLETED if success else NodeState.FAILED
-        error: str | None = None
-        if not success:
-            error = str(response.get("message") or response.get("error") or f"{node_id} failed")
 
         outputs = dict(response)
         outputs["node_id"] = node_id
@@ -189,6 +185,17 @@ class MegaplanManifestBackend(LocalJournalBackend):
         branch_edge_id = self._branch_edge_id(node_id, response)
         suspension_route_id = self._suspension_route_id(node_id, response)
         control_signals = self._build_control_signals(node_id, response)
+
+        state: NodeState
+        if not success:
+            state = NodeState.FAILED
+        elif suspension_route_id is not None:
+            state = NodeState.SUSPENDED
+        else:
+            state = NodeState.COMPLETED
+        error: str | None = None
+        if not success:
+            error = str(response.get("message") or response.get("error") or f"{node_id} failed")
 
         return NodeOutcome(
             state=state,
@@ -200,17 +207,93 @@ class MegaplanManifestBackend(LocalJournalBackend):
         )
 
     def _branch_edge_id(self, node_id: str, response: Mapping[str, Any]) -> str | None:
-        """Map the response's next_step/recommendation to a manifest edge label."""
+        """Map the response's next_step/recommendation to a manifest edge id.
+
+        Conditional edges in the compiled manifest are named
+        ``{source}:{target}``.  This mapping converts legacy handler outputs
+        into those ids so the neutral router can select the correct target.
+        """
 
         next_step = response.get("next_step")
-        if isinstance(next_step, str) and next_step:
-            return next_step
         recommendation = response.get("recommendation")
-        if isinstance(recommendation, str):
-            return recommendation.lower()
+        override_action = response.get("override_action")
+        decision = response.get("decision")
+        review_verdict = response.get("review_verdict")
+
         if node_id == "gate":
-            # Default gate routing when no explicit next step is given.
-            return "proceed"
+            if isinstance(next_step, str):
+                key = {
+                    "finalize": "gate:finalize",
+                    "revise": "gate:revise",
+                    "tiebreaker": "gate:tiebreaker",
+                    "override add-note": "gate:override",
+                    "override force-proceed": "gate:force_proceed",
+                    "force_proceed": "gate:force_proceed",
+                    "force-proceed": "gate:force_proceed",
+                    "halt": "gate:halt",
+                    "gate": "gate:blocked",
+                    "suspend": "gate:suspend",
+                }.get(next_step)
+                if key:
+                    return key
+            if isinstance(recommendation, str):
+                return {
+                    "PROCEED": "gate:finalize",
+                    "ITERATE": "gate:revise",
+                    "ESCALATE": "gate:override",
+                    "TIEBREAKER": "gate:tiebreaker",
+                    "ABORT": "gate:halt",
+                }.get(recommendation)
+            return "gate:finalize"
+
+        if node_id == "tiebreaker_decide":
+            if isinstance(decision, str):
+                return {
+                    "ITERATE": "tiebreaker_decide:critique",
+                    "PROCEED": "tiebreaker_decide:finalize",
+                    "ESCALATE": "tiebreaker_decide:override",
+                }.get(decision)
+            if isinstance(recommendation, str):
+                return {
+                    "ITERATE": "tiebreaker_decide:critique",
+                    "PROCEED": "tiebreaker_decide:finalize",
+                    "ESCALATE": "tiebreaker_decide:override",
+                }.get(recommendation)
+            return None
+
+        if node_id == "revise":
+            if isinstance(next_step, str) and next_step in {"revise:loop", "critique"}:
+                return "revise:critique"
+            return None
+
+        if node_id == "review":
+            if review_verdict == "needs_rework":
+                return "review:revise"
+            if review_verdict == "pass":
+                return "review:halt"
+            if isinstance(next_step, str):
+                return {
+                    "finalize": "review:halt",
+                    "revise": "review:revise",
+                    "halt": "review:halt",
+                }.get(next_step)
+            return None
+
+        if node_id == "override":
+            if isinstance(override_action, str):
+                return {
+                    "finalize": "override:finalize",
+                    "abort": "override:halt",
+                    "replan": "override:revise",
+                }.get(override_action)
+            if isinstance(next_step, str):
+                return {
+                    "finalize": "override:finalize",
+                    "halt": "override:halt",
+                    "revise": "override:revise",
+                }.get(next_step)
+            return None
+
         return None
 
     def _suspension_route_id(self, node_id: str, response: Mapping[str, Any]) -> str | None:

@@ -264,9 +264,95 @@ Temporary aliases and shims that bridge old imports to the new package during M4
 | Registry plugin alias | `arnold/pipeline/registry.py` | `arnold.pipelines.megaplan` discovery | also scans `arnold_pipelines.megaplan` | M6 |
 | Worker agent parity | `arnold_pipelines/megaplan/workers/hermes.py`, `workers/_impl.py` | imports `arnold.pipelines.megaplan.agent` | allowed M4 parity adapter; vendored `agent/` stays in legacy tree | M6 |
 
-## 10. Notes
+## 11. M4 Phase 6 re-scan additions
+
+The Phase 6 pass re-scanned legacy surfaces after the package move and parity
+test landing.  The following rows were added or tightened:
+
+| Path / group | Class | Owner | Blocker | Expiry |
+| --- | --- | --- | --- | --- |
+| `arnold_pipelines/megaplan/_compatibility.py` | `temporary M4 parity shim` | megaplan | backwards-compat re-exports for legacy callers | M6 |
+| `arnold_pipelines/megaplan/_pipeline/_bridge.py` | `temporary M4 parity shim` | megaplan | legacy `Pipeline` -> `WorkflowManifest` bridge | M6 |
+| `arnold_pipelines/megaplan/_pipeline/executor.py` | `temporary M4 parity shim` | megaplan | legacy `run_pipeline` / `run_pipeline_with_policy` entry points | M6 |
+| `arnold_pipelines/megaplan/_pipeline/registry.py` | `temporary M4 parity shim` | megaplan | legacy dispatcher allowlist `_BRIDGED_PIPELINES` | M6 |
+| `arnold_pipelines/megaplan/_pipeline/run_cli.py` | `temporary M4 parity shim` | megaplan | legacy `megaplan run` CLI path | M6 |
+| `arnold_pipelines/megaplan/_pipeline/subloop.py` | `temporary M4 parity shim` | megaplan | child-pipeline execution not yet bridge-compatible | M6 |
+| `arnold_pipelines/megaplan/_core/state.py` | `temporary M4 parity shim` | megaplan | legacy `state.json` read/write; new runtime uses journal projection | M6 |
+| `arnold_pipelines/megaplan/_pipeline/demos/` | `M6 delete` | megaplan | demo entries not bridged | M6 |
+| `arnold_pipelines/megaplan/_pipeline/m5-wrapper-eval.judge.json` | `M6 delete` | megaplan | generated judge fixture | M6 |
+| `arnold_pipelines/megaplan/_pipeline/pipeline_ids.json` | `read-only migration input` | megaplan | legacy pipeline ID registry used for alias mapping | M6 archive |
+| `arnold_pipelines/megaplan/agent/` | `M6 delete` (vendored) | megaplan | full Hermes/agent runtime vendored under product tree | M6 |
+| `arnold_pipelines/megaplan/vendor/shannon/` | `M6 delete` (vendored) | megaplan | vendored Shannon runtime | M6 |
+| `arnold_pipelines/megaplan/cloud/_reference/` | `M6 delete` | megaplan | generated reference debris | M6 |
+| `arnold_pipelines/megaplan/data/_codex_skills/` | `M6 delete` | megaplan | generated skill cache | M6 |
+| `arnold_pipelines/megaplan/cli/arnold.py` | `temporary M4 parity shim` | megaplan | legacy CLI surface; projections live in `cli/projection.py` | M6 |
+| `arnold_pipelines/megaplan/cli/roots.py` | `temporary M4 parity shim` | megaplan | legacy command-root wiring | M6 |
+| `tests/test_pipeline_*.py` | `read-only migration input` | megaplan | golden/parity references; kept until new tests lock parity | M6 archive |
+| `tests/characterization/test_pipeline_golden.py` | `read-only migration input` | megaplan | golden characterization | M6 archive |
+| `tests/_pipeline/` | `read-only migration input` | megaplan | legacy pipeline tests | M6 archive |
+
+## 12. Notes
 
 * The bridge path is `arnold/pipelines/megaplan/_pipeline/_bridge.py`.  The brief `arnold-post-extraction-next/m1-megaplan-canonical-executor-bridge.md` incorrectly referenced `arnold/pipeline/_bridge.py`; this inventory corrects that path.
 * `arnold/pipelines/megaplan/agent/` is classified as vendored debris for M4 because neutral `arnold/agent/` now hosts the equivalent runtime.  It remains physically present for parity only.
 * `arnold/pipelines/megaplan/_core/state.py` and `arnold/pipeline/state.py` are *read-only migration inputs* for the new journal-backed runtime; no M4 code may treat them as authority.
 * All `__pycache__` directories are excluded from the inventory because they are rebuild artifacts.
+
+## 13. M6 deletion ledger
+
+Consolidated list of every surface that expires at M6.  This is the authoritative deletion checklist for the M6 cleanup sweep.
+
+| Path / symbol | Class | Owner | Blocker | Expiry |
+| --- | --- | --- | --- | --- |
+| `arnold/pipelines/megaplan/__init__.py` | `temporary M4 parity shim` | megaplan | plugin registry still scans `arnold/pipelines` first; must keep alias until M6 | M6 |
+| `arnold/pipelines/megaplan/__main__.py` | `temporary M4 parity shim` | megaplan | CLI entry `python -m arnold.pipelines.megaplan` used in docs/scripts | M6 |
+| `arnold/pipelines/megaplan/SKILL.md` | `M6 delete` | megaplan | skill metadata duplicated in `.agents/skills/megaplan` | M6 |
+| `arnold/pipelines/megaplan/_core/state.py` | `temporary M4 parity shim` | megaplan | legacy `state.json` writes/read; new runtime uses journal projection | M6 |
+| `arnold/pipelines/megaplan/_pipeline/_bridge.py` | `temporary M4 parity shim` | megaplan | bridge between legacy `Pipeline` and M3 `WorkflowManifest`; referenced by `_BRIDGE_CALLERS.md` | M6 |
+| `arnold/pipelines/megaplan/_pipeline/executor.py` | `temporary M4 parity shim` | megaplan | 19+ legacy callers still import `run_pipeline` / `run_pipeline_with_policy` (see Bridge Callers) | M6 |
+| `arnold/pipelines/megaplan/_pipeline/registry.py` | `temporary M4 parity shim` | megaplan | legacy dispatcher allowlist `_BRIDGED_PIPELINES` | M6 |
+| `arnold/pipelines/megaplan/_pipeline/run_cli.py` | `temporary M4 parity shim` | megaplan | legacy `megaplan run` CLI path | M6 |
+| `arnold/pipelines/megaplan/_pipeline/subloop.py` | `temporary M4 parity shim` | megaplan | child-pipeline execution not yet bridge-compatible | M6 |
+| `arnold/pipelines/megaplan/_pipeline/demos/` | `M6 delete` | megaplan | demo entries not bridged; `demo_judges.py`, `demos/doc_critique.py`, `demos/tournament.py` | M6 |
+| `arnold/pipelines/megaplan/_pipeline/m5-wrapper-eval.judge.json` | `M6 delete` | megaplan | generated judge fixture | M6 |
+| `arnold/pipelines/megaplan/_pipeline/pipeline_ids.json` | `read-only migration input` | megaplan | legacy pipeline ID registry used for alias mapping | M6 archive |
+| `arnold/pipelines/megaplan/cloud/_reference/` | `M6 delete` | megaplan | generated reference debris; already excluded from wheel/sdist | M6 |
+| `arnold/pipelines/megaplan/data/_codex_skills/` | `M6 delete` | megaplan | generated skill cache | M6 |
+| `arnold/pipelines/megaplan/agent/` | `M6 delete` (vendored) | megaplan | full Hermes/agent runtime vendored under product tree; neutral `arnold/agent/` now owns equivalent surfaces | M6 |
+| `arnold/pipelines/megaplan/agent/.github/` | `M6 delete` | megaplan | upstream issue/CI templates | M6 |
+| `arnold/pipelines/megaplan/agent/tests/` | `M6 delete` | megaplan | vendored agent tests | M6 |
+| `arnold/pipelines/megaplan/agent/pyproject.toml` | `M6 delete` | megaplan | nested package metadata; already excluded from wheel/sdist | M6 |
+| `arnold/pipelines/megaplan/agent/scripts/whatsapp-bridge/package-lock.json` | `M6 delete` | megaplan | vendored node lockfile | M6 |
+| `arnold/pipelines/megaplan/vendor/shannon/` | `M6 delete` (vendored) | megaplan | vendored Shannon runtime | M6 |
+| `arnold/pipeline/state.py` | `temporary M4 parity shim` | arnold | legacy state authority; journal projection replaces writes in M4 Phase 4 | M6 |
+| `arnold/pipeline/resume.py` | `temporary M4 parity shim` | arnold | legacy resume tokens | M6 |
+| `arnold/runtime/state_persistence.py` | `temporary M4 parity shim` | arnold | legacy state persistence | M6 |
+| `arnold/cli/__init__.py` | `temporary M4 parity shim` | arnold | legacy `megaplan` subcommands; projections move to `arnold_pipelines.megaplan.cli` | M6 |
+| `tests/test_pipeline_*.py` | `read-only migration input` | megaplan | golden/parity references; kept until new tests lock parity | M6 archive |
+| `tests/characterization/test_pipeline_golden.py` | `read-only migration input` | megaplan | golden characterization | M6 archive |
+| `tests/_pipeline/` | `read-only migration input` | megaplan | legacy pipeline tests | M6 archive |
+| `python -m arnold.pipelines.megaplan` | `temporary M4 parity shim` | megaplan | CLI docs/scripts | M6 |
+| `python -m arnold.pipelines.megaplan run` | `temporary M4 parity shim` | megaplan | operator habit, scripts | M6 |
+| `arnold megaplan run` / `arnold megaplan resume` | `temporary M4 parity shim` | arnold | `arnold/cli/__init__.py` subcommands | M6 |
+| Generated docs under `arnold/pipelines/megaplan/agent/docs/` | `M6 delete` | megaplan | vendored agent docs | M6 |
+| `arnold/pipelines/megaplan/agent/skills/index-cache/*.json` | `M6 delete` | megaplan | generated skill index cache | M6 |
+| Top-level package alias | `arnold/pipelines/megaplan/__init__.py` | `arnold.pipelines.megaplan.*` | forwarded lazily to new package modules in M4 | M6 |
+| CLI alias | `arnold/pipelines/megaplan/__main__.py` | `python -m arnold.pipelines.megaplan` | delegates to `arnold_pipelines.megaplan.cli` | M6 |
+| Registry plugin alias | `arnold/pipeline/registry.py` | `arnold.pipelines.megaplan` discovery | also scans `arnold_pipelines.megaplan` | M6 |
+| Worker agent parity | `arnold_pipelines/megaplan/workers/hermes.py`, `workers/_impl.py` | imports `arnold.pipelines.megaplan.agent` | allowed M4 parity adapter; vendored `agent/` stays in legacy tree | M6 |
+| `arnold_pipelines/megaplan/_compatibility.py` | `temporary M4 parity shim` | megaplan | backwards-compat re-exports for legacy callers | M6 |
+| `arnold_pipelines/megaplan/_pipeline/_bridge.py` | `temporary M4 parity shim` | megaplan | legacy `Pipeline` -> `WorkflowManifest` bridge | M6 |
+| `arnold_pipelines/megaplan/_pipeline/executor.py` | `temporary M4 parity shim` | megaplan | legacy `run_pipeline` / `run_pipeline_with_policy` entry points | M6 |
+| `arnold_pipelines/megaplan/_pipeline/registry.py` | `temporary M4 parity shim` | megaplan | legacy dispatcher allowlist `_BRIDGED_PIPELINES` | M6 |
+| `arnold_pipelines/megaplan/_pipeline/run_cli.py` | `temporary M4 parity shim` | megaplan | legacy `megaplan run` CLI path | M6 |
+| `arnold_pipelines/megaplan/_pipeline/subloop.py` | `temporary M4 parity shim` | megaplan | child-pipeline execution not yet bridge-compatible | M6 |
+| `arnold_pipelines/megaplan/_core/state.py` | `temporary M4 parity shim` | megaplan | legacy `state.json` read/write; new runtime uses journal projection | M6 |
+| `arnold_pipelines/megaplan/_pipeline/demos/` | `M6 delete` | megaplan | demo entries not bridged | M6 |
+| `arnold_pipelines/megaplan/_pipeline/m5-wrapper-eval.judge.json` | `M6 delete` | megaplan | generated judge fixture | M6 |
+| `arnold_pipelines/megaplan/_pipeline/pipeline_ids.json` | `read-only migration input` | megaplan | legacy pipeline ID registry used for alias mapping | M6 archive |
+| `arnold_pipelines/megaplan/agent/` | `M6 delete` (vendored) | megaplan | full Hermes/agent runtime vendored under product tree | M6 |
+| `arnold_pipelines/megaplan/vendor/shannon/` | `M6 delete` (vendored) | megaplan | vendored Shannon runtime | M6 |
+| `arnold_pipelines/megaplan/cloud/_reference/` | `M6 delete` | megaplan | generated reference debris | M6 |
+| `arnold_pipelines/megaplan/data/_codex_skills/` | `M6 delete` | megaplan | generated skill cache | M6 |
+| `arnold_pipelines/megaplan/cli/arnold.py` | `temporary M4 parity shim` | megaplan | legacy CLI surface; projections live in `cli/projection.py` | M6 |
+| `arnold_pipelines/megaplan/cli/roots.py` | `temporary M4 parity shim` | megaplan | legacy command-root wiring | M6 |

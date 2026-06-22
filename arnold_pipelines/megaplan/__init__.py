@@ -55,6 +55,7 @@ def compile_planning_pipeline(*args: Any, **kwargs: Any) -> Any:
 _SYMBOL_EXPORTS = {
     # Arnold plugin exports (canonical pipeline constructors)
     "build_pipeline": "arnold_pipelines.megaplan.pipeline",
+    "build_and_compile_pipeline": "arnold_pipelines.megaplan.pipeline",
     "compile_planning_pipeline": "arnold_pipelines.megaplan.pipeline",
     "operation_registry": "arnold_pipelines.megaplan.planning.operations",
     "override_catalog": "arnold_pipelines.megaplan.planning.operations",
@@ -158,7 +159,7 @@ _SYMBOL_EXPORTS = {
 
 __all__ = [
     # Arnold plugin exports
-    "build_pipeline", "compile_planning_pipeline",
+    "build_pipeline", "build_and_compile_pipeline", "compile_planning_pipeline",
     "operation_registry", "override_catalog",
     # Types
     "PlanState", "PlanConfig", "PlanMeta", "FlagRecord", "StepResponse",

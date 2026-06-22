@@ -63,7 +63,8 @@ class TestManifestBackendDispatch:
         ctx = make_context("prep")
         outcome = backend._execute_node_payload(ctx.coordinate, node, ctx)
         assert outcome.state == NodeState.COMPLETED
-        assert outcome.branch_edge_id == "plan"
+        # ``prep`` has only an unconditional outgoing edge; no branch is selected.
+        assert outcome.branch_edge_id is None
         assert outcome.outputs["next_step"] == "plan"
         assert fake.calls[0][0] == plan_dir.parent
         assert fake.calls[0][1].plan == "test"
@@ -98,7 +99,7 @@ class TestManifestBackendDispatch:
         node = make_node("gate")
         ctx = make_context("gate")
         outcome = backend._execute_node_payload(ctx.coordinate, node, ctx)
-        assert outcome.branch_edge_id == "iterate"
+        assert outcome.branch_edge_id == "gate:revise"
         assert len(outcome.control_signals) == 1
         signal = outcome.control_signals[0]
         assert signal.target.node_ref == "revise"
@@ -115,13 +116,13 @@ class TestBackendBranchSelection:
         from arnold_pipelines.megaplan.runtime.manifest_backend import MegaplanManifestBackend
 
         backend = MegaplanManifestBackend(plan_dir=tmp_path / "plan")
-        assert backend._branch_edge_id("gate", {"next_step": "revise"}) == "revise"
+        assert backend._branch_edge_id("gate", {"next_step": "revise"}) == "gate:revise"
 
     def test_branch_edge_from_recommendation(self, tmp_path: Path) -> None:
         from arnold_pipelines.megaplan.runtime.manifest_backend import MegaplanManifestBackend
 
         backend = MegaplanManifestBackend(plan_dir=tmp_path / "plan")
-        assert backend._branch_edge_id("gate", {"recommendation": "PROCEED"}) == "proceed"
+        assert backend._branch_edge_id("gate", {"recommendation": "PROCEED"}) == "gate:finalize"
 
     def test_suspension_route_for_human_state(self, tmp_path: Path) -> None:
         from arnold_pipelines.megaplan.runtime.manifest_backend import MegaplanManifestBackend
