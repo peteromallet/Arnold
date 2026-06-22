@@ -10,7 +10,7 @@ from arnold.runtime.operations import OperationResult
 
 def preflight_or_raise(profile: Mapping[str, Any], **kwargs: Any) -> None:
     """Run the existing Megaplan credential preflight via its observed path."""
-    from arnold_pipelines.megaplan._pipeline import preflight as preflight_module
+    from arnold_pipelines.megaplan import preflight as preflight_module
 
     preflight_module.preflight_or_raise(dict(profile), **kwargs)
 

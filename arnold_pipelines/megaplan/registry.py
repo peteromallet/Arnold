@@ -38,12 +38,8 @@ from arnold.runtime.operations import (
     OperationRequest,
     OperationResult,
 )
-from arnold_pipelines.megaplan._pipeline.discovery.trust import (
-    BLESSED_ALLOWLIST,
-    TrustGrade,
-    classify,
-)
-from arnold_pipelines.megaplan._pipeline import types as _pipeline_types  # noqa: F401 — legacy types still needed internally
+from arnold.pipeline.discovery.trust import BLESSED_ALLOWLIST, TrustGrade
+from arnold_pipelines.megaplan.runtime.discovery import classify
 from arnold_pipelines.megaplan.runtime.discovery import (
     CANONICAL_BUILTIN_PIPELINE,
     LEGACY_PIPELINE_ALIASES,

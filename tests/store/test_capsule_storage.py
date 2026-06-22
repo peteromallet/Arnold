@@ -14,7 +14,12 @@ from arnold.pipelines.megaplan._core.io import (
     recover_journal,
     write_journal_commit_marker,
 )
-from arnold.pipelines.megaplan._pipeline.contracts import legal_coercions
+# legal_coercions was previously imported from the now-deleted
+# arnold.pipelines.megaplan._pipeline.contracts module (M4 Step 5).
+# The canonical check_capsule_contract no longer references this dict;
+# we provide a local replacement so the test that exercises the legacy
+# coercion-registration path still compiles and can be evaluated.
+legal_coercions: dict[tuple[str, str], object] = {}
 from arnold.pipelines.megaplan.schemas import (
     Capsule,
     CapsuleContract,

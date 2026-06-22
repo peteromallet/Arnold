@@ -8,17 +8,11 @@ discovered) from the command line. Examples::
     megaplan run writing-panel-strict path/to/draft.md \
         --profile @writing-panel-strict:standard
 
-Demo pipelines (``doc-critique``, ``judges``) are not registered as
-built-ins; run them directly via their Python modules::
-
-    python -c "from arnold_pipelines.megaplan._pipeline.demos.doc_critique import run_demo; ..."
-    python -c "from arnold_pipelines.megaplan._pipeline.demo_judges import run_demo; ..."
-
 Single dispatch path: every pipeline is resolved through
 :mod:`megaplan.registry`. The human-gate resume path is
 preserved — paused runs reload state, swap the primary input to the
 latest artifact when the user picks ``continue``, then re-enter at the
-paused stage via :func:`megaplan._pipeline.resume.with_entry`.
+paused stage via :func:`arnold_pipelines.megaplan.runtime.resume.with_entry`.
 
 This module was rehomed from ``arnold_pipelines.megaplan._pipeline.run_cli``
 during the M3 burn-down (T18).
@@ -173,11 +167,11 @@ def _run_pipeline(args: argparse.Namespace) -> int:
     stage via :func:`with_entry`.
     """
 
-    from arnold_pipelines.megaplan._pipeline._bridge import run_pipeline_dispatch
+    from arnold_pipelines.megaplan.runtime.bridge import run_pipeline_dispatch
     from arnold_pipelines.megaplan.registry import (
         pipeline_metadata,
     )
-    from arnold_pipelines.megaplan._pipeline.resume import with_entry
+    from arnold_pipelines.megaplan.runtime.resume import with_entry
     from arnold_pipelines.megaplan.step_types import StepContext
     from arnold_pipelines.megaplan.profiles import (
         apply_vendor_rewrite,
@@ -532,7 +526,7 @@ def _validate_profile_for_run(
     vendor: str | None = None,
 ) -> int | None:
     from arnold.runtime.operations import OperationKind, OperationRequest
-    from arnold_pipelines.megaplan._pipeline import preflight as preflight_module
+    from arnold_pipelines.megaplan import preflight as preflight_module
     from arnold_pipelines.megaplan.runtime.discovery import canonical_pipeline_name
     from arnold_pipelines.megaplan.registry import (
         dispatch_operation_for,
