@@ -1,10 +1,10 @@
 {
   "schema_version": 0,
-  "current_milestone_index": 1,
-  "current_plan_name": "m2-provider-persistence-spine-20260622-1921",
+  "current_milestone_index": 2,
+  "current_plan_name": "m3-proposal-spine-and-agent-20260622-2318",
   "last_state": "done",
-  "pr_number": 55,
-  "pr_state": "open",
+  "pr_number": null,
+  "pr_state": null,
   "completed": [
     {
       "label": "m1-preview-truth-contract-freeze",
@@ -31,6 +31,35 @@
         "delta_computed": false,
         "command": "pytest --tb=no -q --no-header -rA",
         "duration_s": 1.912055791937746,
+        "ran": true,
+        "artifact": "full_suite_backstop.json"
+      }
+    },
+    {
+      "label": "m2-provider-persistence-spine",
+      "plan": "m2-provider-persistence-spine-20260622-1921",
+      "status": "done",
+      "pr_number": 55,
+      "pr_state": "merged",
+      "full_suite_backstop": {
+        "mode": "shadow",
+        "status": "failed",
+        "blocks": false,
+        "reason": "full_suite_backstop_mode=shadow: recorded only",
+        "passed": 8,
+        "failed": 3,
+        "failing_tests": [
+          "vendor/timeline-schema/tests/test_materialize_output.py::MaterializeOutputTests::test_materialize_output_from_2rp_theme",
+          "vendor/timeline-schema/tests/test_materialize_output.py::ResolveThemeTests::test_resolve_theme_2rp",
+          "vendor/timeline-schema/tests/test_materialize_output.py::ResolveThemeTests::test_resolve_theme_with_overrides"
+        ],
+        "newly_failing": [],
+        "deleted_tests": [],
+        "baseline_failing_count": 3,
+        "current_failing_count": 3,
+        "delta_computed": true,
+        "command": "pytest --tb=no -q --no-header -rA",
+        "duration_s": 2.585229624994099,
         "ran": true,
         "artifact": "full_suite_backstop.json"
       }
