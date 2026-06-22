@@ -44,9 +44,10 @@ def test_patterns_package_does_not_import_execution_or_product_modules() -> None
 
 def test_neutral_source_files_have_no_forbidden_imports() -> None:
     root = Path(__file__).parent.parent.parent.parent
+    manifest_sources = list((root / "arnold" / "manifest").rglob("*.py"))
     workflow_sources = list((root / "arnold" / "workflow").rglob("*.py"))
     patterns_sources = list((root / "arnold" / "patterns").rglob("*.py"))
-    violations = check_neutral_import_boundary(workflow_sources + patterns_sources)
+    violations = check_neutral_import_boundary(manifest_sources + workflow_sources + patterns_sources)
 
     assert violations == {}, f"forbidden product imports found: {violations}"
 

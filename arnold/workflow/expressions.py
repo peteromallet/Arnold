@@ -10,7 +10,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Iterable
 
-from arnold.workflow.refs import HookRef, ImportRef, _require_ref_segment
+from arnold.manifest.refs import HookRef, ImportRef, _require_ref_segment
 
 
 @dataclass(frozen=True, order=True)

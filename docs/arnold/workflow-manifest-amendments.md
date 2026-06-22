@@ -53,6 +53,34 @@ If later compiler work proves those carriers insufficient, the change must be a
 separate manifest amendment that states whether `manifest_hash`,
 `topology_hash`, or both change.
 
+## M3 Runtime Reserved Slots
+
+M3 adds optional runtime-reserved policy carriers to the v1 manifest contract
+without changing topology identity. These carriers are serialized manifest
+fields and therefore change `manifest_hash` when present or edited:
+
+- `WorkflowPolicy.timing`
+- `WorkflowPolicy.idempotency`
+- `WorkflowPolicy.effects`
+- `WorkflowPolicy.reducers`
+- `WorkflowPolicy.compensation`
+- `WorkflowPolicy.escalation`
+- `WorkflowPolicy.control_transitions`
+- `WorkflowPolicy.topology_overlays`
+- `WorkflowPolicy.authority`
+- `SuspensionRoute.resume_schema_hash`, `resume_schema_ref`, and
+  `resume_payload_ref`
+
+These fields do not change `topology_hash` because the static graph remains the
+same: nodes, edges, stable inputs/outputs, subpipeline refs, and edge
+conditions are unchanged.
+
+Dynamic topology overlays are represented by `TopologyOverlaySlot` manifest
+metadata plus later runtime control-transition events. The runtime event records
+the applied overlay and projects it into views, but it does not rewrite the
+canonical manifest or replace the original `manifest_hash` carried by replay
+events. Planned topology variants remain separate compiled manifests.
+
 ## Fixture Changes
 
 Behavioral goldens cannot change for import/package-only moves. Legitimate
