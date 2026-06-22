@@ -321,7 +321,7 @@ const PANEL_IDS = Object.freeze({
 const ROUTE_ALIASES = Object.freeze({
   auto: "auto",
   arnold: "auto",
-  deepseek: "openrouter",
+  deepseek: "deepseek",
   openrouter: "openrouter",
   anthropic: "anthropic",
   claude: "anthropic",
@@ -331,6 +331,7 @@ const ROUTE_ALIASES = Object.freeze({
 
 const ROUTE_LABELS = Object.freeze({
   auto: "auto",
+  deepseek: "deepseek",
   openrouter: "openrouter",
   anthropic: "anthropic",
   "openai-codex": "openai-codex",
@@ -392,10 +393,13 @@ const VIBECOMFY_LOGO_URL = resolveModuleAssetUrl("./vibecomfy_agent_icon_cream.p
 
 function _lsGet(key) {
   try {
-    if (typeof localStorage === "undefined" || localStorage === null) {
+    const storage = typeof localStorage !== "undefined" && localStorage !== null
+      ? localStorage
+      : globalThis?.localStorage;
+    if (!storage) {
       return null;
     }
-    return localStorage.getItem(key);
+    return storage.getItem(key);
   } catch (_e) {
     return null;
   }
@@ -403,10 +407,13 @@ function _lsGet(key) {
 
 function _lsSet(key, value) {
   try {
-    if (typeof localStorage === "undefined" || localStorage === null) {
+    const storage = typeof localStorage !== "undefined" && localStorage !== null
+      ? localStorage
+      : globalThis?.localStorage;
+    if (!storage) {
       return;
     }
-    localStorage.setItem(key, value);
+    storage.setItem(key, value);
   } catch (_e) {
     // Best-effort: silently swallow set errors (private browsing, quota, etc.)
   }
@@ -414,21 +421,23 @@ function _lsSet(key, value) {
 
 function _lsRemove(key) {
   try {
-    if (typeof localStorage === "undefined" || localStorage === null) {
+    const storage = typeof localStorage !== "undefined" && localStorage !== null
+      ? localStorage
+      : globalThis?.localStorage;
+    if (!storage) {
       return;
     }
-    localStorage.removeItem(key);
+    storage.removeItem(key);
   } catch (_e) {
     // Best-effort.
   }
 }
 
-const CANONICAL_AGENT_PROVIDERS = new Set(["anthropic", "openai-codex", "openrouter"]);
+const CANONICAL_AGENT_PROVIDERS = new Set(["anthropic", "deepseek", "openai-codex", "openrouter"]);
 
 function getPersistedAgentProvider() {
   const raw = _lsGet(LS_AGENT_PROVIDER_KEY);
   if (raw == null) return null;
-  if (raw === "deepseek") return "openrouter";
   if (CANONICAL_AGENT_PROVIDERS.has(raw)) return raw;
   return null;
 }
@@ -2545,7 +2554,7 @@ function normalizeRoutePreference(value) {
   const normalized = String(value || "")
     .trim()
     .toLowerCase();
-  return ROUTE_ALIASES[normalized] || "openrouter";
+  return ROUTE_ALIASES[normalized] || "deepseek";
 }
 
 function normalizeModelPreference(value) {
@@ -2967,6 +2976,8 @@ async function refreshAgentStatus(panel, { quiet = false } = {}) {
     requestedRoute: route,
     model,
   };
+  panel.fields.route.disabled = true;
+  panel.fields.model.disabled = true;
   if (typeof document !== "undefined") {
     renderAgentPanel(panel, { dirtySections: SETTINGS_STATUS_RENDER_SECTIONS });
   }
@@ -3049,7 +3060,7 @@ async function refreshAgentStatus(panel, { quiet = false } = {}) {
     } else {
       const availableRoute = routeOptions[requestedRoute]
         ? requestedRoute
-        : (routeOptions["openrouter"] ? "openrouter" : Object.keys(routeOptions)[0] || requestedRoute);
+        : (routeOptions.deepseek ? "deepseek" : (routeOptions.openrouter ? "openrouter" : Object.keys(routeOptions)[0] || requestedRoute));
       console.log("[vibecomfy] refreshAgentStatus using availableRoute=", availableRoute, "(requestedRoute=", requestedRoute, ")");
       populateRouteSelect(panel.fields.route, routeOptions, { selectedRoute: availableRoute });
       panel.fields.route.value = availableRoute;
@@ -3119,9 +3130,20 @@ function clearCredentialInput(panel) {
   panel.fields.apiKey.value = "";
 }
 
-function hasStoredOpenRouterCredential(panel) {
+function hasStoredBrowserCredential(panel, route = panel?.fields?.route?.value) {
   const presence = panel?.state?.statusSnapshot?.credential_presence || {};
+  const normalizedRoute = normalizeRoutePreference(route);
+  if (normalizedRoute === "deepseek") {
+    return Boolean(presence.deepseek_api_key);
+  }
+  if (normalizedRoute === "openrouter") {
+    return Boolean(presence.openrouter_api_key);
+  }
   return Boolean(presence.openrouter_api_key || presence.deepseek_api_key);
+}
+
+function hasStoredOpenRouterCredential(panel) {
+  return hasStoredBrowserCredential(panel, "deepseek") || hasStoredBrowserCredential(panel, "openrouter");
 }
 
 function closeChooseEngineOverlay(panel) {
@@ -3143,6 +3165,9 @@ function storedReadyProviderFromStatus(panel) {
   const resolvedRoute = normalizeRoutePreference(
     status.route || status.route_metadata?.normalized_route || status.requested_route,
   );
+  if (resolvedRoute === "deepseek" && status.credential_presence?.deepseek_api_key) {
+    return "deepseek";
+  }
   if (resolvedRoute === "openrouter" && (status.credential_presence?.openrouter_api_key || status.credential_presence?.deepseek_api_key)) {
     return "openrouter";
   }
@@ -3165,6 +3190,12 @@ function syncChooseEngineGate(panel) {
       selectedRoute: readyProvider,
     });
     panel.fields.route.value = readyProvider;
+    panel.state.routeStatus = {
+      kind: ROUTE_STATUS_KIND.READY,
+      requestedRoute: readyProvider,
+      model: normalizeModelPreference(panel.fields.model.value),
+    };
+    panel.state.settingsMessage = `${readyProvider} → ${panel.state.statusSnapshot?.route || readyProvider} (provider ready)`;
     closeChooseEngineOverlay(panel);
     return;
   }
@@ -3462,7 +3493,7 @@ function candidateActionState(panel, message = null, snapshot = null) {
     eligibility,
     blockerMessage,
     applyDisabled: applying || !active || !eligibility.applyable,
-    rejectDisabled: submitting || applying || !active || !eligibility.applyable,
+    rejectDisabled: submitting || applying || !active,
   };
 }
 
@@ -3847,6 +3878,7 @@ function createAgentPanelShell() {
   const modelInput = document.createElement("input");
   modelInput.id = PANEL_IDS.model;
   modelInput.placeholder = "Model override (optional)";
+  modelInput.disabled = true;
   Object.assign(modelInput.style, {
     width: "100%",
     display: "none",
@@ -6099,6 +6131,11 @@ export function computePreviewDiff(candidateGraph, candidateReport) {
         liveUidById.set(String(node.id), uid);
       }
     }
+    for (const [id, uid] of candidateUidById) {
+      if (!liveUidById.has(id) && liveNodesById.has(id)) {
+        liveUidById.set(id, uid);
+      }
+    }
 
     let _unresolvableLinkWarnCount = 0;
     const _MAX_UNRESOLVABLE_LINK_WARNS = 5;
@@ -8092,17 +8129,15 @@ function renderSettings(panel) {
   const descriptor = getRouteDescriptor(panel);
   const controlsReady =
     Boolean(descriptor)
-    && (
-      routeStatus.kind === ROUTE_STATUS_KIND.READY
-      || routeStatus.kind === ROUTE_STATUS_KIND.LOADING
-    );
+    && routeStatus.kind === ROUTE_STATUS_KIND.READY;
   const apiKeyVisible = controlsReady && Boolean(descriptor.browser_api_key_allowed);
   panel.fields.route.disabled = !controlsReady;
   panel.fields.model.disabled = !controlsReady;
   setVisible(panel.fields.apiKey, apiKeyVisible, "");
-  const storedOpenRouterKey = hasStoredOpenRouterCredential(panel);
+  const storedBrowserKey = hasStoredBrowserCredential(panel, panel.fields.route.value);
+  const browserKeyLabel = normalizeRoutePreference(panel.fields.route.value) === "deepseek" ? "DeepSeek" : "OpenRouter";
   panel.fields.apiKey.placeholder = apiKeyVisible
-    ? (storedOpenRouterKey ? "Saved OpenRouter key present; paste a new key to replace" : "OpenRouter API key")
+    ? (storedBrowserKey ? `Saved ${browserKeyLabel} key present; paste a new key to replace` : `${browserKeyLabel} API key`)
     : "Browser API keys are not accepted for this route";
   if (!apiKeyVisible) {
     clearCredentialInput(panel);
@@ -8147,8 +8182,8 @@ function renderSettings(panel) {
   statusNode.textContent = panel.state.settingsMessage
     || `${descriptor.requested_route} → ${normalizedRoute} (${availability})`;
   guidanceNode.textContent = descriptor.guidance || "";
-  if (apiKeyVisible && storedOpenRouterKey) {
-    guidanceNode.textContent += `${guidanceNode.textContent ? "\n" : ""}Saved OpenRouter key present. Paste a new key only if you want to replace it.`;
+  if (apiKeyVisible && storedBrowserKey) {
+    guidanceNode.textContent += `${guidanceNode.textContent ? "\n" : ""}Saved ${browserKeyLabel} key present. Paste a new key only if you want to replace it.`;
   }
   if (descriptor.requested_route === "anthropic") {
     guidanceNode.textContent += "\nClaude runs through your local CLI setup; browser-submitted API keys are not stored for this route.";
@@ -8214,26 +8249,44 @@ function renderPanelMetaAndStatus(panel) {
 }
 
 function renderThreadSection(panel) {
-  return renderThreadSectionImpl(panel, {
+  return renderThreadSectionImpl(panel, agentPanelThreadRenderDeps());
+}
+
+function agentPanelThreadRenderDeps() {
+  return {
+    appendAuditDetail,
     appendChildOnce,
     appendCodeLine,
+    appendCandidateDetail,
+    appendDebugDetail,
+    appendFailureDetail,
+    appendQueueDetail,
     appendTextLine,
     button,
+    candidateActionState,
+    changeDetailsForMessage,
     clearNode,
     collectThreadMessageEntries,
     computeThreadDisplayEntries,
+    createBubbleDetailSection,
+    createDetails,
     currentAgentPanel,
+    detailSnapshotForMessage,
     downloadTurnAudit,
     el,
     ensureThreadRenderState,
     getAgentPanelRuntime,
+    messageSignature,
+    messageStableKey,
     markAgentPanelDirty,
     reconcileChatBubbles,
     recordAgentPanelRenderCount,
     recordThreadRender,
     renderAgentPanel,
     RENDER_SECTIONS,
-  });
+    showIssueModal,
+    submitRating,
+  };
 }
 
 function renderComposerActions(panel) {
@@ -8351,26 +8404,7 @@ function renderAgentPanelSections(panel, dirtySections = ALL_AGENT_PANEL_RENDER_
     if (section === RENDER_SECTIONS.META) {
       runAgentPanelSectionRenderer(panel, RENDER_SECTIONS.META, renderPanelMetaAndStatus, result);
     } else if (section === RENDER_SECTIONS.THREAD) {
-      runAgentPanelSectionRenderer(panel, RENDER_SECTIONS.THREAD, (nextPanel) => renderThreadSectionImpl(nextPanel, {
-        appendChildOnce,
-        appendCodeLine,
-        appendTextLine,
-        button,
-        clearNode,
-        collectThreadMessageEntries,
-        computeThreadDisplayEntries,
-        currentAgentPanel,
-        downloadTurnAudit,
-        el,
-        ensureThreadRenderState,
-        getAgentPanelRuntime,
-        markAgentPanelDirty,
-        reconcileChatBubbles,
-        recordAgentPanelRenderCount,
-        recordThreadRender,
-        renderAgentPanel,
-        RENDER_SECTIONS,
-      }), result);
+      runAgentPanelSectionRenderer(panel, RENDER_SECTIONS.THREAD, renderThreadSection, result);
     } else if (section === RENDER_SECTIONS.COMPOSER) {
       runAgentPanelSectionRenderer(panel, RENDER_SECTIONS.COMPOSER, (nextPanel) => renderComposerActionsImpl(nextPanel, {
         candidateActionState,
@@ -9791,23 +9825,7 @@ async function applyAgentCandidate(panel) {
 }
 
 async function rejectAgentCandidate(panel) {
-  if (!panel?.state?.candidateGraph) {
-    return;
-  }
-  const eligibility = applyEligibility(panel);
-  if (!eligibility.applyable) {
-    const failure = agentPanelFailure("RejectBlocked", eligibility.message || "Reject is blocked for this candidate.", {
-      retryable: eligibility.reason !== APPLY_ELIGIBILITY_REASON.NO_CANDIDATE,
-      graph_unchanged: true,
-      next_action: "Submit a new edit or resolve the server-side blockers before retrying Reject.",
-      apply_eligibility: eligibility,
-    });
-    const obligations = transition(panel, "REJECT_FAILURE", {
-      failure,
-      debugPayload: failure,
-    });
-    fulfillLifecycleTransitionObligations(panel, obligations);
-    renderLifecycleTransition(panel, obligations);
+  if (!panel?.state?.candidateGraph || !panel.state.sessionId || !panel.state.turnId) {
     return;
   }
 
