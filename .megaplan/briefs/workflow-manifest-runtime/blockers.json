@@ -1,0 +1,29 @@
+{
+  "schema_version": 1,
+  "blockers": [
+    {
+      "id": "wmr-review-w3-sequencing-unresolved-inventory",
+      "source": "docs/arnold/workflow-manifest-runtime-review/subagent-results/wave3/w3-01-sequencing-coherence.txt",
+      "title": "Resolve migration, deletion, whitelist, and post-merge proof inventory before final completion",
+      "status": "open"
+    },
+    {
+      "id": "wmr-review-w9-merge-result-conformance",
+      "source": "docs/arnold/workflow-manifest-runtime-review/subagent-results/wave9/w9-10-final-merge-result-attack.txt",
+      "title": "Run merge-result rebuild, installed-wheel conformance, deletion integrity, and generated-artifact freshness gates after all milestone merges",
+      "status": "open"
+    },
+    {
+      "id": "wmr-review-w9-dynamic-import-trap",
+      "source": "docs/arnold/workflow-manifest-runtime-review/subagent-results/wave9/w9-10-final-merge-result-attack.txt",
+      "title": "Instrument importlib, __import__, lazy __getattr__, __all__, entrypoint loading, and handler registration against deleted legacy paths",
+      "status": "open"
+    },
+    {
+      "id": "wmr-review-w9-allowlist-freeze",
+      "source": "docs/arnold/workflow-manifest-runtime-review/subagent-results/wave9/w9-10-final-merge-result-attack.txt",
+      "title": "Freeze and resolve all legacy allowlist rows before M6 merge; merge-review rechartering requires independent evidence",
+      "status": "open"
+    }
+  ]
+}

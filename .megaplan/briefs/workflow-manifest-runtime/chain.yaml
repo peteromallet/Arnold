@@ -77,6 +77,19 @@ milestones:
     prep_direction: "Make the clean-break end-state true. Delete obsolete public/native/compatibility surfaces only after inventory, parity, installed-wheel, docs/scaffold, import graph, and golden behavior gates are green. Preserve no permanent shims."
     notes: "Final public API contract cutover and deletion sprint."
 
+  - label: m7-merge-result-conformance
+    idea: .megaplan/briefs/workflow-manifest-runtime/m7-merge-result-conformance.md
+    profile: partnered-5
+    vendor: codex
+    robustness: thorough
+    depth: high
+    branch: workflow-manifest-runtime-m7-merge-result-conformance
+    depends_on:
+      - m6-clean-break-purge-conformance
+    prep_clarify: false
+    prep_direction: "Run only post-merge release gates on the integrated checkout. Build the wheel from the merge result, rerun installed-wheel conformance and generated-artifact freshness, run scripts/chain_done_gate.py with blockers.json, run scripts/m6_purge_gate.py, and prove deleted files/imports were not resurrected. Do not reintroduce or repair legacy pipeline content here."
+    notes: "Blocks final chain completion unless the merged state, not just milestone branches, proves the clean-break contract."
+
 on_failure:
   abort: stop_chain
 on_escalate:
