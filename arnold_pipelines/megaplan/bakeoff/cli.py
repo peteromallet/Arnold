@@ -6,7 +6,7 @@ import argparse
 from pathlib import Path
 from typing import Any, Callable
 
-from arnold_pipelines.megaplan._pipeline.flags import supervisor_tier_routing_on
+from arnold_pipelines.megaplan.feature_flags import supervisor_tier_routing_on
 from arnold_pipelines.megaplan.profiles import ROBUSTNESS_LEVELS
 from arnold_pipelines.megaplan.types import CliError
 

@@ -1569,7 +1569,7 @@ def query_route_if_enabled(
     now: Optional[float] = None,
 ) -> RouteSuggestion | None:
     """Return a route suggestion only when calibration query routing is enabled."""
-    from arnold_pipelines.megaplan._pipeline.flags import calibration_query_route_on
+    from arnold_pipelines.megaplan.feature_flags import calibration_query_route_on
 
     if not calibration_query_route_on():
         return None
@@ -1596,7 +1596,7 @@ def project_tier_models_if_enabled(
     fallback_tier_models: Mapping[str, Mapping[int | str, Any]] | None = None,
 ) -> dict[str, dict[str, str]] | None:
     """Return projected tier models only when the calibration route flag is on."""
-    from arnold_pipelines.megaplan._pipeline.flags import calibration_query_route_on
+    from arnold_pipelines.megaplan.feature_flags import calibration_query_route_on
 
     if not calibration_query_route_on():
         return None

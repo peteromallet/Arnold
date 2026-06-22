@@ -89,7 +89,7 @@ def _time_budget_seconds(state: LoopState, args: argparse.Namespace | None) -> i
     # T21: UNIFIED_BUDGET=1 routes the loop time budget read through the
     # budget authority. Flag-OFF byte-identical to pre-T21 behavior.
     try:
-        from arnold_pipelines.megaplan._pipeline.flags import unified_budget_on
+        from arnold_pipelines.megaplan.feature_flags import unified_budget_on
         from arnold_pipelines.megaplan.runtime.budget_authority import current_authority
 
         if unified_budget_on():
@@ -121,7 +121,7 @@ def _record_dispatch_attribution(
     if amount_usd <= 0 or lease_id is None or fencing_token is None:
         return
     try:
-        from arnold_pipelines.megaplan._pipeline.flags import unified_budget_on
+        from arnold_pipelines.megaplan.feature_flags import unified_budget_on
         from arnold_pipelines.megaplan.runtime.budget_authority import current_authority
 
         if not unified_budget_on():

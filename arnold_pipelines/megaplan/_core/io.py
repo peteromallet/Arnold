@@ -337,7 +337,7 @@ def read_plan_state_cached(plan_dir: Path, *, mode: "PlanStateReadMode") -> Any:
     if mode == "authority":
         # Lazy import to avoid module-load-time cycles
         # (flags → _pipeline → _core.io).
-        from arnold_pipelines.megaplan._pipeline.flags import r1_authority_on
+        from arnold_pipelines.megaplan.feature_flags import r1_authority_on
         if r1_authority_on():
             from arnold_pipelines.megaplan.observability.fold import rebuild_state_from_wal
             wal_state = rebuild_state_from_wal(Path(plan_dir))
@@ -961,7 +961,7 @@ def get_effective(
         raise KeyError(default_key)
     # M4 T13: flag-gated delegation to N-layer ConfigResolver. Flag-OFF path
     # below is byte-identical to the pre-T13 behaviour for the 30+ callers.
-    from arnold_pipelines.megaplan._pipeline.flags import unified_config_on
+    from arnold_pipelines.megaplan.feature_flags import unified_config_on
 
     if unified_config_on():
         from arnold_pipelines.megaplan._core.config_resolver import ConfigResolver
@@ -1002,7 +1002,7 @@ def setting_is_explicit(
     explicit — a project config entry is a deliberate operator pin.
     """
     # M4 T13: flag-gated delegation. Flag-OFF retains existing behaviour.
-    from arnold_pipelines.megaplan._pipeline.flags import unified_config_on
+    from arnold_pipelines.megaplan.feature_flags import unified_config_on
 
     if unified_config_on():
         from arnold_pipelines.megaplan._core.config_resolver import ConfigResolver

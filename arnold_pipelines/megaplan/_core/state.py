@@ -651,7 +651,7 @@ def restorable_boundary(operation: str) -> Iterator[None]:
     # Lazy imports avoid a state.py -> drivers / pipeline import cycle at
     # module-load time (state.py is imported very early in the stack).
     from arnold_pipelines.megaplan.drivers import current_substrate
-    from arnold_pipelines.megaplan._pipeline.envelope import _fanout_active_ctx
+    from arnold.runtime.envelope import _fanout_active_ctx
 
     substrate = current_substrate()
     fanout_active = _fanout_active_ctx.get(False)
@@ -700,7 +700,7 @@ def write_plan_state(
                     raise TypeError("state is required for executor-key-merge mode")
                 if state_path.exists() and executor_owned_keys is not None:
                     try:
-                        from arnold_pipelines.megaplan._pipeline.flags import typed_ports_on
+                        from arnold_pipelines.megaplan.feature_flags import typed_ports_on
                         from arnold_pipelines.megaplan.state_delta import StateDelta, apply_delta
                         _flag_on = typed_ports_on()
                     except Exception:
@@ -1189,7 +1189,7 @@ def append_history(state: PlanState, entry: HistoryEntry) -> None:
         )
 
     try:
-        from arnold_pipelines.megaplan._pipeline.flags import effect_ledger_on
+        from arnold_pipelines.megaplan.feature_flags import effect_ledger_on
         from arnold_pipelines.megaplan.observability.effect_enforcement import journal_then_execute
         from arnold_pipelines.megaplan.observability.effect_ledger import Effect, ReplayClass
     except Exception:
