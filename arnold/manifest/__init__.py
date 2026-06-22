@@ -1,4 +1,4 @@
-"""Compatibility re-exports for neutral workflow manifest schema."""
+"""Neutral workflow manifest schema and reference primitives."""
 
 from __future__ import annotations
 
@@ -28,6 +28,20 @@ from arnold.manifest.manifests import (
     compute_manifest_hash,
     compute_topology_hash,
 )
+from arnold.manifest.refs import (
+    EdgeRef,
+    HookRef,
+    ImportRef,
+    ManifestCoordinate,
+    ManifestCursor,
+    NodeRef,
+    RefDiagnosticError,
+    SourceRef,
+    SourceSpan,
+    ValueRef,
+    canonical_alias,
+    manifest_coordinate,
+)
 
 __all__ = [
     "AuthorityRequirement",
@@ -36,22 +50,34 @@ __all__ = [
     "CompensationPolicy",
     "CompensationTarget",
     "ControlTransitionSlot",
+    "EdgeRef",
     "EffectRef",
     "EscalationPolicy",
     "FanoutPolicy",
+    "HookRef",
+    "ImportRef",
     "IdempotencyPolicy",
     "LoopPolicy",
+    "ManifestCoordinate",
+    "ManifestCursor",
+    "NodeRef",
     "ReducerRef",
+    "RefDiagnosticError",
     "RetryPolicy",
+    "SourceRef",
+    "SourceSpan",
     "SubpipelineRef",
     "SuspensionRoute",
     "TimingPolicy",
     "TopologyOverlaySlot",
+    "ValueRef",
     "WorkflowEdge",
     "WorkflowManifest",
     "WorkflowNode",
     "WorkflowPolicy",
+    "canonical_alias",
     "canonical_json",
     "compute_manifest_hash",
     "compute_topology_hash",
+    "manifest_coordinate",
 ]
