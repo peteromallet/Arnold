@@ -44,7 +44,9 @@ interface ExtensionProposal {
   payload: Record<string, unknown>;
   createdAt: string;
   updatedAt: string;
+  title?: string;
   label?: string;
+  detail?: Record<string, unknown>;
   baseVersion?: number;
   expiresAt?: number;
   acceptedAt?: string;

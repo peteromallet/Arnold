@@ -79,7 +79,7 @@ import {
 } from '@/tools/video-editor/lib/timeline-asset-plans.ts';
 import { useRenderDiagnostic } from '@/tools/video-editor/hooks/usePerfDiagnostics.ts';
 import { createTimelineReader } from '@/tools/video-editor/lib/timeline-reader.ts';
-import { createProposalRuntime } from '@/tools/video-editor/lib/proposal-runtime.ts';
+import { createProposalRuntime, createProposalPersistenceBridge, type ProposalPersistenceProvider } from '@/tools/video-editor/lib/proposal-runtime.ts';
 import { createCommandRegistry, type CommandRegistry } from '@/tools/video-editor/runtime/commandRegistry.ts';
 import { createEffectRegistrationService } from '@/tools/video-editor/runtime/effectRegistrationService.ts';
 import type { EffectRegistry } from '@/tools/video-editor/effects/registry/types.ts';
@@ -217,6 +217,18 @@ function InnerProvider({
     [store, runtime.project.projectId, runtime.extensionRuntime.requirements],
   );
 
+  // ── M3: Provider-backed proposal persistence bridge ─────────────────────
+  const proposalPersistenceRef = useRef<ProposalPersistenceProvider | null | undefined>(undefined);
+  if (proposalPersistenceRef.current === undefined) {
+    const svc = runtime.provider.createExtensionPersistenceService?.({
+      userId: runtime.auth.userId,
+      timelineId: runtime.timelineId,
+    }, []);
+    proposalPersistenceRef.current = svc?.capabilities.proposals
+      ? createProposalPersistenceBridge(svc)
+      : null;
+  }
+
   // One ProposalRuntime per provider mount, stable for the provider lifetime.
   const proposalRuntimeRef = useRef<ReturnType<typeof createProposalRuntime> | null>(null);
   if (!proposalRuntimeRef.current) {
@@ -225,6 +237,7 @@ function InnerProvider({
       proposalRuntimeRef.current = createProposalRuntime({
         timelineOps: ops,
         reader: timelineReader,
+        persistenceProvider: proposalPersistenceRef.current ?? undefined,
       });
       store.getState().syncSlices({ proposalRuntime: proposalRuntimeRef.current });
     }
@@ -238,6 +251,7 @@ function InnerProvider({
       proposalRuntimeRef.current = createProposalRuntime({
         timelineOps: ops,
         reader: timelineReader,
+        persistenceProvider: proposalPersistenceRef.current ?? undefined,
       });
     }
   }, [store, timelineReader]);

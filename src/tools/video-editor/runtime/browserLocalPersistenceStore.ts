@@ -70,7 +70,9 @@ interface ProposalRecord {
   payload: Record<string, unknown>;
   createdAt: string;
   updatedAt: string;
+  title?: string;
   label?: string;
+  detail?: Record<string, unknown>;
   baseVersion?: number;
   expiresAt?: number;
   acceptedAt?: string;
@@ -220,7 +222,9 @@ async function loadAllProposals(
           payload: record.payload,
           createdAt: record.createdAt,
           updatedAt: record.updatedAt,
+          ...(record.title !== undefined ? { title: record.title } : {}),
           ...(record.label !== undefined ? { label: record.label } : {}),
+          ...(record.detail !== undefined ? { detail: record.detail } : {}),
         };
         if (record.baseVersion !== undefined) {
           proposal.baseVersion = record.baseVersion;
@@ -286,7 +290,9 @@ async function saveAllProposals(
         payload: proposal.payload,
         createdAt: proposal.createdAt,
         updatedAt: proposal.updatedAt,
+        ...(proposal.title !== undefined ? { title: proposal.title } : {}),
         ...(proposal.label !== undefined ? { label: proposal.label } : {}),
+        ...(proposal.detail !== undefined ? { detail: proposal.detail } : {}),
         ...(proposal.baseVersion !== undefined ? { baseVersion: proposal.baseVersion } : {}),
         ...(proposal.expiresAt !== undefined ? { expiresAt: proposal.expiresAt } : {}),
         ...(proposal.acceptedAt !== undefined ? { acceptedAt: proposal.acceptedAt } : {}),

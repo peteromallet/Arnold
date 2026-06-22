@@ -150,6 +150,10 @@ export interface ExtensionProposalRecord {
   readonly rejectedAt?: string;
 }
 
+/** A diagnostic code for proposal storage degradation (e.g., IndexedDB down). */
+export const PROPOSAL_STORAGE_DEGRADED =
+  'proposal_storage_degraded' as const;
+
 export type ExtensionProposal = ExtensionProposalRecord;
 
 /** Query criteria for listing proposals. */

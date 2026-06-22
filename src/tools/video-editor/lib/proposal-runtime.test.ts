@@ -1349,5 +1349,99 @@ describe('ProposalRuntime', () => {
         expect(hasPersistenceDiag).toBe(false);
       }
     });
+
+    it('explicitly warns that proposals will be lost on page refresh when persistence is unsupported', () => {
+      const mockOps = createMockTimelineOps();
+      const createOptions: any = {
+        timelineOps: mockOps,
+        reader: { snapshot: () => ({ currentVersion: 1 }) },
+        persistenceProvider: null, // explicitly no persistence
+      };
+
+      const runtime = createProposalRuntime(createOptions);
+      expect(runtime).toBeDefined();
+
+      const diags = (runtime as any).diagnostics;
+      expect(diags).toBeDefined();
+      expect(Array.isArray(diags)).toBe(true);
+
+      const persistenceDiag = diags.find(
+        (d: any) => d.code === 'proposal/persistence-unsupported',
+      );
+      expect(persistenceDiag).toBeDefined();
+      expect(persistenceDiag.message).toContain('lost on page refresh');
+      expect(persistenceDiag.severity).toBe('warning');
+    });
+
+    it('does not promise reload-safe proposals when persistence provider is absent', () => {
+      // Construct two runtimes without a persistence provider.
+      // Proposals created in runtime1 must NOT be visible in runtime2 —
+      // the runtime makes no false promise of cross-instance survival.
+      const mockOps = createMockTimelineOps();
+      const reader = { snapshot: () => ({ currentVersion: 1 }) };
+
+      const runtime1 = createProposalRuntime({
+        timelineOps: mockOps,
+        reader: reader as any,
+        persistenceProvider: null,
+      });
+
+      const proposal = runtime1.create({
+        source: 'ext-a',
+        patch: { version: 0, operations: [] },
+        baseVersion: 0,
+      });
+
+      // A second runtime with no provider should NOT see the proposal.
+      const runtime2 = createProposalRuntime({
+        timelineOps: mockOps,
+        reader: reader as any,
+        persistenceProvider: null,
+      });
+
+      expect(runtime2.get(proposal.id)).toBeUndefined();
+      expect(runtime2.list()).toHaveLength(0);
+
+      // The unsupported diagnostic must be present.
+      const diags = (runtime2 as any).diagnostics as Array<{ code: string; message: string }>;
+      expect(diags.some((d) => d.code === 'proposal/persistence-unsupported')).toBe(true);
+    });
+  });
+
+  // -----------------------------------------------------------------------
+  // M3: Negative-path — provider_capability_extension_proposals_unsupported bridge
+  // -----------------------------------------------------------------------
+
+  describe('negative-path: unsupported-provider bridge to DataProvider diagnostics', () => {
+    it('surfaces the stable diagnostic code when the provider capabilities exclude proposals', () => {
+      // Simulate a minimal persistence provider that explicitly reports
+      // proposals as unsupported (similar to what a DataProvider that lacks
+      // createExtensionPersistenceService would emit).
+      const mockOps = createMockTimelineOps();
+      const reader = { snapshot: () => ({ currentVersion: 1 }) };
+
+      // persistenceProvider: null is the canonical "unsupported" sentinel.
+      const runtime = createProposalRuntime({
+        timelineOps: mockOps,
+        reader: reader as any,
+        persistenceProvider: null,
+      });
+
+      const diags = (runtime as any).diagnostics as Array<{ severity: string; code: string; message: string }>;
+      expect(diags).toBeDefined();
+
+      const unsupportedDiag = diags.find(
+        (d) => d.code === 'proposal/persistence-unsupported',
+      );
+      expect(unsupportedDiag).toBeDefined();
+      expect(unsupportedDiag!.severity).toBe('warning');
+
+      // The runtime must not crash or throw when used without persistence.
+      expect(() => runtime.create({
+        source: 'ext-a',
+        patch: { version: 0, operations: [] },
+        baseVersion: 0,
+      })).not.toThrow();
+    });
   });
 });

@@ -36,6 +36,15 @@ serve((req) => withEdgeRequest<AgentInvocationBody>(
       ? undefined
       : typeof body.user_message === "string" ? body.user_message.trim() : null;
     const selectedClips = normalizeSelectedClips(body.selected_clips);
+    // M3: proposal_policy → timelineMutationMode mapping
+    // 'always' → proposal mode (agent returns proposals instead of mutating)
+    // 'immediate' / absent → immediate mode (agent applies mutations directly)
+    const proposalPolicy = typeof body.proposal_policy === "string"
+      && (body.proposal_policy === "always" || body.proposal_policy === "immediate")
+      ? body.proposal_policy
+      : undefined;
+    const timelineMutationMode: "immediate" | "proposal" =
+      proposalPolicy === "always" ? "proposal" : "immediate";
     if (!sessionId) return jsonResponse({ error: "session_id is required" }, 400);
     if (userMessage === null) return jsonResponse({ error: "user_message must be a string when provided" }, 400);
 
@@ -80,6 +89,7 @@ serve((req) => withEdgeRequest<AgentInvocationBody>(
         supabaseAdmin,
         userJwt,
         logger,
+        timelineMutationMode,
       });
       await persistSessionState(supabaseAdmin, {
         sessionId: session.id,
@@ -93,8 +103,9 @@ serve((req) => withEdgeRequest<AgentInvocationBody>(
         turns_added: result.turns.length - session.turns.length,
         tool_count: TIMELINE_AGENT_TOOLS.length,
         model: session.model,
+        mutation_applied: result.mutation_applied,
         ...(result.proposals && result.proposals.length > 0
-          ? { proposals: result.proposals, mutation_applied: result.mutation_applied }
+          ? { proposals: result.proposals }
           : {}),
       });
     } catch (error: unknown) {

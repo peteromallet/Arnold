@@ -12,6 +12,16 @@ type AgentInvocationResponse = {
   session_id: string;
   status: AgentSessionStatus;
   turns_added: number;
+  proposals?: Array<{
+    id: string;
+    source: string;
+    rationale?: string;
+    state: string;
+    baseVersion: number;
+    expiresAt?: number;
+    patch: { version: number; operations: Array<{ op: string; target: string; payload?: Record<string, unknown> }> };
+  }>;
+  mutation_applied?: boolean;
 };
 
 type AgentMessageAttachment = NonNullable<AgentTurn['attachments']>[number];
@@ -91,11 +101,26 @@ function normalizeSession(row: unknown): AgentSession {
 function normalizeInvokeResponse(value: unknown): AgentInvocationResponse {
   const record = isRecord(value) ? value : {};
 
-  return {
+  const response: AgentInvocationResponse = {
     session_id: typeof record.session_id === 'string' ? record.session_id : '',
     status: isAgentSessionStatus(record.status) ? record.status : 'error',
     turns_added: typeof record.turns_added === 'number' ? record.turns_added : 0,
   };
+
+  // M3: Preserve proposals array from edge response
+  if (Array.isArray(record.proposals)) {
+    response.proposals = record.proposals.filter(
+      (p: unknown): p is AgentInvocationResponse['proposals'][number] =>
+        isRecord(p) && typeof p.id === 'string' && typeof p.state === 'string',
+    );
+  }
+
+  // M3: Preserve mutation_applied flag from edge response
+  if (typeof record.mutation_applied === 'boolean') {
+    response.mutation_applied = record.mutation_applied;
+  }
+
+  return response;
 }
 
 function delayWithTracking(timeoutIdsRef: MutableRefObject<Set<number>>, ms: number) {
@@ -271,6 +296,7 @@ export function useSendMessage(sessionId: string | null | undefined, timelineId?
         const { data, error } = await getSupabaseClient().functions.invoke('ai-timeline-agent', {
           body: {
             session_id: sessionId,
+            proposal_policy: 'always',
             ...(nextUserMessage ? { user_message: nextUserMessage } : {}),
             ...(nextUserMessage && attachments?.length ? {
               selected_clips: attachments.map((clip) => ({
@@ -352,12 +378,14 @@ export function useSendMessage(sessionId: string | null | undefined, timelineId?
       const clearId = window.setTimeout(() => setLocalError(null), 5000);
       timeoutIdsRef.current.add(clearId);
     },
-    onSuccess: () => {
+    onSuccess: (data: AgentInvocationResponse) => {
       setLocalError(null);
       void queryClient.invalidateQueries({ queryKey: agentSessionQueryKey(sessionId) });
       void queryClient.invalidateQueries({ queryKey: ['timeline-agent-sessions'] });
-      // Re-fetch the timeline so agent edits appear immediately in the editor
-      if (timelineId) {
+      // M3: Only re-fetch the timeline when mutations were actually applied.
+      // Proposal-only responses (mutation_applied: false) skip invalidation
+      // to avoid an unnecessary reload of unchanged config.
+      if (timelineId && data.mutation_applied !== false) {
         void queryClient.invalidateQueries({ queryKey: timelineQueryKey(timelineId) });
       }
     },

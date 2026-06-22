@@ -222,6 +222,8 @@ export interface AgentInvocationBody {
   session_id?: unknown;
   user_message?: unknown;
   selected_clips?: unknown;
+  /** M3: proposal mode policy — 'immediate' (default) applies mutations directly; 'always' returns proposals. */
+  proposal_policy?: unknown;
 }
 
 export interface TimelineRow {

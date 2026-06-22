@@ -187,6 +187,8 @@ export interface RunAgentLoopOptions {
   // service-role; in that case the delegate tool will refuse.
   userJwt?: string;
   logger: LoopLogger;
+  /** M3: Proposal mutation mode — 'immediate' applies directly, 'proposal' returns proposals. */
+  timelineMutationMode?: 'immediate' | 'proposal';
 }
 
 export interface RunAgentLoopResult {
@@ -439,6 +441,38 @@ function timeSince(iso: string): string {
   return `${Math.round(ms / 3_600_000)}h ago`;
 }
 
+// ---------------------------------------------------------------------------
+// M3: Tool classification metadata for proposal-mode gating
+// ---------------------------------------------------------------------------
+
+/** Broad classification of an agent tool's side-effect profile. */
+const enum ToolClassification {
+  /** Mutates the timeline config (clips, tracks, effects). */
+  TimelineConfigMutation = 'timeline-config-mutation',
+  /** Side effect on the database that is NOT a timeline config mutation. */
+  TimelineDbSideEffect = 'timeline-db-side-effect',
+  /** Side effect outside the timeline (generation tasks, image transforms, etc.). */
+  NonTimelineSideEffect = 'non-timeline-side-effect',
+  /** Pure read — no mutations of any kind. */
+  ReadOnly = 'read-only',
+}
+
+/** Mapping of tool name → classification. */
+const TOOL_CLASSIFICATION: Record<string, ToolClassification> = {
+  run: ToolClassification.TimelineConfigMutation,
+  set_params: ToolClassification.TimelineConfigMutation,
+  set_theme: ToolClassification.TimelineConfigMutation,
+  set_theme_overrides: ToolClassification.TimelineConfigMutation,
+  create_task: ToolClassification.NonTimelineSideEffect,
+  transform_image: ToolClassification.NonTimelineSideEffect,
+  set_lora: ToolClassification.NonTimelineSideEffect,
+  duplicate_generation: ToolClassification.NonTimelineSideEffect,
+  delegateToBanodocoAgent: ToolClassification.NonTimelineSideEffect,
+  create_shot: ToolClassification.TimelineDbSideEffect,
+  search_loras: ToolClassification.ReadOnly,
+  get_tasks: ToolClassification.ReadOnly,
+};
+
 export async function executeToolCall(
   toolCall: ExtractedToolCall,
   timelineState: TimelineState,
@@ -449,6 +483,7 @@ export async function executeToolCall(
   userId?: string,
   logger?: LoopLogger,
   userJwt?: string,
+  timelineMutationMode?: 'immediate' | 'proposal',
 ): Promise<ToolResult> {
   const toolArgs = toolCall.args;
 
@@ -467,7 +502,11 @@ export async function executeToolCall(
   }
 
   if (toolCall.name === "run") {
-    return await executeCommand(toolArgs, timelineState, timelineId, supabaseAdmin);
+    // M3: In proposal mode, route timeline config mutations through proposal envelopes
+    const effectiveArgs = timelineMutationMode === 'proposal'
+      ? { ...toolArgs, mode: 'proposal' as const }
+      : toolArgs;
+    return await executeCommand(effectiveArgs, timelineState, timelineId, supabaseAdmin);
   }
 
   if (toolCall.name === "create_task") {
@@ -491,6 +530,16 @@ export async function executeToolCall(
   }
 
   if (toolCall.name === "create_shot") {
+    // M3: In proposal mode, create_shot is blocked because no patch adapter
+    // exists for database shot creation.  When a real patch adapter is
+    // implemented, create_shot should produce a proposal envelope instead.
+    if (timelineMutationMode === 'proposal') {
+      return {
+        result: `[BLOCKED] create_shot is blocked in proposal mode: no patch adapter exists for database shot creation. ` +
+          `Use create_task to generate media first, then add clips to the timeline via run commands. ` +
+          `Shot creation will be supported through proposal envelopes when the TimelineDbSideEffect patch adapter is implemented.`,
+      };
+    }
     return await executeCreateShot(toolArgs, timelineState, supabaseAdmin);
   }
 
@@ -525,11 +574,14 @@ export async function executeToolCall(
             },
           };
 
+    // M3: In proposal mode, route timeline config mutations through proposal envelopes
+    const effectiveMode = timelineMutationMode === 'proposal' ? 'proposal' as const : 'apply' as const;
+
     return await executeCommand({
       transaction: {
         commands: [transactionCommand],
       },
-      mode: "apply",
+      mode: effectiveMode,
     }, timelineState, timelineId, supabaseAdmin);
   }
 
@@ -554,6 +606,7 @@ async function processToolCalls({
   userJwt,
   setActiveToolCallId,
   logger,
+  timelineMutationMode,
 }: {
   toolCalls: ExtractedToolCall[];
   assistantText: string;
@@ -569,6 +622,8 @@ async function processToolCalls({
   userJwt?: string;
   setActiveToolCallId: (toolCallId: string | null) => void;
   logger?: LoopLogger;
+  /** M3: Proposal mutation mode. */
+  timelineMutationMode?: 'immediate' | 'proposal';
 }): Promise<{ hasError: boolean; proposals: EdgeProposal[] }> {
   let hasError = false;
   const proposals: EdgeProposal[] = [];
@@ -601,6 +656,7 @@ async function processToolCalls({
       userId,
       logger,
       userJwt,
+      timelineMutationMode,
     );
     setActiveToolCallId(null);
 
@@ -684,7 +740,7 @@ async function maybeSurfaceBanodocoStatus(
 export async function runAgentLoop(
   options: RunAgentLoopOptions,
 ): Promise<RunAgentLoopResult> {
-  const { session, userMessage, selectedClips, supabaseAdmin, userJwt, logger } = options;
+  const { session, userMessage, selectedClips, supabaseAdmin, userJwt, logger, timelineMutationMode } = options;
   const effectiveSelectedClips = selectedClips?.length
     ? selectedClips
     : recoverSelectedClipsFromTurns(session.turns);
@@ -855,6 +911,7 @@ export async function runAgentLoop(
         userJwt,
         setActiveToolCallId: (toolCallId) => { activeToolCallId = toolCallId; },
         logger,
+        timelineMutationMode,
       });
 
       // Aggregate proposals across all loop iterations (M3)
