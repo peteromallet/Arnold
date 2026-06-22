@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any, Mapping
 
 from arnold_pipelines.megaplan._core import configured_robustness, creative_form_id
-from arnold_pipelines.megaplan._pipeline.types import StepContext
+from arnold_pipelines.megaplan.step_types import StepContext
 from arnold_pipelines.megaplan.forms import Form, get_form
 from arnold_pipelines.megaplan.forms.provocations import select_active_checks
 

@@ -437,7 +437,7 @@ def resolved_default_model_for_agent(agent: str) -> str | None:
     >>> resolved_default_model_for_agent("hermes") is None
     True
     """
-    from arnold_pipelines.megaplan._pipeline.defaults import CLAUDE_DEFAULT_MODEL, CODEX_DEFAULT_MODEL
+    from arnold_pipelines.megaplan.defaults import CLAUDE_DEFAULT_MODEL, CODEX_DEFAULT_MODEL
 
     if agent == "claude":
         return CLAUDE_DEFAULT_MODEL

@@ -12,14 +12,16 @@ import sys
 from typing import Sequence
 
 from arnold.runtime.operations import OperationKind
-from arnold_pipelines.megaplan._pipeline.registry import (
-    canonical_pipeline_name,
-    discover_python_pipelines,
+from arnold_pipelines.megaplan.registry import (
     override_catalog_for,
     pipeline_metadata,
     read_pipeline_skill_md,
-    scan_python_pipelines,
     supported_operations_for,
+)
+from arnold_pipelines.megaplan.runtime.discovery import (
+    canonical_pipeline_name,
+    discover_python_pipelines,
+    scan_python_pipelines,
 )
 
 UMBRELLA_OVERRIDE_ACTIONS: tuple[str, ...] = (

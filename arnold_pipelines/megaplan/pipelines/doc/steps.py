@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Mapping
 
 from arnold.pipeline import StepContext
-from arnold_pipelines.megaplan._pipeline.types import StepResult
+from arnold_pipelines.megaplan.step_types import StepResult
 
 
 def _root_dir(ctx: StepContext) -> Path:

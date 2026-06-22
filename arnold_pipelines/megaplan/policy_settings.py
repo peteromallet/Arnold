@@ -8,7 +8,6 @@ Megaplan defaults and resolver helpers that already own those decisions.
 from __future__ import annotations
 
 import argparse
-import ast
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Mapping
@@ -105,26 +104,9 @@ def _unsupported(spec: PolicySettingSpec, *, source: str, notes: str) -> ReportV
     }
 
 
-def _read_execute_stage_confirm_destructive_default() -> bool:
-    execute_stage_path = Path(__file__).with_name("stages") / "execute.py"
-    tree = ast.parse(execute_stage_path.read_text(encoding="utf-8"))
-    for node in tree.body:
-        if isinstance(node, ast.Assign):
-            targets = node.targets
-            value_node = node.value
-        elif isinstance(node, ast.AnnAssign):
-            targets = [node.target]
-            value_node = node.value
-        else:
-            continue
-        if not any(isinstance(target, ast.Name) and target.id == "_DEFAULTS" for target in targets):
-            continue
-        if not isinstance(value_node, ast.Dict):
-            continue
-        for key, value in zip(value_node.keys, value_node.values):
-            if isinstance(key, ast.Constant) and key.value == "confirm_destructive":
-                return bool(ast.literal_eval(value))
-    raise ValueError("could not resolve _DEFAULTS['confirm_destructive'] from stages/execute.py")
+def _read_execute_handler_confirm_destructive_default() -> bool:
+    from arnold_pipelines.megaplan.handlers.execute import EXECUTE_DEFAULTS
+    return bool(EXECUTE_DEFAULTS.get("confirm_destructive", True))
 
 
 def _report_destructive_confirmation(ctx: _PolicyContext, spec: PolicySettingSpec) -> ReportValue:
@@ -137,9 +119,9 @@ def _report_destructive_confirmation(ctx: _PolicyContext, spec: PolicySettingSpe
         )
     return _effective(
         spec,
-        value=_read_execute_stage_confirm_destructive_default(),
-        source="arnold_pipelines.megaplan.stages.execute._DEFAULTS.confirm_destructive",
-        notes="Stage default used when no explicit execute args are provided.",
+        value=_read_execute_handler_confirm_destructive_default(),
+        source="arnold_pipelines.megaplan.handlers.execute.EXECUTE_DEFAULTS.confirm_destructive",
+        notes="Handler default used when no explicit execute args are provided.",
     )
 
 
@@ -321,7 +303,7 @@ SETTING_SPECS: tuple[PolicySettingSpec, ...] = (
         key="destructive_confirmation",
         owner="arnold_pipelines.megaplan.execute",
         summary="Execute destructive confirmation gate for code-mode runs.",
-        resolver_ref="arnold_pipelines.megaplan.stages.execute._DEFAULTS + megaplan.handlers.execute.handle_execute",
+        resolver_ref="arnold_pipelines.megaplan.handlers.execute.EXECUTE_DEFAULTS + megaplan.handlers.execute.handle_execute",
         reporter=_report_destructive_confirmation,
     ),
     PolicySettingSpec(

@@ -747,7 +747,7 @@ def _parse_json_object_arg(value: str | None, *, arg_name: str) -> dict[str, Any
 
 
 def _handle_epic_capsule(root: Path, args: argparse.Namespace) -> StepResponse:
-    from arnold_pipelines.megaplan._pipeline.flags import m7_sinks_on
+    from arnold_pipelines.megaplan.feature_flags import m7_sinks_on
     from arnold_pipelines.megaplan.store.capsule import (
         CapsuleStorageError,
         build_capsule,
@@ -875,10 +875,10 @@ def handle_contract(root: Path, args: argparse.Namespace) -> StepResponse:
         is_step_io_envelope,
         read_violation_records,
     )
-    from arnold_pipelines.megaplan._pipeline.schema_registry_adapter import (
+    from arnold_pipelines.megaplan.runtime.schema_registry_adapter import (
         create_step_io_contract_context,
     )
-    from arnold_pipelines.megaplan._pipeline.step_io_policy_adapter import (
+    from arnold_pipelines.megaplan.runtime.step_io_policy_adapter import (
         has_megaplan_step_io_self_validation_marker,
         load_megaplan_step_io_policy,
         record_megaplan_step_io_self_validation_marker,
@@ -1423,9 +1423,9 @@ def _resume_human_gate(root: Path, plan_dir: Path, args: argparse.Namespace) -> 
         )
 
     from arnold_pipelines.megaplan._pipeline.executor import run_pipeline
-    from arnold_pipelines.megaplan._pipeline.registry import get_pipeline
     from arnold_pipelines.megaplan._pipeline.resume import with_entry
-    from arnold_pipelines.megaplan._pipeline.types import StepContext
+    from arnold_pipelines.megaplan.registry import get_pipeline
+    from arnold_pipelines.megaplan.step_types import StepContext
 
     data["_resume_choice"] = choice
     try:
@@ -1567,11 +1567,11 @@ def _handle_pipelines(root: Path, args: argparse.Namespace) -> int:
             _emit_validator_defects(diag)
             return 1
 
-        from arnold_pipelines.megaplan._pipeline.registry import (
-            canonical_pipeline_name,
+        from arnold_pipelines.megaplan.registry import (
             get_pipeline,
-            scan_python_pipelines,
         )
+        from arnold_pipelines.megaplan.runtime.discovery import canonical_pipeline_name
+        from arnold_pipelines.megaplan.runtime.discovery import scan_python_pipelines
         from arnold_pipelines.megaplan._pipeline.validator import validate
 
         canonical_name = canonical_pipeline_name(name)
@@ -1607,7 +1607,7 @@ def _handle_pipelines(root: Path, args: argparse.Namespace) -> int:
         _emit_validator_defects(diag)
         return 1
     if action == "doctor":
-        from arnold_pipelines.megaplan._pipeline.registry import scan_python_pipelines
+        from arnold_pipelines.megaplan.runtime.discovery import scan_python_pipelines
 
         dispositions = scan_python_pipelines()
         for disp in dispositions:
@@ -1622,7 +1622,7 @@ def _handle_pipelines(root: Path, args: argparse.Namespace) -> int:
                     print(f"    {tb_line}")
         return 0
     if action == "new":
-        from arnold_pipelines.megaplan._pipeline.registry import _SCAN_ROOTS, _cli_name
+        from arnold_pipelines.megaplan.runtime.discovery import _SCAN_ROOTS, _cli_name
 
         name = getattr(args, "pipeline_name", None)
         if not name:
@@ -1669,7 +1669,7 @@ def _handle_pipelines(root: Path, args: argparse.Namespace) -> int:
             f"\n"
             f"from pathlib import Path\n"
             f"\n"
-            f"from arnold_pipelines.megaplan._pipeline.types import Pipeline\n"
+            f"from arnold.pipeline.types import Pipeline\n"
             f"\n"
             f"\n"
             f'_PIPELINE_DIR: Path = Path(__file__).parent / "{cli_name}"\n'
@@ -2125,7 +2125,7 @@ def _setup_chain_worktree(args: argparse.Namespace) -> None:
 
 def _handle_list_pipelines(args: argparse.Namespace) -> StepResponse:
     """Handle ``megaplan list pipelines`` — list registered pipelines."""
-    from arnold_pipelines.megaplan._pipeline.registry import (
+    from arnold_pipelines.megaplan.registry import (
         describe_pipeline,
         pipeline_metadata,
         registered_pipelines,
@@ -2162,7 +2162,7 @@ def _handle_list_pipelines(args: argparse.Namespace) -> StepResponse:
 
 def handle_describe(args: argparse.Namespace) -> StepResponse:
     """Handle ``megaplan describe <pipeline>`` command."""
-    from arnold_pipelines.megaplan._pipeline.registry import (
+    from arnold_pipelines.megaplan.registry import (
         describe_pipeline,
         pipeline_metadata,
         registered_pipelines,
@@ -2346,7 +2346,7 @@ def main(argv: list[str] | None = None) -> int:
             return error_response(error, root=root)
 
     if args.command == "run":
-        from arnold_pipelines.megaplan._pipeline.run_cli import cli_run
+        from arnold_pipelines.megaplan.cli.run import cli_run
 
         try:
             return cli_run(args)

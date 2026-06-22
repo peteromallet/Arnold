@@ -9,7 +9,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from arnold_pipelines.megaplan._pipeline.flags import calibration_query_route_on
+from arnold_pipelines.megaplan.feature_flags import calibration_query_route_on
 from arnold_pipelines.megaplan.calibration import (
     CapabilityClaim,
     EvaluandRef,
@@ -37,7 +37,7 @@ from arnold_pipelines.megaplan._core import (
 from arnold_pipelines.megaplan.observability.evaluand import read_evaluand_events
 from arnold.pipeline.contract_validation import validate_payload_against_schema
 from arnold.pipeline.step_io_contract import StepIOOperation
-from arnold_pipelines.megaplan._pipeline.schema_registry_adapter import create_step_io_contract_context
+from arnold_pipelines.megaplan.runtime.schema_registry_adapter import create_step_io_contract_context
 from arnold_pipelines.megaplan.orchestration.plan_contracts import normalize_contract_payload
 from arnold_pipelines.megaplan.orchestration.test_selection import (
     compute_test_blast_radius,

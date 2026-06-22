@@ -30,7 +30,7 @@ from pathlib import Path
 from typing import Any, Mapping, cast
 
 from arnold.pipeline.resources import PipelineResourceBundle, resolve_bundle_prompt
-from arnold_pipelines.megaplan._pipeline.types import StepContext
+from arnold_pipelines.megaplan.step_types import StepContext
 from arnold_pipelines.megaplan.forms import get_form
 from arnold_pipelines.megaplan.types import PlanState
 

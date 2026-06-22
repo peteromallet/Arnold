@@ -12,7 +12,9 @@ from typing import Generic, TypeVar
 
 T = TypeVar("T")
 
-# TODO: import from arnold_pipelines.megaplan._pipeline.types once a generic Reduce[T] lands there
+# Reduce is a self-contained generic frozen dataclass defined here; it does not
+# depend on _pipeline.types.  If a shared Reduce[T] ever lands in an Arnold or
+# Megaplan-owned module, this definition should migrate there.
 
 
 @dataclass(frozen=True)

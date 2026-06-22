@@ -40,7 +40,7 @@ from arnold_pipelines.megaplan.planning.state import (
     STATE_REVIEWED,
 )
 from arnold.pipeline.step_io_contract import StepIOOperation
-from arnold_pipelines.megaplan._pipeline.schema_registry_adapter import create_step_io_contract_context
+from arnold_pipelines.megaplan.runtime.schema_registry_adapter import create_step_io_contract_context
 from arnold_pipelines.megaplan.store import write_plan_artifact_json
 from arnold_pipelines.megaplan.workers import (
     WorkerResult,

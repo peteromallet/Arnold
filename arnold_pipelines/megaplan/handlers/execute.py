@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import argparse
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping
 
 from arnold_pipelines.megaplan.execute.batch import (
     handle_execute_auto_loop,
@@ -24,7 +24,7 @@ from arnold_pipelines.megaplan.planning.state import (
     STATE_FINALIZED,
 )
 from arnold.pipeline.step_io_contract import StepIOOperation
-from arnold_pipelines.megaplan._pipeline.schema_registry_adapter import create_step_io_contract_context
+from arnold_pipelines.megaplan.runtime.schema_registry_adapter import create_step_io_contract_context
 from arnold_pipelines.megaplan.store import PlanRepository, write_plan_artifact_json
 from arnold_pipelines.megaplan.model_seam import audit_step_payload
 from arnold_pipelines.megaplan._core import (
@@ -45,6 +45,12 @@ from arnold_pipelines.megaplan.runtime.execution_environment import preflight_mu
 
 from .shared import _agent_mode_parts, _emit_phase_notice, attach_agent_fallback, worker_module
 from arnold_pipelines.megaplan.orchestration.phase_result import _emit_phase_result, phase_result_guard, BlockedTask, Deviation
+
+# Canonical execute-phase defaults (rehomed from stages/execute.py during M3 T24).
+EXECUTE_DEFAULTS: Mapping[str, Any] = {
+    "user_approved": True,
+    "confirm_destructive": True,
+}
 
 
 def _is_rework_reexecution(state: PlanState) -> bool:

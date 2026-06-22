@@ -6,9 +6,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Mapping
 
-# M3a: next_version kept as bridge import — Arnold next_version has
-# different signature (ctx, stage, label, suffix vs output_dir).
-from arnold_pipelines.megaplan._pipeline.step_helpers import next_version  # bridge
+from arnold_pipelines.megaplan.runtime.artifacts import next_version
 from arnold.pipeline import StepContext, StepResult
 from arnold_pipelines.megaplan.pipelines.jokes.prompts import render_prompt
 
