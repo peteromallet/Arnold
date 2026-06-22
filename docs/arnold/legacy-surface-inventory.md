@@ -4,6 +4,14 @@
 > **Owner:** `m4-megaplan-product-migration`
 > **Base:** `origin/main` at `cede284f65dfdbb3511f9c9e9f7f8d296fc48960`
 > **Plan:** `.megaplan/plans/m4-megaplan-product-migration/plan_v1.md`
+>
+> **M6 Phase A update:** All `M6 delete` and `M6 archive` rows in sections 1–5
+> and 11–13 have been executed on branch `workflow-manifest-runtime-m6-purge`.
+> The `arnold.pipelines.megaplan` tree is gone, `arnold.pipeline` no longer
+> re-exports the obsolete public symbols listed in section 6, and `arnold.cli`
+> has been repointed to the workflow CLI. Remaining neutral runtime surfaces
+> (`arnold.runtime.event_journal`, `arnold.runtime.envelope`,
+> `arnold.runtime.semantic_replay`, etc.) are retained as neutral API.
 
 ## Classification legend
 

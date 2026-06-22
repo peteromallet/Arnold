@@ -2,6 +2,14 @@
 
 # M6 Deletion List
 
+> **Phase A status (branch `workflow-manifest-runtime-m6-purge`):** All
+> `delete` targets below have been removed from the source tree; `archive`
+> targets have been moved to `docs/archive/m5/` and removed from their original
+> locations. The public `arnold.pipeline` package no longer re-exports the
+> obsolete native symbols `PipelineBuilder`, `Stage`, `Edge`, `ParallelStage`, or
+> `run_pipeline`, and `arnold.cli` no longer delegates to legacy Megaplan CLI
+> surfaces.
+
 Every row traces back to a disposition in the M5 inventories and a concrete M5
 outcome.
 

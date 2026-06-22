@@ -54,9 +54,6 @@ def test_wheel_has_arnold_entrypoint_and_py_typed() -> None:
                 name.endswith("pipeline_ids.json") for name in names
             ), "missing pipeline_ids.json data"
             assert any(
-                "arnold_pipelines/megaplan/data/_codex_skills/" in name for name in names
-            ), "missing generated codex skills"
-            assert any(
                 "arnold_pipelines/megaplan/data/_composed/" in name for name in names
             ), "missing composed rules"
             assert not any(
