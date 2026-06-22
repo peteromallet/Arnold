@@ -17,9 +17,8 @@ T = TypeVar("T")
 # ---------------------------------------------------------------------------
 # M3 process-driver Protocol (inline until M3's public protocol lands)
 # ---------------------------------------------------------------------------
-# TODO: import from arnold_pipelines.megaplan._pipeline once M3 exports a stable ProcessDriver
-#       Protocol / ABC.  The inline definition below is the minimal contract
-#       the scheduler needs.
+# The inline definition below is the minimal process-driver contract the
+# scheduler needs until a public runtime Protocol / ABC lands.
 
 
 class ProcessDriver(Protocol):

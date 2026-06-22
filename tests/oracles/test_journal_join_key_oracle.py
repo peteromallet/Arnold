@@ -11,7 +11,7 @@ from pathlib import Path
 
 import pytest
 
-from arnold.pipelines.megaplan._pipeline.envelope import make_envelope
+from arnold.runtime.envelope import make_envelope
 from arnold.pipelines.megaplan.observability import NdjsonBackend, StoreBackend
 from arnold.pipelines.megaplan.observability.events import _envelope_ctx, read_events
 

@@ -28,10 +28,10 @@ from acceptance.backtrack_solver.solver import (
     _one_step,
     solve,
 )
-from arnold.pipelines.megaplan._pipeline.envelope import EMPTY_ENVELOPE, RunEnvelope
-from arnold.pipelines.megaplan._pipeline.loop_node import LoopNode
-from arnold.pipelines.megaplan._pipeline.pattern_stops import LoopState
-from arnold.pipelines.megaplan.runtime.governor import Governor
+from arnold.pipeline.pattern_stops import LoopState
+from arnold.runtime.envelope import EMPTY_ENVELOPE, RunEnvelope
+from arnold_pipelines.megaplan.runtime.governor import Governor
+from arnold_pipelines.megaplan.runtime.loop_node import LoopNode
 
 
 # ──────────────────────────────────────────────────────────────────────────────

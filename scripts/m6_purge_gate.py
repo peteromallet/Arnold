@@ -357,6 +357,10 @@ def _test_keepalive_errors(repo_root: Path, test_roots: Iterable[str]) -> list[s
         if not root.exists():
             continue
         for path in sorted(root.rglob("test*.py")):
+            # Archived tests are intentionally frozen legacy references;
+            # fixture helpers are not assertions. Skip both.
+            if "archive" in path.parts or "fixtures" in path.parts:
+                continue
             try:
                 tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
             except SyntaxError:

@@ -46,11 +46,11 @@ import dataclasses
 from dataclasses import dataclass, field
 from typing import Any, Callable, List, Optional, Tuple
 
-from arnold.pipelines.megaplan._pipeline.envelope import EMPTY_ENVELOPE, RunEnvelope
-from arnold.pipelines.megaplan._pipeline.loop_node import LoopNode
-from arnold.pipelines.megaplan._pipeline.pattern_stops import LoopState
-from arnold.pipelines.megaplan._pipeline.types import Port, PortRef
-from arnold.pipelines.megaplan.runtime.governor import BudgetExceeded, Governor
+from arnold.pipeline.pattern_stops import LoopState
+from arnold.pipeline.types import Port, PortRef
+from arnold.runtime.envelope import EMPTY_ENVELOPE, RunEnvelope
+from arnold_pipelines.megaplan.runtime.governor import BudgetExceeded, Governor
+from arnold_pipelines.megaplan.runtime.loop_node import LoopNode
 
 
 # ──────────────────────────────────────────────────────────────────────────────
