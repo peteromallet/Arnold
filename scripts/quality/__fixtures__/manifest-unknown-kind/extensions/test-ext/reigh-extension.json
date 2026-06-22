@@ -1,0 +1,11 @@
+{
+  "id": "test.unknown-kind",
+  "version": "1.0.0",
+  "label": "Unknown Kind Test Extension",
+  "contributions": [
+    {
+      "id": "test.bogus",
+      "kind": "garbageKind"
+    }
+  ]
+}

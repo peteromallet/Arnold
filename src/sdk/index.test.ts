@@ -2973,6 +2973,117 @@ describe('M14: validateManifest', () => {
     expect(Object.isFrozen(result.errors)).toBe(true);
     expect(Object.isFrozen(result.warnings)).toBe(true);
   });
+
+  // ---- T3: Kind-specific placement rules ---- 
+
+  it('accepts valid panel placement', () => {
+    const manifest: ExtensionManifest = {
+      ...baseManifest(),
+      contributions: [
+        { id: 'panel-valid' as any, kind: 'panel' as any, placement: 'asset-panel' },
+      ],
+    };
+    const result = validateManifest(manifest, 'dev');
+    expect(result.valid).toBe(true);
+    expect(result.errors).toHaveLength(0);
+  });
+
+  it('rejects invalid panel placement', () => {
+    const manifest: ExtensionManifest = {
+      ...baseManifest(),
+      contributions: [
+        { id: 'panel-bad' as any, kind: 'panel' as any, placement: 'left-panel' },
+      ],
+    };
+    const result = validateManifest(manifest, 'dev');
+    expect(result.valid).toBe(false);
+    expect(result.errors.some(e => e.code === 'manifest/invalid-panel-placement')).toBe(true);
+  });
+
+  it('accepts panel without placement (placement is optional)', () => {
+    const manifest: ExtensionManifest = {
+      ...baseManifest(),
+      contributions: [
+        { id: 'panel-no-placement' as any, kind: 'panel' as any },
+      ],
+    };
+    const result = validateManifest(manifest, 'dev');
+    expect(result.valid).toBe(true);
+    expect(result.errors).toHaveLength(0);
+  });
+
+  it('rejects slot contribution that specifies placement', () => {
+    const manifest: ExtensionManifest = {
+      ...baseManifest(),
+      contributions: [
+        { id: 'slot-bad' as any, kind: 'slot' as any, slot: 'toolbar', placement: 'asset-panel' },
+      ],
+    };
+    const result = validateManifest(manifest, 'dev');
+    expect(result.valid).toBe(false);
+    expect(result.errors.some(e => e.code === 'manifest/slot-no-placement')).toBe(true);
+  });
+
+  it('rejects slot contribution with unknown slot name', () => {
+    const manifest: ExtensionManifest = {
+      ...baseManifest(),
+      contributions: [
+        { id: 'slot-unknown' as any, kind: 'slot' as any, slot: 'nonexistentSlot' },
+      ],
+    };
+    const result = validateManifest(manifest, 'dev');
+    expect(result.valid).toBe(false);
+    expect(result.errors.some(e => e.code === 'manifest/unknown-slot-name')).toBe(true);
+  });
+
+  it('accepts slot contribution with valid slot name and no placement', () => {
+    const manifest: ExtensionManifest = {
+      ...baseManifest(),
+      contributions: [
+        { id: 'slot-valid' as any, kind: 'slot' as any, slot: 'toolbar' },
+      ],
+    };
+    const result = validateManifest(manifest, 'dev');
+    expect(result.valid).toBe(true);
+    expect(result.errors).toHaveLength(0);
+  });
+
+  it('rejects contribution with unknown kind', () => {
+    const manifest: ExtensionManifest = {
+      ...baseManifest(),
+      contributions: [
+        { id: 'unknown-kind' as any, kind: 'notARealKind' as any },
+      ],
+    };
+    const result = validateManifest(manifest, 'dev');
+    expect(result.valid).toBe(false);
+    expect(result.errors.some(e => e.code === 'manifest/unknown-contribution-kind')).toBe(true);
+  });
+
+  it('rejects contribution with missing kind', () => {
+    const manifest: ExtensionManifest = {
+      ...baseManifest(),
+      contributions: [
+        { id: 'no-kind' as any } as any,
+      ],
+    };
+    const result = validateManifest(manifest, 'dev');
+    expect(result.valid).toBe(false);
+    expect(result.errors.some(e => e.code === 'manifest/missing-contribution-kind')).toBe(true);
+  });
+
+  it('accepts known-but-deferred kind at manifest validation level (bridging check is runtime concern)', () => {
+    // outputFormat is in KNOWN_CONTRIBUTION_KINDS but contributionKindNotYetBridged('outputFormat') === 'M6'
+    const manifest: ExtensionManifest = {
+      ...baseManifest(),
+      contributions: [
+        { id: 'deferred-ok' as any, kind: 'outputFormat' as any },
+      ],
+    };
+    const result = validateManifest(manifest, 'dev');
+    expect(result.valid).toBe(true);
+    expect(result.errors).toHaveLength(0);
+  });
 });
 
 // ---------------------------------------------------------------------------

@@ -1,0 +1,797 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://reigh.ai/contracts/reigh-extension.schema.json",
+  "title": "Reigh Extension Manifest",
+  "description": "Frozen manifest contract for Reigh editor extensions. Validates contribution kind enums, discriminated shapes, placement rules, and rejects unknown top-level collections.",
+  "type": "object",
+  "required": ["id", "version", "label"],
+  "additionalProperties": false,
+  "properties": {
+    "id": {
+      "type": "string",
+      "description": "Extension ID — non-empty, lowercase start, dot-separated segments of letters/digits/hyphens/underscores, max 128 chars.",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[a-z][a-z0-9_-]*(\\.[a-z][a-z0-9_-]*)*$"
+    },
+    "version": {
+      "type": "string",
+      "description": "Semver version string (e.g. '1.0.0').",
+      "pattern": "^\\d+\\.\\d+\\.\\d+"
+    },
+    "label": {
+      "type": "string",
+      "description": "Human-readable extension label.",
+      "minLength": 1
+    },
+    "description": {
+      "type": "string",
+      "description": "Optional description of the extension."
+    },
+    "apiVersion": {
+      "type": "integer",
+      "description": "API version this extension targets (positive integer).",
+      "minimum": 1
+    },
+    "contributions": {
+      "type": "array",
+      "description": "Contribution declarations.",
+      "items": {
+        "$ref": "#/definitions/Contribution"
+      }
+    },
+    "permissions": {
+      "type": "array",
+      "description": "Descriptive permission metadata.",
+      "items": {
+        "$ref": "#/definitions/ExtensionPermissionDeclaration"
+      }
+    },
+    "processes": {
+      "type": "array",
+      "description": "Process declarations.",
+      "items": {
+        "$ref": "#/definitions/ProcessManifestEntry"
+      }
+    },
+    "migrations": {
+      "type": "array",
+      "description": "Typed migration hooks or legacy record entries."
+    },
+    "comments": {
+      "type": "string",
+      "description": "Human-readable comments."
+    },
+    "dependsOn": {
+      "type": "array",
+      "description": "Typed dependency declarations.",
+      "items": {
+        "$ref": "#/definitions/ExtensionDependency"
+      }
+    },
+    "renderability": {
+      "type": "object",
+      "description": "Renderability descriptors."
+    },
+    "settingsDefaults": {
+      "type": "object",
+      "description": "Extension-scoped settings defaults."
+    },
+    "settingsSchema": {
+      "$ref": "#/definitions/ExtensionSettingsSchema"
+    },
+    "messages": {
+      "type": "object",
+      "description": "Bundled i18n messages keyed by locale-neutral key.",
+      "additionalProperties": {
+        "type": "string"
+      }
+    },
+    "publisher": {
+      "type": "string",
+      "description": "Publisher identity."
+    },
+    "license": {
+      "type": "string",
+      "description": "SPDX license identifier."
+    },
+    "icon": {
+      "type": "string",
+      "description": "Icon URL or data URI."
+    }
+  },
+
+  "definitions": {
+    "ContributionId": {
+      "type": "string",
+      "description": "Contribution ID — same rules as extension ID.",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[a-z][a-z0-9_-]*(\\.[a-z][a-z0-9_-]*)*$"
+    },
+
+    "ContributionKind": {
+      "type": "string",
+      "description": "Known contribution kinds matching the SDK ContributionKind enum.",
+      "enum": [
+        "slot",
+        "dialog",
+        "panel",
+        "inspectorSection",
+        "timelineOverlay",
+        "command",
+        "keybinding",
+        "contextMenuItem",
+        "parser",
+        "outputFormat",
+        "searchProvider",
+        "metadataFacet",
+        "assetDetailSection",
+        "process",
+        "effect",
+        "transition",
+        "clipType",
+        "shader",
+        "automation",
+        "agentTool",
+        "agent"
+      ]
+    },
+
+    "SlotName": {
+      "type": "string",
+      "description": "Slot names recognized by the host shell.",
+      "enum": [
+        "header",
+        "toolbar",
+        "leftPanel",
+        "rightPanel",
+        "codePanel",
+        "writingPanel",
+        "stagePanel",
+        "timelineFooter",
+        "statusBar",
+        "dialogs",
+        "assetPanel",
+        "inspectorPanel"
+      ]
+    },
+
+    "Contribution": {
+      "oneOf": [
+        { "$ref": "#/definitions/SlotContribution" },
+        { "$ref": "#/definitions/DialogContribution" },
+        { "$ref": "#/definitions/PanelContribution" },
+        { "$ref": "#/definitions/InspectorSectionContribution" },
+        { "$ref": "#/definitions/TimelineOverlayContribution" },
+        { "$ref": "#/definitions/CommandContribution" },
+        { "$ref": "#/definitions/KeybindingContribution" },
+        { "$ref": "#/definitions/ContextMenuItemContribution" },
+        { "$ref": "#/definitions/ParserContribution" },
+        { "$ref": "#/definitions/OutputFormatContribution" },
+        { "$ref": "#/definitions/SearchProviderContribution" },
+        { "$ref": "#/definitions/MetadataFacetContribution" },
+        { "$ref": "#/definitions/AssetDetailSectionContribution" },
+        { "$ref": "#/definitions/ProcessContribution" },
+        { "$ref": "#/definitions/EffectContribution" },
+        { "$ref": "#/definitions/TransitionContribution" },
+        { "$ref": "#/definitions/ClipTypeContribution" },
+        { "$ref": "#/definitions/ShaderContribution" },
+        { "$ref": "#/definitions/AutomationContribution" },
+        { "$ref": "#/definitions/AgentToolContribution" },
+        { "$ref": "#/definitions/AgentContribution" }
+      ]
+    },
+
+    "SlotContribution": {
+      "type": "object",
+      "description": "Slot contribution: renders into a named host shell slot. Must NOT specify placement.",
+      "required": ["id", "kind"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "$ref": "#/definitions/ContributionId" },
+        "kind": { "const": "slot" },
+        "order": { "type": "number", "description": "Lower values sort first. Default 0." },
+        "slot": { "$ref": "#/definitions/SlotName" },
+        "label": { "type": "string" },
+        "when": { "type": "string" }
+      }
+    },
+
+    "DialogContribution": {
+      "type": "object",
+      "description": "Dialog contribution: renders into a named dialog layer.",
+      "required": ["id", "kind"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "$ref": "#/definitions/ContributionId" },
+        "kind": { "const": "dialog" },
+        "order": { "type": "number" },
+        "layer": { "enum": ["modal", "overlay"] },
+        "label": { "type": "string" },
+        "when": { "type": "string" }
+      }
+    },
+
+    "PanelContribution": {
+      "type": "object",
+      "description": "Panel contribution: placement must be 'asset-panel' when specified.",
+      "required": ["id", "kind"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "$ref": "#/definitions/ContributionId" },
+        "kind": { "const": "panel" },
+        "order": { "type": "number" },
+        "placement": {
+          "type": "string",
+          "description": "Panel placement is limited to 'asset-panel'.",
+          "enum": ["asset-panel"]
+        },
+        "label": { "type": "string" },
+        "when": { "type": "string" }
+      }
+    },
+
+    "InspectorSectionContribution": {
+      "type": "object",
+      "description": "Inspector section contribution: placement 'before-default' or 'after-default'.",
+      "required": ["id", "kind"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "$ref": "#/definitions/ContributionId" },
+        "kind": { "const": "inspectorSection" },
+        "order": { "type": "number" },
+        "placement": {
+          "type": "string",
+          "enum": ["before-default", "after-default"]
+        },
+        "label": { "type": "string" },
+        "when": { "type": "string" }
+      }
+    },
+
+    "TimelineOverlayContribution": {
+      "type": "object",
+      "description": "Timeline overlay contribution: renders over the timeline surface.",
+      "required": ["id", "kind"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "$ref": "#/definitions/ContributionId" },
+        "kind": { "const": "timelineOverlay" },
+        "order": { "type": "number" },
+        "label": { "type": "string" },
+        "when": { "type": "string" }
+      }
+    },
+
+    "CommandContribution": {
+      "type": "object",
+      "description": "Command contribution: registers a command for the palette / keybinding dispatch.",
+      "required": ["id", "kind", "command", "label"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "$ref": "#/definitions/ContributionId" },
+        "kind": { "const": "command" },
+        "command": { "type": "string", "description": "The command identifier (e.g. 'myExtension.doSomething')." },
+        "label": { "type": "string", "minLength": 1 },
+        "category": { "type": "string" },
+        "when": { "type": "string" },
+        "order": { "type": "number" }
+      }
+    },
+
+    "KeybindingContribution": {
+      "type": "object",
+      "description": "Keybinding contribution: binds a keyboard shortcut to a command.",
+      "required": ["id", "kind", "command", "key"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "$ref": "#/definitions/ContributionId" },
+        "kind": { "const": "keybinding" },
+        "command": { "type": "string" },
+        "key": { "type": "string", "description": "Platform-aware key notation (e.g. 'CtrlOrCmd+K')." },
+        "when": { "type": "string" },
+        "order": { "type": "number" }
+      }
+    },
+
+    "ContextMenuItemContribution": {
+      "type": "object",
+      "description": "Context-menu item contribution for clip/track/timeline-area surfaces.",
+      "required": ["id", "kind", "command", "target"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "$ref": "#/definitions/ContributionId" },
+        "kind": { "const": "contextMenuItem" },
+        "command": { "type": "string" },
+        "label": { "type": "string" },
+        "target": {
+          "type": "string",
+          "description": "Target context where this item appears.",
+          "enum": ["clip", "track", "timeline", "selection", "asset", "canvas"]
+        },
+        "when": { "type": "string" },
+        "order": { "type": "number" },
+        "icon": { "type": "string" }
+      }
+    },
+
+    "ParserContribution": {
+      "type": "object",
+      "description": "M6: Parser contribution — enriches asset metadata during ingestion.",
+      "required": ["id", "kind", "label"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "$ref": "#/definitions/ContributionId" },
+        "kind": { "const": "parser" },
+        "label": { "type": "string", "minLength": 1 },
+        "acceptMimeTypes": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "acceptExtensions": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "maxBytes": { "type": "number", "minimum": 1 },
+        "required": { "type": "boolean" },
+        "order": { "type": "number" }
+      }
+    },
+
+    "OutputFormatContribution": {
+      "type": "object",
+      "description": "M6: Output format contribution — produces an artifact from timeline/asset data.",
+      "required": ["id", "kind", "label", "requiresRender", "outputExtension"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "$ref": "#/definitions/ContributionId" },
+        "kind": { "const": "outputFormat" },
+        "label": { "type": "string", "minLength": 1 },
+        "requiresRender": { "type": "boolean" },
+        "outputExtension": { "type": "string" },
+        "outputMimeType": { "type": "string" },
+        "description": { "type": "string" },
+        "order": { "type": "number" },
+        "render": { "$ref": "#/definitions/RenderDependentOutputDescriptor" },
+        "sampling": { "$ref": "#/definitions/SamplingConfig" },
+        "sidecars": {
+          "type": "array",
+          "items": { "$ref": "#/definitions/RenderArtifactSidecarDescriptor" }
+        }
+      }
+    },
+
+    "RenderDependentOutputDescriptor": {
+      "type": "object",
+      "description": "M12: Route/process requirements for a render-dependent output format.",
+      "required": ["routes"],
+      "additionalProperties": false,
+      "properties": {
+        "routes": {
+          "type": "array",
+          "items": { "$ref": "#/definitions/RenderRoute" }
+        },
+        "requiredCapabilities": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "processId": { "type": "string" },
+        "operationId": { "type": "string" },
+        "determinism": { "$ref": "#/definitions/DeterminismStatus" },
+        "unavailableMessage": { "type": "string" }
+      }
+    },
+
+    "RenderRoute": {
+      "type": "string",
+      "description": "Render route identifier.",
+      "enum": ["browser-main", "browser-worker", "browser-offscreen", "server", "edge-function"]
+    },
+
+    "DeterminismStatus": {
+      "type": "string",
+      "enum": ["deterministic", "non-deterministic", "external-dependent", "unknown"]
+    },
+
+    "SamplingConfig": {
+      "type": "object",
+      "description": "Declarative sampling defaults for export configuration.",
+      "additionalProperties": false,
+      "properties": {
+        "defaultFps": { "type": "number", "minimum": 1 },
+        "defaultWidth": { "type": "integer", "minimum": 1 },
+        "defaultHeight": { "type": "integer", "minimum": 1 },
+        "allowCustomResolution": { "type": "boolean" },
+        "allowCustomFps": { "type": "boolean" }
+      }
+    },
+
+    "RenderArtifactSidecarDescriptor": {
+      "type": "object",
+      "description": "Sidecar kind an output may emit.",
+      "additionalProperties": false,
+      "properties": {
+        "kind": { "type": "string" },
+        "extension": { "type": "string" },
+        "mimeType": { "type": "string" },
+        "label": { "type": "string" }
+      }
+    },
+
+    "SearchProviderContribution": {
+      "type": "object",
+      "description": "M6: Search provider contribution — supplies asset/material search results.",
+      "required": ["id", "kind", "label"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "$ref": "#/definitions/ContributionId" },
+        "kind": { "const": "searchProvider" },
+        "label": { "type": "string", "minLength": 1 },
+        "description": { "type": "string" },
+        "resultKinds": {
+          "type": "array",
+          "items": { "enum": ["asset", "material"] }
+        },
+        "order": { "type": "number" }
+      }
+    },
+
+    "MetadataFacetContribution": {
+      "type": "object",
+      "description": "M6: Metadata facet contribution — surfaces a metadata field as a searchable/filterable facet.",
+      "required": ["id", "kind", "fieldPath", "displayName", "valueKind"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "$ref": "#/definitions/ContributionId" },
+        "kind": { "const": "metadataFacet" },
+        "fieldPath": { "type": "string", "minLength": 1 },
+        "displayName": { "type": "string", "minLength": 1 },
+        "valueKind": {
+          "type": "string",
+          "enum": ["string", "number", "boolean", "enum", "date", "url"]
+        },
+        "order": { "type": "number" },
+        "aggregationPosture": {
+          "type": "string",
+          "enum": ["exact", "range", "presence"]
+        },
+        "enumValues": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      }
+    },
+
+    "AssetDetailSectionContribution": {
+      "type": "object",
+      "description": "M6: Asset detail section contribution — named slot within the asset detail panel.",
+      "required": ["id", "kind", "title", "placement"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "$ref": "#/definitions/ContributionId" },
+        "kind": { "const": "assetDetailSection" },
+        "title": { "type": "string", "minLength": 1 },
+        "placement": {
+          "type": "string",
+          "enum": ["before-default", "after-default"]
+        },
+        "fieldPaths": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "order": { "type": "number" },
+        "when": { "type": "string" }
+      }
+    },
+
+    "ProcessContribution": {
+      "type": "object",
+      "description": "M12: Process contribution — trusted local process descriptor.",
+      "required": ["id", "kind", "spec"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "$ref": "#/definitions/ContributionId" },
+        "kind": { "const": "process" },
+        "label": { "type": "string" },
+        "order": { "type": "number" },
+        "spec": {
+          "type": "object",
+          "description": "Process specification.",
+          "required": ["command"],
+          "additionalProperties": true,
+          "properties": {
+            "command": { "type": "string" },
+            "args": {
+              "type": "array",
+              "items": { "type": "string" }
+            },
+            "env": { "type": "object" },
+            "cwd": { "type": "string" },
+            "timeoutMs": { "type": "number" },
+            "maxRestarts": { "type": "integer", "minimum": 0 }
+          }
+        }
+      }
+    },
+
+    "EffectContribution": {
+      "type": "object",
+      "description": "M7: Effect contribution — trusted component effect.",
+      "required": ["id", "kind", "effectId"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "$ref": "#/definitions/ContributionId" },
+        "kind": { "const": "effect" },
+        "effectId": { "type": "string", "minLength": 1 },
+        "label": { "type": "string" },
+        "allowBrowserExport": { "type": "boolean" },
+        "allowWorkerExport": { "type": "boolean" },
+        "order": { "type": "number" }
+      }
+    },
+
+    "TransitionContribution": {
+      "type": "object",
+      "description": "M8: Transition contribution — trusted component transition.",
+      "required": ["id", "kind", "transitionId"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "$ref": "#/definitions/ContributionId" },
+        "kind": { "const": "transition" },
+        "transitionId": { "type": "string", "minLength": 1 },
+        "label": { "type": "string" },
+        "allowBrowserExport": { "type": "boolean" },
+        "allowWorkerExport": { "type": "boolean" },
+        "order": { "type": "number" }
+      }
+    },
+
+    "ClipTypeContribution": {
+      "type": "object",
+      "description": "M9: Clip type contribution — contributed clip type renderer/inspector.",
+      "required": ["id", "kind", "clipTypeId"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "$ref": "#/definitions/ContributionId" },
+        "kind": { "const": "clipType" },
+        "clipTypeId": { "type": "string", "minLength": 1 },
+        "label": { "type": "string" },
+        "allowBrowserExport": { "type": "boolean" },
+        "allowWorkerExport": { "type": "boolean" },
+        "order": { "type": "number" }
+      }
+    },
+
+    "ShaderContribution": {
+      "type": "object",
+      "description": "M13: Shader/WebGL contribution.",
+      "required": ["id", "kind", "shaderId", "label", "pass"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "$ref": "#/definitions/ContributionId" },
+        "kind": { "const": "shader" },
+        "shaderId": { "type": "string", "minLength": 1 },
+        "label": { "type": "string", "minLength": 1 },
+        "description": { "type": "string" },
+        "pass": {
+          "oneOf": [
+            { "type": "string", "enum": ["color", "alpha", "effect", "post-process", "compute"] },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "kind": { "type": "string", "enum": ["color", "alpha", "effect", "post-process", "compute"] },
+                "colorAttachment": { "type": "string" },
+                "alphaAttachment": { "type": "string" },
+                "inputAttachments": {
+                  "type": "array",
+                  "items": { "type": "string" }
+                }
+              }
+            }
+          ]
+        },
+        "source": {
+          "type": "object",
+          "description": "Shader source descriptor.",
+          "additionalProperties": false,
+          "properties": {
+            "language": { "type": "string", "enum": ["glsl", "wgsl"] },
+            "vertex": { "type": "string" },
+            "fragment": { "type": "string" },
+            "compute": { "type": "string" }
+          }
+        },
+        "uniforms": {
+          "type": "object",
+          "description": "Shader uniform schema.",
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "type": { "type": "string", "enum": ["float", "vec2", "vec3", "vec4", "int", "ivec2", "ivec3", "ivec4", "bool", "mat3", "mat4", "sampler2D"] },
+              "default": {},
+              "min": { "type": "number" },
+              "max": { "type": "number" }
+            }
+          }
+        },
+        "textures": {
+          "type": "object",
+          "description": "Shader texture schema.",
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "type": { "type": "string", "enum": ["2d", "cube", "3d"] },
+              "format": { "type": "string" },
+              "defaultSource": { "type": "string" }
+            }
+          }
+        },
+        "fallback": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "strategy": { "type": "string", "enum": ["skip", "passthrough", "solid-color", "error-texture"] },
+            "color": { "type": "string" }
+          }
+        },
+        "materializer": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "platform": { "type": "string" },
+            "entrypoint": { "type": "string" },
+            "timeoutMs": { "type": "number" }
+          }
+        },
+        "order": { "type": "number" },
+        "when": { "type": "string" }
+      }
+    },
+
+    "AutomationContribution": {
+      "type": "object",
+      "description": "M9: Automation contribution — host-owned automation clip declaration.",
+      "required": ["id", "kind"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "$ref": "#/definitions/ContributionId" },
+        "kind": { "const": "automation" },
+        "order": { "type": "number" },
+        "label": { "type": "string" },
+        "when": { "type": "string" }
+      }
+    },
+
+    "AgentToolContribution": {
+      "type": "object",
+      "description": "M10: Agent tool contribution — host-mediated, proposal-backed.",
+      "required": ["id", "kind", "toolId", "label"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "$ref": "#/definitions/ContributionId" },
+        "kind": { "const": "agentTool" },
+        "toolId": { "type": "string", "minLength": 1 },
+        "label": { "type": "string", "minLength": 1 },
+        "description": { "type": "string" },
+        "inputSchema": {
+          "type": "object",
+          "description": "Agent tool input schema (StandardSchema-compatible subset).",
+          "required": ["type"],
+          "additionalProperties": false,
+          "properties": {
+            "type": { "const": "object" },
+            "properties": {
+              "type": "object",
+              "additionalProperties": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "type": { "type": "string", "enum": ["string", "number", "boolean", "object"] },
+                  "title": { "type": "string" },
+                  "description": { "type": "string" },
+                  "default": {},
+                  "enum": {
+                    "type": "array",
+                    "items": { "type": "string" }
+                  },
+                  "properties": { "type": "object" },
+                  "required": {
+                    "type": "array",
+                    "items": { "type": "string" }
+                  }
+                }
+              }
+            },
+            "required": {
+              "type": "array",
+              "items": { "type": "string" }
+            },
+            "title": { "type": "string" },
+            "description": { "type": "string" }
+          }
+        },
+        "resultFamilies": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "mutation/proposal",
+              "generation/session",
+              "material/artifact",
+              "enrichment/search",
+              "export",
+              "process",
+              "ui/summary"
+            ]
+          }
+        },
+        "order": { "type": "number" },
+        "when": { "type": "string" }
+      }
+    },
+
+    "AgentContribution": {
+      "type": "object",
+      "description": "Reserved agent contribution — not yet bridged.",
+      "required": ["id", "kind"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "$ref": "#/definitions/ContributionId" },
+        "kind": { "const": "agent" },
+        "order": { "type": "number" },
+        "label": { "type": "string" },
+        "when": { "type": "string" }
+      }
+    },
+
+    "ExtensionPermissionDeclaration": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "permission": { "type": "string" },
+        "reason": { "type": "string" }
+      }
+    },
+
+    "ProcessManifestEntry": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string" },
+        "label": { "type": "string" },
+        "spec": { "type": "object" }
+      }
+    },
+
+    "ExtensionDependency": {
+      "type": "object",
+      "required": ["extensionId"],
+      "additionalProperties": false,
+      "properties": {
+        "extensionId": { "type": "string" },
+        "versionRange": { "type": "string" },
+        "posture": {
+          "type": "string",
+          "enum": ["required", "optional"]
+        },
+        "optional": { "type": "boolean" }
+      }
+    },
+
+    "ExtensionSettingsSchema": {
+      "type": "object",
+      "required": ["version"],
+      "additionalProperties": true,
+      "properties": {
+        "version": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    }
+  }
+}

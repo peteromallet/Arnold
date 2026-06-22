@@ -384,6 +384,89 @@ export interface ExtensionContribution {
 }
 
 // ---------------------------------------------------------------------------
+// Runtime-inspectable contract constants
+// ---------------------------------------------------------------------------
+
+/**
+ * All known contribution kinds as a runtime-inspectable readonly array.
+ * Use this to enumerate valid kinds at runtime without relying on the
+ * TypeScript type system alone.
+ */
+export const KNOWN_CONTRIBUTION_KINDS: readonly ContributionKind[] = [
+  'slot',
+  'dialog',
+  'panel',
+  'inspectorSection',
+  'timelineOverlay',
+  'command',
+  'keybinding',
+  'contextMenuItem',
+  'parser',
+  'outputFormat',
+  'searchProvider',
+  'metadataFacet',
+  'assetDetailSection',
+  'process',
+  'effect',
+  'transition',
+  'clipType',
+  'shader',
+  'automation',
+  'agentTool',
+  'agent',
+] as const;
+
+/** Set form of {@link KNOWN_CONTRIBUTION_KINDS} for fast lookups. */
+export const KNOWN_CONTRIBUTION_KINDS_SET: ReadonlySet<string> = new Set(KNOWN_CONTRIBUTION_KINDS);
+
+/**
+ * All known slot names as a runtime-inspectable readonly array.
+ */
+export const KNOWN_SLOT_NAMES: readonly VideoEditorSlotName[] = [
+  'header',
+  'toolbar',
+  'leftPanel',
+  'rightPanel',
+  'codePanel',
+  'writingPanel',
+  'stagePanel',
+  'timelineFooter',
+  'statusBar',
+  'dialogs',
+  'assetPanel',
+  'inspectorPanel',
+] as const;
+
+/** Set form of {@link KNOWN_SLOT_NAMES} for fast lookups. */
+export const KNOWN_SLOT_NAMES_SET: ReadonlySet<string> = new Set(KNOWN_SLOT_NAMES);
+
+// ---- Placement value constants ----
+
+/** Valid placement values for inspectorSection contributions. */
+export const INSPECTOR_SECTION_PLACEMENTS: readonly string[] = [
+  'before-default',
+  'after-default',
+] as const;
+
+/** Valid placement values for panel contributions. */
+export const PANEL_PLACEMENTS: readonly string[] = [
+  'asset-panel',
+] as const;
+
+/** Valid placement values for assetDetailSection contributions. */
+export const ASSET_DETAIL_SECTION_PLACEMENTS: readonly string[] = [
+  'before-default',
+  'after-default',
+] as const;
+
+/** Union of all valid placement values across contribution kinds. */
+export const ALL_VALID_PLACEMENTS: readonly string[] = [
+  'before-default',
+  'after-default',
+  'asset-panel',
+] as const;
+
+// ---------------------------------------------------------------------------
 // M6: Metadata facet / asset detail section contributions
 // ---------------------------------------------------------------------------
 
@@ -2470,7 +2553,7 @@ export function validateManifest(
   }
 
   // -----------------------------------------------------------------------
-  // Contribution ID uniqueness
+  // Contribution validation (ID uniqueness, kind, placement rules)
   // -----------------------------------------------------------------------
   if (manifest.contributions && manifest.contributions.length > 0) {
     const seen = new Set<string>();
@@ -2484,6 +2567,91 @@ export function validateManifest(
         pushErr('manifest/duplicate-contribution-id', `Duplicate contribution ID "${cId}"`, cId);
       }
       seen.add(cId);
+
+      // ---- Contribution kind validation ----
+      const cKind = (contribution as any).kind as string | undefined;
+      if (!cKind || typeof cKind !== 'string') {
+        pushErr('manifest/missing-contribution-kind', `Contribution "${cId}" is missing a kind`, cId);
+        continue; // cannot validate kind-specific rules without a kind
+      }
+      if (!KNOWN_CONTRIBUTION_KINDS_SET.has(cKind)) {
+        pushErr(
+          'manifest/unknown-contribution-kind',
+          `Contribution "${cId}" has unknown kind "${cKind}"; must be one of: ${KNOWN_CONTRIBUTION_KINDS.join(', ')}`,
+          cId,
+        );
+        continue; // unknown kind — skip kind-specific placement rules
+      }
+
+      // ---- Kind-specific placement rules ----
+
+      // Slot: must not specify placement
+      if (cKind === 'slot') {
+        const cPlacement = (contribution as any).placement;
+        if (cPlacement !== undefined && cPlacement !== null) {
+          pushErr(
+            'manifest/slot-no-placement',
+            `Slot contribution "${cId}" must not specify placement`,
+            cId,
+          );
+        }
+        // Validate slot name if present
+        const cSlot = (contribution as any).slot;
+        if (cSlot !== undefined && cSlot !== null && !KNOWN_SLOT_NAMES_SET.has(cSlot)) {
+          pushErr(
+            'manifest/unknown-slot-name',
+            `Slot contribution "${cId}" has unknown slot name "${cSlot}"; must be one of: ${KNOWN_SLOT_NAMES.join(', ')}`,
+            cId,
+          );
+        }
+      }
+
+      // Panel: placement must be 'asset-panel' when specified
+      if (cKind === 'panel') {
+        const cPlacement = (contribution as any).placement as string | undefined;
+        if (cPlacement !== undefined && cPlacement !== null) {
+          if (!PANEL_PLACEMENTS.includes(cPlacement)) {
+            pushErr(
+              'manifest/invalid-panel-placement',
+              `Panel contribution "${cId}" placement must be "asset-panel", got "${cPlacement}"`,
+              cId,
+            );
+          }
+        }
+      }
+
+      // InspectorSection: validate placement when present; host applies defaults
+      if (cKind === 'inspectorSection') {
+        const cPlacement = (contribution as any).placement as string | undefined;
+        if (cPlacement !== undefined && cPlacement !== null) {
+          if (!INSPECTOR_SECTION_PLACEMENTS.includes(cPlacement)) {
+            pushErr(
+              'manifest/invalid-inspector-placement',
+              `InspectorSection contribution "${cId}" placement must be one of: ${INSPECTOR_SECTION_PLACEMENTS.join(', ')}, got "${cPlacement}"`,
+              cId,
+            );
+          }
+        }
+      }
+
+      // AssetDetailSection: title and placement are required
+      if (cKind === 'assetDetailSection') {
+        const adsContribution = contribution as { id: string; title?: unknown; placement?: unknown };
+        if (!adsContribution.title || typeof adsContribution.title !== 'string' || adsContribution.title.trim().length === 0) {
+          pushErr(
+            'manifest/missing-asset-detail-title',
+            `AssetDetailSection contribution "${cId}" must include a non-empty title`,
+            cId,
+          );
+        }
+        if (!adsContribution.placement || typeof adsContribution.placement !== 'string' || !ASSET_DETAIL_SECTION_PLACEMENTS.includes(adsContribution.placement)) {
+          pushErr(
+            'manifest/invalid-asset-detail-placement',
+            `AssetDetailSection contribution "${cId}" must specify placement as one of: ${ASSET_DETAIL_SECTION_PLACEMENTS.join(', ')}, got "${String(adsContribution.placement ?? 'undefined')}"`,
+            cId,
+          );
+        }
+      }
     }
   }
 

@@ -15,7 +15,7 @@ This document defines the **developer contract** between extension authors and t
 2. What extension authors **must** do (import boundary, dispose contract, diagnostic conventions).
 3. What is **explicitly deferred** or **unsupported** in V1.
 
-This contract is backed by the [supported/deferred matrix](./extension-platform-supported-deferred.md) (84 supported rows, 69 deferred rows) and the [trust envelope](./extensions-trust-envelope.md). Every supported claim is traceable to concrete evidence — tests, examples, absence checks, or contract-recheck rows.
+This contract is backed by the [supported/deferred matrix](./extension-platform-supported-deferred.md) (91 supported rows, 69 deferred rows) and the [trust envelope](./extensions-trust-envelope.md). Every supported claim is traceable to concrete evidence — tests, examples, absence checks, or contract-recheck rows.
 
 ---
 
@@ -51,7 +51,7 @@ This contract is backed by the [supported/deferred matrix](./extension-platform-
 
 | Guarantee | Evidence |
 |---|---|
-| Host slots: toolbar, inspector, overlay, status, code panel, dialogs, writing, stage | S-020 |
+| Host slots: header, toolbar, leftPanel, rightPanel, codePanel, writingPanel, stagePanel, timelineFooter, statusBar, dialogs, assetPanel, inspectorPanel | S-020 |
 | Inspector and overlay contributions update on host state changes | S-021 |
 | `SchemaForm` renders and validates common schema subset | S-022 |
 | Diagnostic fallback links open `DiagnosticPanel` filtered to failing extension | S-023 |
@@ -379,7 +379,7 @@ The gate outputs a JSON record of docs-safe example IDs. At the time of this doc
 | Document | Purpose |
 |---|---|
 | [extensions-quickstart.md](./extensions-quickstart.md) | Getting-started guide for new extension authors |
-| [extension-platform-supported-deferred.md](./extension-platform-supported-deferred.md) | Canonical supported/deferred matrix (84 supported, 69 deferred) |
+| [extension-platform-supported-deferred.md](./extension-platform-supported-deferred.md) | Canonical supported/deferred matrix (91 supported, 69 deferred) |
 | [extension-platform-contract-recheck.md](./extension-platform-contract-recheck.md) | Complete M0–M14 Done Criteria evidence matrix |
 | [extensions-trust-envelope.md](./extensions-trust-envelope.md) | V1 trusted-local execution model and permission posture |
 | [provider-compatibility-matrix.md](./provider-compatibility-matrix.md) | DataProvider compatibility across InMemory/Supabase/Astrid |

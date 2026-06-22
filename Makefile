@@ -6,7 +6,7 @@ PUBLIC_VITE_ENV := \
 	VITE_API_TARGET_URL=https://example.com \
 	VITE_APP_ENV=web
 
-.PHONY: help install-hooks dockerfile-check build-context-check build docker-build deploy-check quality test slot-first-unit slot-first-edge slot-first-db slot-first-e2e slot-first-health slot-first-schema-drift slot-first-test-fixture-legacy slot-first-audit release-check prepush ci
+.PHONY: help install-hooks dockerfile-check build-context-check build docker-build deploy-check quality test extensions-check extensions-production-smoke slot-first-unit slot-first-edge slot-first-db slot-first-e2e slot-first-health slot-first-schema-drift slot-first-test-fixture-legacy slot-first-audit release-check prepush ci
 
 help:
 	@printf '%s\n' \
@@ -18,6 +18,8 @@ help:
 		'  make deploy-check         Reproduce the Railway build end-to-end (catches the breakage that --check misses).' \
 		'  make quality              Run architecture, lint, and strict type checks.' \
 		'  make test                 Run the Vitest suite.' \
+		'  make extensions-check     Run extension contract gates (schema validation, drift, export freeze, packagability, unit tests).  Local-only — no Docker required.' \
+		'  make extensions-production-smoke  Run the production-bundled smoke extension tests (opt-in, statically bundled).  Local-only.' \
 		'  make slot-first-audit     Run M0 slot-first audit-mode tests and gates.' \
 		'  make release-check        Run the full release gate before cutting a deployment.' \
 		'  make prepush              Run the lightweight gate before pushing.' \
@@ -65,6 +67,26 @@ quality:
 test:
 	npm test
 
+# ---------------------------------------------------------------------------
+# Extension contract gates (local-only — no Docker required)
+# ---------------------------------------------------------------------------
+# Runs schema validation (Ajv), drift gate, public export freeze,
+# packagability smoke, and focused extension unit tests.
+extensions-check:
+	npm run test:extensions
+
+# Production-bundled smoke extension tests (opt-in, statically bundled).
+# This verifies the ?extensionSmoke=1 trigger without a sandbox or loader.
+extensions-production-smoke:
+	npm run test:extensions:production-smoke
+
+# ---------------------------------------------------------------------------
+# Release gate
+# ---------------------------------------------------------------------------
+# Docker-required: dockerfile-check, docker-build
+# Local-only:      build-context-check, build, quality, test, extensions-check
+release-check: dockerfile-check build-context-check docker-build build quality test extensions-check
+
 slot-first-unit:
 	npm run test:slot:unit
 
@@ -89,8 +111,6 @@ slot-first-test-fixture-legacy:
 	npm run quality:test-fixture-legacy -- --audit
 
 slot-first-audit: slot-first-unit slot-first-edge slot-first-db slot-first-schema-drift slot-first-test-fixture-legacy slot-first-health slot-first-e2e
-
-release-check: dockerfile-check build-context-check docker-build build quality test
 
 prepush: dockerfile-check build-context-check
 

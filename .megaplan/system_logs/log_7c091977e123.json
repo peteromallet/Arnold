@@ -1,0 +1,65 @@
+{
+  "id": "log_7c091977e123",
+  "level": "debug",
+  "category": "system",
+  "event_type": "authority_divergence",
+  "message": "authority_divergence emitted",
+  "details": {
+    "event": {
+      "seq": 2369,
+      "schema_version": 1,
+      "ts_utc": "2026-06-22T16:53:52.680246+00:00",
+      "ts_rel_init_s": 3099.762066,
+      "kind": "authority_divergence",
+      "phase": "execute",
+      "payload": {
+        "diagnostic_version": 1,
+        "task_id": "T8",
+        "raw_terminal_status": "done",
+        "authority_status": "unknown",
+        "authoritative": false,
+        "reason": "stale_evidence:missing_head:task_files_changed",
+        "missing_outputs": [],
+        "stale_evidence": [
+          "missing_head:task_files_changed",
+          "missing_head:task_commands_run",
+          "missing_head:task_commands_run",
+          "missing_head:task_commands_run"
+        ],
+        "would_block_reasons": [
+          "stale_evidence:missing_head:task_files_changed",
+          "stale_evidence:missing_head:task_commands_run"
+        ],
+        "error": null,
+        "diagnostics": {
+          "task_id": "T8",
+          "declared_outputs": {
+            "files_changed": [
+              "config/contracts/registry.json"
+            ],
+            "commands_run": [
+              "node scripts/quality/check-sdk-public-exports.mjs --release",
+              "node scripts/quality/check-contract-governance.mjs",
+              "npx vitest run src/sdk/index.test.ts"
+            ]
+          },
+          "linked_evidence_count": 8,
+          "evidence_count": 98,
+          "normalization": "iterable",
+          "status": "unknown",
+          "evidence_sources": [
+            "plan_artifacts"
+          ],
+          "loaded_evidence_count": 98,
+          "raw_terminal_status": "done"
+        },
+        "ts_utc": "2026-06-22T16:53:52.679584+00:00"
+      },
+      "transaction_id": "20c5b43d95544ff2",
+      "store_method": "log_system_event"
+    }
+  },
+  "turn_id": null,
+  "epic_id": "m1-preview-truth-and-contract-20260622-1802",
+  "occurred_at": "2026-06-22T16:53:52.680297Z"
+}

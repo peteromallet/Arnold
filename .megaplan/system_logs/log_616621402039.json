@@ -1,0 +1,61 @@
+{
+  "id": "log_616621402039",
+  "level": "debug",
+  "category": "system",
+  "event_type": "authority_divergence",
+  "message": "authority_divergence emitted",
+  "details": {
+    "event": {
+      "seq": 2193,
+      "schema_version": 1,
+      "ts_utc": "2026-06-22T16:50:53.366755+00:00",
+      "ts_rel_init_s": 2920.448575,
+      "kind": "authority_divergence",
+      "phase": "execute",
+      "payload": {
+        "diagnostic_version": 1,
+        "task_id": "T5",
+        "raw_terminal_status": "done",
+        "authority_status": "unknown",
+        "authoritative": false,
+        "reason": "stale_evidence:missing_head:task_files_changed",
+        "missing_outputs": [],
+        "stale_evidence": [
+          "missing_head:task_files_changed",
+          "missing_head:task_commands_run"
+        ],
+        "would_block_reasons": [
+          "stale_evidence:missing_head:task_files_changed",
+          "stale_evidence:missing_head:task_commands_run"
+        ],
+        "error": null,
+        "diagnostics": {
+          "task_id": "T5",
+          "declared_outputs": {
+            "files_changed": [
+              "src/sdk/manifest-schema-validation.test.ts"
+            ],
+            "commands_run": [
+              "npx vitest run --config config/testing/vitest.config.ts src/sdk/manifest-schema-validation.test.ts"
+            ]
+          },
+          "linked_evidence_count": 4,
+          "evidence_count": 94,
+          "normalization": "iterable",
+          "status": "unknown",
+          "evidence_sources": [
+            "plan_artifacts"
+          ],
+          "loaded_evidence_count": 94,
+          "raw_terminal_status": "done"
+        },
+        "ts_utc": "2026-06-22T16:50:53.366276+00:00"
+      },
+      "transaction_id": "f52155ca99000ca2",
+      "store_method": "log_system_event"
+    }
+  },
+  "turn_id": null,
+  "epic_id": "m1-preview-truth-and-contract-20260622-1802",
+  "occurred_at": "2026-06-22T16:50:53.366810Z"
+}

@@ -1,0 +1,12 @@
+{
+  "id": "test.kind-drift",
+  "version": "1.0.0",
+  "label": "Kind Drift Test Extension",
+  "contributions": [
+    {
+      "id": "test.slot",
+      "kind": "slot",
+      "slot": "header"
+    }
+  ]
+}

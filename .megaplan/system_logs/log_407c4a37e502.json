@@ -1,0 +1,67 @@
+{
+  "id": "log_407c4a37e502",
+  "level": "debug",
+  "category": "system",
+  "event_type": "authority_divergence",
+  "message": "authority_divergence emitted",
+  "details": {
+    "event": {
+      "seq": 2898,
+      "schema_version": 1,
+      "ts_utc": "2026-06-22T17:03:09.083544+00:00",
+      "ts_rel_init_s": 3656.165364,
+      "kind": "authority_divergence",
+      "phase": "execute",
+      "payload": {
+        "diagnostic_version": 1,
+        "task_id": "T4",
+        "raw_terminal_status": "done",
+        "authority_status": "unknown",
+        "authoritative": false,
+        "reason": "stale_evidence:missing_head:task_files_changed",
+        "missing_outputs": [],
+        "stale_evidence": [
+          "missing_head:task_files_changed",
+          "missing_head:task_commands_run",
+          "missing_head:task_commands_run",
+          "missing_head:task_commands_run",
+          "missing_head:task_commands_run"
+        ],
+        "would_block_reasons": [
+          "stale_evidence:missing_head:task_files_changed",
+          "stale_evidence:missing_head:task_commands_run"
+        ],
+        "error": null,
+        "diagnostics": {
+          "task_id": "T4",
+          "declared_outputs": {
+            "files_changed": [
+              "config/contracts/reigh-extension.schema.json"
+            ],
+            "commands_run": [
+              "python3 schema structure validation",
+              "python3 _test_schema.py (11 jsonschema validation tests)",
+              "npx vitest run src/sdk/index.test.ts (278 passed)",
+              "npx vitest run src/sdk/boundary.test.ts (110 passed)"
+            ]
+          },
+          "linked_evidence_count": 10,
+          "evidence_count": 114,
+          "normalization": "iterable",
+          "status": "unknown",
+          "evidence_sources": [
+            "plan_artifacts"
+          ],
+          "loaded_evidence_count": 114,
+          "raw_terminal_status": "done"
+        },
+        "ts_utc": "2026-06-22T17:03:09.082726+00:00"
+      },
+      "transaction_id": "bc192f6268a1c7cf",
+      "store_method": "log_system_event"
+    }
+  },
+  "turn_id": null,
+  "epic_id": "m1-preview-truth-and-contract-20260622-1802",
+  "occurred_at": "2026-06-22T17:03:09.083605Z"
+}

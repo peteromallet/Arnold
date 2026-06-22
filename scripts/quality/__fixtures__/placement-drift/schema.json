@@ -1,0 +1,66 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Reigh Extension Manifest (Placement Drift Fixture)",
+  "type": "object",
+  "required": ["id", "version", "label"],
+  "definitions": {
+    "ContributionKind": {
+      "type": "string",
+      "enum": ["slot", "dialog", "panel", "inspectorSection"]
+    },
+    "SlotName": {
+      "type": "string",
+      "enum": ["header", "toolbar"]
+    },
+    "Contribution": {
+      "oneOf": [
+        { "$ref": "#/definitions/SlotContribution" },
+        { "$ref": "#/definitions/DialogContribution" },
+        { "$ref": "#/definitions/PanelContribution" },
+        { "$ref": "#/definitions/InspectorSectionContribution" }
+      ]
+    },
+    "SlotContribution": {
+      "type": "object",
+      "required": ["id", "kind"],
+      "properties": {
+        "id": { "type": "string" },
+        "kind": { "const": "slot" },
+        "slot": { "$ref": "#/definitions/SlotName" }
+      }
+    },
+    "DialogContribution": {
+      "type": "object",
+      "required": ["id", "kind"],
+      "properties": {
+        "id": { "type": "string" },
+        "kind": { "const": "dialog" }
+      }
+    },
+    "PanelContribution": {
+      "type": "object",
+      "required": ["id", "kind"],
+      "properties": {
+        "id": { "type": "string" },
+        "kind": { "const": "panel" },
+        "placement": {
+          "type": "string",
+          "description": "INTENTIONALLY wrong: allows 'left-panel' instead of 'asset-panel'.",
+          "enum": ["left-panel", "right-panel"]
+        }
+      }
+    },
+    "InspectorSectionContribution": {
+      "type": "object",
+      "required": ["id", "kind"],
+      "properties": {
+        "id": { "type": "string" },
+        "kind": { "const": "inspectorSection" },
+        "placement": {
+          "type": "string",
+          "enum": ["before-default", "after-default"]
+        }
+      }
+    }
+  }
+}

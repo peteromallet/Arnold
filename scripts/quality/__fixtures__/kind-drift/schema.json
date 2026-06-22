@@ -1,0 +1,54 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Reigh Extension Manifest (Kind Drift Fixture)",
+  "type": "object",
+  "required": ["id", "version", "label"],
+  "definitions": {
+    "ContributionKind": {
+      "type": "string",
+      "description": "Intentionally missing 'bogusKind' to trigger drift.",
+      "enum": [
+        "slot",
+        "dialog",
+        "panel"
+      ]
+    },
+    "SlotName": {
+      "type": "string",
+      "enum": ["header", "toolbar"]
+    },
+    "Contribution": {
+      "oneOf": [
+        { "$ref": "#/definitions/SlotContribution" },
+        { "$ref": "#/definitions/DialogContribution" },
+        { "$ref": "#/definitions/PanelContribution" }
+      ]
+    },
+    "SlotContribution": {
+      "type": "object",
+      "required": ["id", "kind"],
+      "properties": {
+        "id": { "type": "string" },
+        "kind": { "const": "slot" },
+        "slot": { "$ref": "#/definitions/SlotName" }
+      }
+    },
+    "DialogContribution": {
+      "type": "object",
+      "required": ["id", "kind"],
+      "properties": {
+        "id": { "type": "string" },
+        "kind": { "const": "dialog" }
+      }
+    },
+    "PanelContribution": {
+      "type": "object",
+      "required": ["id", "kind"],
+      "properties": {
+        "id": { "type": "string" },
+        "kind": { "const": "panel" },
+        "placement": { "enum": ["asset-panel"] }
+      }
+    }
+  }
+}

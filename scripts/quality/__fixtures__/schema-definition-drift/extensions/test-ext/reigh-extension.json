@@ -1,0 +1,12 @@
+{
+  "id": "test.schema-def-drift",
+  "version": "1.0.0",
+  "label": "Schema Def Drift Test Extension",
+  "contributions": [
+    {
+      "id": "test.slot",
+      "kind": "slot",
+      "slot": "header"
+    }
+  ]
+}

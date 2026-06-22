@@ -204,10 +204,10 @@ Example references:
 | Kind | Milestone | Example (docs-safe) |
 |---|---|---|
 | `parser` | M6 | [integrity-hash-parser-example.ts](../../src/examples/integrity-hash-parser-example.ts) |
-| `outputFormat` | M6 | [metadata-json-output-example.ts](../../src/examples/metadata-json-output-example.ts) |
-| `searchProvider` | M6 | Declared in SDK; frontend rendering deferred (D-063, D-064) |
-| `metadataFacet` | M6 | Declared in SDK; frontend rendering deferred (D-063, D-064) |
-| `assetDetailSection` | M6 | Declared in SDK; frontend rendering deferred |
+| `outputFormat` | M6 | Typed and declarable; execution reserved (returns M6 from `contributionKindNotYetBridged`). Example: [metadata-json-output-example.ts](../../src/examples/metadata-json-output-example.ts) |
+| `searchProvider` | M6 | Typed and declarable; execution reserved (returns M6 from `contributionKindNotYetBridged`). Frontend rendering deferred (D-063, D-064) |
+| `metadataFacet` | M6 | Supported (bridged); frontend rendering deferred (D-063, D-064) |
+| `assetDetailSection` | M6 | Supported (bridged); frontend rendering deferred |
 | `agentTool` | M10 | [agent-tools-canary/](../../src/tools/video-editor/examples/extensions/agent-tools-canary/) (EXT, docs-safe) |
 | `shader` | M13 | [clip-local-shader-canary/](../../src/tools/video-editor/examples/extensions/clip-local-shader-canary/) (EXT, docs-safe) |
 | `automation` | M9 | [automation-recording-canary.ts](../../src/examples/automation-recording-canary.ts) (docs-safe) |

@@ -1,0 +1,12 @@
+{
+  "id": "test.placement-drift",
+  "version": "1.0.0",
+  "label": "Placement Drift Test Extension",
+  "contributions": [
+    {
+      "id": "test.slot",
+      "kind": "slot",
+      "slot": "header"
+    }
+  ]
+}

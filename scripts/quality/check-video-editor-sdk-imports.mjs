@@ -179,3 +179,144 @@ if (failures.length > 0) {
 }
 
 console.log('[video-editor-sdk-imports] OK: all external video-editor imports use public entrypoints or the approved allowlist.');
+
+// ---------------------------------------------------------------------------
+// Packagability smoke: verify @reigh/editor-sdk can be imported standalone
+// without requiring any deep imports from src/tools/video-editor/*.
+// ---------------------------------------------------------------------------
+
+import { execSync } from 'node:child_process';
+import os from 'node:os';
+
+const SMOKE_LABEL = '[video-editor-sdk-smoke]';
+
+/**
+ * Create a temporary TypeScript fixture that imports only @reigh/editor-sdk,
+ * defines a minimal extension, and type-checks cleanly. If tsc fails, the SDK
+ * is not packagable — it likely transitively requires video-editor internals
+ * that are unavailable to external consumers.
+ */
+function runPackagabilitySmoke() {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'reigh-sdk-smoke-'));
+  const fixturePath = path.join(tmpDir, 'smoke-fixture.ts');
+  const tsconfigPath = path.join(tmpDir, 'tsconfig.json');
+
+  const fixtureContent = `/**
+ * Packagability smoke fixture — must NOT import from src/tools/video-editor/*.
+ * Imports exclusively from @reigh/editor-sdk, the public SDK entrypoint.
+ */
+
+import { defineExtension } from '@reigh/editor-sdk';
+import type { ReighExtension } from '@reigh/editor-sdk';
+
+const ext: ReighExtension = defineExtension({
+  manifest: {
+    id: 'com.reigh.smoke.packagability' as any,
+    version: '1.0.0',
+    label: 'Packagability Smoke',
+    description: 'Temporary fixture verifying the SDK stands alone.',
+    apiVersion: 1,
+  },
+});
+
+// Also pull in a few additional public types to widen the import surface:
+import {
+  validateManifest,
+  type ContributionKind,
+  CONTRIBUTION_KIND_MILESTONE,
+  contributionKindNotYetBridged,
+} from '@reigh/editor-sdk';
+
+// Exhaustiveness: reference the imports so they are not tree-shaken away
+void ext;
+void validateManifest;
+void CONTRIBUTION_KIND_MILESTONE;
+void contributionKindNotYetBridged;
+// ContributionKind is type-only; used via typeof in type position below
+type _SmokeCheck = ContributionKind;
+void ({} as _SmokeCheck);
+`;
+
+  const tsconfigContent = {
+    compilerOptions: {
+      target: 'ESNext',
+      module: 'ESNext',
+      moduleResolution: 'bundler',
+      baseUrl: repoRoot,
+      paths: {
+        '@/*': ['./src/*'],
+        '@reigh/editor-sdk': ['./src/sdk/index.ts'],
+      },
+      skipLibCheck: true,
+      noEmit: true,
+      strict: true,
+      allowImportingTsExtensions: true,
+      isolatedModules: true,
+    },
+    include: ['smoke-fixture.ts'],
+  };
+
+  try {
+    fs.writeFileSync(fixturePath, fixtureContent, 'utf8');
+    fs.writeFileSync(tsconfigPath, JSON.stringify(tsconfigContent, null, 2), 'utf8');
+
+    console.log(`${SMOKE_LABEL} Temporary fixture written to ${tmpDir}`);
+
+    const tscPath = path.join(repoRoot, 'node_modules', '.bin', 'tsc');
+    const cmd = `${tscPath} -p ${tsconfigPath} --noEmit`;
+
+    console.log(`${SMOKE_LABEL} Running: ${cmd}`);
+    const stdout = execSync(cmd, {
+      cwd: tmpDir,
+      encoding: 'utf8',
+      timeout: 60_000,
+      stdio: ['pipe', 'pipe', 'pipe'],
+    });
+
+    if (stdout.trim()) {
+      console.log(`${SMOKE_LABEL} tsc stdout:\n${stdout}`);
+    }
+
+    // Verify the fixture does not contain any deep import into video-editor
+    const fixtureText = fs.readFileSync(fixturePath, 'utf8');
+    const deepImportPattern = /from\s+['"](?:@\/tools\/video-editor|.*\/src\/tools\/video-editor)/;
+    if (deepImportPattern.test(fixtureText)) {
+      console.error(`${SMOKE_LABEL} FAILED: smoke fixture itself contains a deep import into src/tools/video-editor.`);
+      cleanupTmp(tmpDir);
+      return false;
+    }
+
+    console.log(`${SMOKE_LABEL} PASSED: @reigh/editor-sdk type-checks standalone with no video-editor deep imports required.`);
+    return true;
+  } catch (err) {
+    console.error(`${SMOKE_LABEL} FAILED: type-check of packagability fixture did not succeed.`);
+    console.error(`${SMOKE_LABEL} This means @reigh/editor-sdk cannot be compiled in isolation —`);
+    console.error(`${SMOKE_LABEL} it likely transitively requires types or values from src/tools/video-editor/*.`);
+    if (err.stdout) console.error(`${SMOKE_LABEL} tsc stdout:\n${String(err.stdout)}`);
+    if (err.stderr) console.error(`${SMOKE_LABEL} tsc stderr:\n${String(err.stderr)}`);
+    if (!err.stdout && !err.stderr) console.error(`${SMOKE_LABEL} ${err.message}`);
+    return false;
+  } finally {
+    cleanupTmp(tmpDir);
+  }
+}
+
+function cleanupTmp(tmpDir) {
+  try {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  } catch {
+    // Best effort — temp dirs are ephemeral anyway.
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Execute packagability smoke (always runs; failures are fatal)
+// ---------------------------------------------------------------------------
+
+console.log(`${SMOKE_LABEL} Running packagability smoke…`);
+const smokeOk = runPackagabilitySmoke();
+if (!smokeOk) {
+  process.exit(1);
+}
+
+console.log('[video-editor-sdk-imports] All checks passed (allowlist + packagability smoke).');

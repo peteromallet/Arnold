@@ -1,0 +1,17 @@
+{
+  "id": "test.placement-mismatch",
+  "version": "1.0.0",
+  "label": "Placement Mismatch Test Extension",
+  "contributions": [
+    {
+      "id": "test.panel-wrong",
+      "kind": "panel",
+      "placement": "wrong-spot"
+    },
+    {
+      "id": "test.inspector-wrong",
+      "kind": "inspectorSection",
+      "placement": "middle"
+    }
+  ]
+}

@@ -1,0 +1,70 @@
+{
+  "id": "log_d41b8dc89f38",
+  "level": "debug",
+  "category": "system",
+  "event_type": "authority_divergence",
+  "message": "authority_divergence emitted",
+  "details": {
+    "event": {
+      "seq": 3391,
+      "schema_version": 1,
+      "ts_utc": "2026-06-22T17:11:24.082189+00:00",
+      "ts_rel_init_s": 4151.164009,
+      "kind": "authority_divergence",
+      "phase": "execute",
+      "payload": {
+        "diagnostic_version": 1,
+        "task_id": "T14",
+        "raw_terminal_status": "done",
+        "authority_status": "unknown",
+        "authoritative": false,
+        "reason": "stale_evidence:missing_head:task_commands_run",
+        "missing_outputs": [],
+        "stale_evidence": [
+          "missing_head:task_commands_run",
+          "missing_head:task_commands_run",
+          "missing_head:task_commands_run",
+          "missing_head:task_commands_run",
+          "missing_head:task_commands_run",
+          "missing_head:task_commands_run",
+          "missing_head:task_commands_run",
+          "missing_head:task_commands_run"
+        ],
+        "would_block_reasons": [
+          "stale_evidence:missing_head:task_commands_run"
+        ],
+        "error": null,
+        "diagnostics": {
+          "task_id": "T14",
+          "declared_outputs": {
+            "commands_run": [
+              "npm run test:extensions:production-smoke (29 passed)",
+              "npm run check:extension-drift (0 errors, 1 pre-existing warning)",
+              "npm run check:sdk-public-exports -- --release (PASS)",
+              "npm run check:video-editor-sdk-imports (FAIL \u2014 pre-existing packagability issue)",
+              "npm run check:extension-drift:release (FAIL exit 1 \u2014 pre-existing flagship-local warning)",
+              "npx vitest run --config config/testing/vitest.config.ts src/sdk/ (8 failed examples-governance, 1175 passed)",
+              "node --test scripts/quality/check-extension-drift.test.mjs (19/19 PASS)",
+              "node scripts/quality/check-contract-governance.mjs (PASS)"
+            ]
+          },
+          "linked_evidence_count": 16,
+          "evidence_count": 150,
+          "normalization": "iterable",
+          "status": "unknown",
+          "evidence_sources": [
+            "plan_artifacts"
+          ],
+          "loaded_evidence_count": 150,
+          "raw_terminal_status": "done"
+        },
+        "ts_utc": "2026-06-22T17:11:24.081600+00:00"
+      },
+      "transaction_id": "6ccef56ae4834828",
+      "store_method": "log_system_event"
+    }
+  },
+  "turn_id": null,
+  "epic_id": "m1-preview-truth-and-contract-20260622-1802",
+  "occurred_at": "2026-06-22T17:11:24.082250Z"
+}

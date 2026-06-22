@@ -1,0 +1,49 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Reigh Extension Manifest (Manifest Unknown Kind Fixture)",
+  "type": "object",
+  "required": ["id", "version", "label"],
+  "definitions": {
+    "ContributionKind": {
+      "type": "string",
+      "enum": ["slot", "dialog", "panel"]
+    },
+    "SlotName": {
+      "type": "string",
+      "enum": ["header", "toolbar"]
+    },
+    "Contribution": {
+      "oneOf": [
+        { "$ref": "#/definitions/SlotContribution" },
+        { "$ref": "#/definitions/DialogContribution" },
+        { "$ref": "#/definitions/PanelContribution" }
+      ]
+    },
+    "SlotContribution": {
+      "type": "object",
+      "required": ["id", "kind"],
+      "properties": {
+        "id": { "type": "string" },
+        "kind": { "const": "slot" },
+        "slot": { "$ref": "#/definitions/SlotName" }
+      }
+    },
+    "DialogContribution": {
+      "type": "object",
+      "required": ["id", "kind"],
+      "properties": {
+        "id": { "type": "string" },
+        "kind": { "const": "dialog" }
+      }
+    },
+    "PanelContribution": {
+      "type": "object",
+      "required": ["id", "kind"],
+      "properties": {
+        "id": { "type": "string" },
+        "kind": { "const": "panel" },
+        "placement": { "enum": ["asset-panel"] }
+      }
+    }
+  }
+}
