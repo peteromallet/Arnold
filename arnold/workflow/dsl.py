@@ -17,8 +17,8 @@ from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import Any, Mapping
 
-from arnold.workflow.manifests import SubpipelineRef, WorkflowPolicy
-from arnold.workflow.refs import SourceSpan, canonical_alias
+from arnold.manifest.manifests import SubpipelineRef, WorkflowPolicy
+from arnold.manifest.refs import SourceSpan, canonical_alias
 
 _REF_RE = re.compile(r"^[A-Za-z0-9_.:-]+$")
 

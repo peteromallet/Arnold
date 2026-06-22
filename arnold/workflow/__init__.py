@@ -17,7 +17,7 @@ from arnold.workflow.dsl import (
 )
 from arnold.workflow.expressions import ExpressionRef, expression_ref
 from arnold.workflow.inspect import inspect_manifest, to_dot, to_yaml
-from arnold.workflow.refs import (
+from arnold.manifest.refs import (
     EdgeRef,
     HookRef,
     ImportRef,
@@ -31,14 +31,24 @@ from arnold.workflow.refs import (
     canonical_alias,
     manifest_coordinate,
 )
-from arnold.workflow.manifests import (
+from arnold.manifest.manifests import (
+    AuthorityRequirement,
     BudgetPolicy,
     CapabilityRequirement,
+    CompensationPolicy,
+    CompensationTarget,
+    ControlTransitionSlot,
+    EffectRef,
+    EscalationPolicy,
     FanoutPolicy,
+    IdempotencyPolicy,
     LoopPolicy,
+    ReducerRef,
     RetryPolicy,
     SubpipelineRef,
     SuspensionRoute,
+    TimingPolicy,
+    TopologyOverlaySlot,
     WorkflowEdge,
     WorkflowManifest,
     WorkflowNode,
@@ -75,13 +85,23 @@ __all__ = [
     "SourceSpan",
     "Step",
     "ValueRef",
+    "AuthorityRequirement",
     "BudgetPolicy",
     "CapabilityRequirement",
+    "CompensationPolicy",
+    "CompensationTarget",
+    "ControlTransitionSlot",
+    "EffectRef",
+    "EscalationPolicy",
     "FanoutPolicy",
+    "IdempotencyPolicy",
     "LoopPolicy",
+    "ReducerRef",
     "RetryPolicy",
     "SubpipelineRef",
     "SuspensionRoute",
+    "TimingPolicy",
+    "TopologyOverlaySlot",
     "WorkflowEdge",
     "WorkflowManifest",
     "WorkflowNode",
