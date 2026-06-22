@@ -3,8 +3,8 @@
   "current_milestone_index": 2,
   "current_plan_name": "m3-proposal-spine-and-agent-20260622-2318",
   "last_state": "done",
-  "pr_number": null,
-  "pr_state": null,
+  "pr_number": 56,
+  "pr_state": "open",
   "completed": [
     {
       "label": "m1-preview-truth-contract-freeze",
