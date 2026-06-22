@@ -101,8 +101,10 @@ export interface ExtensionPersistenceScope {
 export type ExtensionProposalStatus =
   | 'draft'
   | 'submitted'
+  | 'pending'
   | 'accepted'
   | 'rejected'
+  | 'stale'
   | 'cancelled'
   | 'expired';
 
@@ -126,6 +128,26 @@ export interface ExtensionProposalRecord {
   readonly label?: string;
   /** Optional structured detail for filtering / display. */
   readonly detail?: Record<string, unknown>;
+  /**
+   * The timeline config version this proposal was created against.
+   * Used for stale/expired conflict diagnostics (M3).
+   */
+  readonly baseVersion?: number;
+  /**
+   * Epoch-ms timestamp when this proposal expires.
+   * `undefined` means no expiry (M3).
+   */
+  readonly expiresAt?: number;
+  /**
+   * ISO 8601 timestamp when this proposal was accepted.
+   * Only present when status is `accepted` (M3).
+   */
+  readonly acceptedAt?: string;
+  /**
+   * ISO 8601 timestamp when this proposal was rejected.
+   * Only present when status is `rejected` (M3).
+   */
+  readonly rejectedAt?: string;
 }
 
 export type ExtensionProposal = ExtensionProposalRecord;

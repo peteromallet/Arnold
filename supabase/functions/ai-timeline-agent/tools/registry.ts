@@ -17,6 +17,7 @@ import {
   type TimelineCommandTransaction,
 } from "../../../../src/tools/video-editor/index.ts";
 import type {
+  EdgeProposal,
   SupabaseAdmin,
   TimelineState,
   ToolResult,
@@ -509,10 +510,31 @@ async function executeProposal(
     summary: summaries.join("\n"),
   };
 
+  // Build structured EdgeProposal[] for client consumption.
+  // Each ProposalPatch maps to a single EdgeProposal.
+  const defaultExpiresAt = Date.now() + 5 * 60 * 1000; // 5-minute TTL
+  const proposals: EdgeProposal[] = patches.map((patch, index) => ({
+    id: `proposal-${crypto.randomUUID().slice(0, 8)}`,
+    source: patch.source ?? metadata.source,
+    rationale: index === 0 ? metadata.rationale : undefined,
+    state: "pending" as const,
+    baseVersion: metadata.baseVersion,
+    expiresAt: defaultExpiresAt,
+    patch: {
+      version: patch.version,
+      operations: patch.operations.map((op) => ({
+        op: op.op,
+        target: op.target,
+        ...(op.payload !== undefined ? { payload: op.payload } : {}),
+      })),
+    },
+  }));
+
   // Return proposal result — no config saved
   return {
     result: `[PROPOSAL — not applied]\n${metadata.summary}\n\nBase version: ${metadata.baseVersion}\nPatches: ${patches.length}`,
     config: state.config, // Return current config as-is (unchanged)
+    proposals,
   };
 }
 

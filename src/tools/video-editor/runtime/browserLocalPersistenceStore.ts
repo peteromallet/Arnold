@@ -71,6 +71,10 @@ interface ProposalRecord {
   createdAt: string;
   updatedAt: string;
   label?: string;
+  baseVersion?: number;
+  expiresAt?: number;
+  acceptedAt?: string;
+  rejectedAt?: string;
 }
 
 function proposalScopeKey(scope: ExtensionPersistenceScope): string {
@@ -209,7 +213,7 @@ async function loadAllProposals(
     const result: Record<string, ExtensionProposal> = {};
     for (const record of records) {
       if (record.scopeKey === sk) {
-        result[record.proposalId] = {
+        const proposal: Record<string, unknown> = {
           id: record.proposalId,
           extensionId: record.extensionId,
           status: record.status as ExtensionProposal['status'],
@@ -218,6 +222,19 @@ async function loadAllProposals(
           updatedAt: record.updatedAt,
           ...(record.label !== undefined ? { label: record.label } : {}),
         };
+        if (record.baseVersion !== undefined) {
+          proposal.baseVersion = record.baseVersion;
+        }
+        if (record.expiresAt !== undefined) {
+          proposal.expiresAt = record.expiresAt;
+        }
+        if (record.acceptedAt !== undefined) {
+          proposal.acceptedAt = record.acceptedAt;
+        }
+        if (record.rejectedAt !== undefined) {
+          proposal.rejectedAt = record.rejectedAt;
+        }
+        result[record.proposalId] = proposal as unknown as ExtensionProposal;
       }
     }
     return result;
@@ -270,6 +287,10 @@ async function saveAllProposals(
         createdAt: proposal.createdAt,
         updatedAt: proposal.updatedAt,
         ...(proposal.label !== undefined ? { label: proposal.label } : {}),
+        ...(proposal.baseVersion !== undefined ? { baseVersion: proposal.baseVersion } : {}),
+        ...(proposal.expiresAt !== undefined ? { expiresAt: proposal.expiresAt } : {}),
+        ...(proposal.acceptedAt !== undefined ? { acceptedAt: proposal.acceptedAt } : {}),
+        ...(proposal.rejectedAt !== undefined ? { rejectedAt: proposal.rejectedAt } : {}),
       };
       await withProposalStore('readwrite', (s) => s.put(record));
     }

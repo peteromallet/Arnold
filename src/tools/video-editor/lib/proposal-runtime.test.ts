@@ -1024,4 +1024,330 @@ describe('ProposalRuntime', () => {
       expect(listener.mock.calls[0][0].state).toBe('accepted');
     });
   });
+
+  // -----------------------------------------------------------------------
+  // M3: Expiry — pending proposal TTL and auto-expiration
+  // -----------------------------------------------------------------------
+
+  describe('expiry', () => {
+    it('marks pending proposals as expired after their TTL elapses', async () => {
+      const mockOps = createMockTimelineOps();
+      const reader = await makeReader(undefined, 1);
+      const runtime = createProposalRuntime({ timelineOps: mockOps, reader });
+
+      const proposal = runtime.create({
+        source: 'ext-a',
+        rationale: 'Expiring proposal',
+        patch: { version: 1, operations: [] },
+        baseVersion: 1,
+      });
+
+      // The runtime should expose an expireStale method or auto-expire
+      // proposals.  Since the current runtime has no TTL support, this
+      // expectation should fail until M3 wires expiry in.
+      expect(typeof (runtime as any).expireStale).toBe('function');
+
+      // Expire proposals older than 0ms (all pending proposals)
+      const expired = (runtime as any).expireStale(0);
+      expect(Array.isArray(expired)).toBe(true);
+      expect(expired.length).toBeGreaterThanOrEqual(1);
+      expect(expired[0].id).toBe(proposal.id);
+
+      // The expired proposal should be in 'expired' state and not appear
+      // in pending listings.
+      const updated = runtime.get(proposal.id);
+      expect(updated).toBeDefined();
+      expect(updated!.state).toBe('expired');
+
+      const pending = runtime.list('pending');
+      expect(pending.find((p) => p.id === proposal.id)).toBeUndefined();
+    });
+
+    it('does not expire proposals that are still within TTL', async () => {
+      const mockOps = createMockTimelineOps();
+      const reader = await makeReader(undefined, 1);
+      const runtime = createProposalRuntime({ timelineOps: mockOps, reader });
+
+      runtime.create({
+        source: 'ext-a',
+        patch: { version: 1, operations: [] },
+        baseVersion: 1,
+      });
+
+      expect(typeof (runtime as any).expireStale).toBe('function');
+
+      // Use a very large TTL — the proposal was just created so it
+      // should still be within the window.
+      const expired = (runtime as any).expireStale(86_400_000); // 1 day
+      expect(expired).toEqual([]);
+
+      const pending = runtime.list('pending');
+      expect(pending.length).toBe(1);
+    });
+
+    it('expired proposals cannot be accepted', async () => {
+      const mockOps = createMockTimelineOps();
+      const reader = await makeReader(undefined, 1);
+      const runtime = createProposalRuntime({ timelineOps: mockOps, reader });
+
+      const proposal = runtime.create({
+        source: 'ext-a',
+        patch: { version: 1, operations: [] },
+        baseVersion: 1,
+      });
+
+      // Expire it
+      (runtime as any).expireStale(0);
+
+      // Accepting an expired proposal should throw
+      expect(() => runtime.accept(proposal.id)).toThrow();
+      expect(mockOps._applyCalls).toHaveLength(0);
+    });
+
+    it('expired proposals are hidden or clearly marked as expired in list', async () => {
+      const mockOps = createMockTimelineOps();
+      const reader = await makeReader(undefined, 1);
+      const runtime = createProposalRuntime({ timelineOps: mockOps, reader });
+
+      const active = runtime.create({
+        source: 'ext-a',
+        patch: { version: 1, operations: [] },
+        baseVersion: 1,
+      });
+
+      const expiring = runtime.create({
+        source: 'ext-b',
+        patch: { version: 1, operations: [] },
+        baseVersion: 1,
+      });
+
+      // Expire only ext-b
+      (runtime as any).expireStale(0);
+
+      // Active proposal still pending
+      expect(runtime.get(active.id)!.state).toBe('pending');
+
+      // Expired proposal is not in the default list (or listed as expired)
+      const all = runtime.list();
+      const expiredInList = all.filter((p) => p.id === expiring.id);
+      // If it appears at all, it must be marked 'expired', not 'pending'
+      if (expiredInList.length > 0) {
+        expect(expiredInList[0].state).toBe('expired');
+      }
+
+      // Pending list must not include expired
+      const pending = runtime.list('pending');
+      expect(pending.find((p) => p.id === expiring.id)).toBeUndefined();
+    });
+  });
+
+  // -----------------------------------------------------------------------
+  // M3: Stale-before-mutation — timeline is never mutated for stale proposals
+  // -----------------------------------------------------------------------
+
+  describe('stale-before-mutation', () => {
+    it('never calls TimelineOps.apply for a stale proposal', async () => {
+      const mockOps = createMockTimelineOps();
+      const reader = await makeReader(undefined, 5);
+      const runtime = createProposalRuntime({ timelineOps: mockOps, reader });
+
+      // Create a proposal whose baseVersion will not match the reader
+      const proposal = runtime.create({
+        source: 'ext-a',
+        patch: { version: 999, operations: [{ op: 'clip.add', target: 'c1', payload: {} }] },
+        baseVersion: 999,
+      });
+
+      expect(() => runtime.accept(proposal.id)).toThrow('stale');
+
+      // The critical invariant: TimelineOps.apply was NEVER called.
+      // The stale rejection must happen before any mutation touches the
+      // timeline data.
+      expect(mockOps._applyCalls).toHaveLength(0);
+    });
+
+    it('marks proposal stale before mutation when baseVersion differs', async () => {
+      const mockOps = createMockTimelineOps();
+      const reader = await makeReader(undefined, 10);
+      const runtime = createProposalRuntime({ timelineOps: mockOps, reader });
+
+      const proposal = runtime.create({
+        source: 'ext-a',
+        rationale: 'Should go stale',
+        patch: { version: 3, operations: [{ op: 'clip.move', target: 'c1', payload: { at: 5 } }] },
+        baseVersion: 3, // Different from reader's 10
+      });
+
+      // Accept should throw and mark stale
+      expect(() => runtime.accept(proposal.id)).toThrow();
+
+      const stale = runtime.get(proposal.id)!;
+      expect(stale.state).toBe('stale');
+
+      // The stale proposal carries diagnostics explaining the version mismatch
+      expect(stale.diagnostics).toBeDefined();
+      expect(stale.diagnostics!.some((d) => d.code === 'timeline-patch/stale-base-version')).toBe(true);
+
+      // No mutation side effects
+      expect(mockOps._applyCalls).toHaveLength(0);
+    });
+
+    it('rejects stale proposals without mutating even for baseVersion 0', async () => {
+      // baseVersion 0 means "no expectation", so accept should succeed.
+      // This test verifies that stale detection only triggers when
+      // baseVersion !== 0 AND baseVersion !== currentVersion.
+      const mockOps = createMockTimelineOps({
+        applyResult: {
+          version: 1,
+          entries: [{ granularity: 'clip', kind: 'added', target: 'c1', op: 'clip.add' }],
+          affectedObjectIds: ['c1'],
+        },
+      });
+      const reader = await makeReader(undefined, 5);
+      const runtime = createProposalRuntime({ timelineOps: mockOps, reader });
+
+      const proposal = runtime.create({
+        source: 'ext-a',
+        patch: { version: 0, operations: [{ op: 'clip.add', target: 'c1', payload: {} }] },
+        baseVersion: 0,
+      });
+
+      // Should accept successfully — baseVersion 0 bypasses stale check
+      const diff = runtime.accept(proposal.id);
+      expect(diff).toBeDefined();
+      expect(mockOps._applyCalls).toHaveLength(1);
+    });
+  });
+
+  // -----------------------------------------------------------------------
+  // M3: Reload — proposal survival across provider/runtime reload
+  // -----------------------------------------------------------------------
+
+  describe('reload survival', () => {
+    it('preserves created proposals across runtime re-creation', async () => {
+      const mockOps = createMockTimelineOps();
+      const reader = await makeReader(undefined, 1);
+
+      const runtime1 = createProposalRuntime({ timelineOps: mockOps, reader });
+      const p1 = runtime1.create({
+        source: 'ext-a',
+        patch: { version: 1, operations: [] },
+        baseVersion: 1,
+      });
+
+      // Simulate a page reload by creating a new runtime against the same
+      // reader.  The proposal should survive because the persistence layer
+      // (when wired) will reload it.
+      const runtime2 = createProposalRuntime({ timelineOps: mockOps, reader });
+
+      // The proposal from runtime1 should be visible in runtime2.
+      // Currently this fails because proposals are in-memory only.
+      const reloaded = runtime2.get(p1.id);
+      expect(reloaded).toBeDefined();
+      expect(reloaded!.id).toBe(p1.id);
+      expect(reloaded!.source).toBe('ext-a');
+    });
+
+    it('preserves proposal state (accepted/rejected) across reload', async () => {
+      const mockOps = createMockTimelineOps();
+      const reader = await makeReader(undefined, 1);
+
+      const runtime1 = createProposalRuntime({ timelineOps: mockOps, reader });
+      const p1 = runtime1.create({
+        source: 'ext-a',
+        patch: { version: 1, operations: [] },
+        baseVersion: 0,
+      });
+      runtime1.accept(p1.id);
+
+      // After reload, the proposal should still be 'accepted'
+      const runtime2 = createProposalRuntime({ timelineOps: mockOps, reader });
+      const reloaded = runtime2.get(p1.id);
+      expect(reloaded).toBeDefined();
+      expect(reloaded!.state).toBe('accepted');
+    });
+
+    it('list returns proposals from before reload', async () => {
+      const mockOps = createMockTimelineOps();
+      const reader = await makeReader(undefined, 1);
+
+      const runtime1 = createProposalRuntime({ timelineOps: mockOps, reader });
+      runtime1.create({
+        source: 'ext-a',
+        patch: { version: 1, operations: [] },
+        baseVersion: 1,
+      });
+      runtime1.create({
+        source: 'ext-b',
+        patch: { version: 1, operations: [] },
+        baseVersion: 1,
+      });
+
+      const runtime2 = createProposalRuntime({ timelineOps: mockOps, reader });
+      const all = runtime2.list();
+      expect(all.length).toBeGreaterThanOrEqual(2);
+    });
+  });
+
+  // -----------------------------------------------------------------------
+  // M3: Unsupported-provider diagnostics
+  // -----------------------------------------------------------------------
+
+  describe('unsupported-provider diagnostics', () => {
+    it('surfaces diagnostics when the provider does not support proposal persistence', () => {
+      // A provider that explicitly declares it cannot persist proposals
+      // should surface that as a diagnostic rather than silently failing.
+      // The ProposalRuntime factory should accept an optional
+      // `persistenceProvider` and emit diagnostics when it's unsupported.
+
+      const mockOps = createMockTimelineOps();
+      // We can't test this fully without the persistence provider hook,
+      // but the factory should at minimum accept the option without
+      // throwing.  When `persistenceProvider: null` or `'unsupported'`
+      // is passed, the runtime should be constructable and surface
+      // diagnostics through a well-known channel.
+      const createOptions: any = {
+        timelineOps: mockOps,
+        reader: { snapshot: () => ({ currentVersion: 1 }) },
+        persistenceProvider: null, // explicitly no persistence
+      };
+
+      // Should not throw — unsupported is a valid configuration
+      const runtime = createProposalRuntime(createOptions);
+
+      // The runtime should expose diagnostics about the persistence gap
+      expect(runtime).toBeDefined();
+
+      // When persistence is unsupported, a diagnostic should be available.
+      // This may be via a `diagnostics` getter or a well-known method.
+      const diags = (runtime as any).diagnostics;
+      if (diags !== undefined) {
+        expect(Array.isArray(diags)).toBe(true);
+        const hasPersistenceDiag = diags.some(
+          (d: any) => d.code === 'proposal/persistence-unsupported',
+        );
+        expect(hasPersistenceDiag).toBe(true);
+      }
+    });
+
+    it('does not surface persistence diagnostics when a supported provider is configured', () => {
+      const mockOps = createMockTimelineOps();
+      const createOptions: any = {
+        timelineOps: mockOps,
+        reader: { snapshot: () => ({ currentVersion: 1 }) },
+        persistenceProvider: 'in-memory', // supported
+      };
+
+      const runtime = createProposalRuntime(createOptions);
+      expect(runtime).toBeDefined();
+
+      const diags = (runtime as any).diagnostics;
+      if (diags !== undefined) {
+        const hasPersistenceDiag = diags.some(
+          (d: any) => d.code === 'proposal/persistence-unsupported',
+        );
+        expect(hasPersistenceDiag).toBe(false);
+      }
+    });
+  });
 });

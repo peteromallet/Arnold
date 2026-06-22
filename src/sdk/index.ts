@@ -5152,7 +5152,31 @@ export type ProposalState =
   | 'pending'
   | 'accepted'
   | 'rejected'
-  | 'stale';
+  | 'stale'
+  | 'expired';
+
+/**
+ * Structured detail carried by a proposal that reached stale or expired state.
+ *
+ * Produced by the runtime when a proposal's baseVersion no longer matches
+ * the current reader version (stale) or when its TTL has elapsed (expired).
+ * Carried on {@link TimelineProposal.expiryDetail} so the UI can surface
+ * clear diagnostics without parsing raw timeline-patch codes.
+ */
+export interface ProposalExpiryDetail {
+  /** Why the proposal transitioned to stale/expired. */
+  reason: 'base-version-mismatch' | 'ttl-elapsed' | 'manual';
+  /** The baseVersion the proposal was created against. */
+  baseVersion: number;
+  /** The current reader version at the time the proposal transitioned. */
+  currentVersion: number;
+  /** When the proposal was created (epoch ms). */
+  createdAt: number;
+  /** When the proposal transitioned to stale/expired (epoch ms). */
+  expiredAt: number;
+  /** The TTL in ms that was configured when the proposal was created, if any. */
+  ttlMs?: number;
+}
 
 /** A proposal to mutate the timeline, submitted by an extension or tool. */
 export interface TimelineProposal {
@@ -5183,6 +5207,18 @@ export interface TimelineProposal {
   createdAt: number;
   /** Timestamp when the proposal last changed state (epoch ms). */
   updatedAt: number;
+  /**
+   * Epoch-ms timestamp after which the proposal is considered expired.
+   * When set, the runtime may auto-expire the proposal once this time
+   * has elapsed.  If absent, the proposal has no TTL.
+   */
+  expiresAt?: number;
+  /**
+   * When the proposal became stale or expired, this carries structured
+   * detail about the conflict (version drift, TTL elapsed, etc.).
+   * Absent for proposals in pending/accepted/rejected state.
+   */
+  expiryDetail?: ProposalExpiryDetail;
   /** Diagnostics produced during validation or preview, if any. */
   diagnostics?: readonly TimelinePatchDiagnostic[];
 }
@@ -5261,6 +5297,16 @@ export interface ProposalRuntime {
    * Get the current reader snapshot version for baseVersion comparisons.
    */
   readonly currentVersion: number;
+
+  /**
+   * Scan pending proposals and transition any whose TTL has elapsed
+   * to 'expired' state, populating {@link TimelineProposal.expiryDetail}.
+   *
+   * @param maxAgeMs - Proposals older than this many ms (relative to now)
+   *   are eligible for expiry.  A value of 0 expires every pending proposal.
+   * @returns The proposals that were transitioned to 'expired' in this call.
+   */
+  expireStale(maxAgeMs: number): readonly TimelineProposal[];
 }
 
 // ---------------------------------------------------------------------------
@@ -5463,6 +5509,36 @@ export type ProposalPanelAction =
   | { type: 'reject'; proposalId: string; reason?: string }
   | { type: 'preview'; proposalId: string }
   | { type: 'toggleVisibility' };
+
+/**
+ * Serialized proposal envelope returned by edge functions (e.g. the
+ * ai-timeline-agent) when operating in proposal mode.
+ *
+ * This shape is wire-stable and consumed by the client-side
+ * `normalizeInvokeResponse` path to hydrate the ProposalPanel UI without
+ * parsing unstructured agent response text.
+ */
+export interface ProposalEnvelope {
+  /** The proposals produced by this edge invocation. */
+  proposals: readonly TimelineProposal[];
+  /**
+   * The config version the proposals were created against.
+   * Used by the client to detect stale/conflict before rendering the panel.
+   */
+  baseVersion: number;
+  /**
+   * Human-readable summary produced by the agent alongside the proposals.
+   * May be empty when only proposals are returned.
+   */
+  summary?: string;
+  /**
+   * Whether any mutation was applied during this invocation.
+   * In pure proposal mode this is always false; the field is present so
+   * the client can distinguish proposal-only responses from apply-mode
+   * responses that also carry proposals.
+   */
+  mutationApplied: boolean;
+}
 
 // ---------------------------------------------------------------------------
 // M6: Asset metadata types

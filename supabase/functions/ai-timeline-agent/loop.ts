@@ -54,6 +54,7 @@ import type {
   AgentSession,
   AgentSessionStatus,
   AgentTurn,
+  EdgeProposal,
   GenerationContext,
   LlmMessage,
   SelectedClipPayload,
@@ -192,6 +193,10 @@ export interface RunAgentLoopResult {
   status: AgentSessionStatus;
   turns: AgentTurn[];
   summary: string | null;
+  /** Aggregated proposal envelopes from all tool calls (M3). */
+  proposals?: EdgeProposal[];
+  /** Explicit non-mutation state: false when proposals are pending but no config was saved. */
+  mutation_applied: boolean;
 }
 
 function attachSelectedClips(
@@ -564,8 +569,9 @@ async function processToolCalls({
   userJwt?: string;
   setActiveToolCallId: (toolCallId: string | null) => void;
   logger?: LoopLogger;
-}): Promise<{ hasError: boolean }> {
+}): Promise<{ hasError: boolean; proposals: EdgeProposal[] }> {
   let hasError = false;
+  const proposals: EdgeProposal[] = [];
 
   for (const toolCall of toolCalls) {
     const toolArgs = toolCall.args;
@@ -598,6 +604,11 @@ async function processToolCalls({
     );
     setActiveToolCallId(null);
 
+    // Collect structured proposals from tool result (M3)
+    if (result.proposals && result.proposals.length > 0) {
+      proposals.push(...result.proposals);
+    }
+
     turns.push(createToolTurn("tool_result", toolCall.name, result.result, toolArgs));
     messages.push({
       role: "tool",
@@ -628,7 +639,7 @@ async function processToolCalls({
     });
   }
 
-  return { hasError };
+  return { hasError, proposals };
 }
 
 // Sprint 7 (SD-034 status path): if a delegateToBanodocoAgent tool call is
@@ -688,6 +699,7 @@ export async function runAgentLoop(
   }
   let status: AgentSessionStatus = "processing";
   let activeToolCallId: string | null = null;
+  const allProposals: EdgeProposal[] = [];
 
   let summary = session.summary;
 
@@ -829,7 +841,7 @@ export async function runAgentLoop(
         break;
       }
 
-      const { hasError } = await processToolCalls({
+      const { hasError, proposals } = await processToolCalls({
         toolCalls: extractedToolCalls,
         assistantText,
         turns,
@@ -844,6 +856,11 @@ export async function runAgentLoop(
         setActiveToolCallId: (toolCallId) => { activeToolCallId = toolCallId; },
         logger,
       });
+
+      // Aggregate proposals across all loop iterations (M3)
+      if (proposals.length > 0) {
+        allProposals.push(...proposals);
+      }
 
       if (hasError) {
         continue;
@@ -867,7 +884,13 @@ export async function runAgentLoop(
       turns_added: turns.length - session.turns.length,
     });
 
-    return { status, turns, summary };
+    return {
+      status,
+      turns,
+      summary,
+      proposals: allProposals.length > 0 ? allProposals : undefined,
+      mutation_applied: allProposals.length === 0,
+    };
   } catch (error: unknown) {
     const errorDetail = toErrorMessage(error);
     console.error(`[agent] FATAL: ${errorDetail}`);
@@ -896,6 +919,6 @@ export async function runAgentLoop(
       });
     }
 
-    return { status: "error", turns, summary };
+    return { status: "error", turns, summary, mutation_applied: false };
   }
 }

@@ -93,6 +93,9 @@ serve((req) => withEdgeRequest<AgentInvocationBody>(
         turns_added: result.turns.length - session.turns.length,
         tool_count: TIMELINE_AGENT_TOOLS.length,
         model: session.model,
+        ...(result.proposals && result.proposals.length > 0
+          ? { proposals: result.proposals, mutation_applied: result.mutation_applied }
+          : {}),
       });
     } catch (error: unknown) {
       return jsonResponse({

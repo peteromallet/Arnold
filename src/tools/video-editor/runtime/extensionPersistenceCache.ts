@@ -956,6 +956,10 @@ export class CachedExtensionStateRepository
       createdAt: now,
       updatedAt: now,
       ...(proposal.label !== undefined ? { label: proposal.label } : {}),
+      ...(proposal.baseVersion !== undefined ? { baseVersion: proposal.baseVersion } : {}),
+      ...(proposal.expiresAt !== undefined ? { expiresAt: proposal.expiresAt } : {}),
+      ...(proposal.acceptedAt !== undefined ? { acceptedAt: proposal.acceptedAt } : {}),
+      ...(proposal.rejectedAt !== undefined ? { rejectedAt: proposal.rejectedAt } : {}),
     };
 
     cache.proposals[id] = record;

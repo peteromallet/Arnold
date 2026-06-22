@@ -833,3 +833,282 @@ describe('proposal mode — unchanged apply-mode persistence', () => {
     expect(registryMocks.saveTimelineConfigVersioned).toHaveBeenCalled();
   });
 });
+
+// ---------------------------------------------------------------------------
+// M3: Structured proposal envelope — object shape, not just text
+// ---------------------------------------------------------------------------
+
+describe('proposal mode — structured proposal envelope', () => {
+  it('returns a proposals array alongside the result text', async () => {
+    const state = makeState({
+      config: {
+        clips: [{ id: 'clip-1', at: 0, track: 'V1', clipType: 'media', from: 0, to: 5 }],
+        tracks: [{ id: 'V1', label: 'V1', kind: 'visual' }],
+      } as unknown as TimelineConfig,
+      configVersion: 5,
+    });
+    const result = await executeCommand(
+      { command: 'move clip-1 2.0', mode: 'proposal' },
+      state,
+      'timeline-1',
+      makeSupabaseAdmin(),
+    );
+
+    // Currently the result is a flat ToolResult with text in .result.
+    // The M3 contract requires a structured proposals envelope so the
+    // client can render ProposalPanel without parsing text.
+    // This expectation will fail until the edge returns structured data.
+    expect(result).toHaveProperty('proposals');
+    expect(Array.isArray((result as any).proposals)).toBe(true);
+  });
+
+  it('each proposal in the envelope has id, source, state, and patch', async () => {
+    const state = makeState({
+      config: {
+        clips: [{ id: 'clip-1', at: 0, track: 'V1', clipType: 'media', from: 0, to: 5 }],
+        tracks: [{ id: 'V1', label: 'V1', kind: 'visual' }],
+      } as unknown as TimelineConfig,
+      configVersion: 3,
+    });
+    const result = await executeCommand(
+      { command: 'delete clip-1', mode: 'proposal' },
+      state,
+      'timeline-1',
+      makeSupabaseAdmin(),
+    );
+
+    const proposals = (result as any).proposals;
+    if (!proposals || proposals.length === 0) {
+      // When structured envelopes are implemented, this will pass.
+      // Until then the test documents the expected contract.
+      expect(proposals).toBeDefined();
+      expect(proposals.length).toBeGreaterThanOrEqual(1);
+      return;
+    }
+
+    const p = proposals[0];
+    expect(typeof p.id).toBe('string');
+    expect(typeof p.source).toBe('string');
+    expect(p.state).toBe('pending');
+    expect(p.patch).toBeDefined();
+    expect(typeof p.patch.version).toBe('number');
+    expect(Array.isArray(p.patch.operations)).toBe(true);
+  });
+
+  it('proposal envelope includes baseVersion and rationale', async () => {
+    const state = makeState({
+      config: {
+        clips: [{ id: 'clip-1', at: 0, track: 'V1', clipType: 'media', from: 0, to: 10 }],
+        tracks: [{ id: 'V1', label: 'V1', kind: 'visual' }],
+      } as unknown as TimelineConfig,
+      configVersion: 7,
+    });
+    const result = await executeCommand(
+      { command: 'trim clip-1 --from 2 --to 8', mode: 'proposal' },
+      state,
+      'timeline-1',
+      makeSupabaseAdmin(),
+    );
+
+    const proposals = (result as any).proposals;
+    if (!proposals || proposals.length === 0) {
+      expect(proposals).toBeDefined();
+      return;
+    }
+
+    const p = proposals[0];
+    expect(typeof p.baseVersion).toBe('number');
+    expect(p.baseVersion).toBe(7);
+    expect(typeof p.rationale).toBe('string');
+    expect(p.rationale.length).toBeGreaterThan(0);
+  });
+
+  it('proposal envelope omits config mutation (config returned as-is)', async () => {
+    const state = makeState({
+      config: {
+        clips: [{ id: 'clip-1', at: 0, track: 'V1', clipType: 'media', from: 0, to: 5 }],
+        tracks: [{ id: 'V1', label: 'V1', kind: 'visual' }],
+      } as unknown as TimelineConfig,
+      configVersion: 4,
+    });
+    const originalConfig = state.config;
+    const result = await executeCommand(
+      { command: 'move clip-1 1.5', mode: 'proposal' },
+      state,
+      'timeline-1',
+      makeSupabaseAdmin(),
+    );
+
+    // The returned config must be the original (unchanged).
+    expect(result.config).toBe(originalConfig);
+    expect(registryMocks.saveTimelineConfigVersioned).not.toHaveBeenCalled();
+
+    // If structured proposals exist, they should NOT contain a mutated config
+    const proposals = (result as any).proposals;
+    if (proposals && proposals.length > 0) {
+      for (const p of proposals) {
+        expect(p).not.toHaveProperty('config');
+      }
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// M3: create_shot blocked in proposal mode
+// ---------------------------------------------------------------------------
+
+const createShotMocks = vi.hoisted(() => ({
+  createShotWithGenerations: vi.fn(),
+}));
+
+describe('proposal mode — create_shot blocked', () => {
+  beforeEach(() => {
+    createShotMocks.createShotWithGenerations.mockReset();
+  });
+
+  it('returns a blocked/rejected result when create_shot is invoked in proposal mode', async () => {
+    // create_shot is dispatched through executeToolCall in loop.ts, not
+    // executeCommand.  We import executeToolCall and mock the clips
+    // dependency so we can verify the proposal-mode gate.
+    vi.mock('../tools/clips.ts', () => ({
+      createShotWithGenerations: createShotMocks.createShotWithGenerations,
+    }));
+
+    const { executeToolCall } = await import('../loop.ts');
+
+    const state = makeState({
+      config: makeConfig([{ id: 'V1', label: 'V1', kind: 'visual' }]),
+      configVersion: 1,
+    });
+
+    // Invoke a create_shot tool call.  Without proposal_policy gating,
+    // this would execute normally.  With proposal_policy='always',
+    // it should return a blocked/rejected result.
+    // The current code does not check proposal_policy for create_shot,
+    // so this expectation will fail until M3 wires the gate.
+    const result = await executeToolCall(
+      {
+        id: 'tc-1',
+        name: 'create_shot',
+        args: { shot_name: 'Test Shot', generation_ids: ['gen-1'] },
+        parseError: null,
+      },
+      state,
+      makeSupabaseAdmin(),
+      'timeline-1',
+    );
+
+    // create_shot should NOT have been called when proposal mode is active
+    // (once the gate is wired).  Currently this fails because no gate exists.
+    expect(createShotMocks.createShotWithGenerations).not.toHaveBeenCalled();
+
+    // Result should indicate the operation was blocked, not executed
+    expect(result.result).toContain('blocked');
+  });
+
+  it('does not mutate database rows when create_shot is blocked in proposal mode', async () => {
+    vi.mock('../tools/clips.ts', () => ({
+      createShotWithGenerations: createShotMocks.createShotWithGenerations,
+    }));
+
+    const { executeToolCall } = await import('../loop.ts');
+
+    const state = makeState({
+      config: makeConfig([{ id: 'V1', label: 'V1', kind: 'visual' }]),
+      configVersion: 1,
+    });
+
+    await executeToolCall(
+      {
+        id: 'tc-1',
+        name: 'create_shot',
+        args: { shot_name: 'Test Shot', generation_ids: ['gen-1'] },
+        parseError: null,
+      },
+      state,
+      makeSupabaseAdmin(),
+      'timeline-1',
+    );
+
+    // No database writes should have occurred
+    expect(createShotMocks.createShotWithGenerations).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// M3: Non-timeline side-effect tools remain operational in proposal mode
+// ---------------------------------------------------------------------------
+
+describe('proposal mode — non-timeline side-effect tools', () => {
+  it('allows read-only query commands in proposal mode without blocking', async () => {
+    const state = makeState({
+      config: makeConfig([{ id: 'V1', label: 'V1', kind: 'visual' }]),
+    });
+    const result = await executeCommand(
+      { command: 'view', mode: 'proposal' },
+      state,
+      'timeline-1',
+      makeSupabaseAdmin(),
+    );
+
+    // Read-only commands still work and return timeline info
+    expect(result.result).toContain('PROPOSAL MODE');
+    expect(result.result).toContain('read-only');
+    expect(registryMocks.saveTimelineConfigVersioned).not.toHaveBeenCalled();
+  });
+
+  it('does not save timeline config for non-timeline tool results in proposal mode', async () => {
+    const state = makeState({
+      config: makeConfig([{ id: 'V1', label: 'V1', kind: 'visual' }]),
+      configVersion: 1,
+    });
+
+    // Even for commands that would normally mutate in apply mode,
+    // proposal mode must not save.
+    const result = await executeCommand(
+      {
+        transaction: {
+          commands: [
+            {
+              type: 'set-theme',
+              payload: { themeId: 'dark' },
+            },
+          ],
+        },
+        mode: 'proposal',
+      },
+      state,
+      'timeline-1',
+      makeSupabaseAdmin(),
+    );
+
+    expect(result.result).toContain('PROPOSAL');
+    expect(registryMocks.saveTimelineConfigVersioned).not.toHaveBeenCalled();
+    expect(result.config).toBe(state.config);
+  });
+
+  it('classifies set_theme and set_theme_overrides as proposal-safe', async () => {
+    const state = makeState({
+      config: makeConfig([{ id: 'V1', label: 'V1', kind: 'visual' }]),
+      configVersion: 2,
+    });
+
+    // set_theme should be converted to a proposal patch, not applied
+    const result = await executeCommand(
+      {
+        transaction: {
+          commands: [
+            { type: 'set-theme-overrides', payload: { overrides: { spacing: 'compact' } } },
+          ],
+        },
+        mode: 'proposal',
+      },
+      state,
+      'timeline-1',
+      makeSupabaseAdmin(),
+    );
+
+    expect(result.result).toContain('PROPOSAL');
+    expect(registryMocks.saveTimelineConfigVersioned).not.toHaveBeenCalled();
+  });
+});

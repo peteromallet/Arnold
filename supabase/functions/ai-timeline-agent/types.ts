@@ -8,11 +8,38 @@ import type { AssetRegistry, TimelineConfig } from "../../../src/tools/video-edi
 
 export type { AgentSession, AgentSessionStatus, AgentTurn };
 
+/** A single proposal in a structured edge proposal envelope. */
+export interface EdgeProposal {
+  /** Unique proposal identifier. */
+  id: string;
+  /** Source that created this proposal (tool name, agent, etc.). */
+  source: string;
+  /** Human-readable rationale / description. */
+  rationale?: string;
+  /** Lifecycle state — always 'pending' when produced by the edge. */
+  state: 'pending';
+  /** Config version the proposal was created against. */
+  baseVersion: number;
+  /** Epoch-ms expiry timestamp, or undefined for no TTL. */
+  expiresAt?: number;
+  /** The patch that would be applied if accepted. */
+  patch: {
+    version: number;
+    operations: Array<{
+      op: string;
+      target: string;
+      payload?: Record<string, unknown>;
+    }>;
+  };
+}
+
 export type ToolResult = {
   result: string;
   config?: TimelineConfig;
   stopLoop?: boolean;
   nextStatus?: AgentSessionStatus;
+  /** Structured proposals produced in proposal mode (M3). */
+  proposals?: EdgeProposal[];
 };
 
 export type ToolContext = {
