@@ -69,7 +69,7 @@ PIPELINE_DISPOSITION: dict[str, dict[str, Any]] = {
         "migrated": True,
     },
     "arnold/pipelines/evidence_pack": {
-        "status": "migrate",
+        "status": "delete",
         "registry_id": None,
         "migrated": False,
     },
@@ -79,7 +79,7 @@ PIPELINE_DISPOSITION: dict[str, dict[str, Any]] = {
         "migrated": True,
     },
     "arnold/pipelines/_template": {
-        "status": "migrate",
+        "status": "delete",
         "registry_id": None,
         "migrated": False,
     },

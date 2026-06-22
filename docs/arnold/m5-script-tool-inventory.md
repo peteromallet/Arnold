@@ -2,6 +2,11 @@
 
 # M5 Script / Tool Inventory
 
+> **M6 Phase A update:** The `delete` scripts/tools/root helpers below have been
+> removed from the source tree on branch `workflow-manifest-runtime-m6-purge`.
+> The `archive` items were never tracked in this worktree, so no archive copies
+> remain.
+
 ## `scripts/`
 
 | Script | Status | Final location / action | M6 disposition |

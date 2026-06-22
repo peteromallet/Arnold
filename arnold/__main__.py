@@ -1,5 +1,5 @@
 """Allow running as ``python -m arnold``."""
 
-from arnold.cli import cli_entry
+from arnold.cli import main
 
-cli_entry()
+raise SystemExit(main())

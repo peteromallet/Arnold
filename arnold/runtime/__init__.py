@@ -69,7 +69,6 @@ No Megaplan re-exports appear here; this is the neutral surface.
 from arnold.runtime import oracle  # noqa: F401 — make the oracle module accessible as arnold.runtime.oracle
 from arnold.runtime.envelope import RunContext, RunEnvelope, RuntimeEnvelope
 from arnold.runtime.errors import ArnoldError
-from arnold.runtime.driver import PipelineStepwiseDriver, StepwiseDriver
 from arnold.runtime.oracle import OracleResult, run as oracle_run
 from arnold.runtime.outcome import RunOutcome, RunResultMetadata
 from arnold.runtime.effect import NONCOMPENSABLE, Effect, ReplayClass  # noqa: F401 — re-export for convenience
@@ -81,13 +80,6 @@ from arnold.runtime.event_journal import (  # noqa: F401 — re-export for conve
     read_event_journal,
     read_event_journal_paged,
     stream_event_journal,
-)
-from arnold.runtime.state_persistence import (  # noqa: F401 — re-export for convenience
-    atomic_write_bytes,
-    atomic_write_json,
-    atomic_write_text,
-    plan_state_lock,
-    runtime_state_lock,
 )
 from arnold.runtime.semantic_replay import (  # noqa: F401 — re-export for convenience
     semantic_equivalent,
@@ -116,19 +108,12 @@ __all__: list[str] = [
     "RunContext",
     "RunEnvelope",
     "RuntimeEnvelope",
-    "PipelineStepwiseDriver",
     "RunOutcome",
     "RunResultMetadata",
-    "StepwiseDriver",
-    "atomic_write_bytes",
-    "atomic_write_json",
-    "atomic_write_text",
     "build_batch_runtime_settings",
     "fold_journal",
     "last_state_snapshot_projector",
     "oracle_run",
-    "plan_state_lock",
-    "runtime_state_lock",
     "read_event_journal",
     "read_event_journal_paged",
     "stream_event_journal",

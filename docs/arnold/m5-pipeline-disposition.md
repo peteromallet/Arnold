@@ -2,6 +2,11 @@
 
 # M5 Pipeline Disposition
 
+> **M6 Phase A update:** All `delete` and `archive` rows have been executed on
+> branch `workflow-manifest-runtime-m6-purge`. `arnold/pipelines/*` legacy
+> duplicates are removed (delete) or relocated to `docs/archive/m5/` (archive).
+> The surviving migrated roots remain under `arnold_pipelines/`.
+
 Status enum: `migrate`, `delete`, `archive`, `whitelist`.
 
 | Root | Status | Final location | Public | Registry ID | Docs status | M6 fate |
