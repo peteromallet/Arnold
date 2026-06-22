@@ -380,22 +380,30 @@ def _merge_batch_results(
             violations = validate_stance(task_update["stance"])
             if violations:
                 task_update["stance_violations"] = violations
+    evidence_context_fields = ("head_sha", "code_hash")
     if is_prose_mode(mode_state):
         required_fields = ("task_id", "status", "executor_notes", "sections_written")
         object_fields: tuple[str, ...] = ()
-        optional_fields: tuple[str, ...] = ()
+        optional_fields: tuple[str, ...] = evidence_context_fields
         if is_creative_mode(mode_state):
             required_fields = required_fields + ("stance", "stop_signal")
             object_fields = ("stance", "stop_signal")
-            optional_fields = ("stance_violations",)
-        merge_fields = ("status", "executor_notes", "sections_written", "stance", "stop_signal", "stance_violations")
+            optional_fields = ("stance_violations",) + evidence_context_fields
+        merge_fields = (
+            "status",
+            "executor_notes",
+            "sections_written",
+            "stance",
+            "stop_signal",
+            "stance_violations",
+        ) + evidence_context_fields
         array_fields = ("sections_written", "stance_violations")
     else:
         required_fields = ("task_id", "status", "executor_notes", "files_changed", "commands_run")
-        merge_fields = ("status", "executor_notes", "files_changed", "commands_run", "head_sha", "code_hash")
+        merge_fields = ("status", "executor_notes", "files_changed", "commands_run") + evidence_context_fields
         array_fields = ("files_changed", "commands_run")
         object_fields = ()
-        optional_fields = ("head_sha", "code_hash")
+        optional_fields = evidence_context_fields
     merged_count, _ = _validate_and_merge_batch(
         payload.get("task_updates"),
         required_fields=required_fields,

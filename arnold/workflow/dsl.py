@@ -181,3 +181,8 @@ class Pipeline:
         object.__setattr__(self, "routes", tuple(self.routes))
         object.__setattr__(self, "capabilities", tuple(self.capabilities))
         object.__setattr__(self, "metadata", _freeze_metadata(self.metadata))
+
+    @property
+    def entry(self) -> str:
+        """Compatibility alias for graph-style callers."""
+        return self.steps[0].id if self.steps else ""
