@@ -7,27 +7,34 @@ merge ordering.
 
 from __future__ import annotations
 
-import time
 from typing import Any
 from urllib.parse import unquote_plus
 from unittest.mock import patch
 
 import pytest
 
-from vibecomfy.executor.contracts import ResearchResult
+from vibecomfy.executor.contracts import (
+    InspectionSummary,
+    PrecedentAdaptationPlan,
+    ResearchResult,
+    WorkflowSlice,
+)
 from vibecomfy.executor.research import (
-    HivemindClient,
     HivemindError,
     _default_hivemind_client,
+    _build_adaptation_plan,
+    _build_inspection_summary,
+    _build_precedent_slices,
     _build_summary,
-    _normalize_source,
     _normalize_hivemind_source,
+    _normalize_source,
     _run_hivemind_research,
     research,
     run_local_research,
 )
 from vibecomfy.search.index import SearchEntry
 from vibecomfy.search.scorer import SearchResult
+from vibecomfy.ingest.workflow_source import load_workflow_source, normalize_workflow_source
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
@@ -44,6 +51,11 @@ def _make_entry(
     tasks: tuple[str, ...] = (),
     source: str = "object_info",
     path: str | None = None,
+    template_id: str | None = None,
+    source_workflow_path: str | None = None,
+    source_workflow_available: bool = False,
+    source_workflow_parseable: bool = False,
+    adapt_pattern_keys: tuple[str, ...] = (),
 ) -> SearchEntry:
     return SearchEntry(
         class_type=class_type,
@@ -53,6 +65,11 @@ def _make_entry(
         tasks=tasks,
         source=source,
         path=path,
+        template_id=template_id,
+        source_workflow_path=source_workflow_path,
+        source_workflow_available=source_workflow_available,
+        source_workflow_parseable=source_workflow_parseable,
+        adapt_pattern_keys=adapt_pattern_keys,
     )
 
 
@@ -84,6 +101,11 @@ class TestNormalizeSource:
             "description",
             "tasks",
             "path",
+            "template_id",
+            "source_workflow_path",
+            "source_workflow_available",
+            "source_workflow_parseable",
+            "adapt_pattern_keys",
         ]
         assert source["class_type"] == "KSampler"
         assert source["score"] == 10
@@ -109,9 +131,17 @@ class TestNormalizeSource:
             "video/ltx2_3_t2v",
             source="ready_template",
             path="ready_templates/video/ltx2_3_t2v.py",
+            template_id="video/ltx2_3_t2v",
+            source_workflow_path="ready_templates/sources/custom_nodes/ltxvideo/ltx2_3.json",
+            source_workflow_available=True,
+            source_workflow_parseable=True,
+            adapt_pattern_keys=("two_pass_refinement",),
         )
         source = _normalize_source(result)
         assert source["path"] == "ready_templates/video/ltx2_3_t2v.py"
+        assert source["template_id"] == "video/ltx2_3_t2v"
+        assert source["source_workflow_parseable"] is True
+        assert source["adapt_pattern_keys"] == ["two_pass_refinement"]
 
 
 class TestNormalizeHivemindSource:
@@ -702,7 +732,9 @@ class TestHivemindClientProtocol:
     """The HivemindClient type accepts any callable matching the signature."""
 
     def test_lambda_is_valid_client(self) -> None:
-        client: HivemindClient = lambda q, t: {"results": []}
+        def client(q: str, t: float) -> dict[str, Any]:
+            return {"results": []}
+
         result = _run_hivemind_research("test", client=client, timeout=1.0)
         assert result == ()
 
@@ -730,21 +762,96 @@ class TestHivemindClientProtocol:
             _run_hivemind_research("test", client=exploding_client, timeout=1.0)
 
 
+class TestWorkflowSourceNormalization:
+    """Centralized source workflow loader contract for adapt extraction."""
+
+    def test_api_prompt_dict_loads_node_records(self) -> None:
+        result = normalize_workflow_source(
+            {
+                "prompt": {
+                    "2": {"class_type": "VAEDecode", "inputs": {"samples": ["1", 0]}},
+                    "1": {"class_type": "KSampler", "inputs": {"seed": 42}},
+                }
+            },
+            source_path="inline/api_prompt.json",
+        )
+        assert result.status == "loaded"
+        assert result.shape == "api"
+        assert result.source_path == "inline/api_prompt.json"
+        assert result.blocks_candidate_output is False
+        assert [node.node_id for node in result.nodes] == ["1", "2"]
+        assert result.nodes[0].class_type == "KSampler"
+
+    def test_litegraph_nodes_links_export_loads_node_records(self) -> None:
+        result = normalize_workflow_source(
+            {
+                "nodes": [
+                    {
+                        "id": 10,
+                        "type": "LoadImage",
+                        "widgets_values": ["image.png"],
+                        "inputs": [],
+                    },
+                    {
+                        "id": 11,
+                        "type": "PreviewImage",
+                        "inputs": [{"name": "images", "link": 1}],
+                    },
+                ],
+                "links": [[1, 10, 0, 11, 0, "IMAGE"]],
+            },
+            source_path="inline/litegraph.json",
+        )
+        assert result.status == "loaded"
+        assert result.shape == "litegraph"
+        assert result.source_path == "inline/litegraph.json"
+        assert [node.node_id for node in result.nodes] == ["10", "11"]
+        assert result.nodes[1].inputs["images"] == ["10", 0]
+
+    def test_common_wrapper_keys_are_unwrapped(self) -> None:
+        result = normalize_workflow_source(
+            {
+                "extra": {
+                    "workflow": {
+                        "graph": {
+                            "nodes": [{"id": 1, "type": "WanVideoVACEEncode"}],
+                            "links": [],
+                        }
+                    }
+                }
+            },
+            source_path="inline/nested_wrapper.json",
+        )
+        assert result.status == "loaded"
+        assert result.shape == "litegraph"
+        assert result.source_path == "inline/nested_wrapper.json"
+        assert result.nodes[0].class_type == "WanVideoVACEEncode"
+        unwrap_warnings = [warning for warning in result.warnings if warning.code == "workflow_unwrapped"]
+        assert [warning.path for warning in unwrap_warnings] == [
+            ("extra", "workflow"),
+            ("extra", "workflow", "graph"),
+        ]
+
+    def test_unsupported_format_blocks_candidate_output_with_warning(self) -> None:
+        result = normalize_workflow_source(
+            {"metadata": {"name": "not a workflow"}},
+            source_path="inline/unsupported_format.json",
+        )
+        assert result.status == "unsupported"
+        assert result.source_path == "inline/unsupported_format.json"
+        assert result.blocks_candidate_output is True
+        assert result.nodes == ()
+        warning = result.warnings[0]
+        assert warning.code == "unsupported_workflow_format"
+        assert "ComfyUI API prompt dict" in warning.message
+        assert "LiteGraph nodes/links export" in warning.message
+        assert result.to_dict()["source_path"] == "inline/unsupported_format.json"
+
+
 # ── Structured precedent tests (T11) ─────────────────────────────────────────
 # Verify _build_inspection_summary, _build_precedent_slices,
 # _build_adaptation_plan, and the research() function's precedent output
 # when usable candidates exist vs. when no precedent is found.
-
-from vibecomfy.executor.contracts import (
-    InspectionSummary,
-    PrecedentAdaptationPlan,
-    WorkflowSlice,
-)
-from vibecomfy.executor.research import (
-    _build_adaptation_plan,
-    _build_inspection_summary,
-    _build_precedent_slices,
-)
 
 
 class TestBuildInspectionSummary:
@@ -827,7 +934,7 @@ class TestBuildInspectionSummary:
 
 
 class TestBuildPrecedentSlices:
-    """Building WorkflowSlice placeholders from research sources."""
+    """Building WorkflowSlice records from research sources."""
 
     def test_empty_sources_returns_empty_tuple(self) -> None:
         result = _build_precedent_slices(())
@@ -871,17 +978,178 @@ class TestBuildPrecedentSlices:
         assert result[0].source_class_type == "video/ltx2_3_runexx_custom_audio"
         assert result[0].python_path == "ready_templates/video/ltx2_3_runexx_custom_audio.py"
 
-    def test_source_workflow_creates_slice(self) -> None:
+    def test_source_workflow_creates_slice(self, tmp_path) -> None:
+        source_path = tmp_path / "ltx2_3.json"
+        source_path.write_text(
+            '{"nodes": [{"id": 7, "type": "LTXVLoader"}, {"id": 8, "type": "KSampler"}], "links": []}'
+        )
         sources = (
             {
                 "class_type": "ltx2_3_source",
                 "source": "source_workflow",
-                "path": "ready_templates/sources/custom_nodes/ltxvideo/ltx2_3.py",
+                "path": str(source_path),
             },
         )
         result = _build_precedent_slices(sources)
         assert len(result) == 1
         assert result[0].source_class_type == "ltx2_3_source"
+        assert result[0].node_ids == ("7", "8")
+        assert result[0].node_types == ("LTXVLoader", "KSampler")
+        assert result[0].entry_anchor == "7"
+        assert result[0].exit_anchor == "8"
+        assert result[0].source_workflow_path == str(source_path)
+
+    def test_vace_source_extracts_concrete_pattern_slice(self) -> None:
+        sources = (
+            {
+                "class_type": "video/wanvideo_wrapper_13b_vace",
+                "source": "ready_template",
+                "path": "ready_templates/video/wanvideo_wrapper_13b_vace.py",
+                "source_workflow_path": "ready_templates/sources/custom_nodes/wanvideo_wrapper/kijai/wan13b_vace.json",
+                "adapt_pattern_keys": ["vace"],
+            },
+        )
+        result = _build_precedent_slices(sources)
+        assert len(result) == 1
+        slice_ = result[0]
+        assert slice_.source_workflow_path == "ready_templates/sources/custom_nodes/wanvideo_wrapper/kijai/wan13b_vace.json"
+        assert slice_.python_path == "ready_templates/video/wanvideo_wrapper_13b_vace.py"
+        assert "22" in slice_.node_ids
+        assert "56" in slice_.node_ids
+        assert "111" in slice_.node_ids
+        assert "WanVideoVACEEncode" in slice_.node_types
+        assert slice_.entry_anchor is not None
+        assert slice_.exit_anchor is not None
+
+    def test_real_vace_ready_template_fixture_extracts_repository_nodes(self) -> None:
+        source_workflow_path = "ready_templates/sources/custom_nodes/wanvideo_wrapper/kijai/wan13b_vace.json"
+        load_result = load_workflow_source(source_workflow_path)
+        assert load_result.ok is True
+        assert len(load_result.nodes) > 100
+        assert {"22", "56", "111", "209", "224"}.issubset(
+            {record.node_id for record in load_result.nodes}
+        )
+
+        sources = (
+            {
+                "class_type": "video/wanvideo_wrapper_13b_vace",
+                "source": "ready_template",
+                "path": "ready_templates/video/wanvideo_wrapper_13b_vace.py",
+                "source_workflow_path": source_workflow_path,
+                "adapt_pattern_keys": ["vace"],
+            },
+        )
+        result = _build_precedent_slices(sources)
+        assert len(result) == 1
+        slice_ = result[0]
+        assert slice_.source_workflow_path == source_workflow_path
+        assert slice_.python_path == "ready_templates/video/wanvideo_wrapper_13b_vace.py"
+        assert {"56", "111", "148", "209", "224", "231"}.issubset(set(slice_.node_ids))
+        assert "WanVideoVACEEncode" in slice_.node_types
+        assert "WanVideoVACEModelSelect" in slice_.node_types
+        assert "WanVideoVACEStartToEndFrame" in slice_.node_types
+        assert slice_.warnings == ()
+
+    def test_missing_real_vace_source_does_not_mock_passing_extraction(self, tmp_path) -> None:
+        missing_source = tmp_path / "wan13b_vace_absent.json"
+        sources = (
+            {
+                "class_type": "video/wanvideo_wrapper_13b_vace_missing",
+                "source": "ready_template",
+                "path": "ready_templates/video/wanvideo_wrapper_13b_vace.py",
+                "source_workflow_path": str(missing_source),
+                "adapt_pattern_keys": ["vace"],
+            },
+        )
+
+        assert load_workflow_source(str(missing_source)).blocks_candidate_output is True
+        assert _build_precedent_slices(sources) == ()
+
+    def test_lora_chain_source_extracts_loader_and_selector_nodes(self) -> None:
+        sources = (
+            {
+                "class_type": "video/wanvideo_wrapper_13b_control_lora",
+                "source": "ready_template",
+                "path": "ready_templates/video/wanvideo_wrapper_13b_control_lora.py",
+                "source_workflow_path": "ready_templates/sources/custom_nodes/wanvideo_wrapper/kijai/wan13b_control_lora.json",
+                "adapt_pattern_keys": ["lora_chain"],
+            },
+        )
+        result = _build_precedent_slices(sources)
+        assert len(result) == 1
+        assert "22" in result[0].node_ids
+        assert "98" in result[0].node_ids
+        assert "WanVideoLoraSelect" in result[0].node_types
+
+    def test_controlnet_depth_source_extracts_guidance_nodes(self) -> None:
+        sources = (
+            {
+                "class_type": "video/wanvideo_wrapper_22_5b_i2v_controlnet",
+                "source": "ready_template",
+                "path": "ready_templates/video/wanvideo_wrapper_22_5b_i2v_controlnet.py",
+                "source_workflow_path": "ready_templates/sources/custom_nodes/wanvideo_wrapper/kijai/wan22_5b_i2v_controlnet.json",
+                "adapt_pattern_keys": ["depth_pose_guidance"],
+            },
+        )
+        result = _build_precedent_slices(sources)
+        assert len(result) == 1
+        assert {"103", "104", "105"}.issubset(set(result[0].node_ids))
+        assert "WanVideoControlnetLoader" in result[0].node_types
+        assert "MiDaS-DepthMapPreprocessor" in result[0].node_types
+
+    def test_two_pass_refinement_extracts_sampler_and_upscale_nodes(self) -> None:
+        sources = (
+            {
+                "class_type": "video/ltx2_3_lightricks_two_stage_distilled",
+                "source": "ready_template",
+                "path": "ready_templates/video/ltx2_3_lightricks_two_stage_distilled.py",
+                "source_workflow_path": "ready_templates/sources/custom_nodes/ltxvideo/lightricks_2_3/LTX-2.3_T2V_I2V_Two_Stage_Distilled.json",
+                "adapt_pattern_keys": ["two_pass_refinement"],
+            },
+        )
+        result = _build_precedent_slices(sources)
+        assert len(result) == 1
+        assert "4975" in result[0].node_ids
+        assert "LTXVLatentUpsampler" in result[0].node_types
+        assert result[0].entry_anchor is not None
+        assert result[0].exit_anchor is not None
+
+    def test_low_vram_source_extracts_real_slice_and_missing_blockswap_warning(self) -> None:
+        sources = (
+            {
+                "class_type": "video/ltx2_3_iamccs_low_vram",
+                "source": "ready_template",
+                "path": "ready_templates/video/ltx2_3_iamccs_low_vram.py",
+                "source_workflow_path": "ready_templates/sources/custom_nodes/ltxvideo/iamccs/IAMCCS_LTX_2.3_T_I2V_LOW_VRAM.json",
+                "adapt_pattern_keys": ["low_vram"],
+            },
+        )
+        result = _build_precedent_slices(sources)
+        assert len(result) == 1
+        assert "207" in result[0].node_ids
+        assert "LTXVChunkFeedForward" in result[0].node_types
+        assert result[0].warnings
+        assert result[0].warnings[0]["code"] == "missing_required_pattern_nodes"
+        assert result[0].warnings[0]["source_path"].endswith("IAMCCS_LTX_2.3_T_I2V_LOW_VRAM.json")
+
+    def test_slice_to_dict_includes_source_node_types_and_structured_warnings(self, tmp_path) -> None:
+        source_path = tmp_path / "missing_vace.json"
+        source_path.write_text('{"7": {"class_type": "KSampler", "inputs": {}}}', encoding="utf-8")
+        sources = (
+            {
+                "class_type": "bad_vace",
+                "source": "source_workflow",
+                "path": str(source_path),
+                "adapt_pattern_keys": ["vace"],
+            },
+        )
+        result = _build_precedent_slices(sources)
+        assert len(result) == 1
+        payload = result[0].to_dict()
+        assert payload["source_workflow_path"] == str(source_path)
+        assert payload["node_ids"] == []
+        assert payload["warnings"][0]["code"] == "pattern_nodes_not_found"
+        assert payload["warnings"][0]["source_path"] == str(source_path)
 
     def test_external_workflow_creates_slice(self) -> None:
         sources = (
@@ -931,7 +1199,7 @@ class TestBuildPrecedentSlices:
         # Deduplication by class_type: only one slice
         assert len(result) == 1
 
-    def test_workflow_source_without_py_path_skipped(self) -> None:
+    def test_workflow_source_unsupported_json_path_is_blocked(self) -> None:
         sources = (
             {
                 "class_type": "some_workflow",
@@ -940,9 +1208,26 @@ class TestBuildPrecedentSlices:
             },
         )
         result = _build_precedent_slices(sources)
-        # ready_template IS a workflow source kind, so it creates a slice even with .json path
-        assert len(result) == 1
-        assert result[0].python_path == "ready_templates/some_workflow.json"
+        assert result == ()
+
+    def test_inline_unsupported_workflow_source_never_builds_candidate_slice(self, tmp_path) -> None:
+        unsupported_path = tmp_path / "unsupported_workflow.json"
+        unsupported_path.write_text('{"metadata": {"format": "not-comfyui"}}', encoding="utf-8")
+        sources = (
+            {
+                "class_type": "unsupported_inline_workflow",
+                "source": "external_workflow",
+                "path": str(unsupported_path),
+            },
+        )
+        load_result = normalize_workflow_source(
+            {"metadata": {"format": "not-comfyui"}},
+            source_path=str(unsupported_path),
+        )
+        assert load_result.blocks_candidate_output is True
+        assert load_result.warnings[0].code == "unsupported_workflow_format"
+        assert load_result.source_path == str(unsupported_path)
+        assert _build_precedent_slices(sources) == ()
 
     def test_workflow_source_no_path_still_creates_if_source_workflow(self) -> None:
         """source_workflow + .py path are OR'd: either the source kind or .py path qualifies."""
@@ -961,6 +1246,60 @@ class TestBuildPrecedentSlices:
 
 class TestBuildAdaptationPlan:
     """PrecedentAdaptationPlan construction from slices."""
+
+    def _wan_lora_slice(self) -> WorkflowSlice:
+        slices = _build_precedent_slices((
+            {
+                "class_type": "video/wan_control_lora",
+                "source": "ready_template",
+                "path": "ready_templates/video/wan_control_lora.py",
+                "source_workflow_path": "ready_templates/sources/custom_nodes/wanvideo_wrapper/kijai/wan13b_control_lora.json",
+                "adapt_pattern_keys": ["lora_chain"],
+            },
+        ))
+        assert slices
+        return slices[0]
+
+    def _wan_target_graph(self) -> dict[str, dict[str, object]]:
+        return {
+            "1": {
+                "class_type": "WanVideoModelLoader",
+                "inputs": {
+                    "model": "WanVideo\\wan2.1_t2v_1.3B_fp16.safetensors",
+                    "lora": ["2", 0],
+                },
+            },
+            "2": {
+                "class_type": "WanVideoLoraSelect",
+                "inputs": {
+                    "lora": "WanVid\\wan2.1-control-lora.safetensors",
+                    "strength": 1,
+                },
+            },
+            "3": {
+                "class_type": "WanVideoSampler",
+                "inputs": {"model": ["1", 0], "latent_image": ["4", 0]},
+            },
+        }
+
+    def _ltx_target_graph_with_matching_anchor_shapes(self) -> dict[str, dict[str, object]]:
+        return {
+            "1": {
+                "class_type": "LTXVModelLoader",
+                "inputs": {
+                    "model": "ltx-video-2b.safetensors",
+                    "lora": ["2", 0],
+                },
+            },
+            "2": {
+                "class_type": "LTXVLoraSelect",
+                "inputs": {"lora": "ltx-detail-lora.safetensors", "strength": 1},
+            },
+            "3": {
+                "class_type": "LTXVSampler",
+                "inputs": {"model": ["1", 0], "latent_image": ["4", 0]},
+            },
+        }
 
     def test_no_slices_returns_none(self) -> None:
         result = _build_adaptation_plan(
@@ -1017,6 +1356,86 @@ class TestBuildAdaptationPlan:
         assert "selected_slice" in d
         assert d["selected_slice"]["source_class_type"] == "test"
         assert d["structural_validation"] == "not_evaluated"
+
+    def test_compatible_wan_target_binds_structural_anchors(self) -> None:
+        plan = _build_adaptation_plan(
+            query="add Wan LoRA chain",
+            graph=self._wan_target_graph(),
+            inspection=None,
+            slices=(self._wan_lora_slice(),),
+        )
+
+        assert plan is not None
+        assert plan.structural_validation == "pass"
+        assert plan.candidate_graph is not None
+        assert plan.anchor_bindings
+        roles = {binding["anchor_role"] for binding in plan.anchor_bindings}
+        assert {"lora", "model"} <= roles
+        assert {
+            (binding["anchor_role"], binding["source_socket"], binding["target_socket"])
+            for binding in plan.anchor_bindings
+        } >= {("lora", "lora", "lora"), ("model", "model", "model")}
+        assert {
+            binding["target_class_type"] for binding in plan.anchor_bindings
+        } <= {"WanVideoModelLoader"}
+        # Candidate graph preserves the original target IDs and links and
+        # includes the non-anchor source nodes under deterministic new IDs.
+        assert {"1", "2", "3"} <= set(plan.candidate_graph.keys())
+        assert plan.candidate_graph["1"]["inputs"]["lora"] == ["2", 0]
+        added_ids = set(plan.candidate_graph.keys()) - {"1", "2", "3"}
+        assert added_ids
+        for node_id in added_ids:
+            assert node_id.startswith("adapt_")
+
+    def test_candidate_graph_only_emitted_on_pass(self) -> None:
+        plan = _build_adaptation_plan(
+            query="add Wan LoRA chain",
+            graph=self._wan_target_graph(),
+            inspection=None,
+            slices=(self._wan_lora_slice(),),
+        )
+        assert plan is not None
+        assert plan.structural_validation == "pass"
+        assert plan.to_dict().get("candidate_graph") is plan.candidate_graph
+
+    def test_incompatible_target_family_produces_no_anchor_bindings(self) -> None:
+        plan = _build_adaptation_plan(
+            query="add Wan LoRA chain",
+            graph=self._ltx_target_graph_with_matching_anchor_shapes(),
+            inspection=None,
+            slices=(self._wan_lora_slice(),),
+        )
+
+        assert plan is not None
+        assert plan.structural_validation == "fail"
+        assert plan.anchor_bindings == ()
+        assert plan.candidate_graph is None
+
+    def test_missing_target_graph_does_not_bind_or_build_candidate(self) -> None:
+        plan = _build_adaptation_plan(
+            query="add Wan LoRA chain",
+            graph=None,
+            inspection=None,
+            slices=(self._wan_lora_slice(),),
+        )
+
+        assert plan is not None
+        assert plan.structural_validation == "not_evaluated"
+        assert plan.anchor_bindings == ()
+        assert plan.candidate_graph is None
+
+    def test_unsupported_target_graph_blocks_anchor_bindings(self) -> None:
+        plan = _build_adaptation_plan(
+            query="add Wan LoRA chain",
+            graph={"metadata": {"format": "not-comfyui"}},
+            inspection=None,
+            slices=(self._wan_lora_slice(),),
+        )
+
+        assert plan is not None
+        assert plan.structural_validation == "fail"
+        assert plan.anchor_bindings == ()
+        assert plan.candidate_graph is None
 
 
 def _normalize_sources_for_test(entries):

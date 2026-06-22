@@ -521,24 +521,39 @@ class WorkflowSlice:
 
     source_class_type: str = ""
     node_ids: tuple[str, ...] = ()
+    node_types: tuple[str, ...] = ()
     entry_anchor: str | None = None
     exit_anchor: str | None = None
+    source_workflow_path: str | None = None
     python_path: str | None = None
+    warnings: tuple[dict[str, Any], ...] = ()
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "node_ids", tuple(self.node_ids))
+        object.__setattr__(self, "node_types", tuple(self.node_types))
+        object.__setattr__(self, "warnings", tuple(
+            MappingProxyType({str(k): _freeze_jsonish(v) for k, v in warning.items()})
+            if isinstance(warning, Mapping) else warning
+            for warning in self.warnings
+        ))
 
     def to_dict(self) -> dict[str, Any]:
         payload: dict[str, Any] = {
             "source_class_type": self.source_class_type,
             "node_ids": list(self.node_ids),
         }
+        if self.node_types:
+            payload["node_types"] = list(self.node_types)
         if self.entry_anchor is not None:
             payload["entry_anchor"] = self.entry_anchor
         if self.exit_anchor is not None:
             payload["exit_anchor"] = self.exit_anchor
+        if self.source_workflow_path is not None:
+            payload["source_workflow_path"] = self.source_workflow_path
         if self.python_path is not None:
             payload["python_path"] = self.python_path
+        if self.warnings:
+            payload["warnings"] = _thaw_jsonish(self.warnings)
         return payload
 
 
@@ -563,6 +578,7 @@ class PrecedentAdaptationPlan:
     candidate_graph: dict[str, Any] | None = None
     structural_validation: str = "not_evaluated"
     semantic_validation: str = "not_evaluated"
+    warnings: tuple[dict[str, Any], ...] = ()
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "anchor_bindings", tuple(
@@ -585,10 +601,17 @@ class PrecedentAdaptationPlan:
             if isinstance(op, Mapping) else op
             for op in self.edit_ops
         ))
+        object.__setattr__(self, "warnings", tuple(
+            MappingProxyType({str(k): _freeze_jsonish(v) for k, v in warning.items()})
+            if isinstance(warning, Mapping) else warning
+            for warning in self.warnings
+        ))
         if self.structural_validation not in ("not_evaluated", "pass", "fail", "advisory"):
             object.__setattr__(self, "structural_validation", "not_evaluated")
         if self.semantic_validation not in ("not_evaluated", "pass", "fail", "advisory"):
             object.__setattr__(self, "semantic_validation", "not_evaluated")
+        if self.structural_validation != "pass" and self.candidate_graph is not None:
+            object.__setattr__(self, "candidate_graph", None)
 
     def to_dict(self) -> dict[str, Any]:
         payload: dict[str, Any] = {
@@ -600,7 +623,9 @@ class PrecedentAdaptationPlan:
             "structural_validation": self.structural_validation,
             "semantic_validation": self.semantic_validation,
         }
-        if self.candidate_graph is not None:
+        if self.warnings:
+            payload["warnings"] = _thaw_jsonish(self.warnings)
+        if self.structural_validation == "pass" and self.candidate_graph is not None:
             payload["candidate_graph"] = self.candidate_graph
         return payload
 
@@ -812,7 +837,7 @@ class RevisionEvidence:
     scoped_diff: ScopedDiff | None = None
     no_candidate_reason: str | None = None
     candidate_eligible: bool = False
-    warnings: tuple[str, ...] = ()
+    warnings: tuple[str | dict[str, Any], ...] = ()
     summary: str = ""
 
     def __post_init__(self) -> None:
@@ -873,13 +898,17 @@ class ResearchResult:
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "sources", tuple(self.sources))
-        object.__setattr__(self, "warnings", tuple(self.warnings))
+        object.__setattr__(self, "warnings", tuple(
+            MappingProxyType({str(k): _freeze_jsonish(v) for k, v in warning.items()})
+            if isinstance(warning, Mapping) else str(warning)
+            for warning in self.warnings
+        ))
         object.__setattr__(self, "precedent_slices", tuple(self.precedent_slices))
     def to_dict(self) -> dict[str, Any]:
         result = {
             "summary": self.summary,
             "sources": _thaw_jsonish(self.sources),
-            "warnings": list(self.warnings),
+            "warnings": _thaw_jsonish(self.warnings),
         }
         if self.precedent_slices:
             result["precedent_slices"] = [s.to_dict() for s in self.precedent_slices]

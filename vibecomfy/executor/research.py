@@ -10,6 +10,7 @@ with local-only results rather than blocking on network unavailability.
 
 from __future__ import annotations
 
+import copy
 import logging
 import re
 from html import unescape
@@ -21,6 +22,12 @@ from typing import Any, Callable
 
 from vibecomfy.search.index import build_search_corpus
 from vibecomfy.search.scorer import search_entries, SearchResult
+from vibecomfy.ingest.workflow_source import (
+    WorkflowLoadResult,
+    WorkflowNodeRecord,
+    load_workflow_source,
+    normalize_workflow_source,
+)
 
 from .contracts import (
     InspectionSummary,
@@ -83,6 +90,33 @@ _SEARCH_STOPWORDS = {
     "with",
 }
 
+_PATTERN_NODE_TERMS: dict[str, tuple[str, ...]] = {
+    "vace": ("vace",),
+    "lora_chain": ("lora", "iclora"),
+    "low_vram": ("blockswap", "block swap", "low_vram", "low vram", "low_ram", "low ram", "chunkfeed", "decode_to_disk"),
+    "two_pass_refinement": ("two_stage", "two stage", "two-pass", "two pass", "upscale", "upsampler", "refine", "samplercustomadvanced", "ksampler"),
+    "depth_pose_guidance": ("controlnet", "control net", "depth", "pose", "dwpose", "preprocessor", "guide"),
+}
+
+_PATTERN_REQUIRED_TERMS: dict[str, tuple[str, ...]] = {
+    "vace": ("vace",),
+    "lora_chain": ("lora", "iclora"),
+    "low_vram": ("blockswap", "low_vram", "low vram", "chunkfeed"),
+    "two_pass_refinement": ("upsampler", "upscale", "sampler"),
+    "depth_pose_guidance": ("controlnet", "depth", "pose", "dwpose"),
+}
+
+_FAMILY_EVIDENCE_TERMS: dict[str, tuple[str, ...]] = {
+    "wan": ("wanvideo", "wan2", "wan_2", "wan 2", "wan2_1", "wan2.1", "wan2_2", "wan2.2"),
+    "ltx": ("ltx", "ltxv", "lightricks"),
+    "flux": ("flux", "flux1", "flux2"),
+    "qwen": ("qwen",),
+    "hunyuan": ("hunyuan", "hyvideo"),
+    "sd": ("sdxl", "sd3", "stable diffusion", "stable_diffusion"),
+}
+
+_ANCHOR_ROLE_PRIORITY = ("lora", "model", "sampler", "latent", "conditioning", "exit")
+
 
 # ── Hivemind error (non-fatal) ───────────────────────────────────────────────
 
@@ -144,6 +178,11 @@ def _normalize_source(result: SearchResult) -> dict[str, Any]:
         "description": entry.description,
         "tasks": list(entry.tasks),
         "path": entry.path,
+        "template_id": entry.template_id,
+        "source_workflow_path": entry.source_workflow_path,
+        "source_workflow_available": entry.source_workflow_available,
+        "source_workflow_parseable": entry.source_workflow_parseable,
+        "adapt_pattern_keys": list(entry.adapt_pattern_keys),
     }
 
 
@@ -644,14 +683,7 @@ def _build_inspection_summary(graph: dict | None) -> InspectionSummary | None:
 def _build_precedent_slices(
     sources: tuple[dict, ...],
 ) -> tuple[WorkflowSlice, ...]:
-    """Build :class:`WorkflowSlice` placeholders from research sources.
-
-    Only sources that reference workflow-level paths (``.py`` files from
-    ready templates, source workflows, or Hivemind workflow resources)
-    produce a slice.  Each slice is a minimal placeholder — the
-    *node_ids*, *entry_anchor*, and *exit_anchor* are empty/absent
-    because full slice extraction is deferred to a later sprint (SD3).
-    """
+    """Build source-backed :class:`WorkflowSlice` records from research sources."""
     workflow_source_kinds = {
         "ready_template",
         "source_workflow",
@@ -666,28 +698,377 @@ def _build_precedent_slices(
             continue
         source_kind = str(source.get("source", ""))
         path = source.get("path")
+        source_workflow_path = source.get("source_workflow_path")
         class_type = str(source.get("class_type", ""))
 
-        # Only create a slice for workflow sources with a .py path
         is_workflow = source_kind in workflow_source_kinds
         has_py_path = isinstance(path, str) and path.endswith(".py")
-        if not is_workflow and not has_py_path:
+        has_source_workflow = isinstance(source_workflow_path, str) and source_workflow_path.endswith(".json")
+        if not is_workflow and not has_py_path and not has_source_workflow:
             continue
         if not class_type or class_type in seen:
             continue
+
+        load_result: WorkflowLoadResult | None = None
+        if has_source_workflow:
+            load_result = load_workflow_source(source_workflow_path)
+        elif isinstance(path, str) and path.endswith(".json"):
+            load_result = load_workflow_source(path)
+
+        source_warnings: list[dict[str, Any]] = []
+        if load_result is not None and load_result.ok:
+            pattern_key = _source_pattern_key(source)
+            extracted_nodes, source_warnings = _extract_pattern_nodes(
+                load_result=load_result,
+                pattern_key=pattern_key,
+            )
+            node_ids = tuple(record.node_id for record in extracted_nodes)
+            node_types = tuple(record.class_type for record in extracted_nodes)
+            entry_anchor = node_ids[0] if node_ids else None
+            exit_anchor = node_ids[-1] if node_ids else None
+        else:
+            node_ids = ()
+            node_types = ()
+            entry_anchor = None
+            exit_anchor = None
+
+        if load_result is not None and load_result.blocks_candidate_output:
+            continue
+
         seen.add(class_type)
 
         slices.append(
             WorkflowSlice(
                 source_class_type=class_type,
-                node_ids=(),  # placeholder — slice extraction deferred
-                entry_anchor=None,
-                exit_anchor=None,
+                node_ids=node_ids,
+                node_types=node_types,
+                entry_anchor=entry_anchor,
+                exit_anchor=exit_anchor,
+                source_workflow_path=load_result.source_path if load_result is not None else None,
                 python_path=path if isinstance(path, str) else None,
+                warnings=tuple(source_warnings),
             )
         )
 
     return tuple(slices)
+
+
+def _source_pattern_key(source: dict[str, Any]) -> str | None:
+    keys = source.get("adapt_pattern_keys")
+    if isinstance(keys, list | tuple):
+        for key in keys:
+            if isinstance(key, str) and key in _PATTERN_NODE_TERMS:
+                return key
+
+    text = " ".join(
+        str(source.get(key, ""))
+        for key in ("class_type", "path", "template_id", "source_workflow_path", "description")
+    ).lower()
+    for key, terms in _PATTERN_NODE_TERMS.items():
+        if any(term in text for term in terms):
+            return key
+    return None
+
+
+def _extract_pattern_nodes(
+    *,
+    load_result: WorkflowLoadResult,
+    pattern_key: str | None,
+) -> tuple[tuple[Any, ...], list[dict[str, Any]]]:
+    """Return the minimal deterministic precedent node slice for a pattern."""
+    if pattern_key is None:
+        return load_result.nodes, []
+
+    terms = _PATTERN_NODE_TERMS[pattern_key]
+    required_terms = _PATTERN_REQUIRED_TERMS.get(pattern_key, ())
+    matched = tuple(
+        record for record in load_result.nodes
+        if _node_record_matches_any(record, terms)
+    )
+
+    warnings: list[dict[str, Any]] = []
+    if not matched:
+        warnings.append({
+            "code": "pattern_nodes_not_found",
+            "severity": "warning",
+            "pattern_key": pattern_key,
+            "source_path": load_result.source_path,
+            "message": f"No nodes matched deterministic extraction terms for {pattern_key}.",
+            "required_terms": list(required_terms),
+        })
+        return (), warnings
+
+    missing_terms = [
+        term for term in required_terms
+        if not any(_node_record_matches_any(record, (term,)) for record in matched)
+    ]
+    if missing_terms:
+        warnings.append({
+            "code": "missing_required_pattern_nodes",
+            "severity": "warning",
+            "pattern_key": pattern_key,
+            "source_path": load_result.source_path,
+            "message": f"Pattern slice is missing expected node evidence for {pattern_key}.",
+            "missing_terms": missing_terms,
+        })
+
+    return matched, warnings
+
+
+def _node_record_matches_any(record: Any, terms: tuple[str, ...]) -> bool:
+    haystack = _node_record_search_text(record)
+    return any(term in haystack for term in terms)
+
+
+def _node_record_search_text(record: Any) -> str:
+    return " ".join((
+        str(getattr(record, "node_id", "")),
+        str(getattr(record, "class_type", "")),
+        str(getattr(record, "inputs", "")),
+        str(getattr(record, "raw_node", "")),
+    )).lower().replace("-", "_")
+
+
+def _normalize_target_graph(graph: dict | None) -> WorkflowLoadResult | None:
+    if graph is None:
+        return None
+    return normalize_workflow_source(graph, source_path="<target_graph>")
+
+
+def _selected_source_records(selected_slice: WorkflowSlice) -> tuple[WorkflowNodeRecord, ...]:
+    if not selected_slice.source_workflow_path:
+        return ()
+    load_result = load_workflow_source(selected_slice.source_workflow_path)
+    if not load_result.ok:
+        return ()
+    selected_ids = set(selected_slice.node_ids)
+    if not selected_ids:
+        return load_result.nodes
+    return tuple(record for record in load_result.nodes if record.node_id in selected_ids)
+
+
+def _family_evidence_from_text(text: str) -> set[str]:
+    haystack = text.lower().replace("-", "_").replace("\\", "/")
+    families: set[str] = set()
+    for family, terms in _FAMILY_EVIDENCE_TERMS.items():
+        if any(term in haystack for term in terms):
+            families.add(family)
+    return families
+
+
+def _detect_record_families(records: tuple[WorkflowNodeRecord, ...], *extra_text: str | None) -> set[str]:
+    families: set[str] = set()
+    for text in extra_text:
+        if text:
+            families.update(_family_evidence_from_text(text))
+    for record in records:
+        families.update(_family_evidence_from_text(_node_record_search_text(record)))
+    return families
+
+
+def _anchor_roles(record: WorkflowNodeRecord) -> tuple[str, ...]:
+    text = _node_record_search_text(record)
+    class_text = record.class_type.lower().replace("-", "_")
+    input_names = {str(name).lower().replace("-", "_") for name in record.inputs}
+    roles: list[str] = []
+
+    if "lora" in text or "lora" in input_names:
+        roles.append("lora")
+    if (
+        "model" in class_text
+        or "loader" in class_text
+        or "unet" in class_text
+        or "checkpoint" in class_text
+        or "model" in input_names
+    ):
+        roles.append("model")
+    if "sampler" in class_text or "ksampler" in class_text or "sampler" in input_names:
+        roles.append("sampler")
+    if "latent" in class_text or "latent_image" in input_names or "samples" in input_names:
+        roles.append("latent")
+    if (
+        "conditioning" in class_text
+        or "cliptextencode" in class_text
+        or "controlnet" in class_text
+        or "positive" in input_names
+        or "negative" in input_names
+        or "conditioning" in input_names
+    ):
+        roles.append("conditioning")
+    if (
+        "save" in class_text
+        or "decode" in class_text
+        or "combine" in class_text
+        or "images" in input_names
+    ):
+        roles.append("exit")
+
+    deduped: list[str] = []
+    for role in _ANCHOR_ROLE_PRIORITY:
+        if role in roles and role not in deduped:
+            deduped.append(role)
+    return tuple(deduped)
+
+
+def _anchor_socket_for_role(record: WorkflowNodeRecord, role: str) -> str:
+    input_names = {str(name).lower().replace("-", "_") for name in record.inputs}
+    if role == "lora" and "lora" in input_names:
+        return "lora"
+    if role == "model" and "model" in input_names:
+        return "model"
+    if role == "sampler" and "sampler" in input_names:
+        return "sampler"
+    if role == "latent" and "latent_image" in input_names:
+        return "latent_image"
+    if role == "latent" and "samples" in input_names:
+        return "samples"
+    if role == "conditioning" and "positive" in input_names:
+        return "positive"
+    if role == "conditioning" and "conditioning" in input_names:
+        return "conditioning"
+    if role == "exit" and "images" in input_names:
+        return "images"
+    return role
+
+
+def _target_anchor_candidates(
+    target_records: tuple[WorkflowNodeRecord, ...],
+) -> dict[str, list[WorkflowNodeRecord]]:
+    candidates: dict[str, list[WorkflowNodeRecord]] = {role: [] for role in _ANCHOR_ROLE_PRIORITY}
+    for record in target_records:
+        for role in _anchor_roles(record):
+            candidates.setdefault(role, []).append(record)
+    return candidates
+
+
+def _source_anchor_records(
+    selected_slice: WorkflowSlice,
+    source_records: tuple[WorkflowNodeRecord, ...],
+) -> tuple[WorkflowNodeRecord, ...]:
+    records_by_id = {record.node_id: record for record in source_records}
+    anchor_ids = tuple(
+        anchor_id
+        for anchor_id in (selected_slice.entry_anchor, selected_slice.exit_anchor)
+        if anchor_id is not None
+    )
+    anchors = tuple(records_by_id[anchor_id] for anchor_id in anchor_ids if anchor_id in records_by_id)
+    if anchors:
+        return anchors
+    return tuple(record for record in source_records if _anchor_roles(record))
+
+
+def _build_anchor_bindings(
+    *,
+    selected_slice: WorkflowSlice,
+    source_records: tuple[WorkflowNodeRecord, ...],
+    target_records: tuple[WorkflowNodeRecord, ...],
+) -> tuple[dict[str, str], ...]:
+    target_candidates = _target_anchor_candidates(target_records)
+    bindings: list[dict[str, str]] = []
+    used: set[tuple[str, str, str]] = set()
+
+    for source_record in _source_anchor_records(selected_slice, source_records):
+        for role in _anchor_roles(source_record):
+            target_record = next(iter(target_candidates.get(role, ())), None)
+            if target_record is None:
+                continue
+            key = (source_record.node_id, role, target_record.node_id)
+            if key in used:
+                continue
+            used.add(key)
+            bindings.append({
+                "source_anchor": source_record.node_id,
+                "target_anchor": target_record.node_id,
+                "anchor_role": role,
+                "source_class_type": source_record.class_type,
+                "target_class_type": target_record.class_type,
+                "source_socket": _anchor_socket_for_role(source_record, role),
+                "target_socket": _anchor_socket_for_role(target_record, role),
+            })
+
+    return tuple(bindings)
+
+
+_SOURCE_ID_PREFIX = "adapt_"
+
+
+def _build_candidate_graph(
+    target_graph: dict[str, Any],
+    source_records: tuple[WorkflowNodeRecord, ...],
+    anchor_bindings: tuple[dict[str, str], ...],
+) -> dict[str, Any] | None:
+    """Merge a validated source slice into the target graph.
+
+    Preserves every target node, ID, and link.  Source nodes that participate
+    in an anchor binding are *not* duplicated; their role is filled by the
+    already-bound target anchor.  Remaining source nodes are copied in with
+    deterministic non-colliding IDs and their input references are remapped to
+    point at the corresponding target anchor or copied source node.
+
+    Returns ``None`` if the inputs look malformed.
+    """
+    if not isinstance(target_graph, dict) or not anchor_bindings:
+        return None
+
+    candidate = copy.deepcopy(target_graph)
+    existing_ids = {str(k) for k in candidate.keys() if isinstance(k, (str, int))}
+
+    source_to_target: dict[str, str] = {}
+    source_anchors: set[str] = set()
+    for binding in anchor_bindings:
+        if not isinstance(binding, dict):
+            continue
+        source_id = str(binding.get("source_anchor", ""))
+        target_id = str(binding.get("target_anchor", ""))
+        if source_id and target_id:
+            source_anchors.add(source_id)
+            if source_id not in source_to_target:
+                source_to_target[source_id] = target_id
+
+    def _allocate_id(source_id: str) -> str:
+        preferred = f"{_SOURCE_ID_PREFIX}{source_id}"
+        if preferred not in existing_ids:
+            existing_ids.add(preferred)
+            return preferred
+        counter = 1
+        while True:
+            candidate_id = f"{preferred}_{counter}"
+            if candidate_id not in existing_ids:
+                existing_ids.add(candidate_id)
+                return candidate_id
+            counter += 1
+
+    new_id_for_source: dict[str, str] = {
+        record.node_id: _allocate_id(record.node_id)
+        for record in source_records
+        if record.node_id not in source_anchors
+    }
+
+    id_map = {**source_to_target, **new_id_for_source}
+
+    def _remap_value(value: Any) -> Any:
+        if isinstance(value, list | tuple) and len(value) == 2:
+            ref_id, slot = value
+            if isinstance(ref_id, (str, int)) and str(ref_id) in id_map:
+                return [id_map[str(ref_id)], slot]
+        return value
+
+    for record in source_records:
+        if record.node_id in source_anchors:
+            continue
+        new_id = new_id_for_source.get(record.node_id)
+        if new_id is None:
+            continue
+        remapped_inputs = {
+            key: _remap_value(val)
+            for key, val in (record.inputs or {}).items()
+        }
+        candidate[new_id] = {
+            "class_type": record.class_type,
+            "inputs": remapped_inputs,
+        }
+
+    return candidate
 
 
 def _build_adaptation_plan(
@@ -707,14 +1088,54 @@ def _build_adaptation_plan(
     if not slices:
         return None
 
+    selected_slice = slices[0]
+    target_load = _normalize_target_graph(graph)
+    anchor_bindings: tuple[dict[str, str], ...] = ()
+    structural_validation = "not_evaluated"
+    source_records: tuple[WorkflowNodeRecord, ...] = ()
+    family_check_passed = False
+
+    if target_load is not None:
+        structural_validation = "fail"
+        source_records = _selected_source_records(selected_slice)
+        source_families = _detect_record_families(
+            source_records,
+            selected_slice.source_class_type,
+            selected_slice.source_workflow_path,
+            selected_slice.python_path,
+        )
+        target_families = (
+            _detect_record_families(target_load.nodes, str(target_load.raw or ""))
+            if target_load.ok else set()
+        )
+        family_check_passed = (
+            bool(source_families)
+            and bool(target_families)
+            and bool(source_families & target_families)
+        )
+    candidate_graph: dict[str, Any] | None = None
+    if target_load is not None and target_load.ok and source_records and family_check_passed:
+        anchor_bindings = _build_anchor_bindings(
+            selected_slice=selected_slice,
+            source_records=source_records,
+            target_records=target_load.nodes,
+        )
+        if anchor_bindings:
+            structural_validation = "pass"
+            candidate_graph = _build_candidate_graph(
+                target_graph=graph,
+                source_records=source_records,
+                anchor_bindings=anchor_bindings,
+            )
+
     return PrecedentAdaptationPlan(
-        selected_slice=slices[0],
-        anchor_bindings=(),
+        selected_slice=selected_slice,
+        anchor_bindings=anchor_bindings,
         required_new_nodes=(),
         required_rewires=(),
         edit_ops=(),
-        candidate_graph=None,
-        structural_validation="not_evaluated",
+        candidate_graph=candidate_graph,
+        structural_validation=structural_validation,
         semantic_validation="not_evaluated",
     )
 
@@ -726,6 +1147,7 @@ def research(
     query: str,
     *,
     task: str | None = None,
+    graph: dict[str, Any] | None = None,
     hivemind_client: HivemindClient | None | object = _USE_DEFAULT,
     hivemind_timeout: float = _DEFAULT_HIVEMIND_TIMEOUT,
     web_search_client: WebSearchClient | None | object = _USE_DEFAULT,
@@ -845,11 +1267,11 @@ def research(
     # ── Build structured precedent output (SD2) ──────────────────────────
     # Graph is not directly available in research(), so inspection and
     # adaptation plan are left empty.  The executor wires graph inspection
-    # into the research phase externally (see core._run_research).
+    # Thread the attached target graph into adaptation planning (T14).
     precedent_slices = _build_precedent_slices(tuple(sources))
     adaptation_plan = _build_adaptation_plan(
         query=query,
-        graph=None,
+        graph=graph,
         inspection=None,
         slices=precedent_slices,
     )

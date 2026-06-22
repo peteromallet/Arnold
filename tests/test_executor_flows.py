@@ -24,10 +24,6 @@ import pytest
 from vibecomfy.executor.contracts import (
     ClassifyDecision,
     ExecutorRequest,
-    ExecutorResult,
-    ImplementationResult,
-    Report,
-    ResearchResult,
 )
 from vibecomfy.executor import core as executor_core
 from vibecomfy.executor.core import run_executor
@@ -109,6 +105,7 @@ def _fake_classify_respond_only(
     model: str = "",
     has_graph: bool = False,
     graph_summary: str | None = None,
+    **kwargs: Any,
 ) -> ClassifyDecision:
     """Return a respond-only classification (no research, no edit)."""
     return ClassifyDecision.respond_only(
@@ -123,6 +120,7 @@ def _fake_classify_research_only(
     model: str = "",
     has_graph: bool = False,
     graph_summary: str | None = None,
+    **kwargs: Any,
 ) -> ClassifyDecision:
     """Return a research-only classification (research, no edit)."""
     return ClassifyDecision(
@@ -141,6 +139,7 @@ def _fake_classify_simple_edit(
     model: str = "",
     has_graph: bool = False,
     graph_summary: str | None = None,
+    **kwargs: Any,
 ) -> ClassifyDecision:
     """Return a simple edit classification (implement, no research)."""
     return ClassifyDecision.edit(
@@ -157,6 +156,7 @@ def _fake_classify_graph_describe(
     model: str = "",
     has_graph: bool = False,
     graph_summary: str | None = None,
+    **kwargs: Any,
 ) -> ClassifyDecision:
     """Return a graph-describe classification (research + implement)."""
     return ClassifyDecision.edit(
@@ -174,6 +174,7 @@ def _fake_reply_respond_only(
     plan: ClassifyDecision | None = None,
     research_summary: str | None = None,
     implementation_message: str | None = None,
+    **kwargs: Any,
 ) -> str:
     """Return a respond-only fake reply."""
     return "I'm here to help with your ComfyUI workflow. What would you like to do?"
@@ -187,6 +188,7 @@ def _fake_reply_research_only(
     plan: ClassifyDecision | None = None,
     research_summary: str | None = None,
     implementation_message: str | None = None,
+    **kwargs: Any,
 ) -> str:
     """Return a research-only fake reply."""
     return "Based on my research, here are the relevant node types: KSampler, VAEDecode, CLIPTextEncode."
@@ -200,6 +202,7 @@ def _fake_reply_hotshot(
     plan: ClassifyDecision | None = None,
     research_summary: str | None = None,
     implementation_message: str | None = None,
+    **kwargs: Any,
 ) -> str:
     """Return a fake reply referencing Hotshot XL research."""
     return "Hotshot XL is an SDXL-based text-to-video model. You can insert it before SVD-XT as a frame generator."
@@ -213,6 +216,7 @@ def _fake_reply_edit(
     plan: ClassifyDecision | None = None,
     research_summary: str | None = None,
     implementation_message: str | None = None,
+    **kwargs: Any,
 ) -> str:
     """Return an edit fake reply."""
     return "The graph has been updated with the requested changes."
@@ -226,6 +230,7 @@ def _fake_reply_graph_describe(
     plan: ClassifyDecision | None = None,
     research_summary: str | None = None,
     implementation_message: str | None = None,
+    **kwargs: Any,
 ) -> str:
     """Return a graph-describe fake reply."""
     return "I've analyzed your graph and applied the node template. The graph now has a KSampler connected to VAEDecode."
@@ -249,6 +254,7 @@ def _fake_classify_explain_graph(
     model: str = "",
     has_graph: bool = False,
     graph_summary: str | None = None,
+    **kwargs: Any,
 ) -> ClassifyDecision:
     """Return an explain-graph classification (implement only, no research)."""
     return ClassifyDecision(
@@ -269,6 +275,7 @@ def _fake_reply_explain_graph(
     plan: ClassifyDecision | None = None,
     research_summary: str | None = None,
     implementation_message: str | None = None,
+    **kwargs: Any,
 ) -> str:
     """Return a fake reply for an explain-graph request."""
     return "This workflow loads a checkpoint, encodes prompts, samples a latent, decodes it, and saves the image."
@@ -1170,6 +1177,7 @@ def _fake_classify_revise(
     model: str = "",
     has_graph: bool = False,
     graph_summary: str | None = None,
+    **kwargs: Any,
 ) -> ClassifyDecision:
     """Return a revise classification (implement only, no research)."""
     return ClassifyDecision(
@@ -1191,6 +1199,7 @@ def _fake_classify_inspect(
     model: str = "",
     has_graph: bool = False,
     graph_summary: str | None = None,
+    **kwargs: Any,
 ) -> ClassifyDecision:
     """Return an inspect classification (research only, no implement)."""
     return ClassifyDecision(
@@ -1212,6 +1221,7 @@ def _fake_classify_clarify(
     model: str = "",
     has_graph: bool = False,
     graph_summary: str | None = None,
+    **kwargs: Any,
 ) -> ClassifyDecision:
     """Return a clarify classification (no research, no implement)."""
     return ClassifyDecision(
@@ -1233,6 +1243,7 @@ def _fake_classify_adapt(
     model: str = "",
     has_graph: bool = False,
     graph_summary: str | None = None,
+    **kwargs: Any,
 ) -> ClassifyDecision:
     """Return a adapt classification (research + implement)."""
     return ClassifyDecision(
@@ -1256,6 +1267,7 @@ def _fake_reply_route_gate(
     research_summary: str | None = None,
     implementation_message: str | None = None,
     graph_summary: str | None = None,
+    **kwargs: Any,
 ) -> str:
     """Fake reply for route gate tests."""
     return "Task completed."
@@ -3097,3 +3109,201 @@ class TestPrecedentAdaptationPromptAssembly:
 # ── Precedent payload integrity tests (T14) ──────────────────────────────────
 # Verify adapt payloads carry both legacy and structured research
 # data, while revise payloads carry neither.
+
+
+# ── Adapt target-graph integration tests (T15) ───────────────────────────────
+# Verify adapt flows thread the attached target graph into adaptation planning
+# and keep non-adapt flows unchanged.
+
+
+class TestAdaptGraphIntegration:
+    """Executor-level coverage for adapt-with-graph and edge cases."""
+
+    _WAN_SOURCE_PATH = (
+        "ready_templates/sources/custom_nodes/wanvideo_wrapper/kijai/wan13b_control_lora.json"
+    )
+
+    def _wan_target_graph(self) -> dict[str, object]:
+        return {
+            "1": {
+                "class_type": "WanVideoModelLoader",
+                "inputs": {
+                    "model": "WanVideo\\wan2.1_t2v_1.3B_fp16.safetensors",
+                    "lora": ["2", 0],
+                },
+            },
+            "2": {
+                "class_type": "WanVideoLoraSelect",
+                "inputs": {"lora": "WanVid\\wan2.1-control-lora.safetensors", "strength": 1},
+            },
+            "3": {
+                "class_type": "WanVideoSampler",
+                "inputs": {"model": ["1", 0], "latent_image": ["4", 0]},
+            },
+        }
+
+    def _ltx_target_graph(self) -> dict[str, object]:
+        return {
+            "1": {
+                "class_type": "LTXVModelLoader",
+                "inputs": {"model": "ltx-video-2b.safetensors", "lora": ["2", 0]},
+            },
+            "2": {
+                "class_type": "LTXVLoraSelect",
+                "inputs": {"lora": "ltx-detail-lora.safetensors", "strength": 1},
+            },
+            "3": {
+                "class_type": "LTXVSampler",
+                "inputs": {"model": ["1", 0], "latent_image": ["4", 0]},
+            },
+        }
+
+    def _corpus_with_wan_source(self) -> list[Any]:
+        from vibecomfy.search.index import SearchEntry
+
+        return [
+            SearchEntry(
+                class_type="video/wan_control_lora",
+                description="Wan control LoRA workflow",
+                pack="wanvideo",
+                source="ready_template",
+                path="ready_templates/video/wan_control_lora.py",
+                source_workflow_path=self._WAN_SOURCE_PATH,
+                source_workflow_available=True,
+                source_workflow_parseable=True,
+                adapt_pattern_keys=("lora_chain",),
+            ),
+        ]
+
+    @mock.patch("vibecomfy.executor.core.run_classify_turn", side_effect=_fake_classify_adapt)
+    @mock.patch("vibecomfy.executor.core.run_reply_turn", side_effect=_fake_reply_route_gate)
+    @mock.patch("vibecomfy.executor.core.handle_agent_edit", side_effect=_fake_handle_agent_edit)
+    @mock.patch("vibecomfy.executor.research.build_search_corpus")
+    def test_adapt_with_compatible_graph_produces_pass_candidate(
+        self,
+        mock_corpus: mock.MagicMock,
+        mock_edit: mock.MagicMock,
+        mock_reply: mock.MagicMock,
+        mock_classify: mock.MagicMock,
+        profile_dir: Path,
+    ) -> None:
+        """adapt + Wan-compatible target graph → structural pass + candidate_graph."""
+        mock_corpus.return_value = self._corpus_with_wan_source()
+
+        request = ExecutorRequest(
+            query="add Wan LoRA chain",
+            graph=self._wan_target_graph(),
+            profile="default",
+        )
+        result = run_executor(request)
+
+        assert result.ok is True
+        payload = mock_edit.call_args[0][0]
+        plan = payload["adaptation_plan"]
+        assert plan["structural_validation"] == "pass"
+        assert plan["candidate_graph"] is not None
+        assert "1" in plan["candidate_graph"]
+
+    @mock.patch("vibecomfy.executor.core.run_classify_turn", side_effect=_fake_classify_adapt)
+    @mock.patch("vibecomfy.executor.core.run_reply_turn", side_effect=_fake_reply_route_gate)
+    @mock.patch("vibecomfy.executor.core.handle_agent_edit", side_effect=_fake_handle_agent_edit)
+    @mock.patch("vibecomfy.executor.research.build_search_corpus")
+    def test_adapt_without_graph_does_not_build_candidate(
+        self,
+        mock_corpus: mock.MagicMock,
+        mock_edit: mock.MagicMock,
+        mock_reply: mock.MagicMock,
+        mock_classify: mock.MagicMock,
+        profile_dir: Path,
+    ) -> None:
+        """adapt with no target graph still produces a plan but no candidate."""
+        mock_corpus.return_value = self._corpus_with_wan_source()
+
+        request = ExecutorRequest(
+            query="add Wan LoRA chain",
+            graph=None,
+            profile="default",
+        )
+        result = run_executor(request)
+
+        assert result.ok is True
+        # No graph means the implement phase is skipped without calling the
+        # edit engine; the adaptation plan still exists on the research report.
+        mock_edit.assert_not_called()
+        assert result.report.research is not None
+        assert result.report.research.adaptation_plan is not None
+        assert result.report.research.adaptation_plan.structural_validation == "not_evaluated"
+        assert result.report.research.adaptation_plan.candidate_graph is None
+
+    @mock.patch("vibecomfy.executor.core.run_classify_turn", side_effect=_fake_classify_adapt)
+    @mock.patch("vibecomfy.executor.core.run_reply_turn", side_effect=_fake_reply_route_gate)
+    @mock.patch("vibecomfy.executor.core.handle_agent_edit", side_effect=_fake_handle_agent_edit)
+    @mock.patch("vibecomfy.executor.research.build_search_corpus")
+    def test_adapt_incompatible_family_fails_without_candidate(
+        self,
+        mock_corpus: mock.MagicMock,
+        mock_edit: mock.MagicMock,
+        mock_reply: mock.MagicMock,
+        mock_classify: mock.MagicMock,
+        profile_dir: Path,
+    ) -> None:
+        """adapt + cross-family target graph (Wan source, LTX target) → fail, no candidate."""
+        mock_corpus.return_value = self._corpus_with_wan_source()
+
+        request = ExecutorRequest(
+            query="add Wan LoRA chain",
+            graph=self._ltx_target_graph(),
+            profile="default",
+        )
+        result = run_executor(request)
+
+        assert result.ok is True
+        payload = mock_edit.call_args[0][0]
+        plan = payload["adaptation_plan"]
+        assert plan["structural_validation"] == "fail"
+        assert "candidate_graph" not in plan
+
+    @mock.patch("vibecomfy.executor.core.run_classify_turn", side_effect=_fake_classify_adapt)
+    @mock.patch("vibecomfy.executor.core.run_reply_turn", side_effect=_fake_reply_route_gate)
+    @mock.patch("vibecomfy.executor.core.handle_agent_edit", side_effect=_fake_handle_agent_edit)
+    @mock.patch("vibecomfy.executor.research.build_search_corpus")
+    def test_adapt_unsupported_source_format_fails_without_candidate(
+        self,
+        mock_corpus: mock.MagicMock,
+        mock_edit: mock.MagicMock,
+        mock_reply: mock.MagicMock,
+        mock_classify: mock.MagicMock,
+        profile_dir: Path,
+        tmp_path: Path,
+    ) -> None:
+        """adapt with an unsupported source workflow format produces no candidate."""
+        from vibecomfy.search.index import SearchEntry
+
+        bad_path = tmp_path / "not_a_workflow.txt"
+        bad_path.write_text("not json", encoding="utf-8")
+
+        mock_corpus.return_value = [
+            SearchEntry(
+                class_type="video/wan_control_lora",
+                description="Wan control LoRA workflow",
+                pack="wanvideo",
+                source="ready_template",
+                path="ready_templates/video/wan_control_lora.py",
+                source_workflow_path=str(bad_path),
+                source_workflow_available=True,
+                source_workflow_parseable=False,
+            ),
+        ]
+
+        request = ExecutorRequest(
+            query="add Wan LoRA chain",
+            graph=self._wan_target_graph(),
+            profile="default",
+        )
+        result = run_executor(request)
+
+        assert result.ok is True
+        payload = mock_edit.call_args[0][0]
+        plan = payload["adaptation_plan"]
+        assert plan["structural_validation"] == "fail"
+        assert "candidate_graph" not in plan
