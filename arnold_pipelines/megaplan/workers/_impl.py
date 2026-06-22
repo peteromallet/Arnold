@@ -3443,21 +3443,18 @@ def run_codex_prep_step(
 def _is_agent_available(agent: str) -> bool:
     """Check if an agent is available (CLI binary or vendored for hermes)."""
     if agent == "hermes":
-        # The legacy filesystem probe pointed at megaplan/workers/agent/, which
-        # has never existed — run_agent.py lives one directory up at
-        # megaplan/agent/. The probe therefore always returned False on every
-        # install, and the downstream install guidance fired even when the
-        # agent runtime was fully present.
-        # Importing megaplan.agent triggers the sys.path side effect at
-        # megaplan/agent/__init__.py that makes run_agent / hermes_state
-        # resolvable; we probe both so a partial install also fails closed.
+        # The vendored run_agent.py and hermes_state.py now live under
+        # ``arnold/agent/``. Import ``arnold.agent`` to locate the directory,
+        # place it on ``sys.path`` so the legacy absolute imports resolve, then
+        # probe the two required modules so a partial install fails closed.
         try:
-            import arnold.pipelines.megaplan.agent as megaplan_agent
             import importlib
             import sys
             from pathlib import Path
 
-            agent_dir = str(Path(megaplan_agent.__file__).resolve().parent)
+            import arnold.agent as _agent_pkg
+
+            agent_dir = str(Path(_agent_pkg.__file__).resolve().parent)
             if agent_dir not in sys.path:
                 sys.path.insert(0, agent_dir)
 

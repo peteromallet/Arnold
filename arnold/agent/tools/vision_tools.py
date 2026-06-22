@@ -1,5 +1,8 @@
-import sys as _sys
-import importlib as _importlib
-_real = _importlib.import_module("arnold.pipelines.megaplan.agent.tools.vision_tools")
-globals().update(_real.__dict__)
-_sys.modules[__name__] = _real
+"""M6 stub: legacy tool removed in clean-break purge."""
+from __future__ import annotations
+
+def vision_analyze_tool(*args, **kwargs):
+    """Legacy vision analysis stub (M6)."""
+    raise NotImplementedError("vision_analyze_tool was removed in M6")
+
+__all__ = ['vision_analyze_tool']

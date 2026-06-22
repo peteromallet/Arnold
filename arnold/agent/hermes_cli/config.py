@@ -45,12 +45,13 @@ import yaml
 
 
 def _load_legacy_colors_module():
-    return importlib.import_module("arnold.pipelines.megaplan.agent.hermes_cli.colors")
+    from arnold.agent.hermes_cli import colors
+    return colors
 
 
 def _load_legacy_default_soul_md() -> str:
-    module = importlib.import_module("arnold.pipelines.megaplan.agent.hermes_cli.default_soul")
-    return module.DEFAULT_SOUL_MD
+    from arnold.agent.hermes_cli import default_soul
+    return default_soul.DEFAULT_SOUL_MD
 
 
 class _LazyColorsProxy:
@@ -83,7 +84,7 @@ def get_env_path() -> Path:
 
 def get_project_root() -> Path:
     """Get the project installation directory."""
-    return Path(__file__).resolve().parents[2] / "pipelines" / "megaplan" / "agent"
+    return Path(__file__).resolve().parents[1] / "agent"
 
 def _secure_dir(path):
     """Set directory to owner-only access (0700). No-op on Windows."""

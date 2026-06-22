@@ -267,29 +267,6 @@ class TestCoercion:
 
 
 # ---------------------------------------------------------------------------
-# PortBindError — from Megaplan bridge
-# ---------------------------------------------------------------------------
-
-
-class TestPortBindError:
-    def test_port_bind_error_creation(self) -> None:
-        from arnold.pipelines.megaplan._pipeline.contracts import PortBindError
-
-        err = PortBindError("step-1", "consume-x")
-        assert err.step_id == "step-1"
-        assert err.consume_name == "consume-x"
-        assert "step-1" in str(err)
-        assert "consume-x" in str(err)
-        assert isinstance(err, RuntimeError)
-
-    def test_port_bind_error_with_detail(self) -> None:
-        from arnold.pipelines.megaplan._pipeline.contracts import PortBindError
-
-        err = PortBindError("s", "c", detail="type mismatch")
-        assert "type mismatch" in str(err)
-
-
-# ---------------------------------------------------------------------------
 # Boundary — no Megaplan imports in Arnold contracts
 # ---------------------------------------------------------------------------
 

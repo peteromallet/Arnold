@@ -25,33 +25,60 @@
 #    Adapter modules retain historical package-name strings for backwards
 #    compatibility with vendored agent runtimes.
 #
-# 7. semantic-coupling arnold.agent.adapters.* / arnold.agent.agent.* /
-#    arnold.agent.hermes_cli.config / arnold.agent.tools.*
+# 7. semantic-coupling arnold.agent.adapters._oneshot /
+#    arnold.agent.agent.anthropic_adapter / arnold.agent.agent.auxiliary_client /
+#    arnold.agent.agent.context_compressor / arnold.agent.agent.copilot_acp_client /
+#    arnold.agent.agent.display / arnold.agent.agent.model_metadata /
+#    arnold.agent.agent.prompt_builder / arnold.agent.agent.prompt_caching /
+#    arnold.agent.agent.redact / arnold.agent.agent.trajectory /
+#    arnold.agent.hermes_cli.config / arnold.agent.run_agent
 #    Agent runtime modules are intentionally coupled to product model/agent
 #    semantics.  They are not part of the neutral workflow/execution/kernel
-#    surfaces.
+#    surfaces.  Owner: agent-runtime.  Expiry: M7 agent-runtime extraction.
 #
 # 8. semantic-coupling arnold.conformance.checks
 #    Conformance checks reference product vocabulary while the extraction is
 #    incomplete.
 #
-# 9. semantic-coupling arnold.pipeline.step_io_policy
-#    Policy helpers reference PlanState and phase-name vocabulary pending
-#    decontamination or relocation.
+# 9. semantic-coupling arnold.conformance.workflow_manifest_runtime
+#    Workflow manifest runtime conformance module enumerates forbidden product
+#    prefixes as part of its validation surface.
 #
-# 10. semantic-coupling arnold.supervisor.outcomes
+# 10. semantic-coupling arnold.pipeline.step_io_policy
+#     Policy helpers reference PlanState and phase-name vocabulary pending
+#     decontamination or relocation.
+#
+# 11. semantic-coupling arnold.supervisor.outcomes
 #     Same rationale as (4).
 #
-# 11. package-name-staleness arnold.agent.agent.* / arnold.agent.hermes_cli.auth /
-#     arnold.agent.hermes_cli.config / arnold.agent.hermes_cli.models /
-#     arnold.agent.run_agent / arnold.agent.tools.*
-#     Historical package-name strings retained for agent runtime compatibility.
+# 12. semantic-coupling arnold.workflow.validation
+#     Workflow validation module enumerates forbidden product imports as part of
+#     its validation surface.
 #
-# 12. package-name-staleness arnold.conformance.checks
+# 13. package-name-staleness arnold.agent.adapters._oneshot /
+#     arnold.agent.agent.anthropic_adapter / arnold.agent.agent.auxiliary_client /
+#     arnold.agent.agent.context_compressor / arnold.agent.agent.copilot_acp_client /
+#     arnold.agent.agent.display / arnold.agent.agent.model_metadata /
+#     arnold.agent.agent.prompt_builder / arnold.agent.agent.prompt_caching /
+#     arnold.agent.agent.redact / arnold.agent.agent.trajectory /
+#     arnold.agent.hermes_cli.auth / arnold.agent.hermes_cli.config /
+#     arnold.agent.hermes_cli.models / arnold.agent.run_agent
+#     Historical package-name strings retained for agent runtime compatibility.
+#     Owner: agent-runtime.  Expiry: M7 agent-runtime extraction.
+#
+# 14. package-name-staleness arnold.conformance.checks
 #     Conformance checks reference historical package names while extraction is
 #     incomplete.
 #
-# 13. never-port-artifacts .megaplan/plans/**
+# 15. package-name-staleness arnold.conformance.workflow_manifest_runtime
+#     Workflow manifest runtime conformance module enumerates forbidden product
+#     prefixes as part of its validation surface.
+#
+# 16. package-name-staleness arnold.workflow.validation
+#     Workflow validation module enumerates forbidden product imports as part of
+#     its validation surface.
+#
+# 17. never-port-artifacts .megaplan/plans/**
 #     Plans are local working artifacts, never packaged.
 #
 # --- End M6 Allowlist Rationales ---
@@ -77,18 +104,9 @@ package-name-staleness arnold.agent.hermes_cli.auth
 package-name-staleness arnold.agent.hermes_cli.config
 package-name-staleness arnold.agent.hermes_cli.models
 package-name-staleness arnold.agent.run_agent
-package-name-staleness arnold.agent.tools.browser_tool
-package-name-staleness arnold.agent.tools.checkpoint_manager
-package-name-staleness arnold.agent.tools.clarify_tool
-package-name-staleness arnold.agent.tools.delegate_tool
-package-name-staleness arnold.agent.tools.honcho_tools
-package-name-staleness arnold.agent.tools.interrupt
-package-name-staleness arnold.agent.tools.memory_tool
-package-name-staleness arnold.agent.tools.session_search_tool
-package-name-staleness arnold.agent.tools.terminal_tool
-package-name-staleness arnold.agent.tools.todo_tool
-package-name-staleness arnold.agent.tools.vision_tools
 package-name-staleness arnold.conformance.checks
+package-name-staleness arnold.conformance.workflow_manifest_runtime
+package-name-staleness arnold.workflow.validation
 
 semantic-coupling arnold.agent.adapters._oneshot
 semantic-coupling arnold.agent.agent.anthropic_adapter
@@ -102,19 +120,10 @@ semantic-coupling arnold.agent.agent.prompt_caching
 semantic-coupling arnold.agent.agent.redact
 semantic-coupling arnold.agent.agent.trajectory
 semantic-coupling arnold.agent.hermes_cli.config
-semantic-coupling arnold.agent.tools.browser_tool
-semantic-coupling arnold.agent.tools.checkpoint_manager
-semantic-coupling arnold.agent.tools.clarify_tool
-semantic-coupling arnold.agent.tools.delegate_tool
-semantic-coupling arnold.agent.tools.honcho_tools
-semantic-coupling arnold.agent.tools.interrupt
-semantic-coupling arnold.agent.tools.memory_tool
-semantic-coupling arnold.agent.tools.session_search_tool
-semantic-coupling arnold.agent.tools.terminal_tool
-semantic-coupling arnold.agent.tools.todo_tool
-semantic-coupling arnold.agent.tools.vision_tools
 semantic-coupling arnold.conformance.checks
+semantic-coupling arnold.conformance.workflow_manifest_runtime
 semantic-coupling arnold.pipeline.step_io_policy
 semantic-coupling arnold.supervisor.outcomes
+semantic-coupling arnold.workflow.validation
 
 never-port-artifacts .megaplan/plans/**
