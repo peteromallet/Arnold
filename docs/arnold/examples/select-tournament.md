@@ -5,7 +5,7 @@ Do not edit by hand; run `python scripts/generate_arnold_docs.py --write`.
 Provenance:
 - generator: scripts/generate_arnold_docs.py
 - source_package: arnold_pipelines/megaplan/pipelines/select_tournament.py
-- manifest_hash: sha256:7ae35fda74984a1a98bbcf0461c01be8f319a8241f9a2577dd67823bfe9fbe24
+- manifest_hash: sha256:883cf2b46963466759588306d8855b53bb9ae5fdb77b8572242b2a913d24d0c5
 - generated_at: regenerated on demand (not embedded)
 - m6_disposition: keep
 - policy: regenerate from compiled surviving registries; fail on stale examples.
@@ -21,7 +21,7 @@ Provenance:
 | Manifest and builder | arnold_pipelines/megaplan/pipelines/select_tournament.py|
 | Skill | arnold_pipelines/megaplan/pipelines/select-tournament/SKILL.md|
 | Validation | `arnold workflow check --module arnold_pipelines.megaplan.pipelines.select_tournament:build_pipeline`|
-| Manifest hash | sha256:7ae35fda74984a1a98bbcf0461c01be8f319a8241f9a2577dd67823bfe9fbe24|
+| Manifest hash | sha256:883cf2b46963466759588306d8855b53bb9ae5fdb77b8572242b2a913d24d0c5|
 
 ## Builder Surface
 
@@ -135,7 +135,7 @@ def build_pipeline(
 ```yaml
 edge_count: 2
 id: select-tournament
-manifest_hash: sha256:7ae35fda74984a1a98bbcf0461c01be8f319a8241f9a2577dd67823bfe9fbe24
+manifest_hash: sha256:883cf2b46963466759588306d8855b53bb9ae5fdb77b8572242b2a913d24d0c5
 node_count: 3
 possible_routes:
 - condition_ref: null
