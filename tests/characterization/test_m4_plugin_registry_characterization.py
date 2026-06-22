@@ -26,10 +26,8 @@ from typing import Any
 
 import pytest
 
-from arnold.pipelines.megaplan._pipeline.registry import (
-    _package_prefix_for_module_file,
-    PipelineRegistry,
-)
+from arnold_pipelines.megaplan.registry import PipelineRegistry
+from arnold_pipelines.megaplan.runtime.discovery import _package_prefix_for_module_file
 
 
 # ── (f) Package prefix classification ──────────────────────────────────
@@ -56,25 +54,31 @@ def test_package_prefix_for_out_of_tree_path() -> None:
 # ── Helpers for planting pipeline modules ──────────────────────────────
 
 _PIPELINE_BODY = """\
-from arnold.pipelines.megaplan._pipeline.types import Pipeline, Stage, Edge, \
-StepContext, StepResult, Step
-from dataclasses import dataclass
+from arnold.workflow.dsl import Pipeline, Route, Step
+from arnold.manifest import WorkflowPolicy
 
 description = {description!r}
 default_profile = {default_profile!r}
 supported_modes = {supported_modes!r}
 
-@dataclass
-class _NoopStep(Step):
-    name: str = 'noop'
-    def run(self, ctx: StepContext) -> StepResult:
-        return StepResult(next='halt', state_patch={state_patch!r})
-
 def build_pipeline() -> Pipeline:
+    noop = Step(
+        id="noop",
+        kind="megaplan:noop",
+        policy=WorkflowPolicy(),
+        metadata={{}},
+    )
+    halt = Step(
+        id="halt",
+        kind="megaplan:halt",
+        policy=WorkflowPolicy(),
+        metadata={{"terminal": True}},
+    )
     return Pipeline(
-        stages={{'noop': Stage(name='noop', step=_NoopStep(),
-                              edges=(Edge(label='halt', target='halt'),))}},
-        entry='noop',
+        id="characterization-test-plugin",
+        version="0.1",
+        steps=(noop, halt),
+        routes=(Route(id="noop:halt", source="noop", target="halt", label="default"),),
     )
 """
 
@@ -225,7 +229,7 @@ def test_arnold_pipeline_wins_over_megaplan_duplicate(
 
 def test_arnold_scan_root_appears_before_megaplan_plugin_in_scan_roots() -> None:
     """_SCAN_ROOTS lists arnold/pipelines before the Megaplan plugin pipelines."""
-    from arnold.pipelines.megaplan._pipeline.registry import _SCAN_ROOTS
+    from arnold_pipelines.megaplan.runtime.discovery import _SCAN_ROOTS
     prefixes_in_order = [pkg_prefix for _, pkg_prefix in _SCAN_ROOTS if pkg_prefix is not None]
     arnold_idx = prefixes_in_order.index("arnold.pipelines")
     megaplan_idx = prefixes_in_order.index("arnold.pipelines.megaplan.pipelines")
@@ -240,7 +244,7 @@ def test_arnold_scan_root_appears_before_megaplan_plugin_in_scan_roots() -> None
 
 def test_legacy_planning_alias_still_resolves() -> None:
     """The 'planning' → 'megaplan' alias remains in LEGACY_PIPELINE_ALIASES."""
-    from arnold.pipelines.megaplan._pipeline.registry import LEGACY_PIPELINE_ALIASES, canonical_pipeline_name
+    from arnold_pipelines.megaplan.runtime.discovery import LEGACY_PIPELINE_ALIASES, canonical_pipeline_name
     assert "planning" in LEGACY_PIPELINE_ALIASES
     assert LEGACY_PIPELINE_ALIASES["planning"] == "megaplan"
     assert canonical_pipeline_name("planning") == "megaplan"

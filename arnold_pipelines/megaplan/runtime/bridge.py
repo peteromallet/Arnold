@@ -1,11 +1,14 @@
-"""Bridge adapter: megaplan pipeline executor → neutral Arnold executor.
+"""Bridge adapter: megaplan pipeline executor -> neutral Arnold executor.
+
+Rehomed from ``arnold_pipelines.megaplan._pipeline._bridge`` during the M4
+burn-down (T4).
 
 Routes ``demo_judges`` through :func:`arnold.pipeline.runner.run_pipeline`
 (canonical neutral walk-loop) while leaving all other pipelines on the
 legacy :func:`arnold_pipelines.megaplan._pipeline.executor.run_pipeline`
 unchanged.
 
-M1 allowlist: ``_BRIDGED_PIPELINES = {'demo_judges'}`` — hard cap for M1.
+M1 allowlist: ``_BRIDGED_PIPELINES = {'demo_judges'}`` -- hard cap for M1.
 Additions require a dedicated follow-on milestone after bridge-compatibility
 is verified for the target pipeline.
 
@@ -14,8 +17,8 @@ Design notes
 *SD2*: :func:`_translate_stage` and :func:`_translate_parallel_stage` use
   keyword arguments for neutral ``Stage`` / ``ParallelStage`` construction.
   The megaplan ``Stage`` places ``reads`` / ``writes`` before
-  ``decision_vocabulary`` / ``override_vocabulary`` (positions 3–4 vs 10–11),
-  while the neutral ``Stage`` reverses that order (positions 3–4 vs 5–6).
+  ``decision_vocabulary`` / ``override_vocabulary`` (positions 3-4 vs 10-11),
+  while the neutral ``Stage`` reverses that order (positions 3-4 vs 5-6).
   Positional construction would silently misalign these fields; keyword
   construction is mandatory.
 
@@ -52,7 +55,7 @@ class _BridgeStep:
     neutral context's ``hook_extensions`` dict (keyed ``_mp_*``) and
     reconstructed here at dispatch time.
 
-    ``_inner_step`` exposes the original megaplan step for safety checks —
+    ``_inner_step`` exposes the original megaplan step for safety checks --
     ``MegaplanExecutorHooks.is_parallel_safe`` unwraps it to test for
     ``InProcessHandlerStep``.
     """
@@ -63,8 +66,8 @@ class _BridgeStep:
         self.kind: str = inner_step.kind
 
     def run(self, ctx: Any) -> Any:
-        from arnold_pipelines.megaplan._pipeline.types import StepContext as MpStepContext
-        from arnold_pipelines.megaplan._pipeline.envelope import EMPTY_ENVELOPE
+        from arnold.runtime.envelope import EMPTY_ENVELOPE
+        from arnold_pipelines.megaplan.step_types import StepContext as MpStepContext
 
         hook_ext: Mapping[str, Any] = ctx.hook_extensions if ctx.hook_extensions else {}
         raw_inputs: dict = dict(hook_ext.get("_mp_inputs") or {})
@@ -121,11 +124,9 @@ def _mp_to_neutral_result(mp_result: Any) -> Any:
 
 def _neutral_to_mp_result(neutral_result: Any, mp_envelope: Any) -> Any:
     """Convert a neutral StepResult to a megaplan StepResult (for join wrappers)."""
-    from arnold_pipelines.megaplan._pipeline.types import (
-        PipelineVerdict as MpVerdict,
-        StepResult as MpResult,
-    )
-    from arnold_pipelines.megaplan._pipeline.envelope import EMPTY_ENVELOPE
+    from arnold.pipeline.types import PipelineVerdict as MpVerdict
+    from arnold.runtime.envelope import EMPTY_ENVELOPE
+    from arnold_pipelines.megaplan.step_types import StepResult as MpResult
 
     mp_verdict = None
     if neutral_result.verdict is not None:
@@ -170,9 +171,9 @@ def _translate_stage(mp_stage: Any) -> Any:
     """Translate a megaplan Stage to a neutral Stage.
 
     Keyword-only construction (SD2): megaplan ``Stage`` field order has
-    ``reads`` / ``writes`` at positions 3–4 and ``decision_vocabulary`` /
-    ``override_vocabulary`` at 10–11.  Neutral ``Stage`` reverses positions
-    3–4 (``decision_vocabulary`` / ``override_vocabulary`` first).  A
+    ``reads`` / ``writes`` at positions 3-4 and ``decision_vocabulary`` /
+    ``override_vocabulary`` at 10-11.  Neutral ``Stage`` reverses positions
+    3-4 (``decision_vocabulary`` / ``override_vocabulary`` first).  A
     positional call would silently misalign these fields.
     """
     from arnold.pipeline.types import Stage as NeutralStage
@@ -204,7 +205,7 @@ def _translate_parallel_stage(mp_ps: Any) -> Any:
     the underlying megaplan join sees only megaplan types throughout.
     """
     from arnold.pipeline.types import ParallelStage as NeutralParallelStage
-    from arnold_pipelines.megaplan._pipeline.envelope import EMPTY_ENVELOPE
+    from arnold.runtime.envelope import EMPTY_ENVELOPE
 
     mp_join = mp_ps.join
 
@@ -213,7 +214,7 @@ def _translate_parallel_stage(mp_ps: Any) -> Any:
         mp_env = hook_ext.get("_mp_envelope") or EMPTY_ENVELOPE
         mp_results = [_neutral_to_mp_result(r, mp_env) for r in neutral_results]
 
-        from arnold_pipelines.megaplan._pipeline.types import StepContext as MpStepContext
+        from arnold_pipelines.megaplan.step_types import StepContext as MpStepContext
 
         raw_inputs: dict = dict(hook_ext.get("_mp_inputs") or {})
         mp_inputs: dict[str, Any] = {
@@ -251,8 +252,16 @@ def _translate_parallel_stage(mp_ps: Any) -> Any:
 
 def _translate_pipeline(mp_pipeline: Any) -> Any:
     """Convert a megaplan Pipeline to a neutral Pipeline."""
+    from arnold.pipeline.types import ParallelStage as NeutralParallelStage
     from arnold.pipeline.types import Pipeline as NeutralPipeline
-    from arnold_pipelines.megaplan._pipeline.types import ParallelStage as MpParallelStage
+    from arnold.pipeline.types import Stage as NeutralStage
+    from arnold_pipelines.megaplan.step_types import ParallelStage as MpParallelStage
+
+    if isinstance(mp_pipeline, NeutralPipeline) and all(
+        isinstance(stage, (NeutralStage, NeutralParallelStage))
+        for stage in mp_pipeline.stages.values()
+    ):
+        return mp_pipeline
 
     neutral_stages: dict = {}
     for name, stage in mp_pipeline.stages.items():
@@ -372,7 +381,7 @@ class MegaplanExecutorHooks:
     def is_parallel_safe(self, step: Any) -> bool:
         inner = getattr(step, "_inner_step", step)
         try:
-            from arnold_pipelines.megaplan.stages.inprocess_step import InProcessHandlerStep
+            from arnold_pipelines.megaplan.runtime.inprocess_step import InProcessHandlerStep
 
             return not isinstance(inner, InProcessHandlerStep)
         except ImportError:
@@ -477,12 +486,7 @@ def run_pipeline_dispatch(
     artifact_root: Path,
     pipeline_key: str,
 ) -> dict:
-    """Route a pipeline to the bridged or legacy executor based on the allowlist.
-
-    Pipelines in :data:`_BRIDGED_PIPELINES` are executed via the neutral
-    Arnold walk-loop through :func:`run_pipeline_bridged`.  All other
-    pipelines fall through to the legacy megaplan executor unchanged so
-    callers outside the allowlist observe no behavioral difference.
+    """Route a pipeline through the surviving neutral Arnold executor.
 
     Parameters
     ----------
@@ -494,18 +498,14 @@ def run_pipeline_dispatch(
         Root directory for pipeline artifacts.
     pipeline_key:
         The registry name for the pipeline (SD1: derived at the CLI call site,
-        not from ``Pipeline`` — which has no ``name`` field).
+        not from ``Pipeline`` -- which has no ``name`` field).
 
-    SD3 — allowlist contract
+    SD3 -- allowlist contract
     ------------------------
     ``_BRIDGED_PIPELINES = {'demo_judges'}`` is the M1 hard cap.  Any
     addition requires explicit verification that the target pipeline is
     bridge-compatible (no ``_materialize_stage_step`` dependency, no
     ``InProcessHandlerStep`` in a ``ParallelStage``, etc.).
     """
-    if pipeline_key in _BRIDGED_PIPELINES:
-        return run_pipeline_bridged(pipeline, ctx, artifact_root=artifact_root)
-
-    from arnold_pipelines.megaplan._pipeline.executor import run_pipeline
-
-    return run_pipeline(pipeline, ctx, artifact_root=artifact_root)
+    del pipeline_key
+    return run_pipeline_bridged(pipeline, ctx, artifact_root=artifact_root)
