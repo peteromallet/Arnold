@@ -1,0 +1,211 @@
+"""Compatibility facade for reusable pipeline pattern functions.
+
+Public imports continue to come from :mod:`megaplan._pipeline.patterns`,
+while the implementations now live in concern-specific sibling modules.
+Underscore-prefixed dynamic helpers and classes remain reachable as
+attributes on this facade for de-facto compatibility with tests and
+callers that introspect them.
+"""
+
+from __future__ import annotations
+
+from typing import Any, Iterator
+
+from arnold_pipelines.megaplan._pipeline.pattern_dynamic import (
+    _agreement_ratio,
+    _ConsensusStep,
+    _DynamicFanoutStep,
+    _extract_specs_from_result,
+    _PanelFromArtifactStep,
+    _PairedRoundStep,
+    _read_specs_from_path,
+    _specialize_step,
+    dynamic_fanout,
+    iterate_until_consensus,
+    paired_round,
+    panel_from_artifact,
+)
+from arnold_pipelines.megaplan._pipeline.pattern_joins import majority_vote, weighted_vote
+from arnold_pipelines.megaplan._pipeline.pattern_topology import (
+    alternating_turns,
+    critique_revise_gate_loop,
+    escalate_if,
+    escalate_via_subpipeline,
+    iterate_until,
+    mode_prompts,
+    panel_parallel,
+    phase_zero_gate,
+    subpipeline_call,
+)
+from arnold_pipelines.megaplan._pipeline.pattern_types import JoinFn, PromoteFn  # noqa: F401
+
+
+#: API version for the patterns module (M5a node-library milestone).
+arnold_api_version: str = "0.1.0-m5a"
+
+
+_NODE_REGISTRY: dict[str, dict[str, Any]] = {
+    # -- Types --
+    "PromoteFn": {
+        "tier": "type",
+        "consumes": (),
+        "produces": (),
+        "arnold_api_version": arnold_api_version,
+    },
+    "JoinFn": {
+        "tier": "type",
+        "consumes": (),
+        "produces": (),
+        "arnold_api_version": arnold_api_version,
+    },
+    # -- Gates --
+    "critique_revise_gate_loop": {
+        "tier": "gate",
+        "consumes": ("gated@artifact",),
+        "produces": ("verdict",),
+        "arnold_api_version": arnold_api_version,
+    },
+    "phase_zero_gate": {
+        "tier": "gate",
+        "consumes": ("recommendation",),
+        "produces": ("routing",),
+        "arnold_api_version": arnold_api_version,
+    },
+    # -- Topology --
+    "panel_parallel": {
+        "tier": "topology",
+        "consumes": ("tasks",),
+        "produces": ("results",),
+        "arnold_api_version": arnold_api_version,
+    },
+    "alternating_turns": {
+        "tier": "topology",
+        "consumes": ("conversation",),
+        "produces": ("turn_results",),
+        "arnold_api_version": arnold_api_version,
+    },
+    "subpipeline_call": {
+        "tier": "topology",
+        "consumes": ("state",),
+        "produces": ("resolved",),
+        "arnold_api_version": arnold_api_version,
+    },
+    "iterate_until": {
+        "tier": "topology",
+        "consumes": ("state",),
+        "produces": ("final_state",),
+        "arnold_api_version": arnold_api_version,
+    },
+    "escalate_if": {
+        "tier": "topology",
+        "consumes": ("verdict",),
+        "produces": ("escalation",),
+        "arnold_api_version": arnold_api_version,
+    },
+    "escalate_via_subpipeline": {
+        "tier": "topology",
+        "consumes": ("gated@artifact",),
+        "produces": ("resolved@artifact",),
+        "arnold_api_version": arnold_api_version,
+    },
+    # -- Joins --
+    "majority_vote": {
+        "tier": "join",
+        "consumes": ("panel_output",),
+        "produces": ("verdict",),
+        "arnold_api_version": arnold_api_version,
+    },
+    "weighted_vote": {
+        "tier": "join",
+        "consumes": ("panel_output", "weights"),
+        "produces": ("verdict",),
+        "arnold_api_version": arnold_api_version,
+    },
+    # -- Prompts --
+    "mode_prompts": {
+        "tier": "prompt",
+        "consumes": ("task",),
+        "produces": ("prompt",),
+        "arnold_api_version": arnold_api_version,
+    },
+    # -- Dynamic primitives --
+    "panel_from_artifact": {
+        "tier": "dynamic",
+        "consumes": ("artifact",),
+        "produces": ("panel_specs",),
+        "arnold_api_version": arnold_api_version,
+    },
+    "dynamic_fanout": {
+        "tier": "dynamic",
+        "consumes": ("spec",),
+        "produces": ("fanout_results",),
+        "arnold_api_version": arnold_api_version,
+    },
+    "iterate_until_consensus": {
+        "tier": "dynamic",
+        "consumes": ("state",),
+        "produces": ("consensus",),
+        "arnold_api_version": arnold_api_version,
+    },
+    "paired_round": {
+        "tier": "dynamic",
+        "consumes": ("input",),
+        "produces": ("round_results",),
+        "arnold_api_version": arnold_api_version,
+    },
+    # -- Metadata --
+    "arnold_api_version": {
+        "tier": "meta",
+        "consumes": (),
+        "produces": (),
+        "arnold_api_version": arnold_api_version,
+    },
+    "get_node_metadata": {
+        "tier": "meta",
+        "consumes": (),
+        "produces": (),
+        "arnold_api_version": arnold_api_version,
+    },
+    "iter_node_metadata": {
+        "tier": "meta",
+        "consumes": (),
+        "produces": (),
+        "arnold_api_version": arnold_api_version,
+    },
+}
+
+
+def get_node_metadata(name: str) -> dict[str, Any]:
+    """Return registry metadata for *name*, or raise KeyError if unknown."""
+    return _NODE_REGISTRY[name]
+
+
+def iter_node_metadata() -> Iterator[tuple[str, dict[str, Any]]]:
+    """Yield ``(name, metadata)`` for every registered node in insertion order."""
+    yield from _NODE_REGISTRY.items()
+
+
+__all__ = [
+    "PromoteFn",
+    "JoinFn",
+    "critique_revise_gate_loop",
+    "panel_parallel",
+    "alternating_turns",
+    "subpipeline_call",
+    "mode_prompts",
+    "iterate_until",
+    "escalate_if",
+    "escalate_via_subpipeline",
+    "majority_vote",
+    "phase_zero_gate",
+    # Dynamic primitives (0.23 — pipeline-rationalization sprint, T2).
+    "panel_from_artifact",
+    "dynamic_fanout",
+    "weighted_vote",
+    "iterate_until_consensus",
+    "paired_round",
+    # M5a node-library metadata
+    "arnold_api_version",
+    "get_node_metadata",
+    "iter_node_metadata",
+]
