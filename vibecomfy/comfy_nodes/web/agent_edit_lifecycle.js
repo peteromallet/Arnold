@@ -747,7 +747,7 @@ function _handleClarifyOnlyResponse(panel, payload) {
     dirtySections: STATUS_AND_DEVELOPER_DIRTY_SECTIONS,
     persistSession: panel.state.sessionId || null,
     refreshQueueGuard: true,
-    rehydrateChat: true,
+    rehydrateChat: Boolean(panel.state.sessionId),
     invalidateCandidate: true,
   });
 }
@@ -778,7 +778,7 @@ function _handleNoopResponse(panel, payload) {
     dirtySections: STATUS_AND_DEVELOPER_DIRTY_SECTIONS,
     persistSession: panel.state.sessionId || null,
     refreshQueueGuard: true,
-    rehydrateChat: true,
+    rehydrateChat: Boolean(panel.state.sessionId),
     invalidateCandidate: true,
   });
 }
@@ -846,7 +846,7 @@ function _handleCandidateResponse(panel, payload) {
       queueAllowed: panel.state.queueAllowed,
     },
     refreshQueueGuard: true,
-    rehydrateChat: true,
+    rehydrateChat: Boolean(panel.state.sessionId),
     invalidateCandidate: true,
   });
 }

@@ -5165,15 +5165,6 @@ function buildSyntheticAgentMessage(panel) {
     return alreadyInThread ? null : synthetic;
   }
   const turnId = typeof panel.state.turnId === "string" && panel.state.turnId ? panel.state.turnId : null;
-  if (!turnId) {
-    return null;
-  }
-  const existing = Array.isArray(panel.state.chatMessages)
-    ? panel.state.chatMessages.some((msg) => msg?.role === "agent" && msg?.turn_id === turnId)
-    : false;
-  if (existing) {
-    return null;
-  }
   const text =
     panel.state.message
     || panel.state.clarification?.message
@@ -5184,12 +5175,24 @@ function buildSyntheticAgentMessage(panel) {
   if (!text) {
     return null;
   }
+  const existing = Array.isArray(panel.state.chatMessages)
+    ? panel.state.chatMessages.some((msg) => (
+        msg?.role === "agent"
+        && typeof msg.text === "string"
+        && msg.text === text
+        && (!turnId || msg.turn_id === turnId)
+      ))
+    : false;
+  if (existing) {
+    return null;
+  }
   return {
     role: "agent",
     text,
-    turn_id: turnId,
+    turn_id: turnId || null,
     session_id: panel.state.sessionId || null,
     synthetic: true,
+    local_id: turnId ? undefined : `synthetic-terminal:${panel.state.phase || "unknown"}:${djb2Hash(text)}`,
   };
 }
 

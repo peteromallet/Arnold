@@ -578,6 +578,52 @@ test("OK_CANDIDATE_RESPONSE sets deltaOps to null when all delta_ops entries are
   assert.equal(panel.state.deltaOps, null, "all-invalid entries must produce null");
 });
 
+test("terminal submit responses without session metadata do not trigger chat rehydrate", () => {
+  const clarifyPanel = makePanel({
+    phase: PANEL_STATE.SUBMITTING,
+    chatMessages: [
+      { role: "user", text: "Reply with a token", optimistic: true },
+      { role: "agent", pending_response: true, executor_pending: true },
+    ],
+  });
+  const clarifyObligations = transition(clarifyPanel, "CLARIFY_ONLY_RESPONSE", {
+    result: {
+      message: "Could you clarify the token?",
+      outcome: { kind: "clarify", question: "Could you clarify the token?" },
+    },
+    clarification: { message: "Could you clarify the token?" },
+    message: "Could you clarify the token?",
+  });
+  assert.equal(clarifyPanel.state.phase, PANEL_STATE.CLARIFY);
+  assert.equal(clarifyPanel.state.sessionId, null);
+  assert.equal(clarifyObligations.persistSession, null);
+  assert.equal(clarifyObligations.rehydrateChat, false);
+
+  const noopPanel = makePanel({ phase: PANEL_STATE.SUBMITTING });
+  const noopObligations = transition(noopPanel, "NOOP_RESPONSE", {
+    result: { message: "No change needed." },
+    message: "No change needed.",
+  });
+  assert.equal(noopPanel.state.phase, PANEL_STATE.IDLE);
+  assert.equal(noopObligations.persistSession, null);
+  assert.equal(noopObligations.rehydrateChat, false);
+
+  const candidatePanel = makePanel({ phase: PANEL_STATE.SUBMITTING });
+  const candidateObligations = transition(candidatePanel, "OK_CANDIDATE_RESPONSE", {
+    result: {
+      message: "Candidate ready",
+      canvas_apply_allowed: true,
+      queue_allowed: false,
+    },
+    candidateGraph: { nodes: [] },
+    candidateGraphHash: "hash-no-session",
+    applyEligibility: { applyable: true },
+  });
+  assert.equal(candidatePanel.state.phase, PANEL_STATE.AWAITING_REVIEW);
+  assert.equal(candidateObligations.persistSession, null);
+  assert.equal(candidateObligations.rehydrateChat, false);
+});
+
 test("CHAT_REHYDRATE_RESTORE_LATEST_CANDIDATE extracts deltaOps from baseline.raw", () => {
   const panel = makePanel({ phase: PANEL_STATE.ERROR });
   const deltaOps = [
