@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -22,7 +23,12 @@ from arnold.pipeline import (
 
 
 def discover_registry_files(root: Path | None = None) -> list[Path]:
-    """Find all ``pipeline_ids.json`` files tracked by git under *root*."""
+    """Find all source-controlled ``pipeline_ids.json`` files under *root*.
+
+    Legacy duplicate registries under ``arnold/pipelines/`` that have a
+    corresponding registry under ``arnold_pipelines/`` are excluded from the
+    default aggregate check because they are scheduled for deletion in M6.
+    """
     if root is None:
         root = _repo_root()
     try:
@@ -41,9 +47,32 @@ def discover_registry_files(root: Path | None = None) -> list[Path]:
         if not line:
             continue
         paths.append(root / line)
-    if not paths:
+
+    # Drop legacy duplicates that are shadowed by arnold_pipelines survivors.
+    survivors = {
+        p.relative_to(root / "arnold_pipelines").as_posix()
+        for p in paths
+        if _is_under(p, root / "arnold_pipelines")
+    }
+    filtered: list[Path] = []
+    for path in paths:
+        if _is_under(path, root / "arnold" / "pipelines"):
+            suffix = path.relative_to(root / "arnold" / "pipelines").as_posix()
+            if suffix in survivors:
+                continue
+        filtered.append(path)
+
+    if not filtered:
         return _fallback_glob(root)
-    return sorted(paths)
+    return sorted(filtered)
+
+
+def _is_under(path: Path, parent: Path) -> bool:
+    try:
+        path.relative_to(parent)
+        return True
+    except ValueError:
+        return False
 
 
 def _repo_root() -> Path:
@@ -153,6 +182,117 @@ def check_aggregate_uniqueness(paths: list[Path]) -> list[str]:
     except Exception as exc:
         errors.append(f"aggregate uniqueness check failed: {exc}")
     return errors
+
+
+# ---------------------------------------------------------------------------
+# Hash and survivor-ref validation
+# ---------------------------------------------------------------------------
+
+
+# Survivor registry IDs are taken from the M5 pipeline disposition inventory.
+# These are the only stable IDs that may appear in public registries.
+_SURVIVOR_REGISTRY_IDS: frozenset[str] = frozenset(
+    {
+        "megaplan.core",
+        "megaplan.planning",
+        "megaplan.doc",
+        "megaplan.creative",
+        "megaplan.jokes",
+        "megaplan.live_supervisor",
+        "megaplan.select_tournament",
+        "megaplan.writing_panel_strict",
+        "evidence_pack.verifier",
+    }
+)
+
+_HASH_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
+
+
+def _load_registry_data(path: Path) -> dict[str, Any]:
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def check_registry_hashes(paths: list[Path]) -> list[str]:
+    """Validate hash format for any registry entries that carry a manifest_hash."""
+    errors: list[str] = []
+    for path in paths:
+        data = _load_registry_data(path)
+        pipelines = data.get("pipelines") or []
+        for index, item in enumerate(pipelines, start=1):
+            if not isinstance(item, dict):
+                continue
+            stable_id = item.get("stable_id")
+            if not isinstance(stable_id, str) or not stable_id:
+                errors.append(f"[{path}] row {index}: missing stable_id")
+                continue
+            manifest_hash = item.get("manifest_hash")
+            if manifest_hash is None:
+                # Hashes are not required until Phase 4 regeneration.
+                continue
+            if not isinstance(manifest_hash, str) or not _HASH_RE.match(manifest_hash):
+                errors.append(
+                    f"[{path}] {stable_id!r}: invalid manifest_hash {manifest_hash!r}"
+                )
+    return errors
+
+
+def check_survivor_only_refs(paths: list[Path]) -> list[str]:
+    """Ensure every active stable_id belongs to the survivor set."""
+    errors: list[str] = []
+    for path in paths:
+        data = _load_registry_data(path)
+        pipelines = data.get("pipelines") or []
+        for item in pipelines:
+            if not isinstance(item, dict):
+                continue
+            stable_id = item.get("stable_id")
+            if isinstance(stable_id, str) and stable_id not in _SURVIVOR_REGISTRY_IDS:
+                errors.append(
+                    f"[{path}] stable_id {stable_id!r} is not a survivor registry ID"
+                )
+    return errors
+
+
+def check_composed_rule_refs(root: Path | None = None) -> list[str]:
+    """Validate composed rule pipeline/pattern refs against survivors only."""
+    if root is None:
+        root = _repo_root()
+    errors: list[str] = []
+    composed_dir = root / "arnold_pipelines" / "megaplan" / "data" / "_composed"
+    if not composed_dir.exists():
+        return errors
+    for path in sorted(composed_dir.rglob("*")):
+        if path.suffix not in {".json", ".yaml", ".yml"}:
+            continue
+        try:
+            if path.suffix == ".json":
+                payload = json.loads(path.read_text(encoding="utf-8"))
+            else:
+                import yaml
+
+                payload = yaml.safe_load(path.read_text(encoding="utf-8"))
+        except Exception as exc:
+            errors.append(f"{path}: could not parse composed rule: {exc}")
+            continue
+        refs = _collect_refs(payload)
+        for ref in refs:
+            if ref not in _SURVIVOR_REGISTRY_IDS:
+                errors.append(f"{path}: ref {ref!r} is not a survivor registry ID")
+    return errors
+
+
+def _collect_refs(value: Any) -> set[str]:
+    refs: set[str] = set()
+    if isinstance(value, dict):
+        for key, sub in value.items():
+            if key in {"pipeline", "pattern", "pipeline_id", "stable_id"} and isinstance(sub, str):
+                refs.add(sub)
+            else:
+                refs.update(_collect_refs(sub))
+    elif isinstance(value, list):
+        for item in value:
+            refs.update(_collect_refs(item))
+    return refs
 
 
 # ---------------------------------------------------------------------------
@@ -305,6 +445,21 @@ def main(argv: list[str] | None = None) -> int:
     uniqueness_errors = check_aggregate_uniqueness(registry_paths)
     for err in uniqueness_errors:
         all_errors.append(f"[aggregate] {err}")
+
+    # 3. Hash format validation (requires manifest_hash once regenerated)
+    hash_errors = check_registry_hashes(registry_paths)
+    for err in hash_errors:
+        all_errors.append(f"[hash] {err}")
+
+    # 4. Survivor-only stable_id references
+    survivor_errors = check_survivor_only_refs(registry_paths)
+    for err in survivor_errors:
+        all_errors.append(f"[survivor] {err}")
+
+    # 5. Composed rule refs
+    composed_errors = check_composed_rule_refs()
+    for err in composed_errors:
+        all_errors.append(f"[composed] {err}")
 
     if all_errors:
         for error in all_errors:

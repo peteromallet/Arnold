@@ -1,0 +1,46 @@
+<!-- M5 Phase 1 inventory: consolidated M6 deletion targets. -->
+
+# M6 Deletion List
+
+Every row traces back to a disposition in the M5 inventories.
+
+| Path / surface | Source inventory | M5 outcome | M6 action |
+| --- | --- | --- | --- |
+| `arnold/pipelines/megaplan/` | `m5-pipeline-disposition.md` | delete | Remove package tree. |
+| `arnold/pipelines/jokes/` | `m5-pipeline-disposition.md` | delete | Remove package tree. |
+| `arnold/pipelines/creative/` | `m5-pipeline-disposition.md` | delete | Remove package tree. |
+| `arnold/pipelines/doc/` | `m5-pipeline-disposition.md` | delete | Remove package tree. |
+| `arnold/pipelines/live_supervisor/` | `m5-pipeline-disposition.md` | delete | Remove package tree. |
+| `arnold/pipelines/select_tournament/` | `m5-pipeline-disposition.md` | delete | Remove package tree. |
+| `arnold/pipelines/simplify_writing/` | `m5-pipeline-disposition.md` | archive | Move to `docs/archive/m5/`, then delete source tree. |
+| `arnold/pipelines/vibecomfy_executor/` | `m5-pipeline-disposition.md` | archive | Move to `docs/archive/m5/`, then delete source tree. |
+| `arnold/pipelines/writing_panel_strict.py` | `m5-pipeline-disposition.md` | delete | Remove file. |
+| `arnold/pipelines/epic_blitz/` | `m5-pipeline-disposition.md` | archive | Move to `docs/archive/m5/`, then delete source tree. |
+| `arnold/pipelines/folder_audit/` | `m5-pipeline-disposition.md` | archive | Move to `docs/archive/m5/`, then delete source tree. |
+| `arnold/pipelines/deliberation/` | `m5-pipeline-disposition.md` | archive | Move to `docs/archive/m5/`, then delete source tree. |
+| `arnold/pipelines/_deliberation_example/` | `m5-pipeline-disposition.md` | archive | Move to `docs/archive/m5/`, then delete source tree. |
+| `arnold/pipelines/briefs/` | `m5-pipeline-disposition.md` | archive | Move to `docs/archive/m5/`, then delete source tree. |
+| `arnold_pipelines/megaplan/pipelines/epic_blitz.py` | `m5-pipeline-disposition.md` | archive | Move to `docs/archive/m5/`, then delete source file. |
+| `arnold_pipelines/megaplan/cli/arnold.py` | `m5-cli-dispatch-chain.md` | delete | Remove legacy top-level dispatch. |
+| `arnold_pipelines/megaplan/cli/parser.py` | `m5-cli-dispatch-chain.md` | delete | Remove legacy parser. |
+| `arnold pipelines *` subcommands | `m5-cli-command-mapping.md` | delete | Remove command handlers. |
+| `arnold <module> *` subcommands | `m5-cli-command-mapping.md` | delete | Remove module verb handlers. |
+| `arnold init/plan/prep/...` step commands | `m5-cli-command-mapping.md` | delete | Remove Megaplan step commands. |
+| `scripts/backfill_step_receipts.py` | `m5-script-tool-inventory.md` | archive | Move to `docs/archive/m5/scripts/`, then delete. |
+| `scripts/m4_oracle_bisect.py` | `m5-script-tool-inventory.md` | archive | Move to `docs/archive/m5/scripts/`, then delete. |
+| `scripts/record_oracle_traces.py` | `m5-script-tool-inventory.md` | archive | Move to `docs/archive/m5/scripts/`, then delete. |
+| `scripts/silent_failure_census.py` | `m5-script-tool-inventory.md` | archive | Move to `docs/archive/m5/scripts/`, then delete. |
+| `tools/m4_oracle_bisect.py` | `m5-script-tool-inventory.md` | archive | Move to `docs/archive/m5/tools/`, then delete. |
+| `_gen_corpus.py` | `m5-script-tool-inventory.md` | archive | Move to `docs/archive/m5/`, then delete. |
+| `_gen_golden_traces.py` | `m5-script-tool-inventory.md` | archive | Move to `docs/archive/m5/`, then delete. |
+| `tests/_pipeline/` | `m5-legacy-test-inventory.md` | archive | Move to `tests/archive/m5/`, then delete. |
+| `tests/pipelines/` | `m5-legacy-test-inventory.md` | archive | Move to `tests/archive/m5/`, then delete. |
+| `tests/docs/test_arnold_external_builder.py` | `m5-legacy-test-inventory.md` | archive | Move to `tests/archive/m5/`, then delete. |
+
+## Keep list (survivors)
+
+- `arnold.workflow` authoring surface and tests.
+- `arnold.execution.run` runtime and tests.
+- `arnold/cli/workflow.py` and `arnold/cli/operators.py`.
+- Migrated `arnold_pipelines/*` shipped pipelines.
+- `scripts/check_workflow_pipeline_inventory.py`, `scripts/check_pipeline_id_registry.py`, `scripts/validate_package_disposition.py`, `scripts/render_package_disposition_md.py`.
