@@ -6,6 +6,7 @@ Status enum: `migrate`, `delete`, `archive`, `whitelist`.
 
 | Root | Status | Final location | Public | Registry ID | Docs status | M6 fate |
 | --- | --- | --- | --- | --- | --- | --- |
+| `arnold_pipelines/megaplan` | migrate | `arnold_pipelines/megaplan` | yes | `megaplan.core` | active | keep |
 | `arnold_pipelines/megaplan/pipelines/planning` | migrate | `arnold_pipelines/megaplan/pipelines/planning` | yes | `megaplan.planning` | active | keep |
 | `arnold_pipelines/megaplan/pipelines/doc` | migrate | `arnold_pipelines/megaplan/pipelines/doc` | yes | `megaplan.doc` | active | keep |
 | `arnold_pipelines/megaplan/pipelines/creative` | migrate | `arnold_pipelines/megaplan/pipelines/creative` | yes | `megaplan.creative` | active | keep |

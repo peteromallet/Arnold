@@ -1,8 +1,9 @@
-<!-- M5 Phase 1 inventory: consolidated M6 deletion targets. -->
+<!-- M5 Phase 5 inventory: consolidated M6 deletion targets. -->
 
 # M6 Deletion List
 
-Every row traces back to a disposition in the M5 inventories.
+Every row traces back to a disposition in the M5 inventories and a concrete M5
+outcome.
 
 | Path / surface | Source inventory | M5 outcome | M6 action |
 | --- | --- | --- | --- |
@@ -26,21 +27,22 @@ Every row traces back to a disposition in the M5 inventories.
 | `arnold pipelines *` subcommands | `m5-cli-command-mapping.md` | delete | Remove command handlers. |
 | `arnold <module> *` subcommands | `m5-cli-command-mapping.md` | delete | Remove module verb handlers. |
 | `arnold init/plan/prep/...` step commands | `m5-cli-command-mapping.md` | delete | Remove Megaplan step commands. |
-| `scripts/backfill_step_receipts.py` | `m5-script-tool-inventory.md` | archive | Move to `docs/archive/m5/scripts/`, then delete. |
-| `scripts/m4_oracle_bisect.py` | `m5-script-tool-inventory.md` | archive | Move to `docs/archive/m5/scripts/`, then delete. |
-| `scripts/record_oracle_traces.py` | `m5-script-tool-inventory.md` | archive | Move to `docs/archive/m5/scripts/`, then delete. |
-| `scripts/silent_failure_census.py` | `m5-script-tool-inventory.md` | archive | Move to `docs/archive/m5/scripts/`, then delete. |
-| `tools/m4_oracle_bisect.py` | `m5-script-tool-inventory.md` | archive | Move to `docs/archive/m5/tools/`, then delete. |
-| `_gen_corpus.py` | `m5-script-tool-inventory.md` | archive | Move to `docs/archive/m5/`, then delete. |
-| `_gen_golden_traces.py` | `m5-script-tool-inventory.md` | archive | Move to `docs/archive/m5/`, then delete. |
-| `tests/_pipeline/` | `m5-legacy-test-inventory.md` | archive | Move to `tests/archive/m5/`, then delete. |
-| `tests/pipelines/` | `m5-legacy-test-inventory.md` | archive | Move to `tests/archive/m5/`, then delete. |
-| `tests/docs/test_arnold_external_builder.py` | `m5-legacy-test-inventory.md` | archive | Move to `tests/archive/m5/`, then delete. |
+| `scripts/backfill_step_receipts.py` | `m5-script-tool-inventory.md` | archive | Moved to `docs/archive/m5/scripts/`, then delete. |
+| `scripts/m4_oracle_bisect.py` | `m5-script-tool-inventory.md` | archive | Moved to `docs/archive/m5/scripts/`, then delete. |
+| `scripts/record_oracle_traces.py` | `m5-script-tool-inventory.md` | archive | Moved to `docs/archive/m5/scripts/`, then delete. |
+| `scripts/silent_failure_census.py` | `m5-script-tool-inventory.md` | archive | Moved to `docs/archive/m5/scripts/`, then delete. |
+| `tools/m4_oracle_bisect.py` | `m5-script-tool-inventory.md` | archive | Moved to `docs/archive/m5/tools/`, then delete. |
+| `_gen_corpus.py` | `m5-script-tool-inventory.md` | archive | Moved to `docs/archive/m5/`, then delete. |
+| `tests/_pipeline/` | `m5-legacy-test-inventory.md` | archive | Moved to `tests/archive/m5/`, then delete. |
+| `tests/pipelines/` | `m5-legacy-test-inventory.md` | archive | Moved to `tests/archive/m5/`, then delete. |
+| `tests/docs/test_arnold_external_builder.py` | `m5-legacy-test-inventory.md` | archive | Moved to `tests/archive/m5/docs/`, then delete. |
+| `arnold/pipelines/megaplan/data/` | `m5-generated-artifact-manifest.md` | delete | Removed in Phase 4; old generated skills/composed no longer packaged. |
 
 ## Keep list (survivors)
 
 - `arnold.workflow` authoring surface and tests.
 - `arnold.execution.run` runtime and tests.
 - `arnold/cli/workflow.py` and `arnold/cli/operators.py`.
-- Migrated `arnold_pipelines/*` shipped pipelines.
-- `scripts/check_workflow_pipeline_inventory.py`, `scripts/check_pipeline_id_registry.py`, `scripts/validate_package_disposition.py`, `scripts/render_package_disposition_md.py`.
+- Migrated `arnold_pipelines/*` shipped pipelines with `manifest_hash` in registries.
+- `arnold_pipelines/megaplan/data/_codex_skills/` and `_composed/` workflow-only generated assets.
+- `scripts/check_workflow_pipeline_inventory.py`, `scripts/check_pipeline_id_registry.py`, `scripts/validate_package_disposition.py`, `scripts/render_package_disposition_md.py`, `scripts/generate_arnold_docs.py`.

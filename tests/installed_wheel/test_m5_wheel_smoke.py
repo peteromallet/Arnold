@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import subprocess
 import sys
+import tarfile
 import tempfile
 import venv
 from pathlib import Path
@@ -18,9 +19,17 @@ def test_wheel_has_arnold_entrypoint_and_py_typed() -> None:
         tmp = Path(tmpdir)
         build_dir = tmp / "build"
         build_dir.mkdir()
+        sdist_dir = tmp / "sdist"
+        sdist_dir.mkdir()
 
         subprocess.run(
             [sys.executable, "-m", "pip", "wheel", "--no-deps", "-w", str(build_dir), str(REPO_ROOT)],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        subprocess.run(
+            [sys.executable, "-m", "build", "--sdist", "-o", str(sdist_dir), str(REPO_ROOT)],
             check=True,
             capture_output=True,
             text=True,
@@ -29,6 +38,10 @@ def test_wheel_has_arnold_entrypoint_and_py_typed() -> None:
         wheels = list(build_dir.glob("*.whl"))
         assert wheels, "no wheel produced"
         wheel = wheels[0]
+
+        sdists = list(sdist_dir.glob("*.tar.gz"))
+        assert sdists, "no sdist produced"
+        sdist = sdists[0]
 
         with ZipFile(wheel) as whl:
             names = whl.namelist()
@@ -40,12 +53,26 @@ def test_wheel_has_arnold_entrypoint_and_py_typed() -> None:
             assert any(
                 name.endswith("pipeline_ids.json") for name in names
             ), "missing pipeline_ids.json data"
+            assert any(
+                "arnold_pipelines/megaplan/data/_codex_skills/" in name for name in names
+            ), "missing generated codex skills"
+            assert any(
+                "arnold_pipelines/megaplan/data/_composed/" in name for name in names
+            ), "missing composed rules"
+            assert not any(
+                "arnold/pipelines/megaplan/data/" in name for name in names
+            ), "legacy generated data still packaged"
+
+        with tarfile.open(sdist, "r:gz") as tar:
+            sdist_names = tar.getnames()
+            assert any(name.endswith("pyproject.toml") for name in sdist_names)
 
         # Install into a clean venv and verify the console script works.
         venv_dir = tmp / "venv"
         venv.create(venv_dir, with_pip=True)
         pip = venv_dir / "bin" / "pip"
         arnold = venv_dir / "bin" / "arnold"
+        python = venv_dir / "bin" / "python"
 
         subprocess.run([str(pip), "install", str(wheel)], check=True, capture_output=True)
 
@@ -57,3 +84,22 @@ def test_wheel_has_arnold_entrypoint_and_py_typed() -> None:
         assert result.returncode == 0, result.stderr
         assert "check" in result.stdout
         assert "run" in result.stdout
+
+        # Workflow CLI can validate and manifest a shipped pipeline from the wheel.
+        for subcommand in ("check", "manifest", "dry-run"):
+            result = subprocess.run(
+                [
+                    str(arnold),
+                    "workflow",
+                    subcommand,
+                    "--module",
+                    "arnold_pipelines.megaplan.pipelines.jokes:build_pipeline",
+                ],
+                capture_output=True,
+                text=True,
+            )
+            assert result.returncode == 0, (
+                f"arnold workflow {subcommand} failed: {result.stderr}"
+            )
+            if subcommand in {"check", "manifest"}:
+                assert "sha256:" in result.stdout

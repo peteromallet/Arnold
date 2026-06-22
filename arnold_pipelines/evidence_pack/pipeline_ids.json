@@ -1,12 +1,14 @@
 {
-  "version": 1,
   "pipelines": [
     {
+      "m6_disposition": "keep",
+      "manifest_hash": "sha256:71e3242c2ea95afdaa6376648cbb6826826e652f5d9249a0b69b741031db96c2",
       "name": "evidence_pack_verifier",
-      "stable_id": "evidence_pack.verifier",
-      "typed_contract_capable": true,
       "previous_stable_ids": [],
-      "seam_ids": []
+      "seam_ids": [],
+      "stable_id": "evidence_pack.verifier",
+      "typed_contract_capable": true
     }
-  ]
+  ],
+  "version": 1
 }

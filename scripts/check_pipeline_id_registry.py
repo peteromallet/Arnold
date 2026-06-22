@@ -16,6 +16,8 @@ from arnold.pipeline import (
     load_pipeline_id_registries,
     load_pipeline_id_registry,
 )
+from arnold.workflow import compile_pipeline
+from arnold_pipelines.discovery import discover_migrated_pipelines
 
 # ---------------------------------------------------------------------------
 # Discovery
@@ -189,23 +191,27 @@ def check_aggregate_uniqueness(paths: list[Path]) -> list[str]:
 # ---------------------------------------------------------------------------
 
 
-# Survivor registry IDs are taken from the M5 pipeline disposition inventory.
-# These are the only stable IDs that may appear in public registries.
-_SURVIVOR_REGISTRY_IDS: frozenset[str] = frozenset(
-    {
-        "megaplan.core",
-        "megaplan.planning",
-        "megaplan.doc",
-        "megaplan.creative",
-        "megaplan.jokes",
-        "megaplan.live_supervisor",
-        "megaplan.select_tournament",
-        "megaplan.writing_panel_strict",
-        "evidence_pack.verifier",
-    }
-)
-
 _HASH_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
+
+
+def _survivor_registry_ids() -> frozenset[str]:
+    """Derive survivor IDs from the shipped-pipeline discovery helper."""
+    return frozenset(
+        info.registry_id
+        for info in discover_migrated_pipelines()
+        if info.registry_id is not None
+    )
+
+
+def _expected_manifest_hashes() -> dict[str, str]:
+    """Compute expected manifest hashes from compiled surviving builders."""
+    expected: dict[str, str] = {}
+    for info in discover_migrated_pipelines():
+        if info.registry_id is None or info.builder is None:
+            continue
+        manifest = compile_pipeline(info.builder())
+        expected[info.registry_id] = manifest.manifest_hash or ""
+    return expected
 
 
 def _load_registry_data(path: Path) -> dict[str, Any]:
@@ -213,8 +219,9 @@ def _load_registry_data(path: Path) -> dict[str, Any]:
 
 
 def check_registry_hashes(paths: list[Path]) -> list[str]:
-    """Validate hash format for any registry entries that carry a manifest_hash."""
+    """Validate manifest_hash format and value for every survivor registry entry."""
     errors: list[str] = []
+    expected = _expected_manifest_hashes()
     for path in paths:
         data = _load_registry_data(path)
         pipelines = data.get("pipelines") or []
@@ -227,17 +234,26 @@ def check_registry_hashes(paths: list[Path]) -> list[str]:
                 continue
             manifest_hash = item.get("manifest_hash")
             if manifest_hash is None:
-                # Hashes are not required until Phase 4 regeneration.
+                errors.append(
+                    f"[{path}] {stable_id!r}: missing manifest_hash after Phase 4"
+                )
                 continue
             if not isinstance(manifest_hash, str) or not _HASH_RE.match(manifest_hash):
                 errors.append(
                     f"[{path}] {stable_id!r}: invalid manifest_hash {manifest_hash!r}"
+                )
+                continue
+            if stable_id in expected and manifest_hash != expected[stable_id]:
+                errors.append(
+                    f"[{path}] {stable_id!r}: manifest_hash mismatch "
+                    f"(registry={manifest_hash!r}, computed={expected[stable_id]!r})"
                 )
     return errors
 
 
 def check_survivor_only_refs(paths: list[Path]) -> list[str]:
     """Ensure every active stable_id belongs to the survivor set."""
+    survivors = _survivor_registry_ids()
     errors: list[str] = []
     for path in paths:
         data = _load_registry_data(path)
@@ -246,7 +262,7 @@ def check_survivor_only_refs(paths: list[Path]) -> list[str]:
             if not isinstance(item, dict):
                 continue
             stable_id = item.get("stable_id")
-            if isinstance(stable_id, str) and stable_id not in _SURVIVOR_REGISTRY_IDS:
+            if isinstance(stable_id, str) and stable_id not in survivors:
                 errors.append(
                     f"[{path}] stable_id {stable_id!r} is not a survivor registry ID"
                 )
@@ -257,6 +273,7 @@ def check_composed_rule_refs(root: Path | None = None) -> list[str]:
     """Validate composed rule pipeline/pattern refs against survivors only."""
     if root is None:
         root = _repo_root()
+    survivors = _survivor_registry_ids()
     errors: list[str] = []
     composed_dir = root / "arnold_pipelines" / "megaplan" / "data" / "_composed"
     if not composed_dir.exists():
@@ -276,7 +293,7 @@ def check_composed_rule_refs(root: Path | None = None) -> list[str]:
             continue
         refs = _collect_refs(payload)
         for ref in refs:
-            if ref not in _SURVIVOR_REGISTRY_IDS:
+            if ref not in survivors:
                 errors.append(f"{path}: ref {ref!r} is not a survivor registry ID")
     return errors
 
