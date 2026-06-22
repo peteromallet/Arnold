@@ -2,10 +2,10 @@ from __future__ import annotations
 
 import inspect
 
-import arnold.pipelines.megaplan.auto as auto
-from arnold.pipelines.megaplan.editorial.reads import load_hot_context
-from arnold.pipelines.megaplan.store import FileStore
-from arnold.pipelines.megaplan.store.base import HotContext
+import arnold_pipelines.megaplan.auto as auto
+from arnold_pipelines.megaplan.editorial.reads import load_hot_context
+from arnold_pipelines.megaplan.store import FileStore
+from arnold_pipelines.megaplan.store.base import HotContext
 
 
 class FakeStore:
@@ -42,7 +42,7 @@ def test_editorial_backend_fixture_does_not_masquerade_db_as_file_store(
     editorial_backend_name: str,
 ) -> None:
     if editorial_backend_name == "db":
-        from arnold.pipelines.megaplan.store import DBStore
+        from arnold_pipelines.megaplan.store import DBStore
 
         assert isinstance(editorial_store, DBStore)
         assert not isinstance(editorial_store, FileStore)

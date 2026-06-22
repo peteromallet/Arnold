@@ -11,7 +11,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from arnold.pipelines.megaplan._core.topology import RealizedGraph, RunTopologyConfig, predecessors
+from arnold_pipelines.megaplan._core.topology import RealizedGraph, RunTopologyConfig, predecessors
 
 FIXTURE = Path(__file__).parent / "fixtures" / "workflow_next_matrix.json"
 LABEL = "control-flow parity, NOT drift-provably-zero"

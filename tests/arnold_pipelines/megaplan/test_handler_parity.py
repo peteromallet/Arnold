@@ -2,7 +2,7 @@
 
 These tests exercise relocated product handler helpers directly with controlled
 inputs. They are cheap, do not require LLM calls, and lock behavioral semantics
-that must survive the move from ``arnold.pipelines.megaplan`` to
+that must survive the move from ``arnold_pipelines.megaplan`` to
 ``arnold_pipelines.megaplan``.
 """
 

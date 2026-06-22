@@ -47,9 +47,9 @@ _OUT_OF_TREE_SUB_BUDGET_USD = 1.0
 
 # Megaplan-specific in-tree path fragments (mirrors
 # arnold_pipelines.megaplan._pipeline.discovery.trust._IN_TREE_PATH_FRAGMENTS).
-# ``arnold/pipelines`` is the new plugin root (scanned first);
+# ``arnold_pipelines`` is the new plugin root (scanned first);
 # ``megaplan/pipelines`` is the legacy root.
-_IN_TREE_PATH_FRAGMENTS: tuple[str, ...] = ("arnold/pipelines", "megaplan/pipelines")
+_IN_TREE_PATH_FRAGMENTS: tuple[str, ...] = ("arnold_pipelines", "megaplan/pipelines")
 
 
 def classify(
@@ -145,6 +145,14 @@ def _manifest_discovery_enabled() -> bool:
 
 def _package_prefix_for_module_file(module_file: Path) -> str | None:
     normalised = str(module_file.resolve()).replace("\\", "/")
+    arnold_pipelines_megaplan_fragment = "/arnold_pipelines/megaplan/pipelines/"
+    if arnold_pipelines_megaplan_fragment in normalised or normalised.endswith(
+        "/arnold_pipelines/megaplan/pipelines"
+    ):
+        return "arnold_pipelines.megaplan.pipelines"
+    arnold_pipelines_fragment = "/arnold_pipelines/"
+    if arnold_pipelines_fragment in normalised or normalised.endswith("/arnold_pipelines"):
+        return "arnold_pipelines"
     arnold_megaplan_fragment = "/arnold/pipelines/megaplan/pipelines/"
     if arnold_megaplan_fragment in normalised or normalised.endswith(
         "/arnold/pipelines/megaplan/pipelines"
@@ -228,7 +236,7 @@ def _discovered_cli_name(
     """Return the CLI-visible name for a discovered pipeline entry."""
 
     if (
-        package_prefix in ("arnold.pipelines", "arnold_pipelines.megaplan.pipelines")
+        package_prefix in ("arnold_pipelines", "arnold.pipelines", "arnold_pipelines.megaplan.pipelines")
         and entry.is_dir()
         and entry.name == "planning"
         and (entry / "__init__.py").exists()
@@ -416,7 +424,7 @@ def _manifest_metadata(name: str, disposition: Disposition) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 _SCAN_ROOTS: list[tuple[Path, str | None]] = [
-    (Path(__file__).resolve().parent.parent.parent, "arnold.pipelines"),
+    (Path(__file__).resolve().parent.parent.parent, "arnold_pipelines"),
     (
         Path(__file__).resolve().parent.parent / "pipelines",
         "arnold_pipelines.megaplan.pipelines",
@@ -467,7 +475,7 @@ def scan_python_pipelines() -> list[Disposition]:
         origin = (
             "in_tree"
             if package_prefix
-            in ("arnold.pipelines", "arnold_pipelines.megaplan.pipelines")
+            in ("arnold_pipelines", "arnold.pipelines", "arnold_pipelines.megaplan.pipelines")
             else "user"
         )
 

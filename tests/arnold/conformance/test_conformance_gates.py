@@ -71,9 +71,9 @@ class BlockMegaplan:
     def find_spec(self, fullname, path=None, target=None):
         blocked = (
             fullname == "megaplan"
-            or fullname.startswith("arnold.pipelines.megaplan.")
-            or fullname == "arnold.pipelines.megaplan"
-            or fullname.startswith("arnold.pipelines.megaplan.")
+            or fullname.startswith("arnold_pipelines.megaplan.")
+            or fullname == "arnold_pipelines.megaplan"
+            or fullname.startswith("arnold_pipelines.megaplan.")
             or fullname == "arnold_pipelines.megaplan"
             or fullname.startswith("arnold_pipelines.megaplan.")
         )
@@ -98,7 +98,7 @@ assert not any("megaplan" in name for name in sys.modules)
 def test_active_megaplan_package_names_are_scanned() -> None:
     assert ACTIVE_MEGAPLAN_PACKAGE_NAMES == (
         "megaplan",
-        "arnold.pipelines.megaplan",
+        "arnold_pipelines.megaplan",
         "arnold_pipelines.megaplan",
     )
 
@@ -130,7 +130,7 @@ def test_package_name_staleness_fails_on_runtime_string_reference(tmp_path: Path
         root,
         "launcher.py",
         """
-        COMMAND = "python -m arnold.pipelines.megaplan run"
+        COMMAND = "python -m arnold_pipelines.megaplan run"
         """,
     )
 
@@ -138,7 +138,7 @@ def test_package_name_staleness_fails_on_runtime_string_reference(tmp_path: Path
 
     assert result.passed is False
     assert result.details["unexpected"] == {
-        "arnold.launcher": ("arnold.pipelines.megaplan",)
+        "arnold.launcher": ("arnold_pipelines.megaplan",)
     }
 
 
@@ -252,7 +252,7 @@ def test_dynamic_import_paths_fail_for_deleted_megaplan_surfaces() -> None:
     import importlib
 
     deleted_prefixes = (
-        "arnold.pipelines.megaplan",
+        "arnold_pipelines.megaplan",
         "arnold.pipelines.jokes",
         "arnold.pipelines.creative",
         "arnold.pipelines.doc",
@@ -272,8 +272,8 @@ def test_dynamic_import_paths_fail_for_deleted_megaplan_surfaces() -> None:
 def test_eval_exec_cannot_resolve_deleted_megaplan_paths() -> None:
     """Deleted package paths must not be constructable via eval/exec."""
     for expr in (
-        "__import__('arnold.pipelines.megaplan')",
-        "__import__('arnold.pipelines.megaplan.agent')",
+        "__import__('arnold_pipelines.megaplan')",
+        "__import__('arnold_pipelines.megaplan.agent')",
     ):
         with pytest.raises(ModuleNotFoundError):
             eval(expr)  # noqa: S307
@@ -287,8 +287,8 @@ def test_sys_modules_audit_finds_no_deleted_megaplan_modules_after_conformance()
     deleted_loaded = [
         name
         for name in sys.modules
-        if name == "arnold.pipelines.megaplan"
-        or name.startswith("arnold.pipelines.megaplan.")
+        if name == "arnold_pipelines.megaplan"
+        or name.startswith("arnold_pipelines.megaplan.")
     ]
     assert deleted_loaded == []
 

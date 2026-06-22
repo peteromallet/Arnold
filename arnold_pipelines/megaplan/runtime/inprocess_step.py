@@ -10,6 +10,9 @@ Production callers (``megaplan/auto.py`` after Sprint 3 integration)
 should use :class:`HandlerStep` so the existing per-phase subprocess
 boundary — and its stall / cost / context-retry policy in
 ``auto.py`` — is preserved.
+
+Canonical home relocated from ``arnold_pipelines.megaplan.stages.inprocess_step``
+to ``arnold_pipelines.megaplan.runtime.inprocess_step`` during M4 T5.
 """
 
 from __future__ import annotations
@@ -19,7 +22,8 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Callable, Mapping
 
-from arnold_pipelines.megaplan._pipeline.types import StepContext, StepResult, PipelineVerdict
+from arnold.pipeline.types import PipelineVerdict
+from arnold_pipelines.megaplan.step_types import StepContext, StepResult
 from arnold_pipelines.megaplan.pipeline_contracts import (
     LOGICAL_CRITIQUE_PAYLOAD,
     LOGICAL_EXECUTE_PAYLOAD,

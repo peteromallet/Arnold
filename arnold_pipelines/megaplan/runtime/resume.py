@@ -1,33 +1,13 @@
-"""ResumeCursor — Sprint 5 Chunk D, third primitive.
+"""Resume helpers — megaplan-owned resume cursor and typed-contract extraction.
 
-Typed wrapper around the resume state legacy plans persist in
-``state.json::resume_cursor``. Tied to the pipeline's stage names so
-``resume_from(name)`` re-enters the pipeline at the right place.
+Rehomed from ``arnold_pipelines.megaplan._pipeline.resume`` during the M4
+burn-down (T4).  Contains Megaplan-specific resume primitives: legacy
+``ResumeCursor`` (state.json::resume_cursor), typed suspended-contract
+extraction, composite child resume, and human-gate await detection.
 
-Usage::
-
-    cursor = ResumeCursor.load(plan_dir)
-    if cursor:
-        pipeline = pipeline.with_entry(cursor.stage)
-        run_pipeline(pipeline, ctx, artifact_root=plan_dir)
-    else:
-        run_pipeline(pipeline, ctx, artifact_root=plan_dir)
-
-    # After each stage:
-    ResumeCursor(stage=node.name).save(plan_dir)
-
-Sprint A addition: ``check_awaiting_user`` inspects ``awaiting_user.json``
-so callers (e.g. ``handle_resume``) can dispatch to the human-gate resume
-flow before falling through to ``state.json::resume_cursor`` recovery.
-
-C3 addition: ``extract_suspended_contract_result`` reads the typed
-``state.json::contract_result`` persisted by the executor, parses it with
-``ContractResult.from_json()``, and returns only suspended contracts with
-a usable ``Suspension``.  ``extract_typed_resume_metadata`` exposes
-phase, pipeline/thread identity, choices, ``resume_input_schema``, and
-decoded cursor data.  Both helpers fail soft — malformed, completed, or
-failed-only data returns ``None`` so callers fall through to the next
-resume source.
+Prefer :mod:`arnold.pipeline.resume` and :mod:`arnold.runtime.resume`
+for neutral resume primitives; this module supplies only the Megaplan
+opinionated layer.
 """
 
 from __future__ import annotations
@@ -39,7 +19,7 @@ from typing import Any, Mapping
 
 from arnold.pipeline.types import HumanSuspension
 from arnold_pipelines.megaplan._core.state import write_plan_state
-from arnold_pipelines.megaplan._pipeline.types import Pipeline
+from arnold_pipelines.megaplan.step_types import Pipeline
 
 COMPOSITE_SUSPENSION_KIND = "composite_suspension"
 COMPOSITE_SUSPENSION_CURSOR_VERSION = 1
@@ -268,7 +248,9 @@ def with_entry(pipeline: Pipeline, stage_name: str) -> Pipeline:
     return Pipeline(
         stages=pipeline.stages,
         entry=stage_name,
-        overlays=pipeline.overlays,
+        overlays=getattr(pipeline, "overlays", ()),
+        binding_map=getattr(pipeline, "binding_map", None),
+        resource_bundles=getattr(pipeline, "resource_bundles", ()),
     )
 
 

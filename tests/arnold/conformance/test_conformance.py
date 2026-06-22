@@ -35,15 +35,15 @@ import sys
 # Block any megaplan import
 class _BlockMegaplanFinder:
     def find_spec(self, fullname, path, target=None):
-        if fullname == "megaplan" or fullname.startswith("arnold.pipelines.megaplan."):
+        if fullname == "megaplan" or fullname.startswith("arnold_pipelines.megaplan."):
             raise ModuleNotFoundError(
                 f"megaplan import blocked by leak gate: {fullname}"
             )
-        if fullname == "arnold.pipelines.megaplan" or fullname.startswith(
-            "arnold.pipelines.megaplan."
+        if fullname == "arnold_pipelines.megaplan" or fullname.startswith(
+            "arnold_pipelines.megaplan."
         ):
             raise ModuleNotFoundError(
-                f"arnold.pipelines.megaplan import blocked by leak gate: {fullname}"
+                f"arnold_pipelines.megaplan import blocked by leak gate: {fullname}"
             )
         return None
 
@@ -362,7 +362,7 @@ class TestConformanceImportIsolation:
         # Force a clean state by removing megaplan if already present
         # (it won't be, but this makes the test idempotent)
         for name in list(sys.modules):
-            if name == "megaplan" or name.startswith("arnold.pipelines.megaplan."):
+            if name == "megaplan" or name.startswith("arnold_pipelines.megaplan."):
                 sys.modules.pop(name, None)
         assert "megaplan" not in sys.modules, (
             f"megaplan already in sys.modules before conformance import: "

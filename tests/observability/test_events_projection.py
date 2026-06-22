@@ -3,13 +3,13 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from arnold.pipelines.megaplan.observability.events import EventKind, read_events
-from arnold.pipelines.megaplan.observability.events_projection import (
+from arnold_pipelines.megaplan.observability.events import EventKind, read_events
+from arnold_pipelines.megaplan.observability.events_projection import (
     _canonical_dumps,
     project_events,
     schema_equivalence_triples,
 )
-from arnold.pipelines.megaplan.store import FileStore, PlanRepository
+from arnold_pipelines.megaplan.store import FileStore, PlanRepository
 
 
 def _reference_line(kind: str, phase: str | None, payload: dict) -> str:

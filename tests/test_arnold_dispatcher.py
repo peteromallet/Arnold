@@ -5,7 +5,7 @@ Covers:
 * unknown agent raises LookupError
 * ``isinstance(ArnoldDispatcher(), AgentDispatcher)`` is True
 * ``sys.modules`` snapshot before ``import arnold.agent.dispatcher`` shows
-  no ``arnold.pipelines.megaplan*`` module loaded as a side-effect
+  no ``arnold_pipelines.megaplan*`` module loaded as a side-effect
 """
 
 from __future__ import annotations
@@ -169,7 +169,7 @@ class TestProtocolConformance:
 
 class TestZeroLeakSysModules:
     """Verify that importing ``arnold.agent.dispatcher`` does not load any
-    ``arnold.pipelines.megaplan*`` module into ``sys.modules`` as a side-effect.
+    ``arnold_pipelines.megaplan*`` module into ``sys.modules`` as a side-effect.
     """
 
     def test_import_dispatcher_does_not_load_megaplan_modules(self):
@@ -177,7 +177,7 @@ class TestZeroLeakSysModules:
         # The test file itself already imports ArnoldDispatcher at the top,
         # so we snapshot the modules that *were already loaded* and then
         # verify no NEW megaplan module appeared since.
-        megaplan_prefix = "arnold.pipelines.megaplan"
+        megaplan_prefix = "arnold_pipelines.megaplan"
 
         # Collect all currently-loaded megaplan modules (there may be some
         # from test infrastructure / other imports).
@@ -221,7 +221,7 @@ class TestZeroLeakSysModules:
         )
 
     def test_zero_leak_gate_on_imports(self):
-        """Standalone check: no import of arnold.pipelines.megaplan in dispatcher or adapters."""
+        """Standalone check: no import of arnold_pipelines.megaplan in dispatcher or adapters."""
         import ast
         import inspect
         from pathlib import Path
@@ -229,7 +229,7 @@ class TestZeroLeakSysModules:
         import arnold.agent.adapters
         import arnold.agent.dispatcher
 
-        megaplan_ref = "arnold.pipelines.megaplan"
+        megaplan_ref = "arnold_pipelines.megaplan"
 
         files_to_check = [
             Path(inspect.getfile(arnold.agent.dispatcher)),

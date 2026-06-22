@@ -4,40 +4,35 @@ This corpus is intentionally small and behavioral: A win/B loss, tie,
 missing, and version-skew re-judge all run through the canonical
 ``events.ndjson`` Evaluand ledger.  The assertions pin that replay reads are
 pure, byte-stable, and do not spend live judge/model calls.
+
+After M4 Step 5 deletion the legacy ``_pipeline.eval_judge_wrapper``,
+``_pipeline.executor``, and ``_pipeline.types`` modules are gone.
+Tests that exercised the wrapper-written planning smoke path through
+those deleted surfaces have been converted to negative-absence probes.
 """
 
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 import pytest
 
-from arnold.pipelines.megaplan._pipeline.eval_judge_wrapper import (
-    EvaluandClarityJudge,
-    M5_WRAPPER_JUDGE_VERSION,
-    M5_WRAPPER_PIECE_VERSION,
-    M5_WRAPPER_RUBRIC_VERSION,
-)
-from arnold.pipelines.megaplan._pipeline.executor import run_pipeline
-from arnold.pipelines.megaplan._pipeline.types import Edge, Pipeline, Port, Stage, StepContext, StepResult
-from arnold.pipelines.megaplan.observability import (
+from arnold_pipelines.megaplan.observability import (
     BetterResult,
     EvaluandRecord,
     RecordedModelIO,
     ReJudgeOutcome,
     re_judge,
 )
-from arnold.pipelines.megaplan.observability.evaluand import (
+from arnold_pipelines.megaplan.observability.evaluand import (
     _reset_for_tests,
     better,
     read_evaluand_events,
     write_evaluand_event,
 )
-from arnold.pipelines.megaplan.observability.events import EventKind, read_events
-
+from arnold_pipelines.megaplan.observability.events import EventKind, read_events
 
 REPLAY_ORACLE_CORPUS_SIZE = 4
 
@@ -75,27 +70,6 @@ def _record(
         provenance={"oracle": "m5-evaluand-replay"},
         taint=("oracle",),
     )
-
-
-@dataclass
-class _OracleCandidateProducer:
-    name: str = "candidate"
-    kind: str = "produce"
-    prompt_key: str | None = None
-    slot: str | None = None
-    produces: tuple = field(
-        default_factory=lambda: (Port(name="candidate", content_type="text/markdown"),)
-    )
-    consumes: tuple = field(default_factory=tuple)
-
-    def run(self, ctx: StepContext) -> StepResult:
-        candidate = Path(ctx.plan_dir) / self.name / "v1.md"
-        candidate.parent.mkdir(parents=True, exist_ok=True)
-        candidate.write_text(
-            "This throwaway planning candidate should exercise the eval wrapper end to end.",
-            encoding="utf-8",
-        )
-        return StepResult(outputs={"candidate": candidate}, next="to_judge")
 
 
 def _projection(result: BetterResult) -> bytes:
@@ -329,72 +303,20 @@ def test_replay_oracle_distinguishes_rubric_and_model_skew_records(tmp_path):
     }
 
 
-def test_replay_oracle_accepts_wrapper_written_planning_smoke(monkeypatch, tmp_path):
-    monkeypatch.setenv("UNIFIED_EVALUAND", "1")
-    monkeypatch.setenv("MEGAPLAN_TYPED_PORTS", "1")
+def test_wrapper_written_planning_smoke_modules_absent() -> None:
+    """Legacy ``_pipeline.eval_judge_wrapper`` and ``_pipeline.executor``
+    are physically deleted in M4 Step 5.
 
-    pipeline = Pipeline(
-        stages={
-            "candidate": Stage(
-                name="candidate",
-                step=_OracleCandidateProducer(),
-                edges=(Edge("to_judge", "judge"),),
-            ),
-            "judge": Stage(
-                name="judge",
-                step=EvaluandClarityJudge(),
-                edges=(Edge("done", "halt"),),
-            ),
-        },
-        entry="candidate",
-        binding_map={("judge", "candidate"): ("candidate", "candidate")},
-    )
+    The wrapper-written planning smoke test that previously exercised
+    these modules through ``EvaluandClarityJudge``, ``run_pipeline``,
+    and the legacy ``Stage``/``Edge``/``Pipeline`` types is replaced
+    by this negative-absence probe.
+    """
+    import importlib
 
-    run_pipeline(
-        pipeline,
-        StepContext(
-            plan_dir=tmp_path,
-            state={"run_id": "run-wrapper-oracle"},
-            profile=None,
-            mode="plan",
-            inputs={},
-            budget=None,
-        ),
-        artifact_root=tmp_path,
-    )
-
-    folded = read_evaluand_events(tmp_path)
-    wrapper_record = folded[
-        (
-            M5_WRAPPER_PIECE_VERSION,
-            M5_WRAPPER_JUDGE_VERSION,
-            M5_WRAPPER_RUBRIC_VERSION,
-            next(iter(folded.values())).input_set_hash,
-        )
-    ]
-    write_evaluand_event(
-        "run-wrapper-oracle-opponent",
-        EvaluandRecord(
-            judge_version=M5_WRAPPER_JUDGE_VERSION,
-            rubric_version=M5_WRAPPER_RUBRIC_VERSION,
-            input_set_hash=wrapper_record.input_set_hash,
-            score=wrapper_record.score - 0.1,
-            piece_version="piece:oracle-opponent@sha256:planning",
-            provenance={"oracle": "wrapper-smoke"},
-            taint=("oracle",),
-        ),
-        plan_dir=tmp_path,
-    )
-
-    result = better(
-        M5_WRAPPER_PIECE_VERSION,
-        "piece:oracle-opponent@sha256:planning",
-        plan_dir=tmp_path,
-        judge_version=M5_WRAPPER_JUDGE_VERSION,
-        rubric_version=M5_WRAPPER_RUBRIC_VERSION,
-        input_set_hash=wrapper_record.input_set_hash,
-    )
-
-    assert result.status == "winner"
-    assert result.winner_piece_version == M5_WRAPPER_PIECE_VERSION
-    assert len(list(read_events(tmp_path, kinds=[EventKind.EVALUAND_RECORDED]))) == 2
+    for mod_name in (
+        "arnold_pipelines.megaplan._pipeline.eval_judge_wrapper",
+        "arnold_pipelines.megaplan._pipeline.executor",
+    ):
+        with pytest.raises(ModuleNotFoundError):
+            importlib.import_module(mod_name)

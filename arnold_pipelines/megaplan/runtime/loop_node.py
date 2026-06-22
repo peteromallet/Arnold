@@ -7,14 +7,13 @@ mandatory teardown into a single object that fires teardown on every
 exit path (normal halt, cap, exception, or budget-exhausted).
 
 T16 (M3): introduced to make loop-control invariants (cap + teardown)
-explicit and testable.  ``iterate_until`` now constructs a LoopNode under
-the hood; the legacy :func:`iterate_until` and :class:`SubloopStep`
-shims continue to work unchanged for existing call sites.
+explicit and testable.  Rehomed from ``arnold_pipelines.megaplan._pipeline.loop_node``
+to ``arnold_pipelines.megaplan.runtime.loop_node`` during M4 physical deletion.
 
 Contract
 --------
 ``predicate(loop_state)`` returns True to stop the loop. ``loop_state``
-is a :class:`pattern_stops.LoopState` extended with a ``budget``
+is a :class:`arnold.pipeline.pattern_stops.LoopState` extended with a ``budget``
 attribute (None when no budget is configured).
 
 ``max_iterations`` is REQUIRED — there is no "unbounded" mode. The cap
@@ -35,7 +34,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Callable, Mapping, Optional
 
-from arnold_pipelines.megaplan._pipeline.pattern_stops import LoopState
+from arnold.pipeline.pattern_stops import LoopState
 
 
 @dataclass
@@ -79,38 +78,67 @@ class LoopNode:
         self,
         ls: LoopState | _LoopStateWithBudget,
     ) -> bool:
-        """Return True when the loop should terminate this iteration."""
+        """Return True if the loop should halt this iteration.
 
-        # Cap: hard ceiling, fires regardless of predicate.
+        Halting conditions are evaluated in order:
+
+        1. ``predicate`` returns True (normal halt).
+        2. ``iteration >= max_iterations`` (cap halt).
+        3. ``budget()`` returns True (budget halt).
+
+        The first matching reason is stored in ``last_halt_reason``.
+        """
+        if self.predicate(ls):
+            self.last_halt_reason = "predicate"
+            return True
         if ls.iteration >= self.max_iterations:
             self.last_halt_reason = "cap"
             return True
-
-        # Budget: optional probe, halts before predicate runs.
         if self.budget is not None and self.budget():
             self.last_halt_reason = "budget"
             return True
-
-        ext = _LoopStateWithBudget(
-            state=ls.state,
-            last_fanout_results=ls.last_fanout_results,
-            iteration=ls.iteration,
-            budget=self.budget,
-        )
-        if self.predicate(ext):
-            self.last_halt_reason = "predicate"
-            return True
-
         return False
+
+    def run(
+        self,
+        initial_state: Mapping[str, Any],
+        step: Callable[[Mapping[str, Any]], Mapping[str, Any]],
+    ) -> Mapping[str, Any]:
+        """Run ``step`` iteratively until a halt condition is met.
+
+        ``step`` receives the current state and returns the next state.
+        Teardown is guaranteed to run exactly once on every exit path.
+        """
+        state = dict(initial_state)
+        iteration = 0
+        last_fanout_results: Any = None
+        try:
+            while True:
+                ls = _LoopStateWithBudget(
+                    state=state,
+                    last_fanout_results=last_fanout_results,
+                    iteration=iteration,
+                    budget=self.budget,
+                )
+                if self.should_halt(ls):
+                    break
+                state = dict(step(state))
+                iteration += 1
+        finally:
+            self._tear_down()
+        return state
 
     def run_teardown(self) -> None:
         """Idempotent teardown; safe to call repeatedly."""
-
         if self._torn_down:
             return
         self._torn_down = True
         if self.teardown is not None:
             self.teardown()
+
+    def _tear_down(self) -> None:
+        # Backward-compatible alias for internal callers.
+        self.run_teardown()
 
     def __enter__(self) -> "LoopNode":
         return self

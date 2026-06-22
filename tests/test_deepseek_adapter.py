@@ -397,7 +397,7 @@ class TestExceptionPropagation:
 
     def test_cli_error_propagates(self):
         """Any error type (simulating CliError) propagates through the adapter."""
-        # CliError lives in arnold.pipelines.megaplan — the adapter must not
+        # CliError lives in arnold_pipelines.megaplan — the adapter must not
         # import it, but must not swallow it either.  Simulate with a custom
         # exception class.
 

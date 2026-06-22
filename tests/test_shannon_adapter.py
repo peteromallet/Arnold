@@ -31,7 +31,7 @@ def _request(agent: str = "claude", **overrides) -> AgentRequest:
 
 
 def _fake_worker_result(**overrides):
-    from arnold.pipelines.megaplan.workers import WorkerResult
+    from arnold_pipelines.megaplan.workers import WorkerResult
 
     base = dict(
         payload={"summary": "ok"},
@@ -53,7 +53,7 @@ def _fake_worker_result(**overrides):
 
 def test_shannon_adapter_projects_worker_result() -> None:
     with patch(
-        "arnold.pipelines.megaplan.workers.shannon.run_shannon_step",
+        "arnold_pipelines.megaplan.workers.shannon.run_shannon_step",
         side_effect=lambda *a, **k: _fake_worker_result(),
     ):
         result = ShannonAdapter()(_request())
@@ -82,7 +82,7 @@ def test_shannon_adapter_synthesizes_oneshot_context() -> None:
         return _fake_worker_result()
 
     with patch(
-        "arnold.pipelines.megaplan.workers.shannon.run_shannon_step",
+        "arnold_pipelines.megaplan.workers.shannon.run_shannon_step",
         side_effect=fake_run_shannon_step,
     ):
         ShannonAdapter(session_agent="claude")(_request())
@@ -108,7 +108,7 @@ def test_shannon_adapter_read_only_vs_write_work_dir(tmp_path: Path) -> None:
         return _fake_worker_result()
 
     with patch(
-        "arnold.pipelines.megaplan.workers.shannon.run_shannon_step",
+        "arnold_pipelines.megaplan.workers.shannon.run_shannon_step",
         side_effect=fake_run_shannon_step,
     ):
         ShannonAdapter()(
@@ -127,7 +127,7 @@ def test_shannon_adapter_session_agent_default_and_override() -> None:
         return _fake_worker_result()
 
     with patch(
-        "arnold.pipelines.megaplan.workers.shannon.run_shannon_step",
+        "arnold_pipelines.megaplan.workers.shannon.run_shannon_step",
         side_effect=fake_run_shannon_step,
     ):
         ShannonAdapter()(_request())  # default -> "claude"
@@ -138,12 +138,12 @@ def test_shannon_adapter_session_agent_default_and_override() -> None:
 
 def test_shannon_adapter_is_available_delegates() -> None:
     with patch(
-        "arnold.pipelines.megaplan._core.is_shannon_available",
+        "arnold_pipelines.megaplan._core.is_shannon_available",
         return_value=True,
     ):
         assert ShannonAdapter.is_available() is True
     with patch(
-        "arnold.pipelines.megaplan._core.is_shannon_available",
+        "arnold_pipelines.megaplan._core.is_shannon_available",
         return_value=False,
     ):
         assert ShannonAdapter.is_available() is False
@@ -157,7 +157,7 @@ def test_default_dispatcher_routes_claude_and_shannon() -> None:
         return _fake_worker_result()
 
     with patch(
-        "arnold.pipelines.megaplan.workers.shannon.run_shannon_step",
+        "arnold_pipelines.megaplan.workers.shannon.run_shannon_step",
         side_effect=fake_run_shannon_step,
     ):
         r_claude = dispatch(_request(agent="claude"))
@@ -185,7 +185,7 @@ def test_explicit_dispatcher_register_and_route() -> None:
     disp = ArnoldDispatcher()
     disp.register("claude", ShannonAdapter(session_agent="claude"))
     with patch(
-        "arnold.pipelines.megaplan.workers.shannon.run_shannon_step",
+        "arnold_pipelines.megaplan.workers.shannon.run_shannon_step",
         side_effect=lambda *a, **k: _fake_worker_result(session_id="Y"),
     ):
         result = disp.dispatch(_request())

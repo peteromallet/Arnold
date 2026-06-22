@@ -111,3 +111,66 @@ class TestM3Pipeline:
             assert removed_name not in pipeline_all, (
                 f"{removed_name!r} must not appear in pipeline.__all__"
             )
+
+    # ── Absence tests: deleted submodules must not be importable ─────────
+
+    _DELETED_SUBMODULES = (
+        "arnold_pipelines.megaplan._pipeline",
+        "arnold_pipelines.megaplan._pipeline._bridge",
+        "arnold_pipelines.megaplan._pipeline.builder",
+        "arnold_pipelines.megaplan._pipeline.dispatch",
+        "arnold_pipelines.megaplan._pipeline.runtime",
+        "arnold_pipelines.megaplan._pipeline.types",
+        "arnold_pipelines.megaplan.stages",
+        "arnold_pipelines.megaplan.stages.inprocess_step",
+        "arnold_pipelines.megaplan._compatibility",
+    )
+
+    def test_deleted_submodules_raise_module_not_found(self) -> None:
+        """Deleted _pipeline, stages, and _compatibility submodules must
+        raise ModuleNotFoundError on import."""
+        import importlib
+
+        for mod_name in self._DELETED_SUBMODULES:
+            with pytest.raises(ModuleNotFoundError):
+                importlib.import_module(mod_name)
+
+    def test_deleted_submodules_not_in_sys_modules(self) -> None:
+        """No deleted prefix keys should leak into sys.modules after importing
+        the pipeline module."""
+        import sys
+
+        # Ensure we've imported the pipeline module
+        import arnold_pipelines.megaplan.pipeline  # noqa: F401
+
+        deleted_prefixes = (
+            "arnold_pipelines.megaplan._pipeline",
+            "arnold_pipelines.megaplan.stages",
+            "arnold_pipelines.megaplan._compatibility",
+        )
+        leaked = [
+            key
+            for key in sys.modules
+            if any(key == prefix or key.startswith(prefix + ".") for prefix in deleted_prefixes)
+        ]
+        assert not leaked, f"sys.modules contains deleted module keys: {leaked}"
+
+    def test_top_level_deleted_symbols_not_in_pipeline_module(self) -> None:
+        """Top-level legacy symbols must not be accessible from the pipeline
+        module as direct attributes or via getattr."""
+        import arnold_pipelines.megaplan.pipeline as pipeline_mod
+
+        for name in (
+            "build_legacy_pipeline",
+            "compile_planning_pipeline",
+            "WorkflowManifest",
+            "run_pipeline",
+            "InProcessHandlerStep",
+            "HandlerStep",
+            "Stage",
+        ):
+            assert not hasattr(pipeline_mod, name), (
+                f"hasattr(pipeline, {name!r}) must be False"
+            )
+            with pytest.raises(AttributeError):
+                getattr(pipeline_mod, name)

@@ -37,7 +37,7 @@ def _run(argv: list[str], *, cwd: Path, registry_home: Path) -> subprocess.Compl
     env.pop("MEGAPLAN_BACKEND", None)
     env["MEGAPLAN_REGISTRY_HOME"] = str(registry_home)
     return subprocess.run(
-        [sys.executable, "-m", "arnold.pipelines.megaplan", *argv],
+        [sys.executable, "-m", "arnold_pipelines.megaplan", *argv],
         cwd=cwd,
         capture_output=True,
         text=True,

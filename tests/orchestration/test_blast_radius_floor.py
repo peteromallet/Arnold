@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from copy import deepcopy
 
-from arnold.pipelines.megaplan.orchestration.test_selection import merge_blast_radius_floor
+from arnold_pipelines.megaplan.orchestration.test_selection import merge_blast_radius_floor
 
 
 def _radius(

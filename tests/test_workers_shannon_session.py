@@ -9,20 +9,20 @@ import sys
 
 
 def test_shared_session_planner_import_has_no_tmux_side_effects() -> None:
-    sys.modules.pop("arnold.pipelines.megaplan.workers.shannon_session", None)
-    sys.modules.pop("arnold.pipelines.megaplan.workers.shannon", None)
-    sys.modules.pop("arnold.pipelines.megaplan.runtime.process", None)
+    sys.modules.pop("arnold_pipelines.megaplan.workers.shannon_session", None)
+    sys.modules.pop("arnold_pipelines.megaplan.workers.shannon", None)
+    sys.modules.pop("arnold_pipelines.megaplan.runtime.process", None)
 
-    module = importlib.import_module("arnold.pipelines.megaplan.workers.shannon_session")
+    module = importlib.import_module("arnold_pipelines.megaplan.workers.shannon_session")
 
     assert module.plan_session is not None
-    assert "arnold.pipelines.megaplan.workers.shannon" not in sys.modules
-    assert "arnold.pipelines.megaplan.runtime.process" not in sys.modules
+    assert "arnold_pipelines.megaplan.workers.shannon" not in sys.modules
+    assert "arnold_pipelines.megaplan.runtime.process" not in sys.modules
 
 
 def test_shannon_reexports_shared_session_planner() -> None:
-    import arnold.pipelines.megaplan.workers.shannon as shannon
-    import arnold.pipelines.megaplan.workers.shannon_session as shared
+    import arnold_pipelines.megaplan.workers.shannon as shannon
+    import arnold_pipelines.megaplan.workers.shannon_session as shared
 
     assert shannon.Turn is shared.Turn
     assert shannon.SessionPlan is shared.SessionPlan
@@ -45,8 +45,8 @@ def test_shannon_reexports_shared_session_planner() -> None:
 
 
 def test_shared_session_planner_pins_new_resume_clear_compact_parity() -> None:
-    from arnold.pipelines.megaplan.workers.shannon import ShannonConfig
-    from arnold.pipelines.megaplan.workers.shannon_session import _serialize_session_plan, plan_session
+    from arnold_pipelines.megaplan.workers.shannon import ShannonConfig
+    from arnold_pipelines.megaplan.workers.shannon_session import _serialize_session_plan, plan_session
 
     base = dataclasses.replace(
         ShannonConfig.load({}, env={}),
@@ -107,9 +107,9 @@ def test_shared_session_planner_pins_new_resume_clear_compact_parity() -> None:
 
 
 def test_shared_session_planner_probability_threshold_matches_tmux_selector() -> None:
-    from arnold.pipelines.megaplan.workers import shannon
-    from arnold.pipelines.megaplan.workers.shannon import ShannonConfig
-    from arnold.pipelines.megaplan.workers.shannon_session import plan_session
+    from arnold_pipelines.megaplan.workers import shannon
+    from arnold_pipelines.megaplan.workers.shannon import ShannonConfig
+    from arnold_pipelines.megaplan.workers.shannon_session import plan_session
 
     cfg = dataclasses.replace(
         ShannonConfig.load({}, env={}),

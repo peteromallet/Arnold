@@ -38,12 +38,8 @@ from arnold.runtime.operations import (
     OperationRequest,
     OperationResult,
 )
-from arnold_pipelines.megaplan._pipeline.discovery.trust import (
-    BLESSED_ALLOWLIST,
-    TrustGrade,
-    classify,
-)
-from arnold_pipelines.megaplan._pipeline import types as _pipeline_types  # noqa: F401 — legacy types still needed internally
+from arnold.pipeline.discovery.trust import BLESSED_ALLOWLIST, TrustGrade
+from arnold_pipelines.megaplan.runtime.discovery import classify
 from arnold_pipelines.megaplan.runtime.discovery import (
     CANONICAL_BUILTIN_PIPELINE,
     LEGACY_PIPELINE_ALIASES,
@@ -104,7 +100,7 @@ def make_megaplan_registry() -> ArnoldPipelineRegistry:
 
     return ArnoldPipelineRegistry(
         scan_roots=_scan_roots,
-        package_prefixes=("arnold.pipelines", "arnold_pipelines.megaplan.pipelines"),
+        package_prefixes=("arnold_pipelines", "arnold_pipelines.megaplan.pipelines"),
         alias_map=dict(LEGACY_PIPELINE_ALIASES),
         discovery_hook=_discovery_hook,
     )

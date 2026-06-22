@@ -27,7 +27,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, Generator, Iterator, Optional, Sequence, Set
 
 if TYPE_CHECKING:
-    from arnold_pipelines.megaplan._pipeline.envelope import RunEnvelope
+    from arnold.runtime.envelope import RunEnvelope
     from arnold_pipelines.megaplan.store import Store
 
 
@@ -599,7 +599,7 @@ def read_events(
                 # continue used to swallow corruption.  Flag-off path
                 # remains byte-identical (silent skip).
                 try:
-                    from arnold_pipelines.megaplan._pipeline.flags import unified_emit_on
+                    from arnold_pipelines.megaplan.feature_flags import unified_emit_on
                     if unified_emit_on():
                         raise RuntimeError(
                             "EVENTS_NDJSON_DECODE_ERROR: "

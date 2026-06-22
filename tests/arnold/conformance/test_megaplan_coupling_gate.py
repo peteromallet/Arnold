@@ -39,7 +39,7 @@ def test_new_generic_megaplan_import_fails_gate(tmp_path: Path) -> None:
         "\n".join(
             [
                 "from arnold.pipelines import megaplan",
-                "from arnold.pipelines.megaplan.run_outcome import RunOutcome",
+                "from arnold_pipelines.megaplan.run_outcome import RunOutcome",
                 "",
             ]
         ),
@@ -55,8 +55,8 @@ def test_new_generic_megaplan_import_fails_gate(tmp_path: Path) -> None:
     assert "new generic Arnold Megaplan coupling" in result.message
     assert result.details["unexpected"] == {
         "arnold.new_surface": (
-            "arnold.pipelines.megaplan",
-            "arnold.pipelines.megaplan.run_outcome",
+            "arnold_pipelines.megaplan",
+            "arnold_pipelines.megaplan.run_outcome",
         )
     }
 
@@ -95,16 +95,16 @@ def test_c1_generic_pipeline_modules_do_not_import_megaplan() -> None:
                 for node in ast.walk(tree)
                 if isinstance(node, ast.Import)
                 for alias in node.names
-                if alias.name == "arnold.pipelines.megaplan"
-                or alias.name.startswith("arnold.pipelines.megaplan.")
+                if alias.name == "arnold_pipelines.megaplan"
+                or alias.name.startswith("arnold_pipelines.megaplan.")
             }
             | {
                 (node.module or "")
                 for node in ast.walk(tree)
                 if isinstance(node, ast.ImportFrom)
                 and (
-                    (node.module or "") == "arnold.pipelines.megaplan"
-                    or (node.module or "").startswith("arnold.pipelines.megaplan.")
+                    (node.module or "") == "arnold_pipelines.megaplan"
+                    or (node.module or "").startswith("arnold_pipelines.megaplan.")
                 )
             }
         )

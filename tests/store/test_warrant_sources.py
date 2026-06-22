@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from arnold.pipelines.megaplan.store.warrant_sources import (
+from arnold_pipelines.megaplan.store.warrant_sources import (
     REQUIRED_WARRANT_SOURCE_FIELDS,
     build_warrant_source_projection,
     inventory_warrant_sources,

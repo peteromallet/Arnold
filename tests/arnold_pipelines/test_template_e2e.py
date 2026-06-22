@@ -19,14 +19,14 @@ from arnold.execution import run
 from arnold.execution.backend import SkeletalBackend
 from arnold.workflow import Pipeline, compile_pipeline, dry_run
 from arnold_pipelines._template import build_pipeline
-from arnold_pipelines.megaplan._pipeline.registry import _scan_dir_for_pipeline_modules
+from arnold_pipelines.megaplan.runtime.discovery import _scan_dir_for_pipeline_modules
 
 
 def test_template_excluded_by_legacy_scanner() -> None:
     """The legacy scanner must NOT return ``_template`` as a discovered pipeline."""
 
     registry_file = Path(__file__).resolve().parent.parent.parent / (
-        "arnold_pipelines/megaplan/_pipeline/registry.py"
+        "arnold_pipelines/megaplan/runtime/discovery.py"
     )
     pipelines_dir = registry_file.resolve().parent.parent.parent  # arnold_pipelines/
 

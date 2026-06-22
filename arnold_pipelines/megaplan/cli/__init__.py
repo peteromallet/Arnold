@@ -1276,7 +1276,7 @@ def handle_migrate_local_plans(root: Path, args: argparse.Namespace) -> StepResp
 
 def handle_resume(root: Path, args: argparse.Namespace) -> StepResponse:
     from arnold_pipelines.megaplan._core.io import find_plan_dir
-    from arnold_pipelines.megaplan._pipeline.resume import extract_typed_resume_metadata
+    from arnold_pipelines.megaplan.runtime.resume import extract_typed_resume_metadata
 
     plan_dir = find_plan_dir(root, args.plan)
     typed_meta = (
@@ -1324,7 +1324,7 @@ def _resume_human_gate(root: Path, plan_dir: Path, args: argparse.Namespace) -> 
     then re-enters the pipeline at the paused stage.
     """
     awaiting_path = plan_dir / "awaiting_user.json"
-    from arnold_pipelines.megaplan._pipeline.resume import extract_typed_resume_metadata
+    from arnold_pipelines.megaplan.runtime.resume import extract_typed_resume_metadata
 
     typed_meta = extract_typed_resume_metadata(plan_dir)
 
@@ -1422,8 +1422,8 @@ def _resume_human_gate(root: Path, plan_dir: Path, args: argparse.Namespace) -> 
             f"Invalid choice '{choice}'. " f"Valid choices: {', '.join(choices)}",
         )
 
-    from arnold_pipelines.megaplan._pipeline.executor import run_pipeline
-    from arnold_pipelines.megaplan._pipeline.resume import with_entry
+    from arnold_pipelines.megaplan.runtime.bridge import run_pipeline_dispatch
+    from arnold_pipelines.megaplan.runtime.resume import with_entry
     from arnold_pipelines.megaplan.registry import get_pipeline
     from arnold_pipelines.megaplan.step_types import StepContext
 
@@ -1465,7 +1465,12 @@ def _resume_human_gate(root: Path, plan_dir: Path, args: argparse.Namespace) -> 
         mode=state.get("mode", "code"),
         inputs={},
     )
-    result = run_pipeline(pipeline, ctx, artifact_root=plan_dir)
+    result = run_pipeline_dispatch(
+        pipeline,
+        ctx,
+        artifact_root=plan_dir,
+        pipeline_key=str(pipeline_name),
+    )
 
     # Clean up awaiting_user.json after successful resume.
     if awaiting_path.exists():
@@ -1538,7 +1543,7 @@ def _handle_pipelines(root: Path, args: argparse.Namespace) -> int:
         if not name:
             print("(no pipeline name provided)")
             return 0
-        from arnold_pipelines.megaplan._pipeline.judge_manifest_discovery import (
+        from arnold_pipelines.megaplan.runtime.judge_manifest_discovery import (
             find_judge_manifest,
             validate_judge_manifest,
         )
@@ -1572,7 +1577,7 @@ def _handle_pipelines(root: Path, args: argparse.Namespace) -> int:
         )
         from arnold_pipelines.megaplan.runtime.discovery import canonical_pipeline_name
         from arnold_pipelines.megaplan.runtime.discovery import scan_python_pipelines
-        from arnold_pipelines.megaplan._pipeline.validator import validate
+        from arnold.pipeline.validator import ValidationOptions, validate
 
         canonical_name = canonical_pipeline_name(name)
         original_manifest_discovery = os.environ.get("MEGAPLAN_M6_MANIFEST_DISCOVERY")
@@ -1599,7 +1604,14 @@ def _handle_pipelines(root: Path, args: argparse.Namespace) -> int:
         if pipeline is None:
             print(f"pipelines check: {canonical_name!r} is not executable", file=sys.stderr)
             return 1
-        diag = validate(pipeline)
+        diag = validate(
+            pipeline,
+            ValidationOptions(
+                decision_vocabulary_fallback=frozenset(
+                    {"proceed", "iterate", "tiebreaker", "escalate"}
+                ),
+            ),
+        )
         if diag.ok:
             print(name)
             return 0

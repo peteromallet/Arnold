@@ -5,10 +5,10 @@ from pathlib import Path
 
 import pytest
 
-from arnold.pipelines.megaplan._core.workflow import resume_plan
-from arnold.pipelines.megaplan.cli import main as cli_main
-from arnold.pipelines.megaplan.store import FileStore, RevisionConflict
-from arnold.pipelines.megaplan.types import CliError
+from arnold_pipelines.megaplan._core.workflow import resume_plan
+from arnold_pipelines.megaplan.cli import main as cli_main
+from arnold_pipelines.megaplan.store import FileStore, RevisionConflict
+from arnold_pipelines.megaplan.types import CliError
 
 
 def _project(tmp_path: Path) -> Path:
@@ -125,7 +125,7 @@ def test_resume_cli_dispatches_minimal_entry_point(tmp_path: Path, monkeypatch, 
     def fake_resume(root: Path, plan: str, *, store=None):
         return {"success": True, "step": "resume", "plan": plan, "phase": "review", "state": "done"}
 
-    monkeypatch.setattr("arnold.pipelines.megaplan.cli.resume_plan", fake_resume)
+    monkeypatch.setattr("arnold_pipelines.megaplan.cli.resume_plan", fake_resume)
 
     exit_code = cli_main(["resume", "--plan", "cli-resume"])
     payload = json.loads(capsys.readouterr().out)

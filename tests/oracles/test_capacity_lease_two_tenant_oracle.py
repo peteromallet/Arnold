@@ -27,8 +27,8 @@ from __future__ import annotations
 
 import pytest
 
-from arnold.pipelines.megaplan._pipeline.envelope import RunEnvelope, make_envelope
-from arnold.pipelines.megaplan.runtime.governor import (
+from arnold.runtime.envelope import RunEnvelope, make_envelope
+from arnold_pipelines.megaplan.runtime.governor import (
     BudgetExceeded,
     ExceedReason,
     Governor,

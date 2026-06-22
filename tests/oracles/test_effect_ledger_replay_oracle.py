@@ -7,11 +7,11 @@ from __future__ import annotations
 
 import pytest
 
-from arnold.pipelines.megaplan.observability.effect_enforcement import (
+from arnold_pipelines.megaplan.observability.effect_enforcement import (
     _reset_for_tests,
     journal_then_execute,
 )
-from arnold.pipelines.megaplan.observability.effect_ledger import Effect, ReplayClass
+from arnold_pipelines.megaplan.observability.effect_ledger import Effect, ReplayClass
 
 
 @pytest.fixture(autouse=True)
@@ -57,7 +57,7 @@ def test_crash_between_return_and_journal_does_not_double_execute(monkeypatch):
 
     # Now simulate a substrate where the journal sink itself would crash.
     # The at-most-once class must NOT re-fire fn, regardless of sink state.
-    import arnold.pipelines.megaplan.observability.effect_enforcement as ee
+    import arnold_pipelines.megaplan.observability.effect_enforcement as ee
 
     monkeypatch.setattr(ee, "_journal_intent", boom)
     journal_then_execute(eff, lambda: calls.append("twice?"))
