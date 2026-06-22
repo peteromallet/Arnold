@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any, Callable, Iterable
 
 import arnold_pipelines.megaplan.workers as worker_module
-from arnold_pipelines.megaplan._pipeline.flags import calibration_query_route_on
+from arnold_pipelines.megaplan.feature_flags import calibration_query_route_on
 from arnold_pipelines.megaplan.store import write_plan_artifact_json
 from arnold_pipelines.megaplan._core import (
     apply_session_update,

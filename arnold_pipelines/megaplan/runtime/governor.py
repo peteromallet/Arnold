@@ -31,7 +31,7 @@ from contextvars import ContextVar
 from dataclasses import dataclass, field
 from typing import Optional
 
-from arnold_pipelines.megaplan._pipeline.envelope import RunEnvelope
+from arnold.runtime.envelope import RunEnvelope
 
 
 class ExceedReason(str, enum.Enum):

@@ -4,7 +4,7 @@ import argparse
 from pathlib import Path
 from typing import Any, Callable
 
-from arnold_pipelines.megaplan._pipeline.flags import control_interface_routing_on
+from arnold_pipelines.megaplan.feature_flags import control_interface_routing_on
 from arnold_pipelines.megaplan.profiles import (
     DEFAULT_AGENT_ROUTING,
     ROBUSTNESS_ACCEPTED,

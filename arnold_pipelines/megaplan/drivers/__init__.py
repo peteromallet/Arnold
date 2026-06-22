@@ -18,7 +18,7 @@ from __future__ import annotations
 
 from typing import Literal, Optional
 
-from arnold_pipelines.megaplan._pipeline.flags import unified_dispatch_on
+from arnold_pipelines.megaplan.feature_flags import unified_dispatch_on
 
 from .in_process import InProcessDriver
 from .subprocess_isolated import SubprocessIsolatedDriver
