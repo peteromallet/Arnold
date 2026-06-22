@@ -50,7 +50,7 @@
     },
     {
       "m6_disposition": "keep",
-      "manifest_hash": "sha256:7ae35fda74984a1a98bbcf0461c01be8f319a8241f9a2577dd67823bfe9fbe24",
+      "manifest_hash": "sha256:fc699201b0f473c3cc240dc16702f32f27e35760b04bc9f2cc9fc3670c5bb200",
       "name": "select-tournament",
       "seam_ids": [],
       "stable_id": "megaplan.select_tournament",
@@ -58,7 +58,7 @@
     },
     {
       "m6_disposition": "keep",
-      "manifest_hash": "sha256:5ef8176f567ccee09f6d65262965b6d517023179f5c663fb232c63d75b2634f5",
+      "manifest_hash": "sha256:5c872d9f3a953478a5fd71de3840e3d7c700426dd3c2e8818842348f0943502a",
       "name": "writing-panel-strict",
       "seam_ids": [],
       "stable_id": "megaplan.writing_panel_strict",
