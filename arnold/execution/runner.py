@@ -7,9 +7,11 @@ from pathlib import Path
 
 from arnold.manifest import ManifestCursor, WorkflowManifest
 
-from arnold.execution.backend import ExecutionBackend, SkeletalBackend
+from arnold.execution.backend import ExecutionBackend, LocalJournalBackend, SkeletalBackend
+from arnold.execution.observability import ExecutionLogger
 from arnold.execution.registries import ExecutionRegistries
 from arnold.execution.result import ExecutionResult
+from arnold.execution.state_store import StateStore
 
 
 def run(
@@ -19,6 +21,8 @@ def run(
     registries: ExecutionRegistries | None = None,
     resume_cursor: ManifestCursor | None = None,
     backend: ExecutionBackend | None = None,
+    state_store: StateStore | None = None,
+    logger: ExecutionLogger | None = None,
 ) -> ExecutionResult:
     """Run a compiled workflow manifest through a sync backend."""
 
@@ -27,12 +31,22 @@ def run(
 
     root = Path(artifact_root)
     resolved_registries = registries if registries is not None else ExecutionRegistries()
-    resolved_backend = backend if backend is not None else SkeletalBackend()
+    if backend is not None:
+        return backend.run_manifest(
+            manifest,
+            artifact_root=root,
+            registries=resolved_registries,
+            resume_cursor=resume_cursor,
+        )
+
+    resolved_backend = LocalJournalBackend(state_store=state_store, logger=logger)
     return resolved_backend.run_manifest(
         manifest,
         artifact_root=root,
         registries=resolved_registries,
         resume_cursor=resume_cursor,
+        state_store=state_store,
+        logger=logger,
     )
 
 

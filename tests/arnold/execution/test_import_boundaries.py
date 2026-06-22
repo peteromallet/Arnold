@@ -52,9 +52,13 @@ def test_execution_public_namespace_is_narrow() -> None:
     assert set(execution.__all__) == {
         "ExecutionBackend",
         "ExecutionDiagnostic",
+        "ExecutionLogger",
         "ExecutionRegistries",
         "ExecutionResult",
         "ExecutionState",
+        "FileStateStore",
+        "RunCheckpoint",
         "SkeletalBackend",
+        "StateStore",
         "run",
     }
