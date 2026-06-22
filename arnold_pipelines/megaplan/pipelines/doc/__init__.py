@@ -1,52 +1,19 @@
 """Python composition of the first-class ``doc`` pipeline.
 
-Linear topology with NO gate stage — single-pass critique + revise,
-then assembly:
+Linear explicit-node workflow with a dynamic fanout stage:
 
-    outline → section_drafts → critique → revise → assembly
+    outline -> section_drafts (fanout+reducer) -> critique -> revise -> assembly
 
-* ``outline`` emits a ``sections`` JSON artifact (a list of section
-  specs the per-section drafts stage will fan out over).
-* ``section_drafts`` is the in-tree consumer of the new dynamic
-  primitives: a :func:`dynamic_fanout` SubloopStep whose generator
-  reads the outline-emitted artifact and whose ``base_prompt`` is a
-  per-section execute step. The join concatenates the per-section
-  outputs into a single mapping that downstream stages consume.
-* ``critique`` and ``revise`` are direct ``Step``s (not
-  ``critique_revise_gate_loop``) — there is no third ``gate`` stage in
-  ``pipeline.stages``. The doc pipeline is deliberately single-pass.
-* ``assembly`` concatenates the section drafts + revisions into the
-  final document. Its ``run()`` returns ``next='halt'`` directly per
-  ``executor.py:218-220`` (a ``halt``-labelled edge would be
-  unreachable; the assembly Stage carries no halt edge).
-
-Per-stage prompt files are bundled under
-``megaplan/pipelines/doc/prompts/``. The public Step shells in
-``megaplan.pipelines.doc.steps`` carry the canonical ``prompt_key`` slots
-(``outline_doc`` / ``execute_doc`` / ``critique_doc`` / ``revise_doc``
-/ ``assemble_doc``).
+The ``section_drafts`` step consumes the ``sections`` artifact emitted by
+``outline`` and fans out per-section draft nodes. The reducer concatenates the
+per-section outputs into a single mapping for downstream stages.
 """
 
 from __future__ import annotations
 
-from arnold_pipelines.megaplan._pipeline.patterns import dynamic_fanout
-from arnold_pipelines.megaplan._pipeline.types import (
-    Edge,
-    Pipeline,
-    Stage,
-)
-from arnold_pipelines.megaplan.pipelines.doc.prompts import DOC_PROMPT_BUNDLE
-from arnold_pipelines.megaplan.pipelines.doc.steps import (
-    AssemblyStep,
-    CritiqueStep,
-    OutlineArtifactReader,
-    OutlineStep,
-    ReviseStep,
-    SectionDraftStep,
-    concat_sections_join,
-)
+from arnold.manifest import FanoutPolicy, ReducerRef, WorkflowPolicy
+from arnold.workflow.dsl import Capability, Input, Output, Pipeline, Route, Step
 
-# ── Module-level metadata surfaced via PipelineRegistry ────────────────
 
 name: str = "doc"
 description: str = (
@@ -62,60 +29,90 @@ arnold_api_version: str = "1.0"
 capabilities: tuple[str, ...] = ("doc",)
 
 
-# ── Pipeline assembly ──────────────────────────────────────────────────
-
-
 def build_pipeline() -> Pipeline:
-    """Return the canonical ``doc`` :class:`Pipeline`.
+    """Return the canonical ``doc`` explicit-node pipeline."""
 
-    Stage order (insertion-order preserved via plain ``dict``):
-
-    1. ``outline`` — emits ``sections`` JSON artifact.
-    2. ``section_drafts`` — :func:`dynamic_fanout` SubloopStep wrapping
-       the outline reader + per-section base_prompt.
-    3. ``critique`` — direct Step (no gate loop).
-    4. ``revise`` — direct Step (no gate loop).
-    5. ``assembly`` — terminal Step (returns ``next='halt'``).
-    """
-
-    fanout = dynamic_fanout(
-        generator=OutlineArtifactReader(artifact_label="sections"),
-        base_prompt=SectionDraftStep(),
-        join=concat_sections_join,
-        name="section_drafts",
+    outline = Step(
+        id="outline",
+        kind="agent",
+        label="Outline document sections",
+        inputs=(Input(name="brief"),),
+        outputs=(Output(name="sections"), Output(name="outline_prompt")),
+        capabilities=(Capability(id="doc", route="outline"),),
+        metadata={"prompt_key": "outline_doc", "stage": "outline"},
+    )
+    section_drafts = Step(
+        id="section_drafts",
+        kind="fanout",
+        label="Draft each section in parallel",
+        inputs=(Input(name="sections", value_ref="outline.sections"),),
+        outputs=(Output(name="draft_chunks"),),
+        capabilities=(Capability(id="doc", route="execute"),),
+        policy=WorkflowPolicy(
+            fanout=FanoutPolicy(mode="dynamic", reducer_ref="doc:concat_sections"),
+            reducers=(ReducerRef(reducer_id="doc:concat_sections"),),
+        ),
+        metadata={
+            "prompt_key": "execute_doc",
+            "generator_ref": "doc:outline_artifact_reader",
+            "stage": "section_drafts",
+        },
+    )
+    critique = Step(
+        id="critique",
+        kind="agent",
+        label="Critique the assembled draft",
+        inputs=(Input(name="draft_chunks", value_ref="section_drafts.draft_chunks"),),
+        outputs=(Output(name="critique_artifact"), Output(name="critique_prompt")),
+        capabilities=(Capability(id="doc", route="critique"),),
+        metadata={"prompt_key": "critique_doc", "stage": "critique"},
+    )
+    revise = Step(
+        id="revise",
+        kind="agent",
+        label="Revise from critique",
+        inputs=(
+            Input(name="draft_chunks", value_ref="section_drafts.draft_chunks"),
+            Input(name="critique_artifact", value_ref="critique.critique_artifact"),
+        ),
+        outputs=(Output(name="revised_draft"), Output(name="revise_prompt")),
+        capabilities=(Capability(id="doc", route="revise"),),
+        metadata={"prompt_key": "revise_doc", "stage": "revise"},
+    )
+    assembly = Step(
+        id="assembly",
+        kind="emit",
+        label="Assemble final document",
+        inputs=(Input(name="revised_draft", value_ref="revise.revised_draft"),),
+        outputs=(Output(name="document"), Output(name="assembly_prompt")),
+        capabilities=(Capability(id="doc", route="assemble"),),
+        metadata={"prompt_key": "assemble_doc", "stage": "assembly", "terminal": True},
     )
 
-    stages: dict[str, Stage] = {
-        "outline": Stage(
-            name="outline",
-            step=OutlineStep(),
-            edges=(Edge(label="section_drafts", target="section_drafts"),),
+    return Pipeline(
+        id="doc",
+        version="m5-phase3",
+        steps=(outline, section_drafts, critique, revise, assembly),
+        routes=(
+            Route(id="outline:section_drafts", source="outline", target="section_drafts", label="section_drafts"),
+            Route(id="section_drafts:critique", source="section_drafts", target="critique", label="critique"),
+            Route(id="critique:revise", source="critique", target="revise", label="revise"),
+            Route(id="revise:assembly", source="revise", target="assembly", label="assembly"),
         ),
-        "section_drafts": Stage(
-            name="section_drafts",
-            step=fanout,
-            edges=(Edge(label="critique", target="critique"),),
-        ),
-        "critique": Stage(
-            name="critique",
-            step=CritiqueStep(),
-            edges=(Edge(label="revise", target="revise"),),
-        ),
-        "revise": Stage(
-            name="revise",
-            step=ReviseStep(),
-            edges=(Edge(label="assembly", target="assembly"),),
-        ),
-        "assembly": Stage(
-            name="assembly",
-            step=AssemblyStep(),
-            edges=(),
-        ),
-    }
-
-    pipeline = Pipeline(stages=stages, entry="outline")
-    object.__setattr__(pipeline, "resource_bundles", (DOC_PROMPT_BUNDLE,))
-    return pipeline
+        capabilities=(Capability(id="doc", route="default"),),
+        metadata={
+            "name": name,
+            "description": description,
+            "driver": driver,
+            "entrypoint": entrypoint,
+            "arnold_api_version": arnold_api_version,
+            "capabilities": capabilities,
+            "default_profile": default_profile,
+            "supported_modes": supported_modes,
+            "recommended_profiles": recommended_profiles,
+            "resource_bundles": ("doc",),
+        },
+    )
 
 
 __all__ = [

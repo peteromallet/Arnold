@@ -899,6 +899,10 @@ def _scan_dir_for_pipeline_modules(
     for entry in sorted(pipelines_dir.iterdir()):
         if entry.name.startswith("_") or entry.name.startswith("."):
             continue
+        # M5 discovery helper is not a pipeline module; skip it so the legacy
+        # scanner does not reject it for lacking a ``build_pipeline`` callable.
+        if entry.name == "discovery.py":
+            continue
         if entry.is_file() and entry.suffix == ".py":
             cli = _discovered_cli_name(entry, package_prefix=package_prefix)
             if cli in seen:

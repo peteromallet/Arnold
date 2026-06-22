@@ -30,6 +30,24 @@
       "stable_id": "megaplan.jokes",
       "typed_contract_capable": false,
       "seam_ids": []
+    },
+    {
+      "name": "live-supervisor",
+      "stable_id": "megaplan.live_supervisor",
+      "typed_contract_capable": false,
+      "seam_ids": []
+    },
+    {
+      "name": "select-tournament",
+      "stable_id": "megaplan.select_tournament",
+      "typed_contract_capable": false,
+      "seam_ids": []
+    },
+    {
+      "name": "writing-panel-strict",
+      "stable_id": "megaplan.writing_panel_strict",
+      "typed_contract_capable": false,
+      "seam_ids": []
     }
   ]
 }
