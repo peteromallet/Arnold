@@ -18,7 +18,8 @@ def test_pre_m6_planning_name_alias_resolves_registry_pipeline() -> None:
     assert canonical_pipeline_name("planning") == "megaplan"
     pipeline = get_pipeline("planning")
     assert pipeline is not None
-    assert pipeline.entry == "prep"
+    assert pipeline.id == "megaplan"
+    assert "prep" in {step.id for step in pipeline.steps}
 
 
 def test_resume_plan_with_pre_m6_planning_cursor_runs(tmp_path: Path) -> None:
@@ -40,13 +41,17 @@ def test_resume_plan_with_pre_m6_planning_cursor_runs(tmp_path: Path) -> None:
                     "batch_index": 1,
                 },
                 "history": [],
-                "config": {},
+                "config": {"project_dir": str(tmp_path)},
                 "sessions": {},
                 "plan_versions": [],
                 "meta": {},
                 "last_gate": {},
             }
         ),
+        encoding="utf-8",
+    )
+    (plan_dir / "finalize.json").write_text(
+        json.dumps({"tasks": [{"id": "legacy-resume", "status": "waived"}]}),
         encoding="utf-8",
     )
 
@@ -107,7 +112,7 @@ def test_resume_plan_refuses_pipeline_manifest_chimera(tmp_path: Path, monkeypat
         "_pipeline_manifest_hash": "sha256:not-the-current-manifest",
         "resume_cursor": {"phase": "execute", "pipeline": "planning"},
         "history": [],
-        "config": {},
+        "config": {"project_dir": str(tmp_path)},
         "sessions": {},
         "plan_versions": [],
         "meta": {},
@@ -157,13 +162,17 @@ def test_resume_plan_accepts_matching_pipeline_manifest_hash(tmp_path: Path, mon
                 "_pipeline_manifest_hash": current_hash,
                 "resume_cursor": {"phase": "execute", "pipeline": "planning"},
                 "history": [],
-                "config": {},
+                "config": {"project_dir": str(tmp_path)},
                 "sessions": {},
                 "plan_versions": [],
                 "meta": {},
                 "last_gate": {},
             }
         ),
+        encoding="utf-8",
+    )
+    (plan_dir / "finalize.json").write_text(
+        json.dumps({"tasks": [{"id": "hashed-resume", "status": "waived"}]}),
         encoding="utf-8",
     )
 
@@ -193,7 +202,7 @@ def test_resume_plan_rollback_preserves_runtime_envelope_on_failed_operation(tmp
                 "_pipeline_name": "planning",
                 "resume_cursor": {"phase": "execute", "pipeline": "planning"},
                 "history": [],
-                "config": {},
+                "config": {"project_dir": str(tmp_path)},
                 "sessions": {},
                 "plan_versions": [],
                 "meta": {},
@@ -235,7 +244,7 @@ def test_resume_plan_refuses_non_builtin_missing_runtime_envelope(tmp_path: Path
                 "_pipeline_name": "creative",
                 "resume_cursor": {"phase": "draft", "pipeline": "creative"},
                 "history": [],
-                "config": {},
+                "config": {"project_dir": str(tmp_path)},
                 "sessions": {},
                 "plan_versions": [],
                 "meta": {},
