@@ -14,8 +14,8 @@ from __future__ import annotations
 from dataclasses import asdict
 from typing import Any, Mapping
 
-from arnold.workflow.manifests import WorkflowManifest
-from arnold.workflow.refs import EdgeRef, NodeRef, ValueRef
+from arnold.manifest.manifests import WorkflowManifest
+from arnold.manifest.refs import EdgeRef, NodeRef, ValueRef
 
 
 def inspect_manifest(manifest: WorkflowManifest) -> dict[str, Any]:

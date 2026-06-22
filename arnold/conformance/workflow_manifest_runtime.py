@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Iterable
 
 NEUTRAL_PACKAGE_PREFIXES = (
+    "arnold.manifest",
     "arnold.workflow",
     "arnold.kernel",
     "arnold.execution",
