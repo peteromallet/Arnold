@@ -40,10 +40,25 @@ from arnold.kernel.artifacts import ArtifactBinding, ProvenanceParent
 from arnold.kernel.effect_ledger import derive_effect_idempotency_key
 from arnold.manifest import ManifestCursor, WorkflowEdge, WorkflowManifest, WorkflowNode
 
+from arnold.execution.observability import (
+    ExecutionLogger,
+    build_health_snapshot,
+    build_progress_report,
+    routing_snapshot,
+    snapshot_to_dict,
+)
 from arnold.execution.registries import ExecutionRegistries
 from arnold.execution.result import ExecutionDiagnostic, ExecutionResult, ExecutionState
 from arnold.execution.routing import project_routing_state
 from arnold.execution.state import RouteCoordinate, RoutingState
+from arnold.execution.state_store import (
+    BudgetSnapshot,
+    FileStateStore,
+    JournalPointer,
+    RoutingSnapshot,
+    RunCheckpoint,
+    StateStore,
+)
 
 
 class ExecutionBackend(Protocol):
@@ -56,6 +71,8 @@ class ExecutionBackend(Protocol):
         artifact_root: Path,
         registries: ExecutionRegistries,
         resume_cursor: ManifestCursor | None = None,
+        state_store: StateStore | None = None,
+        logger: ExecutionLogger | None = None,
     ) -> ExecutionResult:
         """Run or resume a compiled workflow manifest."""
 
@@ -70,8 +87,10 @@ class SkeletalBackend:
         artifact_root: Path,
         registries: ExecutionRegistries,
         resume_cursor: ManifestCursor | None = None,
+        state_store: StateStore | None = None,
+        logger: ExecutionLogger | None = None,
     ) -> ExecutionResult:
-        del registries
+        del registries, state_store, logger
         return ExecutionResult(
             state=ExecutionState.COMPLETED,
             manifest_id=manifest.id,
@@ -143,12 +162,16 @@ class LocalJournalBackend:
         init_ts: datetime | None = None,
         resume_payload: Mapping[str, Any] | None = None,
         initial_scope_stack: tuple[str, ...] | None = None,
+        state_store: StateStore | None = None,
+        logger: ExecutionLogger | None = None,
     ) -> None:
         self._external_run_id = run_id
         self._external_reentry_id = reentry_id
         self._external_init_ts = init_ts
         self._resume_payload = dict(resume_payload or {})
         self._initial_scope_stack = initial_scope_stack
+        self._state_store = state_store
+        self._logger = logger or ExecutionLogger()
 
     # ------------------------------------------------------------------
     # Pluggable hooks (subclass-friendly)
@@ -335,6 +358,8 @@ class LocalJournalBackend:
         artifact_root: Path,
         registries: ExecutionRegistries,
         resume_cursor: ManifestCursor | None = None,
+        state_store: StateStore | None = None,
+        logger: ExecutionLogger | None = None,
     ) -> ExecutionResult:
         self._manifest = manifest
         self._root = Path(artifact_root)
@@ -346,6 +371,16 @@ class LocalJournalBackend:
         self._reentry_id = resume_cursor.reentry_id if resume_cursor else self._make_reentry_id()
         self._scope_stack: tuple[str, ...] = self._initial_scope_stack or ()
         self._init_ts = self._external_init_ts or self._now()
+        if state_store is not None:
+            self._state_store = state_store
+        if logger is not None:
+            self._logger = logger
+
+        span = self._logger.span("run_manifest", self._run_id)
+        span.__enter__()
+
+        diagnostics: list[ExecutionDiagnostic] = []
+        terminal: ExecutionState | None = None
 
         prior_events = self._journal.read()
         self._append(
@@ -358,9 +393,17 @@ class LocalJournalBackend:
             "manifest_validated",
             {"manifest_id": manifest.id, "manifest_hash": manifest.manifest_hash or ""},
         )
+        self._logger.log_event(
+            "run_started",
+            self._run_id,
+            {
+                "manifest_id": manifest.id,
+                "manifest_hash": manifest.manifest_hash or "",
+                "artifact_root": str(self._root),
+            },
+        )
 
-        diagnostics: list[ExecutionDiagnostic] = []
-        terminal: ExecutionState | None = None
+        self._save_checkpoint("running")
 
         if resume_cursor is not None and resume_cursor.node is not None:
             node_ref = resume_cursor.node.id
@@ -386,6 +429,11 @@ class LocalJournalBackend:
                         "node_ref": node_ref,
                         "reentry_id": self._reentry_id or "",
                     },
+                )
+                self._logger.log_event(
+                    "run_resumed",
+                    self._run_id,
+                    {"node_ref": node_ref, "reentry_id": self._reentry_id or ""},
                 )
 
         while terminal is None:
@@ -473,14 +521,46 @@ class LocalJournalBackend:
             f"run_{terminal.value}",
             {"reason": "terminal state reached"},
         )
+        self._save_checkpoint(terminal.value)
 
-        resume_cursor_out: ManifestCoordinate | None = None
+        events = self._journal.read()
+        routing = project_routing_state(manifest, events)
+        governor = fold_governor_state(events)
+        budget = self._node_budget(None)
+        elapsed = (self._now() - self._init_ts).total_seconds()
+        progress = build_progress_report(events)
+        snapshot = build_health_snapshot(
+            status=terminal.value,
+            routing_state=routing,
+            governor_state=governor,
+            budget=budget,
+            elapsed_seconds=elapsed,
+        )
+        self._logger.log_event(
+            f"run_{terminal.value}",
+            self._run_id,
+            {
+                "progress": {
+                    "total_nodes": progress.total_nodes,
+                    "completed": progress.completed,
+                    "failed": progress.failed,
+                    "pending": progress.pending,
+                    "suspended": progress.suspended,
+                    "consumed_cost": progress.consumed_cost,
+                    "remaining_cost": progress.remaining_cost,
+                    "health_status": progress.health_status,
+                },
+                "health": snapshot_to_dict(snapshot),
+            },
+        )
+
+        resume_cursor_out: ManifestCursor | None = None
         if terminal == ExecutionState.SUSPENDED:
-            events = self._journal.read()
-            routing = project_routing_state(manifest, events)
             if routing.suspended:
                 suspended = sorted(routing.suspended)[0]
                 resume_cursor_out = self._build_resume_cursor(suspended)
+
+        span.__exit__(None, None, None)
 
         return ExecutionResult(
             state=terminal,
@@ -652,6 +732,55 @@ class LocalJournalBackend:
 
         return None
 
+    def _save_checkpoint(self, status: str) -> None:
+        """Persist a snapshot of the current run state if a store is attached."""
+
+        if self._state_store is None:
+            return
+
+        events = self._journal.read()
+        routing = project_routing_state(self._manifest, events)
+        governor = fold_governor_state(events)
+        last_sequence = events[-1].sequence if events else None
+
+        now = self._now().isoformat()
+        checkpoint = RunCheckpoint(
+            run_id=self._run_id,
+            manifest_id=self._manifest.id,
+            manifest_hash=self._manifest.manifest_hash or "",
+            status=status,
+            routing=RoutingSnapshot(
+                completed=tuple(routing_snapshot(routing)["completed"]),
+                failed=tuple(routing_snapshot(routing)["failed"]),
+                suspended=tuple(routing_snapshot(routing)["suspended"]),
+                ready=tuple(routing_snapshot(routing)["ready"]),
+                blocked=tuple(routing_snapshot(routing)["blocked"]),
+            ),
+            journal_pointer=JournalPointer(
+                journal_uri=self._journal.journal_uri,
+                sequence=last_sequence,
+            ),
+            budget=BudgetSnapshot(
+                consumed_cost=governor.consumed_cost,
+                consumed_seconds=governor.consumed_seconds,
+                consumed_tokens=governor.consumed_tokens,
+                released_cost=governor.released_cost,
+                released_seconds=governor.released_seconds,
+                released_tokens=governor.released_tokens,
+            ),
+            outputs=self._collect_outputs(),
+            scope_stack=self._scope_stack,
+            reentry_id=self._reentry_id,
+            created_at=self._init_ts.isoformat(),
+            updated_at=now,
+        )
+        self._state_store.save(checkpoint)
+        self._logger.log_event(
+            "checkpoint_saved",
+            self._run_id,
+            {"status": status, "sequence": last_sequence},
+        )
+
     def _execute_coordinate(
         self, coordinate: RouteCoordinate, routing: RoutingState
     ) -> None:
@@ -716,6 +845,17 @@ class LocalJournalBackend:
             },
             idempotency_key=reservation_id,
         )
+        self._logger.log_event(
+            "budget_reserved",
+            self._run_id,
+            {
+                "node_ref": coordinate.node_ref,
+                "reservation_id": reservation_id,
+                "cost": reservation.cost,
+                "seconds": reservation.seconds,
+                "tokens": reservation.tokens,
+            },
+        )
 
         # Loop iteration marker
         if node.policy and node.policy.loop is not None:
@@ -731,6 +871,15 @@ class LocalJournalBackend:
         self._append(
             EventFamily.NODE_LIFECYCLE,
             "node_started",
+            {
+                "node_ref": coordinate.node_ref,
+                "attempt": coordinate.attempt,
+                "iteration": coordinate.iteration,
+            },
+        )
+        self._logger.log_event(
+            "node_started",
+            self._run_id,
             {
                 "node_ref": coordinate.node_ref,
                 "attempt": coordinate.attempt,
@@ -753,6 +902,11 @@ class LocalJournalBackend:
                 "node_cancelled",
                 {"node_ref": coordinate.node_ref},
             )
+            self._logger.log_event(
+                "node_failed",
+                self._run_id,
+                {"node_ref": coordinate.node_ref, "reason": "cancelled"},
+            )
             self._release_budget(reservation_id, reservation)
             raise _TerminalState(ExecutionState.CANCELLED)
 
@@ -768,6 +922,15 @@ class LocalJournalBackend:
                     "iteration": coordinate.iteration,
                 },
             )
+            self._logger.log_event(
+                "run_suspended",
+                self._run_id,
+                {
+                    "node_ref": coordinate.node_ref,
+                    "route_id": outcome.suspension_route_id or "default",
+                },
+            )
+            self._save_checkpoint("suspended")
             self._release_budget(reservation_id, reservation)
             raise _TerminalState(ExecutionState.SUSPENDED)
 
@@ -790,6 +953,16 @@ class LocalJournalBackend:
                     "iteration": coordinate.iteration,
                 },
             )
+            self._logger.log_event(
+                "node_failed",
+                self._run_id,
+                {
+                    "node_ref": coordinate.node_ref,
+                    "error": outcome.error or "node timed out",
+                    "attempt": coordinate.attempt,
+                    "iteration": coordinate.iteration,
+                },
+            )
             self._release_budget(reservation_id, reservation)
             return
 
@@ -797,6 +970,16 @@ class LocalJournalBackend:
             self._append(
                 EventFamily.NODE_LIFECYCLE,
                 "node_failed",
+                {
+                    "node_ref": coordinate.node_ref,
+                    "error": outcome.error or "node failed",
+                    "attempt": coordinate.attempt,
+                    "iteration": coordinate.iteration,
+                },
+            )
+            self._logger.log_event(
+                "node_failed",
+                self._run_id,
                 {
                     "node_ref": coordinate.node_ref,
                     "error": outcome.error or "node failed",
@@ -821,6 +1004,11 @@ class LocalJournalBackend:
                         "node_ref": coordinate.node_ref,
                         "error": f"effect {effect.effect_id} failed",
                     },
+                )
+                self._logger.log_event(
+                    "node_failed",
+                    self._run_id,
+                    {"node_ref": coordinate.node_ref, "error": f"effect {effect.effect_id} failed"},
                 )
                 self._release_budget(reservation_id, reservation)
                 return
@@ -874,6 +1062,11 @@ class LocalJournalBackend:
                         "error": child_outcome.error or "subpipeline failed",
                     },
                 )
+                self._logger.log_event(
+                    "node_failed",
+                    self._run_id,
+                    {"node_ref": coordinate.node_ref, "error": child_outcome.error or "subpipeline failed"},
+                )
                 self._release_budget(reservation_id, reservation)
                 return
 
@@ -893,6 +1086,17 @@ class LocalJournalBackend:
             },
             idempotency_key=reservation_id,
         )
+        self._logger.log_event(
+            "budget_settled",
+            self._run_id,
+            {
+                "node_ref": coordinate.node_ref,
+                "reservation_id": reservation_id,
+                "actual_cost": outcome.actual_cost,
+                "actual_seconds": outcome.actual_seconds,
+                "actual_tokens": outcome.actual_tokens,
+            },
+        )
 
         self._append(
             EventFamily.NODE_LIFECYCLE,
@@ -904,6 +1108,16 @@ class LocalJournalBackend:
                 "outputs": outcome.outputs,
             },
         )
+        self._logger.log_event(
+            "node_completed",
+            self._run_id,
+            {
+                "node_ref": coordinate.node_ref,
+                "attempt": coordinate.attempt,
+                "iteration": coordinate.iteration,
+            },
+        )
+        self._save_checkpoint("running")
 
     def _run_node_body(
         self, coordinate: RouteCoordinate, node: WorkflowNode, context: ExecutionContext
@@ -1099,6 +1313,17 @@ class LocalJournalBackend:
                 "reservation_id": reservation_id,
             },
             idempotency_key=reservation_id,
+        )
+        self._logger.log_event(
+            "budget_released",
+            self._run_id,
+            {
+                "node_ref": reservation.node_ref,
+                "reservation_id": reservation_id,
+                "released_cost": reservation.cost,
+                "released_seconds": reservation.seconds,
+                "released_tokens": reservation.tokens,
+            },
         )
 
 
