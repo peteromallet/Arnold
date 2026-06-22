@@ -62,6 +62,33 @@ if TYPE_CHECKING:
 
 DEFAULT_ACTIVE_STEP_STALE_SECONDS = DEFAULT_NON_EXECUTE_TIMEOUT_CAP_SECONDS
 
+# M4 authority boundary: state.json is no longer an independent authority for
+# manifest-backed callers.  It survives only as a migration input or a read-only
+# sunset projection.  New code should derive status/trace/resume/inspect from
+# manifest journal events and artifact bindings.
+STATE_JSON_AUTHORITY = False
+
+
+def is_state_json_authority() -> bool:
+    """Return whether state.json is currently treated as independent authority."""
+    return STATE_JSON_AUTHORITY
+
+
+def load_state_as_projection(plan_dir: Path) -> dict[str, Any] | None:
+    """Load ``state.json`` as a read-only sunset projection only.
+
+    This function is intentionally read-only and never used for resume,
+    status, trace, or control-transition authority in manifest-backed callers.
+    """
+    state_path = plan_dir / "state.json"
+    if not state_path.exists():
+        return None
+    try:
+        data = json.loads(state_path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return None
+    return data if isinstance(data, dict) else {}
+
 
 def _heartbeat_persist_interval_seconds() -> float:
     raw = os.environ.get("MEGAPLAN_HEARTBEAT_PERSIST_INTERVAL_S")
