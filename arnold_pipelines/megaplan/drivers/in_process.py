@@ -33,7 +33,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Callable, Literal
 
-from arnold_pipelines.megaplan._pipeline.types import StepContext, StepResult
+from arnold_pipelines.megaplan.step_types import StepContext, StepResult
 
 
 @dataclass

@@ -24,7 +24,7 @@ from arnold.control.interface import (
     RunStateView,
 )
 from arnold_pipelines.megaplan._core.state import write_plan_state
-from arnold_pipelines.megaplan._pipeline.types import StateDelta, StateDeltaConflict, apply_delta
+from arnold_pipelines.megaplan.state_delta import StateDelta, StateDeltaConflict, apply_delta
 from arnold.runtime.outcome import RunOutcome
 
 
@@ -186,7 +186,7 @@ def read_valid_targets(
         raise ValueError("read_valid_targets requires an explicit binding or plugin identity")
     if isinstance(binding, str) and binding in {"megaplan", "planning"}:
         from arnold.runtime.operations import OperationKind, OperationRequest
-        from arnold_pipelines.megaplan._pipeline.registry import (
+        from arnold_pipelines.megaplan.registry import (
             control_status_result_from_operation_result,
             dispatch_operation_for,
         )

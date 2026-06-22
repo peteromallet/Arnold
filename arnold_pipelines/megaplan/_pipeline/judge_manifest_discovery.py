@@ -15,7 +15,7 @@ from arnold_pipelines.megaplan._pipeline.judge_manifest import (
     JUDGE_MANIFEST_SCHEMA,
     load_judge_manifest,
 )
-from arnold_pipelines.megaplan._pipeline.registry import _get_scan_roots
+from arnold_pipelines.megaplan.runtime.discovery import _get_scan_roots
 from arnold_pipelines.megaplan._pipeline.types import CONTENT_TYPES, Pipeline, Port, PortRef
 
 

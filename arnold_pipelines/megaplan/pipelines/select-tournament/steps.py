@@ -9,13 +9,8 @@ from typing import Any, Mapping
 
 # M3a: structural port/result shapes route through the Megaplan bridge here
 # because this package is executed by the Megaplan pipeline executor.
-from arnold_pipelines.megaplan._pipeline.types import (
-    PipelineVerdict,
-    Port,
-    PortRef,
-    StepContext,
-    StepResult,
-)
+from arnold.pipeline.types import PipelineVerdict, Port, PortRef
+from arnold_pipelines.megaplan.step_types import StepContext, StepResult
 from arnold.pipeline import ReduceResult, SelectionResult
 
 

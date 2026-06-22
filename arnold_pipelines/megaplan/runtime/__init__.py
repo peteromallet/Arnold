@@ -1,99 +1,48 @@
-"""Runtime infrastructure helpers grouped under ``megaplan.runtime``."""
+"""Megaplan runtime adapters and helpers.
 
-from __future__ import annotations
+This package houses Megaplan-owned adapters (e.g., Step IO policy,
+schema registry, pipeline discovery) that bridge Arnold pipeline contracts
+with Megaplan planning conventions.
 
-from importlib import import_module
-from typing import Any
+These modules were rehomed from ``arnold_pipelines.megaplan._pipeline``
+during the M3 burn-down to keep the production surface free of legacy
+``_pipeline`` imports.
+"""
 
-_MODULE_EXPORTS = {
-    "capabilities": "arnold_pipelines.megaplan.runtime.capabilities",
-    "doc_assembly": "arnold_pipelines.megaplan.runtime.doc_assembly",
-    "key_pool": "arnold_pipelines.megaplan.runtime.key_pool",
-    "sandbox": "arnold_pipelines.megaplan.runtime.sandbox",
-}
+from arnold_pipelines.megaplan.runtime.schema_registry_adapter import (  # noqa: F401
+    MEGAPLAN_CONTRACT_SCHEMA_ROOT,
+    create_contract_schema_registry,
+    create_step_io_contract_context,
+    derive_project_root_from_plan_dir,
+    resolve_contract_schema_project_root,
+)
 
-_SYMBOL_EXPORTS = {
-    "ALL_CAPABILITIES": "arnold_pipelines.megaplan.runtime.capabilities",
-    "CONTAINER_CAPABILITIES": "arnold_pipelines.megaplan.runtime.capabilities",
-    "DEFAULT_AGENT_ROUTING": "arnold_pipelines.megaplan.profiles.policy",
-    "DEFAULT_CONTAINER_CAPABILITIES": "arnold_pipelines.megaplan.runtime.capabilities",
-    "DEFAULT_HUMAN_CAPABILITIES": "arnold_pipelines.megaplan.runtime.capabilities",
-    "HUMAN_CAPABILITIES": "arnold_pipelines.megaplan.runtime.capabilities",
-    "get_worker_capabilities": "arnold_pipelines.megaplan.runtime.capabilities",
-    "union_verifies": "arnold_pipelines.megaplan.runtime.capabilities",
-    "validate_capabilities": "arnold_pipelines.megaplan.runtime.capabilities",
-    "assemble_doc": "arnold_pipelines.megaplan.runtime.doc_assembly",
-    "extract_sections": "arnold_pipelines.megaplan.runtime.doc_assembly",
-    "extract_settled_decisions": "arnold_pipelines.megaplan.runtime.doc_assembly",
-    "KeyEntry": "arnold_pipelines.megaplan.runtime.key_pool",
-    "KeyPool": "arnold_pipelines.megaplan.runtime.key_pool",
-    "acquire_key": "arnold_pipelines.megaplan.runtime.key_pool",
-    "has_keys": "arnold_pipelines.megaplan.runtime.key_pool",
-    "minimax_openrouter_model": "arnold_pipelines.megaplan.runtime.key_pool",
-    "report_429": "arnold_pipelines.megaplan.runtime.key_pool",
-    "report_failure": "arnold_pipelines.megaplan.runtime.key_pool",
-    "resolve_model": "arnold_pipelines.megaplan.runtime.key_pool",
-    "CapacityLease": "arnold_pipelines.megaplan.runtime.capacity_lease",
-    "Governor": "arnold_pipelines.megaplan.runtime.governor",
-    "current_governor": "arnold_pipelines.megaplan.runtime.governor",
-    "set_governor": "arnold_pipelines.megaplan.runtime.governor",
-    "SANDBOXED_EXEC_TOOLS": "arnold_pipelines.megaplan.runtime.sandbox",
-    "SANDBOXED_WRITE_TOOLS": "arnold_pipelines.megaplan.runtime.sandbox",
-    "SandboxViolation": "arnold_pipelines.megaplan.runtime.sandbox",
-    "install_sandbox": "arnold_pipelines.megaplan.runtime.sandbox",
-    "validate_terminal_command": "arnold_pipelines.megaplan.runtime.sandbox",
-    "validate_v4a_patch": "arnold_pipelines.megaplan.runtime.sandbox",
-    "validate_write_path": "arnold_pipelines.megaplan.runtime.sandbox",
-}
+from arnold_pipelines.megaplan.runtime.artifacts import (  # noqa: F401
+    latest_artifact,
+    next_version,
+)
 
-__all__ = [
-    *_MODULE_EXPORTS,
-    *_SYMBOL_EXPORTS,
-    "install_runtime_governor",
-    "uninstall_runtime_governor",
-]
+from arnold_pipelines.megaplan.runtime.step_io_policy_adapter import (  # noqa: F401
+    STEP_IO_POLICY_ENV,
+    STEP_IO_READ_LENIENT_ENV,
+    has_megaplan_step_io_self_validation_marker,
+    load_megaplan_step_io_policy,
+    load_megaplan_step_io_policy_path,
+    megaplan_policy_for_envelope,
+    megaplan_step_io_policy_path,
+    megaplan_step_io_read_lenient_escape_on,
+    record_megaplan_step_io_self_validation_marker,
+    resolve_megaplan_step_io_policy,
+    write_megaplan_step_io_policy,
+)
 
-
-def uninstall_runtime_governor(gov: Any) -> None:
-    """Reset ContextVar tokens installed by ``install_runtime_governor``."""
-
-    if gov is None:
-        return
-    tokens = getattr(gov, "_install_tokens", None) or []
-    setattr(gov, "_install_tokens", [])
-    for reset_fn, token in tokens:
-        try:
-            reset_fn(token)
-        except Exception:
-            pass
-
-
-def install_runtime_governor(envelope: Any, *, ledger_path: Any = None) -> Any:
-    """Install a tree-scoped Governor and seat the envelope in runtime contexts."""
-
-    del ledger_path
-    from arnold_pipelines.megaplan._pipeline.envelope import _envelope_ctx as _pipeline_env_ctx
-    from arnold_pipelines.megaplan.observability.events import _envelope_ctx as _events_env_ctx
-    from arnold_pipelines.megaplan.runtime.governor import Governor, set_governor
-
-    gov = Governor()
-    set_governor(gov)
-    tokens: list[Any] = []
-    if envelope is not None:
-        tokens.append((_pipeline_env_ctx.reset, _pipeline_env_ctx.set(envelope)))
-        tokens.append((_events_env_ctx.reset, _events_env_ctx.set(envelope)))
-    setattr(gov, "_install_tokens", tokens)
-    return gov
-
-
-def __getattr__(name: str) -> Any:
-    if name in _MODULE_EXPORTS:
-        value = import_module(_MODULE_EXPORTS[name])
-        globals()[name] = value
-        return value
-    if name in _SYMBOL_EXPORTS:
-        module = import_module(_SYMBOL_EXPORTS[name])
-        value = getattr(module, name)
-        globals()[name] = value
-        return value
-    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+from arnold_pipelines.megaplan.runtime.discovery import (  # noqa: F401
+    CANONICAL_BUILTIN_PIPELINE,
+    Disposition,
+    _SCAN_ROOTS,
+    _cli_name,
+    _get_scan_roots,
+    canonical_pipeline_name,
+    discover_python_pipelines,
+    scan_python_pipelines,
+)

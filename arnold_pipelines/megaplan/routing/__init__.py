@@ -12,7 +12,7 @@ from arnold_pipelines.megaplan.routing.identity import (
     params_hash,
     prompt_hash,
 )
-from arnold_pipelines.megaplan._pipeline.types import Edge
+from arnold.pipeline.types import Edge
 
 PLAN_PROCEED: str = "proceed"
 PLAN_ITERATE: str = "iterate"

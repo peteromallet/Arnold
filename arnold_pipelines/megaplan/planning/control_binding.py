@@ -22,7 +22,7 @@ from arnold_pipelines.megaplan._core import (
     sha256_file,
     unresolved_significant_flags,
 )
-from arnold_pipelines.megaplan._pipeline.types import StateDelta
+from arnold_pipelines.megaplan.state_delta import StateDelta
 from arnold.control.interface import (
     CONTROL_TARGET_ABORT,
     CONTROL_TARGET_FORCE_ADVANCE,
