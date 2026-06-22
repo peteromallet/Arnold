@@ -68,8 +68,8 @@ This page is generated from the ``arnold.workflow`` manifest contract, the shipp
 | megaplan.jokes | jokes | sha256:3a49d0895f747685fdaaf40b3435ced81e653b8cd9f0ffdd6242150e15a0f3d5 | arnold_pipelines/megaplan/pipelines/jokes | keep|
 | megaplan.live_supervisor | live-supervisor | sha256:15c141b2d40bb116002e2638eb469b9f7f47cff8f7101b28582f34d115876c66 | arnold_pipelines/megaplan/pipelines/live_supervisor | keep|
 | megaplan.planning | megaplan | sha256:245a06ac778caf20c645772b7c0570655af7a79a0d00eda959b19d2cf01a3eba | arnold_pipelines/megaplan/pipelines/planning | keep|
-| megaplan.select_tournament | select-tournament | sha256:7ae35fda74984a1a98bbcf0461c01be8f319a8241f9a2577dd67823bfe9fbe24 | arnold_pipelines/megaplan/pipelines/select_tournament.py | keep|
-| megaplan.writing_panel_strict | writing-panel-strict | sha256:5ef8176f567ccee09f6d65262965b6d517023179f5c663fb232c63d75b2634f5 | arnold_pipelines/megaplan/pipelines/writing_panel_strict.py | keep|
+| megaplan.select_tournament | select-tournament | sha256:883cf2b46963466759588306d8855b53bb9ae5fdb77b8572242b2a913d24d0c5 | arnold_pipelines/megaplan/pipelines/select_tournament.py | keep|
+| megaplan.writing_panel_strict | writing-panel-strict | sha256:33735b429bd6991379dbffa0837b96fffb4a4d62e9bcef5417a5e07c5546b443 | arnold_pipelines/megaplan/pipelines/writing_panel_strict.py | keep|
 
 ## Workflow CLI Subcommands
 
