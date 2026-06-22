@@ -23,7 +23,6 @@ fields: ``files_changed``, ``commands_run``, ``evidence_files``, and
 
 from __future__ import annotations
 
-import os
 import subprocess
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
@@ -279,7 +278,6 @@ def _stale_evidence(
                     current_head,
                     execution_window,
                 )
-                or _head_is_ancestor(observed_head, current_head)
             ):
                 stale.append(f"head_mismatch:{ref.kind}")
         if current_code_hash:
@@ -318,31 +316,6 @@ def _git_is_ancestor(project_dir: Path, ancestor: str, descendant: str) -> bool:
     except (OSError, subprocess.SubprocessError):
         return False
     return completed.returncode == 0
-
-
-def _head_is_ancestor(ancestor: str, descendant: str) -> bool:
-    """Return True if ``ancestor`` is an ancestor of (or equal to) ``descendant``.
-
-    When the harness commits plan state between batches, task evidence is
-    recorded at the pre-commit HEAD. Treating such evidence as stale causes
-    infinite re-execution loops, so we accept any evidence whose HEAD is in
-    the current branch history.
-    """
-    if ancestor == descendant:
-        return True
-    root = os.environ.get("MEGAPLAN_TARGET_ROOT") or os.environ.get("MEGAPLAN_PROJECT_DIR")
-    cwd = Path(root) if root else Path.cwd()
-    try:
-        result = subprocess.run(
-            ["git", "merge-base", "--is-ancestor", ancestor, descendant],
-            cwd=str(cwd),
-            check=False,
-            capture_output=True,
-            text=True,
-        )
-    except (OSError, subprocess.SubprocessError):
-        return False
-    return result.returncode == 0
 
 
 def _explicit_terminal_status(refs: tuple[EvidenceRef, ...]) -> EvidenceStatus | None:

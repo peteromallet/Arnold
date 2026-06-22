@@ -57,14 +57,14 @@
       "msg": "terminal state reached: done"
     },
     {
-      "msg": "completion verdict (shadow): accepted subject=plan:idle-timeout failures=[none]"
+      "msg": "completion verdict (shadow): accepted subject=plan:idle-timeout failures=[none] providers=[phase_coverage,landed_diff,worker_did_work,green_suite,review_disposition,declared_noop] legacy_evidence=0 unknown_evidence=3"
     }
   ],
   "exit_code": 0,
   "outcome": {
     "blocking_reasons": [],
     "context_retries_used": 0,
-    "current_state": "failed",
+    "current_state": null,
     "external_retries_used": 0,
     "final_state": "done",
     "iterations": 3,

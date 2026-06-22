@@ -29,8 +29,16 @@ TERMINAL_TASK_STATUSES: frozenset[str] = frozenset(
 EXECUTE_TASK_STATUS_ALIASES: dict[str, str] = {
     "completed": "done",
     "complete": "done",
+    "passed": "done",
+    "pass": "done",
+    "success": "done",
+    "ok": "done",
     "skip": "skipped",
     "verified": "done",
+    "failed": "blocked",
+    "failure": "blocked",
+    "fail": "blocked",
+    "error": "blocked",
 }
 
 

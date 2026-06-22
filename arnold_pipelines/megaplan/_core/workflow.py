@@ -605,6 +605,25 @@ def _persist_resume_runtime_envelope(
     repo.save_state(state)
 
 
+def _seed_legacy_resume_project_dir(
+    state: dict[str, Any],
+    *,
+    root: Path,
+    pipeline_name: str,
+    has_runtime_envelope: bool,
+) -> None:
+    """Backfill pre-runtime-envelope built-in Megaplan state before preflight."""
+    if has_runtime_envelope or pipeline_name != "megaplan":
+        return
+    config = state.get("config")
+    if not isinstance(config, dict):
+        config = {}
+        state["config"] = config
+    if config.get("project_dir"):
+        return
+    config["project_dir"] = str(Path(root).expanduser().resolve())
+
+
 def _cursor_from_typed_suspension(plan_dir: Path) -> dict[str, Any] | None:
     from arnold_pipelines.megaplan.runtime.resume import (
         extract_typed_resume_metadata,
@@ -797,6 +816,12 @@ def resume_plan(
         state["current_state"] = active_state
         repo.save_state(state)
     state_for_preflight = repo.load_state()
+    _seed_legacy_resume_project_dir(
+        state_for_preflight,
+        root=root,
+        pipeline_name=pipeline_name,
+        has_runtime_envelope=has_runtime_envelope,
+    )
     if phase in {"execute", "revise", "loop_execute"}:
         preflight_mutating_phase(root=root, state=state_for_preflight, phase=f"resume:{phase}")
     else:

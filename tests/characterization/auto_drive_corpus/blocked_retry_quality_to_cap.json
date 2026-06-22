@@ -10,6 +10,11 @@
       ]
     },
     {
+      "msg": "execute artifact reconciliation did not validate; rerunning execute",
+      "phase": "execute",
+      "plan": "blocked-retry-quality-to-cap"
+    },
+    {
       "msg": "running: megaplan execute --confirm-destructive --user-approved --retry-blocked-tasks --plan blocked-retry-quality-to-cap",
       "phase": "execute",
       "timeout": 3600
@@ -35,6 +40,11 @@
       "valid_next": [
         "execute"
       ]
+    },
+    {
+      "msg": "execute artifact reconciliation did not validate; rerunning execute",
+      "phase": "execute",
+      "plan": "blocked-retry-quality-to-cap"
     },
     {
       "msg": "running: megaplan execute --confirm-destructive --user-approved --retry-blocked-tasks --plan blocked-retry-quality-to-cap",
