@@ -5,6 +5,11 @@ Arnold dispatch plugin-owned operations without importing or referencing
 Megaplan policy, phase names, gate labels, override vocabularies, profile
 semantics, or artifact conventions.
 
+The public package surface is intentionally minimal.  Internal callers should
+import from the relevant submodule (``arnold.runtime.driver``,
+``arnold.runtime.state_persistence``, etc.) rather than relying on broad
+package re-exports.
+
 Sub-modules (landed incrementally across M2a, M3d and M8 tasks):
 * ``envelope``         — ``RuntimeEnvelope``, the runtime-owned run envelope.
 * ``resume``           — ``ResumeCursor`` and legacy-resume migration contract.
@@ -21,8 +26,7 @@ Sub-modules (landed incrementally across M2a, M3d and M8 tasks):
 * ``state_persistence`` — ``plan_state_lock``, ``atomic_write_bytes``,
                          ``atomic_write_text``, ``atomic_write_json``.
 * ``event_journal``    — ``EventEnvelope``, ``EventSink`` Protocol,
-                         ``NdjsonEventJournal``, ``read_event_journal``,
-                         ``NdjsonEventSink``.
+                         ``NdjsonEventJournal``, ``NdjsonEventSink``.
 * ``effect``           — ``Effect`` dataclass, ``ReplayClass`` enum,
                          ``NONCOMPENSABLE`` sentinel.
 * ``wal_fold``         — ``fold_journal`` parameterized fold combinator,
@@ -52,14 +56,8 @@ defaults, policy interpretation, and argument translation for its phases.
 
 Import from ``arnold.runtime``:
 
-    from arnold.runtime import RuntimeEnvelope, OperationRequest, StepwiseDriver
-    from arnold.runtime.batch import BatchUnit, BatchRunResult, BatchRuntimeSettings
-    from arnold.runtime.recovery import (
-        RecoveryContext,
-        RecoveryDecision,
-        ArnoldRecoveryPolicy,
-        NullRecoveryPolicy,
-    )
+    from arnold.runtime import RuntimeEnvelope, RunOutcome, OracleResult
+    from arnold.runtime.event_journal import read_event_journal
 
 No Megaplan re-exports appear here; this is the neutral surface.
 """
@@ -92,11 +90,6 @@ from arnold.runtime.wal_fold import (  # noqa: F401 — re-export for convenienc
 
 __all__: list[str] = [
     "ArnoldError",
-    "BatchUnit",
-    "BatchUnitResult",
-    "BatchRunResult",
-    "BatchRuntimeSettings",
-    "BatchOutcomeKind",
     "Effect",
     "EventEnvelope",
     "EventSink",
@@ -110,19 +103,12 @@ __all__: list[str] = [
     "RuntimeEnvelope",
     "RunOutcome",
     "RunResultMetadata",
-    "build_batch_runtime_settings",
     "fold_journal",
     "last_state_snapshot_projector",
     "oracle_run",
     "read_event_journal",
     "read_event_journal_paged",
     "stream_event_journal",
-    "scatter_gather_threaded",
-    "scatter_gather_processes",
     "semantic_equivalent",
     "semantic_replay_journal",
-    "RecoveryContext",
-    "RecoveryDecision",
-    "ArnoldRecoveryPolicy",
-    "NullRecoveryPolicy",
 ]
