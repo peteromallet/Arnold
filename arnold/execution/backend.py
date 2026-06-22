@@ -15,6 +15,9 @@ from arnold.kernel import (
     BudgetReservation,
     BudgetSettlement,
     BudgetExceeded,
+    ControlBinding,
+    ControlTarget,
+    ControlTransition,
     EffectDescriptor,
     EffectKind,
     EventEnvelope,
@@ -38,8 +41,42 @@ from arnold.kernel import (
 )
 from arnold.kernel.artifacts import ArtifactBinding, ProvenanceParent
 from arnold.kernel.effect_ledger import derive_effect_idempotency_key
-from arnold.manifest import ManifestCursor, WorkflowEdge, WorkflowManifest, WorkflowNode
+from arnold.manifest import (
+    CompensationPolicy,
+    ControlTransitionSlot,
+    EscalationPolicy,
+    ManifestCursor,
+    TopologyOverlaySlot,
+    WorkflowEdge,
+    WorkflowManifest,
+    WorkflowNode,
+)
 
+from arnold.execution.compensation import (
+    CompensationStep,
+    build_compensation_steps,
+    compensation_already_started,
+    compensation_completed_payload,
+    compensation_policy_for_node,
+    compensation_run_idempotency_key,
+    compensation_scope_stack,
+    compensation_started_payload,
+    compensation_step_payload,
+)
+from arnold.execution.escalation import (
+    escalation_already_routed,
+    escalation_policy_for_node,
+    escalation_routed_payload,
+    should_escalate,
+)
+from arnold.execution.topology import (
+    collect_declared_overlays,
+    collect_declared_transitions,
+    control_transition_from_projection,
+    dispatch_control_transition,
+    dispatch_topology_overlay,
+    project_control_transitions,
+)
 from arnold.execution.observability import (
     ExecutionLogger,
     build_health_snapshot,
@@ -134,6 +171,7 @@ class NodeOutcome:
     actual_cost: float = 0.0
     actual_seconds: float = 0.0
     actual_tokens: int = 0
+    control_signals: tuple[Mapping[str, Any] | ControlTransition, ...] = ()
 
 
 @dataclass
@@ -347,6 +385,21 @@ class LocalJournalBackend:
         del coordinate, node, child_manifest, context
         return NodeOutcome(state=NodeState.COMPLETED)
 
+    def _emit_control_signals(
+        self,
+        coordinate: RouteCoordinate,
+        node: WorkflowNode,
+        outcome: NodeOutcome,
+        context: ExecutionContext,
+    ) -> tuple[Mapping[str, Any] | ControlTransition, ...]:
+        """Return control transitions emitted by a node outcome.
+
+        Override in tests to simulate control signals.
+        """
+
+        del coordinate, node, context
+        return tuple(outcome.control_signals)
+
     # ------------------------------------------------------------------
     # Public entry point
     # ------------------------------------------------------------------
@@ -442,7 +495,12 @@ class LocalJournalBackend:
                 break
 
             events = self._journal.read()
-            routing = project_routing_state(manifest, events)
+            control_projection = project_control_transitions(manifest, events)
+            routing = project_routing_state(
+                manifest,
+                events,
+                overlays=control_projection.overlays,
+            )
 
             if routing.suspended:
                 terminal = ExecutionState.SUSPENDED
@@ -470,7 +528,13 @@ class LocalJournalBackend:
                     break
 
                 # Routing may have changed underneath us (e.g. branch selection).
-                routing = project_routing_state(manifest, self._journal.read())
+                events = self._journal.read()
+                control_projection = project_control_transitions(manifest, events)
+                routing = project_routing_state(
+                    manifest,
+                    events,
+                    overlays=control_projection.overlays,
+                )
                 if coordinate not in routing.ready:
                     continue
 
@@ -500,7 +564,7 @@ class LocalJournalBackend:
                         ExecutionDiagnostic(
                             code="execution_error",
                             message=str(exc),
-                            node_ref=coordinate.node_ref,
+                            node_id=coordinate.node_ref,
                         )
                     )
                     self._append(
@@ -510,7 +574,13 @@ class LocalJournalBackend:
                     )
                     break
 
-                routing = project_routing_state(manifest, self._journal.read())
+                events = self._journal.read()
+                control_projection = project_control_transitions(manifest, events)
+                routing = project_routing_state(
+                    manifest,
+                    events,
+                    overlays=control_projection.overlays,
+                )
 
             if terminal is not None:
                 break
@@ -524,7 +594,12 @@ class LocalJournalBackend:
         self._save_checkpoint(terminal.value)
 
         events = self._journal.read()
-        routing = project_routing_state(manifest, events)
+        control_projection = project_control_transitions(manifest, events)
+        routing = project_routing_state(
+            manifest,
+            events,
+            overlays=control_projection.overlays,
+        )
         governor = fold_governor_state(events)
         budget = self._node_budget(None)
         elapsed = (self._now() - self._init_ts).total_seconds()
@@ -887,7 +962,11 @@ class LocalJournalBackend:
             },
         )
 
+        self._apply_control_transitions(coordinate, node)
+
         outcome = self._run_node_body(coordinate, node, context)
+
+        self._process_control_signals(coordinate, node, outcome, context)
 
         # Timeout check
         node_timing = node.policy.timing if node.policy else None
@@ -988,6 +1067,8 @@ class LocalJournalBackend:
                 },
             )
             self._release_budget(reservation_id, reservation)
+            self._maybe_compensate(coordinate, node)
+            self._maybe_escalate(coordinate, node)
             return
 
         # COMPLETED
@@ -1011,6 +1092,8 @@ class LocalJournalBackend:
                     {"node_ref": coordinate.node_ref, "error": f"effect {effect.effect_id} failed"},
                 )
                 self._release_budget(reservation_id, reservation)
+                self._maybe_compensate(coordinate, node)
+                self._maybe_escalate(coordinate, node)
                 return
 
         # Branch selection
@@ -1295,6 +1378,306 @@ class LocalJournalBackend:
             scope_stack=coordinate.scope_stack,
         )
         return binding
+
+    # ------------------------------------------------------------------
+    # Control transitions, compensation, and escalation
+    # ------------------------------------------------------------------
+
+    def _journal_control_transition(
+        self,
+        payload: Mapping[str, Any],
+        *,
+        scope_stack: tuple[str, ...] | None = None,
+    ) -> None:
+        self._append(
+            EventFamily.CONTROL_TRANSITION,
+            "control_transition",
+            dict(payload),
+            scope_stack=scope_stack if scope_stack is not None else self._scope_stack,
+        )
+
+    def _apply_control_transitions(
+        self,
+        coordinate: RouteCoordinate,
+        node: WorkflowNode,
+    ) -> None:
+        """Dispatch declared control transitions and overlays through the registry."""
+
+        controls = self._registries.controls
+        manifest_hash = self._manifest.manifest_hash or ""
+        for slot in collect_declared_transitions(node):
+            transition = dispatch_control_transition(
+                controls,
+                slot,
+                coordinate,
+                run_id=self._run_id,
+            )
+            if transition is not None:
+                payload = control_transition_from_projection(
+                    transition,
+                    scope_stack=coordinate.scope_stack,
+                    manifest_hash=manifest_hash,
+                )
+                self._journal_control_transition(
+                    payload,
+                    scope_stack=coordinate.scope_stack,
+                )
+        for slot in collect_declared_overlays(node):
+            for transition in dispatch_topology_overlay(
+                controls,
+                slot,
+                coordinate,
+                run_id=self._run_id,
+            ):
+                payload = control_transition_from_projection(
+                    transition,
+                    scope_stack=coordinate.scope_stack,
+                    manifest_hash=manifest_hash,
+                )
+                # Topology overlays are recorded as control transitions with
+                # kind ``overlay`` so routing can project them without mutating
+                # the canonical manifest hash.
+                payload = {**payload, "kind": "overlay"}
+                self._journal_control_transition(
+                    payload,
+                    scope_stack=coordinate.scope_stack,
+                )
+
+    def _process_control_signals(
+        self,
+        coordinate: RouteCoordinate,
+        node: WorkflowNode,
+        outcome: NodeOutcome,
+        context: ExecutionContext,
+    ) -> None:
+        """Journal control transitions emitted by a node outcome."""
+
+        signals = self._emit_control_signals(coordinate, node, outcome, context)
+        if not signals:
+            return
+        manifest_hash = self._manifest.manifest_hash or ""
+        for signal in signals:
+            if isinstance(signal, ControlTransition):
+                payload = control_transition_from_projection(
+                    signal,
+                    scope_stack=coordinate.scope_stack,
+                    manifest_hash=manifest_hash,
+                )
+            else:
+                payload = {
+                    "kind": signal.get("kind", ""),
+                    "source_node": signal.get("source_node", coordinate.node_ref),
+                    "target_node": signal.get("target_node", ""),
+                    "scope_stack": list(coordinate.scope_stack),
+                    "payload": dict(signal.get("payload", {})),
+                    "manifest_hash": manifest_hash,
+                }
+            self._journal_control_transition(
+                payload,
+                scope_stack=coordinate.scope_stack,
+            )
+
+    def _execute_compensation_effect(
+        self,
+        step: "CompensationStep",
+        context: ExecutionContext,
+    ) -> tuple[bool, str | None]:
+        """Execute a single compensation target through the effect ledger."""
+
+        effect_ref = step.target.effect
+        coordinate = step.coordinate
+        ledger = fold_effect_ledger(self._journal.read())
+        if ledger.is_duplicate(step.idempotency_key):
+            return True, None
+
+        descriptor = EffectDescriptor(
+            effect_id=effect_ref.effect_id,
+            kind=EffectKind.INTENT,
+            target=effect_ref.route,
+            idempotency_key=step.idempotency_key,
+            payload_schema_hash=effect_ref.payload_schema_hash or "",
+        )
+        self._append(
+            EventFamily.EFFECT,
+            "effect_intent",
+            intent_payload(descriptor),
+            scope_stack=coordinate.scope_stack,
+            idempotency_key=step.idempotency_key,
+        )
+        try:
+            result = self._execute_effect(coordinate, effect_ref, context)
+        except Exception as exc:  # noqa: BLE001
+            self._append(
+                EventFamily.EFFECT,
+                "effect_failure",
+                {
+                    "effect_id": effect_ref.effect_id,
+                    "idempotency_key": step.idempotency_key,
+                    "error": str(exc),
+                },
+                scope_stack=coordinate.scope_stack,
+                idempotency_key=step.idempotency_key,
+            )
+            return False, str(exc)
+        self._append(
+            EventFamily.EFFECT,
+            "effect_fulfillment",
+            fulfillment_payload(descriptor, result),
+            scope_stack=coordinate.scope_stack,
+            idempotency_key=step.idempotency_key,
+        )
+        return True, None
+
+    def _maybe_compensate(
+        self,
+        coordinate: RouteCoordinate,
+        node: WorkflowNode,
+    ) -> None:
+        """Trigger compensation for a failed coordinate if a policy exists."""
+
+        manifest_policy = self._manifest.policy.compensation if self._manifest.policy else None
+        policy = compensation_policy_for_node(node, manifest_policy)
+        if policy is None:
+            return
+        scope_stack = compensation_scope_stack(coordinate, policy)
+        run_key = compensation_run_idempotency_key(
+            run_id=self._run_id,
+            trigger_node_ref=coordinate.node_ref,
+            scope_stack=scope_stack,
+        )
+        events = self._journal.read()
+        if compensation_already_started(
+            events,
+            trigger_node_ref=coordinate.node_ref,
+            scope_stack=scope_stack,
+        ):
+            return
+
+        steps = build_compensation_steps(
+            events,
+            policy,
+            coordinate,
+            run_id=self._run_id,
+        )
+        context = ExecutionContext(
+            coordinate=coordinate,
+            scope_stack=scope_stack,
+            outputs=self._outputs,
+            resume_payload=self._resume_payload,
+        )
+        self._append(
+            EventFamily.NODE_LIFECYCLE,
+            "compensation_started",
+            compensation_started_payload(
+                trigger_node_ref=coordinate.node_ref,
+                scope_stack=scope_stack,
+                step_count=len(steps),
+            ),
+            scope_stack=scope_stack,
+            idempotency_key=run_key,
+        )
+        completed_steps = 0
+        failed_steps = 0
+        for step in steps:
+            success, error = self._execute_compensation_effect(step, context)
+            if success:
+                completed_steps += 1
+                self._append(
+                    EventFamily.NODE_LIFECYCLE,
+                    "compensation_step_completed",
+                    compensation_step_payload(step=step, success=True),
+                    scope_stack=scope_stack,
+                )
+            else:
+                failed_steps += 1
+                self._append(
+                    EventFamily.NODE_LIFECYCLE,
+                    "compensation_step_failed",
+                    compensation_step_payload(
+                        step=step,
+                        success=False,
+                        error=error or f"effect {step.target.effect.effect_id} failed",
+                    ),
+                    scope_stack=scope_stack,
+                )
+        self._append(
+            EventFamily.NODE_LIFECYCLE,
+            "compensation_completed",
+            compensation_completed_payload(
+                trigger_node_ref=coordinate.node_ref,
+                scope_stack=scope_stack,
+                completed_steps=completed_steps,
+                failed_steps=failed_steps,
+            ),
+            scope_stack=scope_stack,
+            idempotency_key=run_key,
+        )
+
+    def _execute_escalation_target(
+        self,
+        target_ref: str,
+        scope_stack: tuple[str, ...],
+    ) -> None:
+        """Execute an escalation target node in the current scope."""
+
+        try:
+            target_node = self._node_by_id(target_ref)
+        except ValueError:
+            self._append(
+                EventFamily.NODE_LIFECYCLE,
+                "escalation_target_missing",
+                {"node_ref": target_ref, "scope_stack": list(scope_stack)},
+                scope_stack=scope_stack,
+            )
+            return
+        target_coordinate = RouteCoordinate(
+            node_ref=target_ref,
+            scope_stack=scope_stack,
+        )
+        events = self._journal.read()
+        control_projection = project_control_transitions(self._manifest, events)
+        routing = project_routing_state(
+            self._manifest,
+            events,
+            overlays=control_projection.overlays,
+        )
+        self._execute_coordinate(target_coordinate, routing)
+
+    def _maybe_escalate(
+        self,
+        coordinate: RouteCoordinate,
+        node: WorkflowNode,
+        *,
+        explicit_signal: bool = False,
+    ) -> None:
+        """Route to escalation targets after retry exhaustion or explicit signal."""
+
+        manifest_policy = self._manifest.policy.escalation if self._manifest.policy else None
+        route = should_escalate(
+            coordinate,
+            node,
+            manifest_policy,
+            explicit_signal=explicit_signal,
+        )
+        if route is None:
+            return
+        if escalation_already_routed(
+            self._journal.read(),
+            source_node=coordinate.node_ref,
+            scope_stack=coordinate.scope_stack,
+            attempt=coordinate.attempt,
+        ):
+            return
+
+        manifest_hash = self._manifest.manifest_hash or ""
+        self._append(
+            EventFamily.CONTROL_TRANSITION,
+            "escalation_routed",
+            escalation_routed_payload(route, manifest_hash=manifest_hash),
+            scope_stack=coordinate.scope_stack,
+        )
+        for target_ref in route.target_refs:
+            self._execute_escalation_target(target_ref, coordinate.scope_stack)
 
     def _release_budget(self, reservation_id: str, reservation: BudgetReservation) -> None:
         self._append(
