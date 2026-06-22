@@ -225,8 +225,8 @@ def build_with_binding(
 
     import dataclasses
 
-    from arnold_pipelines.megaplan._pipeline import contracts
-    from arnold_pipelines.megaplan._pipeline.types import Pipeline
+    from arnold.pipeline import contracts
+    from arnold.pipeline.types import Pipeline
 
     stages = pipeline.stages
     edges = []
@@ -534,7 +534,7 @@ def _raise_resume_execute_authority_failure(
 
 
 def _current_manifest_hash_for(pipeline_name: str) -> str | None:
-    from arnold_pipelines.megaplan._pipeline.registry import pipeline_metadata
+    from arnold_pipelines.megaplan.registry import pipeline_metadata
 
     try:
         value = pipeline_metadata(pipeline_name).get("manifest_hash")
@@ -727,11 +727,11 @@ def resume_plan(
             if has_runtime_envelope
             else "megaplan"
         )
-    from arnold_pipelines.megaplan._pipeline.registry import (
-        canonical_pipeline_name,
+    from arnold_pipelines.megaplan.registry import (
         dispatch_operation_for,
         resume_result_from_operation_result,
     )
+    from arnold_pipelines.megaplan.runtime.discovery import canonical_pipeline_name
 
     pipeline_name = canonical_pipeline_name(raw_pipeline_name)
     if not has_runtime_envelope and pipeline_name != "megaplan":

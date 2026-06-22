@@ -11,14 +11,9 @@ from dataclasses import dataclass, field
 from typing import Any, Mapping
 
 from arnold_pipelines.megaplan.handlers import handle_execute
+from arnold_pipelines.megaplan.handlers.execute import EXECUTE_DEFAULTS as _DEFAULTS
 from arnold_pipelines.megaplan.stages.inprocess_step import InProcessHandlerStep
 from arnold_pipelines.megaplan._pipeline.types import StepContext, StepMixinProperty, StepResult
-
-
-_DEFAULTS: Mapping[str, Any] = {
-    "user_approved": True,
-    "confirm_destructive": True,
-}
 
 
 @dataclass(frozen=True)

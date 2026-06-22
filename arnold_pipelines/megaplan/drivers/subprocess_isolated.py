@@ -20,7 +20,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal, TYPE_CHECKING
 
-from arnold_pipelines.megaplan._pipeline.types import StepContext, StepResult
+from arnold_pipelines.megaplan.step_types import StepContext, StepResult
 from arnold_pipelines.megaplan.auto import _supervise_subprocess
 from arnold_pipelines.megaplan.runtime.process import spawn
 

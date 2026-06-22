@@ -1267,7 +1267,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     build_auto_parser(subparsers)
 
-    from arnold_pipelines.megaplan._pipeline.run_cli import build_run_parser
+    from arnold_pipelines.megaplan.cli.run import build_run_parser
 
     build_run_parser(subparsers)
 

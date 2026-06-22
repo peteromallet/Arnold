@@ -10,8 +10,8 @@ the :mod:`megaplan._pipeline` typed-port substrate. Its shape is::
 
 Each entry in ``versions`` is the monotonically-increasing CAS version
 for the like-named top-level state key, used by
-:func:`megaplan._pipeline.types.apply_delta` to detect stale writes and
-raise :class:`megaplan._pipeline.types.StateDeltaConflict`. Callers
+:func:`megaplan.state_delta.apply_delta` to detect stale writes and
+raise :class:`megaplan.state_delta.StateDeltaConflict`. Callers
 outside the typed-port substrate MUST NOT mutate ``_state_meta`` directly.
 """
 
@@ -701,7 +701,7 @@ def write_plan_state(
                 if state_path.exists() and executor_owned_keys is not None:
                     try:
                         from arnold_pipelines.megaplan._pipeline.flags import typed_ports_on
-                        from arnold_pipelines.megaplan._pipeline.types import StateDelta, apply_delta
+                        from arnold_pipelines.megaplan.state_delta import StateDelta, apply_delta
                         _flag_on = typed_ports_on()
                     except Exception:
                         _flag_on = False
