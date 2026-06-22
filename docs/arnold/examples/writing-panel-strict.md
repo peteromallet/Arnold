@@ -5,7 +5,7 @@ Do not edit by hand; run `python scripts/generate_arnold_docs.py --write`.
 Provenance:
 - generator: scripts/generate_arnold_docs.py
 - source_package: arnold_pipelines/megaplan/pipelines/writing_panel_strict.py
-- manifest_hash: sha256:33735b429bd6991379dbffa0837b96fffb4a4d62e9bcef5417a5e07c5546b443
+- manifest_hash: sha256:5c872d9f3a953478a5fd71de3840e3d7c700426dd3c2e8818842348f0943502a
 - generated_at: regenerated on demand (not embedded)
 - m6_disposition: keep
 - policy: regenerate from compiled surviving registries; fail on stale examples.
@@ -21,7 +21,7 @@ Provenance:
 | Manifest and builder | arnold_pipelines/megaplan/pipelines/writing_panel_strict.py|
 | Skill | arnold_pipelines/megaplan/pipelines/writing-panel-strict/SKILL.md|
 | Validation | `arnold workflow check --module arnold_pipelines.megaplan.pipelines.writing_panel_strict:build_pipeline`|
-| Manifest hash | sha256:33735b429bd6991379dbffa0837b96fffb4a4d62e9bcef5417a5e07c5546b443|
+| Manifest hash | sha256:5c872d9f3a953478a5fd71de3840e3d7c700426dd3c2e8818842348f0943502a|
 
 ## Builder Surface
 
@@ -166,7 +166,7 @@ def build_pipeline() -> Pipeline:
 ```yaml
 edge_count: 5
 id: writing-panel-strict
-manifest_hash: sha256:33735b429bd6991379dbffa0837b96fffb4a4d62e9bcef5417a5e07c5546b443
+manifest_hash: sha256:5c872d9f3a953478a5fd71de3840e3d7c700426dd3c2e8818842348f0943502a
 node_count: 5
 possible_routes:
 - condition_ref: stop

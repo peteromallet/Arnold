@@ -13,6 +13,7 @@ import ast
 import dataclasses
 import difflib
 import json
+import subprocess
 import sys
 import tempfile
 from datetime import datetime, timezone
@@ -628,9 +629,24 @@ def generated_files() -> dict[Path, str]:
     return files
 
 
+def _is_gitignored(path: Path) -> bool:
+    """Return True if *path* is ignored by git (generated, not committed)."""
+    try:
+        result = subprocess.run(
+            ["git", "check-ignore", "-q", str(path)],
+            cwd=REPO_ROOT,
+            capture_output=True,
+        )
+    except FileNotFoundError:
+        return False
+    return result.returncode == 0
+
+
 def _check_files(files: dict[Path, str]) -> list[str]:
     failures: list[str] = []
     for path, expected in files.items():
+        if _is_gitignored(path):
+            continue
         try:
             current = path.read_text(encoding="utf-8")
         except FileNotFoundError:

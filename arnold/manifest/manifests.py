@@ -10,12 +10,18 @@ from __future__ import annotations
 import hashlib
 import json
 from dataclasses import asdict, dataclass, field, fields, is_dataclass
+from pathlib import Path
 from typing import Any, ClassVar, Mapping, TypeVar, get_args, get_origin, get_type_hints
 
 from arnold.manifest.refs import SourceSpan, canonical_alias
 
 _HASH_PREFIX = "sha256:"
 _T = TypeVar("_T")
+
+# Repository root for the installed Arnold package.  Used to normalize
+# absolute paths (e.g. prompt_bundle directories) so manifest hashes are
+# independent of where the repo is checked out.
+_REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
 def _sha256_json(value: Mapping[str, Any]) -> str:
@@ -320,10 +326,35 @@ class WorkflowManifest:
         return _decode_dataclass(cls, payload)
 
 
+def _normalize_for_hash(value: Any) -> Any:
+    """Normalize values for stable hashing across checkouts.
+
+    - Removes source-span fields (they contain absolute paths).
+    - Rewrites absolute paths under the repo root to relative paths.
+    - Drops None values.
+    """
+    if isinstance(value, Mapping):
+        return {
+            str(key): _normalize_for_hash(subvalue)
+            for key, subvalue in sorted(value.items(), key=lambda item: str(item[0]))
+            if str(key) != "source_span" and subvalue is not None
+        }
+    if isinstance(value, (tuple, list)):
+        return [_normalize_for_hash(item) for item in value]
+    if isinstance(value, str):
+        try:
+            p = Path(value)
+            if p.is_absolute() and _REPO_ROOT in p.parents:
+                return str(p.relative_to(_REPO_ROOT).as_posix())
+        except (ValueError, OSError):
+            pass
+    return value
+
+
 def compute_manifest_hash(manifest: WorkflowManifest) -> str:
     """Compute a stable hash over the manifest body, excluding hash fields."""
 
-    return _sha256_json(manifest.to_dict(include_hashes=False))
+    return _sha256_json(_normalize_for_hash(manifest.to_dict(include_hashes=False)))
 
 
 def compute_topology_hash(manifest: WorkflowManifest) -> str:
