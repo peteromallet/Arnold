@@ -9,7 +9,7 @@ ordering, and subpipeline scope hashes.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Mapping
 
 from arnold.kernel.events import EventEnvelope
 from arnold.manifest import WorkflowEdge, WorkflowManifest, WorkflowNode
@@ -271,8 +271,15 @@ def _subpipeline_scope(parent_scope: tuple[str, ...], node: WorkflowNode) -> tup
 def project_routing_state(
     manifest: WorkflowManifest,
     events: tuple[EventEnvelope, ...] = (),
+    *,
+    overlays: Mapping[tuple[tuple[str, ...], str], tuple[str, ...]] | None = None,
 ) -> RoutingState:
-    """Project deterministic routing state from a manifest and journal events."""
+    """Project deterministic routing state from a manifest and journal events.
+
+    ``overlays`` maps ``(scope_stack, source_node_ref)`` to additional target
+    node refs introduced by dynamic topology overlays.  Overlays never mutate
+    the manifest; they are applied purely as a routing projection.
+    """
 
     summary = _summary_from_events(events)
     nodes = _deterministic_node_order(manifest.nodes)
@@ -415,6 +422,21 @@ def project_routing_state(
                 ready_set.add(attempt_coord)
             else:
                 blocked_set.add(attempt_coord)
+
+        # Dynamic topology overlays: add target nodes as ready once the source
+        # node is completed.  Overlays are derived from control_transition events
+        # and never mutate the canonical manifest hash.
+        if overlays:
+            for (overlay_scope, source_ref), target_refs in overlays.items():
+                if overlay_scope != scope_stack:
+                    continue
+                source_coord = RouteCoordinate(node_ref=source_ref, scope_stack=scope_stack)
+                if source_coord not in completed:
+                    continue
+                for target_ref in target_refs:
+                    target_coord = RouteCoordinate(node_ref=target_ref, scope_stack=scope_stack)
+                    if target_coord not in completed and target_coord not in failed:
+                        ready_set.add(target_coord)
 
     # Project the root scope and any scopes referenced by events.
     scopes_to_project: set[tuple[str, ...]] = {root_scope}

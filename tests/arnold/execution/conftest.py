@@ -19,15 +19,21 @@ from arnold.kernel import (
     BudgetReservation,
     ContentTypeRegistration,
     ContentTypeRegistry,
+    ControlTransition,
     FileBackedArtifactStore,
     GeneratedArtifactProvenance,
     RetentionPolicy,
     schema_hash,
 )
-from arnold.manifest import WorkflowEdge, WorkflowManifest, WorkflowNode
+from arnold.manifest import EffectRef, WorkflowEdge, WorkflowManifest, WorkflowNode
 
 
 _NODE_BEHAVIOR = Callable[["RouteCoordinate", WorkflowNode, Any], NodeOutcome]
+_CONTROL_SIGNAL_BEHAVIOR = Callable[
+    ["RouteCoordinate", WorkflowNode, NodeOutcome, Any],
+    tuple[Mapping[str, Any] | ControlTransition, ...],
+]
+_EFFECT_BEHAVIOR = Mapping[str, Any] | Exception
 
 
 class FakeBackend(LocalJournalBackend):
@@ -44,6 +50,11 @@ class FakeBackend(LocalJournalBackend):
         authority_results: Mapping[str, bool] | None = None,
         subpipeline_results: Mapping[str, NodeOutcome] | None = None,
         child_manifests: Mapping[str, WorkflowManifest] | None = None,
+        control_signals: Mapping[
+            str,
+            tuple[Mapping[str, Any] | ControlTransition, ...] | _CONTROL_SIGNAL_BEHAVIOR,
+        ] | None = None,
+        effect_behaviors: Mapping[str, _EFFECT_BEHAVIOR] | None = None,
         now: datetime | None = None,
         monotonic_sequence: list[float] | None = None,
         initial_scope_stack: tuple[str, ...] | None = None,
@@ -59,9 +70,12 @@ class FakeBackend(LocalJournalBackend):
         self.authority_results = dict(authority_results or {})
         self.subpipeline_results = dict(subpipeline_results or {})
         self.child_manifests = dict(child_manifests or {})
+        self.control_signals = dict(control_signals or {})
+        self.effect_behaviors = dict(effect_behaviors or {})
         self._now_value = now
         self._monotonic_sequence = list(monotonic_sequence or [])
         self._monotonic_index = 0
+        self._event_counter = 0
         self._text_plain = ContentTypeRegistration(
             type_id="text/plain",
             schema_version="1",
@@ -70,6 +84,12 @@ class FakeBackend(LocalJournalBackend):
         )
         self._content_types = ContentTypeRegistry()
         self._content_types.register(self._text_plain)
+
+    def _next_event_counter(self) -> int:
+        """Use a per-instance counter so separate runs are deterministic."""
+
+        self._event_counter += 1
+        return self._event_counter
 
     def _now(self) -> datetime:
         if self._now_value is not None:
@@ -163,6 +183,35 @@ class FakeBackend(LocalJournalBackend):
         if reducer_ref in self.reducer_results:
             return dict(self.reducer_results[reducer_ref])
         return {"reducer_ref": reducer_ref, "inputs": [dict(i) for i in inputs]}
+
+    def _emit_control_signals(
+        self,
+        coordinate: "RouteCoordinate",
+        node: WorkflowNode,
+        outcome: NodeOutcome,
+        context: Any,
+    ) -> tuple[Mapping[str, Any] | ControlTransition, ...]:
+        behavior = self.control_signals.get(node.id)
+        if behavior is None:
+            behavior = self.control_signals.get(node.kind)
+        if behavior is None:
+            return super()._emit_control_signals(coordinate, node, outcome, context)
+        if callable(behavior):
+            return behavior(coordinate, node, outcome, context)
+        return tuple(behavior)
+
+    def _execute_effect(
+        self,
+        coordinate: "RouteCoordinate",
+        effect_ref: EffectRef,
+        context: Any,
+    ) -> Mapping[str, Any]:
+        behavior = self.effect_behaviors.get(effect_ref.effect_id)
+        if behavior is None:
+            return super()._execute_effect(coordinate, effect_ref, context)
+        if isinstance(behavior, Exception):
+            raise behavior
+        return dict(behavior)
 
     def _check_authority(self, action: str, evidence: Mapping[str, Any]) -> bool:
         return self.authority_results.get(action, True)
