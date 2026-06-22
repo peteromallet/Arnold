@@ -7,7 +7,8 @@ from pathlib import Path
 
 from arnold.manifest import ManifestCursor, WorkflowManifest
 
-from arnold.execution.backend import ExecutionBackend, ExecutionRegistries, SkeletalBackend
+from arnold.execution.backend import ExecutionBackend, SkeletalBackend
+from arnold.execution.registries import ExecutionRegistries
 from arnold.execution.result import ExecutionResult
 
 
