@@ -13,6 +13,6 @@ import pytest
 
 
 def test_patterns_module_absent() -> None:
-    """``arnold.pipelines.megaplan._pipeline.patterns`` raises ModuleNotFoundError."""
+    """``arnold_pipelines.megaplan._pipeline.patterns`` raises ModuleNotFoundError."""
     with pytest.raises(ModuleNotFoundError):
-        importlib.import_module("arnold.pipelines.megaplan._pipeline.patterns")
+        importlib.import_module("arnold_pipelines.megaplan._pipeline.patterns")

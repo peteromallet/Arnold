@@ -12,6 +12,6 @@ import pytest
 
 
 def test_doc_critique_demo_module_absent() -> None:
-    """``arnold.pipelines.megaplan._pipeline.demos.doc_critique`` raises ModuleNotFoundError."""
+    """``arnold_pipelines.megaplan._pipeline.demos.doc_critique`` raises ModuleNotFoundError."""
     with pytest.raises(ModuleNotFoundError):
-        importlib.import_module("arnold.pipelines.megaplan._pipeline.demos.doc_critique")
+        importlib.import_module("arnold_pipelines.megaplan._pipeline.demos.doc_critique")

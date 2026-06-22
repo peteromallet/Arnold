@@ -18,7 +18,7 @@ Why this exists
 Normalization rules
   * ``argparse.SUPPRESS`` → ``"<SUPPRESS>"``
   * Callables (``type`` functions, ``choices`` callable) → qualified name
-    (e.g. ``"int"``, ``"builtins.float"``, ``"arnold.pipelines.megaplan.cli._non_negative_float"``)
+    (e.g. ``"int"``, ``"builtins.float"``, ``"arnold_pipelines.megaplan.cli._non_negative_float"``)
   * Classes → qualified name (e.g. ``"builtins.int"``)
   * ``argparse.REMAINDER`` → ``"REMAINDER"``
   * Keys in every JSON object are sorted for deterministic output.
@@ -166,7 +166,7 @@ def build_snapshot() -> dict[str, Any]:
     Returns a dict with a single key ``"commands"`` whose value is the
     recursive walk rooted at ``""`` (the root parser).
     """
-    from arnold.pipelines.megaplan.cli import build_parser
+    from arnold_pipelines.megaplan.cli import build_parser
 
     root_parser = build_parser()
     root_command = _walk_parser(root_parser)

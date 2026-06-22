@@ -7,7 +7,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Iterator
 
-from arnold.pipelines.megaplan.handlers import critique
+from arnold_pipelines.megaplan.handlers import critique
 
 
 def test_revise_merge_failure_falls_back_to_prior_floor(
@@ -116,7 +116,7 @@ def test_revise_merge_failure_falls_back_to_prior_floor(
         lambda *args, **kwargs: {"summary": kwargs.get("summary", "")},
     )
 
-    from arnold.pipelines.megaplan.orchestration import test_selection
+    from arnold_pipelines.megaplan.orchestration import test_selection
 
     def raise_merge(*args: Any, **kwargs: Any) -> None:
         raise RuntimeError("merge failed")

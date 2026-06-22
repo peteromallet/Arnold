@@ -50,7 +50,7 @@ def test_oracle_run_accepts_string_command_via_shell():
 def test_validate_execution_evidence_preserved_as_attestation_path():
     """Must remain a callable in execution_evidence — and not be re-routed
     through the oracle.run flow-execution seam."""
-    from arnold.pipelines.megaplan.orchestration import execution_evidence
+    from arnold_pipelines.megaplan.orchestration import execution_evidence
 
     assert hasattr(execution_evidence, "validate_execution_evidence")
     assert callable(execution_evidence.validate_execution_evidence)

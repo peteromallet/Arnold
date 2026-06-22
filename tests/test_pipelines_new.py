@@ -22,9 +22,9 @@ _PIPELINES_DIR = (
 
 
 def _run_pipelines(*args: str) -> subprocess.CompletedProcess[str]:
-    """Run ``python -m arnold.pipelines.megaplan pipelines ...`` and return the result."""
+    """Run ``python -m arnold_pipelines.megaplan pipelines ...`` and return the result."""
     return subprocess.run(
-        [sys.executable, "-m", "arnold.pipelines.megaplan", "pipelines", *args],
+        [sys.executable, "-m", "arnold_pipelines.megaplan", "pipelines", *args],
         capture_output=True,
         text=True,
         env={**__import__("os").environ, "MEGAPLAN_MOCK_WORKERS": "1"},
@@ -32,9 +32,9 @@ def _run_pipelines(*args: str) -> subprocess.CompletedProcess[str]:
 
 
 def _run_arnold_pipelines(*args: str) -> subprocess.CompletedProcess[str]:
-    """Run ``python -m arnold.pipelines.megaplan.cli.arnold pipelines ...``."""
+    """Run ``python -m arnold_pipelines.megaplan.cli.arnold pipelines ...``."""
     return subprocess.run(
-        [sys.executable, "-m", "arnold.pipelines.megaplan.cli.arnold", "pipelines", *args],
+        [sys.executable, "-m", "arnold_pipelines.megaplan.cli.arnold", "pipelines", *args],
         capture_output=True,
         text=True,
         env={**__import__("os").environ, "MEGAPLAN_MOCK_WORKERS": "1"},

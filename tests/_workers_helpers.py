@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from arnold.pipelines.megaplan.workers import _build_mock_payload
+from arnold_pipelines.megaplan.workers import _build_mock_payload
 
 
 def _mock_state(tmp_path: Path, *, iteration: int = 1) -> tuple[Path, dict]:

@@ -33,7 +33,7 @@ def _request(**overrides) -> AgentRequest:
 
 
 def _fake_worker_result(**overrides):
-    from arnold.pipelines.megaplan.workers import WorkerResult
+    from arnold_pipelines.megaplan.workers import WorkerResult
 
     base = dict(
         payload={"answer": "4"},
@@ -64,7 +64,7 @@ def test_codex_adapter_projects_worker_result_to_agent_result() -> None:
         return _fake_worker_result()
 
     with patch(
-        "arnold.pipelines.megaplan.workers.run_codex_step",
+        "arnold_pipelines.megaplan.workers.run_codex_step",
         side_effect=fake_run_codex_step,
     ):
         result = CodexAdapter()(_request())
@@ -99,7 +99,7 @@ def test_codex_adapter_synthesizes_oneshot_context() -> None:
         return _fake_worker_result()
 
     with patch(
-        "arnold.pipelines.megaplan.workers.run_codex_step",
+        "arnold_pipelines.megaplan.workers.run_codex_step",
         side_effect=fake_run_codex_step,
     ):
         CodexAdapter()(_request())
@@ -129,7 +129,7 @@ def test_codex_adapter_read_only_vs_write_work_dir(tmp_path: Path) -> None:
         return _fake_worker_result()
 
     with patch(
-        "arnold.pipelines.megaplan.workers.run_codex_step",
+        "arnold_pipelines.megaplan.workers.run_codex_step",
         side_effect=fake_run_codex_step,
     ):
         # write mode + explicit work_dir
@@ -162,7 +162,7 @@ def test_codex_adapter_real_worker_path_mock_shortcut(
 
 def test_default_dispatcher_routes_codex() -> None:
     with patch(
-        "arnold.pipelines.megaplan.workers.run_codex_step",
+        "arnold_pipelines.megaplan.workers.run_codex_step",
         side_effect=lambda *a, **k: _fake_worker_result(),
     ):
         result = dispatch(_request())
@@ -173,7 +173,7 @@ def test_explicit_dispatcher_register_and_route() -> None:
     disp = ArnoldDispatcher()
     disp.register("codex", CodexAdapter())
     with patch(
-        "arnold.pipelines.megaplan.workers.run_codex_step",
+        "arnold_pipelines.megaplan.workers.run_codex_step",
         side_effect=lambda *a, **k: _fake_worker_result(session_id="X"),
     ):
         result = disp.dispatch(_request())

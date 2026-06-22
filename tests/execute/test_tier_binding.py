@@ -7,7 +7,7 @@ import textwrap
 
 import pytest
 
-from arnold.pipelines.megaplan.execute._binding.tier import (
+from arnold_pipelines.megaplan.execute._binding.tier import (
     COMPLEXITY_SCALE,
     select_batch_tier,
     validate_task_complexity,
@@ -180,7 +180,7 @@ def test_tier_module_only_scale_reference_is_select_batch_tier():
     helper may reference 1..5, but no other function/class in the module
     should embed the scale as a literal.
     """
-    import arnold.pipelines.megaplan.execute._binding.tier as mod
+    import arnold_pipelines.megaplan.execute._binding.tier as mod
 
     source = textwrap.dedent(open(mod.__file__).read())
     tree = ast.parse(source)

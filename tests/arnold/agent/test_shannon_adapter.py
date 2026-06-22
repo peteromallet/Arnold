@@ -7,7 +7,7 @@ from unittest.mock import patch
 import pytest
 
 from arnold.agent import AgentRequest, ArnoldDispatcher
-from arnold.pipelines.megaplan.agent_adapters.shannon import ShannonAdapter
+from arnold_pipelines.megaplan.agent_adapters.shannon import ShannonAdapter
 
 
 def _request(agent: str = "claude", **overrides) -> AgentRequest:
@@ -26,7 +26,7 @@ def _request(agent: str = "claude", **overrides) -> AgentRequest:
 
 
 def _fake_worker_result(**overrides):
-    from arnold.pipelines.megaplan.workers import WorkerResult
+    from arnold_pipelines.megaplan.workers import WorkerResult
 
     data = {
         "payload": {"summary": "ok"},
@@ -48,7 +48,7 @@ def _fake_worker_result(**overrides):
 
 def test_shannon_adapter_projects_worker_result() -> None:
     with patch(
-        "arnold.pipelines.megaplan.workers.shannon.run_shannon_step",
+        "arnold_pipelines.megaplan.workers.shannon.run_shannon_step",
         side_effect=lambda *args, **kwargs: _fake_worker_result(),
     ):
         result = ShannonAdapter()(_request())
@@ -74,7 +74,7 @@ def test_shannon_adapter_synthesizes_oneshot_context(tmp_path: Path) -> None:
         return _fake_worker_result()
 
     with patch(
-        "arnold.pipelines.megaplan.workers.shannon.run_shannon_step",
+        "arnold_pipelines.megaplan.workers.shannon.run_shannon_step",
         side_effect=fake_run_shannon_step,
     ):
         ShannonAdapter(session_agent="shannon")(
@@ -101,7 +101,7 @@ def test_shannon_adapter_passes_free_text_only_without_output_schema() -> None:
         return _fake_worker_result(raw_output="batch([done()])", payload={})
 
     with patch(
-        "arnold.pipelines.megaplan.workers.shannon.run_shannon_step",
+        "arnold_pipelines.megaplan.workers.shannon.run_shannon_step",
         side_effect=fake_run_shannon_step,
     ):
         raw_result = ShannonAdapter()(_request(metadata={"toolsets": []}))
@@ -112,9 +112,9 @@ def test_shannon_adapter_passes_free_text_only_without_output_schema() -> None:
 
 
 def test_shannon_adapter_is_available_delegates() -> None:
-    with patch("arnold.pipelines.megaplan._core.is_shannon_available", return_value=True):
+    with patch("arnold_pipelines.megaplan._core.is_shannon_available", return_value=True):
         assert ShannonAdapter.is_available() is True
-    with patch("arnold.pipelines.megaplan._core.is_shannon_available", return_value=False):
+    with patch("arnold_pipelines.megaplan._core.is_shannon_available", return_value=False):
         assert ShannonAdapter.is_available() is False
 
 
@@ -129,7 +129,7 @@ def test_explicit_dispatcher_routes_claude_and_shannon() -> None:
         return _fake_worker_result()
 
     with patch(
-        "arnold.pipelines.megaplan.workers.shannon.run_shannon_step",
+        "arnold_pipelines.megaplan.workers.shannon.run_shannon_step",
         side_effect=fake_run_shannon_step,
     ):
         dispatcher.dispatch(_request(agent="claude"))
@@ -139,8 +139,8 @@ def test_explicit_dispatcher_routes_claude_and_shannon() -> None:
 
 
 def test_extract_free_text_result_returns_verbatim_text_and_errors() -> None:
-    from arnold.pipelines.megaplan.workers._impl import CliError
-    from arnold.pipelines.megaplan.workers.shannon import _extract_free_text_result
+    from arnold_pipelines.megaplan.workers._impl import CliError
+    from arnold_pipelines.megaplan.workers.shannon import _extract_free_text_result
 
     ndjson = "\n".join(
         [

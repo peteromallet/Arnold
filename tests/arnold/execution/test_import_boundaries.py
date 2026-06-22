@@ -11,7 +11,7 @@ import pytest
 FORBIDDEN_PREFIXES = (
     "arnold.workflow",
     "arnold.patterns",
-    "arnold.pipelines.megaplan",
+    "arnold_pipelines.megaplan",
     "arnold_pipelines.megaplan",
     "megaplan",
 )

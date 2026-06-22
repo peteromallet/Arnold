@@ -7,8 +7,8 @@ from pathlib import Path
 
 import pytest
 
-from arnold.pipelines.megaplan.orchestration.import_graph import ImportGraph
-from arnold.pipelines.megaplan.orchestration.test_selection import (
+from arnold_pipelines.megaplan.orchestration.import_graph import ImportGraph
+from arnold_pipelines.megaplan.orchestration.test_selection import (
     compute_default_blast_radius,
     resolve_baseline_test_selection,
 )
@@ -122,7 +122,7 @@ def test_import_graph_keeps_flat_package_layout_unchanged(tmp_path: Path) -> Non
     _write(
         repo,
         "tests/orchestration/test_import_graph.py",
-        "import arnold.pipelines.megaplan.orchestration.import_graph\n",
+        "import arnold_pipelines.megaplan.orchestration.import_graph\n",
     )
 
     radius = compute_default_blast_radius(

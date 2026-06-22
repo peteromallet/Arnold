@@ -15,16 +15,16 @@ from typing import Any
 
 import pytest
 
-from arnold.pipelines.megaplan._core.scheduler.types import Reduce
-from arnold.pipelines.megaplan.execute._binding.reducer import (
+from arnold_pipelines.megaplan._core.scheduler.types import Reduce
+from arnold_pipelines.megaplan.execute._binding.reducer import (
     BatchOutcome,
     BatchReduceResult,
     apply_outcome_to_state,
     reduce_batch,
 )
-from arnold.pipelines.megaplan.execute.batch import BatchResult
-from arnold.pipelines.megaplan.planning.state import STATE_EXECUTED
-from arnold.pipelines.megaplan.workers import WorkerResult
+from arnold_pipelines.megaplan.execute.batch import BatchResult
+from arnold_pipelines.megaplan.planning.state import STATE_EXECUTED
+from arnold_pipelines.megaplan.workers import WorkerResult
 
 
 # ---------------------------------------------------------------------------

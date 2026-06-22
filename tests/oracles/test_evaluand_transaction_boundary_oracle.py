@@ -17,7 +17,7 @@ from pathlib import Path
 
 import pytest
 
-from arnold.pipelines.megaplan.observability import evaluand
+from arnold_pipelines.megaplan.observability import evaluand
 
 
 @pytest.fixture(autouse=True)

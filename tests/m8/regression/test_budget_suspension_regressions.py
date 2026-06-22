@@ -18,7 +18,7 @@ import pytest
 from arnold.pipeline import ContractResult, ContractStatus, reduce_contract_results
 from arnold.pipeline.contract_reduce import ReducePolicy
 from arnold.pipeline.types import Suspension
-from arnold.pipelines.megaplan.model_seam import (
+from arnold_pipelines.megaplan.model_seam import (
     BudgetStatus,
     ModelBudgetError,
     ModelTier,

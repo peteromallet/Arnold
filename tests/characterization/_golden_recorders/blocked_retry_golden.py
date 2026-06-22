@@ -31,8 +31,8 @@ and listed in the M4 close-out for policy.halt(kind) follow-up.
 """
 from __future__ import annotations
 
-from arnold.pipelines.megaplan.orchestration.phase_result import ExitKind
-from arnold.pipelines.megaplan.orchestration.recovery_policy import RecoveryPolicy
+from arnold_pipelines.megaplan.orchestration.phase_result import ExitKind
+from arnold_pipelines.megaplan.orchestration.recovery_policy import RecoveryPolicy
 
 
 class _StubBlockedResult:

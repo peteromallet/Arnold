@@ -2,9 +2,9 @@ from __future__ import annotations
 
 import pytest
 
-from arnold.pipelines.megaplan.editorial import sprints
-from arnold.pipelines.megaplan.editorial.errors import EditorialNotFound, EditorialValidationError, EditorialWorkflowError
-from arnold.pipelines.megaplan.store import RevisionConflict, SprintItemInput
+from arnold_pipelines.megaplan.editorial import sprints
+from arnold_pipelines.megaplan.editorial.errors import EditorialNotFound, EditorialValidationError, EditorialWorkflowError
+from arnold_pipelines.megaplan.store import RevisionConflict, SprintItemInput
 
 
 def test_sprint_crud_items_queue_and_events(editorial_store) -> None:

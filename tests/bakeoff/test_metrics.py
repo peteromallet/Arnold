@@ -2,7 +2,7 @@ import json
 import subprocess
 from pathlib import Path
 
-from arnold.pipelines.megaplan.bakeoff.metrics import collect_profile_metrics
+from arnold_pipelines.megaplan.bakeoff.metrics import collect_profile_metrics
 
 
 def _git(repo: Path, *args: str) -> subprocess.CompletedProcess[str]:

@@ -235,7 +235,7 @@ def test_control_transition_dispatch_is_product_neutral(
             policy=WorkflowPolicy(
                 control_transitions=(
                     ControlTransitionSlot(
-                        transition_id="arnold.pipelines.megaplan:control:override",
+                        transition_id="arnold_pipelines.megaplan:control:override",
                         transition_type="override",
                         target_ref="target",
                     ),
@@ -246,7 +246,7 @@ def test_control_transition_dispatch_is_product_neutral(
     )
     registry = ExecutionRegistries(
         controls={
-            "arnold.pipelines.megaplan:control:override": KindControlHandler("override")
+            "arnold_pipelines.megaplan:control:override": KindControlHandler("override")
         }
     )
     backend = fake_backend_factory()

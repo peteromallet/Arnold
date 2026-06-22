@@ -42,7 +42,7 @@ def test_package_prefix_for_arnold_path() -> None:
 def test_package_prefix_for_megaplan_path() -> None:
     """_package_prefix_for_module_file returns 'megaplan.pipelines' for megaplan paths."""
     fake = Path("/repo/megaplan/pipelines/planning/__init__.py")
-    assert _package_prefix_for_module_file(fake) == "arnold.pipelines.megaplan.pipelines"
+    assert _package_prefix_for_module_file(fake) == "arnold_pipelines.megaplan.pipelines"
 
 
 def test_package_prefix_for_out_of_tree_path() -> None:
@@ -84,8 +84,8 @@ def build_pipeline() -> Pipeline:
 
 
 def _plant_arnold_megaplan(base: Path) -> Path:
-    """Write arnold/pipelines/megaplan/__init__.py under *base*."""
-    pkg = base / "arnold" / "pipelines" / "megaplan"
+    """Write arnold_pipelines/megaplan/__init__.py under *base*."""
+    pkg = base / "arnold_pipelines" / "megaplan"
     pkg.mkdir(parents=True)
     init = pkg / "__init__.py"
     init.write_text(
@@ -133,22 +133,22 @@ def _patch_load_for_temp_paths(
         # For out-of-tree (or known temp paths), use spec-from-file.
         if package_prefix is None:
             mod_name = (
-                f"arnold.pipelines.megaplan._user_pipelines.{module_file.stem}"
+                f"arnold_pipelines.megaplan._user_pipelines.{module_file.stem}"
                 if module_file.name != "__init__.py"
-                else f"arnold.pipelines.megaplan._user_pipelines.{module_file.parent.name}"
+                else f"arnold_pipelines.megaplan._user_pipelines.{module_file.parent.name}"
             )
-        elif package_prefix == "arnold.pipelines":
+        elif package_prefix == "arnold_pipelines":
             if module_file.name == "__init__.py":
-                mod_name = f"arnold.pipelines._test_{module_file.parent.name}_{abs(hash(str(module_file)))}"
+                mod_name = f"arnold_pipelines._test_{module_file.parent.name}_{abs(hash(str(module_file)))}"
             else:
-                mod_name = f"arnold.pipelines._test_{module_file.stem}_{abs(hash(str(module_file)))}"
-        elif package_prefix == "arnold.pipelines.megaplan.pipelines":
+                mod_name = f"arnold_pipelines._test_{module_file.stem}_{abs(hash(str(module_file)))}"
+        elif package_prefix == "arnold_pipelines.megaplan.pipelines":
             if module_file.name == "__init__.py":
-                mod_name = f"arnold.pipelines.megaplan.pipelines._test_{module_file.parent.name}_{abs(hash(str(module_file)))}"
+                mod_name = f"arnold_pipelines.megaplan.pipelines._test_{module_file.parent.name}_{abs(hash(str(module_file)))}"
             else:
-                mod_name = f"arnold.pipelines.megaplan.pipelines._test_{module_file.stem}_{abs(hash(str(module_file)))}"
+                mod_name = f"arnold_pipelines.megaplan.pipelines._test_{module_file.stem}_{abs(hash(str(module_file)))}"
         else:
-            mod_name = f"arnold.pipelines.megaplan._user_pipelines.{module_file.stem}"
+            mod_name = f"arnold_pipelines.megaplan._user_pipelines.{module_file.stem}"
 
         spec = importlib.util.spec_from_file_location(mod_name, module_file)
         if spec is None or spec.loader is None:
@@ -163,7 +163,7 @@ def _patch_load_for_temp_paths(
         return module
 
     monkeypatch.setattr(
-        "arnold.pipelines.megaplan._pipeline.registry._load_module_from_path",
+        "arnold_pipelines.megaplan.runtime.discovery._load_module_from_path",
         _load_from_path,
     )
 
@@ -174,10 +174,10 @@ def _patch_load_for_temp_paths(
 def test_arnold_pipeline_wins_over_megaplan_duplicate(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """When both arnold/pipelines/megaplan/ and megaplan/pipelines/planning/
+    """When both arnold_pipelines/megaplan/ and megaplan/pipelines/planning/
     expose build_pipeline, the arnold plugin wins discovery because
-    arnold/pipelines is scanned first."""
-    arnold_pp = tmp_path / "arnold" / "pipelines"
+    arnold_pipelines is scanned first."""
+    arnold_pp = tmp_path / "arnold_pipelines"
     megaplan_pp = tmp_path / "megaplan" / "pipelines"
 
     _plant_arnold_megaplan(tmp_path)
@@ -188,16 +188,16 @@ def test_arnold_pipeline_wins_over_megaplan_duplicate(
 
     # Override scan roots.
     monkeypatch.setattr(
-        "arnold.pipelines.megaplan._pipeline.registry._SCAN_ROOTS",
-        [(arnold_pp, "arnold.pipelines"), (megaplan_pp, "arnold.pipelines.megaplan.pipelines")],
+        "arnold_pipelines.megaplan.runtime.discovery._SCAN_ROOTS",
+        [(arnold_pp, "arnold_pipelines"), (megaplan_pp, "arnold_pipelines.megaplan.pipelines")],
     )
     monkeypatch.setattr(
-        "arnold.pipelines.megaplan._pipeline.registry._get_scan_roots",
-        lambda: [(arnold_pp, "arnold.pipelines"), (megaplan_pp, "arnold.pipelines.megaplan.pipelines")],
+        "arnold_pipelines.megaplan.runtime.discovery._get_scan_roots",
+        lambda: [(arnold_pp, "arnold_pipelines"), (megaplan_pp, "arnold_pipelines.megaplan.pipelines")],
     )
 
     # Drop any cached imports.
-    sys.modules.pop("arnold.pipelines.megaplan.pipelines.planning", None)
+    sys.modules.pop("arnold_pipelines.megaplan.pipelines.planning", None)
 
     registry = PipelineRegistry()
     names = registry.names()
@@ -224,18 +224,18 @@ def test_arnold_pipeline_wins_over_megaplan_duplicate(
     # Build the pipeline and verify it's from arnold.
     pipeline = registry.get("megaplan")
     assert pipeline is not None
-    assert "noop" in pipeline.stages
+    assert "noop" in {s.id for s in pipeline.steps}
 
 
 def test_arnold_scan_root_appears_before_megaplan_plugin_in_scan_roots() -> None:
-    """_SCAN_ROOTS lists arnold/pipelines before the Megaplan plugin pipelines."""
+    """_SCAN_ROOTS lists arnold_pipelines before the Megaplan plugin pipelines."""
     from arnold_pipelines.megaplan.runtime.discovery import _SCAN_ROOTS
     prefixes_in_order = [pkg_prefix for _, pkg_prefix in _SCAN_ROOTS if pkg_prefix is not None]
-    arnold_idx = prefixes_in_order.index("arnold.pipelines")
-    megaplan_idx = prefixes_in_order.index("arnold.pipelines.megaplan.pipelines")
+    arnold_idx = prefixes_in_order.index("arnold_pipelines")
+    megaplan_idx = prefixes_in_order.index("arnold_pipelines.megaplan.pipelines")
     assert arnold_idx < megaplan_idx, (
-        f"arnold.pipelines ({arnold_idx}) must appear before "
-        f"arnold.pipelines.megaplan.pipelines ({megaplan_idx}) in _SCAN_ROOTS"
+        f"arnold_pipelines ({arnold_idx}) must appear before "
+        f"arnold_pipelines.megaplan.pipelines ({megaplan_idx}) in _SCAN_ROOTS"
     )
 
 
@@ -258,7 +258,7 @@ def test_skill_md_read_from_arnold_plugin_path(
 ) -> None:
     """When an arnold-planted pipeline has a co-located SKILL.md,
     read_skill_md returns its contents."""
-    arnold_pp = tmp_path / "arnold" / "pipelines"
+    arnold_pp = tmp_path / "arnold_pipelines"
 
     _plant_arnold_megaplan(tmp_path)
 
@@ -269,12 +269,12 @@ def test_skill_md_read_from_arnold_plugin_path(
     _patch_load_for_temp_paths(monkeypatch, tmp_path, arnold_pp)
 
     monkeypatch.setattr(
-        "arnold.pipelines.megaplan._pipeline.registry._SCAN_ROOTS",
-        [(arnold_pp, "arnold.pipelines")],
+        "arnold_pipelines.megaplan.runtime.discovery._SCAN_ROOTS",
+        [(arnold_pp, "arnold_pipelines")],
     )
     monkeypatch.setattr(
-        "arnold.pipelines.megaplan._pipeline.registry._get_scan_roots",
-        lambda: [(arnold_pp, "arnold.pipelines")],
+        "arnold_pipelines.megaplan.runtime.discovery._get_scan_roots",
+        lambda: [(arnold_pp, "arnold_pipelines")],
     )
 
     registry = PipelineRegistry()
@@ -288,19 +288,19 @@ def test_skill_md_returns_none_when_absent_from_plugin(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """read_skill_md returns None gracefully when the plugin has no SKILL.md."""
-    arnold_pp = tmp_path / "arnold" / "pipelines"
+    arnold_pp = tmp_path / "arnold_pipelines"
 
     _plant_arnold_megaplan(tmp_path)
 
     _patch_load_for_temp_paths(monkeypatch, tmp_path, arnold_pp)
 
     monkeypatch.setattr(
-        "arnold.pipelines.megaplan._pipeline.registry._SCAN_ROOTS",
-        [(arnold_pp, "arnold.pipelines")],
+        "arnold_pipelines.megaplan.runtime.discovery._SCAN_ROOTS",
+        [(arnold_pp, "arnold_pipelines")],
     )
     monkeypatch.setattr(
-        "arnold.pipelines.megaplan._pipeline.registry._get_scan_roots",
-        lambda: [(arnold_pp, "arnold.pipelines")],
+        "arnold_pipelines.megaplan.runtime.discovery._get_scan_roots",
+        lambda: [(arnold_pp, "arnold_pipelines")],
     )
 
     registry = PipelineRegistry()

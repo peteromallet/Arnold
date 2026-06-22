@@ -19,20 +19,20 @@ from typing import Any
 
 import pytest
 
-from arnold.pipelines.megaplan.observability import (
+from arnold_pipelines.megaplan.observability import (
     BetterResult,
     EvaluandRecord,
     RecordedModelIO,
     ReJudgeOutcome,
     re_judge,
 )
-from arnold.pipelines.megaplan.observability.evaluand import (
+from arnold_pipelines.megaplan.observability.evaluand import (
     _reset_for_tests,
     better,
     read_evaluand_events,
     write_evaluand_event,
 )
-from arnold.pipelines.megaplan.observability.events import EventKind, read_events
+from arnold_pipelines.megaplan.observability.events import EventKind, read_events
 
 REPLAY_ORACLE_CORPUS_SIZE = 4
 
