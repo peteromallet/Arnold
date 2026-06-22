@@ -1,5 +1,8 @@
-import sys as _sys
-import importlib as _importlib
-_real = _importlib.import_module("arnold.pipelines.megaplan.agent.tools.session_search_tool")
-globals().update(_real.__dict__)
-_sys.modules[__name__] = _real
+"""M6 stub: legacy tool removed in clean-break purge."""
+from __future__ import annotations
+
+def session_search(*args, **kwargs):
+    """Legacy session search stub (M6)."""
+    raise NotImplementedError("session_search was removed in M6")
+
+__all__ = ['session_search']

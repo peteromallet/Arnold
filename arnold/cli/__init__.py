@@ -1,8 +1,11 @@
-"""Arnold CLI thin dispatch layer.
+"""Arnold CLI dispatch layer.
 
-Lazily delegates to the canonical CLI logic in
-``arnold.pipelines.megaplan.cli.arnold`` so that ``arnold`` and
-``python -m arnold`` work without eagerly importing the entire plugin tree.
+Routes:
+* ``arnold workflow ...`` directly to ``arnold.cli.workflow``.
+* ``arnold status/trace/inspect/override`` to ``arnold.cli.operators``.
+
+Legacy Megaplan subcommands are removed in M6; the only supported top-level
+verbs are the workflow runtime and the operator projection commands.
 """
 
 from __future__ import annotations
@@ -11,13 +14,48 @@ import sys
 from typing import Sequence
 
 
+# Commands that are implemented directly against the workflow/execution runtime.
+_WORKFLOW_COMMAND = "workflow"
+_OPERATOR_COMMANDS = frozenset({"status", "trace", "inspect", "override"})
+
+
 def cli_entry() -> None:
     """Console-script entry point registered in pyproject.toml."""
     sys.exit(main())
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    """Lazy dispatch to the canonical Arnold CLI implementation."""
-    from arnold.pipelines.megaplan.cli.arnold import main as _arnold_main
+    """Dispatch to the workflow CLI or operator commands."""
+    args = list(sys.argv[1:] if argv is None else argv)
+    if not args:
+        _print_usage()
+        return 2
 
-    return _arnold_main(argv)
+    command = args[0]
+    rest = args[1:]
+
+    if command == _WORKFLOW_COMMAND:
+        from arnold.cli.workflow import main as _workflow_main
+
+        return _workflow_main(rest)
+
+    if command in _OPERATOR_COMMANDS:
+        from arnold.cli.operators import main as _operators_main
+
+        return _operators_main([command, *rest])
+
+    print(f"arnold: unknown command {command!r}", file=sys.stderr)
+    _print_usage(file=sys.stderr)
+    return 2
+
+
+def _print_usage(*, file=None) -> None:  # type: ignore[no-untyped-def]
+    target = file or sys.stdout
+    print(
+        "usage: arnold workflow {check,manifest,dot,dry-run,run,resume,describe} | "
+        "arnold {status,trace,inspect,override}",
+        file=target,
+    )
+
+
+__all__ = ["cli_entry", "main"]

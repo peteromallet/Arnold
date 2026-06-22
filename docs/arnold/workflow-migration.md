@@ -1,5 +1,30 @@
 # Workflow Migration
 
+## M6 Clean-Break Completion
+
+M6 finalized the clean break from legacy public surfaces. The following surfaces
+were removed from the source tree and will not resolve at import time:
+
+| Deleted surface | Migration target |
+| --- | --- |
+| `arnold.pipelines.megaplan` (and sibling `arnold.pipelines.*` packages) | `arnold_pipelines.megaplan` for product-specific shipped pipelines; `arnold.workflow` for neutral authoring. |
+| `arnold.pipeline` public builder/executor symbols (`PipelineBuilder`, `Stage`, `Edge`, `ParallelStage`, `run_pipeline`) | `arnold.workflow.dsl.Pipeline`, `arnold.workflow.dsl.Step`, `arnold.workflow.dsl.Route`; execution via `arnold.execution.run`. |
+| `arnold pipelines *` CLI subcommands | `arnold workflow {check,manifest,dot,dry-run,run,resume,describe}`. |
+| `arnold <module> *` step commands (`init`, `plan`, `prep`, ...) | `arnold_pipelines.megaplan` package-local CLI (`python -m arnold_pipelines.megaplan ...`) or `arnold workflow run`. |
+| `arnold/agent/*` vendored Hermes tool shims delegated to `arnold.pipelines.megaplan.agent.tools.*` | Native `arnold.agent.tools.*` stubs (M6) or product-specific tool implementations in `arnold_pipelines.megaplan`. |
+| Root-level `test_*.py` files importing deleted surfaces | Removed; current tests live under `tests/arnold/`, `tests/arnold_pipelines/`, `tests/cli/`, `tests/installed_wheel/`. |
+
+Canonical authoring and runtime paths after M6:
+
+- Author workflows with `arnold.workflow.dsl` and `arnold.workflow.compiler`.
+- Compile and validate with `arnold workflow check --module <module>:build_pipeline`.
+- Run with `arnold workflow run` or `arnold.execution.run`.
+- Ship product pipelines under `arnold_pipelines.<product>` with `manifest_hash`
+  registered in `pipeline_ids.json`.
+
+Any code still importing `arnold.pipelines.megaplan` must be migrated before it
+can run against the M6 tree; those imports raise `ModuleNotFoundError`.
+
 ## M1 Baseline Evidence
 
 Batch 1 verified that the M1 implementation branch descends from `origin/main` and does not include a merge from `native-python-pipelines`.

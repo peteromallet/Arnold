@@ -15,7 +15,7 @@ from dataclasses import dataclass
 from typing import Any, Mapping
 
 from arnold.workflow.dsl import Capability, Input, Output, Pipeline, Route, Step
-from arnold.workflow.manifests import (
+from arnold.manifest.manifests import (
     CapabilityRequirement,
     WorkflowEdge,
     WorkflowManifest,

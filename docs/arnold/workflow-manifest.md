@@ -7,8 +7,8 @@ capability requirements, and replay coordinates. It does not execute workflow
 code, import product packages, or carry live Python objects.
 
 The implementation source of truth is the frozen dataclass set in
-`arnold/workflow/manifests.py`, plus stable reference helpers in
-`arnold/workflow/refs.py`. This document names the field-level contract that
+`arnold/manifest/manifests.py`, plus stable reference helpers in
+`arnold/manifest/refs.py`. This document names the field-level contract that
 later DSL, compiler, inspect, dry-run, and runtime work must preserve.
 
 ## Version And Identity
@@ -95,6 +95,24 @@ slots and durable refs; the runner owns the concrete algorithms.
   amendment defines an equivalent bounded proof.
 - `fanout`: optional `FanoutPolicy` with `mode`, `width`, and `reducer_ref`.
 - `suspension_routes`: tuple of `SuspensionRoute` values.
+- `timing`: optional `TimingPolicy` for node timeout, deadline refs, and TTL.
+- `idempotency`: optional `IdempotencyPolicy` for replay-safe node execution.
+- `effects`: tuple of string-keyed `EffectRef` values resolved by runtime
+  registries.
+- `reducers`: tuple of string-keyed `ReducerRef` values resolved by runtime
+  registries.
+- `compensation`: optional `CompensationPolicy` declaring reversal targets.
+- `escalation`: optional `EscalationPolicy` declaring neutral escalation
+  targets.
+- `control_transitions`: tuple of `ControlTransitionSlot` values for generic
+  override, fallback, escalation, supervisor-promotion, compensation, and
+  overlay transitions.
+- `topology_overlays`: tuple of `TopologyOverlaySlot` values. These reserve
+  dynamic overlay metadata in the manifest, but applied overlays are recorded
+  later as runtime control-transition events and must not mutate the canonical
+  manifest hash.
+- `authority`: tuple of `AuthorityRequirement` values checked before accepting
+  authority-gated runtime mutations.
 
 `SuspensionRoute` is product-neutral:
 
@@ -104,6 +122,8 @@ slots and durable refs; the runner owns the concrete algorithms.
 - `reentry_id`: optional stable cursor used to resume into bounded control
   topology.
 - `payload_schema_hash`: optional schema hash for route payloads.
+- `resume_schema_hash`, `resume_schema_ref`, and `resume_payload_ref`: optional
+  resume payload contract fields.
 
 ## Bounded Loop And Reentry Semantics
 

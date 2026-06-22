@@ -17,7 +17,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
-from arnold.pipelines.megaplan.run_outcome import RunOutcome, RunResultMetadata
+from arnold_pipelines.megaplan.run_outcome import RunOutcome, RunResultMetadata
 
 # ---------------------------------------------------------------------------
 # Documented DriverOutcome.status → RunOutcome mapping

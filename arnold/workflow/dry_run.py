@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from arnold.workflow.manifests import WorkflowManifest
+from arnold.manifest.manifests import WorkflowManifest
 
 
 def dry_run(manifest: WorkflowManifest) -> dict[str, Any]:

@@ -1,5 +1,8 @@
-import sys as _sys
-import importlib as _importlib
-_real = _importlib.import_module("arnold.pipelines.megaplan.agent.tools.terminal_tool")
-globals().update(_real.__dict__)
-_sys.modules[__name__] = _real
+"""M6 stub: legacy tool removed in clean-break purge."""
+from __future__ import annotations
+
+def cleanup_vm(task_id: str | None = None) -> None:
+    """No-op cleanup for legacy VM state (M6)."""
+    pass
+
+__all__ = ['cleanup_vm']

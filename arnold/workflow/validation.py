@@ -9,7 +9,18 @@ import re
 from pathlib import Path
 from typing import Any, Iterable, Mapping
 
-from arnold.workflow.manifests import (
+from arnold.manifest.manifests import (
+    AuthorityRequirement,
+    CompensationPolicy,
+    CompensationTarget,
+    ControlTransitionSlot,
+    EffectRef,
+    EscalationPolicy,
+    IdempotencyPolicy,
+    ReducerRef,
+    SuspensionRoute,
+    TimingPolicy,
+    TopologyOverlaySlot,
     WorkflowEdge,
     WorkflowManifest,
     WorkflowNode,
@@ -150,19 +161,207 @@ def _validate_policy(name: str, policy: WorkflowPolicy | None, errors: list[str]
         _validate_ref(f"{name}.fanout.mode", policy.fanout.mode, errors)
         _validate_optional_positive_int(f"{name}.fanout.width", policy.fanout.width, errors)
         _validate_optional_ref(f"{name}.fanout.reducer_ref", policy.fanout.reducer_ref, errors)
+    _validate_timing_policy(f"{name}.timing", policy.timing, errors)
+    _validate_idempotency_policy(f"{name}.idempotency", policy.idempotency, errors)
+    _validate_effects(f"{name}.effects", policy.effects, errors)
+    _validate_reducers(f"{name}.reducers", policy.reducers, errors)
+    _validate_compensation_policy(f"{name}.compensation", policy.compensation, errors)
+    _validate_escalation_policy(f"{name}.escalation", policy.escalation, errors)
+    _validate_control_transitions(
+        f"{name}.control_transitions",
+        policy.control_transitions,
+        errors,
+    )
+    _validate_topology_overlays(f"{name}.topology_overlays", policy.topology_overlays, errors)
+    _validate_authority_requirements(f"{name}.authority", policy.authority, errors)
     route_ids: set[str] = set()
     for route in policy.suspension_routes:
-        _validate_ref(f"{name}.suspension_routes.route_id", route.route_id, errors)
-        if route.route_id in route_ids:
-            errors.append(f"{name}.suspension_routes route_id {route.route_id!r} is duplicated")
-        route_ids.add(route.route_id)
-        _validate_optional_ref(f"{name}.suspension_routes.capability_id", route.capability_id, errors)
-        _validate_optional_ref(f"{name}.suspension_routes.reentry_id", route.reentry_id, errors)
-        _validate_optional_hash(
-            f"{name}.suspension_routes.payload_schema_hash",
-            route.payload_schema_hash,
-            errors,
-        )
+        _validate_suspension_route(f"{name}.suspension_routes", route, route_ids, errors)
+
+
+def _validate_suspension_route(
+    name: str,
+    route: SuspensionRoute,
+    route_ids: set[str],
+    errors: list[str],
+) -> None:
+    _validate_ref(f"{name}.route_id", route.route_id, errors)
+    if route.route_id in route_ids:
+        errors.append(f"{name} route_id {route.route_id!r} is duplicated")
+    route_ids.add(route.route_id)
+    _validate_optional_ref(f"{name}.capability_id", route.capability_id, errors)
+    _validate_optional_ref(f"{name}.reentry_id", route.reentry_id, errors)
+    _validate_optional_hash(
+        f"{name}.payload_schema_hash",
+        route.payload_schema_hash,
+        errors,
+    )
+    _validate_optional_hash(f"{name}.resume_schema_hash", route.resume_schema_hash, errors)
+    _validate_optional_ref(f"{name}.resume_schema_ref", route.resume_schema_ref, errors)
+    _validate_optional_ref(f"{name}.resume_payload_ref", route.resume_payload_ref, errors)
+
+
+def _validate_timing_policy(name: str, timing: TimingPolicy | None, errors: list[str]) -> None:
+    if timing is None:
+        return
+    _validate_optional_positive_number(f"{name}.timeout_seconds", timing.timeout_seconds, errors)
+    _validate_optional_ref(f"{name}.deadline_ref", timing.deadline_ref, errors)
+    _validate_optional_positive_number(f"{name}.ttl_seconds", timing.ttl_seconds, errors)
+
+
+def _validate_idempotency_policy(
+    name: str,
+    idempotency: IdempotencyPolicy | None,
+    errors: list[str],
+) -> None:
+    if idempotency is None:
+        return
+    _validate_optional_ref(f"{name}.key_ref", idempotency.key_ref, errors)
+    _validate_optional_ref(f"{name}.key_template", idempotency.key_template, errors)
+    if not isinstance(idempotency.required, bool):
+        errors.append(f"{name}.required must be a boolean")
+
+
+def _validate_effects(name: str, effects: Iterable[EffectRef], errors: list[str]) -> None:
+    effect_ids: set[str] = set()
+    for effect in effects:
+        _validate_effect_ref(name, effect, effect_ids, errors)
+
+
+def _validate_effect_ref(
+    name: str,
+    effect: EffectRef,
+    effect_ids: set[str] | None,
+    errors: list[str],
+) -> None:
+    _validate_ref(f"{name}.effect_id", effect.effect_id, errors)
+    if effect_ids is not None:
+        if effect.effect_id in effect_ids:
+            errors.append(f"{name} effect_id {effect.effect_id!r} is duplicated")
+        effect_ids.add(effect.effect_id)
+    _validate_ref(f"{name}.route", effect.route, errors)
+    _validate_optional_ref(f"{name}.payload_ref", effect.payload_ref, errors)
+    _validate_optional_hash(f"{name}.payload_schema_hash", effect.payload_schema_hash, errors)
+    _validate_idempotency_policy(f"{name}.idempotency", effect.idempotency, errors)
+
+
+def _validate_reducers(name: str, reducers: Iterable[ReducerRef], errors: list[str]) -> None:
+    reducer_ids: set[str] = set()
+    for reducer in reducers:
+        _validate_ref(f"{name}.reducer_id", reducer.reducer_id, errors)
+        if reducer.reducer_id in reducer_ids:
+            errors.append(f"{name} reducer_id {reducer.reducer_id!r} is duplicated")
+        reducer_ids.add(reducer.reducer_id)
+        _validate_optional_ref(f"{name}.input_ref", reducer.input_ref, errors)
+        _validate_optional_ref(f"{name}.output_ref", reducer.output_ref, errors)
+
+
+def _validate_compensation_policy(
+    name: str,
+    compensation: CompensationPolicy | None,
+    errors: list[str],
+) -> None:
+    if compensation is None:
+        return
+    _validate_optional_ref(f"{name}.scope_ref", compensation.scope_ref, errors)
+    for trigger_ref in compensation.trigger_on:
+        _validate_ref(f"{name}.trigger_on", trigger_ref, errors)
+    target_ids: set[str] = set()
+    for target in compensation.targets:
+        _validate_compensation_target(f"{name}.targets", target, target_ids, errors)
+    _validate_idempotency_policy(f"{name}.idempotency", compensation.idempotency, errors)
+
+
+def _validate_compensation_target(
+    name: str,
+    target: CompensationTarget,
+    target_ids: set[str],
+    errors: list[str],
+) -> None:
+    _validate_ref(f"{name}.target_id", target.target_id, errors)
+    if target.target_id in target_ids:
+        errors.append(f"{name} target_id {target.target_id!r} is duplicated")
+    target_ids.add(target.target_id)
+    _validate_effect_ref(f"{name}.effect", target.effect, None, errors)
+    _validate_optional_ref(f"{name}.condition_ref", target.condition_ref, errors)
+    _validate_idempotency_policy(f"{name}.idempotency", target.idempotency, errors)
+
+
+def _validate_escalation_policy(
+    name: str,
+    escalation: EscalationPolicy | None,
+    errors: list[str],
+) -> None:
+    if escalation is None:
+        return
+    if not escalation.targets:
+        errors.append(f"{name}.targets must include at least one target")
+    for target_ref in escalation.targets:
+        _validate_ref(f"{name}.targets", target_ref, errors)
+    _validate_optional_positive_int(
+        f"{name}.escalate_after_attempts",
+        escalation.escalate_after_attempts,
+        errors,
+    )
+    _validate_optional_ref(f"{name}.policy_ref", escalation.policy_ref, errors)
+    _validate_ref(f"{name}.backoff", escalation.backoff, errors)
+
+
+def _validate_control_transitions(
+    name: str,
+    transitions: Iterable[ControlTransitionSlot],
+    errors: list[str],
+) -> None:
+    transition_ids: set[str] = set()
+    for transition in transitions:
+        _validate_ref(f"{name}.transition_id", transition.transition_id, errors)
+        if transition.transition_id in transition_ids:
+            errors.append(f"{name} transition_id {transition.transition_id!r} is duplicated")
+        transition_ids.add(transition.transition_id)
+        _validate_ref(f"{name}.transition_type", transition.transition_type, errors)
+        _validate_optional_ref(f"{name}.trigger_ref", transition.trigger_ref, errors)
+        _validate_optional_ref(f"{name}.target_ref", transition.target_ref, errors)
+        _validate_optional_hash(f"{name}.payload_schema_hash", transition.payload_schema_hash, errors)
+        _validate_optional_ref(f"{name}.policy_ref", transition.policy_ref, errors)
+        _validate_idempotency_policy(f"{name}.idempotency", transition.idempotency, errors)
+
+
+def _validate_topology_overlays(
+    name: str,
+    overlays: Iterable[TopologyOverlaySlot],
+    errors: list[str],
+) -> None:
+    overlay_ids: set[str] = set()
+    for overlay in overlays:
+        _validate_ref(f"{name}.overlay_id", overlay.overlay_id, errors)
+        if overlay.overlay_id in overlay_ids:
+            errors.append(f"{name} overlay_id {overlay.overlay_id!r} is duplicated")
+        overlay_ids.add(overlay.overlay_id)
+        _validate_ref(f"{name}.overlay_type", overlay.overlay_type, errors)
+        _validate_optional_ref(f"{name}.source_ref", overlay.source_ref, errors)
+        for target_ref in overlay.target_refs:
+            _validate_ref(f"{name}.target_refs", target_ref, errors)
+        _validate_optional_ref(f"{name}.condition_ref", overlay.condition_ref, errors)
+        _validate_optional_hash(f"{name}.payload_schema_hash", overlay.payload_schema_hash, errors)
+
+
+def _validate_authority_requirements(
+    name: str,
+    requirements: Iterable[AuthorityRequirement],
+    errors: list[str],
+) -> None:
+    requirement_ids: set[tuple[str, str]] = set()
+    for requirement in requirements:
+        _validate_ref(f"{name}.authority_id", requirement.authority_id, errors)
+        _validate_ref(f"{name}.action", requirement.action, errors)
+        key = (requirement.authority_id, requirement.action)
+        if key in requirement_ids:
+            errors.append(
+                f"{name} authority/action pair {requirement.authority_id!r}/{requirement.action!r} is duplicated"
+            )
+        requirement_ids.add(key)
+        _validate_optional_hash(f"{name}.evidence_schema_hash", requirement.evidence_schema_hash, errors)
+        _validate_optional_ref(f"{name}.capability_id", requirement.capability_id, errors)
 
 
 def _validate_optional_hash(name: str, value: str | None, errors: list[str]) -> None:
