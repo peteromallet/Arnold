@@ -17,7 +17,6 @@ from arnold_pipelines.megaplan import (  # noqa: F401
     name,
     supported_modes,
     build_pipeline as _canonical_build_pipeline,
-    compile_planning_pipeline,
 )
 from arnold_pipelines.megaplan.planning.operations import operation_registry, override_catalog  # noqa: F401
 
@@ -28,7 +27,6 @@ def build_pipeline():
 
 __all__ = [
     "build_pipeline",
-    "compile_planning_pipeline",
     "operation_registry",
     "override_catalog",
     "name",

@@ -87,9 +87,27 @@ class TestM3Pipeline:
         m2 = compile_pipeline(build_pipeline())
         assert m1.manifest_hash == m2.manifest_hash
 
-    def test_legacy_pipeline_still_available(self) -> None:
-        from arnold_pipelines.megaplan.pipeline import build_legacy_pipeline, compile_planning_pipeline
+    # ── Absence tests: removed legacy names must not be importable ──────────
 
-        legacy = build_legacy_pipeline()
-        assert legacy is not None
-        assert compile_planning_pipeline() is not None
+    def test_build_legacy_pipeline_not_importable(self) -> None:
+        import arnold_pipelines.megaplan.pipeline as pipeline_mod
+
+        assert not hasattr(pipeline_mod, "build_legacy_pipeline")
+        with pytest.raises(AttributeError):
+            getattr(pipeline_mod, "build_legacy_pipeline")
+
+    def test_compile_planning_pipeline_not_importable_from_pipeline(self) -> None:
+        import arnold_pipelines.megaplan.pipeline as pipeline_mod
+
+        assert not hasattr(pipeline_mod, "compile_planning_pipeline")
+        with pytest.raises(AttributeError):
+            getattr(pipeline_mod, "compile_planning_pipeline")
+
+    def test_legacy_names_not_in_pipeline_module_all(self) -> None:
+        import arnold_pipelines.megaplan.pipeline as pipeline_mod
+
+        pipeline_all = getattr(pipeline_mod, "__all__", [])
+        for removed_name in ("build_legacy_pipeline", "compile_planning_pipeline"):
+            assert removed_name not in pipeline_all, (
+                f"{removed_name!r} must not appear in pipeline.__all__"
+            )
