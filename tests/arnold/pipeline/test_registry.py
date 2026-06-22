@@ -197,7 +197,7 @@ class TestConstructorConfig:
         assert reg.scan_roots == roots
 
     def test_package_prefixes_stored(self) -> None:
-        prefixes = ("arnold.pipelines.megaplan.pipelines",)
+        prefixes = ("arnold_pipelines.megaplan.pipelines",)
         reg = PipelineRegistry(package_prefixes=prefixes)
         assert reg.package_prefixes == prefixes
 
@@ -574,14 +574,14 @@ class TestDiscoveryBoundary:
                     for alias in node.names:
                         assert not (
                             alias.name.startswith("megaplan")
-                            or alias.name.startswith("arnold.pipelines.megaplan")
+                            or alias.name.startswith("arnold_pipelines.megaplan")
                         ), (
                             f"manifest.py imports Megaplan policy: {alias.name!r}"
                         )
                 else:
                     assert node.module is None or not (
                         node.module.startswith("megaplan")
-                        or node.module.startswith("arnold.pipelines.megaplan")
+                        or node.module.startswith("arnold_pipelines.megaplan")
                     ), (
                         f"manifest.py imports from Megaplan policy: {node.module!r}"
                     )
@@ -604,14 +604,14 @@ class TestDiscoveryBoundary:
                     for alias in node.names:
                         assert not (
                             alias.name.startswith("megaplan")
-                            or alias.name.startswith("arnold.pipelines.megaplan")
+                            or alias.name.startswith("arnold_pipelines.megaplan")
                         ), (
                             f"trust.py imports Megaplan policy: {alias.name!r}"
                         )
                 else:
                     assert node.module is None or not (
                         node.module.startswith("megaplan")
-                        or node.module.startswith("arnold.pipelines.megaplan")
+                        or node.module.startswith("arnold_pipelines.megaplan")
                     ), (
                         f"trust.py imports from Megaplan policy: {node.module!r}"
                     )
@@ -634,14 +634,14 @@ class TestDiscoveryBoundary:
                     for alias in node.names:
                         assert not (
                             alias.name.startswith("megaplan")
-                            or alias.name.startswith("arnold.pipelines.megaplan")
+                            or alias.name.startswith("arnold_pipelines.megaplan")
                         ), (
                             f"__init__.py imports Megaplan policy: {alias.name!r}"
                         )
                 else:
                     assert node.module is None or not (
                         node.module.startswith("megaplan")
-                        or node.module.startswith("arnold.pipelines.megaplan")
+                        or node.module.startswith("arnold_pipelines.megaplan")
                     ), (
                         f"__init__.py imports from Megaplan policy: {node.module!r}"
                     )

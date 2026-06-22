@@ -15,8 +15,8 @@ from pathlib import Path
 import pytest
 
 from arnold.pipeline import TELEMETRY_FILENAME
-from arnold.pipelines.megaplan.store.plan_repository import PlanRepository
-from arnold.pipelines.megaplan._core.state import load_plan, load_plan_from_dir
+from arnold_pipelines.megaplan.store.plan_repository import PlanRepository
+from arnold_pipelines.megaplan._core.state import load_plan, load_plan_from_dir
 from arnold_pipelines.megaplan.runtime.step_io_policy_adapter import megaplan_step_io_policy_path
 
 _FIXTURE_ROOT = Path(__file__).parent

@@ -26,7 +26,7 @@ ALLOWED_RAW_FANOUT_MODULES = {
 PROHIBITED_IMPORTS = {
     "concurrent.futures",
     "multiprocessing",
-    "arnold.pipelines.megaplan.workers.hermes",
+    "arnold_pipelines.megaplan.workers.hermes",
 }
 
 PROHIBITED_NAMES = {

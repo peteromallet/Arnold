@@ -2,14 +2,14 @@ from argparse import Namespace
 from pathlib import Path
 from unittest.mock import patch
 
-from arnold.pipelines.megaplan.bakeoff.channel_shadow import (
+from arnold_pipelines.megaplan.bakeoff.channel_shadow import (
     evaluate_channel_shadow_gate,
     channel_shadow_sample_rate,
     maybe_run_channel_shadow,
 )
-from arnold.pipelines.megaplan.bakeoff.state import CHANNEL_SHADOW_SCHEMA_VERSION, load_channel_shadow_state
-from arnold.pipelines.megaplan.types import AgentMode, CliError
-from arnold.pipelines.megaplan.workers import WorkerResult
+from arnold_pipelines.megaplan.bakeoff.state import CHANNEL_SHADOW_SCHEMA_VERSION, load_channel_shadow_state
+from arnold_pipelines.megaplan.types import AgentMode, CliError
+from arnold_pipelines.megaplan.workers import WorkerResult
 
 
 def _state(project_dir: Path) -> dict:
@@ -124,7 +124,7 @@ def test_channel_shadow_default_sample_rate_is_ten_percent(monkeypatch) -> None:
 
 def test_channel_shadow_records_not_sampled_without_running_worker(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setenv("MEGAPLAN_CHANNEL_SHADOW_SAMPLE_RATE", "0")
-    with patch("arnold.pipelines.megaplan.bakeoff.channel_shadow.worker_module.run_step_with_worker") as run_worker:
+    with patch("arnold_pipelines.megaplan.bakeoff.channel_shadow.worker_module.run_step_with_worker") as run_worker:
         _run_shadow(tmp_path, _worker("shannon_tmux"))
 
     state = load_channel_shadow_state(tmp_path / "root", "plan-shadow")
@@ -138,7 +138,7 @@ def test_channel_shadow_records_not_sampled_without_running_worker(tmp_path: Pat
 def test_channel_shadow_records_pressure_skip_without_counting_it(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setenv("MEGAPLAN_CHANNEL_SHADOW_SAMPLE_RATE", "1")
     monkeypatch.setenv("MEGAPLAN_CHANNEL_SHADOW_PRESSURE", "1")
-    with patch("arnold.pipelines.megaplan.bakeoff.channel_shadow.worker_module.run_step_with_worker") as run_worker:
+    with patch("arnold_pipelines.megaplan.bakeoff.channel_shadow.worker_module.run_step_with_worker") as run_worker:
         _run_shadow(tmp_path, _worker("shannon_tmux"))
 
     state = load_channel_shadow_state(tmp_path / "root", "plan-shadow")
@@ -153,7 +153,7 @@ def test_channel_shadow_records_pressure_skip_without_counting_it(tmp_path: Path
 def test_channel_shadow_admitted_shadow_routes_through_worker_seam(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setenv("MEGAPLAN_CHANNEL_SHADOW_SAMPLE_RATE", "1")
     with patch(
-        "arnold.pipelines.megaplan.bakeoff.channel_shadow.worker_module.run_step_with_worker",
+        "arnold_pipelines.megaplan.bakeoff.channel_shadow.worker_module.run_step_with_worker",
         return_value=(_worker("shannon_stream"), "shannon", "persistent", False),
     ) as run_worker:
         _run_shadow(tmp_path, _worker("shannon_tmux"))
@@ -182,7 +182,7 @@ def test_channel_shadow_host_cap_refusal_is_recorded_as_pressure_skip(
         extra={"source": "host_turn_cap", "retryable": True},
     )
     with patch(
-        "arnold.pipelines.megaplan.bakeoff.channel_shadow.worker_module.run_step_with_worker",
+        "arnold_pipelines.megaplan.bakeoff.channel_shadow.worker_module.run_step_with_worker",
         side_effect=error,
     ):
         _run_shadow(tmp_path, _worker("shannon_tmux"))

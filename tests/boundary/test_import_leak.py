@@ -5,17 +5,17 @@ Design
 Uses the same subprocess + ``sys.meta_path`` blocker pattern as
 ``tests/arnold/runtime/test_runtime_import_leakage.py``.  A fresh Python
 interpreter with a MetaPathFinder that raises ``ModuleNotFoundError`` for
-any ``arnold.pipelines.megaplan.*`` import attempts to import
+any ``arnold_pipelines.megaplan.*`` import attempts to import
 ``arnold.agent.run_agent``.  If the import chain is clean the subprocess
 exits 0; otherwise it exits non-zero with the blocking module name in stderr.
 
 Current status (as of m7 rework batch 1)
 -----------------------------------------
 The static import surface of ``arnold/agent/`` is CLEAN — ``git grep`` for
-``from arnold.pipelines.megaplan`` in that tree returns zero real imports.
+``from arnold_pipelines.megaplan`` in that tree returns zero real imports.
 
 However 33 shim files under ``arnold/agent/{tools,hermes_cli,agent}/`` use
-``_importlib.import_module("arnold.pipelines.megaplan.*")`` at module-load
+``_importlib.import_module("arnold_pipelines.megaplan.*")`` at module-load
 time, which triggers megaplan imports whenever run_agent.py's top-level
 ``from arnold.agent.X import Y`` statements execute.
 
@@ -64,11 +64,11 @@ import sys
 
 class _BlockMegaplanFinder:
     def find_spec(self, fullname, path, target=None):
-        if fullname == "arnold.pipelines.megaplan" or fullname.startswith(
-            "arnold.pipelines.megaplan."
+        if fullname == "arnold_pipelines.megaplan" or fullname.startswith(
+            "arnold_pipelines.megaplan."
         ):
             raise ModuleNotFoundError(
-                f"arnold.pipelines.megaplan import blocked by agent leak gate: {fullname}"
+                f"arnold_pipelines.megaplan import blocked by agent leak gate: {fullname}"
             )
         return None
 
@@ -88,7 +88,7 @@ class TestAgentImportLeakage:
     """arnold.agent must import without pulling in Megaplan policy."""
 
     def test_static_surface_clean(self) -> None:
-        """git grep: zero real 'from arnold.pipelines.megaplan' in arnold/agent/."""
+        """git grep: zero real 'from arnold_pipelines.megaplan' in arnold/agent/."""
         import pathlib
         repo_root = str(pathlib.Path(__file__).resolve().parents[3])
         result = subprocess.run(
@@ -104,7 +104,7 @@ class TestAgentImportLeakage:
     @pytest.mark.xfail(
         reason=(
             "T5-T11 not yet migrated: 33 shims under arnold/agent/ delegate to "
-            "arnold.pipelines.megaplan.* via _importlib.import_module() at load "
+            "arnold_pipelines.megaplan.* via _importlib.import_module() at load "
             "time, causing megaplan imports when run_agent.py is imported.  Full "
             "cleanup requires T5-T11 (tool-layer migration tasks, skipped in "
             "batch 1 due to baseline_test_failures=null)."

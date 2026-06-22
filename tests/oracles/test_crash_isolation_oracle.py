@@ -28,8 +28,8 @@ from pathlib import Path
 import pytest
 
 from arnold_pipelines.megaplan.step_types import StepContext, StepResult
-from arnold.pipelines.megaplan.drivers.in_process import InProcessDriver
-from arnold.pipelines.megaplan.drivers.subprocess_isolated import SubprocessIsolatedDriver
+from arnold_pipelines.megaplan.drivers.in_process import InProcessDriver
+from arnold_pipelines.megaplan.drivers.subprocess_isolated import SubprocessIsolatedDriver
 
 
 pytestmark = pytest.mark.hinge_gate
@@ -173,7 +173,7 @@ def test_in_process_os_exit_terminates_interpreter(tmp_path: Path) -> None:
         import os, sys
         from pathlib import Path
         from arnold_pipelines.megaplan.step_types import StepContext, StepResult
-        from arnold.pipelines.megaplan.drivers.in_process import InProcessDriver
+        from arnold_pipelines.megaplan.drivers.in_process import InProcessDriver
 
         def step(ctx):
             os._exit(137)

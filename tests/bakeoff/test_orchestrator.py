@@ -4,8 +4,8 @@ from typing import Any
 
 import pytest
 
-import arnold.pipelines.megaplan.bakeoff.orchestrator as orchestrator
-from arnold.pipelines.megaplan.bakeoff.state import BakeoffState
+import arnold_pipelines.megaplan.bakeoff.orchestrator as orchestrator
+from arnold_pipelines.megaplan.bakeoff.state import BakeoffState
 
 
 class FakeProcess:
@@ -26,7 +26,7 @@ def test_init_profile_appends_robustness(monkeypatch: pytest.MonkeyPatch, tmp_pa
         return FakeProcess(0)
 
     monkeypatch.setattr(
-        "arnold.pipelines.megaplan.bakeoff.orchestrator.asyncio.create_subprocess_exec",
+        "arnold_pipelines.megaplan.bakeoff.orchestrator.asyncio.create_subprocess_exec",
         fake_create_subprocess_exec,
     )
     monkeypatch.setattr(
@@ -76,7 +76,7 @@ def test_init_profile_threads_doc_mode_and_output(monkeypatch: pytest.MonkeyPatc
         return FakeProcess(0)
 
     monkeypatch.setattr(
-        "arnold.pipelines.megaplan.bakeoff.orchestrator.asyncio.create_subprocess_exec",
+        "arnold_pipelines.megaplan.bakeoff.orchestrator.asyncio.create_subprocess_exec",
         fake_create_subprocess_exec,
     )
     monkeypatch.setattr(
@@ -147,7 +147,7 @@ def test_init_profile_doc_mode_requires_output(monkeypatch: pytest.MonkeyPatch, 
         "merged_at": None,
         "judge_model": None,
     }
-    from arnold.pipelines.megaplan.types import CliError
+    from arnold_pipelines.megaplan.types import CliError
 
     with pytest.raises(CliError) as excinfo:
         asyncio.run(
@@ -196,7 +196,7 @@ def test_run_bakeoff_persists_doc_mode_and_output_in_state(
         return FakeProcess(0)
 
     monkeypatch.setattr(
-        "arnold.pipelines.megaplan.bakeoff.orchestrator.asyncio.create_subprocess_exec",
+        "arnold_pipelines.megaplan.bakeoff.orchestrator.asyncio.create_subprocess_exec",
         fake_create_subprocess_exec,
     )
 
@@ -246,7 +246,7 @@ def test_run_bakeoff_metaplan_mode_rejected(tmp_path: Path) -> None:
     (T12: the metaplan→doc alias coercion was removed). Programmatic callers
     that still pass `mode='metaplan'` must now raise CliError('invalid_args')
     so they migrate to `mode='doc'`."""
-    from arnold.pipelines.megaplan.types import CliError
+    from arnold_pipelines.megaplan.types import CliError
 
     root = tmp_path / "repo"
     root.mkdir()
@@ -271,7 +271,7 @@ def test_run_bakeoff_joke_mode_rejected(tmp_path: Path) -> None:
     """`--mode joke` was never a valid bake-off mode and after the 0.23 cleanup
     the validation set is tightened to `{code, doc}`. Programmatic callers must
     raise CliError('invalid_args')."""
-    from arnold.pipelines.megaplan.types import CliError
+    from arnold_pipelines.megaplan.types import CliError
 
     root = tmp_path / "repo"
     root.mkdir()
@@ -295,7 +295,7 @@ def test_run_bakeoff_code_and_doc_modes_validate(tmp_path: Path) -> None:
     """The tightened validation set `{code, doc}` still accepts both literals;
     the validation gate must not regress legitimate values along with the
     metaplan/joke removal."""
-    from arnold.pipelines.megaplan.bakeoff.cli import BAKEOFF_SUPPORTED_MODES
+    from arnold_pipelines.megaplan.bakeoff.cli import BAKEOFF_SUPPORTED_MODES
 
     assert set(BAKEOFF_SUPPORTED_MODES) == {"code", "doc"}
 
@@ -308,7 +308,7 @@ def test_init_profile_omits_robustness_when_none(monkeypatch: pytest.MonkeyPatch
         return FakeProcess(0)
 
     monkeypatch.setattr(
-        "arnold.pipelines.megaplan.bakeoff.orchestrator.asyncio.create_subprocess_exec",
+        "arnold_pipelines.megaplan.bakeoff.orchestrator.asyncio.create_subprocess_exec",
         fake_create_subprocess_exec,
     )
     monkeypatch.setattr(

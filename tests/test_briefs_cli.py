@@ -17,7 +17,7 @@ def _run_megaplan(argv: list[str], *, cwd: Path) -> subprocess.CompletedProcess[
     env["PYTHONPATH"] = str(REPO_ROOT)
     env.pop("MEGAPLAN_BACKEND", None)
     return subprocess.run(
-        [sys.executable, "-m", "arnold.pipelines.megaplan", *argv],
+        [sys.executable, "-m", "arnold_pipelines.megaplan", *argv],
         cwd=cwd,
         capture_output=True,
         text=True,

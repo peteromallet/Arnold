@@ -12,8 +12,8 @@ from pathlib import Path
 import pytest
 
 from arnold.runtime.envelope import make_envelope
-from arnold.pipelines.megaplan.observability import NdjsonBackend, StoreBackend
-from arnold.pipelines.megaplan.observability.events import _envelope_ctx, read_events
+from arnold_pipelines.megaplan.observability import NdjsonBackend, StoreBackend
+from arnold_pipelines.megaplan.observability.events import _envelope_ctx, read_events
 
 
 @pytest.mark.substrate_swap

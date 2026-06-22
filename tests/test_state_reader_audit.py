@@ -107,7 +107,7 @@ def _parse_line_range(line_range: str) -> set[int]:
 
 
 def _inventory_lines_by_file():
-    from arnold.pipelines.megaplan.orchestration.authority_readers import AUTHORITY_ROUTES
+    from arnold_pipelines.megaplan.orchestration.authority_readers import AUTHORITY_ROUTES
 
     lines_by_file: dict[str, set[int]] = {}
     for route in AUTHORITY_ROUTES:
@@ -254,7 +254,7 @@ def test_three_allowlists_are_disjoint():
 
 def test_m2_authority_readers_inventory_exists():
     """The M2 authority route inventory module must be importable and non-empty."""
-    from arnold.pipelines.megaplan.orchestration.authority_readers import (
+    from arnold_pipelines.megaplan.orchestration.authority_readers import (
         AUTHORITY_ROUTES,
     )
     assert AUTHORITY_ROUTES, "AUTHORITY_ROUTES inventory must not be empty"
@@ -265,7 +265,7 @@ def test_m2_authority_readers_inventory_exists():
 
 def test_m2_authority_readers_every_route_has_disposition_and_reason():
     """Every route must have a valid disposition and a non-empty owner_or_reason."""
-    from arnold.pipelines.megaplan.orchestration.authority_readers import (
+    from arnold_pipelines.megaplan.orchestration.authority_readers import (
         AUTHORITY_ROUTES,
         MIGRATED,
         TESTED,
@@ -299,7 +299,7 @@ def test_m2_authority_readers_every_route_has_disposition_and_reason():
 
 def test_m2_authority_readers_no_unclassified_routes():
     """No route may have an unrecognized disposition."""
-    from arnold.pipelines.megaplan.orchestration.authority_readers import (
+    from arnold_pipelines.megaplan.orchestration.authority_readers import (
         AUTHORITY_ROUTES,
         MIGRATED,
         TESTED,
@@ -316,7 +316,7 @@ def test_m2_authority_readers_no_unclassified_routes():
 def test_m2_authority_readers_required_families_present():
     """All Step 1 route families must be represented: execute, resume, chain,
     supervisor, status, timeout."""
-    from arnold.pipelines.megaplan.orchestration.authority_readers import (
+    from arnold_pipelines.megaplan.orchestration.authority_readers import (
         AUTHORITY_ROUTES,
     )
 
@@ -331,7 +331,7 @@ def test_m2_authority_readers_required_families_present():
 
 def test_m2_authority_readers_execute_routes_have_key_sites():
     """Verify key execute authority-increasing sites are inventoried."""
-    from arnold.pipelines.megaplan.orchestration.authority_readers import (
+    from arnold_pipelines.megaplan.orchestration.authority_readers import (
         AUTHORITY_ROUTES,
     )
 
@@ -354,7 +354,7 @@ def test_m2_authority_readers_execute_routes_have_key_sites():
 
 def test_m2_authority_readers_resume_routes_have_key_sites():
     """Verify key resume/redrive authority-increasing sites are inventoried."""
-    from arnold.pipelines.megaplan.orchestration.authority_readers import (
+    from arnold_pipelines.megaplan.orchestration.authority_readers import (
         AUTHORITY_ROUTES,
     )
 
@@ -374,7 +374,7 @@ def test_m2_authority_readers_resume_routes_have_key_sites():
 
 def test_m2_authority_readers_chain_routes_have_key_sites():
     """Verify key chain authority-increasing sites are inventoried."""
-    from arnold.pipelines.megaplan.orchestration.authority_readers import (
+    from arnold_pipelines.megaplan.orchestration.authority_readers import (
         AUTHORITY_ROUTES,
     )
 
@@ -387,7 +387,7 @@ def test_m2_authority_readers_chain_routes_have_key_sites():
 
 def test_m2_authority_readers_supervisor_routes_have_key_sites():
     """Verify key supervisor authority-increasing sites are inventoried."""
-    from arnold.pipelines.megaplan.orchestration.authority_readers import (
+    from arnold_pipelines.megaplan.orchestration.authority_readers import (
         AUTHORITY_ROUTES,
     )
 
@@ -400,7 +400,7 @@ def test_m2_authority_readers_supervisor_routes_have_key_sites():
 
 def test_m2_authority_readers_status_routes_are_deferred_or_informational():
     """Status/shadow routes must be deferred or informational, not migrated."""
-    from arnold.pipelines.megaplan.orchestration.authority_readers import (
+    from arnold_pipelines.megaplan.orchestration.authority_readers import (
         AUTHORITY_ROUTES,
         MIGRATED,
         TESTED,
@@ -417,7 +417,7 @@ def test_m2_authority_readers_status_routes_are_deferred_or_informational():
 
 def test_m2_authority_readers_deferred_routes_have_explicit_reasons():
     """Every deferred route must carry an explicit deferral reason in owner_or_reason."""
-    from arnold.pipelines.megaplan.orchestration.authority_readers import (
+    from arnold_pipelines.megaplan.orchestration.authority_readers import (
         AUTHORITY_ROUTES,
         DEFERRED,
     )
@@ -441,7 +441,7 @@ def test_m2_authority_reader_grep_audit_classifies_all_raw_authority_patterns():
     - land inside an inventoried authority route line range, or
     - be explicitly documented here as informational/non-authority.
     """
-    from arnold.pipelines.megaplan.orchestration.authority_readers import AUTHORITY_ROUTES
+    from arnold_pipelines.megaplan.orchestration.authority_readers import AUTHORITY_ROUTES
 
     route_ids = {route.id for route in AUTHORITY_ROUTES}
     unclassified: list[str] = []
@@ -472,7 +472,7 @@ def test_m2_authority_reader_grep_audit_classifies_all_raw_authority_patterns():
 
 def test_m2_completion_contract_and_shadow_routes_remain_deferred_infrastructure():
     """Completion verdict readers stay shadow/evidence infrastructure in M2."""
-    from arnold.pipelines.megaplan.orchestration.authority_readers import (
+    from arnold_pipelines.megaplan.orchestration.authority_readers import (
         AUTHORITY_ROUTES,
         DEFERRED,
     )
@@ -504,7 +504,7 @@ def test_m2_completion_contract_and_shadow_routes_remain_deferred_infrastructure
 
 def test_m2_informational_status_read_remains_fail_open():
     """Operator-facing raw status reads must remain informational, not authority."""
-    from arnold.pipelines.megaplan.orchestration.authority_readers import (
+    from arnold_pipelines.megaplan.orchestration.authority_readers import (
         AUTHORITY_ROUTES,
         INFORMATIONAL,
         MIGRATED,

@@ -11,8 +11,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from arnold.pipelines.megaplan.orchestration.phase_result import ExitKind
-from arnold.pipelines.megaplan.orchestration.recovery_policy import RecoveryPolicy
+from arnold_pipelines.megaplan.orchestration.phase_result import ExitKind
+from arnold_pipelines.megaplan.orchestration.recovery_policy import RecoveryPolicy
 
 
 class _StubResult:

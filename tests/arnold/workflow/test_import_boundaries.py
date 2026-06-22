@@ -12,7 +12,7 @@ from arnold.workflow import check_neutral_import_boundary
 
 PRODUCT_FORBIDDEN_PREFIXES = (
     "arnold.execution",
-    "arnold.pipelines.megaplan",
+    "arnold_pipelines.megaplan",
     "arnold_pipelines.megaplan",
     "megaplan",
 )

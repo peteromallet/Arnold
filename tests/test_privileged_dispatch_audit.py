@@ -68,13 +68,13 @@ def _imports_planning_control_surface(rel_path: str) -> list[str]:
         if isinstance(node, ast.ImportFrom):
             module = node.module or ""
             imported = {alias.name for alias in node.names}
-            if module == "arnold.pipelines.megaplan.planning.control_binding" and (
+            if module == "arnold_pipelines.megaplan.planning.control_binding" and (
                 {"planning_control_binding", "planning_run_state_view"} & imported
             ):
                 violations.append(
                     f"{rel_path}:{node.lineno}: direct import from {module}"
                 )
-            if module == "arnold.pipelines.megaplan.planning" and (
+            if module == "arnold_pipelines.megaplan.planning" and (
                 {"planning_control_binding", "planning_run_state_view"} & imported
             ):
                 violations.append(
@@ -82,7 +82,7 @@ def _imports_planning_control_surface(rel_path: str) -> list[str]:
                 )
         elif isinstance(node, ast.Import):
             for alias in node.names:
-                if alias.name == "arnold.pipelines.megaplan.planning.control_binding":
+                if alias.name == "arnold_pipelines.megaplan.planning.control_binding":
                     violations.append(
                         f"{rel_path}:{node.lineno}: direct import of {alias.name}"
                     )

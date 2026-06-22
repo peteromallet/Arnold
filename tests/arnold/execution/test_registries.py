@@ -172,9 +172,9 @@ def test_manifest_fields_are_never_treated_as_import_paths() -> None:
     """Registry keys are opaque strings; no dynamic import is performed."""
 
     registry = CapabilityRegistry()
-    registry.register("arnold.pipelines.megaplan:capability", FakeCapabilityHandler())
+    registry.register("arnold_pipelines.megaplan:capability", FakeCapabilityHandler())
     # The handler is still found by the opaque string key.
-    assert registry.check("arnold.pipelines.megaplan:capability").allowed is True
+    assert registry.check("arnold_pipelines.megaplan:capability").allowed is True
 
     effect_registry = EffectRegistry()
     effect_registry.register("python:os.system", FakeEffectHandler())

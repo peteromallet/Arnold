@@ -672,7 +672,7 @@ class TestMediaUsageFromHookMetadata:
 # ---------------------------------------------------------------------------
 
 class TestNoMegaplanImports:
-    """``media_cost.py`` must not import arnold.pipelines.megaplan."""
+    """``media_cost.py`` must not import arnold_pipelines.megaplan."""
 
     def test_media_cost_has_no_megaplan_imports(self) -> None:
         import ast

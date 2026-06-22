@@ -3,7 +3,7 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-from arnold.pipelines.megaplan.editorial import EditorialError, EditorialOperation, EditorialResult
+from arnold_pipelines.megaplan.editorial import EditorialError, EditorialOperation, EditorialResult
 
 
 class RecordingStore:
@@ -47,9 +47,9 @@ def test_editorial_foundation_imports_stay_store_only() -> None:
     package = Path(__file__).resolve().parents[1] / "arnold" / "pipelines" / "megaplan" / "editorial"
     forbidden_roots = {"supabase", "psycopg"}
     forbidden_modules = {
-        "arnold.pipelines.megaplan.store.file",
-        "arnold.pipelines.megaplan.store.db",
-        "arnold.pipelines.megaplan.store.plan_repository",
+        "arnold_pipelines.megaplan.store.file",
+        "arnold_pipelines.megaplan.store.db",
+        "arnold_pipelines.megaplan.store.plan_repository",
     }
 
     for path in package.glob("*.py"):

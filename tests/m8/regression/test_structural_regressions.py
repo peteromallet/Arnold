@@ -22,7 +22,7 @@ from arnold.pipeline import (
     StepInvocation,
     validate_payload_against_schema,
 )
-from arnold.pipelines.megaplan.model_seam import (
+from arnold_pipelines.megaplan.model_seam import (
     ModelStructuralAuditError,
     capture_step_output,
 )

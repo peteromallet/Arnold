@@ -92,7 +92,7 @@ def test_unsafe_legacy_alias_is_quarantined() -> None:
     cursor = ReplayCursor(manifest_hash=_hash("b"), event_sequence=0)
     aliases = {
         _hash("b"): LegacyAliasRecord(
-            alias="arnold.pipelines.megaplan:bad",
+            alias="arnold_pipelines.megaplan:bad",
             source_manifest_hash=_hash("b"),
             target_manifest_hash=_hash("a"),
         ),

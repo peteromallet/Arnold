@@ -12,6 +12,6 @@ import pytest
 
 
 def test_demo_judges_module_absent() -> None:
-    """``arnold.pipelines.megaplan._pipeline.demo_judges`` raises ModuleNotFoundError."""
+    """``arnold_pipelines.megaplan._pipeline.demo_judges`` raises ModuleNotFoundError."""
     with pytest.raises(ModuleNotFoundError):
-        importlib.import_module("arnold.pipelines.megaplan._pipeline.demo_judges")
+        importlib.import_module("arnold_pipelines.megaplan._pipeline.demo_judges")

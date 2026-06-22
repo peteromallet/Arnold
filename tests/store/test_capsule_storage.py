@@ -7,29 +7,29 @@ from pathlib import Path
 
 import pytest
 
-from arnold.pipelines.megaplan._core.canonical import canonical_projection_bytes, sha256_hex
-from arnold.pipelines.megaplan._core.io import (
+from arnold_pipelines.megaplan._core.canonical import canonical_projection_bytes, sha256_hex
+from arnold_pipelines.megaplan._core.io import (
     journal_blob_promotion,
     prepare_journal_transaction,
     recover_journal,
     write_journal_commit_marker,
 )
 # legal_coercions was previously imported from the now-deleted
-# arnold.pipelines.megaplan._pipeline.contracts module (M4 Step 5).
+# arnold_pipelines.megaplan._pipeline.contracts module (M4 Step 5).
 # The canonical check_capsule_contract no longer references this dict;
 # we provide a local replacement so the test that exercises the legacy
 # coercion-registration path still compiles and can be evaluated.
 legal_coercions: dict[tuple[str, str], object] = {}
-from arnold.pipelines.megaplan.schemas import (
+from arnold_pipelines.megaplan.schemas import (
     Capsule,
     CapsuleContract,
     CapsuleDefinition,
     CapsuleEvidence,
     CapsuleLineage,
 )
-from arnold.pipelines.megaplan.store import MultiStore, deterministic_idempotency_key
-from arnold.pipelines.megaplan.store.blob import BlobRef, BlobStore, LocalDirBlobStore
-from arnold.pipelines.megaplan.store.capsule import (
+from arnold_pipelines.megaplan.store import MultiStore, deterministic_idempotency_key
+from arnold_pipelines.megaplan.store.blob import BlobRef, BlobStore, LocalDirBlobStore
+from arnold_pipelines.megaplan.store.capsule import (
     CAPSULE_INDEX_ID_PREFIX,
     CAPSULE_RECORD_ID_PREFIX,
     CapsuleIntegrityError,
@@ -46,8 +46,8 @@ from arnold.pipelines.megaplan.store.capsule import (
     put_capsule_record,
     write_capsule,
 )
-from arnold.pipelines.megaplan.store.export import collect_epic_export, write_epic_export_tar
-from arnold.pipelines.megaplan.store.file import FileStore
+from arnold_pipelines.megaplan.store.export import collect_epic_export, write_epic_export_tar
+from arnold_pipelines.megaplan.store.file import FileStore
 
 
 NOW = datetime(2026, 6, 1, tzinfo=timezone.utc)
@@ -64,7 +64,7 @@ def _capsule(capsule_hash: str | None = None) -> Capsule:
             replay_ready=True,
         ),
         contract=CapsuleContract(
-            manifest_abi="arnold.pipelines.megaplan.pipeline.behavioral.v1",
+            manifest_abi="arnold_pipelines.megaplan.pipeline.behavioral.v1",
             static_behavioral_hash="sha256:" + "c" * 64,
         ),
         lineage=CapsuleLineage(capsule_hash=value, created_at=NOW),
@@ -116,7 +116,7 @@ def test_check_capsule_contract_accepts_declared_manifest_topology_ports_and_evi
     check = check_capsule_contract(
         capsule,
         {
-            "manifest_abi": "arnold.pipelines.megaplan.pipeline.behavioral.v1",
+            "manifest_abi": "arnold_pipelines.megaplan.pipeline.behavioral.v1",
             "static_behavioral_hash": "sha256:" + "c" * 64,
             "runtime_topology_hash": "sha256:" + "d" * 64,
             "ports": [{"name": "summary", "kind": "produce", "content_type": "text/markdown"}],
@@ -144,7 +144,7 @@ def test_check_capsule_contract_reports_machine_readable_manifest_and_topology_m
 
     details = exc_info.value.details
     assert details["error_kind"] == "manifest_abi_mismatch"
-    assert details["wanted"] == "arnold.pipelines.megaplan.pipeline.behavioral.v1"
+    assert details["wanted"] == "arnold_pipelines.megaplan.pipeline.behavioral.v1"
     assert details["have"] == "wrong-abi"
     assert details["legal_moves"] == ()
     assert [failure["error_kind"] for failure in details["failures"]] == [
@@ -622,7 +622,7 @@ def test_build_capsule_fails_loud_on_export_errors_unless_missing_blobs_is_expli
             "errors": [{"error": "blob_store_unavailable"}],
         }
 
-    monkeypatch.setattr("arnold.pipelines.megaplan.store.capsule.collect_epic_export", fake_export)
+    monkeypatch.setattr("arnold_pipelines.megaplan.store.capsule.collect_epic_export", fake_export)
     blob_store = LocalDirBlobStore(tmp_path / "capsule-blobs")
 
     with pytest.raises(CapsuleStorageError) as exc_info:
@@ -680,7 +680,7 @@ def test_build_capsule_keeps_allow_degraded_alias(tmp_path: Path, monkeypatch: p
             "errors": [{"error": "blob_store_unavailable"}],
         }
 
-    monkeypatch.setattr("arnold.pipelines.megaplan.store.capsule.collect_epic_export", fake_export)
+    monkeypatch.setattr("arnold_pipelines.megaplan.store.capsule.collect_epic_export", fake_export)
 
     result = build_capsule(
         object(),

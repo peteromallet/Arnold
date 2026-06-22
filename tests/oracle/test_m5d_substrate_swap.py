@@ -15,8 +15,8 @@ from typing import Any
 
 import pytest
 
-from arnold.pipelines.megaplan.auto import DriverOutcome
-from arnold.pipelines.megaplan.control_interface import (
+from arnold_pipelines.megaplan.auto import DriverOutcome
+from arnold_pipelines.megaplan.control_interface import (
     CONTROL_TARGET_ABORT,
     CONTROL_TARGET_FORCE_ADVANCE,
     CONTROL_TARGET_RECOVER_FROM_STUCK,
@@ -26,10 +26,10 @@ from arnold.pipelines.megaplan.control_interface import (
     ControlTransitionResult,
     RunStateView,
 )
-from arnold.pipelines.megaplan.supervisor.chain_runner import run_chain
-from arnold.pipelines.megaplan.supervisor.driver import RunRequest
-from arnold.pipelines.megaplan.supervisor.ladder import SupervisorLadderPolicy
-from arnold.pipelines.megaplan.supervisor.model import RunNode
+from arnold_pipelines.megaplan.supervisor.chain_runner import run_chain
+from arnold_pipelines.megaplan.supervisor.driver import RunRequest
+from arnold_pipelines.megaplan.supervisor.ladder import SupervisorLadderPolicy
+from arnold_pipelines.megaplan.supervisor.model import RunNode
 
 
 FIXTURE_DIR = (
@@ -379,7 +379,7 @@ def test_retirement_oracle_awaiting_pr_boundary_passes_against_canary_supervisor
     payload = _load("awaiting_pr.json")
     _assert_no_planning_literals(payload)
 
-    monkeypatch.setattr("arnold.pipelines.megaplan.supervisor.pr_merge.git_ops._pr_state", lambda *_a, **_k: "open")
+    monkeypatch.setattr("arnold_pipelines.megaplan.supervisor.pr_merge.git_ops._pr_state", lambda *_a, **_k: "open")
 
     def fake_run_command(
         root: Path,
@@ -398,13 +398,13 @@ def test_retirement_oracle_awaiting_pr_boundary_passes_against_canary_supervisor
             "",
         )
 
-    monkeypatch.setattr("arnold.pipelines.megaplan.supervisor.pr_merge.git_ops._run_command", fake_run_command)
+    monkeypatch.setattr("arnold_pipelines.megaplan.supervisor.pr_merge.git_ops._run_command", fake_run_command)
     monkeypatch.setattr(
-        "arnold.pipelines.megaplan.supervisor.pr_merge.git_ops._mark_pr_ready",
+        "arnold_pipelines.megaplan.supervisor.pr_merge.git_ops._mark_pr_ready",
         lambda root, pr_number, *, writer: None,
     )
     monkeypatch.setattr(
-        "arnold.pipelines.megaplan.supervisor.pr_merge.git_ops._enable_auto_merge",
+        "arnold_pipelines.megaplan.supervisor.pr_merge.git_ops._enable_auto_merge",
         lambda root, pr_number, *, writer: "open",
     )
 

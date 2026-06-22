@@ -6,7 +6,7 @@ from unittest.mock import patch
 import pytest
 
 from arnold.agent import AgentRequest, ArnoldDispatcher
-from arnold.pipelines.megaplan.agent_adapters.codex import CodexAdapter
+from arnold_pipelines.megaplan.agent_adapters.codex import CodexAdapter
 
 
 def _request(**overrides) -> AgentRequest:
@@ -25,7 +25,7 @@ def _request(**overrides) -> AgentRequest:
 
 
 def _fake_worker_result(**overrides):
-    from arnold.pipelines.megaplan.workers import WorkerResult
+    from arnold_pipelines.megaplan.workers import WorkerResult
 
     data = {
         "payload": {"answer": "4"},
@@ -46,7 +46,7 @@ def _fake_worker_result(**overrides):
 
 def test_codex_adapter_projects_worker_result() -> None:
     with patch(
-        "arnold.pipelines.megaplan.workers.run_codex_step",
+        "arnold_pipelines.megaplan.workers.run_codex_step",
         side_effect=lambda *args, **kwargs: _fake_worker_result(),
     ):
         result = CodexAdapter()(_request())
@@ -74,7 +74,7 @@ def test_codex_adapter_synthesizes_oneshot_context(tmp_path: Path) -> None:
         return _fake_worker_result()
 
     with patch(
-        "arnold.pipelines.megaplan.workers.run_codex_step",
+        "arnold_pipelines.megaplan.workers.run_codex_step",
         side_effect=fake_run_codex_step,
     ):
         CodexAdapter()(_request(read_only=False, metadata={"work_dir": str(work_dir)}))
@@ -99,7 +99,7 @@ def test_codex_adapter_passes_free_text_only_without_output_schema() -> None:
         return _fake_worker_result(raw_output="batch([done()])", payload={})
 
     with patch(
-        "arnold.pipelines.megaplan.workers.run_codex_step",
+        "arnold_pipelines.megaplan.workers.run_codex_step",
         side_effect=fake_run_codex_step,
     ):
         raw_result = CodexAdapter()(_request(metadata={"toolsets": []}))
@@ -114,7 +114,7 @@ def test_explicit_dispatcher_routes_codex_adapter() -> None:
     dispatcher.register("codex", CodexAdapter())
 
     with patch(
-        "arnold.pipelines.megaplan.workers.run_codex_step",
+        "arnold_pipelines.megaplan.workers.run_codex_step",
         side_effect=lambda *args, **kwargs: _fake_worker_result(session_id="X"),
     ):
         result = dispatcher.dispatch(_request())
@@ -125,8 +125,8 @@ def test_explicit_dispatcher_routes_codex_adapter() -> None:
 def test_run_codex_step_free_text_omits_output_schema(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from arnold.pipelines.megaplan._core import ensure_runtime_layout
-    from arnold.pipelines.megaplan.workers import _impl
+    from arnold_pipelines.megaplan._core import ensure_runtime_layout
+    from arnold_pipelines.megaplan.workers import _impl
 
     root = tmp_path / "root"
     root.mkdir()

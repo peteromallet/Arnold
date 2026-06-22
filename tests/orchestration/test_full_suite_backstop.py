@@ -6,14 +6,14 @@ from unittest.mock import patch
 
 import pytest
 
-from arnold.pipelines.megaplan import chain as chain_module
-from arnold.pipelines.megaplan.chain import ChainState, load_chain_state, run_chain, save_chain_state
-from arnold.pipelines.megaplan.orchestration import full_suite_backstop
-from arnold.pipelines.megaplan.orchestration.full_suite_backstop import (
+from arnold_pipelines.megaplan import chain as chain_module
+from arnold_pipelines.megaplan.chain import ChainState, load_chain_state, run_chain, save_chain_state
+from arnold_pipelines.megaplan.orchestration import full_suite_backstop
+from arnold_pipelines.megaplan.orchestration.full_suite_backstop import (
     evaluate_full_suite_backstop,
     run_full_suite_backstop,
 )
-from arnold.pipelines.megaplan.orchestration.suite_runner import SuiteRunResult
+from arnold_pipelines.megaplan.orchestration.suite_runner import SuiteRunResult
 
 
 def _suite_result(
@@ -430,10 +430,10 @@ def _write_plan_state(root: Path, plan_name: str, *, current_state: str = "done"
 
 def _patch_light_chain(plan_name: str, backstop_result: dict[str, object]):
     return (
-        patch("arnold.pipelines.megaplan.chain._refresh_base_branch", lambda *args, **kwargs: None),
-        patch("arnold.pipelines.megaplan.chain._init_plan", return_value=plan_name),
+        patch("arnold_pipelines.megaplan.chain._refresh_base_branch", lambda *args, **kwargs: None),
+        patch("arnold_pipelines.megaplan.chain._init_plan", return_value=plan_name),
         patch(
-            "arnold.pipelines.megaplan.chain._drive_plan",
+            "arnold_pipelines.megaplan.chain._drive_plan",
             return_value=chain_module.DriverOutcome(
                 status="done",
                 plan=plan_name,
@@ -442,14 +442,14 @@ def _patch_light_chain(plan_name: str, backstop_result: dict[str, object]):
                 reason="",
             ),
         ),
-        patch("arnold.pipelines.megaplan.chain._current_head_sha", return_value="abc123"),
+        patch("arnold_pipelines.megaplan.chain._current_head_sha", return_value="abc123"),
         patch(
-            "arnold.pipelines.megaplan.chain._plan_terminal_completion_is_authoritative",
+            "arnold_pipelines.megaplan.chain._plan_terminal_completion_is_authoritative",
             return_value=(True, ""),
         ),
-        patch("arnold.pipelines.megaplan.chain._shadow_milestone_completion_verdict", return_value=False),
+        patch("arnold_pipelines.megaplan.chain._shadow_milestone_completion_verdict", return_value=False),
         patch(
-            "arnold.pipelines.megaplan.orchestration.full_suite_backstop.run_full_suite_backstop",
+            "arnold_pipelines.megaplan.orchestration.full_suite_backstop.run_full_suite_backstop",
             return_value=backstop_result,
         ),
     )

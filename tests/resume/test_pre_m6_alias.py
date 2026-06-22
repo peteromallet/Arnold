@@ -6,11 +6,11 @@ from pathlib import Path
 import pytest
 
 from arnold.runtime.envelope import RuntimeEnvelope
-from arnold.pipelines.megaplan._core.workflow import resume_plan
+from arnold_pipelines.megaplan._core.workflow import resume_plan
 from arnold_pipelines.megaplan import registry
 from arnold_pipelines.megaplan.registry import get_pipeline
 from arnold_pipelines.megaplan.runtime.discovery import _NAME_ALIASES, canonical_pipeline_name
-from arnold.pipelines.megaplan.types import CliError
+from arnold_pipelines.megaplan.types import CliError
 
 
 def test_pre_m6_planning_name_alias_resolves_registry_pipeline() -> None:

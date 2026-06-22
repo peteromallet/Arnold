@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from arnold.pipelines.megaplan.profiles import (
+from arnold_pipelines.megaplan.profiles import (
     SYSTEM_DEFAULT_PROFILE,
     _flatten_profile_keys,
     _load_pipeline_local_profiles,
@@ -13,7 +13,7 @@ from arnold.pipelines.megaplan.profiles import (
     load_profiles,
     resolve_pipeline_profile,
 )
-from arnold.pipelines.megaplan.types import CliError
+from arnold_pipelines.megaplan.types import CliError
 
 
 # ── Pipeline-local profile loading ────────────────────────────────────
@@ -40,7 +40,7 @@ class TestPipelineLocalProfiles:
         # All slots should be valid agent specs
         for slot, spec in std.items():
             # Should not raise
-            from arnold.pipelines.megaplan.types import parse_agent_spec
+            from arnold_pipelines.megaplan.types import parse_agent_spec
             agent, model = parse_agent_spec(spec)
             assert agent in ("claude", "codex", "hermes", "shannon")
 

@@ -78,8 +78,8 @@ def test_top_level_dispatch_routes_workflow_without_importing_legacy_modules() -
     forbidden = {
         name
         for name in imported
-        if name == "arnold.pipelines.megaplan.cli.arnold"
-        or name.startswith("arnold.pipelines.megaplan.cli")
+        if name == "arnold_pipelines.megaplan.cli.arnold"
+        or name.startswith("arnold_pipelines.megaplan.cli")
     }
     assert rc == 0
     assert not forbidden, f"workflow dispatch imported legacy modules: {forbidden}"

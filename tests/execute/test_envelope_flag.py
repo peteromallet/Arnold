@@ -14,10 +14,10 @@ from pathlib import Path
 
 import pytest
 
-import arnold.pipelines.megaplan.workers as worker_module
-from arnold.pipelines.megaplan._core import resolve_dispatch_spec
-from arnold.pipelines.megaplan.execute._binding.tier import select_batch_tier
-from arnold.pipelines.megaplan.execute._envelope import unified_execute_enabled
+import arnold_pipelines.megaplan.workers as worker_module
+from arnold_pipelines.megaplan._core import resolve_dispatch_spec
+from arnold_pipelines.megaplan.execute._binding.tier import select_batch_tier
+from arnold_pipelines.megaplan.execute._envelope import unified_execute_enabled
 
 
 # ---------------------------------------------------------------------------
@@ -106,7 +106,7 @@ class TestEnvelopeFlagParity:
         batch_ids = ["T1", "T2"]
 
         # Flag-off path: compute_batch_complexity + tier_map.get
-        from arnold.pipelines.megaplan._core import compute_batch_complexity
+        from arnold_pipelines.megaplan._core import compute_batch_complexity
 
         complexity_off = compute_batch_complexity(payload, batch_ids)
         spec_off = self.TIER_MAP.get(complexity_off)
@@ -141,7 +141,7 @@ class TestEnvelopeFlagParity:
         )
         batch_ids = ["T1"]
 
-        from arnold.pipelines.megaplan._core import compute_batch_complexity
+        from arnold_pipelines.megaplan._core import compute_batch_complexity
 
         complexity_off = compute_batch_complexity(payload, batch_ids)
         spec_off = self.TIER_MAP.get(complexity_off)
@@ -186,7 +186,7 @@ class TestEnvelopeFlagParity:
         )
         batch_ids = ["T1", "T2"]
 
-        from arnold.pipelines.megaplan._core import compute_batch_complexity
+        from arnold_pipelines.megaplan._core import compute_batch_complexity
 
         complexity_off = compute_batch_complexity(payload, batch_ids)
         spec_off = self.TIER_MAP.get(complexity_off)
@@ -211,7 +211,7 @@ class TestEnvelopeFlagParity:
         payload = _build_finalize_payload([])
         batch_ids: list[str] = []
 
-        from arnold.pipelines.megaplan._core import compute_batch_complexity
+        from arnold_pipelines.megaplan._core import compute_batch_complexity
 
         complexity_off = compute_batch_complexity(payload, batch_ids)
         spec_off = self.TIER_MAP.get(complexity_off)
@@ -242,7 +242,7 @@ class TestEnvelopeFlagParity:
         )
         batch_ids = ["T1"]
 
-        from arnold.pipelines.megaplan._core import compute_batch_complexity
+        from arnold_pipelines.megaplan._core import compute_batch_complexity
 
         complexity_off = compute_batch_complexity(payload, batch_ids)
         spec_off = sparse_map.get(complexity_off)
@@ -269,7 +269,7 @@ class TestUnifiedExecuteEnabled:
         """Without the env var set, returns False."""
         monkeypatch.delenv("MEGAPLAN_UNIFIED_EXECUTE", raising=False)
         import importlib
-        import arnold.pipelines.megaplan.execute._envelope as mod
+        import arnold_pipelines.megaplan.execute._envelope as mod
 
         importlib.reload(mod)
         assert not mod.unified_execute_enabled()
@@ -279,7 +279,7 @@ class TestUnifiedExecuteEnabled:
         monkeypatch.setenv("MEGAPLAN_UNIFIED_EXECUTE", "0")
         # Reset module cache by re-importing
         import importlib
-        import arnold.pipelines.megaplan.execute._envelope as mod
+        import arnold_pipelines.megaplan.execute._envelope as mod
 
         importlib.reload(mod)
         assert not mod.unified_execute_enabled()
@@ -288,7 +288,7 @@ class TestUnifiedExecuteEnabled:
         """MEGAPLAN_UNIFIED_EXECUTE=false → False."""
         monkeypatch.setenv("MEGAPLAN_UNIFIED_EXECUTE", "false")
         import importlib
-        import arnold.pipelines.megaplan.execute._envelope as mod
+        import arnold_pipelines.megaplan.execute._envelope as mod
 
         importlib.reload(mod)
         assert not mod.unified_execute_enabled()
@@ -297,7 +297,7 @@ class TestUnifiedExecuteEnabled:
         """MEGAPLAN_UNIFIED_EXECUTE=1 → True."""
         monkeypatch.setenv("MEGAPLAN_UNIFIED_EXECUTE", "1")
         import importlib
-        import arnold.pipelines.megaplan.execute._envelope as mod
+        import arnold_pipelines.megaplan.execute._envelope as mod
 
         importlib.reload(mod)
         assert mod.unified_execute_enabled()
@@ -306,7 +306,7 @@ class TestUnifiedExecuteEnabled:
         """MEGAPLAN_UNIFIED_EXECUTE=true → True."""
         monkeypatch.setenv("MEGAPLAN_UNIFIED_EXECUTE", "true")
         import importlib
-        import arnold.pipelines.megaplan.execute._envelope as mod
+        import arnold_pipelines.megaplan.execute._envelope as mod
 
         importlib.reload(mod)
         assert mod.unified_execute_enabled()
@@ -315,7 +315,7 @@ class TestUnifiedExecuteEnabled:
         """MEGAPLAN_UNIFIED_EXECUTE=yes → True (any non-falsy string)."""
         monkeypatch.setenv("MEGAPLAN_UNIFIED_EXECUTE", "yes")
         import importlib
-        import arnold.pipelines.megaplan.execute._envelope as mod
+        import arnold_pipelines.megaplan.execute._envelope as mod
 
         importlib.reload(mod)
         assert mod.unified_execute_enabled()
