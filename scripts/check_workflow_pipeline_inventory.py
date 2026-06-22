@@ -225,11 +225,18 @@ ARCHIVAL_ALLOWLIST: tuple[str, ...] = (
     "docs/arnold/workflow-migration.md",
     "docs/arnold/legacy-surface-inventory.md",
     "docs/arnold/authoring-guide.md",
+    "docs/arnold/creating-a-new-pipeline.md",
+    "docs/arnold/skill-integration.md",
+    "docs/arnold/tooling.md",
+    "docs/arnold/arnold-megaplan-cleanup-plan.md",
+    "docs/arnold/arnold-megaplan-subagent-review-synthesis.md",
+    "docs/arnold/arnold-abstraction-vetting-synthesis.md",
+    "docs/arnold/m5-cli-command-mapping.md",
+    "docs/arnold/m5-generated-artifact-manifest.md",
+    "docs/arnold/workflow-manifest-runtime-review",
     "docs/arnold/examples/select-tournament.md",
     "docs/arnold/examples/planning-as-composition.md",
-    "tests/docs/test_arnold_external_builder.py",
-    "tests/_pipeline",
-    "tests/pipelines",
+    "tests/archive/m5",
 )
 
 

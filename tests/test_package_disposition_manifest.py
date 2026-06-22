@@ -118,8 +118,8 @@ def test_file_row_covers_tracked_file(tmp_path: Path) -> None:
     repo_root, manifest_path = _init_repo(
         tmp_path,
         {
-            "megaplan/core/a.py": "A = 1\n",
-            "megaplan/core/b.py": "B = 2\n",
+            "arnold_pipelines/megaplan/core/a.py": "A = 1\n",
+            "arnold_pipelines/megaplan/core/b.py": "B = 2\n",
         },
     )
     manifest = _manifest_with_rows(
@@ -139,7 +139,7 @@ def test_file_row_rejects_nonexistent_file(tmp_path: Path) -> None:
     module = _load_module()
     repo_root, manifest_path = _init_repo(
         tmp_path,
-        {"megaplan/real.py": "REAL = 1\n"},
+        {"arnold_pipelines/megaplan/real.py": "REAL = 1\n"},
     )
     manifest = _manifest_with_rows(
         [
@@ -164,9 +164,9 @@ def test_directory_row_covers_recursive_files(tmp_path: Path) -> None:
     repo_root, manifest_path = _init_repo(
         tmp_path,
         {
-            "megaplan/pkg/a.py": "A = 1\n",
-            "megaplan/pkg/b.py": "B = 2\n",
-            "megaplan/pkg/sub/c.py": "C = 3\n",
+            "arnold_pipelines/megaplan/pkg/a.py": "A = 1\n",
+            "arnold_pipelines/megaplan/pkg/b.py": "B = 2\n",
+            "arnold_pipelines/megaplan/pkg/sub/c.py": "C = 3\n",
         },
     )
     manifest = _manifest_with_rows(
@@ -183,7 +183,7 @@ def test_directory_row_rejects_file_path(tmp_path: Path) -> None:
     module = _load_module()
     repo_root, manifest_path = _init_repo(
         tmp_path,
-        {"megaplan/pkg/a.py": "A = 1\n"},
+        {"arnold_pipelines/megaplan/pkg/a.py": "A = 1\n"},
     )
     manifest = _manifest_with_rows(
         [_row("megaplan/pkg/a.py", "directory", "megaplan-plugin", target="megaplan/pkg")]
@@ -202,8 +202,8 @@ def test_directory_row_rejects_empty_directory(tmp_path: Path) -> None:
     repo_root, manifest_path = _init_repo(
         tmp_path,
         {
-            "megaplan/pkg/readme.txt": "not python\n",
-            "megaplan/other/a.py": "A = 1\n",
+            "arnold_pipelines/megaplan/pkg/readme.txt": "not python\n",
+            "arnold_pipelines/megaplan/other/a.py": "A = 1\n",
         },
     )
     manifest = _manifest_with_rows(
@@ -229,8 +229,8 @@ def test_split_file_parent_with_symbol_children_accepted(tmp_path: Path) -> None
     repo_root, manifest_path = _init_repo(
         tmp_path,
         {
-            "megaplan/cli/arnold.py": "def main(): pass\n",
-            "megaplan/other/a.py": "A = 1\n",
+            "arnold_pipelines/megaplan/cli/arnold.py": "def main(): pass\n",
+            "arnold_pipelines/megaplan/other/a.py": "A = 1\n",
         },
     )
     manifest = _manifest_with_rows(
@@ -268,8 +268,8 @@ def test_split_directory_parent_with_descendant_children_accepted(tmp_path: Path
     repo_root, manifest_path = _init_repo(
         tmp_path,
         {
-            "megaplan/cli/arnold.py": "def main(): pass\n",
-            "megaplan/cli/helpers.py": "def help(): pass\n",
+            "arnold_pipelines/megaplan/cli/arnold.py": "def main(): pass\n",
+            "arnold_pipelines/megaplan/cli/helpers.py": "def help(): pass\n",
         },
     )
     manifest = _manifest_with_rows(
@@ -300,7 +300,7 @@ def test_split_file_parent_without_symbol_children_rejected(tmp_path: Path) -> N
     module = _load_module()
     repo_root, manifest_path = _init_repo(
         tmp_path,
-        {"megaplan/cli/solo.py": "SOLO = 1\n"},
+        {"arnold_pipelines/megaplan/cli/solo.py": "SOLO = 1\n"},
     )
     manifest = _manifest_with_rows(
         [
@@ -325,7 +325,7 @@ def test_split_directory_parent_without_descendants_rejected(tmp_path: Path) -> 
     module = _load_module()
     repo_root, manifest_path = _init_repo(
         tmp_path,
-        {"megaplan/cli/solo.py": "SOLO = 1\n"},
+        {"arnold_pipelines/megaplan/cli/solo.py": "SOLO = 1\n"},
     )
     manifest = _manifest_with_rows(
         [_row("megaplan/cli", "split", "split-required", target="megaplan/cli")]
@@ -346,7 +346,7 @@ def test_symbol_children_do_not_cause_duplicate_coverage(tmp_path: Path) -> None
     module = _load_module()
     repo_root, manifest_path = _init_repo(
         tmp_path,
-        {"megaplan/hybrid/x.py": "X = 1\n"},
+        {"arnold_pipelines/megaplan/hybrid/x.py": "X = 1\n"},
     )
     manifest = _manifest_with_rows(
         [
@@ -394,8 +394,8 @@ def test_duplicate_coverage_file_and_directory(tmp_path: Path) -> None:
     repo_root, manifest_path = _init_repo(
         tmp_path,
         {
-            "megaplan/hybrid/one.py": "ONE = 1\n",
-            "megaplan/hybrid/two.py": "TWO = 2\n",
+            "arnold_pipelines/megaplan/hybrid/one.py": "ONE = 1\n",
+            "arnold_pipelines/megaplan/hybrid/two.py": "TWO = 2\n",
         },
     )
     manifest = _manifest_with_rows(
@@ -423,8 +423,8 @@ def test_duplicate_coverage_two_directories(tmp_path: Path) -> None:
     repo_root, manifest_path = _init_repo(
         tmp_path,
         {
-            "megaplan/pkg/a.py": "A = 1\n",
-            "megaplan/pkg/sub/b.py": "B = 2\n",
+            "arnold_pipelines/megaplan/pkg/a.py": "A = 1\n",
+            "arnold_pipelines/megaplan/pkg/sub/b.py": "B = 2\n",
         },
     )
     manifest = _manifest_with_rows(
@@ -451,7 +451,7 @@ def test_duplicate_row_same_source_granularity_rejected(tmp_path: Path) -> None:
     module = _load_module()
     repo_root, manifest_path = _init_repo(
         tmp_path,
-        {"megaplan/core/a.py": "A = 1\n"},
+        {"arnold_pipelines/megaplan/core/a.py": "A = 1\n"},
     )
     manifest = _manifest_with_rows(
         [
@@ -475,7 +475,7 @@ def test_orphan_symbol_without_any_parent(tmp_path: Path) -> None:
     module = _load_module()
     repo_root, manifest_path = _init_repo(
         tmp_path,
-        {"megaplan/core/a.py": "A = 1\n"},
+        {"arnold_pipelines/megaplan/core/a.py": "A = 1\n"},
     )
     manifest = _manifest_with_rows(
         [
@@ -500,7 +500,7 @@ def test_orphan_symbol_with_file_row_not_split(tmp_path: Path) -> None:
     module = _load_module()
     repo_root, manifest_path = _init_repo(
         tmp_path,
-        {"megaplan/core/a.py": "A = 1\n"},
+        {"arnold_pipelines/megaplan/core/a.py": "A = 1\n"},
     )
     manifest = _manifest_with_rows(
         [
@@ -530,9 +530,9 @@ def test_exclusion_matches_remove_from_coverage(tmp_path: Path) -> None:
     repo_root, manifest_path = _init_repo(
         tmp_path,
         {
-            "megaplan/core/a.py": "A = 1\n",
-            "megaplan/core/__pycache__/cached.py": "# auto-generated cache\n",
-            "megaplan/core/b.py": "B = 2\n",
+            "arnold_pipelines/megaplan/core/a.py": "A = 1\n",
+            "arnold_pipelines/megaplan/core/__pycache__/cached.py": "# auto-generated cache\n",
+            "arnold_pipelines/megaplan/core/b.py": "B = 2\n",
         },
     )
     manifest = _manifest_with_rows(
@@ -542,7 +542,7 @@ def test_exclusion_matches_remove_from_coverage(tmp_path: Path) -> None:
         ],
         coverage_exclusions=[
             {
-                "source": "megaplan/core/__pycache__/*.py",
+                "source": "arnold_pipelines/megaplan/core/__pycache__/*.py",
                 "reason": "CPython bytecode cache, not authored source",
                 "evidence": "git ls-files match against __pycache__ artifacts",
             },
@@ -559,13 +559,13 @@ def test_exclusion_with_no_matches_produces_error(tmp_path: Path) -> None:
     module = _load_module()
     repo_root, manifest_path = _init_repo(
         tmp_path,
-        {"megaplan/core/a.py": "A = 1\n"},
+        {"arnold_pipelines/megaplan/core/a.py": "A = 1\n"},
     )
     manifest = _manifest_with_rows(
         [_row("megaplan/core/a.py", "file", "arnold-core")],
         coverage_exclusions=[
             {
-                "source": "megaplan/**/nonexistent/**/*.py",
+                "source": "arnold_pipelines/megaplan/**/nonexistent/**/*.py",
                 "reason": "Nothing to exclude",
                 "evidence": "N/A",
             },
@@ -585,15 +585,15 @@ def test_exclusion_allows_uncovered_when_excluded(tmp_path: Path) -> None:
     repo_root, manifest_path = _init_repo(
         tmp_path,
         {
-            "megaplan/core/a.py": "A = 1\n",
-            "megaplan/gen/generated.py": "# auto-generated\n",
+            "arnold_pipelines/megaplan/core/a.py": "A = 1\n",
+            "arnold_pipelines/megaplan/gen/generated.py": "# auto-generated\n",
         },
     )
     manifest = _manifest_with_rows(
         [_row("megaplan/core/a.py", "file", "arnold-core")],
         coverage_exclusions=[
             {
-                "source": "megaplan/gen/generated.py",
+                "source": "arnold_pipelines/megaplan/gen/generated.py",
                 "reason": "Auto-generated file",
                 "evidence": "Contains 'auto-generated' header",
             },
@@ -613,7 +613,7 @@ def test_normalize_path_rejects_absolute(tmp_path: Path) -> None:
     module = _load_module()
     repo_root, manifest_path = _init_repo(
         tmp_path,
-        {"megaplan/core/a.py": "A = 1\n"},
+        {"arnold_pipelines/megaplan/core/a.py": "A = 1\n"},
     )
     manifest = _manifest_with_rows(
         [_row("/absolute/path.py", "file", "arnold-core")]
@@ -631,7 +631,7 @@ def test_normalize_path_rejects_parent_traversal(tmp_path: Path) -> None:
     module = _load_module()
     repo_root, manifest_path = _init_repo(
         tmp_path,
-        {"megaplan/core/a.py": "A = 1\n"},
+        {"arnold_pipelines/megaplan/core/a.py": "A = 1\n"},
     )
     manifest = _manifest_with_rows(
         [_row("megaplan/../escape.py", "file", "arnold-core")]
@@ -649,7 +649,7 @@ def test_normalize_path_rejects_glob_in_row_source(tmp_path: Path) -> None:
     module = _load_module()
     repo_root, manifest_path = _init_repo(
         tmp_path,
-        {"megaplan/core/a.py": "A = 1\n"},
+        {"arnold_pipelines/megaplan/core/a.py": "A = 1\n"},
     )
     manifest = _manifest_with_rows(
         [_row("megaplan/core/*.py", "file", "arnold-core")]
@@ -667,7 +667,7 @@ def test_normalize_path_strips_whitespace(tmp_path: Path) -> None:
     module = _load_module()
     repo_root, manifest_path = _init_repo(
         tmp_path,
-        {"megaplan/core/a.py": "A = 1\n"},
+        {"arnold_pipelines/megaplan/core/a.py": "A = 1\n"},
     )
     manifest = _manifest_with_rows(
         [_row("  megaplan/core/a.py  ", "file", "arnold-core")]
@@ -683,7 +683,7 @@ def test_normalize_path_rejects_empty_source(tmp_path: Path) -> None:
     module = _load_module()
     repo_root, manifest_path = _init_repo(
         tmp_path,
-        {"megaplan/core/a.py": "A = 1\n"},
+        {"arnold_pipelines/megaplan/core/a.py": "A = 1\n"},
     )
     manifest = _manifest_with_rows(
         [_row("", "file", "arnold-core")]
@@ -749,8 +749,8 @@ def test_uncovered_file_without_any_row(tmp_path: Path) -> None:
     repo_root, manifest_path = _init_repo(
         tmp_path,
         {
-            "megaplan/core/a.py": "A = 1\n",
-            "megaplan/core/b.py": "B = 2\n",
+            "arnold_pipelines/megaplan/core/a.py": "A = 1\n",
+            "arnold_pipelines/megaplan/core/b.py": "B = 2\n",
         },
     )
     manifest = _manifest_with_rows(

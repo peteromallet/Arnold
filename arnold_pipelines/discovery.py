@@ -48,6 +48,14 @@ class ShippedPipelineInfo:
 # scanner in ``scripts/check_workflow_pipeline_inventory.py``.
 _SHIPPED_PIPELINE_DISPOSITION: dict[str, dict[str, Any]] = {
     # Survivors (migrate)
+    "arnold_pipelines/megaplan": {
+        "id": "megaplan",
+        "public": True,
+        "registry_id": "megaplan.core",
+        "docs_path": "arnold_pipelines/megaplan/SKILL.md",
+        "disposition": "migrate",
+        "migrated": True,
+    },
     "arnold_pipelines/megaplan/pipelines/planning": {
         "id": "megaplan",
         "public": True,

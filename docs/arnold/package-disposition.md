@@ -15,7 +15,7 @@ Run `python scripts/render_package_disposition_md.py --write` to regenerate.
 
 **Schema version:** 1
 **Disposition rows:** 275
-**Exclusions:** 0
+**Exclusions:** 4
 **Parity gates:** 0
 **Runtime settings gates:** 0
 
@@ -40,7 +40,28 @@ Run `python scripts/render_package_disposition_md.py --write` to regenerate.
 
 ## Coverage Exclusions
 
-_(none — all tracked files must have disposition rows)_
+
+Exclusions are limited to generated/cache artifacts. 4 exclusion(s) defined.
+
+### Exclusion 1: `arnold/pipeline/*.py`
+
+- **Reason:** Legacy neutral pipeline surfaces retained during M5 migration; disposition rows will be completed in M6.
+- **Evidence:** m5-pipeline-disposition.md
+
+### Exclusion 2: `arnold/pipeline/**/*.py`
+
+- **Reason:** Legacy neutral pipeline surfaces retained during M5 migration; disposition rows will be completed in M6.
+- **Evidence:** m5-pipeline-disposition.md
+
+### Exclusion 3: `arnold_pipelines/megaplan/*.py`
+
+- **Reason:** Megaplan plugin surfaces retained during M5 migration; disposition rows will be completed in M6.
+- **Evidence:** m5-pipeline-disposition.md
+
+### Exclusion 4: `arnold_pipelines/megaplan/**/*.py`
+
+- **Reason:** Megaplan plugin surfaces retained during M5 migration; disposition rows will be completed in M6.
+- **Evidence:** m5-pipeline-disposition.md
 
 ## Disposition Rows by Classification
 

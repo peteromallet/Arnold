@@ -212,7 +212,9 @@ def _cmd_describe(args: argparse.Namespace) -> int:
     return 0
 
 
-def main(argv: Sequence[str] | None = None) -> int:
+def build_parser() -> argparse.ArgumentParser:
+    """Return the ``arnold workflow`` argument parser."""
+
     parser = argparse.ArgumentParser(
         prog="arnold workflow",
         description="Compile, inspect, and run explicit-node Arnold workflows.",
@@ -270,6 +272,12 @@ def main(argv: Sequence[str] | None = None) -> int:
                 "--node",
                 help="Resume from a specific node id.",
             )
+
+    return parser
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    parser = build_parser()
 
     dispatch = {
         "check": _cmd_check,

@@ -40,6 +40,8 @@ The M2 explicit-node DSL lowers to the existing v1 fields:
 - Package `build_pipeline()` returns the M2 authoring pipeline object. A
   `WorkflowManifest` is compiler output.
 
+The implementation lives in `arnold/manifest/manifests.py`.
+
 Loop-back behavior is a semantic tightening, not a new v1 field.  Arbitrary graph cycles are not valid M2 topology; intentional recursive behavior must be expressed with explicit bounded loop/reentry carriers:
 
 - `WorkflowPolicy.loop.max_iterations` supplies the finite bound.

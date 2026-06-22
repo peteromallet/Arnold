@@ -90,9 +90,9 @@ def test_validate_manifest_accepts_file_directory_and_split_rows(tmp_path: Path)
     repo_root, manifest_path = _init_repo(
         tmp_path,
         {
-            "megaplan/core/a.py": "A = 1\n",
-            "megaplan/pkg/b.py": "B = 2\n",
-            "megaplan/cli/arnold.py": "def main():\n    return 0\n",
+            "arnold_pipelines/megaplan/core/a.py": "A = 1\n",
+            "arnold_pipelines/megaplan/pkg/b.py": "B = 2\n",
+            "arnold_pipelines/megaplan/cli/arnold.py": "def main():\n    return 0\n",
         },
     )
     manifest = _manifest_with_rows(
@@ -116,17 +116,17 @@ def test_tracked_python_files_include_top_level_megaplan_modules(tmp_path: Path)
     repo_root, _manifest_path = _init_repo(
         tmp_path,
         {
-            "megaplan/auto.py": "AUTO = 1\n",
-            "megaplan/control_interface.py": "CONTROL = 2\n",
-            "megaplan/subpkg/worker.py": "WORKER = 3\n",
+            "arnold_pipelines/megaplan/auto.py": "AUTO = 1\n",
+            "arnold_pipelines/megaplan/control_interface.py": "CONTROL = 2\n",
+            "arnold_pipelines/megaplan/subpkg/worker.py": "WORKER = 3\n",
         },
     )
 
     tracked = module._tracked_python_files(repo_root)
 
-    assert "megaplan/auto.py" in tracked
-    assert "megaplan/control_interface.py" in tracked
-    assert "megaplan/subpkg/worker.py" in tracked
+    assert "arnold_pipelines/megaplan/auto.py" in tracked
+    assert "arnold_pipelines/megaplan/control_interface.py" in tracked
+    assert "arnold_pipelines/megaplan/subpkg/worker.py" in tracked
 
 
 def test_validate_manifest_rejects_duplicate_coverage_and_missing_split_children(
@@ -136,9 +136,9 @@ def test_validate_manifest_rejects_duplicate_coverage_and_missing_split_children
     repo_root, manifest_path = _init_repo(
         tmp_path,
         {
-            "megaplan/hybrid/one.py": "ONE = 1\n",
-            "megaplan/hybrid/two.py": "TWO = 2\n",
-            "megaplan/cli/solo.py": "SOLO = 3\n",
+            "arnold_pipelines/megaplan/hybrid/one.py": "ONE = 1\n",
+            "arnold_pipelines/megaplan/hybrid/two.py": "TWO = 2\n",
+            "arnold_pipelines/megaplan/cli/solo.py": "SOLO = 3\n",
         },
     )
     manifest = _manifest_with_rows(
@@ -162,8 +162,8 @@ def test_cli_summary_reports_disposition_and_package_counts(tmp_path: Path) -> N
     repo_root, manifest_path = _init_repo(
         tmp_path,
         {
-            "megaplan/core/a.py": "A = 1\n",
-            "megaplan/pkg/b.py": "B = 2\n",
+            "arnold_pipelines/megaplan/core/a.py": "A = 1\n",
+            "arnold_pipelines/megaplan/pkg/b.py": "B = 2\n",
         },
     )
     manifest = _manifest_with_rows(
