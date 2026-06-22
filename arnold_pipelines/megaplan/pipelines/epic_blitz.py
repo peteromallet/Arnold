@@ -23,7 +23,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from arnold_pipelines.megaplan._pipeline.types import (
+from arnold.pipeline.types import (
     Edge,
     ParallelStage,
     Pipeline,

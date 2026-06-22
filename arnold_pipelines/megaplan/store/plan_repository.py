@@ -25,7 +25,7 @@ from arnold.pipeline.step_io_policy import (  # re-exported for back-compat monk
     decision_blocks_write,
 )
 from arnold.pipeline.step_io_telemetry import emit_decision_telemetry  # re-exported for back-compat
-from arnold_pipelines.megaplan._pipeline.schema_registry_adapter import (
+from arnold_pipelines.megaplan.runtime.schema_registry_adapter import (
     create_step_io_contract_context,
 )
 from arnold.pipeline.step_io_telemetry import TELEMETRY_FILENAME
@@ -39,7 +39,7 @@ from arnold_pipelines.megaplan._core.io import (
     read_json,
 )
 from arnold_pipelines.megaplan._core.state import write_plan_state
-from arnold_pipelines.megaplan._pipeline.step_io_policy_adapter import (
+from arnold_pipelines.megaplan.runtime.step_io_policy_adapter import (
     megaplan_policy_for_envelope,
     resolve_megaplan_step_io_policy,
 )

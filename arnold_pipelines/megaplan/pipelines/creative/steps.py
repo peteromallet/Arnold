@@ -8,9 +8,9 @@ from pathlib import Path
 from typing import Any, Mapping
 
 from arnold.pipeline import StepContext
-from arnold_pipelines.megaplan._pipeline.types import StepResult
+from arnold_pipelines.megaplan.step_types import StepResult
 
-from arnold_pipelines.megaplan._pipeline.step_helpers import next_version  # bridge: different signature
+from arnold_pipelines.megaplan.runtime.artifacts import next_version
 from arnold_pipelines.megaplan.pipelines.creative.prompts import render_prompt
 
 

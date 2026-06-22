@@ -17,7 +17,7 @@ from __future__ import annotations
 
 from typing import Mapping
 
-from arnold_pipelines.megaplan._pipeline.types import Edge
+from arnold.pipeline.types import Edge
 
 # ---------------------------------------------------------------------------
 # Planning decision literals

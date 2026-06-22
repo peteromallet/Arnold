@@ -23,7 +23,7 @@ from pathlib import Path
 from typing import Any, Mapping, cast
 
 from arnold.pipeline.resources import PipelineResourceBundle, resolve_bundle_prompt
-from arnold_pipelines.megaplan._pipeline.types import StepContext
+from arnold_pipelines.megaplan.step_types import StepContext
 from arnold_pipelines.megaplan.types import PlanState
 
 from .assemble_doc import _assemble_doc_prompt
