@@ -1,0 +1,50 @@
+{
+  "id": "log_846e27139bef",
+  "level": "debug",
+  "category": "system",
+  "event_type": "authority_divergence",
+  "message": "authority_divergence emitted",
+  "details": {
+    "event": {
+      "seq": 469,
+      "schema_version": 1,
+      "ts_utc": "2026-06-22T22:05:50.491275+00:00",
+      "ts_rel_init_s": 856.400882,
+      "kind": "authority_divergence",
+      "phase": "execute",
+      "payload": {
+        "diagnostic_version": 1,
+        "task_id": "T1",
+        "raw_terminal_status": "skipped",
+        "authority_status": "unknown",
+        "authoritative": false,
+        "reason": "missing_linked_evidence",
+        "missing_outputs": [],
+        "stale_evidence": [],
+        "would_block_reasons": [
+          "missing_linked_evidence"
+        ],
+        "error": null,
+        "diagnostics": {
+          "task_id": "T1",
+          "declared_outputs": {},
+          "linked_evidence_count": 0,
+          "evidence_count": 4,
+          "normalization": "iterable",
+          "status": "unknown",
+          "evidence_sources": [
+            "plan_artifacts"
+          ],
+          "loaded_evidence_count": 4,
+          "raw_terminal_status": "skipped"
+        },
+        "ts_utc": "2026-06-22T22:05:50.490650+00:00"
+      },
+      "transaction_id": "acc754dd01ef4fe5",
+      "store_method": "log_system_event"
+    }
+  },
+  "turn_id": null,
+  "epic_id": "m5-generated-assets-and-merge-20260622-2351",
+  "occurred_at": "2026-06-22T22:05:50.491348Z"
+}

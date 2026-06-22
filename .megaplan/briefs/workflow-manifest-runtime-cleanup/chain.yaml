@@ -1,0 +1,82 @@
+base_branch: main
+
+milestones:
+  - label: m1-public-api-clean-break
+    idea: .megaplan/briefs/workflow-manifest-runtime-cleanup/m1-public-api-clean-break.md
+    profile: partnered-5
+    vendor: codex
+    robustness: thorough
+    depth: high
+    with_prep: true
+    branch: workflow-manifest-runtime-cleanup-m1-api
+    prep_clarify: false
+    prep_direction: "Treat .megaplan/briefs/workflow-manifest-runtime/m4-megaplan-product-migration.md, m2-explicit-node-dsl-compiler.md, the remediation plan in /tmp/codex_remedy_plan_out.txt, and prevention gates as authoritative. Focus on the public Megaplan API contract: build_pipeline() returns arnold.workflow.dsl.Pipeline; WorkflowManifest is compiler output; legacy constructors and compile_planning_pipeline are not public or compatibility surfaces."
+    notes: "partnered-5/thorough/high @codex. Highest-risk public contract cutover; a local green suite can still hide broken downstream imports."
+
+  - label: m2-archive-delete-epic-blitz
+    idea: .megaplan/briefs/workflow-manifest-runtime-cleanup/m2-archive-delete-epic-blitz.md
+    profile: partnered-5
+    vendor: codex
+    robustness: thorough
+    depth: high
+    with_prep: true
+    branch: workflow-manifest-runtime-cleanup-m2-epic-blitz
+    depends_on:
+      - m1-public-api-clean-break
+    prep_clarify: false
+    prep_direction: "Use M1's public API contract as fixed. Delete/archive epic_blitz exactly as the M5/M6 inventories require; do not migrate it into the new runtime unless a human explicitly changes the archive/delete decision."
+    notes: "partnered-5/thorough/high @codex. Smaller code delta, but discovery/CLI/docs packaging absence must be exact."
+
+  - label: m3-burn-down-legacy-imports
+    idea: .megaplan/briefs/workflow-manifest-runtime-cleanup/m3-burn-down-legacy-imports.md
+    profile: partnered-5
+    vendor: codex
+    robustness: thorough
+    depth: high
+    with_prep: true
+    branch: workflow-manifest-runtime-cleanup-m3-imports
+    depends_on:
+      - m2-archive-delete-epic-blitz
+    prep_clarify: false
+    prep_direction: "Migrate every load-bearing arnold_pipelines.megaplan._pipeline and arnold_pipelines.megaplan.stages import in production code before deletion. Work by import family and keep a ledger of replacement destinations and tests."
+    notes: "partnered-5/thorough/high @codex. This is the hardest topology sprint; bad decomposition can leave hidden dynamic imports or broken runtime contracts."
+
+  - label: m4-physical-deletion-conformance-gates
+    idea: .megaplan/briefs/workflow-manifest-runtime-cleanup/m4-physical-deletion-conformance-gates.md
+    profile: partnered-5
+    vendor: codex
+    robustness: thorough
+    depth: high
+    with_prep: true
+    branch: workflow-manifest-runtime-cleanup-m4-delete-gates
+    depends_on:
+      - m3-burn-down-legacy-imports
+    prep_clarify: false
+    prep_direction: "After M3 import burn-down is proven, physically delete _pipeline/, stages/, compatibility shims, and strengthen source/wheel/sdist/dynamic-import gates. Integrate scripts/m6_purge_gate.py and ensure tests no longer keep legacy constructors alive."
+    notes: "partnered-5/thorough/high @codex. Deletion must be proven in source and installed artifacts; no permanent shims."
+
+  - label: m5-generated-assets-merge-result-conformance
+    idea: .megaplan/briefs/workflow-manifest-runtime-cleanup/m5-generated-assets-merge-result-conformance.md
+    profile: partnered-5
+    vendor: codex
+    robustness: thorough
+    depth: high
+    with_prep: true
+    branch: workflow-manifest-runtime-cleanup-m5-merge-conformance
+    depends_on:
+      - m4-physical-deletion-conformance-gates
+    prep_clarify: false
+    prep_direction: "Regenerate docs, registries, generated skills/assets, package disposition, and final manifest identity ledgers from the post-deletion tree. Run merge-result conformance from an integrated checkout using chain_done_gate.py, m6_purge_gate.py, wheel/sdist builds, installed-wheel positive and negative tests, dynamic import tracing, and sys.modules deleted-prefix audit."
+    notes: "partnered-5/thorough/high @codex. Final guard against stale generated artifacts and merge resolution resurrecting deleted surfaces."
+
+on_failure:
+  abort: stop_chain
+on_escalate:
+  abort: stop_chain
+merge_policy: review
+
+driver:
+  robustness: thorough
+  auto_approve: true
+  max_iterations: 120
+  poll_sleep: 8.0
