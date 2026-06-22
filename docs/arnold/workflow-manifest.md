@@ -7,8 +7,8 @@ capability requirements, and replay coordinates. It does not execute workflow
 code, import product packages, or carry live Python objects.
 
 The implementation source of truth is the frozen dataclass set in
-`arnold/workflow/manifests.py`, plus stable reference helpers in
-`arnold/workflow/refs.py`. This document names the field-level contract that
+`arnold/manifest/manifests.py`, plus stable reference helpers in
+`arnold/manifest/refs.py`. This document names the field-level contract that
 later DSL, compiler, inspect, dry-run, and runtime work must preserve.
 
 ## Version And Identity

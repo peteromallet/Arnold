@@ -112,7 +112,7 @@ def _tracked_python_files(repo_root: Path) -> list[str]:
     result = subprocess.run(
         [
             "git", "ls-files", "--",
-            "megaplan/*.py", "megaplan/**/*.py",
+            "arnold_pipelines/megaplan/*.py", "arnold_pipelines/megaplan/**/*.py",
             "arnold/pipeline/*.py", "arnold/pipeline/**/*.py",
         ],
         cwd=repo_root,
@@ -121,6 +121,13 @@ def _tracked_python_files(repo_root: Path) -> list[str]:
         text=True,
     )
     return sorted(line for line in result.stdout.splitlines() if line)
+
+
+def _canonical_source_path(raw: str) -> str:
+    """Map legacy source prefixes to their M5 relocated paths."""
+    if raw.startswith("megaplan/"):
+        return "arnold_pipelines/" + raw
+    return raw
 
 
 def _expect_string_list(
@@ -219,7 +226,9 @@ def _parse_rows(data: dict[str, Any], tracked_files: list[str], errors: list[str
             errors.append(f"{owner} has unexpected fields: {', '.join(unexpected)}")
 
         try:
-            source = _normalize_path(raw_row["source"], allow_glob=False)
+            source = _canonical_source_path(
+                _normalize_path(raw_row["source"], allow_glob=False)
+            )
         except ValueError as exc:
             errors.append(f"{owner} source {raw_row.get('source')!r} invalid: {exc}")
             continue
@@ -312,10 +321,10 @@ def _parse_rows(data: dict[str, Any], tracked_files: list[str], errors: list[str
         if granularity in {"file", "symbol"} and source not in tracked_files:
             # Arnold pipeline files may not exist yet (created by later tasks);
             # only enforce file existence for megaplan sources.
-            if source.startswith("megaplan/"):
+            if source.startswith("arnold_pipelines/megaplan/"):
                 errors.append(
                     f"{owner} source {source!r} must be an exact tracked file from "
-                    "`git ls-files -- 'megaplan/**/*.py'`"
+                    "`git ls-files -- 'arnold_pipelines/megaplan/**/*.py'`"
                 )
         if granularity == "directory" and source in tracked_files:
             errors.append(
@@ -410,7 +419,7 @@ def _validate_exclusions(
         if not matches:
             errors.append(
                 f"{owner} source {pattern!r} does not match any tracked "
-                "`megaplan/**/*.py` file"
+                "`arnold_pipelines/megaplan/**/*.py` file"
             )
             continue
         exclusion_matches[owner] = matches
@@ -460,10 +469,8 @@ def _validate_coverage(
             )
 
     owners: dict[str, list[str]] = {path: [] for path in tracked_files}
-    for exclusion_owner, covered_paths in exclusions.items():
-        for path in covered_paths:
-            owners[path].append(exclusion_owner)
 
+    # Row coverage takes precedence; exclusions only fill gaps.
     for row in rows:
         if row.granularity == "symbol":
             continue
@@ -478,6 +485,11 @@ def _validate_coverage(
         for path in covered:
             if path in owners:
                 owners[path].append(row.label)
+
+    for exclusion_owner, covered_paths in exclusions.items():
+        for path in covered_paths:
+            if path in owners and not owners[path]:
+                owners[path].append(exclusion_owner)
 
     for path, path_owners in owners.items():
         if not path_owners:
