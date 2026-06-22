@@ -160,32 +160,80 @@ def _outgoing_edges(
     ))
 
 
+def _reachable_nodes(
+    scope_stack: tuple[str, ...],
+    summary: _EventSummary,
+    nodes: tuple[WorkflowNode, ...],
+    edges: tuple[WorkflowEdge, ...],
+) -> set[str]:
+    """Return the set of node refs reachable via active edges.
+
+    A node is reachable when it has at least one active incoming edge. An
+    unconditional edge is active when its source is reachable and completed. A
+    conditional edge is active when its source is reachable, completed, and the
+    branch selected that edge.
+    """
+
+    incoming_by_target: dict[str, tuple[WorkflowEdge, ...]] = {
+        node.id: _incoming_edges(node.id, edges) for node in nodes
+    }
+    reachable: set[str] = {
+        node.id for node in nodes if not incoming_by_target[node.id]
+    }
+
+    changed = True
+    while changed:
+        changed = False
+        for node in nodes:
+            node_id = node.id
+            if node_id in reachable:
+                continue
+            for edge in incoming_by_target[node_id]:
+                source = edge.source
+                if source not in reachable:
+                    continue
+                source_coordinate = RouteCoordinate(
+                    node_ref=source, scope_stack=scope_stack
+                )
+                if source_coordinate not in summary.completed:
+                    continue
+                if edge.condition_ref is not None:
+                    selected = _branch_selected_edge(source, scope_stack, summary)
+                    if selected != edge.id:
+                        continue
+                reachable.add(node_id)
+                changed = True
+                break
+    return reachable
+
+
 def _is_ready_linear(
     node: WorkflowNode,
     scope_stack: tuple[str, ...],
     summary: _EventSummary,
     edges: tuple[WorkflowEdge, ...],
+    reachable: set[str],
 ) -> bool:
-    """Return True when all required predecessors are completed.
+    """Return True when all active predecessors are completed.
 
-    Unconditional edges are required. Conditional edges are ignored unless a
-    branch has been selected for a different edge, in which case the target is
-    blocked.
+    A node is only ready when it is reachable and every active incoming edge
+    (unconditional or matching conditional branch) has its source completed.
     """
 
+    if node.id not in reachable:
+        return False
+
     for edge in _incoming_edges(node.id, edges):
-        source_coordinate = RouteCoordinate(node_ref=edge.source, scope_stack=scope_stack)
-        if edge.condition_ref is not None:
-            selected = _branch_selected_edge(edge.source, scope_stack, summary)
-            if (
-                selected is not None
-                and selected != edge.id
-                and source_coordinate in summary.completed
-            ):
-                return False
+        source = edge.source
+        if source not in reachable:
             continue
+        source_coordinate = RouteCoordinate(node_ref=source, scope_stack=scope_stack)
         if source_coordinate not in summary.completed:
             return False
+        if edge.condition_ref is not None:
+            selected = _branch_selected_edge(source, scope_stack, summary)
+            if selected != edge.id:
+                return False
     return True
 
 
@@ -307,6 +355,7 @@ def project_routing_state(
             scope_hashes[scope_stack] = scope_stack[-1]
 
     def _project_scope(scope_stack: tuple[str, ...]) -> None:
+        reachable = _reachable_nodes(scope_stack, summary, nodes, edges)
         for node in nodes:
             base = RouteCoordinate(node_ref=node.id, scope_stack=scope_stack)
 
@@ -325,7 +374,7 @@ def project_routing_state(
                     continue
                 if base in completed:
                     continue
-                if _is_ready_linear(node, scope_stack, summary, edges):
+                if _is_ready_linear(node, scope_stack, summary, edges, reachable):
                     ready_set.add(base)
                 else:
                     blocked_set.add(base)
@@ -364,15 +413,19 @@ def project_routing_state(
                             if child not in completed and child not in failed:
                                 ready_set.add(child)
                     continue
-                if _is_ready_linear(node, scope_stack, summary, edges):
+                if _is_ready_linear(node, scope_stack, summary, edges, reachable):
                     ready_set.add(base)
                 else:
                     blocked_set.add(base)
                 continue
 
             # Loop node: after completion, re-enter if under max_iterations.
+            # Nodes that have both a loop policy and conditional outgoing edges
+            # are treated as branch nodes so product cycles can route to their
+            # targets while still satisfying the bounded-reentry validator.
             loop_max = _loop_max_iterations(node)
-            if loop_max is not None:
+            outgoing = _outgoing_edges(node.id, edges)
+            if loop_max is not None and not any(edge.condition_ref is not None for edge in outgoing):
                 loop_proj = _loop_state(node, scope_stack, summary)
                 loops[base] = loop_proj
                 iteration_coord = base.replace(iteration=loop_proj.current_iteration)
@@ -382,7 +435,7 @@ def project_routing_state(
                         if next_iter not in completed:
                             ready_set.add(next_iter)
                     continue
-                if _is_ready_linear(node, scope_stack, summary, edges):
+                if _is_ready_linear(node, scope_stack, summary, edges, reachable):
                     ready_set.add(iteration_coord)
                 else:
                     blocked_set.add(iteration_coord)
@@ -398,7 +451,7 @@ def project_routing_state(
                         if target_coord not in completed and target_coord not in failed:
                             ready_set.add(target_coord)
                     continue
-                if _is_ready_linear(node, scope_stack, summary, edges):
+                if _is_ready_linear(node, scope_stack, summary, edges, reachable):
                     ready_set.add(base)
                 else:
                     blocked_set.add(base)
@@ -418,7 +471,7 @@ def project_routing_state(
                 continue
             if retry_proj.current_attempt > retry_proj.max_attempts:
                 continue
-            if _is_ready_linear(node, scope_stack, summary, edges):
+            if _is_ready_linear(node, scope_stack, summary, edges, reachable):
                 ready_set.add(attempt_coord)
             else:
                 blocked_set.add(attempt_coord)

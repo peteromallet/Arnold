@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+set -euo pipefail
+SPEC="$1"
+ONE_FLAG="${2:-}"
+CANONICAL_LOG=".megaplan/cloud-chain.log"
+if [ "$ONE_FLAG" = "--one" ]; then
+    exec env MEGAPLAN_TRUSTED_CONTAINER=1 python -m arnold.pipelines.megaplan chain start --spec "$SPEC" --one >> "$CANONICAL_LOG" 2>&1
+else
+    exec env MEGAPLAN_TRUSTED_CONTAINER=1 python -m arnold.pipelines.megaplan chain start --spec "$SPEC" >> "$CANONICAL_LOG" 2>&1
+fi

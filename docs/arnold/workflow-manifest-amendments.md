@@ -87,6 +87,25 @@ Behavioral goldens cannot change for import/package-only moves. Legitimate
 behavior changes need a sibling `.explanation.md` artifact that names the
 behavioral reason and references the milestone.
 
+## M4 Megaplan Product Migration
+
+The M4 milestone relocates the Megaplan planning product from
+``arnold.pipelines.megaplan`` to ``arnold_pipelines.megaplan`` and introduces
+the canonical explicit-node manifest for the Megaplan pipeline.
+
+* Contract field: canonical Megaplan manifest topology.
+* ``manifest_hash`` changes: yes — the explicit-node DSL adds runtime policy
+  carriers (timing, control transitions, suspension routes) that are serialized.
+* ``topology_hash`` changes: yes — the explicit node and edge IDs are now
+  authored directly rather than derived from the legacy typed-port pipeline.
+* In-flight runs: legacy runs resume through a journal-derived cursor and an
+  explicit alias mapping; they do not silently replay against the new manifest.
+* New volatile golden fields: none; normalization follows
+  ``tests/fixtures/workflow/README.md``.
+* Owner: ``m4-megaplan-product-migration``.
+* Tests: ``tests/arnold_pipelines/megaplan/test_topology_amendment.py``,
+  ``tests/arnold_pipelines/megaplan/test_parity_harness.py``.
+
 ## Replay Rule
 
 The original manifest reference carried by journaled events is authoritative.

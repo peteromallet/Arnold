@@ -31,6 +31,7 @@ dist/
 *.egg-info/
 activity-summary-*.md
 megaplan/cloud/_reference/
+arnold_pipelines/megaplan/data/_codex_skills/
 
 # Local/generated planning inputs and cloud runner specs.
 cloud.yaml
