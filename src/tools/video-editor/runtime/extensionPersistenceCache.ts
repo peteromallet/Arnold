@@ -955,7 +955,13 @@ export class CachedExtensionStateRepository
       payload: { ...proposal.payload },
       createdAt: now,
       updatedAt: now,
+      ...(proposal.title !== undefined ? { title: proposal.title } : {}),
       ...(proposal.label !== undefined ? { label: proposal.label } : {}),
+      ...(proposal.detail !== undefined ? { detail: { ...proposal.detail } } : {}),
+      ...(proposal.baseVersion !== undefined ? { baseVersion: proposal.baseVersion } : {}),
+      ...(proposal.expiresAt !== undefined ? { expiresAt: proposal.expiresAt } : {}),
+      ...(proposal.acceptedAt !== undefined ? { acceptedAt: proposal.acceptedAt } : {}),
+      ...(proposal.rejectedAt !== undefined ? { rejectedAt: proposal.rejectedAt } : {}),
     };
 
     cache.proposals[id] = record;
@@ -990,11 +996,14 @@ export class CachedExtensionStateRepository
       throw new Error(`Proposal "${proposalId}" not found`);
     }
 
+    const now = new Date().toISOString();
     cache.proposals[proposalId] = {
       ...existing,
       status,
       ...(detail !== undefined ? { detail } : {}),
-      updatedAt: new Date().toISOString(),
+      updatedAt: now,
+      ...(status === 'accepted' && !existing.acceptedAt ? { acceptedAt: now } : {}),
+      ...(status === 'rejected' && !existing.rejectedAt ? { rejectedAt: now } : {}),
     };
     this.markDirty();
   }

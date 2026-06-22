@@ -44,7 +44,13 @@ interface ExtensionProposal {
   payload: Record<string, unknown>;
   createdAt: string;
   updatedAt: string;
+  title?: string;
   label?: string;
+  detail?: Record<string, unknown>;
+  baseVersion?: number;
+  expiresAt?: number;
+  acceptedAt?: string;
+  rejectedAt?: string;
 }
 
 const TIMELINE_ASSETS_BUCKET = 'timeline-assets';
@@ -393,7 +399,7 @@ class SupabaseFullSnapshotStore implements FullSnapshotStore {
     // 3. Load proposals
     const { data: proposalRows, error: proposalsError } = await supabase
       .from('extension_proposals')
-      .select('id, extension_id, status, payload, label, created_at, updated_at')
+      .select('id, extension_id, status, payload, label, created_at, updated_at, base_version, expires_at, accepted_at, rejected_at')
       .eq('user_id', userId)
       .eq('timeline_id', timelineId);
 
@@ -402,8 +408,20 @@ class SupabaseFullSnapshotStore implements FullSnapshotStore {
     }
 
     const proposals: Record<string, unknown> = {};
-    for (const row of (proposalRows ?? []) as Array<{ id: string; extension_id: string; status: string; payload: Record<string, unknown>; label: string | null; created_at: string; updated_at: string }>) {
-      proposals[row.id] = {
+    for (const row of (proposalRows ?? []) as Array<{
+      id: string;
+      extension_id: string;
+      status: string;
+      payload: Record<string, unknown>;
+      label: string | null;
+      created_at: string;
+      updated_at: string;
+      base_version: number | null;
+      expires_at: string | null;
+      accepted_at: string | null;
+      rejected_at: string | null;
+    }>) {
+      const proposal: Record<string, unknown> = {
         id: row.id,
         extensionId: row.extension_id,
         status: row.status,
@@ -412,6 +430,19 @@ class SupabaseFullSnapshotStore implements FullSnapshotStore {
         updatedAt: row.updated_at,
         ...(row.label !== null && row.label !== undefined ? { label: row.label } : {}),
       };
+      if (row.base_version !== null) {
+        proposal.baseVersion = row.base_version;
+      }
+      if (row.expires_at !== null) {
+        proposal.expiresAt = new Date(row.expires_at).getTime();
+      }
+      if (row.accepted_at !== null) {
+        proposal.acceptedAt = row.accepted_at;
+      }
+      if (row.rejected_at !== null) {
+        proposal.rejectedAt = row.rejected_at;
+      }
+      proposals[row.id] = proposal;
     }
     base.proposals = proposals;
 
@@ -512,6 +543,12 @@ class SupabaseFullSnapshotStore implements FullSnapshotStore {
           payload: proposal.payload,
           label: proposal.label ?? null,
           schema_version: 1,
+          ...(proposal.baseVersion !== undefined ? { base_version: proposal.baseVersion } : {}),
+          ...(proposal.expiresAt !== undefined
+            ? { expires_at: new Date(proposal.expiresAt).toISOString() }
+            : {}),
+          ...(proposal.acceptedAt !== undefined ? { accepted_at: proposal.acceptedAt } : {}),
+          ...(proposal.rejectedAt !== undefined ? { rejected_at: proposal.rejectedAt } : {}),
         });
 
       if (insertError) {

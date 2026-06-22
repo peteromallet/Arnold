@@ -64,6 +64,7 @@ const STATE_LABEL: Record<ProposalState, string> = {
   accepted: 'Accepted',
   rejected: 'Rejected',
   stale: 'Stale',
+  expired: 'Expired',
 };
 
 const STATE_COLOR: Record<ProposalState, string> = {
@@ -71,6 +72,7 @@ const STATE_COLOR: Record<ProposalState, string> = {
   accepted: 'bg-green-500/15 text-green-400 border-green-500/30',
   rejected: 'bg-zinc-500/15 text-zinc-400 border-zinc-500/30',
   stale: 'bg-red-500/15 text-red-400 border-red-500/30',
+  expired: 'bg-red-600/20 text-red-300 border-red-600/40',
 };
 
 const SEVERITY_ICON: Record<string, typeof AlertTriangle> = {
@@ -180,13 +182,14 @@ export function ProposalPanel({
     });
   }, [proposals, showAccepted, showRejected]);
 
-  // Sort: pending first, then stale, then accepted, then rejected; newest first within each
+  // Sort: pending first, then expired, then stale, then accepted, then rejected; newest first within each
   const sortedProposals = useMemo(() => {
     const order: Record<ProposalState, number> = {
       pending: 0,
-      stale: 1,
-      accepted: 2,
-      rejected: 3,
+      expired: 1,
+      stale: 2,
+      accepted: 3,
+      rejected: 4,
     };
     return [...filteredProposals].sort((a, b) => {
       const orderDiff = order[a.state] - order[b.state];
@@ -197,6 +200,7 @@ export function ProposalPanel({
 
   const pendingCount = proposals.filter((p) => p.state === 'pending').length;
   const staleCount = proposals.filter((p) => p.state === 'stale').length;
+  const expiredCount = proposals.filter((p) => p.state === 'expired').length;
 
   // ---- Handlers -------------------------------------------------------
   const toggleExpand = useCallback((id: string) => {
@@ -373,6 +377,11 @@ export function ProposalPanel({
               {pendingCount} pending
             </span>
           )}
+          {expiredCount > 0 && (
+            <span className="rounded-full bg-red-600/20 px-1.5 py-0.5 text-[10px] text-red-300">
+              {expiredCount} expired
+            </span>
+          )}
           {staleCount > 0 && (
             <span className="rounded-full bg-red-500/15 px-1.5 py-0.5 text-[10px] text-red-400">
               {staleCount} stale
@@ -453,6 +462,7 @@ export function ProposalPanel({
               const isExpanded = expandedIds.has(proposal.id);
               const isPending = proposal.state === 'pending';
               const isStale = proposal.state === 'stale';
+              const isExpired = proposal.state === 'expired';
 
               return (
                 <div
@@ -499,6 +509,13 @@ export function ProposalPanel({
                             className="h-2.5 w-2.5 shrink-0 text-zinc-500"
                             aria-label="Not previewable"
                             data-video-editor-proposal-not-previewable="true"
+                          />
+                        )}
+                        {isExpired && (
+                          <Clock
+                            className="h-2.5 w-2.5 shrink-0 text-red-300"
+                            aria-label="Expired"
+                            data-video-editor-proposal-expired="true"
                           />
                         )}
                         {isStale && (
@@ -620,6 +637,30 @@ export function ProposalPanel({
                             <X className="h-3 w-3" aria-hidden="true" />
                             Reject
                           </button>
+                        </div>
+                      )}
+
+                      {/* Expired proposals: show expiry detail, accept/reject disabled */}
+                      {isExpired && (
+                        <div className="flex flex-col gap-1 border-t border-white/5 px-3 py-2">
+                          <div className="flex items-center gap-1">
+                            <Clock className="h-3 w-3 text-red-300" aria-hidden="true" />
+                            <span className="text-[10px] text-red-300 font-medium">
+                              Expired
+                            </span>
+                          </div>
+                          {proposal.expiryDetail && (
+                            <div className="text-[10px] text-zinc-500">
+                              {proposal.expiryDetail.reason === 'ttl-elapsed'
+                                ? `TTL elapsed after ${proposal.expiryDetail.ttlMs != null ? `${Math.round(proposal.expiryDetail.ttlMs / 1000)}s` : ''} (base v${proposal.expiryDetail.baseVersion}, current v${proposal.expiryDetail.currentVersion})`
+                                : proposal.expiryDetail.reason === 'base-version-mismatch'
+                                  ? `Base version v${proposal.expiryDetail.baseVersion} no longer matches current v${proposal.expiryDetail.currentVersion}`
+                                  : `Expired: ${proposal.expiryDetail.reason}`}
+                            </div>
+                          )}
+                          <span className="text-[10px] text-zinc-500">
+                            Accept and reject are disabled for expired proposals.
+                          </span>
                         </div>
                       )}
 

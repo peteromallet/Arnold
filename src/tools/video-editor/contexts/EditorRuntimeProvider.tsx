@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, type ReactNode } from 'react';
 import { useLayoutEffect } from 'react';
 import { useEffects } from '@/tools/video-editor/hooks/useEffects.ts';
 import { createTimelineReader } from '@/tools/video-editor/lib/timeline-reader.ts';
-import { createProposalRuntime } from '@/tools/video-editor/lib/proposal-runtime.ts';
+import { createProposalRuntime, createProposalPersistenceBridge, type ProposalPersistenceProvider } from '@/tools/video-editor/lib/proposal-runtime.ts';
 import { useEffectRegistry } from '@/tools/video-editor/hooks/useEffectRegistry.ts';
 import {
   EffectRegistryProvider,
@@ -220,6 +220,19 @@ function EditorRuntimeProviderInner({
     [store, extensionRuntime.requirements],
   );
 
+  // ── M3: Provider-backed proposal persistence bridge ─────────────────────
+  const videoEditorRuntime = useVideoEditorRuntime();
+  const proposalPersistenceRef = useRef<ProposalPersistenceProvider | null | undefined>(undefined);
+  if (proposalPersistenceRef.current === undefined) {
+    const svc = videoEditorRuntime.provider.createExtensionPersistenceService?.({
+      userId: videoEditorRuntime.auth.userId ?? 'unknown',
+      timelineId: videoEditorRuntime.timelineId,
+    }, []);
+    proposalPersistenceRef.current = svc?.capabilities.proposals
+      ? createProposalPersistenceBridge(svc)
+      : null;
+  }
+
   const proposalRuntimeRef = useRef<ReturnType<typeof createProposalRuntime> | null>(null);
   if (!proposalRuntimeRef.current) {
     const ops = store.getState().timelineOps;
@@ -227,6 +240,7 @@ function EditorRuntimeProviderInner({
       proposalRuntimeRef.current = createProposalRuntime({
         timelineOps: ops,
         reader: timelineReader,
+        persistenceProvider: proposalPersistenceRef.current ?? undefined,
       });
       store.getState().syncSlices({ proposalRuntime: proposalRuntimeRef.current });
     }

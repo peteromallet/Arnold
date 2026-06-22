@@ -150,6 +150,9 @@ import type {
   // M3 Host UI
   ProposalPanelState,
   ProposalPanelAction,
+  // M3 Expiry / conflict diagnostics
+  ProposalExpiryDetail,
+  ProposalEnvelope,
   // CreativeContext (updated in M3)
   CreativeContext,
   // M6: Parser / output format / search provider
@@ -542,6 +545,141 @@ describe('M3: type interfaces are importable from @reigh/editor-sdk', () => {
 
     const toggleAction: ProposalPanelAction = { type: 'toggleVisibility' };
     expect(toggleAction.type).toBe('toggleVisibility');
+  });
+
+  it('ProposalState includes expired', () => {
+    const states: ProposalState[] = [
+      'pending',
+      'accepted',
+      'rejected',
+      'stale',
+      'expired',
+    ];
+    expect(states).toHaveLength(5);
+    expect(states).toContain('expired');
+  });
+
+  it('TimelineProposal shape is constructable with expiry fields', () => {
+    const now = Date.now();
+    const proposal: TimelineProposal = {
+      id: 'prop-exp',
+      source: 'com.test.ext',
+      rationale: 'Test expiry',
+      state: 'pending',
+      patch: { version: 0, operations: [] },
+      baseVersion: 5,
+      previewable: true,
+      createdAt: now,
+      updatedAt: now,
+      expiresAt: now + 60_000, // 1 minute TTL
+    };
+    expect(proposal.expiresAt).toBe(now + 60_000);
+    expect(proposal.expiryDetail).toBeUndefined();
+  });
+
+  it('TimelineProposal carries expiryDetail when stale/expired', () => {
+    const now = Date.now();
+    const detail: ProposalExpiryDetail = {
+      reason: 'base-version-mismatch',
+      baseVersion: 5,
+      currentVersion: 7,
+      createdAt: now - 60000,
+      expiredAt: now,
+      ttlMs: 30000,
+    };
+    const proposal: TimelineProposal = {
+      id: 'prop-stale',
+      source: 'com.test.ext',
+      state: 'stale',
+      patch: { version: 0, operations: [] },
+      baseVersion: 5,
+      previewable: false,
+      createdAt: now - 60000,
+      updatedAt: now,
+      expiryDetail: detail,
+    };
+    expect(proposal.state).toBe('stale');
+    expect(proposal.expiryDetail).toBeDefined();
+    expect(proposal.expiryDetail!.reason).toBe('base-version-mismatch');
+    expect(proposal.expiryDetail!.currentVersion).toBe(7);
+  });
+
+  it('ProposalExpiryDetail shape is constructable for ttl-elapsed', () => {
+    const now = Date.now();
+    const detail: ProposalExpiryDetail = {
+      reason: 'ttl-elapsed',
+      baseVersion: 3,
+      currentVersion: 3,
+      createdAt: now - 120000,
+      expiredAt: now,
+      ttlMs: 60000,
+    };
+    expect(detail.reason).toBe('ttl-elapsed');
+    expect(detail.ttlMs).toBe(60000);
+    // currentVersion matches baseVersion when expired by TTL (no conflict)
+    expect(detail.baseVersion).toBe(detail.currentVersion);
+  });
+
+  it('ProposalExpiryDetail shape is constructable for manual expiry', () => {
+    const now = Date.now();
+    const detail: ProposalExpiryDetail = {
+      reason: 'manual',
+      baseVersion: 1,
+      currentVersion: 2,
+      createdAt: now - 5000,
+      expiredAt: now,
+    };
+    expect(detail.reason).toBe('manual');
+    expect(detail.ttlMs).toBeUndefined();
+  });
+
+  it('ProposalEnvelope shape is constructable', () => {
+    const now = Date.now();
+    const proposal: TimelineProposal = {
+      id: 'env-prop-1',
+      source: 'edge-agent',
+      rationale: 'Move clip',
+      state: 'pending',
+      patch: {
+        version: 0,
+        operations: [{ op: 'clip.move', target: 'clip-1', payload: { at: 2.5 } }],
+      },
+      baseVersion: 4,
+      previewable: true,
+      createdAt: now,
+      updatedAt: now,
+    };
+    const envelope: ProposalEnvelope = {
+      proposals: [proposal],
+      baseVersion: 4,
+      summary: 'Moved clip-1 to 2.5s',
+      mutationApplied: false,
+    };
+    expect(envelope.proposals).toHaveLength(1);
+    expect(envelope.proposals[0].id).toBe('env-prop-1');
+    expect(envelope.baseVersion).toBe(4);
+    expect(envelope.summary).toBe('Moved clip-1 to 2.5s');
+    expect(envelope.mutationApplied).toBe(false);
+  });
+
+  it('ProposalEnvelope with empty proposals and no summary is constructable', () => {
+    const envelope: ProposalEnvelope = {
+      proposals: [],
+      baseVersion: 1,
+      mutationApplied: false,
+    };
+    expect(envelope.proposals).toHaveLength(0);
+    expect(envelope.summary).toBeUndefined();
+    expect(envelope.mutationApplied).toBe(false);
+  });
+
+  it('ProposalEnvelope mutationApplied=true for apply-mode responses', () => {
+    const envelope: ProposalEnvelope = {
+      proposals: [],
+      baseVersion: 5,
+      mutationApplied: true,
+    };
+    expect(envelope.mutationApplied).toBe(true);
   });
 
   it('CreativeContext timeline member is assignable from TimelineOps (typing proof)', () => {

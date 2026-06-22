@@ -549,6 +549,48 @@ describe('BrowserLocalFullSnapshotStore', () => {
       expect(parsedA.proposals['shared-id'].status).toBe('accepted');
       expect(parsedA.proposals['shared-id'].payload.owner).toBe('A');
     });
+
+    it('localStorage does NOT contain proposal data — proposals go to IndexedDB only', async () => {
+      const store = new BrowserLocalFullSnapshotStore(SCOPE_A);
+
+      // Create a snapshot with a large proposal payload
+      const proposals = {
+        'large-prop-1': {
+          id: 'large-prop-1',
+          extensionId: 'ext.test',
+          status: 'pending',
+          payload: { data: 'x'.repeat(10000) }, // large payload
+          createdAt: '2026-01-01T00:00:00.000Z',
+          updatedAt: '2026-01-01T00:00:00.000Z',
+        },
+      };
+      const snapshot = makeFullSnapshot(
+        { packs: { 'ext.test': { extensionId: 'ext.test', version: '1.0.0' } } },
+        proposals,
+      );
+      await store.saveSnapshot(snapshot);
+
+      // Verify localStorage directly — proposals must NOT be in localStorage
+      const key = 'reigh.ext-state.user-a.timeline-001';
+      const localData = localStorage.getItem(key);
+      expect(localData).not.toBeNull();
+
+      const parsed = JSON.parse(localData!);
+      // Proposals must be absent from localStorage
+      expect(parsed.proposals).toBeUndefined();
+      // But non-proposal data (packs) must be in localStorage
+      expect(parsed.packs).toBeDefined();
+      expect(parsed.packs['ext.test']).toBeDefined();
+
+      // loadSnapshot() must still return proposals (merged from IndexedDB)
+      const loaded = await store.loadSnapshot();
+      expect(loaded).not.toBeNull();
+      const loadedParsed = JSON.parse(loaded!);
+      expect(loadedParsed.proposals).toBeDefined();
+      expect(loadedParsed.proposals['large-prop-1']).toBeDefined();
+      expect(loadedParsed.proposals['large-prop-1'].status).toBe('pending');
+      expect(loadedParsed.proposals['large-prop-1'].payload.data.length).toBe(10000);
+    });
   });
 });
 
