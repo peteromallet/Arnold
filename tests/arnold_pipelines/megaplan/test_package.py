@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 import arnold_pipelines
 import arnold_pipelines.megaplan as megaplan
 
@@ -34,10 +36,6 @@ def test_build_pipeline_is_callable() -> None:
     assert callable(megaplan.build_pipeline)
 
 
-def test_legacy_shim_re_exports() -> None:
-    import arnold.pipelines.megaplan as legacy
-
-    assert legacy.__name__ == "arnold.pipelines.megaplan"
-    assert legacy.name == megaplan.name
-    assert legacy.entrypoint == megaplan.entrypoint
-    assert callable(legacy.build_pipeline)
+def test_legacy_package_is_not_importable() -> None:
+    with pytest.raises(ModuleNotFoundError):
+        import arnold.pipelines.megaplan  # noqa: F401

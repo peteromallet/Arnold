@@ -133,7 +133,21 @@ def _normalize_worker_options(worker_options: dict[str, object] | None) -> dict[
 
 
 def _import_hermes_runtime():
-    import arnold.pipelines.megaplan.agent  # noqa: F401
+    """Resolve the vendored hermes runtime packages.
+
+    The agent code now lives under ``arnold.agent``; ensure the agent directory
+    is on ``sys.path`` so the vendored ``run_agent`` / ``hermes_state`` modules
+    are resolvable by their legacy absolute names.
+    """
+    import importlib
+    import sys
+    from pathlib import Path
+
+    import arnold.agent  # noqa: F401
+
+    agent_dir = str(Path(arnold.agent.__file__).resolve().parent)
+    if agent_dir not in sys.path:
+        sys.path.insert(0, agent_dir)
 
     try:
         from run_agent import AIAgent

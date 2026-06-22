@@ -1,4 +1,0 @@
-#!/usr/bin/env bash
-# Deprecated — use arnold-run instead.
-echo "mp-run: this wrapper is deprecated, use arnold-run instead." >&2
-exec "$(dirname "$0")/arnold-run" "$@"

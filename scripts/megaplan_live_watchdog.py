@@ -22,12 +22,12 @@ from arnold.execution.backend import SkeletalBackend
 from arnold.workflow import compile_pipeline
 from arnold_pipelines.megaplan.pipelines.live_supervisor import build_pipeline
 from arnold_pipelines.megaplan.pipelines.live_supervisor.model import HealthCategory, Triage
-from arnold.pipelines.megaplan.watchdog.discovery import DEFAULT_SCAN_ROOTS
-from arnold.pipelines.megaplan.watchdog.log import DEFAULT_LOG_PATH, log_event, setup_logging
-from arnold.pipelines.megaplan.watchdog.registry import Observation, WatchdogRegistry
-from arnold.pipelines.megaplan.watchdog.repair_runner import RepairRunner
-from arnold.pipelines.megaplan.watchdog.retry import RetryLoop, RetryOutcome
-from arnold.pipelines.megaplan.watchdog.snapshot import build_snapshot
+from arnold_pipelines.megaplan.watchdog.discovery import DEFAULT_SCAN_ROOTS
+from arnold_pipelines.megaplan.watchdog.log import DEFAULT_LOG_PATH, log_event, setup_logging
+from arnold_pipelines.megaplan.watchdog.registry import Observation, WatchdogRegistry
+from arnold_pipelines.megaplan.watchdog.repair_runner import RepairRunner
+from arnold_pipelines.megaplan.watchdog.retry import RetryLoop, RetryOutcome
+from arnold_pipelines.megaplan.watchdog.snapshot import build_snapshot
 
 
 DEFAULT_REGISTRY_PATH = "~/.megaplan/watchdog/registry.ndjson"
