@@ -1,0 +1,64 @@
+---
+
+## 1. Verdict
+
+**Absent.** No trusted local process runtime, sidecar runtime, or `ProcessContribution` mechanism exists in this codebase for extension-render flows. The render path is exclusively client-side WebCodecs (`useClientRender`) or remote HTTP orchestrator dispatch (`worker-banodoco`). The `renderRuntime.ts` file is a configuration carrier, not a runtime.
+
+---
+
+## 2. Evidence
+
+1. **`ProcessContribution`, `LocalProcessRuntime`, `invokeProcess`, `RenderArtifactManifest` — zero source hits.** Repo-wide `rg` across all `.ts`/`.tsx` (excluding `node_modules`/`vendor`) returns no matches for any of these identifiers.
+
+2. **`src/tools/video-editor/render/renderRuntime.ts` (lines 3–7)** defines `RenderRuntime` as a plain config interface — `projectId`, `orchestratorBaseUrl`, JWT helpers. No process lifecycle, spawn, kill, or communication primitives. This is a settings DTO, not a runtime.
+
+3. **`src/tools/video-editor/render/renderPipeline.ts` (lines 60–130)** branches on two routes only: `'browser-remotion'` (in-browser WebCodecs via `startBrowserRender()`) and `'worker-banodoco'` (HTTP POST to a remote orchestrator endpoint). No local-process path exists. The `'external'` route is stubbed to return an error (line 120–124).
+
+4. **`src/tools/video-editor/lib/renderRouter.ts` (lines 142–157)** — the orchestrator dispatch (`enqueueBanodocoRenderTimeline`) POSTs JSON to a remote `/functions/v1/enqueue-task` URL. No local process fork, no sidecar socket, no IPC.
+
+5. **`src/shared/lib/localWorker/`** (`ingest.ts`, `config.ts`, `healthcheck.ts`) exposes a file-ingest helper that POSTs to `http://localhost:8765`. This is a generic file upload mechanism, not a trusted process/sidecar runtime for extensions. It has no connection to the extension contribution model, no process sandboxing, and no render-flow integration.
+
+6. **`src/tools/video-editor/runtime/extensionSurface.ts`** — the extension contribution model is purely UI-oriented: slots, dialogs, panels, inspector sections. There is no `ProcessContribution` slot, no process factory, no sidecar registry anywhere in this surface.
+
+7. **`src/tools/video-editor/clip-types/defineClipType.ts` (lines 119–127)** — `ClipTypeRenderCapabilities` defines `previewRoute` and `exportRoute` as string enums (`'client'`, `'banodoco'`, `'blocked'`, `'custom'`). No process-contribution route, no `invokeProcess` capability, no `sidecar` export option.
+
+8. **`src/tools/video-editor/core/core-runtime.tsx`** — the "core runtime" is a React context wrapping a data provider and core ports. No kernel, no process manager, no extension sandbox.
+
+9. **`src/tools/video-editor/hooks/useClientRender.ts`** — only browser-side rendering via Remotion WebCodecs `@remotion/web-renderer`. No sidecar or subprocess invocation.
+
+10. **`supabase/functions/ai-timeline-agent/tools/delegateToBanodocoAgent.ts`** — the AI agent dispatch is also HTTP POST to a remote orchestrator, reinforcing that all non-browser work is remote, not local-process.
+
+---
+
+## 3. Gap/Risk
+
+The epic milestones call out "extension runtime/kernel" and "trusted local processes and sidecar runtimes for extension-render flows." Their absence means:
+
+- **No extension sandboxing.** Third-party extensions cannot run rendering/compute workloads in a process-isolated, capability-restricted environment. All extension logic currently runs in the browser's main thread.
+- **No local GPU/compute offload.** Extensions cannot contribute a native process (e.g., a Python FFmpeg sidecar, a local ML inference server) to the render pipeline.
+- **Architectural ceiling.** The render router hardcodes exactly two providers (`browser-remotion`, `worker-banodoco`). There is no `ProcessContribution` provider registration that would let an extension plug in its own render backend.
+- **The `localWorker` module is misleadingly named** but provides zero process management — just HTTP file upload. If it's mistaken for a "trusted local process runtime," product expectations will be severely misaligned.
+
+---
+
+## 4. Polish Plan
+
+1. **Define `ProcessContribution` interface** in `extensionSurface.ts` or a new `processContribution.ts`. Specify: `id`, `label`, `kind` (e.g., `sidecar`/`inline-worker`), `spawn(config)`, `invoke(name, args)`, `kill()`, `health()`.
+
+2. **Add `processContributions` slot** to `VideoEditorExtensionConfig` and `VideoEditorExtensionRuntimeConfig`, so extensions can register process-based render backends.
+
+3. **Add `'process'` route** to `RenderRoute` in `renderRouter.ts` with corresponding dispatch logic in `renderPipeline.ts` that selects and invokes the registered process contribution.
+
+4. **Implement `LocalProcessRuntime`** as a browser-safe abstraction (potentially backed by a Web Worker or a localhost sidecar managed via the existing `localWorker` HTTP bridge). Include `invokeProcess(command, args)` that routes to the registered extension process.
+
+5. **Wire `RenderArtifactManifest`** — a schema for process-contributed render outputs (files, streams, progress events) — into the render pipeline's `afterRender`/`assetMaterialized` events.
+
+6. **Document** the extension process model: sandboxing guarantees, platform requirements (local sidecar vs. browser-only), and a minimal "hello world" process contribution example.
+
+7. **Test** the end-to-end flow: extension registers a local process → user clicks render → router dispatches to process → artifact manifest surfaces download URL.
+
+---
+
+## 5. Confidence
+
+**High.** The absence is unambiguous — keyword searches return zero hits, no file implements any of the named interfaces, and the render pipeline's route set has no process path. Confidence would be further cemented by a review of the external orchestrator source (the Python `banodoco` worker) to confirm it too lacks local-process extension hooks, but the frontend/render-layer evidence alone is dispositive.

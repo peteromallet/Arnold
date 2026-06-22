@@ -1,0 +1,76 @@
+## Confirmed
+
+### 1. No `removeByExtensionId` on the diagnostics store
+
+The `VideoEditorDiagnosticsStore` interface (diagnostics.ts L295–329) exposes `report`, `reportMany`, `replaceBySource`, `clear`, `getSnapshot`, and `subscribe`. There is no `removeByExtensionId` method. The implementation (`DiagnosticsStoreImpl`) tracks a `Set<string>` of seen IDs and an array snapshot, but neither supports removal by extension ID. This gap means there is no programmatic way to purge all diagnostics for a single extension on disable/unload without clearing the entire store.
+
+### 2. Extension-render diagnostics leak — no replaceBySource for that source
+
+`EditorRuntimeProvider.tsx` calls `replaceBySource('extension-runtime', …)` (line 120) and replaces `provider`/`asset-materialization`/`asset-generation` via the provider diagnostics loop (lines 127–143). `BrowserVideoEditorProvider.tsx` calls `replaceBySource('extension-loader', …)` (line 135). However, `ExtensionRenderBoundary.tsx` reports render exceptions via `store.report(diag)` (singular push, line 93–97 of the boundary). No code path ever calls `replaceBySource('extension-render', …)`. Render-boundary diagnostics therefore accumulate indefinitely across re-renders and are never cleaned up when an extension is disabled or unloaded.
+
+### 3. Render boundary has no reset mechanism
+
+`ExtensionRenderBoundaryInner` (ExtensionRenderBoundary.tsx L108–128) is a class component using `getDerivedStateFromError`. Once `this.state.error` is set to non-null, `render()` returns the fallback permanently. There is no `componentDidUpdate`, no `key`-driven reset, no `retry` prop/function, and no `reset()` method exposed to the parent. The only way to clear the error is to unmount and remount the boundary entirely. The M4 brief requires that re-enabling a crashed extension "resets the render boundary and attempts fresh render" — this works today only if the parent supplies a fresh `key` to force remount; nothing in the current code does that automatically.
+
+### 4. No diagnostics capacity bounds
+
+The `DiagnosticsStoreImpl` grows its snapshot array without limit. `report()` and `reportMany()` unconditionally push entries (diagnostics.ts L374–405). There is no `MAX_DIAGNOSTIC_COUNT`, no eviction policy, and no rejection path for exceeding a configured bound. The store will grow unboundedly as `extension-render` diagnostics accumulate.
+
+### 5. Missing M4-required tests
+
+The existing test corpus is substantial: `ExtensionRenderBoundary.test.tsx` (52+ tests), `extensionLoader.test.ts` (60+ tests), plus manifest, settings, and state-repository tests. However, the specific tests listed in the M4 "Required Tests" section are absent:
+- No test for scoped reporter anti-spoofing (extension reporter cannot spoof host sources)
+- No test for capacity bounds or eviction
+- No test for `removeByExtensionId` on disable/unload
+- No test for error-boundary reset after crash and re-enable
+- No SchemaForm tests (SchemaForm does not exist yet in this codebase)
+
+---
+
+## Rejected or Overstated
+
+**"No diagnostics bounds" is strictly true for capacity, but the deduplication mechanism provides a soft bound**: The store uses a deterministic ID hash (`diagnosticId`, diagnostics.ts L342–357) derived from `(source, code, extensionId)` and a `Set<string>` to prevent exact-duplicate diagnostics. This means render-boundary exceptions from the same extension producing the same error do not multiply infinitely — each unique `(source, code, extensionId)` appears at most once. However, this is not a capacity *bound*; it's deduplication, and distinct errors still accumulate without limit.
+
+**The existing test coverage is not "missing" in the general sense** — `ExtensionRenderBoundary.test.tsx` and `extensionLoader.test.ts` are thorough for their current contracts. The gap is specifically the lifecycle-cleanup tests the M4 brief mandates, which rightly don't exist yet because the underlying APIs (`removeByExtensionId`, capacity bounds, boundary reset) haven't been built.
+
+---
+
+## Required Plan Changes
+
+### A. Add `removeByExtensionId(extensionId: string)` to diagnostics store
+
+Add to `VideoEditorDiagnosticsStore` interface and `DiagnosticsStoreImpl`:
+- Filter `this.snapshot` to remove all diagnostics where `d.extensionId === extensionId` or where `d.detail?.extensionId === extensionId`.
+- Rebuild `this.seen` set from remaining diagnostics.
+- Call `commit()` with the filtered array.
+- This method becomes the single cleanup hook for disable/unload. Callers (`BrowserVideoEditorProvider` or a lifecycle manager) invoke it when an extension is removed.
+
+### B. Add scoped reporter factory
+
+Add `createScopedReporter(store, source, extensionId)` to diagnostics.ts that returns a `VideoEditorDiagnosticReporter` whose `report`/`reportMany`/`replaceBySource` methods:
+- Force `source` to the pinned value (reject mismatches).
+- Force `extensionId` to the pinned value.
+- Reject any diagnostic carrying `source` values outside the extension-authored set (block spoofing of `render`, `provider`, `perf`, etc.).
+This is the host-owned primitive that extensions receive, never the raw store.
+
+### C. Add configurable capacity bound with oldest-first eviction
+
+Add `maxDiagnostics?: number` to `createVideoEditorDiagnosticsStore()`. When set and the array exceeds the bound, evict the oldest entries (lowest index in the snapshot array) before adding new ones. Emit a `diagnostic_capacity_reached` warning as the first evicted diagnostic so the UI can surface it. Default to no bound (current behavior) for backward compatibility; wire a bound (e.g., 500) in `BrowserVideoEditorProvider`.
+
+### D. Wire extension-render diagnostics through `replaceBySource`
+
+`ExtensionRenderBoundary` should not call `store.report()` directly. Instead, add a hook or mechanism so the parent runtime collects all render-boundary diagnostics per-extension and calls `replaceBySource('extension-render', allExtensionRenderDiags)` atomically. When an extension is disabled, the next `replaceBySource` call naturally drops its diagnostics. Combined with `removeByExtensionId` as a backstop, this prevents leaks.
+
+### E. Add explicit reset to ExtensionRenderBoundary
+
+Add an optional `resetKey: string | number` prop to `ExtensionRenderBoundary`. When `resetKey` changes, clear `this.state.error` to `null` in `componentDidUpdate`, re-rendering children. The parent runtime increments this key when an extension transitions from disabled→enabled or when a "retry" action is triggered. This satisfies "re-enabling a crashed extension resets the render boundary" without requiring unmount/remount.
+
+### F. Add lifecycle-cleanup tests
+
+Add a test file `runtime/extensionLifecycle.test.tsx` covering:
+1. Disable removes all surfaces, commands, keybindings, and diagnostics for that extension.
+2. `removeByExtensionId` purges extension-render diagnostics.
+3. Re-enable restores contributions deterministically.
+4. Re-enable after crash resets the render boundary (boundary shows children, not fallback).
+5. Scoped reporter rejects host-source spoofing.
+6. Capacity bound evicts oldest diagnostics when exceeded.

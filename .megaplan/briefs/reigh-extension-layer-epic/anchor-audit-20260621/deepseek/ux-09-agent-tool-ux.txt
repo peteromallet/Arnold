@@ -1,0 +1,63 @@
+Now I have a complete picture. Here is the audit verdict.
+
+---
+
+## 1. Verdict
+
+**Agent tools are application-hardcoded, non-extension-provided, operate in direct-apply mode without proposal/review flows, and are only partially transparent to the end user — the tool definitions are documented internally but there is zero extension SDK surface for tool registration, review gates, or third-party instrumentation.**
+
+---
+
+## 2. Evidence
+
+1. **Hardcoded tool registry** — `supabase/functions/ai-timeline-agent/tool-schemas.ts` (the entire file) defines `TIMELINE_AGENT_TOOLS` as a static `const` array of 11 tool definitions. No dynamic registration API exists. Extension authors cannot add tools without modifying this file.
+
+2. **Hardcoded dispatch chain** — `supabase/functions/ai-timeline-agent/loop.ts`, lines ~270–335, `executeToolCall()` uses a literal if/else chain (`if (toolCall.name === "run")`, `if (toolCall.name === "create_task")`, etc.) with no plugin or registry abstraction.
+
+3. **Hardcoded fallback tool names** — `supabase/functions/ai-timeline-agent/tool-calls.ts`, lines ~22–34, `FALLBACK_TOOL_NAMES` is a local `Set` with a closed list of tool names. New tool names require source edits here.
+
+4. **No extension SDK export for agent tools** — `src/tools/video-editor/index.ts` exports `AgentSession`, `AgentTurn`, `AgentTurnAttachment` *types* but no `registerAgentTool`, `executeAgentTool`, or extension-kernel agent API. A thorough ripgrep for `extension` in the video-editor directory returns zero matches.
+
+5. **No "proposal" concept anywhere** — `rg -rn "proposal"` across `src/tools/video-editor/` and `supabase/functions/ai-timeline-agent/` returns zero matches. The question's "proposal flows" concept is absent from the codebase.
+
+6. **Direct-apply by default** — In `tool-schemas.ts`, the `run` tool's `mode` parameter (line ~30) supports `"apply" | "dry_run" | "validate"`, but the system prompt and loop always invoke in apply mode. The `executeCommand` default in `tools/registry.ts`, line `extractMode` returns `"apply"` when mode is absent. No user-facing review/gate exists before mutations land.
+
+7. **Tool-call UI is present but not review-gated** — `src/tools/video-editor/components/AgentChat/AgentChat.tsx` renders tool calls as collapsible `AgentChatToolGroup` components (lines 44–65, `buildRenderedTurns`), but this is post-hoc display, not pre-execution review. The user cannot approve/reject a tool call before it executes.
+
+8. **SequenceCreatorPanel has a separate review pattern, not agent-aligned** — `src/tools/video-editor/components/SequenceCreator/SequenceCreatorPanel.tsx` implements a generate→preview→insert/replace flow, but this is a distinct UX surface disconnected from the chat agent's tool execution.
+
+9. **React context bridge is internal-only** — `src/shared/contexts/AgentChatContext.tsx` provides an `AgentChatProvider` with `AgentChatActionsRegistry` for panel-to-pane communication (recording toggle, focus, engagement), but this is a host-side bridge, not an extension-facing SDK.
+
+10. **Tests validate internal behavior, not extension contracts** — `src/tools/video-editor/components/AgentChat/AgentChatMessage.test.tsx` and `useAgentSession.test.tsx` cover UI rendering and payload serialization, but no test verifies that extension authors can register tools, inspect agent sessions, or hook into proposal flows.
+
+---
+
+## 3. Gap/Risk
+
+**Product consequence:** Third-party extensions (theme packs, custom effect vendors, workflow integrators) cannot provide their own agent tools, cannot intercept agent tool calls for review, and cannot participate in a proposal→approve→apply lifecycle. Every new tool capability requires a core-platform code change, making the extension layer a closed system for agent tooling. This directly contradicts the epic's intent of an "extension layer" where contributed capabilities plug into the agent surface.
+
+**Dev consequence:** Developers cannot audit what the agent does before it executes. The "dry_run" mode exists in the schema but has no UX affordance. If the agent makes a destructive timeline edit, the user sees it only after it has landed (mitigated by `undo` but not prevented).
+
+---
+
+## 4. Polish Plan
+
+1. **Define an `AgentToolRegistration` interface** — create `src/tools/video-editor/extensions/AgentToolExtension.ts` exporting `registerAgentTool(name, definition, handler)` and `unregisterAgentTool(name)`. This becomes the SDK boundary.
+
+2. **Refactor `executeToolCall` into a registry-backed dispatcher** — replace the if/else chain in `loop.ts` with a `Map<string, ToolHandler>` populated from both core tools and extension-registered tools.
+
+3. **Expose the registration API from `index.ts`** — add `registerAgentTool` / `unregisterAgentTool` to the public SDK surface alongside existing type exports.
+
+4. **Introduce a proposal mode in the agent loop** — add a `proposal` run mode to the `run` tool schema that returns mutations as structured diffs instead of applying them. Wire this to a chat UI affordance ("Approve / Reject") in `AgentChatToolGroup`.
+
+5. **Add a tool-review panel** — in `AgentChat.tsx`, add an `onBeforeToolExecute` callback that extensions can hook to surface tool calls for human-in-the-loop review before they reach `executeToolCall`.
+
+6. **Write acceptance tests** — create `agent-tool-extension.acceptance.test.ts` verifying that an extension can (a) register a custom tool, (b) have it appear in the LLM's tool list, (c) have it dispatched through the loop, and (d) unregister it.
+
+7. **Document the extension contract** — add an `AGENT_TOOL_EXTENSIONS.md` in the video editor tool directory describing the registration API, tool schema format, handler contract, and proposal-flow integration.
+
+---
+
+## 5. Confidence
+
+**Medium.** The evidence that tools are hardcoded and proposal flows are absent is unambiguous across grep, file inspection, and the public export surface. What could raise this to high is tracing the epic's actual acceptance criteria (the `reigh-extension-layer-epic` branch may have a CLAUDE.md or spec that defines expected tool extension behaviors beyond what I can infer from code alone). If the epic's definition of "agent tool UX integration" is satisfied by the current internal-only chat panel + task pane integration, the verdict would shift to "implemented but architecturally not extension-layer."

@@ -1,0 +1,77 @@
+## Findings
+
+### Finding 1: `proposal_policy` never reaches the edge function — complete dead-end
+**Evidence:** `supabase/functions/ai-timeline-agent/types.ts:200-204` — `AgentInvocationBody` has only `session_id`, `user_message`, `selected_clips` (all `unknown`). No `proposal_policy` field. `supabase/functions/ai-timeline-agent/index.ts` — zero references to `proposal_policy`, `proposal_response`, or `timelineMutationMode`. `runAgentLoop` is called at line ~78 without `timelineMutationMode`. Grep of the entire `ai-timeline-agent/` directory returns zero matches for `proposal_policy` or `proposal_response`.
+**Why it matters:** The entire proposal policy spine is a no-op. The client sends `proposal_policy: 'always'` but it's never read, converted, or acted upon. All timeline mutations execute directly regardless of policy.
+**Required plan change:** Add `proposal_policy` to `AgentInvocationBody`, read it in `index.ts`, convert to `TimelineMutationMode`, and pass it to `runAgentLoop({..., timelineMutationMode})`.
+**Severity:** Critical
+
+---
+
+### Finding 2: `proposal_policy` is only sent on auto-continuation, never on the first invoke
+**Evidence:** `src/tools/video-editor/hooks/useAgentSession.ts:325-326` — `proposal_policy` is included in the body only when `nextUserMessage === undefined`, which is the auto-continuation path. The initial invocation always has a `user_message`, so `proposal_policy` is unconditionally omitted. Test at `useAgentSession.test.tsx:186` confirms: `"does not include proposal_policy in the initial invoke body"`.
+**Why it matters:** Even if the edge function were fixed to read `proposal_policy`, it would never receive it on the first (and usually only) user message. Auto-continuation is rare and policy must be set at session start.
+**Required plan change:** Move `proposal_policy` into the initial invoke body. The condition `nextUserMessage === undefined` should not gate policy. Policy should be sent on every invoke or at minimum the first one.
+**Severity:** Critical
+
+---
+
+### Finding 3: Edge function never returns `proposal_response` — proposal data is discarded
+**Evidence:** `supabase/functions/ai-timeline-agent/index.ts:91-96` — the response JSON includes only `session_id`, `status`, `turns_added`, `tool_count`, `model`. No `proposal_response` field. `runAgentLoop` returns `{ status, turns, summary }` with no proposal data. `loop.ts:595-615` (`processToolCalls`) captures only `result.result` from `ToolResult`, completely ignoring `result.proposal`. `loop.ts` has zero references to `proposal_response` or `result.proposal`.
+**Why it matters:** Even if `timelineMutationMode` were correctly threaded to `executePreparedTransaction` (which does produce proposal objects), the proposal data is silently lost in `processToolCalls` and never reaches the client. The client-side `proposalResponse` state in `useSendMessage` will never be set.
+**Required plan change:** (a) In `processToolCalls`, capture `result.proposal` from `executeToolCall` and aggregate it. (b) Return proposal data from `runAgentLoop`. (c) Include `proposal_response` in the edge function response JSON.
+**Severity:** Critical
+
+---
+
+### Finding 4: `create_shot` tool bypasses proposal mode entirely
+**Evidence:** `supabase/functions/ai-timeline-agent/loop.ts:492-493` — `executeCreateShot(toolArgs, timelineState, supabaseAdmin)` is called without `timelineMutationMode`. `executeCreateShot` (line 373-395) calls `createShotWithGenerations` which does a direct `supabaseAdmin.rpc("insert_shot_at_position", ...)` insert with no proposal interception.
+**Why it matters:** Shot creation is a durable, destructive mutation that cannot be intercepted even if proposal plumbing were fixed. An agent can create shots and attach generations directly, bypassing review entirely.
+**Required plan change:** `executeCreateShot` must accept `timelineMutationMode` and either return a proposal (in propose mode) or refuse mutation. Same for auto-shot creation in `create_task`.
+**Severity:** High
+
+---
+
+### Finding 5: `create_task` auto-creates shots bypassing proposal mode
+**Evidence:** `supabase/functions/ai-timeline-agent/tools/create-task.ts:425` — when `taskType === "image-to-video"` and no shot exists, `createShotWithGenerations` is called directly. No `timelineMutationMode` parameter exists in `executeCreateTask`.
+**Why it matters:** The `create_task` tool is the primary agent workflow. When creating image-to-video tasks, it silently calls `createShotWithGenerations` — a direct DB mutation with no proposal path.
+**Required plan change:** `executeCreateTask` must accept `timelineMutationMode` and either produce a proposal for shot creation or defer it.
+**Severity:** High
+
+---
+
+### Finding 6: Agent accept flow cannot work — `ProposalResponseData` is missing `runner`
+**Evidence:** `src/tools/video-editor/types/agent-session.ts:52-62` — `ProposalResponseData` has `proposalId`, `proposal` (Record), `input` (Record), `summary`. `src/tools/video-editor/components/ProposalReviewDialog.tsx:110-115` — `acceptProposal` requires `commands.applyTimelineProposal(proposal, input, runner)` where `runner` is a `TimelineCommandRunner`. The agent path has no `TimelineCommandRunner` — it runs on the server.
+**Why it matters:** Even if `proposal_response` reached the client, the accept flow requires a `TimelineCommandRunner` that the agent session hook doesn't have. The `ProposalReviewProvider` pattern assumes an in-browser command runner. Accepting an agent proposal would fail.
+**Required plan change:** The agent accept flow needs a different mechanism — either a dedicated edge function endpoint (`accept-agent-proposal`) that re-runs the command through the server-side command runner, or the `ProposalResponseData` must carry enough context for client-side re-execution.
+**Severity:** High
+
+---
+
+### Finding 7: All destructive timeline commands apply directly — zero proposal enforcement
+**Evidence:** `supabase/functions/ai-timeline-agent/index.ts:78` — `runAgentLoop` called without `timelineMutationMode`. `supabase/functions/ai-timeline-agent/loop.ts:469` — `executeCommand(toolArgs, ..., timelineMutationMode)` receives `undefined` for `timelineMutationMode`. `supabase/functions/ai-timeline-agent/tools/registry.ts:464` — `executePreparedTransaction` only enters proposal mode when `timelineMutationMode === "propose"`, which never happens.
+**Why it matters:** Every destructive command (move, split, trim, delete, set, add-text, set-text, duplicate, set-params, set-theme, set-theme-overrides, add-media, swap, undo) executes directly with full persistence. No proposal is ever returned even though the `executePreparedTransaction` function (line 464) and `handleRepeat` (line 655) both correctly handle proposal mode when activated.
+**Required plan change:** Wire `proposal_policy` → `timelineMutationMode` end-to-end (Findings 1-3).
+**Severity:** Critical
+
+---
+
+### Finding 8: No proposal persistence, TTL, or expiry exists for agent proposals
+**Evidence:** `src/tools/video-editor/commands/proposals.ts` — `createProposalFromExecutionResult` creates in-memory `TimelineProposal` objects with `createdAt` but no persistence. `.megaplan/briefs/reigh-extension-layer-foundation/m3-proposal-agent-policy-spine.md` lines 28-30 specify "Persist proposal envelopes," "Add TTL/expiry and stale-proposal cleanup semantics," and "Preserve stale-version rejection before mutation." None of this is implemented in the agent path.
+**Why it matters:** Without persistence, proposals can't survive a reload. Without TTL, stale proposals accumulate. Without expiry enforcement, accepted proposals might apply against a moved-target config version. The `canApplyProposal` check in `proposals.ts:210-213` exists but requires a caller to invoke it — agent proposals have no caller-side enforcement.
+**Required plan change:** Implement proposal persistence (DB table + repository), TTL semantics, cleanup, and stale-version rejection at the point of accept (both client and edge function paths).
+**Severity:** Medium
+
+---
+
+### Finding 9: `handleRepeat` in registry.ts has a broken `undo` proposal path
+**Evidence:** `supabase/functions/ai-timeline-agent/tools/registry.ts:757-764` — in proposal mode, `undo` creates a dry-run against a command with `type: "undo" as never`, which has no registered command descriptor and will likely fail or produce meaningless results. Also line 671 — `toTransactionCommand` is called with a modified `state` object that uses `dryRunData.config` instead of the working config, which could cause `add-media`/`swap` to register assets against the wrong state.
+**Why it matters:** If proposal mode were ever activated, the undo-proposal path would produce broken proposals. The repeat path has a mismatch between working state and dry-run baseline.
+**Required plan change:** Fix the undo proposal path to produce a meaningful proposal. Align repeat's dry-run state with the actual working state.
+**Severity:** Low (latent — only manifests when Findings 1-3 are fixed)
+
+---
+
+## Verdict
+
+The proposal policy spine is non-functional end-to-end. `proposal_policy` is sent by the client but never reaches the edge function (`AgentInvocationBody` omits it, `index.ts` never reads it, `runAgentLoop` is called without `timelineMutationMode`), is only included on auto-continuation calls (never the initial invoke), and even if it were threaded through, proposal data is discarded in `processToolCalls` and never returned to the client. Additionally, `create_shot` and `create_task` auto-shot-creation bypass any proposal concept entirely via direct RPC inserts. The client accept flow requires a `TimelineCommandRunner` that the agent path doesn't possess. No proposal persistence, TTL, or expiry exists. Every destructive timeline command applies directly with zero interception. The existing proposal-mode code in `executePreparedTransaction` and `handleRepeat` is correctly structured but never activated. Fixing this requires: (1) threading `proposal_policy` through the full stack, (2) surfacing proposal responses from the agent loop through the edge function to the client, (3) adding a server-side accept endpoint or client-side re-execution path, (4) wrapping `create_shot` and auto-shot creation in proposal mode, and (5) implementing proposal persistence with TTL/stale-version enforcement.

@@ -1,0 +1,63 @@
+---
+
+## 1. Verdict
+
+**Partial.** Schema-internal canonicalization (repair/migrate/flatten) is implemented and well-tested, but the formal versioned schema contract (`version: 1`), the pinnedShotGroups→`app['x-reigh']` relocation, and the extension-package loading/migration path described in design documents remain unimplemented in code. SDK surface governance is strong; the serialized schema is not yet version-locked for forward-compatibility.
+
+---
+
+## 2. Evidence
+
+1. **No `version` field on `TimelineConfig`.** The design doc (`docs/design/video-editor-oss-extraction.md:404`) specifies `version: z.literal(1)` in the published schema. The actual `TimelineConfig` type (`src/tools/video-editor/types/index.ts:228-241`) has no `version` field at all — only `output`, `clips`, `tracks`, `pinnedShotGroups`, `theme`, `theme_overrides`, `generation_defaults`, and `app`.
+
+2. **`configVersion` is persistence-layer only, not schema.** `LoadedTimeline.configVersion` (`src/tools/video-editor/data/DataProvider.ts:11-14`) is an optimistic-concurrency integer used by `saveTimeline()` for conflict detection (`src/tools/video-editor/hooks/useTimelinePersistence.ts:167,177`), not a schema version for format migration.
+
+3. **`pinnedShotGroups` not relocated.** The design doc requires `pinnedShotGroups` be removed from the core schema and moved to `app['x-reigh'].pinnedShotGroups` (`docs/design/video-editor-oss-extraction.md:510-512`). The code still keeps `pinnedShotGroups` as a top-level `TimelineConfig` field (`src/tools/video-editor/types/index.ts:232`) and 20+ runtime files read/write it directly (e.g., `usePinnedShotGroups.ts:35`, `useTimelineCommit.ts:78-79`, `TimelineEditorCore.tsx:67`, `serialize.ts:48-50`). The migration from `config.pinnedShotGroups` → `config.app?.['x-reigh']?.pinnedShotGroups` does not exist.
+
+4. **`repairConfig` handles legacy projection but not schema relocation.** The `repairConfig()` function (`src/tools/video-editor/lib/timeline-domain.ts:462-563`) strips legacy `start`/`children` fields from pinned shot groups but preserves them at the top-level `pinnedShotGroups` key — it never rewrites them into `app['x-reigh']`. Test coverage for legacy repair is solid (`migrate.test.ts:7-163`, `serialize.test.ts:231-314`).
+
+5. **`app` extension namespace exists and is tested.** The `app` escape hatch is on `TrackDefinition` (line 81), `TimelineClip` (line 155), and `TimelineConfig` (line 240) in `types/index.ts`. `cloneAppExtension()` deep-clones it (`timeline-domain.ts:211-220`). Tests validate top-level, clip-level, and track-level `app` round-trips with unknown-key rejection (`serialize.test.ts:343-413`).
+
+6. **`canonicalizeTimelineConfigSnapshot` chains migrations but has no version gate.** The pipeline at `timeline-domain.ts:747-764` runs `repairConfig → repairShotGroupContiguity → migrateToFlatTracks → canonicalizeNonHoldTrim` sequentially but has no input schema version to branch on — it applies all migrations unconditionally. There is no "if v0 then migrate to v1" logic.
+
+7. **SDK contract governance is operational.** `config/contracts/registry.json` defines 7 contracts (core, browser, provider, sequence, testing, supabase-client, ui-cn) with `@publicContract` tag enforcement. The governance script (`scripts/quality/check-contract-governance.mjs`) verifies exports against registry. Deprecation budget phase-downs are tracked in `src/shared/lib/governance/deprecationPolicy.ts` (three policies with removal deadlines).
+
+8. **No extension package loader/manager/state exists.** The extension runtime (`src/tools/video-editor/runtime/extensionSurface.ts`) is a config-driven injection model (slots, dialogs, inspector sections) — not a package loader. A grep for "PackageManifest", "ExtensionManifest", "package.*loader", or "loader" in the video-editor tree returned zero results. Extension migration boundaries from in-tree to external packages are entirely unbuilt.
+
+9. **InMemoryDataProvider exists for offline/standalone compatibility** (`src/tools/video-editor/lib/browser-runtime.ts:57-123`), providing a migration path for hosts that need to run without Supabase. It supports `loadTimeline`, `saveTimeline`, `listTimelines`, `deleteTimeline`, `loadAssetRegistry`, and optimistic concurrency.
+
+10. **`serialize.ts` has Sprint 2 backward-compatibility guarantees.** `serializeForDisk()` (`serialize.ts:33-67`) supports an optional `extras` parameter for theme/overrides/generation_defaults/app and a `pinnedShotGroups` parameter. Tests confirm pre-Sprint-2 timelines round-trip without injecting new optional fields (`serialize.test.ts:118-156`). The `clipType` was widened to `string` at SD-024 (`types/index.ts:62-69`) and the validator tolerates unknown types (`serialize.test.ts:158-169`).
+
+---
+
+## 3. Gap / Risk
+
+**Product consequence:** Any external consumer or OSS adopter cannot determine, upon loading a serialized timeline, which schema version it conforms to. The absence of a `version` field means there is no forward-compatibility contract — a v2 timeline loaded by a v1 parser will silently fail or produce garbage because there is no version gate to reject it. This blocks the multi-package extraction described in the design doc.
+
+**Dev consequence:** The `pinnedShotGroups` → `app['x-reigh']` migration not being executed means the extraction cannot proceed as designed. If extraction happens before relocation, pinned-shot-group data either leaks reigh concepts into OSS schema (violating the "forbidden in core" table at `docs/design/video-editor-oss-extraction.md:797-815`) or gets silently dropped, corrupting legacy timelines. The 20+ direct reads of `config.pinnedShotGroups` create a mesh of dependencies that must all migrate in lockstep.
+
+**Process consequence:** No extension package loader means third-party extensions cannot be distributed, versioned, or migrated independently — all extensions currently ship in-tree, making the "extension layer" a design aspiration rather than a platform primitive.
+
+---
+
+## 4. Polish Plan
+
+1. **Add `version: number` to `TimelineConfig`** (type at `types/index.ts:228`), defaulting to `1` for all current serialized data. Update `validateSerializedConfig` to reject unknown versions.
+
+2. **Implement the `pinnedShotGroups` relocation shim.** Add a `migratePinnedShotGroupsToApp()` function that moves `config.pinnedShotGroups` → `config.app?.['x-reigh']?.pinnedShotGroups`. Wire it into `canonicalizeTimelineConfigSnapshot` after `repairShotGroupContiguity` with an issue code like `pinned_shot_groups_relocated_to_app`. Update `serializeForDisk` to read from `app['x-reigh']` when writing (with a dual-read fallback for legacy).
+
+3. **Update all 20+ direct `config.pinnedShotGroups` reads** (listed in `serialize.test.ts:790`) to go through a single accessor that checks both the legacy location and `app['x-reigh']`.
+
+4. **Add `// @deprecated` annotations** on the `pinnedShotGroups` field in `TimelineConfig` (`types/index.ts:232`) with `removeBy: '2026-07-30'`.
+
+5. **Add test gate tests** as specified in the design doc (`docs/design/video-editor-oss-extraction.md:776-790`): serialize, migrate, timeline-save-utils, pinned-group-projection, useTimelineCommit, useClipEditing, useClipDrag, and useTimelineTrackManagement must all pass with the relocated schema.
+
+6. **Add the formal zod schema exports** (`TimelineConfigV1`, `TimelineTrackV1`, `TimelineClipV1`, `migrate()`, `toJsonSchema()`) as outlined in `docs/design/video-editor-oss-extraction.md:404-468` — this is a prerequisite for extraction.
+
+7. **Define extension package manifest format** (a `video-editor-extension.json` with `name`, `version`, `schemaVersionRange`, `slots`, `dialogs`, `panels`) and a `loadExtensionPackage()` function. Until this exists, the "extension layer" is not a platform — it's in-tree config injection.
+
+---
+
+## 5. Confidence
+
+**Medium.** What would raise it to high: (a) a committed `version: 1` field on `TimelineConfig` with a zod schema export, (b) a working `pinnedShotGroups` → `app['x-reigh']` migration with passing test gates, and (c) at least a stub extension package loader with a manifest format. The absence of all three keeps the "extension layer" at the SDK-and-runtime boundary but not yet at the external-package-migration boundary.

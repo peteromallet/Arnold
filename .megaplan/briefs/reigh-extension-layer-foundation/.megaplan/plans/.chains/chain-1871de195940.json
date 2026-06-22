@@ -1,0 +1,71 @@
+{
+  "schema_version": 0,
+  "current_milestone_index": 1,
+  "current_plan_name": "m2-provider-persistence-spine-20260622-1921",
+  "last_state": "done",
+  "pr_number": 55,
+  "pr_state": "open",
+  "completed": [
+    {
+      "label": "m1-preview-truth-contract-freeze",
+      "plan": "m1-preview-truth-and-contract-20260622-1802",
+      "status": "done",
+      "pr_number": 54,
+      "pr_state": "merged",
+      "full_suite_backstop": {
+        "mode": "shadow",
+        "status": "failed",
+        "blocks": false,
+        "reason": "full_suite_backstop_mode=shadow: recorded only",
+        "passed": 8,
+        "failed": 3,
+        "failing_tests": [
+          "vendor/timeline-schema/tests/test_materialize_output.py::MaterializeOutputTests::test_materialize_output_from_2rp_theme",
+          "vendor/timeline-schema/tests/test_materialize_output.py::ResolveThemeTests::test_resolve_theme_2rp",
+          "vendor/timeline-schema/tests/test_materialize_output.py::ResolveThemeTests::test_resolve_theme_with_overrides"
+        ],
+        "newly_failing": [],
+        "deleted_tests": [],
+        "baseline_failing_count": 0,
+        "current_failing_count": 3,
+        "delta_computed": false,
+        "command": "pytest --tb=no -q --no-header -rA",
+        "duration_s": 1.912055791937746,
+        "ran": true,
+        "artifact": "full_suite_backstop.json"
+      }
+    }
+  ],
+  "branch_head": "67daf18801ab947eaa0e84652062c8d5dd3f3cb7",
+  "pr_head": "67daf18801ab947eaa0e84652062c8d5dd3f3cb7",
+  "last_pushed_commit": "67daf18801ab947eaa0e84652062c8d5dd3f3cb7",
+  "dirty_flag": true,
+  "sync_state": "dirty",
+  "extra_repos": [],
+  "chain_session": null,
+  "resolved_workspace": null,
+  "extra_repo_sync": [],
+  "completion_contract_mode": "shadow",
+  "full_suite_backstop_mode": "shadow",
+  "retry_counts": {},
+  "ladder_stage": {},
+  "profile_bumps": {},
+  "robustness_bumps": {},
+  "depth_bumps": {},
+  "enforce_revise_counts": {},
+  "metadata": {
+    "execution_environment": {
+      "schema_version": 1,
+      "created_phase": "chain_start",
+      "last_observed_phase": "chain_start",
+      "project_root": "/Users/peteromalley/Documents/reigh-workspace/reigh-app",
+      "target_root": "/Users/peteromalley/Documents/reigh-workspace/reigh-app",
+      "work_dir": "/Users/peteromalley/Documents/reigh-workspace/reigh-app",
+      "engine_root": "/Users/peteromalley/.pyenv/versions/3.11.11/lib/python3.11/site-packages",
+      "target_head": "67fe1e582641f85b8d2910ab84a065b6dba87871",
+      "target_base": "b7a49a0c2a664184b0a51c81f66f16648c25c3fc",
+      "target_base_ref": "main",
+      "target_fallback_reason": null
+    }
+  }
+}

@@ -1,0 +1,63 @@
+I have all the evidence needed. Here is the final audit.
+
+---
+
+## 1. Verdict
+
+**Absent.** The types `TimelinePatch` and `TimelineProposal` do not exist as public contracts anywhere in the codebase. The system has internal version-aware persistence (`configVersion`/`expectedVersion`) and mutation plumbing (`TimelineEditMutation`), but no public-facing semantic patch/proposal abstraction with base-version gating and stale rejection is exposed to callers, agents, or extension surfaces.
+
+---
+
+## 2. Evidence
+
+1. **No `TimelinePatch` or `TimelineProposal` type defined anywhere.** A repo-wide ripgrep for both symbols returns zero hits (`rg -rn "TimelinePatch|TimelineProposal"` across the entire repo — confirmed empty). The only near-match is `TimelinePatchRegistry` (`timeline-state-types.ts:44`), which is a *function type* `(assetId: string, entry, src?) => void` for optimistic asset registry insertion — completely unrelated to semantic versioned patches.
+
+2. **`timeline-state-types.ts`** (the file the question asks to inspect first) contains no patch or proposal types. It defines `TimelinePatchRegistry`, `TimelineUnpatchRegistry`, `TimelineApplyEdit`, and assorted state ref typings. None carry a `baseVersion` field, stale semantics, or proposal shape.
+
+3. **`timeline-mutation-engine.ts`** defines `TimelineEditMutation` (lines 12–28), a discriminated union of `{type: 'rows' | 'config' | 'pinnedShotGroups'}`. This is the *internal mutation vehicle*, not a public contract. It has no `baseVersion` field and no stale-check logic — `previewTimelineMutation`/`applyTimelineMutation` operate blindly on whatever `current` is passed in.
+
+4. **`commands/types.ts`** builds an elaborate command framework (`TimelineCommand`, `TimelineCommandDescriptor`, `TimelineCommandRunner`, `TimelineCommandExecutionResult`) with validate/dryRun/apply/invert pipeline, but again zero mention of `baseVersion` or stale rejection. The `TimelineCommandExecutionResult` type (line 130) has `status: 'ok' | 'partial' | 'rejected'` — but `'rejected'` means command-level validation failure, not version-conflict rejection.
+
+5. **`useTimelineCommands.ts`** implements the `TimelineCommands` facade (10 public methods). Each command internally reads `current = getCurrentData(state)` and applies mutations through `applyValidatedMutation`. There is no version check before mutation — commands operate on whatever `current` the store holds at call time. No stale-rejection gate exists at the command surface.
+
+6. **`DataProvider.ts`** (lines 12–19, 41–47) defines `TimelineVersionConflictError` and a `saveTimeline(timelineId, config, expectedVersion)` contract. This is the *only* version-gated boundary: the persistence layer rejects saves whose `expectedVersion` doesn't match the server's `configVersion`.
+
+7. **`useTimelinePersistence.ts`** (lines 113–217) implements the conflict-retry loop (MAX_CONFLICT_RETRIES = 3) around `saveTimeline`. This is wholly internal to the persistence hook — not a public API, not typed as a `TimelinePatch`/`TimelineProposal`, and not consumable by external agents or extension code.
+
+8. **`command-parser.ts` in `ai-timeline-agent`** parses natural-language commands into `ParsedCommand` (a flat union of 17 command shapes). The `validateCommand` function (line ~175) checks clip/track existence but performs no version comparison and has no concept of stale rejection. The agent's `tools/timeline.ts` mutates configs in-place and returns result strings — no patch envelope, no base version.
+
+9. **`configVersion`** (aliased as `n`) threads through `TimelineData`, `LoadedTimeline`, and the save pipeline. It is a monotonic integer incremented on each successful save. It is **never surfaced as a public field on any mutation input type**, proposal type, or command contract — it stays internal to `useTimelineCommit.patchRegistry` and `useTimelinePersistence.doSave`.
+
+10. **The `semantic` flag** on `ApplyEditOptions` (`useTimelineCommit.ts:67`) is a boolean metadata tag passed to the event bus for history tracking. It signals intent ("this edit is semantic"), but carries no version, no patch envelope, and no stale-rejection semantics.
+
+---
+
+## 3. Gap/Risk
+
+**Product consequence:** Without a public `TimelinePatch`/`TimelineProposal` contract, external agents (the AI timeline agent in `supabase/functions/ai-timeline-agent`), extension surfaces, and multi-user editing flows cannot submit versioned, stale-checkable edits. Today the agent mutates configs directly and assumes the client will land them correctly. If two agents or a user and agent submit concurrent edits, the only protection is the server-side `expectedVersion` check at persistence time — which produces a silent retry loop in `useTimelinePersistence` that may drop one party's changes without surfacing the conflict to the caller. This undermines the "extension layer as a platform" goal: there is no typed contract an extension can import to build a patch, attach a base version, and receive a deterministic accept/reject/stale response.
+
+**Dev consequence:** Every new integration (agent, API, multi-user) must re-invent version-check plumbing. The `TimelineCommand` framework has the right shape (validate → dryRun → apply → invert), but lacks the version dimension, making it unfit for distributed or asynchronous edit flows.
+
+---
+
+## 4. Polish Plan
+
+1. **Define `TimelinePatch`** in `commands/types.ts` or a new `src/tools/video-editor/patches/types.ts`: a public type carrying `baseVersion: number`, `operations: TimelineCommand[]` (or a specialized op list), and optional `proposalId: string`. Make it distinct from the internal `TimelineEditMutation`.
+
+2. **Define `TimelineProposal`** as the response envelope: `{ accepted: boolean; stale: boolean; nextVersion?: number; appliedData?: TimelineData; conflict?: { serverVersion: number } }`.
+
+3. **Add `applyPatch(proposal: TimelinePatch): TimelineProposal`** to the `TimelineCommandRunner` or a new `TimelinePatchRunner` interface, wiring it to the existing `configVersion` infrastructure. The runner reads `baseVersion`, compares against `currentData.configVersion`, rejects stale with `{ accepted: false, stale: true }`, otherwise runs the command pipeline.
+
+4. **Expose via `useTimelineCommands`** or a parallel `useTimelinePatches()` hook so the agent and external consumers have a single import point.
+
+5. **Update `command-parser.ts` in `ai-timeline-agent`** to wrap its output in `TimelinePatch` envelopes carrying the agent's observed `configVersion` as `baseVersion`, and handle the `TimelineProposal.stale` response.
+
+6. **Unit tests** for stale rejection (patch with `baseVersion < configVersion` → rejected), successful apply (version matches), and conflict-after-apply (server rejects despite local match).
+
+7. **Document the patch contract** in a `docs/extension-layer/timeline-patches.md` with examples showing agent usage patterns.
+
+---
+
+## 5. Confidence
+
+**High.** The absence of these types is unambiguous — zero hits across the entire repo for `TimelinePatch` (as a discrete type) or `TimelineProposal`. The existing `configVersion` infrastructure provides the plumbing that a patch contract would need, but it has not been shaped into a public API. What would change this to medium/low: discovering a `TimelinePatch` export from `@banodoco/timeline-ops` or a reference doc I missed, but the grep evidence and file inspection are conclusive.

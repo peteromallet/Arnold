@@ -1,9 +1,16 @@
 import {
+  type ExtensionPersistenceScope,
+  type ExtensionPersistenceService,
   TimelineNotFoundError,
   TimelineVersionConflictError,
   type DataProvider,
   type LoadedTimeline,
 } from '@/tools/video-editor/data/DataProvider.ts';
+import type { ExtensionDiagnostic } from '@reigh/editor-sdk';
+import {
+  createCachedExtensionPersistenceService,
+  type FullSnapshotStore,
+} from '@/tools/video-editor/runtime/extensionPersistenceCache.ts';
 import { createDefaultTimelineConfig } from '@/tools/video-editor/lib/defaults.ts';
 import type { AssetRegistry, AssetRegistryEntry, TimelineConfig } from '@/tools/video-editor/types/index.ts';
 
@@ -19,6 +26,25 @@ type InMemoryTimelineRecord = {
   registry: AssetRegistry;
 };
 
+class InMemoryExtensionSnapshotStore implements FullSnapshotStore {
+  constructor(
+    private readonly snapshots: Map<string, string>,
+    private readonly key: string,
+  ) {}
+
+  async loadSnapshot(): Promise<string | null> {
+    return this.snapshots.get(this.key) ?? null;
+  }
+
+  async saveSnapshot(serialized: string): Promise<void> {
+    this.snapshots.set(this.key, serialized);
+  }
+
+  async deleteSnapshot(): Promise<void> {
+    this.snapshots.delete(this.key);
+  }
+}
+
 const clone = <T,>(value: T): T => {
   return JSON.parse(JSON.stringify(value)) as T;
 };
@@ -33,6 +59,7 @@ const normalizeTimelineSeed = (seed?: TimelineSeed): InMemoryTimelineRecord => {
 
 export class InMemoryDataProvider implements DataProvider {
   private readonly timelines = new Map<string, InMemoryTimelineRecord>();
+  private readonly extensionSnapshots = new Map<string, string>();
 
   constructor(seed: Record<string, TimelineSeed> = {}) {
     for (const [timelineId, value] of Object.entries(seed)) {
@@ -42,6 +69,14 @@ export class InMemoryDataProvider implements DataProvider {
 
   seedTimeline(timelineId: string, seed?: TimelineSeed) {
     this.timelines.set(timelineId, normalizeTimelineSeed(seed));
+  }
+
+  clearExtensionPersistence(): void {
+    this.extensionSnapshots.clear();
+  }
+
+  seedExtensionPersistenceSnapshot(scope: ExtensionPersistenceScope, serialized: string): void {
+    this.extensionSnapshots.set(`${scope.userId}:${scope.timelineId}`, serialized);
   }
 
   async loadTimeline(timelineId: string): Promise<LoadedTimeline> {
@@ -104,5 +139,17 @@ export class InMemoryDataProvider implements DataProvider {
         [assetId]: clone(entry),
       },
     };
+  }
+
+  createExtensionPersistenceService(
+    scope: ExtensionPersistenceScope,
+    diagnostics: ExtensionDiagnostic[],
+  ): ExtensionPersistenceService {
+    const key = `${scope.userId}:${scope.timelineId}`;
+    return createCachedExtensionPersistenceService(
+      new InMemoryExtensionSnapshotStore(this.extensionSnapshots, key),
+      diagnostics,
+      scope,
+    );
   }
 }

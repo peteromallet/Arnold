@@ -1,0 +1,59 @@
+---
+
+## 1. Verdict
+
+**Partial — the bridge persistence pipeline is well-implemented for the happy path, but asset materialization diagnostics are orphaned (no UI surface, no retry API, no offline resilience), so the runtime cannot reliably surface or recover from materialization failures.**
+
+---
+
+## 2. Evidence
+
+- **`AstridBridgeDataProvider.ts:800–835`** — `materializeGenerationAssets()` iterates the registry, resolves generation-backed entries via `resolveGenerationAsset`, downloads blobs, and writes them to `sources/assets/` using the File System Access API. Failed assets are tracked with `materializationStates` but *never surfaced to the user*.
+
+- **`AstridBridgeDataProvider.ts:812`** — The guard `this.materializationStates.get(assetId)?.state === 'skipped-with-diagnostic'` permanently skips assets that failed once. There is no `resetMaterializationState()` or retry API, so a transient network blip condemns an asset to indefinite limbo for the lifetime of the provider instance.
+
+- **`AstridBridgeDataProvider.ts:243–253`** — `getMaterializationSummary()` is a public method that collects all materialization states and diagnostics. It is called **only in tests** (verified by project-wide grep: zero production call sites). No toast, no status bar, no inspector panel consumes this data.
+
+- **`AstridBridgeDataProvider.ts:537`** — `fetchLocalTimelinePayload()` sets `this.localTimelineFiles` as a side effect of timeline loading. If the user re-picks a different project root directory, stale `localTimelineFiles` handle persists until the next `loadTimeline`/`loadAssetRegistry` call.
+
+- **`useExternalDrop.ts:429`** — The Astrid direct-upload path is gated on `runtime.provider instanceof AstridBridgeDataProvider`. When true, it calls `uploadAsset()` → `registerAsset()` → writes to disk + bridge. If the bridge is unreachable, `registerAsset` fails despite local bytes being written successfully, leaving an orphaned file with no registry entry.
+
+- **`AstridBridgeDataProvider.ts:345–355`** — `saveCheckpoint()` returns a synthetic timestamp ID; `loadCheckpoints()` returns `[]`. These are no-ops, which is contract-legal (both optional on `DataProvider`) but means the checkpoint subsystem is absent for the local bridge path.
+
+- **`AstridBridgeDataProvider.ts:531–556`** — The local timeline payload path reads `assembly.json` and `registry.json` from the project directory tree, materializes generation assets on load, and writes back the materialized registry to disk. This is correctly atomic (temp-file-then-commit pattern at lines 744–765).
+
+- **`AstridBridgeDataProvider.test.ts:820–1126`** — Four dedicated tests cover materialization success, failure diagnostics, mixed success/failure, and skip-on-retry behavior. All pass, confirming the internal logic is sound.
+
+- **`AstridBridgeDataProvider.ts:914–930`** — Materialization writes use a staging directory (`.incoming/<nonce>/`) then copy to `sources/assets/`, with best-effort temp cleanup. This is robust against partial writes but adds an extra I/O step per asset.
+
+- **`external-drop-utils.ts:242–276`** — The `directAssetUploadAllFiles` path in `handleFileDrop` is synchronous: upload → patch registry → drop onto timeline. This is correct for the local bridge case and avoids the skeleton-clip hack used in the non-Astrid path.
+
+---
+
+## 3. Gap/Risk
+
+The concrete product consequence: **when a generation-backed asset fails to download during materialization, the editor silently skips it.** The asset remains in the registry with an empty `file` field and a `generationId`, so timeline clips referencing it will show a broken/missing media indicator. The user has no visibility into *which* asset failed, *why* it failed, or *how* to retry. On page reload, the failure state is lost, and the asset will be retried automatically — masking the problem during development but creating unpredictable flakiness in production if network conditions vary between loads. The absence of a diagnostics UI means support teams cannot troubleshoot customer-reported "missing media" issues without inspecting IndexedDB or console logs.
+
+---
+
+## 4. Polish Plan
+
+1. **Expose `getMaterializationSummary()` through `DataProviderContext`** — Add `materializationSummary` to `VideoEditorRuntimeContextValue` and pipe it from the provider so any UI component can consume it.
+
+2. **Build a minimal diagnostics indicator** — A small badge or status-bar entry that shows an amber count when `diagnostics.length > 0`. Clicking it could open a lightweight panel listing failed assets with their `reason` and `message`.
+
+3. **Add `retryMaterialization(assetId)` API** — A public method on `AstridBridgeDataProvider` that resets a single asset's materialization state to `'not-attempted'` and re-runs `materializeGenerationAsset`. Wire it to a "Retry" button in the diagnostics panel.
+
+4. **Persist materialization states to `registry.json`** — Store a `_materialization` key (or extend entries) so that skipped states survive page reload. This also makes the state inspectable for debugging.
+
+5. **Add a unit test for the `skipped-with-diagnostic` guard on reload** — The existing test verifies skip-on-subsequent-save but not skip-on-reload. Verify that loading a registry with a previously-failed asset respects the persisted skipped state.
+
+6. **Decouple local upload from bridge `registerAsset`** — When `localTimelineFiles` is set, `uploadAsset` should write directly to `sources/local-drops/` and patch the registry locally (write `registry.json`) without requiring the bridge. The `registerAsset` call to the bridge should be fire-and-forget with a fallback.
+
+7. **Add `materializeGenerationAssets` to the `DataProvider` interface as an optional method** — This would let the runtime trigger materialization proactively (e.g., when a generation-backed asset is added to the registry via the lightbox → "Add to timeline" flow) rather than only at save/load time.
+
+---
+
+## 5. Confidence
+
+**Medium.** What would raise it to high: a full end-to-end test exercising the local bridge path from project pick → timeline load → generation-backed asset drop → materialization failure → diagnostics UI display → retry → success. Currently the materialization logic has excellent unit coverage but zero integration or E2E coverage, and the UI gap means we cannot confirm users actually experience a working flow end-to-end.

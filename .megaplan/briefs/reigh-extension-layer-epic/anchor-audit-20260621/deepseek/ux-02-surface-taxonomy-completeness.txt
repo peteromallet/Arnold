@@ -1,0 +1,59 @@
+---
+
+## 1. Verdict
+
+**Partial.** The extension surface type system declares 9 slots and 3 registry categories covering major editor chrome, but 3 of the 9 slots (`leftPanel`, `rightPanel`, `dialogs`) are entirely unrendered in the production shell (`TimelineEditorShellCore`), and 3 expected surface categories—code/writing panel, stage panel, and diagnostics panel—have zero representation as surfaces, slots, or components anywhere in the codebase.
+
+---
+
+## 2. Evidence
+
+1. **Slot declaration vs. consumption gap** — `extensionSurface.ts` (lines 10–18) defines `VideoEditorSlotName` with 9 values: `header`, `toolbar`, `leftPanel`, `rightPanel`, `timelineFooter`, `statusBar`, `dialogs`, `assetPanel`, `inspectorPanel`. However, `TimelineEditorShellCore.tsx` (lines ~227–240) only dereferences 6: `header`, `toolbar`, `assetPanel`, `inspectorPanel`, `timelineFooter`, `statusBar`. The `leftPanel`, `rightPanel`, and `dialogs` slots are never rendered in the production shell.
+
+2. **leftPanel/rightPanel only in example code** — `CustomTwoPaneVideoEditorExample.tsx` (lines 90–91, 108–109) is the only file that consumes `slotRenderers.leftPanel` and `slotRenderers.rightPanel`. This is an example/demo file, not the production shell. Extensions contributing to these slots will silently render nothing in the real editor.
+
+3. **Dialogs slot unattached from main shell** — `TimelineEditorShellCore.tsx` has no call to `slotRenderers.dialogs`. The `VideoEditorDialogHost` component (`runtime/VideoEditorDialogHost.tsx`) implements a dialog registry with sort/visibility/layer support, but it is never instantiated inside `TimelineEditorShellCore`. Only the `CustomTwoPaneVideoEditorExample` wires it (line ~110: `resolveSlot(slotRenderers.dialogs, renderContext)`).
+
+4. **Code/writing/stage panels: absent** — A full-text search for `CodePanel`, `WritingPanel`, `StagePanel`, `codePanel`, `writingPanel`, `stagePanel` across the entire `src/tools/video-editor/` tree returns zero results. No slot, component, or type definition exists for any of these surfaces.
+
+5. **Diagnostics/status panel: no UI surface** — `perf-diagnostics.ts` (lines 1–170) implements `bootDiagnostics`, `MemoryPressureDetector`, `RenderStormDetector`, `RafLoopDetector`, and `EffectLoopDetector` — all purely console-based (`logPerf` writes to `console.error`). There is no dedicated diagnostics panel component. The `statusBar` slot only renders extension-contributed content; no built-in diagnostics surface wires into it.
+
+6. **Inspector taxonomy partially complete** — `PropertiesPanel.tsx` (lines ~147–158) renders `InspectorRegistrySections` for both `before-default` and `after-default` placements, and `ClipPanel.tsx` pulls in `SequenceParamEditor`. However, there is no inspector section slot for contributed *code/script* editors — only effect/sequence parameter editing.
+
+7. **Preview overlay exists but is closed-box** — `PreviewPanel.tsx` (lines 89–133) renders `OverlayEditor` for visual clip manipulation. There is no slot or extension point for contributing custom overlay renderers into the preview surface itself.
+
+8. **Asset panel surface is wired** — `TimelineEditorShellCore.tsx` (lines ~233–235) correctly renders `assetPanelSlot` with a fallback to `VideoEditorAssetPanelSurface` when contributed panels exist. This is the most complete surface in the taxonomy.
+
+9. **SequenceCreator is a dialog, not a panel** — `SequenceCreatorPanel` is conditionally rendered at the bottom of `TimelineEditorShellCore.tsx` (lines ~296–300) as an uncontrolled dialog, not as a slotted panel surface. It cannot be replaced or augmented via the extension registry.
+
+10. **AgentChat exists but is disconnected** — `AgentChat/AgentChat.tsx` exports `AgentChatPanel` but there is no slot for it in the shell. It is not wired into any of the 9 slot names or into the panel registry system.
+
+---
+
+## 3. Gap/Risk
+
+The concrete product consequence: an extension developer who reads `extensionSurface.ts` and contributes to `leftPanel`, `rightPanel`, or `dialogs` will see nothing rendered. A developer expecting to build a code panel, script/stage editor, or diagnostics dashboard will find no mount point, no type definition, and no pattern to follow. The `AgentChatPanel` and `SequenceCreatorPanel` are wired as hard-coded shell children rather than extension-contributed surfaces, meaning they cannot be swapped, augmented, or suppressed by third-party extensions. The diagnostics system exists but cannot surface its output to users, making proactive performance monitoring invisible at the UX level.
+
+---
+
+## 4. Polish Plan
+
+1. **Wire `leftPanel`/`rightPanel` into `TimelineEditorShellCore`** — Add slot resolution for `leftPanel` and `rightPanel` in the full (non-condensed) and condensed layouts, falling back to the existing layout when no slot renderer is provided. This closes the largest surface taxonomy gap (~20 lines of change).
+
+2. **Render `dialogs` slot in shell** — Instantiate `VideoEditorDialogHost` (or directly resolve `slotRenderers.dialogs`) at the shell root in `TimelineEditorShellCore.tsx`, below all panel content, so extension-contributed modal/overlay dialogs actually appear.
+
+3. **Add `codePanel` slot to `VideoEditorSlotName`** — Extend the union type and wire a placeholder in the right-panel area so that contributed code/script editors have a mount point. Consider adding a `SequenceParamEditor`-style extension hook for contributed code editors.
+
+4. **Add built-in diagnostics surface wired to `statusBar`** — Create a lightweight `DiagnosticsStatusBar` component that surfaces render-storm/raf-loop/memory-pressure counts and expose it as the default fallback for the `statusBar` slot.
+
+5. **Expose `SequenceCreatorPanel` and `AgentChatPanel` as registry contributions** — Convert them from hard-coded shell children into `VideoEditorPanelDescriptor` entries or dedicated slot names (`sequenceCreator`, `agentChat`) so extensions can override or augment them.
+
+6. **Add preview overlay extension point** — Add an `overlay` slot name to `VideoEditorSlotName` and pass it through `PreviewPanel` as an additional overlay layer above `OverlayEditor`.
+
+7. **Document slot taxonomy** — Add a Markdown doc (`docs/extension-surfaces.md`) enumerating every slot, its render context, and the expected placement in each layout mode (full/condensed/mobile).
+
+---
+
+## 5. Confidence
+
+**High.** The evidence is unambiguous: the type system declares 9 slots but the main shell renders only 6, and 3 entire surface categories (code, stage, diagnostics) have zero representation. This is verifiable by searching for any of the missing slot names or surface categories. What would change confidence to absolute: running a unit test that programmatically verifies every `VideoEditorSlotName` value is dereferenced in `TimelineEditorShellCore`.

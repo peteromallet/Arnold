@@ -1,0 +1,65 @@
+## 1. Verdict
+
+**Misleadingly implied.** A functional pipeline exists — a Supabase‑realtime subscription over `timeline_agent_sessions` plus an edge‑function agent loop — but it is ad‑hoc plumbing hardwired to a single table and single endpoint. There is no `DataSourceContribution`, `LiveChannel`, `GenerationSession`, or any other extension‑friendly data‑source registration surface anywhere in the repository. The "bridge" is agent‑specific plumbing, not a platform layer an extension author could plug into.
+
+---
+
+## 2. Evidence
+
+1. **All three search targets are absent.**  
+   `rg DataSourceContribution`, `rg LiveChannel`, `rg GenerationSession` each return zero results across the entire repo. No type, interface, class, or comment contains those terms.
+
+2. **The "live" link is a single Supabase realtime channel on one table.**  
+   `src/tools/video-editor/hooks/useAgentSession.ts:162‑186` opens a `postgres_changes` subscription on `timeline_agent_sessions`, invalidating React Query caches on `UPDATE`. This is the only "live data" mechanism for the generation session.
+
+3. **The edge function is a monolithic HTTP POST endpoint, not a session bridge.**  
+   `supabase/functions/ai-timeline-agent/index.ts:14‑92` — `serve((req) => withEdgeRequest(…))` runs the entire agent loop synchronously, persists via `persistSessionState`, and returns a JSON response. The frontend polls via the realtime subscription on the DB table; there is no WebSocket, no bidirectional bridge, no streaming.
+
+4. **The `AgentChatContext` bridge is React‑only, not a data‑source extension.**  
+   `src/shared/contexts/AgentChatContext.tsx:48‑110` — `AgentChatProvider` uses `useToolSettings` to derive a `timelineId`, and `VideoEditorProvider` pushes overrides via `register/unregister`. This is purely a React‑tree wiring pattern; extensions cannot contribute data‑sources through it.
+
+5. **`DataProvider` is a fixed interface with no contribution mechanism.**  
+   `src/tools/video-editor/data/DataProvider.ts:38‑56` defines `loadTimeline`, `saveTimeline`, `loadAssetRegistry`, etc. It is exported from the public SDK (`src/tools/video-editor/index.ts:63‑77`), but there is no registry, no `DataProviderContribution` type, and no way for an extension to register a custom data source.
+
+6. **`RealtimeEventProcessor` is hardcoded to five database tables.**  
+   `src/shared/realtime/RealtimeEventProcessor.ts:103‑135` — the `processQueue` switch statement handles only `tasks`, `generations`, `shot_generations`, `generation_variants`, and `timelines`. Extensions cannot register new event streams.
+
+7. **The agent loop’s tool registry hardcodes extensions as internal functions.**  
+   `supabase/functions/ai-timeline-agent/tools/registry.ts` and `loop.ts:execToolCall` dispatch by tool name (`create_task`, `transform_image`, `search_loras`, etc.) via a monolithic `if/else` chain (loop.ts:368‑431). There is no tool‑contribution interface for extensions to hook into the session.
+
+8. **No extension‑data‑source tests exist.**  
+   The test harness (`supabase/functions/_tests/harness/client.ts`) invokes `ai-timeline-agent` directly and checks HTTP status codes; there are no tests for data‑source contributions or live channel registration.
+
+---
+
+## 3. Gap/Risk
+
+**Product consequence:** An extension developer who wants to plug in a live data feed (e.g., a real‑time stock‑ticker overlay on a video, a WebSocket‑fed scoreboard, or a collaborative cursor stream) has no stable contract to implement. They would have to either (a) fork the agent loop, (b) bypass the session system entirely and inject data through side‑channel DB writes, or (c) build a parallel realtime subscription outside the editor’s lifecycle management. All three paths are fragile, unsupported, and break on internal refactors.
+
+**Dev consequence:** The current "bridge" conflates *session lifecycle* (the agent chat loop) with *live data ingestion* (the realtime subscription). This makes it impossible to add a live data source that is not tied to an agent session — for example, a background feed that populates a clip’s text overlay — without duplicating the entire realtime subscription pattern or tightly coupling to `timeline_agent_sessions`.
+
+---
+
+## 4. Polish Plan
+
+1. **Define a `DataSourceContribution` contract** (new file: `src/tools/video-editor/contributions/DataSourceContribution.ts`).  
+   An object with `id`, `label`, and a `connect(timelineId): LiveChannel` factory. `LiveChannel` exposes `subscribe(observer) => unsubscribe` and `close()`.
+
+2. **Add a `DataSourceRegistry` to the kernel** (`src/tools/video-editor/registry/DataSourceRegistry.ts`).  
+   A simple `Map<string, DataSourceContribution>` with `register(contribution)` / `unregister(id)`, exported from the public SDK index.
+
+3. **Wire the registry into `useAgentSession`** so that, when an agent session is active, any registered live data sources also connect and feed turn attachments or contextual data into the session (or at least expose them via the `AgentChatContext`).
+
+4. **Add a `RealtimeEventProcessor.registerTable(table, handler)` method** so extensions can push custom DB‑table events through the existing batched processor, rather than creating standalone channels.
+
+5. **Ship a smoke‑test extension** (`src/tools/video-editor/contributions/__tests__/DataSourceContribution.test.ts`) that registers a mock data source, verifies it receives `connect`/`disconnect` calls during session lifecycle, and confirms events flow through the processor.
+
+6. **Update the public SDK export** (`src/tools/video-editor/index.ts`) to expose `DataSourceContribution`, `LiveChannel`, `DataSourceRegistry`, and `registerDataSource()`.
+
+7. **Document the contract** in `docs/extension-layer/data-sources.md` with a working example.
+
+---
+
+## 5. Confidence
+
+**High.** The three distinguishing tokens (`DataSourceContribution`, `LiveChannel`, `GenerationSession`) are literally absent from the codebase. The existing live‑data plumbing is a straightforward Supabase realtime subscription on a single table, and the agent session is a pure HTTP‑RPC loop. There is no architectural ambiguity — extension‑friendly data sources simply do not exist. Confidence would drop only if a contribution‑style registry were found under an unexpected name (e.g., `SourcePlugin`, `FeedProvider`), but exhaustive searches for these patterns also returned nothing.

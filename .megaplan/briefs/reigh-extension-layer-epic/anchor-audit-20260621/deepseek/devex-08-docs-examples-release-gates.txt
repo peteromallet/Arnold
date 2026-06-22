@@ -1,0 +1,53 @@
+---
+
+## 1. Verdict
+
+**Misleadingly implied.** The repo ships a thoughtfully typed extension-slot runtime (`extensionSurface.ts`) and a believable embed demo, but the public surface for building/installing/using extensions against it is absent: no discoverable docs, no extension-config passthrough in the public browser provider, zero extension-specific tests, and the referenced SDK guide directory simply does not exist.
+
+---
+
+## 2. Evidence
+
+1. **Dead SDK doc link** — `README.md` (line ~78) references `docs/video-editor-sdk/README.md` as the sole source of "Supported public SDK guide, recipes, and standalone embed demo references." That directory and file do not exist on disk (`ls: docs/video-editor-sdk/: No such file or directory`).
+
+2. **embed-demo never touches extension slots** — `examples/embed-demo/src/App.tsx` demonstrates `BrowserVideoEditorProvider` + hooks but never imports `extensionSurface.ts` or exercises slot, panel, inspector, or dialog registration. The demo proves the provider mounts — it does not prove anyone can build an extension.
+
+3. **`extensionSurface.ts` is not a public entrypoint** — `config/governance/video-editor-sdk-import-allowlist.json` lists exactly five public entrypoints (`index.ts`, `browser.ts`, `browser-provider.ts`, `sequence.ts`, `testing.ts`). `runtime/extensionSurface.ts` is not among them. External consumers following the SDK rules cannot import it.
+
+4. **No extension config reaches the runtime through the browser provider** — `BrowserVideoEditorProvider.tsx` (lines 38–62) forwards to `EditorRuntimeProvider` with `dataProvider`, `timelineId`, `timelineName`, `effectCatalog`, and a `runtime` bag containing only `assetResolver`, `exporter`, `hostContext`. `EditorRuntimeProvider.tsx` (lines 89–105) constructs the `DataProviderWrapper` value with those fields — but the `VideoEditorRuntimeContextValue` type also requires `extensions`, `auth`, `project`, `shots`, `mediaLightbox`, `agentChat`, `toast`, and `telemetry`. These are never supplied. The full `VideoEditorProvider` (line 465) passes `DEFAULT_VIDEO_EDITOR_EXTENSION_RUNTIME` (all-empty frozen constant). **Extension config from a host is structurally impossible through the public browser provider.**
+
+5. **Zero extension tests** — A grep for `extensionSurface` across all test files returns no matches. The `public-browser.acceptance.test.tsx` tests mount the editor with a fixture; it does not exercise `VideoEditorExtensionConfig`, slot rendering, dialog registration, panel/inspector ordering, or visibility predicates. `testing.ts` provides `createEmbedDemoTimelineFixture()` but no `createTestExtensionConfig()` helper.
+
+6. **No release gate covers extension regression** — `make prepush` runs only `dockerfile-check` and `build-context-check`. `make release-check` adds build, `quality:check`, and the Vitest suite — none of which include extension-surface contract tests because none exist. The contract registry (`config/contracts/registry.json`) lists `video-editor-core-sdk`, `video-editor-browser-sdk`, `video-editor-browser-provider-sdk`, `video-editor-sequence-sdk`, and `video-editor-testing-sdk` — but no `video-editor-extension-sdk` contract.
+
+7. **Quality scripts guard import boundaries, not extension behavior** — `check-video-editor-sdk-imports.mjs` protects the SDK boundary (no deep imports from outside), and `check-video-editor-core-imports.ts` protects the headless core from host imports. Neither verifies that `extensionSurface` types are stable, that slot signatures haven't drifted, or that the extension runtime is actually wired.
+
+8. **The `CustomTwoPaneVideoEditorExample` exists but is private** — It demonstrates slot resolution (`resolveSlot`, `useVideoEditorSlotRenderers`, `useVideoEditorRenderContext`) but lives at `src/tools/video-editor/examples/CustomTwoPaneVideoEditorExample.tsx`, deep inside the internal module. It is not exported from any public entrypoint, not referenced in the README, and not runnable by an external consumer.
+
+## 3. Gap/Risk
+
+**Product consequence:** A developer who reads the README and follows the `docs/video-editor-sdk/` link finds nothing. If they discover the embed demo, they learn only provider+mount+hooks — not the extension-slot system that is the intended extensibility surface per the OSS extraction design doc. Even if they find `extensionSurface.ts` by browsing source, they cannot wire extension config through `BrowserVideoEditorProvider` because the runtime value construction in `EditorRuntimeProvider` omits the `extensions` field entirely. The extension layer is an internal-only artifact with no documented path to contribution.
+
+**Dev consequence:** Without regression tests on slot contracts, panel/dialog ordering, or visibility predicates, any refactor can silently break the extension surface with no CI signal. The pre-push gate is too lightweight to catch this.
+
+## 4. Polish Plan
+
+1. **Create `docs/video-editor-sdk/README.md`** — Minimum: explain the browser provider, public hooks, and the extension slot/panel/dialog system with copy-paste code recipes. Link to `examples/embed-demo/` as a working reference.
+
+2. **Expose extension config through `BrowserVideoEditorProvider`** — Add an `extensions?: VideoEditorExtensionConfig` prop, thread it through `EditorRuntimeProvider` → `DataProviderWrapper`, resolving to the runtime config via `resolveVideoEditorExtensionRuntime()`. This is a one-field prop addition.
+
+3. **Add an extension-specific embed demo** — Extend `examples/embed-demo/` (or add `examples/extension-demo/`) showing slot registration (header, leftPanel, inspectorSection) so consumers see a working pattern.
+
+4. **Create `VideoEditorExtensionConfig` test fixture** — In `testing.ts`, export `createTestExtensionConfig()` returning a valid `VideoEditorExtensionConfig` with at least one slot, one dialog, one panel, and one inspector section. Include it in the contract registry.
+
+5. **Write `extensionSurface.test.ts`** — Cover `resolveVideoEditorExtensionRuntime` (empty config, partial config, edge cases), `resolveVideoEditorPanelRegistry` (ordering, visibility predicates, empty sets), and the full round-trip: config → resolve → render context.
+
+6. **Add extension acceptance test** — Extend `public-browser.acceptance.test.tsx` (or create `extension.acceptance.test.tsx`) to: mount `BrowserVideoEditor` with an `extensions` config containing a test slot, verify the slot renders, and verify `DEFAULT_VIDEO_EDITOR_EXTENSION_RUNTIME` produces no errors.
+
+7. **Add `video-editor-extension-sdk` contract** — Register `extensionSurface.ts` in `config/contracts/registry.json` and `config/governance/contract-surface-map.json` so the governance gates track its exported types.
+
+8. **Wire extension-surface checks into `quality:check` / `test:arch`** — At minimum add a lint rule that validates `VideoEditorExtensionRuntimeConfig` completeness in `EditorRuntimeProvider`, and run the new extension test suite as part of `test:contracts`.
+
+## 5. Confidence
+
+**High.** The evidence is unambiguous: the docs don't exist, the test coverage is zero, the public browser provider cannot pass extension config through, and the README link is dead. Confidence would become "certain" only by confirming whether the missing `extensions` field in `EditorRuntimeProvider`'s value literal is a TypeScript error suppressed by a cast or exclude pattern I could not locate — but even if it compiles, the field is absent from the constructed value, which confirms the gap.

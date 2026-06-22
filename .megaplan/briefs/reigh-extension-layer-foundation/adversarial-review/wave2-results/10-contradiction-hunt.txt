@@ -1,0 +1,77 @@
+I now have all the evidence. Here is the adversarial review.
+
+---
+
+## Contradictions
+
+### C1 — `panels.placement`: docs say use it, schema rejects it (CRITICAL)
+
+- **Claim A:** `docs/extensions/compatibility.md` table row for panels: "authored packages should use `placement: 'asset-panel'`."
+- **Claim B:** `config/contracts/reigh-extension.schema.json` `contributions.panels.items` allows only `id` and `order` with `additionalProperties: false`. There is no `placement` property.
+- **Evidence:** compatibility.md line "panels | Asset panel descriptors; authored packages should use `placement: 'asset-panel'`" vs. schema `"additionalProperties": false` with only `"id"` and `"order"` in properties. The foundation plan acknowledges this drift as a known issue but it remains unfixed across all docs.
+- **Required change:** Decide: either add `placement: 'asset-panel'` to the schema's panels descriptor, or remove the `placement` instruction from compatibility.md. The M1 brief asks this as an open question but does not resolve it.
+- **Severity: Critical.** Any author following the docs will produce a manifest that fails schema validation. This is the first thing an implementer would hit.
+
+### C2 — `assetPanel` is simultaneously a slot AND a panel collection; architecture is ambiguous
+
+- **Claim A:** Schema `contributions.slots.items.slot.enum` includes `"assetPanel"` as a slot value. So asset panels are rendered through the slot system.
+- **Claim B:** Schema also has `contributions.panels` as a separate collection (only `id`/`order`). Compatibility.md describes `panels` saying "authored packages should use `placement: 'asset-panel'`," implying a separate panel contribution mechanism.
+- **Evidence:** Slot enum lists `assetPanel`; panels collection exists separately. `inspectorSections` has a `placement` field with explicit enum — the only surface collection that does. The relationship between slots.assetPanel and contributions.panels is undefined.
+- **Required change:** Clarify in schema/docs whether asset panels are contributed via slots or via the panels collection. If via slots, the panels collection may be vestigial and should be deprecated or removed. If via panels, explain why `assetPanel` is also a slot.
+- **Severity: High.** An implementer cannot determine which manifest path to use for an asset panel contribution. This directly blocks Phase 1 contract freeze.
+
+### C3 — Roadmap Phase 3 includes code/writing/stage canaries; Foundation Plan explicitly defers them
+
+- **Claim A:** Roadmap Phase 3 deliverables: "Optional inert/code/writing/stage canaries with explicit empty/error/disabled states."
+- **Claim B:** Foundation Plan Phase 3 work item 9: "Defer code/writing/stage panel canaries unless there is a concrete product workflow; inert canaries create API promises and test burden." Wave 1 Review Synthesis: "Do not add inert code/writing/stage panel canaries unless product demand appears."
+- **Evidence:** Roadmap includes them as deliverables; foundation plan explicitly says don't do them. Full-extensibility ticket never mentions them. The foundation plan's Wave 1 and Wave 2 reviews both rejected them.
+- **Required change:** Remove code/writing/stage canaries from the Roadmap Phase 3 deliverables list. The Roadmap should align with the Foundation Plan's explicit deferral.
+- **Severity: High.** An implementer building from the Roadmap would waste days on dead features that the Foundation Plan and two review waves already killed.
+
+### C4 — Production-build extension smoke: required Phase 1 gate in Foundation Plan, absent from Roadmap
+
+- **Claim A:** Foundation Plan Wave 2: "Make the production-build extension smoke a required Phase 1 gate, not an optional note." Phase 1 acceptance criteria: "A production-build smoke path passes for the preview release gate, even if the full E2E matrix remains dev-harness based."
+- **Claim B:** Roadmap Phase 1 deliverables list only: "Updated validation artifacts for `npm run test:extensions`, `npm run build`, and `make release-check`." No mention of a production-build extension smoke. Roadmap Phase 1 acceptance criteria also omit it.
+- **Evidence:** Foundation Plan elevated this from optional to required in Wave 2. Roadmap was not updated to reflect this.
+- **Required change:** Add production-build extension smoke to Roadmap Phase 1 deliverables and acceptance criteria.
+- **Severity: Medium.** An implementer following only the Roadmap would ship Phase 1 without production-build coverage, creating a regression risk the Foundation Plan explicitly guards against.
+
+### C5 — M1 freeze ordering: Foundation Plan fixes drift before freezing exports; M1 brief freezes before fixing
+
+- **Claim A:** Foundation Plan "Recommended Execution Order": #2 "Fix known docs/schema drift for panel placement" then #3 "EXT-002: freeze public exports."
+- **Claim B:** M1 brief Scope list: #1 "Regenerate and record validation," #2 "Freeze public exports," #3 "Fix the known panels.placement docs/schema contradiction."
+- **Evidence:** Foundation Plan puts fix at step 2, freeze at step 3. M1 brief puts freeze at step 2, fix at step 3. This is not a drafting artifact — the M1 brief explicitly numbers these as sequential scope items.
+- **Required change:** Reconcile execution order. Fixing before freezing is correct (otherwise you freeze a broken contract). M1 brief should be reordered.
+- **Severity: Medium.** Freezing exports before fixing the placement drift would encode a contract where documented manifest examples fail validation — exactly what Phase 1 is supposed to prevent.
+
+### C6 — Timeline overlay: Foundation Plan Phase 3 promotes it; Full-Extensibility Ticket omits it; schema has no collection for it
+
+- **Claim A:** Foundation Plan Phase 3 deliverables: "Optional timeline overlay contribution contract and tests." Roadmap Phase 3: "Add timeline overlay as the next concrete surface family."
+- **Claim B:** Full-Extensibility Ticket lists 12 contribution families. Timeline overlay is not among them. `contributionFamilies.ts` has no `timeline-overlay` family ID. Schema has no `timelineOverlays` or `overlays` collection.
+- **Evidence:** The foundation plan treats timeline overlay as a surface-adjacent contribution type to add in Phase 3. But the full-extensibility ticket's exhaustive family list does not include it. The schema has no collection for it. The family matrix has no entry for it.
+- **Required change:** Either add timeline overlay as a recognized family (with schema, matrix entry, and ticket coverage), or remove it from Phase 3 scope as something that would require a new contribution family — which Phase 3 is not authorized to promote without a readiness gate.
+- **Severity: Medium.** An implementer would need to invent schema, types, and matrix entries with no specification in any planning document.
+
+### C7 — Full-Extensibility Ticket lists SDK packaging as "done" criterion; Foundation Plan defers it past Phase 2
+
+- **Claim A:** Full-Extensibility Ticket family #12: "SDK packaging, examples, compatibility matrix, and release gates." Lists `@reigh/editor-sdk` as part of complete extensibility. Done criteria: "Public SDK/package examples compile without internal imports."
+- **Claim B:** Foundation Plan "Recommended Execution Order" step 7: "Add public-entrypoint extraction smoke, but defer actual `@reigh/editor-sdk` packaging until after Phase 2 contracts settle." Open Decisions: "Whether actual `@reigh/editor-sdk` packaging should happen in Phase 3 or at the start of Phase 4."
+- **Evidence:** The full-extensibility ticket treats SDK packaging as a first-class deliverable of complete extensibility. The foundation plan explicitly defers it and has not resolved when it will happen.
+- **Required change:** The full-extensibility ticket should reflect the deferred SDK packaging decision, or the foundation plan should commit to a milestone for it. The current ambiguity means "complete extensibility" has no agreed definition for when the public package ships.
+- **Severity: Medium.** "Complete" is undefined if one doc requires the public package and another defers it indefinitely.
+
+### C8 — `ExtensionStateRepository` is fully synchronous; Foundation Plan's sync-cache-over-async strategy has no implementation path
+
+- **Claim A:** `ExtensionStateRepository` interface in code: `load()` returns `ExtensionDiagnostic[]` synchronously, `save()` returns `void` synchronously. Current implementations are localStorage and InMemory — both sync.
+- **Claim B:** Foundation Plan Phase 2: "The extension repository contract is currently synchronous, while provider-backed Supabase and IndexedDB persistence will be asynchronous unless a staged loading/cache layer is added." Resolution: "Keep ExtensionStateRepository synchronous for now; use a sync cache repository over async Supabase/IndexedDB stores."
+- **Evidence:** The sync interface has no hooks for async preloading, no readiness state, no cache-miss fallback, and no invalidation. The plan says "sync cache over async stores" but neither the interface nor any draft implementation exists. Phase 2 cannot proceed without designing this bridge.
+- **Required change:** The sync-cache-over-async design (interface, cache lifecycle, stale-read semantics) must be spec'd before Phase 2 provider-backed persistence can be implemented. It should appear as a Phase 2 deliverable in the foundation plan.
+- **Severity: Medium.** Phase 2's central technical premise (provider-backed persistence without async loader) has no concrete design. An implementer starting Phase 2 would have to design the bridge from scratch.
+
+---
+
+## Verdict
+
+The documents form a coherent vision at the 10,000-foot level, but they diverge in **execution-level detail** in ways that would misdirect an implementer. The most damaging is **C1** (panels.placement) — it's a live bug that makes the docs instruct authors to write invalid manifests. **C2** (slots vs panels architecture) and **C3** (canaries the foundation plan killed but the roadmap still lists) would cause wrong implementation work. **C4** (missing production smoke in roadmap) and **C5** (freeze-before-fix ordering) would corrupt the Phase 1 gate. **C6** (timeline overlay is underspecified everywhere) and **C8** (no sync-cache design) would stall Phase 2/3 implementers because the prerequisite designs do not exist.
+
+The Foundation Plan is the most authoritative of the four documents — it incorporates two waves of adversarial review. **The Roadmap and M1 brief should be reconciled to it**, not the reverse. Specifically: fix C1 and C2 before any contract freeze; remove C3 from the roadmap; add C4 to the roadmap; reorder C5; resolve C6's family status; align C7's SDK decision; and spec C8 before Phase 2 work begins.

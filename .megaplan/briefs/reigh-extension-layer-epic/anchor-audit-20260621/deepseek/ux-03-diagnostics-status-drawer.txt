@@ -1,0 +1,59 @@
+---
+
+## 1. Verdict
+
+**Absent as a unified user-facing surface.** The video-editor has rich diagnostic data (asset materialization, render pipeline events, extension registries, error classification) and a pluggable extension slot architecture, but they are not connected into any diagnostics/status drawer or panel the user can inspect. All diagnostics are either console-only, test-only, or inline one-off badges.
+
+---
+
+## 2. Evidence
+
+- **Asset materialization diagnostics are computed but never rendered.** `AstridBridgeDataProvider.getMaterializationSummary()` (line 243–252, `data/AstridBridgeDataProvider.ts`) produces `AssetMaterializationSummary` with per-asset states (`materialized`, `skipped-with-diagnostic`, `not-attempted`) and structured `AssetMaterializationDiagnostic` records. A grep across `src/` confirms zero UI components consume this data — it's only asserted in `AstridBridgeDataProvider.test.ts`.
+
+- **Performance diagnostics are console-only, gated behind a feature flag.** `lib/perf-diagnostics.ts` defines `RenderStormDetector`, `EffectLoopDetector`, `RafLoopDetector`, and `MemoryPressureDetector` — all gated by `arePerfDiagnosticsEnabled()` (line 13) which checks `localStorage` item `reigh:perf-diagnostics`. Output goes exclusively to `console.error` (line 38). The React hook `usePerfDiagnostics.ts` exposes `useRenderDiagnostic` / `useEffectDiagnostic` used by ~9 components, but never renders anything to the DOM.
+
+- **`extensionSurface.ts` defines a `statusBar` slot but it conveys only save/render state.** The slot type `VideoEditorSlotName` at line 9–18 includes `'statusBar'`. `TimelineEditorShellCore.tsx` (line 337) renders it as `{statusBarSlot}`, and the default toolbar shows `chrome.saveStatus` as a `<Badge>` (line 422–423) and `chrome.renderStatus` as a button disable/enable (line 653). The `CustomTwoPaneVideoEditorExample.tsx` fallback (line 70–76) shows only clip count and a static label. Neither includes extension health, compatibility warnings, or registry state.
+
+- **Error handling has a pluggable presenter but no persistent diagnostic surface.** `errorNotifier.ts` (line 47) exports `emitErrorNotification` which calls an injected `ErrorNotifier` function. `runtimeErrorPresenter.ts` (line 11) similarly relies on an `installRuntimeErrorPresenter` pattern. These are wired to toasts (`VideoEditorPage.tsx` line 423, 673) but never to a status drawer or diagnostics panel. `recoverableError.ts` explicitly sets `showToast: false` (line 19) for boundary catches — those errors are logged but invisible to the user.
+
+- **Error boundaries are silent in-production.** `EffectErrorBoundary.tsx` (line 16) and `MediaErrorBoundary.tsx` (line 21) both catch errors, `console.error` them, and render a fallback child — but there is no aggregation, no "errors occurred" badge, no drawer to review them. `ChunkLoadErrorBoundary.tsx` immediately reloads the page with a bare "Updating..." message (line 68).
+
+- **Dynamic registry state is introspectable but not surfaced anywhere.** `DynamicComponentRegistry.ts` has `listAll()` (line 116), `isDynamic()` (line 124), and `getAllDynamicCode()` (line 128) methods. `DynamicEffectRegistry` and `DynamicSequenceRegistry` extend this. No UI component calls these to display registered extensions.
+
+- **Render pipeline middleware events have no UI-side consumer.** `renderPipeline.ts` defines `RenderPipelineEvent` (line 8–30) with `beforeRender`, `assetMaterialized`, `afterRender`, and `renderFailed` types. `executeRenderPipeline` emits them through a `middlewares` array (line 152–157). Searching the entire codebase, no middleware that renders pipeline status into a drawer or panel exists.
+
+- **`UnknownClipPlaceholder` is inline but isolated.** `UnknownClipPlaceholder.tsx` renders per-clip amber/red bands for unsupported clip types (`clipType 'X' not yet supported`) and missing assets — this is the closest thing to an extension compatibility diagnostic, but it's per-clip in the timeline render, not a summary drawer.
+
+- **`capabilityManifest.ts` and `renderRouter.ts` know about clip-type capabilities but surface nothing to users.** The router returns `RenderRouteDecision` with reason strings like `'generated_remotion_module'` or `'preview-only'` when a block reason applies — but the UI consuming `decideRenderRoute` only uses the `route` field, not the diagnostic `reason`.
+
+- **No "extension", "package", "compatibility", or "loader" status panel exists anywhere.** A case-insensitive grep for `extension.*status|status.*extension|extension.*health|package.*status|loader.*status` across the entire `src/` tree returns zero results.
+
+---
+
+## 3. Gap/Risk
+
+**Product consequence:** Users have no way to understand the health of the extension layer that powers their video editor. When a generation asset fails to materialize, the failure is silently swallowed (the registry falls back to a remote URL that may 404). When a dynamic effect or sequence component fails to compile, only a fallback placeholder is shown — not an explanation. When an extension package is missing, the render silently degrades with no warning. For developers integrating against the SDK, there is no introspection surface to verify their extension registered correctly or debug why it isn't working.
+
+**Dev consequence:** Debugging extension issues requires `localStorage` flags, console spelunking, or reading test assertions. The `getMaterializationSummary()` API exists but has zero consumer code — it's effectively dead weight outside tests. The sophisticated pipeline middleware architecture is similarly unused for UI purposes.
+
+---
+
+## 4. Polish Plan
+
+1. **Wire `AssetMaterializationSummary` to a UI panel.** Create an `ExtensionDiagnosticsDrawer` component that calls `provider.getMaterializationSummary()` and renders a collapsible panel (using the existing `VideoEditorDialogDescriptor` or `statusBar` slot) showing: count of materialized / failed / pending assets, with expandable per-asset diagnostics.
+
+2. **Surface dynamic registry state.** Add a "Registered Extensions" section to the diagnostics drawer that calls `DynamicEffectRegistry.listAll()`, `DynamicSequenceRegistry.listAll()` and shows built-in vs. custom, compile status, and any pending async registrations.
+
+3. **Add a render pipeline middleware that populates render log state.** Wire a middleware into `executeRenderPipeline` that writes `RenderPipelineEvent` data to the existing `renderLog` field in `TimelineChromeContextValue` (already declared at line 298), then surface it in the diagnostics drawer.
+
+4. **Expose `VideoEditorRenderStatus` and `VideoEditorSaveStatus` in a persistent status bar component.** The data already exists in the chrome slice. Create a `VideoEditorStatusBar` component slotted into the `statusBar` position that shows a persistent chip row: save status, render status, asset health, extension count, and an "N issues" badge that opens the diagnostics drawer.
+
+5. **Add an extension compatibility check on timeline load.** When `decideRenderRoute` returns `preview-only` or a `custom` clip type isn't in any registry, emit a structured warning into the chrome slice that the status bar can surface as a clickable warning chip.
+
+6. **Tests and docs.** Add a `VideoEditorDiagnosticsDrawer.test.tsx` verifying all states (empty, healthy, degraded, error). Document the diagnostics surface in the video-editor README and the epic docs.
+
+---
+
+## 5. Confidence
+
+**Medium.** The data infrastructure for diagnostics exists and is well-structured — the gap is purely in the presentation layer. What would raise confidence to high: confirming that `getMaterializationSummary` is actually callable from a React component in a real timeline session (the tests mock everything), and verifying the `VideoEditorDialogHost` or `statusBar` slot can accept a diagnostics panel without breaking existing layouts.

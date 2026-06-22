@@ -1,0 +1,51 @@
+---
+
+## 1. Verdict
+
+**Effects are partially contributable through an internal data pipeline (resources table + `custom:` convention), but the extension-layer SDK boundary has zero effect contribution capability — no public API exists for extensions to contribute component effects at all.**
+
+## 2. Evidence
+
+- **`VideoEditorExtensionConfig` has no effect field** (`src/tools/video-editor/runtime/extensionSurface.ts:72–77`). The extension config shape only supports `slots`, `dialogHost`, and `registry` (panels/inspector sections). No `EffectContribution`, `registerComponent`, or effect manifest anywhere.
+
+- **`VideoEditorProvider` hardcodes empty extensions** (`src/tools/video-editor/contexts/VideoEditorProvider.tsx:436`): `extensions: DEFAULT_VIDEO_EDITOR_EXTENSION_RUNTIME`. There is no injection point for extensions to contribute effects through the provider.
+
+- **`EffectContribution.component` does not exist.** A project-wide grep for `EffectContribution`, `registerComponent`, `contributeEffect`, `effect.*contribution`, `contribution.*component` returns zero results in `src/`.
+
+- **The `effectCatalog` prop on `VideoEditorProvider` is a data-fetching abstraction, not an effect contribution API** (`src/tools/video-editor/hooks/useEffectResources.ts:55–96`). It wraps Supabase resource queries (list/create/update/delete on the `resources` table, type `'effect'`) and exposes categorized `EffectResource[]` arrays. It cannot accept a local React component.
+
+- **The actual contribution pipeline is internal, not extension-layer** (`src/tools/video-editor/hooks/useEffectRegistry.ts:29–55`): `useEffectRegistry` feeds effects from three sources (localStorage drafts, legacy DB effects, resource-based effects) into `DynamicEffectRegistry.registerAsync()`. Resources come from `useEffectResources` → Supabase `resources` table. There's no extension-manifest-based contribution.
+
+- **No M5 provider-scoped registry exists.** The registry is still a module-level singleton (`src/tools/video-editor/effects/index.tsx:80–92`): `let effectRegistry: DynamicEffectRegistry | null = null` with `getEffectRegistry()` / `replaceEffectRegistry()`. The M5 spec calls for replacing this with a provider-scoped context with `DisposeHandle`, provenance, and enable/disable lifecycle — none of which exists.
+
+- **No M7 renderability/provenance metadata.** Zero hits for `RenderCapability`, `ContributionRenderability`, `CapabilityFinding`, `RenderBlocker`, or `DisposeHandle` anywhere in `src/`. The `DynamicEffectRegistry` records (`src/tools/video-editor/runtime-components/DynamicComponentRegistry.ts:13–17`) carry only `component`, `code`, and `schema` — no provenance, no renderability.
+
+- **No export guard for contributed effects.** The `renderRouter.ts` routes based on clipTypes (`NATIVE_BUILTIN_CLIP_TYPES` at line 120) and theme packages, not on effect renderability. A grep for `export.*guard`, `pre-render.*scan`, `export.*readiness` in `src/tools/video-editor/` returns nothing.
+
+- **The `custom:` prefix convention is the de facto contribution mechanism** (`src/tools/video-editor/components/PropertiesPanel/ClipPanel.tsx:78–88`): resource-based effects are referenced as `custom:{resourceId}` in clip data, resolved by stripping the prefix and looking up the `EffectResource` by ID. This is an internal naming convention, not an SDK contract.
+
+- **No package loader or extension manager** (`m14-packaging-loader-manager.md` specifies `ExtensionLoader`, `ExtensionStateRepository`, `ExtensionManager` UI — none found in `src/`). Zero files matching `package.*loader`, `PackageLoader`, `loadPackage`, `PackageManager`, `installExtension` in the source tree.
+
+## 3. Gap/Risk
+
+The product consequence is a **closed-loop effect ecosystem that looks extensible but isn't**. A third-party developer following the extension-layer SDK (the `VideoEditorExtensionConfig` surface) will find no way to contribute a custom effect. The only contribution path — saving AI-generated code to the `resources` table and referencing it via `custom:{id}` — is an internal app-level workflow tied to Supabase auth, the `EffectCreatorPanel` UI, and the `ai-generate-effect` edge function. An extension package cannot ship a pre-built effect component. There is no manifest format for effects, no load lifecycle, no enable/disable, no renderability declaration, and no export guard. If a developer ships an extension with a custom shader effect, they have no API to register it, no way to declare it as browser-preview-only, and no mechanism to block worker export.
+
+## 4. Polish Plan
+
+1. **Define `EffectContribution` in extension config** (`extensionSurface.ts`): add `effects?: EffectContributionDescriptor[]` with fields `id`, `component` (an FC), `category`, `label`, `provenance`, `renderCapability`, `parameterSchema`. Wire into `resolveVideoEditorExtensionRuntime`.
+
+2. **Refactor registry to provider-scoped** (`useEffectRegistry.ts`): replace the module-level singleton with a `useSyncExternalStore`-based provider context. Accept contributions from `VideoEditorExtensionRuntimeConfig.effects` during mount. Add `DisposeHandle` returns and enable/disable lifecycle.
+
+3. **Add `registerComponent()` path to `DynamicEffectRegistry`** (`DynamicEffectRegistry.ts`): accept a pre-compiled `FC<EffectComponentProps>` directly (bypassing Sucrase) for trusted local components. Mark with `provenance: 'bundled-extension'`.
+
+4. **Add provenance and renderability metadata** (`DynamicComponentRegistry.ts` dynamic record shape): extend `DynamicRecord` to include `provenance`, `renderCapability`, `ownerExtensionId`. Surface in picker UI as badges (e.g., "Extension · Browser-only").
+
+5. **Add export guard** (`renderRouter.ts` or new `exportGuard.ts`): walk resolved timeline clips, collect all applied effects, check each against its declared `RenderCapability`, aggregate into `RenderBlocker[]` findings surfaced in the export dialog. Block worker export for effects marked `browser-only`.
+
+6. **Tests**: provider isolation (two simultaneous editors don't share effects), HMR replacement (stale component removed), enable/disable (unregister without refresh), export guard (worker export blocked for unsupported effect), provenance badges in picker.
+
+7. **Docs**: document `EffectContribution` in the SDK boundary docs; add a contributed-effect example to `CustomTwoPaneVideoEditorExample.tsx`.
+
+## 5. Confidence
+
+**High.** The evidence is unambiguous: the `VideoEditorExtensionConfig` type has no effect-related fields (confirmed by reading `extensionSurface.ts:72–77`), the provider hardcodes empty extensions (line 436 of `VideoEditorProvider.tsx`), and exhaustive grep for every M5/M7 vocabulary term returns zero results. What would change it: finding a file that exports `EffectContribution` or wires a `registerComponent` call into the extension runtime — but no such file exists after searching the entire `src/` tree.

@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { useState, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { MemoryRouter } from 'react-router-dom';
 import { EditorRuntimeProvider } from '@/tools/video-editor/contexts/EditorRuntimeProvider.tsx';
 import type { DataProvider } from '@/tools/video-editor/data/DataProvider.ts';
@@ -9,7 +9,7 @@ import type {
   VideoEditorExporter,
   VideoEditorHostContext,
 } from '@/tools/video-editor/lib/browser-runtime.ts';
-import type { ReighExtension } from '@reigh/editor-sdk';
+import type { ExtensionDiagnostic, ReighExtension } from '@reigh/editor-sdk';
 import { useExtensionLoaderWiring } from '@/tools/video-editor/runtime/useExtensionLoaderWiring';
 import type { ExtensionStateRepository } from '@/tools/video-editor/runtime/extensionStateRepository';
 import type { BundleContentStore } from '@/tools/video-editor/runtime/useExtensionLoaderWiring';
@@ -58,13 +58,83 @@ export function BrowserVideoEditorProvider({
   exporter = null,
   hostContext = null,
   extensions,
-  repository,
-  bundleStore,
+  repository: explicitRepository,
+  bundleStore: explicitBundleStore,
   queryClient,
   initialEntries,
   children,
 }: BrowserVideoEditorProviderProps) {
   const [ownedQueryClient] = useState(() => queryClient ?? createDefaultQueryClient());
+
+  // ---- M2: Derive effective repository / bundleStore from DataProvider when
+  //        explicit props are not supplied ----------------------------------
+
+  // Stabilize dataProvider identity so the effect doesn't re-fire on new
+  // object references with the same logical dataProvider.
+  const dataProviderRef = useRef(dataProvider);
+  dataProviderRef.current = dataProvider;
+
+  const [effectiveRepository, setEffectiveRepository] = useState<
+    ExtensionStateRepository | null | undefined
+  >(undefined);
+  const [effectiveBundleStore, setEffectiveBundleStore] = useState<
+    BundleContentStore | null | undefined
+  >(undefined);
+
+  useEffect(() => {
+    // If explicit repository is provided, use it directly (caller-owned,
+    // assumed pre-hydrated). This is the backward-compatible path.
+    if (explicitRepository !== undefined) {
+      setEffectiveRepository(explicitRepository);
+      setEffectiveBundleStore(explicitBundleStore ?? null);
+      return;
+    }
+
+    // No explicit repository: try to derive from DataProvider.
+    // We need both a userId and a factory method to proceed.
+    if (!userId || !dataProviderRef.current.createExtensionPersistenceService) {
+      setEffectiveRepository(null);
+      setEffectiveBundleStore(null);
+      return;
+    }
+
+    const diagnostics: ExtensionDiagnostic[] = [];
+    const service = dataProviderRef.current.createExtensionPersistenceService(
+      { userId, timelineId },
+      diagnostics,
+    );
+
+    let cancelled = false;
+
+    service.initialize().then(() => {
+      if (cancelled) {
+        service.dispose().catch(() => {});
+        return;
+      }
+      const repo = service.stateRepository ?? null;
+      setEffectiveRepository(repo);
+
+      // Derive bundleStore: if the repository has getBundleContent, use it.
+      if (
+        repo &&
+        typeof (repo as Record<string, unknown>).getBundleContent === "function"
+      ) {
+        setEffectiveBundleStore(repo as unknown as BundleContentStore);
+      } else {
+        setEffectiveBundleStore(null);
+      }
+    }).catch(() => {
+      if (!cancelled) {
+        setEffectiveRepository(null);
+        setEffectiveBundleStore(null);
+      }
+    });
+
+    return () => {
+      cancelled = true;
+      service.dispose().catch(() => {});
+    };
+  }, [explicitRepository, explicitBundleStore, userId, timelineId]);
 
   // ---- M14: extension loader wiring (host-owned) --------------------------
   const {
@@ -72,8 +142,8 @@ export function BrowserVideoEditorProvider({
     isResolving: _loaderIsResolving,
   } = useExtensionLoaderWiring({
     directExtensions: extensions,
-    repository: repository ?? null,
-    bundleStore: bundleStore ?? null,
+    repository: effectiveRepository ?? null,
+    bundleStore: effectiveBundleStore ?? null,
   });
 
   return (

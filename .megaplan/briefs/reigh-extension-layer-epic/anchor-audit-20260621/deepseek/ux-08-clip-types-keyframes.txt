@@ -1,0 +1,61 @@
+---
+
+## 1. Verdict
+
+**Partial.** Clip-type authoring, inspection, and rendering are substantially built for trusted/built-in clip types and sequence components, but contributed per-type `Inspector` adapters are defined yet never wired into the UI, and keyframe support is entirely absent — no authoring, no inspection, no rendering path exists for keyframes anywhere in the video editor extension layer.
+
+---
+
+## 2. Evidence
+
+1. **Clip-type type system is rich and complete.** `clip-types/defineClipType.ts` (lines 1–323) defines `ClipTypeDescriptorInput` with `render`, `Inspector`, `timelineDisplay`, `resize`, `drag`, `commands`, `paramsSchema` (editor/sequence kinds), `hold` timing, and `renderCapabilities`. The `defineClipType` factory normalizes defaults and injects `clipType` into clip defaults (lines 278–323).
+
+2. **Trusted clip types are authored.** `sequences/metadata.ts` defines 6 trusted sequence clip types (`image-jump`, `title-card`, `section-hook`, `art-card`, `resource-card`, `cta-card`) with typed hold timing, sequence param definitions, and capability overrides. `clip-types/registry.ts` wires them into `TRUSTED_CLIP_TYPE_REGISTRATIONS` via `buildSequenceDescriptor()` (lines 70–114).
+
+3. **Built-in clip types exist.** `clip-types/runtime.ts` (lines 149–228) registers `media`, `hold`, `text`, and `effect-layer` with full descriptors, commands, render capabilities, and defaults.
+
+4. **Authoring UX is realized through SequenceCreatorPanel.** `components/SequenceCreator/SequenceCreatorPanel.tsx` (1,274 lines) supports prompt-based generation, draft variant selection, param editing, AI code path (custom components), library loading, fork-to-DB flow, headless smoke-render gate, and insert/replace into timeline.
+
+5. **Inspection exists but custom Inspector adapters are dead code.** `ClipPanel.tsx` (line 334) dispatches `SequenceParamEditor` for sequence clips with `clipTypeResolution.status === 'available'`. However, `ClipTypeInspectorAdapter` (defined at `defineClipType.ts:182`) is stripped from manifests in `toClipTypeManifest` (line 316) and is **never rendered by any component** — no UI dispatches a per-clip-type custom Inspector.
+
+6. **Rendering dispatch chain is layered and functional.** `TimelineRenderer.tsx` (lines 146–311 in `VisualTrack`) dispatches: generated-module placeholder → built-in `effect-layer`/`text` → dynamic-aware sequence component registry (`isSequenceComponentClipType`) → capability-based placeholder → loud unknown placeholder. `VisualClip.tsx`, `TextClip.tsx`, `AudioTrack.tsx`, and `EffectLayerSequence.tsx` provide per-type render compositions.
+
+7. **SequenceParamEditor handles inspection for sequence params.** `components/PropertiesPanel/SequenceParamEditor.tsx` (164 lines) renders string inputs and asset-list multi-select widgets, resolving param definitions from both clip-type descriptors and sequence metadata.
+
+8. **Keyframes: zero references.** `rg -i keyframe` across the entire `src/tools/video-editor/` directory returns zero matches (exit code 1). The core timeline's `PositionMetadata.is_keyframe` field (`useTimelineCore.types.ts:29`) is never consumed by the video editor layer.
+
+9. **No keyframe interpolation, timeline, or parameter surface.** No easing curves, no keyframe track visualization, no keyframe add/edit/delete commands, no render-time keyframe interpolation (Remotion's `interpolate` is used only in `effects/transitions.ts` for clip-to-clip transitions, not per-property keyframes).
+
+10. **Tests confirm the gap.** `clip-types/defineClipType.test.ts` tests descriptor normalization, manifest export, and param schema kinds but never asserts that an `Inspector` adapter reaches a render path. The `TimelineRenderer.sequence.test.tsx` and `ClipPanel.sequence.test.tsx` files cover sequence clip rendering and panel rendering but contain no keyframe tests.
+
+---
+
+## 3. Gap/Risk
+
+**Product consequence:** Users cannot set or view keyframes for any clip property (position, scale, opacity, effect intensity, text transforms) over time. Every parameter is static for the clip's duration. This means no animated motion graphics, no parameter automation, no "zoom in while fading out" — the editor is effectively a static compositor, not a motion editor. This gap blocks narrative video production workflows.
+
+**Dev consequence:** The `ClipTypeInspectorAdapter` type and `Inspector` field in `ClipTypeDescriptorInput` imply a plugin contract that downstream consumers may depend on, but since it's never wired, any third-party clip type that ships an `Inspector` component will silently fail to surface it.
+
+---
+
+## 4. Polish Plan
+
+1. **Wire `Inspector` adapter into `ClipPanel`.** Add a dispatch path in `ClipPanel.tsx` that, when a clip type's descriptor has an `Inspector` component, renders it (likely as an additional tab or replacing the default effects/sequence tab). Fall back to the current generic tabs when absent.
+
+2. **Define a keyframe data model.** Add `Keyframe<T>` type (time + value + easing), `KeyframeTrack<T>` (property path + keyframes array), and a `keyframes?: KeyframeTrack[]` field to the clip model in `types/index.ts`.
+
+3. **Add keyframe authoring UI.** Create a `KeyframeEditor` component (timeline scrubber + add/delete keyframe buttons + value editor + easing picker) integrated into `ClipPanel` as a "Keyframes" tab.
+
+4. **Add keyframe rendering.** Extend `TimelineRenderer` dispatch (or per-clip-type render components like `VisualClip`) to read `keyframes` from clip params and interpolate values at render time using Remotion's `interpolate` + `useCurrentFrame`.
+
+5. **Add keyframe commands.** Register `add-keyframe`, `remove-keyframe`, `next-keyframe`, `prev-keyframe` in the command system so the timeline surface and keyboard shortcuts can drive keyframe workflows.
+
+6. **Tests.** Add unit tests for keyframe interpolation, integration tests for keyframe authoring UI, and snapshot tests for clips rendered with keyframe-driven properties.
+
+7. **Docs.** Document the `Inspector` adapter contract and keyframe model in the extension surface docs (`runtime/extensionSurface.ts`).
+
+---
+
+## 5. Confidence
+
+**High.** The evidence is unambiguous: `rg` confirms zero keyframe tokens in the extension layer; the `Inspector` field is type-only with no render dispatch; the rendering and authoring paths for clip types are otherwise robust. What would change it to *certain*: adding a `ClipTypeInspectorAdapter` render dispatch to `ClipPanel` and a keyframe model + render integration test that passes.

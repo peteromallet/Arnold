@@ -1,0 +1,57 @@
+---
+
+## 1. Verdict
+
+**Absent.** Render capability, findings, blockers, materials, and route decisions do **not** form one canonical contract. They exist as loosely coupled, partially overlapping types and functions spread across four files with no unifying type, no shared vocabulary, and one outright duplicate code path.
+
+---
+
+## 2. Evidence
+
+1. **`ClipTypeRenderCapabilities`** (defineClipType.ts:124–129) declares `previewRoute`, `exportRoute`, `features`, and `knownLimitations` as a per-clip-type shape. It is the closest thing to a "capability contract," but no downstream consumer imports or references the type by name.
+
+2. **`RenderRouteDecision`** (renderRouter.ts:77–91) is a completely separate type with fields `route`, `hasThemedClip`, `hasMediaClip`, and `reason`. It lives in `lib/renderRouter.ts` and has zero type-level reference to `ClipTypeRenderCapabilities`.
+
+3. **renderRouter.ts:112** accesses `descriptor?.renderCapabilities.exportRoute === 'custom'` as a raw string check — no typed contract, no import of `ClipTypeExportRoute`. It never checks `previewRoute`, `features`, or `knownLimitations`.
+
+4. **`useRenderState.ts:13–47`** contains a **duplicate** route-decision function (`getFastRenderRouteDecision`) with a hardcoded `CLIENT_CLIP_TYPES` set (`'media', 'text', 'effect-layer', 'hold'`) — completely independent of the clip-type registry that `decideRenderRoute` consults (renderRouter.ts:93–98). Two code paths decide the same thing with different logic.
+
+5. **`ClipTypeExportRoute`** (defineClipType.ts:105–110) defines four values: `'client'`, `'banodoco'`, `'blocked'`, `'custom'`. In production registrations, only `'client'` (runtime.ts:203,230,280,302) and `'custom'` (registry.ts:118) are assigned. `'blocked'` is **never assigned**; `'banodoco'` is only used in a test (defineClipType.test.ts:51). The type promises vocabulary the runtime never uses.
+
+6. **`knownLimitations`** (defineClipType.ts:128) is declared in 5 places across the codebase but **never read** by any consumer. Grep shows zero runtime reads — it is dead documentation.
+
+7. **`materializeSequenceConfig`** (sequences/materialize.ts:115–143) is the "materials" concept — it resolves asset keys to URLs for render payloads. It is called from `renderRouter.ts:259` inside `buildRenderTimelinePayload`, but it operates on raw config shapes with no typed contract tying it to `ClipTypeRenderCapabilities`.
+
+8. **No "findings" or "blockers" vocabulary** exists anywhere in the render/capability layer. `GeneratedRemotionModuleBlockReason` (generated-lanes.ts:16–18) is the only blocker type and it's scoped to a single lane, not part of a general contract.
+
+9. **`renderPipeline.ts`** imports `RenderRouteDecision` (line 7) but has **zero imports** from clip-types — it never references `ClipTypeRenderCapabilities`, `ClipTypeExportRoute`, or `knownLimitations`.
+
+10. **The import graph is one-directional and shallow:** `renderRouter` → `runtime.ts` (for `getRegisteredClipTypeDescriptor`); `runtime.ts` → `defineClipType.ts` (for type definitions). But `renderPipeline` only talks to `renderRouter`, and `useRenderState` duplicates `renderRouter`'s logic instead of calling it directly.
+
+---
+
+## 3. Gap/Risk
+
+The concrete consequence: a developer adding a new export route (e.g., `'cloud-render'`) must update **four independent locations** — the `ClipTypeExportRoute` union (defineClipType.ts:105), the `RenderRoute` union (renderRouter.ts:62), the `decideRenderRoute` switch logic (renderRouter.ts:116), the `executeProviderRoute` switch (renderPipeline.ts:68), and the hardcoded fast-path in `useRenderState.ts:13`. There is no single source of truth. Worse, `knownLimitations` is declared everywhere but surfaced nowhere — users and devs have no programmatic way to discover why a clip type can't render. The `'blocked'` export route exists in the type system but has zero implementation, misleading anyone reading the types into thinking it's a supported path.
+
+---
+
+## 4. Polish Plan
+
+1. **Consolidate route vocabularies** into one canonical enum/union (e.g., `RenderCapabilityV1`) that maps 1:1 between `ClipTypeExportRoute` and `RenderRoute`, with a shared registry that both the router and pipeline reference.
+
+2. **Delete the `useRenderState.ts` fast-path** (`getFastRenderRouteDecision`, lines 13–47) and call `decideRenderRoute` from `renderRouter.ts` directly — lazy-import is already in place but gated behind a null check.
+
+3. **Wire `knownLimitations`** into `RenderRouteDecision` so the UI can surface them. Currently `renderRouter.ts:128` returns `knownLimitations?: readonly string[]` nowhere.
+
+4. **Remove or implement `'blocked'`** — either delete it from the `ClipTypeExportRoute` union or add a `blockedReason` field to `ClipTypeRenderCapabilities` and teach the router to short-circuit on it.
+
+5. **Add a typed bridge type** (e.g., `RenderCapabilityContract = ClipTypeRenderCapabilities & { routeDecision: RenderRoute }`) in a shared location, and enforce it with a compile-time `satisfies` check in `decideRenderRoute`.
+
+6. **Add a unit test** that verifies every `ClipTypeExportRoute` value maps to a handled `RenderRoute` case and that no `knownLimitations` field is silently dropped.
+
+---
+
+## 5. Confidence
+
+**High.** The evidence is structural: two independent type hierarchies with no cross-references, a duplicate routing function, dead type members (`'blocked'`, `'banodoco'` as assigned values), and `knownLimitations` that is written but never read. Confidence would shift to medium only if a shared contract type were found outside the four inspected files — but the import-graph search confirms none exists.

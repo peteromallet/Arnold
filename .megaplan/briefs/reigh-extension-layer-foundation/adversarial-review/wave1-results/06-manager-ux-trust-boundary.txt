@@ -1,0 +1,93 @@
+Now I have thoroughly examined the codebase. Here is my adversarial review.
+
+---
+
+## Findings
+
+### Finding 1: "Installed" Terminology Implies User Installation That Does Not Exist
+
+**Evidence:** `extensionLoader.ts` lines 43-51 define `InstalledPackageState` and `ExtensionLoadResult.installedPackages`. The loading docs (`loading.md` line ~107) state "Inspect `installedPackages` for package management UIs." The `BrowserVideoEditorProvider.tsx` line ~70 receives `extensionPackages` as a prop — they are host-defined at build time, not user-installed.
+
+**Why it matters:** The term "installed" throughout `InstalledPackageState`, `installedPackages`, and documentation implies a marketplace/install flow. Users will reasonably expect a UI action to "install" or "uninstall." There is no installation mechanism — packages are passed by the host application at construction time. A manager built on `installedPackages` inherits this language.
+
+**Required plan change:** Rename `InstalledPackageState` → `InspectedPackageState` and `installedPackages` → `inspectablePackages` or `packageStates` in the loader contract. Update M5 plan to require the manager to use labels like "Loaded packages," "Package inspector," and never "Installed extensions." Add a constraint: "Do not use the word 'install' or 'uninstall' in any manager label, control, or state description."
+
+**Severity:** High
+
+---
+
+### Finding 2: `loaded: false` Collapses Disabled, Invalid, Incompatible, and Duplicate Into One Indistinguishable State
+
+**Evidence:** `extensionLoader.ts` lines 101-150 — the `loaded` boolean is set to `false` for packages that are disabled, validation-failed, API-incompatible, or duplicate-ID. There are only two paths that produce `loaded: false`: (1) `state.enabled === false` at line ~123 (no diagnostics), and (2) validation-failed or duplicate at lines ~149 (diagnostics present). The plan acknowledges this at edge case line: "Manager must distinguish disabled-by-user from failed-to-load/invalid/incompatible/duplicate where possible, because all currently collapse toward `loaded: false`."
+
+**Why it matters:** The M5 plan acceptance criteria ("Manager lists all packages, including invalid and incompatible packages" and "Manager must distinguish disabled-by-user from failed-to-load") require the manager to render distinct states for disabled-vs-invalid-vs-incompatible-vs-duplicate. The current `InstalledPackageState` data shape has no `reason` field, no separate `valid`/`compatible`/`duplicate` flags, and relies entirely on checking `diagnostics.length === 0` as a heuristic for "disabled" (which is fragile — a disabled package could also have validation diagnostics if the order is changed in the loader).
+
+**Required plan change:** Add a `rejectionReason` field to `InstalledPackageState` with values like `'disabled' | 'validation-failed' | 'api-incompatible' | 'duplicate-id' | undefined`. Update the loader to populate it deterministically. Add acceptance criteria: "Manager shows a distinct label and icon for each rejection reason, not just a loaded/not-loaded binary."
+
+**Severity:** High
+
+---
+
+### Finding 3: No "Reload without Page Refresh" Mechanism Exists
+
+**Evidence:** `BrowserVideoEditorProvider.tsx` lines 105-108 compute `loadResult` in a `useMemo` keyed on `[extensionPackages, repository]`. The `repository` object reference is stable (line 85-102 creates it once). The `extensionPackages` prop is a static array. There is no imperative reload trigger exposed. The loader's `load()` method is called once on mount. The plan (`m5-manager-phase4-readiness.md` line ~51) requires "enable/disable persists and contributions disappear/reappear without refresh."
+
+**Why it matters:** The current architecture provides no way to re-run the loader after a user toggles enable/disable in the manager. The `ExtensionLoader.load()` is synchronous and idempotent only with respect to the *repository's in-memory state* — but the React component has no path to re-trigger it. The manager plan assumes this works.
+
+**Required plan change:** Add an explicit reload mechanism — either a `loadVersion` counter state that bumps on repository mutation and triggers `useMemo` re-computation, or a `forceReload` callback that the manager can invoke. Add acceptance criterion: "Toggling enable/disable in the manager and calling `repository.save()` followed by a reload-trigger causes `BrowserVideoEditorProvider` to re-resolve extensions and re-render with the new config set, without a full page refresh."
+
+**Severity:** Medium
+
+---
+
+### Finding 4: Contribution Family Matrix Exposes "Trusted-Only" Families That The Manager Must Not Imply Are Available
+
+**Evidence:** `contributionFamilies.ts` lines 49-82 define effects, transitions, and clip-types as `'trusted-only'`. The `extension.ts` public export re-exports `EXTENSION_CONTRIBUTION_FAMILIES` and `EXTENSION_CONTRIBUTION_FAMILY_BY_ID` to consumers. The compatibility docs (`compatibility.md`) list these families in a table. The authoring docs (`authoring.md` line ~164) state: "Effects, transitions, clip types, agent tools, data/live providers, render materials/capabilities, and keyframes are not public third-party contribution families."
+
+**Why it matters:** If the manager displays the contribution family matrix (as `EXTENSION_CONTRIBUTION_FAMILIES` is publicly exported), it risks showing effects/transitions/clip-types as "trusted-only" — users may interpret this as "available but locked" or "coming soon." The manager must either not surface contribution families at all, or must clearly distinguish "supported now" from "internal/not available to extensions."
+
+**Required plan change:** If the manager includes a contribution-family view, it must only show `status: 'supported'` families and explicitly hide `'trusted-only'` and `'deferred'` families, or group them under a "Not available to extensions" section. Add acceptance criterion: "Manager does not show effects, transitions, clip types, agent tools, data providers, render materials, or keyframes as available contribution families."
+
+**Severity:** Medium
+
+---
+
+### Finding 5: No Trust Warning Infrastructure Exists — The Plan Requires It
+
+**Evidence:** The plan (`m5-manager-phase4-readiness.md` line 20) states "Add trust warning for every package: extensions are trusted, unsandboxed code and manifest permissions are not enforced at runtime." The `extensionManifest.ts` has no field for trust metadata. The `extensionLoader.ts` produces no trust-related diagnostics. The `ExtensionRenderBoundary.tsx` (referenced in the tests) exists but I can confirm there's no trust warning output in the loader pipeline.
+
+**Why it matters:** The manager plan requires a "first-class UI, not just docs" trust warning. Currently no code produces trust information that a manager could render. Without a `trustWarning?: string` or similar field in the load result, the manager must hardcode the warning text, which violates the "data-driven" architecture the loader was designed for.
+
+**Required plan change:** Either add a `trustWarning` string to `ExtensionLoadResult` (populated by the loader, keyed on runtime trust posture), or explicitly require the manager to display a static, host-owned trust warning banner keyed on the presence of ANY extension packages. Add acceptance criterion: "Every package row in the manager shows a trust indicator, and a banner at the top of the manager reads: 'Extensions run as trusted, unsandboxed code. Declared permissions are not enforced at runtime.'"
+
+**Severity:** Medium
+
+---
+
+### Finding 6: `LocalStorageExtensionStateRepository` Does Not Support Async/Supabase Production Persistence — All State Is Local-Only After Foundation
+
+**Evidence:** `extensionStateRepository.ts` lines 235-330 define the localStorage-backed implementation. The `DataProvider` contract has no extension persistence methods (confirmed by the foundation plan's baseline limitations). The `BrowserVideoEditorProvider.tsx` lines 85-102 select `LocalStorageExtensionStateRepository` (which writes to `localStorage`) or `InMemoryExtensionStateRepository` as fallback. There is no Supabase-backed repository wired into any production path.
+
+**Why it matters:** After the foundation epic (Phases 1-3), extension state persists only in the browser's localStorage. Settings and enable/disable flags are lost across devices, are not backed up, and are per-browser. The manager's "persist" capabilities are local-only. This is an important limitation the manager should honestly represent.
+
+**Required plan change:** The manager should include a persistence indicator showing "Local storage only" or "Synced to account" based on the repository backend. Add acceptance criterion: "When using LocalStorageExtensionStateRepository, the manager shows a persistence note: 'Extension state is stored in this browser only.'"
+
+**Severity:** Low
+
+---
+
+### Finding 7: No `extensionRegistry.ts` Exists — The Question References a Non-Existent File
+
+**Evidence:** The task prompts mention `src/tools/video-editor/runtime/extensionRegistry.ts` as a starting point. This file does not exist. The extension registry concept is distributed across `extensionLoader.ts` (registration/loading), `extensionSurface.ts` (runtime configs/merge), and `ExtensionRenderBoundary.tsx` (render isolation). There is no single `ExtensionRegistry` class or file.
+
+**Why it matters:** If the manager plan assumes a centralized `ExtensionRegistry` with methods like `getExtensions()`, `unregister()`, `reload()`, those APIs don't exist. The manager must work with `ExtensionLoadResult.installedPackages` + `ExtensionStateRepository` methods directly.
+
+**Required plan change:** Ensure the M5 plan references only the real APIs: `ExtensionLoader.load()`, `ExtensionLoadResult.installedPackages`, `ExtensionStateRepository.setEnabled()` / `save()`. Do not assume a central registry object.
+
+**Severity:** Low
+
+---
+
+## Verdict
+
+The M5 manager plan is honest about what it must NOT do (no marketplace, no install, no discovery), and the codebase's loader/state architecture provides exactly the right data shape (`InstalledPackageState` with manifest, state, diagnostics, loaded flag) to power an inspect-and-toggle manager. However, the plan has three material overclaims that the current code cannot fulfill: (1) the "installed" terminology in the loader contract will leak into the manager UI and imply an installation capability that does not exist, (2) the `loaded: false` binary cannot distinguish disabled-by-user from rejected-by-validation, which the acceptance criteria require, and (3) no reload-trigger mechanism exists to re-resolve extensions after the manager toggles state. The trust warning, contribution-family display, and persistence-backend transparency are secondary concerns the plan already anticipates but which lack explicit code support or acceptance criteria coverage. The plan's constraints and "Out" section are excellent and should be enforced as gate criteria; the problems are in the bridge between plan language and the existing code contracts.

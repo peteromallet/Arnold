@@ -1,0 +1,199 @@
+Now I have a thorough understanding of the entire codebase. Here is the adversarial review.
+
+---
+
+## Findings
+
+### Finding 1: Agent Tool Dispatch Is Entirely Hardcoded — No Extension Point
+
+**Evidence:**
+- `supabase/functions/ai-timeline-agent/loop.ts` lines 440-530: `executeToolCall()` is a monolithic `if/else if` chain that hardcodes every tool name (`"run"`, `"create_task"`, `"transform_image"`, etc.). There is no registry, no dispatch table, no extension hook.
+- `supabase/functions/ai-timeline-agent/tool-calls.ts` lines 21-31: `FALLBACK_TOOL_NAMES` is a hardcoded `Set`. Adding a new tool requires editing this file.
+- `supabase/functions/ai-timeline-agent/tool-schemas.ts`: `TIMELINE_AGENT_TOOLS` is a hardcoded const array. No dynamic registration exists.
+
+**Why it matters:** The Phase 4 `AgentToolContribution` family requires a backend dispatch registry where extensions can register tool schemas and executors. Currently, the agent loop has zero awareness that extensions exist. Without a `ToolRegistry` contract, no third-party agent tool can ever be invoked — the `executeToolCall` function literally returns `"Unknown tool: ${name}"` for anything not in the chain.
+
+**Required plan change:** The foundation plan must add a `ToolRegistry` contract (register schema + executor, lookup by name, lifecycle cleanup) as a Phase 1/2 deliverable. The agent loop must dispatch through a registry rather than a hardcoded switch. The `AgentToolContribution` manifest schema field must be defined and accepted by the manifest validator.
+
+**Severity:** **CRITICAL**
+
+---
+
+### Finding 2: Render Planner Has Zero Integration With Extension Contributions
+
+**Evidence:**
+- `src/tools/video-editor/lib/renderRouter.ts`: `planRender()` and `createRenderRouteDecision()` only inspect (a) native built-in clip types (`media`, `text`, `effect-layer`, `hold`), (b) theme-package clip types via `getRegisteredClipTypeDescriptor()`, and (c) generated remotion module status. There is no iteration over extension-contributed effects, transitions, clip types, render materials, or capabilities.
+- The `RenderPlan`, `RenderMaterial`, `RenderBlocker` types exist but no code path feeds them from extension contributions.
+- There is no `RenderPlannerExtension` contract — no registration API where an extension contribution declares its render posture (preview-only, export-capable, required materials).
+
+**Why it matters:** The plan states "Every creative/rendering family must participate in `planRender()` and produce actionable blockers for unsupported/preview-only content." But `planRender()` has no API for extensions to participate. Without this contract, Phase 4 effects, transitions, clip types, and render materials cannot declare render posture, and the plan's promise of "never silently export unsupported extension content" is unenforceable.
+
+**Required plan change:** A `RenderPlannerExtension` registration contract must exist in Phase 1/2. Extensions must be able to register `renderCapability` declarations and have them consumed by `planRender()`. The `RenderMaterial` and `RenderBlocker` types should include an `extensionId` field so diagnostics can attribute blockers to specific packages.
+
+**Severity:** **CRITICAL**
+
+---
+
+### Finding 3: Manifest Schema Rejects All Phase 4 Contribution Families
+
+**Evidence:**
+- `src/tools/video-editor/runtime/extensionManifest.ts` lines 246-253: The `validCollections` array in schema validation is `['slots', 'dialogs', 'panels', 'inspectorSections', 'commands']`. Any other contribution collection key (e.g., `agentTools`, `dataSources`, `effects`, `transitions`, `clipTypes`, `renderMaterials`, `keyframes`) produces an `unknown_manifest_field` error diagnostic.
+- The `ExtensionManifest` interface has `[key: string]: unknown` for forward-compatibility, but the runtime validator fails-closed. This is correct security posture but there's no extension point mechanism.
+
+**Why it matters:** An extension package literally cannot declare any Phase 4 family in its manifest today. The schema must be extended before any package author can ship an effect, transition, agent tool, or data source. Each family needs a manifest schema definition, and the validator needs a plugin system or at minimum a per-family schema extension point.
+
+**Required plan change:** Foundation Phase 1/2 should define a `ContributionSchemaExtension` mechanism. At minimum, reserve the contribution collection keys in the schema (accept them as `additionalProperties` with deferred validation) or define the schema shapes for each planned family so the contract is stable even if runtime support comes later. Authors should be able to declare `contributions.agentTools` and have it validated for shape even if the backend tool registry doesn't exist yet.
+
+**Severity:** **CRITICAL**
+
+---
+
+### Finding 4: No Lifecycle Dispose/Unregister Contract Exists
+
+**Evidence:**
+- `src/tools/video-editor/runtime/extensionLoader.ts`: `ExtensionLoader.load()` registers extensions but there is no `unload()`, `dispose()`, or `unregister()` method anywhere in the loader or runtime.
+- `examples/video-editor-extension/src/config.tsx`: The example extension puts React components into slots but there's no `cleanup` or `teardown` callback.
+- `src/tools/video-editor/runtime/extensionStateRepository.ts`: `setEnabled(false)` changes the flag but the loader has no mechanism to tear down already-registered contributions from a disabled extension.
+
+**Why it matters:** Every Phase 4 family involves resources needing cleanup: agent tool subscriptions, live data WebSocket connections, WebGL contexts, sidecar processes, event listeners, setInterval timers. Without a lifecycle contract (`onRegister`, `onUnregister`, `onDisable`, `onEnable`, `dispose`), enabling/disabling or uninstalling extensions will leak resources. The plan's risk register even acknowledges this: "Lifecycle cleanup blocks safe promotion of any new public family."
+
+**Required plan change:** Foundation Phase 1/2 must define a `Lifecycle` contract with explicit `onRegister`, `onDisable`, `onEnable`, `onUnregister`, `dispose` hooks. The `ExtensionLoader` must expose an `unload(extensionId)` method. The `VideoEditorExtensionConfig` type must accept lifecycle callbacks.
+
+**Severity:** **HIGH**
+
+---
+
+### Finding 5: No `TimelinePatch` Envelope Type for Proposal Persistence
+
+**Evidence:**
+- A search of the codebase confirms `TimelinePatch` and `TimelinePatchOp` do not exist anywhere.
+- `src/tools/video-editor/commands/types.ts` exports `TimelineProposal` but this is the in-memory review type, not a serializable persistence envelope.
+- `src/tools/video-editor/data/DataProvider.ts` declares `commandProposals` as a capability but there is no type definition for what a persisted proposal looks like in storage.
+
+**Why it matters:** The plan explicitly says "Add public `TimelinePatch`/`TimelinePatchOp` envelope types without creating a second mutation engine." Agent tools (Phase 4, FX-M5) need to produce serializable proposals that survive reload. Without this contract, proposals from extension-contributed tools cannot be stored, reviewed after page refresh, or shared across sessions.
+
+**Required plan change:** Foundation Phase 2 must define and export `TimelinePatch`, `TimelinePatchOp`, and a `PersistedProposalEnvelope` type. These must be public exports from `extension.ts` so extension authors can produce patches that flow through the proposal review UI and provider persistence.
+
+**Severity:** **HIGH**
+
+---
+
+### Finding 6: No Live Data Lifecycle Contract Exists At All
+
+**Evidence:**
+- There is zero code for `DataSourceContribution`, `LiveChannel`, ring buffer, `bake`, or live-data export blockers anywhere in the codebase.
+- `src/tools/video-editor/runtime/contributionFamilies.ts`: `data-live-providers` is marked `deferred`.
+- `src/tools/video-editor/data/DataProvider.ts`: The `DataProvider` interface has no live source methods, no ring-buffer ingestion, no bake-to-asset workflow.
+
+**Why it matters:** The plan says "Live sources do not pollute timeline history until baked; unbaked live content cannot silently export." These are hard invariants that require a well-designed contract. Without a `LiveChannel` contract (activate/deactivate/dispose, ring buffer, status/reconnect model, permission declarations, bake action), Phase 4 live data work cannot start. Worse, if the contract isn't defined early, the render planner and persistence layer won't account for non-deterministic content.
+
+**Required plan change:** Foundation Phase 1/2 must define the `DataSourceContribution` contract shape at minimum in a `.d.ts` or interface-only form. The `DataProvider` interface must reserve a `liveSource` capability slot. The render planner must have a code path for `unbaked_content` blockers even if no sources exist yet.
+
+**Severity:** **HIGH**
+
+---
+
+### Finding 7: No Provider-Backed Extension State Persistence (Supabase)
+
+**Evidence:**
+- `src/tools/video-editor/runtime/extensionStateRepository.ts`: Only two implementations exist: `InMemoryExtensionStateRepository` and `LocalStorageExtensionStateRepository`. No Supabase-backed implementation.
+- `src/tools/video-editor/data/SupabaseDataProvider.ts`: Implements `DataProvider` for timeline/asset persistence but has zero extension state, settings, or proposal methods.
+- The `DataProvider` capability flags `extensionState`, `extensionSettings`, `commandProposals` are declared but no provider returns `true` for them.
+
+**Why it matters:** This is correctly planned as Phase 2 but it blocks everything downstream: manager UI persistence (Phase 3), proposal storage for agent tools (Phase 4), live data bake workflows (Phase 4), and cross-session state survival. The plan acknowledges this as the "main production blocker."
+
+**Required plan change:** The foundation readiness gate must require at minimum the Supabase RLS migration schema for extension state/settings/proposals to be designed and reviewed, even if implementation follows in Phase 2. Currently, there's no migration file, no table schema, and no RLS policy. The contract shape for `SupabaseExtensionStateRepository` must exist.
+
+**Severity:** **HIGH** (correctly sequenced in plan, but foundation needs the DB schema contract)
+
+---
+
+### Finding 8: No Trust/Security Primitives in Code
+
+**Evidence:**
+- There is no `TrustLevel` enum, no package signature verification, no integrity hash validation, no trust warning mechanism in the codebase.
+- `src/tools/video-editor/runtime/extensionManifest.ts`: `ExtensionManifest` has no `trust`, `signature`, or `integrity` field.
+- `src/tools/video-editor/runtime/contributionFamilies.ts`: "trusted-only" is a label in the matrix but has no code enforcement. A trusted-only family could theoretically be contributed by a third-party package if the manifest schema accepted it.
+
+**Why it matters:** The plan states "Keep arbitrary code families trusted/signed until an explicit sandbox or permission broker exists." Effects, transitions, sidecars, and shaders all involve arbitrary code execution. Without code-level trust enforcement (even a simple `trustLevel` field on manifests that the loader checks), the gap between "documented as trusted-only" and "code-enforced as trusted-only" is dangerous.
+
+**Required plan change:** Foundation Phase 1 must add a `trustLevel` field to `ExtensionManifest` (at minimum `'unsigned' | 'signed' | 'trusted'`) and the loader must validate that packages claiming `trusted` contribution families have an appropriate trust level. The contribution family matrix should derive its enforced status from this field, not just documentation.
+
+**Severity:** **MEDIUM**
+
+---
+
+### Finding 9: Agent `proposal_policy` Wiring From Frontend to Backend Is Incomplete
+
+**Evidence:**
+- `src/tools/video-editor/hooks/useAgentSession.ts`: `SendMessageInput` has `proposalPolicy?: ProposalPolicy` but the actual invocation to the Supabase Edge Function does not visibly include this field in the POST body. The `AgentInvocationBody` type in `types.ts` only declares `session_id`, `user_message`, and `selected_clips` — no `timeline_mutation_mode`.
+- `supabase/functions/ai-timeline-agent/index.ts`: The handler destructures `session_id`, `user_message`, and `selected_clips` from the body but does not extract a `timeline_mutation_mode` field. It's unclear how `propose` mode reaches the agent loop.
+- `supabase/functions/ai-timeline-agent/types.ts`: `TimelineMutationMode` type exists but is not part of `AgentInvocationBody`.
+
+**Why it matters:** If the frontend `proposalPolicy` doesn't reach the agent backend through a defined contract, destructive agent operations could silently apply rather than produce proposals. The plan's core invariant — "agent tools cannot directly mutate timeline state by default" — depends on this wire being reliable end-to-end.
+
+**Required plan change:** Foundation Phase 2 must add `timeline_mutation_mode` to `AgentInvocationBody`, extract it in the edge function, thread it through `runAgentLoop` -> `executeToolCall`, and cover this path with a conformance test. The `useAgentSession` hook must visibly include `proposalPolicy` in the POST payload.
+
+**Severity:** **MEDIUM**
+
+---
+
+### Finding 10: No `SchemaForm` Contract Defined Before Phase 4 Creative Families
+
+**Evidence:**
+- `SchemaForm` does not exist anywhere in the codebase. The plan correctly schedules it for Phase 3, but the contract shape is undefined.
+- Every Phase 4 creative family (effects with parameter schemas, transitions, clip type params, keyframes, agent tool input schemas, data source config) needs SchemaForm for parameter editing.
+
+**Why it matters:** Without even a contract definition for what primitive types SchemaForm supports and how it validates, Phase 4 family implementations will inevitably build their own incompatible parameter editors. The plan correctly sequences SchemaForm in Phase 3, but the contract must be frozen before Phase 4 families start so they can code against a stable API.
+
+**Required plan change:** Foundation readiness gate should require a `SchemaForm` contract document or `.d.ts` stub defining: supported primitive types (string, number, boolean, enum, color), validation pipeline, extension widget registration point, and unsupported-shape diagnostic format. This is a contract, not an implementation — it can be a 50-line interface file.
+
+**Severity:** **MEDIUM**
+
+---
+
+### Finding 11: No Diagnostic Reporter Public API for Extensions
+
+**Evidence:**
+- `src/tools/video-editor/runtime/contributionFamilies.ts` line 64-68: `diagnostics` family status is `loader-runtime-only`. The notes say "Extension-authored diagnostic reporting is deferred until a scoped public reporter API and lifecycle tests exist."
+- There is no `DiagnosticReporter` interface or public export for extensions to emit scoped diagnostics.
+
+**Why it matters:** Without extension-authored diagnostics, Phase 4 families have no way to surface runtime failures. An effect that crashes, a data source that disconnects, or a tool that fails validation needs to report errors to the user. The plan correctly sequences this in Phase 3, but the contract shape should exist now so extension authors don't invent their own error reporting.
+
+**Required plan change:** Foundation should export a `DiagnosticReporter` interface (even if it's a no-op in Phase 1) with `report(diagnostic)`, `clear(extensionId)`, `dispose()`. The `ExtensionDiagnostic` type already exists — the reporter just needs to be public.
+
+**Severity:** **MEDIUM**
+
+---
+
+### Finding 12: `contributionFamilies.ts` Freezes the Matrix But Has No Extension Registration API
+
+**Evidence:**
+- `src/tools/video-editor/runtime/contributionFamilies.ts`: `EXTENSION_CONTRIBUTION_FAMILIES` is `Object.freeze([...])`. The matrix is static and immutable at runtime.
+- There are no `registerEffect()`, `registerTransition()`, `registerClipType()`, `registerAgentTool()` APIs anywhere.
+
+**Why it matters:** The contribution family matrix declares "what families conceptually exist" but families need runtime registration APIs to actually accept contributions. A static matrix that says `effects: 'trusted-only'` is useless without an `EffectRegistry.register(effectContribution)` function. The plan conflates "declaring a family's support status" with "providing a registry." These are separate contracts.
+
+**Required plan change:** Each supported/trusted-only family needs a registration contract (interface + registry singleton) defined in the foundation, even if the registry is empty. For example: `EffectRegistry { register(effect): void; unregister(id): void; getAll(): readonly EffectContribution[] }`. This registration API is the contract that Phase 4 families implement against.
+
+**Severity:** **MEDIUM**
+
+---
+
+### Finding 13: The Extension Config Has No Way to Accept Non-UI Contribution Types
+
+**Evidence:**
+- `src/tools/video-editor/runtime/extensionSurface.ts`: `VideoEditorExtensionConfig` focuses on surfaces (slots, dialogs, panels, inspector sections, commands). There's no field for `effects`, `transitions`, `agentTools`, `dataSources`, `renderMaterials`.
+- The `defineExtension()` helper in the example takes only UI-related config keys.
+
+**Why it matters:** When Phase 4 families are implemented, there's no place in the extension config to put non-UI contributions like effect definitions, tool executors, or data source factories. The `VideoEditorExtensionConfig` type must grow or be composed with family-specific contribution types.
+
+**Required plan change:** Foundation should define a composition pattern for `VideoEditorExtensionConfig`. Either add discriminated fields (`effects?: EffectContribution[]`, `agentTools?: AgentToolContribution[]`) as optional stubs, or define a `ExtensionContributionBundle` type that the loader composes into the config. Authors need to know where to put their effect definitions.
+
+**Severity:** **LOW**
+
+---
+
+## Verdict
+
+The foundation (Phase 1 "preview") delivers solid baseline infrastructure — manifest validation, loader, state repository, command surfacing — but it is **insufficient in its current form for downstream agent-tool and live-data contributions.** The three most critical gaps are: (1) the agent tool dispatch is a hardcoded `if/else` chain with no registry or extension point, (2) the render planner has zero integration with extension contribution declarations, and (3) the manifest schema rejects all Phase 4 contribution families. These are not implementation gaps — they are missing contracts. Without a `ToolRegistry`, a `RenderPlannerExtension` registration API, and per-family manifest schema definitions, the Phase 4 work cannot start. Additionally, the lifecycle cleanup contract, `TimelinePatch` envelope type, live-data channel contract, and trust enforcement primitives are absent from the code, though the plan correctly identifies them as Phase 2/3 dependencies. The foundation readiness gate should require at minimum: a `ToolRegistry` contract, a `RenderPlannerExtension` contract, reserved manifest schema fields for all planned families, a `Lifecycle` hook contract, and a `TimelinePatch` serialization envelope — all as stub interfaces or type definitions — before any Phase 4 contribution family implementation begins. The current plan treats these as Phase 4 deliverables when they are in fact Phase 1/2 prerequisite contracts.

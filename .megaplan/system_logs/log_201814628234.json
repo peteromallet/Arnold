@@ -1,0 +1,65 @@
+{
+  "id": "log_201814628234",
+  "level": "debug",
+  "category": "system",
+  "event_type": "authority_divergence",
+  "message": "authority_divergence emitted",
+  "details": {
+    "event": {
+      "seq": 7497,
+      "schema_version": 1,
+      "ts_utc": "2026-06-22T20:43:24.374108+00:00",
+      "ts_rel_init_s": 12103.264754,
+      "kind": "authority_divergence",
+      "phase": "execute",
+      "payload": {
+        "diagnostic_version": 1,
+        "task_id": "T2",
+        "raw_terminal_status": "done",
+        "authority_status": "unknown",
+        "authoritative": false,
+        "reason": "stale_evidence:missing_head:task_commands_run",
+        "missing_outputs": [],
+        "stale_evidence": [
+          "missing_head:task_commands_run"
+        ],
+        "would_block_reasons": [
+          "stale_evidence:missing_head:task_commands_run"
+        ],
+        "error": null,
+        "diagnostics": {
+          "task_id": "T2",
+          "declared_outputs": {
+            "files_changed": [
+              "src/tools/video-editor/data/DataProvider.ts"
+            ],
+            "commands_run": [
+              "npx tsc --noEmit (typecheck; clean)",
+              "npx vitest run src/tools/video-editor/data/DataProvider.test.ts (24 passed)",
+              "npx vitest run src/tools/video-editor/data/InMemoryDataProvider.test.ts (13 passed)",
+              "npx vitest run src/tools/video-editor/testing.test.ts (2 passed)",
+              "npx vitest run src/tools/video-editor/testing/__tests__/providerCompatibility.inmemory.test.ts (31 passed)",
+              "npx vitest run src/sdk/index.test.ts (269 passed)",
+              "git diff --stat src/tools/video-editor/data/DataProvider.ts (verified 343 insertions)"
+            ]
+          },
+          "linked_evidence_count": 20,
+          "evidence_count": 144,
+          "normalization": "iterable",
+          "status": "unknown",
+          "evidence_sources": [
+            "plan_artifacts"
+          ],
+          "loaded_evidence_count": 144,
+          "raw_terminal_status": "done"
+        },
+        "ts_utc": "2026-06-22T20:43:24.373684+00:00"
+      },
+      "transaction_id": "eec648d7033c2f0e",
+      "store_method": "log_system_event"
+    }
+  },
+  "turn_id": null,
+  "epic_id": "m2-provider-persistence-spine-20260622-1921",
+  "occurred_at": "2026-06-22T20:43:24.374163Z"
+}

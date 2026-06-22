@@ -1,0 +1,67 @@
+---
+
+## 1. Verdict
+
+**The provider contract is a single-document persistence CRUD interface with asset resolution bolted on; it lacks any construct for timeline readers, snapshots, operations, proposals, settings, or package state — the extension-layer needs are entirely absent.**
+
+---
+
+## 2. Evidence
+
+- **DataProvider interface** (`DataProvider.ts:44-56`): Exposes only `loadTimeline`, `saveTimeline`, optional `saveCheckpoint`/`loadCheckpoints`, and `loadAssetRegistry`. No method returns partial timeline views, diffs, op streams, or snapshot references.
+
+- **AssetResolver interface** (`AssetResolver.ts:71-85`): Handles asset URL resolution, upload, waveform, and profile loading. Zero overlap with ops, proposals, settings, or packages.
+
+- **saveTimeline signature** (`DataProvider.ts:47-52`): Takes a full `TimelineConfig` blob + `expectedVersion` for optimistic concurrency. This is whole-document replacement, not operation-based mutation — extensions cannot submit discrete ops.
+
+- **LoadTimeline return type** (`DataProvider.ts:11-14`): Returns `{ config, configVersion }`. No snapshot ID, no read cursor, no diff-against-previous capability.
+
+- **Checkpoint methods are optional** (`DataProvider.ts:53-54`): `saveCheckpoint?` / `loadCheckpoints?` — two out of three implementations (AstridBridgeDataProvider at lines 344-353, InMemoryDataProvider) stub or no-op them. This is not a snapshot abstraction.
+
+- **No "ops", "proposal", "settings", or "package" anywhere in the data layer**: `rg` across the entire `src/tools/video-editor/data/` directory returns zero hits for these terms.
+
+- **SupabaseDataProvider** (`SupabaseDataProvider.ts:291-831`): Faithfully implements the interface. Adds `syncTimeline` (line 536) as a private extension, but that method is **not part of the DataProvider contract** — it's an implementation detail unavailable through the canonical port.
+
+- **AstridBridgeDataProvider** (`AstridBridgeDataProvider.ts:199-981`): Implements DataProvider but checkpoints are stubs (returns empty array at line 351-353, generates synthetic IDs at line 344-348). No snapshot, ops, or proposal surface.
+
+- **browser-runtime.ts** (198 lines): Contains `InMemoryDataProvider` + standalone `VideoEditorAssetResolver`, `VideoEditorExporter`, `VideoEditorHostContext` interfaces. These are export/rendering and host-context surfaces, not extension-layer contracts. No mention of extensions, kernels, or plugins anywhere in the file.
+
+- **`VideoEditorPersistencePort` type alias** (`DataProvider.ts:65`): `export type VideoEditorPersistencePort = DataProvider`. The comment explicitly states this is "the persistence boundary for the headless editor core." It is a single port, not a multi-faceted extension API.
+
+---
+
+## 3. Gap/Risk
+
+The concrete product consequence: **an extension author cannot contribute to a timeline through any sanctioned API.**
+
+- No `readTimeline(timelineId, {fields?: [...], atVersion?: number})` means extensions must fetch the entire config blob and extract what they need, even for a single clip property.
+- No `submitOp(timelineId, op)` means every extension write requires loading the full config, mutating it, and saving the whole thing back — conflicts are almost guaranteed with multiple concurrent extensions.
+- No `createProposal` / `acceptProposal` means there is no review workflow for extension-contributed changes. An AI agent or collaborator cannot suggest changes that a human reviews before merging.
+- No `getSettings` / `updateSettings` means extension preferences, feature flags, or per-extension config must live outside the provider entirely (likely in local storage or ad-hoc Supabase tables).
+- No `getPackageState` / `registerPackage` means there is no installable extension lifecycle — no way to query which extensions are loaded, their versions, or their activation state.
+
+The result is that the "extension layer" discussed in the epic milestones (SDK boundary, extension runtime/kernel, contributed UX surfaces, package loader/manager/state) has no data-contract foundation to build on. The provider contract is a persistence port for a single monolithic editor, not a platform for extensions.
+
+---
+
+## 4. Polish Plan
+
+1. **Define `TimelineReader` sub-interface** — add `readTimeline(timelineId, selector)` returning partial views (e.g., `{clips?: [...], tracks?: [...], output?: {...}}`) to avoid full-blob fetches. Target: `DataProvider.ts`, new exported interface.
+
+2. **Introduce `TimelineOp` type and `submitOps(timelineId, ops[])`** — define discrete operations (addClip, updateClip, deleteClip, setOutput, etc.) with CRDT-friendly semantics. The provider becomes responsible for sequencing, not the caller. Target: new `TimelineOps.ts` alongside `DataProvider.ts`.
+
+3. **Add `createProposal` / `listProposals` / `acceptProposal` to DataProvider** — optional methods for extension-contributed changes that require review. Even a stub that returns "not supported" would make the contract explicit about the capability gap.
+
+4. **Add `getSettings` / `updateSettings` to DataProvider** — a simple key-value scope per timeline (or per extension) so extensions don't scatter config across localStorage. Target: `DataProvider.ts`.
+
+5. **Make `syncTimeline` part of the canonical DataProvider interface** — it exists on `SupabaseDataProvider` (line 536) as public but isn't on the contract. Either promote it or delete it.
+
+6. **Add `ExtensionPackageState` interface + `getPackageState`/`registerPackage`** — stub methods that signal where the package-loader contract will eventually live. Target: new file `data/ExtensionPackageProvider.ts` or fold into `DataProvider`.
+
+7. **Document the provider contract** — a one-page markdown in `docs/video-editor/provider-contract.md` listing each method, its extension-era readiness, and which implementations support it.
+
+---
+
+## 5. Confidence
+
+**High.** The four files inspected cover the complete provider surface. Zero references to readers, ops, proposals, settings, or packages exist anywhere in the `video-editor/data/` directory or the broader `video-editor/` tree. Three independent implementations all converge on the same narrow CRUD contract. What would change this: discovery of a separate extension API surface (e.g., `src/extensions/` or a WebSocket-based kernel) that provides these capabilities through a different channel entirely — but that would simply relocate the gap, not close it at the provider level.

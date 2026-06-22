@@ -1,0 +1,31 @@
+## Confirmed
+
+**1. Static capability flags are aspirational, not earned.** All three providers (`SupabaseDataProvider`, `AstridBridgeDataProvider`, `InMemoryDataProvider`) set `extensionState: false` and `extensionSettings: false` as immutable `readonly` properties. Only AstridBridge has a `getCapabilities()` override, and that exists solely to degrade `materialization` based on runtime diagnostics — it never promotes extension capabilities. The M2 brief's "earned by conformance tests" design is absent.
+
+**2. DataProvider has no extension persistence methods.** The `DataProvider` interface declares nine capability labels (including `extensionState`, `extensionSettings`, `commandProposals`) and provides diagnostic normalization for them, but defines zero CRUD methods for extension state, settings, or proposals. There is no `loadExtensionState()`, `saveExtensionSettings()`, or `storeCommandProposal()`. The interface is a persistence port for timelines and assets only; extension capabilities exist purely as diagnostic surface area.
+
+**3. Zero Supabase schema for extension persistence.** No migration file across the 40+ entries in `supabase/migrations/` references extension state, settings, enabled flags, install records, or proposal storage. Grep returns empty across the entire directory. The schema foundation the M2 brief calls for does not exist.
+
+**4. No async hydration or cache-repository fallback design.** The `ExtensionStateRepository` interface and its two implementations (`InMemoryExtensionStateRepository`, `LocalStorageExtensionStateRepository`) are entirely synchronous. No cache-repository adapter, no `AsyncExtensionStateStore`, no hydration strategy, and no IndexedDB proposal storage exist. The codebase has no bridge between `DataProvider` and `ExtensionStateRepository` — they are completely disconnected subsystems. The `BrowserVideoEditorProvider` resolves the repository in a `useMemo` that picks localStorage or in-memory; it never consults the `DataProvider` for persistence capabilities.
+
+**5. No provider conformance tests exist for extension persistence.** The conformance test utility (`expectDataProviderCapabilityConformance`) verifies only that capability flags are internally consistent (e.g., "extensionState is unsupported" produces the right diagnostic code). There is no functional test that proves a provider can persist and restore extension state. The existing tests for `SupabaseDataProvider`, `AstridBridgeDataProvider`, and `InMemoryDataProvider` all assert `extensionState` and `extensionSettings` as `unsupported` — confirming the absence, not exercising a working path.
+
+## Rejected or Overstated
+
+Nothing material. Wave one's characterization is accurate on every dimension. The only minor nuance: the capability *diagnostic machinery* (`normalizeProviderCapabilityDiagnostics`, `collectProviderCapabilityDiagnostics`, `resolveDataProviderCapabilities`) is real and works — so the "unsupported provider emits diagnostics" part of the M2 brief is partially pre-built. But that's scaffolding for a persistence spine that doesn't exist, not a contradiction of the claim.
+
+## Required Plan Changes
+
+The M2 brief is already well-scoped. Based on the gap analysis, these specifics must be added for implementability:
+
+1. **DataProvider method contracts.** Add at minimum: `loadExtensionState(timelineId): Promise<Record<string, ExtensionState>>`, `saveExtensionState(timelineId, states)`, `loadExtensionSettings(timelineId): Promise<Record<string, Record<string, unknown>>>`, `saveExtensionSettings(timelineId, settings)`, and a `getExtensionStateRepository(): ExtensionStateRepository` factory (or equivalent) so the loader can stay synchronous via a cache layer.
+
+2. **Supabase schema + migrations.** Two tables minimum: `extension_states` (extension_id, timeline_id, user_id, enabled, settings_overrides jsonb, version, updated_at) and `command_proposals` (foundation columns for M3). Must include RLS policies keyed to timeline ownership, a `schema_version` metadata row, and a migration file with rollback. The brief currently leaves the table split as an open question — resolve it.
+
+3. **Cache-backed repository over async stores.** Implement a `CacheExtensionStateRepository` that wraps an async `DataProvider`-backed store, hydrates on first load, keeps the synchronous `ExtensionStateRepository` contract for the loader, and flushes writes to the async store on `save()`. The localStorage path stays for browser-local; IndexedDB scope for proposals should be decided (the brief flags this as open).
+
+4. **Conformance test suite.** Extend `providerCapabilityConformance.testUtils.ts` (or add a parallel utility) to actually exercise `extensionState`/`extensionSettings` round-trips: seed state, reload, verify identity; test corrupt-state fallback; test RLS isolation. Wire these into each provider's test file so `extensionState: true` is only set after passing.
+
+5. **Provider capability gating.** `SupabaseDataProvider` and `InMemoryDataProvider` must not hardcode `extensionState: false` after M2. The flag should be derived from whether the provider exposes a repository factory. AstridBridge should remain explicitly unsupported per the open question.
+
+6. **Migration/version semantics for settings.** The brief mentions this as a done criterion but provides no detail. Add: a `settings_version` field on each extension state row; a defined fallback (reset to defaults) when the stored version exceeds the current runtime; a diagnostic emission path for version mismatches.

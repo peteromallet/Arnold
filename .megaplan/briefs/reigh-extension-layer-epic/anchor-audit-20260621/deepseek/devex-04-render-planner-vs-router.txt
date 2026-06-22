@@ -1,0 +1,65 @@
+---
+
+## 1. Verdict
+
+**The render router is a well-tested shape-driven classifier, but it is a router, not a planner — the epic's stated need for capabilities introspection, blocker resolution, and artifact lifecycle is absent, and the hook that calls the router has a dead-end worker path that never enqueues.**
+
+---
+
+## 2. Evidence
+
+1. **`decideRenderRoute` (`renderRouter.ts`, lines 107–169) is a pure classifier**: It inspects clipTypes, checks `generation.sequence_lane === 'remotion_module'`, and checks `exportRoute === 'custom'`. It returns a single `RenderRouteDecision` with no plan steps, no capability preconditions, no artifact readiness polling. It's one-shot: one timeline → one route.
+
+2. **`SequenceCapabilityOverrides` exist but are never consumed** (`sequences/metadata.ts`, lines 17–23): The metadata type defines `browserRender`, `workerRender`, `externalRender` booleans, and `preview` / `previewFallbackReason` fields. None of these fields are read by `decideRenderRoute`, `executeRenderPipeline`, or `useRenderState`. The capability manifest is defined but orphaned.
+
+3. **No artifact lifecycle** (`renderRouter.ts`, lines 37–41, and `generated-lanes.ts`, lines 18–43): `getGeneratedRemotionModuleStatus` only checks whether `artifact_id` is a non-empty string. There is no artifact registry, no status polling (e.g., "building", "ready", "failed"), no CDN URL resolution, and no retry. A `preview-only` block is a hard terminal error with no recovery path.
+
+4. **`useRenderState.ts` duplicates routing and dead-ends on worker routes** (lines 47–57 and 73–78): `getFastRenderRouteDecision()` inlines a simplified version of `decideRenderRoute` but cannot classify themed clipTypes — it returns `null` for them, forcing a slow dynamic import. Worse, when the worker route is resolved, the hook shows an error message (`"Worker render unavailable for route..."`) instead of calling `enqueueBanodocoRenderTimeline`. The hook never invokes `executeRenderPipeline`.
+
+5. **`renderPipeline.ts` is unused by the hook** (`renderPipeline.ts`, lines 66–118, and search for `executeRenderPipeline` in `useRenderState.ts`): `executeRenderPipeline` is a well-structured middleware pipeline (beforeRender → assetMaterialized → provider dispatch → afterRender/renderFailed) with JWT acquisition and enqueue, but zero callers in `useRenderState.ts` reference it. The pipeline exists only in tests.
+
+6. **No blocker resolution or fallback planning anywhere**: If worker-banodoco returns an error (missing JWT, orchestrator down, 4xx response), the pipeline emits `renderFailed` and stops. There is no "split the timeline and render media clips client-side" fallback, no retry with backoff, and no degraded-mode plan.
+
+7. **No capability-gated routing**: The router does not check whether the orchestrator is reachable, whether the user's plan supports worker rendering, whether theme packages are installed, or whether the output resolution/codec is supported by the target provider. These are all planner concerns that a router alone cannot address.
+
+8. **`useRenderState.ts` exists as `.ts` not `.tsx`** — the audit spot file name `useRenderState.tsx` does not match the actual file `useRenderState.ts`. This is a minor discrepancy but suggests the spec and implementation are out of sync.
+
+9. **Tests are thorough but test an isolated router, not an end-to-end planner** (`renderRouter.test.ts`, 691 lines): Integration tests cover `decideRenderRoute → buildRenderTimelinePayload → enqueueBanodocoRenderTimeline` and `executeRenderPipeline`, but no test verifies the hook actually invokes the pipeline, and no test covers capability overrides, artifact lifecycle, or fallback behavior.
+
+10. **`external` route is defined but unreachable** (`renderRouter.ts`, lines 176–181 in `executeProviderRoute`): The `external` case returns a hard error. `decideRenderRoute` never returns `'external'`, so this is dead code — a planner would register and dispatch to external providers dynamically.
+
+---
+
+## 3. Gap/Risk
+
+**Product consequence**: The "Render" button in the extension layer can route pure-native timelines to the browser renderer, but any timeline containing a themed clip (e.g., `image-jump`, `title-card`) lands on an error message — *"Worker render unavailable for route..."* — even though the router correctly identifies it as `worker-banodoco` and the enqueue pipeline is built. The end-to-end flow is broken at the hook layer. Users cannot render themed timelines.
+
+**Dev consequence**: There are two routing implementations (hook inline + `decideRenderRoute`) with divergent behavior, zero capability introspection, and no artifact lifecycle. A team building on this extension layer would need to rebuild the planner from scratch before shipping any themed content.
+
+---
+
+## 4. Polish Plan
+
+1. **Wire `useRenderState.ts` to `executeRenderPipeline`**: Replace the dead-end worker-branch error message with an actual call to `executeRenderPipeline` (or inline the enqueue flow). This is the single highest-impact fix — it unblocks themed rendering end-to-end.
+
+2. **Remove the duplicate `getFastRenderRouteDecision`**: Consolidate on `decideRenderRoute` as the single routing entry point. If the dynamic import is too slow, make it a static import.
+
+3. **Implement a `RenderPlanner` that wraps the router**: Add a planner layer that:
+   - Consumes `SequenceCapabilityOverrides` from metadata
+   - Checks orchestrator health / reachability before deciding worker route
+   - Produces a `RenderPlan` with ordered steps, required capabilities, and fallback actions
+   - Tracks artifact status (polling, CDN resolution)
+
+4. **Add artifact lifecycle**: Extend `GeneratedRemotionModuleStatus` to include artifact state (`building` / `ready` / `failed`), add an `ArtifactRegistry` service, and wire it into the planner.
+
+5. **Add fallback logic**: When worker dispatch fails, attempt a degraded browser render of the media-only subset of the timeline.
+
+6. **Add tests for the hook→pipeline integration** and for capability-gated routing decisions.
+
+7. **Rename `useRenderState.ts` → `useRenderState.tsx`** if the spec requires it (or update the audit spot).
+
+---
+
+## 5. Confidence
+
+**Medium**. The router and pipeline are well-implemented in isolation, and the test coverage is strong for the units that exist. Confidence would become **high** with confirmation of whether the hook→pipeline disconnection is a known work-in-progress (e.g., awaiting orchestrator deployment) or an oversight. A search across the codebase for any `executeRenderPipeline` call-site outside tests would resolve this definitively.

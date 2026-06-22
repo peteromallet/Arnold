@@ -1,0 +1,61 @@
+Now I have all the evidence. Let me compile the audit.
+
+---
+
+## 1. Verdict
+
+**Implemented but masks contract drift: the `isMissingTimelineEventsTableError` guard (lines 281–289, 309–312) correctly prevents an outright crash when the `timeline_events` table is absent, but it collapses "table missing" into the same semantic as "empty event log," silently severing the sync protocol's ability to detect remote advancement and exposing a two-version-system misalignment between the append-service write path and the browser's direct-read path.**
+
+---
+
+## 2. Evidence
+
+1. **Fallback exists and is tested.** `SupabaseDataProvider.ts` lines 309–312: `loadDbHead` catches Postgres code `42P01` (relation does not exist) and returns `{ version: 0, hash: null, event_id: null }`. The test at `SupabaseDataProvider.test.ts` lines 199–238 explicitly verifies this path ("loadTimeline still hydrates the materialized timeline row when timeline_events is not migrated").
+
+2. **Two parallel version counters are in play.** The migration `20260612100000` line 102–103 documents that `timeline_events.version` is "Separate from timelines.config_version, which remains the optimistic save counter." The write path (`saveTimeline`, line 498) posts to the append service with `expected_version` (the `config_version`). The read path (`loadDbHead`, lines 299–308) queries `timeline_events.version`. These are distinct sequences.
+
+3. **The sync protocol has no "table missing" state.** `AppSyncState` (lines 58–64) defines six states, none of which represent "event infrastructure missing." When both `dbHead.version === 0` and no bookmark exists, `syncTimeline` (lines 555–592) falls through all branches and returns `bookmark_incompatible` — which is the same state used when two valid bookmarks genuinely conflict.
+
+4. **The `DataProvider` interface is unaware of `timeline_events`.** `DataProvider.ts` (lines 44–56) exposes `loadTimeline`, `saveTimeline`, `loadAssetRegistry`, etc. — none of which surface event-log health. The `syncTimeline` method and `SyncTimelineResult` types are declared on `SupabaseDataProvider` only, not the interface, making them implementation-coupled.
+
+5. **Legacy blob-write RPCs are locked down.** Migration `20260612113000` lines 8–11 revoke `update_timeline_config_versioned` and `update_timeline_versioned` from authenticated users. The append service is now the sole write path, meaning every save must go through the Python service that populates `timeline_events`. A failure in that pipeline leaves the browser with no fallback write path.
+
+6. **No corrective reload path exists.** `useEditorSync.ts` lines 97–129 maps `syncTimeline` results to UI states, but `bookmark_incompatible` only sets a warning — it never triggers a reload or recovery attempt. The user is stuck with a non-actionable state.
+
+7. **The append-service response includes a `db_head` for bookmark update (line 531), but the sync's `loadDbHead` re-queries the table directly (line 539).** If the append service wrote the event but the direct SELECT misses it (e.g., replication lag, RLS misconfiguration), the sync sees stale data while the bookmark is up-to-date — a phantom `both_advanced` or `bookmark_incompatible`.
+
+8. **No index on `timeline_events(timeline_id, version DESC)` beyond the PK.** The primary key `(timeline_id, version)` covers the `loadDbHead` query (line 305), but the migration also has `unique (timeline_id, event_id)` at line 43. The query uses `.order('version', { ascending: false }).limit(1)`, which the PK supports — but only if the PK is clustered or the planner chooses an index scan. On a cold cache with many events, this could be a table scan.
+
+9. **The rollback script exists** (`supabase/rollbacks/20260612100000_timeline_events.sql`) but drops the table without any migration version housekeeping — a rollback would re-trigger the 42P01 path silently.
+
+10. **Test coverage is narrow.** The `loadTimeline` test at line 199 verifies the fallback lets loading proceed, but no test verifies what `syncTimeline` returns when `loadDbHead` hits 42P01 during a sync operation. The sync tests always mock `timeline_events` as present.
+
+---
+
+## 3. Gap/Risk
+
+**Product consequence:** If the `timeline_events` migration is absent, delayed, or rolled back on a production Supabase instance, the sync button silently degrades to `bookmark_incompatible` with no user-facing explanation. The editor remains usable for local editing and saves (since `saveTimeline` goes through the append service), but multi-device sync is permanently broken with no recovery path short of a full page reload or database migration. The user never sees an error that says "event log not available" — they see a generic bookmark conflict.
+
+**Dev consequence:** The two-version-system architecture (`config_version` for CAS, `event_log.version` for sync head) means that any inconsistency between the append service's event emission and the materialized `timelines` row creates an unrecoverable sync state. A developer debugging a sync failure must understand that `dbHead.version` (from `timeline_events`) and `configVersion` (from `timelines`) are separate counters, and a mismatch between them is the root cause of many `bookmark_incompatible` states — but this relationship is undocumented outside the SQL migration comment.
+
+---
+
+## 4. Polish Plan
+
+1. **Add `infrastructure_missing` to `AppSyncState`** and handle it in both `syncTimeline` (return it when `loadDbHead` catches 42P01 after migration should have run) and `useEditorSync` (surface a clear "event infrastructure unavailable" message, not a generic bookmark conflict).
+
+2. **Add an explicit `timeline_events` health probe** to `loadTimeline` or a separate `healthCheck()` method — verify the table exists and is queryable before attempting sync, and expose the result through the hook so the UI can show a banner.
+
+3. **Document the two-version-system contract** in a `SYNC_CONTRACT.md` or in-code comments on `loadDbHead` and `saveTimeline`, explaining that `dbHead.version` (event-log sequence) is distinct from `configVersion` (CAS counter) and that the append service is the sole authority for keeping them correlated.
+
+4. **Add an integration test** that simulates `42P01` on `loadDbHead` during a `syncTimeline` call and asserts the result is a distinct, actionable state (not `bookmark_incompatible`).
+
+5. **Add a fast-fail check** in the SupabaseDataProvider constructor (or first `loadDbHead` call) that raises a typed error if `timeline_events` is missing AND the provider was constructed with a flag indicating migration should be complete, preventing silent degradation for environments where the migration is expected.
+
+6. **Add a `config_version` vs `event_log.version` consistency assertion** in `loadDbHead` — if `config_version > 0` but `timeline_events` is empty (version 0), log a warning or throw, since this indicates the append service has saved materialized config without emitting events.
+
+---
+
+## 5. Confidence
+
+**High.** The fallback is real, tested, and works as designed for the narrow case of a missing table. The contract drift is structural: the sync protocol leans on `timeline_events` as its source of truth, the `DataProvider` interface doesn't surface event-log health, and the two-version-system architecture creates an implicit coupling that no test covers end-to-end. Confidence would move to **very high** with an integration test that exercises the `42P01` path through `syncTimeline` → `useEditorSync` and confirms the UI receives a distinct, recoverable state.

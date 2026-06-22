@@ -1,0 +1,61 @@
+---
+
+## 1. Verdict
+
+**Partial.** The asset parser, registry persistence, and metadata types are production-ready for the built-in media pipeline, but there is no search/query API, no extension contribution point for custom parsers/formats, and output-format codecs are only typed stubs—not an end-to-end contribution-ready platform.
+
+---
+
+## 2. Evidence
+
+- **Parser exists and is tested** — `extractAssetRegistryEntry()` at `src/tools/video-editor/lib/mediaMetadata.ts:56-131` handles video (`extractVideoMetadata`), image (`loadImageMetadata`), audio (`loadAudioMetadata`), and extension-based fallback for blank MIME types. Tests at `src/tools/video-editor/lib/mediaMetadata.test.ts:41-76` cover video and audio extension fallback paths.
+
+- **Rich metadata type shapes** — `AssetRegistryEntry` at `src/tools/video-editor/types/index.ts:243-262` captures `type` (MIME), `duration`, `resolution`, `fps`, `origin`, `derivedFrom` (with `role: 'thumbnail' | 'proxy' | 'render-output'`), `generationId`, `variantId`, `thumbnailUrl`, and integrity fields (`etag`, `content_sha256`). Production-grade detail.
+
+- **Optimistic persistence works** — `optimisticallyPersistAssetRegistryEntry()` at `src/tools/video-editor/lib/assetRegistryPersistence.ts:21-40` patches the registry immediately then rolls back on persistence failure via `remove` or `restore` strategies. Clean separation of mutation from I/O.
+
+- **Asset drop tests are thorough** — `src/tools/video-editor/hooks/useAssetManagement.assetDrop.test.ts:52-239` validates text rejection, video acceptance, unresolved-duration fallback (5-second visible span), and three registration-plan paths (generation, duplicate, final-video replacement).
+
+- **No search/query/filter API exists** — Searched for `searchAsset`, `queryAsset`, `filterAsset`, `listAssets`, `findAsset`, `filterByType`, `searchRegistry` across `src/tools/video-editor/` — zero results. `DataProvider` (`data/DataProvider.ts:44-56`) and `AssetResolver` (`data/AssetResolver.ts:71-85`) expose only `loadAssetRegistry()` / `registerAsset()`; no query contract.
+
+- **Extension surface has no parser/format contribution points** — `VideoEditorExtensionRuntimeConfig` at `src/tools/video-editor/runtime/extensionSurface.ts:78-87` supports only `slots`, `dialogHost` (dialogs), and `registry` (panels + inspectorSections). Zero contribution points for custom asset parsers, metadata extractors, search providers, or output-format codecs.
+
+- **Output-format codec field is type-only** — `VideoEditorExportRequest.output.codec` at `src/tools/video-editor/lib/browser-runtime.ts:23` lists `'h264' | 'h265' | 'vp8' | 'vp9' | 'prores'` but the actual browser render pipeline (`hooks/useClientRender.ts:70-82`) only maps `vp*`/`av1` → `webm` and everything else → `mp4`. No contribution point for new codecs.
+
+- **MIME type maps are hardcoded** — `VIDEO_EXTENSION_TYPES` (lines 4-12) and `AUDIO_EXTENSION_TYPES` (lines 14-21) in `mediaMetadata.ts` are closed maps. Extensions cannot register new container formats (e.g., `.mxf`, `.caf`) without forking this file.
+
+- **Parser assumes browser `File` API** — `extractAssetRegistryEntry` only accepts `File` objects with `file.type` and `file.name`. No support for URL-based parsing, streaming metadata extraction, or server-side/progressive metadata loading.
+
+- **`AssetRegistry` is a flat lookup table** — at `types/index.ts:264-266`, it's `Record<string, AssetRegistryEntry>` — O(1) keyed access but zero indexed/queryable facets (by type, duration, resolution, origin, generationId, etc.).
+
+---
+
+## 3. Gap/Risk
+
+**Product consequence:** A third-party extension developer cannot contribute a custom asset parser (e.g., for `.pxd` Pixelmator files, `.aep` After Effects project metadata, or `.srt` subtitles) and have it plug into the editor's asset ingestion pipeline. Similarly, there is no way to search/filter assets in a large timeline (>100 assets) by type, resolution, duration, or generation provenance—users must scan a flat key-value map manually.
+
+**Dev consequence:** Any extension that ships an asset panel (the only contribution point available) must either import internal-only `AssetRegistry` shapes directly (breaking the SDK boundary) or replicate metadata-parsing logic that cannot feed back into the registry. The output-format codec enum is a typed stub with no extension hook, so a contributor wanting to add AVIF sequence export or DNxHD would need to monkey-patch `useClientRender.ts`.
+
+**Risk severity:** Medium-high. The parser and metadata shapes are solid. The absence of an extensible contribution point means `reigh-extension-layer-epic`'s "extension commands, registry/clip/effect/transition/keyframe contributions, asset/live-data/render/process/shader capabilities" milestone is materially incomplete for the "asset" and "render/process" sub-items.
+
+---
+
+## 4. Polish Plan
+
+1. **Add `AssetParserContribution` to `extensionSurface.ts`** — a new `parsers?: readonly AssetParserDescriptor[]` on `VideoEditorExtensionConfig`, where each descriptor has `id`, `accept: (file: File | { url: string; mimeType?: string }) => boolean`, and `parse: (input) => Promise<Partial<AssetRegistryEntry>>`. Wire into `extractAssetRegistryEntry` as a pre-processor chain.
+
+2. **Expose `AssetRegistryQuery` on `DataProvider` / `AssetResolver`** — add `queryAssets?(filter: { type?: string; minDuration?: number; maxDuration?: number; resolution?: string; origin?: string; generationId?: string }) => Promise<string[]>` for server-side-capable providers, and ship a synchronous `filterAssets(registry, filter)` utility in `lib/assetFilter.ts` for client-side use.
+
+3. **Add `OutputFormatContribution`** — a `formats?: readonly OutputFormatDescriptor[]` on `VideoEditorExtensionConfig`, with `id`, `container: string`, `codec: string`, `mimeType: string`, `fileExtension: string`, and an optional `transcode?: (blob: Blob) => Promise<Blob>`. Wire into `useClientRender.ts` so contributed codecs appear alongside the built-in `vp8`/`vp9`/`h264` path.
+
+4. **Open the MIME-type maps** — refactor `VIDEO_EXTENSION_TYPES` and `AUDIO_EXTENSION_TYPES` in `mediaMetadata.ts` to accept a merge-from-contributions pattern so extension-registered container formats get proper MIME inference in the fallback path.
+
+5. **Add `parseAssetFromUrl`** — a companion to `extractAssetRegistryEntry` that handles URL-based metadata probing (Content-Type header, range-request probing for moov atom, etc.) so the parser works outside the drag-and-drop `File` path.
+
+6. **Docs and tests** — add an `asset-parser-extension.example.ts` and `output-format-extension.example.ts` under `examples/`, and extend `mediaMetadata.test.ts` to cover the contribution chain.
+
+---
+
+## 5. Confidence
+
+**High.** The evidence is unambiguous: metadata types are rich, the parser is tested, persistence works, but search/query, extensible parser registration, and output-format contributions are entirely absent from every layer examined (types, data providers, extension surface, runtime). A grep for "search/query/filter/contribute.*parser/contribute.*format" across the entire `video-editor/` tree returns zero relevant hits beyond the React Router `useSearchParams` in UI pages. What would raise confidence further: confirmation that the Codex audit's "package loader/manager/state" milestone also has no parser-contribution bridging (but that's a different spot).

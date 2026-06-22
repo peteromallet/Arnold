@@ -1,0 +1,83 @@
+## Confirmed
+
+**Claim 1 — Semantic overclaim on "installed"**: Partially confirmed. The public API field `ExtensionLoadResult.installedPackages` uses the term "installed," which implies marketplace/install semantics. The actual loader takes host-provided packages — there is no installation flow. The M5 brief guards against this (Done Criteria: "No marketplace/discovery/install/update affordances exist"; Out: "Marketplace/discovery/catalog/search/install-from-URL/update/dependency graph"). The hazard is real but contained by spec; the naming remains a latent leak that a future contributor could misinterpret.
+
+**Claim 2 — `loaded: boolean` collapses disabled/invalid/incompatible/duplicate**: Confirmed. `InstalledPackageState.loaded` is `false` for all four rejection paths:
+- Validation failure (invalid manifest, API mismatch, rejected permissions)
+- Duplicate package ID (first-wins, later rejected)
+- Disabled by user (`state.enabled === false`)
+- Any runtime error during settings resolution
+
+The M5 brief's Locked Decisions already flag this: "Manager must distinguish disabled-by-user from failed-to-load/invalid/incompatible/duplicate where possible." The `loading.md` doc shows a workaround (disabled = `!loaded && diagnostics.length === 0`), but this is indirect and fragile — a valid package with zero diagnostics that fails settings resolution would be misclassified as "disabled."
+
+## Rejected or Overstated
+
+**Neither claim is overstated.** The `installedPackages` naming genuinely risks marketplace conflation (even if spec-guarded), and the boolean collapse is real, not theoretical. The M5 brief's Locked Decisions already identify the collapse as a problem to solve, confirming wave one's read.
+
+**Minor overstatement in original claim**: wave one said the loader "collapses into `loaded=false`" as if no recovery path exists. In practice, the `diagnostics` array on `InstalledPackageState` does carry the reason — disabled packages have empty diagnostics, invalid ones carry errors. The collapse is UX-awkward but not information-destructive.
+
+## Required Plan Changes
+
+### 1. Rename `installedPackages` → `packages` (or `loadedPackages`)
+
+In `ExtensionLoadResult` (`extensionLoader.ts` line 64):
+
+```
+// FROM:
+installedPackages: InstalledPackageState[];
+
+// TO:
+packages: InstalledPackageState[];
+```
+
+Docs, tests, and the M5 brief must follow. This eliminates the install/marketplace semantic leak at the API level. The M5 constraints (no install/update/delete flows) remain unchanged.
+
+### 2. Add explicit `status` field to `InstalledPackageState`
+
+Replace the overloaded `loaded: boolean` with a discriminator:
+
+```ts
+export type PackageStatus =
+  | 'loaded'       // Valid, enabled, non-duplicate, loaded into runtime
+  | 'disabled'     // User-disabled via state.enabled === false
+  | 'invalid'      // Failed validation (schema, API version, permissions, etc.)
+  | 'incompatible' // api_version_incompatible specifically (subset of invalid)
+  | 'duplicate'    // Duplicate manifest.id — first-wins, this one rejected
+  | 'error';       // Settings resolution or unexpected runtime failure
+
+export interface InstalledPackageState {
+  manifest: ExtensionManifest;
+  state: ExtensionState;
+  diagnostics: ExtensionDiagnostic[];
+  status: PackageStatus;   // replaces 'loaded: boolean'
+}
+```
+
+The loader already knows the rejection reason at every branch. Deriving `status` is mechanical:
+- Validation fails → `'invalid'` (or `'incompatible'` if code is `api_version_incompatible`)
+- Duplicate ID → `'duplicate'`
+- `state.enabled === false` → `'disabled'`
+- Otherwise → `'loaded'`
+
+M5 brief Locked Decisions call for this explicitly; making it first-class eliminates the fragile `diagnostics.length === 0` heuristic.
+
+### 3. Fix documentation diagnostic-code mismatch
+
+`loading.md` lists `settings_validation_failed` and `unsupported_record_version` as diagnostic codes. Neither exists in `ExtensionDiagnosticCode` in `extensionManifest.ts`. The actual codes are `settings_override_invalid` and `state_corrupt`. Update the doc to match the source of truth, or add the missing codes if they represent real unreported states in the state repository implementation.
+
+### 4. Minimum UX wording constraints for the manager
+
+Per M5 Locked Decisions, the manager must surface these labels exactly:
+
+| Status | Manager label | Action affordance |
+|---|---|---|
+| `loaded` | "Active" | Disable button, settings edit |
+| `disabled` | "Disabled" | Enable button, settings edit (read-only or editable) |
+| `invalid` | "Invalid — check diagnostics" | Inspect-only, no enable/disable |
+| `incompatible` | "Incompatible API version" | Inspect-only, no enable/disable |
+| `duplicate` | "Duplicate — another extension already loaded this ID" | Inspect-only, no enable/disable |
+| `error` | "Load error" | Inspect-only, retry button |
+
+Trust warning wording (required per Locked Decisions): "Extensions run with full editor access. Permissions declared in manifests are not enforced at runtime. Only load extensions from sources you trust."
+
+No "Install," "Uninstall," "Update," "Remove," "Delete," or "Marketplace" labels anywhere in the manager.

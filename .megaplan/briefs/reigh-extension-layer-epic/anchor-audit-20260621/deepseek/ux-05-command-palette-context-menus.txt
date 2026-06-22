@@ -1,0 +1,59 @@
+## 1. Verdict
+
+**Absent.** Extension commands are not discoverable through any command palette or context-menu contribution mechanism. What exists is an internal, programmatic command execution engine (`commands/`) with no user-facing palette integration, and two hardcoded context menus (`ClipAction`, `ShotGroupContextMenu`) with zero extension-contribution hooks. The `cmdk`-based `CommandDialog` from `shared/components/ui/command.tsx` is available in the component library but is never wired into the video editor.
+
+---
+
+## 2. Evidence
+
+- **No command palette usage:** `CommandDialog` (exported from `src/shared/components/ui/command.tsx:44`) is never imported or instantiated anywhere in `src/tools/video-editor/`. It is used only by `ProjectSelectorPopover` and `ShotSelector` — unrelated surfaces.
+
+- **No extension command contribution slot:** `VideoEditorExtensionConfig` (`src/tools/video-editor/runtime/extensionSurface.ts:73-77`) defines extension surfaces for `slots`, `dialogHost`, and `registry` (panels/inspector sections), but has zero fields for contributed commands, palette items, context-menu entries, or shortcuts.
+
+- **Hardcoded keyboard shortcuts:** `useKeyboardShortcuts.ts:41-129` registers a fixed set of `keydown` handlers (Space, arrows, Ctrl+Z, Ctrl+A, Del, M, S, Escape) with no `registerShortcut` API, no extension hook, and no conflict resolution.
+
+- **Hardcoded clip context menu:** `ClipAction.tsx:84-237` (`ClipContextMenu`) renders a fixed list of menu items (Duplicate generation, Update variant, Dismiss reminder, Trim to media end, Hold last frame, Split Here, Mute/Unmute, Split at playhead, Create animation sequence, Create Shot, Generate Video, Delete). No extension entry point exists.
+
+- **Hardcoded shot-group context menu:** `ShotGroupContextMenu.tsx:14-175` renders only deconstruct/delete/switch-to-video/switch-to-images/update-video/jump/generate items — all wired to props, none contributed by extensions.
+
+- **Clip-type command system is internal-only:** `getClipTypeCommandAvailability` and `isClipTypeCommandAvailable` (`src/tools/video-editor/clip-types/runtime.ts:621-652`) evaluate command constraints against clip state, but these are consumed only by `ClipPanel.tsx:192-201` and `clip-inspector.ts:30` for gating built-in button visibility — never surfaced as discoverable palette items.
+
+- **No conflict resolution:** No code path examines `commandId` collisions between extensions (the `TimelineCommand.commandId` field at `types.ts:14` is an opaque annotation, not used for UI dedup). No target-context discrimination exists — every command runs against the active timeline data indiscriminately.
+
+- **`commands/` directory is an execution engine, not a discoverability layer:** `runner.ts:298-313` (`createTimelineCommandRegistry`) and `media.ts:288-290` (`MEDIA_COMMAND_DESCRIPTORS`) provide a clean internal pipeline (validate → dryRun → apply → invert) for two commands (`add-media`, `swap`), but these are called programmatically from hooks like `useTimelineCommands` — never exposed for user browsing or searching.
+
+- **Gap confirmed by negative search:** `grep -rn "commandPalette\|CommandPalette\|registerCommand\|extensionCommand\|contextMenu.*extension"` across `src/tools/video-editor/` returns zero results.
+
+---
+
+## 3. Gap/Risk
+
+**Product consequence:** A third-party developer who writes an extension (e.g., an "AI Color Grade" command) has no way to surface it to the user. Without palette/context-menu contribution hooks, every extension command is invisible — it can only be triggered programmatically by another extension that knows about it. Users cannot discover, search, or invoke extension commands via the standard UX patterns (⌘K palette, right-click menus, keyboard shortcuts).
+
+**Dev consequence:** The internal command engine (`TimelineCommandRunner`, descriptors) is architectural dead weight for extension authors — it supports only two built-in commands (`add-media`, `swap`), and there is no registration API for third-party command descriptors. This means the promise of "extension commands" in the epic is confined to internal timeline mutations, not an actual extensibility surface.
+
+---
+
+## 4. Polish Plan
+
+1. **Extend `VideoEditorExtensionConfig`** (`extensionSurface.ts:73`): add optional `commands?: VideoEditorCommandContribution[]` and `contextMenu?: VideoEditorContextMenuContribution[]` fields, including `id`, `label`, `icon?`, `shortcut?`, `when?` (target context predicate), and `onInvoke`.
+
+2. **Build a command palette host** using the existing `Command`/`CommandDialog` from `shared/components/ui/command.tsx`: register all built-in + extension-contributed commands, group by category, support fuzzy search, and wire to ⌘K.
+
+3. **Add extension contribution hooks to existing context menus**: `ClipAction.tsx`'s `ClipContextMenu` should accept an `extensionItems` prop or consume a context that merges contributed menu items with built-in ones, gated by the same `when` predicate.
+
+4. **Implement command conflict detection**: deduplicate by `id`, warn on shortcut collisions, and provide a `priority` field for resolution.
+
+5. **Expose target context**: the `when` predicate should receive `{ selectedClipIds, activeTrackId, clipMeta, timelineData }` so extensions can scope availability precisely.
+
+6. **Open the internal `TimelineCommandRegistry`**: let extensions register `TimelineCommandDescriptor` entries at runtime (currently `createTimelineCommandRegistry` freezes at construction — `runner.ts:298`).
+
+7. **Tests**: unit tests for command deduplication, shortcut conflict resolution, palette search/filtering, and context-menu merging.
+
+8. **Docs**: add an Extension Commands page describing the contribution API, target context shape, conflict rules, and example extension.
+
+---
+
+## 5. Confidence
+
+**High.** Every relevant file has been inspected directly and cross-referenced with negative search results. The codebase has solid internal infrastructure (`commands/`, `extensionSurface`, `cmdk` wrapper) but zero wiring between them for user-facing discoverability. Confidence would become *certain* with confirmation from the epic spec or a product requirement document that this was explicitly deferred rather than overlooked.

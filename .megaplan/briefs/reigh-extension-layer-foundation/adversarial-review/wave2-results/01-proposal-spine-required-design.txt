@@ -1,0 +1,47 @@
+All evidence gathered. Here is the independent assessment:
+
+---
+
+## Confirmed
+
+**1. Frontend omits `proposal_policy` on first invoke.** In `useAgentSession.ts:325`, the guard `nextUserMessage === undefined && proposalPolicy !== undefined` means `proposal_policy` is only embedded in the body on recursive auto-continue calls (where `nextUserMessage` is `undefined`). On the initial `invokeAgent(message, 0)` call (line 402), `nextUserMessage` is the user's actual message string, so the spread is dead. The policy never reaches the edge function on the first turn.
+
+**2. Backend ignores `proposal_policy`.** `AgentInvocationBody` (types.ts:200–204) defines only `session_id`, `user_message`, and `selected_clips` — no `proposal_policy` field exists in the type or in the destructuring at index.ts:34–38. Consequently `runAgentLoop` (index.ts:76–83) is called without `timelineMutationMode`, so the loop never enters proposal mode regardless of what the frontend sends. The `RunAgentLoopOptions.timelineMutationMode` parameter exists but is never wired.
+
+**3. Edge response discards proposal data.** `RunAgentLoopResult` (loop.ts:194–198) returns only `status`, `turns`, and `summary`. Individual tool results can carry a `proposal` field (`ToolResult.proposal` in types.ts:19), but `processToolCalls` in loop.ts never aggregates proposals from tool executions, and `index.ts:90–96` never includes any proposal data in the HTTP response. The frontend's `normalizeInvokeResponse` and `proposalResponse` state are wired to receive proposals, but the edge never sends them.
+
+**4. `create_shot` bypasses proposal mode.** In `executeToolCall` (loop.ts:492–493), `create_shot` calls `executeCreateShot(toolArgs, timelineState, supabaseAdmin)` without `timelineMutationMode`. `executeCreateShot` (lines 373–399) directly calls `createShotWithGenerations(supabaseAdmin, …)`, which inserts a shot into the database — a destructive mutation with no proposal gating. This is the genuine bypass.
+
+**5. Proposal persistence does not exist.** Proposals are created in-memory via `createProposalFromExecutionResult` (commands/proposals.ts) and attached to `ToolResult.proposal`. They are never written to a database table, never survive reload, and have no TTL/expiry mechanism. No proposal table exists in the schema.
+
+---
+
+## Rejected Or Overstated
+
+**"`set_params`, `set_theme`, `set_theme_overrides` bypass proposal policy."** These three are routed through `executeCommand` at loop.ts:500–533 with `timelineMutationMode` correctly forwarded. Inside `registry.ts`, `executePreparedTransaction` (line 464) and sub-paths for `repeat` and `undo` all check `timelineMutationMode === "propose"` and return dry-run proposals instead of persisting. The shortcut path claim is false — those three respect policy.
+
+**"`create_task` bypasses proposal mode" (implied by wave-one's "some tools").** `create_task` (loop.ts:472–473) doesn't pass `timelineMutationMode`, but it creates a task in the generation queue, not a timeline config mutation. It's debatable whether task creation falls under the proposal policy scope; the brief's "Out" section explicitly excludes "Full extension-contributed agent tools," so this may be by design. Worth a note but not a confirmed bypass of the timeline-mutation policy.
+
+---
+
+## Required Plan Changes
+
+These are minimum-scope changes, all within the brief's existing touchpoints and locked decisions.
+
+**A. Fix the frontend send path (useAgentSession.ts, 1 line).**
+Change the guard on line 325 from `nextUserMessage === undefined` to a flag like `isFirstInvocation`. On the first call, include `proposal_policy` in the body alongside the user message. The auto-continue path already works.
+
+**B. Add `proposal_policy` to `AgentInvocationBody` (types.ts) and wire it in `index.ts`.**
+Add `proposal_policy?: unknown` to `AgentInvocationBody`. In `index.ts`, extract `body.proposal_policy`, normalize it to `TimelineMutationMode` (accept `"propose"`, default to `"apply"`), and pass it as `timelineMutationMode` to `runAgentLoop`. This is ~5 lines.
+
+**C. Return proposal data from the edge function.**
+After `runAgentLoop` returns, scan `result.turns` for tool_result turns whose `tool_args` contain a `proposal` payload. Merge the most recent non-null proposal into the response under `proposal_response`. The frontend's `normalizeInvokeResponse` already expects this shape. Alternatively, extend `RunAgentLoopResult` with an optional `proposal` field and have `processToolCalls` aggregate it. ~8 lines.
+
+**D. Gate `create_shot` on `timelineMutationMode`.**
+Pass `timelineMutationMode` into `executeCreateShot`. In proposal mode, instead of calling `createShotWithGenerations`, return a proposal-like result describing the shot that would be created. The `createShotWithGenerations` call itself (in `tools/clips.ts`) should also gain a mode guard, or the caller should skip it. ~10 lines in loop.ts + the `executeCreateShot` signature change.
+
+**E. Add proposal persistence (new migration + db.ts).**
+Create a `timeline_proposals` table with columns: `id`, `timeline_id`, `session_id`, `payload` (jsonb of `TimelineProposal`), `status` (`pending`/`accepted`/`rejected`/`expired`), `base_config_version`, `created_at`, `expires_at`. Add `saveProposal` and `loadPendingProposals` functions to `db.ts` and call them from `executePreparedTransaction`/`handleRepeat`/`undo` paths in registry.ts when a proposal is generated. The M2 storage foundation can serve as the persistence layer. ~30 lines + migration.
+
+**F. Add TTL/expiry enforcement (proposals.ts + registry.ts).**
+Add `isProposalExpired(proposal, ttlMs)` to commands/proposals.ts. In `applyProposal`, reject if expired. Add a cleanup path (e.g., on session load) to mark expired proposals. ~15 lines.

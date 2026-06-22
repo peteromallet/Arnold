@@ -1,0 +1,66 @@
+{
+  "id": "log_60d552df0095",
+  "level": "debug",
+  "category": "system",
+  "event_type": "authority_divergence",
+  "message": "authority_divergence emitted",
+  "details": {
+    "event": {
+      "seq": 6039,
+      "schema_version": 1,
+      "ts_utc": "2026-06-22T19:39:35.474149+00:00",
+      "ts_rel_init_s": 8274.364795,
+      "kind": "authority_divergence",
+      "phase": "execute",
+      "payload": {
+        "diagnostic_version": 1,
+        "task_id": "T6",
+        "raw_terminal_status": "done",
+        "authority_status": "unknown",
+        "authoritative": false,
+        "reason": "stale_evidence:missing_head:task_commands_run",
+        "missing_outputs": [],
+        "stale_evidence": [
+          "missing_head:task_commands_run",
+          "missing_head:task_files_changed",
+          "missing_head:task_commands_run",
+          "missing_head:task_commands_run",
+          "missing_head:task_commands_run"
+        ],
+        "would_block_reasons": [
+          "stale_evidence:missing_head:task_commands_run",
+          "stale_evidence:missing_head:task_files_changed"
+        ],
+        "error": null,
+        "diagnostics": {
+          "task_id": "T6",
+          "declared_outputs": {
+            "files_changed": [
+              "src/tools/video-editor/browser/BrowserVideoEditorProvider.tsx"
+            ],
+            "commands_run": [
+              "npx tsc --noEmit --project tsconfig.json",
+              "npx vitest run src/tools/video-editor/browser/BrowserVideoEditorProvider.test.tsx --reporter=verbose",
+              "npx vitest run src/tools/video-editor/data/DataProvider.test.ts src/tools/video-editor/runtime/ --reporter=verbose"
+            ]
+          },
+          "linked_evidence_count": 10,
+          "evidence_count": 86,
+          "normalization": "iterable",
+          "status": "unknown",
+          "evidence_sources": [
+            "plan_artifacts"
+          ],
+          "loaded_evidence_count": 86,
+          "raw_terminal_status": "done"
+        },
+        "ts_utc": "2026-06-22T19:39:35.473823+00:00"
+      },
+      "transaction_id": "1ea8885b01cad5fa",
+      "store_method": "log_system_event"
+    }
+  },
+  "turn_id": null,
+  "epic_id": "m2-provider-persistence-spine-20260622-1921",
+  "occurred_at": "2026-06-22T19:39:35.474192Z"
+}

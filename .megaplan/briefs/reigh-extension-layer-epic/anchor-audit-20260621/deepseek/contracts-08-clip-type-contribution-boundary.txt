@@ -1,0 +1,56 @@
+---
+
+## 1. Verdict
+**Clip types are a trusted internal sequence helper, not a true third-party contribution API.** The `defineClipType` factory exists and is well-typed, but there is no external registration surface — all clip-type identities are hardcoded at build time (4 builtin + 6 trusted), and the lone dynamic path (`custom:` prefix in `DynamicSequenceRegistry`) routes entirely around the clip-type descriptor system.
+
+---
+
+## 2. Evidence
+
+1. **`defineClipType` is not exported from the public contract.** `src/tools/video-editor/index.ts` (lines 1–117) carries `@publicContract` but exports only `BUILTIN_CLIP_TYPES` and `TRUSTED_SEQUENCE_CLIP_TYPES` — never `defineClipType`. The barrel at `clip-types/index.ts` exports it, but that barrel is consumed only internally.
+
+2. **All clip-type identities are hardcoded.** `TRUSTED_CLIP_TYPE_REGISTRATIONS` in `clip-types/registry.ts:97-100` is computed from `TRUSTED_SEQUENCE_METADATA` in `sequences/metadata.ts:39-153`, which is a `const` array of exactly six entries: `image-jump`, `title-card`, `section-hook`, `art-card`, `resource-card`, `cta-card`. Builtin types (`media`, `hold`, `text`, `effect-layer`) are likewise a literal array in `runtime.ts:133-199`. No runtime mutation to either.
+
+3. **The "available" vs "unavailable" split is about component presence, not third-party clip-type authorship.** `filterTrustedClipTypeRegistrationsForRegistry` (`registry.ts:136-151`) checks `hasOwn(registry, registration.id)` against a component registry — a safe-to-render gate, not an extension API. A clip type not in `TRUSTED_SEQUENCE_METADATA` always resolves to `{ status: 'unknown' }`.
+
+4. **The dynamic DB path bypasses clip-type descriptors entirely.** `DynamicSequenceRegistry` (`sequences/DynamicSequenceRegistry.ts:1-14`) and `resolveSequenceClipEntry` (`sequences/registry.ts:199-224`) handle `custom:my-pulse` by looking up compiled TSX, not by going through `defineClipType`/`ClipTypeDescriptor`. The capability descriptor for DB entries (`DB_SEQUENCE_COMPONENT_CAPABILITIES`, registry.ts:175-180) is a static `{ preview: 'browser', browserRender: true, workerRender: false }` stub — no commands, no inspector adapter, no overlay behavior, no hold schema.
+
+5. **No external consumer references `defineClipType` or `ClipTypeDescriptorInput`.** An `rg` across the entire `src/` tree (excluding `clip-types/` internals) returns zero hits for either symbol. The only callers are `runtime.ts` (builtins) and `registry.ts` (trusted sequence descriptors), both inside `clip-types/`.
+
+6. **`capabilityManifest.ts` produces a static read-only manifest.** `createVideoEditorClipTypeCapabilityManifest` (`manifest.ts:56-66`) iterates `BUILTIN_CLIP_TYPES` and `TRUSTED_CLIP_TYPE_REGISTRATIONS` — both hardcoded. It has no `register()` path. The output `VideoEditorClipTypeCapabilityManifest` is declarative introspection, not an extension point.
+
+7. **The public `sequence.ts` contract exposes only validation/materialization/application helpers.** `src/tools/video-editor/sequence.ts` (lines 1–55) exports `validateSequenceDraft`, `materializeSequenceParams`, `applySequenceDraftToTimeline`, and the trusted metadata types. It does not export `defineClipType` or any registration function.
+
+8. **Tests confirm internal-only scope.** `defineClipType.test.ts` and `registry.test.ts` test normalization and trusted/available resolution but never exercise a path where an arbitrary third party registers a new clip type with custom render adapters or commands.
+
+---
+
+## 3. Gap/Risk
+
+**Product consequence:** A third-party developer (theme package, plugin, or AI-generated extension) cannot contribute a novel clip type with its own inspector panel, timeline badge logic, command availability rules, resize policy, or overlay behavior. They are confined to two paths: (a) use an existing trusted clip type and supply only parameters (e.g., `title-card` with a custom title string), or (b) use the `custom:` DB-stored component path, which gets a one-size-fits-all capability stub with no hook into the descriptor-driven UI surfaces (PropertiesPanel, lightbox, command menu, timeline display adapters).
+
+**Dev consequence:** Adding a genuinely new clip type (e.g., a community-contributed "ken-burns" or "lyric-video" clip) requires a source-code change to `TRUSTED_SEQUENCE_METADATA`, a rebuild, and re-deployment — not a runtime registration.
+
+---
+
+## 4. Polish Plan
+
+1. **Design a `registerClipType` public function** that accepts `ClipTypeDescriptorInput`, validates uniqueness, and merges into a runtime-mutable registry (alongside builtins/trusted). Export it from the `@publicContract` index.
+
+2. **Decouple the trusted/available distinction from the component registry.** Currently `filterTrustedClipTypeRegistrationsForRegistry` conflates "is the clip type known?" with "is a React component available?" A third-party-registered type should enter the "available" tier without needing a pre-baked trusted metadata entry.
+
+3. **Add a `ClipTypeRegistrationResult` type** (success/duplicate/invalid) and return it from `registerClipType` so callers can handle collisions gracefully.
+
+4. **Wire the capability manifest to the runtime registry** so `createVideoEditorClipTypeCapabilityManifest` reflects dynamically registered types, not just static builtins.
+
+5. **Add a `clip-types/registerClipType.test.ts`** covering: successful registration, duplicate rejection, resolution through `resolveRegistration`, command evaluation, overlay behavior derivation, and manifest inclusion.
+
+6. **Document the registration contract** in a new `docs/clip-type-extension-api.md` with a minimal example (define → register → use in timeline JSON).
+
+---
+
+## 5. Confidence
+
+**High.** The code is unambiguous: `defineClipType` is an internal factory consumed exclusively by two sites inside the same directory. Zero external references exist. The word "trusted" appears 73 times across `registry.ts` and `runtime.ts` and always refers to hardcoded identity tables. The three-tier resolution (trusted → available → unknown) is well-built but entirely closed to external injection.
+
+What would change my confidence: evidence of a runtime `register()` call from a theme package, a `window.__REIGH_CLIP_TYPE_REGISTRY__` bridge, or a doc/ADR explicitly describing third-party clip-type registration as a future milestone — none of which exist.

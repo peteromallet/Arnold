@@ -27,6 +27,26 @@ import {
 import type { AssetRegistry, AssetRegistryEntry, TimelineConfig } from '@/tools/video-editor/types/index.ts';
 import type { Checkpoint } from '@/tools/video-editor/types/history.ts';
 
+import type { ExtensionDiagnostic } from '@reigh/editor-sdk';
+import type {
+  ExtensionPersistenceScope,
+  ExtensionPersistenceService,
+  ExtensionProposalStatus,
+} from '@/tools/video-editor/data/DataProvider';
+import type { FullSnapshotStore } from '@/tools/video-editor/runtime/extensionPersistenceCache';
+import { createCachedExtensionPersistenceService } from '@/tools/video-editor/runtime/extensionPersistenceCache';
+
+/** Local type matching the ExtensionProposal shape used by the cache layer. */
+interface ExtensionProposal {
+  id: string;
+  extensionId: string;
+  status: ExtensionProposalStatus;
+  payload: Record<string, unknown>;
+  createdAt: string;
+  updatedAt: string;
+  label?: string;
+}
+
 const TIMELINE_ASSETS_BUCKET = 'timeline-assets';
 const TIMELINE_CHECKPOINT_LIMIT = 30;
 const TIMELINE_CHECKPOINT_RETENTION_MS = 24 * 60 * 60 * 1000;
@@ -277,6 +297,267 @@ function compareDbHeadToBookmarkHead(head: DbHeadSnapshot, bookmark: SyncBookmar
   }
   return head.version > bookmark.hub_version ? 'advanced' : 'behind';
 }
+
+
+// ==========================================================================
+// T10: SupabaseFullSnapshotStore — FullSnapshotStore over Supabase tables
+// ==========================================================================
+
+/** Sentinel extension_id used to store the base state in extension_install_state. */
+const SNAPSHOT_SENTINEL_ID = '__reigh_snapshot__';
+
+interface SettingsRow {
+  id: string;
+  user_id: string;
+  timeline_id: string;
+  extension_id: string;
+  schema_version: number;
+  values: Record<string, unknown>;
+  last_written_at: string;
+}
+
+/**
+ * A {@link FullSnapshotStore} that persists the cached extension state
+ * snapshot across Supabase extension tables.
+ *
+ * ## Sentinel row pattern
+ *
+ * The base state (meta, packs, enablement, overrides, events, lock) is
+ * stored in a single `extension_install_state` row with
+ * `extension_id = '__reigh_snapshot__'`.  Settings are stored as
+ * individual rows in `extension_settings`.  Proposals are stored as
+ * individual rows in `extension_proposals`.
+ *
+ * ## Error propagation
+ *
+ * Every Supabase error is re-thrown — never swallowed.  This ensures
+ * the cache (CachedExtensionStateRepository) can catch the error, emit
+ * a diagnostic, and enter fail-closed state.
+ */
+class SupabaseFullSnapshotStore implements FullSnapshotStore {
+  private readonly _scope: ExtensionPersistenceScope;
+
+  constructor(scope: ExtensionPersistenceScope) {
+    this._scope = scope;
+  }
+
+  // -------------------------------------------------------------------
+  // FullSnapshotStore
+  // -------------------------------------------------------------------
+
+  async loadSnapshot(): Promise<string | null> {
+    const supabase = getSupabaseClient();
+    const { userId, timelineId } = this._scope;
+
+    // 1. Load sentinel row (base state)
+    const { data: sentinel, error: sentinelError } = await supabase
+      .from('extension_install_state')
+      .select('metadata')
+      .eq('user_id', userId)
+      .eq('timeline_id', timelineId)
+      .eq('extension_id', SNAPSHOT_SENTINEL_ID)
+      .maybeSingle();
+
+    if (sentinelError) {
+      throw sentinelError;
+    }
+
+    if (!sentinel?.metadata) {
+      return null;
+    }
+
+    const base = sentinel.metadata as Record<string, unknown>;
+
+    // 2. Load settings rows
+    const { data: settingsRows, error: settingsError } = await supabase
+      .from('extension_settings')
+      .select('extension_id, schema_version, values, last_written_at')
+      .eq('user_id', userId)
+      .eq('timeline_id', timelineId);
+
+    if (settingsError) {
+      throw settingsError;
+    }
+
+    const settings: Record<string, unknown> = {};
+    for (const row of (settingsRows ?? []) as SettingsRow[]) {
+      settings[row.extension_id] = {
+        extensionId: row.extension_id,
+        schemaVersion: row.schema_version,
+        values: row.values,
+        lastWrittenAt: row.last_written_at,
+      };
+    }
+    base.settings = settings;
+
+    // 3. Load proposals
+    const { data: proposalRows, error: proposalsError } = await supabase
+      .from('extension_proposals')
+      .select('id, extension_id, status, payload, label, created_at, updated_at')
+      .eq('user_id', userId)
+      .eq('timeline_id', timelineId);
+
+    if (proposalsError) {
+      throw proposalsError;
+    }
+
+    const proposals: Record<string, unknown> = {};
+    for (const row of (proposalRows ?? []) as Array<{ id: string; extension_id: string; status: string; payload: Record<string, unknown>; label: string | null; created_at: string; updated_at: string }>) {
+      proposals[row.id] = {
+        id: row.id,
+        extensionId: row.extension_id,
+        status: row.status,
+        payload: row.payload,
+        createdAt: row.created_at,
+        updatedAt: row.updated_at,
+        ...(row.label !== null && row.label !== undefined ? { label: row.label } : {}),
+      };
+    }
+    base.proposals = proposals;
+
+    return JSON.stringify(base);
+  }
+
+  async saveSnapshot(serialized: string): Promise<void> {
+    const supabase = getSupabaseClient();
+    const { userId, timelineId } = this._scope;
+
+    let parsed: Record<string, unknown>;
+    try {
+      parsed = JSON.parse(serialized);
+    } catch {
+      return; // Defensive — cache always serializes valid JSON
+    }
+
+    // Extract settings and proposals from the snapshot
+    const settings =
+      (parsed.settings as Record<string, Record<string, unknown>>) ?? {};
+    const { settings: _settings, proposals: _proposals, ...base } = parsed;
+
+    // 1. Upsert sentinel row with base state (excl. settings, proposals)
+    // Use the unique constraint on (user_id, timeline_id, extension_id)
+    const { error: sentinelError } = await supabase
+      .from('extension_install_state')
+      .upsert(
+        {
+          user_id: userId,
+          timeline_id: timelineId,
+          extension_id: SNAPSHOT_SENTINEL_ID,
+          metadata: base,
+          schema_version: 1,
+        },
+        {
+          onConflict: 'user_id,timeline_id,extension_id',
+          ignoreDuplicates: false,
+        },
+      );
+
+    if (sentinelError) {
+      throw sentinelError;
+    }
+
+    // 2. Upsert settings rows
+    for (const [extensionId, snapshot] of Object.entries(settings)) {
+      const { error: settingsError } = await supabase
+        .from('extension_settings')
+        .upsert(
+          {
+            user_id: userId,
+            timeline_id: timelineId,
+            extension_id: extensionId,
+            schema_version:
+              (snapshot as Record<string, unknown>).schemaVersion as number ?? 1,
+            values:
+              ((snapshot as Record<string, unknown>).values as Record<string, unknown>) ?? {},
+            last_written_at:
+              ((snapshot as Record<string, unknown>).lastWrittenAt as string) ??
+              new Date().toISOString(),
+          },
+          {
+            onConflict: 'user_id,timeline_id,extension_id',
+            ignoreDuplicates: false,
+          },
+        );
+
+      if (settingsError) {
+        throw settingsError;
+      }
+    }
+
+    // 3. Delete existing proposals for this scope, then re-insert
+    const proposals =
+      (parsed.proposals as Record<string, ExtensionProposal>) ?? {};
+
+    // Delete all existing proposals for this scope
+    const { error: deleteError } = await supabase
+      .from('extension_proposals')
+      .delete()
+      .eq('user_id', userId)
+      .eq('timeline_id', timelineId);
+
+    if (deleteError) {
+      throw deleteError;
+    }
+
+    // Insert current proposals
+    for (const proposal of Object.values(proposals)) {
+      const { error: insertError } = await supabase
+        .from('extension_proposals')
+        .insert({
+          id: proposal.id,
+          user_id: userId,
+          timeline_id: timelineId,
+          extension_id: proposal.extensionId,
+          status: proposal.status,
+          payload: proposal.payload,
+          label: proposal.label ?? null,
+          schema_version: 1,
+        });
+
+      if (insertError) {
+        throw insertError;
+      }
+    }
+  }
+
+  async deleteSnapshot(): Promise<void> {
+    const supabase = getSupabaseClient();
+    const { userId, timelineId } = this._scope;
+
+    // Delete all rows across all three tables for this scope
+    const { error: installError } = await supabase
+      .from('extension_install_state')
+      .delete()
+      .eq('user_id', userId)
+      .eq('timeline_id', timelineId);
+
+    if (installError) {
+      throw installError;
+    }
+
+    const { error: settingsError } = await supabase
+      .from('extension_settings')
+      .delete()
+      .eq('user_id', userId)
+      .eq('timeline_id', timelineId);
+
+    if (settingsError) {
+      throw settingsError;
+    }
+
+    const { error: proposalsError } = await supabase
+      .from('extension_proposals')
+      .delete()
+      .eq('user_id', userId)
+      .eq('timeline_id', timelineId);
+
+    if (proposalsError) {
+      throw proposalsError;
+    }
+  }
+}
+
+
 
 export class SupabaseDataProvider implements DataProvider {
   constructor(
@@ -814,5 +1095,34 @@ export class SupabaseDataProvider implements DataProvider {
 
   async loadAssetProfile(): Promise<null> {
     return null;
+  }
+
+  // -------------------------------------------------------------------------
+  // Extension persistence (T10)
+  // -------------------------------------------------------------------------
+
+  /**
+   * Create a Supabase-backed extension persistence service for the given
+   * (userId, timelineId) scope.
+   *
+   * All extension state, settings, and proposals are stored in the
+   * extension_install_state, extension_settings, and extension_proposals
+   * Supabase tables, every query scoped by both user_id and timeline_id.
+   *
+   * The returned service advertises full capabilities (state, settings,
+   * proposals) and is backed by a shared cache (CachedExtensionStateRepository
+   * + CachedExtensionPersistenceService) wired on top of a
+   * SupabaseFullSnapshotStore.
+   *
+   * @param scope        The (userId, timelineId) scope for all extension data.
+   * @param diagnostics  An array the provider may append
+   *                     {@link ExtensionDiagnostic} entries to.
+   */
+  createExtensionPersistenceService(
+    scope: ExtensionPersistenceScope,
+    diagnostics: ExtensionDiagnostic[],
+  ): ExtensionPersistenceService {
+    const store = new SupabaseFullSnapshotStore(scope);
+    return createCachedExtensionPersistenceService(store, diagnostics, scope);
   }
 }

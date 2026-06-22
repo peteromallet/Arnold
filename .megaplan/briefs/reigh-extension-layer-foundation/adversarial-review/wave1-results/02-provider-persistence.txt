@@ -1,0 +1,157 @@
+## Findings
+
+### Finding 1: Extension capability flags are static aspirational placeholders with zero backing implementation
+
+**Evidence:**
+- `SupabaseDataProvider.ts:289-291` — `extensionState: false, extensionSettings: false, commandProposals: false` set as static literals in the constructor with no code path that ever sets them to `true`.
+- `grep -rn "extensionState\|extension_state\|extensionSettings\|extension_settings" supabase/migrations/` — zero results. No Supabase tables, RLS policies, or migrations exist for extension state, settings, or proposal storage.
+- `DataProvider.ts:77-100` — The `DataProvider` interface has no methods for extension state, settings, or command proposals. The capability flags exist purely as enum labels with no associated API surface.
+
+**Why it matters:** The M2 plan assumes these flags gate real provider-backed persistence. In reality they are dead labels. Building the factory contracts, async cache, hydration, and RLS schema must happen from scratch — nothing can be "wired up" from existing foundations.
+
+**Required plan change:** Add an explicit Step 0: design and implement the `DataProvider` extension methods (e.g., `getExtensionStateRepository(): ExtensionStateRepository`, `saveExtensionState(...)`, etc.), then create the Supabase schema, then flip the flags.
+
+**Severity:** Critical
+
+---
+
+### Finding 2: No connection exists between DataProvider capabilities and extension state repository selection
+
+**Evidence:**
+- `BrowserVideoEditorProvider.tsx:89-115` — The repository is selected in a `useMemo` based solely on the presence of an injected `extensionStateRepository` prop, falling back to `localStorage` or `InMemoryExtensionStateRepository`. The `dataProvider` is never consulted.
+- `grep -rn "dataProvider\." BrowserVideoEditorProvider.tsx` — zero results. The provider never calls `dataProvider.capabilities`, `dataProvider.getCapabilities()`, or any extension-related method.
+- `grep -rn "DataProvider.*extension\|extension.*DataProvider\|provider.*repository\|repository.*provider" src/tools/video-editor/` — zero results. No coupling exists anywhere in the codebase.
+
+**Why it matters:** The plan's central architectural premise — "provider-owned repository factories" — is entirely aspirational. The repository is selected and scoped independently of the data provider. Even after M2 implements the factories, the wiring into `BrowserVideoEditorProvider` must be designed from scratch, including resolution order (injected prop > provider factory > localStorage fallback).
+
+**Required plan change:** Add a concrete design decision for how the provider selects extension persistence: injected repo wins, then provider factory, then localStorage fallback. This must specify the resolution order and how capabilities are surfaced to consumers.
+
+**Severity:** Critical
+
+---
+
+### Finding 3: Synchronous ExtensionStateRepository.load() is incompatible with async provider hydration
+
+**Evidence:**
+- `extensionStateRepository.ts:57` — `load(): ExtensionDiagnostic[]` returns synchronously.
+- `extensionLoader.ts:141-142` — `const repoDiagnostics = this._repository.load();` called synchronously in `load()`, which is itself synchronous (line 134: `load(): ExtensionLoadResult`).
+- The plan states (line 15): "Keep `ExtensionStateRepository` synchronous for the loader by adding a cache repository over async stores."
+
+**Why it matters:** The plan acknowledges this conflict but does not specify the cache/hydration design. A provider-backed repository fetching from Supabase cannot fit the synchronous `load()` contract. The "cache repository" must be pre-hydrated before the loader runs. But the `BrowserVideoEditorProvider` creates the repository in a `useMemo` (line 89) — there's no async hydration step, no loading state, and no error boundary for hydration failure. The synchronous barrier forces a two-phase initialization (async hydrate → sync use) that the current component architecture cannot express.
+
+**Required plan change:** Add a concrete cache-repository design that specifies: (a) the cache interface, (b) the hydration trigger point (e.g., a `useEffect` or React Query hook before `useMemo`), (c) loading/error UI states, and (d) how hydration failure emits diagnostics without blocking the editor.
+
+**Severity:** High
+
+---
+
+### Finding 4: Scoping mismatch between localStorage and potential Supabase-backed repositories
+
+**Evidence:**
+- `BrowserVideoEditorProvider.tsx:101-107` — localStorage scoping uses `userId` and `projectId` concatenated into a key string.
+- `extensionStateRepository.ts:266` — `DEFAULT_STORAGE_KEY = 'reigh:extension-state:v1'` — no timeline-level scoping.
+- The plan states (line 35): "Under the current schema, extension state/settings/proposals are per-user by timeline ownership."
+- `BrowserVideoEditorProvider.tsx:34` — receives `timelineId` but does not pass it to the repository or use it in scoping.
+
+**Why it matters:** When the system gains a Supabase-backed repository, its scoping will be per-user+timeline (via RLS), but the localStorage fallback scopes per-user+project. There is no shared scoping model. Switching between providers (or offline→online sync) will produce inconsistent data because settings attached to one timeline in localStorage won't map to the same timeline in Supabase. The plan excludes multi-project semantics but the scoping mismatch exists even within a single project with multiple timelines.
+
+**Required plan change:** Define a unified scoping key that works across both localStorage and Supabase (e.g., `{userId, timelineId}`), pass `timelineId` to the repository factory, and update `BrowserVideoEditorProvider` to scope by timeline.
+
+**Severity:** High
+
+---
+
+### Finding 5: No recovery or fallback design for async hydration failure
+
+**Evidence:**
+- `BrowserVideoEditorProvider.tsx:89-115` — the `useMemo` that creates the repository has no error handling, no try/catch, no fallback state.
+- The plan states (line 29): "Fail-closed diagnostics are acceptable for the first version" and constraint: "Repository hydration failure must degrade with diagnostics, not partial support."
+- The only existing degradation is `extensionStateRepository.ts:308-313` — corrupt localStorage is silently reset with a diagnostic. But provider-backed async hydration failure (network error, auth failure, RLS rejection) has no analog.
+
+**Why it matters:** The plan's "fail-closed" principle requires that when Supabase is unreachable, the loader gracefully degrades with diagnostics. But the current architecture has no place to inject a fallback decision. If hydration is async and fails, the repository must either fall back to defaults (with diagnostics) or block the editor. Neither path is designed.
+
+**Required plan change:** Add a concrete hydration-failure contract: the async cache must resolve to either hydrated state + no diagnostics, or empty state + diagnostics. The `useMemo` must be replaced with an async initialization pattern (e.g., `useEffect` + state) that handles the loading/error/success triad.
+
+**Severity:** High
+
+---
+
+### Finding 6: No mechanism to "earn" capability flags through conformance tests
+
+**Evidence:**
+- `SupabaseDataProvider.ts:285-296` — capabilities are static properties initialized in the class body. There's no `getCapabilities()` override, no runtime check, no dynamic evaluation.
+- `providerCapabilityConformance.testUtils.ts:80-105` — `expectDataProviderCapabilityConformance` tests that declared capabilities match expectations but never flips a flag from `false` to `true`.
+- `InMemoryDataProvider.test.ts:106-113` — calls the conformance util with explicit lists of supported/unsupported but `InMemoryDataProvider` itself (line 35-120 of that file) doesn't declare capabilities at all.
+
+**Why it matters:** The plan's locked decision (line 36): "Provider capability flags must be earned by conformance tests." Today, flags are human-authored constants. There is no gate, no test that programmatically enables a capability, and no runtime mechanism to transition from `false` to `true`. The plan must specify whether "earned" means (a) a CI gate that blocks merging until tests pass, (b) a runtime capability probe that dynamically toggles the flag, or (c) simply that the flag value must be backed by a passing conformance suite in the same PR.
+
+**Required plan change:** Clarify the "earned" mechanism. Recommend: the conformance test suite lives in the same PR that flips the flag; a CI check verifies that only capabilities with passing conformance tests are `true`. Alternatively, implement `getCapabilities()` as a runtime probe.
+
+**Severity:** Medium
+
+---
+
+### Finding 7: Editor runtime cannot persist extension state changes — no write path flows back
+
+**Evidence:**
+- `BrowserVideoEditorProvider.tsx:122-127` — `ExtensionLoader` is instantiated, `load()` is called, and `loadResult.configs` are passed to `EditorRuntimeProvider` via `combinedExtensions` (line 142, 159). The repository itself is not passed.
+- `BrowserVideoEditor.tsx:48,71` — the injected `extensionStateRepository` prop flows to `BrowserVideoEditorProvider` but stops there; no context or hook exposes it to extension UIs.
+- The `ExtensionStateRepository` interface has `setEnabled()`, `setSettingsOverrides()`, and `save()` — but no consumer in the rendered editor tree can call them.
+
+**Why it matters:** Even if M2 builds provider-backed persistence, the editor runtime has no way to write back state changes (e.g., user toggles an extension off, changes a setting). The plan says M3 owns the "Manager UI" but the write path is a persistence-spine concern. Without it, M3's UI will have no API to call. The repository must be exposed through React context so that the extension manager UI (or any consumer) can mutate and persist state.
+
+**Required plan change:** Add a requirement to expose the repository (or a controlled write API) through React context from `EditorRuntimeProvider`, or add `onExtensionStateChange` callbacks to the provider props. Specify the contract: save-after-mutate vs auto-save vs batch-save.
+
+**Severity:** High
+
+---
+
+### Finding 8: Command proposal persistence has no interface definition, schema, or storage design
+
+**Evidence:**
+- `DataProvider.ts:22` — `'commandProposals'` is listed as a capability. `DataProvider.ts:111` — labeled "command proposals". But the `DataProvider` interface (lines 77-100) has zero proposal-related methods.
+- `extensionManifest.ts:111` — `proposal?: boolean` on `ExtensionCommandContribution` — this is a declaration that a command *wants* proposal review, but there's no mechanism to store/persist/retrieve proposed timeline changes.
+- `grep -rn "commandProposal\|command_proposal\|proposal" src/tools/video-editor/data/` — only capability flag declarations and test expectations. No interfaces, no types, no methods.
+- The plan says (line 14): "command proposal storage hooks needed by M3" — these hooks are undefined. M3 cannot build on them if they don't exist.
+
+**Why it matters:** M3's scope depends on proposal storage that M2 is supposed to deliver. Without even a draft interface, M2 and M3 are fully sequential (M3 cannot start until M2 defines the contract). The plan should at minimum define the interface shape and storage schema in M2, even if the request/response wiring is M3's responsibility.
+
+**Required plan change:** Add a concrete deliverable: define `CommandProposalStorage` interface (or methods on `DataProvider`) with `submitProposal()`, `getProposals()`, `resolveProposal()` signatures, plus the Supabase table DDL. This is the "foundation" the plan promises but doesn't specify.
+
+**Severity:** Medium
+
+---
+
+### Finding 9: No offline→online transition design
+
+**Evidence:**
+- The plan states (line 29): "Automatic offline merge. Fail-closed diagnostics are acceptable for the first version." — explicitly out of scope.
+- `BrowserVideoEditorProvider.tsx:89-115` — the default repository is localStorage (offline-capable). But there's no code that detects when a Supabase connection becomes available and syncs/merges.
+- `SupabaseDataProvider.ts` has a sophisticated sync protocol (`syncTimeline`, `syncEventLog`) for timeline data — but none of this pattern is applied to extension state.
+
+**Why it matters:** The plan acknowledges this gap but doesn't specify what "fail-closed" means for extension state. If a user enables an extension while offline (localStorage), then connects (Supabase), does the localStorage state win? Supabase win? Merge? The answer affects the repository factory contract — if the cache repository must support multi-source reconciliation, its interface needs `getSource()` or conflict metadata.
+
+**Required plan change:** Specify the fail-closed behavior precisely: "When a provider-backed repository is unavailable, the loader falls back to localStorage. On reconnect, localStorage state is discarded in favor of provider state (last-write-wins from provider). A diagnostic is emitted noting the discard." Or design a merge contract.
+
+**Severity:** Medium
+
+---
+
+### Finding 10: ExtensionStateRepository version migration resets data — no forward-compatibility design
+
+**Evidence:**
+- `extensionStateRepository.ts:318-326` — when `record.version > CURRENT_RECORD_VERSION`, the entire state is cleared and the storage key is removed. All user settings are lost.
+- `extensionStateRepository.ts:26` — `CURRENT_RECORD_VERSION = 1`.
+- The plan requires (line 21): "Define migration/version semantics for settings overrides and saved extension state" and (line 63): "Settings schema/version changes have a defined migration/fallback behavior."
+
+**Why it matters:** The current behavior is a destructive reset on version mismatch. The plan requires migration semantics but the existing code implements "reset and forget." For a v1→v2 migration, the plan must decide: write a migration function, keep old data with a compatibility wrapper, or accept data loss with a diagnostic. Without this decision, any schema evolution will silently destroy user settings.
+
+**Required plan change:** Define the migration contract: either (a) the repository record carries a `migrate(fromVersion, toVersion)` function, (b) old records are preserved in a backup key with a diagnostic, or (c) the plan explicitly accepts data loss as acceptable for v1→v2 with a documented rationale.
+
+**Severity:** Medium
+
+---
+
+## Verdict
+
+The M2 plan's architecture is sound in principle — provider-owned repository factories, sync-loading-safe cache layer, and capability flags gated by conformance — but the current codebase has zero of the infrastructure needed to realize it. The three capabilities (`extensionState`, `extensionSettings`, `commandProposals`) are static `false` literals with no backing interfaces, no database schema, no factory contracts, and no connection to the `BrowserVideoEditorProvider`'s repository selection. The synchronous `ExtensionStateRepository.load()` contract is incompatible with async provider hydration, the component architecture (`useMemo` repository creation) cannot express async initialization, and there is no write path for the runtime to persist state changes. M2 is effectively a greenfield build inside a codebase that has extension *loading* but not extension *persistence*. The plan must be augmented with concrete interface designs for the repository factory, async cache hydration in React, a unified scoping model (user+timeline, not user+project), a fallback decision tree for hydration failure, and at minimum a draft of the Supabase DDL and command proposal storage interface — otherwise M3 will inherit undefined contracts and the "foundation" will be a second greenfield build.

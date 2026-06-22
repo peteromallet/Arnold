@@ -1,0 +1,57 @@
+---
+
+## 1. Verdict
+
+**Transitions are NOT dynamic extension contributions** — they are a closed, hardcoded set of 4 built-in renderers with no extension registry, no UI for authoring or selection, and no pathway for third-party code to register custom transitions. They do serialize/deserialize and render correctly in preview and export, but exclusively from the fixed built-in palette.
+
+---
+
+## 2. Evidence
+
+- **Hardcoded dictionary, zero extension surface** — `src/tools/video-editor/effects/transitions.ts:6-23` defines `transitions` as a plain `Record<string, TransitionRenderer>` with 4 entries (`crossfade`, `wipe`, `slide-push`, `zoom-through`). No registry class, no `DynamicTransitionRegistry`, no subscription mechanism. Contrast with effects which use `DynamicEffectRegistry` (`DynamicEffectRegistry.ts:7-13`) wrapping `DynamicComponentRegistry`.
+
+- **Single static import, no lookup abstraction** — `VisualClip.tsx:14` imports the transitions map directly. `VisualClip.tsx:322` does a raw dictionary lookup `transitions[clip.transition.type]`. No equivalent of `lookupEffect()` from `effects/index.tsx:88-103` that fans out to a dynamic registry.
+
+- **EffectCategory excludes transitions** — `useResources.ts:84` defines `EffectMetadata.category` as `'entrance' | 'exit' | 'continuous'`. The `EffectCreatorPanel` only supports those three categories (`EffectCreatorPanel.tsx:478-480`). No `'transition'` category exists anywhere.
+
+- **No transition editing UI tab** — `useEditorPreferences.ts:4` defines `ClipTab = 'effects' | 'timing' | 'position' | 'audio' | 'text'`. No `'transition'`. Neither `ClipPanel.tsx` nor `BulkClipPanel.tsx` expose any transition selector, type picker, or duration control. The `clip-inspector.ts:10` `BASE_TABS` excludes transitions entirely.
+
+- **Transitions DO serialize correctly** — `timeline-domain.ts:137` includes `'transition'` in `TIMELINE_CLIP_FIELDS`. `serialize.ts` routes through `sanitizeTimelineClipSnapshot`. `serialize.test.ts:42` tests a `{ type: 'crossfade', duration: 0.4 }` round-trip. `duplicate-clip.ts:13` deep-clones transitions on duplicate.
+
+- **Transitions DO render in preview and export** — `VisualClip.tsx:322-335` interpolates transition progress per frame and applies CSS properties. `VisualClipSequence:357-365` extends clip duration for transition overlap. Since this is all inside the Remotion composition tree, it works identically in the interactive preview (`RemotionPreview.tsx`) and headless render (used by `renderPipeline.ts` and `headlessRender.ts`).
+
+- **Capability manifest silent on transitions** — `capabilityManifest.ts` contains zero references to "transition." The `extensionSurface.ts` slot system (`VideoEditorSlotName`) has no transition-related slot.
+
+- **Clip-type system has no transition command** — `clip-types/index.ts` and `defineClipType.ts` define commands like `split`, `move-track-up`, `toggle-mute`, `detach-audio` — nothing transition-related.
+
+- **Effect resources have no transition category** — `effect-catalog.ts:75-78` shows `EMPTY_EFFECT_GROUPS` with only `entrance`, `exit`, `continuous`. The `VideoEditorEffectCatalog` interface (`effect-catalog.ts:51-54`) similarly has only those three category arrays.
+
+---
+
+## 3. Gap/Risk
+
+The product consequence: users cannot author or install custom transitions. A developer wanting to ship a "glitch-dissolve" or "page-curl" transition has no integration point. The 4 built-in transitions are effectively frozen. Because `transitions.ts` is a plain module-level constant with no registry, every addition requires a core code change and redeploy. This is architecturally inconsistent with the effect system (which supports dynamic code-compiled extensions via `DynamicEffectRegistry`), creating a fragmented extension story where "custom entrance effects" are possible but "custom transitions" are not — despite both being timeline-spanning visual animations. Users will eventually notice the asymmetry and file feature requests or work around it by abusing entrance/exit effects, which don't properly handle cross-clip blending.
+
+---
+
+## 4. Polish Plan
+
+1. **Design a `TransitionRegistry`** mirroring `DynamicEffectRegistry` — a `DynamicComponentRegistry<TransitionComponentProps, ParameterSchema>` with a `transitions` entry in the effect catalog, a `'transition'` effect category, and lookup through `lookupTransition()` parallel to `lookupEffect()`.
+
+2. **Add `'transition'` to `ClipTab`** and wire a transition selector into `ClipPanel.tsx` / `BulkClipPanel.tsx` effects tab (or a new "Transitions" tab) exposing type, duration, and custom parameters.
+
+3. **Extend `EffectCreatorPanel`** or create a `TransitionCreatorPanel` that accepts `category: 'transition'` so authored extensions can be published as transitions.
+
+4. **Wire `VisualClip.tsx`** to use the new registry lookup instead of the static `transitions` dictionary.
+
+5. **Add serialization tests** for custom transition types (currently only `crossfade` is tested).
+
+6. **Update `capabilityManifest.ts`** and extension documentation to declare transition contributions as a supported extension point.
+
+7. **Backfill integration tests** verifying that a dynamically registered transition renders correctly in both preview and export pipelines.
+
+---
+
+## 5. Confidence
+
+**High.** The evidence is unambiguous: transitions are a closed built-in set with zero dynamic extension infrastructure, no UI, and no category in the effect resource system. Confidence would change only if a separate transition extension mechanism existed outside the video-editor tree (e.g., in a different package or a server-side plugin system not visible in this repo), but the audit's file scope covers the entire `src/tools/video-editor/` surface and no such mechanism exists there.

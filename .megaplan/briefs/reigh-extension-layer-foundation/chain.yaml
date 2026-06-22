@@ -1,0 +1,69 @@
+base_branch: main
+
+milestones:
+  - label: m1-preview-truth-contract-freeze
+    idea: .megaplan/briefs/reigh-extension-layer-foundation/m1-preview-truth-contract-freeze.md
+    branch: epic/reigh-ext-foundation-m1-preview-truth
+    profile: partnered-5
+    robustness: full
+    depth: medium
+    vendor: codex
+    with_prep: true
+    prep_direction: "Focus on docs/schema/runtime/export drift, production-build extension smoke, public-entrypoint extractability, and trust wording. Do not plan provider persistence or manager UI yet."
+    notes: "Make the current preview contract honest and release-gated before adding foundation features."
+
+  - label: m2-provider-persistence-spine
+    idea: .megaplan/briefs/reigh-extension-layer-foundation/m2-provider-persistence-spine.md
+    branch: epic/reigh-ext-foundation-m2-persistence
+    profile: partnered-5
+    robustness: thorough
+    depth: high
+    vendor: codex
+    with_prep: true
+    prep_direction: "Focus on provider-owned repository factories, sync cache over async stores, Supabase RLS/table design, browser-local storage, and conformance tests. Keep proposal execution policy itself for M3."
+    notes: "Add durable extension state/settings persistence across providers without making the loader promise-based."
+
+  - label: m3-proposal-agent-policy-spine
+    idea: .megaplan/briefs/reigh-extension-layer-foundation/m3-proposal-agent-policy-spine.md
+    branch: epic/reigh-ext-foundation-m3-proposals
+    profile: partnered-5
+    robustness: thorough
+    depth: high
+    vendor: codex
+    with_prep: true
+    prep_direction: "Focus on TimelinePatch as an envelope over the existing command runner, persisted proposals with TTL, stale rejection, and agent proposal_policy wiring from frontend through edge function to accept/reject."
+    notes: "Make proposal-first destructive flows durable and enforceable, especially through the agent path."
+
+  - label: m4-diagnostics-schemaform-lifecycle
+    idea: .megaplan/briefs/reigh-extension-layer-foundation/m4-diagnostics-schemaform-lifecycle.md
+    branch: epic/reigh-ext-foundation-m4-primitives
+    profile: partnered-5
+    robustness: full
+    depth: medium
+    vendor: codex
+    with_prep: true
+    prep_direction: "Focus on scoped diagnostic reporter spoofing prevention, SchemaForm V1, cleanup contracts, and disable/unload/re-enable lifecycle tests. Do not build the manager UI yet."
+    notes: "Add host-owned primitives needed by the manager and future contribution families."
+
+  - label: m5-manager-phase4-readiness
+    idea: .megaplan/briefs/reigh-extension-layer-foundation/m5-manager-phase4-readiness.md
+    branch: epic/reigh-ext-foundation-m5-manager-readiness
+    profile: partnered-5
+    robustness: full
+    depth: medium
+    vendor: codex
+    with_prep: true
+    prep_direction: "Focus on local installed-package manager UX, trust warnings, settings editor integration, per-package diagnostics, and a Phase 4 readiness artifact. Do not add marketplace/discovery/update flows."
+    notes: "Expose the foundation to users and define the gate before deeper contribution families."
+
+on_failure:
+  abort: stop_chain
+on_escalate:
+  abort: stop_chain
+merge_policy: auto
+
+driver:
+  robustness: full
+  auto_approve: true
+  max_iterations: 120
+  poll_sleep: 8.0

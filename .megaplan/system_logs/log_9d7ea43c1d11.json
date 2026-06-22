@@ -1,0 +1,56 @@
+{
+  "id": "log_9d7ea43c1d11",
+  "level": "debug",
+  "category": "system",
+  "event_type": "authority_divergence",
+  "message": "authority_divergence emitted",
+  "details": {
+    "event": {
+      "seq": 4804,
+      "schema_version": 1,
+      "ts_utc": "2026-06-22T18:53:38.785223+00:00",
+      "ts_rel_init_s": 5517.675869,
+      "kind": "authority_divergence",
+      "phase": "execute",
+      "payload": {
+        "diagnostic_version": 1,
+        "task_id": "T9",
+        "raw_terminal_status": "done",
+        "authority_status": "unknown",
+        "authoritative": false,
+        "reason": "stale_evidence:missing_head:task_files_changed",
+        "missing_outputs": [],
+        "stale_evidence": [
+          "missing_head:task_files_changed"
+        ],
+        "would_block_reasons": [
+          "stale_evidence:missing_head:task_files_changed"
+        ],
+        "error": null,
+        "diagnostics": {
+          "task_id": "T9",
+          "declared_outputs": {
+            "files_changed": [
+              "supabase/migrations/20260612130000_create_extension_persistence_tables.sql"
+            ]
+          },
+          "linked_evidence_count": 2,
+          "evidence_count": 82,
+          "normalization": "iterable",
+          "status": "unknown",
+          "evidence_sources": [
+            "plan_artifacts"
+          ],
+          "loaded_evidence_count": 82,
+          "raw_terminal_status": "done"
+        },
+        "ts_utc": "2026-06-22T18:53:38.784785+00:00"
+      },
+      "transaction_id": "dd67bd620e539cd2",
+      "store_method": "log_system_event"
+    }
+  },
+  "turn_id": null,
+  "epic_id": "m2-provider-persistence-spine-20260622-1921",
+  "occurred_at": "2026-06-22T18:53:38.785285Z"
+}

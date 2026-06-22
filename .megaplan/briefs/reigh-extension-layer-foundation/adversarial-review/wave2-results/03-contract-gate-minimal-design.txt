@@ -1,0 +1,86 @@
+Now I have full clarity. Here's the adjudication:
+
+---
+
+## Confirmed
+
+### 1. Panel `placement` field — canonical schema absent but TypeScript/example/docs/inlined-schema all require it
+
+- **JSON Schema** (`reigh-extension.schema.json`): `panels.items` has `additionalProperties: false`, only `id` + `order` — **no `placement` property exists**.
+- **TypeScript** `ExtensionPanelContribution`: `placement: 'asset-panel'` (required).
+- **Inlined runtime schema** in `extensionManifest.ts`: `panels.items.properties.placement: { type: 'string', enum: ['asset-panel'] }`.
+- **Example manifest** (`examples/video-editor-extension/src/manifest.ts`): `panels: [{ id: '...', placement: 'asset-panel', order: 10 }]`.
+- **Docs** (`authoring.md`): shows `placement: 'asset-panel'` on panels.
+- **Runtime config** (`extensionSurface.ts` `VideoEditorPanelDescriptor`): `placement: 'asset-panel'` required.
+- **Net effect**: A manifest that passes the runtime `validateExtensionPackage` (which uses the inlined schema) would **fail Ajv validation against the canonical JSON Schema file** because `additionalProperties: false` rejects the `placement` key. The current `extensionManifest.test.ts` Ajv tests avoid this by never testing a panel manifest object with `placement` — the "accepts a complete valid manifest" test uses `panels: [{ id: 'my-panel' }]` without `placement`.
+
+### 2. Slot `placement` field — same pattern
+
+- **JSON Schema**: `slots.items` has `additionalProperties: false`, properties are `slot`, `id`, `order` — **no `placement`**.
+- **TypeScript** `ExtensionSlotContribution`: `placement?: string` (optional).
+- **Inlined runtime schema**: `slots.items.properties.placement: { type: 'string' }`.
+- The example manifest does not currently use `placement` on slots, so this drift is latent rather than active.
+
+### 3. JSON Schema root `additionalProperties: false` vs inlined `true`
+
+- JSON Schema root: `additionalProperties: false`.
+- Inlined TypeScript schema: `additionalProperties: true`.
+- Behavioral consistency is maintained via `validateManifestSchema`'s explicit `knownRootFields` check, so this is **cosmetic but real**.
+
+### 4. Manifest `id` pattern in JSON Schema vs inlined
+
+- JSON Schema root `id`: regex pattern `^[a-z0-9]+(?:[.-][a-z0-9]+)*$`.
+- Inlined schema `id`: **no pattern** (just `minLength: 1`).
+- The `validateManifestSchema` function also does not check `id` against this pattern. A manifest with `id: "Bad Extension!"` passes runtime validation but fails Ajv validation against the canonical schema.
+
+### 5. Two validation paths exist with no cross-validation test
+
+- **Path A**: `validateManifestSchema` / `validateExtensionPackage` — uses the inlined TypeScript schema, runs in production and in the example validate test.
+- **Path B**: `extensionManifest.test.ts` — uses Ajv against the canonical JSON Schema file.
+- **There is no test that validates the same manifest through both paths and asserts identical results.** The example manifest is only validated through Path A. The Ajv tests construct their own stripped-down fixtures. This is why the panel/slot `placement` drift went undetected.
+
+---
+
+## Rejected Or Overstated
+
+- **"Slot names themselves differ"**: Rejected. `ExtensionSlotName`, `VideoEditorSlotName`, JSON Schema slot enum, and docs all list the same nine slot names (`header`, `toolbar`, `leftPanel`, `rightPanel`, `timelineFooter`, `statusBar`, `dialogs`, `assetPanel`, `inspectorPanel`).
+- **"Inspector section `placement` differs"**: Rejected. TypeScript `placement: 'before-default' | 'after-default'` (required), JSON Schema correctly has `required: ["id", "placement"]` with matching enum — these are in sync.
+- **"Dialog structure differs"**: Rejected. All sources agree: `id` required, `layer` enum `['modal', 'overlay']`, `order` optional.
+- **"Commands contribution shape differs"**: Rejected. JSON Schema, inlined schema, TypeScript types, docs, and example all align on command structure including `keybinding`, `menu`, `proposal`, and the `^[a-z0-9]+(?:[.-][a-z0-9]+)*$` pattern on local command IDs.
+
+---
+
+## Required Plan Changes
+
+### Fix the drift (one-time)
+
+1. **Add `placement` to JSON Schema panels items** with `enum: ['asset-panel']` and remove `additionalProperties: false` (or keep it and add `placement` as a property).
+2. **Add `placement` to JSON Schema slots items** (optional string).
+3. **Add `id` pattern to inlined schema** to match the JSON Schema file.
+4. **Align root `additionalProperties`** — either make the inlined schema `false` (and update the validation function to remove the redundant `knownRootFields` check) or loosen the JSON Schema to `true` and rely on the runtime check.
+
+### Automated gate (the smallest one that prevents recurrence)
+
+A single new vitest test in `extensionManifest.test.ts` (or a sibling `schemaCrossValidation.test.ts`):
+
+```ts
+// Load the example manifest, validate it through both paths,
+// assert zero diagnostics from BOTH.
+it('example manifest passes BOTH inlined-schema and canonical JSON Schema validation', () => {
+  // 1. Runtime validation (Path A — already done in validate.test.ts but re-assert here)
+  expect(validateExtensionPackage(videoEditorExtensionPackage)).toEqual([]);
+  // 2. Canonical JSON Schema validation (Path B — NEW, catches placement drift)
+  const ajvValid = ajvValidate(videoEditorExtensionPackage.manifest);
+  expect(ajvValid).toBe(true);
+});
+```
+
+And symmetrically:
+
+```ts
+it('every fixture manifest used in loader/diagnostic tests passes canonical JSON Schema validation', () => {
+  // iterate test fixtures, validate each manifest through Ajv
+});
+```
+
+This is ~30 lines of test code. It needs no new dependencies (Ajv is already in devDependencies and loaded by the existing test). It plugs directly into the existing `npm run test:extensions` gate. The moment someone adds a field to the TypeScript/inlined schema without updating the JSON Schema file (or vice versa), the cross-validation test breaks with a clear diff.

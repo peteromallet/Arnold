@@ -1,0 +1,49 @@
+I now have comprehensive evidence. Here is the final audit.
+
+---
+
+## 1. Verdict
+
+**Both shader/WebGL and the named extension-manager classes are absent;** an extension _surface_ (slot/dialog/panel registry) and a dynamic-effect compiler exist but are not the `ExtensionManager`/`ExtensionLoader`/`ExtensionStateRepository`/`reigh-extension.json` artifacts the epic milestone claims.
+
+---
+
+## 2. Evidence
+
+- **Zero WebGL/GLSL/shader code in the video editor.** `rg -rn "glsl|fragmentShader|vertexShader|createShader|shaderSource|compileShader|WebGLProgram" src/tools/video-editor/` returns nothing. The only `src/` WebGL hit is `src/shared/hooks/useReferralTracking.ts` (lines ~8–14), used for browser fingerprinting, not rendering.
+- **"Chromatic Glitch Storm" is CSS, not a shader.** `src/tools/video-editor/effects/chromatic-glitch-storm.js` implements RGB separation via `mixBlendMode: "screen"` / `"multiply"` on DOM `<div>` elements—zero GLSL.
+- **Effect compilation uses sucrase for JSX→JS, not GPU.** `src/tools/video-editor/effects/compileEffect.tsx` (lines 1–49) calls `compileWithGlobalsSync/Async` from `runtime-components/compileWithGlobals.ts` (lines 1–93), which runs `new Function(...)` over sucrase-transpiled code. This is a React-component compiler, not a shader pipeline.
+- **`ExtensionManager`, `ExtensionLoader`, `ExtensionStateRepository` do not exist.** `rg -rn "ExtensionManager|ExtensionLoader|ExtensionState" src/` returns zero results across the entire source tree.
+- **`reigh-extension.json` does not exist.** `rg -rn "reigh-extension\.json|extension\.json"` (excluding node_modules, dist, .git) returns nothing.
+- **No package loader/manager for extensions.** `rg -rn "package.*loader|package.*manager|ExtensionPackage|loadExtension|installExtension|extensionStore|extension.*market" src/tools/video-editor/` returns nothing.
+- **The actual extension surface is `extensionSurface.ts`** (`src/tools/video-editor/runtime/extensionSurface.ts`, 1–173 lines). It defines `VideoEditorExtensionConfig`, slot renderers (header/toolbar/leftPanel/rightPanel/timelineFooter/statusBar/dialogs/assetPanel/inspectorPanel), dialog descriptors with visibility predicates, and panel/inspector-section registries. This is a UI-slot injection system, not a package-based extension manager.
+- **`VideoEditorProvider.tsx`** (line 231) wires `extensions: DEFAULT_VIDEO_EDITOR_EXTENSION_RUNTIME` — an empty frozen default with zero slots/dialogs/panels. No external extension packages are loaded.
+- **`DynamicComponentRegistry`** (`src/tools/video-editor/runtime-components/DynamicComponentRegistry.ts`, lines 1–132) is the closest thing to an "extension loader" — it compiles and registers custom effects at runtime. Its subclass `DynamicEffectRegistry` (`effects/DynamicEffectRegistry.ts`, lines 1–17) is the concrete registry for visual effects.
+- **Effect Creator UX exists but manages effects, not extensions.** `src/tools/video-editor/components/EffectCreatorPanel.tsx` (1–400+ lines) provides an AI-powered effect creation dialog with live Remotion preview, code editing, parameter controls, and Supabase-backed save/publish. `CustomEffectEditor.tsx` (1–100+ lines) provides a simpler inline editor with localStorage draft support. Neither is an "extension manager" — they handle individual animation effects, not extension packages.
+
+---
+
+## 3. Gap/Risk
+
+- **Shader pipeline is fiction in this branch.** Any feature, effect, or integration that assumes GPU-accelerated shader/WebGL processing (real-time chroma key, GLSL transitions, pixel-shader effects) will fail or silently degrade to CSS approximations. The `effectPromptTemplate.ts` even instructs AI generators: *"Do NOT use SVG filters (blocked on cross-origin)"* — confirming rendering is pure DOM/CSS.
+- **The named extension-manager APIs do not exist.** External consumers or SDK documentation that reference `ExtensionManager.load()`, `ExtensionStateRepository.getState()`, or a `reigh-extension.json` manifest will find nothing. Integration tests for extension lifecycle (load/unload/state) have no target to test against.
+- **The existing extension surface (`extensionSurface.ts`) is wired to a hardcoded empty default** in `VideoEditorProvider.tsx:231`. There is no mechanism in this branch to inject non-empty extension configs from external packages, files, or a registry — the slot system is architecturally present but operationally inert.
+- **Naming drift.** Many imports reference `nSurface.ts` (e.g., `DataProviderContext.tsx:6`, `useVideoEditorRenderContext.ts:11`) while the actual file is `extensionSurface.ts`. This suggests a global find-replace ("Extension" → "n") was partially applied, risking broken tooling resolution in strict bundlers, and making grep-based audits unreliable.
+
+---
+
+## 4. Polish Plan
+
+1. **Decide: shader in or out.** If shader/WebGL is needed, add a `src/tools/video-editor/render/shaders/` directory with at minimum one GLSL effect, a WebGL context manager, and a `<ShaderEffect>` Remotion composition component. If not, strike "shader" and "WebGL" from the epic deliverables explicitly.
+2. **Rename `extensionSurface.ts` → `extensionSurface.ts` consistently.** Fix all imports that reference the mangled `nSurface.ts` path (found in 6 files: `DataProviderContext.tsx`, `VideoEditorProvider.tsx`, `useVideoEditorRenderContext.ts`, `VideoEditorDialogHost.tsx`, `CustomTwoPaneVideoEditorExample.tsx`). Run `tsc --noEmit` to verify.
+3. **Implement `ExtensionManager` or rename the epic claim.** If the slot/dialog/panel surface _is_ the intended extension system, rename `extensionSurface.ts` to `ExtensionManager.ts` (or create a thin `ExtensionManager` class that wraps it) and add `ExtensionLoader` (loads a `reigh-extension.json`-shaped config) and `ExtensionStateRepository` (tracks enabled/disabled state). If the epic intended a different system, document what the named classes should actually do.
+4. **Add `reigh-extension.json` schema and loader.** Define a JSON schema for extension packages (name, version, slots, dialogs, panels, inspectorSections). Implement `ExtensionLoader.loadFromPackage(json)` that feeds into `resolveVideoEditorExtensionRuntime`. Add a test with a minimal valid manifest.
+5. **Wire non-empty extensions into `VideoEditorProvider`.** Accept an optional `extensionConfig` prop in `VideoEditorProviderProps` and pass it to `resolveVideoEditorExtensionRuntime` instead of hardcoding `DEFAULT_VIDEO_EDITOR_EXTENSION_RUNTIME`.
+6. **Add integration tests.** Test that a `reigh-extension.json` package can register a custom inspector section, a dialog, and a slot renderer, that they appear in the resolved registry, and that `ExtensionStateRepository` tracks enable/disable.
+7. **Document the extension system.** Add a `docs/video-editor-extensions.md` covering: schema reference, loader API, slot/dialog/panel lifecycle, and a walkthrough example.
+
+---
+
+## 5. Confidence
+
+**High.** The searches were exhaustive across the entire `src/` tree and specifically within `src/tools/video-editor/`. The named classes (`ExtensionManager`, `ExtensionLoader`, `ExtensionStateRepository`) and file (`reigh-extension.json`) simply do not exist in any file under version control. The shader/WebGL search covered GLSL keywords, WebGL API surface, and three.js imports — all negative. What _does_ exist (extensionSurface.ts, DynamicComponentRegistry, EffectCreatorPanel) is real and working but doesn't match the claimed names or the package-manifest paradigm. Confidence could be further raised by a `git log --diff-filter=A -- '**/ExtensionManager*' '**/shader*' '**/WebGL*' '**/reigh-extension*'` on the epic branch to confirm these were never added and later deleted.

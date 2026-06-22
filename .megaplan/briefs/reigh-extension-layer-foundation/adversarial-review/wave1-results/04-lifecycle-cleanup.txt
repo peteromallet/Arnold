@@ -1,0 +1,55 @@
+Now I have a thorough understanding of the codebase. Let me compile my adversarial findings.
+
+## Findings
+
+### Finding 1: Extension-render diagnostics leak permanently across disable/reload/re-enable
+- **Evidence**: `ExtensionRenderBoundary.tsx:118-122` — `componentDidCatch` calls `reportExtensionRenderDiagnostic` which uses `store.report()`. Unlike `extension-loader` and `extension-runtime` diagnostics (replaced via `replaceBySource` in `BrowserVideoEditorProvider.tsx:130` and `EditorRuntimeProvider.tsx:120`), extension-render diagnostics have **no corresponding `replaceBySource` call anywhere in the lifecycle**. Once a crash diagnostic is reported, it persists forever in the store regardless of disable, reload, or re-enable.
+- **Why it matters**: After an extension crashes, the diagnostics store permanently shows a stale `extension_render_exception` even after the extension is disabled, updated, and re-enabled. The diagnostics panel will mislead users into thinking the extension is still broken.
+- **Required plan change**: Add `removeByExtensionId` to `VideoEditorDiagnosticsStore`; call it on extension disable/unload. Alternatively, call `replaceBySource('extension-render', [])` in the disable/reload path.
+- **Severity**: High
+
+### Finding 2: No crash recovery — error boundary state is permanent
+- **Evidence**: `ExtensionRenderBoundary.tsx:96-115` — `ExtensionRenderBoundaryInner` is a class component that catches errors via `getDerivedStateFromError` and sets `state.error`. **There is no `key` prop, no `componentDidUpdate` reset, and no public `reset()` method.** The boundary has no mechanism to clear its error state when the extension is re-enabled or reloaded after a crash. `ExtensionRenderBoundary.test.tsx` has zero tests for re-enable-after-crash behavior.
+- **Why it matters**: If an extension renderer throws once (e.g., due to a transient data issue), the extension UI is permanently replaced with fallback content. Disabling and re-enabling the extension does not restore the UI — the boundary stays in error state. This violates the M4 plan's done criterion: "Re-enabling a crashed extension resets the render boundary and attempts fresh render."
+- **Required plan change**: Add a `resetKey` prop or `key` prop driven by extension load state so React unmounts/remounts the boundary on re-enable. Add lifecycle tests for crash → disable → re-enable → fresh render.
+- **Severity**: Critical
+
+### Finding 3: No `removeByExtensionId` on diagnostics store
+- **Evidence**: `diagnostics.ts:249-317` — `DiagnosticsStoreImpl` exposes `report`, `reportMany`, `replaceBySource`, and `clear`. **There is no method to remove diagnostics by extension ID.** The M4 plan explicitly lists "Store can remove all diagnostics for an extension ID" as a Done Criterion. A grep for `removeByExtensionId` across the entire codebase returns zero results.
+- **Why it matters**: Without per-extension-ID cleanup, disable/unload cannot surgically remove just the disabled extension's diagnostics. The M4 plan requires this for the lifecycle contract.
+- **Required plan change**: Add `removeByExtensionId(extensionId: string): void` to `VideoEditorDiagnosticsStore` interface and `DiagnosticsStoreImpl`.
+- **Severity**: High
+
+### Finding 4: No diagnostic capacity bounds — unbounded growth
+- **Evidence**: `diagnostics.ts:249-317` — `DiagnosticsStoreImpl` has no maximum capacity, no eviction policy, and no per-source or per-extension limits. The M4 plan explicitly lists "Store enforces deterministic capacity bounds" as a Done Criterion and "Do not allow unbounded diagnostics growth" as a Constraint.
+- **Why it matters**: A misbehaving extension (or normal operation over long sessions) can flood the diagnostics store, causing memory pressure and performance degradation in the diagnostics panel.
+- **Required plan change**: Add capacity bounds (e.g., 1000 diagnostics total, oldest-first eviction) to `DiagnosticsStoreImpl`. Add tests for capacity limit and eviction behavior.
+- **Severity**: Medium
+
+### Finding 5: No scoped extension-authored diagnostic reporter
+- **Evidence**: The M4 plan requires "Scoped reporter factory pins source and extension ID so extensions cannot impersonate host diagnostics." Searching for any reporter factory or `extension-authored` source yields nothing. The current code has no mechanism for extensions to report their own diagnostics scoped to their ID. `diagnostics.ts` defines `VideoEditorDiagnosticSource` with `extension-render` but no dedicated `extension-authored` source.
+- **Why it matters**: Extensions have no safe channel to emit their own runtime diagnostics. If they were given access to the raw `VideoEditorDiagnosticReporter`, they could spoof `render`, `provider`, or other host-owned sources. The M4 plan requires a scoped factory to prevent this.
+- **Required plan change**: Add `extension-authored` source, create `createExtensionDiagnosticReporter(extensionId: string)` factory that pins source and extensionId, and enforce the pinning in `normalizeReporterDiagnostic`.
+- **Severity**: Medium
+
+### Finding 6: No per-command hot-unregister API in EditorCommandRegistry
+- **Evidence**: `editorCommandRegistry.ts:187-190` — `unregisterExecutor(id)` only removes an executor from the executor map. There is **no method to remove a command entry** (`EditorCommandEntry`) from the registry. The `commands` array and `commandMap` are frozen at creation time. While the `useEditorCommandRegistry` hook rebuilds the registry on extension reload, there is no API for hot-disabling a single extension's commands without a full remount.
+- **Why it matters**: The M4 plan open question asks "Whether command/keybinding cleanup should rebuild whole registries or add per-command unregister APIs." Without per-command unregister, any future runtime hot-disable (without React remount) would be impossible for command contributions.
+- **Required plan change**: Add `unregisterCommand(id: string)` and `registerCommand(entry: EditorCommandEntry)` to `EditorCommandRegistry` interface, or document that command cleanup always requires full registry rebuild via remount.
+- **Severity**: Low (acceptable if full rebuild is the intended V1 approach)
+
+### Finding 7: Disabled extension consumes no seenIds — correct but subtle
+- **Evidence**: `extensionLoader.ts:147-162` — When `state.enabled === false`, the loader executes `continue` **before** calling `seenIds.add(manifest.id)`. This means a disabled package does not block a later duplicate-ID package. This behavior is tested in `extensionLoader.test.ts` lines 377-398 and is correct, but the docstring says "Duplicate-ID handling is fail-closed and runs before state/settings resolution" (line 97), which is technically true — the duplicate check runs but the disabled `continue` skips `seenIds.add`. The behavior is correct but the doc could mislead.
+- **Why it matters**: This is a documentation gap, not a bug. But if someone refactors the loader and moves `seenIds.add` before the disabled check (thinking it matches the doc), duplicate-ID behavior for disabled-then-re-enabled packages would break.
+- **Required plan change**: Clarify the docstring to note that disabled packages do not consume IDs in `seenIds`.
+- **Severity**: Low
+
+### Finding 8: No lifecycle tests for crash recovery, diagnostics cleanup by extension ID, or capacity bounds
+- **Evidence**: `extensionLoader.test.ts` tests disable/enable via remount (line 388-434) but only verifies configs/settings. `ExtensionRenderBoundary.test.tsx` tests error catching but has zero tests for re-enable-after-crash. No test file anywhere tests `removeByExtensionId` (doesn't exist) or capacity bounds (don't exist). The M4 plan lists these as Required Tests.
+- **Why it matters**: The M4 plan's required tests for lifecycle and diagnostics cleanup are entirely absent from the codebase. These are not optional.
+- **Required plan change**: Add mandatory tests: (1) crash → disable → re-enable → fresh render, (2) diagnostics cleanup by extension ID on disable, (3) capacity bounds and eviction, (4) scoped reporter cannot spoof host sources.
+- **Severity**: High
+
+## Verdict
+
+The extension lifecycle foundation has sound core mechanics — `replaceBySource` correctly cleans `extension-loader` and `extension-runtime` diagnostics on reload, settings overrides survive disable/re-enable, and duplicate registration prevention is solid. However, **three critical gaps make the M4 lifecycle contract unfulfillable as-is**: (1) extension-render crash diagnostics leak permanently because there is no `replaceBySource('extension-render', ...)` or `removeByExtensionId` call anywhere in the disable/reload path, (2) the `ExtensionRenderBoundary` has no reset mechanism — a crashed extension stays dead forever even after disable/re-enable, violating the explicit "re-enabling a crashed extension resets the render boundary" requirement, and (3) every M4-required lifecycle test (crash recovery, diagnostics-ID cleanup, capacity bounds, scoped reporter anti-spoofing) is missing. The plan must add `removeByExtensionId` to the diagnostics store, give `ExtensionRenderBoundary` a reset-capable `key` prop tied to extension load state, wire extension-render source replacement into the disable/reload lifecycle, enforce diagnostic capacity bounds, and add the mandatory lifecycle tests before this milestone can be considered done.

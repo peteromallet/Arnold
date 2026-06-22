@@ -1,0 +1,49 @@
+## 1. Verdict
+
+**Absent.** The extension injection machinery (types, context field, resolution hooks) exists entirely on paper but has no rendering integration, no public API surface, and zero consumers anywhere in the codebase. Extensions hit a dead end the moment they enter the runtime context.
+
+## 2. Evidence
+
+- **`VideoEditorProvider.tsx:465`** — Hardcodes `extensions: DEFAULT_VIDEO_EDITOR_EXTENSION_RUNTIME`, an immutable all-empty object (`extensionSurface.ts:111–120`). No prop allows a caller to supply real extensions.
+
+- **`VideoEditorProviderProps` (lines 406–416)** — The props interface accepts `effectCatalog` and `sequenceComponentCatalog` but has no `extensions` field. Extensions cannot be injected at the host level.
+
+- **`EditorRuntimeProvider.tsx:24–33`** — The `runtime` prop only accepts `assetResolver | exporter | hostContext`. No extension surface. `BrowserVideoEditorProvider.tsx:66` passes exactly those three, confirming the omission.
+
+- **`browser.ts` (all 79 lines)** — The public browser API exports path helpers, settings, effect catalog factories, sequence clip types, `BrowserVideoEditor`, hooks, mount helpers, and data providers. Zero extension types, zero extension utilities, zero mention of the word "extension."
+
+- **`useVideoEditorRenderContext.ts:59–97`** — Defines `useVideoEditorSlotRenderers`, `useVideoEditorDialogDescriptors`, `useVideoEditorPanelRegistry`, `useResolvedVideoEditorPanelRegistry`, `useVideoEditorAssetPanels`, and `useVideoEditorInspectorSections`. **None of these six hooks are imported or called anywhere outside this file.** A codebase-wide `rg` returns zero hits.
+
+- **`components/` directory** — No component imports or references any extension hook, slot renderer, or dialog descriptor. The rendering path is completely disconnected from the extension system.
+
+- **`resolveVideoEditorExtensionRuntime` (`extensionSurface.ts:122–146`)** — This is the function that would merge a user-supplied `VideoEditorExtensionConfig` into a runtime config. It is never called outside its own module. No code path ever invokes it.
+
+- **`browser/` directory** — Contains `BrowserVideoEditor.tsx`, `BrowserVideoEditorProvider.tsx`, `hooks.tsx`, `mountVideoEditor.tsx`. Not one file mentions extensions.
+
+- **Tests (`useEditorSync.test.ts`, `PreviewPersistence.test.tsx`)** — Mock runtime context values with hardcoded empty extension objects (`{ slots: {}, dialogHost: { dialogs: [] }, registry: { panels: [], inspectorSections: [] } }`), not the actual extension types. No test exercises extension injection or rendering.
+
+- **`extensionSurface.ts` itself** — The type system is sophisticated: `VideoEditorSlotName`, `VideoEditorSlotRenderer`, `VideoEditorDialogDescriptor`, `VideoEditorPanelDescriptor`, `VideoEditorInspectorSectionDescriptor`, visibility predicates, ordering. All fully specified and completely orphaned.
+
+## 3. Gap/Risk
+
+The extension layer is a ghost API. A third-party developer who reads the types in `extensionSurface.ts` and tries to build an extension (a custom toolbar button, an asset panel, an inspector section, a dialog) has no entry point. `browser.ts` exports nothing they need. `VideoEditorProvider` cannot be told about their extension. Even if they could inject it, no component would render it. The product consequence is that the "extension platform" milestone is a mirage: the SDK is legible to humans but inoperative to machines. Any downstream work on the extension package loader, manager, compatibility checks, or release gates would be building on a foundation that doesn't connect at any seam.
+
+## 4. Polish Plan
+
+1. **Add `extensions` prop** to `VideoEditorProviderProps` (`VideoEditorProvider.tsx:406`), accepting `VideoEditorExtensionConfig | undefined`, and pipe it through `resolveVideoEditorExtensionRuntime` instead of hardcoding `DEFAULT_VIDEO_EDITOR_EXTENSION_RUNTIME` at line 465.
+
+2. **Add `extensions` prop** to `EditorRuntimeProviderProps` (`EditorRuntimeProvider.tsx:24`) and `BrowserVideoEditorProviderProps` (`BrowserVideoEditorProvider.tsx:13`), threading it identically.
+
+3. **Export extension types** from `browser.ts`: `VideoEditorExtensionConfig`, `VideoEditorExtensionRuntimeConfig`, `VideoEditorSlotName`, `VideoEditorSlotRenderer`, `VideoEditorDialogDescriptor`, `VideoEditorPanelDescriptor`, `VideoEditorInspectorSectionDescriptor`, `VideoEditorVisibilityPredicate`, `VideoEditorRenderContext`.
+
+4. **Export the hooks** from `browser.ts`: `useVideoEditorSlotRenderers`, `useVideoEditorDialogDescriptors`, `useVideoEditorAssetPanels`, `useVideoEditorInspectorSections`.
+
+5. **Wire slot renderers into the editor shell** — at minimum, render `slots.header`, `slots.toolbar`, `slots.statusBar` in the main editor layout component; render `dialogHost.dialogs` in a dialog layer; render `registry.panels` in the asset panel; render `registry.inspectorSections` in the inspector panel.
+
+6. **Write a smoke test** that injects a real extension (e.g., a custom toolbar button via `slots.toolbar`), renders through `BrowserVideoEditorProvider`, and asserts the button appears.
+
+7. **Document** the extension contract in a README or JSDoc on `browser.ts`, with a minimal example of defining and injecting an extension config.
+
+## 5. Confidence
+
+**High.** Every link in the chain—injection, transport, consumption, rendering, public export—was checked independently. The only uncertainty would be if a sibling package or external consumer calls `resolveVideoEditorExtensionRuntime` directly, but a full codebase `rg` returned zero hits for that function, the hooks, and the extension types outside their defining files.

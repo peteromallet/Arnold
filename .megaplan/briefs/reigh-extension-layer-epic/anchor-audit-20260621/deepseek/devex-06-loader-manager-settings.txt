@@ -1,0 +1,63 @@
+## Audit: Packaging Loader Manager and Settings Persistence
+
+---
+
+### 1. Verdict
+
+**Absent** — the extension surface type system exists as a well-designed shell, but there is no loader, manager, package lifecycle, or extension-specific settings persistence wired into the product; the runtime always resolves to an empty hardcoded default.
+
+---
+
+### 2. Evidence
+
+1. **`extensionSurface.ts:72-78`** — `VideoEditorExtensionConfig` defines slots, dialogHost, and registry contributions. `resolveVideoEditorExtensionRuntime()` (line 123) converts config → runtime. The design is clean: slot renderers, dialog descriptors, panel registries with ordering and visibility predicates.
+
+2. **`VideoEditorProvider.tsx:465`** — Extensions are hardcoded to `DEFAULT_VIDEO_EDITOR_EXTENSION_RUNTIME` (line 108: all empty arrays/objects, frozen). The provider **does not accept an `extensions` prop** — `VideoEditorProviderProps` (lines 413-424) has no `extensions` field.
+
+3. **`EditorRuntimeProvider.tsx:76-82`** — The browser-facing `EditorRuntimeProvider` creates a `DataProviderWrapper` with **no `extensions` field at all**, relying on the context default. Same pattern: extensions cannot be injected from outside.
+
+4. **`BrowserVideoEditorProvider.tsx:11-22`** — `BrowserVideoEditorProviderProps` omits any `extensions` property. The public browser SDK boundary has no extension injection point.
+
+5. **`registry.json` (config/contracts)** — The contract registry lists `video-editor-browser-sdk` and `video-editor-browser-provider-sdk` with expected exports (`BrowserVideoEditor`, `mountVideoEditor`, etc.). **No extension-loader, extension-manager, or extension-package exports appear** in any contract.
+
+6. **`effect-store.ts:1-39`** — Effect drafts persist via `localStorage` (`video-editor:draft-effects` key), but this is scoped to effect code editing, not general extension settings. **No equivalent exists for extension state.**
+
+7. **`videoEditorDefaults.ts:3-12`** — `VideoEditorSettings` tracks only `lastTimelineId`. The broader settings system (`useToolSettings`, Supabase-backed cascade resolution) is robust but **never invoked for extension configuration**.
+
+8. **`DynamicEffectRegistry.ts` / `DynamicComponentRegistry.ts`** — The closest analogue: a general-purpose dynamic component registry with `register`/`registerAsync`/`unregister`/`subscribe`/`getSnapshot`. Well-tested. But it is **scoped exclusively to effects** (`DynamicEffectRegistry extends DynamicComponentRegistry`), not used for general extension loading.
+
+9. **No extension package.json** — `find` across the workspace (excluding `node_modules`) returns zero extension-specific `package.json` files. No extension packaging format exists.
+
+10. **Zero matches** for `installExtension`, `uninstallExtension`, `extensionLoader`, `extensionManager`, `extensionState`, `setExtension`, `addExtension`, `removeExtension`, `loadExtension`, or `registerExtension` across the entire `src/` tree — confirmed via exhaustive `rg` searches.
+
+---
+
+### 3. Gap/Risk
+
+**Product consequence:** Third-party developers cannot package, distribute, install, or manage extensions. The slot/dialog/panel contribution model in `extensionSurface.ts` is unreachable — there is no public API to populate it. A developer who follows the types would write a `VideoEditorExtensionConfig`, only to discover no hook, prop, or function accepts it. The effect registry proves the dynamic-compilation + subscription pattern works, but it is not generalized.
+
+**Dev consequence:** Every extension contribution must be baked into the source tree at build time (like `installed-themes.ts`). There is no runtime extension marketplace, no user-facing install flow, and no way to persist extension preferences per-user or per-project.
+
+---
+
+### 4. Polish Plan
+
+1. **Add `extensions?: VideoEditorExtensionConfig` to `VideoEditorProviderProps`** (line 413 of `VideoEditorProvider.tsx`) and pass it through to `resolveVideoEditorExtensionRuntime()` instead of hardcoding the default. Same for `BrowserVideoEditorProviderProps` and `EditorRuntimeProviderProps`.
+
+2. **Extract `DynamicComponentRegistry` into a general `ExtensionRegistry`** that wraps the existing component registry and adds metadata fields: `manifest` (name, version, author), `state` (enabled/disabled), and `settings` (arbitrary key-value). Unit-test register/unregister/enable/disable.
+
+3. **Define an `ExtensionPackage` interface and JSON schema** — a `reigh-extension.json` manifest format (name, version, slots, dialogs, effects, sequences, clipTypes, assets). Write a JSON Schema file in `config/contracts/`.
+
+4. **Build `ExtensionLoader`** — a class that accepts `ExtensionPackage[]` and feeds them into `ExtensionRegistry`, `DynamicEffectRegistry`, and the sequence registry. Support synchronous (bundled) and async (dynamic import / URL fetch) loading. Test with a mock extension package.
+
+5. **Wire extension settings into `useToolSettings`** — register a `video-editor-extensions` settings key, persist installed extension IDs + per-extension config through the existing Supabase cascade. Add `useExtensionSettings(extensionId)` hook.
+
+6. **Add contract entries** — update `registry.json` to include `video-editor-extension-loader-sdk` and `video-editor-extension-manager-sdk` with expected exports (`ExtensionLoader`, `ExtensionRegistry`, `useExtensionSettings`, `ExtensionPackage`).
+
+7. **Documentation** — add `docs/extensions/authoring.md` (how to write an extension), `docs/extensions/loading.md` (loader lifecycle), and a public example extension in `examples/`.
+
+---
+
+### 5. Confidence
+
+**High.** The absence is unambiguous: the extension surface types exist but no code populates or manages them. The only dynamic registration system (`DynamicComponentRegistry`) is effect-specific. No loader, no manager, no settings persistence for extensions. Confidence would drop only if an out-of-tree extension system exists in a separate repository not examined here.

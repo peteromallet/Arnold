@@ -1,0 +1,61 @@
+## 1. Verdict
+
+**Diagnostics are scattered local error handling with no shared extension contract and no host-visible status/debug UI.** The telemetry host port exists as dead code, the perf diagnostics module logs only to `console.error` behind a localStorage gate, and the structured diagnostic types for generation assets and materialization are never surfaced to any consumer.
+
+---
+
+## 2. Evidence
+
+1. **`lib/perf-diagnostics.ts` (215 lines, lines 1–12, 170–215):** Engine-level detectors (`RenderStormDetector`, `EffectLoopDetector`, `RafLoopDetector`, `MemoryPressureDetector`) all gate on a `localStorage` flag and write exclusively to `console.error('[PERF] ...')`. No host-facing API, no aggregation, no extension hook. Only `bootDiagnostics()` is called once from `TimelineEditorShellCore.tsx` (line 173).
+
+2. **`hooks/usePerfDiagnostics.ts` (lines 1–14):** The `useRenderDiagnostic` / `useEffectDiagnostic` hooks are thin wrappers that feed component names into `RenderStormDetector.track()` / `EffectLoopDetector.track()`. Used across ~12 components but purely for internal rough-cut perf detection — outputs bypass any host or extension surface.
+
+3. **`runtime/ports.ts` (lines 36–40):** `VideoEditorTelemetryHost` defines `log`, `warn`, `error` methods. Wired in `VideoEditorProvider.tsx` (line ~297) as pass-throughs to `console`. **Zero production callers** — a `rg -rn "telemetry\."` search returns empty. The interface is dead code.
+
+4. **`contexts/DataProviderContext.tsx` (lines 19–31):** The runtime context `VideoEditorRuntimeContextValue` includes `telemetry: VideoEditorTelemetryHost` but no diagnostic aggregation contract, no event bus, no structured reporting type.
+
+5. **`runtime/extensionSurface.ts` (lines 11–18, 84–93):** Extension slots include `statusBar` but there is **no diagnostic slot**, no diagnostic data in `VideoEditorRenderContext`, and no way for extensions to register diagnostic handlers or consume diagnostic events.
+
+6. **`data/generationAssetResolver.ts` (lines 11–16, 41–50):** `GenerationAssetDiagnostic` is a well-typed discriminated union with codes (`generation-not-found`, `refresh-failed`, etc.) but exists only as a function return value — never aggregated, never exposed to any UI or host surface.
+
+7. **`data/AstridBridgeDataProvider.ts` (lines 107–119, 206–215):** `AssetMaterializationDiagnostic` + `getMaterializationSummary()` collect per-asset materialization failures. However, `getMaterializationSummary()` is **only called in unit tests** (`AstridBridgeDataProvider.test.ts`) — never wired to any rendering, host, or extension surface.
+
+8. **`data/DataProvider.ts` (lines 1–53):** The canonical persistence interface has no diagnostic methods, no error-reporting contract, no telemetry hooks. Extensions implementing `DataProvider` cannot participate in any shared diagnostic pipeline.
+
+9. **`compositions/MediaErrorBoundary.tsx` (lines 1–21):** Catches runtime media errors and logs to `console.error`. No aggregation, no host visibility beyond devtools.
+
+10. **`index.ts` (SDK entry):** Exports zero diagnostic types, interfaces, or utilities. The public SDK boundary has no diagnostic contract whatsoever.
+
+---
+
+## 3. Gap/Risk
+
+**Product consequence:** An extension author cannot observe system health, asset resolution failures, render errors, or performance regressions in a structured way. The host application cannot expose a diagnostics dashboard, status panel, or debugging overlay because diagnostics are either console-only, dead code, or trapped within function return values that no caller aggregates. When a user's timeline silently fails to render a generation asset, there is no mechanism to surface that failure in the UI — only a toast, which disappears.
+
+**Dev consequence:** Contributors adding new data providers, render pipelines, or effect runtimes have no contract to hook into for error reporting. Every team reinvents ad-hoc `console.error`/`toast.error` patterns, making production debugging dependent on end-user console access.
+
+---
+
+## 4. Polish Plan
+
+1. **Define a shared `VideoEditorDiagnosticEvent` type** in `runtime/ports.ts` with structured fields: `code`, `severity` ('info'|'warn'|'error'|'fatal'), `source` (component/extension id), `message`, `context` (Record<string, unknown>), and `timestamp`.
+
+2. **Extend `VideoEditorTelemetryHost`** with a `report(diagnostic: VideoEditorDiagnosticEvent): void` method and wire it into the runtime context. Replace dead `log/warn/error` with this.
+
+3. **Add `diagnostics` to `VideoEditorRenderContext`** (in `extensionSurface.ts`) so extensions can both emit and subscribe to diagnostic events through the host surface.
+
+4. **Wire existing diagnostic producers**: have `GenerationAssetDiagnostic`, `AssetMaterializationDiagnostic`, `MediaErrorBoundary`, and `perf-diagnostics.ts` detectors emit through the telemetry host instead of (or in addition to) `console.error`.
+
+5. **Add a `statusBar` diagnostics sub-slot** or a dedicated `diagnosticsPanel` slot on the extension surface so extensions can render a debug overlay observing all diagnostic events.
+
+6. **Export diagnostic types from `index.ts`** so the public SDK contract includes the diagnostic interface.
+
+7. **Write a ~40-line integration test** proving that a diagnostic event emitted from a generation asset failure surfaces in the telemetry host and is consumable by an extension.
+
+8. **Document** the diagnostic contract in the SDK README with a minimal code example of an extension consuming/reporting diagnostics.
+
+---
+
+## 5. Confidence
+
+**High.** Every search for `Diagnostic` export/interface across the full `src/tools/video-editor` tree confirms there is no shared diagnostic contract: diagnostic types exist only as ephemeral return values, `telemetry` is wired but never called, `getMaterializationSummary()` is test-only, and the extension surface has no diagnostic slot. The gap is demonstrable and complete. Confidence would rise to **very high** by confirming that no other repo (e.g., a host shell outside `src/tools/video-editor`) wraps the editor with its own diagnostic aggregation.

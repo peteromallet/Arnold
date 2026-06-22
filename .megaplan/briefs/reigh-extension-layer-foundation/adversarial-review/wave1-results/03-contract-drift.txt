@@ -1,0 +1,83 @@
+I now have all the evidence needed. Here is the complete adversarial review.
+
+---
+
+## Findings
+
+### Finding 1: Panels `placement` is required by TypeScript and docs but rejected by the JSON schema file
+- **Evidence**: 
+  - `src/tools/video-editor/runtime/extensionManifest.ts:71-75` — `ExtensionPanelContribution` has `placement: 'asset-panel'` as a **required** field.
+  - `config/contracts/reigh-extension.schema.json` — panels items have `"additionalProperties": false` and properties are only `["id", "order"]`. **No `placement` property exists.**
+  - `docs/extensions/authoring.md` — shows `placement: 'asset-panel'` in panel manifest examples.
+  - `examples/video-editor-extension/src/manifest.ts` — includes `placement: 'asset-panel'` on its panel contribution.
+  - `src/tools/video-editor/runtime/extensionManifest.test.ts:94` — JSON schema test uses `panels: [{ id: 'my-panel' }]` **without** placement and expects it to pass.
+- **Why it matters**: A manifest that satisfies TypeScript (placement required) would be silently rejected by a JSON-schema-based validator. The example manifest shipped in the repo would fail Ajv validation against the canonical schema file. Extension authors following the docs would produce manifests that don't validate against the schema.
+- **Required plan change**: Add `"placement": { "type": "string", "enum": ["asset-panel"] }` to panels items properties in `config/contracts/reigh-extension.schema.json`. Optionally add it to `required`.
+- **Severity**: **HIGH** — contract-level incompatibility between the canonical schema file and every other source of truth.
+
+### Finding 2: Slots `placement` is accepted by TypeScript and inlined schema but rejected by the JSON schema file
+- **Evidence**:
+  - `src/tools/video-editor/runtime/extensionManifest.ts:58-64` — `ExtensionSlotContribution` has `placement?: string`.
+  - `src/tools/video-editor/runtime/extensionManifest.ts:226` — inlined `MANIFEST_SCHEMA` includes `placement: { type: 'string' }` in slots items properties.
+  - `config/contracts/reigh-extension.schema.json` — slots items have `"additionalProperties": false` and properties are only `["slot", "id", "order"]`. **No `placement`.**
+- **Why it matters**: A slot contribution with `placement` passes the runtime and TypeScript but fails against the canonical JSON schema. This is a secondary surface-level mismatch.
+- **Required plan change**: Add `"placement": { "type": "string" }` to slots items properties in the JSON schema, or remove it from the TypeScript type and inlined schema.
+- **Severity**: **MEDIUM** — the `placement` field on slots is undocumented in authoring.md so real-world impact is lower, but the schema/type/source drift is real.
+
+### Finding 3: Inlined `MANIFEST_SCHEMA` drifts from the canonical JSON schema file on three points and is dead validation code
+- **Evidence**:
+  - `src/tools/video-editor/runtime/extensionManifest.ts:183-280` — the inlined `MANIFEST_SCHEMA` constant.
+  - Drift 1 (panels placement): inlined schema includes `placement: { type: 'string', enum: ['asset-panel'] }` at line 251; JSON schema file omits it.
+  - Drift 2 (slots placement): inlined schema includes `placement: { type: 'string' }` at line 226; JSON schema file omits it.
+  - Drift 3 (inspectorSections required): inlined schema has `required: ['id']` at line 261; JSON schema file has `required: ["id", "placement"]`.
+  - The `validateManifestSchema()` function (lines 284-582) performs manual validation and **never references `MANIFEST_SCHEMA`** — it is dead code that serves only as misleading documentation.
+- **Why it matters**: The inlined schema is a third "source of truth" that disagrees with both the JSON schema file and the TypeScript types. It misleads anyone reading the source code about what the actual contract is.
+- **Required plan change**: Either (a) delete the inlined `MANIFEST_SCHEMA` constant and replace it with a comment pointing to the JSON schema file, or (b) keep it but add an automated test that diffs it against the JSON schema file to prevent drift.
+- **Severity**: **MEDIUM** — code-quality hazard; the dead-code schema creates confusion but doesn't directly affect runtime behavior.
+
+### Finding 4: Diagnostic codes `settings_validation_failed` and `unsupported_record_version` exist in docs but NOT in the TypeScript `ExtensionDiagnosticCode` type
+- **Evidence**:
+  - `docs/extensions/loading.md:199` — lists `'settings_validation_failed'` as a valid diagnostic code.
+  - `docs/extensions/loading.md:202` — lists `'unsupported_record_version'` as a valid diagnostic code.
+  - `src/tools/video-editor/runtime/extensionManifest.ts:152-163` — `ExtensionDiagnosticCode` type defines 11 codes; **neither `settings_validation_failed` nor `unsupported_record_version` is present.**
+  - `rg -rn 'settings_validation_failed\|unsupported_record_version' src/` returns **zero results** — these codes don't exist anywhere in source.
+  - The settings resolver (`extensionSettings.ts`) uses `'settings_override_invalid'` for validation failures, not `'settings_validation_failed'`.
+  - The state repository (`extensionStateRepository.ts`) uses `'state_corrupt'` for unsupported record versions, not `'unsupported_record_version'`.
+- **Why it matters**: Anyone implementing diagnostics handling against the loading.md contract would write code against codes that never fire. Conversely, the real `state_corrupt` code for unsupported versions may surprise them. Docs and runtime disagree on the diagnostic vocabulary.
+- **Required plan change**: Either (a) add `settings_validation_failed` and `unsupported_record_version` to the `ExtensionDiagnosticCode` type and emit them where the docs promise, or (b) update `loading.md` to match the actual source codes (`settings_override_invalid`, `state_corrupt`).
+- **Severity**: **MEDIUM** — docs/code mismatch; integrators relying on docs get incorrect type information.
+
+### Finding 5: `settingsSchema` in JSON schema accepts `boolean` (per JSON Schema spec) but TypeScript type only allows `Record<string, unknown>`
+- **Evidence**:
+  - `config/contracts/reigh-extension.schema.json` — `settingsSchema` is `"oneOf": [{"type": "object", "additionalProperties": true}, {"type": "boolean"}]`, meaning `true`/`false` are valid (boolean schemas in JSON Schema indicate "allow all" / "forbid all").
+  - `src/tools/video-editor/runtime/extensionManifest.ts:140` — `settingsSchema?: Record<string, unknown>` — TypeScript prohibits `boolean`.
+  - `src/tools/video-editor/runtime/extensionSettings.ts:171` — the settings resolver does handle `typeof schema === 'boolean'` at runtime, so the runtime is more permissive than its own type implies.
+- **Why it matters**: An extension author using `settingsSchema: true` would satisfy the JSON schema and the runtime but fail TypeScript compilation. The resolver's runtime handling of boolean schemas is correct, but the type doesn't express it.
+- **Required plan change**: Change the TypeScript type to `settingsSchema?: Record<string, unknown> | boolean`.
+- **Severity**: **LOW** — boolean schemas are an edge case unlikely in practice, but the type/schema/resolver triangle is inconsistent.
+
+### Finding 6: No automated extension-layer drift gate exists despite M1 plan explicitly requiring one
+- **Evidence**:
+  - `.megaplan/briefs/reigh-extension-layer-foundation/m1-preview-truth-contract-freeze.md` — Done Criterion: "Drift gate fails if docs/schema/runtime/export status disagree." Touchpoints: "new or existing drift-check script under `scripts/quality/*`".
+  - `scripts/quality/` — contains `check-schema-drift.mjs` (Supabase DB schema only), `check-contract-governance.mjs` (export count mismatches only), `check-contract-surface-map.mjs` (README path validation only). **No script compares contribution family status across source/docs/schema/exports.**
+  - `Makefile` — `extension-release-gates` target resolves to `test-extensions` only (line 102). No drift gate step.
+  - `package.json` — `test:extensions` script runs import boundary, typecheck, unit tests, example validation, and Playwright. No cross-source drift comparison.
+- **Why it matters**: Every drift finding in this report (Findings 1–5) was introduced and persisted because no automated gate catches them. The M1 plan recognized this risk and prescribed a gate, but it was never built. Future changes will inevitably create more drift.
+- **Required plan change**: Create a drift-check script (e.g., `scripts/quality/check-extension-contract-drift.mjs`) that parses `contributionFamilies.ts` statuses, the JSON schema's allowed contribution collections, `compatibility.md`'s family table, and `extension.ts`'s public exports, then fails on any disagreement. Wire it into `test:extensions` and `extension-release-gates`.
+- **Severity**: **HIGH** — systemic gap; absence of this gate enables all other findings and will cause recurrence.
+
+### Finding 7: Manifest `contributions` TypeScript type has `[key: string]: unknown` index signature, making it permissive of rejected collection keys at compile time
+- **Evidence**:
+  - `src/tools/video-editor/runtime/extensionManifest.ts:128-136` — `contributions` interface has `[key: string]: unknown` index.
+  - `src/tools/video-editor/runtime/extensionManifest.ts:348-355` — `validateManifestSchema` rejects unknown contribution collections.
+  - `config/contracts/reigh-extension.schema.json` — `"additionalProperties": false` on contributions.
+  - TypeScript would allow `contributions: { effects: [...] }` at compile time even though both the schema and runtime reject it.
+- **Why it matters**: Extension authors get no TypeScript feedback about invalid contribution collection names. The error surfaces only at runtime/schema-validation time, making the developer experience worse than it could be.
+- **Required plan change**: Remove the `[key: string]: unknown` index from the contributions type and explicitly list only the supported keys (`slots`, `dialogs`, `panels`, `inspectorSections`, `commands`).
+- **Severity**: **LOW** — developer experience issue, not a contract integrity problem per se.
+
+---
+
+## Verdict
+
+The extension layer has **five active drift points** across its sources of truth: the JSON schema file (`config/contracts/reigh-extension.schema.json`), the TypeScript types (`extensionManifest.ts`), the inlined dead-code schema, the runtime validator (`validateManifestSchema`), and the documentation (`authoring.md`, `loading.md`, `compatibility.md`). The most impactful drifts are (a) `placement` on panel contributions being required by TypeScript and documented everywhere but rejected by the canonical JSON schema, and (b) two phantom diagnostic codes documented in `loading.md` that don't exist in source. A deeper systemic gap is that the M1 plan explicitly required a drift gate comparing contribution-family status, schema, docs, and exports — and it was never built, leaving all these drifts undetectable except by manual adversarial review. The inlined `MANIFEST_SCHEMA` constant in `extensionManifest.ts` is dead validation code that drifts from the canonical schema file and should either be deleted or kept in sync via an automated test. The canonical truth should be the JSON schema file plus the TypeScript types; the runtime validator and all docs must be derived from or kept consistent with those two artifacts, enforced by an automated gate in `test:extensions`.

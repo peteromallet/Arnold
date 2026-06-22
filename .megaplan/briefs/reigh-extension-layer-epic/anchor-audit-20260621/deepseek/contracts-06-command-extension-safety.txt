@@ -1,0 +1,67 @@
+Now I have comprehensive evidence across the full filesystem. Here is my audit:
+
+---
+
+## 1. Verdict
+
+**Absent.** The command infrastructure is a well-typed internal-only engine with no extension-safe contract for contributed command IDs, keybindings, menus, or conflict resolution.
+
+---
+
+## 2. Evidence
+
+1. **No extension command contribution model exists.** `src/tools/video-editor/runtime/extensionSurface.ts` (lines 1–154) defines `VideoEditorExtensionConfig` with only `slots`, `dialogHost`, and `registry` (panels/inspectorSections). There is zero provision for contributed commands, keybindings, or menu actions. The word "command" does not appear in the file.
+
+2. **`commandId` is optional metadata, never validated for extension uniqueness.** `src/tools/video-editor/commands/types.ts` (line 14) declares `commandId?: string` on `TimelineCommand`, but the runner at `src/tools/video-editor/commands/runner.ts` (lines 109–113) only validates that it's a string *if present* — never checks for ID collisions across extension-contributed descriptors.
+
+3. **Registry construction detects internal duplicates but has no extension-namespacing.** `src/tools/video-editor/commands/runner.ts` (lines 245–256) `createTimelineCommandRegistry` throws on duplicate `descriptor.type` within a single call, but extension registries cannot be merged via a public API — there is no `mergeRegistries()` or conflict-reporting function exported from `commands/index.ts` (lines 1–86).
+
+4. **`ClipTypeCommandMetadata` has no keybinding, menu-group, or icon field.** `src/tools/video-editor/clip-types/defineClipType.ts` (lines 88–95) defines only `{ id, label, description?, requirements?, limitations? }`. No `accelerator`, `keybinding`, `icon`, or `group` property exists. The `id` field is a bare string with no namespace convention.
+
+5. **`PUBLIC_TIMELINE_COMMAND_NAMES` is a hardcoded frozen list, not extensible.** `src/tools/video-editor/hooks/useTimelineCommands.ts` (lines 131–143) exports a `const` array of 10 command names. Extensions cannot add to this list. The `PUBLIC_TIMELINE_COMMAND_SCOPE` is set to `'non-gesture'` (line 149), explicitly scoping it away from any extension-contributed gesture surface.
+
+6. **No keybinding or shortcut infrastructure exists in the commands layer.** A grep for `keybind`, `keyBind`, `shortcut`, `accelerator`, `hotkey` across `src/tools/video-editor/commands/` returns zero matches. The extension surface (`runtime/`) also returns zero matches for these terms.
+
+7. **Menu rendering is hardcoded in React components, not command-driven.** `src/tools/video-editor/components/TimelineEditor/ClipAction.tsx` (lines 81–183) renders context menus from explicit prop callbacks (`onDeleteClip`, `onSplitHere`, etc.), not from a contributed command registry. Extensions cannot register menu items through any API in the commands package.
+
+8. **Error codes lack extension-specific categories.** `src/tools/video-editor/commands/types.ts` (lines 35–45) defines `TimelineCommandErrorCode` with codes like `'unknown_command'`, `'validation_failed'`, `'apply_failed'` — but nothing for `'command_id_conflict'`, `'extension_command_rejected'`, or `'keybinding_collision'`. In `useTimelineCommands.ts` (lines 16–23), the separate error code type has no extension-specific variants either.
+
+9. **No test file exists in `commands/`.** The directory `src/tools/video-editor/commands/` has zero `.test.ts` or `.spec.ts` files (confirmed by `find`). The extension-mocking test at `src/tools/video-editor/hooks/useEditorSync.test.ts` (line 121) only passes `{ slots: {}, dialogHost: { dialogs: [] }, registry: { panels: [], inspectorSections: [] } }` — no command-related fields at all.
+
+10. **The sequence SDK (`sequence.ts`) is a parallel public API, not integrated with the command system.** `src/tools/video-editor/sequence.ts` (lines 1–58) exports sequence validation/materialization helpers but does not wrap them as `TimelineCommandDescriptor` entries with IDs, keybindings, or menu placements. There is no `applySequenceViaCommand()` bridge.
+
+---
+
+## 3. Gap/Risk
+
+**Product consequence:** A third-party developer building a Reigh extension (e.g., a "Color Grade" or "Subtitle Generator") has no way to contribute a timeline command with a stable, non-colliding ID, a user-facing menu label, or a keyboard shortcut. They would have to either:
+- Inject custom React components into a UI slot and wire commands imperatively, bypassing the command engine entirely;
+- Or hardcode command type strings with no namespace, risking runtime collisions when two extensions both try to register `"apply-filter"`.
+
+**Dev consequence:** The `TimelineCommandRegistry` and `TimelineCommandRunner` are architecturally ready for extension contribution (generic, ReadonlyMap-based, pure functions), but they sit behind a hardcoded facade (`useTimelineCommands`) with no merge-injection point. This makes the command layer a **closed system**, contradicting the epic's "extension runtime/kernel" and "contributed UX surfaces" milestones.
+
+**Concrete failure mode:** If extension A registers `{ type: 'my-effect', ... }` via a hypothetical future API and extension B also registers `{ type: 'my-effect', ... }`, `createTimelineCommandRegistry` will throw at runtime with `Duplicate timeline command descriptor registered for "my-effect".` — a crash with no recovery path, no user-visible error attribution, and no "last-write-wins" or "namespaced" strategy.
+
+---
+
+## 4. Polish Plan
+
+1. **Add `commandContributions` to `VideoEditorExtensionConfig`.** In `extensionSurface.ts`, add a field: `commands?: readonly TimelineCommandDescriptor[]` with a merge-safe resolver function that wraps `createTimelineCommandRegistry` but returns a `{ registry, conflicts }` result instead of throwing.
+
+2. **Add keybinding and menu metadata to `ClipTypeCommandMetadata`.** Extend the type in `defineClipType.ts` with optional `accelerator?: string`, `group?: string`, and `icon?: string` fields so clip-type commands can surface in menus and shortcut palettes.
+
+3. **Namespace command type strings.** Either enforce a convention (e.g., `extension:my-package:command-name`) or auto-prefix extension-contributed descriptors with the extension's package identifier at merge time, with validation that rejects bare unprefixed type strings from extensions.
+
+4. **Add conflict error codes.** Add `'duplicate_command_type'` and `'keybinding_collision'` to `TimelineCommandErrorCode` in `types.ts`, with structured detail about which extensions conflict.
+
+5. **Expose a `mergeExtensionCommandRegistries()` public function.** Export from `commands/index.ts` a function that takes `(baseRegistry, extensionDescriptors[])` and returns `{ merged, conflicts: TimelineCommandError[] }`, so the extension runtime can surface conflicts as warnings rather than crashes.
+
+6. **Add tests for extension command contribution and conflict.** Create `commands/__tests__/extension-command-conflict.test.ts` covering: duplicate type across extensions, keybinding collision detection, namespace validation, and merge-reject scenarios.
+
+7. **Bridge sequence SDK commands.** Create a `TimelineCommandDescriptor` wrapper for sequence draft application so the existing sequence extension path feeds into the command engine rather than bypassing it.
+
+---
+
+## 5. Confidence
+
+**High.** The evidence is unambiguous: the command system is well-engineered internally but has no extension-contribution surface whatsoever. Confidence would change to medium only if there exists an undiscovered merge/contribution API outside the `commands/` and `runtime/` directories — but exhaustive grep across the entire `video-editor/` tree for `registerCommand`, `contributedCommand`, `extension.*command`, `mergeRegistry`, and `keybind` returned zero relevant matches.

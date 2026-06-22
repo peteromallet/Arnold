@@ -1,0 +1,50 @@
+---
+
+## 1. Verdict
+The agent tool system uses a **parallel command/text/session shape**, not canonical proposal/result families. There is no proposal lifecycle — tool calls are directly executed and paired with flat string results inside a session-turn log.
+
+## 2. Evidence
+
+1. **No "proposal" exists anywhere.** Zero hits for `proposal`, `propose`, `accept`, `review`, `preview`, or `confirm` across the entire `ai-timeline-agent/` directory (16 source files + 4 test files), the `AgentChat` component, `useAgentSession.ts`, or `agent-session.ts`.
+
+2. **Session model is turn-based, not proposal-based.**  
+   `src/tools/video-editor/types/agent-session.ts:15–18` — `AgentTurn.role` is `"user" | "assistant" | "tool_call" | "tool_result"`. There is no `"proposal"` or `"accept"` role. Turns carry `content: string` plus optional `tool_name`/`tool_args`, not structured proposal payloads.
+
+3. **Tool execution is direct, not staged.**  
+   `supabase/functions/ai-timeline-agent/loop.ts:537–600` (`processToolCalls`) — each extracted tool call immediately pushes a `tool_call` turn, executes via `executeToolCall()`, then pushes a `tool_result` turn without any intermediate proposal stage, user review gate, or accept/reject path.
+
+4. **The `run` tool is a command executor, not a proposal engine.**  
+   `supabase/functions/ai-timeline-agent/tool-schemas.ts:10–13` — the `run` tool description: *"Execute timeline edits through either a legacy command string or a typed transaction batch."* It supports `mode: "apply" | "dry_run" | "validate"`, but the agent always hardcodes `mode: "apply"` (see `loop.ts:524–528` for `set_params`/`set_theme`/`set_theme_overrides` — `mode: "apply"` is fixed).
+
+5. **ToolResult is a flat string, not a structured family.**  
+   `supabase/functions/ai-timeline-agent/types.ts:10–15` — `ToolResult = { result: string; config?: TimelineConfig; stopLoop?: boolean; nextStatus?: AgentSessionStatus }`. There is no proposal ID, no acceptance state, no lineage between proposed and applied state. The `config` field is the mutated timeline after direct application, not a proposed diff.
+
+6. **Transaction batch has no proposal lifecycle.**  
+   `supabase/functions/ai-timeline-agent/tools/registry.ts:276–343` (`executeCommand`) — the transaction path (`runArgs.transaction`) validates, then applies in one pass through `executePreparedTransaction`. There's no "stage proposal → user reviews → user accepts" flow. The `dry_run`/`validate` modes exist in the command-runner machinery but the agent never invokes them with user-facing intent.
+
+7. **UI renders tool groups as inline command→result, not proposal cards.**  
+   `src/tools/video-editor/components/AgentChat/AgentChat.tsx:22–66` (`buildRenderedTurns`) — tool calls and results are collapsed into `ToolCallPair` objects and rendered as expandable code blocks with a `→ result` suffix. No accept/reject UI, no diff preview, no proposal staging.
+
+8. **Command parser is a string DSL, not a proposal schema.**  
+   `supabase/functions/ai-timeline-agent/command-parser.ts:1–19` — `ParsedCommand` is a flat discriminated union of imperative verb types (`move`, `split`, `trim`, `delete`, `set`, `add-text`, `swap`, etc.). These are direct mutations, not declarative intents. There's no mechanism to diff proposed vs. current state.
+
+9. **`buildInitialMessages` folds tool_call/tool_result into flat LLM history.**  
+   `supabase/functions/ai-timeline-agent/llm/messages.ts:162–176` — traffic between `tool_call` and `tool_result` turns summarizes into assistant messages for the LLM, not into proposal/result structures. The LLM sees "Tool call run: {args}" and "Tool result run: Applied 1/1 command(s)."
+
+10. **Cancellation is direct state mutation, not proposal rejection.**  
+    `src/tools/video-editor/hooks/useAgentSession.ts:256–290` (`useCancelSession`) — sets `status: 'cancelled'` with metadata. This kills the whole session; there's no per-proposal rejection.
+
+## 3. Gap / Risk
+The product consequence is that **every agent-initiated timeline mutation is a blind apply** — users see changes only after the fact, reconstructed from `tool_result` text or realtime timeline updates. There is no preview-then-accept safety net. If the agent misinterprets a command (e.g., trims the wrong clip, moves to the wrong position), the user must manually undo or trust the agent's next fix. The `dry_run` and `validate` modes are wired into the command framework but never exposed through the agent's default execution path, leaving a latent capability unproductized.
+
+## 4. Polish Plan
+1. **Extend `AgentTurn.role`** to include `"proposal"` and `"proposal_accept" | "proposal_reject"` in `agent-session.ts:15`.
+2. **Add `AgentProposal` type** with a stable proposal ID, the proposed `ToolResult` (with `config` diff), a status enum, and optional user-facing description.
+3. **Gate mutations in `processToolCalls`** (loop.ts:537): when the tool is `run` and the mode is `"apply"`, check a new `auto_apply` session flag. If false, store the proposal and set session status to `"awaiting_approval"` instead of executing.
+4. **Add `useAcceptProposal` / `useRejectProposal` hooks** in `useAgentSession.ts` that apply or discard a staged proposal via Supabase RPC.
+5. **Render proposals in `AgentChat.tsx`** as diff cards (current config vs. proposed config) with accept/reject buttons, reusing `ToolCallPair` or a new `ProposalCard` component.
+6. **Add tests** in `loop.test.ts` and `AgentChat.test.tsx` covering: proposal staging, user accept applies mutation, user reject discards, auto-apply flag skips staging, proposal expiry/timeout.
+7. **Expose `mode: "dry_run"`** as a system-prompt instruction so the LLM can call `run({command: "...", mode: "dry_run"})` to preview without applying, returning a diff summary the agent can present before the user commits.
+
+## 5. Confidence
+**High.** The codebase is unambiguous — zero proposal infrastructure exists. What would change it: discovery of a separate code path (e.g., a worker or orchestrator not in `ai-timeline-agent/`) that implements proposal staging. But the current agent-tool boundary from Edge Function invocation through LLM loop through frontend rendering is entirely command→flat-result, end-to-end.

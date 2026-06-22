@@ -1,0 +1,67 @@
+Now I have all the evidence needed. Here is the final audit.
+
+---
+
+## 1. Verdict
+
+The contract governance **freezes only the pre-existing video editor SDK** (types, data provider, timeline commands, config utilities, sequence workflow, and browser/provider hooks). The extension-layer API that the epic targets — `ReighExtension[]`, contribution types, extension commands, package loader/manager — is entirely absent from the freeze, while the internal slot/panel/inspector extension *infrastructure* exists at `runtime/extensionSurface.ts` but is ungoverned and inaccessible from public entrypoints.
+
+---
+
+## 2. Evidence
+
+1. **registry.json (lines 1–208)** defines 7 contracts. Five cover the video-editor: `video-editor-core-sdk` (`index.ts`), `video-editor-browser-sdk` (`browser.ts`), `video-editor-browser-provider-sdk` (`browser-provider.ts`), `video-editor-sequence-sdk` (`sequence.ts`), and `video-editor-testing-sdk` (`testing.ts`). No contract name, class, or path references `extension`, `extensionLayer`, `runtime`, `contribution`, or `package`.
+
+2. **The word "extension" does not appear in registry.json** (`grep -i extension` returns empty). The 80+ expected exports across all video-editor contracts contain zero extension-layer types: no `ClipTypeContribution`, `SurfaceContribution`, `EffectContribution`, `ReighExtension`, `ExtensionPackage`, `RegisterTrackType`, or `TimelinePatch`.
+
+3. **`import-allowlist.json` (lines 1–36)** declares the same 5 files as `publicEntrypoints`. `runtime/extensionSurface.ts` is not listed. External consumers must use the allowlist for any deep video-editor import, and the allowlist contains only pre-existing app-level coupling (e.g., `useTimelineCommands.ts`, `videoEditorDefaults.ts`) — no extension-runtime paths.
+
+4. **`extensionSurface.ts` (lines 1–197)** defines the real extension runtime: `VideoEditorSlotName` (9 slots), `VideoEditorExtensionRuntimeConfig`, `VideoEditorRenderContext`, `VideoEditorDialogDescriptor`, `VideoEditorPanelDescriptor`, `VideoEditorInspectorSectionDescriptor`, `resolveVideoEditorExtensionRuntime()`, and `resolveVideoEditorPanelRegistry()`. These are functional and wired — confirmed by `.scenario_comparison.md:26` — but exported only from this internal file.
+
+5. **No public entrypoint re-exports extension-layer types.** `grep` for `VideoEditorExtensionRuntimeConfig`, `VideoEditorSlotRenderer`, or `VideoEditorRenderContext` across `index.ts`, `browser.ts`, `browser-provider.ts` returns zero matches. The runtime types can only be imported via deep paths like `@/tools/video-editor/runtime/extensionSurface.ts`, which the import-allowlist script would flag as a violation.
+
+6. **`VideoEditorProvider.tsx:465` hardcodes `DEFAULT_VIDEO_EDITOR_EXTENSION_RUNTIME`** (all empty slots/dialogs/panels). There is no `extensions` prop on `VideoEditorProvider` or `BrowserVideoEditorProvider`. The `.scenario_comparison.md:24` explicit diagnostic states: "The agents found the same hardcoded `DEFAULT_VIDEO_EDITOR_EXTENSION_RUNTIME` and missing provider prop we did."
+
+7. **`CustomTwoPaneVideoEditorExample.tsx:19-22`** imports `VideoEditorRenderContext` and `VideoEditorSlotRenderer` directly from `runtime/extensionSurface.ts` — not from any public entrypoint. This is an internal example, not a supported public API path.
+
+8. **No extension-layer epic concepts exist in `src/tools/video-editor/`.** `grep` for `ReighExtension`, `ClipTypeContribution`, `SurfaceContribution`, `EffectContribution`, `packageLoader`, `packageManager`, `extensionCommand`, `extensionRegistry`, or `RegisterTrackType` returns zero hits across the entire codebase (excluding docs).
+
+9. **The check script (`check-video-editor-sdk-imports.mjs`, lines 1–155)** enforces the freeze by treating the 5 public entrypoints as the only valid import targets. Imports of `runtime/extensionSurface.ts` from outside `src/tools/video-editor/` would fail this check unless added to the allowlist — and they are not.
+
+10. **`sequence.ts` (the closest thing to an "extension" contract)**, described as "Edge-safe custom sequence SDK for the supported video-editor extension path" (line 3), governs only the trusted-sequence draft workflow (`validateSequenceDraft`, `materializeSequenceConfig`, `applySequenceDraftToTimeline`). It does not expose an open contribution model for third-party clip types, effects, or transitions.
+
+---
+
+## 3. Gap / Risk
+
+The product consequence is **a false sense of platform readiness**. The extension runtime infrastructure (slots, panels, inspector sections, dialog descriptors, render context, visibility predicates) is internally functional but entirely locked behind internal paths with no public API surface, no `extensions` prop on providers, and no contribution model. A developer trying to build on the "extension layer" today would:
+
+- Find no public `ReighExtension` type to author against.
+- Be unable to pass contributions into `VideoEditorProvider` or `BrowserVideoEditorProvider`.
+- Discover that `TimelineRenderer` does not dispatch to extension-contributed renderers.
+- Violate the import-allowlist check if they import from `runtime/extensionSurface.ts`.
+- Have no extension manager UI, no `enabled` flags, no persisted layout state.
+
+The dev consequence is that none of the 10 epic end-state scenarios (described in `.scenario_comparison.md`) are executable without Phase 0: adding an `extensions` prop, a merge layer, and a `ReighExtension` contribution type to the public SDK boundary — none of which the current contract freeze covers.
+
+---
+
+## 4. Polish Plan
+
+1. **Add a `ReighExtension` public type** (or equivalent contribution shape) to a new public entrypoint (e.g., `src/tools/video-editor/extensions.ts`) with sub-contributions for surfaces, clip types, effects, transitions, keyframes, and assets.
+
+2. **Re-export the runtime types** from a public entrypoint: at minimum `VideoEditorExtensionRuntimeConfig`, `VideoEditorExtensionConfig`, `VideoEditorSlotName`, `VideoEditorSlotRenderer`, `VideoEditorDialogDescriptor`, `VideoEditorPanelDescriptor`, `VideoEditorInspectorSectionDescriptor`. Mark them `@publicContract`.
+
+3. **Add `extensions` prop to `VideoEditorProvider` and `BrowserVideoEditorProvider`**, merge it via `resolveVideoEditorExtensionRuntime()` instead of hardcoding `DEFAULT_VIDEO_EDITOR_EXTENSION_RUNTIME`.
+
+4. **Register the new `extensions.ts` entrypoint** in `registry.json`, `import-allowlist.json`, and `contract-surface-map.json`.
+
+5. **Write a contract test** that verifies the `extensions` prop flows into `VideoEditorExtensionRuntimeConfig` and that slot renderers, panels, dialogs, and inspector sections are resolved correctly.
+
+6. **Document the extension contribution API** in a `docs/extension-layer.md` with examples showing how to contribute a surface, clip type, effect, and inspector section.
+
+---
+
+## 5. Confidence
+
+**High.** The absence of extension-layer types from the contract registry and public entrypoints is a binary condition confirmed by direct inspection of the files. The `.scenario_comparison.md` cross-agent audit independently reaches the same conclusion about the missing `extensions` prop and hardcoded runtime. What would raise confidence further: running `check-video-editor-sdk-imports.mjs` to confirm `runtime/extensionSurface.ts` imports from outside the video-editor directory are currently absent or blocked.

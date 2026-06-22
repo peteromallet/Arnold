@@ -1,0 +1,19 @@
+{
+  "brief": "/Users/peteromalley/Documents/reigh-workspace/reigh-app/.megaplan/briefs/reigh-extension-layer-foundation/adversarial-review/wave1-briefs/07-schemaform-settings.md",
+  "elapsed_s": 141.88355683302507,
+  "error": "Connection error.",
+  "error_class": "APIConnectionError",
+  "finish_reason": null,
+  "finished_at": "2026-06-22T15:42:07Z",
+  "meta_file": "/Users/peteromalley/Documents/reigh-workspace/reigh-app/.megaplan/briefs/reigh-extension-layer-foundation/adversarial-review/wave1-results/07-schemaform-settings.meta.json",
+  "model": "deepseek:deepseek-v4-pro",
+  "pid": 15828,
+  "raw_result_keys": [],
+  "response_chars": 0,
+  "response_file": "/Users/peteromalley/Documents/reigh-workspace/reigh-app/.megaplan/briefs/reigh-extension-layer-foundation/adversarial-review/wave1-results/07-schemaform-settings.txt",
+  "started_at": "2026-06-22T15:39:45Z",
+  "status": "error",
+  "stem": "07-schemaform-settings",
+  "task_timeout_s": 1800,
+  "tool_calls": 0
+}

@@ -1,0 +1,59 @@
+## 1. Verdict
+
+**There is no reusable schema-driven form contract; the codebase contains four independent, non-interoperable parameter-control implementations, each with its own type system, widget set, and rendering logic.** The `schemaUtils.ts` file is irrelevant to form rendering — it is a task-creation validation utility, not a form contract.
+
+---
+
+## 2. Evidence
+
+1. **`ParameterControls` (line 75–227 of `ParameterControls.tsx`)** consumes a `ParameterSchema` — an array of `ParameterDefinition` objects (`src/tools/video-editor/types/index.ts`, lines 19–49). It manually maps five parameter types (`number`, `select`, `boolean`, `color`, `audio-binding`) to bespoke JSX blocks (e.g., `Slider` at line 109, `Select` at line 120, `Switch` at line 142, color `Input` at line 152, and a multi-field audio-binding block at lines 164–221). There is no abstraction over widget selection.
+
+2. **`ControlsManifestLayout` (line 134–188 of `ControlsManifestLayout.tsx`)** consumes a `ControlsManifest` — an entirely separate type system defined in `src/tools/video-editor/sequences/controlsManifest.ts` (lines 15–81). Its `ControlField` switch (line 33–112) maps six different type codes (`number`, `slider`, `boolean`, `text`, `color`, `enum`). The `priority` field (lines 141–148) drives a two-zone layout (primary/secondary) absent from `ParameterControls`.
+
+3. **`CodePathParamEditor` (line 111–318 of `CodePathParamEditor.tsx`)** consumes a raw JSON Schema object (`schemaJson: object`, line 112) and renders controls by inspecting `prop.type`, `prop.enum`, `prop.format`, and property-name heuristics (e.g., `looksLikeColor` at lines 74–83). This is a third, completely distinct rendering path.
+
+4. **`SequenceParamEditor` (line 59–164 of `SequenceParamEditor.tsx`)** renders sequence parameters from descriptor metadata (`SequenceParam[]`) — not a schema-driven system at all. It hardcodes a check for `asset-list` kind (line 93) and a `PARAMS_WITH_TEXTAREA` set (line 15), with no reusable contract between it and the other form renders.
+
+5. **No shared abstraction exists.** A search for `SchemaForm`, `FormEngine`, `DynamicForm`, `schema-form`, `formSchema` across the entire `src/` tree returns zero results. Neither `ParameterControls`, `ControlsManifestLayout`, nor `CodePathParamEditor` share any base component, utility function, or type intersection.
+
+6. **The two "nearby" type systems are incompatible.** `ParameterSchema` supports `audio-binding` (types/index.ts line 24) but not `slider`, `text`, or `enum`. `ControlsManifest` supports `slider`, `text`, `enum` (controlsManifest.ts lines 15–22) but not `audio-binding`. `ParameterSchema` has `ParameterOption` with `{label, value}` (line 32–35); `ControlsManifest` uses raw `string[]` options (line 70). No conversion utility bridges them.
+
+7. **`schemaUtils.ts` is misidentified in the audit scope.** It contains validation functions (`validateNonEmptyString`, `validateNumericRange`, `validateLoraConfigs`, `resolveSeed32Bit`, etc.) for task-creation pipelines (LoRA configs, seeds) and has zero relation to form rendering or parameter controls.
+
+8. **Default-value construction is duplicated.** `ParameterControls.getDefaultValues` (lines 56–61) and `buildDefaultsFromManifest` (controlsManifest.ts lines 305–311) perform the identical logical operation on different types, with no shared contract.
+
+9. **Usage patterns confirm the split.** `ParameterControls` is imported by `ClipPanel.tsx` (line 13), `EffectCreatorPanel.tsx` (line 26), and `BulkClipPanel.tsx` (line 10 — only `getDefaultValues`). `ControlsManifestLayout` is imported only by `SequenceCreatorPanel.tsx` (line 73). No component uses both.
+
+10. **`ClipPanel.tsx` (lines 398, 466, 533) explicitly guards `ParameterControls` usage with `hasParameterSchema()`** checks — a type-narrowing guard (`line 128–130`) that verifies `parameterSchema` is non-empty, demonstrating that the form render path is tightly coupled to effect-resource metadata rather than a generic contract.
+
+---
+
+## 3. Gap/Risk
+
+**Product consequence:** Every new parameter-bearing feature (effects, sequence components, clip-type params, theme overrides) requires writing yet another bespoke form renderer from scratch. This duplicates widget-to-type mapping logic (slider vs. number input vs. select vs. switch) at least four times already, and any new widget type or UX convention must be manually propagated to every renderer. The result is UX inconsistency — e.g., `ParameterControls` shows labels differently than `ControlsManifestLayout`, `CodePathParamEditor` uses JSON Schema `title` while `ControlsManifestLayout` uses its own `label` field, and `SequenceParamEditor` ignores schema-driven rendering entirely.
+
+**Developer consequence:** The absence of a shared contract makes it impossible to write a single test suite for parameter-form behavior. Validation logic, accessibility patterns, and layout conventions diverge silently. Introducing a new parameter type (e.g., `gradient`, `keyframe-curve`) would require touching three or more files with no compiler-enforced completeness check.
+
+---
+
+## 4. Polish Plan
+
+1. **Extract a canonical `FormFieldSpec` type** (in a new `src/shared/contracts/parameterForm.ts`) that unions all current and anticipated field types (`number`, `slider`, `boolean`, `text`, `color`, `enum`, `select`, `audio-binding`, `asset-list`), with optional `priority`/`layout` metadata. Provide bidirectional conversion adapters from `ParameterDefinition`, `ControlManifestEntry`, and JSON Schema properties.
+
+2. **Build a single `SchemaForm` component** in `src/shared/components/SchemaForm/` that consumes `FormFieldSpec[]` and renders widgets via a `switch`-based field renderer, with layout driven by a `layout?: 'grid' | 'stack' | 'primary-secondary'` prop. Use `data-testid` conventions for testability.
+
+3. **Refactor `ParameterControls` and `ControlsManifestLayout`** to be thin wrappers around `SchemaForm` with their respective type adapters. Delete the duplicate `ControlField`/`ControlRow` rendering logic.
+
+4. **Refactor `CodePathParamEditor`** to convert its JSON Schema inspection into `FormFieldSpec[]` and delegate to `SchemaForm`. This eliminates the `looksLikeColor` heuristic and the one-off fallback JSON editor (line 288-304).
+
+5. **Refactor `SequenceParamEditor`** to use `SchemaForm` with an appropriate field spec (adding `asset-list` to the canonical type).
+
+6. **Add unit tests** for `SchemaForm` covering: all field types render, layout modes, accessibility labels, disabled state, value round-tripping, and empty-state rendering.
+
+7. **Add a migration test** verifying that all current consumers (`ClipPanel`, `BulkClipPanel`, `EffectCreatorPanel`, `SequenceCreatorPanel`) produce identical rendered output after the refactor.
+
+---
+
+## 5. Confidence: **High**
+
+The evidence is unambiguous. Every file was read in full, every type definition examined, and every import chain traced. No shared schema-form infrastructure exists anywhere in the codebase. Confidence could be further raised by an automated snapshot-diff of rendered output across all four form paths, but the architectural conclusion does not depend on it.

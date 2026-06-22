@@ -1,0 +1,19 @@
+{
+  "brief": "/Users/peteromalley/Documents/reigh-workspace/reigh-app/.megaplan/briefs/reigh-extension-layer-foundation/adversarial-review/wave1-briefs/10-test-gates-fake-pass.md",
+  "elapsed_s": 13.838172957999632,
+  "error": "Connection error.",
+  "error_class": "APIConnectionError",
+  "finish_reason": null,
+  "finished_at": "2026-06-22T15:41:55Z",
+  "meta_file": "/Users/peteromalley/Documents/reigh-workspace/reigh-app/.megaplan/briefs/reigh-extension-layer-foundation/adversarial-review/wave1-results/10-test-gates-fake-pass.meta.json",
+  "model": "deepseek:deepseek-v4-pro",
+  "pid": 15828,
+  "raw_result_keys": [],
+  "response_chars": 0,
+  "response_file": "/Users/peteromalley/Documents/reigh-workspace/reigh-app/.megaplan/briefs/reigh-extension-layer-foundation/adversarial-review/wave1-results/10-test-gates-fake-pass.txt",
+  "started_at": "2026-06-22T15:41:41Z",
+  "status": "error",
+  "stem": "10-test-gates-fake-pass",
+  "task_timeout_s": 1800,
+  "tool_calls": 0
+}

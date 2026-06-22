@@ -1,0 +1,32 @@
+# DeepSeek Brief Index
+
+- `contracts-01-public-sdk-export-freeze.md` - Public SDK Export Freeze vs Epic Export Set
+- `contracts-02-runtime-injection-wiring.md` - Extension Runtime Injection Wiring
+- `contracts-03-manifest-package-metadata.md` - Manifest and Package Metadata
+- `contracts-04-diagnostics-schema-host.md` - Diagnostics Schema and Host Surface
+- `contracts-05-timeline-patch-proposal.md` - TimelinePatch and TimelineProposal Contract
+- `contracts-06-command-extension-safety.md` - Command Contract Suitability for Extensions
+- `contracts-07-renderability-vocabulary.md` - Renderability and Export Blocker Vocabulary
+- `contracts-08-clip-type-contribution-boundary.md` - Clip-Type Contribution Boundary
+- `contracts-09-agent-tool-result-contract.md` - Agent Tool Result Contract
+- `contracts-10-compatibility-migration.md` - Compatibility and Migration Semantics
+- `ux-01-provider-injection-dead-end.md` - Provider Injection Dead End
+- `ux-02-surface-taxonomy-completeness.md` - M2 Surface Taxonomy Completeness
+- `ux-03-diagnostics-status-drawer.md` - Diagnostics and Status Drawer UX
+- `ux-04-schemaform-parameter-controls.md` - SchemaForm vs ParameterControls
+- `ux-05-command-palette-context-menus.md` - Command Palette and Context Menus
+- `ux-06-effect-contribution-reality.md` - Effect Contribution Reality
+- `ux-07-dynamic-transitions.md` - Dynamic Transition Contributions
+- `ux-08-clip-types-keyframes.md` - Clip Types and Keyframes UX
+- `ux-09-agent-tool-ux.md` - Agent Tool UX Integration
+- `ux-10-shader-manager-claims.md` - Shader and Extension Manager Claims
+- `devex-01-provider-contract-depth.md` - Provider Contract Depth
+- `devex-02-supabase-events-fallback.md` - Supabase Timeline Events Fallback Semantics
+- `devex-03-astrid-bridge-persistence.md` - Astrid Bridge Persistence and Asset Materialization
+- `devex-04-render-planner-vs-router.md` - Render Planner vs Legacy Router
+- `devex-05-local-process-sidecar-runtime.md` - Trusted Local Process and Sidecar Runtime
+- `devex-06-loader-manager-settings.md` - Packaging Loader Manager and Settings Persistence
+- `devex-07-asset-parser-output-formats.md` - Asset Parser Metadata Search and Output Formats
+- `devex-08-docs-examples-release-gates.md` - Public Examples Docs and Release Gates
+- `devex-09-provider-parity-matrix.md` - Provider Parity Matrix
+- `devex-10-live-data-generation-bridge.md` - Live Data and Generation Session Bridge

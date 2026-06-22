@@ -1,0 +1,49 @@
+## Findings
+
+### Finding 1: No dedicated extension-authored diagnostic source exists in the valid source set
+- **Evidence**: `src/tools/video-editor/runtime/diagnostics.ts` lines 31–40 defines `VideoEditorDiagnosticSource` with 8 host sources (`extension-loader`, `extension-runtime`, `extension-render`, `asset-materialization`, `asset-generation`, `render`, `provider`, `perf`). No `extension-authored` source exists. The `VALID_DIAGNOSTIC_SOURCES` set at lines 483–494 enforces this closed set — any extension attempting to report with a custom source is normalized into a `diagnostic_report_invalid` wrapper at line 536–538.
+- **Why it matters**: The M4 plan's central spoof-prevention guarantee ("extensions cannot impersonate host diagnostics") depends on a dedicated extension-authored source that is the only source usable through the scoped reporter factory. Without this source in the type system and validator, the security claim has no implementation surface.
+- **Required plan change**: Add an `extension-authored` value to `VideoEditorDiagnosticSource` and `VALID_DIAGNOSTIC_SOURCES` *before* building the scoped reporter factory. The source validation must treat this source as permissibly used only through the factory, not raw `report()` calls.
+- **Severity**: HIGH
+
+### Finding 2: No scoped reporter factory exists — extensions would get the raw store today
+- **Evidence**: `src/tools/video-editor/runtime/diagnostics.ts` lines 283–300 define `VideoEditorDiagnosticReporter` with `report()`, `reportMany()`, and `replaceBySource()`. The comment at line 291 explicitly says "This is an internal loader/runtime bridge. It is not a public extension-authored diagnostics API." The M4 plan (`.megaplan/briefs/reigh-extension-layer-foundation/m4-diagnostics-schemaform-lifecycle.md` line 12) mandates a "scoped reporter factory that pins source and extensionId so extensions cannot impersonate host diagnostics" — this factory does not exist.
+- **Why it matters**: If the raw reporter were given to extension code today, an extension could call `report({source: 'render', ...})` and inject diagnostics into the host-owned render stream. The factory is the only mechanism to prevent spoofing. Without it, the "safe enough" diagnostic API the full extensibility ticket depends on is unimplemented.
+- **Required plan change**: Implement `createExtensionDiagnosticReporter(extensionId: string): DiagnosticReporter` that pins `source = 'extension-authored'` and `extensionId`. This factory must be the only export extensions receive; the raw `VideoEditorDiagnosticReporter` must never be exposed to extension code.
+- **Severity**: HIGH
+
+### Finding 3: No capacity bounds, rate limits, or eviction in the diagnostics store
+- **Evidence**: `src/tools/video-editor/runtime/diagnostics.ts` `DiagnosticsStoreImpl.report()` at lines 379–391 appends without any bound check. `reportMany()` at lines 393–409 accumulates without limit. The `commit()` method at lines 366–368 freezes the growing array. Searching for "capacity", "bound", "rate", "limit", "evict", "max" across the diagnostics module returns zero hits. The M4 plan line 51 says "Do not allow unbounded diagnostics growth" and line 89 requires "capacity bounds and oldest-first eviction/rejection."
+- **Why it matters**: Even trusted extensions can flood the store with diagnostics (accidentally or maliciously), causing unbounded memory growth. The full extensibility ticket lists capacity bounds as a safety requirement. The current store has zero protection against this.
+- **Required plan change**: Add configurable per-extension and total capacity limits to `DiagnosticsStoreImpl` with oldest-first eviction. Reject new diagnostics over the cap with explicit rejection diagnostics.
+- **Severity**: MEDIUM
+
+### Finding 4: No removal-by-extension-ID method in the diagnostics store
+- **Evidence**: `src/tools/video-editor/runtime/diagnostics.ts` — the `VideoEditorDiagnosticsStore` interface at lines 315–329 exposes `getSnapshot()`, `subscribe()`, `clear()`, `report()`, `reportMany()`, and `replaceBySource()`. There is no method to remove diagnostics by `extensionId`. Searching the entire `src/tools/video-editor/` tree for `removeByExtension`, `clearExtension`, `deleteByExtension`, `byExtension` returns no results. The M4 plan line 57 requires "Store can remove all diagnostics for an extension ID."
+- **Why it matters**: The lifecycle cleanup contract (M4 plan lines 55–57) requires diagnostics cleanup on extension disable/unload. Without per-extension removal, stale diagnostics from disabled extensions persist in the store, misleading users and violating the cleanup contract.
+- **Required plan change**: Add `removeByExtension(extensionId: string): void` to `VideoEditorDiagnosticsStore` and implement it in `DiagnosticsStoreImpl`.
+- **Severity**: MEDIUM
+
+### Finding 5: No trust/security documentation exists for extension authors
+- **Evidence**: `docs/extensions/` contains `authoring.md`, `compatibility.md`, `loading.md`, and plan/roadmap/ticket docs. No `trust-and-security.md` exists. The `authoring.md` (the primary author-facing doc) contains zero mentions of trust, security, sandbox, or execution model. The foundation plan (`.megaplan/briefs/reigh-extension-layer-foundation/m4-diagnostics-schemaform-lifecycle.md` line 292) requires: "Name the execution model in trust docs: extension code can execute through `new Function` in the editor context; there is no sandbox or runtime permission enforcement." The full extensibility ticket (line 25) lists "Trust/security statement" as a foundation prerequisite that must exist before Phase 4 families are promoted.
+- **Why it matters**: Extension authors currently have no way to discover that their code runs unsandboxed, that manifest permissions are purely declarative, and that there is no runtime permission enforcement. Without this documentation, the platform risks authors making incorrect security assumptions.
+- **Required plan change**: Create `docs/extensions/trust-and-security.md` (or fold content into `authoring.md`) that states: (a) extension code runs as trusted code, (b) manifest permissions are declarative/not enforced at runtime, (c) there is no sandbox or iframe isolation, (d) the execution context (`new Function` in the editor context). This must ship before claims about "safe enough" diagnostics can be made.
+- **Severity**: HIGH
+
+### Finding 6: The `detailId` parameter in the deterministic ID function is never used — coarse deduplication
+- **Evidence**: `src/tools/video-editor/runtime/diagnostics.ts` the `diagnosticId()` function at lines 343–355 accepts `detailId: string | undefined` and includes it in the djb2 hash, but all three call sites (lines 383, 404, 439) pass `undefined`. This means diagnostic IDs are derived solely from `(source, code, extensionId)` — only one diagnostic per code per extension can exist at a time. The M4 plan line 62 mentions "optional contribution ID" and "optional source range" for extension-authored diagnostics, which would require detail-level deconfliction.
+- **Why it matters**: If an extension needs to report two instances of the same diagnostic code with different provenance (e.g., two different contributions), the second report will be silently deduplicated. The M4 plan acknowledges finer granularity is needed but the column in the ID function already exists unused.
+- **Required plan change**: When implementing the scoped reporter, pass a `detailId` derived from `contributionId`/`sourceRange` to `diagnosticId()` so distinct diagnostic instances with the same code are preserved.
+- **Severity**: LOW
+
+### Finding 7: No diagnostic-report test exists that proves an extension-with-reporter cannot spoof host sources
+- **Evidence**: `src/tools/video-editor/runtime/diagnostics.test.ts` at lines 695–702 tests that an invalid source like `extension-author` is rejected into `diagnostic_report_invalid`. But there is no test that (a) creates a scoped reporter factory, (b) gives it to simulated extension code, and (c) proves the extension cannot inject diagnostics with `source: 'render'` or `source: 'provider'`. The M4 plan line 88 requires "extension reporter cannot spoof host sources" as a test.
+- **Why it matters**: Without this test, the spoof-prevention guarantee is aspirational. The test must exercise the actual factory API — not just the source validator.
+- **Required plan change**: Add a dedicated test: `createExtensionDiagnosticReporter(extensionId)` returns a reporter whose output ALWAYS has `source: 'extension-authored'` regardless of what the extension passes. Any attempt to override source must be silently pinned or rejected.
+- **Severity**: MEDIUM
+
+---
+
+## Verdict
+
+The diagnostics foundation today is a robust internal loader/runtime bridge with deterministic IDs, deduplication, source replacement, and fail-closed normalization — but it is entirely host-internal. Extension-authored diagnostics are explicitly `loader-runtime-only` with zero implementation surface for safe extension consumption: no dedicated source, no scoped reporter factory, no capacity bounds, no per-extension cleanup, no trust/security documentation, and no spoof-prevention tests. The M4 brief's security posture (scoped reporter pins source and extensionId to prevent spoofing host diagnostics) is entirely unrealized in code. Before any plan can claim extension-authored diagnostics are "safe enough for trusted extensions," it must deliver the scoped reporter factory with pinned source, capacity bounds with eviction, per-extension cleanup, and public trust documentation — and it must explicitly avoid claims of sandboxing or runtime permission enforcement that do not exist.

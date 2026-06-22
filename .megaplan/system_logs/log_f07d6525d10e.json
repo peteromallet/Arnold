@@ -1,0 +1,87 @@
+{
+  "id": "log_f07d6525d10e",
+  "level": "debug",
+  "category": "system",
+  "event_type": "authority_divergence",
+  "message": "authority_divergence emitted",
+  "details": {
+    "event": {
+      "seq": 7746,
+      "schema_version": 1,
+      "ts_utc": "2026-06-22T20:47:48.119086+00:00",
+      "ts_rel_init_s": 12367.009732,
+      "kind": "authority_divergence",
+      "phase": "execute",
+      "payload": {
+        "diagnostic_version": 1,
+        "task_id": "T9",
+        "raw_terminal_status": "done",
+        "authority_status": "unknown",
+        "authoritative": false,
+        "reason": "stale_evidence:missing_head:task_files_changed",
+        "missing_outputs": [],
+        "stale_evidence": [
+          "missing_head:task_files_changed",
+          "missing_head:task_commands_run",
+          "missing_head:task_commands_run",
+          "missing_head:task_commands_run",
+          "missing_head:task_commands_run",
+          "missing_head:task_commands_run",
+          "missing_head:task_commands_run",
+          "missing_head:task_commands_run",
+          "missing_head:task_commands_run",
+          "missing_head:task_commands_run",
+          "missing_head:task_commands_run",
+          "missing_head:task_commands_run",
+          "missing_head:task_commands_run",
+          "missing_head:task_commands_run",
+          "missing_head:task_commands_run"
+        ],
+        "would_block_reasons": [
+          "stale_evidence:missing_head:task_files_changed",
+          "stale_evidence:missing_head:task_commands_run"
+        ],
+        "error": null,
+        "diagnostics": {
+          "task_id": "T9",
+          "declared_outputs": {
+            "files_changed": [
+              "supabase/migrations/20260612130000_create_extension_persistence_tables.sql"
+            ],
+            "commands_run": [
+              "cat supabase/migrations/20260612130000_create_extension_persistence_tables.sql",
+              "md5 -q supabase/migrations/20260612130000_create_extension_persistence_tables.sql",
+              "wc -l supabase/migrations/20260612130000_create_extension_persistence_tables.sql",
+              "grep -ci 'auth.uid() = user_id' (16 hits)",
+              "grep -ci 'references.*timelines' (3 hits)",
+              "grep -ci 'references auth' (3 hits)",
+              "grep -ci 'enable row level security' (3 hits)",
+              "grep -ci service_role (6 hits)",
+              "grep -ci 'jsonb_typeof.*=.*object' (3 hits)",
+              "grep -ci schema_version checks (6 hits)",
+              "grep -ci 'unique.*user_id.*timeline_id.*extension_id' (2 hits)",
+              "grep -ci status enum (2 hits)",
+              "grep -rn extension table references in TypeScript",
+              "git status --porcelain"
+            ]
+          },
+          "linked_evidence_count": 30,
+          "evidence_count": 142,
+          "normalization": "iterable",
+          "status": "unknown",
+          "evidence_sources": [
+            "plan_artifacts"
+          ],
+          "loaded_evidence_count": 142,
+          "raw_terminal_status": "done"
+        },
+        "ts_utc": "2026-06-22T20:47:48.118249+00:00"
+      },
+      "transaction_id": "5e30577442ec292c",
+      "store_method": "log_system_event"
+    }
+  },
+  "turn_id": null,
+  "epic_id": "m2-provider-persistence-spine-20260622-1921",
+  "occurred_at": "2026-06-22T20:47:48.119156Z"
+}

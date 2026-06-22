@@ -1,0 +1,106 @@
+Traceback (most recent call last):
+  File "/Users/peteromalley/.pyenv/versions/3.11.11/lib/python3.11/site-packages/httpx/_transports/default.py", line 101, in map_httpcore_exceptions
+    yield
+  File "/Users/peteromalley/.pyenv/versions/3.11.11/lib/python3.11/site-packages/httpx/_transports/default.py", line 250, in handle_request
+    resp = self._pool.handle_request(req)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/peteromalley/.pyenv/versions/3.11.11/lib/python3.11/site-packages/httpcore/_sync/connection_pool.py", line 256, in handle_request
+    raise exc from None
+  File "/Users/peteromalley/.pyenv/versions/3.11.11/lib/python3.11/site-packages/httpcore/_sync/connection_pool.py", line 236, in handle_request
+    response = connection.handle_request(
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/peteromalley/.pyenv/versions/3.11.11/lib/python3.11/site-packages/httpcore/_sync/connection.py", line 101, in handle_request
+    raise exc
+  File "/Users/peteromalley/.pyenv/versions/3.11.11/lib/python3.11/site-packages/httpcore/_sync/connection.py", line 78, in handle_request
+    stream = self._connect(request)
+             ^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/peteromalley/.pyenv/versions/3.11.11/lib/python3.11/site-packages/httpcore/_sync/connection.py", line 124, in _connect
+    stream = self._network_backend.connect_tcp(**kwargs)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/peteromalley/.pyenv/versions/3.11.11/lib/python3.11/site-packages/httpcore/_backends/sync.py", line 207, in connect_tcp
+    with map_exceptions(exc_map):
+  File "/Users/peteromalley/.pyenv/versions/3.11.11/lib/python3.11/contextlib.py", line 158, in __exit__
+    self.gen.throw(typ, value, traceback)
+  File "/Users/peteromalley/.pyenv/versions/3.11.11/lib/python3.11/site-packages/httpcore/_exceptions.py", line 14, in map_exceptions
+    raise to_exc(exc) from exc
+httpcore.ConnectError: [Errno 8] nodename nor servname provided, or not known
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/Users/peteromalley/.pyenv/versions/3.11.11/lib/python3.11/site-packages/openai/_base_client.py", line 1037, in request
+    response = self._send_request(
+               ^^^^^^^^^^^^^^^^^^^
+  File "/Users/peteromalley/.pyenv/versions/3.11.11/lib/python3.11/site-packages/openai/_client.py", line 440, in _send_request
+    return self._send_with_auth_retry(request, stream=stream, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/peteromalley/.pyenv/versions/3.11.11/lib/python3.11/site-packages/openai/_client.py", line 418, in _send_with_auth_retry
+    response = super()._send_request(request, stream=stream, **kwargs)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/peteromalley/.pyenv/versions/3.11.11/lib/python3.11/site-packages/openai/_base_client.py", line 964, in _send_request
+    return self._client.send(request, stream=stream, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/peteromalley/.pyenv/versions/3.11.11/lib/python3.11/site-packages/httpx/_client.py", line 914, in send
+    response = self._send_handling_auth(
+               ^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/peteromalley/.pyenv/versions/3.11.11/lib/python3.11/site-packages/httpx/_client.py", line 942, in _send_handling_auth
+    response = self._send_handling_redirects(
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/peteromalley/.pyenv/versions/3.11.11/lib/python3.11/site-packages/httpx/_client.py", line 979, in _send_handling_redirects
+    response = self._send_single_request(request)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/peteromalley/.pyenv/versions/3.11.11/lib/python3.11/site-packages/httpx/_client.py", line 1014, in _send_single_request
+    response = transport.handle_request(request)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/peteromalley/.pyenv/versions/3.11.11/lib/python3.11/site-packages/httpx/_transports/default.py", line 249, in handle_request
+    with map_httpcore_exceptions():
+  File "/Users/peteromalley/.pyenv/versions/3.11.11/lib/python3.11/contextlib.py", line 158, in __exit__
+    self.gen.throw(typ, value, traceback)
+  File "/Users/peteromalley/.pyenv/versions/3.11.11/lib/python3.11/site-packages/httpx/_transports/default.py", line 118, in map_httpcore_exceptions
+    raise mapped_exc(message) from exc
+httpx.ConnectError: [Errno 8] nodename nor servname provided, or not known
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/Users/peteromalley/.claude/skills/subagent-launcher/fan.py", line 585, in _run_one
+    result = agent_future.result(timeout=task_timeout)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/peteromalley/.pyenv/versions/3.11.11/lib/python3.11/concurrent/futures/_base.py", line 456, in result
+    return self.__get_result()
+           ^^^^^^^^^^^^^^^^^^^
+  File "/Users/peteromalley/.pyenv/versions/3.11.11/lib/python3.11/concurrent/futures/_base.py", line 401, in __get_result
+    raise self._exception
+  File "/Users/peteromalley/.pyenv/versions/3.11.11/lib/python3.11/concurrent/futures/thread.py", line 58, in run
+    result = self.fn(*self.args, **self.kwargs)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/peteromalley/Documents/megaplan/arnold/agent/run_agent.py", line 6547, in run_conversation
+    return self._run_conversation_impl(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/peteromalley/Documents/megaplan/arnold/agent/run_agent.py", line 7720, in _run_conversation_impl
+    raise api_error
+  File "/Users/peteromalley/Documents/megaplan/arnold/agent/run_agent.py", line 6964, in _run_conversation_impl
+    response = self._interruptible_streaming_api_call(
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/peteromalley/Documents/megaplan/arnold/agent/run_agent.py", line 4626, in _interruptible_streaming_api_call
+    raise result["error"]
+  File "/Users/peteromalley/Documents/megaplan/arnold/agent/run_agent.py", line 4604, in _call
+    result["response"] = self._interruptible_api_call(api_kwargs)
+                         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/peteromalley/Documents/megaplan/arnold/agent/run_agent.py", line 4098, in _interruptible_api_call
+    raise result["error"]
+  File "/Users/peteromalley/Documents/megaplan/arnold/agent/run_agent.py", line 4072, in _call
+    result["response"] = request_client_holder["client"].chat.completions.create(**api_kwargs)
+                         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/peteromalley/.pyenv/versions/3.11.11/lib/python3.11/site-packages/openai/_utils/_utils.py", line 298, in wrapper
+    return func(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/peteromalley/.pyenv/versions/3.11.11/lib/python3.11/site-packages/openai/resources/chat/completions/completions.py", line 1251, in create
+    return self._post(
+           ^^^^^^^^^^^
+  File "/Users/peteromalley/.pyenv/versions/3.11.11/lib/python3.11/site-packages/openai/_base_client.py", line 1332, in post
+    return cast(ResponseT, self.request(cast_to, opts, stream=stream, stream_cls=stream_cls))
+                           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/peteromalley/.pyenv/versions/3.11.11/lib/python3.11/site-packages/openai/_base_client.py", line 1072, in request
+    raise APIConnectionError(request=request) from err
+openai.APIConnectionError: Connection error.

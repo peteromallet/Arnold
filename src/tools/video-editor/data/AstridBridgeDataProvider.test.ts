@@ -26,6 +26,9 @@ import {
 } from '@/tools/video-editor/data/AstridBridgeDataProvider.ts';
 import { TimelineNotFoundError } from '@/tools/video-editor/data/DataProvider.ts';
 import {
+  expectUnsupportedExtensionPersistenceDiagnostics,
+} from '@/tools/video-editor/data/conformance/extensionPersistenceConformance';
+import {
   ensurePermission,
   getDirectoryHandle,
   saveDirectoryHandle,
@@ -43,6 +46,7 @@ import type {
   CompileOnlyOutputFormatEntry,
 } from '@/tools/video-editor/runtime/outputFormatRegistry';
 import type { OutputFormatContribution, OutputFormatHandler, OutputFormatContext, CompileOnlyOutputResult, TimelineSnapshot, AssetMetadata } from '@reigh/editor-sdk';
+import type { ExtensionDiagnostic } from '@reigh/editor-sdk';
 
 
 const makePayload = () => ({
@@ -216,6 +220,16 @@ describe('AstridBridgeDataProvider', () => {
       projectRootHandle: makeDirectoryHandle(''),
     };
   }
+
+  it('keeps extension persistence unsupported for M2 and emits normalized diagnostics', () => {
+    const provider = new AstridBridgeDataProvider({
+      projectSlug: 'ados-talks',
+      timelineRef: 'intro-cut',
+    });
+    const diagnostics: ExtensionDiagnostic[] = [];
+
+    expectUnsupportedExtensionPersistenceDiagnostics(provider, diagnostics, 'Astrid bridge');
+  });
 
   it('loads timeline JSON through the api base, defaults configVersion to 1, and fills missing output', async () => {
     const provider = new AstridBridgeDataProvider({
@@ -805,7 +819,10 @@ describe('AstridBridgeDataProvider', () => {
     });
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
       if (String(input).startsWith('https://storage.example/')) {
-        return new Response(new Blob(['downloaded-video'], { type: 'video/mp4' }), { status: 200 });
+        return new Response('downloaded-video', {
+          status: 200,
+          headers: { 'Content-Type': 'video/mp4' },
+        });
       }
       throw new Error(`Unexpected fetch: ${String(input)}`);
     }));
@@ -951,7 +968,10 @@ describe('AstridBridgeDataProvider', () => {
     });
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
       if (String(input).startsWith('https://storage.example/')) {
-        return new Response(new Blob(['downloaded-video'], { type: 'video/mp4' }), { status: 200 });
+        return new Response('downloaded-video', {
+          status: 200,
+          headers: { 'Content-Type': 'video/mp4' },
+        });
       }
       throw new Error(`Unexpected fetch: ${String(input)}`);
     }));
@@ -1065,7 +1085,10 @@ describe('AstridBridgeDataProvider', () => {
     });
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
       if (String(input).startsWith('https://storage.example/')) {
-        return new Response(new Blob(['new-audio'], { type: 'audio/wav' }), { status: 200 });
+        return new Response('new-audio', {
+          status: 200,
+          headers: { 'Content-Type': 'audio/wav' },
+        });
       }
       throw new Error(`Unexpected fetch: ${String(input)}`);
     }));

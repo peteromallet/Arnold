@@ -1,0 +1,37 @@
+## Correctly In Foundation
+
+**M1 (contract freeze)**: Making the current preview honest — drift gates, schema/doc/export reconciliation, production-build smoke — is table stakes. You cannot build a platform on a dishonest contract.
+
+**M2 (provider persistence)**: Durable state/settings/proposals across Supabase and browser-local storage is the single biggest production blocker today. The sync-cache-over-async-store pattern keeps the loader synchronous while supporting async backends. Provider-owned repository factories are the right abstraction over bolting methods onto `DataProvider`. This is correctly in foundation and correctly sequenced before everything else.
+
+**M3 (proposal spine and agent policy)**: `TimelinePatch` as an envelope over the existing command runner — not a second mutation engine — is the right call. Wiring `proposal_policy` through the edge function end-to-end proves the proposal spine works on the most dangerous path (agent-driven destructive mutations). This is correctly foundation: every creative family that mutates timeline state will depend on this.
+
+**M4 (diagnostics, SchemaForm, lifecycle)**: These are cross-cutting host primitives. The scoped reporter with spoofing prevention, V1 SchemaForm with primitive-only fields, and deterministic cleanup contracts are exactly what every future family needs before it can exist safely. Correctly in foundation.
+
+**M5 (manager UI and readiness gate)**: A local installed-package manager with enable/disable, settings editing, per-package diagnostics, and trust warnings is the minimum viable visibility surface. The Phase 4 readiness artifact — render planner contract, trust/sandbox decision, family promotion checklist — is a smart pause point that prevents Phase 4 from starting without agreed guardrails. Correctly in foundation.
+
+---
+
+## Should Move Out
+
+**Timeline overlay (M5)**: Even with the "only if still justified" hedge, this is a creative surface contribution masquerading as foundation work. It requires viewport integration, interaction-policy constraints, and render participation — all of which depend on the render planner extension contract that M5 is still *defining*, not implementing. The overlay should move to Phase 4 as the first creative family promoted after the readiness gate passes, serving as a canary for the full promotion pipeline (schema → SDK types → loader → registration → manager → diagnostics → lifecycle → render planner).
+
+---
+
+## Must Move Into Foundation
+
+**1. Promote diagnostics to `supported` status after M4.** The current `contributionFamilies.ts` marks diagnostics as `loader-runtime-only`. M4 builds the scoped reporter and lifecycle cleanup that make extension-authored diagnostics safe. But none of the foundation done criteria explicitly say "update the contribution family matrix to mark diagnostics as `supported`." Without this, the foundation completes with diagnostics still listed as unavailable to extension authors, which contradicts what M4 actually delivers. M4's done criteria should include a contract-registry update and a `contributionFamilies.ts` status promotion, plus a compatibility-matrix update.
+
+**2. Public SDK package boundary definition (not publishing).** M1 proves "public-entrypoint extractability" but the foundation ends with no committed package shape. By M5, the public API surface (extension types, manifest types, proposal envelope types, diagnostic reporter types, SchemaForm types, loader helpers, provider contracts) has grown substantially. The foundation should commit a `packages/editor-sdk/package.json` and barrel file that defines the boundary — even if unpublished and marked `"private": true`. Without this, the "public SDK" remains a handwave, and Phase 4 families will each invent their own export pattern. This is low-effort (a few files) and high-value (prevents boundary drift across Phase 4 families).
+
+**3. Standalone trust/security document.** The prep.md asks whether trust docs should be standalone or folded into authoring/compatibility docs. Foundation should decide and produce it. M5 requires a trust warning in the manager UI and the Phase 4 readiness artifact requires a trust/sandbox decision. Neither can be coherent without a canonical trust/security document that defines: what "trusted/unsandboxed" means for extension code, what manifest permissions are declarative vs. enforced, what the trust posture will be for signed packages, and what a future sandbox/permission-broker path would require. This gates the Phase 4 trust decision and should not be deferred.
+
+---
+
+## Verdict
+
+**Correctly scoped with three important gaps.** The foundation epic correctly identifies the plumbing that every creative contribution family needs — honest contracts, durable persistence, safe proposal-backed mutation, scoped diagnostics, parameter editing, lifecycle cleanup, visibility management, and a readiness gate. It correctly resists the temptation to add effects, transitions, or clip types before this plumbing exists. The anti-scope discipline (no marketplace, no sandboxing, no SDK publishing, no creative families) is honest and appropriate.
+
+The three gaps are surgical, not architectural: promoting diagnostics status to match what M4 builds, committing a package boundary shape so Phase 4 families have a target, and producing the trust/security document that gates the Phase 4 posture decision. Each is a documentation/registration artifact, not new engineering work. The timeline overlay should move to Phase 4 as a canary family, not sit awkwardly in foundation.
+
+The five-milestone chain structure is sound. M2 and M3 are rightfully rated 5/5 difficulty with `thorough/high` planning depth — persistence and proposal policy are where this foundation lives or dies. The Phase 4 readiness gate at M5 is the most important structural decision in the entire epic: it forces an explicit "are we ready?" conversation before creative families consume months of engineering effort on unstable plumbing.

@@ -1,0 +1,33 @@
+## Confirmed
+
+1. **Provider persistence (M2) is the correct first post-freeze priority.** Every Phase 4 family — effects, transitions, clip types, keyframes, agent tools, live data — needs durable extension state, settings, and proposal storage. The foundation correctly sequences this before creative families. The sync-cache-over-async bridge pattern is sensible given the loader's synchronous contract.
+
+2. **SchemaForm (M4) is correctly scoped as a host-owned primitive.** V1 primitives (string, number, boolean, enum/select, color) cover the parameter shapes that effects, transitions, and clip-type params will need for a first pass. The V2 gap (arrays, nested objects, asset refs) is acknowledged in the full-extensibility ticket as a Phase 4 concern — correct.
+
+3. **The render planner is already Phase 4-ready in code, even if not yet formalized.** `planRender()` already dispatches on `ClipTypeDescriptor.renderCapabilities.exportRoute`, produces `RenderBlockers`, `RenderMaterials`, and `RenderArtifactManifests`, and understands provider availability. The Phase 4 readiness artifact (M5) should document this existing contract rather than design a new one. The clip-type dispatch mechanism (`client`/`banodoco`/`blocked`/`custom`) already handles the four-route taxonomy that effects, transitions, and contributed clip types will plug into.
+
+4. **Proposal spine (M3) correctly stays as an envelope over the existing command runner.** The `TimelinePatch`/proposal envelope approach avoids introducing a second mutation engine. Agent tool contributions (Phase 4) depend on this for proposal-first destructive results.
+
+5. **The clip-type internal infrastructure is rich enough to serve as the Phase 4 extension contract template.** `defineClipType()`, `ClipTypeDescriptorInput`, `ClipTypeRenderCapabilities`, `ClipTypeCommandMetadata`, command-availability constraints, and runtime adapters exist and are well-typed. The Phase 4 readiness artifact should decide whether the public extension contract exposes this descriptor directly or wraps a subset.
+
+6. **The `contributionFamilies.ts` matrix matches the real state.** Effects, transitions, and clip types are `trusted-only` — they have internal registries but no public extension manifest keys. Diagnostics is `loader-runtime-only`. Agent tools, live data, render materials, and keyframes are `deferred`. This honesty is correct.
+
+## Rejected Or Overstated
+
+1. **"Phase 4 readiness artifact needs to design the render planner extension contract"** — overstated. The contract exists in code (`renderRouter.ts` + `clip-types/`). What M5 should produce is a *documentation and formalization* artifact, not a design artifact. The existing `exportRoute` field on `ClipTypeRenderCapabilities` already defines the extension participation surface. Claiming this as a missing foundation primitive would delay Phase 4 unnecessarily.
+
+2. **The full-extensibility ticket's completion criteria list is aspirational but not a blocker for foundation scoping.** It enumerates all 12 families as end-state requirements for "complete extensibility" — that's a Phase 4 concern, not a gate on whether the foundation has enough primitives. The foundation prep.md correctly excludes creative families. The adversarial question is whether the foundation *enables* Phase 4 work, and it does.
+
+3. **"Asset parser/search/output contributions need the foundation"** — only partially true. They need persistence, diagnostics, and manager (all foundation). But they also need asset-ingestion pipeline hooks that the foundation doesn't add. This is acceptable deferral, not a foundation gap.
+
+4. **The manager (M5) being "local installed-package only" is NOT a blocker for Phase 4.** The full-extensibility ticket says no marketplace/install/update. This matches the foundation scope. Creative families don't need a marketplace — they need enable/disable, diagnostics, and settings editing, which M5 delivers.
+
+## Required Plan Changes
+
+1. **Add "render planner contract formalization" to M5 with explicit deliverables.** M5 currently says "produce Phase 4 readiness artifact covering: render planner extension participation contract." This should be sharpened to: (a) document the existing `ClipTypeRenderCapabilities.exportRoute` as the public extension contract surface; (b) add one `RenderBlocker` code for each of the deferred families so the taxonomy is complete before Phase 4 starts; (c) write a one-page "Phase 4 extension author checklist" that every new family must satisfy (manifest key, SDK type, render capability, blocker/remedy pair, diagnostics code, lifecycle test). The raw material already exists in `renderRouter.ts`.
+
+2. **Add a `renderCapabilities` conformance test to the M1 contract freeze.** The `contributionFamilies.ts` matrix declares effects/transitions/clip-types as `trusted-only`. But `renderRouter.ts` already consumes `exportRoute` from clip-type descriptors. M1 should add a drift check that any descriptor with `renderCapabilities` must have an `exportRoute` enumerated in the blocker taxonomy. This prevents a Phase 4 family from adding a render capability without the planner understanding it.
+
+3. **Move the "family promotion checklist" from a M5 artifact to an actual config file checked by CI.** The foundation builds the promotion infrastructure for Phase 4. Add a `config/contracts/family-promotion-checklist.json` in M5 that lists required gates per family (schema, SDK type, loader validation, runtime registration, diagnostics, lifecycle, manager visibility, render planner participation, docs, tests, examples). CI checks that any family marked `supported` in `contributionFamilies.ts` has all checklist items satisfied in the repo. Phase 4 families promote themselves by satisfying this checklist.
+
+4. **Scope `SchemaForm` V1 explicitly to the param shapes needed by the first Phase 4 families.** M4 lists "string, number, boolean, enum/select, color." Effects and transitions need a `range`/slider widget and a `color-with-alpha` type. Add those two widgets to M4 scope so the first creative families don't immediately need SchemaForm V2. The clip-type system's existing `ParameterSchema` already defines these shapes — M4 should align with that type.

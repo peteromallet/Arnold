@@ -1,0 +1,57 @@
+## 1. Verdict
+
+**Partial.** Four provider implementations exist against a single `DataProvider` interface, but they diverge in version-conflict semantics, sync capabilities, checkpoint support, and optional method coverage — with no formal parity matrix, capability detection, or conformance test suite that guarantees extension-layer behavior across backends.
+
+---
+
+## 2. Evidence
+
+1. **Two separate `InMemoryDataProvider` classes exist** with different feature sets: `lib/browser-runtime.ts:75` supports `saveCheckpoint`/`loadCheckpoints`, while `testing/InMemoryDataProvider.ts:31` does not — yet `coreTestPorts.ts:4` imports the weaker one, making core tests unable to verify checkpoint flows.
+
+2. **`syncTimeline` is Supabase-exclusive** — `useEditorSync.ts:47` gates on `provider instanceof SupabaseDataProvider`. No other provider implements the bookmark protocol, source/destination-only divergence, or keep-both artifact recording. The Astrid and InMemory providers have zero sync story.
+
+3. **Version-conflict semantics are provider-specific, not interface-contractual**: Supabase enforces CAS via the append service (`SupabaseDataProvider.ts:302`, 409 → `TimelineVersionConflictError`). The Astrid bridge **explicitly ignores** `expectedVersion` — confirmed in `AstridBridgeDataProvider.test.ts:255-267` ("does not throw TimelineVersionConflictError for stale expectedVersion"). The InMemory providers do enforce CAS but with in-process semantics only.
+
+4. **`DataProvider` extends `AssetResolver`** (`DataProvider.ts:42`), which defines eight optional methods (`onResolve`, `onUpload`, `onTranscode`, `onMissing`, `onProfileLoad`, `registerAsset`, `uploadAsset`, `loadWaveform`, `loadAssetProfile`). Only AstridBridgeDataProvider meaningfully implements `onResolve` (line 265). Every other optional method returns `null`, throws, or is absent across providers.
+
+5. **Checkpoint support is tri-modal**: Supabase has DB-backed checkpoints with retention (`SupabaseDataProvider.ts:415-491`); Astrid has local no-op stubs (`AstridBridgeDataProvider.ts:356-365`); the testing `InMemoryDataProvider` has none; the `browser-runtime` `InMemoryDataProvider` has in-memory checkpoints but is not the one wired into core tests.
+
+6. **`resolveAssetUrl` behavior diverges**: Supabase resolves paths to Supabase Storage public URLs (`SupabaseDataProvider.ts:514-525`); Astrid resolves through bridge endpoints, local File System Access, or blob URLs (`AstridBridgeDataProvider.ts:236-262`); InMemory prepends `memory://` (`InMemoryDataProvider.ts:82`) or uses an identity function (`browser-runtime.ts:162`).
+
+7. **No capability-detection layer exists**: Consumers check `instanceof SupabaseDataProvider` (`useEditorSync.ts:47`) or `persistenceEnabled` flag (`useTimelinePersistence.ts:62`) rather than querying an interface like `SyncCapableProvider` or `CheckpointProvider`. This bakes provider-specific assumptions into UX surfaces.
+
+8. **No conformance test suite** validates all providers against a shared behavioral contract. Each provider has its own test file, but there's no cross-provider test harness that asserts, e.g., "all providers that claim `persistenceEnabled=true` must honor CAS semantics" or "all providers must implement `saveCheckpoint`."
+
+9. **The "browser" provider referenced in the audit spot does not exist as a distinct entity**: The only browser-local paths are (a) AstridBridgeDataProvider (requiring either a local bridge server or File System Access API), and (b) InMemoryDataProviders (volatile, no persistence). There is no IndexedDB-only or localStorage-only browser provider.
+
+10. **`uploadAsset` is unimplemented on both InMemoryDataProviders** but is present on Supabase and Astrid (via File System Access API). Any test or consumer expecting upload capability on the memory provider will hit `Method not implemented` errors since the interface marks it optional.
+
+---
+
+## 3. Gap/Risk
+
+**Product consequence**: Extension authors who write against the `DataProvider` interface cannot predict runtime behavior without knowing which concrete provider is active. A timeline extension that calls `saveTimeline` expecting CAS conflict detection will silently corrupt data when running against the Astrid bridge (which ignores `expectedVersion`). An extension UX that shows a "Sync" button via `useEditorSync` will display it only under Supabase — Astrid users and local-only users never see the sync affordance, even though the hook's contract implies generic availability. Two different `InMemoryDataProvider` implementations mean test fixtures and production-adjacent tests diverge silently, producing false passes.
+
+**Dev consequence**: Adding a new provider (e.g., IndexedDB-only browser persistence) requires reimplementing the entire 26-method `DataProvider` surface from scratch with no conformance test to validate against, and manual auditing of every `instanceof` check in consuming code.
+
+---
+
+## 4. Polish Plan
+
+1. **Unify the two `InMemoryDataProvider` implementations** into a single canonical class in `lib/browser-runtime.ts` and re-export it from `testing/` as an alias. Delete `testing/InMemoryDataProvider.ts`. Update `coreTestPorts.ts` to import from the canonical location. (~30 min)
+
+2. **Define a `DataProviderCapabilities` interface** with boolean flags (`supportsSync`, `supportsCheckpoints`, `supportsUpload`, `supportsVersionConflict`) and a `getCapabilities()` method on `DataProvider`. Replace `instanceof SupabaseDataProvider` checks with capability queries. (~1 hr)
+
+3. **Write a shared provider conformance test suite** (`ProviderConformance.test.ts`) that accepts any `DataProvider` and asserts: (a) `loadTimeline`/`saveTimeline` round-trip, (b) version-conflict behavior when `supportsVersionConflict=true`, (c) checkpoint create/load round-trip when `supportsCheckpoints=true`, (d) asset registry read/write, (e) `resolveAssetUrl` returns a string. Run it against all four providers. (~2 hr)
+
+4. **Document the parity matrix** in a `docs/provider-parity.md` table with columns for each provider and rows for each `DataProvider` method/capability, noting "supported / stub / absent." Link from the extension SDK docs. (~45 min)
+
+5. **Add AstridBridgeDataProvider version-conflict support**: Either (a) have it honor `expectedVersion` by reading the bridge's current config version before save and rejecting mismatches, or (b) document that the bridge is optimistic-write only and set `supportsVersionConflict=false` in capabilities. (~1 hr)
+
+6. **Add `uploadAsset` to the canonical InMemoryDataProvider** with in-memory blob storage so tests can exercise upload flows without Supabase or File System Access API dependencies. (~30 min)
+
+---
+
+## 5. Confidence
+
+**High.** Every claim is backed by direct file evidence (class signatures at specific lines, test assertions that explicitly verify behavior differences, and `instanceof` gate locations). Confidence would reach maximum with a runtime integration test that exercises all four providers against the proposed conformance suite; this would surface any hidden behavioral gaps not visible in static analysis alone.

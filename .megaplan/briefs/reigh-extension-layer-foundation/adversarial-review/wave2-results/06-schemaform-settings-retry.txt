@@ -1,0 +1,39 @@
+Here is the adversarial review.
+
+## Confirmed
+
+1. **`settingsSchema` is a first-class manifest field.** The `ExtensionManifest` type, inlined validator, contract schema, and contribution-family matrix all agree it sits at the manifest root as `settingsSchema?: Record<string, unknown>`. The contract schema also accepts `boolean` (true/false). Both the example extension and the 1415-line settings test suite exercise it thoroughly.
+
+2. **Defaults collection works.** `extensionSettings.ts:collectSchemaDefaults()` walks `type: object` / `properties` trees, collects scalars, arrays, nulls, and nested objects, handles zero/falsy defaults correctly, and overlays object-level defaults with nested property defaults. Test coverage is exhaustive.
+
+3. **Persistence and override merge work.** `ExtensionStateRepository` stores `settingsOverrides` keyed by extension ID, versioned (v1), with corrupt-data reset. `resolveExtensionSettings` deep-merges overrides onto collected defaults and validates the merged result via Ajv (v8.20.0, already in `package.json`). Invalid overrides cause a full fallback to manifest defaults — no partial merge.
+
+4. **Ajv is already a dependency.** `ajv@^8.20.0` is used directly in `extensionSettings.ts` for compile-and-validate. This means the SchemaForm V1 validation layer can reuse the same Ajv instance and error shapes without a new dependency.
+
+5. **No SchemaForm component exists.** A file search across `src/` returns zero hits for `SchemaForm`, `schema-form`, or any JSON-Schema-driven form builder. The `ContributionFamilyHarnessPage` renders a raw `<form>` with read-only `<input>` elements — a test harness placeholder, not a reusable component.
+
+6. **The M4 brief correctly scopes arrays out of V1.** Arrays are in the "Out" section. The brief explicitly limits V1 to `string, number/integer, boolean, enum/select, color, defaults, required, min/max/pattern`. This is a realistic subset that covers the example extension's `settingsSchema` (enum + boolean) and the 90% case for V1 extension authors.
+
+7. **Lifecycle cleanup does not exist yet.** There is no `unload()` on the loader, no per-extension command/keybinding unregister, no forced React unmount for extension surfaces, no diagnostics-cleanup-by-extension-ID, and no error-boundary reset. All of these are scoped "In" for M4.
+
+## Rejected Or Overstated
+
+1. **"The wave-one agent failed due to transport" is a red herring for planning.** Transport failure is irrelevant to scoping the work. The codebase makes the surface area clear regardless.
+
+2. **The brief claims `settingsSchema: { type: 'object' }` in the inlined schema is the only constraint.** In practice the contract schema allows `boolean` too, and `extensionSettings.ts` already has a code path for boolean schemas (pass-through with no type validation). The SchemaForm V1 must handle both `object` schemas (rendered form) and boolean schemas (empty/disabled form with a note).
+
+3. **The brief lists "color" as an in-scope primitive.** This is an open question in the brief itself ("Exact color input implementation"). Unless there's a pre-existing color picker in shared UI, this adds design risk. The shared UI library has no color input; it has button, switch, segmented-control, slider, input, textarea, dialog, tabs, card, popover, progress, scroll-area, hover-card, badge, and label. A color field could be a simple `<input type="color">` with a hex text fallback, but the brief should clarify whether that's sufficient.
+
+## Required Plan Changes
+
+1. **SchemaForm must reuse the existing Ajv instance.** Do not add a second validator. The form should call `_ajv.compile(schema)` (same instance from `extensionSettings.ts`), validate on blur/submit, and map Ajv errors to per-field messages using `instancePath`. This keeps validation semantics identical between load-time override validation and form-time editing.
+
+2. **The form must block save-on-invalid at the field level, not the whole-object level.** The brief says "SchemaForm blocks saving invalid overrides rather than letting one invalid field corrupt all settings." This contradicts the current `resolveExtensionSettings` behavior, which does whole-object fallback. The form should accumulate per-field edits in local state, validate the full object on submit, and reject the submit with field-level errors. The repo's `setSettingsOverrides` should only be called with a fully valid object. Add a dedicated `validateSettingsPartial` export (or expose the Ajv instance) so the form doesn't re-implement validation.
+
+3. **Scaffold the SchemaForm in `src/tools/video-editor/components/` not `src/shared/components/ui/`** — it's extension-specific until there's a second consumer. The shared UI primitives (Input, Switch, Label, etc.) are already there; SchemaForm composes them.
+
+4. **Order the lifecycle work before the SchemaForm work.** The SchemaForm needs a settings panel surface to render into, and that surface must mount/unmount cleanly. Without lifecycle cleanup, the form is untestable for disable/re-enable. Build the unload/cleanup contract first, then hang SchemaForm on it.
+
+5. **Add migration awareness to the repository record now.** The current `CURRENT_RECORD_VERSION = 1` with "future version → reset" logic is good, but the M4 brief should explicitly call for a migration function slot (even if V1→V2 is a no-op stub) so the repo can evolve without data loss. The corrupt-diagnostic path is too destructive as the sole upgrade mechanism.
+
+6. **Drop "color" from the V1 primitive list unless a concrete implementation is committed.** The open question in the brief plus the absence of a shared color picker make this a schedule risk. Ship with `string` + `pattern` for hex colors; add native `<input type="color">` as a fast-follow.

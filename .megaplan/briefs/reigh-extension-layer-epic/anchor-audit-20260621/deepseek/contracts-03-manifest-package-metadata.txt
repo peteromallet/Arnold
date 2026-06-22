@@ -1,0 +1,63 @@
+Now I have comprehensive data. Here is the final audit.
+
+---
+
+## 1. Verdict
+
+**Absent.** No canonical extension manifest/package metadata format (`reigh-extension.json`, `ExtensionManifest`) exists anywhere in the repository. The extension layer is purely an in-process React slot/dialog/panel registry with zero package-awareness, making it incapable of addressing M1 or M14 compatibility needs for external extension packaging, versioning, dependency resolution, or migration.
+
+---
+
+## 2. Evidence
+
+1. **`reigh-extension.json` is absent.** Repo-wide `rg` search returns zero hits. No file, import, reference, or documentation mentions this filename anywhere in the project.
+
+2. **`ExtensionManifest` type does not exist.** Searches for `ExtensionManifest`, `IExtensionManifest`, `ExtensionPackage`, and `PackageManifest` across all `.ts`/`.tsx` files return zero results. No interface defining `apiVersion`, `dependsOn`, `permissions`, `migrations`, or `processes` fields exists.
+
+3. **The runtime layer (`src/tools/video-editor/runtime/`) has only 4 files** (`extensionSurface.ts`, `ports.ts`, `useVideoEditorRenderContext.ts`, `VideoEditorDialogHost.tsx`). None define manifest, package, or compatibility types. Zero matches for `apiVersion`, `dependsOn`, `permissions`, `migrations`, or `processes` within this directory.
+
+4. **`extensionSurface.ts` (lines 72–87)** defines `VideoEditorExtensionConfig` and `VideoEditorExtensionRuntimeConfig` with only three properties: `slots` (UI slot renderers), `dialogHost` (dialog descriptors), and `registry` (panel/inspector section descriptors). These are render-target registries with zero metadata about identity, version, authorship, or compatibility.
+
+5. **No package loader or manager infrastructure exists.** Repo-wide searches for `PackageLoader`, `PackageManager`, `ExtensionRegistry`, `loadExtension`, `registerExtension`, and `installExtension` all return zero results. There is no mechanism to load extensions from files, URLs, or packages.
+
+6. **No migration infrastructure.** Zero results for `migrations` or `migrate` in `src/tools/video-editor/runtime/` or the broader `src/tools/video-editor/` tree related to extensions or manifest evolution.
+
+7. **`capabilityManifest.ts` (line 24)** defines `VideoEditorClipTypeCapabilityManifest` with a hardcoded `version: 1` — but this is a clip-type capability catalog, NOT an extension package manifest. It has no `apiVersion`, `dependsOn`, or compatibility fields.
+
+8. **The `registry.json` contract (`config/contracts/registry.json`)** defines 6 SDK contracts (`video-editor-core-sdk`, `video-editor-browser-sdk`, `video-editor-sequence-sdk`, etc.) but zero mention of extension manifests, package metadata, or compatibility contracts.
+
+9. **`DataProviderContext.tsx` (line 34)** shows `extensions` inlined into the runtime context as `VideoEditorExtensionRuntimeConfig` — a flat slot configuration, not a package-aware registry.
+
+10. **`VideoEditorProvider.tsx` (line 465)** hardcodes `extensions: DEFAULT_VIDEO_EDITOR_EXTENSION_RUNTIME` — an empty frozen default. There is no path for loading extensions from external packages or manifests.
+
+---
+
+## 3. Gap/Risk
+
+**Concrete product consequence:** An extension author cannot package their work as a distributable artifact. There is no file format to declare identity, version, API compatibility range (`apiVersion`), dependencies (`dependsOn`), required permissions, or migration scripts. The platform cannot validate whether an extension is compatible with the host version before loading it, cannot resolve extension-vs-extension dependency conflicts, cannot run schema migrations when extension data formats evolve, and cannot enforce a permissions model (e.g., preventing an extension from calling export APIs it didn't request). This means M1 (basic extension packaging) is unimplemented and M14 (release-readiness compatibility gates) is structurally blocked — you cannot gate release compatibility on a manifest that doesn't exist.
+
+**Dev consequence:** Any attempt to onboard a third-party extension requires manual code integration through React context wiring (`VideoEditorExtensionConfig`), which is neither documented as a public API nor stable across versions. The `@publicContract` annotations in `index.ts` and `browser.ts` do not include extension manifest or package types.
+
+---
+
+## 4. Polish Plan
+
+1. **Define `ExtensionManifest` schema** — Create a canonical TypeScript type + JSON Schema at `src/tools/video-editor/extension/ExtensionManifest.ts` with fields: `name`, `version` (semver), `apiVersion` (range like `^1.0`), `dependsOn` (optional `Record<string, string>` of extension-name → semver-range), `permissions` (string array: `export`, `render`, `asset-access`, `network`, etc.), `migrations` (optional ordered migration array with `fromVersion`/`toVersion`/`apply`), `main` (entry-point specifier), and `processes` (optional process model declarations).
+
+2. **Define the canonical file convention** — Specify `reigh-extension.json` as the expected filename, document it at `docs/extension-manifest-spec.md`, and add a Zod validator at `src/tools/video-editor/extension/validateManifest.ts`.
+
+3. **Build `ExtensionPackageLoader`** — Implement at `src/tools/video-editor/extension/PackageLoader.ts` to parse `reigh-extension.json`, validate against the schema, check `apiVersion` compatibility against host, resolve `dependsOn` ordering, and report errors.
+
+4. **Add `VideoEditorExtensionPackageConfig`** — Extend `extensionSurface.ts` to include optional `manifest?: ExtensionManifest` and `compatibility?: CompatibilityCheck` fields alongside the existing slot configuration.
+
+5. **Wire into `VideoEditorProvider`** — Replace the hardcoded `DEFAULT_VIDEO_EDITOR_EXTENSION_RUNTIME` (line 465) with a manifest-aware loader that accepts extension package descriptors and validates them before registration.
+
+6. **Add contract to `registry.json`** — Register `"video-editor-extension-manifest"` as a new `runtime_contract` entry with expected exports (`ExtensionManifest`, `validateExtensionManifest`, `resolveExtensionCompatibility`) and `@publicContract` tagging.
+
+7. **Tests** — Unit tests for manifest validation (`ExtensionManifest.test.ts`), loader resolution ordering (`PackageLoader.test.ts`), compatibility gating, and migration application.
+
+---
+
+## 5. Confidence
+
+**High.** The absence is definitive — zero matches for the searched terms across the entire repository. Confidence would be reduced only if extension manifest logic exists under a completely different naming convention or in an external package not present in this workspace. A search for any JSON/YAML/TOML config files under a `vendor/`, `extensions/`, or `packages/` directory outside the current repo could adjust the finding from "Absent" to "Partial" if one existed there.

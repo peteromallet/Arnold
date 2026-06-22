@@ -1,0 +1,63 @@
+Now I have the complete evidentiary picture. Here is the audit.
+
+---
+
+## 1. Verdict
+
+**Extension runtime injection wiring is absent from all three provider entry points — the extension surface types and consumers exist, but no external caller can inject a non-empty extension config into the runtime.**
+
+---
+
+## 2. Evidence
+
+1. **`extensionSurface.ts` lines 72–87, 111–120, 122–146**: The extension surface layer is well-typed. `VideoEditorExtensionConfig` accepts optional `slots`, `dialogHost`, and `registry`; `resolveVideoEditorExtensionRuntime()` normalizes them into the required `VideoEditorExtensionRuntimeConfig`; `DEFAULT_VIDEO_EDITOR_EXTENSION_RUNTIME` is an immutable empty default.
+
+2. **`DataProviderContext.tsx` line 34**: `VideoEditorRuntimeContextValue` declares `extensions: VideoEditorExtensionRuntimeConfig` as a required field. The context is the sole injection point into the runtime.
+
+3. **`EditorRuntimeProvider.tsx` lines 24–33, 81–101**: The `EditorRuntimeProviderProps` interface has no `extensions` field. The `runtime` prop is typed as `Pick<VideoEditorRuntimeContextValue, 'assetResolver' | 'exporter' | 'hostContext'>`. The value object passed to `DataProviderWrapper` (lines 92–101) omits `extensions` entirely — along with `auth`, `project`, `shots`, `mediaLightbox`, `agentChat`, `toast`, and `telemetry`. Extension config cannot reach the context through this provider.
+
+4. **`BrowserVideoEditorProvider.tsx` lines 13–25, 42–66**: The public SDK surface (`BrowserVideoEditorProviderProps`) has no `extensions` prop. It delegates to `EditorRuntimeProvider` at line 60 with `runtime={{ assetResolver, exporter, hostContext }}`, providing no mechanism for callers to supply extension config.
+
+5. **`VideoEditorProvider.tsx` lines 406–416, 431–465**: The internal Reigh app shell provider (`VideoEditorProviderProps`) also has no `extensions` prop. Line 465 hardcodes `extensions: DEFAULT_VIDEO_EDITOR_EXTENSION_RUNTIME` — a permanently empty, frozen default.
+
+6. **`VideoEditorProvider.tsx` line 465**: The `useMemo` dependency array on lines 466 includes `dataProvider`, `projectId`, `shotsHost`, `timelineId`, `timelineName`, `userId` — but not `extensions`, because it never varies. There is no path for extension config to reach `runtime.extensions` short of editing the hardcoded constant.
+
+7. **`useVideoEditorRenderContext.ts` lines 31–32, 59–68**: Consumers exist and are wired. `useVideoEditorExtensionRuntime()` reads `extensions` from context; `useVideoEditorSlotRenderers()`, `useVideoEditorDialogDescriptors()`, `useVideoEditorPanelRegistry()` all chain from it. These are called in `TimelineEditorShellCore.tsx` (lines 323–325), `PropertiesPanel.tsx` (line 26), `VideoEditorAssetPanelSurface.tsx` (line 20), and `VideoEditorDialogHost.tsx` (line 42). The consumption side is complete.
+
+8. **`browser-provider.ts` (public export barrel, lines 1–53)**: The public SDK re-exports `BrowserVideoEditorProvider` and `BrowserVideoEditorProviderProps` — neither carries an `extensions` field. No `VideoEditorExtensionConfig` type is exported.
+
+9. **Tests confirm the gap by omission**: `BrowserVideoEditorProvider.test.tsx` (lines 26–51) and `public-browser.acceptance.test.tsx` (lines 33–84) verify props like `dataProvider`, `timelineId`, `hostContext` — but never assert on or pass extension config.
+
+10. **`EditorRuntimeProvider` value mismatch**: The object at lines 92–101 is missing half the required fields of `VideoEditorRuntimeContextValue`. If TypeScript strict mode is enabled, this is a latent compile error masked by the fact that `EditorRuntimeProvider` is mocked in all its consumer tests (see `BrowserVideoEditorProvider.test.tsx` line 8, `public-browser.acceptance.test.tsx` line 16).
+
+---
+
+## 3. Gap / Risk
+
+**Product consequence**: Third-party developers using the public `BrowserVideoEditorProvider` cannot contribute custom slots (header, toolbar, statusBar, etc.), dialogs, asset panels, or inspector sections. The extension surface types, resolvers, and rendering hooks are fully built — but they are dead code because no injection path exists. The internal `VideoEditorProvider` permanently sets extensions to the empty default, so even first-party extensions cannot be contributed without modifying the provider source.
+
+**Dev consequence**: Any integration test that mocks `EditorRuntimeProvider` (which is all of them) bypasses the incomplete-value bug. When someone attempts to use the real `EditorRuntimeProvider` with consumers that access `runtime.auth`, `runtime.toast`, or other missing fields, the runtime will crash with a destructuring error on `undefined`.
+
+---
+
+## 4. Polish Plan
+
+1. **Add `extensions?: VideoEditorExtensionConfig` to `BrowserVideoEditorProviderProps`** (file: `BrowserVideoEditorProvider.tsx`, after line 21). Wire it through to `EditorRuntimeProvider` at line 60.
+
+2. **Add `extensions?: VideoEditorExtensionConfig` to `EditorRuntimeProviderProps`** (file: `EditorRuntimeProvider.tsx`, after line 31). Call `resolveVideoEditorExtensionRuntime(extensions)` and include it in the `DataProviderWrapper` value at line 93.
+
+3. **Add `extensions?: VideoEditorExtensionConfig` to `VideoEditorProviderProps`** (file: `VideoEditorProvider.tsx`, after line 414). Replace the hardcoded `DEFAULT_VIDEO_EDITOR_EXTENSION_RUNTIME` on line 465 with `resolveVideoEditorExtensionRuntime(extensions)`.
+
+4. **Fix the `EditorRuntimeProvider` value object** (lines 92–101): Either (a) make `EditorRuntimeProvider` not use `DataProviderWrapper` and instead use its own narrower context, or (b) supply null/default stubs for all required `VideoEditorRuntimeContextValue` fields. The current mismatch is a runtime crash waiting to happen.
+
+5. **Export `VideoEditorExtensionConfig` and `resolveVideoEditorExtensionRuntime` from `browser-provider.ts`** so SDK consumers can construct extension configs.
+
+6. **Add a test** that passes `extensions={{ slots: { header: () => <div>test</div> }}}` to `BrowserVideoEditorProvider` and asserts the slot renderer reaches `useVideoEditorSlotRenderers()`.
+
+7. **Document the extension injection API** in the browser-provider JSDoc, including a minimal example of contributing a slot, a dialog, and an inspector section.
+
+---
+
+## 5. Confidence
+
+**High**. The absence is unambiguous: three provider components, zero extension props, one hardcoded empty default. Every source file is cited by line number. The consumption side is wired and waiting — the only missing piece is the prop-to-context pipe in the providers. Confidence would be raised to *certain* by confirming whether the TypeScript build actually emits errors for the incomplete `EditorRuntimeProvider` value object (likely masked by `skipLibCheck` or non-strict mode).
