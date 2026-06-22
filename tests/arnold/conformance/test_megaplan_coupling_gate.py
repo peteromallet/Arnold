@@ -14,8 +14,8 @@ def test_current_tree_passes_megaplan_coupling_gate() -> None:
 
     assert result.passed is True
     assert result.check_id == "generic-arnold-megaplan-coupling"
-    assert result.details["allowlisted_count"] == 6
-    assert result.details["coupled_count"] == 6
+    assert result.details["allowlisted_count"] == 5
+    assert result.details["coupled_count"] == 5
     assert result.details["unexpected"] == {}
     assert result.details["stale_allowlist"] == []
 

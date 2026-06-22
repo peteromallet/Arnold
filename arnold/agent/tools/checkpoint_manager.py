@@ -1,5 +1,10 @@
-import sys as _sys
-import importlib as _importlib
-_real = _importlib.import_module("arnold.pipelines.megaplan.agent.tools.checkpoint_manager")
-globals().update(_real.__dict__)
-_sys.modules[__name__] = _real
+"""M6 stub: legacy tool removed in clean-break purge."""
+from __future__ import annotations
+
+class CheckpointManager:
+    """Legacy checkpoint store stub (M6)."""
+
+    def __init__(self, *args, **kwargs):
+        pass
+
+__all__ = ['CheckpointManager']
