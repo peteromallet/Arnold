@@ -65,9 +65,9 @@
       }
     }
   ],
-  "branch_head": "79d572f5d08dd9e1b3c1652911aa3f50adabcdcb",
-  "pr_head": "79d572f5d08dd9e1b3c1652911aa3f50adabcdcb",
-  "last_pushed_commit": "79d572f5d08dd9e1b3c1652911aa3f50adabcdcb",
+  "branch_head": "a8dad230d4e1e364b547933af25b9496ac25f562",
+  "pr_head": "a8dad230d4e1e364b547933af25b9496ac25f562",
+  "last_pushed_commit": "a8dad230d4e1e364b547933af25b9496ac25f562",
   "dirty_flag": false,
   "sync_state": "clean",
   "extra_repos": [],
