@@ -1,222 +1,25 @@
 """Canonical Megaplan planning pipeline.
 
-This module exposes two constructors:
+This module exposes two helpers:
 
 * ``build_pipeline()`` — returns the M3 explicit-node
-  :class:`arnold.workflow.dsl.Pipeline`, intended for the manifest runtime.
-* ``build_legacy_pipeline()`` / ``compile_planning_pipeline`` — returns the
-  legacy typed-port :class:`arnold_pipelines.megaplan._pipeline.types.Pipeline`
-  for M4 parity callers that have not yet migrated.
+  :class:`arnold.workflow.dsl.Pipeline`, the canonical authoring surface
+  for the manifest runtime.
+* ``build_and_compile_pipeline()`` — convenience helper that builds the M3
+  pipeline via ``build_pipeline()`` and compiles it to a
+  ``WorkflowManifest`` via :func:`arnold.workflow.compiler.compile_pipeline`.
 
-The M3 pipeline is the focus of Phase 3.  It is a pure data graph: steps,
-routes, and policy slots.  Execution semantics live in the manifest backend
-adapter and the handlers.
+The pipeline is a pure data graph: steps, routes, and policy slots.
+Execution semantics live in the manifest backend adapter and the handlers.
 """
 
 from __future__ import annotations
 
-import dataclasses
 from typing import Any
 
 from arnold.manifest import WorkflowPolicy
 from arnold.workflow.compiler import compile_pipeline
 from arnold.workflow.dsl import Capability, Input, Output, Pipeline, Route, Step
-
-
-# ---------------------------------------------------------------------------
-# Legacy pipeline constructor (preserved for M4 parity)
-# ---------------------------------------------------------------------------
-
-def _build_legacy_pipeline() -> Any:
-    """Return the legacy typed-port pipeline."""
-
-    from arnold_pipelines.megaplan.pipeline_contracts import (
-        LOGICAL_CRITIQUE_PAYLOAD,
-        LOGICAL_EXECUTE_PAYLOAD,
-        LOGICAL_FINALIZE_PAYLOAD,
-        LOGICAL_GATE_PAYLOAD,
-        LOGICAL_PLAN_PAYLOAD,
-        LOGICAL_PREP_PAYLOAD,
-        LOGICAL_REVISE_PAYLOAD,
-        LOGICAL_REVIEW_PAYLOAD,
-        LOGICAL_TIEBREAKER_PAYLOAD,
-        production_planning_contracts,
-    )
-    from arnold_pipelines.megaplan._pipeline.patterns import (
-        critique_revise_gate_loop,
-        phase_zero_gate,
-    )
-    from arnold_pipelines.megaplan._pipeline.types import Edge, Stage
-    from arnold_pipelines.megaplan.stages.prep import PrepStep
-    from arnold_pipelines.megaplan.stages.plan import PlanStep
-    from arnold_pipelines.megaplan.stages.critique import CritiqueStep
-    from arnold_pipelines.megaplan.stages.gate import GateStep
-    from arnold_pipelines.megaplan.stages.revise import ReviseStep
-    from arnold_pipelines.megaplan.stages.finalize import FinalizeStep
-    from arnold_pipelines.megaplan.stages.execute import ExecuteStep
-    from arnold_pipelines.megaplan.stages.review import ReviewStep
-    from arnold_pipelines.megaplan.stages.tiebreaker import TiebreakerStep
-    from arnold_pipelines.megaplan.routing import (
-        PLANNING_DECISIONS,
-        PLAN_ESCALATE,
-        PLAN_ITERATE,
-        PLAN_PROCEED,
-        tiebreaker_edges,
-    )
-
-    def _planning_loop_should_halt(loop_state: object) -> bool:
-        state = getattr(loop_state, "state", {}) or {}
-        config = state.get("config", {}) if isinstance(state, dict) else {}
-        raw_limit = None
-        if isinstance(state, dict):
-            raw_limit = state.get("max_gate_iterations") or state.get("max_iterations")
-        if raw_limit is None and isinstance(config, dict):
-            raw_limit = config.get("max_gate_iterations") or config.get("max_iterations")
-        if raw_limit in (None, ""):
-            return False
-        try:
-            limit = int(raw_limit)
-        except (TypeError, ValueError):
-            return False
-        if limit <= 0:
-            return False
-        return int(getattr(loop_state, "iteration", 0) or 0) >= limit
-
-    contracts = production_planning_contracts()
-    prep_contract = contracts[LOGICAL_PREP_PAYLOAD]
-    plan_contract = contracts[LOGICAL_PLAN_PAYLOAD]
-    critique_contract = contracts[LOGICAL_CRITIQUE_PAYLOAD]
-    gate_contract = contracts[LOGICAL_GATE_PAYLOAD]
-    revise_contract = contracts[LOGICAL_REVISE_PAYLOAD]
-    finalize_contract = contracts[LOGICAL_FINALIZE_PAYLOAD]
-    execute_contract = contracts[LOGICAL_EXECUTE_PAYLOAD]
-    review_contract = contracts[LOGICAL_REVIEW_PAYLOAD]
-    tiebreaker_contract = contracts[LOGICAL_TIEBREAKER_PAYLOAD]
-
-    prep_stage = phase_zero_gate(PrepStep(), name="prep", on_pass="plan", on_fail="halt")
-    cycle = critique_revise_gate_loop(
-        CritiqueStep(),
-        GateStep(),
-        ReviseStep(),
-        on_proceed="finalize",
-        on_iterate="revise",
-        on_tiebreaker="tiebreaker",
-        on_escalate="finalize",
-        critique_fallback_edges=(
-            Edge(label="gate_unset:gate", target="gate"),
-            Edge(label="gate", target="gate"),
-        ),
-        gate_extra_edges=(
-            Edge(label="revise", target="revise"),
-            Edge(label="gate", target="finalize"),
-            Edge(label="override force-proceed", target="finalize"),
-            Edge(label="override abort", target="halt"),
-        ),
-        revise_target="critique",
-    )
-    prep_stage = dataclasses.replace(
-        prep_stage,
-        produces=(prep_contract.producer_port("prep_payload"),),
-    )
-    cycle["critique"] = dataclasses.replace(
-        cycle["critique"],
-        consumes=(
-            plan_contract.consumer_port("plan_payload"),
-            revise_contract.consumer_port("revise_payload"),
-            tiebreaker_contract.consumer_port("tiebreaker_payload"),
-        ),
-        produces=(critique_contract.producer_port("critique_payload"),),
-    )
-    cycle["gate"] = dataclasses.replace(
-        cycle["gate"],
-        consumes=(critique_contract.consumer_port("critique_payload"),),
-        produces=(gate_contract.producer_port("gate_payload"),),
-    )
-    cycle["revise"] = dataclasses.replace(
-        cycle["revise"],
-        consumes=(gate_contract.consumer_port("gate_payload"),),
-        produces=(revise_contract.producer_port("revise_payload"),),
-    )
-
-    stages = {
-        "prep": prep_stage,
-        "plan": Stage(
-            name="plan",
-            step=PlanStep(),
-            edges=(Edge(label="critique", target="critique"),),
-            consumes=(prep_contract.consumer_port("prep_payload"),),
-            produces=(plan_contract.producer_port("plan_payload"),),
-        ),
-        "critique": cycle["critique"],
-        "gate": cycle["gate"],
-        "revise": cycle["revise"],
-        "finalize": Stage(
-            name="finalize",
-            step=FinalizeStep(),
-            edges=(Edge(label="execute", target="execute"),),
-            consumes=(gate_contract.consumer_port("gate_payload"),),
-            produces=(finalize_contract.producer_port("finalize_payload"),),
-        ),
-        "execute": Stage(
-            name="execute",
-            step=ExecuteStep(),
-            edges=(Edge(label="review", target="review"),),
-            consumes=(finalize_contract.consumer_port("finalize_payload"),),
-            produces=(execute_contract.producer_port("execute_payload"),),
-        ),
-        "review": Stage(
-            name="review",
-            step=ReviewStep(),
-            edges=(Edge(label="review", target="halt"), Edge(label="halt", target="halt")),
-            consumes=(execute_contract.consumer_port("execute_payload"),),
-            produces=(review_contract.producer_port("review_payload"),),
-        ),
-        "tiebreaker": Stage(
-            name="tiebreaker",
-            step=TiebreakerStep(),
-            edges=tiebreaker_edges(
-                on_iterate="critique",
-                on_proceed="finalize",
-                on_escalate="finalize",
-            ),
-            consumes=(gate_contract.consumer_port("gate_payload"),),
-            produces=(tiebreaker_contract.producer_port("tiebreaker_payload"),),
-            decision_vocabulary=frozenset({PLAN_ITERATE, PLAN_PROCEED, PLAN_ESCALATE}),
-        ),
-    }
-    stages["gate"] = dataclasses.replace(
-        stages["gate"],
-        decision_vocabulary=frozenset(PLANNING_DECISIONS),
-        loop_condition=_planning_loop_should_halt,
-    )
-
-    from arnold_pipelines.megaplan._pipeline.types import Pipeline as LegacyPipeline
-
-    return LegacyPipeline(
-        stages=stages,
-        entry="prep",
-        resource_bundles=(
-            "prep",
-            "plan",
-            "critique",
-            "gate",
-            "revise",
-            "finalize",
-            "execute",
-            "review",
-            "tiebreaker",
-        ),
-    )
-
-
-def build_legacy_pipeline() -> Any:
-    """Return the legacy typed-port pipeline for M4 parity callers."""
-    return _build_legacy_pipeline()
-
-
-def compile_planning_pipeline() -> Any:
-    """Legacy alias retained for M4 parity callers."""
-    return _build_legacy_pipeline()
 
 
 # ---------------------------------------------------------------------------
@@ -581,7 +384,5 @@ def build_and_compile_pipeline(**kwargs: Any) -> Any:
 
 __all__ = [
     "build_and_compile_pipeline",
-    "build_legacy_pipeline",
     "build_pipeline",
-    "compile_planning_pipeline",
 ]

@@ -6,7 +6,7 @@ implementation.  Registry discovery scans ``arnold/pipelines`` before
 
 Modules:
 
-* ``pipeline.py`` — canonical ``build_pipeline()`` and ``compile_planning_pipeline``.
+* ``pipeline.py`` — canonical ``build_pipeline()`` and ``build_and_compile_pipeline()``.
 * ``routing.py`` — planning decision literals and routing helpers.
 * ``handlers/`` — handler bridge modules (M5a/M5b deferred).
 * ``stages/`` — stage implementation classes.
@@ -45,18 +45,12 @@ def build_pipeline(*args: Any, **kwargs: Any) -> Any:
     return module.build_pipeline(*args, **kwargs)
 
 
-def compile_planning_pipeline(*args: Any, **kwargs: Any) -> Any:
-    """Return the canonical Megaplan planning pipeline."""
-
-    module = import_module("arnold_pipelines.megaplan.pipeline")
-    return module.compile_planning_pipeline(*args, **kwargs)
-
 
 _SYMBOL_EXPORTS = {
     # Arnold plugin exports (canonical pipeline constructors)
     "build_pipeline": "arnold_pipelines.megaplan.pipeline",
     "build_and_compile_pipeline": "arnold_pipelines.megaplan.pipeline",
-    "compile_planning_pipeline": "arnold_pipelines.megaplan.pipeline",
+
     "operation_registry": "arnold_pipelines.megaplan.planning.operations",
     "override_catalog": "arnold_pipelines.megaplan.planning.operations",
     # Types
@@ -159,7 +153,7 @@ _SYMBOL_EXPORTS = {
 
 __all__ = [
     # Arnold plugin exports
-    "build_pipeline", "build_and_compile_pipeline", "compile_planning_pipeline",
+    "build_pipeline", "build_and_compile_pipeline",
     "operation_registry", "override_catalog",
     # Types
     "PlanState", "PlanConfig", "PlanMeta", "FlagRecord", "StepResponse",
