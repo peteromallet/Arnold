@@ -25,6 +25,7 @@ from vibecomfy.executor.contracts import (
     WorkflowSlice,
     _ALLOWED_ROUTES,
     format_route_options_for_prompt,
+    warning_detail_from_exception,
 )
 from vibecomfy.executor.prompts import (
     build_classify_messages,
@@ -413,11 +414,33 @@ class TestResearchResult:
             summary="x",
             sources=({"k": "v"},),
             warnings=("w1",),
+            warning_details=({"type": "TimeoutError", "message": "timed out"},),
         )
         d = r.to_dict()
         assert d["summary"] == "x"
         assert d["sources"] == [{"k": "v"}]
         assert d["warnings"] == ["w1"]
+        assert d["warning_details"] == [
+            {"type": "TimeoutError", "message": "timed out"}
+        ]
+
+    def test_warning_details_omitted_when_empty(self) -> None:
+        d = ResearchResult(warnings=("w1",)).to_dict()
+        assert d["warnings"] == ["w1"]
+        assert "warning_details" not in d
+
+    def test_warning_detail_from_exception_redacts_sensitive_url_query(self) -> None:
+        exc = RuntimeError(
+            "request failed for https://example.test/search?token=secret&q=ksampler#frag"
+        )
+        detail = warning_detail_from_exception(exc)
+        assert detail == {
+            "type": "RuntimeError",
+            "message": (
+                "request failed for "
+                "https://example.test/search?token=%3Credacted%3E&q=ksampler"
+            ),
+        }
 
     def test_immutable_tuples(self) -> None:
         r = ResearchResult(sources=({"a": 1},), warnings=("w",))

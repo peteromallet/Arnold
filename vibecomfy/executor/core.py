@@ -46,6 +46,7 @@ from .contracts import (
     Report,
     ResearchResult,
     _ALLOWED_ROUTES,
+    warning_detail_from_exception,
 )
 from .graph_inspection import _graph_inspection
 from .profiles import (
@@ -874,6 +875,7 @@ def _run_research(
                 summary=summary,
                 sources=result.sources,
                 warnings=result.warnings,
+                warning_details=result.warning_details,
                 precedent_slices=result.precedent_slices,
                 adaptation_plan=result.adaptation_plan,
             )
@@ -886,6 +888,7 @@ def _run_research(
         return ResearchResult(
             summary="Research skipped due to an internal error.",
             warnings=(f"research phase failed: {type(exc).__name__}",),
+            warning_details=(warning_detail_from_exception(exc),),
         )
 
 
@@ -1013,6 +1016,7 @@ def _run_reply(
     spec: AgentSpecShape,
     *,
     plan: ClassifyDecision,
+    effective_graph: dict[str, Any] | None,
     research_result: ResearchResult | None = None,
     implementation_result: ImplementationResult | None = None,
     graph_inspection: str | None = None,
@@ -1031,7 +1035,7 @@ def _run_reply(
     implementation_message: str | None = (
         implementation_result.message if implementation_result else None
     )
-    graph_summary = _graph_summary(request.graph)
+    graph_summary = _graph_summary(effective_graph)
 
     # For inspect-only, replace the compact graph summary with the detailed
     # inspection evidence so the reply model can describe the workflow
@@ -1130,11 +1134,13 @@ class _ExecutorPhaseError(Exception):
         failure_kind: str,
         message: str,
         failure_envelope: Any = None,
+        warning_details: tuple[dict[str, Any], ...] = (),
     ) -> None:
         super().__init__(message)
         self.stage = stage
         self.failure_kind = failure_kind
         self.failure_envelope = failure_envelope
+        self.warning_details = tuple(warning_details)
 
 
 # ── public entry point ───────────────────────────────────────────────────────
@@ -1221,7 +1227,8 @@ def run_executor(
     plan: ClassifyDecision = ClassifyDecision.respond_only()
     research_result: ResearchResult | None = None
     implementation_result: ImplementationResult | None = None
-    candidate_graph: dict[str, Any] | None = None
+    effective_graph: dict[str, Any] | None = request.graph
+    result_graph: dict[str, Any] | None = None
     executor_id = new_profile_id("executor")
     request_fields = {
         "executor_id": executor_id,
@@ -1373,11 +1380,13 @@ def run_executor(
                         warning_count=len(research_result.warnings or ()),
                         summary_preview=short_text(research_result.summary),
                     )
-                except _ExecutorPhaseError:
+                except _ExecutorPhaseError as exc:
                     # Research failure is non-fatal; capture as empty result.
                     research_result = ResearchResult(
                         summary="Research skipped due to an error.",
                         warnings=("research phase error; continuing",),
+                        warning_details=exc.warning_details
+                        or (warning_detail_from_exception(exc),),
                     )
                     span.update(warning_count=len(research_result.warnings or ()))
     else:
@@ -1455,7 +1464,8 @@ def run_executor(
             route_behavior.can_produce_candidate
             and implementation_result.graph is not None
         ):
-            candidate_graph = implementation_result.graph
+            effective_graph = implementation_result.graph
+            result_graph = implementation_result.graph
     else:
         _emit_executor_phase_event(
             request,
@@ -1493,9 +1503,10 @@ def run_executor(
                 request,
                 reply_spec,
                 plan=plan,
+                effective_graph=effective_graph,
                 research_result=research_result,
                 implementation_result=implementation_result,
-                graph_inspection=_graph_inspection(request.graph)
+                graph_inspection=_graph_inspection(effective_graph)
                 if route_behavior.reply_uses_graph_inspection
                 else None,
             )
@@ -1521,7 +1532,7 @@ def run_executor(
 
     # ── Guard: inspect must never return an edited graph ─────────────────
     if route_behavior.clears_result_graph:
-        candidate_graph = None
+        result_graph = None
 
     # ── Assemble success result ──────────────────────────────────────────
     report = Report(
@@ -1535,12 +1546,12 @@ def run_executor(
         **request_fields,
         has_research=research_result is not None,
         has_implementation=implementation_result is not None,
-        result_has_graph=candidate_graph is not None,
+        result_has_graph=result_graph is not None,
         reply_preview=short_text(reply_text),
     )
     return ExecutorResult.success(
         report=report,
-        graph=candidate_graph,
+        graph=result_graph,
         reply=reply_text,
     )
 

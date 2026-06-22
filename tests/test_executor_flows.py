@@ -832,6 +832,146 @@ class TestGraphDescribeFlow:
     @mock.patch("vibecomfy.executor.core.run_reply_turn", side_effect=_fake_reply_graph_describe)
     @mock.patch("vibecomfy.executor.core.handle_agent_edit", side_effect=_fake_handle_agent_edit)
     @mock.patch("vibecomfy.executor.research.build_search_corpus")
+    def test_reply_receives_post_implementation_graph_summary(
+        self, mock_corpus, mock_edit, mock_reply, mock_classify, profile_dir: Path
+    ) -> None:
+        """Reply receives the graph returned by implementation, not stale input graph context."""
+        from vibecomfy.search.index import SearchEntry
+
+        mock_corpus.return_value = [
+            SearchEntry(
+                class_type="KSampler",
+                description="K-Sampler",
+                pack="core",
+                source="object_info",
+            ),
+        ]
+
+        request = ExecutorRequest(
+            query="describe my pipeline and suggest improvements",
+            graph={"nodes": [{"id": 1, "class_type": "CLIPTextEncode"}]},
+            profile="default",
+        )
+        result = run_executor(request)
+
+        assert result.ok is True
+        graph_summary = mock_reply.call_args.kwargs.get("graph_summary")
+        assert graph_summary is not None
+        assert "CLIPTextEncode" in graph_summary
+        assert "KSampler" in graph_summary
+
+    @mock.patch("vibecomfy.executor.core.run_classify_turn", side_effect=_fake_classify_graph_describe)
+    @mock.patch("vibecomfy.executor.core.run_reply_turn", side_effect=_fake_reply_graph_describe)
+    @mock.patch("vibecomfy.executor.research.build_search_corpus")
+    @mock.patch(
+        "vibecomfy.executor.core._default_hivemind_client",
+        side_effect=_empty_hivemind_client,
+    )
+    def test_reply_graph_summary_uses_replacement_implementation_graph(
+        self, mock_hivemind, mock_corpus, mock_reply, mock_classify, profile_dir: Path
+    ) -> None:
+        """Reply summaries describe the implemented graph, not the request graph."""
+        from vibecomfy.search.index import SearchEntry
+
+        def replace_graph(payload: dict, **kwargs: Any) -> dict:
+            return {
+                "graph": {"nodes": [{"id": 99, "class_type": "SaveImage"}]},
+                "message": "Replaced graph with output node.",
+            }
+
+        mock_corpus.return_value = [
+            SearchEntry(
+                class_type="SaveImage",
+                description="output image node",
+                pack="core",
+                source="object_info",
+            ),
+        ]
+
+        request = ExecutorRequest(
+            query="replace this workflow with a save image output",
+            graph={"nodes": [{"id": 1, "class_type": "OriginalOnlyNode"}]},
+            profile="default",
+        )
+        with mock.patch("vibecomfy.executor.core.handle_agent_edit", side_effect=replace_graph):
+            result = run_executor(request)
+
+        assert result.ok is True
+        assert result.graph == {"nodes": [{"id": 99, "class_type": "SaveImage"}]}
+        graph_summary = mock_reply.call_args.kwargs.get("graph_summary")
+        assert graph_summary is not None
+        assert "SaveImage" in graph_summary
+        assert "OriginalOnlyNode" not in graph_summary
+
+    @mock.patch("vibecomfy.executor.core.run_classify_turn", side_effect=_fake_classify_graph_describe)
+    @mock.patch("vibecomfy.executor.core.run_reply_turn", side_effect=_fake_reply_graph_describe)
+    @mock.patch("vibecomfy.executor.core.handle_agent_edit", side_effect=_fake_handle_agent_edit)
+    @mock.patch(
+        "vibecomfy.executor.core.run_research_phase",
+        side_effect=RuntimeError(
+            "research failed at https://example.test/search?token=secret-value&query=nodes "
+            "with a verbose diagnostic that should be shortened before serialization"
+        ),
+    )
+    def test_research_exception_warning_details_are_sanitized_and_non_fatal(
+        self, mock_research, mock_edit, mock_reply, mock_classify, profile_dir: Path
+    ) -> None:
+        """Unexpected research errors are serialized as sanitized warnings."""
+        result = run_executor(
+            ExecutorRequest(
+                query="describe and edit my graph",
+                graph={"nodes": [{"id": 1, "class_type": "CLIPTextEncode"}]},
+                profile="default",
+            )
+        )
+
+        assert result.ok is True
+        assert result.report.research is not None
+        assert result.report.research.warnings == ("research phase failed: RuntimeError",)
+        serialized_research = result.to_dict()["report"]["executor"]["research"]
+        warning_detail = serialized_research["warning_details"][0]
+        assert warning_detail["type"] == "RuntimeError"
+        assert "token=%3Credacted%3E" in warning_detail["message"]
+        assert "secret-value" not in warning_detail["message"]
+        assert len(warning_detail["message"]) <= 160
+
+    @mock.patch("vibecomfy.executor.core.run_classify_turn", side_effect=_fake_classify_graph_describe)
+    @mock.patch("vibecomfy.executor.core.run_reply_turn", side_effect=_fake_reply_graph_describe)
+    @mock.patch("vibecomfy.executor.core.handle_agent_edit", side_effect=_fake_handle_agent_edit)
+    @mock.patch(
+        "vibecomfy.executor.core._run_research",
+        side_effect=executor_core._ExecutorPhaseError(
+            stage="research",
+            failure_kind="provider_error",
+            message="research provider failed",
+        ),
+    )
+    def test_research_phase_error_fallback_serializes_warning_details(
+        self, mock_research, mock_edit, mock_reply, mock_classify, profile_dir: Path
+    ) -> None:
+        """Research _ExecutorPhaseError fallback keeps legacy warnings and details."""
+        result = run_executor(
+            ExecutorRequest(
+                query="describe and edit my graph",
+                graph={"nodes": [{"id": 1, "class_type": "CLIPTextEncode"}]},
+                profile="default",
+            )
+        )
+
+        assert result.ok is True
+        assert result.report.research is not None
+        assert result.report.research.warnings == ("research phase error; continuing",)
+        assert result.report.research.warning_details == (
+            {"type": "_ExecutorPhaseError", "message": "research provider failed"},
+        )
+        assert result.to_dict()["report"]["executor"]["research"]["warning_details"] == [
+            {"type": "_ExecutorPhaseError", "message": "research provider failed"}
+        ]
+
+    @mock.patch("vibecomfy.executor.core.run_classify_turn", side_effect=_fake_classify_graph_describe)
+    @mock.patch("vibecomfy.executor.core.run_reply_turn", side_effect=_fake_reply_graph_describe)
+    @mock.patch("vibecomfy.executor.core.handle_agent_edit", side_effect=_fake_handle_agent_edit)
+    @mock.patch("vibecomfy.executor.research.build_search_corpus")
     @mock.patch(
         "vibecomfy.executor.core._default_hivemind_client",
         side_effect=_empty_hivemind_client,
