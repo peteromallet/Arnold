@@ -6,6 +6,7 @@ from arnold.kernel.artifacts import (
     ArtifactBinding,
     ArtifactRoot,
     ArtifactRootKind,
+    FileBackedArtifactStore,
     GeneratedArtifactProvenance,
     ProvenanceParent,
     latest_version,
@@ -31,7 +32,14 @@ from arnold.kernel.effect_ledger import EffectLedger
 from arnold.kernel.events import EventEnvelope, EventFamily, ManifestReference, ReplayReference
 from arnold.kernel.governor import GovernorBudget, GovernorProjection
 from arnold.kernel.ids import ReentryId, RunId, derive_idempotency_key, derive_pipeline_identity
-from arnold.kernel.journal import EventJournal, JournalPosition
+from arnold.kernel.journal import (
+    EventJournal,
+    JournalPosition,
+    JournalQuarantineRecord,
+    NDJsonEventJournal,
+    fold_event_journal,
+    read_event_journal,
+)
 from arnold.kernel.replay import QuarantineRecord, ReplayDecision, ReplayResolution
 from arnold.kernel.suspension import SuspendCapabilityRoute, SuspensionRecord, SuspensionState
 
@@ -39,6 +47,7 @@ __all__ = [
     "ArtifactBinding",
     "ArtifactRoot",
     "ArtifactRootKind",
+    "FileBackedArtifactStore",
     "CapabilityCheck",
     "CapabilityId",
     "ContentTypeRegistration",
@@ -55,6 +64,10 @@ __all__ = [
     "EventFamily",
     "EventJournal",
     "GeneratedArtifactProvenance",
+    "JournalQuarantineRecord",
+    "NDJsonEventJournal",
+    "fold_event_journal",
+    "read_event_journal",
     "GovernorBudget",
     "GovernorProjection",
     "JournalPosition",

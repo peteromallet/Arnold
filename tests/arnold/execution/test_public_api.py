@@ -71,3 +71,15 @@ def test_result_states_are_explicit() -> None:
 def test_run_rejects_non_manifest_inputs(tmp_path: Path) -> None:
     with pytest.raises(TypeError, match="WorkflowManifest"):
         run(object(), artifact_root=tmp_path)  # type: ignore[arg-type]
+
+
+def test_run_rejects_dsl_pipeline_and_step_objects(tmp_path: Path) -> None:
+    from arnold.workflow.dsl import Pipeline, Step
+
+    pipeline = Pipeline(id="demo", version="1", steps=(Step(id="s1", kind="agent"),))
+    with pytest.raises(TypeError, match="WorkflowManifest"):
+        run(pipeline, artifact_root=tmp_path)  # type: ignore[arg-type]
+
+    step = Step(id="s1", kind="agent")
+    with pytest.raises(TypeError, match="WorkflowManifest"):
+        run(step, artifact_root=tmp_path)  # type: ignore[arg-type]
