@@ -1,0 +1,69 @@
+{
+  "pipelines": [
+    {
+      "m6_disposition": "keep",
+      "manifest_hash": "sha256:245a06ac778caf20c645772b7c0570655af7a79a0d00eda959b19d2cf01a3eba",
+      "name": "megaplan",
+      "seam_ids": [],
+      "stable_id": "megaplan.core",
+      "typed_contract_capable": false
+    },
+    {
+      "m6_disposition": "keep",
+      "manifest_hash": "sha256:245a06ac778caf20c645772b7c0570655af7a79a0d00eda959b19d2cf01a3eba",
+      "name": "planning",
+      "seam_ids": [],
+      "stable_id": "megaplan.planning",
+      "typed_contract_capable": true
+    },
+    {
+      "m6_disposition": "keep",
+      "manifest_hash": "sha256:24d157216c83c61765a047ae14d8207b6831eccda9f7492fd1dfb9760fd9cda5",
+      "name": "doc",
+      "seam_ids": [],
+      "stable_id": "megaplan.doc",
+      "typed_contract_capable": true
+    },
+    {
+      "m6_disposition": "keep",
+      "manifest_hash": "sha256:43d30d31c2eb11de4ad7216c930a3311dd6cfd5bd6b8b2e8926aa304bee7cfe9",
+      "name": "creative",
+      "seam_ids": [],
+      "stable_id": "megaplan.creative",
+      "typed_contract_capable": true
+    },
+    {
+      "m6_disposition": "keep",
+      "manifest_hash": "sha256:3a49d0895f747685fdaaf40b3435ced81e653b8cd9f0ffdd6242150e15a0f3d5",
+      "name": "jokes",
+      "seam_ids": [],
+      "stable_id": "megaplan.jokes",
+      "typed_contract_capable": false
+    },
+    {
+      "m6_disposition": "keep",
+      "manifest_hash": "sha256:15c141b2d40bb116002e2638eb469b9f7f47cff8f7101b28582f34d115876c66",
+      "name": "live-supervisor",
+      "seam_ids": [],
+      "stable_id": "megaplan.live_supervisor",
+      "typed_contract_capable": false
+    },
+    {
+      "m6_disposition": "keep",
+      "manifest_hash": "sha256:7ae35fda74984a1a98bbcf0461c01be8f319a8241f9a2577dd67823bfe9fbe24",
+      "name": "select-tournament",
+      "seam_ids": [],
+      "stable_id": "megaplan.select_tournament",
+      "typed_contract_capable": false
+    },
+    {
+      "m6_disposition": "keep",
+      "manifest_hash": "sha256:5ef8176f567ccee09f6d65262965b6d517023179f5c663fb232c63d75b2634f5",
+      "name": "writing-panel-strict",
+      "seam_ids": [],
+      "stable_id": "megaplan.writing_panel_strict",
+      "typed_contract_capable": false
+    }
+  ],
+  "version": 1
+}

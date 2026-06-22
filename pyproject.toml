@@ -50,6 +50,9 @@ dependencies = [
     "PyJWT[crypto]",
 ]
 
+[project.scripts]
+arnold = "arnold.cli:main"
+
 [project.optional-dependencies]
 db = [
     "psycopg[binary]>=3.1",
@@ -67,16 +70,26 @@ agent = []
 
 [tool.hatch.build]
 exclude = [
-    "arnold/pipelines/megaplan/cloud/_reference/**",
-    "arnold/pipelines/megaplan/agent/pyproject.toml",
-    "arnold/pipelines/megaplan/agent/auto_improve/iterations/**",
+    "arnold/pipelines/**",
+    "docs/archive/**",
+    "tests/archive/**",
+    ".megaplan/**",
 ]
 
 [tool.hatch.build.targets.wheel]
-packages = ["arnold"]
+packages = ["arnold", "arnold_pipelines"]
+artifacts = [
+    "py.typed",
+    "**/pipeline_ids.json",
+    "**/SKILL.md",
+]
 exclude = [
-    "arnold/pipelines/megaplan/cloud/_reference/**",
-    "arnold/pipelines/megaplan/agent/pyproject.toml",
+    "arnold/pipelines/**",
+    "arnold_pipelines/megaplan/cloud/_reference/**",
+    "arnold_pipelines/megaplan/agent/pyproject.toml",
+    "docs/archive/**",
+    "tests/archive/**",
+    ".megaplan/**",
 ]
 
 [tool.pytest.ini_options]
@@ -84,6 +97,7 @@ testpaths = ["tests"]
 pythonpath = ["."]
 addopts = "--import-mode=importlib"
 python_files = ["test_*.py", "editorial_*.py"]
+norecursedirs = ["tests/archive", ".*", "build", "dist", "CVS", "_darcs", "{arch}", "*.egg"]
 markers = [
     "asyncio: async tests, primarily for the vendored agent runtime",
     "conformance: opt-in live conformance tests that require external authenticated CLIs",
@@ -95,4 +109,6 @@ markers = [
     "substrate_swap: M4 oracle tests that must remain green under substrate substitution (lease/budget/journal swap)",
     "replay_oracle: M5c replay tests that capture legacy control outputs and opt into routed parity action by action",
     "m8_benchmark: M8 acceptance-gate benchmark tests (opt-in, width-32 thresholds)",
+    "wheel_smoke: build and install wheel/sdist into a clean venv",
+    "live_smoke: opt-in real backend smoke tests requiring credentials",
 ]

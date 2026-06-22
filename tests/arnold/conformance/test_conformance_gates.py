@@ -5,6 +5,8 @@ import sys
 import textwrap
 from pathlib import Path
 
+import pytest
+
 from arnold.conformance import (
     ConformanceCheckResult,
     ConformanceSuiteResult,
@@ -243,3 +245,81 @@ def test_allowlist_entries_are_ratchets_and_stale_entries_fail(tmp_path: Path) -
 
     assert result.passed is False
     assert result.details["stale_allowlist"] == ["arnold.neutral"]
+
+
+def test_dynamic_import_paths_fail_for_deleted_megaplan_surfaces() -> None:
+    """Deleted surfaces must not resolve via dynamic import mechanisms."""
+    import importlib
+
+    deleted_prefixes = (
+        "arnold.pipelines.megaplan",
+        "arnold.pipelines.jokes",
+        "arnold.pipelines.creative",
+        "arnold.pipelines.doc",
+        "arnold.pipelines.live_supervisor",
+        "arnold.pipelines.select_tournament",
+    )
+
+    for prefix in deleted_prefixes:
+        with pytest.raises(ModuleNotFoundError):
+            importlib.import_module(prefix)
+        with pytest.raises(ModuleNotFoundError):
+            importlib.import_module(f"{prefix}.agent")
+        with pytest.raises(ModuleNotFoundError):
+            importlib.import_module(f"{prefix}.run_outcome")
+
+
+def test_eval_exec_cannot_resolve_deleted_megaplan_paths() -> None:
+    """Deleted package paths must not be constructable via eval/exec."""
+    for expr in (
+        "__import__('arnold.pipelines.megaplan')",
+        "__import__('arnold.pipelines.megaplan.agent')",
+    ):
+        with pytest.raises(ModuleNotFoundError):
+            eval(expr)  # noqa: S307
+
+
+
+def test_sys_modules_audit_finds_no_deleted_megaplan_modules_after_conformance() -> None:
+    """After running the conformance suite, no deleted megaplan module is loaded."""
+    run_conformance_suite()
+
+    deleted_loaded = [
+        name
+        for name in sys.modules
+        if name == "arnold.pipelines.megaplan"
+        or name.startswith("arnold.pipelines.megaplan.")
+    ]
+    assert deleted_loaded == []
+
+
+def test_filesystem_reads_of_legacy_megaplan_state_are_blocked(tmp_path: Path) -> None:
+    """Instrumentation blocks reads of old .megaplan runtime state outside migration modules.
+
+    This test verifies the guard can be attached to ``Path.open`` and that it
+    rejects legacy state paths while permitting ordinary files.
+    """
+    from pathlib import Path
+
+    legacy_state = tmp_path / ".megaplan" / "plans" / "current" / "state.json"
+    legacy_state.parent.mkdir(parents=True)
+    legacy_state.write_text('{"old": true}', encoding="utf-8")
+
+    ordinary = tmp_path / "ok.txt"
+    ordinary.write_text("ok", encoding="utf-8")
+
+    original_open = Path.open
+
+    def _guarded_open(self, *args, **kwargs):
+        path = str(self)
+        if ".megaplan/plans/" in path and "migrat" not in path:
+            raise PermissionError(f"blocked legacy .megaplan state read: {path}")
+        return original_open(self, *args, **kwargs)
+
+    Path.open = _guarded_open  # type: ignore[assignment]
+    try:
+        with pytest.raises(PermissionError):
+            legacy_state.read_text(encoding="utf-8")
+        assert ordinary.read_text(encoding="utf-8") == "ok"
+    finally:
+        Path.open = original_open  # type: ignore[assignment]

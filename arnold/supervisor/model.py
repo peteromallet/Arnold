@@ -13,7 +13,7 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any
 
-from arnold.pipelines.megaplan.run_outcome import RunOutcome
+from arnold_pipelines.megaplan.run_outcome import RunOutcome
 
 
 class SupervisorVariantKind(StrEnum):

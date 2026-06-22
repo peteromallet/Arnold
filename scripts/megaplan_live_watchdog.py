@@ -11,23 +11,23 @@ from __future__ import annotations
 import argparse
 import json
 import logging
-import shutil
 import sys
 import tempfile
 import time
 from pathlib import Path
 from typing import Any
 
-from arnold.pipeline.executor import run_pipeline
-from arnold.pipelines.megaplan.pipelines.live_supervisor import build_pipeline
-from arnold.pipelines.megaplan.pipelines.live_supervisor.model import HealthCategory, Triage
-from arnold.pipelines.megaplan.watchdog.discovery import DEFAULT_SCAN_ROOTS
-from arnold.pipelines.megaplan.watchdog.log import DEFAULT_LOG_PATH, log_event, setup_logging
-from arnold.pipelines.megaplan.watchdog.registry import Observation, WatchdogRegistry
-from arnold.pipelines.megaplan.watchdog.repair_runner import RepairRunner
-from arnold.pipelines.megaplan.watchdog.retry import RetryLoop, RetryOutcome
-from arnold.pipelines.megaplan.watchdog.snapshot import build_snapshot
-from arnold.runtime.envelope import RuntimeEnvelope
+from arnold.execution import run
+from arnold.execution.backend import SkeletalBackend
+from arnold.workflow import compile_pipeline
+from arnold_pipelines.megaplan.pipelines.live_supervisor import build_pipeline
+from arnold_pipelines.megaplan.pipelines.live_supervisor.model import HealthCategory, Triage
+from arnold_pipelines.megaplan.watchdog.discovery import DEFAULT_SCAN_ROOTS
+from arnold_pipelines.megaplan.watchdog.log import DEFAULT_LOG_PATH, log_event, setup_logging
+from arnold_pipelines.megaplan.watchdog.registry import Observation, WatchdogRegistry
+from arnold_pipelines.megaplan.watchdog.repair_runner import RepairRunner
+from arnold_pipelines.megaplan.watchdog.retry import RetryLoop, RetryOutcome
+from arnold_pipelines.megaplan.watchdog.snapshot import build_snapshot
 
 
 DEFAULT_REGISTRY_PATH = "~/.megaplan/watchdog/registry.ndjson"
@@ -107,15 +107,24 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 
 def _run_pipeline_once(snapshot_dict: dict[str, Any]) -> dict[str, Any]:
-    """Run the live-supervisor pipeline and return artifact contents."""
+    """Run the live-supervisor workflow manifest and return artifact contents.
+
+    M5 Phase 3: the pipeline is now an explicit-node ``arnold.workflow.Pipeline``
+    executed through the neutral manifest runtime. The skeletal backend proves
+    compile/run compatibility; a product-specific backend adapter is required to
+    re-hydrate the legacy step artifacts (classifications.json, diagnoses.json,
+    repair_decisions.json, recheck_emit.json) in a later phase.
+    """
     with tempfile.TemporaryDirectory() as tmpdir:
-        envelope = RuntimeEnvelope(artifact_root=tmpdir)
-        pipeline = build_pipeline()
-        run_pipeline(
-            pipeline,
-            initial_state={"snapshot": snapshot_dict},
-            envelope=envelope,
+        manifest = compile_pipeline(build_pipeline())
+        run(
+            manifest,
+            artifact_root=tmpdir,
+            backend=SkeletalBackend(),
         )
+        # The legacy step shells are preserved for reference but are not
+        # executed by the neutral runtime. Return an empty artifact mapping
+        # until a Megaplan backend adapter is wired.
         artifacts: dict[str, Any] = {}
         artifact_names = {
             "classify": "classifications.json",
