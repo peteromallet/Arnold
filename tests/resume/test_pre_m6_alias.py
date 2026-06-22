@@ -13,12 +13,20 @@ from arnold_pipelines.megaplan.runtime.discovery import _NAME_ALIASES, canonical
 from arnold_pipelines.megaplan.types import CliError
 
 
+def _write_execute_authority(plan_dir: Path, *, task_id: str = "legacy-task") -> None:
+    (plan_dir / "finalize.json").write_text(
+        json.dumps({"tasks": [{"id": task_id, "status": "waived"}]}),
+        encoding="utf-8",
+    )
+
+
 def test_pre_m6_planning_name_alias_resolves_registry_pipeline() -> None:
     assert _NAME_ALIASES["planning"] == "megaplan"
     assert canonical_pipeline_name("planning") == "megaplan"
     pipeline = get_pipeline("planning")
     assert pipeline is not None
-    assert pipeline.entry == "prep"
+    assert pipeline.id == "megaplan"
+    assert "prep" in {step.id for step in pipeline.steps}
 
 
 def test_resume_plan_with_pre_m6_planning_cursor_runs(tmp_path: Path) -> None:
@@ -49,11 +57,11 @@ def test_resume_plan_with_pre_m6_planning_cursor_runs(tmp_path: Path) -> None:
         ),
         encoding="utf-8",
     )
-
     calls: list[list[str]] = []
 
     def runner(args: list[str], *, cwd: Path) -> tuple[int, str, str]:
         calls.append(list(args))
+        _write_execute_authority(plan_dir, task_id="legacy-resume")
         state_path = plan_dir / "state.json"
         state = json.loads(state_path.read_text(encoding="utf-8"))
         state["current_state"] = "done"
@@ -107,7 +115,7 @@ def test_resume_plan_refuses_pipeline_manifest_chimera(tmp_path: Path, monkeypat
         "_pipeline_manifest_hash": "sha256:not-the-current-manifest",
         "resume_cursor": {"phase": "execute", "pipeline": "planning"},
         "history": [],
-        "config": {},
+        "config": {"project_dir": str(tmp_path)},
         "sessions": {},
         "plan_versions": [],
         "meta": {},
@@ -166,8 +174,8 @@ def test_resume_plan_accepts_matching_pipeline_manifest_hash(tmp_path: Path, mon
         ),
         encoding="utf-8",
     )
-
     def runner(args: list[str], *, cwd: Path) -> tuple[int, str, str]:
+        _write_execute_authority(plan_dir, task_id="hashed-resume")
         state_path = plan_dir / "state.json"
         state = json.loads(state_path.read_text(encoding="utf-8"))
         state["current_state"] = "done"
@@ -235,7 +243,7 @@ def test_resume_plan_refuses_non_builtin_missing_runtime_envelope(tmp_path: Path
                 "_pipeline_name": "creative",
                 "resume_cursor": {"phase": "draft", "pipeline": "creative"},
                 "history": [],
-                "config": {},
+                "config": {"project_dir": str(tmp_path)},
                 "sessions": {},
                 "plan_versions": [],
                 "meta": {},

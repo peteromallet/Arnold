@@ -50,7 +50,7 @@
       "msg": "terminal state reached: done"
     },
     {
-      "msg": "completion verdict (shadow): accepted subject=plan:plan-locked-skip-continue failures=[none]"
+      "msg": "completion verdict (shadow): accepted subject=plan:plan-locked-skip-continue failures=[none] providers=[phase_coverage,landed_diff,worker_did_work,green_suite,review_disposition,declared_noop] legacy_evidence=0 unknown_evidence=3"
     }
   ],
   "exit_code": 0,

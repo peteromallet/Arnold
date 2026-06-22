@@ -116,3 +116,41 @@ def test_m6_purge_gate_fails_for_legacy_in_test_keepalive(tmp_path: Path) -> Non
     errors = check_m6_purge(repo_root=tmp_path)
 
     assert any("references legacy constructors in tests" in e for e in errors)
+
+
+def test_m6_purge_gate_scans_arbitrary_nested_fixture_dirs(tmp_path: Path) -> None:
+    """Only the explicit top-level fixture allowlist may skip legacy keepalives."""
+    product = tmp_path / "arnold_pipelines" / "megaplan"
+    product.mkdir(parents=True)
+    (product / "__init__.py").write_text("", encoding="utf-8")
+    (product / "pipeline.py").write_text("", encoding="utf-8")
+    nested = tmp_path / "tests" / "unit" / "fixtures"
+    nested.mkdir(parents=True)
+    (nested / "test_legacy.py").write_text(
+        "from arnold_pipelines.megaplan import build_legacy_pipeline\n"
+        "def test_it():\n"
+        "    assert build_legacy_pipeline\n",
+        encoding="utf-8",
+    )
+
+    errors = check_m6_purge(repo_root=tmp_path)
+
+    assert any("references legacy constructors in tests" in e for e in errors)
+
+
+def test_m6_purge_gate_allows_explicit_legacy_fixture_dirs(tmp_path: Path) -> None:
+    """The known legacy fixture/archive suites remain intentionally frozen."""
+    product = tmp_path / "arnold_pipelines" / "megaplan"
+    product.mkdir(parents=True)
+    (product / "__init__.py").write_text("", encoding="utf-8")
+    (product / "pipeline.py").write_text("", encoding="utf-8")
+    allowed = tmp_path / "tests" / "fixtures"
+    allowed.mkdir(parents=True)
+    (allowed / "test_legacy.py").write_text(
+        "from arnold_pipelines.megaplan import build_legacy_pipeline\n"
+        "def test_it():\n"
+        "    assert build_legacy_pipeline\n",
+        encoding="utf-8",
+    )
+
+    assert check_m6_purge(repo_root=tmp_path) == []

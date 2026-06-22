@@ -508,4 +508,14 @@ def run_pipeline_dispatch(
     ``InProcessHandlerStep`` in a ``ParallelStage``, etc.).
     """
     del pipeline_key
+    return run_pipeline(pipeline, ctx, artifact_root=artifact_root)
+
+
+def run_pipeline(
+    pipeline: Any,
+    ctx: Any,
+    *,
+    artifact_root: Path,
+) -> dict:
+    """Compatibility entry point for callers that patch the executor directly."""
     return run_pipeline_bridged(pipeline, ctx, artifact_root=artifact_root)

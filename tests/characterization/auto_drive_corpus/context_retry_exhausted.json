@@ -10,6 +10,11 @@
       ]
     },
     {
+      "msg": "execute artifact reconciliation did not validate; rerunning execute",
+      "phase": "execute",
+      "plan": "context-retry-exhausted"
+    },
+    {
       "msg": "running: megaplan execute --confirm-destructive --user-approved --retry-blocked-tasks --plan context-retry-exhausted",
       "phase": "execute",
       "timeout": 3600

@@ -911,6 +911,8 @@ def test_preflight_resolves_symbolic_premium_with_default_vendor(monkeypatch) ->
 
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
+    monkeypatch.delenv("FIREWORKS_API_KEY", raising=False)
     monkeypatch.setattr(
         profiles_module,
         "effective_premium_vendor",

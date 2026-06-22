@@ -13,6 +13,11 @@ LEGACY_CONSTRUCTORS = {
     "compile_planning_pipeline",
 }
 DEFAULT_PRODUCT_ROOTS = ("arnold_pipelines",)
+LEGACY_TEST_KEEPALIVE_DIR_ALLOWLIST = (
+    Path("tests/archive"),
+    Path("tests/fixtures"),
+    Path("tests/installed_wheel"),
+)
 
 
 def _iter_product_roots(repo_root: Path, roots: Iterable[str]) -> list[Path]:
@@ -339,6 +344,17 @@ class _TestUsageVisitor(ast.NodeVisitor):
         return False
 
 
+def _is_allowlisted_test_keepalive_path(path: Path, repo_root: Path) -> bool:
+    try:
+        relative = path.relative_to(repo_root)
+    except ValueError:
+        relative = path
+    return any(
+        relative == allowed_dir or relative.is_relative_to(allowed_dir)
+        for allowed_dir in LEGACY_TEST_KEEPALIVE_DIR_ALLOWLIST
+    )
+
+
 def _test_keepalive_errors(repo_root: Path, test_roots: Iterable[str]) -> list[str]:
     """AST-aware test-file scanner for legacy constructor keepalives.
 
@@ -357,9 +373,10 @@ def _test_keepalive_errors(repo_root: Path, test_roots: Iterable[str]) -> list[s
         if not root.exists():
             continue
         for path in sorted(root.rglob("test*.py")):
-            # Archived tests are intentionally frozen legacy references;
-            # fixture helpers are not assertions. Skip both.
-            if "archive" in path.parts or "fixtures" in path.parts:
+            # Frozen legacy/reference suites may preserve old constructor
+            # names, but arbitrary nested archive/fixtures directories must
+            # still be scanned.
+            if _is_allowlisted_test_keepalive_path(path, repo_root):
                 continue
             try:
                 tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))

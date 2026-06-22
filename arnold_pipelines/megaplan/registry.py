@@ -377,9 +377,11 @@ def _ensure_builtin_pipelines_registered() -> None:
     if CANONICAL_BUILTIN_PIPELINE in _GLOBAL_REGISTRY.builders:
         return
 
+    import arnold_pipelines.megaplan as canonical_megaplan
     from arnold_pipelines.megaplan.pipelines import planning
 
     module_file = Path(planning.__file__).resolve()
+    manifest_file = Path(canonical_megaplan.__file__).resolve()
     description = str(getattr(planning, "description", "") or "")
     metadata = {
         "description": description,
@@ -393,7 +395,7 @@ def _ensure_builtin_pipelines_registered() -> None:
     if default_profile:
         metadata["default_profile"] = default_profile
     if _manifest_discovery_enabled():
-        manifest_result = read_manifest(module_file)
+        manifest_result = read_manifest(manifest_file)
         if isinstance(manifest_result, Manifest):
             from arnold_pipelines.megaplan.runtime.discovery import Disposition
 
@@ -401,7 +403,7 @@ def _ensure_builtin_pipelines_registered() -> None:
                 _manifest_metadata(
                     CANONICAL_BUILTIN_PIPELINE,
                     Disposition(
-                        path=module_file,
+                        path=manifest_file,
                         origin="in_tree",
                         status="discovered",
                         reason="ok (manifest)",
@@ -410,6 +412,8 @@ def _ensure_builtin_pipelines_registered() -> None:
                     ),
                 )
             )
+            metadata["source_path"] = str(module_file)
+            metadata["manifest_source_path"] = str(manifest_file)
 
     _GLOBAL_REGISTRY.register(
         CANONICAL_BUILTIN_PIPELINE,
