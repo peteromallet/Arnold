@@ -1,17 +1,15 @@
-"""First-class ``select-tournament`` pipeline.
+"""Canonical importable module for the ``select-tournament`` pipeline.
 
-Explicit-node workflow:
-
-    score_candidates (fanout) -> pairwise_bracket -> winner
-
-Per-candidate scoring steps fan out in parallel; a reducer joins the scores into
-a ``candidate_scores`` artifact. The bracket step deterministically selects a
-winner, and the terminal ``winner`` step emits the final result.
+The hyphenated sibling directory ``select-tournament/`` holds prompts,
+profiles, and ``SKILL.md``. This module is the importable surface so the
+workflow CLI and registry discovery can address it as
+``arnold_pipelines.megaplan.pipelines.select_tournament:build_pipeline``.
 """
 
 from __future__ import annotations
 
 from collections.abc import Sequence
+from pathlib import Path
 
 from arnold.manifest import FanoutPolicy, ReducerRef, WorkflowPolicy
 from arnold.workflow.dsl import Capability, Input, Output, Pipeline, Route, Step
@@ -37,6 +35,9 @@ DEFAULT_CANDIDATES: tuple[str, ...] = (
     "gamma",
     "delta",
 )
+
+_PIPELINE_DIR: Path = Path(__file__).parent / "select-tournament"
+_PROMPTS: Path = _PIPELINE_DIR / "prompts"
 
 
 def build_pipeline(
@@ -77,6 +78,7 @@ def build_pipeline(
         metadata={
             "candidates": candidate_list,
             "prompt_key": "score_candidate",
+            "prompt_bundle": str(_PROMPTS),
         },
     )
     pairwise_bracket = Step(
@@ -86,7 +88,10 @@ def build_pipeline(
         inputs=(Input(name="candidate_scores", value_ref="score_candidates.candidate_scores"),),
         outputs=(Output(name="bracket_result"),),
         capabilities=(Capability(id="review", route="bracket"),),
-        metadata={"prompt_key": "pairwise_bracket"},
+        metadata={
+            "prompt_key": "pairwise_bracket",
+            "prompt_bundle": str(_PROMPTS),
+        },
     )
     winner = Step(
         id="winner",
@@ -95,7 +100,11 @@ def build_pipeline(
         inputs=(Input(name="bracket_result", value_ref="pairwise_bracket.bracket_result"),),
         outputs=(Output(name="winner_result"),),
         capabilities=(Capability(id="review", route="winner"),),
-        metadata={"prompt_key": "winner", "terminal": True},
+        metadata={
+            "prompt_key": "winner",
+            "terminal": True,
+            "prompt_bundle": str(_PROMPTS),
+        },
     )
 
     return Pipeline(

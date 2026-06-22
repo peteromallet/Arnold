@@ -14,7 +14,6 @@ Subcommands operate on a single builder target:
 from __future__ import annotations
 
 import argparse
-import importlib
 import json
 import sys
 from pathlib import Path
@@ -35,27 +34,11 @@ from arnold.workflow import (
     to_dot,
     to_yaml,
 )
+from arnold_pipelines.discovery import load_builder
 
 
 def _load_builder(target: str) -> Callable[[], Pipeline]:
-    if ":" not in target:
-        raise ValueError(
-            "builder target must be '--module package.module:builder_name'"
-        )
-    module_path, builder_name = target.rsplit(":", 1)
-    try:
-        module = importlib.import_module(module_path)
-    except Exception as exc:
-        raise ValueError(f"cannot import module {module_path!r}: {exc}") from exc
-    try:
-        builder = getattr(module, builder_name)
-    except AttributeError as exc:
-        raise ValueError(
-            f"module {module_path!r} has no attribute {builder_name!r}"
-        ) from exc
-    if not callable(builder):
-        raise ValueError(f"builder {target!r} is not callable")
-    return builder
+    return load_builder(target)
 
 
 def _compile_from_target(target: str) -> workflow.WorkflowManifest:

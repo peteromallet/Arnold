@@ -1,36 +1,21 @@
 """Python composition of the first-class ``creative`` pipeline.
 
-``--form`` is a first-class input on the pipeline (validated against
-:func:`megaplan.forms.available_form_ids` — the canonical registry the
-init handler also consults at ``megaplan/handlers/init.py:62-64``);
-``--primary-criterion`` is a first-class creative-pipeline input (it is
-already exposed via the existing ``--primary-criterion`` CLI flag).
+Linear explicit-node workflow:
 
-Topology (linear, single-pass — no gate loop):
+    prep -> execute_creative -> critique_creative -> revise_creative -> finalize
 
-    prep (form-aware) → execute_creative → critique_creative → revise_creative → finalize
-
-The ``megaplan/forms/`` package stays canonical and is consumed by 25+
-non-creative modules — the creative pipeline imports from
-``megaplan.forms`` like any other consumer; the package is NOT
-relocated. Provocations + director's-notes sidecar wiring lives in the
-per-stage prompt modules (relocated under
-``megaplan/pipelines/creative/prompts/``). The default joke form uses
-runnable joke-specialised prompt keys. Non-joke forms use the generic
-creative keys and pass the form id through stage params/state.
+``--form`` is a first-class input validated against
+:func:`arnold_pipelines.megaplan.forms.available_form_ids`; ``--primary-criterion``
+threads through as pipeline metadata. Per-stage prompt keys are carried in step
+metadata and resolve through the canonical creative prompt bundle.
 """
 
 from __future__ import annotations
 
 from arnold_pipelines.megaplan.forms import available_form_ids
-from arnold_pipelines.megaplan._pipeline.types import Edge, Pipeline, Stage
 from arnold_pipelines.megaplan.types import CliError
+from arnold.workflow.dsl import Capability, Input, Output, Pipeline, Route, Step
 
-from arnold_pipelines.megaplan.pipelines.creative.prompts import CREATIVE_PROMPT_BUNDLE
-from arnold_pipelines.megaplan.pipelines.creative.steps import CreativeStep
-
-
-# ── Module-level metadata surfaced via PipelineRegistry ────────────────
 
 name: str = "creative"
 description: str = (
@@ -47,42 +32,7 @@ arnold_api_version: str = "1.0"
 capabilities: tuple[str, ...] = ("creative",)
 
 
-STAGE_SPECS: tuple[tuple[str, str | None, str], ...] = (
-    ("prep", "prep", "execute_creative"),
-    ("execute_creative", "execute_creative", "critique_creative"),
-    ("critique_creative", "critique_creative", "revise_creative"),
-    ("revise_creative", "revise_creative", "finalize"),
-    ("finalize", None, "halt"),
-)
-
-
-# ── Pipeline assembly ──────────────────────────────────────────────────
-
-
-def _stage(
-    name: str,
-    *,
-    prompt_key: str | None,
-    next_label: str,
-    form: str,
-    primary_criterion: str | None,
-) -> Stage:
-    target = "halt" if next_label == "halt" else next_label
-    edges = () if next_label == "halt" else (Edge(label=next_label, target=target),)
-    return Stage(
-        name=name,
-        step=CreativeStep(
-            name=name,
-            prompt_key=prompt_key,
-            form=form,
-            primary_criterion=primary_criterion,
-            next_label=next_label,
-        ),
-        edges=edges,
-    )
-
-
-def _prompt_key_for_form(prompt_key: str | None, form: str) -> str | None:
+def _prompt_key(prompt_key: str | None, form: str) -> str | None:
     if prompt_key is None:
         return None
     if form == "joke":
@@ -94,21 +44,11 @@ def build_pipeline(
     form: str = "joke",
     primary_criterion: str | None = None,
 ) -> Pipeline:
-    """Return the canonical ``creative`` :class:`Pipeline` for *form*.
+    """Return the canonical ``creative`` explicit-node pipeline for *form*.
 
-    *form* is validated against :func:`available_form_ids` — unknown
-    forms raise ``CliError('invalid_args')`` so the CLI surface and the
-    init handler stay aligned on the same registry.
-
-    *primary_criterion*, when set, is threaded through to each stage as
-    a dataclass field so prompt modules can render it into the
-    form-specific prompt body.
-
-    The default *form='joke'* keeps :func:`build_pipeline` callable
-    with zero arguments — required so the pipeline registry's discovery
-    pass (which calls ``builder()`` with no kwargs) can register the
-    creative pipeline without raising. CLI invocations always supply
-    an explicit form via ``--form``.
+    *form* is validated against :func:`available_form_ids` so the CLI surface
+    and any registry discovery stay aligned. The default ``form='joke'`` keeps
+    :func:`build_pipeline` callable with zero arguments.
     """
 
     valid_forms = available_form_ids()
@@ -120,20 +60,66 @@ def build_pipeline(
             exit_code=2,
         )
 
-    stages = {
-        name: _stage(
-            name,
-            prompt_key=_prompt_key_for_form(prompt_key, form),
-            next_label=next_label,
-            form=form,
-            primary_criterion=primary_criterion,
-        )
-        for name, prompt_key, next_label in STAGE_SPECS
-    }
+    stage_meta: tuple[tuple[str, str | None, str], ...] = (
+        ("prep", "prep", "execute_creative"),
+        ("execute_creative", "execute_creative", "critique_creative"),
+        ("critique_creative", "critique_creative", "revise_creative"),
+        ("revise_creative", "revise_creative", "finalize"),
+        ("finalize", None, "halt"),
+    )
 
-    pipeline = Pipeline(stages=stages, entry="prep")
-    object.__setattr__(pipeline, "resource_bundles", (CREATIVE_PROMPT_BUNDLE,))
-    return pipeline
+    steps: list[Step] = []
+    routes: list[Route] = []
+    for index, (step_id, prompt_key, next_label) in enumerate(stage_meta):
+        is_terminal = next_label == "halt"
+        resolved_prompt = _prompt_key(prompt_key, form)
+        step = Step(
+            id=step_id,
+            kind="agent" if step_id != "finalize" else "emit",
+            label=step_id.replace("_", " ").title(),
+            inputs=() if index == 0 else (Input(name="previous_artifact"),),
+            outputs=(Output(name=f"{step_id}_artifact"), Output(name=f"{step_id}_prompt")),
+            capabilities=(Capability(id="creative", route=form or "default"),),
+            metadata={
+                "prompt_key": resolved_prompt,
+                "form": form,
+                "primary_criterion": primary_criterion,
+                "stage": step_id,
+                "terminal": is_terminal,
+            },
+        )
+        steps.append(step)
+        if not is_terminal:
+            routes.append(
+                Route(
+                    id=f"{step_id}:{next_label}",
+                    source=step_id,
+                    target=next_label,
+                    label=next_label,
+                )
+            )
+
+    return Pipeline(
+        id="creative",
+        version="m5-phase3",
+        steps=tuple(steps),
+        routes=tuple(routes),
+        capabilities=(Capability(id="creative", route=form or "default"),),
+        metadata={
+            "name": name,
+            "description": description,
+            "driver": driver,
+            "entrypoint": entrypoint,
+            "arnold_api_version": arnold_api_version,
+            "capabilities": capabilities,
+            "default_profile": default_profile,
+            "supported_modes": supported_modes,
+            "recommended_profiles": recommended_profiles,
+            "form": form,
+            "primary_criterion": primary_criterion,
+            "resource_bundles": ("creative",),
+        },
+    )
 
 
 __all__ = [

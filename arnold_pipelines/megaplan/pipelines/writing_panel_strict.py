@@ -4,42 +4,27 @@ Sibling-file replacement for the legacy
 ``megaplan/pipelines/writing-panel-strict/pipeline.yaml``. The hyphenated
 directory (``megaplan/pipelines/writing-panel-strict/``) stays on disk —
 prompts / profiles / ``SKILL.md`` are referenced from it; only the YAML
-manifest is replaced.
+manifest is replaced by this explicit-node workflow.
 
-Topology (identical to the legacy YAML — locks done-criterion #8):
+Topology:
 
-* ``panel_review`` — three reviewers (pessimist, optimist,
-  structuralist) running in parallel via the builder's
-  :class:`ParallelStage` fan-out.
-* ``synth`` — single agent fanning in the three reviewer artifacts
-  via ``panel_review.*``.
-* ``revise`` — single agent producing a revised draft from the
-  original draft + the synthesised critique.
-* ``human_decide`` — :class:`HumanDecisionStep` with ``options=['continue',
-  'stop']``. ``continue`` loops back to ``panel_review`` (re-entry into
-  the ParallelStage); ``stop`` exits via the executor's ``"halt"``
-  terminator (the Python-composition equivalent of the YAML compiler's
-  ``to: done`` → ``target="halt"`` translation at
-  ``compiler.py:245``). The brief's ``['ship','continue','escalate']``
-  sketch is rejected — done-criterion #8 requires identical behaviour
-  to the YAML's ``choices: [continue, stop]``.
+    panel_review (fanout: 3 reviewers) -> synth -> revise -> human_decide
+
+``human_decide`` is a human-gate step. ``continue`` loops back to
+``panel_review``; ``stop`` exits via a terminal halt route.
 """
 
 from __future__ import annotations
 
 from pathlib import Path
 
-# M3a: Pipeline kept as megaplan bridge — build_pipeline() uses Pipeline.builder()
-# which returns a megaplan PipelineBuilder with .panel()/.agent()/.human_gate()
-# convenience methods not available on the Arnold PipelineBuilder.
-from arnold_pipelines.megaplan._pipeline.types import Pipeline
+from arnold.manifest import ControlTransitionSlot, FanoutPolicy, LoopPolicy, SuspensionRoute, WorkflowPolicy
+from arnold.workflow.dsl import Capability, Input, Output, Pipeline, Route, Step
 
 
 _PIPELINE_DIR: Path = Path(__file__).parent / "writing-panel-strict"
 _PROMPTS: Path = _PIPELINE_DIR / "prompts"
 
-
-# ── Module-level metadata surfaced via PipelineRegistry (T9) ──────────
 
 name: str = "writing-panel-strict"
 description: str = (
@@ -59,45 +44,132 @@ arnold_api_version: str = "1.0"
 capabilities: tuple[str, ...] = ("writing", "critique", "revise")
 
 
-def build_pipeline() -> Pipeline:
-    """Return the canonical ``writing-panel-strict`` :class:`Pipeline`."""
+REVIEWERS: tuple[tuple[str, str], ...] = (
+    ("pessimist", str(_PROMPTS / "pessimist.md")),
+    ("optimist", str(_PROMPTS / "optimist.md")),
+    ("structuralist", str(_PROMPTS / "structuralist.md")),
+)
 
-    return (
-        Pipeline.builder(
-            "writing-panel-strict",
-            description=description,
-            default_profile=default_profile,
-            supported_modes=supported_modes,
-            pipeline_dir=_PIPELINE_DIR,
-        )
-        .input("draft", file=True)
-        .panel(
-            "panel_review",
-            reviewers=[
-                ("pessimist", str(_PROMPTS / "pessimist.md")),
-                ("optimist", str(_PROMPTS / "optimist.md")),
-                ("structuralist", str(_PROMPTS / "structuralist.md")),
+
+def build_pipeline() -> Pipeline:
+    """Return the canonical ``writing-panel-strict`` explicit-node pipeline."""
+
+    panel_review = Step(
+        id="panel_review",
+        kind="fanout",
+        label="Adversarial panel review",
+        inputs=(Input(name="draft"),),
+        outputs=(Output(name="review_batch"),),
+        capabilities=(Capability(id="writing", route="critique"),),
+        policy=WorkflowPolicy(
+            fanout=FanoutPolicy(
+                mode="static",
+                width=len(REVIEWERS),
+                reducer_ref="writing_panel_strict:merge_reviews",
+            ),
+        ),
+        metadata={
+            "reviewers": [
+                {"name": name, "prompt_path": path}
+                for name, path in REVIEWERS
             ],
-            inputs=["draft"],
-            merge="none",
-        )
-        .agent(
-            "synth",
-            prompt=str(_PROMPTS / "synth.md"),
-            inputs=["panel_review.*"],
-        )
-        .agent(
-            "revise",
-            prompt=str(_PROMPTS / "revise.md"),
-            inputs=["draft", "synth"],
-        )
-        .human_gate(
-            "human_decide",
-            artifact="revise",
-            options=["continue", "stop"],
-            edges={"continue": "panel_review", "stop": "halt"},
-        )
-        .build()
+            "merge": "none",
+        },
+    )
+    synth = Step(
+        id="synth",
+        kind="agent",
+        label="Synthesize panel critiques",
+        inputs=(Input(name="review_batch", value_ref="panel_review.review_batch"),),
+        outputs=(Output(name="synth_artifact"),),
+        capabilities=(Capability(id="writing", route="critique"),),
+        metadata={
+            "prompt_path": str(_PROMPTS / "synth.md"),
+        },
+    )
+    revise = Step(
+        id="revise",
+        kind="agent",
+        label="Revise draft from synthesis",
+        inputs=(
+            Input(name="draft"),
+            Input(name="synth_artifact", value_ref="synth.synth_artifact"),
+        ),
+        outputs=(Output(name="revised_draft"),),
+        capabilities=(Capability(id="writing", route="revise"),),
+        metadata={
+            "prompt_path": str(_PROMPTS / "revise.md"),
+        },
+    )
+    human_decide = Step(
+        id="human_decide",
+        kind="human_gate",
+        label="Human decision: continue or stop",
+        inputs=(Input(name="revised_draft", value_ref="revise.revised_draft"),),
+        outputs=(Output(name="decision"),),
+        capabilities=(Capability(id="human", route="decision"),),
+        policy=WorkflowPolicy(
+            loop=LoopPolicy(max_iterations=8, until_ref="human_decide:stop"),
+            suspension_routes=(
+                SuspensionRoute(route_id="human_decide:loop", reentry_id="continue"),
+            ),
+            control_transitions=(
+                ControlTransitionSlot(
+                    transition_id="human_decide:continue",
+                    transition_type="override",
+                    trigger_ref="human_decide.decision",
+                    target_ref="panel_review",
+                    policy_ref="writing_panel_strict:human_decide",
+                ),
+                ControlTransitionSlot(
+                    transition_id="human_decide:stop",
+                    transition_type="override",
+                    trigger_ref="human_decide.decision",
+                    target_ref="halt",
+                    policy_ref="writing_panel_strict:human_decide",
+                ),
+            ),
+        ),
+        metadata={
+            "options": ("continue", "stop"),
+        },
+    )
+    halt = Step(
+        id="halt",
+        kind="halt",
+        label="Terminal halt",
+        outputs=(Output(name="status"),),
+        metadata={"terminal": True},
+    )
+
+    return Pipeline(
+        id="writing-panel-strict",
+        version="m5-phase3",
+        steps=(panel_review, synth, revise, human_decide, halt),
+        routes=(
+            Route(id="panel_review:synth", source="panel_review", target="synth", label="default"),
+            Route(id="synth:revise", source="synth", target="revise", label="default"),
+            Route(id="revise:human_decide", source="revise", target="human_decide", label="default"),
+            Route(id="human_decide:panel_review", source="human_decide", target="panel_review", label="continue", condition_ref="continue"),
+            Route(id="human_decide:halt", source="human_decide", target="halt", label="stop", condition_ref="stop"),
+        ),
+        capabilities=(
+            Capability(id="writing", route="critique"),
+            Capability(id="writing", route="revise"),
+            Capability(id="human", route="decision", required=False),
+        ),
+        metadata={
+            "name": name,
+            "description": description,
+            "driver": driver,
+            "entrypoint": entrypoint,
+            "arnold_api_version": arnold_api_version,
+            "capabilities": capabilities,
+            "default_profile": default_profile,
+            "supported_modes": supported_modes,
+            "recommended_profiles": recommended_profiles,
+            "pipeline_dir": str(_PIPELINE_DIR),
+        },
     )
 
 
