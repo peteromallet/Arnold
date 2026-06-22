@@ -2,10 +2,10 @@ from __future__ import annotations
 
 from typing import Any
 
-from arnold.pipelines.megaplan.editorial import checklist, sprints
-from arnold.pipelines.megaplan.editorial.body import edit_section, read_body, update_body
-from arnold.pipelines.megaplan.editorial.gating import transition_epic_state
-from arnold.pipelines.megaplan.store import SprintItemInput
+from arnold_pipelines.megaplan.editorial import checklist, sprints
+from arnold_pipelines.megaplan.editorial.body import edit_section, read_body, update_body
+from arnold_pipelines.megaplan.editorial.gating import transition_epic_state
+from arnold_pipelines.megaplan.store import SprintItemInput
 
 
 MANUAL_PARITY_NOTES = (

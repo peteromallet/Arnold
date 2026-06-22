@@ -11,7 +11,7 @@ import pytest
 
 from arnold.pipeline import ContractResult, ContractStatus, Suspension
 from arnold.pipeline.step_invocation import StepInvocation
-from arnold.pipelines.megaplan._pipeline.envelope import RunEnvelope
+from arnold.runtime.envelope import RunEnvelope
 from arnold.pipelines.megaplan._pipeline.executor import run_pipeline
 from arnold.pipelines.megaplan._pipeline.runtime import RuntimePolicy, StallDetector
 from arnold.pipelines.megaplan._pipeline.steps.agent import AgentStep

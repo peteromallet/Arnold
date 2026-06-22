@@ -1,5 +1,8 @@
 """Credential preflight for YAML pipelines.
 
+Rehomed from ``arnold_pipelines.megaplan._pipeline.preflight`` during the M4
+burn-down (T4).
+
 Walks the resolved profile slots used by a YAML pipeline, maps agents and
 providers to credential requirements, and validates that the user has the
 required credentials before any stage fires.

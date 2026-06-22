@@ -1,4 +1,8 @@
-"""Import-free discovery and validation for judge sidecar manifests."""
+"""Import-free discovery and validation for judge sidecar manifests.
+
+Rehomed from ``arnold_pipelines.megaplan._pipeline.judge_manifest_discovery``
+during the M4 burn-down (T4).
+"""
 
 from __future__ import annotations
 
@@ -7,8 +11,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
-from arnold_pipelines.megaplan._pipeline.contracts import BindResult, RepairGradient, bind
-from arnold_pipelines.megaplan._pipeline.judge_manifest import (
+from arnold.pipeline.contracts import BindResult, RepairGradient, bind
+from arnold.pipeline.types import CONTENT_TYPES, Pipeline, Port, PortRef
+from arnold_pipelines.megaplan.judge_manifest import (
     EVALUAND_RECORD_CONTENT_TYPE,
     JUDGE_KIND,
     JudgePieceManifest,
@@ -16,7 +21,6 @@ from arnold_pipelines.megaplan._pipeline.judge_manifest import (
     load_judge_manifest,
 )
 from arnold_pipelines.megaplan.runtime.discovery import _get_scan_roots
-from arnold_pipelines.megaplan._pipeline.types import CONTENT_TYPES, Pipeline, Port, PortRef
 
 
 @dataclass(frozen=True)

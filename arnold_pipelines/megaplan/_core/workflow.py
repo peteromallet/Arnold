@@ -218,7 +218,7 @@ def build_with_binding(
         robustness, creative=creative, with_prep=with_prep, with_feedback=with_feedback
     )
 
-    from arnold_pipelines.megaplan._pipeline.flags import typed_ports_on
+    from arnold_pipelines.megaplan.feature_flags import typed_ports_on
 
     if not typed_ports_on():
         return pipeline
@@ -606,7 +606,7 @@ def _persist_resume_runtime_envelope(
 
 
 def _cursor_from_typed_suspension(plan_dir: Path) -> dict[str, Any] | None:
-    from arnold_pipelines.megaplan._pipeline.resume import (
+    from arnold_pipelines.megaplan.runtime.resume import (
         extract_typed_resume_metadata,
     )
 
@@ -635,7 +635,7 @@ def _resolve_resume_cursor(
     if typed_cursor is not None:
         return typed_cursor, "typed_contract", None
 
-    from arnold_pipelines.megaplan._pipeline.resume import (
+    from arnold_pipelines.megaplan.runtime.resume import (
         check_awaiting_user,
         load_composite_resume_cursor,
     )

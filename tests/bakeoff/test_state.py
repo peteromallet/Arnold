@@ -1,7 +1,7 @@
 import json
 from pathlib import Path
 
-from arnold.pipelines.megaplan.bakeoff.state import (
+from arnold_pipelines.megaplan.bakeoff.state import (
     BAKEOFF_SCHEMA_VERSION,
     CHANNEL_SHADOW_SCHEMA_VERSION,
     load_channel_shadow_state,

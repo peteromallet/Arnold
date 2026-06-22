@@ -5,19 +5,29 @@ that were previously scattered across four legacy literals in three files. Facto
 helpers produce byte-identical dicts so the cut-over in downstream tasks is a
 single-line replacement.
 
-Import contract
-    ``CompatibilityMode`` is imported from ``._compatibility`` (leaf module, no cycles).
-    ``PREMIUM_AGENT`` is imported from ``.types``.
+``CompatibilityMode`` is defined in this module (canonical home post-M4 deletion
+of ``_compatibility.py``).
+``PREMIUM_AGENT`` is imported from ``.types``.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
+from enum import Enum
 from typing import Any, Literal, Mapping, TYPE_CHECKING
 
 from arnold.pipeline import StepInvocation
-from arnold_pipelines.megaplan._compatibility import CompatibilityMode
 from arnold_pipelines.megaplan.types import PREMIUM_AGENT
+
+
+class CompatibilityMode(str, Enum):
+    """Whether a step still relies on legacy compatibility repair.
+
+    Canonically defined here (post-M4) after ``_compatibility.py`` was deleted.
+    """
+
+    NATIVE = "native"
+    LEGACY = "legacy"
 
 if TYPE_CHECKING:
     from arnold_pipelines.megaplan.template_registry import (

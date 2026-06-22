@@ -94,3 +94,88 @@ def test_compiler_smoke_build_and_compile() -> None:
     manifest = compile_pipeline(pipeline)
     assert manifest.id == "megaplan"
     assert manifest.manifest_hash is not None
+
+
+# ── Absence tests: deleted submodule imports ────────────────────────────
+
+_DELETED_SUBMODULE_IMPORTS = (
+    "arnold_pipelines.megaplan._pipeline",
+    "arnold_pipelines.megaplan._pipeline.builder",
+    "arnold_pipelines.megaplan._pipeline.runtime",
+    "arnold_pipelines.megaplan._pipeline.dispatch",
+    "arnold_pipelines.megaplan._pipeline.types",
+    "arnold_pipelines.megaplan.stages",
+    "arnold_pipelines.megaplan.stages.inprocess_step",
+    "arnold_pipelines.megaplan._compatibility",
+)
+
+
+def test_deleted_submodules_raise_module_not_found() -> None:
+    """Importing deleted submodules via importlib must raise ModuleNotFoundError."""
+    import importlib
+
+    for mod_name in _DELETED_SUBMODULE_IMPORTS:
+        with pytest.raises(ModuleNotFoundError):
+            importlib.import_module(mod_name)
+
+
+def test_deleted_submodules_not_importable_via_from() -> None:
+    """from arnold_pipelines.megaplan import <deleted_subpackage> must raise ImportError."""
+    for subpkg in ("_pipeline", "stages"):
+        with pytest.raises(ImportError):
+            exec(f"from arnold_pipelines.megaplan import {subpkg}")
+
+
+# ── Absence tests: sys.modules prefix leakage ───────────────────────────
+
+
+def test_sys_modules_free_of_deleted_prefixes_after_package_import() -> None:
+    """After importing arnold_pipelines.megaplan, sys.modules must not contain
+    any key starting with the deleted _pipeline, stages, or _compatibility
+    prefixes."""
+    import sys
+
+    # Re-import to guarantee the package is loaded
+    import arnold_pipelines.megaplan  # noqa: F401, F811
+
+    deleted_prefixes = (
+        "arnold_pipelines.megaplan._pipeline",
+        "arnold_pipelines.megaplan.stages",
+        "arnold_pipelines.megaplan._compatibility",
+    )
+    leaked = [
+        key
+        for key in sys.modules
+        if any(key == prefix or key.startswith(prefix + ".") for prefix in deleted_prefixes)
+    ]
+    assert not leaked, f"sys.modules leaks deleted prefixes: {leaked}"
+
+
+# ── Absence tests: representative deleted stage-class symbols ────────────
+
+
+def test_deleted_stage_classes_not_exposed() -> None:
+    """Stage classes from the deleted stages/ package must not be accessible
+    through megaplan or megaplan.pipeline."""
+    import arnold_pipelines.megaplan.pipeline as pipeline_mod
+
+    deleted_stage_classes = (
+        "InProcessHandlerStep",
+        "HandlerStep",
+        "PrepStep",
+        "PlanStep",
+        "CritiqueStep",
+        "GateStep",
+        "ReviseStep",
+        "FinalizeStep",
+        "ExecuteStep",
+        "ReviewStep",
+        "TiebreakerStep",
+    )
+    for cls_name in deleted_stage_classes:
+        assert not hasattr(megaplan, cls_name), (
+            f"megaplan.{cls_name} must not exist"
+        )
+        assert not hasattr(pipeline_mod, cls_name), (
+            f"pipeline.{cls_name} must not exist"
+        )

@@ -11,7 +11,7 @@ from pathlib import Path
 
 import pytest
 
-from arnold.pipelines.megaplan.calibration import (
+from arnold_pipelines.megaplan.calibration import (
     CapabilityClaim,
     EvaluandRef,
     aggregate_weighted_tier,
@@ -21,7 +21,7 @@ from arnold.pipelines.megaplan.calibration import (
     resolve_evaluand,
     write_capability_claim,
 )
-from arnold.pipelines.megaplan.observability.evaluand import EvaluandRecord, write_evaluand_event
+from arnold_pipelines.megaplan.observability.evaluand import EvaluandRecord, write_evaluand_event
 
 
 def _make_ref(piece_version: str) -> EvaluandRef:

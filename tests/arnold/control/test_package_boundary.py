@@ -16,14 +16,14 @@ _INTERFACE_FILE = _CONTROL_PKG / "interface.py"
 
 FORBIDDEN_IMPORT_ROOTS: tuple[str, ...] = (
     "megaplan",
-    "arnold.pipelines.megaplan",
+    "arnold_pipelines.megaplan",
 )
 
 FORBIDDEN_IMPORT_MODULES: tuple[str, ...] = (
-    "arnold.pipelines.megaplan.planning",
-    "arnold.pipelines.megaplan.planning.state",
-    "arnold.pipelines.megaplan.run_outcome",
-    "arnold.pipelines.megaplan._pipeline",
+    "arnold_pipelines.megaplan.planning",
+    "arnold_pipelines.megaplan.planning.state",
+    "arnold_pipelines.megaplan.run_outcome",
+    "arnold_pipelines.megaplan._pipeline",
     "arnold.pipeline.state",
 )
 
@@ -31,8 +31,8 @@ FORBIDDEN_RAW_SOURCE_TOKENS: tuple[str, ...] = (
     ".megaplan",
     "MEGAPLAN_",
     "STATE_",
-    "arnold.pipelines.megaplan.run_outcome",
-    "arnold.pipelines.megaplan.planning.state",
+    "arnold_pipelines.megaplan.run_outcome",
+    "arnold_pipelines.megaplan.planning.state",
     "arnold.pipeline.state",
 )
 
@@ -86,9 +86,9 @@ def _megaplan_modules_loaded_by(import_target: str) -> set[str]:
     script = (
         "import json, sys; "
         "import arnold; "
-        "before = {k for k in sys.modules if k.startswith('arnold.pipelines.megaplan')}; "
+        "before = {k for k in sys.modules if k.startswith('arnold_pipelines.megaplan')}; "
         f"import {import_target}; "
-        "after = {k for k in sys.modules if k.startswith('arnold.pipelines.megaplan')}; "
+        "after = {k for k in sys.modules if k.startswith('arnold_pipelines.megaplan')}; "
         "print(json.dumps(sorted(after - before)))"
     )
     result = subprocess.run(

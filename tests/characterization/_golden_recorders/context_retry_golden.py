@@ -18,7 +18,7 @@ from __future__ import annotations
 
 from typing import Iterable
 
-from arnold.pipelines.megaplan.orchestration.recovery_policy import RecoveryPolicy
+from arnold_pipelines.megaplan.orchestration.recovery_policy import RecoveryPolicy
 
 
 def record_context_retry_trace(

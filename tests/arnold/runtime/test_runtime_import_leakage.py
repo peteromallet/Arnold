@@ -1,7 +1,7 @@
 """Import-leak gate: ``arnold.runtime`` must not pull in Megaplan policy.
 
 This test spawns a hermetic subprocess with a ``sys.meta_path`` finder
-that blocks any import of ``megaplan`` or ``arnold.pipelines.megaplan``
+that blocks any import of ``megaplan`` or ``arnold_pipelines.megaplan``
 by raising ``ModuleNotFoundError``.  Inside that subprocess we import
 the key Arnold runtime modules (and one cross-package consumer).  If any
 of those imports transitively trigger a megaplan import, the subprocess
@@ -30,15 +30,15 @@ import sys
 # ── meta_path blocker: refuse any megaplan import ──────────────────────
 class _BlockMegaplanFinder:
     def find_spec(self, fullname, path, target=None):
-        if fullname == "megaplan" or fullname.startswith("arnold.pipelines.megaplan."):
+        if fullname == "megaplan" or fullname.startswith("arnold_pipelines.megaplan."):
             raise ModuleNotFoundError(
                 f"megaplan import blocked by leak gate: {fullname}"
             )
-        if fullname == "arnold.pipelines.megaplan" or fullname.startswith(
-            "arnold.pipelines.megaplan."
+        if fullname == "arnold_pipelines.megaplan" or fullname.startswith(
+            "arnold_pipelines.megaplan."
         ):
             raise ModuleNotFoundError(
-                f"arnold.pipelines.megaplan import blocked by leak gate: {fullname}"
+                f"arnold_pipelines.megaplan import blocked by leak gate: {fullname}"
             )
         return None  # let other finders handle it
 

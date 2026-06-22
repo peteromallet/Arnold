@@ -462,13 +462,13 @@ class TestOutboundCoverageCatalog:
         """_normalize_worker_payload must not be importable from the workers package."""
         import importlib
 
-        workers = importlib.import_module("arnold.pipelines.megaplan.workers")
+        workers = importlib.import_module("arnold_pipelines.megaplan.workers")
         assert not hasattr(workers, "_normalize_worker_payload"), (
             "_normalize_worker_payload is still accessible on the workers package; "
             "it must be deleted from the public surface."
         )
         workers_impl = importlib.import_module(
-            "arnold.pipelines.megaplan.workers._impl"
+            "arnold_pipelines.megaplan.workers._impl"
         )
         assert not hasattr(workers_impl, "_normalize_worker_payload"), (
             "_normalize_worker_payload is still defined in workers._impl; "

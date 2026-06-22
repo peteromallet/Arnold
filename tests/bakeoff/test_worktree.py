@@ -2,7 +2,7 @@ import json
 import subprocess
 from pathlib import Path
 
-from arnold.pipelines.megaplan.bakeoff.worktree import capture_base_sha, create_worktree, mark_crashed, remove_worktree
+from arnold_pipelines.megaplan.bakeoff.worktree import capture_base_sha, create_worktree, mark_crashed, remove_worktree
 
 
 def _git(repo: Path, *args: str) -> subprocess.CompletedProcess[str]:

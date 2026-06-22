@@ -24,7 +24,7 @@ from typing import Any, Callable, Mapping
 
 from arnold_pipelines.megaplan._core import save_state, slugify
 from arnold_pipelines.megaplan._core.workflow import resume_plan
-from arnold_pipelines.megaplan._pipeline.flags import control_interface_routing_on
+from arnold_pipelines.megaplan.feature_flags import control_interface_routing_on
 from arnold_pipelines.megaplan.auto import drive as drive_auto
 from arnold.control.interface import ControlTransition, RunStateView
 from arnold_pipelines.megaplan.control_interface import apply_transition

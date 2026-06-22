@@ -64,7 +64,7 @@ from arnold_pipelines.megaplan.auto import (
     ESCALATE_ACTIONS,
     drive as auto_drive,
 )
-from arnold_pipelines.megaplan._pipeline.flags import supervisor_tier_routing_on
+from arnold_pipelines.megaplan.feature_flags import supervisor_tier_routing_on
 from arnold_pipelines.megaplan.runtime.execution_environment import (
     merge_isolation_evidence,
     resolve_execution_environment,

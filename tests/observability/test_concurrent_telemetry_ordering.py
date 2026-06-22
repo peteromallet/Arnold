@@ -3,8 +3,8 @@ from __future__ import annotations
 import threading
 from pathlib import Path
 
-from arnold.pipelines.megaplan.observability.events import EventKind, EventWriter, emit, read_events
-from arnold.pipelines.megaplan.store.file import FileStore
+from arnold_pipelines.megaplan.observability.events import EventKind, EventWriter, emit, read_events
+from arnold_pipelines.megaplan.store.file import FileStore
 
 
 def test_concurrent_telemetry_ordering_preserves_lines_and_seq(tmp_path: Path) -> None:

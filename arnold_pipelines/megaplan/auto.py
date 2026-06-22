@@ -37,7 +37,7 @@ if TYPE_CHECKING:
     from arnold_pipelines.megaplan.drivers import Substrate
 
 from arnold_pipelines.megaplan._core import active_phase_name, find_plan_dir
-from arnold_pipelines.megaplan._pipeline.envelope import (
+from arnold.runtime.envelope import (
     _envelope_ctx,
     write_envelope_in,
 )

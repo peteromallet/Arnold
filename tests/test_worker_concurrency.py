@@ -340,7 +340,7 @@ def test_root_logger_handlers_identical_objects_after_construction(
 
 def test_run_hermes_step_does_not_configure_logging_on_worker_hot_path() -> None:
     """Worker execution must not mutate root logger setup per task."""
-    from arnold.pipelines.megaplan.workers.hermes import run_hermes_step
+    from arnold_pipelines.megaplan.workers.hermes import run_hermes_step
 
     tree = ast.parse(textwrap.dedent(inspect.getsource(run_hermes_step)))
     for node in ast.walk(tree):
@@ -701,7 +701,7 @@ def test_install_sandbox_concurrent_distinct_project_dirs(
     """
     # Reset sandbox wrapper state so this test gets a fresh installation
     # against its own fake registry.
-    from arnold.pipelines.megaplan.runtime.sandbox import _unwrap_all_for_tests
+    from arnold_pipelines.megaplan.runtime.sandbox import _unwrap_all_for_tests
     _unwrap_all_for_tests()
 
     # Set up fake tool registry (same pattern as test_sandbox.py)
@@ -724,7 +724,7 @@ def test_install_sandbox_concurrent_distinct_project_dirs(
         sys.modules, "tools", types.ModuleType("tools")
     )
 
-    from arnold.pipelines.megaplan.runtime.sandbox import install_sandbox, get_sandbox_cwd
+    from arnold_pipelines.megaplan.runtime.sandbox import install_sandbox, get_sandbox_cwd
 
     seen: dict[int, str] = {}
     errors: list[str] = []
@@ -776,7 +776,7 @@ def test_install_sandbox_permanent_wrappers_after_concurrent_use(
     sandbox context exit.  When ContextVar is None, wrappers delegate
     unchanged to the original handler."""
     # Reset sandbox wrapper state for fresh installation.
-    from arnold.pipelines.megaplan.runtime.sandbox import _unwrap_all_for_tests
+    from arnold_pipelines.megaplan.runtime.sandbox import _unwrap_all_for_tests
     _unwrap_all_for_tests()
 
     class _FakeEntry:
@@ -803,7 +803,7 @@ def test_install_sandbox_permanent_wrappers_after_concurrent_use(
         sys.modules, "tools", types.ModuleType("tools")
     )
 
-    from arnold.pipelines.megaplan.runtime.sandbox import install_sandbox
+    from arnold_pipelines.megaplan.runtime.sandbox import install_sandbox
 
     project_dir = _make_tmp_project_dir(tmp_path, "sandbox_restore_test")
     monkeypatch.delenv("TERMINAL_CWD", raising=False)

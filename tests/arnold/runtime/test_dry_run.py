@@ -254,6 +254,6 @@ class TestDryRunNoMegaplanImport:
             elif isinstance(node, ast.ImportFrom):
                 if node.module and node.module.startswith("megaplan"):
                     pytest.fail(
-                        f"{mod_path.name}: from arnold.pipelines.megaplan import found: "
+                        f"{mod_path.name}: from arnold_pipelines.megaplan import found: "
                         f"from {node.module} import ..."
                     )

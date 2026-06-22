@@ -26,7 +26,7 @@ def _vendor_for_cost_event(payload: dict, model: str | None) -> str:
     (no _classify_vendor call). Otherwise fall through to the legacy path.
     """
     try:
-        from arnold_pipelines.megaplan._pipeline.flags import unified_emit_on, unified_evaluand_on
+        from arnold_pipelines.megaplan.feature_flags import unified_emit_on, unified_evaluand_on
         if unified_emit_on() or unified_evaluand_on():
             provenance = payload.get("provenance") if isinstance(payload, dict) else None
             if isinstance(provenance, dict):

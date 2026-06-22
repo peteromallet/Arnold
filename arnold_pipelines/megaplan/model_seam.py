@@ -78,7 +78,7 @@ from arnold.pipeline.model_seam import (
 )
 
 from arnold_pipelines.megaplan.schemas import SCHEMAS
-from arnold_pipelines.megaplan._compatibility import CompatibilityMode  # re-export
+from arnold_pipelines.megaplan.step_contracts import CompatibilityMode  # re-export (moved from deleted _compatibility.py)
 from arnold_pipelines.megaplan.step_contracts import (
     STEP_CONTRACTS,
     build_capture_schema_keys_by_step,
