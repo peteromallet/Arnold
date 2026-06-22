@@ -59,10 +59,11 @@ def control_transition_payload(
     scope_stack: tuple[str, ...],
     payload: Mapping[str, Any],
     manifest_hash: str,
+    trigger: str | None = None,
 ) -> dict[str, Any]:
     """Build a ``control_transition`` event payload."""
 
-    return {
+    result: dict[str, Any] = {
         "kind": kind,
         "source_node": source_node,
         "target_node": target_node,
@@ -70,6 +71,9 @@ def control_transition_payload(
         "payload": dict(payload),
         "manifest_hash": manifest_hash,
     }
+    if trigger is not None:
+        result["trigger"] = trigger
+    return result
 
 
 def project_control_transitions(
@@ -190,6 +194,7 @@ def control_transition_from_projection(
         scope_stack=scope_stack,
         payload=dict(transition.payload or {}),
         manifest_hash=manifest_hash,
+        trigger=transition.trigger,
     )
 
 

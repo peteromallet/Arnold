@@ -97,4 +97,6 @@ markers = [
     "substrate_swap: M4 oracle tests that must remain green under substrate substitution (lease/budget/journal swap)",
     "replay_oracle: M5c replay tests that capture legacy control outputs and opt into routed parity action by action",
     "m8_benchmark: M8 acceptance-gate benchmark tests (opt-in, width-32 thresholds)",
+    "wheel_smoke: build and install wheel/sdist into a clean venv",
+    "live_smoke: opt-in real backend smoke tests requiring credentials",
 ]
