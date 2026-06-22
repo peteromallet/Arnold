@@ -2,23 +2,13 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Mapping, Protocol
+from typing import Protocol
 
 from arnold.manifest import ManifestCursor, WorkflowManifest
 
+from arnold.execution.registries import ExecutionRegistries
 from arnold.execution.result import ExecutionResult, ExecutionState
-
-
-@dataclass(frozen=True)
-class ExecutionRegistries:
-    """Process-local protocol registries supplied by product integrations."""
-
-    capabilities: Mapping[str, Any] = field(default_factory=dict)
-    effects: Mapping[str, Any] = field(default_factory=dict)
-    controls: Mapping[str, Any] = field(default_factory=dict)
-    reducers: Mapping[str, Any] = field(default_factory=dict)
 
 
 class ExecutionBackend(Protocol):
