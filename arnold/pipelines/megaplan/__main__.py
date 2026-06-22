@@ -1,6 +1,7 @@
-"""Allow running as ``python -m arnold.pipelines.megaplan``."""
+"""Allow running as ``python -m arnold.pipelines.megaplan`` (M4 parity shim)."""
 
-from arnold.pipelines.megaplan.cli import main
 import sys
+
+from arnold_pipelines.megaplan.cli import main
 
 sys.exit(main())

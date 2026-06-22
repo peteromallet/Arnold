@@ -73,10 +73,12 @@ exclude = [
 ]
 
 [tool.hatch.build.targets.wheel]
-packages = ["arnold"]
+packages = ["arnold", "arnold_pipelines"]
 exclude = [
     "arnold/pipelines/megaplan/cloud/_reference/**",
     "arnold/pipelines/megaplan/agent/pyproject.toml",
+    "arnold_pipelines/megaplan/cloud/_reference/**",
+    "arnold_pipelines/megaplan/agent/pyproject.toml",
 ]
 
 [tool.pytest.ini_options]
