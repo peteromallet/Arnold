@@ -14,7 +14,7 @@ Run `python scripts/render_package_disposition_md.py --write` to regenerate.
 ## Overview
 
 **Schema version:** 1
-**Disposition rows:** 275
+**Disposition rows:** 271
 **Exclusions:** 4
 **Parity gates:** 0
 **Runtime settings gates:** 0
@@ -25,15 +25,15 @@ Run `python scripts/render_package_disposition_md.py --write` to regenerate.
 - arnold-service-interface: 1
 - arnold-adapter: 3
 - arnold-shared-leaf: 25
-- megaplan-plugin: 108
+- megaplan-plugin: 106
 - product-app: 0
-- legacy-hold: 18
+- legacy-hold: 16
 - delete-merge: 0
 - split-required: 18
 
 ### Granularity counts
 
-- directory: 29
+- directory: 25
 - file: 158
 - symbol: 70
 - split: 18
@@ -782,7 +782,7 @@ Exclusions are limited to generated/cache artifacts. 4 exclusion(s) defined.
 
 ---
 
-#### megaplan/_pipeline/stages/__init__.py
+#### megaplan/stages/__init__.py
 **Disposition:** `arnold-core` | **Granularity:** `file` | **Target:** arnold/pipeline/stages/__init__.py
 
 **Reason:** Pipeline runtime primitive — generic dispatch, execution, pattern, or validation infrastructure.
@@ -1070,7 +1070,7 @@ Exclusions are limited to generated/cache artifacts. 4 exclusion(s) defined.
 
 ### arnold-service-interface (1 rows)
 
-#### megaplan/_pipeline/discovery/manifest.py
+#### arnold/pipeline/discovery/manifest.py
 **Disposition:** `arnold-service-interface` | **Granularity:** `file` | **Target:** arnold/pipeline/discovery/manifest.py
 
 **Reason:** The manifest reader defines the public import-free discovery contract for pipeline modules, which belongs at the Arnold SDK surface.
@@ -1549,7 +1549,7 @@ Exclusions are limited to generated/cache artifacts. 4 exclusion(s) defined.
 
 ---
 
-### megaplan-plugin (93 rows)
+### megaplan-plugin (91 rows)
 
 #### megaplan/cli/status_view.py
 **Disposition:** `megaplan-plugin` | **Granularity:** `file` | **Target:** megaplan/pipelines/megaplan/status_view.py
@@ -2564,18 +2564,6 @@ Exclusions are limited to generated/cache artifacts. 4 exclusion(s) defined.
 
 ---
 
-#### megaplan/agent
-**Disposition:** `megaplan-plugin` | **Granularity:** `directory` | **Target:** megaplan/agent (retained)
-
-**Reason:** The vendored Hermes agent subpackage is a Megaplan product surface (CLI, gateway, environments, tools, skills, tests). It carries the Hermes brand, Megaplan-specific runtime wiring, and user-facing product configuration.
-
-**Blockers:**
-- Vendored hermes-agent package with original top-level import assumptions.
-- Agent runtime contracts interleave with Megaplan fan-out and state models.
-- Platform adapters and skill scripts carry Hermes/Megaplan-branded paths and defaults.
-
----
-
 #### megaplan/pipelines
 **Disposition:** `megaplan-plugin` | **Granularity:** `directory` | **Target:** megaplan/pipelines (retained)
 
@@ -2595,17 +2583,6 @@ Exclusions are limited to generated/cache artifacts. 4 exclusion(s) defined.
 **Blockers:**
 - Resident profile/config carries Megaplan tenant and deployment defaults.
 - Tool schemas and registry interleave with Megaplan runtime capabilities.
-
----
-
-#### megaplan/tests/agentic
-**Disposition:** `megaplan-plugin` | **Granularity:** `directory` | **Target:** megaplan/tests/agentic (retained)
-
-**Reason:** Agentic test infrastructure imports Megaplan checks, adapters, and run harness for the Hermes agent test suite.
-
-**Blockers:**
-- Test adapter imports megaplan.agent runtime for agent-in-the-loop testing.
-- megaplan_checks.py carries Megaplan-specific verification helpers.
 
 ---
 
@@ -2807,7 +2784,7 @@ Exclusions are limited to generated/cache artifacts. 4 exclusion(s) defined.
 
 ---
 
-#### megaplan/_pipeline/stages/critique.py
+#### megaplan/stages/critique.py
 **Disposition:** `megaplan-plugin` | **Granularity:** `file` | **Target:** megaplan/pipelines/megaplan/stages/critique.py
 
 **Reason:** Megaplan-specific pipeline policy — planning stages, handler steps, demos, or Megaplan-branded configuration.
@@ -2818,7 +2795,7 @@ Exclusions are limited to generated/cache artifacts. 4 exclusion(s) defined.
 
 ---
 
-#### megaplan/_pipeline/stages/execute.py
+#### megaplan/stages/execute.py
 **Disposition:** `megaplan-plugin` | **Granularity:** `file` | **Target:** megaplan/pipelines/megaplan/stages/execute.py
 
 **Reason:** Megaplan-specific pipeline policy — planning stages, handler steps, demos, or Megaplan-branded configuration.
@@ -2829,7 +2806,7 @@ Exclusions are limited to generated/cache artifacts. 4 exclusion(s) defined.
 
 ---
 
-#### megaplan/_pipeline/stages/finalize.py
+#### megaplan/stages/finalize.py
 **Disposition:** `megaplan-plugin` | **Granularity:** `file` | **Target:** megaplan/pipelines/megaplan/stages/finalize.py
 
 **Reason:** Megaplan-specific pipeline policy — planning stages, handler steps, demos, or Megaplan-branded configuration.
@@ -2840,7 +2817,7 @@ Exclusions are limited to generated/cache artifacts. 4 exclusion(s) defined.
 
 ---
 
-#### megaplan/_pipeline/stages/gate.py
+#### megaplan/stages/gate.py
 **Disposition:** `megaplan-plugin` | **Granularity:** `file` | **Target:** megaplan/pipelines/megaplan/stages/gate.py
 
 **Reason:** Megaplan-specific pipeline policy — planning stages, handler steps, demos, or Megaplan-branded configuration.
@@ -2851,7 +2828,7 @@ Exclusions are limited to generated/cache artifacts. 4 exclusion(s) defined.
 
 ---
 
-#### megaplan/_pipeline/stages/handler_step.py
+#### megaplan/stages/handler_step.py
 **Disposition:** `megaplan-plugin` | **Granularity:** `file` | **Target:** megaplan/pipelines/megaplan/stages/handler_step.py
 
 **Reason:** Megaplan-specific pipeline policy — planning stages, handler steps, demos, or Megaplan-branded configuration.
@@ -2862,7 +2839,7 @@ Exclusions are limited to generated/cache artifacts. 4 exclusion(s) defined.
 
 ---
 
-#### megaplan/_pipeline/stages/inprocess_step.py
+#### megaplan/stages/inprocess_step.py
 **Disposition:** `megaplan-plugin` | **Granularity:** `file` | **Target:** megaplan/pipelines/megaplan/stages/inprocess_step.py
 
 **Reason:** Megaplan-specific pipeline policy — planning stages, handler steps, demos, or Megaplan-branded configuration.
@@ -2873,7 +2850,7 @@ Exclusions are limited to generated/cache artifacts. 4 exclusion(s) defined.
 
 ---
 
-#### megaplan/_pipeline/stages/plan.py
+#### megaplan/stages/plan.py
 **Disposition:** `megaplan-plugin` | **Granularity:** `file` | **Target:** megaplan/pipelines/megaplan/stages/plan.py
 
 **Reason:** Megaplan-specific pipeline policy — planning stages, handler steps, demos, or Megaplan-branded configuration.
@@ -2884,7 +2861,7 @@ Exclusions are limited to generated/cache artifacts. 4 exclusion(s) defined.
 
 ---
 
-#### megaplan/_pipeline/stages/prep.py
+#### megaplan/stages/prep.py
 **Disposition:** `megaplan-plugin` | **Granularity:** `file` | **Target:** megaplan/pipelines/megaplan/stages/prep.py
 
 **Reason:** Megaplan-specific pipeline policy — planning stages, handler steps, demos, or Megaplan-branded configuration.
@@ -2895,7 +2872,7 @@ Exclusions are limited to generated/cache artifacts. 4 exclusion(s) defined.
 
 ---
 
-#### megaplan/_pipeline/stages/review.py
+#### megaplan/stages/review.py
 **Disposition:** `megaplan-plugin` | **Granularity:** `file` | **Target:** megaplan/pipelines/megaplan/stages/review.py
 
 **Reason:** Megaplan-specific pipeline policy — planning stages, handler steps, demos, or Megaplan-branded configuration.
@@ -2906,7 +2883,7 @@ Exclusions are limited to generated/cache artifacts. 4 exclusion(s) defined.
 
 ---
 
-#### megaplan/_pipeline/stages/revise.py
+#### megaplan/stages/revise.py
 **Disposition:** `megaplan-plugin` | **Granularity:** `file` | **Target:** megaplan/pipelines/megaplan/stages/revise.py
 
 **Reason:** Megaplan-specific pipeline policy — planning stages, handler steps, demos, or Megaplan-branded configuration.
@@ -2917,7 +2894,7 @@ Exclusions are limited to generated/cache artifacts. 4 exclusion(s) defined.
 
 ---
 
-#### megaplan/_pipeline/stages/tiebreaker.py
+#### megaplan/stages/tiebreaker.py
 **Disposition:** `megaplan-plugin` | **Granularity:** `file` | **Target:** megaplan/pipelines/megaplan/stages/tiebreaker.py
 
 **Reason:** Megaplan-specific pipeline policy — planning stages, handler steps, demos, or Megaplan-branded configuration.
@@ -3107,7 +3084,7 @@ Exclusions are limited to generated/cache artifacts. 4 exclusion(s) defined.
 
 ---
 
-### legacy-hold (18 rows)
+### legacy-hold (16 rows)
 
 #### megaplan/_pipeline/builder.py
 **Disposition:** `legacy-hold` | **Granularity:** `file` | **Target:** arnold/pipeline/builder.py (after policy-free builder extraction)
@@ -3596,45 +3573,6 @@ Exclusions are limited to generated/cache artifacts. 4 exclusion(s) defined.
 
 **Tests / gates:**
 - static-gate: Arnold-neutral persistence modules must not hardcode the current file-tree roots or ticket frontmatter side effects
-
----
-
-#### megaplan/vendor
-**Disposition:** `legacy-hold` | **Granularity:** `directory` | **Target:** megaplan/vendor
-
-**Reason:** `vendor/` contains vendored runtime assets: the Shannon CLI wrapper (@dexh/shannon v0.0.2) with 15 Megaplan-specific patches (P1..P15). The __init__.py is a one-line docstring. The shannon/ subtree contains index.ts (vendored+patched TypeScript), VENDOR.md (detailed provenance document: upstream source, verified-pristine path, patch catalog P1..P15, regeneration recipe, live proofs, test suite results), package.json (upstream metadata), bun.lock, and .gitignore. Provenance is explicitly recorded in VENDOR.md with verification anchors. No .py files beyond the stub __init__.py. Placed in legacy-hold because: (a) the vendored Shannon runtime is Megaplan's tmux-based Claude Code driver; (b) the 15 patches are Megaplan-specific (P1 timeout override, P2 tool-use guard, P3-P15 session/env/determinism); (c) extraction would require replacing the vendored runtime with an Arnold driver abstraction.
-
-**Blockers:**
-- Vendored Shannon CLI (@dexh/shannon v0.0.2) is a TypeScript runtime with 15 Megaplan-specific patches.
-- Patches P1-P15 are load-bearing for Megaplan's tmux-based Claude Code driver (timeout control, tool-use row guard, root-safe args, paste-first-turn, stdin buffer, slash-completion, env scrubbing).
-- Provenance is fully documented in VENDOR.md but the vendored artifact is not extractable as Python code.
-
-**String policy:**
-| Category | Owner | Policy |
-| --- | --- | --- |
-| megaplan_paths | megaplan | Vendor directory holds vendored runtime under megaplan/vendor/shannon/. Path convention is Megaplan-local. |
-
-**Extraction prerequisites:**
-- Replace vendored Shannon runtime with an Arnold driver abstraction before extraction.
-
-**Tests / gates:**
-- tests/test_workers_shannon.py (72 passed): exercises vendored Shannon through Python worker
-- tests/test_shannon_stream_idle_timeout.py (8 passed)
-- tests/test_shannon_wall_clock_timeout.py (1 passed)
-
----
-
-#### megaplan/_legacy_subprocess
-**Disposition:** `legacy-hold` | **Granularity:** `directory` | **Target:** megaplan/_legacy_subprocess (retained)
-
-**Reason:** Legacy subprocess runner retained for backward compatibility; pending extraction or deletion.
-
-**Blockers:**
-- Carries legacy worker dispatch patterns that may still be referenced.
-- No current extraction path defined.
-
-**Tests / gates:**
-- none-yet: legacy surface, no extraction planned
 
 ---
 
@@ -4418,9 +4356,9 @@ Exclusions are limited to generated/cache artifacts. 4 exclusion(s) defined.
 - `megaplan.cli` — forbidden from: `megaplan/auto.py`, `megaplan/cli/arnold.py`, `megaplan/drivers`, `megaplan/runtime/governor.py`, `megaplan/store/__init__.py` (+17 more)
 - `megaplan.cli.feedback` — forbidden from: `arnold/pipeline/types.py`, `megaplan/_pipeline/types.py`
 - `megaplan.control_interface` — forbidden from: `megaplan/observability/__init__.py`, `megaplan/observability/evaluand.py`, `megaplan/observability/event_sink.py`, `megaplan/observability/fold.py`
-- `megaplan.execute` — forbidden from: `arnold/pipeline/resources.py`, `megaplan/_core/scheduler`, `megaplan/_pipeline`, `megaplan/_pipeline/contracts.py`, `megaplan/_pipeline/discovery/manifest.py` (+9 more)
-- `megaplan.finalize` — forbidden from: `megaplan/_core/scheduler`, `megaplan/_pipeline`, `megaplan/_pipeline/contracts.py`, `megaplan/_pipeline/discovery/manifest.py`, `megaplan/_pipeline/discovery/trust.py` (+5 more)
-- `megaplan.handlers` — forbidden from: `arnold/pipeline/resources.py`, `megaplan/_core/scheduler`, `megaplan/_pipeline`, `megaplan/_pipeline/contracts.py`, `megaplan/_pipeline/discovery/manifest.py` (+29 more)
+- `megaplan.execute` — forbidden from: `arnold/pipeline/discovery/manifest.py`, `arnold/pipeline/resources.py`, `megaplan/_core/scheduler`, `megaplan/_pipeline`, `megaplan/_pipeline/contracts.py` (+9 more)
+- `megaplan.finalize` — forbidden from: `arnold/pipeline/discovery/manifest.py`, `megaplan/_core/scheduler`, `megaplan/_pipeline`, `megaplan/_pipeline/contracts.py`, `megaplan/_pipeline/discovery/trust.py` (+5 more)
+- `megaplan.handlers` — forbidden from: `arnold/pipeline/discovery/manifest.py`, `arnold/pipeline/resources.py`, `megaplan/_core/scheduler`, `megaplan/_pipeline`, `megaplan/_pipeline/contracts.py` (+29 more)
 - `megaplan.observability.events` — forbidden from: `arnold/pipeline/executor.py`
 - `megaplan.orchestration` — forbidden from: `megaplan/observability/events.py`
 - `megaplan.orchestration.progress` — forbidden from: `megaplan/_pipeline/types.py`, `megaplan/auto.py`
@@ -4503,7 +4441,7 @@ _(none defined)_
 ## Next-Milestone Recommendations
 
 - **Resolve 18 split-required row(s):** each split parent needs child symbols finalized before extraction can begin.
-- **Investigate 18 legacy-hold row(s):** these files have unclear ownership and need deeper inspection.
+- **Investigate 16 legacy-hold row(s):** these files have unclear ownership and need deeper inspection.
 - **Extract capability seams** (M2a) before relocating plugins (M2b) to `arnold/pipelines/megaplan/`.
 - **Define parity gates:** no behavior-preservation gates have been declared.
 - **Define runtime settings gates:** no configurable-seam gates have been declared.

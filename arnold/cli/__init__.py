@@ -1,11 +1,11 @@
-"""Arnold CLI thin dispatch layer.
+"""Arnold CLI dispatch layer.
 
 Routes:
-* ``arnold workflow ...`` directly to ``arnold.cli.workflow`` without importing
-  legacy Megaplan CLI modules.
+* ``arnold workflow ...`` directly to ``arnold.cli.workflow``.
 * ``arnold status/trace/inspect/override`` to ``arnold.cli.operators``.
-* All other commands lazily delegate to the legacy Megaplan CLI for the M5
-  transition window.
+
+Legacy Megaplan subcommands are removed in M6; the only supported top-level
+verbs are the workflow runtime and the operator projection commands.
 """
 
 from __future__ import annotations
@@ -25,7 +25,7 @@ def cli_entry() -> None:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    """Lazy dispatch to the appropriate CLI implementation."""
+    """Dispatch to the workflow CLI or operator commands."""
     args = list(sys.argv[1:] if argv is None else argv)
     if not args:
         _print_usage()
@@ -44,19 +44,16 @@ def main(argv: Sequence[str] | None = None) -> int:
 
         return _operators_main([command, *rest])
 
-    # Legacy Megaplan CLI surface: imported lazily and only for commands that
-    # have not yet been migrated to the workflow runtime.
-    from arnold.pipelines.megaplan.cli.arnold import main as _arnold_main
-
-    return _arnold_main(argv)
+    print(f"arnold: unknown command {command!r}", file=sys.stderr)
+    _print_usage(file=sys.stderr)
+    return 2
 
 
 def _print_usage(*, file=None) -> None:  # type: ignore[no-untyped-def]
     target = file or sys.stdout
     print(
         "usage: arnold workflow {check,manifest,dot,dry-run,run,resume,describe} | "
-        "arnold {status,trace,inspect,override} | "
-        "arnold <legacy command> ...",
+        "arnold {status,trace,inspect,override}",
         file=target,
     )
 

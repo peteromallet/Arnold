@@ -3608,7 +3608,7 @@ def drive(
                 f"phase '{next_step}' external_error [{provider}] "
                 f"{error_kind}{code_hint}{retry_hint}: {message[:200]}"
             )
-            resume_command = f"python -m arnold.pipelines.megaplan resume --plan {plan}"
+            resume_command = f"python -m arnold_pipelines.megaplan resume --plan {plan}"
             _record_failure(
                 plan_dir=plan_dir,
                 kind="external_error",

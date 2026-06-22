@@ -4,19 +4,18 @@ This module provides a policy-free :class:`PipelineRegistry` that stores
 builder callables, metadata, and discovery hooks.  It is parameterised
 via explicit constructor inputs — ``scan_roots``, ``package_prefixes``,
 ``alias_map``, ``trust_policy``, and ``resource_path_policy`` — so that
-every Megaplan opinion (discovery paths, budget authority, operation
-fallbacks, planning override catalogs) is injected by the consumer rather
+pipeline-specific opinions (discovery paths, budget authority, operation
+fallbacks, planning override catalogs) are injected by the consumer rather
 than baked in.
 
-The 1131-line ``megaplan/_pipeline/registry.py`` remains the authority
-for Megaplan-specific discovery, budget reservation, operation-registry
-fallbacks, and planning override catalogs.  That module wraps (or
+The heavier pipeline plugin registry lives in
+``arnold_pipelines/megaplan/_pipeline/registry.py``; that module wraps (or
 subclasses) this core as its bridge.
 
 Boundary discipline
 -------------------
 
-No ``megaplan`` imports.  No forbidden vocabulary literals.
+No ``arnold.pipelines.megaplan`` imports.  No forbidden vocabulary literals.
 """
 
 from __future__ import annotations
@@ -96,14 +95,14 @@ class PipelineRegistry:
     first access and is responsible for calling :meth:`register` for
     each discovered pipeline.
 
-    Every Megaplan opinion (scan roots, budget reservation, operation
+    Every pipeline-specific opinion (scan roots, budget reservation, operation
     fallbacks, override catalogs) is injected via the constructor::
 
         registry = PipelineRegistry(
-            alias_map={"planning": "megaplan"},
+            alias_map={"legacy": "canonical"},
             trust_policy=my_trust_classifier,
             resource_path_policy=my_resource_resolver,
-            discovery_hook=scan_and_register_megaplan_pipelines,
+            discovery_hook=scan_and_register_pipelines,
         )
     """
 
@@ -138,7 +137,7 @@ class PipelineRegistry:
     """Dotted package prefixes for in-tree module resolution."""
 
     alias_map: Mapping[str, str] = field(default_factory=dict)
-    """Legacy-name → canonical-name mapping (e.g. ``{"planning": "megaplan"}``)."""
+    """Legacy-name → canonical-name mapping (e.g. ``{"legacy": "canonical"}``)."""
 
     trust_policy: TrustPolicy | None = None
     """Pluggable trust-tier classifier for source paths."""

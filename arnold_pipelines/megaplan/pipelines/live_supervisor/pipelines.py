@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from arnold.pipeline import Edge, Pipeline, Stage
 from arnold.pipeline.builder import PipelineBuilder
+from arnold.pipeline.types import Edge, Pipeline, Stage
 from arnold_pipelines.megaplan.pipelines.live_supervisor.steps import (
     ClassifyStep,
     DiagnoseStep,

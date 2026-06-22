@@ -1,5 +1,8 @@
-import sys as _sys
-import importlib as _importlib
-_real = _importlib.import_module("arnold.pipelines.megaplan.agent.tools.honcho_tools")
-globals().update(_real.__dict__)
-_sys.modules[__name__] = _real
+"""M6 stub: legacy tool removed in clean-break purge."""
+from __future__ import annotations
+
+def set_session_context(*args, **kwargs) -> None:
+    """Legacy Honcho context stub (M6)."""
+    pass
+
+__all__ = ['set_session_context']

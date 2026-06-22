@@ -4,9 +4,6 @@ This sub-package holds the pure-dataclass / Protocol types that define
 a pipeline without reference to Megaplan-specific semantics:
 
 * ``Pipeline``          — named DAG of stages and edges.
-* ``Stage``             — a single-step stage with labelled edges.
-* ``ParallelStage``     — a fan-out stage whose steps run concurrently.
-* ``Edge``              — materialised dependency between two stages.
 * ``Step``              — Protocol for executable units.
 * ``StepContext``       — runtime context passed to every step.
 * ``StepResult``        — result of executing a single step.
@@ -54,15 +51,13 @@ Sub-modules:
 * ``content_validation`` — content-type keyed validation hooks for blob metadata.
 * ``audit_policy``    — deterministic audit-mode selection for size-threshold seams.
 
-All public names are re-exported here.  Import from ``arnold.pipeline``:
-
-    from arnold.pipeline import Pipeline, Stage, StepContext, StateDelta
-
-No Megaplan re-exports appear here; this is the neutral surface.
+The obsolete public builder/executor symbols (``PipelineBuilder``, ``Stage``,
+``Edge``, ``ParallelStage``, ``run_pipeline``) are no longer re-exported from
+this package.  They remain reachable from their originating submodules only
+while internal callers are migrated; new code should use ``arnold.workflow``.
 """
 
 from arnold.pipeline.audit_policy import AuditMode, AuditPolicyHook, select_audit_mode
-from arnold.pipeline.builder import PipelineBuilder
 from arnold.pipeline.content_validation import (
     ContentValidator,
     ContentValidatorRegistry,
@@ -104,8 +99,6 @@ from arnold.pipeline.executor import (
     DEFAULT_PARALLEL_SAFE,
     MediaCostAccumulator,
     ParallelSafePredicate,
-    run_pipeline,
-    run_pipeline_resume,
 )
 from arnold.pipeline.hooks import ExecutorHooks, NullExecutorHooks, account_media_cost_from_result
 from arnold.pipeline.model_resource_capabilities import (
@@ -219,12 +212,10 @@ from arnold.pipeline.types import (
     ContentTypeRegistry,
     ContractResult,
     ContractStatus,
-    Edge,
     EvidenceArtifactRef,
     EvidenceStatus,
     Freshness,
     HumanSuspension,
-    ParallelStage,
     Pipeline,
     PipelineVerdict,
     Port,
@@ -236,7 +227,6 @@ from arnold.pipeline.types import (
     ReduceResult,
     RoutingKey,
     SelectionResult,
-    Stage,
     Step,
     StepContext,
     StepResult,
@@ -245,18 +235,9 @@ from arnold.pipeline.types import (
     register_schema,
 )
 
-
-# Re-exports from arnold.runtime for downstream consumers
-from arnold.runtime.envelope import RuntimeEnvelope
-from arnold.runtime.resume import ResumeCursorRef
-from arnold.runtime.driver import AdvanceOutcome, CheckpointOutcome
-from arnold.pipeline.driver import StepwiseDriver
-
 __all__ = [
     "AcceptedVersionRange",
     "account_media_cost_from_result",
-    "AdvanceOutcome",
-    "CheckpointOutcome",
     "AuditMode",
     "AuditPolicyHook",
     "BillingRoute",
@@ -278,7 +259,6 @@ __all__ = [
     "DEFAULT_MEDIA_PRICING",
     "DEFAULT_PARALLEL_SAFE",
     "DEFAULT_PRICING",
-    "Edge",
     "ExecutorHooks",
     "EvidenceArtifactRef",
     "EvidenceStatus",
@@ -293,9 +273,7 @@ __all__ = [
     "MediaUsage",
     "MODEL_RESOURCE_CAPABILITIES",
     "ParallelSafePredicate",
-    "ParallelStage",
     "Pipeline",
-    "PipelineBuilder",
     "PipelineIdRegistry",
     "PipelineIdRegistryError",
     "PipelineRegistry",
@@ -309,16 +287,17 @@ __all__ = [
     "Provenance",
     "ReduceResult",
     "ReadRef",
-    "ResumeCursorRef",
     "RoutingKey",
     "ReducePolicy",
-    "RuntimeEnvelope",
     "SelectionResult",
-    "Stage",
+    "Step",
     "StateDelta",
     "SuiteDelta",
     "SuiteRunProtocol",
-    "Step",
+    "StepInvocation",
+    "StepInvocationAdapter",
+    "StepInvocationAdapterRegistry",
+    "StepInvocationResult",
     "StepIOClassification",
     "StepIOContractContext",
     "StepIOContractDecision",
@@ -327,13 +306,8 @@ __all__ = [
     "StepIOHandoffResult",
     "StepIOOperation",
     "StepIOPolicy",
-    "StepInvocation",
-    "StepInvocationAdapter",
-    "StepInvocationAdapterRegistry",
-    "StepInvocationResult",
     "StepContext",
     "StepResult",
-    "StepwiseDriver",
     "Suspension",
     "SchemaRegistryError",
     "SeamId",
@@ -416,8 +390,6 @@ __all__ = [
     "resolve_step_io_policy",
     "record_step_io_self_validation_marker",
     "resolve_seam_from_binding_map",
-    "run_pipeline",
-    "run_pipeline_resume",
     "schema_version_for",
     "select",
     "select_audit_mode",
