@@ -50,6 +50,9 @@ dependencies = [
     "PyJWT[crypto]",
 ]
 
+[project.scripts]
+arnold = "arnold.cli:cli_entry"
+
 [project.optional-dependencies]
 db = [
     "psycopg[binary]>=3.1",
@@ -74,6 +77,11 @@ exclude = [
 
 [tool.hatch.build.targets.wheel]
 packages = ["arnold", "arnold_pipelines"]
+artifacts = [
+    "py.typed",
+    "**/pipeline_ids.json",
+    "**/SKILL.md",
+]
 exclude = [
     "arnold/pipelines/megaplan/cloud/_reference/**",
     "arnold/pipelines/megaplan/agent/pyproject.toml",
@@ -86,6 +94,7 @@ testpaths = ["tests"]
 pythonpath = ["."]
 addopts = "--import-mode=importlib"
 python_files = ["test_*.py", "editorial_*.py"]
+norecursedirs = ["tests/archive", ".*", "build", "dist", "CVS", "_darcs", "{arch}", "*.egg"]
 markers = [
     "asyncio: async tests, primarily for the vendored agent runtime",
     "conformance: opt-in live conformance tests that require external authenticated CLIs",
