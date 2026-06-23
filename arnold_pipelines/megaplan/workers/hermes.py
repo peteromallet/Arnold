@@ -341,6 +341,86 @@ def _strip_content_xml_tool_calls(content: str) -> str | None:
     return stripped or None
 
 
+def _extract_json_from_mutating_tool_markup(content: str) -> str | None:
+    """Try to recover JSON output from DeepSeek/Kimi write-style tool markup.
+
+    Some models answer "fill in the JSON template" by emitting a
+    ``<write_file path=...>`` or ``<invoke name="write_file">`` block
+    containing the JSON payload.  When that happens, treat the written
+    content as the worker's actual response instead of rejecting it.
+    """
+    if not content or "<" not in content:
+        return None
+
+    candidates: list[str] = []
+
+    # 1. Plain XML tags: <write_file ...> ... </write_file>
+    tag_pattern = re.compile(
+        r"<(?P<tag>write_file|file_write|write|edit_file|patch|apply_patch|delete_file)\b[^>]*>"
+        r"(?P<body>.*?)"
+        r"</(?P=tag)>",
+        re.DOTALL | re.IGNORECASE,
+    )
+    for match in tag_pattern.finditer(content):
+        body = match.group("body")
+        # Prefer an explicit <content> child if present.
+        content_match = re.search(
+            r"<content\b[^>]*>(.*?)</content>", body, re.DOTALL | re.IGNORECASE
+        )
+        candidates.append(content_match.group(1).strip() if content_match else body.strip())
+        # Also keep the whole body in case JSON is directly inside the tag.
+        if content_match:
+            candidates.append(body.strip())
+
+    # 2. <invoke name="write_file"> ... <parameter name="content">...</parameter> ...
+    invoke_pattern = re.compile(
+        r"<[^<>\s]*invoke\b[^<>]*\bname=[\"'](?P<name>write_file|file_write|write|edit_file|patch|apply_patch|delete_file)[\"'][^<>]*>"
+        r"(?P<body>.*?)"
+        r"</[^<>\s]*invoke>",
+        re.DOTALL | re.IGNORECASE,
+    )
+    param_pattern = re.compile(
+        r"<[^<>\s]*parameter\b[^<>]*\bname=[\"']content[\"'][^<>]*>"
+        r"(?P<value>.*?)"
+        r"</[^<>\s]*parameter>",
+        re.DOTALL | re.IGNORECASE,
+    )
+    for match in invoke_pattern.finditer(content):
+        body = match.group("body")
+        for param in param_pattern.finditer(body):
+            candidates.append(param.group("value").strip())
+        candidates.append(body.strip())
+
+    # 3. Self-closing tags with a content= attribute.
+    self_closing_pattern = re.compile(
+        r"<(write_file|file_write|write|edit_file|patch|apply_patch|delete_file)\b[^>]*\bcontent=[\"'](?P<value>[^\"']+)[\"'][^>]*/>",
+        re.DOTALL | re.IGNORECASE,
+    )
+    for match in self_closing_pattern.finditer(content):
+        candidates.append(match.group("value").strip())
+
+    # 4. Fall back to the largest JSON-ish block anywhere in the markup.
+    json_block_pattern = re.compile(r"(\{[\s\S]*?\}|\[[\s\S]*?\])")
+    for match in json_block_pattern.finditer(content):
+        candidates.append(match.group(1).strip())
+
+    for candidate in candidates:
+        if not candidate:
+            continue
+        # Strip markdown fences if the model wrapped the JSON.
+        cleaned = candidate
+        if cleaned.startswith("```"):
+            cleaned = re.sub(r"^```(?:json)?\s*", "", cleaned)
+            cleaned = re.sub(r"\s*```$", "", cleaned)
+            cleaned = cleaned.strip()
+        try:
+            json.loads(cleaned)
+            return cleaned
+        except json.JSONDecodeError:
+            continue
+    return None
+
+
 def _normalize_response_content_tool_calls(response) -> None:
     """Promote DeepSeek/Kimi XML content tool calls to OpenAI-style objects."""
     choices = getattr(response, "choices", None)
@@ -351,6 +431,10 @@ def _normalize_response_content_tool_calls(response) -> None:
         return
     content = getattr(message, "content", None)
     if isinstance(content, str) and _contains_mutating_deepseek_tool_markup(content):
+        recovered = _extract_json_from_mutating_tool_markup(content)
+        if recovered:
+            message.content = recovered
+            return
         names = ", ".join(sorted(_deepseek_tool_markup_names(content)))
         raise CliError(
             "unsupported_tool_call_markup",

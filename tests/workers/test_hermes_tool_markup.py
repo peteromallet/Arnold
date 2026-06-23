@@ -35,12 +35,49 @@ def test_content_tool_calls_parse_invoke_read_alias() -> None:
     assert _arguments(calls[0]) == {"path": "src/app.py"}
 
 
-def test_normalize_response_rejects_write_tool_markup() -> None:
+def test_normalize_response_recovers_write_tool_markup() -> None:
     response = SimpleNamespace(
         choices=[
             SimpleNamespace(
                 message=SimpleNamespace(
                     content='<write_file path="critique_check_scope.json">{"checks":[]}</write_file>',
+                    tool_calls=None,
+                )
+            )
+        ]
+    )
+
+    _normalize_response_content_tool_calls(response)
+    assert response.choices[0].message.content == '{"checks":[]}'
+
+
+def test_normalize_response_recovers_invoke_write_file_markup() -> None:
+    response = SimpleNamespace(
+        choices=[
+            SimpleNamespace(
+                message=SimpleNamespace(
+                    content=(
+                        '<invoke name="write_file">'
+                        '<parameter name="path">critique_check_scope.json</parameter>'
+                        '<parameter name="content">{"checks":[{"id":"scope","status":"ok"}]}</parameter>'
+                        '</invoke>'
+                    ),
+                    tool_calls=None,
+                )
+            )
+        ]
+    )
+
+    _normalize_response_content_tool_calls(response)
+    assert json.loads(response.choices[0].message.content)["checks"][0]["id"] == "scope"
+
+
+def test_normalize_response_still_rejects_unrecoverable_write_markup() -> None:
+    response = SimpleNamespace(
+        choices=[
+            SimpleNamespace(
+                message=SimpleNamespace(
+                    content='<write_file path="x.txt">not valid json</write_file>',
                     tool_calls=None,
                 )
             )
