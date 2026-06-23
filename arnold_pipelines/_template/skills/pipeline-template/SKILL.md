@@ -1,3 +1,8 @@
+---
+name: pipeline-template-reference
+description: Reference contract for the canonical Arnold pipeline template scaffold.
+---
+
 # Skill: Pipeline Template Reference
 
 The canonical scaffold is `arnold_pipelines/_template/`. It shows the minimum
