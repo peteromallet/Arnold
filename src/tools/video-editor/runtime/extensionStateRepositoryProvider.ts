@@ -92,6 +92,11 @@ export class InMemoryProviderStore implements ProviderBackedStore {
 
 // ---------------------------------------------------------------------------
 // localStorage-backed store (for direct local extensions)
+//
+// M1-LOCKED: Settings source of truth remains provider/localStorage with no
+// migration to an alternative backend (IndexedDB, settings sync API, etc.).
+// The ProviderBackedStore interface (get/set/delete) and reserved keys are
+// stable.  See docs/extensions/extension-layer-foundation-assessment.md §2.4.
 // ---------------------------------------------------------------------------
 
 /**

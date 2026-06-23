@@ -1,0 +1,65 @@
+{
+  "id": "log_d1d48d49713b",
+  "level": "debug",
+  "category": "system",
+  "event_type": "authority_divergence",
+  "message": "authority_divergence emitted",
+  "details": {
+    "event": {
+      "seq": 1266,
+      "schema_version": 1,
+      "ts_utc": "2026-06-23T16:45:11.874743+00:00",
+      "ts_rel_init_s": 1887.066529,
+      "kind": "authority_divergence",
+      "phase": "execute",
+      "payload": {
+        "diagnostic_version": 1,
+        "task_id": "T2",
+        "raw_terminal_status": "done",
+        "authority_status": "unknown",
+        "authoritative": false,
+        "reason": "stale_evidence:missing_head:task_files_changed",
+        "missing_outputs": [],
+        "stale_evidence": [
+          "missing_head:task_files_changed",
+          "missing_head:task_commands_run",
+          "missing_head:task_commands_run",
+          "missing_head:task_files_changed",
+          "missing_head:task_commands_run",
+          "missing_head:task_commands_run"
+        ],
+        "would_block_reasons": [
+          "stale_evidence:missing_head:task_files_changed",
+          "stale_evidence:missing_head:task_commands_run"
+        ],
+        "error": null,
+        "diagnostics": {
+          "task_id": "T2",
+          "declared_outputs": {
+            "files_changed": [
+              "src/tools/video-editor/lib/proposal-runtime.test.ts"
+            ],
+            "commands_run": [
+              "npx vitest run src/tools/video-editor/lib/proposal-runtime.test.ts --reporter=verbose"
+            ]
+          },
+          "linked_evidence_count": 6,
+          "evidence_count": 14,
+          "normalization": "iterable",
+          "status": "unknown",
+          "evidence_sources": [
+            "plan_artifacts"
+          ],
+          "loaded_evidence_count": 14,
+          "raw_terminal_status": "done"
+        },
+        "ts_utc": "2026-06-23T16:45:11.874332+00:00"
+      },
+      "transaction_id": "b3855628385400e2",
+      "store_method": "log_system_event"
+    }
+  },
+  "turn_id": null,
+  "epic_id": "m1-contracts-and-proposal-20260623-1813",
+  "occurred_at": "2026-06-23T16:45:11.874806Z"
+}

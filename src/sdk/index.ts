@@ -5622,6 +5622,43 @@ export interface ProposalEnvelope {
 }
 
 // ---------------------------------------------------------------------------
+// M1: Proposal import contracts
+// ---------------------------------------------------------------------------
+
+/** Status of an individual proposal within an import batch. */
+export type ProposalImportStatus = 'imported' | 'skipped' | 'rejected';
+
+/** Diagnostic produced during proposal import validation. */
+export interface ProposalImportDiagnostic {
+  /** Diagnostic severity. */
+  severity: 'error' | 'warning';
+  /** Diagnostic code (e.g. 'proposal-import/missing-id'). */
+  code: string;
+  /** Human-readable diagnostic message. */
+  message: string;
+  /** Zero-based index of the proposal in the envelope's proposals array. */
+  proposalIndex?: number;
+  /** The proposal ID, if available. */
+  proposalId?: string;
+  /** Additional structured detail. */
+  detail?: Record<string, unknown>;
+}
+
+/** Result of importing proposals from a ProposalEnvelope. */
+export interface ProposalImportResult {
+  /** Number of proposals successfully imported. */
+  imported: number;
+  /** Number of proposals skipped (e.g. non-pending state). */
+  skipped: number;
+  /** Number of proposals rejected during import validation. */
+  rejected: number;
+  /** Individual per-proposal status entries. */
+  statuses: readonly { proposalId: string; status: ProposalImportStatus }[];
+  /** Diagnostics produced during import, if any. */
+  diagnostics: readonly ProposalImportDiagnostic[];
+}
+
+// ---------------------------------------------------------------------------
 // M6: Asset metadata types
 // ---------------------------------------------------------------------------
 

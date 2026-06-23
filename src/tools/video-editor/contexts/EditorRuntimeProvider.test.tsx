@@ -4,7 +4,7 @@ import type { FC, ReactNode } from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import { defineExtension } from '@reigh/editor-sdk';
 import type { Diagnostic, ExtensionContribution } from '@reigh/editor-sdk';
-import type { DataProvider } from '@/tools/video-editor/data/DataProvider.ts';
+import type { DataProvider, ExtensionPersistenceService } from '@/tools/video-editor/data/DataProvider.ts';
 import type { EffectRegistryRecord } from '@/tools/video-editor/effects/registry/types.ts';
 import { useEffectRegistryContext } from '@/tools/video-editor/effects/registry/EffectRegistryContext.tsx';
 import { useTransitionRegistryContext } from '@/tools/video-editor/transitions/registry/index.ts';
@@ -18,6 +18,12 @@ import { EditorRuntimeProvider } from '@/tools/video-editor/contexts/EditorRunti
 import type { LiveDataRegistry } from '@/tools/video-editor/runtime/liveDataRegistry.ts';
 import type { LivePermissionService } from '@/tools/video-editor/runtime/livePermissions.ts';
 import { ExtensionSettingsPanel } from '@/tools/video-editor/components/ExtensionSettings/ExtensionSettingsPanel';
+import {
+  createProposalRuntime,
+  createProposalPersistenceBridge,
+  type ProposalPersistenceProvider,
+} from '@/tools/video-editor/lib/proposal-runtime';
+import { useTimelineState } from '@/tools/video-editor/hooks/useTimelineState';
 
 const mocks = vi.hoisted(() => {
   const syncSlices = vi.fn();
@@ -91,8 +97,21 @@ vi.mock('@/tools/video-editor/hooks/useSequenceResources.ts', async (importOrigi
 });
 
 vi.mock('@/tools/video-editor/hooks/useTimelineState.ts', () => ({
-  useTimelineState: () => ({ store: mocks.timelineStore }),
+  useTimelineState: vi.fn(() => ({ store: mocks.timelineStore })),
 }));
+
+vi.mock('@/tools/video-editor/lib/proposal-runtime', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/tools/video-editor/lib/proposal-runtime')>();
+  return {
+    ...actual,
+    createProposalRuntime: vi.fn((...args: Parameters<typeof actual.createProposalRuntime>) =>
+      actual.createProposalRuntime(...args),
+    ),
+    createProposalPersistenceBridge: vi.fn((...args: Parameters<typeof actual.createProposalPersistenceBridge>) =>
+      actual.createProposalPersistenceBridge(...args),
+    ),
+  };
+});
 
 const Component: FC<{ children: ReactNode }> = ({ children }) => children;
 const ReplacementComponent: FC<{ children: ReactNode }> = ({ children }) => children;
@@ -1869,5 +1888,336 @@ describe('EditorRuntimeProvider clip-type registry scoped cleanup', () => {
     expect(latestRecords.map((r) => r.clipTypeId)).toHaveLength(1);
     expect(disposeA).toHaveBeenCalled();
     expect(disposeB).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// M1: Proposal persistence provider lifecycle (fail-to-pass — T5 will satisfy)
+// ---------------------------------------------------------------------------
+
+describe('M1: proposal persistence provider lifecycle', () => {
+  /**
+   * Create a minimal mock TimelineOps that satisfies the interface.
+   * The real createProposalRuntime requires validate/preview/apply methods.
+   */
+  function makeMockTimelineOps() {
+    return {
+      validate: vi.fn().mockReturnValue({ valid: true, diagnostics: [] }),
+      preview: vi.fn().mockReturnValue({
+        diff: { version: 1, entries: [], affectedObjectIds: [] },
+        fullyPreviewable: true,
+        diagnostics: [],
+      }),
+      apply: vi.fn().mockReturnValue({ version: 1, entries: [], affectedObjectIds: [] }),
+      checkpoint: vi.fn().mockReturnValue('ckpt-1'),
+      rollback: vi.fn().mockReturnValue(null),
+      setAllTracksMuted: vi.fn().mockReturnValue({ version: 1, entries: [], affectedObjectIds: [] }),
+    };
+  }
+
+  /**
+   * Create a mock ExtensionPersistenceService whose initialize/dispose are
+   * vi.fn() spies and whose capabilities.proposals is true so the bridge is
+   * created.  All proposal CRUD methods resolve to empty/no-op results.
+   */
+  function makeMockPersistenceService(overrides?: { initialize?: () => Promise<void> }) {
+    const initialize = overrides?.initialize ?? vi.fn().mockResolvedValue(undefined);
+    return {
+      scope: { userId: 'user-1', timelineId: 'timeline-1' },
+      capabilities: { state: false, settings: false, proposals: true },
+      initialize,
+      dispose: vi.fn().mockResolvedValue(undefined),
+      isDisposed: false,
+      stateRepository: undefined,
+      // Proposal CRUD — stub implementations that the bridge will call
+      createProposal: vi.fn().mockResolvedValue({ id: 'p-1' }),
+      updateProposalStatus: vi.fn().mockResolvedValue(undefined),
+      queryProposals: vi.fn().mockResolvedValue([]),
+    } satisfies ExtensionPersistenceService;
+  }
+
+  it('calls initialize() on the persistence service before exposing proposalRuntime', async () => {
+    const persistenceService = makeMockPersistenceService();
+    const mockOps = makeMockTimelineOps();
+
+    // Override useTimelineState so timelineOps is non-null — this is the
+    // gate that allows proposalRuntime creation in EditorRuntimeProviderInner.
+    vi.mocked(useTimelineState).mockReturnValue({
+      store: {
+        getState: () => ({
+          data: { data: mocks.timelineData },
+          timelineOps: mockOps as any,
+          syncSlices: mocks.syncSlices,
+        }),
+      },
+    } as any);
+
+    // Build a DataProvider whose createExtensionPersistenceService returns
+    // the service mock.
+    const dataProvider = {
+      createExtensionPersistenceService: vi.fn().mockReturnValue(persistenceService),
+    } as unknown as DataProvider;
+
+    // Clear any previous syncSlices calls from module mocks.
+    mocks.syncSlices.mockClear();
+
+    render(
+      <EditorRuntimeProvider
+        dataProvider={dataProvider}
+        timelineId="timeline-1"
+        userId="user-1"
+        extensions={[]}
+      >
+        <div data-testid="child" />
+      </EditorRuntimeProvider>,
+    );
+
+    // After render, the service factory must have been called.
+    expect(dataProvider.createExtensionPersistenceService).toHaveBeenCalled();
+
+    // initialize() must have been called on the service.
+    // (FAIL-TO-PASS: currently initialize is never called. T5 will fix this.)
+    expect(persistenceService.initialize).toHaveBeenCalled();
+
+    // Wait for initialization to settle, then verify proposalRuntime was
+    // exposed via syncSlices AFTER initialization.
+    await waitFor(() => {
+      expect(persistenceService.initialize).toHaveBeenCalled();
+    });
+
+    // Verify syncSlices carried a proposalRuntime.
+    const syncCalls = mocks.syncSlices.mock.calls.filter(
+      (call: any[]) => call[0] && 'proposalRuntime' in call[0] && call[0].proposalRuntime != null,
+    );
+    expect(syncCalls.length).toBeGreaterThanOrEqual(1);
+  });
+
+  it('does not expose proposalRuntime when persistence initialization fails', async () => {
+    const initError = new Error('Persistence backend unavailable');
+    const persistenceService = makeMockPersistenceService({
+      initialize: vi.fn().mockRejectedValue(initError),
+    });
+    const mockOps = makeMockTimelineOps();
+
+    vi.mocked(useTimelineState).mockReturnValue({
+      store: {
+        getState: () => ({
+          data: { data: mocks.timelineData },
+          timelineOps: mockOps as any,
+          syncSlices: mocks.syncSlices,
+        }),
+      },
+    } as any);
+
+    const dataProvider = {
+      createExtensionPersistenceService: vi.fn().mockReturnValue(persistenceService),
+    } as unknown as DataProvider;
+
+    mocks.syncSlices.mockClear();
+
+    render(
+      <EditorRuntimeProvider
+        dataProvider={dataProvider}
+        timelineId="timeline-1"
+        userId="user-1"
+        extensions={[]}
+      >
+        <div data-testid="child" />
+      </EditorRuntimeProvider>,
+    );
+
+    // initialize must have been attempted.
+    expect(persistenceService.initialize).toHaveBeenCalled();
+
+    // When initialization fails, syncSlices MUST NOT carry a non-null
+    // proposalRuntime.  (FAIL-TO-PASS: currently the runtime is exposed
+    // unconditionally in the render body, without waiting for initialize.)
+    // After T5, this should hold.
+    await waitFor(() => {
+      expect(persistenceService.initialize).toHaveBeenCalled();
+    });
+
+    const runtimeSyncs = mocks.syncSlices.mock.calls.filter(
+      (call: any[]) => call[0] && 'proposalRuntime' in call[0] && call[0].proposalRuntime != null,
+    );
+    // In the corrected implementation (T5), a failed initialize must not
+    // expose a persistence-backed proposalRuntime.
+    expect(runtimeSyncs.length).toBe(0);
+  });
+
+  it('throws a clear initialization error when uninitialized proposal persistence is used', async () => {
+    // Build a real CachedExtensionPersistenceService via InMemoryDataProvider
+    // but skip calling initialize(). Then wrap it in the bridge and assert
+    // that any data-access method throws.
+    const { InMemoryDataProvider } = await import(
+      '@/tools/video-editor/testing/InMemoryDataProvider'
+    );
+
+    const provider = new InMemoryDataProvider();
+    const diagnostics: any[] = [];
+    const service = provider.createExtensionPersistenceService(
+      { userId: 'user-1', timelineId: 'timeline-1' },
+      diagnostics,
+    );
+
+    // Deliberately skip service.initialize() — the service is uninitialized.
+
+    const bridge = createProposalPersistenceBridge(service);
+
+    // Any persistence operation must reject with the initialization error.
+    await expect(bridge.loadAllProposals()).rejects.toThrow(
+      'Repository not initialized',
+    );
+
+    await expect(
+      bridge.createProposal({
+        source: 'test',
+        state: 'pending',
+        baseVersion: 1,
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+        patch: {},
+      }),
+    ).rejects.toThrow('Repository not initialized');
+
+    await expect(
+      bridge.updateProposalStatus('p-1', 'accepted'),
+    ).rejects.toThrow('Repository not initialized');
+  });
+
+  it('allows proposal persistence after successful initialization', async () => {
+    // Verify the happy path: after initialize() succeeds, the bridge works.
+    const { InMemoryDataProvider } = await import(
+      '@/tools/video-editor/testing/InMemoryDataProvider'
+    );
+
+    const provider = new InMemoryDataProvider();
+    const diagnostics: any[] = [];
+    const service = provider.createExtensionPersistenceService(
+      { userId: 'user-1', timelineId: 'timeline-1' },
+      diagnostics,
+    );
+
+    // Properly initialize the service first.
+    await service.initialize();
+
+    const bridge = createProposalPersistenceBridge(service);
+
+    // loadAllProposals should succeed (return empty array for fresh state).
+    const proposals = await bridge.loadAllProposals();
+    expect(proposals).toEqual([]);
+
+    // createProposal should succeed.
+    const id = await bridge.createProposal({
+      source: 'test-ext',
+      state: 'pending',
+      baseVersion: 1,
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+      patch: { version: 1, operations: [] },
+    });
+    expect(typeof id).toBe('string');
+    expect(id.length).toBeGreaterThan(0);
+
+    // After creation, loadAllProposals should return the persisted proposal.
+    const reloaded = await bridge.loadAllProposals();
+    expect(reloaded.length).toBe(1);
+    expect(reloaded[0].id).toBe(id);
+
+    // updateProposalStatus should succeed.
+    await expect(
+      bridge.updateProposalStatus(id, 'accepted', { reason: 'approved' }),
+    ).resolves.toBeUndefined();
+
+    // Cleanup.
+    await service.dispose();
+  });
+
+  it('scopes persistence to userId/timelineId/provider changes, disposing old service and creating fresh', async () => {
+    // This test verifies the T5 rework: when scope (userId, timelineId, or
+    // dataProvider) changes, the old persistence service is disposed, the
+    // bridge is cleared, and a new service is created + initialized for the
+    // new scope.
+    const disposeFirst = vi.fn().mockResolvedValue(undefined);
+    const disposeSecond = vi.fn().mockResolvedValue(undefined);
+
+    const firstService = makeMockPersistenceService();
+    firstService.dispose = disposeFirst;
+
+    const secondService = makeMockPersistenceService();
+    secondService.dispose = disposeSecond;
+
+    const mockOps = makeMockTimelineOps();
+    vi.mocked(useTimelineState).mockReturnValue({
+      store: {
+        getState: () => ({
+          data: { data: mocks.timelineData },
+          timelineOps: mockOps as any,
+          syncSlices: mocks.syncSlices,
+        }),
+      },
+    } as any);
+
+    mocks.syncSlices.mockClear();
+
+    // createExtensionPersistenceService returns different services based on userId.
+    const factory = vi
+      .fn()
+      .mockReturnValueOnce(firstService)
+      .mockReturnValueOnce(secondService);
+
+    const dataProvider = {
+      createExtensionPersistenceService: factory,
+    } as unknown as DataProvider;
+
+    // Render with scope A.
+    const { rerender } = render(
+      <EditorRuntimeProvider
+        dataProvider={dataProvider}
+        timelineId="timeline-A"
+        userId="user-A"
+        extensions={[]}
+      >
+        <div data-testid="child" />
+      </EditorRuntimeProvider>,
+    );
+
+    // First service created and initialized.
+    expect(factory).toHaveBeenCalledTimes(1);
+    expect(firstService.initialize).toHaveBeenCalledTimes(1);
+    expect(disposeFirst).not.toHaveBeenCalled();
+
+    await waitFor(() => {
+      expect(firstService.initialize).toHaveBeenCalled();
+    });
+
+    // Rerender with scope B (different userId + timelineId).
+    rerender(
+      <EditorRuntimeProvider
+        dataProvider={dataProvider}
+        timelineId="timeline-B"
+        userId="user-B"
+        extensions={[]}
+      >
+        <div data-testid="child" />
+      </EditorRuntimeProvider>,
+    );
+
+    // Old service must have been disposed.
+    await waitFor(() => {
+      expect(disposeFirst).toHaveBeenCalledTimes(1);
+    });
+
+    // New service created for scope B.
+    expect(factory).toHaveBeenCalledTimes(2);
+    expect(secondService.initialize).toHaveBeenCalledTimes(1);
+
+    // Verify the factory was called with the NEW scope params.
+    const secondCallArgs = factory.mock.calls[1];
+    expect(secondCallArgs[0]).toEqual({ userId: 'user-B', timelineId: 'timeline-B' });
+
+    await waitFor(() => {
+      expect(secondService.initialize).toHaveBeenCalled();
+    });
   });
 });

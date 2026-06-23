@@ -1,0 +1,70 @@
+base_branch: main
+
+milestones:
+  - label: m1-contracts-proposal-spine
+    idea: .megaplan/briefs/reigh-pristine-extension-foundation/m1-contracts-proposal-spine.md
+    branch: epic/reigh-pristine-foundation-m1-proposal-spine
+    profile: partnered-5
+    robustness: full
+    depth: high
+    vendor: codex
+    with_prep: true
+    prep_direction: "Focus on canonical proposal envelope/import contracts, initialized proposal persistence ownership, extension activity region contract, and narrow failing anchors. Do not wire the full edge/client vertical until the runtime/persistence contract is frozen."
+    notes: "Freeze contracts and proposal runtime/persistence spine before wiring the user-visible agent proposal path."
+
+  - label: m2-agent-proposal-vertical
+    idea: .megaplan/briefs/reigh-pristine-extension-foundation/m2-agent-proposal-vertical.md
+    branch: epic/reigh-pristine-foundation-m2-agent-proposals
+    profile: partnered-5
+    robustness: full
+    depth: high
+    vendor: codex
+    with_prep: true
+    prep_direction: "Focus on edge response shape, useAgentSession import, production ProposalPanel/activity region mounting, accept/reject path, reload persistence, true mutation_applied, and proposal_policy durability/removal."
+    notes: "Make the M3 proposal-first agent path demonstrably end to end and user-visible."
+
+  - label: m3-repository-first-settings-runtime
+    idea: .megaplan/briefs/reigh-pristine-extension-foundation/m3-repository-first-settings-runtime.md
+    branch: epic/reigh-pristine-foundation-m3-settings-runtime
+    profile: partnered-5
+    robustness: full
+    depth: high
+    vendor: codex
+    with_prep: true
+    prep_direction: "Focus on ExtensionStateRepository-backed settings source of truth, createExtensionSettingsService semantics, extension context injection, settings.set write-through, localStorage compatibility/migration, stale dispose prevention, and refresh generation."
+    notes: "Make provider-backed settings canonical before improving manager settings UI."
+
+  - label: m4-manager-schemaform-settings
+    idea: .megaplan/briefs/reigh-pristine-extension-foundation/m4-manager-schemaform-settings.md
+    branch: epic/reigh-pristine-foundation-m4-manager-settings
+    profile: partnered-5
+    robustness: full
+    depth: high
+    vendor: codex
+    with_prep: true
+    prep_direction: "Focus on shared SchemaForm settings editor abstraction, manager defaults/validation/save/reload, unsupported schema preservation/rejection, repair UX states, and bidirectional runtime/manager coherence."
+    notes: "Make Extension Manager settings the canonical user-facing settings surface."
+
+  - label: m5-lifecycle-diagnostics-readiness
+    idea: .megaplan/briefs/reigh-pristine-extension-foundation/m5-lifecycle-diagnostics-readiness.md
+    branch: epic/reigh-pristine-foundation-m5-readiness
+    profile: partnered-5
+    robustness: full
+    depth: high
+    vendor: codex
+    with_prep: true
+    prep_direction: "Focus on lifecycle recovery keys, diagnostics provenance, manager inventory semantics, non-active contribution summaries, trust/security docs, foundation contract map, readiness gate, and browser/layout acceptance coverage."
+    notes: "Close the remaining M4/M5 foundation promises and convert readiness from narrative to executable gate."
+
+on_failure:
+  abort: stop_chain
+on_escalate:
+  abort: stop_chain
+merge_policy: auto
+
+driver:
+  robustness: full
+  auto_approve: true
+  max_iterations: 120
+  poll_sleep: 8.0
+

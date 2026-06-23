@@ -54,6 +54,7 @@ import type { VideoEditorSlotName, VideoEditorRenderContext, VideoEditorOutputFo
 import { CodePanelCanary } from '@/tools/video-editor/components/Canary/CodePanelCanary';
 import { WritingPanelCanary } from '@/tools/video-editor/components/Canary/WritingPanelCanary';
 import { StagePanelCanary } from '@/tools/video-editor/components/Canary/StagePanelCanary';
+import { ExtensionActivityRegion, type ExtensionStatusEvent } from '@/tools/video-editor/components/ExtensionActivityRegion';
 
 const MIN_TIMELINE_HEIGHT = 140;
 const MIN_PREVIEW_HEIGHT = 180;
@@ -182,6 +183,11 @@ function TimelineEditorShellCoreComponent({
   const [isMobilePropertiesOpen, setIsMobilePropertiesOpen] = useState(false);
   const [isSequenceCreatorOpen, setIsSequenceCreatorOpen] = useState(false);
   const [isCommandPaletteOpen, setIsCommandPaletteOpen] = useState(false);
+  /** M1: Extension activity region status events (placeholder state). */
+  const [activityEvents, setActivityEvents] = useState<readonly ExtensionStatusEvent[]>([]);
+  const handleActivityDismiss = useCallback((eventId: string) => {
+    setActivityEvents((prev) => prev.filter((e) => e.id !== eventId));
+  }, []);
   const timelineFps = Math.max(1, editorData.resolvedConfig?.output?.fps ?? 30);
   const conflict = useTimelineRealtime({
     timelineId,
@@ -793,6 +799,19 @@ function TimelineEditorShellCoreComponent({
     </div>
   );
 
+  /** M1: Extension activity region — shallow placeholder mounted between toolbar and timeline.
+   * M1-LOCKED: This mount point is intentional across all three layout variants
+   * (desktop, condensed, mobile).  Future milestones will wire agent invocation
+   * feedback, diagnostic panels, and proposal-import status into this region
+   * without changing its position.  See docs/extensions/extension-layer-foundation-assessment.md §2.5. */
+  const activityRegion = (
+    <ExtensionActivityRegion
+      statusEvents={activityEvents}
+      onDismiss={handleActivityDismiss}
+      isExpanded={false}
+    />
+  );
+
   const previewOverlay = (
     <div className="pointer-events-none absolute inset-x-0 top-0 z-20 flex items-center justify-between px-3 py-3" data-shell-interaction="true">
       <span className="pointer-events-auto rounded bg-background/70 px-1.5 py-0.5 font-mono text-[11px] tracking-[0.08em] text-muted-foreground backdrop-blur-sm">{playback.formatTime(playback.currentTime)}</span>
@@ -1022,6 +1041,9 @@ function TimelineEditorShellCoreComponent({
 
             {phoneModeBar}
 
+            {/* M1: Extension activity region — between toolbar and timeline */}
+            {activityRegion}
+
             <div className="flex min-h-0 flex-col gap-3">
               <div className="relative min-h-0 flex-1">
                 {previewOverlay}
@@ -1047,6 +1069,11 @@ function TimelineEditorShellCoreComponent({
           <main className="grid h-full min-h-0 flex-1 animate-in fade-in duration-200 motion-reduce:animate-none motion-reduce:transition-none grid-cols-[minmax(0,1fr)_320px] grid-rows-[auto_minmax(0,1fr)] gap-3 p-3 transition-opacity">
             <div className="col-span-1">
               {toolbar}
+            </div>
+
+            {/* M1: Extension activity region — between toolbar and timeline */}
+            <div className="col-span-1">
+              {activityRegion}
             </div>
 
             <div className="row-span-2 flex min-h-0 flex-col overflow-hidden rounded-xl border border-border bg-card/80">
@@ -1137,6 +1164,11 @@ function TimelineEditorShellCoreComponent({
 
             <div ref={dividerRef} className="col-span-1">
               {toolbarSlot ?? toolbar}
+            </div>
+
+            {/* M1: Extension activity region — between toolbar and timeline */}
+            <div className="col-span-1" style={{ gridColumn: leftPanelSlot ? '2 / span 2' : '1 / span 2' }}>
+              {activityRegion}
             </div>
 
             <div className="relative min-h-0 overflow-hidden" style={{ gridColumn: leftPanelSlot ? '2 / span 2' : '1 / span 2' }}>

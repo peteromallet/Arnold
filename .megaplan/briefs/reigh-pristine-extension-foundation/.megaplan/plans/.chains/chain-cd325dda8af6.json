@@ -1,0 +1,41 @@
+{
+  "schema_version": 0,
+  "current_milestone_index": 0,
+  "current_plan_name": "m1-contracts-and-proposal-20260623-1807",
+  "last_state": null,
+  "pr_number": null,
+  "pr_state": null,
+  "completed": [],
+  "branch_head": null,
+  "pr_head": null,
+  "last_pushed_commit": null,
+  "dirty_flag": false,
+  "sync_state": null,
+  "extra_repos": [],
+  "chain_session": null,
+  "resolved_workspace": null,
+  "extra_repo_sync": [],
+  "completion_contract_mode": "shadow",
+  "full_suite_backstop_mode": "shadow",
+  "retry_counts": {},
+  "ladder_stage": {},
+  "profile_bumps": {},
+  "robustness_bumps": {},
+  "depth_bumps": {},
+  "enforce_revise_counts": {},
+  "metadata": {
+    "execution_environment": {
+      "schema_version": 1,
+      "created_phase": "chain_start",
+      "last_observed_phase": "chain_start",
+      "project_root": "/Users/peteromalley/Documents/reigh-workspace/reigh-app",
+      "target_root": "/Users/peteromalley/Documents/reigh-workspace/reigh-app",
+      "work_dir": "/Users/peteromalley/Documents/reigh-workspace/reigh-app",
+      "engine_root": "/Users/peteromalley/.pyenv/versions/3.11.11/lib/python3.11/site-packages",
+      "target_head": "912a12514eb706caf62309ca30d5c3128408b65a",
+      "target_base": "59781823ab107e928cdc64eaa4c9ba55116c6171",
+      "target_base_ref": "main",
+      "target_fallback_reason": null
+    }
+  }
+}

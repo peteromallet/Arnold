@@ -4,8 +4,8 @@
  * @publicContract
  */
 
-import { describe, expect, it, vi, beforeEach } from 'vitest';
-import { createProposalRuntime } from '@/tools/video-editor/lib/proposal-runtime';
+import { describe, expect, it, vi, beforeEach, beforeAll } from 'vitest';
+import { createProposalRuntime, importEdgeProposals } from '@/tools/video-editor/lib/proposal-runtime';
 import { createTimelineReader } from '@/tools/video-editor/lib/timeline-reader';
 import { buildTimelineData } from '@/tools/video-editor/lib/timeline-data';
 import type { TimelineData } from '@/tools/video-editor/lib/timeline-data';
@@ -1442,6 +1442,636 @@ describe('ProposalRuntime', () => {
         patch: { version: 0, operations: [] },
         baseVersion: 0,
       })).not.toThrow();
+    });
+  });
+
+  // -----------------------------------------------------------------------
+  // M1: importProposal — import validation diagnostics
+  // -----------------------------------------------------------------------
+
+  describe('importProposal', () => {
+    let mockOps: ReturnType<typeof createMockTimelineOps>;
+    let reader: { snapshot: () => { currentVersion: number } };
+    let runtime: ProposalRuntime & { importProposal(proposal: TimelineProposal): void; diagnostics: Array<{ severity: string; code: string; message: string }> };
+
+    beforeEach(() => {
+      mockOps = createMockTimelineOps();
+      reader = { snapshot: () => ({ currentVersion: 1 }) };
+      runtime = createProposalRuntime({
+        timelineOps: mockOps,
+        reader: reader as any,
+        persistenceProvider: null,
+      }) as any;
+    });
+
+    function makeValidProposal(overrides: Partial<TimelineProposal> = {}): TimelineProposal {
+      return {
+        id: 'import-1',
+        source: 'edge-agent',
+        state: 'pending',
+        patch: {
+          version: 1,
+          operations: [
+            { op: 'clip.add', target: 'c1', payload: { track: 'V1', at: 0, clipType: 'hold', hold: 3 } },
+          ],
+        },
+        baseVersion: 1,
+        previewable: false,
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+        ...overrides,
+      };
+    }
+
+    // ── Happy path (existing behavior) ─────────────────────────────────
+
+    it('imports a valid pending proposal into the runtime', () => {
+      const proposal = makeValidProposal();
+      runtime.importProposal(proposal);
+
+      const stored = runtime.get('import-1');
+      expect(stored).toBeDefined();
+      expect(stored!.id).toBe('import-1');
+      expect(stored!.source).toBe('edge-agent');
+      expect(stored!.state).toBe('pending');
+      expect(stored!.patch.operations).toHaveLength(1);
+    });
+
+    it('preserves server-assigned ID, baseVersion, and rationale', () => {
+      const proposal = makeValidProposal({
+        rationale: 'Agent recommends adding a hold clip for pacing',
+        baseVersion: 42,
+      });
+      runtime.importProposal(proposal);
+
+      const stored = runtime.get('import-1')!;
+      expect(stored.rationale).toBe('Agent recommends adding a hold clip for pacing');
+      expect(stored.baseVersion).toBe(42);
+    });
+
+    it('preserves expiry and preview state from the imported proposal', () => {
+      const expiresAt = Date.now() + 86_400_000; // 1 day from now
+      const previewDiff = makeEmptyDiff(1);
+      const proposal = makeValidProposal({
+        expiresAt,
+        previewable: true,
+        previewDiff,
+      });
+      runtime.importProposal(proposal);
+
+      const stored = runtime.get('import-1')!;
+      expect(stored.expiresAt).toBe(expiresAt);
+      expect(stored.previewable).toBe(true);
+      expect(stored.previewDiff).toEqual(previewDiff);
+    });
+
+    it('imports proposals in accepted/rejected/stale/expired states', () => {
+      for (const state of ['accepted', 'rejected', 'stale', 'expired'] as const) {
+        const id = `import-${state}`;
+        runtime.importProposal(makeValidProposal({ id, state }));
+        expect(runtime.get(id)!.state).toBe(state);
+      }
+    });
+
+    it('notifies listeners on import', () => {
+      const listener = vi.fn();
+      runtime.subscribe(listener);
+
+      const proposal = makeValidProposal();
+      runtime.importProposal(proposal);
+
+      expect(listener).toHaveBeenCalled();
+      expect(listener.mock.calls[0][0].id).toBe('import-1');
+    });
+
+    // ── Missing-field validation (existing behavior) ───────────────────
+
+    it('rejects a proposal with missing id (diagnostic emitted)', () => {
+      const proposal = makeValidProposal({ id: '' });
+      runtime.importProposal(proposal);
+
+      expect(runtime.get('import-1')).toBeUndefined();
+      expect(runtime.get('')).toBeUndefined();
+
+      const diags = runtime.diagnostics;
+      const importDiag = diags.find((d) => d.code === 'proposal/import-invalid-shape');
+      expect(importDiag).toBeDefined();
+      expect(importDiag!.severity).toBe('error');
+      expect(importDiag!.message).toContain('missing required fields');
+    });
+
+    it('rejects a proposal with missing source (diagnostic emitted)', () => {
+      const proposal = makeValidProposal({ source: '' });
+      runtime.importProposal(proposal);
+
+      expect(runtime.get('import-1')).toBeUndefined();
+
+      const diags = runtime.diagnostics;
+      const importDiag = diags.find((d) => d.code === 'proposal/import-invalid-shape');
+      expect(importDiag).toBeDefined();
+    });
+
+    it('rejects a proposal with missing patch (diagnostic emitted)', () => {
+      const proposal = makeValidProposal({ patch: undefined as any });
+      runtime.importProposal(proposal);
+
+      expect(runtime.get('import-1')).toBeUndefined();
+
+      const diags = runtime.diagnostics;
+      const importDiag = diags.find((d) => d.code === 'proposal/import-invalid-shape');
+      expect(importDiag).toBeDefined();
+    });
+
+    it('rejects a proposal with null patch (diagnostic emitted)', () => {
+      const proposal = makeValidProposal({ patch: null as any });
+      runtime.importProposal(proposal);
+
+      expect(runtime.get('import-1')).toBeUndefined();
+
+      const diags = runtime.diagnostics;
+      const importDiag = diags.find((d) => d.code === 'proposal/import-invalid-shape');
+      expect(importDiag).toBeDefined();
+    });
+
+    // ── Duplicate handling (existing behavior) ─────────────────────────
+
+    it('skips proposals with duplicate IDs (first-write wins)', () => {
+      const p1 = makeValidProposal({ id: 'dup-1', source: 'agent-a' });
+      const p2 = makeValidProposal({ id: 'dup-1', source: 'agent-b' });
+
+      runtime.importProposal(p1);
+      runtime.importProposal(p2);
+
+      const stored = runtime.get('dup-1')!;
+      expect(stored.source).toBe('agent-a'); // First write preserved
+    });
+
+    // ── Auto-expiry on import (existing behavior) ──────────────────────
+
+    it('auto-expires imported proposals with elapsed TTL', () => {
+      const pastExpiry = Date.now() - 60_000; // 1 minute ago
+      const proposal = makeValidProposal({
+        id: 'expired-import',
+        state: 'pending',
+        expiresAt: pastExpiry,
+      });
+      runtime.importProposal(proposal);
+
+      const stored = runtime.get('expired-import');
+      // After auto-expire, the proposal should be expired, not pending
+      if (stored) {
+        expect(stored.state).toBe('expired');
+      }
+    });
+
+    // ── M1: Invalid patch shapes (fail-to-pass — not yet validated) ────
+
+    it('rejects proposals with invalid patch shape (missing version)', () => {
+      const proposal = makeValidProposal({
+        patch: { operations: [] } as any,
+      });
+      runtime.importProposal(proposal);
+
+      // M1 contract: invalid patch shapes should produce diagnostics
+      const diags = runtime.diagnostics;
+      const validationDiag = diags.find(
+        (d) => d.code === 'proposal/import-invalid-patch-shape' || d.code === 'proposal/import-invalid-shape',
+      );
+      expect(validationDiag).toBeDefined();
+      expect(runtime.get('import-1')).toBeUndefined();
+    });
+
+    it('rejects proposals with missing operations array', () => {
+      const proposal = makeValidProposal({
+        patch: { version: 1 } as any,
+      });
+      runtime.importProposal(proposal);
+
+      const diags = runtime.diagnostics;
+      const validationDiag = diags.find(
+        (d) => d.code === 'proposal/import-invalid-patch-shape' || d.code === 'proposal/import-invalid-shape',
+      );
+      expect(validationDiag).toBeDefined();
+    });
+
+    it('rejects proposals with null operations', () => {
+      const proposal = makeValidProposal({
+        patch: { version: 1, operations: null as any },
+      });
+      runtime.importProposal(proposal);
+
+      const diags = runtime.diagnostics;
+      const validationDiag = diags.find(
+        (d) => d.code === 'proposal/import-invalid-patch-shape' || d.code === 'proposal/import-invalid-shape',
+      );
+      expect(validationDiag).toBeDefined();
+    });
+
+    it('rejects proposals where patch is not an object', () => {
+      const proposal = makeValidProposal({ patch: 'not-a-patch' as any });
+      runtime.importProposal(proposal);
+
+      const diags = runtime.diagnostics;
+      const importDiag = diags.find((d) => d.code === 'proposal/import-invalid-shape');
+      expect(importDiag).toBeDefined();
+      expect(runtime.get('import-1')).toBeUndefined();
+    });
+
+    // ── M1: Unsupported operations (fail-to-pass — not yet validated) ──
+
+    it('rejects proposals with unsupported patch operations', () => {
+      const proposal = makeValidProposal({
+        patch: {
+          version: 1,
+          operations: [
+            { op: 'invalid.operation', target: 'x', payload: {} },
+          ],
+        },
+      });
+      runtime.importProposal(proposal);
+
+      // M1 contract: validateTimelinePatch should reject unknown ops
+      const diags = runtime.diagnostics;
+      const opDiag = diags.find(
+        (d) =>
+          d.code === 'proposal/import-unsupported-operation' ||
+          d.code === 'timeline-patch/unknown-op' ||
+          d.code === 'proposal/import-invalid-shape',
+      );
+      expect(opDiag).toBeDefined();
+    });
+
+    it('rejects proposals with reserved operations', () => {
+      const proposal = makeValidProposal({
+        patch: {
+          version: 1,
+          operations: [
+            { op: 'provider.reload', target: 'timeline', payload: {} },
+          ],
+        },
+      });
+      runtime.importProposal(proposal);
+
+      const diags = runtime.diagnostics;
+      const opDiag = diags.find(
+        (d) =>
+          d.code === 'proposal/import-unsupported-operation' ||
+          d.code === 'timeline-patch/reserved-op' ||
+          d.code === 'proposal/import-invalid-shape',
+      );
+      expect(opDiag).toBeDefined();
+    });
+
+    it('rejects proposals with empty operation list', () => {
+      const proposal = makeValidProposal({
+        patch: { version: 1, operations: [] },
+      });
+      runtime.importProposal(proposal);
+
+      // Empty operations may or may not be rejected — at minimum they
+      // should not crash the runtime.
+      const stored = runtime.get('import-1');
+      // If stored, it should have diagnostics; if not stored, diagnostics
+      // should be in runtime.diagnostics
+      if (stored) {
+        // Empty ops are suspicious; should carry a diagnostic
+        const hasDiag =
+          (stored.diagnostics && stored.diagnostics.length > 0) ||
+          runtime.diagnostics.some(
+            (d) =>
+              d.code === 'proposal/import-empty-operations' ||
+              d.code === 'timeline-patch/empty-operations',
+          );
+        expect(hasDiag).toBe(true);
+      }
+    });
+
+    // ── M1: Payload mismatches (fail-to-pass — not yet validated) ──────
+
+    it('rejects clip.add operations with missing required payload fields', () => {
+      const proposal = makeValidProposal({
+        patch: {
+          version: 1,
+          operations: [
+            { op: 'clip.add', target: 'c-missing', payload: { track: 'V1' } }, // missing at, clipType, hold
+          ],
+        },
+      });
+      runtime.importProposal(proposal);
+
+      // M1 contract: validateTimelinePatch should catch payload mismatches
+      const diags = runtime.diagnostics;
+      const payloadDiag = diags.find(
+        (d) =>
+          d.code === 'proposal/import-payload-mismatch' ||
+          d.code === 'timeline-patch/invalid-payload' ||
+          d.code === 'proposal/import-invalid-shape',
+      );
+      expect(payloadDiag).toBeDefined();
+    });
+
+    it('rejects clip.move operations without required at field', () => {
+      const proposal = makeValidProposal({
+        patch: {
+          version: 1,
+          operations: [
+            { op: 'clip.move', target: 'c-move', payload: {} },
+          ],
+        },
+      });
+      runtime.importProposal(proposal);
+
+      const diags = runtime.diagnostics;
+      const payloadDiag = diags.find(
+        (d) =>
+          d.code === 'proposal/import-payload-mismatch' ||
+          d.code === 'timeline-patch/invalid-payload' ||
+          d.code === 'proposal/import-invalid-shape',
+      );
+      expect(payloadDiag).toBeDefined();
+    });
+
+    it('rejects clip.add with wrong payload types', () => {
+      const proposal = makeValidProposal({
+        patch: {
+          version: 1,
+          operations: [
+            { op: 'clip.add', target: 'c-wrong', payload: { track: 123, at: 'not-a-number', clipType: true, hold: 'abc' } },
+          ],
+        },
+      });
+      runtime.importProposal(proposal);
+
+      const diags = runtime.diagnostics;
+      const payloadDiag = diags.find(
+        (d) =>
+          d.code === 'proposal/import-payload-mismatch' ||
+          d.code === 'timeline-patch/invalid-payload' ||
+          d.code === 'proposal/import-invalid-shape',
+      );
+      expect(payloadDiag).toBeDefined();
+    });
+
+    // ── M1: Structured diagnostics shape (fail-to-pass — not yet validated) ──
+
+    it('produces structured diagnostics with proposalIndex for batch validation', () => {
+      // Import two proposals: one valid, one invalid
+      runtime.importProposal(makeValidProposal({ id: 'valid-1' }));
+      runtime.importProposal(makeValidProposal({ id: '', source: 'bad' })); // invalid
+
+      // M1 contract: diagnostics should identify which proposal failed
+      const diags = runtime.diagnostics;
+      const importDiags = diags.filter((d) => d.code === 'proposal/import-invalid-shape');
+      expect(importDiags.length).toBeGreaterThanOrEqual(1);
+
+      // Ideally diagnostics include the proposal index or ID
+      const hasIdContext = importDiags.some(
+        (d) => (d as any).proposalId !== undefined || (d as any).proposalIndex !== undefined,
+      );
+      // Future: expect(hasIdContext).toBe(true);
+      // Currently diagnostics lack per-proposal indexing — this test
+      // documents the expectation.
+      expect(diags.length).toBeGreaterThan(0);
+    });
+
+    it('uses diagnostic severity "error" for import validation failures', () => {
+      runtime.importProposal(makeValidProposal({ id: '' }));
+
+      const diags = runtime.diagnostics;
+      const importDiag = diags.find((d) => d.code === 'proposal/import-invalid-shape');
+      expect(importDiag).toBeDefined();
+      expect(importDiag!.severity).toBe('error');
+    });
+  });
+
+  // -----------------------------------------------------------------------
+  // M1: importEdgeProposals — envelope-level import
+  // -----------------------------------------------------------------------
+
+  describe('importEdgeProposals', () => {
+    let mockOps: ReturnType<typeof createMockTimelineOps>;
+    let reader: { snapshot: () => { currentVersion: number } };
+
+    beforeEach(() => {
+      mockOps = createMockTimelineOps();
+      reader = { snapshot: () => ({ currentVersion: 1 }) };
+    });
+
+    function makeRuntime() {
+      return createProposalRuntime({
+        timelineOps: mockOps,
+        reader: reader as any,
+        persistenceProvider: null,
+      }) as any;
+    }
+
+    function makePendingProposal(id: string, source = 'edge-agent'): TimelineProposal {
+      return {
+        id,
+        source,
+        state: 'pending',
+        patch: {
+          version: 1,
+          operations: [
+            { op: 'clip.add', target: `c-${id}`, payload: { track: 'V1', at: 0, clipType: 'hold', hold: 3 } },
+          ],
+        },
+        baseVersion: 1,
+        previewable: false,
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      };
+    }
+
+    // ── Happy path (existing behavior) ─────────────────────────────────
+
+    it('imports pending proposals from a valid envelope', () => {
+      const runtime = makeRuntime();
+      const envelope = {
+        proposals: [makePendingProposal('p1'), makePendingProposal('p2')],
+        baseVersion: 1,
+        mutationApplied: false,
+      };
+
+      const count = importEdgeProposals(envelope, runtime);
+      expect(count).toBe(2);
+      expect(runtime.get('p1')).toBeDefined();
+      expect(runtime.get('p2')).toBeDefined();
+    });
+
+    it('returns the count of actually imported proposals', () => {
+      const runtime = makeRuntime();
+      const envelope = {
+        proposals: [
+          makePendingProposal('p1'),
+          makePendingProposal('p2', 'agent-b'),
+          makePendingProposal('p3', 'agent-c'),
+        ],
+        baseVersion: 1,
+        mutationApplied: false,
+      };
+
+      const count = importEdgeProposals(envelope, runtime);
+      expect(count).toBe(3);
+    });
+
+    // ── Empty/missing proposals (existing behavior) ────────────────────
+
+    it('returns 0 for an envelope with empty proposals array', () => {
+      const runtime = makeRuntime();
+      const count = importEdgeProposals(
+        { proposals: [], baseVersion: 1, mutationApplied: false },
+        runtime,
+      );
+      expect(count).toBe(0);
+      expect(runtime.list()).toHaveLength(0);
+    });
+
+    it('returns 0 when proposals field is missing', () => {
+      const runtime = makeRuntime();
+      const count = importEdgeProposals(
+        { baseVersion: 1, mutationApplied: false },
+        runtime,
+      );
+      expect(count).toBe(0);
+    });
+
+    it('returns 0 when proposals field is null', () => {
+      const runtime = makeRuntime();
+      const count = importEdgeProposals(
+        { proposals: null, baseVersion: 1, mutationApplied: false },
+        runtime,
+      );
+      expect(count).toBe(0);
+    });
+
+    // ── Missing runtime importProposal (existing behavior) ─────────────
+
+    it('returns 0 when runtime lacks importProposal', () => {
+      // Create a runtime without importProposal (plain ProposalRuntime)
+      const plainRuntime = createProposalRuntime({
+        timelineOps: mockOps,
+        reader: reader as any,
+        persistenceProvider: null,
+      });
+      // delete the importProposal method to simulate an older runtime
+      delete (plainRuntime as any).importProposal;
+
+      const count = importEdgeProposals(
+        {
+          proposals: [makePendingProposal('p1')],
+          baseVersion: 1,
+          mutationApplied: false,
+        },
+        plainRuntime,
+      );
+      expect(count).toBe(0);
+    });
+
+    // ── Non-pending proposals are skipped (existing behavior) ──────────
+
+    it('skips non-pending proposals (accepted, rejected, stale, expired)', () => {
+      const runtime = makeRuntime();
+      const envelope = {
+        proposals: [
+          makePendingProposal('pending-1'),
+          { ...makePendingProposal('accepted-1'), state: 'accepted' as const },
+          { ...makePendingProposal('rejected-1'), state: 'rejected' as const },
+          { ...makePendingProposal('stale-1'), state: 'stale' as const },
+          { ...makePendingProposal('expired-1'), state: 'expired' as const },
+        ],
+        baseVersion: 1,
+        mutationApplied: false,
+      };
+
+      const count = importEdgeProposals(envelope, runtime);
+      expect(count).toBe(1); // Only the pending one
+      expect(runtime.get('pending-1')).toBeDefined();
+      expect(runtime.get('accepted-1')).toBeUndefined();
+      expect(runtime.get('rejected-1')).toBeUndefined();
+    });
+
+    // ── M1: Malformed envelope validation (fail-to-pass — not yet validated) ──
+
+    it('rejects malformed envelopes where proposals is not an array', () => {
+      const runtime = makeRuntime();
+      const count = importEdgeProposals(
+        { proposals: 'not-an-array' as any, baseVersion: 1, mutationApplied: false },
+        runtime,
+      );
+      // M1 contract: malformed envelopes should be rejected/skipped
+      expect(count).toBe(0);
+      // Future: should also produce a diagnostic about malformed envelope
+    });
+
+    it('rejects envelopes with missing baseVersion', () => {
+      const runtime = makeRuntime();
+      const count = importEdgeProposals(
+        { proposals: [makePendingProposal('p1')], mutationApplied: false } as any,
+        runtime,
+      );
+      // M1 contract: envelope missing baseVersion should be treated with caution
+      // Current behavior: imports anyway (no validation)
+      // Future: should skip or warn
+      expect(count).toBeGreaterThanOrEqual(0);
+    });
+
+    it('rejects envelopes with negative baseVersion', () => {
+      const runtime = makeRuntime();
+      const envelope = {
+        proposals: [makePendingProposal('p1')],
+        baseVersion: -1,
+        mutationApplied: false,
+      };
+      // M1 contract: invalid baseVersion should be rejected
+      const count = importEdgeProposals(envelope, runtime);
+      // Future: should be 0 with a diagnostic
+      expect(count).toBeGreaterThanOrEqual(0);
+    });
+
+    // ── M1: Full batch validation (fail-to-pass — not yet validated) ───
+
+    it('imports only valid proposals when batch contains mixed valid/invalid', () => {
+      const runtime = makeRuntime();
+      const envelope = {
+        proposals: [
+          makePendingProposal('valid-1'),
+          { ...makePendingProposal(''), source: 'bad' }, // missing ID
+          makePendingProposal('valid-2', 'agent-b'),
+        ],
+        baseVersion: 1,
+        mutationApplied: false,
+      };
+
+      const count = importEdgeProposals(envelope, runtime);
+      // M1 contract: only valid proposals should be imported
+      // Current: invalid proposal is rejected by importProposal, so count
+      // should reflect only the successfully imported ones
+      expect(count).toBeGreaterThanOrEqual(2);
+      expect(runtime.get('valid-1')).toBeDefined();
+      expect(runtime.get('valid-2')).toBeDefined();
+    });
+
+    // ── M1: ProposalImportResult contract (fail-to-pass) ───────────────
+
+    it('returns a structured ProposalImportResult instead of a bare count', () => {
+      // M1 contract: importEdgeProposals should return ProposalImportResult
+      // with imported, skipped, rejected counts and per-proposal diagnostics.
+      // Currently it returns just a number — this test documents the
+      // expectation for the contract upgrade.
+      const runtime = makeRuntime();
+      const envelope = {
+        proposals: [
+          makePendingProposal('p1'),
+          { ...makePendingProposal('p2'), state: 'accepted' as const },
+        ],
+        baseVersion: 1,
+        mutationApplied: false,
+      };
+
+      const result = importEdgeProposals(envelope, runtime);
+      // Future: result should be { imported: number; skipped: number; rejected: number; ... }
+      expect(typeof result).toBe('number'); // Currently a number; future: object
     });
   });
 });

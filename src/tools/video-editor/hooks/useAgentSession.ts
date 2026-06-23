@@ -296,6 +296,10 @@ export function useSendMessage(sessionId: string | null | undefined, timelineId?
         const { data, error } = await getSupabaseClient().functions.invoke('ai-timeline-agent', {
           body: {
             session_id: sessionId,
+            // M1-LOCKED: proposal_policy is durable session-scoped state sent on every
+            // agent invocation and automatic continuation.  Lifecycle cleanup (stale
+            // policy removal, per-invocation migration) is deferred to a later milestone.
+            // See docs/extensions/extension-layer-foundation-assessment.md §2.2.
             proposal_policy: 'always',
             ...(nextUserMessage ? { user_message: nextUserMessage } : {}),
             ...(nextUserMessage && attachments?.length ? {

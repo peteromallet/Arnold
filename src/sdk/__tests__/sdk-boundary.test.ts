@@ -153,6 +153,10 @@ import type {
   // M3 Expiry / conflict diagnostics
   ProposalExpiryDetail,
   ProposalEnvelope,
+  // M1: Proposal import contracts
+  ProposalImportDiagnostic,
+  ProposalImportResult,
+  ProposalImportStatus,
   // CreativeContext (updated in M3)
   CreativeContext,
   // M6: Parser / output format / search provider
@@ -680,6 +684,81 @@ describe('M3: type interfaces are importable from @reigh/editor-sdk', () => {
       mutationApplied: true,
     };
     expect(envelope.mutationApplied).toBe(true);
+  });
+
+  // ── M1: Proposal import contracts ─────────────────────────────────────────
+
+  it('ProposalImportDiagnostic shape is constructable', () => {
+    const diag: ProposalImportDiagnostic = {
+      severity: 'error',
+      code: 'proposal-import/missing-id',
+      message: 'Proposal missing required id field',
+      proposalIndex: 0,
+      proposalId: undefined,
+      detail: { source: 'edge-agent', reason: 'invalid-shape' },
+    };
+    expect(diag.severity).toBe('error');
+    expect(diag.code).toBe('proposal-import/missing-id');
+    expect(diag.proposalIndex).toBe(0);
+    expect(diag.proposalId).toBeUndefined();
+    expect(diag.detail).toEqual({ source: 'edge-agent', reason: 'invalid-shape' });
+  });
+
+  it('ProposalImportResult shape is constructable', () => {
+    const result: ProposalImportResult = {
+      imported: 2,
+      skipped: 1,
+      rejected: 0,
+      statuses: [
+        { proposalId: 'prop-1', status: 'imported' },
+        { proposalId: 'prop-2', status: 'imported' },
+        { proposalId: 'prop-3', status: 'skipped' },
+      ],
+      diagnostics: [],
+    };
+    expect(result.imported).toBe(2);
+    expect(result.skipped).toBe(1);
+    expect(result.rejected).toBe(0);
+    expect(result.statuses).toHaveLength(3);
+    expect(result.diagnostics).toHaveLength(0);
+  });
+
+  it('ProposalImportResult with diagnostics is constructable', () => {
+    const result: ProposalImportResult = {
+      imported: 0,
+      skipped: 0,
+      rejected: 2,
+      statuses: [
+        { proposalId: 'bad-1', status: 'rejected' },
+        { proposalId: 'bad-2', status: 'rejected' },
+      ],
+      diagnostics: [
+        {
+          severity: 'error',
+          code: 'proposal-import/invalid-shape',
+          message: 'Proposal missing required fields',
+          proposalIndex: 0,
+          proposalId: 'bad-1',
+        },
+        {
+          severity: 'warning',
+          code: 'proposal-import/stale-base-version',
+          message: 'Proposal baseVersion behind current snapshot',
+          proposalIndex: 1,
+          proposalId: 'bad-2',
+        },
+      ],
+    };
+    expect(result.rejected).toBe(2);
+    expect(result.diagnostics).toHaveLength(2);
+    expect(result.diagnostics[0].severity).toBe('error');
+    expect(result.diagnostics[1].severity).toBe('warning');
+  });
+
+  it('ProposalImportStatus only accepts "imported" | "skipped" | "rejected"', () => {
+    // Type-level contract: the union is narrow and compile-time checked.
+    const statuses: ProposalImportStatus[] = ['imported', 'skipped', 'rejected'];
+    expect(statuses).toHaveLength(3);
   });
 
   it('CreativeContext timeline member is assignable from TimelineOps (typing proof)', () => {
@@ -3607,6 +3686,51 @@ describe('M5/M12: internal renderability types are NOT re-exported from @reigh/e
     for (const forbidden of M5_M12_INTERNAL_FORBIDDEN) {
       expect(valueExports).not.toContain(forbidden);
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// M1: Proposal import API name contract
+// ---------------------------------------------------------------------------
+
+describe('M1: proposal import API name contract', () => {
+  it('no public importEnvelope alias exists in SDK value exports', () => {
+    const valueExports = Object.keys(sdkStar);
+    expect(valueExports).not.toContain('importEnvelope');
+  });
+
+  it('no public importEnvelope alias exists in SDK type exports (namespace check)', () => {
+    // Verify importEnvelope is not a property on the SDK namespace at runtime.
+    const sdkKeys = Object.keys(sdkStar);
+    expect(sdkKeys.filter((k) => k.toLowerCase().includes('importenvelope'))).toHaveLength(0);
+  });
+
+  it('ProposalImportDiagnostic is exported as a type from @reigh/editor-sdk', () => {
+    // Type-only import already verified above; runtime check proves it's in
+    // the module's type space (not a value export, so not in Object.keys).
+    // We verify it compiles by constructing the type — already proven above.
+    const diag: ProposalImportDiagnostic = {
+      severity: 'warning',
+      code: 'test',
+      message: 'test',
+    };
+    expect(diag.severity).toBe('warning');
+  });
+
+  it('ProposalImportResult is exported as a type from @reigh/editor-sdk', () => {
+    const result: ProposalImportResult = {
+      imported: 0,
+      skipped: 0,
+      rejected: 0,
+      statuses: [],
+      diagnostics: [],
+    };
+    expect(result.imported).toBe(0);
+  });
+
+  it('ProposalImportStatus is exported as a type from @reigh/editor-sdk', () => {
+    const s: ProposalImportStatus = 'imported';
+    expect(s).toBe('imported');
   });
 });
 

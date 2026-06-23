@@ -20,9 +20,14 @@ import type {
   DisposeHandle,
   ProposalExpiryDetail,
   ProposalEnvelope,
+  ProposalImportResult,
+  ProposalImportStatus,
+  ProposalImportDiagnostic,
 } from '@/sdk/index';
 import type { TimelineOps } from '@/sdk/index';
 import type { TimelineReader } from '@/sdk/index';
+
+import { validateTimelinePatch } from './timeline-patch';
 
 // ---------------------------------------------------------------------------
 // Persistence provider (lightweight bridge to DataProvider proposal CRUD)
@@ -276,7 +281,13 @@ export function createProposalRuntime(
   const persistenceUnsupported = persistenceProvider === null;
 
   /** Accumulated diagnostics (unsupported-provider, etc.). */
-  const runtimeDiagnostics: Array<{ severity: string; code: string; message: string }> = [];
+  const runtimeDiagnostics: Array<{
+    severity: string;
+    code: string;
+    message: string;
+    proposalId?: string;
+    proposalIndex?: number;
+  }> = [];
 
   if (persistenceUnsupported) {
     runtimeDiagnostics.push({
@@ -664,34 +675,84 @@ export function createProposalRuntime(
 
   // ── Diagnostics getter ─────────────────────────────────────────────────
 
-  function getDiagnostics(): Array<{ severity: string; code: string; message: string }> {
+  function getDiagnostics(): Array<{
+    severity: string;
+    code: string;
+    message: string;
+    proposalId?: string;
+    proposalIndex?: number;
+  }> {
     return runtimeDiagnostics;
   }
 
-  // ── importProposal ─────────────────────────────────────────────────────
+  // ── importProposal (CANONICAL PUBLIC IMPORT API) ──────────────────────
+  // M1-LOCKED: importProposal is the sole canonical public proposal import
+  // API.  No importEnvelope alias exists or will be introduced — the name
+  // contract is settled.  importEdgeProposals serves as the envelope-level
+  // wrapper (see bottom of this file).
+  //
   // M3: Import a pre-built TimelineProposal (e.g. from an edge response
   // envelope) into the runtime, preserving the server-assigned ID and all
   // fields.  Unlike create(), this does NOT auto-generate an ID, does NOT
   // apply replaceForSource semantics, and does NOT trigger an immediate
-  // preview.  Callers should validate the proposal shape before importing.
+  // preview.
+  //
+  // M1 update: validates the proposal's patch through validateTimelinePatch,
+  // rejects malformed proposals before persistence/notification, reports
+  // duplicate IDs diagnostically (instead of silently skipping), and returns
+  // a status indicator so callers (e.g. importEdgeProposals) can build a
+  // structured ProposalImportResult.
 
-  function importProposal(proposal: TimelineProposal): void {
-    // Validate required fields
+  function importProposal(proposal: TimelineProposal): 'imported' | 'duplicate' | 'rejected' {
+    // ── Validate required fields ───────────────────────────────────────
     if (!proposal.id || !proposal.source || !proposal.patch) {
       runtimeDiagnostics.push({
         severity: 'error',
         code: 'proposal/import-invalid-shape',
         message: `importProposal: proposal is missing required fields (id, source, or patch). Proposal not imported.`,
+        proposalId: proposal.id || undefined,
       });
-      return;
+      return 'rejected';
     }
 
-    // If a proposal with this ID already exists, skip (preserves first-write semantics)
+    // ── Validate patch structure through validateTimelinePatch ─────────
+    // Reuse the canonical validator so we don't duplicate schema checks.
+    // Only error-level diagnostics cause rejection; warnings (e.g. reserved
+    // ops) are preserved as non-blocking diagnostics on the stored proposal.
+    const patchValidation = validateTimelinePatch(proposal.patch);
+    if (!patchValidation.valid) {
+      for (const diag of patchValidation.diagnostics) {
+        runtimeDiagnostics.push({
+          severity: diag.severity,
+          code: diag.code,
+          message: diag.message,
+          proposalId: proposal.id,
+        });
+      }
+      return 'rejected';
+    }
+
+    // ── Duplicate detection ────────────────────────────────────────────
+    // If a proposal with this ID already exists, skip (preserves first-write
+    // semantics) but report the duplicate diagnostically instead of silently
+    // returning.
     if (proposals.has(proposal.id)) {
-      return;
+      runtimeDiagnostics.push({
+        severity: 'warning',
+        code: 'proposal/import-duplicate-id',
+        message: `importProposal: proposal with ID "${proposal.id}" already exists. Skipping duplicate.`,
+        proposalId: proposal.id,
+      });
+      return 'duplicate';
     }
 
-    // Normalize optional fields with defaults
+    // ── Normalize optional fields with defaults ────────────────────────
+    // Collect any warning-level diagnostics from validateTimelinePatch
+    // (e.g. reserved-op warnings) as proposal-level diagnostics.
+    const patchWarnings = patchValidation.diagnostics.filter(
+      (d) => d.severity !== 'error',
+    );
+
     const normalized: TimelineProposal = {
       id: proposal.id,
       source: proposal.source,
@@ -705,7 +766,17 @@ export function createProposalRuntime(
       updatedAt: proposal.updatedAt ?? now(),
       expiresAt: proposal.expiresAt,
       expiryDetail: proposal.expiryDetail,
-      diagnostics: proposal.diagnostics,
+      diagnostics:
+        patchWarnings.length > 0
+          ? [
+              ...(proposal.diagnostics ?? []),
+              ...patchWarnings.map((d) => ({
+                severity: d.severity as 'error' | 'warning',
+                code: d.code,
+                message: d.message,
+              })),
+            ]
+          : proposal.diagnostics,
     };
 
     proposals.set(normalized.id, normalized);
@@ -720,6 +791,8 @@ export function createProposalRuntime(
 
     // Notify listeners so UI (ProposalPanel) picks up the import
     notify(normalized);
+
+    return 'imported';
   }
 
   // ── Kick off hydration ─────────────────────────────────────────────────
@@ -729,8 +802,14 @@ export function createProposalRuntime(
   // ── Return ─────────────────────────────────────────────────────────────
 
   const runtime: ProposalRuntime & {
-    diagnostics: Array<{ severity: string; code: string; message: string }>;
-    importProposal(proposal: TimelineProposal): void;
+    diagnostics: Array<{
+      severity: string;
+      code: string;
+      message: string;
+      proposalId?: string;
+      proposalIndex?: number;
+    }>;
+    importProposal(proposal: TimelineProposal): 'imported' | 'duplicate' | 'rejected';
   } = {
     subscribe,
     create,
@@ -761,33 +840,112 @@ export function createProposalRuntime(
  * {@link ProposalRuntime}.
  *
  * Preserves server-assigned IDs, baseVersion, rationale, operations, preview
- * state, and expiry.  Already-terminal proposals (accepted, rejected)
- * are skipped — only pending proposals are imported.
+ * state, and expiry.  Already-terminal proposals (accepted, rejected) are
+ * skipped and diagnostically reported rather than silently dropped.
  *
- * @returns The number of proposals successfully imported.
+ * M1 update: returns a structured {@link ProposalImportResult} with
+ * per-proposal statuses and diagnostics instead of a bare count.
+ * Malformed proposals are rejected by importProposal's internal
+ * validateTimelinePatch check before persistence or notification.
+ *
+ * @returns A {@link ProposalImportResult} with imported/skipped/rejected
+ * counts, per-proposal status entries, and any diagnostics produced.
  */
 export function importEdgeProposals(
   envelope: ProposalEnvelope,
-  runtime: ProposalRuntime & { importProposal?(proposal: TimelineProposal): void },
-): number {
-  if (!envelope.proposals || envelope.proposals.length === 0) {
-    return 0;
+  runtime: ProposalRuntime & {
+    importProposal?(proposal: TimelineProposal): 'imported' | 'duplicate' | 'rejected';
+  },
+): ProposalImportResult {
+  // ── Envelope-level validation ────────────────────────────────────────
+  if (!envelope.proposals || !Array.isArray(envelope.proposals)) {
+    return {
+      imported: 0,
+      skipped: 0,
+      rejected: 0,
+      statuses: [],
+      diagnostics: [
+        {
+          severity: 'error',
+          code: 'proposal-import/invalid-envelope',
+          message: 'ProposalEnvelope.proposals must be an array.',
+        },
+      ],
+    };
+  }
+
+  if (envelope.proposals.length === 0) {
+    return { imported: 0, skipped: 0, rejected: 0, statuses: [], diagnostics: [] };
   }
 
   if (typeof runtime.importProposal !== 'function') {
-    return 0;
+    return {
+      imported: 0,
+      skipped: envelope.proposals.length,
+      rejected: 0,
+      statuses: envelope.proposals.map((p) => ({
+        proposalId: p.id,
+        status: 'skipped' as const,
+      })),
+      diagnostics: [
+        {
+          severity: 'error',
+          code: 'proposal-import/unsupported',
+          message: 'Runtime does not support proposal import.',
+        },
+      ],
+    };
   }
 
+  // ── Per-proposal import ──────────────────────────────────────────────
+  const diagnostics: ProposalImportDiagnostic[] = [];
+  const statuses: { proposalId: string; status: ProposalImportStatus }[] = [];
   let imported = 0;
-  for (const proposal of envelope.proposals) {
-    // Skip terminal states — only pending proposals are actionable
+  let skipped = 0;
+  let rejected = 0;
+
+  for (let i = 0; i < envelope.proposals.length; i++) {
+    const proposal = envelope.proposals[i];
+
+    // Skip terminal states — only pending proposals are actionable.
+    // Report them diagnostically so callers know why they were excluded.
     if (proposal.state !== 'pending') {
+      diagnostics.push({
+        severity: 'warning',
+        code: 'proposal-import/skipped-terminal',
+        message: `Proposal "${proposal.id}" skipped: state is "${proposal.state}" (only pending proposals are imported).`,
+        proposalIndex: i,
+        proposalId: proposal.id,
+      });
+      statuses.push({ proposalId: proposal.id, status: 'skipped' });
+      skipped += 1;
       continue;
     }
 
-    runtime.importProposal(proposal);
-    imported += 1;
+    // Delegate to importProposal which now validates via
+    // validateTimelinePatch, rejects malformed proposals before
+    // persistence/notification, and returns a status indicator.
+    const result = runtime.importProposal(proposal);
+
+    switch (result) {
+      case 'imported':
+        statuses.push({ proposalId: proposal.id, status: 'imported' });
+        imported += 1;
+        break;
+      case 'duplicate':
+        statuses.push({ proposalId: proposal.id, status: 'skipped' });
+        skipped += 1;
+        break;
+      case 'rejected':
+        statuses.push({ proposalId: proposal.id, status: 'rejected' });
+        rejected += 1;
+        break;
+      default:
+        // Defensive: treat unknown status as rejected
+        statuses.push({ proposalId: proposal.id, status: 'rejected' });
+        rejected += 1;
+    }
   }
 
-  return imported;
+  return { imported, skipped, rejected, statuses, diagnostics };
 }
