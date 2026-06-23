@@ -7,6 +7,7 @@ from types import MappingProxyType
 import pytest
 
 from arnold.workflow import authoring
+from tests.fixtures.workflow_authoring import components
 
 
 def _provenance(name: str = "plan") -> authoring.ComponentProvenance:
@@ -72,6 +73,17 @@ def test_step_component_is_callable_shaped_without_executing_runtime() -> None:
     )
     assert authored_step.metadata["source"] == ("fixture",)
     assert isinstance(authored_step.metadata, MappingProxyType)
+
+
+def test_workflow_authoring_fixture_components_are_typed_step_exports() -> None:
+    assert components.plan.kind is authoring.ComponentKind.STEP
+    assert components.execute.kind is authoring.ComponentKind.STEP
+    assert components.review.kind is authoring.ComponentKind.STEP
+    assert components.plan.provenance.ref == "tests.fixtures.workflow_authoring.components:plan"
+    assert components.execute.provenance.ref == "tests.fixtures.workflow_authoring.components:execute"
+    assert components.review.provenance.ref == "tests.fixtures.workflow_authoring.components:review"
+    assert components.review.prompt is components.review_prompt
+    assert components.plan.output_schema is components.plan_output
 
 
 def test_reserved_intrinsics_are_declared_and_not_executable() -> None:

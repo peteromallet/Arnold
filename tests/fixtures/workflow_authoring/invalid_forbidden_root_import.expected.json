@@ -8,7 +8,7 @@
       "message": "root package imports are not valid workflow dependencies",
       "import_ref": {
         "module": "arnold",
-        "qualname": ""
+        "qualname": "__root__"
       },
       "source_span": {
         "start_line": 3,
