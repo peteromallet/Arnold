@@ -1,15 +1,18 @@
 {
   "grammar_version": "arnold.workflow.authoring.v1",
-  "source_path": "tests/fixtures/workflow_authoring/valid_linear.py",
+  "source_path": "tests/fixtures/workflow_authoring/valid_function_linear.py",
   "outcome": "valid",
   "expected_provenance": {
+    "source_form": "function",
     "workflow": {
-      "id": "linear-import-first",
+      "id": "linear-function",
+      "function_name": "linear",
+      "parameters": ["brief"],
       "source_span": {
-        "start_line": 6,
+        "start_line": 7,
         "start_column": 1,
-        "end_line": 14,
-        "end_column": 2
+        "end_line": 10,
+        "end_column": 43
       }
     },
     "imports": [
@@ -72,11 +75,31 @@
         "generated_dsl_id": "step:plan",
         "generated_manifest_node_id": "plan",
         "source_span": {
-          "start_line": 10,
-          "start_column": 9,
-          "end_line": 10,
-          "end_column": 24
-        }
+          "start_line": 8,
+          "start_column": 19,
+          "end_line": 8,
+          "end_column": 47
+        },
+        "output_spans": [
+          {
+            "start_line": 8,
+            "start_column": 5,
+            "end_line": 8,
+            "end_column": 16
+          }
+        ],
+        "inputs": [
+          {
+            "name": "brief",
+            "ref": "param:brief",
+            "source_span": {
+              "start_line": 8,
+              "start_column": 35,
+              "end_line": 8,
+              "end_column": 46
+            }
+          }
+        ]
       },
       {
         "id": "execute",
@@ -84,11 +107,37 @@
         "generated_dsl_id": "step:execute",
         "generated_manifest_node_id": "execute",
         "source_span": {
-          "start_line": 11,
-          "start_column": 9,
-          "end_line": 11,
-          "end_column": 30
-        }
+          "start_line": 9,
+          "start_column": 32,
+          "end_line": 9,
+          "end_column": 71
+        },
+        "output_spans": [
+          {
+            "start_line": 9,
+            "start_column": 5,
+            "end_line": 9,
+            "end_column": 19
+          },
+          {
+            "start_line": 9,
+            "start_column": 21,
+            "end_line": 9,
+            "end_column": 29
+          }
+        ],
+        "inputs": [
+          {
+            "name": "plan",
+            "ref": "output:plan_output",
+            "source_span": {
+              "start_line": 9,
+              "start_column": 54,
+              "end_line": 9,
+              "end_column": 70
+            }
+          }
+        ]
       },
       {
         "id": "review",
@@ -96,11 +145,23 @@
         "generated_dsl_id": "step:review",
         "generated_manifest_node_id": "review",
         "source_span": {
-          "start_line": 12,
-          "start_column": 9,
-          "end_line": 12,
-          "end_column": 28
-        }
+          "start_line": 10,
+          "start_column": 5,
+          "end_line": 10,
+          "end_column": 43
+        },
+        "inputs": [
+          {
+            "name": "evidence",
+            "ref": "output:evidence",
+            "source_span": {
+              "start_line": 10,
+              "start_column": 25,
+              "end_line": 10,
+              "end_column": 42
+            }
+          }
+        ]
       }
     ]
   },
