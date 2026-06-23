@@ -89,7 +89,7 @@ def resume_phase_args(cursor: Mapping[str, Any], plan: str) -> list[str]:
 
 
 def _pipeline():
-    from arnold_pipelines.megaplan.pipeline import build_pipeline
+    from arnold_pipelines.megaplan.workflows.planning import build_pipeline
 
     return build_pipeline()
 
