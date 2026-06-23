@@ -345,9 +345,10 @@ def _extract_json_from_mutating_tool_markup(content: str) -> str | None:
     """Try to recover JSON output from DeepSeek/Kimi write-style tool markup.
 
     Some models answer "fill in the JSON template" by emitting a
-    ``<write_file path=...>`` or ``<invoke name="write_file">`` block
-    containing the JSON payload.  When that happens, treat the written
-    content as the worker's actual response instead of rejecting it.
+    ``<write_file path=...>``, ``<invoke name="write_file">`` or
+    ``<bash>...</bash>`` block containing the JSON payload.  When that
+    happens, treat the written content as the worker's actual response
+    instead of rejecting it.
     """
     if not content or "<" not in content:
         return None
@@ -356,7 +357,7 @@ def _extract_json_from_mutating_tool_markup(content: str) -> str | None:
 
     # 1. Plain XML tags: <write_file ...> ... </write_file>
     tag_pattern = re.compile(
-        r"<(?P<tag>write_file|file_write|write|edit_file|patch|apply_patch|delete_file)\b[^>]*>"
+        r"<(?P<tag>write_file|file_write|write|edit_file|patch|apply_patch|delete_file|bash|run_command|terminal)\b[^>]*>"
         r"(?P<body>.*?)"
         r"</(?P=tag)>",
         re.DOTALL | re.IGNORECASE,
@@ -374,7 +375,7 @@ def _extract_json_from_mutating_tool_markup(content: str) -> str | None:
 
     # 2. <invoke name="write_file"> ... <parameter name="content">...</parameter> ...
     invoke_pattern = re.compile(
-        r"<[^<>\s]*invoke\b[^<>]*\bname=[\"'](?P<name>write_file|file_write|write|edit_file|patch|apply_patch|delete_file)[\"'][^<>]*>"
+        r"<[^<>\s]*invoke\b[^<>]*\bname=[\"'](?P<name>write_file|file_write|write|edit_file|patch|apply_patch|delete_file|bash|run_command|terminal)[\"'][^<>]*>"
         r"(?P<body>.*?)"
         r"</[^<>\s]*invoke>",
         re.DOTALL | re.IGNORECASE,
@@ -391,7 +392,28 @@ def _extract_json_from_mutating_tool_markup(content: str) -> str | None:
             candidates.append(param.group("value").strip())
         candidates.append(body.strip())
 
-    # 3. Self-closing tags with a content= attribute.
+    # 3. DSML-style tags: <｜DSML｜invoke name="write_file"> ...
+    #    <｜DSML｜parameter name="content">...</｜DSML｜parameter> ...
+    dsml_prefix = "\uff5cDSML\uff5c"
+    dsml_invoke_pattern = re.compile(
+        rf"<{re.escape(dsml_prefix)}invoke\b[^<>]*\bname=[\"'](?P<name>write_file|file_write|write|edit_file|patch|apply_patch|delete_file|bash|run_command|terminal)[\"'][^<>]*>"
+        rf"(?P<body>.*?)"
+        rf"</{re.escape(dsml_prefix)}invoke>",
+        re.DOTALL | re.IGNORECASE,
+    )
+    dsml_param_pattern = re.compile(
+        rf"<{re.escape(dsml_prefix)}parameter\b[^<>]*\bname=[\"']content[\"'][^<>]*>"
+        rf"(?P<value>.*?)"
+        rf"</{re.escape(dsml_prefix)}parameter>",
+        re.DOTALL | re.IGNORECASE,
+    )
+    for match in dsml_invoke_pattern.finditer(content):
+        body = match.group("body")
+        for param in dsml_param_pattern.finditer(body):
+            candidates.append(param.group("value").strip())
+        candidates.append(body.strip())
+
+    # 4. Self-closing tags with a content= attribute.
     self_closing_pattern = re.compile(
         r"<(write_file|file_write|write|edit_file|patch|apply_patch|delete_file)\b[^>]*\bcontent=[\"'](?P<value>[^\"']+)[\"'][^>]*/>",
         re.DOTALL | re.IGNORECASE,
@@ -399,9 +421,10 @@ def _extract_json_from_mutating_tool_markup(content: str) -> str | None:
     for match in self_closing_pattern.finditer(content):
         candidates.append(match.group("value").strip())
 
-    # 4. Fall back to the largest JSON-ish block anywhere in the markup.
-    json_block_pattern = re.compile(r"(\{[\s\S]*?\}|\[[\s\S]*?\])")
-    for match in json_block_pattern.finditer(content):
+    # 5. Fall back to JSON-ish blocks anywhere in the markup, preferring
+    # the largest plausible block first so nested braces inside heredocs
+    # are captured before tiny fragments.
+    for match in re.finditer(r"(\{(?:[^{}]|\{[^}]*\))*\}|\[(?:[^\[\]]|\[[^\]]*\])*\])", content, re.DOTALL):
         candidates.append(match.group(1).strip())
 
     for candidate in candidates:
