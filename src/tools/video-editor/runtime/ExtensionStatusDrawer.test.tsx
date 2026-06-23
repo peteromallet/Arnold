@@ -6,7 +6,10 @@ import {
   ExtensionStatusDrawer,
   useExtensionStatusInventory,
 } from '@/tools/video-editor/runtime/ExtensionStatusDrawer';
-import { normalizeExtensionRuntime } from '@/tools/video-editor/runtime/extensionSurface';
+import {
+  normalizeExtensionRuntime,
+  type PackageStateInventoryEntry,
+} from '@/tools/video-editor/runtime/extensionSurface';
 import { defineExtension, createDiagnosticCollection } from '@reigh/editor-sdk';
 import type { DiagnosticCollection, ReighExtension } from '@reigh/editor-sdk';
 import { createRendererRegistry } from '@/tools/video-editor/runtime/extensionRendererRegistry';
@@ -22,8 +25,9 @@ import type { EffectComponentProps } from '@/tools/video-editor/effects/entrance
 function buildRuntimeContext(
   extensions: readonly ReighExtension[],
   diagnosticCollection?: DiagnosticCollection,
+  packageStateEntries?: readonly PackageStateInventoryEntry[],
 ): VideoEditorRuntimeContextValue {
-  const runtime = normalizeExtensionRuntime(extensions);
+  const runtime = normalizeExtensionRuntime(extensions, packageStateEntries);
   const dc = diagnosticCollection ?? createDiagnosticCollection();
 
   return {
@@ -484,6 +488,182 @@ describe('useExtensionStatusInventory', () => {
     expect(Object.isFrozen(inventory!.extensions[0].contributions)).toBe(true);
     expect(Object.isFrozen(inventory!.extensions[0].diagnostics)).toBe(true);
   });
+
+  // ---- Package state inventory propagation (M5/T2) --------------------
+
+  it('packageStateInventory is empty when no entries are supplied', () => {
+    const ext = makeSlotExtension('com.example.psi', 'PSI Extension', 'psi.slot');
+    const ctx = buildRuntimeContext([ext]);
+    expect(ctx.extensionRuntime.packageStateInventory).toEqual([]);
+  });
+
+  it('packageStateInventory carries disabled-by-user entry not in active extensions', () => {
+    const ext = makeSlotExtension('com.example.active', 'Active Ext', 'active.slot');
+    const psiEntries: PackageStateInventoryEntry[] = [
+      {
+        extensionId: 'com.example.disabled',
+        packageState: 'disabled-by-user',
+        stateReason: 'User disabled this package.',
+        packageMetadata: {
+          label: 'Disabled Ext',
+          version: '2.0.0',
+          publisher: 'Test Publisher',
+        },
+      },
+    ];
+    const ctx = buildRuntimeContext([ext], undefined, psiEntries);
+
+    expect(ctx.extensionRuntime.packageStateInventory).toHaveLength(1);
+    expect(ctx.extensionRuntime.packageStateInventory[0].extensionId).toBe('com.example.disabled');
+    expect(ctx.extensionRuntime.packageStateInventory[0].packageState).toBe('disabled-by-user');
+    expect(ctx.extensionRuntime.packageStateInventory[0].packageMetadata!.label).toBe('Disabled Ext');
+  });
+
+  it('read package-state inventory directly from extensionRuntime without deriving from active loadedExtensions', () => {
+    const ext = makeSlotExtension('com.example.active', 'Active Ext', 'active.slot');
+    const psiEntries: PackageStateInventoryEntry[] = [
+      {
+        extensionId: 'com.example.invalid',
+        packageState: 'invalid',
+        stateReason: 'Manifest validation failed.',
+        packageMetadata: {
+          label: 'Invalid Ext',
+          version: '0.0.0',
+        },
+      },
+      {
+        extensionId: 'com.example.duplicate',
+        packageState: 'duplicate',
+        stateReason: 'Installed pack takes precedence.',
+        packageMetadata: {
+          label: 'Duplicate Ext',
+          version: '1.0.0',
+        },
+      },
+    ];
+    const ctx = buildRuntimeContext([ext], undefined, psiEntries);
+
+    // The active extension count should NOT include the non-active packages
+    expect(ctx.extensionRuntime.extensions).toHaveLength(1);
+    expect(ctx.extensionRuntime.extensions[0].manifest.id as string).toBe('com.example.active');
+
+    // The package state inventory is directly available without derivation
+    expect(ctx.extensionRuntime.packageStateInventory).toHaveLength(2);
+
+    const invalidEntry = ctx.extensionRuntime.packageStateInventory.find(
+      (e) => e.extensionId === 'com.example.invalid',
+    );
+    expect(invalidEntry).toBeDefined();
+    expect(invalidEntry!.packageState).toBe('invalid');
+    expect(invalidEntry!.stateReason).toBe('Manifest validation failed.');
+
+    const dupEntry = ctx.extensionRuntime.packageStateInventory.find(
+      (e) => e.extensionId === 'com.example.duplicate',
+    );
+    expect(dupEntry).toBeDefined();
+    expect(dupEntry!.packageState).toBe('duplicate');
+    expect(dupEntry!.stateReason).toBe('Installed pack takes precedence.');
+  });
+
+  it('useExtensionStatusInventory includes non-active packages from packageStateInventory', () => {
+    const ext = makeSlotExtension('com.example.active', 'Active Ext', 'active.slot');
+    const psiEntries: PackageStateInventoryEntry[] = [
+      {
+        extensionId: 'com.example.disabled',
+        packageState: 'disabled-by-user',
+        stateReason: 'User disabled this package.',
+        packageMetadata: {
+          label: 'Disabled Ext',
+          version: '2.0.0',
+          publisher: 'Test Publisher',
+        },
+      },
+    ];
+    const ctx = buildRuntimeContext([ext], undefined, psiEntries);
+    const Wrapper = buildDrawerWrapper(ctx);
+
+    let inventory: ReturnType<typeof useExtensionStatusInventory> | undefined;
+
+    function TestComponent() {
+      inventory = useExtensionStatusInventory();
+      return null;
+    }
+
+    render(
+      <Wrapper>
+        <TestComponent />
+      </Wrapper>,
+    );
+
+    // Should have 2 extensions: 1 active + 1 disabled
+    expect(inventory!.extensions).toHaveLength(2);
+
+    const activeExt = inventory!.extensions.find((e) => e.extensionId === 'com.example.active');
+    expect(activeExt).toBeDefined();
+    expect(activeExt!.hasErrors).toBe(false);
+
+    const disabledExt = inventory!.extensions.find((e) => e.extensionId === 'com.example.disabled');
+    expect(disabledExt).toBeDefined();
+    expect(disabledExt!.label).toBe('Disabled Ext');
+    expect(disabledExt!.version).toBe('2.0.0');
+    expect(disabledExt!.hasWarnings).toBe(true); // disabled-by-user → warning
+    expect(disabledExt!.hasErrors).toBe(false);
+    expect(disabledExt!.contributions).toHaveLength(0); // No contributions for non-active packages
+  });
+
+  it('non-active packages with error states (invalid, incompatible, runtime-error) surface as hasErrors', () => {
+    const ext = makeSlotExtension('com.example.active', 'Active Ext', 'active.slot');
+    const psiEntries: PackageStateInventoryEntry[] = [
+      {
+        extensionId: 'com.example.incompatible',
+        packageState: 'incompatible',
+        stateReason: 'Missing required dependency.',
+        packageMetadata: { label: 'Incompatible Ext', version: '1.0.0' },
+      },
+      {
+        extensionId: 'com.example.runtime',
+        packageState: 'runtime-error',
+        stateReason: 'Integrity check failed.',
+        packageMetadata: { label: 'Runtime Err Ext', version: '1.0.0' },
+      },
+      {
+        extensionId: 'com.example.invalid',
+        packageState: 'invalid',
+        stateReason: 'Manifest invalid.',
+        packageMetadata: { label: 'Invalid Ext', version: '0.0.0' },
+      },
+    ];
+    const ctx = buildRuntimeContext([ext], undefined, psiEntries);
+    const Wrapper = buildDrawerWrapper(ctx);
+
+    let inventory: ReturnType<typeof useExtensionStatusInventory> | undefined;
+
+    function TestComponent() {
+      inventory = useExtensionStatusInventory();
+      return null;
+    }
+
+    render(
+      <Wrapper>
+        <TestComponent />
+      </Wrapper>,
+    );
+
+    expect(inventory!.extensions).toHaveLength(4); // 1 active + 3 non-active
+    expect(inventory!.summary.totalExtensions).toBe(4);
+    expect(inventory!.summary.activeExtensions).toBe(1);
+    expect(inventory!.summary.failedExtensions).toBe(3); // All three are in error states
+
+    const incompatibleExt = inventory!.extensions.find((e) => e.extensionId === 'com.example.incompatible');
+    expect(incompatibleExt!.hasErrors).toBe(true);
+    expect(incompatibleExt!.hasWarnings).toBe(false);
+
+    const runtimeExt = inventory!.extensions.find((e) => e.extensionId === 'com.example.runtime');
+    expect(runtimeExt!.hasErrors).toBe(true);
+
+    const invalidExt = inventory!.extensions.find((e) => e.extensionId === 'com.example.invalid');
+    expect(invalidExt!.hasErrors).toBe(true);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -832,6 +1012,37 @@ describe('ExtensionStatusDrawer', () => {
     expect(drawerText).not.toContain('Enable');
     expect(drawerText).not.toContain('Disable');
     expect(drawerText).not.toContain('Settings');
+  });
+
+  it('renders non-active packages from packageStateInventory in the drawer', () => {
+    const ext = makeSlotExtension('com.example.active', 'Active Ext', 'active.slot');
+    const psiEntries: PackageStateInventoryEntry[] = [
+      {
+        extensionId: 'com.example.disabled',
+        packageState: 'disabled-by-user',
+        stateReason: 'User disabled this package.',
+        packageMetadata: {
+          label: 'Disabled Ext',
+          version: '2.0.0',
+          publisher: 'Test Publisher',
+        },
+      },
+    ];
+    const ctx = buildRuntimeContext([ext], undefined, psiEntries);
+    const onClose = vi.fn();
+
+    render(
+      <DataProviderWrapper value={ctx}>
+        <ExtensionStatusDrawer onClose={onClose} />
+      </DataProviderWrapper>,
+    );
+
+    // The disabled extension should be visible in the drawer
+    expect(screen.getByText('Disabled Ext')).toBeDefined();
+    // The active extension should also be visible
+    expect(screen.getByText('Active Ext')).toBeDefined();
+    // No "No extensions loaded" message
+    expect(screen.queryByText('No extensions loaded.')).toBeNull();
   });
 
   it('uses data attributes for extension and contribution entries', () => {

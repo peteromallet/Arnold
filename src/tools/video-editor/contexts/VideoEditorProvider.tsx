@@ -870,6 +870,8 @@ export interface VideoEditorProviderProps {
   sequenceComponentCatalog?: VideoEditorSequenceComponentCatalog | null;
   onSaveStatusChange?: (status: SaveStatus) => void;
   extensions?: readonly ReighExtension[];
+  /** Package-state inventory entries propagated from the loader (M5). */
+  packageStateEntries?: readonly import('@/tools/video-editor/runtime/extensionSurface').PackageStateInventoryEntry[];
   children: React.ReactNode;
 }
 
@@ -883,6 +885,7 @@ export function VideoEditorProvider({
   sequenceComponentCatalog,
   onSaveStatusChange,
   extensions,
+  packageStateEntries,
   children,
 }: VideoEditorProviderProps) {
   const shotsHost = useReighShotsHost(projectId);
@@ -890,8 +893,8 @@ export function VideoEditorProvider({
 
   // ---- extension normalization & lifecycle --------------------------------
   const extensionRuntime = useMemo<ExtensionRuntime>(
-    () => normalizeExtensionRuntime(extensions ?? []),
-    [extensions],
+    () => normalizeExtensionRuntime(extensions ?? [], packageStateEntries),
+    [extensions, packageStateEntries],
   );
 
   const lifecycleHostRef = useRef<ExtensionLifecycleHost | null>(null);

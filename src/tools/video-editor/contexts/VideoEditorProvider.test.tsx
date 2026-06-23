@@ -1980,6 +1980,153 @@ describe('VideoEditorProvider', () => {
   });
 
   // -------------------------------------------------------------------------
+  // M5/T2: Package state inventory propagation through VideoEditorProvider
+  // -------------------------------------------------------------------------
+  // Prove that the provider carries packageStateInventory through
+  // normalizeExtensionRuntime → extensionRuntime so consumers can read
+  // package-state data directly without deriving it from loadedExtensions.
+
+  it('provider propagates packageStateEntries to extensionRuntime.packageStateInventory', () => {
+    const dataProvider: DataProvider = {
+      loadTimeline: vi.fn(),
+      saveTimeline: vi.fn(),
+      loadAssetRegistry: vi.fn(),
+      resolveAssetUrl: vi.fn(),
+    };
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+
+    const ext = defineExtension({
+      manifest: {
+        id: 'com.t2.provider' as never,
+        version: '1.0.0',
+        label: 'T2 Provider Ext',
+      },
+    });
+
+    const psiEntries = [
+      {
+        extensionId: 'com.t2.disabled',
+        packageState: 'disabled-by-user' as const,
+        stateReason: 'User disabled this package.',
+        packageMetadata: {
+          label: 'T2 Disabled Ext',
+          version: '2.0.0',
+        },
+      },
+      {
+        extensionId: 'com.t2.invalid',
+        packageState: 'invalid' as const,
+        stateReason: 'Manifest validation failed.',
+        packageMetadata: {
+          label: 'T2 Invalid Ext',
+          version: '0.0.0',
+        },
+      },
+    ];
+
+    // Read extensionRuntime from the provider context to verify propagation
+    let capturedRuntime: any = null;
+    function CaptureRuntime() {
+      const { extensionRuntime } = useVideoEditorRuntime();
+      capturedRuntime = extensionRuntime;
+      return null;
+    }
+
+    render(
+      <MemoryRouter>
+        <QueryClientProvider client={queryClient}>
+          <AgentChatProvider>
+            <VideoEditorProvider
+              dataProvider={dataProvider}
+              projectId="project-t2"
+              timelineId="timeline-t2"
+              userId="user-t2"
+              extensions={[ext]}
+              packageStateEntries={psiEntries}
+            >
+              <CaptureRuntime />
+            </VideoEditorProvider>
+          </AgentChatProvider>
+        </QueryClientProvider>
+      </MemoryRouter>,
+    );
+
+    expect(capturedRuntime).not.toBeNull();
+    // Active extensions still only contain the loaded one
+    expect(capturedRuntime.extensions).toHaveLength(1);
+    expect(capturedRuntime.extensions[0].manifest.id as string).toBe('com.t2.provider');
+
+    // Package state inventory is directly available
+    expect(capturedRuntime.packageStateInventory).toHaveLength(2);
+
+    const disabledEntry = capturedRuntime.packageStateInventory.find(
+      (e: any) => e.extensionId === 'com.t2.disabled',
+    );
+    expect(disabledEntry).toBeDefined();
+    expect(disabledEntry.packageState).toBe('disabled-by-user');
+    expect(disabledEntry.packageMetadata.label).toBe('T2 Disabled Ext');
+    expect(disabledEntry.packageMetadata.version).toBe('2.0.0');
+
+    const invalidEntry = capturedRuntime.packageStateInventory.find(
+      (e: any) => e.extensionId === 'com.t2.invalid',
+    );
+    expect(invalidEntry).toBeDefined();
+    expect(invalidEntry.packageState).toBe('invalid');
+    expect(invalidEntry.stateReason).toBe('Manifest validation failed.');
+  });
+
+  it('packageStateInventory is empty when no entries supplied to provider', () => {
+    const dataProvider: DataProvider = {
+      loadTimeline: vi.fn(),
+      saveTimeline: vi.fn(),
+      loadAssetRegistry: vi.fn(),
+      resolveAssetUrl: vi.fn(),
+    };
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+
+    const ext = defineExtension({
+      manifest: {
+        id: 'com.t2.noppsi' as never,
+        version: '1.0.0',
+        label: 'T2 No PSI Ext',
+      },
+    });
+
+    let capturedRuntime: any = null;
+    function CaptureRuntime() {
+      const { extensionRuntime } = useVideoEditorRuntime();
+      capturedRuntime = extensionRuntime;
+      return null;
+    }
+
+    render(
+      <MemoryRouter>
+        <QueryClientProvider client={queryClient}>
+          <AgentChatProvider>
+            <VideoEditorProvider
+              dataProvider={dataProvider}
+              projectId="project-t2-noppsi"
+              timelineId="timeline-t2-noppsi"
+              userId="user-t2"
+              extensions={[ext]}
+            >
+              <CaptureRuntime />
+            </VideoEditorProvider>
+          </AgentChatProvider>
+        </QueryClientProvider>
+      </MemoryRouter>,
+    );
+
+    expect(capturedRuntime).not.toBeNull();
+    expect(capturedRuntime.packageStateInventory).toEqual([]);
+    expect(capturedRuntime.extensions).toHaveLength(1);
+  });
+
+  // -------------------------------------------------------------------------
   // T15: Compatibility — direct extensions synchronize through the lifecycle host
   // -------------------------------------------------------------------------
   // Prove that direct `extensions` prop inputs (no repository, no pack records,
