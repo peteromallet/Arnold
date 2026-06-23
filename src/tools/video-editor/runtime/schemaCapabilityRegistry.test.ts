@@ -436,6 +436,231 @@ describe('validation path mapping', () => {
 });
 
 // ---------------------------------------------------------------------------
+// String path edge cases
+// ---------------------------------------------------------------------------
+
+describe('string path edge cases', () => {
+  it('returns null for invalid regex pattern (does not crash)', () => {
+    const reg = fresh();
+    const path = reg.validationPaths.get('string-path')!;
+
+    // Invalid regex should be caught and skipped — return null, no throw
+    expect(() => {
+      const result = path.validate(
+        'anything',
+        makeDef({ type: 'string', label: 'Code', pattern: '[invalid(regex' }),
+      );
+      expect(result).toBeNull();
+    }).not.toThrow();
+  });
+
+  it('returns null when pattern is an empty string', () => {
+    const reg = fresh();
+    const path = reg.validationPaths.get('string-path')!;
+
+    // Empty string pattern: new RegExp('') matches everything
+    const result = path.validate(
+      'anything',
+      makeDef({ type: 'string', label: 'Code', pattern: '' }),
+    );
+    expect(result).toBeNull();
+  });
+
+  it('returns null for undefined value (skips validation)', () => {
+    const reg = fresh();
+    const path = reg.validationPaths.get('string-path')!;
+
+    expect(
+      path.validate(undefined, makeDef({ type: 'string', label: 'Name', minLength: 3 })),
+    ).toBeNull();
+  });
+
+  it('returns null for null value (skips validation)', () => {
+    const reg = fresh();
+    const path = reg.validationPaths.get('string-path')!;
+
+    expect(
+      path.validate(null, makeDef({ type: 'string', label: 'Name', minLength: 3 })),
+    ).toBeNull();
+  });
+
+  it('returns error for non-string value', () => {
+    const reg = fresh();
+    const path = reg.validationPaths.get('string-path')!;
+
+    const err = path.validate(42, makeDef({ type: 'string', label: 'Name' }));
+    expect(err).toBe('"Name" must be a string.');
+  });
+
+  it('skips non-string/non-text types', () => {
+    const reg = fresh();
+    const path = reg.validationPaths.get('string-path')!;
+
+    // Should return null because def.type is 'number', not 'string' or 'text'
+    expect(path.validate('anything', makeDef({ type: 'number', label: 'Count' }))).toBeNull();
+  });
+
+  it('validates text type the same as string type', () => {
+    const reg = fresh();
+    const path = reg.validationPaths.get('string-path')!;
+
+    // 'text' type is treated same as 'string'
+    const err = path.validate('ab', makeDef({ type: 'text' as any, label: 'Body', minLength: 5 }));
+    expect(err).toBe('"Body" must be at least 5 characters.');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Required path edge cases (falsy values present)
+// ---------------------------------------------------------------------------
+
+describe('required path edge cases', () => {
+  it('does not flag value 0 as missing required (falsy but present)', () => {
+    const reg = fresh();
+    const path = reg.validationPaths.get('required-path')!;
+
+    const result = path.validate(0, makeDef({
+      type: 'number',
+      label: 'Count',
+      isRequired: true,
+    } as any));
+    expect(result).toBeNull();
+  });
+
+  it('does not flag value false as missing required (falsy but present)', () => {
+    const reg = fresh();
+    const path = reg.validationPaths.get('required-path')!;
+
+    const result = path.validate(false, makeDef({
+      type: 'boolean',
+      label: 'Flag',
+      isRequired: true,
+    } as any));
+    expect(result).toBeNull();
+  });
+
+  it('does not flag empty string as missing required (falsy but explicitly set)', () => {
+    const reg = fresh();
+    const path = reg.validationPaths.get('required-path')!;
+
+    // Empty string IS treated as missing by the required validator
+    const result = path.validate('', makeDef({
+      type: 'string',
+      label: 'Name',
+      isRequired: true,
+    } as any));
+    expect(result).toBe('"Name" is required.');
+  });
+
+  it('does not flag non-required fields', () => {
+    const reg = fresh();
+    const path = reg.validationPaths.get('required-path')!;
+
+    expect(path.validate(undefined, makeDef({ type: 'string', label: 'Name' }))).toBeNull();
+    expect(path.validate(null, makeDef({ type: 'number', label: 'Count' }))).toBeNull();
+    expect(path.validate('', makeDef({ type: 'string', label: 'Note' }))).toBeNull();
+  });
+
+  it('flags undefined as missing required', () => {
+    const reg = fresh();
+    const path = reg.validationPaths.get('required-path')!;
+
+    const result = path.validate(undefined, makeDef({
+      type: 'string',
+      label: 'Name',
+      isRequired: true,
+    } as any));
+    expect(result).toBe('"Name" is required.');
+  });
+
+  it('flags null as missing required', () => {
+    const reg = fresh();
+    const path = reg.validationPaths.get('required-path')!;
+
+    const result = path.validate(null, makeDef({
+      type: 'string',
+      label: 'Name',
+      isRequired: true,
+    } as any));
+    expect(result).toBe('"Name" is required.');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Select path with numeric enum
+// ---------------------------------------------------------------------------
+
+describe('select path with numeric enum', () => {
+  it('validates numeric enum values correctly', () => {
+    const reg = fresh();
+    const path = reg.validationPaths.get('select-path')!;
+
+    // String type with numeric enum values (converted to string options)
+    const def = makeDef({
+      type: 'string',
+      label: 'Size',
+      options: [
+        { label: '1', value: '1' },
+        { label: '2', value: '2' },
+        { label: '3', value: '3' },
+      ],
+    });
+
+    expect(path.validate('2', def)).toBeNull();
+    expect(path.validate('4', def)).toBe('"4" is not a valid option for "Size".');
+  });
+
+  it('returns null for string type without enum options (plain text field)', () => {
+    const reg = fresh();
+    const path = reg.validationPaths.get('select-path')!;
+
+    // String type without options — should be skipped by select-path
+    const result = path.validate('anything', makeDef({ type: 'string', label: 'Name' }));
+    expect(result).toBeNull();
+  });
+
+  it('returns null for string type with empty options array', () => {
+    const reg = fresh();
+    const path = reg.validationPaths.get('select-path')!;
+
+    const result = path.validate(
+      'anything',
+      makeDef({ type: 'string', label: 'Name', options: [] }),
+    );
+    expect(result).toBeNull();
+  });
+
+  it('validates enum type the same as select type', () => {
+    const reg = fresh();
+    const path = reg.validationPaths.get('select-path')!;
+
+    const def = makeDef({
+      type: 'enum' as any,
+      label: 'Mode',
+      options: [
+        { label: 'Soft', value: 'soft' },
+        { label: 'Hard', value: 'hard' },
+      ],
+    });
+
+    expect(path.validate('soft', def)).toBeNull();
+    expect(path.validate('medium', def)).toBe('"medium" is not a valid option for "Mode".');
+  });
+
+  it('returns error for non-string select/enum value', () => {
+    const reg = fresh();
+    const path = reg.validationPaths.get('select-path')!;
+
+    const err = path.validate(42, makeDef({
+      type: 'select',
+      label: 'Mode',
+      options: [{ label: 'A', value: 'a' }],
+    }));
+    expect(err).toBe('"Mode" must be a string option value.');
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Registry isolation / owner identity
 // ---------------------------------------------------------------------------
 

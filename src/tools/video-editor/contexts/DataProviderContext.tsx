@@ -24,6 +24,7 @@ import type { DiagnosticCollection } from '@reigh/editor-sdk';
 import type { LiveDataRegistry } from '@/tools/video-editor/runtime/liveDataRegistry.ts';
 import type { LivePermissionService } from '@/tools/video-editor/runtime/livePermissions.ts';
 import type { ExtensionStateRepository } from '@/tools/video-editor/runtime/extensionStateRepository';
+import type { ExtensionSettingsNotificationRegistry } from '@/tools/video-editor/runtime/extensionSettingsNotification';
 
 export interface VideoEditorRuntimeContextValue {
   provider: DataProvider;
@@ -56,6 +57,8 @@ export interface VideoEditorRuntimeContextValue {
   extensionStateRepository?: ExtensionStateRepository | null;
   /** M5: Trigger extension re-resolution after persistence writes. */
   triggerExtensionRefresh?: () => void;
+  /** T9: Host-visible settings notification registry for manager/runtime coherence. */
+  settingsNotificationRegistry?: ExtensionSettingsNotificationRegistry;
 }
 
 export const DataProviderContext = createContext<VideoEditorRuntimeContextValue | null>(null);

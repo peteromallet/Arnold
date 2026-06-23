@@ -2201,6 +2201,294 @@ describe('save-with-errors focus behavior', () => {
   });
 });
 
+// ---------------------------------------------------------------------------
+// Diagnostics prop rendering (without fields)
+// ---------------------------------------------------------------------------
+
+describe('diagnostics prop', () => {
+  it('renders diagnostic rows when diagnostics prop is provided and fields are empty', () => {
+    render(
+      React.createElement(SchemaForm, {
+        schema: [],
+        values: {},
+        onChange: vi.fn(),
+        diagnostics: [
+          {
+            severity: 'error',
+            code: 'settings/missing-schema',
+            message: 'No settings schema declared in the manifest.',
+            detail: {},
+          },
+        ],
+      }),
+    );
+
+    expect(screen.getByTestId('schema-form')).toBeTruthy();
+    expect(screen.getByTestId('schema-form-diagnostic-0')).toBeTruthy();
+    expect(screen.getByTestId('schema-form-diagnostic-0').textContent).toContain('No settings schema declared');
+    expect(screen.getByTestId('schema-form-diagnostic-0').getAttribute('role')).toBe('alert');
+    expect(screen.getByText('Schema validation error')).toBeTruthy();
+    expect(screen.getByText('Error')).toBeTruthy();
+  });
+
+  it('renders multiple diagnostic rows in order', () => {
+    render(
+      React.createElement(SchemaForm, {
+        schema: [],
+        values: {},
+        onChange: vi.fn(),
+        diagnostics: [
+          {
+            severity: 'error',
+            code: 'settings/missing-schema',
+            message: 'First diagnostic.',
+            detail: {},
+          },
+          {
+            severity: 'warning',
+            code: 'settings/unknown-field',
+            message: 'Second diagnostic.',
+            detail: {},
+          },
+        ],
+      }),
+    );
+
+    expect(screen.getByTestId('schema-form-diagnostic-0').textContent).toContain('First diagnostic');
+    expect(screen.getByTestId('schema-form-diagnostic-1').textContent).toContain('Second diagnostic');
+  });
+
+  it('returns null when both fields and diagnostics are empty', () => {
+    const { container } = render(
+      React.createElement(SchemaForm, {
+        schema: [],
+        values: {},
+        onChange: vi.fn(),
+      }),
+    );
+
+    expect(container.querySelector('[data-testid="schema-form"]')).toBeNull();
+  });
+
+  it('renders diagnostics above fields when both are present', () => {
+    render(
+      React.createElement(SchemaForm, {
+        schema: [parameterDef({ name: 'title', type: 'string', label: 'Title' })],
+        values: { title: 'Hello' },
+        onChange: vi.fn(),
+        diagnostics: [
+          {
+            severity: 'warning',
+            code: 'settings/unknown-field',
+            message: 'Schema-level diagnostic.',
+            detail: {},
+          },
+        ],
+      }),
+    );
+
+    // Both the diagnostic row and the field should render
+    expect(screen.getByTestId('schema-form')).toBeTruthy();
+    expect(screen.getByTestId('schema-form-diagnostic-0')).toBeTruthy();
+    expect(screen.getByTestId('schema-form-field-title')).toBeTruthy();
+    // Diagnostic should appear before the field in DOM order
+    const form = screen.getByTestId('schema-form');
+    const children = Array.from(form.children);
+    const diagIndex = children.findIndex((c) => c.getAttribute('data-testid') === 'schema-form-diagnostic-0');
+    const fieldIndex = children.findIndex((c) => c.getAttribute('data-testid') === 'schema-form-field-title');
+    expect(diagIndex).toBeLessThan(fieldIndex);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// validateAndFocus with custom status
+// ---------------------------------------------------------------------------
+
+describe('validateAndFocus custom status', () => {
+  function renderFormWithRef(props: {
+    schema?: SchemaFormSchema;
+    values?: Record<string, unknown>;
+    onChange?: (name: string, value: unknown) => void;
+  }) {
+    const { schema = [], values = {}, onChange = vi.fn() } = props;
+    const ref = React.createRef<SchemaFormHandle>();
+    const result = render(
+      React.createElement(SchemaForm, { ref, schema, values, onChange }),
+    );
+    return { ...result, ref };
+  }
+
+  it('blocks save when the only field has custom status (audio-binding)', () => {
+    const { ref } = renderFormWithRef({
+      schema: [parameterDef({ name: 'audio', type: 'audio-binding', label: 'Audio' })],
+      values: { audio: { source: 'bass', min: 0, max: 100 } },
+    });
+
+    // Custom status fields cannot be saved through SchemaForm
+    expect(ref.current?.validateAndFocus()).toBe(false);
+  });
+
+  it('blocks save when a custom-status field precedes a valid field', () => {
+    const { ref } = renderFormWithRef({
+      schema: [
+        parameterDef({ name: 'audio', type: 'audio-binding', label: 'Audio' }),
+        parameterDef({ name: 'title', type: 'string', label: 'Title' }),
+      ],
+      values: { audio: { source: 'bass', min: 0, max: 100 }, title: 'Hello' },
+    });
+
+    // Custom status blocks save even when valid fields follow
+    expect(ref.current?.validateAndFocus()).toBe(false);
+  });
+
+  it('focuses the first error widget even when it has custom status', () => {
+    const { ref } = renderFormWithRef({
+      schema: [
+        parameterDef({ name: 'audio', type: 'audio-binding', label: 'Audio' }),
+        parameterDef({ name: 'title', type: 'string', label: 'Title', minLength: 10 }),
+      ],
+      values: { audio: { source: 'bass', min: 0, max: 100 }, title: 'ab' },
+    });
+
+    expect(ref.current?.validateAndFocus()).toBe(false);
+    // 'audio' has custom status and is the first error; its SelectTrigger
+    // IS in the widgetRefs map, so it receives focus first
+    const audioWidget = screen.getByTestId('schema-form-widget-audio-source');
+    expect(document.activeElement).toBe(audioWidget);
+  });
+
+  it('focuses the custom-status widget when it is the only error', () => {
+    const { ref } = renderFormWithRef({
+      schema: [
+        parameterDef({ name: 'audio', type: 'audio-binding', label: 'Audio' }),
+      ],
+      values: { audio: { source: 'bass', min: 0, max: 100 } },
+    });
+
+    expect(ref.current?.validateAndFocus()).toBe(false);
+    // The audio-binding widget (SelectTrigger) IS focusable and gets focus
+    const audioWidget = screen.getByTestId('schema-form-widget-audio-source');
+    expect(document.activeElement).toBe(audioWidget);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Invalid regex pattern handling
+// ---------------------------------------------------------------------------
+
+describe('invalid regex pattern', () => {
+  it('does not crash when StandardSchema string field has an invalid regex pattern', () => {
+    const standardSchema = {
+      type: 'object' as const,
+      properties: {
+        code: { type: 'string', title: 'Code', pattern: '[invalid(regex' },
+      },
+    };
+
+    // Should render without throwing
+    expect(() => {
+      renderForm({
+        schema: standardSchema as any,
+        values: { code: 'test' },
+      });
+    }).not.toThrow();
+
+    // Field should render normally (validation skips invalid regex)
+    expect(screen.getByTestId('schema-form-field-code')).toBeTruthy();
+    // No error should be shown for pattern mismatch since the regex is invalid
+    expect(screen.queryByTestId('schema-form-error-code')).toBeNull();
+  });
+
+  it('does not crash when ParameterDefinition string field has an invalid regex pattern', () => {
+    expect(() => {
+      renderForm({
+        schema: [parameterDef({ name: 'slug', type: 'string', label: 'Slug', pattern: '[bad(regex' })],
+        values: { slug: 'test' },
+      });
+    }).not.toThrow();
+
+    expect(screen.getByTestId('schema-form-field-slug')).toBeTruthy();
+    expect(screen.queryByTestId('schema-form-error-slug')).toBeNull();
+  });
+
+  it('still validates other constraints when pattern regex is invalid', () => {
+    const standardSchema = {
+      type: 'object' as const,
+      properties: {
+        code: { type: 'string', title: 'Code', minLength: 5, pattern: '[bad(regex' },
+      },
+    };
+
+    renderForm({
+      schema: standardSchema as any,
+      values: { code: 'ab' },
+    });
+
+    // minLength constraint should still fire (invalid regex is skipped)
+    const error = screen.getByTestId('schema-form-error-code');
+    expect(error.textContent).toContain('must be at least 5 characters');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Slider value badge and multipleOf → step
+// ---------------------------------------------------------------------------
+
+describe('slider details', () => {
+  it('displays numeric value badge next to slider label', () => {
+    renderForm({
+      schema: [parameterDef({ name: 'opacity', type: 'number', label: 'Opacity', min: 0, max: 1, step: 0.1 })],
+      values: { opacity: 0.75 },
+    });
+
+    // The value badge should show the current numeric value
+    const field = screen.getByTestId('schema-form-field-opacity');
+    expect(field.textContent).toContain('0.75');
+  });
+
+  it('maps StandardSchema multipleOf to slider step', () => {
+    const standardSchema = {
+      type: 'object' as const,
+      properties: {
+        volume: { type: 'number', title: 'Volume', minimum: 0, maximum: 1, multipleOf: 0.1 },
+      },
+    };
+
+    renderForm({
+      schema: standardSchema as any,
+      values: { volume: 0.5 },
+    });
+
+    // Field renders as slider
+    const field = screen.getByTestId('schema-form-field-volume');
+    expect(field.dataset.fieldType).toBe('number');
+    expect(field.dataset.fieldStatus).toBe('supported');
+    // The value badge shows the value
+    expect(field.textContent).toContain('0.5');
+  });
+
+  it('slider defaults to step 1 when min/max are present but step is undefined', () => {
+    renderForm({
+      schema: [parameterDef({ name: 'count', type: 'number', label: 'Count', min: 0, max: 100 })],
+      values: { count: 42 },
+    });
+
+    const field = screen.getByTestId('schema-form-field-count');
+    expect(field.dataset.fieldType).toBe('number');
+    expect(field.textContent).toContain('42');
+  });
+
+  it('slider value badge shows 0 when value is 0 (falsy value preserved)', () => {
+    renderForm({
+      schema: [parameterDef({ name: 'count', type: 'number', label: 'Count', min: 0, max: 100 })],
+      values: { count: 0 },
+    });
+
+    const field = screen.getByTestId('schema-form-field-count');
+    expect(field.textContent).toContain('0');
+  });
+});
+
 // Shader uniform helper (re-used from shader test block)
 function shaderUniform(overrides: ShaderUniformSchema[number]): ShaderUniformSchema[number] {
   return overrides;

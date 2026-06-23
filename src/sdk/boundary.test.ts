@@ -476,8 +476,8 @@ describe('ExtensionContext — no internal members exposed', () => {
 
   it('services.settings has only the public API', () => {
     const settingKeys = Object.keys(ctx.services.settings).sort();
-    // get, set, delete, keys — no internal props
-    expect(settingKeys).toEqual(['delete', 'get', 'keys', 'set']);
+    // get, set, delete, keys, subscribe — no internal props (T8 added subscribe)
+    expect(settingKeys).toEqual(['delete', 'get', 'keys', 'set', 'subscribe']);
   });
 
   it('services.i18n has only the public API', () => {

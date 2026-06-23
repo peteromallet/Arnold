@@ -1317,7 +1317,7 @@ describe('ExtensionManager — settings persistence', () => {
       });
     });
 
-    it('rejects raw JSON settings that fail the manifest settings schema', async () => {
+    it('shows blocked reconciliation state and no editable controls for unsupported schema (no properties)', async () => {
       const user = userEvent.setup();
       const repo = makeRepository();
       repo.getSettingsSnapshot = vi.fn().mockResolvedValue(null);
@@ -1349,23 +1349,35 @@ describe('ExtensionManager — settings persistence', () => {
 
       await user.click(screen.getByRole('button', { name: 'Show extension settings' }));
 
-      const rawEditor = await screen.findByRole('textbox', { name: 'Raw JSON settings editor' });
-      fireEvent.change(rawEditor, { target: { value: '{"other":"safe"}' } });
-      await user.click(screen.getByRole('button', { name: 'Save raw JSON extension settings' }));
-
+      // No raw JSON editor should exist
       await waitFor(() => {
-        const errorEl = document.querySelector('[data-video-editor-extension-settings-raw-json-error="ext.raw"]');
-        expect(errorEl).toBeInTheDocument();
-        expect(errorEl).toHaveTextContent('Missing required setting "mode".');
+        expect(screen.queryByRole('textbox', { name: 'Raw JSON settings editor' })).not.toBeInTheDocument();
       });
-      expect(repo.putSettingsSnapshot).not.toHaveBeenCalled();
+
+      // Blocked reconciliation diagnostic should be visible
+      const reconciliationEl = document.querySelector('[data-video-editor-extension-settings-reconciliation-state="blocked"]');
+      expect(reconciliationEl).toBeInTheDocument();
+
+      // No Save button should be available (no editing mode means no save)
+      expect(screen.queryByRole('button', { name: 'Save extension settings' })).not.toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: 'Save raw JSON extension settings' })).not.toBeInTheDocument();
+
+      // No Edit button for blocked unsupported schema
+      expect(screen.queryByRole('button', { name: 'Edit extension settings' })).not.toBeInTheDocument();
+
+      // Settings should indicate no saved settings
+      expect(screen.getByText('No saved settings for this extension.')).toBeInTheDocument();
     });
 
-    it('saves raw JSON settings only after manifest schema validation passes', async () => {
+    it('shows existing snapshot values read-only for unsupported schema with saved data', async () => {
       const user = userEvent.setup();
       const repo = makeRepository();
-      const triggerRefresh = vi.fn();
-      repo.getSettingsSnapshot = vi.fn().mockResolvedValue(null);
+      repo.getSettingsSnapshot = vi.fn().mockResolvedValue({
+        extensionId: 'ext.raw',
+        schemaVersion: 1,
+        values: { mode: 'safe', theme: 'dark' },
+        lastWrittenAt: '2026-01-15T10:30:00Z',
+      });
 
       const manifest = {
         id: 'ext.raw',
@@ -1387,26 +1399,40 @@ describe('ExtensionManager — settings persistence', () => {
           [{ manifest }],
         ),
         extensionStateRepository: repo,
-        triggerExtensionRefresh: triggerRefresh,
+        triggerExtensionRefresh: vi.fn(),
       });
 
       render(<ExtensionManager />);
 
       await user.click(screen.getByRole('button', { name: 'Show extension settings' }));
 
-      const rawEditor = await screen.findByRole('textbox', { name: 'Raw JSON settings editor' });
-      fireEvent.change(rawEditor, { target: { value: '{"mode":"safe"}' } });
-      await user.click(screen.getByRole('button', { name: 'Save raw JSON extension settings' }));
-
+      // Existing snapshot values should be displayed read-only
       await waitFor(() => {
-        expect(repo.putSettingsSnapshot).toHaveBeenCalledTimes(1);
+        expect(screen.getByText('mode')).toBeInTheDocument();
+        expect(screen.getByText('safe')).toBeInTheDocument();
+        expect(screen.getByText('theme')).toBeInTheDocument();
+        expect(screen.getByText('dark')).toBeInTheDocument();
       });
-      expect(repo.putSettingsSnapshot).toHaveBeenCalledWith(expect.objectContaining({
-        extensionId: 'ext.raw',
-        schemaVersion: 1,
-        values: { mode: 'safe' },
-      }));
-      expect(triggerRefresh).toHaveBeenCalledTimes(1);
+
+      // No raw JSON editor
+      expect(screen.queryByRole('textbox', { name: 'Raw JSON settings editor' })).not.toBeInTheDocument();
+
+      // Blocked reconciliation diagnostic should be visible
+      const reconciliationEl = document.querySelector('[data-video-editor-extension-settings-reconciliation-state="blocked"]');
+      expect(reconciliationEl).toBeInTheDocument();
+
+      // No Save or Edit buttons
+      expect(screen.queryByRole('button', { name: 'Save extension settings' })).not.toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: 'Edit extension settings' })).not.toBeInTheDocument();
+
+      // Read-only indicator
+      expect(screen.getByText('Read-only')).toBeInTheDocument();
+
+      // Last saved time should be visible
+      expect(screen.getByText(/Last saved:/)).toBeInTheDocument();
+
+      // Save should not have been called
+      expect(repo.putSettingsSnapshot).not.toHaveBeenCalled();
     });
   });
 });
@@ -1454,6 +1480,334 @@ function makeDiagnosticCollection(initial: Diagnostic[] = []) {
     },
   };
 }
+
+// ---------------------------------------------------------------------------
+// T10: Settings notification registry helper for manager tests
+// ---------------------------------------------------------------------------
+
+function makeNotificationRegistry() {
+  const listeners = new Map<string, Set<() => void>>();
+  const serviceDisposeHandles = new Map<string, { dispose: () => void }>();
+  let disposed = false;
+
+  return {
+    subscribeToExtension(extensionId: string, listener: () => void) {
+      if (!listeners.has(extensionId)) {
+        listeners.set(extensionId, new Set());
+      }
+      listeners.get(extensionId)!.add(listener);
+      return {
+        dispose: () => {
+          listeners.get(extensionId)?.delete(listener);
+        },
+      };
+    },
+    notifySettingsChanged(extensionId: string) {
+      if (disposed) return;
+      const extListeners = listeners.get(extensionId);
+      if (extListeners) {
+        for (const l of extListeners) {
+          try { l(); } catch { /* ignore */ }
+        }
+      }
+    },
+    registerService: vi.fn().mockReturnValue({ dispose: vi.fn() }),
+    subscribe: vi.fn().mockReturnValue({ dispose: vi.fn() }),
+    get isDisposed() { return disposed; },
+    dispose() { disposed = true; listeners.clear(); },
+    getRegisteredExtensionIds: vi.fn().mockReturnValue([]),
+  };
+}
+
+// ---------------------------------------------------------------------------
+// T10: Settings notification coherence tests
+// ---------------------------------------------------------------------------
+
+describe('ExtensionManager — settings notification coherence (T10)', () => {
+  beforeEach(() => {
+    mockUseVideoEditorRuntime.mockReset();
+  });
+
+  describe('manager subscribes to runtime notifications', () => {
+    it('reloads and reconciles settings when runtime notifies via registry', async () => {
+      const notifReg = makeNotificationRegistry();
+      const repo = makeRepository();
+      const savedDate = new Date().toISOString();
+
+      // Initial snapshot
+      repo.getSettingsSnapshot = vi.fn()
+        .mockResolvedValueOnce({
+          extensionId: 'ext.a',
+          schemaVersion: 1,
+          values: { theme: 'light' },
+          lastWrittenAt: savedDate,
+        })
+        // Second call (after notification) returns updated values
+        .mockResolvedValueOnce({
+          extensionId: 'ext.a',
+          schemaVersion: 1,
+          values: { theme: 'dark' },
+          lastWrittenAt: new Date().toISOString(),
+        });
+
+      mockUseVideoEditorRuntime.mockReturnValue({
+        extensionRuntime: makeRuntime([
+          { extensionId: 'ext.a', packageState: 'loaded', label: 'Package A' },
+        ]),
+        extensionStateRepository: repo,
+        triggerExtensionRefresh: vi.fn(),
+        settingsNotificationRegistry: notifReg as any,
+      });
+
+      render(<ExtensionManager />);
+
+      // Expand settings section
+      const toggle = screen.getByRole('button', { name: 'Show extension settings' });
+      await act(async () => {
+        fireEvent.click(toggle);
+      });
+
+      // Should show initial value
+      await waitFor(() => {
+        expect(screen.getByText('light')).toBeInTheDocument();
+      });
+
+      // Simulate runtime settings change via notification
+      await act(async () => {
+        notifReg.notifySettingsChanged('ext.a');
+      });
+
+      // Should reload and show updated value
+      await waitFor(() => {
+        expect(screen.getByText('dark')).toBeInTheDocument();
+      });
+
+      // Repository should have been called twice (initial load + reload)
+      expect(repo.getSettingsSnapshot).toHaveBeenCalledTimes(2);
+    });
+
+    it('does NOT reload when settings section is collapsed', async () => {
+      const notifReg = makeNotificationRegistry();
+      const repo = makeRepository();
+      repo.getSettingsSnapshot = vi.fn().mockResolvedValue({
+        extensionId: 'ext.a',
+        schemaVersion: 1,
+        values: { theme: 'light' },
+        lastWrittenAt: new Date().toISOString(),
+      });
+
+      mockUseVideoEditorRuntime.mockReturnValue({
+        extensionRuntime: makeRuntime([
+          { extensionId: 'ext.a', packageState: 'loaded', label: 'Package A' },
+        ]),
+        extensionStateRepository: repo,
+        triggerExtensionRefresh: vi.fn(),
+        settingsNotificationRegistry: notifReg as any,
+      });
+
+      render(<ExtensionManager />);
+
+      // Don't expand — notify while collapsed
+      await act(async () => {
+        notifReg.notifySettingsChanged('ext.a');
+      });
+
+      // getSettingsSnapshot should NOT have been called since section is collapsed
+      // (the subscription only activates when expanded)
+      expect(repo.getSettingsSnapshot).not.toHaveBeenCalled();
+    });
+
+    it('does not reload when notification registry is absent', async () => {
+      const repo = makeRepository();
+      let loadCount = 0;
+      repo.getSettingsSnapshot = vi.fn().mockImplementation(async () => {
+        loadCount++;
+        return {
+          extensionId: 'ext.a',
+          schemaVersion: 1,
+          values: { key: `load-${loadCount}` },
+          lastWrittenAt: new Date().toISOString(),
+        };
+      });
+
+      mockUseVideoEditorRuntime.mockReturnValue({
+        extensionRuntime: makeRuntime([
+          { extensionId: 'ext.a', packageState: 'loaded', label: 'Package A' },
+        ]),
+        extensionStateRepository: repo,
+        triggerExtensionRefresh: vi.fn(),
+        // No settingsNotificationRegistry provided
+      });
+
+      render(<ExtensionManager />);
+
+      // Expand settings section
+      const toggle = screen.getByRole('button', { name: 'Show extension settings' });
+      await act(async () => {
+        fireEvent.click(toggle);
+      });
+
+      await waitFor(() => {
+        expect(screen.getByText('load-1')).toBeInTheDocument();
+      });
+
+      // Should have loaded once (on expand) and no subscription to trigger reload
+      expect(repo.getSettingsSnapshot).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe('manager save notifies through registry', () => {
+    it('calls notifySettingsChanged after successful save', async () => {
+      const user = userEvent.setup();
+      const notifReg = makeNotificationRegistry();
+      const notifySpy = vi.spyOn(notifReg, 'notifySettingsChanged');
+      const repo = makeRepository();
+
+      repo.getSettingsSnapshot = vi.fn().mockResolvedValue({
+        extensionId: 'ext.a',
+        schemaVersion: 1,
+        values: { theme: 'light' },
+        lastWrittenAt: new Date().toISOString(),
+      });
+
+      mockUseVideoEditorRuntime.mockReturnValue({
+        extensionRuntime: makeRuntime([
+          { extensionId: 'ext.a', packageState: 'loaded', label: 'Package A' },
+        ]),
+        extensionStateRepository: repo,
+        triggerExtensionRefresh: vi.fn(),
+        settingsNotificationRegistry: notifReg as any,
+      });
+
+      render(<ExtensionManager />);
+
+      // Expand settings
+      const toggle = screen.getByRole('button', { name: 'Show extension settings' });
+      await act(async () => {
+        fireEvent.click(toggle);
+      });
+
+      await waitFor(() => {
+        expect(screen.getByText('light')).toBeInTheDocument();
+      });
+
+      // Click Edit
+      const editBtn = screen.getByRole('button', { name: 'Edit extension settings' });
+      await user.click(editBtn);
+
+      // Change a value
+      const input = screen.getByRole('textbox', { name: 'Settings value for theme' });
+      await user.clear(input);
+      await user.type(input, 'dark');
+
+      // Click Save
+      const saveBtn = screen.getByRole('button', { name: 'Save extension settings' });
+      await user.click(saveBtn);
+
+      await waitFor(() => {
+        expect(repo.putSettingsSnapshot).toHaveBeenCalledTimes(1);
+      });
+
+      // Should have notified through the registry
+      await waitFor(() => {
+        expect(notifySpy).toHaveBeenCalledWith('ext.a');
+      });
+
+      notifySpy.mockRestore();
+    });
+
+    it('does NOT notify when repository is absent (save is no-op)', async () => {
+      const notifReg = makeNotificationRegistry();
+      const notifySpy = vi.spyOn(notifReg, 'notifySettingsChanged');
+
+      mockUseVideoEditorRuntime.mockReturnValue({
+        extensionRuntime: makeRuntime([
+          { extensionId: 'ext.a', packageState: 'loaded', label: 'Package A' },
+        ]),
+        extensionStateRepository: null,
+        triggerExtensionRefresh: vi.fn(),
+        settingsNotificationRegistry: notifReg as any,
+      });
+
+      render(<ExtensionManager />);
+
+      // Expand settings
+      const toggle = screen.getByRole('button', { name: 'Show extension settings' });
+      await act(async () => {
+        fireEvent.click(toggle);
+      });
+
+      // No Edit button should appear since there's no repository
+      // (or it would be there but clicking Save wouldn't do anything)
+      // The key point: notifySettingsChanged should NOT be called
+      expect(notifySpy).not.toHaveBeenCalled();
+
+      notifySpy.mockRestore();
+    });
+  });
+
+  describe('notification unsubscription', () => {
+    it('unsubscribes from registry when section collapses', async () => {
+      const notifReg = makeNotificationRegistry();
+      const repo = makeRepository();
+      let loadCount = 0;
+      repo.getSettingsSnapshot = vi.fn().mockImplementation(async () => {
+        loadCount++;
+        return {
+          extensionId: 'ext.a',
+          schemaVersion: 1,
+          values: { key: `load-${loadCount}` },
+          lastWrittenAt: new Date().toISOString(),
+        };
+      });
+
+      mockUseVideoEditorRuntime.mockReturnValue({
+        extensionRuntime: makeRuntime([
+          { extensionId: 'ext.a', packageState: 'loaded', label: 'Package A' },
+        ]),
+        extensionStateRepository: repo,
+        triggerExtensionRefresh: vi.fn(),
+        settingsNotificationRegistry: notifReg as any,
+      });
+
+      render(<ExtensionManager />);
+
+      // Expand settings
+      const toggle = screen.getByRole('button', { name: 'Show extension settings' });
+      await act(async () => {
+        fireEvent.click(toggle);
+      });
+
+      await waitFor(() => {
+        expect(screen.getByText('load-1')).toBeInTheDocument();
+      });
+
+      // First notification — should reload
+      await act(async () => {
+        notifReg.notifySettingsChanged('ext.a');
+      });
+
+      await waitFor(() => {
+        expect(screen.getByText('load-2')).toBeInTheDocument();
+      });
+
+      // Collapse settings section
+      const hideBtn = screen.getByRole('button', { name: 'Hide extension settings' });
+      await act(async () => {
+        fireEvent.click(hideBtn);
+      });
+
+      // Notify again — should NOT reload (subscription disposed)
+      await act(async () => {
+        notifReg.notifySettingsChanged('ext.a');
+      });
+
+      // Wait a tick and verify load count hasn't increased
+      await new Promise((r) => setTimeout(r, 50));
+      expect(loadCount).toBe(2); // Only initial load + first notification
+    });
+  });
+});
 
 describe('ExtensionManager — diagnostic badges and inline details', () => {
   beforeEach(() => {

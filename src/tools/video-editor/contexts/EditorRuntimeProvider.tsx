@@ -81,6 +81,12 @@ import type { LiveDataRegistry } from '@/tools/video-editor/runtime/liveDataRegi
 import { createLivePermissionService } from '@/tools/video-editor/runtime/livePermissions.ts';
 import type { LivePermissionService } from '@/tools/video-editor/runtime/livePermissions.ts';
 import type { ExtensionStateRepository } from '@/tools/video-editor/runtime/extensionStateRepository';
+import type { ExtensionSettingsSnapshot } from '@/tools/video-editor/runtime/extensionStateRepository';
+import {
+  createExtensionSettingsNotificationRegistry,
+  type ExtensionSettingsNotificationRegistry,
+} from '@/tools/video-editor/runtime/extensionSettingsNotification';
+import type { CreateExtensionSettingsServiceOptions } from '@reigh/editor-sdk';
 import {
   TransitionRegistryProvider,
   useTransitionRegistryContext,
@@ -177,6 +183,9 @@ function EditorRuntimeProviderInner({
   agentToolRegistryRef,
   liveDataRegistryRef,
   proposalPersistenceProvider,
+  settingsSnapshotsRef,
+  settingsNotificationRegistryRef,
+  extensionStateRepository,
 }: {
   children: ReactNode;
   userId: string | null;
@@ -192,6 +201,9 @@ function EditorRuntimeProviderInner({
   agentToolRegistryRef: React.MutableRefObject<AgentToolRegistry | null>;
   liveDataRegistryRef: React.MutableRefObject<LiveDataRegistry | null>;
   proposalPersistenceProvider: ProposalPersistenceProvider | null | undefined;
+  settingsSnapshotsRef: React.MutableRefObject<Record<string, ExtensionSettingsSnapshot> | null>;
+  settingsNotificationRegistryRef: React.MutableRefObject<ExtensionSettingsNotificationRegistry | null>;
+  extensionStateRepository: ExtensionStateRepository | null | undefined;
 }) {
   const effectsQuery = useEffects(userId, { enabled: !effectCatalog && Boolean(userId) });
   const effectResources = useResolvedEffectCatalog(userId, effectCatalog);
@@ -382,7 +394,18 @@ function EditorRuntimeProviderInner({
               sessions: createExtensionLiveSessions(liveRegistry, extId),
             }
           : liveCreativeOverrides;
-        return createExtensionContext(
+        // T9: Build settings service options when repository is available
+        const settingsOptions: CreateExtensionSettingsServiceOptions | undefined =
+          extensionStateRepository && !extensionStateRepository.isDisposed
+            ? {
+                repository: extensionStateRepository,
+                initialSnapshot:
+                  settingsSnapshotsRef.current?.[extId] ??
+                  undefined,
+              }
+            : undefined;
+
+        const ctx = createExtensionContext(
           ext,
           creativeOverrides,
           commandsService,
@@ -391,14 +414,25 @@ function EditorRuntimeProviderInner({
           clipTypesService,
           agentToolsService,
           shadersService,
+          settingsOptions,
         );
+
+        // T9: Register the settings service with the host-visible notification
+        // registry so that manager/host consumers can observe settings changes
+        // across all active extensions through a single seam.
+        const notifyReg = settingsNotificationRegistryRef.current;
+        if (notifyReg && !notifyReg.isDisposed) {
+          notifyReg.registerService(extId, ctx.services.settings);
+        }
+
+        return ctx;
       },
     );
     syncExtensionDiagnosticsToCollection(diagnosticCollection, 'extension-lifecycle', [
       ...extensionRuntime.diagnostics,
       ...host.diagnostics,
     ], { activeExtensionIds });
-  }, [activeExtensionIds, diagnosticCollection, lifecycleHostRef, extensionRuntime, liveCreativeOverrides, commandRegistryRef, shaderRegistryRef]);
+  }, [activeExtensionIds, diagnosticCollection, lifecycleHostRef, extensionRuntime, liveCreativeOverrides, commandRegistryRef, shaderRegistryRef, settingsNotificationRegistryRef]);
 
   // Sync live registry diagnostics into the provider diagnostic collection
   useEffect(() => {
@@ -750,6 +784,48 @@ export function EditorRuntimeProvider({
     livePermissionServiceRef.current = createLivePermissionService();
   }
 
+  // ---- T9: Host-visible settings notification registry (one per provider) -----
+  const settingsNotificationRegistryRef = useRef<ExtensionSettingsNotificationRegistry | null>(null);
+  if (!settingsNotificationRegistryRef.current) {
+    settingsNotificationRegistryRef.current = createExtensionSettingsNotificationRegistry();
+  }
+
+  // ---- T9: Pre-load settings snapshots from repository for context factory ----
+  const [settingsSnapshots, setSettingsSnapshots] = useState<
+    Record<string, ExtensionSettingsSnapshot> | null
+  >(null);
+  const settingsSnapshotsRef = useRef<Record<string, ExtensionSettingsSnapshot> | null>(null);
+
+  useEffect(() => {
+    const repo = extensionStateRepository;
+    if (!repo || repo.isDisposed) {
+      setSettingsSnapshots(null);
+      settingsSnapshotsRef.current = null;
+      return;
+    }
+
+    let cancelled = false;
+
+    repo.getAllSettingsSnapshots().then((snapshots) => {
+      if (cancelled) return;
+      const byId: Record<string, ExtensionSettingsSnapshot> = {};
+      for (const snap of snapshots) {
+        byId[snap.extensionId] = snap;
+      }
+      setSettingsSnapshots(byId);
+      settingsSnapshotsRef.current = byId;
+    }).catch(() => {
+      if (!cancelled) {
+        setSettingsSnapshots(null);
+        settingsSnapshotsRef.current = null;
+      }
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [extensionStateRepository]);
+
   const diagnosticCollectionRef = useRef<DiagnosticCollection | null>(null);
   if (!diagnosticCollectionRef.current) {
     diagnosticCollectionRef.current = createDiagnosticCollection();
@@ -924,6 +1000,7 @@ export function EditorRuntimeProvider({
     diagnosticCollection: diagnosticCollectionRef.current ?? undefined,
     extensionStateRepository: extensionStateRepository ?? null,
     triggerExtensionRefresh,
+    settingsNotificationRegistry: settingsNotificationRegistryRef.current ?? undefined,
   }), [
     dataProvider,
     runtime?.assetResolver,
@@ -960,6 +1037,9 @@ export function EditorRuntimeProvider({
         agentToolRegistryRef={agentToolRegistryRef}
         liveDataRegistryRef={liveDataRegistryRef}
         proposalPersistenceProvider={proposalPersistenceBridgeRef.current}
+        settingsSnapshotsRef={settingsSnapshotsRef}
+        settingsNotificationRegistryRef={settingsNotificationRegistryRef}
+        extensionStateRepository={extensionStateRepository}
       >
         {children}
       </EditorRuntimeProviderInner>

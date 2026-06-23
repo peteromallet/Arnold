@@ -38,7 +38,7 @@
  * migration_reset) are emitted through the optional repository.
  */
 
-import type { ExtensionSettingsService } from '@/sdk/index';
+import type { ExtensionSettingsService, DisposeHandle } from '@/sdk/index';
 import type { ExtensionManifest } from '@/sdk/index';
 import type {
   StateRepository,
@@ -343,6 +343,20 @@ export function createExtensionSettingsService(
   /** Track keys deleted via this service to exclude from final snapshot. */
   const deletedKeys = new Set<string>();
 
+  /** Subscribers notified after every successful set() / delete(). */
+  const listeners = new Set<() => void>();
+
+  /** Notify all subscribers. Safe — catches and ignores listener errors. */
+  function notifyListeners(): void {
+    for (const listener of listeners) {
+      try {
+        listener();
+      } catch {
+        // Listener errors must not break the service
+      }
+    }
+  }
+
   // -----------------------------------------------------------------------
   // Compute the effective merged value for a key at read time
   // -----------------------------------------------------------------------
@@ -505,6 +519,7 @@ export function createExtensionSettingsService(
         localStorage.setItem(settingsPrefix + key, JSON.stringify(value));
         writtenKeys.add(key);
         deletedKeys.delete(key);
+        notifyListeners();
       } catch {
         // localStorage quota exceeded or unavailable — silently no-op
       }
@@ -514,6 +529,7 @@ export function createExtensionSettingsService(
         localStorage.removeItem(settingsPrefix + key);
         writtenKeys.delete(key);
         deletedKeys.add(key);
+        notifyListeners();
       } catch {
         // localStorage unavailable — silently no-op
       }
@@ -551,6 +567,14 @@ export function createExtensionSettingsService(
       }
 
       return [...result];
+    },
+    subscribe(listener: () => void): DisposeHandle {
+      listeners.add(listener);
+      return {
+        dispose(): void {
+          listeners.delete(listener);
+        },
+      };
     },
   };
 

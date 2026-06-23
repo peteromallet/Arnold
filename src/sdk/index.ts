@@ -8,7 +8,10 @@
  * @publicContract
  */
 
-import { createExtensionSettingsService } from './extensionSettingsService';
+import {
+  createExtensionSettingsService,
+  type CreateExtensionSettingsServiceOptions,
+} from './extensionSettingsService';
 import { runSettingsMigration, getManifestSettingsSchemaVersion } from './extensionSettingsMigration';
 
 // ---------------------------------------------------------------------------
@@ -3086,6 +3089,14 @@ export interface ExtensionSettingsService {
   set<T = unknown>(key: string, value: T): void;
   delete(key: string): void;
   keys(): readonly string[];
+  /**
+   * Subscribe to settings change notifications.
+   *
+   * The listener is called after every successful `set()` or `delete()`.
+   * Invalid writes blocked by Ajv validation do NOT trigger notifications.
+   * Returns a {@link DisposeHandle} to unsubscribe.
+   */
+  subscribe(listener: () => void): DisposeHandle;
 }
 
 // Re-export the injectable settings service factory (T8)
@@ -3603,6 +3614,7 @@ export function createExtensionContext(
   clipTypes?: ClipTypeRegistrationService,
   agentTools?: AgentToolRegistrationService,
   shaders?: ShaderRegistrationService,
+  settingsServiceOptions?: CreateExtensionSettingsServiceOptions,
 ): ExtensionContext {
   const extensionId = extension.manifest.id as string;
   const manifest = extension.manifest; // Already frozen by defineExtension
@@ -3625,7 +3637,7 @@ export function createExtensionContext(
 
   // ---- settings service (injectable factory, localStorage-backed) -----------
   const { service: settingsService, dispose: disposeSettings } =
-    createExtensionSettingsService(extensionId, manifest);
+    createExtensionSettingsService(extensionId, manifest, settingsServiceOptions);
 
   // ---- i18n service (with manifest message bundle fallback) ----------------
   const messages: Record<string, string> | undefined =

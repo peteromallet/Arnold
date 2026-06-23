@@ -1388,6 +1388,218 @@ describe('T10: Settings migration during service creation', () => {
 });
 
 // ---------------------------------------------------------------------------
+// T8: Settings notification (subscribe) semantics
+// ---------------------------------------------------------------------------
+
+describe('T8: Settings notification (subscribe)', () => {
+  const EXT_ID = 't8.subscribe.ext';
+
+  beforeEach(() => {
+    cleanupLocalStorage(EXT_ID);
+  });
+
+  afterEach(() => {
+    cleanupLocalStorage(EXT_ID);
+  });
+
+  // ---- Basic subscription --------------------------------------------------
+
+  it('subscriber is notified after valid set()', () => {
+    const { service: s, dispose: d } = createExtensionSettingsService(EXT_ID, makeManifest(EXT_ID));
+    let callCount = 0;
+    const handle = s.subscribe(() => { callCount += 1; });
+
+    expect(callCount).toBe(0);
+    s.set('theme', 'dark');
+    expect(callCount).toBe(1);
+    s.set('count', 42);
+    expect(callCount).toBe(2);
+
+    handle.dispose();
+    d();
+  });
+
+  it('subscriber is notified after valid delete()', () => {
+    const { service: s, dispose: d } = createExtensionSettingsService(EXT_ID, makeManifest(EXT_ID));
+    s.set('theme', 'dark');
+    let callCount = 0;
+    const handle = s.subscribe(() => { callCount += 1; });
+
+    expect(callCount).toBe(0);
+    s.delete('theme');
+    expect(callCount).toBe(1);
+
+    handle.dispose();
+    d();
+  });
+
+  // ---- Unsubscribe via DisposeHandle ---------------------------------------
+
+  it('subscriber stops receiving notifications after dispose()', () => {
+    const { service: s, dispose: d } = createExtensionSettingsService(EXT_ID, makeManifest(EXT_ID));
+    let callCount = 0;
+    const handle = s.subscribe(() => { callCount += 1; });
+
+    s.set('a', 1);
+    expect(callCount).toBe(1);
+
+    handle.dispose();
+
+    s.set('b', 2);
+    expect(callCount).toBe(1); // still 1 — unsubscribed
+
+    d();
+  });
+
+  it('dispose is idempotent', () => {
+    const { service: s, dispose: d } = createExtensionSettingsService(EXT_ID, makeManifest(EXT_ID));
+    let callCount = 0;
+    const handle = s.subscribe(() => { callCount += 1; });
+
+    s.set('a', 1);
+    expect(callCount).toBe(1);
+
+    handle.dispose();
+    handle.dispose(); // second call should not throw
+
+    s.set('b', 2);
+    expect(callCount).toBe(1);
+
+    d();
+  });
+
+  // ---- Multiple subscribers -------------------------------------------------
+
+  it('multiple subscribers all receive notifications', () => {
+    const { service: s, dispose: d } = createExtensionSettingsService(EXT_ID, makeManifest(EXT_ID));
+    let countA = 0;
+    let countB = 0;
+    const h1 = s.subscribe(() => { countA += 1; });
+    const h2 = s.subscribe(() => { countB += 1; });
+
+    s.set('x', 1);
+    expect(countA).toBe(1);
+    expect(countB).toBe(1);
+
+    h1.dispose();
+
+    s.set('y', 2);
+    expect(countA).toBe(1); // unsubscribed
+    expect(countB).toBe(2);
+
+    h2.dispose();
+    d();
+  });
+
+  // ---- Ajv-blocked invalid writes do NOT notify ----------------------------
+
+  it('Ajv-blocked invalid set() does not notify subscribers', () => {
+    const manifest: ExtensionManifest = {
+      id: EXT_ID as any,
+      version: '1.0.0',
+      label: 'Test',
+      contributions: [],
+      settingsSchema: {
+        version: 1,
+        schema: {
+          type: 'object',
+          properties: {
+            theme: { type: 'string' },
+          },
+          additionalProperties: false,
+        },
+      },
+    } as ExtensionManifest;
+
+    const { service: s, dispose: d } = createExtensionSettingsService(EXT_ID, manifest);
+    let callCount = 0;
+    const handle = s.subscribe(() => { callCount += 1; });
+
+    // Valid write — should notify
+    s.set('theme', 'dark');
+    expect(callCount).toBe(1);
+
+    // Invalid write (number instead of string) — should NOT notify
+    s.set('theme', 42 as any);
+    expect(callCount).toBe(1); // unchanged — blocked by Ajv
+
+    // Value preserved
+    expect(s.get('theme')).toBe('dark');
+
+    handle.dispose();
+    d();
+  });
+
+  it('Ajv-blocked invalid set() preserves existing valid state and does not notify', () => {
+    const manifest: ExtensionManifest = {
+      id: EXT_ID as any,
+      version: '1.0.0',
+      label: 'Test',
+      contributions: [],
+      settingsSchema: {
+        version: 1,
+        schema: {
+          type: 'object',
+          properties: {
+            maxItems: { type: 'number', minimum: 1 },
+          },
+        },
+      },
+    } as ExtensionManifest;
+
+    const { service: s, dispose: d } = createExtensionSettingsService(EXT_ID, manifest);
+    let callCount = 0;
+    const handle = s.subscribe(() => { callCount += 1; });
+
+    // Valid write
+    s.set('maxItems', 10);
+    expect(callCount).toBe(1);
+
+    // Invalid write — blocked
+    s.set('maxItems', 0);
+    expect(callCount).toBe(1); // unchanged
+
+    // Valid value preserved
+    expect(s.get('maxItems')).toBe(10);
+
+    handle.dispose();
+    d();
+  });
+
+  // ---- Listener errors do not break the service ----------------------------
+
+  it('throwing listener does not break other subscribers or the service', () => {
+    const { service: s, dispose: d } = createExtensionSettingsService(EXT_ID, makeManifest(EXT_ID));
+    let normalCount = 0;
+    const badHandle = s.subscribe(() => { throw new Error('boom'); });
+    const goodHandle = s.subscribe(() => { normalCount += 1; });
+
+    // Should not throw — bad listener error is caught
+    expect(() => s.set('key', 'val')).not.toThrow();
+    expect(normalCount).toBe(1);
+
+    // Service still works
+    s.set('key2', 'val2');
+    expect(normalCount).toBe(2);
+
+    badHandle.dispose();
+    goodHandle.dispose();
+    d();
+  });
+
+  // ---- Subscribe method exists and returns DisposeHandle --------------------
+
+  it('subscribe returns a DisposeHandle with dispose method', () => {
+    const { service: s, dispose: d } = createExtensionSettingsService(EXT_ID, makeManifest(EXT_ID));
+    const handle = s.subscribe(() => {});
+    expect(handle).toBeDefined();
+    expect(typeof handle.dispose).toBe('function');
+    expect(() => handle.dispose()).not.toThrow();
+    d();
+  });
+});
+
+// ---------------------------------------------------------------------------
 // T12: Ajv-backed atomic save behavior
 // ---------------------------------------------------------------------------
 

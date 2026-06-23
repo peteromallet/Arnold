@@ -44,7 +44,17 @@ import type {
   ExtensionSettingsSnapshot,
   ExtensionStateRepository,
 } from '@/tools/video-editor/runtime/extensionStateRepository';
-import { adaptManifestSettingsSchema } from '@/tools/video-editor/runtime/extensionSettings';
+import {
+  analyzeManifestSettingsSchema,
+  reconcileSettingsSnapshot,
+  type ReconciliationResult,
+  type ReconciliationState,
+} from '@/tools/video-editor/runtime/extensionSettings';
+import type { ExtensionSettingsNotificationRegistry } from '@/tools/video-editor/runtime/extensionSettingsNotification';
+import {
+  SchemaForm,
+  type SchemaFormHandle,
+} from '@/tools/video-editor/components/SchemaForm/SchemaForm';
 import { ExtensionTrustWarningBanner } from './ExtensionTrustWarningBanner';
 
 // ---------------------------------------------------------------------------
@@ -288,115 +298,9 @@ type SettingsSectionState =
   | 'idle'
   | 'editing'
   | 'saving'
-  | 'error'
-  | 'raw-json';
+  | 'error';
 
-function isJsonObject(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
 
-function valueMatchesJsonSchemaType(value: unknown, rawType: unknown): boolean {
-  const types = Array.isArray(rawType)
-    ? rawType.filter((item): item is string => typeof item === 'string')
-    : typeof rawType === 'string'
-      ? [rawType]
-      : [];
-
-  if (types.length === 0) return true;
-  if (value === null) return types.includes('null');
-
-  return types.some((type) => {
-    switch (type) {
-      case 'object':
-        return isJsonObject(value);
-      case 'array':
-        return Array.isArray(value);
-      case 'string':
-        return typeof value === 'string';
-      case 'number':
-        return typeof value === 'number' && Number.isFinite(value);
-      case 'integer':
-        return typeof value === 'number' && Number.isInteger(value);
-      case 'boolean':
-        return typeof value === 'boolean';
-      default:
-        return true;
-    }
-  });
-}
-
-function validateRawSettingsAgainstManifestSchema(
-  values: Record<string, unknown>,
-  rawSchema: unknown,
-): string | null {
-  if (!isJsonObject(rawSchema)) {
-    return 'Manifest settings schema is missing or invalid; settings cannot be saved.';
-  }
-  if (rawSchema.type !== undefined && rawSchema.type !== 'object') {
-    return 'Manifest settings schema must describe a JSON object.';
-  }
-
-  const properties = isJsonObject(rawSchema.properties) ? rawSchema.properties : {};
-  const required = Array.isArray(rawSchema.required)
-    ? rawSchema.required.filter((item): item is string => typeof item === 'string')
-    : [];
-
-  for (const key of required) {
-    if (!(key in values)) {
-      return `Missing required setting "${key}".`;
-    }
-  }
-
-  if (rawSchema.additionalProperties === false) {
-    const knownKeys = new Set(Object.keys(properties));
-    const unknownKey = Object.keys(values).find((key) => !knownKeys.has(key));
-    if (unknownKey) {
-      return `Unknown setting "${unknownKey}" is not allowed by the manifest schema.`;
-    }
-  }
-
-  for (const [key, propSchema] of Object.entries(properties)) {
-    if (!(key in values) || !isJsonObject(propSchema)) continue;
-
-    const value = values[key];
-    if (!valueMatchesJsonSchemaType(value, propSchema.type)) {
-      return `Setting "${key}" does not match the manifest schema type.`;
-    }
-
-    if (Array.isArray(propSchema.enum) && !propSchema.enum.includes(value)) {
-      return `Setting "${key}" must be one of the manifest schema enum values.`;
-    }
-
-    if (typeof value === 'number') {
-      if (typeof propSchema.minimum === 'number' && value < propSchema.minimum) {
-        return `Setting "${key}" must be greater than or equal to ${propSchema.minimum}.`;
-      }
-      if (typeof propSchema.maximum === 'number' && value > propSchema.maximum) {
-        return `Setting "${key}" must be less than or equal to ${propSchema.maximum}.`;
-      }
-    }
-
-    if (typeof value === 'string') {
-      if (typeof propSchema.minLength === 'number' && value.length < propSchema.minLength) {
-        return `Setting "${key}" is shorter than the manifest schema minimum length.`;
-      }
-      if (typeof propSchema.maxLength === 'number' && value.length > propSchema.maxLength) {
-        return `Setting "${key}" is longer than the manifest schema maximum length.`;
-      }
-      if (typeof propSchema.pattern === 'string') {
-        try {
-          if (!new RegExp(propSchema.pattern).test(value)) {
-            return `Setting "${key}" does not match the manifest schema pattern.`;
-          }
-        } catch {
-          return `Setting "${key}" has an invalid manifest schema pattern.`;
-        }
-      }
-    }
-  }
-
-  return null;
-}
 
 // ---------------------------------------------------------------------------
 // Package settings section (host repository path)
@@ -407,67 +311,141 @@ function PackageSettingsSection({
   repository,
   onRefresh,
   manifest,
+  settingsNotificationRegistry,
 }: {
   extensionId: string;
   repository: ExtensionStateRepository | null;
   onRefresh: () => void;
   manifest?: ExtensionManifest | null;
+  /** T10: Host-visible notification registry for manager/runtime coherence. */
+  settingsNotificationRegistry?: ExtensionSettingsNotificationRegistry | null;
 }) {
   const [sectionState, setSectionState] = useState<SettingsSectionState>('collapsed');
   const [savedSnapshot, setSavedSnapshot] = useState<ExtensionSettingsSnapshot | null>(null);
   const [editValues, setEditValues] = useState<Record<string, unknown>>({});
   const [settingsError, setSettingsError] = useState<string | null>(null);
-  const [rawJsonText, setRawJsonText] = useState<string>('');
-  const [rawJsonError, setRawJsonError] = useState<string | null>(null);
+  const [reconciliationResult, setReconciliationResult] = useState<ReconciliationResult | null>(null);
+  const [reconciliationExpanded, setReconciliationExpanded] = useState(false);
+  // Snapshot of reconciled values at load time, used as the "clean" baseline
+  // for dirty detection so repairs (default-fill, coercion) don't look like
+  // user edits.
+  const baseValuesRef = useRef<Record<string, unknown>>({});
+  const schemaFormRef = useRef<SchemaFormHandle>(null);
   const mountedRef = useRef(true);
+  // T10: Track whether a save is in flight so the notification reload callback
+  // can skip reloading during our own save (avoids redundant re-fetch).
+  const savingRef = useRef(false);
 
-  // Determine whether the manifest schema is supported by the key-value editor.
-  const schemaAdaptation = useMemo(() => {
+  // Fully analyse the manifest schema (T1): returns schema, diagnostics,
+  // unsupportedFields, and editable flag.  Replaces the older
+  // adaptManifestSettingsSchema call so we can gate the editable surface and
+  // feed the analysis into reconcileSettingsSnapshot.
+  const schemaAnalysis = useMemo(() => {
     if (!manifest || !manifest.settingsSchema) return null;
-    return adaptManifestSettingsSchema(manifest);
+    return analyzeManifestSettingsSchema(manifest);
   }, [manifest]);
 
-  // Unsupported schema: manifest has settingsSchema but it can't be rendered as key-value.
-  const hasUnsupportedSchema = schemaAdaptation !== null && schemaAdaptation.schema === null;
+  // Unsupported schema: manifest has settingsSchema but either the adapter
+  // returned no schema at all OR the schema has unsupported constructs
+  // ($ref, combinators, arrays, nested objects, conditionals).
+  const hasUnsupportedSchema =
+    schemaAnalysis !== null && !schemaAnalysis.editable;
+
+  // ---- Reconciliation derived values (T4) — must be before callbacks that
+  //      reference them to avoid temporal dead zone. ------------------------
+  const reconciliationState: ReconciliationState | null =
+    reconciliationResult?.state ?? null;
+  const isBlocked = reconciliationState === 'blocked';
 
   useEffect(() => {
     mountedRef.current = true;
     return () => { mountedRef.current = false; };
   }, []);
 
+  // T10: Subscribe to settings change notifications from the shared registry.
+  // When runtime code writes through settings.set()/settings.delete(), the
+  // manager reloads and reconciles the updated values without remounting.
+  useEffect(() => {
+    if (!settingsNotificationRegistry || settingsNotificationRegistry.isDisposed) return;
+
+    // Only subscribe when the section is expanded (not collapsed).
+    if (sectionState === 'collapsed') return;
+
+    let cancelled = false;
+
+    const handle = settingsNotificationRegistry.subscribeToExtension(
+      extensionId,
+      async () => {
+        // Skip reload during our own save to avoid redundant re-fetch.
+        if (!mountedRef.current || cancelled || savingRef.current) return;
+
+        try {
+          const snapshot = repository
+            ? await repository.getSettingsSnapshot(extensionId)
+            : null;
+
+          if (!mountedRef.current || cancelled) return;
+
+          if (manifest) {
+            const result = reconcileSettingsSnapshot({ manifest, snapshot });
+            setReconciliationResult(result);
+            setSavedSnapshot(snapshot);
+            setEditValues(result.values);
+            baseValuesRef.current = { ...result.values };
+          } else {
+            setSavedSnapshot(snapshot);
+            const fallbackValues = snapshot ? { ...snapshot.values } : {};
+            setEditValues(fallbackValues);
+            baseValuesRef.current = fallbackValues;
+          }
+        } catch {
+          // Reload failed — silently keep current values.
+        }
+      },
+    );
+
+    return () => {
+      cancelled = true;
+      handle.dispose();
+    };
+  }, [sectionState, extensionId, repository, manifest, settingsNotificationRegistry]);
+
   // Load settings from the repository when expanding.
   const handleExpand = useCallback(async () => {
     if (sectionState === 'loading' || sectionState === 'saving') return;
     if (sectionState !== 'collapsed') {
       setSectionState('collapsed');
-      setRawJsonError(null);
       return;
     }
 
-    // Route unsupported schemas to raw JSON mode.
+    // Unsupported schemas: load snapshot, run reconciliation for blocker
+    // diagnostics, then display read-only preview (no editable controls).
     if (hasUnsupportedSchema) {
       setSectionState('loading');
       setSettingsError(null);
-      setRawJsonError(null);
+      setReconciliationResult(null);
 
       try {
+        let snapshot: ExtensionSettingsSnapshot | null = null;
         if (repository) {
-          const snapshot = await repository.getSettingsSnapshot(extensionId);
-          if (mountedRef.current) {
-            setSavedSnapshot(snapshot);
-            const jsonText = snapshot
-              ? JSON.stringify(snapshot.values, null, 2)
-              : '{}';
-            setRawJsonText(jsonText);
-            setSectionState('raw-json');
-          }
-        } else {
-          if (mountedRef.current) {
-            setSavedSnapshot(null);
-            setRawJsonText('{}');
-            setSectionState('raw-json');
-          }
+          snapshot = await repository.getSettingsSnapshot(extensionId);
         }
+
+        if (!mountedRef.current) return;
+
+        // Run reconciliation even for unsupported schemas so the diagnostic
+        // row can show why the schema is blocked.
+        if (manifest) {
+          const result = reconcileSettingsSnapshot({ manifest, snapshot });
+          setReconciliationResult(result);
+        }
+
+        setSavedSnapshot(snapshot);
+        // Display values read-only (empty object if no snapshot).
+        const displayValues = snapshot ? { ...snapshot.values } : {};
+        setEditValues(displayValues);
+        baseValuesRef.current = displayValues;
+        setSectionState('idle');
       } catch (err) {
         if (mountedRef.current) {
           setSettingsError(err instanceof Error ? err.message : 'Failed to load settings');
@@ -479,22 +457,32 @@ function PackageSettingsSection({
 
     setSectionState('loading');
     setSettingsError(null);
-    setRawJsonError(null);
+    setReconciliationResult(null);
 
     try {
+      let snapshot: ExtensionSettingsSnapshot | null = null;
       if (repository) {
-        const snapshot = await repository.getSettingsSnapshot(extensionId);
-        if (mountedRef.current) {
-          setSavedSnapshot(snapshot);
-          setEditValues(snapshot ? { ...snapshot.values } : {});
-          setSectionState(snapshot ? 'idle' : 'idle');
-        }
+        snapshot = await repository.getSettingsSnapshot(extensionId);
+      }
+
+      if (!mountedRef.current) return;
+
+      // Run reconciliation (T3) when a manifest is available so the
+      // manager surface always has a classified state + diagnostics.
+      if (manifest) {
+        const result = reconcileSettingsSnapshot({ manifest, snapshot });
+        setReconciliationResult(result);
+        setSavedSnapshot(snapshot);
+        setEditValues(result.values);
+        baseValuesRef.current = { ...result.values };
+        setSectionState('idle');
       } else {
-        if (mountedRef.current) {
-          setSavedSnapshot(null);
-          setEditValues({});
-          setSectionState('idle');
-        }
+        // No manifest — fall back to raw snapshot values (legacy path).
+        setSavedSnapshot(snapshot);
+        const fallbackValues = snapshot ? { ...snapshot.values } : {};
+        setEditValues(fallbackValues);
+        baseValuesRef.current = fallbackValues;
+        setSectionState('idle');
       }
     } catch (err) {
       if (mountedRef.current) {
@@ -502,29 +490,38 @@ function PackageSettingsSection({
         setSectionState('error');
       }
     }
-  }, [sectionState, hasUnsupportedSchema, extensionId, repository]);
+  }, [sectionState, hasUnsupportedSchema, extensionId, repository, manifest]);
 
-  // Enter editing mode
+  // Enter editing mode (blocked when reconciliation state is blocked).
   const handleStartEdit = useCallback(() => {
+    if (isBlocked) return;
     setSectionState('editing');
     setSettingsError(null);
-  }, []);
+  }, [isBlocked]);
 
   // Update a single field value (optimistic, not persisted)
   const handleFieldChange = useCallback((key: string, value: unknown) => {
     setEditValues((prev) => ({ ...prev, [key]: value }));
   }, []);
 
-  // Save settings through the repository
+  // Save settings through the repository (blocked when reconciliation is blocked).
   const handleSave = useCallback(async () => {
-    if (!repository) return;
+    if (!repository || isBlocked) return;
+
+    // Validate all SchemaForm fields and focus the first invalid widget.
+    if (schemaFormRef.current && !schemaFormRef.current.validateAndFocus()) {
+      // Validation failed — focus already directed to the first error.
+      return;
+    }
+
     setSectionState('saving');
     setSettingsError(null);
+    savingRef.current = true;
 
     const now = new Date().toISOString();
     const snapshot: ExtensionSettingsSnapshot = {
       extensionId,
-      schemaVersion: savedSnapshot?.schemaVersion ?? 1,
+      schemaVersion: manifest?.settingsSchema?.version ?? 1,
       values: { ...editValues },
       lastWrittenAt: now,
     };
@@ -535,25 +532,33 @@ function PackageSettingsSection({
         setSavedSnapshot(snapshot);
         setSectionState('idle');
         onRefresh();
+
+        // T10: Publish save through the shared notification path so active
+        // extensions and other host consumers see the update.
+        if (settingsNotificationRegistry && !settingsNotificationRegistry.isDisposed) {
+          settingsNotificationRegistry.notifySettingsChanged(extensionId);
+        }
       }
     } catch (err) {
       if (mountedRef.current) {
         setSettingsError(err instanceof Error ? err.message : 'Failed to save settings');
         setSectionState('error');
       }
+    } finally {
+      savingRef.current = false;
     }
-  }, [extensionId, editValues, onRefresh, repository, savedSnapshot]);
+  }, [extensionId, editValues, onRefresh, repository, manifest, isBlocked, settingsNotificationRegistry]);
 
-  // Cancel: revert to last saved values
+  // Cancel: revert to the reconciled baseline values (not raw snapshot).
   const handleCancel = useCallback(() => {
-    setEditValues(savedSnapshot ? { ...savedSnapshot.values } : {});
+    setEditValues({ ...baseValuesRef.current });
     setSectionState('idle');
     setSettingsError(null);
-  }, [savedSnapshot]);
+  }, []);
 
-  // Reset: delete settings and revert to empty
+  // Reset: delete settings, clear reconciliation, re-materialize defaults.
   const handleReset = useCallback(async () => {
-    if (!repository) return;
+    if (!repository || isBlocked) return;
     setSectionState('saving');
     setSettingsError(null);
 
@@ -561,7 +566,17 @@ function PackageSettingsSection({
       await repository.deleteSettingsSnapshot(extensionId);
       if (mountedRef.current) {
         setSavedSnapshot(null);
-        setEditValues({});
+        setReconciliationResult(null);
+        // Re-materialize: re-run reconciliation with null snapshot
+        if (manifest) {
+          const result = reconcileSettingsSnapshot({ manifest, snapshot: null });
+          setReconciliationResult(result);
+          setEditValues(result.values);
+          baseValuesRef.current = { ...result.values };
+        } else {
+          setEditValues({});
+          baseValuesRef.current = {};
+        }
         setSectionState('idle');
         onRefresh();
       }
@@ -571,7 +586,7 @@ function PackageSettingsSection({
         setSectionState('error');
       }
     }
-  }, [extensionId, onRefresh, repository]);
+  }, [extensionId, onRefresh, repository, manifest, isBlocked]);
 
   // Retry after error
   const handleSettingsRetry = useCallback(() => {
@@ -586,142 +601,69 @@ function PackageSettingsSection({
     }, 0);
   }, [handleExpand]);
 
-  // ---- Raw JSON mode handlers --------------------------------------------
 
-  /** Save raw JSON: validate syntax, then persist. */
-  const handleRawJsonSave = useCallback(async () => {
-    if (!repository) return;
-
-    // Validate JSON syntax
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(rawJsonText);
-    } catch (err) {
-      setRawJsonError(
-        err instanceof SyntaxError
-          ? `Invalid JSON: ${err.message}`
-          : 'Invalid JSON: unable to parse',
-      );
-      return;
-    }
-
-    // Must be an object (settings are key-value)
-    if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
-      setRawJsonError('Settings must be a JSON object (e.g. {"key": "value"}), not an array or primitive.');
-      return;
-    }
-
-    const schemaError = validateRawSettingsAgainstManifestSchema(
-      parsed as Record<string, unknown>,
-      manifest?.settingsSchema?.schema,
-    );
-    if (schemaError) {
-      setRawJsonError(schemaError);
-      return;
-    }
-
-    setSectionState('saving');
-    setRawJsonError(null);
-    setSettingsError(null);
-
-    const now = new Date().toISOString();
-    const snapshot: ExtensionSettingsSnapshot = {
-      extensionId,
-      schemaVersion: savedSnapshot?.schemaVersion ?? manifest?.settingsSchema?.version ?? 1,
-      values: parsed as Record<string, unknown>,
-      lastWrittenAt: now,
-    };
-
-    try {
-      await repository.putSettingsSnapshot(snapshot);
-      if (mountedRef.current) {
-        setSavedSnapshot(snapshot);
-        setSectionState('raw-json');
-        onRefresh();
-      }
-    } catch (err) {
-      if (mountedRef.current) {
-        setSettingsError(err instanceof Error ? err.message : 'Failed to save settings');
-        setSectionState('error');
-      }
-    }
-  }, [extensionId, manifest, onRefresh, rawJsonText, repository, savedSnapshot]);
-
-  /** Cancel raw JSON editing: revert to last saved. */
-  const handleRawJsonCancel = useCallback(() => {
-    const jsonText = savedSnapshot
-      ? JSON.stringify(savedSnapshot.values, null, 2)
-      : '{}';
-    setRawJsonText(jsonText);
-    setRawJsonError(null);
-    // Stay in raw-json mode; user can collapse if desired.
-  }, [savedSnapshot]);
-
-  /** Reset raw JSON: delete snapshot and revert to empty object. */
-  const handleRawJsonReset = useCallback(async () => {
-    if (!repository) return;
-    setSectionState('saving');
-    setRawJsonError(null);
-    setSettingsError(null);
-
-    try {
-      await repository.deleteSettingsSnapshot(extensionId);
-      if (mountedRef.current) {
-        setSavedSnapshot(null);
-        setRawJsonText('{}');
-        setSectionState('raw-json');
-        onRefresh();
-      }
-    } catch (err) {
-      if (mountedRef.current) {
-        setSettingsError(err instanceof Error ? err.message : 'Failed to reset settings');
-        setSectionState('error');
-      }
-    }
-  }, [extensionId, onRefresh, repository]);
-
-  /** Retry after raw JSON error. */
-  const handleRawJsonRetry = useCallback(() => {
-    setSettingsError(null);
-    setSectionState('collapsed');
-    setTimeout(() => {
-      if (mountedRef.current) {
-        setSectionState('loading');
-        handleExpand();
-      }
-    }, 0);
-  }, [handleExpand]);
 
   const hasSnapshot = savedSnapshot !== null;
   const hasValues = Object.keys(editValues).length > 0;
-  const isDirty = hasSnapshot
-    ? JSON.stringify(editValues) !== JSON.stringify(savedSnapshot.values)
-    : hasValues;
+  // Compare against the reconciled baseline so auto-repairs (default-fill,
+  // type coercion) don't falsely flag the form as dirty.
+  const isDirty =
+    JSON.stringify(editValues) !== JSON.stringify(baseValuesRef.current);
 
   const settingsKeys = Object.keys(editValues).sort();
 
-  // Raw JSON dirty check
-  const rawJsonDirty = (() => {
-    if (savedSnapshot) {
-      try {
-        const parsed = JSON.parse(rawJsonText);
-        return JSON.stringify(parsed) !== JSON.stringify(savedSnapshot.values);
-      } catch {
-        return true; // Invalid JSON is always "dirty"
-      }
-    }
-    try {
-      const parsed = JSON.parse(rawJsonText);
-      return Object.keys(parsed as Record<string, unknown>).length > 0;
-    } catch {
-      return rawJsonText.trim() !== '' && rawJsonText.trim() !== '{}';
-    }
-  })();
+  // ---- Reconciliation diagnostic helpers (T4) ---------------------------
 
-  // Schema diagnostic message for unsupported schemas
-  const schemaDiagnostics = schemaAdaptation?.diagnostics
-    ?.map((d) => d.message)
-    .join('; ') ?? null;
+  const isRepaired = reconciliationState === 'repaired';
+  const isNeedsReview = reconciliationState === 'needs-review';
+
+  /** Count of reconciliation diagnostics that are not schema-adapter noise. */
+  const reconciliationDiagCount =
+    reconciliationResult?.diagnostics.filter(
+      (d) => !d.code?.startsWith('settings/unsupported-schema'),
+    ).length ?? 0;
+
+  /** Human-readable label for the reconciliation state badge. */
+  function reconciliationBadgeLabel(state: ReconciliationState): string {
+    switch (state) {
+      case 'clean':
+        return 'Settings OK';
+      case 'repaired':
+        return 'Auto-repaired';
+      case 'needs-review':
+        return 'Needs review';
+      case 'blocked':
+        return 'Settings blocked';
+    }
+  }
+
+  /** Severity-driven color classes for the reconciliation row. */
+  function reconciliationRowStyle(state: ReconciliationState): string {
+    switch (state) {
+      case 'clean':
+        return 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400';
+      case 'repaired':
+        return 'bg-blue-500/10 border-blue-500/30 text-blue-400';
+      case 'needs-review':
+        return 'bg-yellow-500/10 border-yellow-500/30 text-yellow-400';
+      case 'blocked':
+        return 'bg-red-500/10 border-red-500/30 text-red-400';
+    }
+  }
+
+  /** Icon component per reconciliation state. */
+  function ReconciliationIcon({ state }: { state: ReconciliationState }) {
+    switch (state) {
+      case 'clean':
+        return <CheckCircle className="h-3 w-3 shrink-0" />;
+      case 'repaired':
+        return <Info className="h-3 w-3 shrink-0" />;
+      case 'needs-review':
+        return <AlertTriangle className="h-3 w-3 shrink-0" />;
+      case 'blocked':
+        return <AlertCircle className="h-3 w-3 shrink-0" />;
+    }
+  }
 
   return (
     <div className="mt-2 border-t border-border pt-2" data-video-editor-extension-settings={extensionId}>
@@ -752,6 +694,67 @@ function PackageSettingsSection({
           <span>Loading settings…</span>
         </div>
       )}
+
+      {/* ---- Reconciliation diagnostic row (T4) ---- */}
+      {reconciliationResult &&
+        (sectionState === 'idle' || sectionState === 'editing') && (
+          <div
+            className={`mt-1.5 rounded border px-2 py-1 text-[10px] ${reconciliationRowStyle(reconciliationResult.state)}`}
+            data-video-editor-extension-settings-reconciliation={extensionId}
+            data-video-editor-extension-settings-reconciliation-state={reconciliationResult.state}
+          >
+            <div className="flex items-center justify-between gap-2">
+              <span className="flex items-center gap-1 font-medium">
+                <ReconciliationIcon state={reconciliationResult.state} />
+                {reconciliationBadgeLabel(reconciliationResult.state)}
+              </span>
+              {reconciliationDiagCount > 0 && (
+                <button
+                  type="button"
+                  onClick={() => setReconciliationExpanded((prev) => !prev)}
+                  className="inline-flex items-center gap-0.5 text-[10px] underline hover:opacity-80 transition-opacity"
+                  aria-expanded={reconciliationExpanded}
+                  aria-label={`${reconciliationExpanded ? 'Hide' : 'Show'} reconciliation details`}
+                  data-video-editor-extension-settings-reconciliation-toggle={extensionId}
+                >
+                  {reconciliationDiagCount} detail{reconciliationDiagCount !== 1 ? 's' : ''}
+                  {reconciliationExpanded ? (
+                    <ChevronDown className="h-2.5 w-2.5" />
+                  ) : (
+                    <ChevronRight className="h-2.5 w-2.5" />
+                  )}
+                </button>
+              )}
+            </div>
+            {reconciliationExpanded && reconciliationDiagCount > 0 && (
+              <div className="mt-1 flex flex-col gap-0.5 max-h-32 overflow-y-auto">
+                {reconciliationResult.diagnostics
+                  .filter((d) => !d.code?.startsWith('settings/unsupported-schema'))
+                  .map((diag, idx) => {
+                    const SevIcon = DIAG_SEVERITY_ICON[diag.severity];
+                    return (
+                      <div
+                        key={`${diag.code ?? 'diag'}-${idx}`}
+                        className="flex items-start gap-1 text-[10px] text-foreground/80"
+                      >
+                        <SevIcon
+                          className={`mt-0.5 h-2.5 w-2.5 shrink-0 ${DIAG_SEVERITY_COLOR[diag.severity]}`}
+                          aria-hidden="true"
+                        />
+                        <span>{diag.message}</span>
+                      </div>
+                    );
+                  })}
+                {reconciliationResult.droppedUnknownFields.length > 0 && (
+                  <div className="text-[10px] text-muted-foreground/70 mt-0.5">
+                    Dropped unknown fields:{' '}
+                    {reconciliationResult.droppedUnknownFields.join(', ')}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        )}
 
       {/* No settings saved, not editing */}
       {(sectionState === 'idle') && !hasValues && (
@@ -788,15 +791,21 @@ function PackageSettingsSection({
               <span>Settings</span>
               <ChevronDown className="h-3 w-3" />
             </button>
-            <button
-              type="button"
-              onClick={handleStartEdit}
-              className="text-[10px] text-muted-foreground hover:text-foreground transition-colors"
-              aria-label="Edit extension settings"
-              data-video-editor-extension-settings-edit={extensionId}
-            >
-              Edit
-            </button>
+            {!hasUnsupportedSchema && (
+              <button
+                type="button"
+                onClick={handleStartEdit}
+                disabled={isBlocked}
+                className="text-[10px] text-muted-foreground hover:text-foreground transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                aria-label="Edit extension settings"
+                data-video-editor-extension-settings-edit={extensionId}
+              >
+                Edit
+              </button>
+            )}
+            {hasUnsupportedSchema && (
+              <span className="text-[10px] text-yellow-400/80 font-medium">Read-only</span>
+            )}
           </div>
           {settingsKeys.map((key) => (
             <div key={key} className="flex items-center gap-2 py-0.5 text-[11px]">
@@ -812,14 +821,21 @@ function PackageSettingsSection({
         </div>
       )}
 
-      {/* Editing: inline key-value editor */}
+      {/* Editing: SchemaForm (supported schemas) or fallback key-value editor */}
       {sectionState === 'editing' && (
         <div>
           <div className="flex items-center gap-1 mb-1.5 text-[11px] text-muted-foreground">
             <Settings className="h-3 w-3" />
             <span>Editing settings</span>
           </div>
-          {settingsKeys.length > 0 ? (
+          {schemaAnalysis?.schema ? (
+            <SchemaForm
+              ref={schemaFormRef}
+              schema={schemaAnalysis.schema}
+              values={editValues}
+              onChange={handleFieldChange}
+            />
+          ) : settingsKeys.length > 0 ? (
             settingsKeys.map((key) => (
               <div key={key} className="flex items-center gap-2 py-0.5">
                 <label className="text-[11px] font-medium text-muted-foreground min-w-[80px] truncate">
@@ -843,7 +859,7 @@ function PackageSettingsSection({
             <button
               type="button"
               onClick={handleSave}
-              disabled={!isDirty}
+              disabled={!isDirty || isBlocked}
               className="inline-flex items-center gap-1 rounded bg-emerald-500/10 border border-emerald-500/30 px-2 py-0.5 text-[10px] font-medium text-emerald-400 hover:bg-emerald-500/20 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
               aria-label="Save extension settings"
               data-video-editor-extension-settings-save={extensionId}
@@ -884,18 +900,18 @@ function PackageSettingsSection({
         </div>
       )}
 
-      {/* Error (key-value or raw JSON) */}
-      {sectionState === 'error' && (settingsError || rawJsonError) && (
+      {/* Error */}
+      {sectionState === 'error' && settingsError && (
         <div
           className="rounded bg-red-500/10 border border-red-500/30 px-2 py-1 text-[11px] text-red-400"
           role="alert"
           data-video-editor-extension-settings-error={extensionId}
         >
           <div className="flex items-center justify-between gap-2">
-            <span>Settings error: {settingsError || rawJsonError}</span>
+            <span>Settings error: {settingsError}</span>
             <button
               type="button"
-              onClick={hasUnsupportedSchema ? handleRawJsonRetry : handleSettingsRetry}
+              onClick={handleSettingsRetry}
               className="shrink-0 text-[10px] underline hover:text-red-300 transition-colors"
               aria-label="Retry extension settings"
               data-video-editor-extension-settings-retry={extensionId}
@@ -906,89 +922,7 @@ function PackageSettingsSection({
         </div>
       )}
 
-      {/* Raw JSON mode — unsupported schemas */}
-      {sectionState === 'raw-json' && (
-        <div data-video-editor-extension-settings-raw-json={extensionId}>
-          <div className="flex items-center justify-between mb-1.5">
-            <button
-              type="button"
-              onClick={handleExpand}
-              className="inline-flex items-center gap-1 text-[11px] text-muted-foreground hover:text-foreground transition-colors"
-              aria-label="Hide extension settings"
-            >
-              <Settings className="h-3 w-3" />
-              <span>Settings</span>
-              <ChevronDown className="h-3 w-3" />
-            </button>
-            <span className="text-[10px] text-yellow-400/80 font-medium">Raw JSON</span>
-          </div>
-          {schemaDiagnostics && (
-            <div className="mb-1.5 rounded bg-yellow-500/10 border border-yellow-500/30 px-2 py-1 text-[10px] text-yellow-400/80">
-              {schemaDiagnostics}
-            </div>
-          )}
-          <textarea
-            value={rawJsonText}
-            onChange={(e) => {
-              setRawJsonText(e.target.value);
-              setRawJsonError(null);
-            }}
-            rows={8}
-            className="w-full rounded border border-border bg-background px-2 py-1.5 font-mono text-[11px] text-foreground focus:outline-none focus:ring-1 focus:ring-ring resize-y"
-            aria-label="Raw JSON settings editor"
-            spellCheck={false}
-            data-video-editor-extension-settings-raw-json-textarea={extensionId}
-          />
-          {rawJsonError && (
-            <div
-              className="mt-1 rounded bg-red-500/10 border border-red-500/30 px-2 py-1 text-[11px] text-red-400"
-              role="alert"
-              data-video-editor-extension-settings-raw-json-error={extensionId}
-            >
-              {rawJsonError}
-            </div>
-          )}
-          <div className="mt-2 flex items-center gap-1.5">
-            <button
-              type="button"
-              onClick={handleRawJsonSave}
-              disabled={!rawJsonDirty}
-              className="inline-flex items-center gap-1 rounded bg-emerald-500/10 border border-emerald-500/30 px-2 py-0.5 text-[10px] font-medium text-emerald-400 hover:bg-emerald-500/20 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-              aria-label="Save raw JSON extension settings"
-              data-video-editor-extension-settings-raw-json-save={extensionId}
-            >
-              <Save className="h-3 w-3" />
-              Save
-            </button>
-            <button
-              type="button"
-              onClick={handleRawJsonCancel}
-              disabled={!rawJsonDirty}
-              className="inline-flex items-center gap-1 rounded bg-muted/50 border border-border px-2 py-0.5 text-[10px] font-medium text-muted-foreground hover:bg-muted transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-              aria-label="Cancel raw JSON settings changes"
-              data-video-editor-extension-settings-raw-json-cancel={extensionId}
-            >
-              <X className="h-3 w-3" />
-              Cancel
-            </button>
-            <button
-              type="button"
-              onClick={handleRawJsonReset}
-              className="inline-flex items-center gap-1 rounded bg-red-500/10 border border-red-500/30 px-2 py-0.5 text-[10px] font-medium text-red-400 hover:bg-red-500/20 transition-colors"
-              aria-label="Reset raw JSON extension settings"
-              data-video-editor-extension-settings-raw-json-reset={extensionId}
-            >
-              <Undo2 className="h-3 w-3" />
-              Reset
-            </button>
-          </div>
-          {savedSnapshot && (
-            <div className="mt-1 text-[10px] text-muted-foreground/50">
-              Last saved: {new Date(savedSnapshot.lastWrittenAt).toLocaleString()}
-            </div>
-          )}
-        </div>
-      )}
+
     </div>
   );
 }
@@ -1004,6 +938,7 @@ function PackageCard({
   onToggleRequest,
   manifest,
   diagnosticSummary,
+  settingsNotificationRegistry,
 }: {
   entry: PackageStateInventoryEntry;
   contributionSummary: ContributionSummary | null;
@@ -1011,6 +946,8 @@ function PackageCard({
   onToggleRequest: () => void;
   manifest?: ExtensionManifest | null;
   diagnosticSummary?: PackageDiagnosticSummary;
+  /** T10: Host-visible notification registry for manager/runtime coherence. */
+  settingsNotificationRegistry?: ExtensionSettingsNotificationRegistry | null;
 }) {
   const { extensionId, packageState, stateReason, packageMetadata } = entry;
   const label = packageMetadata?.label ?? extensionId;
@@ -1285,6 +1222,7 @@ function PackageCard({
         repository={repository}
         onRefresh={onToggleRequest}
         manifest={manifest}
+        settingsNotificationRegistry={settingsNotificationRegistry}
       />
     </div>
   );
@@ -1367,7 +1305,7 @@ const EMPTY_PACKAGE_STATE_INVENTORY: readonly PackageStateInventoryEntry[] = Obj
 // ---------------------------------------------------------------------------
 
 export function ExtensionManager() {
-  const { extensionRuntime, extensionStateRepository, triggerExtensionRefresh, diagnosticCollection } = useVideoEditorRuntime();
+  const { extensionRuntime, extensionStateRepository, triggerExtensionRefresh, diagnosticCollection, settingsNotificationRegistry } = useVideoEditorRuntime();
   const packageStateInventory = extensionRuntime?.packageStateInventory ?? EMPTY_PACKAGE_STATE_INVENTORY;
 
   // Subscribe to live diagnostic updates from the provider-scoped DiagnosticCollection.
@@ -1463,6 +1401,7 @@ export function ExtensionManager() {
             onToggleRequest={triggerExtensionRefresh ?? (() => {})}
             manifest={manifestLookup.get(entry.extensionId) ?? null}
             diagnosticSummary={packageDiagnostics.get(entry.extensionId)}
+            settingsNotificationRegistry={settingsNotificationRegistry ?? null}
           />
         ))}
       </div>
