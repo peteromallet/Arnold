@@ -110,28 +110,28 @@ def _discover_tools():
     not installed) don't prevent the rest from loading.
     """
     _modules = [
-        "tools.web_tools",
-        "tools.terminal_tool",
-        "tools.file_tools",
-        "tools.vision_tools",
-        "tools.mixture_of_agents_tool",
-        "tools.image_generation_tool",
-        "tools.skills_tool",
-        "tools.skill_manager_tool",
-        "tools.browser_tool",
-        "tools.cronjob_tools",
-        "tools.rl_training_tool",
-        "tools.tts_tool",
-        "tools.todo_tool",
-        "tools.memory_tool",
-        "tools.session_search_tool",
-        "tools.clarify_tool",
-        "tools.code_execution_tool",
-        "tools.delegate_tool",
-        "tools.process_registry",
-        "tools.send_message_tool",
-        "tools.honcho_tools",
-        "tools.homeassistant_tool",
+        "arnold.agent.tools.web_tools",
+        "arnold.agent.tools.terminal_tool",
+        "arnold.agent.tools.file_tools",
+        "arnold.agent.tools.vision_tools",
+        "arnold.agent.tools.mixture_of_agents_tool",
+        "arnold.agent.tools.image_generation_tool",
+        "arnold.agent.tools.skills_tool",
+        "arnold.agent.tools.skill_manager_tool",
+        "arnold.agent.tools.browser_tool",
+        "arnold.agent.tools.cronjob_tools",
+        "arnold.agent.tools.rl_training_tool",
+        "arnold.agent.tools.tts_tool",
+        "arnold.agent.tools.todo_tool",
+        "arnold.agent.tools.memory_tool",
+        "arnold.agent.tools.session_search_tool",
+        "arnold.agent.tools.clarify_tool",
+        "arnold.agent.tools.code_execution_tool",
+        "arnold.agent.tools.delegate_tool",
+        "arnold.agent.tools.process_registry",
+        "arnold.agent.tools.send_message_tool",
+        "arnold.agent.tools.honcho_tools",
+        "arnold.agent.tools.homeassistant_tool",
     ]
     import importlib
     for mod_name in _modules:
@@ -145,7 +145,7 @@ _discover_tools()
 
 # MCP tool discovery (external MCP servers from config)
 try:
-    from tools.mcp_tool import discover_mcp_tools
+    from arnold.agent.tools.mcp_tool import discover_mcp_tools
     discover_mcp_tools()
 except Exception as e:
     logger.debug("MCP tool discovery failed: %s", e)
@@ -286,7 +286,7 @@ def get_tool_definitions(
     # execute_code" even when the API key isn't configured or the toolset is
     # disabled (#560-discord).
     if "execute_code" in available_tool_names:
-        from tools.code_execution_tool import SANDBOX_ALLOWED_TOOLS, build_execute_code_schema
+        from arnold.agent.tools.code_execution_tool import SANDBOX_ALLOWED_TOOLS, build_execute_code_schema
         sandbox_enabled = SANDBOX_ALLOWED_TOOLS & available_tool_names
         dynamic_schema = build_execute_code_schema(sandbox_enabled)
         for i, td in enumerate(filtered_tools):
@@ -368,7 +368,7 @@ def handle_function_call(
     # so the *consecutive* counter resets (reads after other work are fine).
     if function_name not in _READ_SEARCH_TOOLS:
         try:
-            from tools.file_tools import notify_other_tool_call
+            from arnold.agent.tools.file_tools import notify_other_tool_call
             notify_other_tool_call(task_id or "default")
         except Exception:
             pass  # file_tools may not be loaded yet

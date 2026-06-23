@@ -8,9 +8,9 @@ import threading
 import time
 from pathlib import Path
 
-from tools.environments.base import BaseEnvironment
-from tools.environments.persistent_shell import PersistentShellMixin
-from tools.interrupt import is_interrupted
+from arnold.agent.tools.environments.base import BaseEnvironment
+from arnold.agent.tools.environments.persistent_shell import PersistentShellMixin
+from arnold.agent.tools.interrupt import is_interrupted
 
 logger = logging.getLogger(__name__)
 

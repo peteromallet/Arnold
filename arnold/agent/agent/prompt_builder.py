@@ -239,7 +239,7 @@ def _parse_skill_file(skill_file: Path) -> tuple[bool, dict, str]:
     (True, {}, "") to err on the side of showing the skill.
     """
     try:
-        from tools.skills_tool import _parse_frontmatter, skill_matches_platform
+        from arnold.agent.tools.skills_tool import _parse_frontmatter, skill_matches_platform
 
         raw = skill_file.read_text(encoding="utf-8")[:2000]
         frontmatter, _ = _parse_frontmatter(raw)
@@ -263,7 +263,7 @@ def _parse_skill_file(skill_file: Path) -> tuple[bool, dict, str]:
 def _read_skill_conditions(skill_file: Path) -> dict:
     """Extract conditional activation fields from SKILL.md frontmatter."""
     try:
-        from tools.skills_tool import _parse_frontmatter
+        from arnold.agent.tools.skills_tool import _parse_frontmatter
         raw = skill_file.read_text(encoding="utf-8")[:2000]
         frontmatter, _ = _parse_frontmatter(raw)
         hermes = frontmatter.get("metadata", {}).get("hermes", {})
@@ -332,7 +332,7 @@ def build_skills_system_prompt(
     # -> category "mlops/training", skill "axolotl"
     # Load disabled skill names once for the entire scan
     try:
-        from tools.skills_tool import _get_disabled_skill_names
+        from arnold.agent.tools.skills_tool import _get_disabled_skill_names
         disabled = _get_disabled_skill_names()
     except Exception:
         disabled = set()
@@ -437,7 +437,7 @@ def load_soul_md() -> Optional[str]:
     ``skip_soul=True`` so SOUL.md isn't injected twice.
     """
     try:
-        from hermes_cli.config import ensure_hermes_home
+        from arnold.agent.hermes_cli.config import ensure_hermes_home
         ensure_hermes_home()
     except Exception as e:
         logger.debug("Could not ensure HERMES_HOME before loading SOUL.md: %s", e)

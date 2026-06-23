@@ -7,4 +7,11 @@ modules in this package are native Arnold implementations.
 
 from __future__ import annotations
 
-__all__ = []
+def check_file_requirements():
+    """File tools only require the terminal backend to be available."""
+    from arnold.agent.tools.terminal_tool import check_terminal_requirements
+
+    return check_terminal_requirements()
+
+
+__all__ = ["check_file_requirements"]

@@ -16,9 +16,9 @@ import uuid
 from pathlib import Path
 from typing import Any, Dict, Optional
 
-from hermes_cli.config import get_hermes_home
-from tools.environments.base import BaseEnvironment
-from tools.interrupt import is_interrupted
+from arnold.agent.hermes_cli.config import get_hermes_home
+from arnold.agent.tools.environments.base import BaseEnvironment
+from arnold.agent.tools.interrupt import is_interrupted
 
 logger = logging.getLogger(__name__)
 
@@ -109,7 +109,7 @@ def _get_scratch_dir() -> Path:
         scratch_path.mkdir(parents=True, exist_ok=True)
         return scratch_path
 
-    from tools.environments.base import get_sandbox_dir
+    from arnold.agent.tools.environments.base import get_sandbox_dir
     sandbox = get_sandbox_dir() / "singularity"
 
     scratch = Path("/scratch")
@@ -267,7 +267,7 @@ class SingularityEnvironment(BaseEnvironment):
             if result.returncode != 0:
                 raise RuntimeError(f"Failed to start instance: {result.stderr}")
             self._instance_started = True
-            logger.info("Singularity instance %s started (persistent=%s)", 
+            logger.info("Singularity instance %s started (persistent=%s)",
                         self.instance_id, self._persistent)
         except subprocess.TimeoutExpired:
             raise RuntimeError("Instance start timed out")

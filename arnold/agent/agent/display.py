@@ -25,7 +25,7 @@ logger = logging.getLogger(__name__)
 def _get_skin():
     """Get the active skin config, or None if not available."""
     try:
-        from hermes_cli.skin_engine import get_active_skin
+        from arnold.agent.hermes_cli.skin_engine import get_active_skin
         return get_active_skin()
     except Exception:
         return None

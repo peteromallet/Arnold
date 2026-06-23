@@ -1040,7 +1040,7 @@ def _fetch_ai_gateway_models(timeout: float = 5.0) -> Optional[list[str]]:
         return None
     base_url = os.getenv("AI_GATEWAY_BASE_URL", "").strip()
     if not base_url:
-        from hermes_constants import AI_GATEWAY_BASE_URL
+        from arnold.agent.hermes_constants import AI_GATEWAY_BASE_URL
         base_url = AI_GATEWAY_BASE_URL
 
     url = base_url.rstrip("/") + "/models"

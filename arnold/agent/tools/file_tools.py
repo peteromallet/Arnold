@@ -7,8 +7,8 @@ import logging
 import os
 import threading
 from typing import Optional
-from tools.file_operations import ShellFileOperations
-from agent.redact import redact_sensitive_text
+from arnold.agent.tools.file_operations import ShellFileOperations
+from arnold.agent.agent.redact import redact_sensitive_text
 
 logger = logging.getLogger(__name__)
 
@@ -47,7 +47,7 @@ def _get_file_ops(task_id: str = "default") -> ShellFileOperations:
     Thread-safe: uses the same per-task creation locks as terminal_tool to
     prevent duplicate sandbox creation from concurrent tool calls.
     """
-    from tools.terminal_tool import (
+    from arnold.agent.tools.terminal_tool import (
         _active_environments, _env_lock, _create_environment,
         _get_env_config, _last_activity, _start_cleanup_thread,
         _check_disk_usage_warning,
@@ -86,7 +86,7 @@ def _get_file_ops(task_id: str = "default") -> ShellFileOperations:
                 terminal_env = None
 
         if terminal_env is None:
-            from tools.terminal_tool import _task_env_overrides
+            from arnold.agent.tools.terminal_tool import _task_env_overrides
 
             config = _get_env_config()
             env_type = config["env_type"]
@@ -310,7 +310,7 @@ def patch_tool(mode: str = "replace", path: str = None, old_string: str = None,
     """Patch a file using replace mode or V4A patch format."""
     try:
         file_ops = _get_file_ops(task_id)
-        
+
         if mode == "replace":
             if not path:
                 return json.dumps({"error": "path required"})
@@ -323,7 +323,7 @@ def patch_tool(mode: str = "replace", path: str = None, old_string: str = None,
             result = file_ops.patch_v4a(patch)
         else:
             return json.dumps({"error": f"Unknown mode: {mode}"})
-        
+
         result_dict = result.to_dict()
         result_json = json.dumps(result_dict, ensure_ascii=False)
         # Hint when old_string not found — saves iterations where the agent
@@ -424,7 +424,7 @@ from arnold.agent.tools.registry import registry
 
 def _check_file_reqs():
     """Lazy wrapper to avoid circular import with tools/__init__.py."""
-    from tools import check_file_requirements
+    from arnold.agent.tools import check_file_requirements
     return check_file_requirements()
 
 READ_FILE_SCHEMA = {

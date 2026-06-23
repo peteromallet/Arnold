@@ -13,9 +13,9 @@ import uuid
 from pathlib import Path
 from typing import Any, Dict, Optional
 
-from hermes_cli.config import get_hermes_home
-from tools.environments.base import BaseEnvironment
-from tools.interrupt import is_interrupted
+from arnold.agent.hermes_cli.config import get_hermes_home
+from arnold.agent.tools.environments.base import BaseEnvironment
+from arnold.agent.tools.interrupt import is_interrupted
 
 logger = logging.getLogger(__name__)
 

@@ -78,7 +78,7 @@ def _load_tool_registry():
     """
     import sys
 
-    legacy_module = sys.modules.get("tools.registry")
+    legacy_module = sys.modules.get("arnold.agent.tools.registry")
     legacy_registry = getattr(legacy_module, "registry", None) if legacy_module else None
     if legacy_registry is not None:
         return legacy_registry
@@ -90,7 +90,7 @@ def _load_tool_registry():
         pass
 
     try:
-        from tools.registry import registry as sdk_registry  # type: ignore
+        from arnold.agent.tools.registry import registry as sdk_registry  # type: ignore
         return sdk_registry
     except Exception:
         return None

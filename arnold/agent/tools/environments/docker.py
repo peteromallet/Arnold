@@ -15,8 +15,8 @@ import threading
 import time
 from typing import Optional
 
-from tools.environments.base import BaseEnvironment
-from tools.interrupt import is_interrupted
+from arnold.agent.tools.environments.base import BaseEnvironment
+from arnold.agent.tools.interrupt import is_interrupted
 
 logger = logging.getLogger(__name__)
 
@@ -62,7 +62,7 @@ def _normalize_forward_env_names(forward_env: list[str] | None) -> list[str]:
 def _load_hermes_env_vars() -> dict[str, str]:
     """Load ~/.hermes/.env values without failing Docker command execution."""
     try:
-        from hermes_cli.config import load_env
+        from arnold.agent.hermes_cli.config import load_env
 
         return load_env() or {}
     except Exception:
@@ -259,7 +259,7 @@ class DockerEnvironment(BaseEnvironment):
         # Persistent workspace via bind mounts from a configurable host directory
         # (TERMINAL_SANDBOX_DIR, default ~/.hermes/sandboxes/). Non-persistent
         # mode uses tmpfs (ephemeral, fast, gone on cleanup).
-        from tools.environments.base import get_sandbox_dir
+        from arnold.agent.tools.environments.base import get_sandbox_dir
 
         # User-configured volume mounts (from config.yaml docker_volumes)
         volume_args = []
@@ -341,7 +341,7 @@ class DockerEnvironment(BaseEnvironment):
     @staticmethod
     def _storage_opt_supported() -> bool:
         """Check if Docker's storage driver supports --storage-opt size=.
-        
+
         Only overlay2 on XFS with pquota supports per-container disk quotas.
         Ubuntu (and most distros) default to ext4, where this flag errors out.
         """

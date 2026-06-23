@@ -15,7 +15,7 @@ from urllib.parse import urlparse
 import requests
 import yaml
 
-from hermes_constants import OPENROUTER_MODELS_URL
+from arnold.agent.hermes_constants import OPENROUTER_MODELS_URL
 
 logger = logging.getLogger(__name__)
 
@@ -854,7 +854,7 @@ def get_model_context_length(
         if ctx:
             return ctx
     if effective_provider:
-        from agent.models_dev import lookup_models_dev_context
+        from arnold.agent.agent.models_dev import lookup_models_dev_context
         ctx = lookup_models_dev_context(effective_provider, model)
         if ctx:
             return ctx

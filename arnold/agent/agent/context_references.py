@@ -11,7 +11,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Awaitable, Callable
 
-from agent.model_metadata import estimate_tokens_rough
+from arnold.agent.agent.model_metadata import estimate_tokens_rough
 
 REFERENCE_PATTERN = re.compile(
     r"(?<![\w/])@(?:(?P<simple>diff|staged)\b|(?P<kind>file|folder|git|url):(?P<value>\S+))"
@@ -314,7 +314,7 @@ async def _fetch_url_content(
 
 
 async def _default_url_fetcher(url: str) -> str:
-    from tools.web_tools import web_extract_tool
+    from arnold.agent.tools.web_tools import web_extract_tool
 
     raw = await web_extract_tool([url], format="markdown", use_llm_processing=True)
     payload = json.loads(raw)

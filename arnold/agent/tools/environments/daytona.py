@@ -14,8 +14,8 @@ import uuid
 import warnings
 from typing import Optional
 
-from tools.environments.base import BaseEnvironment
-from tools.interrupt import is_interrupted
+from arnold.agent.tools.environments.base import BaseEnvironment
+from arnold.agent.tools.interrupt import is_interrupted
 
 logger = logging.getLogger(__name__)
 

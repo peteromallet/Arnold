@@ -17,8 +17,8 @@ import logging
 import os
 from typing import Any, Dict, List, Optional
 
-from agent.auxiliary_client import call_llm
-from agent.model_metadata import (
+from arnold.agent.agent.auxiliary_client import call_llm
+from arnold.agent.agent.model_metadata import (
     get_model_context_length,
     estimate_messages_tokens_rough,
 )

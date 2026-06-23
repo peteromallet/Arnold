@@ -9,7 +9,7 @@ import uuid
 from abc import abstractmethod
 
 from arnold.runtime.process import kill_group
-from tools.interrupt import is_interrupted
+from arnold.agent.tools.interrupt import is_interrupted
 
 logger = logging.getLogger(__name__)
 

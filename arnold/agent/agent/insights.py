@@ -10,7 +10,7 @@ multi-platform architecture with additional cost estimation and platform
 breakdown capabilities.
 
 Usage:
-    from agent.insights import InsightsEngine
+    from arnold.agent.agent.insights import InsightsEngine
     engine = InsightsEngine(db)
     report = engine.generate(days=30)
     print(engine.format_terminal(report))
@@ -22,7 +22,7 @@ from collections import Counter, defaultdict
 from datetime import datetime
 from typing import Any, Dict, List
 
-from agent.usage_pricing import (
+from arnold.agent.agent.usage_pricing import (
     CanonicalUsage,
     DEFAULT_PRICING,
     estimate_usage_cost,
