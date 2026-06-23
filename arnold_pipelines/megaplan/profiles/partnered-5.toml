@@ -4,7 +4,7 @@
 adaptive_critique = true
 plan                  = "premium:low"
 prep                  = "hermes:deepseek:deepseek-v4-pro"
-critique              = "hermes:deepseek:deepseek-v4-pro"
+critique              = "codex:gpt-5.5"
 critique_evaluator    = "premium:low"
 revise                = "premium:low"
 gate                  = "hermes:deepseek:deepseek-v4-pro"
@@ -25,8 +25,8 @@ tiebreaker_challenger = "premium:low"
 5 = "codex:gpt-5.5"
 
 [profiles.partnered-5.tier_models.critique]
-1 = "hermes:deepseek:deepseek-v4-flash"
-2 = "hermes:deepseek:deepseek-v4-pro"
-3 = "hermes:deepseek:deepseek-v4-pro"
-4 = "claude:claude-sonnet-4-6"
-5 = "claude:claude-opus-4-7"
+1 = "codex:gpt-5.5"
+2 = "codex:gpt-5.5"
+3 = "codex:gpt-5.5"
+4 = "codex:gpt-5.5"
+5 = "codex:gpt-5.5"
