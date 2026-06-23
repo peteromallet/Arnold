@@ -245,6 +245,16 @@ export function drawPreviewOverlay(ctx, diff, deps = {}) {
       ctx.restore();
     };
 
+    var measureBadgeWidth = function (text) {
+      ctx.save();
+      try {
+        ctx.font = "bold 12px sans-serif";
+        return ctx.measureText(text).width + 10;
+      } finally {
+        ctx.restore();
+      }
+    };
+
     var drawFullBoxMarker = function (bounds, strokeColor, fillColor, dashed) {
       ctx.setLineDash(dashed ? [6, 3] : []);
       ctx.fillStyle = fillColor;
@@ -506,6 +516,7 @@ export function drawPreviewOverlay(ctx, diff, deps = {}) {
     }
 
     var removedItems = (diff.removed || []).concat(diff.removed_named || []);
+    var removedBadgeText = "\u2212 will be removed";
     for (var ri = 0; ri < removedItems.length; ri += 1) {
       var ritem = removedItems[ri];
       var rnode = liveByUid.get(ritem.uid);
@@ -514,7 +525,10 @@ export function drawPreviewOverlay(ctx, diff, deps = {}) {
       }
       var rb = readNodeBounding(rnode, TITLE_H);
       drawFullBoxMarker(rb, removedColor, removedFill, false);
-      drawBadge(rb.x + rb.w - 2 - 140, rb.y + rb.h - 2, "\u2212 will be removed", removedColor);
+      var removedBadgeWidth = measureBadgeWidth(removedBadgeText);
+      var removedBadgeX = Math.max(rb.x + 4, rb.x + rb.w - removedBadgeWidth - 4);
+      var removedBadgeBottomY = rb.y + Math.max(18, Math.min(TITLE_H - 4, 24));
+      drawBadge(removedBadgeX, removedBadgeBottomY, removedBadgeText, removedColor);
     }
 
     for (var ai = 0; ai < (diff.added || []).length; ai += 1) {

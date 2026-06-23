@@ -7482,6 +7482,15 @@ test("VibeComfy removed-node overlay fills the full node box and keeps the remov
       drawOps.some((op) => op.kind === "fillText" && op.args[0] === "\u2212 will be removed"),
       "removed marker must keep the existing badge label",
     );
+    const removedBadgeTextOp = drawOps.find(
+      (op) => op.kind === "fillText" && op.args[0] === "\u2212 will be removed",
+    );
+    assert.ok(removedBadgeTextOp, "removed marker text op must be captured");
+    const badgeTextY = removedBadgeTextOp.args[2];
+    assert.ok(
+      badgeTextY < NODE_POS[1],
+      "removed marker must be drawn in the title bar above DOM widget rows",
+    );
   } finally {
     await harness.dispose();
   }
