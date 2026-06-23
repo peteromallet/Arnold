@@ -30,6 +30,7 @@ import {
 import {
   normalizeExtensionRuntime,
   type ExtensionRuntime,
+  type PackageStateInventoryEntry,
 } from '@/tools/video-editor/runtime/extensionSurface.ts';
 import {
   createExtensionDiagnosticsService,
@@ -79,6 +80,7 @@ import { createLiveDataRegistry } from '@/tools/video-editor/runtime/liveDataReg
 import type { LiveDataRegistry } from '@/tools/video-editor/runtime/liveDataRegistry.ts';
 import { createLivePermissionService } from '@/tools/video-editor/runtime/livePermissions.ts';
 import type { LivePermissionService } from '@/tools/video-editor/runtime/livePermissions.ts';
+import type { ExtensionStateRepository } from '@/tools/video-editor/runtime/extensionStateRepository';
 import {
   TransitionRegistryProvider,
   useTransitionRegistryContext,
@@ -101,6 +103,12 @@ export interface EditorRuntimeProviderProps {
   sequenceComponentCatalog?: VideoEditorSequenceComponentCatalog | null;
   runtime?: Pick<VideoEditorRuntimeContextValue, 'assetResolver' | 'exporter' | 'hostContext'>;
   extensions?: readonly ReighExtension[];
+  /** Package-state inventory entries propagated from the loader (M5). */
+  packageStateEntries?: readonly PackageStateInventoryEntry[];
+  /** M5: Extension state repository for enable/disable persistence. */
+  extensionStateRepository?: ExtensionStateRepository | null;
+  /** M5: Trigger extension re-resolution after persistence writes. */
+  triggerExtensionRefresh?: () => void;
   children: ReactNode;
 }
 
@@ -693,12 +701,15 @@ export function EditorRuntimeProvider({
   sequenceComponentCatalog,
   runtime,
   extensions,
+  packageStateEntries,
+  extensionStateRepository,
+  triggerExtensionRefresh,
   children,
 }: EditorRuntimeProviderProps) {
   // ---- extension normalization & lifecycle --------------------------------
   const extensionRuntime = useMemo<ExtensionRuntime>(
-    () => normalizeExtensionRuntime(extensions ?? []),
-    [extensions],
+    () => normalizeExtensionRuntime(extensions ?? [], packageStateEntries),
+    [extensions, packageStateEntries],
   );
 
   // ---- M11: live data registry (one per provider mount) -----------------------
@@ -848,6 +859,8 @@ export function EditorRuntimeProvider({
     liveDataRegistry: liveDataRegistryRef.current ?? undefined,
     livePermissionService: livePermissionServiceRef.current ?? undefined,
     diagnosticCollection: diagnosticCollectionRef.current ?? undefined,
+    extensionStateRepository: extensionStateRepository ?? null,
+    triggerExtensionRefresh,
   }), [
     dataProvider,
     runtime?.assetResolver,
@@ -864,6 +877,8 @@ export function EditorRuntimeProvider({
     timelineName,
     extensionRuntime.config,
     extensionRuntime,
+    extensionStateRepository,
+    triggerExtensionRefresh,
   ]);
 
   return (

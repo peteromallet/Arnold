@@ -1,4 +1,4 @@
-import { memo, useEffect, useMemo, useRef } from 'react';
+import { memo, useEffect, useMemo, useRef, useState } from 'react';
 import { Button } from '@/shared/components/ui/button.tsx';
 import { BulkClipPanel } from '@/tools/video-editor/components/PropertiesPanel/BulkClipPanel.tsx';
 import { ClipPanel, getVisibleClipTabs, NO_EFFECT } from '@/tools/video-editor/components/PropertiesPanel/ClipPanel.tsx';
@@ -28,6 +28,12 @@ import {
   ContributionErrorBoundary,
   type ContributionErrorInfo,
 } from '@/tools/video-editor/runtime/ContributionErrorBoundary.tsx';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/shared/components/ui/tabs.tsx';
+import {
+  ExtensionManager,
+  ExtensionManagerErrorBoundary,
+  type ManagerErrorInfo,
+} from '@/tools/video-editor/components/ExtensionManager';
 
 function InspectorRegistrySections({
   placement,
@@ -81,6 +87,17 @@ function InspectorRegistrySections({
 
 function PropertiesPanelComponent() {
   useRenderDiagnostic('PropertiesPanel');
+  const [activePanelTab, setActivePanelTab] = useState<'inspector' | 'extensions'>('inspector');
+  const [managerRecoveryKey, setManagerRecoveryKey] = useState(0);
+
+  const handleManagerError = (_info: ManagerErrorInfo) => {
+    // Error already logged by the boundary; could aggregate to diagnostics sink in future.
+  };
+
+  const handleManagerReset = () => {
+    setManagerRecoveryKey((prev) => prev + 1);
+  };
+
   const {
     data,
     resolvedConfig,
@@ -234,7 +251,17 @@ function PropertiesPanelComponent() {
 
   return (
     <div className="flex h-full min-h-0 flex-col gap-3" style={VIDEO_EDITOR_THEME_VARS}>
-      {showInspectorActions && (
+      <Tabs
+        value={activePanelTab}
+        onValueChange={(value) => setActivePanelTab(value as 'inspector' | 'extensions')}
+        className="flex min-h-0 flex-1 flex-col"
+      >
+        <TabsList className="grid w-full grid-cols-2 bg-muted/60">
+          <TabsTrigger value="inspector">Inspector</TabsTrigger>
+          <TabsTrigger value="extensions">Extensions</TabsTrigger>
+        </TabsList>
+        <TabsContent value="inspector" className="mt-3 flex min-h-0 flex-1 flex-col gap-3">
+          {showInspectorActions && (
         <div className="rounded-xl border border-[color:var(--video-editor-accent-border)] bg-[var(--video-editor-accent-bg)] p-3">
           <div className="flex items-start justify-between gap-3">
             <div>
@@ -388,6 +415,16 @@ function PropertiesPanelComponent() {
         />
       )}
       <InspectorRegistrySections placement="after-default" selection={inspectorSelectionTarget} />
+        </TabsContent>
+        <TabsContent value="extensions" className="mt-3 min-h-0 flex-1 overflow-auto">
+          <ExtensionManagerErrorBoundary
+            recoveryKey={String(managerRecoveryKey)}
+            onError={handleManagerError}
+          >
+            <ExtensionManager />
+          </ExtensionManagerErrorBoundary>
+        </TabsContent>
+      </Tabs>
     </div>
   );
 }

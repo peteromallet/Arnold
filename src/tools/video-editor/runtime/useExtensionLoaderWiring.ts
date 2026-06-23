@@ -21,6 +21,7 @@ import {
   type ExtensionLoaderInput,
 } from '@/tools/video-editor/runtime/extensionLoader';
 import type { ExtensionPackRecord } from '@/tools/video-editor/runtime/extensionStateRepository';
+import type { PackageStateInventoryEntry } from '@/tools/video-editor/runtime/extensionSurface';
 
 // ---------------------------------------------------------------------------
 // Bundle content store (separate from metadata repo per SD2)
@@ -63,6 +64,21 @@ export interface UseExtensionLoaderWiringOptions {
    * This is typically the IndexedDB-backed repository (per SD2).
    */
   bundleStore?: BundleContentStore | null;
+
+  /**
+   * Monotonic refresh key that triggers re-resolution when incremented.
+   *
+   * After a successful persistence write (enable/disable, settings save),
+   * the caller should increment this key to force the loader to re-read
+   * repository state and produce updated extensions, diagnostics, and
+   * package-state inventory.  Defaults to 0 when not provided.
+   *
+   * Without this, the hook's internal deduplication key (based only on
+   * direct extension IDs + repository presence) would skip re-resolution
+   * even after the repository state changes, leaving UI, contributions,
+   * and diagnostics stale.
+   */
+  refreshKey?: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -97,6 +113,19 @@ export interface UseExtensionLoaderWiringResult {
    * `null` on success.
    */
   error: Error | null;
+
+  /**
+   * Package-state inventory entries derived from the loader result.
+   *
+   * Carries package state for every package that reached the loader,
+   * including non-activated packages (disabled, invalid, incompatible,
+   * duplicate, settings-error, runtime-error).  Empty when no repository
+   * is provided or resolution has not yet completed.
+   *
+   * Consumers should read this rather than inferring state from
+   * `resolvedExtensions`.
+   */
+  packageStateEntries: readonly PackageStateInventoryEntry[];
 }
 
 // ---------------------------------------------------------------------------
@@ -128,6 +157,7 @@ export function useExtensionLoaderWiring(
     directExtensions,
     repository,
     bundleStore,
+    refreshKey = 0,
   } = options;
 
   const direct = directExtensions ?? [];
@@ -140,6 +170,7 @@ export function useExtensionLoaderWiring(
       isResolving: false,
       loaderResult: null,
       error: null,
+      packageStateEntries: [],
     }), [direct]);
   }
 
@@ -168,11 +199,13 @@ export function useExtensionLoaderWiring(
     diagnostics: readonly ExtensionDiagnostic[];
     loaderResult: ExtensionLoaderLoadResult | null;
     error: Error | null;
+    packageStateEntries: readonly PackageStateInventoryEntry[];
   }>({
     resolvedExtensions: direct,
     diagnostics: [],
     loaderResult: null,
     error: null,
+    packageStateEntries: [],
   });
 
   const [isResolving, setIsResolving] = useState(true);
@@ -189,7 +222,7 @@ export function useExtensionLoaderWiring(
   );
 
   useEffect(() => {
-    const resolveKey = `${directKey}::${String(Boolean(stableRepo))}`;
+    const resolveKey = `${directKey}::${String(Boolean(stableRepo))}::${refreshKey}`;
     if (resolveKey === lastResolvedKeyRef.current && state.loaderResult !== null) {
       // Already resolved this combination — don't re-resolve
       setIsResolving(false);
@@ -271,6 +304,15 @@ export function useExtensionLoaderWiring(
 
         lastResolvedKeyRef.current = resolveKey;
 
+        // Derive packageStateEntries from loader result entries
+        const packageStateEntries: PackageStateInventoryEntry[] =
+          loadResult.entries.map((entry) => ({
+            extensionId: entry.extensionId,
+            packageState: entry.packageState,
+            stateReason: entry.stateReason,
+            packageMetadata: entry.packageMetadata,
+          }));
+
         setState({
           resolvedExtensions: loadResult.loadedExtensions,
           diagnostics: [
@@ -279,6 +321,7 @@ export function useExtensionLoaderWiring(
           ],
           loaderResult: loadResult,
           error: null,
+          packageStateEntries: Object.freeze(packageStateEntries),
         });
       } catch (err) {
         if (cancelled) return;
@@ -298,7 +341,7 @@ export function useExtensionLoaderWiring(
     return () => {
       cancelled = true;
     };
-  }, [directKey]);
+  }, [directKey, refreshKey]);
 
   return {
     resolvedExtensions: state.resolvedExtensions,
@@ -306,5 +349,6 @@ export function useExtensionLoaderWiring(
     isResolving,
     loaderResult: state.loaderResult,
     error: state.error,
+    packageStateEntries: state.packageStateEntries,
   };
 }
