@@ -3503,6 +3503,57 @@
       "resolved": false,
       "resolved_by": null,
       "resolved_at": null
+    },
+    {
+      "id": "DEBT-207",
+      "subsystem": "extension-manager-inventory",
+      "concern": "direct host-supplied extensions are read-only in extension manager with no install/update/marketplace affordances. this is an intentional scope boundary, not a defect.",
+      "flag_ids": [
+        ""
+      ],
+      "plan_ids": [
+        "m5-lifecycle-diagnostics-20260624-0037"
+      ],
+      "occurrence_count": 1,
+      "created_at": "2026-06-23T22:47:30Z",
+      "updated_at": "2026-06-23T22:47:30Z",
+      "resolved": false,
+      "resolved_by": null,
+      "resolved_at": null
+    },
+    {
+      "id": "DEBT-208",
+      "subsystem": "readiness-verification",
+      "concern": "browser/layout acceptance (step 10) playwright spec may be too slow to include in the aggregate npm run test:readiness command. the plan allows documenting it as a separate directly-runnable command instead.",
+      "flag_ids": [
+        ""
+      ],
+      "plan_ids": [
+        "m5-lifecycle-diagnostics-20260624-0037"
+      ],
+      "occurrence_count": 1,
+      "created_at": "2026-06-23T22:47:30Z",
+      "updated_at": "2026-06-23T22:47:30Z",
+      "resolved": false,
+      "resolved_by": null,
+      "resolved_at": null
+    },
+    {
+      "id": "DEBT-209",
+      "subsystem": "trust-and-security",
+      "concern": "trusted/unsandboxed execution posture is explicitly documented as intentional but carries inherent risk since extension code runs with full host privilege. no sandbox or permission broker is being built.",
+      "flag_ids": [
+        ""
+      ],
+      "plan_ids": [
+        "m5-lifecycle-diagnostics-20260624-0037"
+      ],
+      "occurrence_count": 1,
+      "created_at": "2026-06-23T22:47:30Z",
+      "updated_at": "2026-06-23T22:47:30Z",
+      "resolved": false,
+      "resolved_by": null,
+      "resolved_at": null
     }
   ]
 }
