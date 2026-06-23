@@ -20,3 +20,15 @@ Prove the integrated merge result is the clean-break state after M1-M6 have land
 5. `arnold_pipelines.megaplan.pipeline` does not define or export `_build_legacy_pipeline`, `build_legacy_pipeline`, or `compile_planning_pipeline`.
 6. Tests do not keep those legacy constructors alive.
 7. The installed wheel proves import, CLI, docs, generated artifact, and package metadata behavior from the merge result.
+
+## Completion evidence
+
+Branch: `workflow-manifest-runtime-cleanup-m7-merge-result-conformance` (based on `workflow-manifest-runtime-cleanup-m5-run`)
+
+- `python -m build --wheel --sdist` succeeded (`arnold-0.23.0` wheel + sdist).
+- `python -m pytest -m wheel_smoke tests/installed_wheel tests/arnold_pipelines/megaplan/test_wheel_smoke.py -q` → **16 passed**.
+- Generated-artifact gates pass: `generate_arnold_docs.py --check`, `render_package_disposition_md.py --check`, `validate_package_disposition.py --summary`, `check_workflow_pipeline_inventory.py --check-docs`, `check_pipeline_id_registry.py --no-drift --check-identity-report`.
+- `scripts/m6_purge_gate.py` passes.
+- `scripts/chain_done_gate.py --blockers-only` passes (all blockers resolved).
+- Full `scripts/chain_done_gate.py` passes with `completion_contract_mode` and `full_suite_backstop_mode` set to `enforce` and all M1–M7 plan states marked `done`.
+- No `_pipeline/` or `stages/` directories in `arnold_pipelines/megaplan`; no legacy pipeline constructors remain in source or tests.
