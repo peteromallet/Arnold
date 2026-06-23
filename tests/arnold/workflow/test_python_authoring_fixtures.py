@@ -21,6 +21,7 @@ EXPECTED_CASES = {
     "invalid_forbidden_root_import": "invalid",
     "invalid_intrinsic_shadowing": "invalid",
     "invalid_malformed_call": "invalid",
+    "invalid_reserved_step_keyword": "invalid",
     "invalid_star_import": "invalid",
     "invalid_unknown_component": "invalid",
     "invalid_unknown_reference": "invalid",

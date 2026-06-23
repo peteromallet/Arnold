@@ -31,6 +31,7 @@ PYTHON_AUTHORING_COMPILE_MODULES = (
     Path("arnold/workflow/diagnostics.py"),
 )
 PYTHON_AUTHORING_FIXTURE_ROOT = Path("tests/fixtures/workflow_authoring")
+PYTHON_AUTHORING_SUPPORT_MODULES = {"components"}
 PYTHON_AUTHORING_BANNED_GUIDANCE = (
     "PipelineBuilder",
     "Pipeline.builder()",
@@ -47,6 +48,16 @@ PYTHON_AUTHORING_BANNED_GUIDANCE = (
 PYTHON_AUTHORING_FORBIDDEN_IMPORT_PREFIXES = (
     "arnold.execution",
     "arnold.pipeline.native",
+    "arnold_pipelines",
+    "megaplan",
+)
+NEUTRAL_IMPLEMENTATION_ROOTS = (
+    Path("arnold/workflow"),
+    Path("arnold/manifest"),
+)
+NEUTRAL_IMPLEMENTATION_FORBIDDEN_IMPORT_PREFIXES = (
+    "arnold.execution",
+    "arnold.runtime",
     "arnold_pipelines",
     "megaplan",
 )
@@ -155,6 +166,39 @@ def _is_forbidden_python_authoring_import(name: str) -> bool:
     )
 
 
+def _is_forbidden_neutral_implementation_import(name: str) -> bool:
+    return any(
+        name == prefix or name.startswith(prefix + ".")
+        for prefix in NEUTRAL_IMPLEMENTATION_FORBIDDEN_IMPORT_PREFIXES
+    )
+
+
+def _dynamic_import_module_names(tree: ast.AST) -> set[str]:
+    names: set[str] = set()
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call) or not node.args:
+            continue
+        module = node.args[0]
+        if not isinstance(module, ast.Constant) or not isinstance(module.value, str):
+            continue
+        if isinstance(node.func, ast.Name) and node.func.id == "__import__":
+            names.add(module.value)
+        elif (
+            isinstance(node.func, ast.Attribute)
+            and node.func.attr == "import_module"
+            and isinstance(node.func.value, ast.Name)
+            and node.func.value.id == "importlib"
+        ):
+            names.add(module.value)
+    return names
+
+
+def _implementation_import_violations(path: Path) -> list[str]:
+    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    imports = _imported_modules(path) | _dynamic_import_module_names(tree)
+    return sorted(name for name in imports if _is_forbidden_neutral_implementation_import(name))
+
+
 def test_new_m2_docs_do_not_teach_banned_authoring_language() -> None:
     root = Path(__file__).parent.parent.parent.parent
     violations: list[str] = []
@@ -221,6 +265,8 @@ def test_python_authoring_fixtures_only_use_prohibited_imports_as_invalid_cases(
     violations: dict[str, list[str]] = {}
 
     for path in fixture_root.glob("*.py"):
+        if path.stem in PYTHON_AUTHORING_SUPPORT_MODULES:
+            continue
         expected = path.with_suffix(".expected.json")
         assert expected.exists(), f"missing expected sidecar for {path.name}"
         text = expected.read_text(encoding="utf-8")
@@ -254,6 +300,19 @@ def test_compile_only_modules_do_not_import_execution() -> None:
                 violations[path.as_posix()] = sorted(hits)
 
     assert not violations, f"forbidden arnold.execution imports: {violations}"
+
+
+def test_neutral_workflow_manifest_implementation_files_do_not_import_runtime_or_harness() -> None:
+    root = Path(__file__).parent.parent.parent.parent
+    violations: dict[str, list[str]] = {}
+
+    for relative_root in NEUTRAL_IMPLEMENTATION_ROOTS:
+        for path in (root / relative_root).rglob("*.py"):
+            forbidden = _implementation_import_violations(path)
+            if forbidden:
+                violations[path.relative_to(root).as_posix()] = forbidden
+
+    assert not violations, f"neutral implementation imports runtime/harness modules: {violations}"
 
 
 def test_workflow_manifest_amendments_clarifies_loop_reentry() -> None:
