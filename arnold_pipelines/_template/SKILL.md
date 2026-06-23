@@ -1,3 +1,8 @@
+---
+name: new-arnold-pipeline-template
+description: Scaffold a new Arnold workflow pipeline package from the _template skeleton.
+---
+
 # New Arnold Workflow Pipeline Template
 
 Copy `arnold_pipelines/_template/` to a new package under `arnold_pipelines/`,
