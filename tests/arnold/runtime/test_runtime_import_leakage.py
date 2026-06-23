@@ -46,9 +46,49 @@ sys.meta_path.insert(0, _BlockMegaplanFinder())
 
 # ── import the target modules ─────────────────────────────────────────
 import arnold.runtime                # noqa: E402
+import arnold.runtime.durable_ops    # noqa: E402
 import arnold.runtime.envelope       # noqa: E402
 import arnold.runtime.errors         # noqa: E402
 import arnold.pipeline.types         # noqa: E402
+
+expected_durable_ops_exports = {
+    "ApprovalLink",
+    "DurableOpsStore",
+    "FileBackedDurableOpsStore",
+    "InvalidOperationTransition",
+    "InvalidScheduledTaskTransition",
+    "OperationAlreadyExists",
+    "OperationEvent",
+    "OperationEventAlreadyExists",
+    "OperationHandler",
+    "OperationLockConflict",
+    "OperationNotFound",
+    "OperationRun",
+    "OperationState",
+    "ResourceType",
+    "RetryMetadata",
+    "ScheduledTask",
+    "ScheduledTaskAlreadyExists",
+    "ScheduledTaskLeaseConflict",
+    "ScheduledTaskLeaseTokenMismatch",
+    "ScheduledTaskNotFound",
+    "ScheduledTaskState",
+    "TypedResource",
+    "TypedResourceAlreadyExists",
+    "can_transition_operation",
+    "can_transition_scheduled_task",
+    "ensure_operation_transition",
+    "ensure_scheduled_task_transition",
+    "is_terminal_operation_state",
+    "is_terminal_scheduled_task_state",
+}
+actual_durable_ops_exports = set(arnold.runtime.durable_ops.__all__)
+if actual_durable_ops_exports != expected_durable_ops_exports:
+    raise AssertionError(
+        "durable_ops exports drifted from the neutral runtime boundary: "
+        f"missing={sorted(expected_durable_ops_exports - actual_durable_ops_exports)} "
+        f"extra={sorted(actual_durable_ops_exports - expected_durable_ops_exports)}"
+    )
 """)
 
 

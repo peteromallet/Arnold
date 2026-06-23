@@ -36,6 +36,9 @@ Sub-modules (landed incrementally across M2a, M3d and M8 tasks):
                          comparison with dotted-path ignore/unordered
                          support, and ``semantic_replay_journal`` for
                          journal replay with equivalence checking.
+* ``durable_ops``      — Neutral durable operation contracts, typed
+                         resources, scheduled tasks, approval links, events,
+                         handlers, and the file-backed current-state store.
 * ``CONTRACT.md``      — Human-readable contract documentation.
 
 Boundary contract
