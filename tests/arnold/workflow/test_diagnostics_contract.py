@@ -22,10 +22,38 @@ def test_diagnostic_contract_exposes_grammar_and_import_metadata() -> None:
     assert diagnostics.ALLOWED_FUTURE_IMPORTS == ("annotations",)
     assert diagnostics.RESERVED_AUTHORING_INTRINSICS == (
         "workflow",
+        "loop",
         "halt",
         "suspend",
         "transition",
     )
+    assert diagnostics.RESERVED_AUTHORING_STEP_CALL_KEYWORDS == (
+        "id",
+        "policy",
+        "policies",
+        "schema",
+    )
+    assert diagnostics.RESERVED_AUTHORING_INTRINSIC_CALL_KEYWORDS == {
+        "loop": ("policy", "reentry_id"),
+        "halt": ("id", "trigger_ref", "target_ref", "payload_schema_hash", "policy_ref"),
+        "suspend": (
+            "route_id",
+            "capability_id",
+            "reentry_id",
+            "payload_schema_hash",
+            "resume_schema_hash",
+            "resume_schema_ref",
+            "resume_payload_ref",
+        ),
+        "transition": (
+            "id",
+            "type",
+            "trigger_ref",
+            "target_ref",
+            "payload_schema_hash",
+            "policy_ref",
+        ),
+    }
     assert diagnostics.ALLOWED_IMPORT_FORMS == (
         diagnostics.ImportForm.FUTURE_ANNOTATIONS,
         diagnostics.ImportForm.AUTHORING_INTRINSIC,
@@ -71,6 +99,29 @@ def test_diagnostic_dataclass_carries_stable_shape() -> None:
         diagnostic.details["new"] = "value"  # type: ignore[index]
     with pytest.raises(FrozenInstanceError):
         diagnostic.message = "changed"  # type: ignore[misc]
+
+
+def test_diagnostic_source_span_serializes_with_required_coordinates() -> None:
+    diagnostic = diagnostics.AuthoringDiagnostic(
+        code=diagnostics.DiagnosticCode.RESERVED_CALL_KEYWORD,
+        message="reserved keyword",
+        source_span=SourceSpan("workflow.py", 7, 5, 7, 19),
+        details={"keyword": "policy"},
+    )
+
+    payload = diagnostic.to_dict()
+
+    assert payload["code"] == "AWF010_RESERVED_CALL_KEYWORD"
+    assert payload["severity"] == "error"
+    assert payload["grammar_version"] == "arnold.workflow.authoring.v1"
+    assert payload["source_span"] == {
+        "path": "workflow.py",
+        "start_line": 7,
+        "start_column": 5,
+        "end_line": 7,
+        "end_column": 19,
+    }
+    assert payload["details"] == {"keyword": "policy"}
 
 
 def test_diagnostic_dataclass_rejects_malformed_required_fields() -> None:
