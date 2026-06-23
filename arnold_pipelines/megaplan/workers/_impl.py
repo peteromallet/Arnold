@@ -2043,6 +2043,13 @@ def _critique_repair_context(
 
 def _extract_json_candidates_from_raw(raw: str) -> list[dict[str, Any]]:
     """Extract plausible JSON payload objects from raw agent output."""
+    # Some models (DeepSeek/Kimi) answer with write-style tool markup containing
+    # the JSON payload. Recover that first so downstream extraction sees JSON.
+    from arnold_pipelines.megaplan.workers.hermes import _extract_json_from_mutating_tool_markup
+
+    recovered = _extract_json_from_mutating_tool_markup(raw)
+    if recovered is not None:
+        raw = recovered
 
     def _iter_nested_json_dicts(value: Any) -> list[dict[str, Any]]:
         candidates: list[dict[str, Any]] = []
