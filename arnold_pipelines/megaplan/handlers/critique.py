@@ -118,8 +118,34 @@ def _apply_adaptive_critique_routing(
     # when multiple checks share the same complexity tier.
     _tier_models = getattr(args, "tier_models", None)
     if not isinstance(_tier_models, dict):
-        return _pin
+        _tier_models = {}
     _critique_tiers = _tier_models.get("critique")
+    # apply_profile_expansion strips critique tiers when a persisted/static
+    # phase_model entry for critique is present. Reload the raw profile tiers
+    # so adaptive routing can still honor complexity-based critic assignments.
+    if not isinstance(_critique_tiers, dict) or not _critique_tiers:
+        _profile_name = (
+            getattr(args, "profile", None)
+            or (state.get("config") or {}).get("profile")
+        )
+        if _profile_name:
+            try:
+                from arnold_pipelines.megaplan.profiles import (
+                    load_profile_metadata,
+                    load_profiles,
+                )
+                from arnold_pipelines.megaplan.profiles import _resolve_tier_models_with_inheritance
+
+                _profile_tiers = _resolve_tier_models_with_inheritance(
+                    _profile_name,
+                    system_profiles=load_profiles(),
+                    system_metadata=load_profile_metadata(),
+                    pipeline_local_profiles={},
+                    pipeline_local_metadata={},
+                )
+                _critique_tiers = _profile_tiers.get("critique")
+            except Exception:
+                _critique_tiers = None
     if not isinstance(_critique_tiers, dict) or not _critique_tiers:
         return _pin
 
