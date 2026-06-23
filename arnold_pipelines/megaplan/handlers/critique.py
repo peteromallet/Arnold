@@ -104,33 +104,48 @@ def _apply_adaptive_critique_routing(
     args: argparse.Namespace,
     active_checks: list[dict[str, Any]],
 ) -> str | None:
-    """Attach per-check critic modes or return an explicit operator pin."""
-    _pin = pinned_critic_model(state)
-    if _pin:
-        if any(isinstance(check.get("complexity"), int) and check["complexity"] >= 4 for check in active_checks):
-            msg = (
-                "[megaplan] WARNING: explicit critic_model pin "
-                f"{_pin!r} disables per-lens critique escalation for "
-                "complexity >= 4 checks; all selected lenses will run on the pin."
-            )
-            print(msg, file=sys.stderr, flush=True)
-            log.warning(msg)
-        return _pin
+    """Attach per-check critic modes or return a whole-phase critic pin.
 
-    # No operator pin: resolve per-check AgentMode from tier_models.critique
-    # (complexity-based routing, SD1). Cache complexity -> AgentMode to avoid
-    # redundant resolution when multiple checks share the same complexity tier.
+    In adaptive critique mode, ``tier_models.critique`` is authoritative for
+    complexities it names. A global ``execution.critic_model`` pin is only a
+    fallback for missing complexity tiers, not a short-circuit that disables
+    tier routing.
+    """
+    _pin = pinned_critic_model(state)
+
+    # Resolve per-check AgentMode from tier_models.critique (complexity-based
+    # routing, SD1). Cache complexity -> AgentMode to avoid redundant resolution
+    # when multiple checks share the same complexity tier.
     _tier_models = getattr(args, "tier_models", None)
     if not isinstance(_tier_models, dict):
-        return None
+        return _pin
     _critique_tiers = _tier_models.get("critique")
     if not isinstance(_critique_tiers, dict) or not _critique_tiers:
-        return None
+        return _pin
 
     from arnold_pipelines.megaplan.execute.batch import _resolve_tier_spec
     from arnold_pipelines.megaplan.types import AgentMode as _TierAgentMode
 
     _complexity_cache: dict[int, _TierAgentMode] = {}
+    _pin_agent_mode: _TierAgentMode | None = None
+
+    def _resolved_pin_agent_mode() -> _TierAgentMode:
+        nonlocal _pin_agent_mode
+        if _pin_agent_mode is None:
+            from arnold_pipelines.megaplan.audits.critique_evaluator import roster_dispatch_spec
+            from arnold_pipelines.megaplan.types import parse_agent_spec
+
+            _pin_parsed = parse_agent_spec(roster_dispatch_spec(str(_pin)))
+            _pin_agent_mode = _TierAgentMode(
+                agent=_pin_parsed.agent,
+                mode="fresh",
+                refreshed=False,
+                model=_pin_parsed.model,
+                effort=_pin_parsed.effort,
+                resolved_model=_pin_parsed.model,
+            )
+        return _pin_agent_mode
+
     for _check in active_checks:
         _cid = _check.get("id", "?")
         _cx = _check.get("complexity")
@@ -145,25 +160,29 @@ def _apply_adaptive_critique_routing(
         if _cx not in _complexity_cache:
             _spec = _critique_tiers.get(_cx)
             if not _spec:
-                raise CliError(
-                    "critique_tier_missing",
-                    f"No tier spec for complexity {_cx} "
-                    f"in tier_models.critique; cannot "
-                    f"route check '{_cid}'.",
+                if _pin:
+                    _complexity_cache[_cx] = _resolved_pin_agent_mode()
+                else:
+                    raise CliError(
+                        "critique_tier_missing",
+                        f"No tier spec for complexity {_cx} "
+                        f"in tier_models.critique; cannot "
+                        f"route check '{_cid}'.",
+                    )
+            else:
+                _t_agent, _t_mode, _t_model = _resolve_tier_spec(
+                    args, _spec, phase="critique"
                 )
-            _t_agent, _t_mode, _t_model = _resolve_tier_spec(
-                args, _spec, phase="critique"
-            )
-            _complexity_cache[_cx] = _TierAgentMode(
-                agent=_t_agent,
-                mode=_t_mode,
-                refreshed=False,
-                model=_t_model,
-                effort=None,
-                resolved_model=_t_model,
-            )
+                _complexity_cache[_cx] = _TierAgentMode(
+                    agent=_t_agent,
+                    mode=_t_mode,
+                    refreshed=False,
+                    model=_t_model,
+                    effort=None,
+                    resolved_model=_t_model,
+                )
         _check["_resolved_agent_mode"] = _complexity_cache[_cx]
-        _check["_routing_selected_spec"] = _spec
+        _check["_routing_selected_spec"] = _critique_tiers.get(_cx) or f"critic_model:{_pin}"
         _check["_routing_tier"] = _cx
         _check["_routing_tier_active"] = True
 
@@ -548,6 +567,13 @@ def handle_critique(root: Path, args: argparse.Namespace) -> StepResponse:
                     _check.setdefault("_resolved_agent_mode", resolved)
                 else:
                     _check["_resolved_agent_mode"] = resolved
+        elif adaptive_path and not critic_model_override and active_checks:
+            _single_resolved = active_checks[0].get("_resolved_agent_mode")
+            if isinstance(_single_resolved, _AgentMode):
+                resolved = _single_resolved
+                agent_type, mode, refreshed, model = _agent_mode_parts(resolved)
+                _critique_effort = getattr(resolved, "effort", None)
+                _critique_resolved_model = getattr(resolved, "resolved_model", None) or model
         # Compute revise_context for adaptive path iterations >= 2
         _revise_ctx = ""
         if adaptive_path and iteration >= 2:

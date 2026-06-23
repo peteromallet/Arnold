@@ -59,6 +59,20 @@ class _RetryableCritiqueShapeError(Exception):
         self.raw_payload = raw_payload
 
 
+def _critique_raw_output_path(output_path: Path) -> Path:
+    return output_path.with_name(f"{output_path.stem}_raw.txt")
+
+
+def _persist_critique_raw_output(output_path: Path, raw_output: object) -> None:
+    text = "" if raw_output is None else str(raw_output)
+    if not text:
+        return
+    try:
+        _critique_raw_output_path(output_path).write_text(text, encoding="utf-8")
+    except OSError:
+        pass
+
+
 def _unverifiable_check_payload(check_id: str, question: str, reason: str) -> dict[str, Any]:
     return {
         "id": check_id,
@@ -200,16 +214,25 @@ def _run_check(
             user_message=prompt,
             **run_kwargs,
         )
-        payload, raw_output = parse_agent_output(
-            current_agent,
-            current_result,
-            output_path=current_output_path,
-            schema=schema,
-            step="critique",
-            project_dir=project_dir,
-            plan_dir=plan_dir,
-            run_kwargs=run_kwargs,
-        )
+        try:
+            payload, raw_output = parse_agent_output(
+                current_agent,
+                current_result,
+                output_path=current_output_path,
+                schema=schema,
+                step="critique",
+                project_dir=project_dir,
+                plan_dir=plan_dir,
+                run_kwargs=run_kwargs,
+                check_id=str(check.get("id", "")) or None,
+                question=str(check.get("question", "")) or None,
+            )
+        except CliError as exc:
+            _persist_critique_raw_output(
+                current_output_path,
+                exc.extra.get("raw_output") or exc.message,
+            )
+            raise
         clean_parsed_payload(payload, schema, "critique")
         payload_checks = payload.get("checks")
         if not isinstance(payload_checks, list) or len(payload_checks) != 1 or not isinstance(payload_checks[0], dict):
@@ -362,6 +385,11 @@ def run_parallel_critique(
                     "ledger_tier": _check.get("_routing_tier"),
                     "ledger_complexity": _check.get("complexity"),
                     "ledger_tier_routing_active": bool(_check.get("_routing_tier_active", False)),
+                    "worker_options": {
+                        "session_db_path": str(_worker_db_path(plan_dir, f"critique_{_check['id']}")),
+                        "check_id": str(_check["id"]),
+                        "question": str(_check.get("question", "")),
+                    },
                 },
             )
         )
@@ -456,6 +484,13 @@ def run_parallel_critique(
         def _on_unit_error(_index: int, exc: Exception) -> tuple[Any, float, int, int, int]:
             unit = current_units[_index]
             check_id = str(unit.extra.get("check_id", "?"))
+            if isinstance(exc, CliError):
+                _persist_critique_raw_output(
+                    unit.output_path,
+                    exc.extra.get("raw_output") or exc.message,
+                )
+            else:
+                _persist_critique_raw_output(unit.output_path, str(exc))
             reason = f"parallel critique worker failed for check '{check_id}': {exc}"
             return (
                 {
@@ -514,6 +549,8 @@ def run_parallel_critique(
         try:
             _parsed_results[_idx] = _parse_result(_idx, _payload, units[_idx])
         except _RetryableCritiqueShapeError as exc:
+            if isinstance(_item, WorkerUnitResult):
+                _persist_critique_raw_output(units[_idx].output_path, _item.raw_output)
             _failures[_idx] = exc
 
     _retry_units = units
@@ -544,6 +581,8 @@ def run_parallel_critique(
             try:
                 _parsed_results[_original_idx] = _parse_result(_original_idx, _payload, _unit)
             except _RetryableCritiqueShapeError as exc:
+                if isinstance(_item, WorkerUnitResult):
+                    _persist_critique_raw_output(_unit.output_path, _item.raw_output)
                 _next_failures[_original_idx] = exc
         _failures = _next_failures
         for _idx, _unit in _retry_units_by_index.items():

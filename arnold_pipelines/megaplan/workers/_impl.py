@@ -1965,6 +1965,74 @@ def parse_claude_envelope(raw: str) -> tuple[dict[str, Any], dict[str, Any]]:
     return envelope, payload
 
 
+_DEEPSEEK_TOOL_TAG_RE = re.compile(
+    r"<(?P<name>read_file|file_read|read|search_files|file_search|search|"
+    r"web_extract|fetch_url|web_search|write_file|file_write|write|edit_file|"
+    r"patch|apply_patch|delete_file|run_command|bash|terminal|invoke|tool_call|"
+    r"tool_calls|tool_result)\b(?P<attrs>[^<>]*)>",
+    re.IGNORECASE,
+)
+_DEEPSEEK_INVOKE_NAME_RE = re.compile(
+    r"\bname=[\"'](?P<name>[^\"']+)[\"']",
+    re.IGNORECASE,
+)
+_DEEPSEEK_MUTATING_TOOL_NAMES = frozenset(
+    {
+        "write_file",
+        "file_write",
+        "write",
+        "edit_file",
+        "patch",
+        "apply_patch",
+        "delete_file",
+        "run_command",
+        "bash",
+        "terminal",
+    }
+)
+
+
+def _deepseek_tool_markup_names(raw: str) -> set[str]:
+    """Return tool-like XML tag names emitted in assistant text."""
+    names: set[str] = set()
+    if not raw or "<" not in raw:
+        return names
+    for match in _DEEPSEEK_TOOL_TAG_RE.finditer(raw):
+        name = match.group("name").lower()
+        if name == "invoke":
+            invoked = _DEEPSEEK_INVOKE_NAME_RE.search(match.group("attrs") or "")
+            if invoked:
+                names.add(invoked.group("name").strip().lower())
+            else:
+                names.add(name)
+            continue
+        names.add(name)
+    return names
+
+
+def _looks_like_deepseek_tool_markup(raw: str) -> bool:
+    return bool(_deepseek_tool_markup_names(raw))
+
+
+def _contains_mutating_deepseek_tool_markup(raw: str) -> bool:
+    return bool(_deepseek_tool_markup_names(raw).intersection(_DEEPSEEK_MUTATING_TOOL_NAMES))
+
+
+def _critique_repair_context(
+    *,
+    check_id: str | None = None,
+    question: str | None = None,
+) -> str:
+    bits: list[str] = []
+    if check_id:
+        bits.append(f"check {check_id!r}")
+    if question:
+        cleaned = " ".join(str(question).split())
+        if cleaned:
+            bits.append(f"question {cleaned[:180]!r}")
+    return f" ({'; '.join(bits)})" if bits else ""
+
+
 def _extract_json_candidates_from_raw(raw: str) -> list[dict[str, Any]]:
     """Extract plausible JSON payload objects from raw agent output."""
 
@@ -2152,12 +2220,36 @@ def _repair_worker_json_once(
     *,
     parse_error: json.JSONDecodeError | None = None,
     validate: bool = True,
+    output_path: Path | None = None,
+    template_unchanged: bool = False,
+    check_id: str | None = None,
+    question: str | None = None,
 ) -> tuple[dict[str, Any], str] | None:
     error = parse_error or _json_decode_error_for_raw(raw)
     if error is None:
         return None
     repaired_raw = repair_call(_build_json_repair_prompt(error, raw))
     repaired_candidates = _extract_json_candidates_from_raw(repaired_raw)
+    if (
+        step == "critique"
+        and _looks_like_deepseek_tool_markup(repaired_raw)
+        and repaired_candidates
+        and not any(_looks_like_step_payload(step, candidate) for candidate in repaired_candidates)
+    ):
+        context = _critique_repair_context(check_id=check_id, question=question)
+        raise CliError(
+            "parse_error",
+            "Repair retry for critique did not return a critique JSON object"
+            f"{context}: model emitted unsupported tool-call markup; critique template unchanged",
+            extra={
+                "raw_output": repaired_raw,
+                "model_output_parse_error": True,
+                "unsupported_tool_call_markup": True,
+                "critique_template_unchanged": True,
+                **({"check_id": check_id} if check_id else {}),
+                **({"question": question} if question else {}),
+            },
+        )
     payload = _recover_payload_from_candidates(
         step,
         repaired_candidates,
@@ -2171,6 +2263,39 @@ def _repair_worker_json_once(
             if repaired_error is not None
             else ""
         )
+        if step == "critique" and (
+            _looks_like_deepseek_tool_markup(raw)
+            or _looks_like_deepseek_tool_markup(repaired_raw)
+            or template_unchanged
+        ):
+            context = _critique_repair_context(check_id=check_id, question=question)
+            template_detail = (
+                f"; critique template unchanged at {output_path.name}"
+                if template_unchanged and output_path is not None
+                else "; critique template unchanged"
+                if template_unchanged
+                else ""
+            )
+            mutating_detail = (
+                "; unsupported write operation rejected"
+                if _contains_mutating_deepseek_tool_markup(raw)
+                or _contains_mutating_deepseek_tool_markup(repaired_raw)
+                else ""
+            )
+            raise CliError(
+                "parse_error",
+                "Repair retry for critique did not return valid JSON"
+                f"{location}{context}: model emitted unsupported tool-call markup"
+                f"{template_detail}{mutating_detail}",
+                extra={
+                    "raw_output": repaired_raw,
+                    "model_output_parse_error": True,
+                    "unsupported_tool_call_markup": True,
+                    "critique_template_unchanged": template_unchanged,
+                    **({"check_id": check_id} if check_id else {}),
+                    **({"question": question} if question else {}),
+                },
+            )
         raise CliError(
             "parse_error",
             f"Repair retry for {step} did not return valid JSON{location}",

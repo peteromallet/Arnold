@@ -22,6 +22,8 @@ from arnold_pipelines.megaplan.workers._impl import (
     STEP_SCHEMA_FILENAMES,
     WorkerResult,
     _check_mock_safe,
+    _contains_mutating_deepseek_tool_markup,
+    _deepseek_tool_markup_names,
     _json_decode_error_for_raw,
     _repair_worker_json_once,
     mock_worker_output,
@@ -108,6 +110,14 @@ def _normalize_worker_options(worker_options: dict[str, object] | None) -> dict[
             raise CliError("invalid_args", f"Hermes worker option '{key}' must be a string path")
         normalized[key] = str(value)
 
+    for key in ("check_id", "question"):
+        value = worker_options.get(key)
+        if value is None:
+            continue
+        if not isinstance(value, str):
+            raise CliError("invalid_args", f"Hermes worker option '{key}' must be a string")
+        normalized[key] = value
+
     resolved_model = worker_options.get("resolved_model")
     if resolved_model is not None:
         if not isinstance(resolved_model, str) or not resolved_model.strip():
@@ -163,11 +173,26 @@ def _import_hermes_runtime():
     return AIAgent, SessionDB
 
 
-_CONTENT_TOOL_NAMES = frozenset({"read_file", "search_files", "web_extract", "fetch_url", "web_search"})
-_CONTENT_TOOL_ALIASES = {"fetch_url": "web_extract"}
+_CONTENT_TOOL_ALIASES = {
+    "read": "read_file",
+    "read_file": "read_file",
+    "file_read": "read_file",
+    "search": "search_files",
+    "search_files": "search_files",
+    "file_search": "search_files",
+    "web_extract": "web_extract",
+    "fetch_url": "web_extract",
+    "web_search": "web_search",
+}
+_CONTENT_TOOL_NAMES = frozenset(_CONTENT_TOOL_ALIASES)
 _CONTENT_ARG_ALIASES = {
     "read_file": {"filePath": "path", "filepath": "path"},
 }
+_XML_ATTR_RE = re.compile(
+    r"(?P<key>[A-Za-z_][A-Za-z0-9_-]*)\s*=\s*"
+    r"(?P<quote>[\"'])(?P<value>.*?)(?P=quote)",
+    re.DOTALL,
+)
 
 
 def _coerce_xml_tool_value(raw: str) -> object:
@@ -207,10 +232,17 @@ def _make_content_tool_call(name: str, args: dict[str, object], index: int) -> S
     )
 
 
+def _parse_xml_attrs(attrs: str) -> dict[str, object]:
+    return {
+        match.group("key"): _coerce_xml_tool_value(match.group("value"))
+        for match in _XML_ATTR_RE.finditer(attrs or "")
+    }
+
+
 def _parse_dsml_content_tool_calls(content: str) -> list[SimpleNamespace]:
     calls: list[SimpleNamespace] = []
     invoke_pattern = re.compile(
-        r"<[^<>\s]*invoke\b[^<>]*\bname=[\"'](?P<name>[^\"']+)[\"'][^<>]*>"
+        r"<[^<>\s]*invoke\b(?P<attrs>[^<>]*\bname=[\"'](?P<name>[^\"']+)[\"'][^<>]*)>"
         r"(?P<body>.*?)"
         r"</[^<>\s]*invoke>",
         re.DOTALL,
@@ -224,10 +256,11 @@ def _parse_dsml_content_tool_calls(content: str) -> list[SimpleNamespace]:
     name_pattern = re.compile(r"\bname=[\"'](?P<name>[^\"']+)[\"']")
 
     for match in invoke_pattern.finditer(content):
-        name = match.group("name").strip()
+        name = match.group("name").strip().lower()
         if name not in _CONTENT_TOOL_NAMES:
             continue
-        args: dict[str, object] = {}
+        args: dict[str, object] = _parse_xml_attrs(match.group("attrs"))
+        args.pop("name", None)
         for param in param_pattern.finditer(match.group("body")):
             name_match = name_pattern.search(param.group("attrs"))
             if not name_match:
@@ -239,11 +272,16 @@ def _parse_dsml_content_tool_calls(content: str) -> list[SimpleNamespace]:
 
 def _parse_plain_xml_content_tool_calls(content: str) -> list[SimpleNamespace]:
     calls: list[SimpleNamespace] = []
+    names = "|".join(sorted(re.escape(name) for name in _CONTENT_TOOL_NAMES))
+    self_closing_pattern = re.compile(
+        rf"<(?P<name>{names})\b(?P<attrs>[^<>]*)/>",
+        re.DOTALL | re.IGNORECASE,
+    )
     tool_pattern = re.compile(
-        r"<(?P<name>read_file|search_files|web_extract|fetch_url|web_search)\b[^>]*>"
+        rf"<(?P<name>{names})\b(?P<attrs>[^>]*)>"
         r"(?P<body>.*?)"
         r"</(?P=name)>",
-        re.DOTALL,
+        re.DOTALL | re.IGNORECASE,
     )
     child_pattern = re.compile(
         r"<(?P<key>[A-Za-z_][A-Za-z0-9_-]*)\b[^>]*>"
@@ -252,12 +290,18 @@ def _parse_plain_xml_content_tool_calls(content: str) -> list[SimpleNamespace]:
         re.DOTALL,
     )
 
+    for match in self_closing_pattern.finditer(content):
+        name = match.group("name").strip().lower()
+        calls.append(_make_content_tool_call(name, _parse_xml_attrs(match.group("attrs")), len(calls)))
+
     for match in tool_pattern.finditer(content):
-        args = {
+        name = match.group("name").strip().lower()
+        args = _parse_xml_attrs(match.group("attrs"))
+        args.update({
             child.group("key"): _coerce_xml_tool_value(child.group("value"))
             for child in child_pattern.finditer(match.group("body"))
-        }
-        calls.append(_make_content_tool_call(match.group("name"), args, len(calls)))
+        })
+        calls.append(_make_content_tool_call(name, args, len(calls)))
     return calls
 
 
@@ -268,6 +312,7 @@ def _content_xml_tool_calls(content: object) -> list[SimpleNamespace]:
 
 
 def _strip_content_xml_tool_calls(content: str) -> str | None:
+    names = "|".join(sorted(re.escape(name) for name in _CONTENT_TOOL_NAMES))
     stripped = re.sub(
         r"<[^<>\s]*tool_calls\b[^<>]*>.*?</[^<>\s]*tool_calls>",
         "",
@@ -275,17 +320,23 @@ def _strip_content_xml_tool_calls(content: str) -> str | None:
         flags=re.DOTALL,
     )
     stripped = re.sub(
-        r"<[^<>\s]*invoke\b[^<>]*\bname=[\"'](?:read_file|search_files|web_extract|fetch_url|web_search)[\"'][^<>]*>"
+        rf"<[^<>\s]*invoke\b[^<>]*\bname=[\"'](?:{names})[\"'][^<>]*>"
         r".*?</[^<>\s]*invoke>",
         "",
         stripped,
-        flags=re.DOTALL,
+        flags=re.DOTALL | re.IGNORECASE,
     )
     stripped = re.sub(
-        r"<(?:read_file|search_files|web_extract|fetch_url|web_search)\b[^>]*>.*?</(?:read_file|search_files|web_extract|fetch_url|web_search)>",
+        rf"<(?:{names})\b[^>]*/>",
         "",
         stripped,
-        flags=re.DOTALL,
+        flags=re.DOTALL | re.IGNORECASE,
+    )
+    stripped = re.sub(
+        rf"<(?:{names})\b[^>]*>.*?</(?:{names})>",
+        "",
+        stripped,
+        flags=re.DOTALL | re.IGNORECASE,
     ).strip()
     return stripped or None
 
@@ -298,7 +349,20 @@ def _normalize_response_content_tool_calls(response) -> None:
     message = getattr(choices[0], "message", None)
     if message is None or getattr(message, "tool_calls", None):
         return
-    parsed = _content_xml_tool_calls(getattr(message, "content", None))
+    content = getattr(message, "content", None)
+    if isinstance(content, str) and _contains_mutating_deepseek_tool_markup(content):
+        names = ", ".join(sorted(_deepseek_tool_markup_names(content)))
+        raise CliError(
+            "unsupported_tool_call_markup",
+            "model emitted unsupported tool-call markup for a write operation "
+            f"({names}); refusing to treat it as JSON output",
+            extra={
+                "raw_output": content,
+                "unsupported_tool_call_markup": True,
+                "unsupported_write_tool_call": True,
+            },
+        )
+    parsed = _content_xml_tool_calls(content)
     if not parsed:
         return
     message.tool_calls = parsed
@@ -1085,6 +1149,9 @@ def parse_agent_output(
     plan_dir: Path,
     plan_mode: str = "code",
     run_kwargs: dict | None = None,
+    template_seed_text: str | None = None,
+    check_id: str | None = None,
+    question: str | None = None,
 ) -> tuple[dict, str]:
     """Parse a Hermes agent result into a structured payload.
 
@@ -1095,8 +1162,24 @@ def parse_agent_output(
     extra_run_kwargs = run_kwargs or {}
     raw_output = result.get("final_response", "") or ""
     messages = result.get("messages", [])
+    if _contains_mutating_deepseek_tool_markup(raw_output):
+        names = ", ".join(sorted(_deepseek_tool_markup_names(raw_output)))
+        raise CliError(
+            "worker_parse_error",
+            "Hermes worker returned unsupported tool-call markup for a write "
+            f"operation while producing step '{step}' ({names}); the template "
+            "was not filled",
+            extra={
+                "raw_output": raw_output,
+                "unsupported_tool_call_markup": True,
+                "unsupported_write_tool_call": True,
+                **({"check_id": check_id} if check_id else {}),
+                **({"question": question} if question else {}),
+            },
+        )
     parse_error: json.JSONDecodeError | None = _json_decode_error_for_raw(raw_output)
     repair_raw = raw_output
+    template_unfilled = False
 
     # If final_response is empty and the model used tools, the agent loop exited
     # after tool calls without giving the model a chance to output JSON.
@@ -1150,6 +1233,7 @@ def parse_agent_output(
                     payload = candidate_payload
                     print(f"[hermes-worker] Read JSON from template file: {output_path}", file=sys.stderr)
                 else:
+                    template_unfilled = True
                     print(f"[hermes-worker] Template file exists but has no real content", file=sys.stderr)
         except json.JSONDecodeError as exc:
             parse_error = parse_error or exc
@@ -1286,6 +1370,10 @@ def parse_agent_output(
                 _repair_call,
                 parse_error=parse_error,
                 validate=False,
+                output_path=output_path,
+                template_unchanged=template_unfilled,
+                check_id=check_id,
+                question=question,
             )
         except CliError as exc:
             raise CliError(
@@ -1320,6 +1408,10 @@ def parse_agent_output(
                     _repair_call,
                     parse_error=parse_error,
                     validate=False,
+                    output_path=output_path,
+                    template_unchanged=template_unfilled,
+                    check_id=check_id,
+                    question=question,
                 )
             except CliError as exc:
                 raise CliError(
@@ -1335,6 +1427,23 @@ def parse_agent_output(
                 print(f"[hermes-worker] Repaired malformed JSON with one retry", file=sys.stderr)
 
     if payload is None:
+        if step == "critique" and template_unfilled:
+            context = f" for check {check_id!r}" if check_id else ""
+            detail = (
+                f"; question {question!r}" if question else ""
+            )
+            raise CliError(
+                "worker_parse_error",
+                f"Hermes critique worker did not fill {output_path.name if output_path else 'the critique template'}"
+                f"{context}{detail}",
+                extra={
+                    "raw_output": raw_output,
+                    "model_output_parse_error": parse_error is not None,
+                    "critique_template_unchanged": True,
+                    **({"check_id": check_id} if check_id else {}),
+                    **({"question": question} if question else {}),
+                },
+            )
         raise CliError(
             "worker_parse_error",
             f"Hermes worker returned invalid JSON for step '{step}': "
@@ -1967,6 +2076,9 @@ def run_hermes_step(
                     plan_dir=plan_dir,
                     plan_mode=plan_mode,
                     run_kwargs=run_kwargs,
+                    template_seed_text=template_seed_text,
+                    check_id=str(normalized_worker_options.get("check_id") or "") or None,
+                    question=str(normalized_worker_options.get("question") or "") or None,
                 )
             except CliError as exc:
                 # Retry on transient empty responses (e.g. context overflow
