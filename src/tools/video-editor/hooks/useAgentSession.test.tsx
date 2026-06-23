@@ -3,9 +3,15 @@ import React from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, renderHook } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { useSendMessage } from './useAgentSession';
+import { useCreateSession, useSendMessage } from './useAgentSession';
 
 const invokeMock = vi.fn();
+
+const insertSingleMock = vi.fn();
+const insertSelectMock = vi.fn();
+const insertMock = vi.fn();
+const fromMock = vi.fn();
+const supabaseAuthGetUserMock = vi.fn();
 
 vi.mock('@/integrations/supabase/client', () => ({
   getSupabaseClient: () => ({
@@ -14,9 +20,9 @@ vi.mock('@/integrations/supabase/client', () => ({
     },
     channel: vi.fn(),
     removeChannel: vi.fn(),
-    from: vi.fn(),
+    from: fromMock,
     auth: {
-      getUser: vi.fn(),
+      getUser: supabaseAuthGetUserMock,
     },
   }),
 }));
@@ -412,5 +418,94 @@ describe('useSendMessage — proposal-only no-invalidation', () => {
     // The invalidation behavior will be verified by the post-execute
     // harness.  For now we document that the invoke succeeds.
     expect(invokeMock).toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// M3: useCreateSession — proposal_policy stored on session creation
+// ---------------------------------------------------------------------------
+
+describe('useCreateSession — proposal_policy', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+
+    // Default Supabase auth: authenticated user
+    supabaseAuthGetUserMock.mockResolvedValue({
+      data: { user: { id: 'user-1' } },
+      error: null,
+    });
+
+    // Default Supabase insert chain
+    insertSingleMock.mockResolvedValue({
+      data: {
+        id: 'new-session-1',
+        timeline_id: 'timeline-1',
+        user_id: 'user-1',
+        status: 'waiting_user',
+        turns: [],
+        model: 'groq',
+        proposal_policy: 'immediate',
+        created_at: '2025-01-01T00:00:00Z',
+        updated_at: '2025-01-01T00:00:00Z',
+      },
+      error: null,
+    });
+    insertSelectMock.mockReturnValue({ single: insertSingleMock });
+    insertMock.mockReturnValue({ select: insertSelectMock });
+    fromMock.mockReturnValue({ insert: insertMock });
+  });
+
+  it('persists proposal_policy on session creation', async () => {
+    const { result } = renderHook(
+      () => useCreateSession('timeline-1'),
+      { wrapper: createWrapper() },
+    );
+
+    await act(async () => {
+      await result.current.mutateAsync();
+    });
+
+    // Verify the insert call includes proposal_policy
+    expect(fromMock).toHaveBeenCalledWith('timeline_agent_sessions');
+    expect(insertMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        timeline_id: 'timeline-1',
+        user_id: 'user-1',
+        status: 'waiting_user',
+        turns: [],
+        model: 'groq',
+        proposal_policy: 'immediate',
+      }),
+    );
+  });
+
+  it('normalizes proposal_policy from the created session row', async () => {
+    insertSingleMock.mockResolvedValue({
+      data: {
+        id: 'new-session-2',
+        timeline_id: 'timeline-1',
+        user_id: 'user-1',
+        status: 'waiting_user',
+        turns: [],
+        model: 'groq',
+        proposal_policy: 'immediate',
+        created_at: '2025-01-01T00:00:00Z',
+        updated_at: '2025-01-01T00:00:00Z',
+      },
+      error: null,
+    });
+
+    const { result } = renderHook(
+      () => useCreateSession('timeline-1'),
+      { wrapper: createWrapper() },
+    );
+
+    let session: unknown;
+    await act(async () => {
+      session = await result.current.mutateAsync();
+    });
+
+    expect(session).toBeDefined();
+    expect((session as Record<string, unknown>).proposal_policy).toBe('immediate');
   });
 });

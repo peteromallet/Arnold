@@ -32,7 +32,7 @@ import type { TimelineCanvasHandle } from '@/tools/video-editor/types/timeline-c
 import type { PreviewHandle } from '@/tools/video-editor/components/PreviewPanel/RemotionPreview.tsx';
 import type { TimelineOps } from '@/sdk/index';
 import type { ManagedObjectGuard } from '@/tools/video-editor/lib/managed-object-guard';
-import type { ProposalRuntime } from '@/sdk/index';
+import type { ProposalRuntime, ProposalImportDiagnostic } from '@/sdk/index';
 
 export interface TimelineAvailabilityState {
   mounted: boolean;
@@ -74,11 +74,20 @@ export interface TimelineMutableAdapters {
   ops: TimelineEditorOpsContextValue;
 }
 
+export interface ProposalImportDiagnosticsState {
+  imported: number;
+  skipped: number;
+  rejected: number;
+  diagnostics: readonly ProposalImportDiagnostic[];
+  timestamp: number;
+}
+
 export interface TimelineStoreState extends TimelineStoreBootstrap {
   availability: TimelineAvailabilityState;
   timelineOps: TimelineOps | null;
   proposalRuntime: ProposalRuntime | null;
   managedObjectGuard: ManagedObjectGuard | null;
+  proposalImportDiagnostics: ProposalImportDiagnosticsState | null;
   setMounted: (mounted: boolean) => void;
   syncDataSlice: (data: TimelineEditorDataContextValue) => void;
   syncOpsSlice: (ops: TimelineEditorOpsContextValue) => void;
@@ -86,6 +95,7 @@ export interface TimelineStoreState extends TimelineStoreBootstrap {
   syncPlaybackSlice: (playback: TimelinePlaybackContextValue) => void;
   syncSlices: (bootstrap: Partial<TimelineStoreBootstrap>) => void;
   resetSlices: () => void;
+  setProposalImportDiagnostics: (diagnostics: ProposalImportDiagnosticsState | null) => void;
 }
 
 export type TimelineStoreApi = StoreApi<TimelineStoreState>;
@@ -381,6 +391,7 @@ export function createTimelineStore(bootstrap?: Partial<TimelineStoreBootstrap>)
   return createStore<TimelineStoreState>((set) => ({
     availability: getTimelineAvailabilityState(initialMounted),
     ...seededSlices,
+    proposalImportDiagnostics: null,
     setMounted: (mounted) => {
       set((state) => (
         state.availability.mounted === mounted
@@ -470,10 +481,14 @@ export function createTimelineStore(bootstrap?: Partial<TimelineStoreBootstrap>)
         };
       });
     },
+    setProposalImportDiagnostics: (diagnostics) => {
+      set({ proposalImportDiagnostics: diagnostics });
+    },
     resetSlices: () => {
       set(() => ({
         availability: UNMOUNTED_TIMELINE_AVAILABILITY,
         ...createInitialSlices(),
+        proposalImportDiagnostics: null,
       }));
     },
   }));
@@ -682,4 +697,12 @@ export function useProposalRuntimeFromStore(): ProposalRuntime | null {
 
 export function useProposalRuntimeFromStoreSafe(): ProposalRuntime | null {
   return useSafeTimelineStoreValue((state) => state.proposalRuntime);
+}
+
+export function useProposalImportDiagnosticsFromStore(): ProposalImportDiagnosticsState | null {
+  return useBoundTimelineStore((state) => state.proposalImportDiagnostics, shallow);
+}
+
+export function useProposalImportDiagnosticsFromStoreSafe(): ProposalImportDiagnosticsState | null {
+  return useSafeTimelineStoreValue((state) => state.proposalImportDiagnostics, shallow);
 }

@@ -11,7 +11,9 @@ import type {
   ProposalListener,
   DisposeHandle,
   ProposalState,
+  ProposalImportDiagnostic,
 } from '@reigh/editor-sdk';
+import type { ProposalImportDiagnosticsState } from '@/tools/video-editor/hooks/timelineStore';
 
 // ---------------------------------------------------------------------------
 // Mock factories
@@ -53,6 +55,38 @@ function mockPreviewResult(overrides?: Partial<TimelinePreviewResult>): Timeline
     diff: mockDiff(),
     fullyPreviewable: true,
     diagnostics: [],
+    ...overrides,
+  };
+}
+
+function mockImportDiagnostics(
+  overrides?: Partial<ProposalImportDiagnosticsState>,
+): ProposalImportDiagnosticsState {
+  return {
+    imported: 2,
+    skipped: 0,
+    rejected: 1,
+    diagnostics: [
+      {
+        severity: 'warning',
+        code: 'proposal-import/duplicate-id',
+        message: 'Duplicate proposal ID "dup-1"',
+        proposalIndex: 2,
+        proposalId: 'dup-1',
+      },
+    ],
+    timestamp: Date.now(),
+    ...overrides,
+  };
+}
+
+function mockImportDiagnostic(
+  overrides?: Partial<ProposalImportDiagnostic>,
+): ProposalImportDiagnostic {
+  return {
+    severity: 'warning',
+    code: 'proposal-import/invalid-patch',
+    message: 'Patch validation failed',
     ...overrides,
   };
 }
@@ -1538,7 +1572,7 @@ describe('ProposalPanel', () => {
   // -----------------------------------------------------------------------
 
   describe('stale and expired proposal controls', () => {
-    it('shows a dismiss/reject button for stale proposals', () => {
+    it('shows a dismiss button for stale proposals', () => {
       const runtime = createMockProposalRuntime({
         proposals: [
           mockProposal({
@@ -1561,53 +1595,67 @@ describe('ProposalPanel', () => {
       const expandButton = screen.getByRole('button', { name: /ext/ });
       fireEvent.click(expandButton);
 
-      // Stale proposals should show a dismiss/reject action
-      // Currently stale proposals only show a re-preview button.
-      // This test expects a dedicated dismiss control for stale items.
+      // Stale proposals should show a dismiss button
       const panel = screen.getByRole('region', { name: 'Proposal panel' });
       const dismissBtn = panel.querySelector(
         '[data-video-editor-proposal-action="dismiss-stale"]',
       );
-      // If the dismiss button exists, it should be clickable
-      if (dismissBtn) {
-        expect(dismissBtn).toBeTruthy();
-      }
+      expect(dismissBtn).toBeTruthy();
+      expect(dismissBtn?.getAttribute('aria-label')).toBe(
+        'Dismiss stale proposal from ext',
+      );
 
       // Stale message should be visible
       expect(screen.getByText(/Proposal is stale/)).toBeDefined();
     });
 
-    it('shows expired badge and hides action buttons for expired proposals', () => {
-      // Expired proposals should surface similarly to stale proposals but
-      // with an 'expired' badge instead of 'stale', and no accept/reject
-      // actions available.
+    it('shows expired badge, dismiss button, and hides accept/reject for expired proposals', () => {
       const runtime = createMockProposalRuntime({
         proposals: [
           mockProposal({
             id: 'p1',
             source: 'ext',
-            state: 'pending',
+            state: 'expired',
             rationale: 'Will expire',
+            expiryDetail: {
+              reason: 'ttl-elapsed',
+              baseVersion: 1,
+              currentVersion: 5,
+              createdAt: Date.now() - 120000,
+              expiredAt: Date.now(),
+              ttlMs: 120000,
+            },
           }),
         ],
       });
 
-      // Mark the proposal with an expired-like state through diagnostics
-      // or by manipulating the mock to simulate expiry
       render(<ProposalPanel proposalRuntime={runtime} />);
 
       const expandButton = screen.getByRole('button', { name: /ext/ });
       fireEvent.click(expandButton);
 
-      // When the 'expired' state is wired into ProposalState, the panel
-      // should display an expired badge.  Currently ProposalState only
-      // includes 'pending' | 'accepted' | 'rejected' | 'stale'.
-      // This test documents the expected behavior for M3.
       const panel = screen.getByRole('region', { name: 'Proposal panel' });
+
+      // Expired state badge should be visible
       const stateBadge = panel.querySelector(
         '[data-video-editor-proposal-state-badge="true"]',
       );
       expect(stateBadge).toBeTruthy();
+      expect(stateBadge?.textContent).toBe('Expired');
+
+      // Dismiss button should be available for expired proposals
+      const dismissBtn = panel.querySelector(
+        '[data-video-editor-proposal-action="dismiss-expired"]',
+      );
+      expect(dismissBtn).toBeTruthy();
+
+      // Accept and reject should NOT be available for expired
+      expect(
+        screen.queryByRole('button', { name: /Accept proposal from ext/ }),
+      ).toBeFalsy();
+      expect(
+        screen.queryByRole('button', { name: /Reject proposal from ext/ }),
+      ).toBeFalsy();
     });
 
     it('stale proposals display the stale diagnostic code', () => {
@@ -1655,7 +1703,7 @@ describe('ProposalPanel', () => {
       expect(screen.getByText('1 stale')).toBeDefined();
     });
 
-    it('re-preview button is the only action available for stale proposals', () => {
+    it('shows re-preview and dismiss actions but no accept/reject for stale proposals', () => {
       const runtime = createMockProposalRuntime({
         proposals: [
           mockProposal({
@@ -1683,6 +1731,11 @@ describe('ProposalPanel', () => {
         screen.getByRole('button', { name: /Re-preview stale proposal from ext/ }),
       ).toBeDefined();
 
+      // Dismiss should be available
+      expect(
+        screen.getByRole('button', { name: /Dismiss stale proposal from ext/ }),
+      ).toBeDefined();
+
       // Accept should NOT be available for stale
       expect(
         screen.queryByRole('button', { name: /Accept proposal from ext/ }),
@@ -1707,16 +1760,432 @@ describe('ProposalPanel', () => {
 
       render(<ProposalPanel proposalRuntime={runtime} />);
 
+      // Verify the proposal is visible before dismissal
+      expect(screen.getByRole('button', { name: /ext/ })).toBeDefined();
+      expect(screen.getByText('1 stale')).toBeDefined();
+
+      // Expand to reveal dismiss button
       const expandButton = screen.getByRole('button', { name: /ext/ });
       fireEvent.click(expandButton);
 
-      // The panel should provide a way to dismiss/clear stale proposals.
-      // This could be a dedicated dismiss button or rejecting a stale
-      // proposal to move it to 'rejected' state for filtering.
-      const panel = screen.getByRole('region', { name: 'Proposal panel' });
-      expect(panel).toBeDefined();
+      // Click the dismiss button
+      const dismissBtn = screen.getByRole('button', {
+        name: /Dismiss stale proposal from ext/,
+      });
+      expect(dismissBtn).toBeDefined();
+      fireEvent.click(dismissBtn);
 
-      // Currently stale proposals cannot be rejected (throws 'stale').
-      // M3 should allow dismissing stale proposals to clear them from view.
+      // After dismissal, the proposal should no longer be visible
+      expect(screen.queryByRole('button', { name: /ext/ })).toBeFalsy();
+      // The stale count badge should no longer show stale count
+      expect(screen.queryByText('1 stale')).toBeFalsy();
+      // The empty state should appear
+      expect(screen.getByText('No proposals.')).toBeDefined();
+    });
+
+    it('allows dismissing an expired proposal to clear it from the list', () => {
+      const runtime = createMockProposalRuntime({
+        proposals: [
+          mockProposal({
+            id: 'p1',
+            source: 'ext',
+            state: 'expired',
+            expiryDetail: {
+              reason: 'ttl-elapsed',
+              baseVersion: 1,
+              currentVersion: 5,
+              createdAt: Date.now() - 120000,
+              expiredAt: Date.now(),
+              ttlMs: 120000,
+            },
+          }),
+          mockProposal({ id: 'p2', source: 'ext.b', state: 'pending' }),
+        ],
+      });
+
+      render(<ProposalPanel proposalRuntime={runtime} />);
+
+      // Verify expired proposal is visible alongside pending
+      expect(screen.getByText('1 expired')).toBeDefined();
+      expect(screen.getByText('1 pending')).toBeDefined();
+
+      // Expand the expired proposal to reveal dismiss button
+      // Use a more specific selector to avoid matching ext.b
+      const expiredRow = screen.getByRole('button', {
+        name: /Proposal from ext:.*Expired/,
+      });
+      expect(expiredRow).toBeDefined();
+      fireEvent.click(expiredRow);
+
+      // Click the dismiss button for expired proposal
+      const dismissBtn = screen.getByRole('button', {
+        name: /Dismiss expired proposal from ext/,
+      });
+      expect(dismissBtn).toBeDefined();
+      fireEvent.click(dismissBtn);
+
+      // After dismissal, the expired proposal should be gone
+      expect(screen.queryByText('1 expired')).toBeFalsy();
+      // Pending proposal should still be visible
+      expect(screen.getByText('1 pending')).toBeDefined();
+      expect(screen.getByText('ext.b')).toBeDefined();
+    });
+
+    it('dismissed stale proposals are not cleared from the runtime', () => {
+      const runtime = createMockProposalRuntime({
+        proposals: [
+          mockProposal({
+            id: 'p1',
+            source: 'ext',
+            state: 'stale',
+          }),
+        ],
+      });
+
+      render(<ProposalPanel proposalRuntime={runtime} />);
+
+      // Expand and dismiss
+      const expandButton = screen.getByRole('button', { name: /ext/ });
+      fireEvent.click(expandButton);
+      const dismissBtn = screen.getByRole('button', {
+        name: /Dismiss stale proposal from ext/,
+      });
+      fireEvent.click(dismissBtn);
+
+      // Proposal should still exist in the runtime (not rejected/deleted)
+      const storedProposal = runtime.get('p1');
+      expect(storedProposal).toBeDefined();
+      expect(storedProposal?.state).toBe('stale');
+    });
+  });
+
+  // -----------------------------------------------------------------------
+  // M2: Import diagnostics
+  // -----------------------------------------------------------------------
+
+  describe('import diagnostics', () => {
+    it('renders import diagnostics section above the proposal list', () => {
+      const runtime = createMockProposalRuntime({
+        proposals: [
+          mockProposal({ id: 'p1', source: 'ext.a', state: 'pending' }),
+          mockProposal({ id: 'p2', source: 'ext.b', state: 'pending' }),
+        ],
+      });
+      const importDiags = mockImportDiagnostics({
+        imported: 1,
+        skipped: 1,
+        rejected: 0,
+        diagnostics: [
+          mockImportDiagnostic({
+            severity: 'warning',
+            code: 'proposal-import/invalid-patch',
+            message: 'Patch validation failed for proposal #1',
+            proposalIndex: 1,
+          }),
+        ],
+      });
+
+      render(
+        <ProposalPanel
+          proposalRuntime={runtime}
+          proposalImportDiagnostics={importDiags}
+        />,
+      );
+
+      const panel = screen.getByRole('region', { name: 'Proposal panel' });
+
+      // Import diagnostics section should be present
+      const diagSection = panel.querySelector(
+        '[data-video-editor-import-diagnostics="true"]',
+      );
+      expect(diagSection).toBeTruthy();
+
+      // Should show import summary counts
+      expect(screen.getByText('1 imported')).toBeDefined();
+      expect(screen.getByText('1 skipped')).toBeDefined();
+
+      // Should show diagnostic message
+      expect(
+        screen.getByText(/Patch validation failed for proposal #1/),
+      ).toBeDefined();
+      expect(screen.getByText('[proposal-import/invalid-patch]')).toBeDefined();
+
+      // Proposals should still be visible (not hidden)
+      expect(screen.getByText('ext.a')).toBeDefined();
+      expect(screen.getByText('ext.b')).toBeDefined();
+
+      // Import section should appear BEFORE the proposal list in DOM order
+      const proposalItems = panel.querySelectorAll(
+        '[data-video-editor-proposal-item="true"]',
+      );
+      expect(proposalItems.length).toBe(2);
+    });
+
+    it('does not render import diagnostics section when prop is null', () => {
+      const runtime = createMockProposalRuntime({
+        proposals: [mockProposal({ id: 'p1', source: 'ext', state: 'pending' })],
+      });
+
+      render(
+        <ProposalPanel
+          proposalRuntime={runtime}
+          proposalImportDiagnostics={null}
+        />,
+      );
+
+      const panel = screen.getByRole('region', { name: 'Proposal panel' });
+      const diagSection = panel.querySelector(
+        '[data-video-editor-import-diagnostics="true"]',
+      );
+      expect(diagSection).toBeFalsy();
+    });
+
+    it('does not render import diagnostics when diagnostics array is empty and all counts are zero', () => {
+      const runtime = createMockProposalRuntime({
+        proposals: [mockProposal({ id: 'p1', source: 'ext', state: 'pending' })],
+      });
+      const importDiags = mockImportDiagnostics({
+        imported: 0,
+        skipped: 0,
+        rejected: 0,
+        diagnostics: [],
+      });
+
+      render(
+        <ProposalPanel
+          proposalRuntime={runtime}
+          proposalImportDiagnostics={importDiags}
+        />,
+      );
+
+      const panel = screen.getByRole('region', { name: 'Proposal panel' });
+      const diagSection = panel.querySelector(
+        '[data-video-editor-import-diagnostics="true"]',
+      );
+      expect(diagSection).toBeFalsy();
+    });
+
+    it('shows import summary when counts are non-zero but diagnostics array is empty', () => {
+      const runtime = createMockProposalRuntime({
+        proposals: [mockProposal({ id: 'p1', source: 'ext', state: 'pending' })],
+      });
+      const importDiags = mockImportDiagnostics({
+        imported: 3,
+        skipped: 0,
+        rejected: 0,
+        diagnostics: [],
+      });
+
+      render(
+        <ProposalPanel
+          proposalRuntime={runtime}
+          proposalImportDiagnostics={importDiags}
+        />,
+      );
+
+      const panel = screen.getByRole('region', { name: 'Proposal panel' });
+      const diagSection = panel.querySelector(
+        '[data-video-editor-import-diagnostics="true"]',
+      );
+      expect(diagSection).toBeTruthy();
+      expect(
+        diagSection!.getAttribute('data-video-editor-import-diagnostics-summary-only'),
+      ).toBe('true');
+      expect(screen.getByText('3 imported')).toBeDefined();
+    });
+
+    it('renders error and warning diagnostic severity icons correctly', () => {
+      const runtime = createMockProposalRuntime({
+        proposals: [mockProposal({ id: 'p1', source: 'ext', state: 'pending' })],
+      });
+      const importDiags = mockImportDiagnostics({
+        imported: 1,
+        skipped: 0,
+        rejected: 2,
+        diagnostics: [
+          mockImportDiagnostic({
+            severity: 'error',
+            code: 'proposal-import/missing-patch',
+            message: 'Proposal missing patch field',
+            proposalIndex: 0,
+          }),
+          mockImportDiagnostic({
+            severity: 'warning',
+            code: 'proposal-import/unknown-source',
+            message: 'Unknown extension source',
+            proposalIndex: 1,
+          }),
+        ],
+      });
+
+      render(
+        <ProposalPanel
+          proposalRuntime={runtime}
+          proposalImportDiagnostics={importDiags}
+        />,
+      );
+
+      const panel = screen.getByRole('region', { name: 'Proposal panel' });
+      const diags = panel.querySelectorAll(
+        '[data-video-editor-import-diagnostic="true"]',
+      );
+      expect(diags.length).toBe(2);
+
+      // Check severity attributes
+      const severities = Array.from(diags).map((el) =>
+        el.getAttribute('data-video-editor-import-diagnostic-severity'),
+      );
+      expect(severities).toEqual(['error', 'warning']);
+
+      // Check code attributes
+      const codes = Array.from(diags).map((el) =>
+        el.getAttribute('data-video-editor-import-diagnostic-code'),
+      );
+      expect(codes).toEqual([
+        'proposal-import/missing-patch',
+        'proposal-import/unknown-source',
+      ]);
+
+      // Both messages should be visible
+      expect(screen.getByText(/Proposal missing patch field/)).toBeDefined();
+      expect(screen.getByText(/Unknown extension source/)).toBeDefined();
+    });
+
+    it('shows proposalIndex in diagnostic detail when available', () => {
+      const runtime = createMockProposalRuntime({
+        proposals: [mockProposal({ id: 'p1', source: 'ext', state: 'pending' })],
+      });
+      const importDiags = mockImportDiagnostics({
+        imported: 0,
+        skipped: 1,
+        rejected: 1,
+        diagnostics: [
+          mockImportDiagnostic({
+            severity: 'warning',
+            code: 'proposal-import/duplicate-id',
+            message: 'Duplicate proposal',
+            proposalIndex: 3,
+            proposalId: 'dup-id',
+          }),
+        ],
+      });
+
+      render(
+        <ProposalPanel
+          proposalRuntime={runtime}
+          proposalImportDiagnostics={importDiags}
+        />,
+      );
+
+      expect(screen.getByText(/proposal #3/)).toBeDefined();
+      expect(screen.getByText(/Duplicate proposal/)).toBeDefined();
+    });
+
+    it('successfully imported proposals are still visible alongside diagnostics', () => {
+      const runtime = createMockProposalRuntime({
+        proposals: [
+          mockProposal({ id: 'p1', source: 'ext.alpha', state: 'pending' }),
+          mockProposal({ id: 'p2', source: 'ext.beta', state: 'accepted' }),
+          mockProposal({ id: 'p3', source: 'ext.gamma', state: 'pending' }),
+        ],
+      });
+      const importDiags = mockImportDiagnostics({
+        imported: 2,
+        skipped: 1,
+        rejected: 0,
+        diagnostics: [
+          mockImportDiagnostic({
+            severity: 'warning',
+            code: 'proposal-import/unknown-source',
+            message: 'Skipped proposal from unknown source',
+            proposalIndex: 2,
+          }),
+        ],
+      });
+
+      render(
+        <ProposalPanel
+          proposalRuntime={runtime}
+          proposalImportDiagnostics={importDiags}
+        />,
+      );
+
+      // All three proposals visible
+      expect(screen.getByText('ext.alpha')).toBeDefined();
+      expect(screen.getByText('ext.beta')).toBeDefined();
+      expect(screen.getByText('ext.gamma')).toBeDefined();
+
+      // Import diagnostics also visible
+      expect(screen.getByText('2 imported')).toBeDefined();
+      expect(screen.getByText('1 skipped')).toBeDefined();
+      expect(
+        screen.getByText(/Skipped proposal from unknown source/),
+      ).toBeDefined();
+    });
+
+    it('replaces stale diagnostics with new diagnostics on subsequent render', () => {
+      const runtime = createMockProposalRuntime({
+        proposals: [mockProposal({ id: 'p1', source: 'ext', state: 'pending' })],
+      });
+
+      const firstDiags = mockImportDiagnostics({
+        imported: 1,
+        skipped: 0,
+        rejected: 0,
+        diagnostics: [
+          mockImportDiagnostic({
+            severity: 'warning',
+            code: 'proposal-import/old-warning',
+            message: 'Old diagnostic',
+            proposalIndex: 0,
+          }),
+        ],
+        timestamp: 1000,
+      });
+
+      const { rerender } = render(
+        <ProposalPanel
+          proposalRuntime={runtime}
+          proposalImportDiagnostics={firstDiags}
+        />,
+      );
+
+      // First render: old diagnostic visible
+      expect(screen.getByText(/Old diagnostic/)).toBeDefined();
+
+      const secondDiags = mockImportDiagnostics({
+        imported: 2,
+        skipped: 0,
+        rejected: 1,
+        diagnostics: [
+          mockImportDiagnostic({
+            severity: 'error',
+            code: 'proposal-import/new-error',
+            message: 'New diagnostic',
+            proposalIndex: 1,
+          }),
+        ],
+        timestamp: 2000,
+      });
+
+      // Re-render with new diagnostics
+      rerender(
+        <ProposalPanel
+          proposalRuntime={runtime}
+          proposalImportDiagnostics={secondDiags}
+        />,
+      );
+
+      // New diagnostic visible
+      expect(screen.getByText(/New diagnostic/)).toBeDefined();
+      expect(screen.getByText('[proposal-import/new-error]')).toBeDefined();
+
+      // Old diagnostic no longer present
+      expect(screen.queryByText(/Old diagnostic/)).toBeFalsy();
+      expect(screen.queryByText('[proposal-import/old-warning]')).toBeFalsy();
+
+      // New counts visible
+      expect(screen.getByText('2 imported')).toBeDefined();
+      expect(screen.getByText('1 rejected')).toBeDefined();
     });
   });

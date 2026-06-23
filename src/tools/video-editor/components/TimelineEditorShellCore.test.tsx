@@ -76,6 +76,15 @@ vi.mock('@/tools/video-editor/hooks/timelineStore.ts', () => ({
     previewRef: { current: { togglePlayPause: vi.fn(), seek: vi.fn() } },
     formatTime: (t: number) => `${t.toFixed(1)}s`,
   }),
+  useProposalRuntimeFromStoreSafe: () => null,
+  useProposalImportDiagnosticsFromStoreSafe: () => null,
+}));
+
+vi.mock('@/tools/video-editor/components/ProposalPanel/ProposalPanel.tsx', () => ({
+  ProposalPanel: ({ proposalRuntime, proposalImportDiagnostics }: any) =>
+    proposalRuntime
+      ? <div data-testid="proposal-panel">ProposalPanel</div>
+      : null,
 }));
 
 vi.mock('@/tools/video-editor/hooks/useKeyboardShortcuts.ts', () => ({

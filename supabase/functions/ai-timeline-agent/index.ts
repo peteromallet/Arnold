@@ -36,15 +36,11 @@ serve((req) => withEdgeRequest<AgentInvocationBody>(
       ? undefined
       : typeof body.user_message === "string" ? body.user_message.trim() : null;
     const selectedClips = normalizeSelectedClips(body.selected_clips);
-    // M3: proposal_policy → timelineMutationMode mapping
-    // 'always' → proposal mode (agent returns proposals instead of mutating)
-    // 'immediate' / absent → immediate mode (agent applies mutations directly)
-    const proposalPolicy = typeof body.proposal_policy === "string"
+    // M3: Extract raw proposal_policy from body (validated but not resolved yet)
+    const bodyProposalPolicy = typeof body.proposal_policy === "string"
       && (body.proposal_policy === "always" || body.proposal_policy === "immediate")
       ? body.proposal_policy
       : undefined;
-    const timelineMutationMode: "immediate" | "proposal" =
-      proposalPolicy === "always" ? "proposal" : "immediate";
     if (!sessionId) return jsonResponse({ error: "session_id is required" }, 400);
     if (userMessage === null) return jsonResponse({ error: "user_message must be a string when provided" }, 400);
 
@@ -75,6 +71,28 @@ serve((req) => withEdgeRequest<AgentInvocationBody>(
         cancel_source: session.cancel_source,
         cancel_reason: session.cancel_reason,
       }, 409);
+    }
+
+    // M3: Resolve effective proposal_policy — request body, then session row, then immediate default.
+    // 'always' → proposal mode (agent returns proposals instead of mutating)
+    // 'immediate' / absent → immediate mode (agent applies mutations directly)
+    const sessionProposalPolicy = session.proposal_policy;
+    const effectiveProposalPolicy = bodyProposalPolicy ?? sessionProposalPolicy ?? "immediate";
+    const timelineMutationMode: "immediate" | "proposal" =
+      effectiveProposalPolicy === "always" ? "proposal" : "immediate";
+
+    // Persist policy change when body supplies a valid value that differs from stored state
+    if (bodyProposalPolicy && bodyProposalPolicy !== sessionProposalPolicy) {
+      const { error: policyUpdateError } = await supabaseAdmin
+        .from("timeline_agent_sessions")
+        .update({ proposal_policy: bodyProposalPolicy })
+        .eq("id", session.id);
+      if (policyUpdateError) {
+        logger.warn("Failed to persist proposal_policy update", {
+          session_id: session.id,
+          error: policyUpdateError.message,
+        });
+      }
     }
 
     const lastTurn = session.turns[session.turns.length - 1];

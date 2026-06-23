@@ -821,6 +821,7 @@ const executePreparedTransaction = async (
     return {
       config: state.config,
       result: formatted,
+      mutationApplied: true,
     };
   }
 
@@ -853,6 +854,7 @@ const executePreparedTransaction = async (
   return {
     config: state.config,
     result: retriedFormatted,
+    mutationApplied: true,
   };
 };
 
@@ -973,6 +975,7 @@ const handleRepeat = async (
   return {
     config: state.config,
     result: `Repeated ${succeeded}/${parsed.count}.${errorMessages.length > 0 ? `\n${errorMessages.join("\n")}` : ""}`,
+    mutationApplied: true,
   };
 };
 
@@ -1056,6 +1059,7 @@ export async function executeCommand(
     return {
       config: state.config,
       result: "Undid the last timeline change.",
+      mutationApplied: true,
     };
   }
 

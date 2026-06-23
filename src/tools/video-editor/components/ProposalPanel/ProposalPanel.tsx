@@ -42,7 +42,9 @@ import type {
   TimelineDiffEntry,
   TimelinePatchDiagnostic,
   DisposeHandle,
+  ProposalImportDiagnostic,
 } from '@reigh/editor-sdk';
+import type { ProposalImportDiagnosticsState } from '@/tools/video-editor/hooks/timelineStore';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -53,6 +55,12 @@ export interface ProposalPanelProps {
   proposalRuntime: ProposalRuntime;
   /** Called when the panel requests to be closed. */
   onClose?: () => void;
+  /**
+   * Optional import diagnostics from the most recent edge proposal import.
+   * Rendered above the proposal list without hiding successfully imported proposals.
+   * When null or with zero diagnostics, the section is hidden.
+   */
+  proposalImportDiagnostics?: ProposalImportDiagnosticsState | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -136,6 +144,7 @@ function sparseSummary(record: Record<string, unknown> | undefined): string | nu
 export function ProposalPanel({
   proposalRuntime,
   onClose,
+  proposalImportDiagnostics = null,
 }: ProposalPanelProps) {
   const panelRef = useRef<HTMLDivElement>(null);
 
@@ -173,14 +182,19 @@ export function ProposalPanel({
     severity: 'error' | 'info';
   } | null>(null);
 
+  // Local UI-level dismissal for stale and expired proposals.
+  // Dismissed items reappear on remount — no persistence status is introduced.
+  const [dismissedIds, setDismissedIds] = useState<Set<string>>(new Set());
+
   // ---- Filtering ------------------------------------------------------
   const filteredProposals = useMemo(() => {
     return proposals.filter((p) => {
       if (p.state === 'accepted' && !showAccepted) return false;
       if (p.state === 'rejected' && !showRejected) return false;
+      if (dismissedIds.has(p.id)) return false;
       return true;
     });
-  }, [proposals, showAccepted, showRejected]);
+  }, [proposals, showAccepted, showRejected, dismissedIds]);
 
   // Sort: pending first, then expired, then stale, then accepted, then rejected; newest first within each
   const sortedProposals = useMemo(() => {
@@ -198,9 +212,9 @@ export function ProposalPanel({
     });
   }, [filteredProposals]);
 
-  const pendingCount = proposals.filter((p) => p.state === 'pending').length;
-  const staleCount = proposals.filter((p) => p.state === 'stale').length;
-  const expiredCount = proposals.filter((p) => p.state === 'expired').length;
+  const pendingCount = proposals.filter((p) => p.state === 'pending' && !dismissedIds.has(p.id)).length;
+  const staleCount = proposals.filter((p) => p.state === 'stale' && !dismissedIds.has(p.id)).length;
+  const expiredCount = proposals.filter((p) => p.state === 'expired' && !dismissedIds.has(p.id)).length;
 
   // ---- Handlers -------------------------------------------------------
   const toggleExpand = useCallback((id: string) => {
@@ -211,6 +225,17 @@ export function ProposalPanel({
       } else {
         next.add(id);
       }
+      return next;
+    });
+  }, []);
+
+  // Local UI-level dismissal for stale/expired proposals.
+  // Does not mutate the ProposalRuntime — the proposal remains in its
+  // terminal state in the runtime and reappears on remount.
+  const handleDismiss = useCallback((id: string) => {
+    setDismissedIds((prev) => {
+      const next = new Set(prev);
+      next.add(id);
       return next;
     });
   }, []);
@@ -443,6 +468,18 @@ export function ProposalPanel({
         </div>
       )}
 
+      {/* ---- Import diagnostics ---------------------------------------- */}
+      {proposalImportDiagnostics && proposalImportDiagnostics.diagnostics.length > 0 && (
+        <ImportDiagnosticsSection diagnostics={proposalImportDiagnostics} />
+      )}
+      {proposalImportDiagnostics &&
+        proposalImportDiagnostics.diagnostics.length === 0 &&
+        (proposalImportDiagnostics.imported > 0 ||
+          proposalImportDiagnostics.skipped > 0 ||
+          proposalImportDiagnostics.rejected > 0) && (
+          <ImportSummarySection diagnostics={proposalImportDiagnostics} />
+        )}
+
       {/* ---- Proposal list --------------------------------------------- */}
       <div
         className="overflow-y-auto"
@@ -640,7 +677,7 @@ export function ProposalPanel({
                         </div>
                       )}
 
-                      {/* Expired proposals: show expiry detail, accept/reject disabled */}
+                      {/* Expired proposals: show expiry detail, dismiss, accept/reject disabled */}
                       {isExpired && (
                         <div className="flex flex-col gap-1 border-t border-white/5 px-3 py-2">
                           <div className="flex items-center gap-1">
@@ -658,13 +695,28 @@ export function ProposalPanel({
                                   : `Expired: ${proposal.expiryDetail.reason}`}
                             </div>
                           )}
-                          <span className="text-[10px] text-zinc-500">
-                            Accept and reject are disabled for expired proposals.
-                          </span>
+                          <div className="flex items-center gap-1 mt-0.5">
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleDismiss(proposal.id);
+                              }}
+                              className="flex items-center gap-1 rounded border border-white/10 bg-zinc-800 px-2 py-1 text-[10px] text-zinc-400 hover:bg-zinc-700 hover:text-zinc-200 transition-colors"
+                              aria-label={`Dismiss expired proposal from ${proposal.source}`}
+                              data-video-editor-proposal-action="dismiss-expired"
+                            >
+                              <X className="h-3 w-3" aria-hidden="true" />
+                              Dismiss
+                            </button>
+                            <span className="text-[10px] text-zinc-500">
+                              Accept and reject are disabled for expired proposals.
+                            </span>
+                          </div>
                         </div>
                       )}
 
-                      {/* Stale proposals: show re-preview option */}
+                      {/* Stale proposals: show re-preview and dismiss options */}
                       {isStale && (
                         <div className="flex items-center gap-1 border-t border-white/5 px-3 py-2">
                           <button
@@ -679,6 +731,19 @@ export function ProposalPanel({
                           >
                             <Eye className="h-3 w-3" aria-hidden="true" />
                             Re-preview
+                          </button>
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleDismiss(proposal.id);
+                            }}
+                            className="flex items-center gap-1 rounded border border-white/10 bg-zinc-800 px-2 py-1 text-[10px] text-zinc-400 hover:bg-zinc-700 hover:text-zinc-200 transition-colors"
+                            aria-label={`Dismiss stale proposal from ${proposal.source}`}
+                            data-video-editor-proposal-action="dismiss-stale"
+                          >
+                            <X className="h-3 w-3" aria-hidden="true" />
+                            Dismiss
                           </button>
                           <span className="text-[10px] text-zinc-500 ml-1">
                             Proposal is stale — base version no longer matches current timeline.
@@ -794,6 +859,130 @@ function DiffSection({ diff }: { diff: TimelineDiff }) {
           {diff.affectedObjectIds.length > 5 ? ` +${diff.affectedObjectIds.length - 5} more` : ''}
         </div>
       )}
+    </div>
+  );
+}
+
+/** Renders the import diagnostics for the most recent edge proposal import. */
+function ImportDiagnosticsSection({
+  diagnostics,
+}: {
+  diagnostics: ProposalImportDiagnosticsState;
+}) {
+  return (
+    <div
+      className="border-b border-white/10 px-3 py-2"
+      data-video-editor-import-diagnostics="true"
+      role="status"
+      aria-live="polite"
+      aria-label="Proposal import diagnostics"
+    >
+      {/* Summary header */}
+      <div className="flex items-center gap-2 mb-1.5">
+        <span className="text-[10px] font-medium text-zinc-400 uppercase tracking-[0.12em]">
+          Import
+        </span>
+        <span className="text-[9px] text-zinc-500 tabular-nums">
+          {formatTimestamp(diagnostics.timestamp)}
+        </span>
+        <span className="flex items-center gap-1.5 ml-auto">
+          {diagnostics.imported > 0 && (
+            <span className="rounded bg-green-500/10 px-1.5 py-0 text-[9px] text-green-400">
+              {diagnostics.imported} imported
+            </span>
+          )}
+          {diagnostics.skipped > 0 && (
+            <span className="rounded bg-yellow-500/10 px-1.5 py-0 text-[9px] text-yellow-400">
+              {diagnostics.skipped} skipped
+            </span>
+          )}
+          {diagnostics.rejected > 0 && (
+            <span className="rounded bg-red-500/10 px-1.5 py-0 text-[9px] text-red-400">
+              {diagnostics.rejected} rejected
+            </span>
+          )}
+        </span>
+      </div>
+
+      {/* Diagnostic items */}
+      <div className="flex flex-col gap-1">
+        {diagnostics.diagnostics.map((diag, i) => {
+          const SevIcon = SEVERITY_ICON[diag.severity] ?? AlertCircle;
+          return (
+            <div
+              key={i}
+              data-video-editor-import-diagnostic="true"
+              data-video-editor-import-diagnostic-severity={diag.severity}
+              data-video-editor-import-diagnostic-code={diag.code}
+              className="flex items-start gap-1.5"
+            >
+              <SevIcon
+                className={`mt-0.5 h-2.5 w-2.5 shrink-0 ${SEVERITY_COLOR[diag.severity] ?? 'text-zinc-400'}`}
+                aria-hidden="true"
+              />
+              <div className="min-w-0 flex-1">
+                <span className="text-[10px] text-zinc-400 break-words">
+                  {diag.message}
+                </span>
+                {diag.code && (
+                  <span className="ml-1 text-[9px] text-zinc-600">
+                    [{diag.code}]
+                  </span>
+                )}
+                {diag.proposalIndex !== undefined && (
+                  <span className="ml-1 text-[9px] text-zinc-600">
+                    proposal #{diag.proposalIndex}
+                  </span>
+                )}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+/** Renders a compact import summary when no diagnostics are present but counts are non-zero. */
+function ImportSummarySection({
+  diagnostics,
+}: {
+  diagnostics: ProposalImportDiagnosticsState;
+}) {
+  return (
+    <div
+      className="border-b border-white/10 px-3 py-2"
+      data-video-editor-import-diagnostics="true"
+      data-video-editor-import-diagnostics-summary-only="true"
+      role="status"
+      aria-live="polite"
+      aria-label="Proposal import summary"
+    >
+      <div className="flex items-center gap-2">
+        <span className="text-[10px] font-medium text-zinc-400 uppercase tracking-[0.12em]">
+          Import
+        </span>
+        <span className="text-[9px] text-zinc-500 tabular-nums">
+          {formatTimestamp(diagnostics.timestamp)}
+        </span>
+        <span className="flex items-center gap-1.5 ml-auto">
+          {diagnostics.imported > 0 && (
+            <span className="rounded bg-green-500/10 px-1.5 py-0 text-[9px] text-green-400">
+              {diagnostics.imported} imported
+            </span>
+          )}
+          {diagnostics.skipped > 0 && (
+            <span className="rounded bg-yellow-500/10 px-1.5 py-0 text-[9px] text-yellow-400">
+              {diagnostics.skipped} skipped
+            </span>
+          )}
+          {diagnostics.rejected > 0 && (
+            <span className="rounded bg-red-500/10 px-1.5 py-0 text-[9px] text-red-400">
+              {diagnostics.rejected} rejected
+            </span>
+          )}
+        </span>
+      </div>
     </div>
   );
 }

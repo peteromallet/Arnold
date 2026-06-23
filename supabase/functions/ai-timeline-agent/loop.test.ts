@@ -69,6 +69,7 @@ import {
   executeToolCall,
   recoverSelectedClipsFromTurns,
 } from "./loop.ts";
+import { normalizeSessionRow } from "./llm/messages.ts";
 import { buildSelectedClipsPrompt, buildTimelineAgentSystemPrompt } from "./prompts.ts";
 import { extractToolCalls } from "./tool-calls.ts";
 
@@ -747,5 +748,335 @@ describe("loop helpers", () => {
     );
     expect(result.result).toMatch(/edits superseded/);
     expect(result.result).toMatch(/retry/i);
+  });
+
+  // ── M3: mutation_applied semantics ────────────────────────────────
+
+  describe("mutation_applied edge tests", () => {
+    const makeTimelineState = () => ({
+      config: { clips: [] },
+      configVersion: 1,
+      registry: { assets: {} },
+      projectId: "project-1",
+    } as unknown as import("./types.ts").TimelineState);
+
+    const supabaseAdmin = {} as import("./types.ts").SupabaseAdmin;
+
+    beforeEach(() => {
+      vi.clearAllMocks();
+    });
+
+    it("proposal mode run command with proposals returns mutationApplied=false", async () => {
+      const timelineState = makeTimelineState();
+
+      // Simulate executeProposal returning proposals but NOT setting mutationApplied
+      mocks.executeCommand.mockResolvedValue({
+        result: "[PROPOSAL — not applied]\nMove clip \"clip-1\" to 2.0\n\nBase version: 1\nPatches: 1",
+        config: timelineState.config,
+        proposals: [
+          {
+            id: "proposal-abc12345",
+            source: "ai-timeline-agent/proposal#move",
+            rationale: "Proposed by ai-timeline-agent at config version 1. Move clip \"clip-1\" to 2.0",
+            state: "pending" as const,
+            baseVersion: 1,
+            patch: {
+              version: 1,
+              operations: [{ op: "clip.move", target: "clip-1", payload: { at: 2.0 } }],
+            },
+          },
+        ],
+        // NOTE: mutationApplied intentionally absent — proposal mode never saves
+      });
+
+      const result = await executeToolCall(
+        {
+          id: "tc-proposal-move",
+          name: "run",
+          args: { command: "move clip-1 2.0" },
+          parseError: null,
+        },
+        timelineState,
+        supabaseAdmin,
+        "timeline-1",
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        "proposal",
+      );
+
+      // mutationApplied must NOT be true when proposals are returned without config save
+      expect(result.mutationApplied).not.toBe(true);
+      expect(result.mutationApplied).toBeFalsy();
+      // Proposals were produced
+      expect(result.proposals).toBeDefined();
+      expect(result.proposals!.length).toBeGreaterThan(0);
+    });
+
+    it("read-only proposal-mode command with no proposals returns mutationApplied=false", async () => {
+      const timelineState = makeTimelineState();
+
+      // Simulate a read-only command (view) in proposal mode — no proposals, no save
+      mocks.executeCommand.mockResolvedValue({
+        result: "[PROPOSAL MODE — read-only, no patches]\nTimeline has 0 clips in 0 tracks.",
+        config: timelineState.config,
+        // No proposals, no mutationApplied
+      });
+
+      const result = await executeToolCall(
+        {
+          id: "tc-proposal-view",
+          name: "run",
+          args: { command: "view" },
+          parseError: null,
+        },
+        timelineState,
+        supabaseAdmin,
+        "timeline-1",
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        "proposal",
+      );
+
+      // Read-only proposal-mode commands must NOT report mutationApplied=true
+      expect(result.mutationApplied).not.toBe(true);
+      expect(result.mutationApplied).toBeFalsy();
+      // No proposals should be present for read-only commands
+      expect(result.proposals).toBeUndefined();
+    });
+
+    it("blocked create_shot in proposal mode returns mutationApplied=false", async () => {
+      const timelineState = makeTimelineState();
+
+      // create_shot is blocked directly by executeToolCall in proposal mode,
+      // so no mock setup is needed — the gating happens before any mock is called.
+      const result = await executeToolCall(
+        {
+          id: "tc-proposal-create-shot",
+          name: "create_shot",
+          args: { shot_name: "Test Shot", generation_ids: ["gen-1"] },
+          parseError: null,
+        },
+        timelineState,
+        supabaseAdmin,
+        "timeline-1",
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        "proposal",
+      );
+
+      // Blocked create_shot must NOT report mutationApplied=true
+      expect(result.result).toContain("[BLOCKED]");
+      expect(result.mutationApplied).not.toBe(true);
+      expect(result.mutationApplied).toBeFalsy();
+    });
+
+    it("immediate apply command that successfully saves returns mutationApplied=true", async () => {
+      const timelineState = makeTimelineState();
+
+      // Simulate executePreparedTransaction successfully saving the config
+      mocks.executeCommand.mockResolvedValue({
+        result: "Applied: Move clip \"clip-1\" to 2.0.",
+        config: timelineState.config,
+        mutationApplied: true,
+      });
+
+      // Default timelineMutationMode is undefined → 'immediate' behavior
+      const result = await executeToolCall(
+        {
+          id: "tc-apply-move",
+          name: "run",
+          args: { command: "move clip-1 2.0" },
+          parseError: null,
+        },
+        timelineState,
+        supabaseAdmin,
+        "timeline-1",
+      );
+
+      // Successful apply must report mutationApplied=true
+      expect(result.mutationApplied).toBe(true);
+    });
+  });
+
+  // ── M3: proposal_policy session durability ─────────────────────────
+
+  describe("normalizeSessionRow — proposal_policy extraction", () => {
+    it("extracts proposal_policy 'always' from a valid session row", () => {
+      const row: Record<string, unknown> = {
+        id: "session-1",
+        timeline_id: "timeline-1",
+        user_id: "user-1",
+        status: "waiting_user",
+        turns: [],
+        model: "groq",
+        proposal_policy: "always",
+        summary: null,
+        created_at: "2025-01-01T00:00:00Z",
+        updated_at: "2025-01-01T00:00:00Z",
+      };
+
+      const session = normalizeSessionRow(row);
+      expect(session.proposal_policy).toBe("always");
+    });
+
+    it("extracts proposal_policy 'immediate' from a valid session row", () => {
+      const row: Record<string, unknown> = {
+        id: "session-2",
+        timeline_id: "timeline-1",
+        user_id: "user-1",
+        status: "waiting_user",
+        turns: [],
+        model: "groq",
+        proposal_policy: "immediate",
+        summary: null,
+        created_at: "2025-01-01T00:00:00Z",
+        updated_at: "2025-01-01T00:00:00Z",
+      };
+
+      const session = normalizeSessionRow(row);
+      expect(session.proposal_policy).toBe("immediate");
+    });
+
+    it("returns null when proposal_policy is missing from session row", () => {
+      const row: Record<string, unknown> = {
+        id: "session-3",
+        timeline_id: "timeline-1",
+        user_id: "user-1",
+        status: "waiting_user",
+        turns: [],
+        model: "groq",
+        summary: null,
+        created_at: "2025-01-01T00:00:00Z",
+        updated_at: "2025-01-01T00:00:00Z",
+      };
+
+      const session = normalizeSessionRow(row);
+      expect(session.proposal_policy).toBeNull();
+    });
+
+    it("returns null when proposal_policy is an invalid value", () => {
+      const row: Record<string, unknown> = {
+        id: "session-4",
+        timeline_id: "timeline-1",
+        user_id: "user-1",
+        status: "waiting_user",
+        turns: [],
+        model: "groq",
+        proposal_policy: "never",
+        summary: null,
+        created_at: "2025-01-01T00:00:00Z",
+        updated_at: "2025-01-01T00:00:00Z",
+      };
+
+      const session = normalizeSessionRow(row);
+      expect(session.proposal_policy).toBeNull();
+    });
+  });
+
+  describe("executeToolCall — timelineMutationMode policy-driven behavior", () => {
+    const timelineState = {
+      config: { clips: [] },
+      configVersion: 1,
+      registry: { assets: {} },
+      projectId: "project-1",
+    } as unknown as import("./types.ts").TimelineState;
+
+    function makeSupabaseAdmin() {
+      const rpcMaybeSingle = vi.fn().mockResolvedValue({
+        data: { shot_id: "shot-created", success: true },
+        error: null,
+      });
+      const rpcFn = vi.fn().mockReturnValue({ maybeSingle: rpcMaybeSingle });
+      const insertFn = vi.fn().mockResolvedValue({ error: null });
+      const fromFn = vi.fn().mockReturnValue({ insert: insertFn });
+      return {
+        from: fromFn,
+        rpc: rpcFn,
+      } as unknown as import("./types.ts").SupabaseAdmin;
+    }
+
+    beforeEach(() => {
+      vi.clearAllMocks();
+    });
+
+    it("enters proposal mode when timelineMutationMode is 'proposal' — blocks create_shot", async () => {
+      const supabaseAdmin = makeSupabaseAdmin();
+      // In proposal mode, create_shot is blocked before any mock is called
+      const result = await executeToolCall(
+        {
+          id: "tc-proposal-create-shot-2",
+          name: "create_shot",
+          args: { shot_name: "Test Shot", generation_ids: ["gen-1"] },
+          parseError: null,
+        },
+        timelineState,
+        supabaseAdmin,
+        "timeline-1",
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        "proposal",
+      );
+
+      expect(result.result).toContain("[BLOCKED]");
+      expect(result.mutationApplied).not.toBe(true);
+    });
+
+    it("enters immediate mode when timelineMutationMode is 'immediate' — create_shot allowed", async () => {
+      const supabaseAdmin = makeSupabaseAdmin();
+      const result = await executeToolCall(
+        {
+          id: "tc-immediate-create-shot",
+          name: "create_shot",
+          args: { shot_name: "Shot-1", projectId: "project-1", generation_ids: ["gen-1"] },
+          parseError: null,
+        },
+        timelineState,
+        supabaseAdmin,
+        "timeline-1",
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        "immediate",
+      );
+
+      // In immediate mode, create_shot should NOT be blocked
+      expect(result.result).not.toContain("[BLOCKED]");
+      // create_shot goes through executeCreateShot → rpc, so it should call rpc
+      expect(supabaseAdmin.rpc).toHaveBeenCalled();
+    });
+
+    it("default mode (no timelineMutationMode) allows create_shot (immediate behavior)", async () => {
+      const supabaseAdmin = makeSupabaseAdmin();
+      // No timelineMutationMode → immediate by default
+      const result = await executeToolCall(
+        {
+          id: "tc-default-create-shot",
+          name: "create_shot",
+          args: { shot_name: "Default-Shot", projectId: "project-1", generation_ids: ["gen-1"] },
+          parseError: null,
+        },
+        timelineState,
+        supabaseAdmin,
+        "timeline-1",
+      );
+
+      // create_shot should NOT be blocked in default/immediate mode
+      expect(result.result).not.toContain("[BLOCKED]");
+      expect(supabaseAdmin.rpc).toHaveBeenCalled();
+    });
   });
 });

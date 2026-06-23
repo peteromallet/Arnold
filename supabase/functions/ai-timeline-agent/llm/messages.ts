@@ -77,6 +77,10 @@ export function normalizeSessionRow(row: Record<string, unknown>): AgentSession 
     turns: normalizeTurns(row.turns),
     model: typeof row.model === "string" ? row.model : "openrouter",
     summary: typeof row.summary === "string" ? row.summary : null,
+    proposal_policy: typeof row.proposal_policy === "string"
+      && (row.proposal_policy === "always" || row.proposal_policy === "immediate")
+      ? row.proposal_policy
+      : null,
     cancelled_at: typeof row.cancelled_at === "string" ? row.cancelled_at : null,
     cancelled_by: typeof row.cancelled_by === "string" ? row.cancelled_by : null,
     cancel_source: typeof row.cancel_source === "string" ? row.cancel_source : null,

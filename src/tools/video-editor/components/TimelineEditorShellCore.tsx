@@ -32,6 +32,8 @@ import {
   useTimelineEditorData,
   useTimelineEditorOps,
   useTimelinePlaybackContext,
+  useProposalRuntimeFromStoreSafe,
+  useProposalImportDiagnosticsFromStoreSafe,
 } from '@/tools/video-editor/hooks/timelineStore.ts';
 import { useKeyboardShortcuts } from '@/tools/video-editor/hooks/useKeyboardShortcuts.ts';
 import { useTimelineRealtime } from '@/tools/video-editor/hooks/useTimelineRealtime.ts';
@@ -55,6 +57,7 @@ import { CodePanelCanary } from '@/tools/video-editor/components/Canary/CodePane
 import { WritingPanelCanary } from '@/tools/video-editor/components/Canary/WritingPanelCanary';
 import { StagePanelCanary } from '@/tools/video-editor/components/Canary/StagePanelCanary';
 import { ExtensionActivityRegion, type ExtensionStatusEvent } from '@/tools/video-editor/components/ExtensionActivityRegion';
+import { ProposalPanel } from '@/tools/video-editor/components/ProposalPanel/ProposalPanel.tsx';
 
 const MIN_TIMELINE_HEIGHT = 140;
 const MIN_PREVIEW_HEIGHT = 180;
@@ -188,6 +191,10 @@ function TimelineEditorShellCoreComponent({
   const handleActivityDismiss = useCallback((eventId: string) => {
     setActivityEvents((prev) => prev.filter((e) => e.id !== eventId));
   }, []);
+
+  /** M2: Proposal runtime and import diagnostics from timelineStore. */
+  const proposalRuntime = useProposalRuntimeFromStoreSafe();
+  const proposalImportDiagnostics = useProposalImportDiagnosticsFromStoreSafe();
   const timelineFps = Math.max(1, editorData.resolvedConfig?.output?.fps ?? 30);
   const conflict = useTimelineRealtime({
     timelineId,
@@ -799,17 +806,36 @@ function TimelineEditorShellCoreComponent({
     </div>
   );
 
+  /** M2: Determine whether to show the ProposalPanel inside the activity region.
+   * The panel is shown when a proposalRuntime is available and either proposals
+   * or import diagnostics exist.  The runtime list() call is synchronous and
+   * cheap — the panel itself subscribes via useSyncExternalStore for updates. */
+  const hasProposals = proposalRuntime !== null && proposalRuntime.list().length > 0;
+  const hasDiagnostics = proposalImportDiagnostics !== null && (
+    proposalImportDiagnostics.diagnostics.length > 0 ||
+    proposalImportDiagnostics.imported > 0 ||
+    proposalImportDiagnostics.skipped > 0 ||
+    proposalImportDiagnostics.rejected > 0
+  );
+  const showProposalPanel = proposalRuntime !== null && (hasProposals || hasDiagnostics);
+
   /** M1: Extension activity region — shallow placeholder mounted between toolbar and timeline.
    * M1-LOCKED: This mount point is intentional across all three layout variants
-   * (desktop, condensed, mobile).  Future milestones will wire agent invocation
-   * feedback, diagnostic panels, and proposal-import status into this region
-   * without changing its position.  See docs/extensions/extension-layer-foundation-assessment.md §2.5. */
+   * (desktop, condensed, mobile).  M2 wires the ProposalPanel into the region
+   * when a runtime and proposals/diagnostics exist.  See docs/extensions/extension-layer-foundation-assessment.md §2.5. */
   const activityRegion = (
     <ExtensionActivityRegion
       statusEvents={activityEvents}
       onDismiss={handleActivityDismiss}
       isExpanded={false}
-    />
+    >
+      {showProposalPanel && proposalRuntime && (
+        <ProposalPanel
+          proposalRuntime={proposalRuntime}
+          proposalImportDiagnostics={proposalImportDiagnostics}
+        />
+      )}
+    </ExtensionActivityRegion>
   );
 
   const previewOverlay = (

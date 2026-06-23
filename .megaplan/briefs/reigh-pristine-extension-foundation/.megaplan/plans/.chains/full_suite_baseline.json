@@ -1,0 +1,22 @@
+{
+  "failing_tests": [
+    "vendor/timeline-schema/tests/test_materialize_output.py::MaterializeOutputTests::test_materialize_output_from_2rp_theme",
+    "vendor/timeline-schema/tests/test_materialize_output.py::ResolveThemeTests::test_resolve_theme_2rp",
+    "vendor/timeline-schema/tests/test_materialize_output.py::ResolveThemeTests::test_resolve_theme_with_overrides"
+  ],
+  "collected_ids": [
+    "vendor/timeline-schema/tests/test_materialize_output.py::MaterializeOutputTests::test_materialize_output_carries_background",
+    "vendor/timeline-schema/tests/test_materialize_output.py::MaterializeOutputTests::test_materialize_output_from_2rp_theme",
+    "vendor/timeline-schema/tests/test_materialize_output.py::MaterializeOutputTests::test_materialize_output_rejects_missing_canvas",
+    "vendor/timeline-schema/tests/test_materialize_output.py::MaterializeOutputTests::test_materialize_output_rejects_pacing_only_fps",
+    "vendor/timeline-schema/tests/test_materialize_output.py::ResolveThemeTests::test_resolve_theme_2rp",
+    "vendor/timeline-schema/tests/test_materialize_output.py::ResolveThemeTests::test_resolve_theme_rejects_empty_theme",
+    "vendor/timeline-schema/tests/test_materialize_output.py::ResolveThemeTests::test_resolve_theme_rejects_missing_theme",
+    "vendor/timeline-schema/tests/test_materialize_output.py::ResolveThemeTests::test_resolve_theme_with_overrides",
+    "vendor/timeline-schema/tests/test_materialize_output.py::ValidateTimelineTests::test_validate_timeline_accepts_no_theme_persisted_shape",
+    "vendor/timeline-schema/tests/test_materialize_output.py::ValidateTimelineTests::test_validate_timeline_accepts_open_generation_defaults",
+    "vendor/timeline-schema/tests/test_materialize_output.py::ValidateTimelineTests::test_validate_timeline_rejects_non_object_generation_defaults"
+  ],
+  "captured_at_sha": "e1548d6ed1278bafd3b1a00acd8ce12d0ee4a4f3",
+  "milestone": "m1-contracts-proposal-spine"
+}

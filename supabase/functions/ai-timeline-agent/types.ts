@@ -40,6 +40,8 @@ export type ToolResult = {
   nextStatus?: AgentSessionStatus;
   /** Structured proposals produced in proposal mode (M3). */
   proposals?: EdgeProposal[];
+  /** Explicit flag: true when this tool call successfully saved the timeline config. */
+  mutationApplied?: boolean;
 };
 
 export type ToolContext = {

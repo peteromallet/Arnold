@@ -624,9 +624,10 @@ async function processToolCalls({
   logger?: LoopLogger;
   /** M3: Proposal mutation mode. */
   timelineMutationMode?: 'immediate' | 'proposal';
-}): Promise<{ hasError: boolean; proposals: EdgeProposal[] }> {
+}): Promise<{ hasError: boolean; proposals: EdgeProposal[]; mutationApplied: boolean }> {
   let hasError = false;
   const proposals: EdgeProposal[] = [];
+  let mutationApplied = false;
 
   for (const toolCall of toolCalls) {
     const toolArgs = toolCall.args;
@@ -665,6 +666,11 @@ async function processToolCalls({
       proposals.push(...result.proposals);
     }
 
+    // Aggregate mutationApplied flag (M3): true if any tool call successfully saved timeline config
+    if (result.mutationApplied === true) {
+      mutationApplied = true;
+    }
+
     turns.push(createToolTurn("tool_result", toolCall.name, result.result, toolArgs));
     messages.push({
       role: "tool",
@@ -695,7 +701,7 @@ async function processToolCalls({
     });
   }
 
-  return { hasError, proposals };
+  return { hasError, proposals, mutationApplied };
 }
 
 // Sprint 7 (SD-034 status path): if a delegateToBanodocoAgent tool call is
@@ -756,6 +762,7 @@ export async function runAgentLoop(
   let status: AgentSessionStatus = "processing";
   let activeToolCallId: string | null = null;
   const allProposals: EdgeProposal[] = [];
+  let mutationAppliedOverall = false;
 
   let summary = session.summary;
 
@@ -897,7 +904,7 @@ export async function runAgentLoop(
         break;
       }
 
-      const { hasError, proposals } = await processToolCalls({
+      const { hasError, proposals, mutationApplied } = await processToolCalls({
         toolCalls: extractedToolCalls,
         assistantText,
         turns,
@@ -917,6 +924,11 @@ export async function runAgentLoop(
       // Aggregate proposals across all loop iterations (M3)
       if (proposals.length > 0) {
         allProposals.push(...proposals);
+      }
+
+      // Aggregate mutationApplied across all loop iterations (M3)
+      if (mutationApplied) {
+        mutationAppliedOverall = true;
       }
 
       if (hasError) {
@@ -946,7 +958,7 @@ export async function runAgentLoop(
       turns,
       summary,
       proposals: allProposals.length > 0 ? allProposals : undefined,
-      mutation_applied: allProposals.length === 0,
+      mutation_applied: mutationAppliedOverall,
     };
   } catch (error: unknown) {
     const errorDetail = toErrorMessage(error);

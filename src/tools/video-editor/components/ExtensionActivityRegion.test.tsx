@@ -8,6 +8,9 @@
  * - Collapsed summary shown when >3 events and isExpanded is false
  * - Timestamps rendered only when isExpanded is true
  * - Dismiss callback receives the correct eventId for each event
+ * - Children-only rendering (no status events, children present)
+ * - Events-plus-children mixed rendering
+ * - Children rendered below status events in the DOM order
  */
 
 import { describe, it, expect, vi } from 'vitest';
@@ -240,5 +243,151 @@ describe('ExtensionActivityRegion', () => {
 
     const dismissBtn = region.querySelector('[data-video-editor-activity-dismiss="evt-attrs"]');
     expect(dismissBtn).not.toBeNull();
+  });
+
+  // ── Children slot ──────────────────────────────────────────────────
+
+  it('renders region with children when statusEvents is empty but children are provided', () => {
+    const onDismiss = vi.fn();
+
+    render(
+      <ExtensionActivityRegion statusEvents={[]} onDismiss={onDismiss}>
+        <div data-testid="child-panel">Panel Content</div>
+      </ExtensionActivityRegion>,
+    );
+
+    // Region should be present (not null).
+    const region = screen.getByRole('region', { name: 'Extension activity' });
+    expect(region).toBeInTheDocument();
+
+    // Children should be rendered.
+    expect(screen.getByTestId('child-panel')).toBeInTheDocument();
+    expect(screen.getByText('Panel Content')).toBeInTheDocument();
+
+    // No status events should be visible.
+    expect(
+      region.querySelector('[data-video-editor-activity-event]'),
+    ).toBeNull();
+
+    // onDismiss should not have been called.
+    expect(onDismiss).not.toHaveBeenCalled();
+
+    // Children wrapper data attribute.
+    expect(
+      region.querySelector('[data-video-editor-activity-children="true"]'),
+    ).toBeInTheDocument();
+  });
+
+  it('renders both status events and children when both are provided', () => {
+    const onDismiss = vi.fn();
+    const event = makeEvent({ id: 'evt-mixed', kind: 'warning', message: 'Warning event' });
+
+    render(
+      <ExtensionActivityRegion statusEvents={[event]} onDismiss={onDismiss}>
+        <div data-testid="child-panel">Panel Below</div>
+      </ExtensionActivityRegion>,
+    );
+
+    const region = screen.getByRole('region', { name: 'Extension activity' });
+    expect(region).toBeInTheDocument();
+
+    // Status event is rendered.
+    expect(screen.getByText('Warning event')).toBeInTheDocument();
+    expect(screen.getByText('Warn')).toBeInTheDocument();
+
+    // Dismiss button works.
+    const dismissBtn = screen.getByRole('button', {
+      name: /Dismiss warning event from com\.example\.test/i,
+    });
+    expect(dismissBtn).toBeInTheDocument();
+
+    // Children are rendered.
+    expect(screen.getByTestId('child-panel')).toBeInTheDocument();
+    expect(screen.getByText('Panel Below')).toBeInTheDocument();
+  });
+
+  it('renders children below status events in DOM order', () => {
+    const onDismiss = vi.fn();
+    const event = makeEvent({ id: 'evt-order', kind: 'info', message: 'Status message' });
+
+    render(
+      <ExtensionActivityRegion statusEvents={[event]} onDismiss={onDismiss}>
+        <div data-testid="child-panel">Child content</div>
+      </ExtensionActivityRegion>,
+    );
+
+    const region = screen.getByRole('region', { name: 'Extension activity' });
+
+    // Get all direct children of the region.
+    const directChildren = Array.from(region.children);
+
+    // First child should be the status events container (event div).
+    const eventEl = directChildren[0] as HTMLElement;
+    expect(eventEl).toHaveAttribute('data-video-editor-activity-event', 'evt-order');
+
+    // Last child should be the children wrapper.
+    const childrenWrapper = directChildren[directChildren.length - 1] as HTMLElement;
+    expect(childrenWrapper).toHaveAttribute('data-video-editor-activity-children', 'true');
+    expect(childrenWrapper.querySelector('[data-testid="child-panel"]')).toBeInTheDocument();
+  });
+
+  it('preserves dismiss behavior when children are also rendered', () => {
+    const onDismiss = vi.fn();
+    const event = makeEvent({ id: 'evt-dismiss-with-kids', kind: 'error', message: 'Error!' });
+
+    render(
+      <ExtensionActivityRegion statusEvents={[event]} onDismiss={onDismiss}>
+        <span>Some panel</span>
+      </ExtensionActivityRegion>,
+    );
+
+    const dismissBtn = screen.getByRole('button', {
+      name: /Dismiss error event from com\.example\.test/i,
+    });
+    fireEvent.click(dismissBtn);
+
+    expect(onDismiss).toHaveBeenCalledTimes(1);
+    expect(onDismiss).toHaveBeenCalledWith('evt-dismiss-with-kids');
+  });
+
+  it('renders children when multiple status events are present', () => {
+    const onDismiss = vi.fn();
+    const events = [
+      makeEvent({ id: 'e1', kind: 'info', message: 'First' }),
+      makeEvent({ id: 'e2', kind: 'warning', message: 'Second' }),
+      makeEvent({ id: 'e3', kind: 'error', message: 'Third' }),
+      makeEvent({ id: 'e4', kind: 'success', message: 'Fourth' }),
+    ];
+
+    render(
+      <ExtensionActivityRegion statusEvents={events} onDismiss={onDismiss} isExpanded={false}>
+        <div data-testid="panel">Panel with 4 events above</div>
+      </ExtensionActivityRegion>,
+    );
+
+    // All 4 events rendered.
+    expect(screen.getByText('First')).toBeInTheDocument();
+    expect(screen.getByText('Second')).toBeInTheDocument();
+    expect(screen.getByText('Third')).toBeInTheDocument();
+    expect(screen.getByText('Fourth')).toBeInTheDocument();
+
+    // Collapsed summary shown (4 > 3).
+    expect(screen.getByText(/\+1 more event/)).toBeInTheDocument();
+
+    // Children rendered.
+    expect(screen.getByTestId('panel')).toBeInTheDocument();
+
+    // Each event has a dismiss button.
+    const dismissButtons = screen.getAllByRole('button');
+    expect(dismissButtons).toHaveLength(4);
+  });
+
+  it('renders null when both statusEvents is empty and no children', () => {
+    const onDismiss = vi.fn();
+    const { container } = render(
+      <ExtensionActivityRegion statusEvents={[]} onDismiss={onDismiss} />,
+    );
+    expect(container.firstChild).toBeNull();
+    expect(onDismiss).not.toHaveBeenCalled();
   });
 });

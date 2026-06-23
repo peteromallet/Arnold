@@ -3,6 +3,10 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { getSupabaseClient } from '@/integrations/supabase/client.ts';
 import type { AgentSession, AgentSessionStatus, AgentTurn } from '@/tools/video-editor/types/agent-session.ts';
 import { timelineQueryKey } from '@/tools/video-editor/hooks/useTimeline.ts';
+import { useProposalRuntimeFromStoreSafe, useTimelineStoreApiSafe } from '@/tools/video-editor/hooks/timelineStore.ts';
+import { importEdgeProposals } from '@/tools/video-editor/lib/proposal-runtime.ts';
+import type { ProposalEnvelope, TimelineProposal, ProposalState } from '@/sdk/index';
+import type { ProposalImportDiagnosticsState } from '@/tools/video-editor/hooks/timelineStore.ts';
 
 const TIMELINE_AGENT_SESSIONS_TABLE = 'timeline_agent_sessions';
 const AUTO_CONTINUE_LIMIT = 10;
@@ -89,6 +93,10 @@ function normalizeSession(row: unknown): AgentSession {
     turns: normalizeTurns(record.turns),
     model: typeof record.model === 'string' ? record.model : 'groq',
     summary: typeof record.summary === 'string' ? record.summary : null,
+    proposal_policy: typeof record.proposal_policy === 'string'
+      && (record.proposal_policy === 'always' || record.proposal_policy === 'immediate')
+      ? record.proposal_policy
+      : null,
     cancelled_at: typeof record.cancelled_at === 'string' ? record.cancelled_at : null,
     cancelled_by: typeof record.cancelled_by === 'string' ? record.cancelled_by : null,
     cancel_source: typeof record.cancel_source === 'string' ? record.cancel_source : null,
@@ -243,6 +251,7 @@ export function useCreateSession(timelineId: string | null | undefined) {
           status: 'waiting_user',
           turns: [],
           model: 'groq',
+          proposal_policy: 'immediate',
         })
         .select('*')
         .single();
@@ -265,6 +274,8 @@ export function useSendMessage(sessionId: string | null | undefined, timelineId?
   const lastMessageRef = useRef<SendMessageInput | null>(null);
   const [continuationNotice, setContinuationNotice] = useState<string | null>(null);
   const [localError, setLocalError] = useState<string | null>(null);
+  const proposalRuntime = useProposalRuntimeFromStoreSafe();
+  const storeApi = useTimelineStoreApiSafe();
 
   useEffect(() => {
     const timeoutIds = timeoutIdsRef.current;
@@ -384,6 +395,52 @@ export function useSendMessage(sessionId: string | null | undefined, timelineId?
     },
     onSuccess: (data: AgentInvocationResponse) => {
       setLocalError(null);
+
+      // M3: Import edge proposals into the provider-scoped ProposalRuntime
+      // BEFORE timeline invalidation decisions so the panel has data to render
+      // when the response carries proposals without mutations.
+      if (proposalRuntime && Array.isArray(data.proposals) && data.proposals.length > 0) {
+        const now = Date.now();
+        const timelineProposals: TimelineProposal[] = data.proposals.map((p) => ({
+          id: p.id,
+          source: p.source,
+          rationale: p.rationale,
+          state: (p.state as ProposalState) || 'pending',
+          patch: p.patch as TimelineProposal['patch'],
+          baseVersion: p.baseVersion,
+          previewable: false,
+          createdAt: now,
+          updatedAt: now,
+          expiresAt: p.expiresAt,
+        }));
+
+        const envelope: ProposalEnvelope = {
+          proposals: timelineProposals,
+          baseVersion: data.proposals[0].baseVersion,
+          mutationApplied: data.mutation_applied ?? false,
+        };
+
+        // importEdgeProposals validates each proposal through
+        // validateTimelinePatch; malformed proposals are rejected
+        // diagnostically rather than throwing.
+        const importResult = importEdgeProposals(envelope, proposalRuntime);
+
+        // M4: Persist proposal import diagnostics to timelineStore so the
+        // ProposalPanel and other consumers can observe import outcomes.
+        // Stale diagnostics from a previous import are replaced on every
+        // attempt.
+        if (storeApi) {
+          const diagnosticsState: ProposalImportDiagnosticsState = {
+            imported: importResult.imported,
+            skipped: importResult.skipped,
+            rejected: importResult.rejected,
+            diagnostics: importResult.diagnostics,
+            timestamp: now,
+          };
+          storeApi.getState().setProposalImportDiagnostics(diagnosticsState);
+        }
+      }
+
       void queryClient.invalidateQueries({ queryKey: agentSessionQueryKey(sessionId) });
       void queryClient.invalidateQueries({ queryKey: ['timeline-agent-sessions'] });
       // M3: Only re-fetch the timeline when mutations were actually applied.

@@ -11,7 +11,7 @@
  * feedback.
  */
 
-import { useCallback, type FC } from 'react';
+import { useCallback, type FC, type ReactNode } from 'react';
 import { X } from 'lucide-react';
 import { cn } from '@/shared/components/ui/contracts/cn.ts';
 
@@ -47,6 +47,14 @@ export interface ExtensionActivityRegionProps {
   onDismiss: (eventId: string) => void;
   /** When true, the region renders in an expanded variant (future use). */
   isExpanded?: boolean;
+  /**
+   * Optional children rendered inside the activity region.
+   *
+   * Use this to mount panel content (e.g. ProposalPanel) alongside
+   * extension status events.  Children are rendered below the status
+   * event list so that status events remain prominent.
+   */
+  children?: ReactNode;
 }
 
 // ---------------------------------------------------------------------------
@@ -96,6 +104,7 @@ export const ExtensionActivityRegion: FC<ExtensionActivityRegionProps> = ({
   statusEvents,
   onDismiss,
   isExpanded = false,
+  children,
 }) => {
   const handleDismiss = useCallback(
     (eventId: string) => {
@@ -104,7 +113,11 @@ export const ExtensionActivityRegion: FC<ExtensionActivityRegionProps> = ({
     [onDismiss],
   );
 
-  if (statusEvents.length === 0) {
+  const hasEvents = statusEvents.length > 0;
+  const hasChildren = children !== undefined && children !== null;
+
+  // Render nothing only when there is truly nothing to show.
+  if (!hasEvents && !hasChildren) {
     return null;
   }
 
@@ -119,65 +132,76 @@ export const ExtensionActivityRegion: FC<ExtensionActivityRegionProps> = ({
       role="region"
       aria-label="Extension activity"
     >
-      {statusEvents.map((event) => (
-        <div
-          key={event.id}
-          data-video-editor-activity-event={event.id}
-          data-video-editor-activity-event-kind={event.kind}
-          className={cn(
-            'flex items-start gap-2 rounded border px-2 py-1',
-            KIND_BORDER[event.kind],
-            KIND_BG[event.kind],
+      {hasEvents && (
+        <>
+          {statusEvents.map((event) => (
+            <div
+              key={event.id}
+              data-video-editor-activity-event={event.id}
+              data-video-editor-activity-event-kind={event.kind}
+              className={cn(
+                'flex items-start gap-2 rounded border px-2 py-1',
+                KIND_BORDER[event.kind],
+                KIND_BG[event.kind],
+              )}
+            >
+              {/* Kind badge */}
+              <span
+                className={cn(
+                  'shrink-0 rounded px-1 py-0 text-[9px] font-semibold uppercase tracking-[0.12em]',
+                  KIND_TEXT[event.kind],
+                  'bg-background/40',
+                )}
+              >
+                {KIND_LABEL[event.kind]}
+              </span>
+
+              {/* Message */}
+              <span className="min-w-0 flex-1 truncate text-muted-foreground">
+                <span className="font-mono text-[10px] text-muted-foreground/60">
+                  {event.extensionId}
+                </span>
+                <span className="mx-1 text-border">·</span>
+                {event.message}
+              </span>
+
+              {/* Timestamp */}
+              {isExpanded && (
+                <span className="shrink-0 text-[10px] text-muted-foreground/50 tabular-nums">
+                  {new Date(event.timestamp).toLocaleTimeString([], {
+                    hour: '2-digit',
+                    minute: '2-digit',
+                    second: '2-digit',
+                  })}
+                </span>
+              )}
+
+              {/* Dismiss button */}
+              <button
+                type="button"
+                data-video-editor-activity-dismiss={event.id}
+                className="shrink-0 rounded p-0.5 text-muted-foreground/40 transition-colors hover:bg-muted hover:text-foreground motion-reduce:transition-none"
+                onClick={() => handleDismiss(event.id)}
+                aria-label={`Dismiss ${event.kind} event from ${event.extensionId}`}
+              >
+                <X className="h-3 w-3" />
+              </button>
+            </div>
+          ))}
+
+          {/* Collapsed summary when not expanded and many events */}
+          {!isExpanded && statusEvents.length > 3 && (
+            <div className="text-center text-[10px] text-muted-foreground/50">
+              +{statusEvents.length - 3} more event{statusEvents.length - 3 !== 1 ? 's' : ''}
+            </div>
           )}
-        >
-          {/* Kind badge */}
-          <span
-            className={cn(
-              'shrink-0 rounded px-1 py-0 text-[9px] font-semibold uppercase tracking-[0.12em]',
-              KIND_TEXT[event.kind],
-              'bg-background/40',
-            )}
-          >
-            {KIND_LABEL[event.kind]}
-          </span>
+        </>
+      )}
 
-          {/* Message */}
-          <span className="min-w-0 flex-1 truncate text-muted-foreground">
-            <span className="font-mono text-[10px] text-muted-foreground/60">
-              {event.extensionId}
-            </span>
-            <span className="mx-1 text-border">·</span>
-            {event.message}
-          </span>
-
-          {/* Timestamp */}
-          {isExpanded && (
-            <span className="shrink-0 text-[10px] text-muted-foreground/50 tabular-nums">
-              {new Date(event.timestamp).toLocaleTimeString([], {
-                hour: '2-digit',
-                minute: '2-digit',
-                second: '2-digit',
-              })}
-            </span>
-          )}
-
-          {/* Dismiss button */}
-          <button
-            type="button"
-            data-video-editor-activity-dismiss={event.id}
-            className="shrink-0 rounded p-0.5 text-muted-foreground/40 transition-colors hover:bg-muted hover:text-foreground motion-reduce:transition-none"
-            onClick={() => handleDismiss(event.id)}
-            aria-label={`Dismiss ${event.kind} event from ${event.extensionId}`}
-          >
-            <X className="h-3 w-3" />
-          </button>
-        </div>
-      ))}
-
-      {/* Collapsed summary when not expanded and many events */}
-      {!isExpanded && statusEvents.length > 3 && (
-        <div className="text-center text-[10px] text-muted-foreground/50">
-          +{statusEvents.length - 3} more event{statusEvents.length - 3 !== 1 ? 's' : ''}
+      {/* Children slot — rendered below status events so they remain prominent */}
+      {hasChildren && (
+        <div data-video-editor-activity-children="true">
+          {children}
         </div>
       )}
     </div>
