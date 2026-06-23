@@ -1,4 +1,4 @@
-base_branch: workflow-manifest-runtime-cleanup-m7-merge-result-conformance
+base_branch: python-shaped-workflow-authoring-cleanup
 
 milestones:
   - label: m1-component-contract-grammar
