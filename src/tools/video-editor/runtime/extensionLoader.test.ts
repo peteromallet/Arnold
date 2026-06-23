@@ -36,9 +36,12 @@ import type {
   ExtensionLoaderValidationResult,
   ExtensionLoaderLoadResult,
   ExtensionLoaderUnloadResult,
+  ExtensionLoadEntry,
   DependencyResolutionResult,
   DependencyResolutionEntry,
   DependencyStatus,
+  PackageState,
+  PackageMetadata,
 } from '@/tools/video-editor/runtime/extensionLoader';
 import { defineExtension } from '@reigh/editor-sdk';
 import type {
@@ -2044,10 +2047,9 @@ describe('ExtensionLoader.load — conflict resolution (disabled installed fallb
     expect(entry.winner).toBe('local');
   });
 
-  it('disabled installed without local source — only installed remains (and is skipped by dependency check or loads anyway)', async () => {
-    // When installed is disabled but there's NO local source, the installed
-    // pack should still be in the winning set (no conflict to resolve).
-    // The enablement state itself doesn't block loading — that's a higher-level concern.
+  it('disabled installed without local source — surfaces disabled-by-user state and does not activate', async () => {
+    // When installed is disabled but there's NO local source, the loader
+    // now surfaces disabled-by-user state and does not activate the package.
     const repo = createMockRepository();
     (repo.getFullExtensionState as any).mockResolvedValue({
       enablement: {
@@ -2086,11 +2088,19 @@ describe('ExtensionLoader.load — conflict resolution (disabled installed fallb
       }),
     ]);
 
-    // No conflict (only installed), so it passes through
-    expect(result.loadedExtensions).toHaveLength(1);
-    const entry = result.conflictResolution!.entries.find((e) => e.extensionId === 'com.test.onlyinst')!;
-    expect(entry.hasConflict).toBe(false);
-    expect(entry.winner).toBe('installed');
+    // Disabled package is not activated — no loaded extensions
+    expect(result.loadedExtensions).toHaveLength(0);
+    // But it is present in entries with disabled-by-user state
+    const loadEntry = result.entries.find((e) => e.extensionId === 'com.test.onlyinst')!;
+    expect(loadEntry).toBeDefined();
+    expect(loadEntry.packageState).toBe('disabled-by-user');
+    expect(loadEntry.stateReason).toBe('Disabled');
+    expect(loadEntry.packageMetadata).not.toBeNull();
+    expect(loadEntry.packageMetadata!.label).toBe('Extension com.test.onlyinst');
+    expect(loadEntry.packageMetadata!.version).toBe('1.0.0');
+    // Conflict resolution still shows no conflict (only one form present)
+    const conflictEntry = result.conflictResolution!.entries.find((e) => e.extensionId === 'com.test.onlyinst')!;
+    expect(conflictEntry.hasConflict).toBe(false);
   });
 });
 
@@ -2607,5 +2617,335 @@ describe('ExtensionLoader.load — conflict resolution with frozen results', () 
     expect(Object.isFrozen(cr.entries)).toBe(true);
     expect(Object.isFrozen(cr.diagnostics)).toBe(true);
     expect(Object.isFrozen(cr.winningPackages)).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Package state and metadata preservation (M5 T1)
+// ---------------------------------------------------------------------------
+
+describe('ExtensionLoader.load — package state classification', () => {
+  it('exposes loaded state with metadata for a successfully loaded workspace source', async () => {
+    const loader = createExtensionLoader();
+    const ext = makeExtensionWithId('com.test.loaded');
+
+    const result = await loader.load([directValidatedPackage(ext)]);
+
+    expect(result.loadedExtensions).toHaveLength(1);
+    expect(result.entries).toHaveLength(1);
+    const entry = result.entries[0];
+    expect(entry.packageState).toBe('loaded');
+    expect(entry.stateReason).toBe('Loaded successfully.');
+    expect(entry.packageMetadata).not.toBeNull();
+    expect(entry.packageMetadata!.label).toBe('Extension com.test.loaded');
+    expect(entry.packageMetadata!.version).toBe('1.0.0');
+  });
+
+  it('exposes loaded state with degraded reason for optional-dep-missing extensions', async () => {
+    const loader = createExtensionLoader();
+    const ext = makeExtensionWithId('com.test.degraded', {
+      dependsOn: [{ extensionId: 'com.test.missing', posture: 'optional' as const }],
+    } as any);
+
+    const result = await loader.load([directValidatedPackage(ext)]);
+
+    expect(result.loadedExtensions).toHaveLength(1);
+    const entry = result.entries[0];
+    expect(entry.packageState).toBe('loaded');
+    expect(entry.stateReason).toContain('degraded');
+  });
+
+  it('exposes disabled-by-user state with reason for non-conflict disabled installed pack', async () => {
+    const repo = createMockRepository();
+    (repo.getFullExtensionState as any).mockResolvedValue({
+      enablement: {
+        'com.test.disabled': {
+          extensionId: 'com.test.disabled',
+          enabled: false,
+          lastToggledAt: '2026-06-20T12:00:00.000Z',
+          toggleReason: 'User disabled via extension manager',
+        },
+      },
+      devOverrides: {},
+      settings: {},
+      packs: {},
+      lock: { entries: {}, lastUpdatedAt: '2026-01-01T00:00:00.000Z' },
+    });
+
+    const loader = createExtensionLoader(repo);
+    const bundleContent = 'export function activate() {}';
+    const packRecord = await makePackRecord('com.test.disabled', '1.0.0', bundleContent);
+
+    const result = await loader.load([
+      installedValidatedPackage({
+        metadata: {
+          extensionId: 'com.test.disabled' as any,
+          version: '1.0.0',
+          apiVersion: 1,
+          integrity: packRecord.integrity,
+          installedAt: '2026-06-20T12:00:00.000Z',
+          enabled: true,
+          publisher: 'Test Publisher',
+          license: 'MIT',
+        },
+        manifest: packRecord.manifestSnapshot,
+        bundleContent,
+      }),
+    ]);
+
+    // Should not load, but should be visible in entries
+    expect(result.loadedExtensions).toHaveLength(0);
+    expect(result.entries).toHaveLength(1);
+    const entry = result.entries[0];
+    expect(entry.packageState).toBe('disabled-by-user');
+    expect(entry.stateReason).toBe('User disabled via extension manager');
+    expect(entry.packageMetadata).not.toBeNull();
+    expect(entry.packageMetadata!.label).toBe('Extension com.test.disabled');
+    expect(entry.loaded).toBe(false);
+  });
+
+  it('exposes disabled-by-user state for installed loser in conflict when disabled', async () => {
+    const repo = createMockRepository();
+    (repo.getFullExtensionState as any).mockResolvedValue({
+      enablement: {
+        'com.test.conflict': {
+          extensionId: 'com.test.conflict',
+          enabled: false,
+          lastToggledAt: '2026-06-20T12:00:00.000Z',
+          toggleReason: 'User disabled via manager',
+        },
+      },
+      devOverrides: {},
+      settings: {},
+      packs: {},
+      lock: { entries: {}, lastUpdatedAt: '2026-01-01T00:00:00.000Z' },
+    });
+
+    const loader = createExtensionLoader(repo);
+    const localExt = makeExtensionWithId('com.test.conflict', { version: '1.0.0' } as any);
+    const bundleContent = 'export function activate() {}';
+    const packRecord = await makePackRecord('com.test.conflict', '2.0.0', bundleContent);
+
+    const result = await loader.load([
+      directValidatedPackage(localExt),
+      installedValidatedPackage({
+        metadata: {
+          extensionId: 'com.test.conflict' as any,
+          version: '2.0.0',
+          apiVersion: 1,
+          integrity: packRecord.integrity,
+          installedAt: '2026-06-20T12:00:00.000Z',
+          enabled: true,
+          publisher: 'Test Publisher',
+          license: 'MIT',
+        },
+        manifest: packRecord.manifestSnapshot,
+        bundleContent,
+      }),
+    ]);
+
+    // Local source wins (installed disabled fallback)
+    expect(result.loadedExtensions).toHaveLength(1);
+    // Should have entries for both the winner and loser
+    expect(result.entries).toHaveLength(2);
+
+    const loserEntry = result.entries.find((e) => !e.loaded)!;
+    expect(loserEntry).toBeDefined();
+    expect(loserEntry.packageState).toBe('disabled-by-user');
+    expect(loserEntry.stateReason).toContain('disabled');
+    expect(loserEntry.packageMetadata).not.toBeNull();
+  });
+
+  it('exposes incompatible state for dependency-blocked package with reason', async () => {
+    const loader = createExtensionLoader();
+    const ext = makeExtensionWithId('com.test.blocked', {
+      dependsOn: [{ extensionId: 'com.test.missing', posture: 'required' as const }],
+    } as any);
+
+    const result = await loader.load([directValidatedPackage(ext)]);
+
+    expect(result.loadedExtensions).toHaveLength(0);
+    expect(result.entries).toHaveLength(1);
+    const entry = result.entries[0];
+    expect(entry.packageState).toBe('incompatible');
+    expect(entry.stateReason).toContain('Missing required dependencies');
+    expect(entry.stateReason).toContain('com.test.missing');
+    expect(entry.packageMetadata).not.toBeNull();
+    expect(entry.packageMetadata!.label).toBe('Extension com.test.blocked');
+    expect(entry.loaded).toBe(false);
+  });
+
+  it('exposes incompatible state for cycle-blocked package with cycle reason', async () => {
+    const loader = createExtensionLoader();
+    const extA = makeExtensionWithId('com.test.cycleA', {
+      dependsOn: [{ extensionId: 'com.test.cycleB', posture: 'required' as const }],
+    } as any);
+    const extB = makeExtensionWithId('com.test.cycleB', {
+      dependsOn: [{ extensionId: 'com.test.cycleA', posture: 'required' as const }],
+    } as any);
+
+    const result = await loader.load([
+      directValidatedPackage(extA),
+      directValidatedPackage(extB),
+    ]);
+
+    expect(result.loadedExtensions).toHaveLength(0);
+    expect(result.entries).toHaveLength(2);
+    for (const entry of result.entries) {
+      expect(entry.packageState).toBe('incompatible');
+      expect(entry.stateReason).toContain('dependency cycle');
+      expect(entry.packageMetadata).not.toBeNull();
+    }
+  });
+
+  it('exposes duplicate state for workspace source loser when installed wins', async () => {
+    const repo = createMockRepository();
+    // No overrides, no disabled — installed wins by default
+    (repo.getFullExtensionState as any).mockResolvedValue({
+      enablement: {},
+      devOverrides: {},
+      settings: {},
+      packs: {},
+      lock: { entries: {}, lastUpdatedAt: '2026-01-01T00:00:00.000Z' },
+    });
+
+    const loader = createExtensionLoader(repo);
+    const localExt = makeExtensionWithId('com.test.dup', { version: '1.0.0' } as any);
+    const bundleContent = 'export function activate() {}';
+    const packRecord = await makePackRecord('com.test.dup', '2.0.0', bundleContent);
+
+    const result = await loader.load([
+      directValidatedPackage(localExt),
+      installedValidatedPackage({
+        metadata: {
+          extensionId: 'com.test.dup' as any,
+          version: '2.0.0',
+          apiVersion: 1,
+          integrity: packRecord.integrity,
+          installedAt: '2026-06-20T12:00:00.000Z',
+          enabled: true,
+          publisher: 'Test Publisher',
+          license: 'MIT',
+        },
+        manifest: packRecord.manifestSnapshot,
+        bundleContent,
+      }),
+    ]);
+
+    // Installed wins, local loses
+    expect(result.loadedExtensions).toHaveLength(1);
+    expect(result.entries).toHaveLength(2);
+
+    const loserEntry = result.entries.find((e) => !e.loaded)!;
+    expect(loserEntry.packageState).toBe('duplicate');
+    expect(loserEntry.stateReason).toContain('Installed pack takes precedence');
+    expect(loserEntry.packageMetadata).not.toBeNull();
+  });
+
+  it('exposes runtime-error state for integrity-failed installed bundle', async () => {
+    const repo = createMockRepository();
+    const loader = createExtensionLoader(repo);
+    const originalBundle = 'export function activate() {}';
+    const tamperedBundle = 'export function malicious() {}';
+    const packRecord = await makePackRecord('com.test.rterr', '1.0.0', originalBundle);
+
+    const result = await loader.load([
+      installedValidatedPackage({
+        metadata: {
+          extensionId: 'com.test.rterr' as any,
+          version: '1.0.0',
+          apiVersion: 1,
+          integrity: packRecord.integrity,
+          installedAt: '2026-06-20T12:00:00.000Z',
+          enabled: true,
+          publisher: 'Test Publisher',
+          license: 'MIT',
+        },
+        manifest: packRecord.manifestSnapshot,
+        bundleContent: tamperedBundle,
+      }),
+    ]);
+
+    expect(result.loadedExtensions).toHaveLength(0);
+    expect(result.entries).toHaveLength(1);
+    const entry = result.entries[0];
+    expect(entry.packageState).toBe('runtime-error');
+    expect(entry.stateReason).toContain('Load failed');
+    expect(entry.packageMetadata).not.toBeNull();
+    expect(entry.loaded).toBe(false);
+  });
+
+  it('preserves metadata for all entries including losers', async () => {
+    const repo = createMockRepository();
+    (repo.getFullExtensionState as any).mockResolvedValue({
+      enablement: {},
+      devOverrides: {},
+      settings: {},
+      packs: {},
+      lock: { entries: {}, lastUpdatedAt: '2026-01-01T00:00:00.000Z' },
+    });
+
+    const loader = createExtensionLoader(repo);
+    const localExt = makeExtensionWithId('com.test.meta', {
+      version: '1.0.0',
+      label: 'My Local Extension',
+      publisher: 'LocalDev',
+      description: 'A test extension',
+      license: 'Apache-2.0',
+    } as any);
+    const bundleContent = 'export function activate() {}';
+    const packRecord = await makePackRecord('com.test.meta', '2.0.0', bundleContent, {
+      manifestSnapshot: {
+        id: 'com.test.meta' as any,
+        version: '2.0.0',
+        label: 'My Installed Extension',
+        publisher: 'Test Publisher',
+        description: 'An installed test extension',
+        license: 'MIT',
+        settingsSchema: { version: 1 },
+      },
+    });
+
+    const result = await loader.load([
+      directValidatedPackage(localExt),
+      installedValidatedPackage({
+        metadata: {
+          extensionId: 'com.test.meta' as any,
+          version: '2.0.0',
+          apiVersion: 1,
+          integrity: packRecord.integrity,
+          installedAt: '2026-06-20T12:00:00.000Z',
+          enabled: true,
+          publisher: 'Test Publisher',
+          license: 'MIT',
+        },
+        manifest: packRecord.manifestSnapshot,
+        bundleContent,
+      }),
+    ]);
+
+    // Installed wins, but both should have metadata
+    expect(result.entries).toHaveLength(2);
+
+    const winnerEntry = result.entries.find((e) => e.loaded)!;
+    expect(winnerEntry.packageMetadata!.label).toBe('My Installed Extension');
+    expect(winnerEntry.packageMetadata!.version).toBe('2.0.0');
+    expect(winnerEntry.packageMetadata!.publisher).toBe('Test Publisher');
+
+    const loserEntry = result.entries.find((e) => !e.loaded)!;
+    expect(loserEntry.packageMetadata!.label).toBe('My Local Extension');
+    expect(loserEntry.packageMetadata!.version).toBe('1.0.0');
+    expect(loserEntry.packageMetadata!.publisher).toBe('LocalDev');
+    expect(loserEntry.packageMetadata!.description).toBe('A test extension');
+    expect(loserEntry.packageMetadata!.license).toBe('Apache-2.0');
+    expect(loserEntry.packageState).toBe('duplicate');
+  });
+
+  it('empty load returns empty entries', async () => {
+    const loader = createExtensionLoader();
+    const result = await loader.load([]);
+    expect(result.entries).toHaveLength(0);
+    expect(result.loadedExtensions).toHaveLength(0);
+    expect(result.allLoaded).toBe(true);
   });
 });

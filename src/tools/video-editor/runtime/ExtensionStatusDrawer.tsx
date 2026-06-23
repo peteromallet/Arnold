@@ -37,7 +37,10 @@ import type {
   Diagnostic,
   ContributionKind,
 } from '@reigh/editor-sdk';
-import type { InactiveReservedContribution } from '@/tools/video-editor/runtime/extensionSurface';
+import type {
+  InactiveReservedContribution,
+  PackageStateInventoryEntry,
+} from '@/tools/video-editor/runtime/extensionSurface';
 import type { CommandRegistry, CommandRegistrySnapshot } from '@/tools/video-editor/runtime/commandRegistry';
 import { useEffectRegistrySnapshot } from '@/tools/video-editor/effects/registry/EffectRegistryContext';
 
@@ -209,7 +212,8 @@ export function useExtensionStatusInventory(): ExtensionStatusInventory {
   );
 
   return useMemo(() => {
-    if (!extensionRuntime || extensionRuntime.extensions.length === 0) {
+    const packageInventory = extensionRuntime?.packageStateInventory ?? [];
+    if (!extensionRuntime || (extensionRuntime.extensions.length === 0 && packageInventory.length === 0)) {
       return EMPTY_INVENTORY;
     }
 
@@ -297,6 +301,36 @@ export function useExtensionStatusInventory(): ExtensionStatusInventory {
         hasWarnings: extDiags.some((d) => d.severity === 'warning'),
       };
     });
+
+    // ---- Augment with non-active packages from packageStateInventory ----
+    const activeExtensionIds = new Set(runtime.extensions.map((e) => e.manifest.id as string));
+    for (const psi of packageInventory) {
+      // Only add entries for packages not already represented as active extensions
+      if (activeExtensionIds.has(psi.extensionId)) continue;
+
+      const meta = psi.packageMetadata;
+      const extId = psi.extensionId;
+      const extDiags = allDiagnostics.filter((d) => d.extensionId === extId);
+
+      // Map package state to error/warning signals
+      const isError = psi.packageState === 'invalid'
+        || psi.packageState === 'incompatible'
+        || psi.packageState === 'runtime-error';
+      const isWarning = psi.packageState === 'disabled-by-user'
+        || psi.packageState === 'duplicate'
+        || psi.packageState === 'settings-error';
+
+      extensions.push({
+        extensionId: extId,
+        label: meta?.label ?? extId,
+        version: meta?.version ?? '0.0.0',
+        description: meta?.description,
+        contributions: Object.freeze([]),
+        diagnostics: Object.freeze(extDiags),
+        hasErrors: isError,
+        hasWarnings: isWarning,
+      });
+    }
 
     // ---- Compute blockers --------------------------------------------------
 

@@ -1468,6 +1468,51 @@ describe('VideoEditorProvider', () => {
   // ExtensionLoader into the existing `extensions` prop and diagnostics
   // surfaces without duplicate activation.
 
+  function makeWiringRepository(
+    fullState: Awaited<ReturnType<ExtensionStateRepository['getFullExtensionState']>>,
+  ): ExtensionStateRepository {
+    let disposed = false;
+    return {
+      initialize: vi.fn().mockResolvedValue(undefined),
+      dispose: vi.fn().mockImplementation(async () => { disposed = true; }),
+      get isDisposed() { return disposed; },
+      putPackRecord: vi.fn().mockResolvedValue(undefined),
+      updatePackRecord: vi.fn().mockResolvedValue(undefined),
+      getPackRecord: vi.fn().mockResolvedValue(null),
+      getAllPackRecords: vi.fn().mockResolvedValue([]),
+      deletePackRecord: vi.fn().mockResolvedValue(undefined),
+      putEnablementState: vi.fn().mockResolvedValue(undefined),
+      getEnablementState: vi.fn().mockResolvedValue(null),
+      getAllEnablementStates: vi.fn().mockResolvedValue([]),
+      deleteEnablementState: vi.fn().mockResolvedValue(undefined),
+      putDevOverride: vi.fn().mockResolvedValue(undefined),
+      getDevOverride: vi.fn().mockResolvedValue(null),
+      getAllDevOverrides: vi.fn().mockResolvedValue([]),
+      deleteDevOverride: vi.fn().mockResolvedValue(undefined),
+      putSettingsSnapshot: vi.fn().mockResolvedValue(undefined),
+      getSettingsSnapshot: vi.fn().mockResolvedValue(null),
+      getAllSettingsSnapshots: vi.fn().mockResolvedValue([]),
+      deleteSettingsSnapshot: vi.fn().mockResolvedValue(undefined),
+      appendLifecycleEvent: vi.fn().mockResolvedValue(undefined),
+      queryLifecycleEvents: vi.fn().mockResolvedValue([]),
+      getLifecycleEvents: vi.fn().mockResolvedValue([]),
+      getLock: vi.fn().mockResolvedValue(fullState.lock),
+      putLockEntry: vi.fn().mockResolvedValue(undefined),
+      deleteLockEntry: vi.fn().mockResolvedValue(undefined),
+      getFullExtensionState: vi.fn().mockResolvedValue(fullState),
+    };
+  }
+
+  function emptyExtensionState(): Awaited<ReturnType<ExtensionStateRepository['getFullExtensionState']>> {
+    return {
+      packs: {},
+      enablement: {},
+      devOverrides: {},
+      settings: {},
+      lock: { entries: {}, lastUpdatedAt: '2026-01-01T00:00:00.000Z' },
+    };
+  }
+
   it('resolves direct extensions unchanged when no repository is provided (backward compatible)', async () => {
     // This test verifies the hook's fast-path: when repository is null,
     // direct extensions pass through unchanged.
@@ -1512,6 +1557,109 @@ describe('VideoEditorProvider', () => {
 
     expect(result.current.resolvedExtensions).toEqual([]);
     expect(result.current.isResolving).toBe(false);
+  });
+
+  it('surfaces invalid validation failures in packageStateEntries', async () => {
+    const invalidExtension = {
+      manifest: {
+        id: 'not a valid extension id',
+        version: '1.0.0',
+        label: 'Invalid Direct Extension',
+        contributions: [],
+      },
+      activate: vi.fn(),
+    } as unknown as ReighExtension;
+
+    const { result } = renderHook(() => useExtensionLoaderWiring({
+      directExtensions: [invalidExtension],
+      repository: makeWiringRepository(emptyExtensionState()),
+    }));
+
+    await waitFor(() => {
+      expect(result.current.isResolving).toBe(false);
+    });
+
+    expect(result.current.packageStateEntries).toEqual([
+      expect.objectContaining({
+        extensionId: 'not a valid extension id',
+        packageState: 'invalid',
+        packageMetadata: expect.objectContaining({
+          label: 'Invalid Direct Extension',
+          version: '1.0.0',
+        }),
+      }),
+    ]);
+    expect(result.current.diagnostics.some(
+      (diagnostic) => diagnostic.extensionId === 'not a valid extension id',
+    )).toBe(true);
+  });
+
+  it('surfaces settings snapshot schema failures in packageStateEntries', async () => {
+    const extensionId = 'com.t14.settings-error';
+    const extension: ReighExtension = defineExtension({
+      manifest: {
+        id: extensionId as never,
+        version: '1.0.0',
+        label: 'Settings Error Extension',
+        settingsSchema: {
+          version: 1,
+          schema: {
+            type: 'object',
+            required: ['mode'],
+            properties: {
+              mode: { type: 'string' },
+            },
+          },
+        },
+        contributions: [],
+      },
+      activate() {
+        return { dispose() {} };
+      },
+    });
+
+    const fullState = {
+      ...emptyExtensionState(),
+      settings: {
+        [extensionId]: {
+          extensionId,
+          schemaVersion: 1,
+          values: {},
+          lastWrittenAt: '2026-01-15T10:00:00.000Z',
+        },
+      },
+    };
+
+    const { result } = renderHook(() => useExtensionLoaderWiring({
+      directExtensions: [extension],
+      repository: makeWiringRepository(fullState),
+    }));
+
+    await waitFor(() => {
+      expect(result.current.isResolving).toBe(false);
+    });
+
+    expect(result.current.resolvedExtensions).toEqual([]);
+    expect(result.current.packageStateEntries).toEqual([
+      expect.objectContaining({
+        extensionId,
+        packageState: 'settings-error',
+        stateReason: expect.stringContaining('Missing required setting "mode".'),
+        packageMetadata: expect.objectContaining({
+          label: 'Settings Error Extension',
+          version: '1.0.0',
+        }),
+      }),
+    ]);
+    expect(result.current.diagnostics).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          extensionId,
+          code: 'settings/resolution-failed',
+          severity: 'error',
+        }),
+      ]),
+    );
   });
 
   it('accepts resolved extensions from the loader wiring hook as the extensions prop', async () => {
@@ -1977,6 +2125,153 @@ describe('VideoEditorProvider', () => {
           && diagnostic.detail?.source === 'host-owned',
       )).toBe(true);
     });
+  });
+
+  // -------------------------------------------------------------------------
+  // M5/T2: Package state inventory propagation through VideoEditorProvider
+  // -------------------------------------------------------------------------
+  // Prove that the provider carries packageStateInventory through
+  // normalizeExtensionRuntime → extensionRuntime so consumers can read
+  // package-state data directly without deriving it from loadedExtensions.
+
+  it('provider propagates packageStateEntries to extensionRuntime.packageStateInventory', () => {
+    const dataProvider: DataProvider = {
+      loadTimeline: vi.fn(),
+      saveTimeline: vi.fn(),
+      loadAssetRegistry: vi.fn(),
+      resolveAssetUrl: vi.fn(),
+    };
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+
+    const ext = defineExtension({
+      manifest: {
+        id: 'com.t2.provider' as never,
+        version: '1.0.0',
+        label: 'T2 Provider Ext',
+      },
+    });
+
+    const psiEntries = [
+      {
+        extensionId: 'com.t2.disabled',
+        packageState: 'disabled-by-user' as const,
+        stateReason: 'User disabled this package.',
+        packageMetadata: {
+          label: 'T2 Disabled Ext',
+          version: '2.0.0',
+        },
+      },
+      {
+        extensionId: 'com.t2.invalid',
+        packageState: 'invalid' as const,
+        stateReason: 'Manifest validation failed.',
+        packageMetadata: {
+          label: 'T2 Invalid Ext',
+          version: '0.0.0',
+        },
+      },
+    ];
+
+    // Read extensionRuntime from the provider context to verify propagation
+    let capturedRuntime: any = null;
+    function CaptureRuntime() {
+      const { extensionRuntime } = useVideoEditorRuntime();
+      capturedRuntime = extensionRuntime;
+      return null;
+    }
+
+    render(
+      <MemoryRouter>
+        <QueryClientProvider client={queryClient}>
+          <AgentChatProvider>
+            <VideoEditorProvider
+              dataProvider={dataProvider}
+              projectId="project-t2"
+              timelineId="timeline-t2"
+              userId="user-t2"
+              extensions={[ext]}
+              packageStateEntries={psiEntries}
+            >
+              <CaptureRuntime />
+            </VideoEditorProvider>
+          </AgentChatProvider>
+        </QueryClientProvider>
+      </MemoryRouter>,
+    );
+
+    expect(capturedRuntime).not.toBeNull();
+    // Active extensions still only contain the loaded one
+    expect(capturedRuntime.extensions).toHaveLength(1);
+    expect(capturedRuntime.extensions[0].manifest.id as string).toBe('com.t2.provider');
+
+    // Package state inventory is directly available
+    expect(capturedRuntime.packageStateInventory).toHaveLength(2);
+
+    const disabledEntry = capturedRuntime.packageStateInventory.find(
+      (e: any) => e.extensionId === 'com.t2.disabled',
+    );
+    expect(disabledEntry).toBeDefined();
+    expect(disabledEntry.packageState).toBe('disabled-by-user');
+    expect(disabledEntry.packageMetadata.label).toBe('T2 Disabled Ext');
+    expect(disabledEntry.packageMetadata.version).toBe('2.0.0');
+
+    const invalidEntry = capturedRuntime.packageStateInventory.find(
+      (e: any) => e.extensionId === 'com.t2.invalid',
+    );
+    expect(invalidEntry).toBeDefined();
+    expect(invalidEntry.packageState).toBe('invalid');
+    expect(invalidEntry.stateReason).toBe('Manifest validation failed.');
+  });
+
+  it('packageStateInventory is empty when no entries supplied to provider', () => {
+    const dataProvider: DataProvider = {
+      loadTimeline: vi.fn(),
+      saveTimeline: vi.fn(),
+      loadAssetRegistry: vi.fn(),
+      resolveAssetUrl: vi.fn(),
+    };
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+
+    const ext = defineExtension({
+      manifest: {
+        id: 'com.t2.noppsi' as never,
+        version: '1.0.0',
+        label: 'T2 No PSI Ext',
+      },
+    });
+
+    let capturedRuntime: any = null;
+    function CaptureRuntime() {
+      const { extensionRuntime } = useVideoEditorRuntime();
+      capturedRuntime = extensionRuntime;
+      return null;
+    }
+
+    render(
+      <MemoryRouter>
+        <QueryClientProvider client={queryClient}>
+          <AgentChatProvider>
+            <VideoEditorProvider
+              dataProvider={dataProvider}
+              projectId="project-t2-noppsi"
+              timelineId="timeline-t2-noppsi"
+              userId="user-t2"
+              extensions={[ext]}
+            >
+              <CaptureRuntime />
+            </VideoEditorProvider>
+          </AgentChatProvider>
+        </QueryClientProvider>
+      </MemoryRouter>,
+    );
+
+    expect(capturedRuntime).not.toBeNull();
+    expect(capturedRuntime.packageStateInventory).toEqual([]);
+    expect(capturedRuntime.extensions).toHaveLength(1);
   });
 
   // -------------------------------------------------------------------------

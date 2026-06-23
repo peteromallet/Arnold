@@ -45,6 +45,10 @@ import type {
 } from '@reigh/editor-sdk';
 import { contributionKindNotYetBridged } from '@reigh/editor-sdk';
 import type { TimelineGestureOwner } from '@/tools/video-editor/lib/mobile-interaction-model';
+import type {
+  PackageState,
+  PackageMetadata,
+} from '@/tools/video-editor/runtime/extensionLoader';
 
 export type VideoEditorSlotName =
   | 'header'
@@ -443,6 +447,34 @@ export interface ExtensionRuntime {
   readonly agentTools: readonly VideoEditorAgentToolDescriptor[];
   /** Project-level extension requirements referenced by the active extensions. */
   readonly requirements: readonly ProjectExtensionRequirement[];
+  /**
+   * Full package-state inventory for every package that reached the loader,
+   * including non-activated packages (disabled, invalid, incompatible,
+   * duplicate, settings-error, runtime-error).
+   *
+   * Empty array when no package-state data was supplied (backward compatible
+   * with direct-extension-only providers that bypass the loader).
+   */
+  readonly packageStateInventory: readonly PackageStateInventoryEntry[];
+}
+
+// ---------------------------------------------------------------------------
+// Package state inventory (M5: propagated from ExtensionLoader load result)
+// ---------------------------------------------------------------------------
+
+/**
+ * A single entry in the package-state inventory, propagated from the
+ * ExtensionLoader's load result so UI consumers can read package-state
+ * data directly without deriving it from active `loadedExtensions`.
+ *
+ * Mirrors the state/metadata fields of {@link ExtensionLoadEntry} but is
+ * owned by the runtime normalization layer.
+ */
+export interface PackageStateInventoryEntry {
+  readonly extensionId: string;
+  readonly packageState: PackageState;
+  readonly stateReason: string;
+  readonly packageMetadata: PackageMetadata | null;
 }
 
 /** Signature for host-owned runtime normalization. */
@@ -513,9 +545,10 @@ export const DEFAULT_VIDEO_EDITOR_EXTENSION_RUNTIME: VideoEditorExtensionRuntime
  */
 export function normalizeExtensionRuntime(
   extensions: readonly ReighExtension[],
+  packageStateEntries?: readonly PackageStateInventoryEntry[],
 ): ExtensionRuntime {
   // ---- Empty fast path: preserve the default empty identity ----------------
-  if (extensions.length === 0) {
+  if (extensions.length === 0 && (!packageStateEntries || packageStateEntries.length === 0)) {
     return EMPTY_EXTENSION_RUNTIME;
   }
 
@@ -1142,6 +1175,9 @@ export function normalizeExtensionRuntime(
     shaders: Object.freeze(shaderDescriptors),
     agentTools: Object.freeze(agentToolDescriptors),
     requirements: Object.freeze([]),
+    packageStateInventory: Object.freeze(
+      (packageStateEntries ?? []).map((entry) => Object.freeze({ ...entry })),
+    ),
   });
 
   return runtime;
@@ -1341,6 +1377,7 @@ const EMPTY_EXTENSION_RUNTIME: ExtensionRuntime = Object.freeze({
   shaders: EMPTY_SHADERS,
   agentTools: EMPTY_AGENT_TOOLS,
   requirements: Object.freeze([]),
+  packageStateInventory: Object.freeze([]),
 });
 
 type RegistryDescriptor = {

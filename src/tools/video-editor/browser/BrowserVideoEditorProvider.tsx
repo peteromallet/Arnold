@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { MemoryRouter } from 'react-router-dom';
 import { EditorRuntimeProvider } from '@/tools/video-editor/contexts/EditorRuntimeProvider.tsx';
 import type { DataProvider } from '@/tools/video-editor/data/DataProvider.ts';
@@ -28,6 +28,13 @@ export interface BrowserVideoEditorProviderProps {
   repository?: ExtensionStateRepository | null;
   /** M14: Optional bundle content store for installed pack bytes (IndexedDB). */
   bundleStore?: BundleContentStore | null;
+  /**
+   * M5: Monotonic refresh key forwarded to useExtensionLoaderWiring.
+   * Increment after persistence writes (enable/disable, settings save) to
+   * force re-resolution of extensions, diagnostics, and package-state
+   * inventory without a page refresh.
+   */
+  refreshKey?: number;
   queryClient?: QueryClient;
   initialEntries?: string[];
   children: ReactNode;
@@ -60,11 +67,27 @@ export function BrowserVideoEditorProvider({
   extensions,
   repository: explicitRepository,
   bundleStore: explicitBundleStore,
+  refreshKey,
   queryClient,
   initialEntries,
   children,
 }: BrowserVideoEditorProviderProps) {
   const [ownedQueryClient] = useState(() => queryClient ?? createDefaultQueryClient());
+
+  // ---- M5: Internal refresh key for extension re-resolution ----------------
+  // When refreshKey prop is provided it takes precedence; otherwise we manage
+  // an internal counter that gets incremented by triggerExtensionRefresh.
+  const [internalRefreshKey, setInternalRefreshKey] = useState(0);
+  const effectiveRefreshKey = refreshKey ?? internalRefreshKey;
+
+  const triggerExtensionRefresh = useCallback(() => {
+    if (refreshKey !== undefined) {
+      // External refreshKey: the caller owns refresh. We still provide a
+      // no-op trigger so the manager can call it without checking.
+      return;
+    }
+    setInternalRefreshKey((prev) => prev + 1);
+  }, [refreshKey]);
 
   // ---- M2: Derive effective repository / bundleStore from DataProvider when
   //        explicit props are not supplied ----------------------------------
@@ -140,10 +163,12 @@ export function BrowserVideoEditorProvider({
   const {
     resolvedExtensions,
     isResolving: _loaderIsResolving,
+    packageStateEntries,
   } = useExtensionLoaderWiring({
     directExtensions: extensions,
     repository: effectiveRepository ?? null,
     bundleStore: effectiveBundleStore ?? null,
+    refreshKey: effectiveRefreshKey,
   });
 
   return (
@@ -157,6 +182,9 @@ export function BrowserVideoEditorProvider({
           effectCatalog={effectCatalog}
           runtime={{ assetResolver, exporter, hostContext }}
           extensions={resolvedExtensions}
+          packageStateEntries={packageStateEntries}
+          extensionStateRepository={effectiveRepository ?? null}
+          triggerExtensionRefresh={triggerExtensionRefresh}
         >
           {children}
         </EditorRuntimeProvider>

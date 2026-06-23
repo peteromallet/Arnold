@@ -576,6 +576,41 @@ export interface ExtensionLoaderValidationResult {
 }
 
 // ---------------------------------------------------------------------------
+// Package state types
+// ---------------------------------------------------------------------------
+
+/**
+ * Explicit package state classification for UI consumers.
+ *
+ * Each state carries a machine-readable key so the manager can render
+ * status badges, reason text, and per-state affordances without
+ * inferring state from `loadedExtensions` alone.
+ */
+export type PackageState =
+  | 'loaded'
+  | 'disabled-by-user'
+  | 'invalid'
+  | 'incompatible'
+  | 'duplicate'
+  | 'settings-error'
+  | 'runtime-error';
+
+/**
+ * Metadata preserved for every package regardless of activation state.
+ *
+ * The loader carries this through so the manager can always show
+ * label, version, and publisher even for invalid/disabled/duplicate
+ * packages.
+ */
+export interface PackageMetadata {
+  readonly label: string;
+  readonly version: string;
+  readonly publisher?: string;
+  readonly description?: string;
+  readonly license?: string;
+}
+
+// ---------------------------------------------------------------------------
 // Load types
 // ---------------------------------------------------------------------------
 
@@ -591,13 +626,36 @@ export interface ExtensionLoadEntry {
   readonly errors: readonly ExtensionDiagnostic[];
   /** Lifecycle events emitted during loading. */
   readonly lifecycleEvents: readonly ExtensionLifecycleEvent[];
+  /**
+   * Explicit package state classification.
+   *
+   * Carried for every package that reached the loader, including
+   * packages that did not activate (disabled, invalid, incompatible,
+   * duplicate, settings-error, runtime-error).
+   */
+  readonly packageState: PackageState;
+  /**
+   * Human-readable reason for the current state.
+   *
+   * Examples: "Loaded successfully", "User disabled via extension manager",
+   * "Missing required dependency 'com.example.foo'", "Installed pack
+   * takes precedence over workspace source".
+   */
+  readonly stateReason: string;
+  /**
+   * Package metadata preserved regardless of activation state.
+   *
+   * `null` only when the package was so malformed that no metadata
+   * could be extracted (e.g. missing manifest entirely).
+   */
+  readonly packageMetadata: PackageMetadata | null;
 }
 
 /** Aggregate load result. */
 export interface ExtensionLoaderLoadResult {
   /** Successfully loaded extensions in input order. */
   readonly loadedExtensions: readonly ReighExtension[];
-  /** Per-extension load entries. */
+  /** Per-extension load entries (includes non-activated packages). */
   readonly entries: readonly ExtensionLoadEntry[];
   /** True when every extension loaded successfully. */
   readonly allLoaded: boolean;
@@ -1102,6 +1160,94 @@ export function createExtensionLoader(
 
   // ---- load --------------------------------------------------------------
 
+  /**
+   * Extract PackageMetadata from a validated package regardless of form.
+   */
+  function extractPackageMetadata(pkg: ValidatedPackage): PackageMetadata {
+    const manifest = pkg.form === 'workspace-source'
+      ? (pkg as WorkspaceSourcePackage).manifest
+      : (pkg as InstalledBundlePackage).pack.manifest;
+    return {
+      label: (manifest.label as string) || (manifest.id as string) || '(unknown)',
+      version: (manifest.version as string) || '0.0.0',
+      publisher: manifest.publisher as string | undefined,
+      description: manifest.description as string | undefined,
+      license: manifest.license as string | undefined,
+    };
+  }
+
+  /**
+   * Build a load entry for a package that was not activated.
+   *
+   * Used for loser packages from conflict resolution and
+   * dependency-blocked packages.
+   */
+  function makeNonActivatedEntry(
+    extensionId: string,
+    state: PackageState,
+    reason: string,
+    metadata: PackageMetadata | null,
+    errors: readonly ExtensionDiagnostic[] = [],
+    lifecycleEvents: readonly ExtensionLifecycleEvent[] = [],
+  ): ExtensionLoadEntry {
+    return deepFreeze({
+      extensionId,
+      extension: null,
+      loaded: false,
+      errors,
+      lifecycleEvents,
+      packageState: state,
+      stateReason: reason,
+      packageMetadata: metadata,
+    } satisfies ExtensionLoadEntry);
+  }
+
+  /**
+   * Build a load entry for a package that activated successfully.
+   */
+  function makeActivatedEntry(
+    extensionId: string,
+    extension: ReighExtension,
+    state: PackageState,
+    reason: string,
+    metadata: PackageMetadata | null,
+    lifecycleEvents: readonly ExtensionLifecycleEvent[] = [],
+  ): ExtensionLoadEntry {
+    return deepFreeze({
+      extensionId,
+      extension,
+      loaded: true,
+      errors: Object.freeze([]),
+      lifecycleEvents,
+      packageState: state,
+      stateReason: reason,
+      packageMetadata: metadata,
+    } satisfies ExtensionLoadEntry);
+  }
+
+  /**
+   * Build a load entry for a package that failed during activation.
+   */
+  function makeFailedEntry(
+    extensionId: string,
+    errors: readonly ExtensionDiagnostic[],
+    state: PackageState,
+    reason: string,
+    metadata: PackageMetadata | null,
+    lifecycleEvents: readonly ExtensionLifecycleEvent[] = [],
+  ): ExtensionLoadEntry {
+    return deepFreeze({
+      extensionId,
+      extension: null,
+      loaded: false,
+      errors,
+      lifecycleEvents,
+      packageState: state,
+      stateReason: reason,
+      packageMetadata: metadata,
+    } satisfies ExtensionLoadEntry);
+  }
+
   async function load(
     validated: readonly ValidatedPackage[],
   ): Promise<ExtensionLoaderLoadResult> {
@@ -1163,12 +1309,19 @@ export function createExtensionLoader(
     const conflictResolution = resolveConflicts(validated, conflictConfig);
     const effectivePackages = conflictResolution.winningPackages;
 
+    // Track processed extension IDs to avoid duplicate entries
+    const processedIds = new Set<string>();
+
+    // ---- Process winning packages ----
     for (const pkg of effectivePackages) {
       // Extract extension ID
       const manifest = pkg.form === 'workspace-source'
         ? (pkg as WorkspaceSourcePackage).manifest
         : (pkg as InstalledBundlePackage).pack.manifest;
       const extId = manifest.id as string;
+      const metadata = extractPackageMetadata(pkg);
+
+      processedIds.add(extId);
 
       // Check if blocked by dependency resolution
       if (blockedIds.has(extId)) {
@@ -1177,13 +1330,30 @@ export function createExtensionLoader(
         const errors: ExtensionDiagnostic[] = [
           ...(resEntry?.blockingDiagnostics ?? []),
         ];
-        entries.push(deepFreeze({
-          extensionId: extId,
-          extension: null,
-          loaded: false,
-          errors: Object.freeze([...errors]),
-          lifecycleEvents: Object.freeze([]),
-        } satisfies ExtensionLoadEntry));
+
+        // Build a reason from the blocking diagnostics
+        const reasonParts: string[] = [];
+        if (resEntry?.inCycle) {
+          reasonParts.push(`Part of dependency cycle: [${(resEntry.cycleExtensionIds ?? []).join(', ')}]`);
+        }
+        if ((resEntry?.missingRequired?.length ?? 0) > 0) {
+          reasonParts.push(`Missing required dependencies: ${(resEntry?.missingRequired ?? []).join(', ')}`);
+        }
+        if ((resEntry?.versionMismatchRequired?.length ?? 0) > 0) {
+          reasonParts.push(`Version mismatch for required dependencies: ${(resEntry?.versionMismatchRequired ?? []).join(', ')}`);
+        }
+        const reason = reasonParts.length > 0
+          ? reasonParts.join('. ')
+          : `Extension "${extId}" is incompatible with the current load set.`;
+
+        entries.push(makeFailedEntry(
+          extId,
+          Object.freeze([...errors]),
+          'incompatible',
+          reason,
+          metadata,
+          Object.freeze([]),
+        ));
         continue;
       }
 
@@ -1205,18 +1375,44 @@ export function createExtensionLoader(
         await appendLifecycleEvent(loadEvent);
 
         loadedExtensions.push(syntheticExt);
-        entries.push(deepFreeze({
-          extensionId: extId,
-          extension: syntheticExt,
-          loaded: true,
-          errors: Object.freeze([]),
-          lifecycleEvents: Object.freeze([...lifecycleEvents]),
-        } satisfies ExtensionLoadEntry));
+
+        const degradedReason = degradedIds.has(extId)
+          ? `Loaded (degraded) — optional dependencies missing or mismatched.`
+          : 'Loaded successfully.';
+
+        entries.push(makeActivatedEntry(
+          extId,
+          syntheticExt,
+          'loaded',
+          degradedReason,
+          metadata,
+          Object.freeze([...lifecycleEvents]),
+        ));
       } else {
         // ---------- installed bundle ----------
         const ibPkg = pkg as InstalledBundlePackage;
         const lifecycleEvents: ExtensionLifecycleEvent[] = [];
         const errors: ExtensionDiagnostic[] = [];
+
+        // Check enablement state for non-conflict disabled packages.
+        // If the installed pack is explicitly disabled and there's no
+        // local source to conflict with, we must still surface the
+        // disabled state.
+        const enablementState = conflictConfig.enablementStates[extId];
+        const isDisabled = enablementState && !enablementState.enabled;
+
+        if (isDisabled) {
+          // This installed pack is disabled. Emit a non-activated entry.
+          const reason = enablementState.toggleReason
+            || 'User disabled this package.';
+          entries.push(makeNonActivatedEntry(
+            extId,
+            'disabled-by-user',
+            reason,
+            metadata,
+          ));
+          continue;
+        }
 
         // Integrity verification
         const bundleContent = ibPkg.pack.bundleContent;
@@ -1306,24 +1502,70 @@ export function createExtensionLoader(
           await appendLifecycleEvent(loadEvent);
 
           loadedExtensions.push(syntheticExt);
-          entries.push(deepFreeze({
-            extensionId: extId,
-            extension: syntheticExt,
-            loaded: true,
-            errors: Object.freeze([]),
-            lifecycleEvents: Object.freeze([...lifecycleEvents]),
-          } satisfies ExtensionLoadEntry));
+
+          const degradedReason = degradedIds.has(extId)
+            ? `Loaded (degraded) — optional dependencies missing or mismatched.`
+            : 'Loaded successfully.';
+
+          entries.push(makeActivatedEntry(
+            extId,
+            syntheticExt,
+            'loaded',
+            degradedReason,
+            metadata,
+            Object.freeze([...lifecycleEvents]),
+          ));
         } else {
           allLoaded = false;
-          entries.push(deepFreeze({
-            extensionId: extId,
-            extension: null,
-            loaded: false,
-            errors: Object.freeze([...errors]),
-            lifecycleEvents: Object.freeze([...lifecycleEvents]),
-          } satisfies ExtensionLoadEntry));
+          const reason = `Load failed: ${errors.map((e) => e.message).join('; ')}`;
+          entries.push(makeFailedEntry(
+            extId,
+            Object.freeze([...errors]),
+            'runtime-error',
+            reason,
+            metadata,
+            Object.freeze([...lifecycleEvents]),
+          ));
         }
       }
+    }
+
+    // ---- Process loser packages from conflict resolution ----
+    for (const conflictEntry of conflictResolution.entries) {
+      if (!conflictEntry.hasConflict) continue;
+      if (!conflictEntry.loserPackage) continue;
+
+      const loserPkg = conflictEntry.loserPackage;
+      const manifest = loserPkg.form === 'workspace-source'
+        ? (loserPkg as WorkspaceSourcePackage).manifest
+        : (loserPkg as InstalledBundlePackage).pack.manifest;
+      const extId = manifest.id as string;
+
+      // NOTE: The loser shares the same extension ID as the winner
+      // (they are different forms of the same extension), so we do NOT
+      // skip based on processedIds. The winner entry is already in the
+      // list; the loser entry is intentionally a separate record with
+      // its own packageState.
+
+      const metadata = extractPackageMetadata(loserPkg);
+
+      // Classify the loser state based on conflict resolution strategy
+      let state: PackageState;
+      let reason: string;
+
+      if (conflictEntry.strategy === 'installed-disabled-fallback') {
+        state = 'disabled-by-user';
+        reason = `Installed pack for "${extId}" is disabled; workspace source is active instead.`;
+      } else if (conflictEntry.strategy === 'installed-wins') {
+        state = 'duplicate';
+        reason = `Installed pack takes precedence over workspace source (default policy). Workspace source is inactive.`;
+      } else {
+        // local-wins (dev override)
+        state = 'duplicate';
+        reason = `Dev override prefers local source for "${extId}"; installed pack is inactive.`;
+      }
+
+      entries.push(makeNonActivatedEntry(extId, state, reason, metadata));
     }
 
     // ---- Sync project lock metadata for enabled installed packs ----

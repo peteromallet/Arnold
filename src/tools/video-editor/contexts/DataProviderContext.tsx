@@ -23,6 +23,7 @@ import type { AgentToolRegistry } from '@/tools/video-editor/runtime/agentToolRe
 import type { DiagnosticCollection } from '@reigh/editor-sdk';
 import type { LiveDataRegistry } from '@/tools/video-editor/runtime/liveDataRegistry.ts';
 import type { LivePermissionService } from '@/tools/video-editor/runtime/livePermissions.ts';
+import type { ExtensionStateRepository } from '@/tools/video-editor/runtime/extensionStateRepository';
 
 export interface VideoEditorRuntimeContextValue {
   provider: DataProvider;
@@ -51,6 +52,10 @@ export interface VideoEditorRuntimeContextValue {
   livePermissionService?: LivePermissionService;
   /** Provider-scoped diagnostics surfaced by status and diagnostic panels. */
   diagnosticCollection?: DiagnosticCollection;
+  /** M5: Extension state repository for enable/disable persistence. */
+  extensionStateRepository?: ExtensionStateRepository | null;
+  /** M5: Trigger extension re-resolution after persistence writes. */
+  triggerExtensionRefresh?: () => void;
 }
 
 export const DataProviderContext = createContext<VideoEditorRuntimeContextValue | null>(null);
