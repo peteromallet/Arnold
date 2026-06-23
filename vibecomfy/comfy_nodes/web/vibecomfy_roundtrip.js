@@ -8240,9 +8240,10 @@ function syncComposerButtons(panel, {
   submitting = false,
   applying = false,
   reviewing = false,
+  working = false,
   showUndo = false,
 } = {}) {
-  return syncComposerButtonsImpl(panel, { submitting, applying, reviewing, showUndo });
+  return syncComposerButtonsImpl(panel, { submitting, applying, reviewing, working, showUndo });
 }
 
 function renderComposerNotice(panel, readinessState) {

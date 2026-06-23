@@ -127,6 +127,18 @@ test("composer buttons hide undo while processing and hide reset controls while 
   assert.equal(panel.buttons.undo.style.display, "none");
   assert.equal(panel.buttons.newConversation.style.display, "none");
 
+  panel.buttons.submit.textContent = "Working";
+  syncComposerButtons(panel, { showUndo: true });
+  assert.equal(panel.buttons.stop.style.display, "none");
+  assert.equal(panel.buttons.undo.style.display, "none");
+  assert.equal(panel.buttons.newConversation.style.display, "none");
+
+  panel.buttons.submit.textContent = "Submit";
+  syncComposerButtons(panel, { working: true, showUndo: true });
+  assert.equal(panel.buttons.stop.style.display, "none");
+  assert.equal(panel.buttons.undo.style.display, "none");
+  assert.equal(panel.buttons.newConversation.style.display, "none");
+
   syncComposerButtons(panel, { showUndo: true });
   assert.equal(panel.buttons.stop.style.display, "none");
   assert.equal(panel.buttons.undo.style.display, "inline-flex");

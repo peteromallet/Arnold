@@ -119,7 +119,7 @@ export function submitReadinessState(panel, deps = {}) {
 
 export function syncComposerButtons(
   panel,
-  { submitting = false, applying = false, reviewing = false, showUndo = false } = {},
+  { submitting = false, applying = false, reviewing = false, working = false, showUndo = false } = {},
 ) {
   const row = panel?.composerButtons;
   if (!row) {
@@ -138,7 +138,10 @@ export function syncComposerButtons(
       row.appendChild(btn);
     }
   }
-  const processing = submitting || applying;
+  const submitLooksWorking =
+    typeof panel.buttons.submit?.textContent === "string"
+    && panel.buttons.submit.textContent.trim().startsWith("Working");
+  const processing = submitting || applying || working || submitLooksWorking;
   panel.buttons.stop.style.display = submitting ? "inline-flex" : "none";
   panel.buttons.undo.style.display = showUndo && !processing && !reviewing ? "inline-flex" : "none";
   // Hide conversation reset while processing or reviewing a candidate. During
