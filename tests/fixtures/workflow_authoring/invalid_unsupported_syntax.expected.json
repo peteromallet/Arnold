@@ -4,13 +4,13 @@
   "outcome": "invalid",
   "expected_diagnostics": [
     {
-      "code": "AWF002_UNSUPPORTED_SYNTAX",
-      "message": "branching is outside the M2 linear workflow subset",
+      "code": "AWF011_DYNAMIC_ROUTING_CONDITION",
+      "message": "branch route conditions must compare a decision output to a literal string",
       "source_span": {
         "start_line": 8,
-        "start_column": 5,
-        "end_line": 9,
-        "end_column": 24
+        "start_column": 8,
+        "end_line": 8,
+        "end_column": 13
       }
     }
   ]

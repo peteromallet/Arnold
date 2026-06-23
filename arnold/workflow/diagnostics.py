@@ -13,7 +13,13 @@ from types import MappingProxyType
 from typing import Any, Mapping
 
 from arnold.manifest.refs import ImportRef, SourceSpan
-from arnold.workflow.authoring import GRAMMAR_VERSION, RESERVED_INTRINSIC_NAMES
+from arnold.workflow.authoring import (
+    GRAMMAR_VERSION,
+    RESERVED_INTRINSIC_CALL_KEYWORDS,
+    RESERVED_INTRINSIC_NAMES,
+    RESERVED_SUBFLOW_CALL_KEYWORDS,
+    RESERVED_STEP_CALL_KEYWORDS,
+)
 
 
 GRAMMAR_METADATA = MappingProxyType(
@@ -46,6 +52,9 @@ ALLOWED_IMPORT_FORMS = (
 AUTHORING_INTRINSIC_MODULE = "arnold.workflow.authoring"
 ALLOWED_FUTURE_IMPORTS = ("annotations",)
 RESERVED_AUTHORING_INTRINSICS = RESERVED_INTRINSIC_NAMES
+RESERVED_AUTHORING_STEP_CALL_KEYWORDS = RESERVED_STEP_CALL_KEYWORDS
+RESERVED_AUTHORING_SUBFLOW_CALL_KEYWORDS = RESERVED_SUBFLOW_CALL_KEYWORDS
+RESERVED_AUTHORING_INTRINSIC_CALL_KEYWORDS = RESERVED_INTRINSIC_CALL_KEYWORDS
 
 
 class DiagnosticSeverity(StrEnum):
@@ -67,6 +76,14 @@ class DiagnosticCode(StrEnum):
     RESERVED_INTRINSIC_SHADOWING = "AWF007_RESERVED_INTRINSIC_SHADOWING"
     ALIAS_PROVENANCE_LOSS = "AWF008_ALIAS_PROVENANCE_LOSS"
     MALFORMED_COMPONENT_EXPORT = "AWF009_MALFORMED_COMPONENT_EXPORT"
+    RESERVED_CALL_KEYWORD = "AWF010_RESERVED_CALL_KEYWORD"
+    DYNAMIC_ROUTING_CONDITION = "AWF011_DYNAMIC_ROUTING_CONDITION"
+    UNSUPPORTED_MUTATION = "AWF012_UNSUPPORTED_MUTATION"
+    AMBIGUOUS_LOOP = "AWF013_AMBIGUOUS_LOOP"
+    UNSUPPORTED_POLICY_CARRIER = "AWF014_UNSUPPORTED_POLICY_CARRIER"
+    UNSUPPORTED_SUBFLOW_REFERENCE = "AWF015_UNSUPPORTED_SUBFLOW_REFERENCE"
+    MISSING_FALLTHROUGH_ROUTE = "AWF017_MISSING_FALLTHROUGH_ROUTE"
+    UNREACHABLE_CONTROL_PATH = "AWF016_UNREACHABLE_CONTROL_PATH"
 
 
 class DiagnosticFamily(StrEnum):
@@ -81,6 +98,14 @@ class DiagnosticFamily(StrEnum):
     RESERVED_INTRINSIC_SHADOWING = "reserved_intrinsic_shadowing"
     ALIAS_PROVENANCE = "alias_provenance"
     COMPONENT_EXPORT_METADATA = "component_export_metadata"
+    RESERVED_CALL_KEYWORD = "reserved_call_keyword"
+    DYNAMIC_ROUTING_CONDITION = "dynamic_routing_condition"
+    UNSUPPORTED_MUTATION = "unsupported_mutation"
+    AMBIGUOUS_LOOP = "ambiguous_loop"
+    UNSUPPORTED_POLICY_CARRIER = "unsupported_policy_carrier"
+    UNSUPPORTED_SUBFLOW_REFERENCE = "unsupported_subflow_reference"
+    MISSING_FALLTHROUGH_ROUTE = "missing_fallthrough_route"
+    UNREACHABLE_CONTROL_PATH = "unreachable_control_path"
 
 
 @dataclass(frozen=True)
@@ -166,6 +191,68 @@ DIAGNOSTIC_CODE_SPECS = (
         message_template="component export metadata is missing or malformed",
         remediation="export a typed arnold.workflow.authoring component contract object",
     ),
+    DiagnosticCodeSpec(
+        code=DiagnosticCode.RESERVED_CALL_KEYWORD,
+        family=DiagnosticFamily.RESERVED_CALL_KEYWORD,
+        severity=DiagnosticSeverity.ERROR,
+        message_template="component call uses a reserved authoring keyword as dataflow",
+        remediation=(
+            "use ordinary component input names for dataflow; reserved keywords are "
+            "compiler-owned syntax"
+        ),
+    ),
+    DiagnosticCodeSpec(
+        code=DiagnosticCode.DYNAMIC_ROUTING_CONDITION,
+        family=DiagnosticFamily.DYNAMIC_ROUTING_CONDITION,
+        severity=DiagnosticSeverity.ERROR,
+        message_template="branch route condition is not statically enumerable",
+        remediation="compare one prior decision output to one unique literal string per branch arm",
+    ),
+    DiagnosticCodeSpec(
+        code=DiagnosticCode.UNSUPPORTED_MUTATION,
+        family=DiagnosticFamily.UNSUPPORTED_MUTATION,
+        severity=DiagnosticSeverity.ERROR,
+        message_template="workflow source mutates a value needed for static control flow",
+        remediation="assign each workflow local once and route on the original decision output",
+    ),
+    DiagnosticCodeSpec(
+        code=DiagnosticCode.AMBIGUOUS_LOOP,
+        family=DiagnosticFamily.AMBIGUOUS_LOOP,
+        severity=DiagnosticSeverity.ERROR,
+        message_template="loop control cannot be statically bounded",
+        remediation=(
+            "write loop(policy=<imported loop PolicyComponent>, reentry_id=<literal>) "
+            "immediately before while True"
+        ),
+    ),
+    DiagnosticCodeSpec(
+        code=DiagnosticCode.UNSUPPORTED_POLICY_CARRIER,
+        family=DiagnosticFamily.UNSUPPORTED_POLICY_CARRIER,
+        severity=DiagnosticSeverity.ERROR,
+        message_template="policy declaration does not map to an existing manifest carrier",
+        remediation="use a PolicyComponent with a supported policy_type such as retry or timing",
+    ),
+    DiagnosticCodeSpec(
+        code=DiagnosticCode.UNSUPPORTED_SUBFLOW_REFERENCE,
+        family=DiagnosticFamily.UNSUPPORTED_SUBFLOW_REFERENCE,
+        severity=DiagnosticSeverity.ERROR,
+        message_template="subflow reference does not map to a static manifest identity",
+        remediation="use an imported SubflowComponent with a literal manifest_hash or resolver metadata",
+    ),
+    DiagnosticCodeSpec(
+        code=DiagnosticCode.MISSING_FALLTHROUGH_ROUTE,
+        family=DiagnosticFamily.MISSING_FALLTHROUGH_ROUTE,
+        severity=DiagnosticSeverity.ERROR,
+        message_template="branch route omits an explicit fallthrough arm",
+        remediation="add an else arm so every branch path lowers to an explicit route",
+    ),
+    DiagnosticCodeSpec(
+        code=DiagnosticCode.UNREACHABLE_CONTROL_PATH,
+        family=DiagnosticFamily.UNREACHABLE_CONTROL_PATH,
+        severity=DiagnosticSeverity.ERROR,
+        message_template="source contains a path unreachable after terminal control flow",
+        remediation="remove statements after branches where every arm exits control flow",
+    ),
 )
 
 DIAGNOSTIC_CODE_BY_FAMILY = MappingProxyType(
@@ -199,6 +286,36 @@ class AuthoringDiagnostic:
         if self.component_ref is not None and not self.component_ref:
             raise ValueError("component_ref must be non-empty when provided")
 
+    def to_dict(self) -> dict[str, Any]:
+        """Return a sidecar-safe diagnostic payload with primitive values."""
+
+        payload: dict[str, Any] = {
+            "code": self.code.value,
+            "message": self.message,
+            "severity": self.severity.value,
+            "grammar_version": self.grammar_version,
+        }
+        if self.source_span is not None:
+            payload["source_span"] = {
+                "path": self.source_span.path,
+                "start_line": self.source_span.start_line,
+                "start_column": self.source_span.start_column,
+                "end_line": self.source_span.end_line,
+                "end_column": self.source_span.end_column,
+            }
+        if self.import_ref is not None:
+            payload["import_ref"] = {
+                "module": self.import_ref.module,
+                "qualname": self.import_ref.qualname,
+            }
+        if self.component_ref is not None:
+            payload["component_ref"] = self.component_ref
+        if self.remediation is not None:
+            payload["remediation"] = self.remediation
+        if self.details:
+            payload["details"] = _thaw_value(self.details)
+        return payload
+
 
 def diagnostic_spec(code: DiagnosticCode | str) -> DiagnosticCodeSpec:
     """Return metadata for a stable diagnostic code."""
@@ -220,6 +337,14 @@ def _freeze_value(value: Any) -> Any:
     return value
 
 
+def _thaw_value(value: Any) -> Any:
+    if isinstance(value, Mapping):
+        return {str(key): _thaw_value(subvalue) for key, subvalue in value.items()}
+    if isinstance(value, tuple):
+        return [_thaw_value(item) for item in value]
+    return value
+
+
 __all__ = [
     "ALLOWED_FUTURE_IMPORTS",
     "ALLOWED_IMPORT_FORMS",
@@ -235,5 +360,8 @@ __all__ = [
     "GRAMMAR_METADATA",
     "ImportForm",
     "RESERVED_AUTHORING_INTRINSICS",
+    "RESERVED_AUTHORING_INTRINSIC_CALL_KEYWORDS",
+    "RESERVED_AUTHORING_SUBFLOW_CALL_KEYWORDS",
+    "RESERVED_AUTHORING_STEP_CALL_KEYWORDS",
     "diagnostic_spec",
 ]

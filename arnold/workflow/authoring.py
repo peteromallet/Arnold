@@ -178,6 +178,25 @@ class SubflowComponent(ComponentContract):
         object.__setattr__(self, "workflow_id", _require_ref("workflow_id", workflow_id))
         object.__setattr__(self, "version", version)
 
+    def __call__(
+        self,
+        *,
+        id: str,
+        manifest_hash: str,
+        alias: str | None = None,
+        metadata: Mapping[str, Any] | None = None,
+        **_inputs: Any,
+    ) -> "AuthoredSubflow":
+        """Return compile-time subflow-call data; this does not execute a workflow."""
+
+        return AuthoredSubflow(
+            id=id,
+            component=self,
+            manifest_hash=manifest_hash,
+            alias=alias,
+            metadata={} if metadata is None else metadata,
+        )
+
 
 @dataclass(frozen=True)
 class AuthoredStep:
@@ -193,6 +212,23 @@ class AuthoredStep:
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "id", _require_ref("id", self.id))
+        object.__setattr__(self, "metadata", _freeze_mapping(self.metadata))
+
+
+@dataclass(frozen=True)
+class AuthoredSubflow:
+    """Compile-time subflow call captured from a Python-shaped workflow body."""
+
+    id: str
+    component: "SubflowComponent"
+    manifest_hash: str
+    alias: str | None = None
+    metadata: Mapping[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "id", _require_ref("id", self.id))
+        object.__setattr__(self, "manifest_hash", _require_ref("manifest_hash", self.manifest_hash))
+        object.__setattr__(self, "alias", None if self.alias is None else _require_ref("alias", self.alias))
         object.__setattr__(self, "metadata", _freeze_mapping(self.metadata))
 
 
@@ -313,13 +349,39 @@ def _require_ref(name: str, value: str) -> str:
 
 
 workflow = IntrinsicDeclaration("workflow")
+loop = IntrinsicDeclaration("loop")
 halt = IntrinsicDeclaration("halt")
 suspend = IntrinsicDeclaration("suspend")
 transition = IntrinsicDeclaration("transition")
 
-RESERVED_INTRINSIC_NAMES = (workflow.name, halt.name, suspend.name, transition.name)
+RESERVED_INTRINSIC_NAMES = (
+    workflow.name,
+    loop.name,
+    halt.name,
+    suspend.name,
+    transition.name,
+)
+RESERVED_STEP_CALL_KEYWORDS = ("id", "policy", "policies", "schema")
+RESERVED_SUBFLOW_CALL_KEYWORDS = ("id", "manifest_hash", "alias")
+RESERVED_INTRINSIC_CALL_KEYWORDS = MappingProxyType(
+    {
+        "loop": ("policy", "reentry_id"),
+        "halt": ("id", "trigger_ref", "target_ref", "payload_schema_hash", "policy_ref"),
+        "suspend": (
+            "route_id",
+            "capability_id",
+            "reentry_id",
+            "payload_schema_hash",
+            "resume_schema_hash",
+            "resume_schema_ref",
+            "resume_payload_ref",
+        ),
+        "transition": ("id", "type", "trigger_ref", "target_ref", "payload_schema_hash", "policy_ref"),
+    }
+)
 
 __all__ = [
+    "AuthoredSubflow",
     "AuthoredStep",
     "ComponentContract",
     "ComponentKind",
@@ -328,11 +390,15 @@ __all__ = [
     "IntrinsicDeclaration",
     "PolicyComponent",
     "PromptComponent",
+    "RESERVED_INTRINSIC_CALL_KEYWORDS",
     "RESERVED_INTRINSIC_NAMES",
+    "RESERVED_SUBFLOW_CALL_KEYWORDS",
+    "RESERVED_STEP_CALL_KEYWORDS",
     "SchemaComponent",
     "StepComponent",
     "SubflowComponent",
     "halt",
+    "loop",
     "suspend",
     "transition",
     "workflow",

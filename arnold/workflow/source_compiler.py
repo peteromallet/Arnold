@@ -9,15 +9,21 @@ Python-shaped source into compiler-owned intermediate data.
 from __future__ import annotations
 
 import ast
+import re
 import sys
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from types import MappingProxyType
 from typing import Any, Mapping, Protocol, Sequence
 
 from arnold.manifest.manifests import (
+    AuthorityRequirement,
     ControlTransitionSlot,
+    LoopPolicy,
+    RetryPolicy,
+    SubpipelineRef,
     SuspensionRoute,
+    TimingPolicy,
     WorkflowManifest,
     WorkflowPolicy,
 )
@@ -25,7 +31,12 @@ from arnold.manifest.refs import ImportRef, SourceSpan
 from arnold.workflow.authoring import (
     ComponentContract,
     ComponentKind,
+    PolicyComponent,
+    RESERVED_SUBFLOW_CALL_KEYWORDS,
+    RESERVED_INTRINSIC_CALL_KEYWORDS,
+    RESERVED_STEP_CALL_KEYWORDS,
     StepComponent,
+    SubflowComponent,
 )
 from arnold.workflow.compiler import compile_pipeline
 from arnold.workflow.diagnostics import (
@@ -40,6 +51,13 @@ from arnold.workflow.diagnostics import (
 from arnold.workflow.dsl import Input, Output, Pipeline, Route, Step
 
 _DEFAULT_SOURCE_PATH = "<workflow-source>"
+_SUPPORTED_STEP_POLICY_TYPES = frozenset(
+    {"approval", "authority", "control-transition", "retry", "timing"}
+)
+_SUPPORTED_WORKFLOW_CONTROL_POLICY_TYPES = frozenset(
+    {"approval", "authority", "control-transition", "suspension"}
+)
+_MANIFEST_HASH_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
 
 
 class SourceCompileError(ValueError):
@@ -96,7 +114,27 @@ class StepOutputBinding:
 
 
 @dataclass(frozen=True)
-class StepCall:
+class StepPolicyBinding:
+    """Parsed source-level policy keyword binding."""
+
+    keyword: str
+    component_ref: str
+    component: PolicyComponent
+    source_span: SourceSpan
+
+
+@dataclass(frozen=True)
+class WorkflowPolicyBinding:
+    """Parsed source-level workflow policy keyword binding."""
+
+    keyword: str
+    component_ref: str
+    component: PolicyComponent
+    source_span: SourceSpan
+
+
+@dataclass(frozen=True)
+class ParsedStepCall:
     """Parsed source-level workflow step call."""
 
     id: str
@@ -107,15 +145,36 @@ class StepCall:
     arguments: Mapping[str, ast.AST] = field(default_factory=dict)
     inputs: tuple[StepInputBinding, ...] = ()
     outputs: tuple[StepOutputBinding, ...] = ()
+    policies: tuple[StepPolicyBinding, ...] = ()
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "arguments", MappingProxyType(dict(self.arguments)))
         object.__setattr__(self, "inputs", tuple(self.inputs))
         object.__setattr__(self, "outputs", tuple(self.outputs))
+        object.__setattr__(self, "policies", tuple(self.policies))
 
 
 @dataclass(frozen=True)
-class IntrinsicCall:
+class ParsedSubflowCall:
+    """Parsed source-level subflow call with static manifest identity."""
+
+    id: str
+    local_name: str
+    component_ref: str
+    source_span: SourceSpan
+    component: SubflowComponent
+    manifest_hash: str
+    alias: str | None = None
+    arguments: Mapping[str, ast.AST] = field(default_factory=dict)
+    inputs: tuple[StepInputBinding, ...] = ()
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "arguments", MappingProxyType(dict(self.arguments)))
+        object.__setattr__(self, "inputs", tuple(self.inputs))
+
+
+@dataclass(frozen=True)
+class ParsedIntrinsicCall:
     """Parsed source-level compiler intrinsic call."""
 
     name: str
@@ -124,6 +183,147 @@ class IntrinsicCall:
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "arguments", MappingProxyType(dict(self.arguments)))
+
+
+@dataclass(frozen=True)
+class ParsedUnsupportedStatement:
+    """Parsed source-level statement that is recognized but not yet lowerable."""
+
+    reason: str
+    source_span: SourceSpan
+    node: ast.AST
+
+
+@dataclass(frozen=True)
+class ParsedBranchCondition:
+    """Parsed source-level literal equality route condition."""
+
+    decision_output: str
+    literal: str
+    source_span: SourceSpan
+
+
+@dataclass(frozen=True)
+class ParsedBranchArm:
+    """One if/elif/else arm parsed from source."""
+
+    condition: ParsedBranchCondition | None
+    body: ParsedSourceBlock
+    source_span: SourceSpan
+    terminal: bool = False
+
+
+@dataclass(frozen=True)
+class ParsedBranchBlock:
+    """Parsed source-level branch block awaiting lowering."""
+
+    decision_output: str
+    arms: tuple[ParsedBranchArm, ...]
+    source_span: SourceSpan
+    merged_outputs: Mapping[str, SourceSpan] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "arms", tuple(self.arms))
+        object.__setattr__(self, "merged_outputs", MappingProxyType(dict(self.merged_outputs)))
+
+
+@dataclass(frozen=True)
+class ParsedLoopPolicy:
+    """Parsed source-level loop policy marker for the next while True block."""
+
+    policy_ref: str
+    max_iterations: int
+    reentry_id: str
+    until_ref: str | None
+    source_span: SourceSpan
+
+
+@dataclass(frozen=True)
+class ParsedLoopBlock:
+    """Parsed source-level bounded loop block awaiting backedge lowering."""
+
+    policy: ParsedLoopPolicy
+    body: ParsedSourceBlock
+    source_span: SourceSpan
+    entry_statement: ParsedSourceStatement | None = None
+    body_tail_statements: tuple[ParsedSourceStatement, ...] = ()
+    follow_statement: ParsedSourceStatement | None = None
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "body_tail_statements", tuple(self.body_tail_statements))
+
+
+ParsedSourceStatement = (
+    ParsedStepCall
+    | ParsedSubflowCall
+    | ParsedIntrinsicCall
+    | ParsedUnsupportedStatement
+    | ParsedBranchBlock
+    | ParsedLoopBlock
+)
+
+
+@dataclass(frozen=True)
+class ParsedSourceBlock:
+    """Ordered source-level statements for a workflow body or direct steps list."""
+
+    statements: tuple[ParsedSourceStatement, ...] = ()
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "statements", tuple(self.statements))
+
+    @property
+    def steps(self) -> tuple[ParsedStepCall, ...]:
+        return tuple(
+            statement
+            for statement in self.statements
+            if isinstance(statement, ParsedStepCall)
+        )
+
+    @property
+    def subflows(self) -> tuple[ParsedSubflowCall, ...]:
+        return tuple(
+            statement
+            for statement in self.statements
+            if isinstance(statement, ParsedSubflowCall)
+        )
+
+    @property
+    def intrinsics(self) -> tuple[ParsedIntrinsicCall, ...]:
+        return tuple(
+            statement
+            for statement in self.statements
+            if isinstance(statement, ParsedIntrinsicCall)
+        )
+
+    @property
+    def unsupported(self) -> tuple[ParsedUnsupportedStatement, ...]:
+        return tuple(
+            statement
+            for statement in self.statements
+            if isinstance(statement, ParsedUnsupportedStatement)
+        )
+
+    @property
+    def branches(self) -> tuple[ParsedBranchBlock, ...]:
+        return tuple(
+            statement
+            for statement in self.statements
+            if isinstance(statement, ParsedBranchBlock)
+        )
+
+    @property
+    def loops(self) -> tuple[ParsedLoopBlock, ...]:
+        return tuple(
+            statement
+            for statement in self.statements
+            if isinstance(statement, ParsedLoopBlock)
+        )
+
+
+StepCall = ParsedStepCall
+SubflowCall = ParsedSubflowCall
+IntrinsicCall = ParsedIntrinsicCall
 
 
 @dataclass(frozen=True)
@@ -136,13 +336,20 @@ class WorkflowDeclaration:
     source_span: SourceSpan
     function_name: str | None = None
     parameters: tuple[str, ...] = ()
-    steps: tuple[StepCall, ...] = ()
-    intrinsics: tuple[IntrinsicCall, ...] = ()
+    source_block: ParsedSourceBlock = field(default_factory=ParsedSourceBlock)
+    steps: tuple[ParsedStepCall, ...] = ()
+    intrinsics: tuple[ParsedIntrinsicCall, ...] = ()
+    policies: tuple[WorkflowPolicyBinding, ...] = ()
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "parameters", tuple(self.parameters))
-        object.__setattr__(self, "steps", tuple(self.steps))
-        object.__setattr__(self, "intrinsics", tuple(self.intrinsics))
+        object.__setattr__(self, "policies", tuple(self.policies))
+        source_block = self.source_block
+        if not source_block.statements and (self.steps or self.intrinsics):
+            source_block = ParsedSourceBlock((*self.steps, *self.intrinsics))
+            object.__setattr__(self, "source_block", source_block)
+        object.__setattr__(self, "steps", source_block.steps)
+        object.__setattr__(self, "intrinsics", source_block.intrinsics)
 
 
 @dataclass(frozen=True)
@@ -201,6 +408,15 @@ class CompileWorkflowSourceResult(LowerWorkflowSourceResult):
     """Result carrier for source-to-manifest compilation."""
 
     manifest: WorkflowManifest | None = None
+
+
+@dataclass(frozen=True)
+class _LoweredSourceBlock:
+    steps: tuple[Step, ...]
+    routes: tuple[Route, ...]
+    entry_step_id: str | None
+    exit_step_ids: tuple[str, ...]
+    output_producers: Mapping[str, str]
 
 
 @dataclass(frozen=True)
@@ -505,7 +721,7 @@ def _parse_workflow_declaration(
             declarations.append(statement)
         elif isinstance(statement, ast.Assign):
             for target in statement.targets:
-                if isinstance(target, ast.Name) and target.id in {"workflow", "halt", "suspend", "transition"}:
+                if isinstance(target, ast.Name) and target.id in RESERVED_AUTHORING_INTRINSICS:
                     diagnostics.append(
                         _diagnostic(
                             DiagnosticCode.RESERVED_INTRINSIC_SHADOWING,
@@ -556,16 +772,31 @@ def _parse_direct_workflow(
             )
         )
         return None
-    steps = tuple(
-        step for element in steps_keyword.value.elts if (step := _parse_step_call(element, source_path, imports, diagnostics))
+    policies = _parse_workflow_policy_keywords(call, source_path, imports, diagnostics)
+    if policies is None:
+        return None
+    statements = tuple(
+        _parse_direct_workflow_step(element, source_path, imports, diagnostics)
+        for element in steps_keyword.value.elts
     )
+    statements = tuple(statement for statement in statements if statement is not None)
     return WorkflowDeclaration(
         source_form="direct",
         id=workflow_id,
         version=_string_keyword(call, "version") or "1.0",
         source_span=source_span_for_node(source_path, call),
-        steps=steps,
+        source_block=ParsedSourceBlock(statements),
+        policies=policies,
     )
+
+
+def _parse_direct_workflow_step(
+    node: ast.AST,
+    source_path: str,
+    imports: Mapping[str, ImportBinding],
+    diagnostics: list[AuthoringDiagnostic],
+) -> ParsedStepCall | ParsedSubflowCall | None:
+    return _parse_component_call(node, source_path, imports, diagnostics)
 
 
 def _parse_function_workflow(
@@ -597,6 +828,8 @@ def _parse_function_workflow(
         )
     decorator = next(decorator for decorator in function.decorator_list if _is_workflow_call(decorator, imports))
     header_ok = _validate_workflow_decorator(decorator, source_path, diagnostics)
+    policies = _parse_workflow_policy_keywords(decorator, source_path, imports, diagnostics)
+    header_ok = policies is not None and header_ok
     header_ok = _validate_function_signature(function, source_path, diagnostics) and header_ok
     workflow_id = _string_keyword(decorator, "id")
     if workflow_id is None:
@@ -612,10 +845,10 @@ def _parse_function_workflow(
     version = _string_keyword(decorator, "version") or "1.0"
     parameters = _function_parameter_names(function)
     initial_scope_ok = _validate_initial_function_scope(parameters, imports, source_path, function, diagnostics)
-    steps, intrinsics, local_outputs = (
-        _parse_function_body_steps(function, source_path, imports, parameters, diagnostics)
+    source_block, local_outputs = (
+        _parse_function_body_block(function, source_path, imports, parameters, diagnostics)
         if header_ok and initial_scope_ok
-        else ((), (), {})
+        else (ParsedSourceBlock(), {})
     )
     return WorkflowDeclaration(
         source_form="function",
@@ -624,8 +857,8 @@ def _parse_function_workflow(
         source_span=source_span_for_node(source_path, function),
         function_name=function.name,
         parameters=parameters,
-        steps=steps,
-        intrinsics=intrinsics,
+        source_block=source_block,
+        policies=() if policies is None else policies,
     )
 
 
@@ -646,7 +879,7 @@ def _validate_workflow_decorator(
             )
         )
         valid = False
-    allowed_keywords = {"id", "version"}
+    allowed_keywords = {"id", "version", "policy", "policies"}
     for keyword in decorator.keywords:
         if keyword.arg not in allowed_keywords:
             diagnostics.append(
@@ -657,6 +890,8 @@ def _validate_workflow_decorator(
                 )
             )
             valid = False
+            continue
+        if keyword.arg in {"policy", "policies"}:
             continue
         if not isinstance(keyword.value, ast.Constant) or not isinstance(keyword.value.value, str):
             diagnostics.append(
@@ -740,20 +975,87 @@ def _parameter_span(source_path: str, function: ast.FunctionDef, parameter: str)
     return source_span_for_node(source_path, function)
 
 
-def _parse_function_body_steps(
+def _parse_function_body_block(
     function: ast.FunctionDef,
     source_path: str,
     imports: Mapping[str, ImportBinding],
     parameters: Sequence[str],
     diagnostics: list[AuthoringDiagnostic],
-) -> tuple[tuple[StepCall, ...], tuple[IntrinsicCall, ...], Mapping[str, SourceSpan]]:
-    steps: list[StepCall] = []
-    intrinsics: list[IntrinsicCall] = []
-    local_outputs: dict[str, SourceSpan] = {}
-    for statement in function.body:
+) -> tuple[ParsedSourceBlock, Mapping[str, SourceSpan]]:
+    return _parse_statement_block(
+        function.body,
+        source_path,
+        imports,
+        parameters,
+        diagnostics,
+        initial_local_outputs={},
+        return_is_terminal=False,
+    )[:2]
+
+
+def _parse_statement_block(
+    body: Sequence[ast.stmt],
+    source_path: str,
+    imports: Mapping[str, ImportBinding],
+    parameters: Sequence[str],
+    diagnostics: list[AuthoringDiagnostic],
+    *,
+    initial_local_outputs: Mapping[str, SourceSpan],
+    return_is_terminal: bool,
+    allow_output_rebinding: bool = False,
+    allow_terminal_fallthrough: bool = False,
+) -> tuple[ParsedSourceBlock, Mapping[str, SourceSpan], bool]:
+    statements: list[ParsedSourceStatement] = []
+    local_outputs: dict[str, SourceSpan] = dict(initial_local_outputs)
+    terminal = False
+    pending_loop_policy: ParsedLoopPolicy | None = None
+    pending_invalid_loop_policy = False
+    for statement in body:
+        if terminal:
+            diagnostics.append(
+                _diagnostic(
+                    DiagnosticCode.UNREACHABLE_CONTROL_PATH,
+                    "statement is unreachable because every branch exits control flow",
+                    source_span=source_span_for_node(source_path, statement),
+                )
+            )
+            continue
+        if pending_loop_policy is not None and not isinstance(statement, ast.While):
+            diagnostics.append(
+                _diagnostic(
+                    DiagnosticCode.AMBIGUOUS_LOOP,
+                    "loop policy must be immediately followed by while True",
+                    source_span=pending_loop_policy.source_span,
+                    details={"policy_ref": pending_loop_policy.policy_ref},
+                )
+            )
+            pending_loop_policy = None
+        if pending_invalid_loop_policy and not isinstance(statement, ast.While):
+            pending_invalid_loop_policy = False
         if isinstance(statement, ast.Assign):
             targets = _assignment_output_bindings(statement, source_path, diagnostics)
+            duplicate_outputs = [
+                output for output in targets if output.name in local_outputs
+            ]
+            if duplicate_outputs and not allow_output_rebinding:
+                for output in duplicate_outputs:
+                    diagnostics.append(
+                        _diagnostic(
+                            DiagnosticCode.UNSUPPORTED_MUTATION,
+                            f"control variable {output.name!r} cannot be rebound before routing",
+                            source_span=source_span_for_node(source_path, statement),
+                            details={"name": output.name},
+                        )
+                    )
+                continue
             if _is_reserved_intrinsic_call(statement.value, imports):
+                statements.append(
+                    ParsedUnsupportedStatement(
+                        reason="assigned_intrinsic_call",
+                        source_span=source_span_for_node(source_path, statement.value),
+                        node=statement,
+                    )
+                )
                 diagnostics.append(
                     _diagnostic(
                         DiagnosticCode.UNSUPPORTED_SYNTAX,
@@ -762,7 +1064,7 @@ def _parse_function_body_steps(
                     )
                 )
                 continue
-            step = _parse_step_call(
+            step = _parse_component_call(
                 statement.value,
                 source_path,
                 imports,
@@ -772,28 +1074,28 @@ def _parse_function_body_steps(
                 output_bindings=targets,
             )
             if step is not None:
-                duplicate_outputs = [
-                    output for output in targets if output.name in local_outputs
-                ]
-                for output in duplicate_outputs:
-                    diagnostics.append(
-                        _diagnostic(
-                            DiagnosticCode.UNSUPPORTED_SYNTAX,
-                            "workflow local output names must be assigned exactly once",
-                            source_span=output.source_span,
-                        )
-                    )
-                if not duplicate_outputs:
-                    steps.append(step)
-                    for output in targets:
-                        local_outputs[output.name] = output.source_span
+                statements.append(step)
+                for output in targets:
+                    local_outputs[output.name] = output.source_span
             continue
         elif isinstance(statement, ast.Expr):
+            if _is_loop_policy_marker_call(statement.value, imports):
+                loop_policy = _parse_loop_policy_marker(
+                    statement.value,
+                    source_path,
+                    imports,
+                    diagnostics,
+                )
+                pending_loop_policy = loop_policy
+                pending_invalid_loop_policy = loop_policy is None
+                continue
             intrinsic = _parse_intrinsic_call(statement.value, source_path, imports, diagnostics)
             if intrinsic is not None:
-                intrinsics.append(intrinsic)
+                statements.append(intrinsic)
+                if return_is_terminal and intrinsic.name == "halt":
+                    terminal = True
                 continue
-            step = _parse_step_call(
+            step = _parse_component_call(
                 statement.value,
                 source_path,
                 imports,
@@ -802,11 +1104,55 @@ def _parse_function_body_steps(
                 local_outputs=local_outputs,
             )
             if step is not None:
-                steps.append(step)
+                statements.append(step)
             continue
-        elif isinstance(statement, ast.Return) and statement.value is None:
+        elif isinstance(statement, ast.Return) and _is_none_return_value(statement.value):
+            if return_is_terminal:
+                terminal = True
+            continue
+        elif isinstance(statement, ast.If):
+            branch, merged_outputs, branch_terminal = _parse_branch_block(
+                statement,
+                source_path,
+                imports,
+                parameters,
+                local_outputs,
+                diagnostics,
+                allow_output_rebinding=allow_output_rebinding,
+                allow_terminal_fallthrough=allow_terminal_fallthrough,
+            )
+            if branch is not None:
+                statements.append(branch)
+                local_outputs.update(merged_outputs)
+                terminal = branch_terminal
+            continue
+        elif isinstance(statement, ast.While):
+            loop_block = _parse_while_loop_contract(
+                statement,
+                source_path,
+                imports,
+                parameters,
+                local_outputs,
+                pending_loop_policy,
+                pending_invalid_loop_policy,
+                diagnostics,
+            )
+            pending_loop_policy = None
+            pending_invalid_loop_policy = False
+            if loop_block is not None:
+                statements.append(loop_block)
+                local_outputs.update(
+                    _source_block_output_spans(loop_block.body, local_outputs)
+                )
             continue
         else:
+            statements.append(
+                ParsedUnsupportedStatement(
+                    reason="outside_linear_subset",
+                    source_span=source_span_for_node(source_path, statement),
+                    node=statement,
+                )
+            )
             diagnostics.append(
                 _diagnostic(
                     DiagnosticCode.UNSUPPORTED_SYNTAX,
@@ -815,7 +1161,481 @@ def _parse_function_body_steps(
                 )
             )
             continue
-    return tuple(steps), tuple(intrinsics), local_outputs
+    if pending_loop_policy is not None:
+        diagnostics.append(
+            _diagnostic(
+                DiagnosticCode.AMBIGUOUS_LOOP,
+                "loop policy must be immediately followed by while True",
+                source_span=pending_loop_policy.source_span,
+                details={"policy_ref": pending_loop_policy.policy_ref},
+            )
+        )
+    return ParsedSourceBlock(_with_loop_follow_statements(statements)), local_outputs, terminal
+
+
+def _with_loop_follow_statements(
+    statements: Sequence[ParsedSourceStatement],
+) -> tuple[ParsedSourceStatement, ...]:
+    linked: list[ParsedSourceStatement] = []
+    for index, statement in enumerate(statements):
+        if isinstance(statement, ParsedLoopBlock):
+            follow_statement = statements[index + 1] if index + 1 < len(statements) else None
+            linked.append(replace(statement, follow_statement=follow_statement))
+        else:
+            linked.append(statement)
+    return tuple(linked)
+
+
+def _parse_branch_block(
+    statement: ast.If,
+    source_path: str,
+    imports: Mapping[str, ImportBinding],
+    parameters: Sequence[str],
+    local_outputs: Mapping[str, SourceSpan],
+    diagnostics: list[AuthoringDiagnostic],
+    *,
+    allow_output_rebinding: bool = False,
+    allow_terminal_fallthrough: bool = False,
+) -> tuple[ParsedBranchBlock | None, Mapping[str, SourceSpan], bool]:
+    initial_diagnostic_count = len(diagnostics)
+    raw_arms = _branch_arms(statement)
+    control_name: str | None = None
+    seen_literals: set[str] = set()
+    parsed_arms: list[ParsedBranchArm] = []
+    nonterminal_new_outputs: list[set[str]] = []
+    arm_output_maps: list[Mapping[str, SourceSpan]] = []
+    branch_valid = True
+    has_else = False
+
+    for test, arm_body, arm_node in raw_arms:
+        condition: ParsedBranchCondition | None = None
+        if test is None:
+            has_else = True
+        else:
+            condition = _parse_branch_condition(
+                test,
+                source_path,
+                local_outputs,
+                diagnostics,
+            )
+            if condition is None:
+                branch_valid = False
+            else:
+                if control_name is None:
+                    control_name = condition.decision_output
+                elif control_name != condition.decision_output:
+                    diagnostics.append(
+                        _diagnostic(
+                            DiagnosticCode.DYNAMIC_ROUTING_CONDITION,
+                            "branch route comparisons must use one decision output",
+                            source_span=condition.source_span,
+                            details={
+                                "expected": control_name,
+                                "actual": condition.decision_output,
+                            },
+                        )
+                    )
+                    branch_valid = False
+                if condition.literal in seen_literals:
+                    diagnostics.append(
+                        _diagnostic(
+                            DiagnosticCode.DYNAMIC_ROUTING_CONDITION,
+                            "branch route comparisons must not repeat literal targets",
+                            source_span=condition.source_span,
+                            details={"literal": condition.literal},
+                        )
+                    )
+                    branch_valid = False
+                seen_literals.add(condition.literal)
+
+        body_block, body_outputs, body_terminal = _parse_statement_block(
+            arm_body,
+            source_path,
+            imports,
+            parameters,
+            diagnostics,
+            initial_local_outputs=local_outputs,
+            return_is_terminal=True,
+            allow_output_rebinding=allow_output_rebinding,
+            allow_terminal_fallthrough=allow_terminal_fallthrough,
+        )
+        parsed_arms.append(
+            ParsedBranchArm(
+                condition=condition,
+                body=body_block,
+                source_span=source_span_for_node(source_path, arm_node),
+                terminal=body_terminal,
+            )
+        )
+        arm_output_maps.append(body_outputs)
+        if not body_terminal:
+            nonterminal_new_outputs.append(set(body_outputs) - set(local_outputs))
+
+    if control_name is None:
+        branch_valid = False
+    if (
+        not has_else
+        and branch_valid
+        and not (allow_terminal_fallthrough and any(arm.terminal for arm in parsed_arms))
+        and initial_diagnostic_count == 0
+        and len(diagnostics) == initial_diagnostic_count
+    ):
+        diagnostics.append(
+            _diagnostic(
+                DiagnosticCode.MISSING_FALLTHROUGH_ROUTE,
+                "branch routes require an else arm to avoid implicit fallthrough",
+                source_span=source_span_for_node(source_path, statement),
+            )
+        )
+        branch_valid = False
+    elif not has_else:
+        nonterminal_new_outputs.append(set())
+
+    merged_outputs: dict[str, SourceSpan] = {}
+    if nonterminal_new_outputs:
+        common_outputs = set.intersection(*nonterminal_new_outputs)
+        for name in common_outputs:
+            for arm, arm_outputs in zip(parsed_arms, arm_output_maps):
+                if not arm.terminal and name in arm_outputs:
+                    merged_outputs[name] = arm_outputs[name]
+                    break
+
+    if not branch_valid:
+        return None, {}, False
+
+    return (
+        ParsedBranchBlock(
+            decision_output=control_name,
+            arms=tuple(parsed_arms),
+            source_span=source_span_for_node(source_path, statement),
+            merged_outputs=merged_outputs,
+        ),
+        merged_outputs,
+        has_else and all(arm.terminal for arm in parsed_arms),
+    )
+
+
+def _parse_loop_policy_marker(
+    node: ast.AST,
+    source_path: str,
+    imports: Mapping[str, ImportBinding],
+    diagnostics: list[AuthoringDiagnostic],
+) -> ParsedLoopPolicy | None:
+    if not _is_reserved_intrinsic_call(node, imports):
+        return None
+    assert isinstance(node, ast.Call)
+    assert isinstance(node.func, ast.Name)
+    if node.func.id != "loop":
+        return None
+    if node.args or any(keyword.arg is None for keyword in node.keywords):
+        diagnostics.append(
+            _diagnostic(
+                DiagnosticCode.AMBIGUOUS_LOOP,
+                "loop policy must use explicit keyword arguments",
+                source_span=source_span_for_node(source_path, node),
+            )
+        )
+        return None
+    allowed_keywords = set(RESERVED_INTRINSIC_CALL_KEYWORDS["loop"])
+    keyword_names = {keyword.arg for keyword in node.keywords}
+    if keyword_names != allowed_keywords:
+        diagnostics.append(
+            _diagnostic(
+                DiagnosticCode.AMBIGUOUS_LOOP,
+                "loop policy syntax is loop(policy=<imported loop policy>, reentry_id=<literal>)",
+                source_span=source_span_for_node(source_path, node),
+            )
+        )
+        return None
+
+    policy_keyword = _keyword(node, "policy")
+    reentry_keyword = _keyword(node, "reentry_id")
+    if policy_keyword is None or reentry_keyword is None:
+        return None
+    if (
+        not isinstance(reentry_keyword.value, ast.Constant)
+        or not isinstance(reentry_keyword.value.value, str)
+    ):
+        diagnostics.append(
+            _diagnostic(
+                DiagnosticCode.AMBIGUOUS_LOOP,
+                "loop reentry_id must be a literal string",
+                source_span=source_span_for_node(source_path, reentry_keyword.value),
+            )
+        )
+        return None
+    if not isinstance(policy_keyword.value, ast.Name):
+        diagnostics.append(
+            _diagnostic(
+                DiagnosticCode.AMBIGUOUS_LOOP,
+                "loop policy must reference an imported literal PolicyComponent",
+                source_span=source_span_for_node(source_path, policy_keyword.value),
+            )
+        )
+        return None
+
+    binding = imports.get(policy_keyword.value.id)
+    if (
+        binding is None
+        or binding.component is None
+        or binding.component.kind is not ComponentKind.POLICY
+        or not isinstance(binding.component, PolicyComponent)
+    ):
+        diagnostics.append(
+            _diagnostic(
+                DiagnosticCode.AMBIGUOUS_LOOP,
+                "loop policy must reference an imported PolicyComponent",
+                source_span=source_span_for_node(source_path, policy_keyword.value),
+                component_ref=None if binding is None else binding.component_ref,
+            )
+        )
+        return None
+    policy = binding.component
+    if policy.policy_type != "loop":
+        diagnostics.append(
+            _diagnostic(
+                DiagnosticCode.AMBIGUOUS_LOOP,
+                "loop policy component must have policy_type='loop'",
+                source_span=source_span_for_node(source_path, policy_keyword.value),
+                component_ref=binding.component_ref,
+                details={"policy_type": policy.policy_type},
+            )
+        )
+        return None
+    max_iterations = policy.config.get("max_iterations")
+    if not isinstance(max_iterations, int) or isinstance(max_iterations, bool) or max_iterations < 1:
+        diagnostics.append(
+            _diagnostic(
+                DiagnosticCode.AMBIGUOUS_LOOP,
+                "loop policy requires a positive literal max_iterations bound",
+                source_span=source_span_for_node(source_path, policy_keyword.value),
+                component_ref=binding.component_ref,
+            )
+        )
+        return None
+    until_ref = policy.config.get("until_ref")
+    if until_ref is not None and not isinstance(until_ref, str):
+        diagnostics.append(
+            _diagnostic(
+                DiagnosticCode.AMBIGUOUS_LOOP,
+                "loop policy until_ref must be a literal string when provided",
+                source_span=source_span_for_node(source_path, policy_keyword.value),
+                component_ref=binding.component_ref,
+            )
+        )
+        return None
+    return ParsedLoopPolicy(
+        policy_ref=binding.component_ref,
+        max_iterations=max_iterations,
+        reentry_id=reentry_keyword.value.value,
+        until_ref=until_ref,
+        source_span=source_span_for_node(source_path, node),
+    )
+
+
+def _is_loop_policy_marker_call(node: ast.AST, imports: Mapping[str, ImportBinding]) -> bool:
+    return (
+        _is_reserved_intrinsic_call(node, imports)
+        and isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "loop"
+    )
+
+
+def _parse_while_loop_contract(
+    statement: ast.While,
+    source_path: str,
+    imports: Mapping[str, ImportBinding],
+    parameters: Sequence[str],
+    local_outputs: Mapping[str, SourceSpan],
+    pending_loop_policy: ParsedLoopPolicy | None,
+    pending_invalid_loop_policy: bool,
+    diagnostics: list[AuthoringDiagnostic],
+) -> ParsedLoopBlock | None:
+    if (
+        not isinstance(statement.test, ast.Constant)
+        or statement.test.value is not True
+    ):
+        diagnostics.append(
+            _diagnostic(
+                DiagnosticCode.AMBIGUOUS_LOOP,
+                "bounded loops must use while True with an adjacent literal loop policy",
+                source_span=source_span_for_node(source_path, statement.test),
+            )
+        )
+        return None
+    if pending_invalid_loop_policy:
+        return None
+    if pending_loop_policy is None:
+        diagnostics.append(
+            _diagnostic(
+                DiagnosticCode.AMBIGUOUS_LOOP,
+                "while True loops require an adjacent literal loop policy",
+                source_span=source_span_for_node(source_path, statement),
+            )
+        )
+        return None
+    if _diagnose_unsupported_loop_controls(statement.body, source_path, diagnostics):
+        return None
+
+    body_block, _, _ = _parse_statement_block(
+        statement.body,
+        source_path,
+        imports,
+        parameters,
+        diagnostics,
+        initial_local_outputs=local_outputs,
+        return_is_terminal=True,
+        allow_output_rebinding=True,
+        allow_terminal_fallthrough=True,
+    )
+    entry_statement = body_block.statements[0] if body_block.statements else None
+    return ParsedLoopBlock(
+        policy=pending_loop_policy,
+        body=body_block,
+        source_span=source_span_for_node(source_path, statement),
+        entry_statement=entry_statement,
+        body_tail_statements=_source_block_tail_statements(body_block),
+    )
+
+
+def _diagnose_unsupported_loop_controls(
+    body: Sequence[ast.stmt],
+    source_path: str,
+    diagnostics: list[AuthoringDiagnostic],
+) -> bool:
+    invalid = False
+    for statement in body:
+        for node in ast.walk(statement):
+            if isinstance(node, ast.While):
+                diagnostics.append(
+                    _diagnostic(
+                        DiagnosticCode.AMBIGUOUS_LOOP,
+                        "nested while loops require a separate adjacent literal loop policy",
+                        source_span=source_span_for_node(source_path, node),
+                    )
+                )
+                invalid = True
+            elif isinstance(node, (ast.Break, ast.Continue)):
+                diagnostics.append(
+                    _diagnostic(
+                        DiagnosticCode.AMBIGUOUS_LOOP,
+                        "bounded loop bodies do not support break or continue",
+                        source_span=source_span_for_node(source_path, node),
+                    )
+                )
+                invalid = True
+            elif isinstance(node, ast.Return) and not _is_none_return_value(node.value):
+                diagnostics.append(
+                    _diagnostic(
+                        DiagnosticCode.AMBIGUOUS_LOOP,
+                        "bounded loop bodies only support return None as a terminal exit",
+                        source_span=source_span_for_node(source_path, node.value),
+                    )
+                )
+                invalid = True
+    return invalid
+
+
+def _is_none_return_value(node: ast.AST | None) -> bool:
+    return node is None or (isinstance(node, ast.Constant) and node.value is None)
+
+
+def _source_block_tail_statements(
+    block: ParsedSourceBlock,
+) -> tuple[ParsedSourceStatement, ...]:
+    if not block.statements:
+        return ()
+    tail = block.statements[-1]
+    if isinstance(tail, ParsedBranchBlock):
+        tails: list[ParsedSourceStatement] = []
+        for arm in tail.arms:
+            if not arm.terminal:
+                tails.extend(_source_block_tail_statements(arm.body))
+        return tuple(tails)
+    return (tail,)
+
+
+def _source_block_output_spans(
+    block: ParsedSourceBlock,
+    initial_outputs: Mapping[str, SourceSpan],
+) -> Mapping[str, SourceSpan]:
+    outputs: dict[str, SourceSpan] = dict(initial_outputs)
+    for statement in block.statements:
+        if isinstance(statement, ParsedStepCall):
+            for output in statement.outputs:
+                outputs[output.name] = output.source_span
+        elif isinstance(statement, ParsedBranchBlock):
+            outputs.update(statement.merged_outputs)
+        elif isinstance(statement, ParsedLoopBlock):
+            outputs.update(_source_block_output_spans(statement.body, outputs))
+    return outputs
+
+
+def _branch_arms(statement: ast.If) -> tuple[tuple[ast.AST | None, Sequence[ast.stmt], ast.stmt], ...]:
+    arms: list[tuple[ast.AST | None, Sequence[ast.stmt], ast.stmt]] = []
+    current: ast.If = statement
+    while True:
+        arms.append((current.test, current.body, current))
+        if len(current.orelse) == 1 and isinstance(current.orelse[0], ast.If):
+            current = current.orelse[0]
+            continue
+        if current.orelse:
+            arms.append((None, current.orelse, current.orelse[0]))
+        break
+    return tuple(arms)
+
+
+def _parse_branch_condition(
+    test: ast.AST,
+    source_path: str,
+    local_outputs: Mapping[str, SourceSpan],
+    diagnostics: list[AuthoringDiagnostic],
+) -> ParsedBranchCondition | None:
+    if (
+        not isinstance(test, ast.Compare)
+        or not isinstance(test.left, ast.Name)
+        or len(test.ops) != 1
+        or not isinstance(test.ops[0], ast.Eq)
+        or len(test.comparators) != 1
+    ):
+        diagnostics.append(
+            _diagnostic(
+                DiagnosticCode.DYNAMIC_ROUTING_CONDITION,
+                "branch route conditions must compare a decision output to a literal string",
+                source_span=source_span_for_node(source_path, test),
+            )
+        )
+        return None
+
+    comparator = test.comparators[0]
+    if not isinstance(comparator, ast.Constant) or not isinstance(comparator.value, str):
+        diagnostics.append(
+            _diagnostic(
+                DiagnosticCode.DYNAMIC_ROUTING_CONDITION,
+                "branch route comparisons must use a literal string target",
+                source_span=source_span_for_node(source_path, test),
+            )
+        )
+        return None
+
+    decision_output = test.left.id
+    if decision_output not in local_outputs:
+        diagnostics.append(
+            _diagnostic(
+                DiagnosticCode.DYNAMIC_ROUTING_CONDITION,
+                "branch route comparisons must use a prior decision output",
+                source_span=source_span_for_node(source_path, test.left),
+                details={"name": decision_output},
+            )
+        )
+        return None
+
+    return ParsedBranchCondition(
+        decision_output=decision_output,
+        literal=comparator.value,
+        source_span=source_span_for_node(source_path, test),
+    )
 
 
 def _assignment_output_bindings(
@@ -879,6 +1699,283 @@ def _assignment_output_bindings(
             )
         )
     return tuple(outputs)
+
+
+def _parse_component_call(
+    node: ast.AST,
+    source_path: str,
+    imports: Mapping[str, ImportBinding],
+    diagnostics: list[AuthoringDiagnostic],
+    *,
+    parameters: Sequence[str] = (),
+    local_outputs: Mapping[str, SourceSpan] | None = None,
+    output_bindings: Sequence[StepOutputBinding] = (),
+) -> ParsedStepCall | ParsedSubflowCall | None:
+    if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
+        binding = imports.get(node.func.id)
+        if (
+            binding is not None
+            and binding.component is not None
+            and binding.component.kind is ComponentKind.SUBFLOW
+            and isinstance(binding.component, SubflowComponent)
+        ):
+            return _parse_subflow_call(
+                node,
+                binding,
+                source_path,
+                imports,
+                diagnostics,
+                parameters=parameters,
+                local_outputs=local_outputs,
+                output_bindings=output_bindings,
+            )
+    return _parse_step_call(
+        node,
+        source_path,
+        imports,
+        diagnostics,
+        parameters=parameters,
+        local_outputs=local_outputs,
+        output_bindings=output_bindings,
+    )
+
+
+def _parse_subflow_call(
+    node: ast.Call,
+    binding: ImportBinding,
+    source_path: str,
+    imports: Mapping[str, ImportBinding],
+    diagnostics: list[AuthoringDiagnostic],
+    *,
+    parameters: Sequence[str] = (),
+    local_outputs: Mapping[str, SourceSpan] | None = None,
+    output_bindings: Sequence[StepOutputBinding] = (),
+) -> ParsedSubflowCall | None:
+    local_outputs = {} if local_outputs is None else local_outputs
+    component = binding.component
+    assert isinstance(component, SubflowComponent)
+    if output_bindings:
+        diagnostics.append(
+            _diagnostic(
+                DiagnosticCode.UNSUPPORTED_SUBFLOW_REFERENCE,
+                "subflow calls do not produce assignable workflow-local outputs",
+                source_span=source_span_for_node(source_path, node),
+            )
+        )
+        return None
+    if node.args or any(keyword.arg is None for keyword in node.keywords):
+        diagnostics.append(
+            _diagnostic(
+                DiagnosticCode.MALFORMED_COMPONENT_EXPORT,
+                "subflow calls must use keyword-only authoring arguments",
+                source_span=source_span_for_node(source_path, node),
+                component_ref=binding.component_ref,
+            )
+        )
+        return None
+    if _contains_executable_subflow_code(node):
+        diagnostics.append(
+            _diagnostic(
+                DiagnosticCode.UNSUPPORTED_SUBFLOW_REFERENCE,
+                "subflow calls must reference a manifest identity, not executable child workflow code",
+                source_span=source_span_for_node(source_path, node),
+            )
+        )
+        return None
+
+    subflow_id = _string_keyword(node, "id")
+    if subflow_id is None:
+        diagnostics.append(
+            _diagnostic(
+                DiagnosticCode.MALFORMED_COMPONENT_EXPORT,
+                "subflow calls must include a literal id keyword",
+                source_span=source_span_for_node(source_path, node),
+                component_ref=binding.component_ref,
+            )
+        )
+        return None
+
+    manifest_hash = _subflow_manifest_hash(node, component, source_path, binding, diagnostics)
+    alias = _subflow_alias(node, source_path, diagnostics)
+    inputs = _parse_subflow_inputs(
+        node,
+        source_path,
+        imports=imports,
+        parameters=parameters,
+        local_outputs=local_outputs,
+        diagnostics=diagnostics,
+    )
+    if manifest_hash is None or inputs is None:
+        return None
+    return ParsedSubflowCall(
+        id=subflow_id,
+        local_name=node.func.id,
+        component_ref=binding.component_ref,
+        source_span=source_span_for_node(source_path, node),
+        component=component,
+        manifest_hash=manifest_hash,
+        alias=alias,
+        arguments={keyword.arg: keyword.value for keyword in node.keywords if keyword.arg},
+        inputs=inputs,
+    )
+
+
+def _contains_executable_subflow_code(node: ast.Call) -> bool:
+    executable_keywords = {"workflow", "steps", "body", "source", "runner"}
+    return any(keyword.arg in executable_keywords for keyword in node.keywords)
+
+
+def _subflow_manifest_hash(
+    node: ast.Call,
+    component: SubflowComponent,
+    source_path: str,
+    binding: ImportBinding,
+    diagnostics: list[AuthoringDiagnostic],
+) -> str | None:
+    keyword = _keyword(node, "manifest_hash")
+    if keyword is not None:
+        if isinstance(keyword.value, ast.Constant) and isinstance(keyword.value.value, str):
+            return _validated_subflow_manifest_hash(
+                keyword.value.value,
+                source_path,
+                keyword,
+                diagnostics,
+            )
+        diagnostics.append(
+            _diagnostic(
+                DiagnosticCode.UNSUPPORTED_SUBFLOW_REFERENCE,
+                "subflow manifest_hash must be a literal or resolver-provided identity",
+                source_span=source_span_for_node(source_path, keyword),
+            )
+        )
+        return None
+    manifest_hash = component.metadata.get("manifest_hash")
+    if isinstance(manifest_hash, str):
+        return _validated_subflow_manifest_hash(
+            manifest_hash,
+            source_path,
+            node,
+            diagnostics,
+        )
+    diagnostics.append(
+        _diagnostic(
+            DiagnosticCode.UNSUPPORTED_SUBFLOW_REFERENCE,
+            "subflow manifest_hash must be a literal or resolver-provided identity",
+            source_span=source_span_for_node(source_path, node),
+        )
+    )
+    return None
+
+
+def _validated_subflow_manifest_hash(
+    manifest_hash: str,
+    source_path: str,
+    node: ast.AST,
+    diagnostics: list[AuthoringDiagnostic],
+) -> str | None:
+    if _MANIFEST_HASH_RE.fullmatch(manifest_hash):
+        return manifest_hash
+    diagnostics.append(
+        _diagnostic(
+            DiagnosticCode.UNSUPPORTED_SUBFLOW_REFERENCE,
+            "subflow manifest_hash must be a literal or resolver-provided identity",
+            source_span=source_span_for_node(source_path, node),
+        )
+    )
+    return None
+
+
+def _subflow_alias(
+    node: ast.Call,
+    source_path: str,
+    diagnostics: list[AuthoringDiagnostic],
+) -> str | None:
+    keyword = _keyword(node, "alias")
+    if keyword is None:
+        return None
+    if isinstance(keyword.value, ast.Constant) and isinstance(keyword.value.value, str):
+        return keyword.value.value
+    diagnostics.append(
+        _diagnostic(
+            DiagnosticCode.UNSUPPORTED_SUBFLOW_REFERENCE,
+            "subflow alias must be a literal string when provided",
+            source_span=source_span_for_node(source_path, keyword),
+        )
+    )
+    return None
+
+
+def _parse_subflow_inputs(
+    node: ast.Call,
+    source_path: str,
+    *,
+    imports: Mapping[str, ImportBinding],
+    parameters: Sequence[str],
+    local_outputs: Mapping[str, SourceSpan],
+    diagnostics: list[AuthoringDiagnostic],
+) -> tuple[StepInputBinding, ...] | None:
+    inputs: list[StepInputBinding] = []
+    valid = True
+    parameter_names = set(parameters)
+    for keyword in node.keywords:
+        if keyword.arg is None or keyword.arg in RESERVED_SUBFLOW_CALL_KEYWORDS:
+            continue
+        if not isinstance(keyword.value, ast.Name):
+            diagnostics.append(
+                _diagnostic(
+                    DiagnosticCode.UNSUPPORTED_SYNTAX,
+                    "subflow keyword values must reference workflow parameters or prior local outputs",
+                    source_span=source_span_for_node(source_path, keyword.value),
+                )
+            )
+            valid = False
+            continue
+        ref_name = keyword.value.id
+        if ref_name in RESERVED_AUTHORING_INTRINSICS:
+            diagnostics.append(
+                _diagnostic(
+                    DiagnosticCode.RESERVED_INTRINSIC_SHADOWING,
+                    "compiler intrinsics cannot be passed as dataflow values",
+                    source_span=source_span_for_node(source_path, keyword.value),
+                    component_ref=f"{AUTHORING_INTRINSIC_MODULE}:{ref_name}",
+                )
+            )
+            valid = False
+            continue
+        ref_binding = imports.get(ref_name)
+        if ref_binding is not None and isinstance(ref_binding.component, PolicyComponent):
+            diagnostics.append(
+                _diagnostic(
+                    DiagnosticCode.RESERVED_CALL_KEYWORD,
+                    "policy components must be passed with reserved policy= or policies= syntax",
+                    source_span=source_span_for_node(source_path, keyword.value),
+                    details={"keyword": keyword.arg},
+                )
+            )
+            valid = False
+            continue
+        if ref_name in parameter_names:
+            value_ref = f"param:{ref_name}"
+        elif ref_name in local_outputs:
+            value_ref = f"output:{ref_name}"
+        else:
+            diagnostics.append(
+                _diagnostic(
+                    DiagnosticCode.UNKNOWN_COMPONENT,
+                    "keyword dataflow reference is not a workflow parameter or prior local output",
+                    source_span=source_span_for_node(source_path, keyword),
+                )
+            )
+            valid = False
+            continue
+        inputs.append(
+            StepInputBinding(
+                name=keyword.arg,
+                value_ref=value_ref,
+                source_span=source_span_for_node(source_path, keyword),
+            )
+        )
+    return tuple(inputs) if valid else None
 
 
 def _parse_step_call(
@@ -959,9 +2056,13 @@ def _parse_step_call(
             )
         )
         return None
+    policies = _parse_step_policy_keywords(node, source_path, imports, diagnostics)
+    if policies is None:
+        return None
     inputs = _parse_step_inputs(
         node,
         source_path,
+        imports=imports,
         parameters=parameters,
         local_outputs=local_outputs,
         diagnostics=diagnostics,
@@ -977,6 +2078,257 @@ def _parse_step_call(
         arguments={keyword.arg: keyword.value for keyword in node.keywords if keyword.arg},
         inputs=inputs,
         outputs=tuple(output_bindings),
+        policies=policies,
+    )
+
+
+def _parse_step_policy_keywords(
+    node: ast.Call,
+    source_path: str,
+    imports: Mapping[str, ImportBinding],
+    diagnostics: list[AuthoringDiagnostic],
+) -> tuple[StepPolicyBinding, ...] | None:
+    policies: list[StepPolicyBinding] = []
+    valid = True
+    for keyword in node.keywords:
+        if keyword.arg not in RESERVED_STEP_CALL_KEYWORDS or keyword.arg == "id":
+            continue
+        assert keyword.arg is not None
+        if keyword.arg == "policy":
+            parsed = _parse_single_step_policy(keyword, source_path, imports, diagnostics)
+            if parsed is None:
+                valid = False
+            else:
+                policies.append(parsed)
+            continue
+        if keyword.arg == "policies":
+            parsed_many = _parse_multiple_step_policies(keyword, source_path, imports, diagnostics)
+            if parsed_many is None:
+                valid = False
+            else:
+                policies.extend(parsed_many)
+            continue
+        diagnostics.append(
+            _reserved_step_keyword_diagnostic(keyword.arg, source_path, keyword)
+        )
+        valid = False
+    return tuple(policies) if valid else None
+
+
+def _parse_workflow_policy_keywords(
+    node: ast.Call,
+    source_path: str,
+    imports: Mapping[str, ImportBinding],
+    diagnostics: list[AuthoringDiagnostic],
+) -> tuple[WorkflowPolicyBinding, ...] | None:
+    policies: list[WorkflowPolicyBinding] = []
+    valid = True
+    for keyword in node.keywords:
+        if keyword.arg not in {"policy", "policies"}:
+            continue
+        if keyword.arg == "policy":
+            parsed = _parse_single_workflow_policy(keyword, source_path, imports, diagnostics)
+            if parsed is None:
+                valid = False
+            else:
+                policies.append(parsed)
+            continue
+        parsed_many = _parse_multiple_workflow_policies(keyword, source_path, imports, diagnostics)
+        if parsed_many is None:
+            valid = False
+        else:
+            policies.extend(parsed_many)
+    return tuple(policies) if valid else None
+
+
+def _parse_multiple_workflow_policies(
+    keyword: ast.keyword,
+    source_path: str,
+    imports: Mapping[str, ImportBinding],
+    diagnostics: list[AuthoringDiagnostic],
+) -> tuple[WorkflowPolicyBinding, ...] | None:
+    if not isinstance(keyword.value, (ast.List, ast.Tuple)):
+        diagnostics.append(_workflow_policy_keyword_diagnostic("policies", source_path, keyword))
+        return None
+    policies: list[WorkflowPolicyBinding] = []
+    valid = True
+    for element in keyword.value.elts:
+        parsed = _workflow_policy_binding_from_node(
+            "policies",
+            element,
+            source_path,
+            imports,
+            diagnostics,
+            invalid_span=element,
+        )
+        if parsed is None:
+            valid = False
+        else:
+            policies.append(parsed)
+    return tuple(policies) if valid else None
+
+
+def _parse_single_workflow_policy(
+    keyword: ast.keyword,
+    source_path: str,
+    imports: Mapping[str, ImportBinding],
+    diagnostics: list[AuthoringDiagnostic],
+) -> WorkflowPolicyBinding | None:
+    return _workflow_policy_binding_from_node(
+        "policy",
+        keyword.value,
+        source_path,
+        imports,
+        diagnostics,
+        invalid_span=keyword,
+    )
+
+
+def _workflow_policy_binding_from_node(
+    keyword_name: str,
+    node: ast.AST,
+    source_path: str,
+    imports: Mapping[str, ImportBinding],
+    diagnostics: list[AuthoringDiagnostic],
+    *,
+    invalid_span: ast.AST,
+) -> WorkflowPolicyBinding | None:
+    if not isinstance(node, ast.Name):
+        diagnostics.append(_workflow_policy_keyword_diagnostic(keyword_name, source_path, invalid_span))
+        return None
+    binding = imports.get(node.id)
+    if (
+        binding is None
+        or binding.component is None
+        or not isinstance(binding.component, PolicyComponent)
+    ):
+        diagnostics.append(_workflow_policy_keyword_diagnostic(keyword_name, source_path, invalid_span))
+        return None
+    if binding.component.policy_type not in _SUPPORTED_WORKFLOW_CONTROL_POLICY_TYPES:
+        diagnostics.append(
+            _diagnostic(
+                DiagnosticCode.UNSUPPORTED_POLICY_CARRIER,
+                (
+                    f"workflow policy type {binding.component.policy_type!r} does not map "
+                    "to an existing workflow-level control carrier"
+                ),
+                source_span=source_span_for_node(source_path, invalid_span),
+                details={"policy_type": binding.component.policy_type},
+            )
+        )
+        return None
+    return WorkflowPolicyBinding(
+        keyword=keyword_name,
+        component_ref=binding.component_ref,
+        component=binding.component,
+        source_span=source_span_for_node(source_path, node),
+    )
+
+
+def _workflow_policy_keyword_diagnostic(
+    keyword_name: str,
+    source_path: str,
+    node: ast.AST,
+) -> AuthoringDiagnostic:
+    return _diagnostic(
+        DiagnosticCode.RESERVED_CALL_KEYWORD,
+        f"workflow policy keyword {keyword_name!r} must reference imported PolicyComponent names",
+        source_span=source_span_for_node(source_path, node),
+        details={"keyword": keyword_name},
+    )
+
+
+def _parse_multiple_step_policies(
+    keyword: ast.keyword,
+    source_path: str,
+    imports: Mapping[str, ImportBinding],
+    diagnostics: list[AuthoringDiagnostic],
+) -> tuple[StepPolicyBinding, ...] | None:
+    if not isinstance(keyword.value, (ast.List, ast.Tuple)):
+        diagnostics.append(_reserved_step_keyword_diagnostic("policies", source_path, keyword))
+        return None
+    policies: list[StepPolicyBinding] = []
+    valid = True
+    for element in keyword.value.elts:
+        parsed = _policy_binding_from_node(
+            "policies",
+            element,
+            source_path,
+            imports,
+            diagnostics,
+            invalid_span=element,
+        )
+        if parsed is None:
+            valid = False
+        else:
+            policies.append(parsed)
+    return tuple(policies) if valid else None
+
+
+def _parse_single_step_policy(
+    keyword: ast.keyword,
+    source_path: str,
+    imports: Mapping[str, ImportBinding],
+    diagnostics: list[AuthoringDiagnostic],
+) -> StepPolicyBinding | None:
+    return _policy_binding_from_node(
+        "policy",
+        keyword.value,
+        source_path,
+        imports,
+        diagnostics,
+        invalid_span=keyword,
+    )
+
+
+def _policy_binding_from_node(
+    keyword_name: str,
+    node: ast.AST,
+    source_path: str,
+    imports: Mapping[str, ImportBinding],
+    diagnostics: list[AuthoringDiagnostic],
+    *,
+    invalid_span: ast.AST,
+) -> StepPolicyBinding | None:
+    if not isinstance(node, ast.Name):
+        diagnostics.append(_reserved_step_keyword_diagnostic(keyword_name, source_path, invalid_span))
+        return None
+    binding = imports.get(node.id)
+    if (
+        binding is None
+        or binding.component is None
+        or not isinstance(binding.component, PolicyComponent)
+    ):
+        diagnostics.append(_reserved_step_keyword_diagnostic(keyword_name, source_path, invalid_span))
+        return None
+    if binding.component.policy_type not in _SUPPORTED_STEP_POLICY_TYPES:
+        diagnostics.append(
+            _diagnostic(
+                DiagnosticCode.UNSUPPORTED_POLICY_CARRIER,
+                f"policy type {binding.component.policy_type!r} does not map to an existing manifest carrier",
+                source_span=source_span_for_node(source_path, invalid_span),
+                details={"policy_type": binding.component.policy_type},
+            )
+        )
+        return None
+    return StepPolicyBinding(
+        keyword=keyword_name,
+        component_ref=binding.component_ref,
+        component=binding.component,
+        source_span=source_span_for_node(source_path, node),
+    )
+
+
+def _reserved_step_keyword_diagnostic(
+    keyword_name: str,
+    source_path: str,
+    node: ast.AST,
+) -> AuthoringDiagnostic:
+    return _diagnostic(
+        DiagnosticCode.RESERVED_CALL_KEYWORD,
+        f"step call keyword {keyword_name!r} is reserved for compiler-owned authoring syntax",
+        source_span=source_span_for_node(source_path, node),
+        details={"keyword": keyword_name},
     )
 
 
@@ -984,6 +2336,7 @@ def _parse_step_inputs(
     node: ast.Call,
     source_path: str,
     *,
+    imports: Mapping[str, ImportBinding],
     parameters: Sequence[str],
     local_outputs: Mapping[str, SourceSpan],
     diagnostics: list[AuthoringDiagnostic],
@@ -992,7 +2345,7 @@ def _parse_step_inputs(
     valid = True
     parameter_names = set(parameters)
     for keyword in node.keywords:
-        if keyword.arg in {None, "id"}:
+        if keyword.arg is None or keyword.arg in RESERVED_STEP_CALL_KEYWORDS:
             continue
         if not isinstance(keyword.value, ast.Name):
             diagnostics.append(
@@ -1012,6 +2365,18 @@ def _parse_step_inputs(
                     "compiler intrinsics cannot be passed as dataflow values",
                     source_span=source_span_for_node(source_path, keyword.value),
                     component_ref=f"{AUTHORING_INTRINSIC_MODULE}:{ref_name}",
+                )
+            )
+            valid = False
+            continue
+        ref_binding = imports.get(ref_name)
+        if ref_binding is not None and isinstance(ref_binding.component, PolicyComponent):
+            diagnostics.append(
+                _diagnostic(
+                    DiagnosticCode.RESERVED_CALL_KEYWORD,
+                    "policy components must be passed with reserved policy= or policies= syntax",
+                    source_span=source_span_for_node(source_path, keyword.value),
+                    details={"keyword": keyword.arg},
                 )
             )
             valid = False
@@ -1094,26 +2459,7 @@ def _parse_intrinsic_call(
             return None
         arguments[keyword.arg] = keyword.value.value
 
-    allowed_keywords = {
-        "halt": {"id", "trigger_ref", "target_ref", "payload_schema_hash", "policy_ref"},
-        "suspend": {
-            "route_id",
-            "capability_id",
-            "reentry_id",
-            "payload_schema_hash",
-            "resume_schema_hash",
-            "resume_schema_ref",
-            "resume_payload_ref",
-        },
-        "transition": {
-            "id",
-            "type",
-            "trigger_ref",
-            "target_ref",
-            "payload_schema_hash",
-            "policy_ref",
-        },
-    }[intrinsic_name]
+    allowed_keywords = set(RESERVED_INTRINSIC_CALL_KEYWORDS[intrinsic_name])
     required_keywords = {
         "halt": {"id"},
         "suspend": {"route_id"},
@@ -1152,53 +2498,439 @@ def _lower_parsed_source(parsed_source: ParsedWorkflowSource) -> Pipeline | None
     workflow = parsed_source.workflow
     if workflow is None:
         return None
-    steps = tuple(
-        Step(
-            id=step.id,
-            kind=step.component.step_type,
-            label=step.component.label,
-            inputs=tuple(
-                Input(
-                    name=input_binding.name,
-                    value_ref=input_binding.value_ref,
-                    source_span=input_binding.source_span,
-                )
-                for input_binding in step.inputs
-            ),
-            outputs=tuple(
-                Output(
-                    name=output_binding.name,
-                    source_span=output_binding.source_span,
-                )
-                for output_binding in step.outputs
-            ),
-            source_span=step.source_span,
-            metadata={
-                "component_ref": step.component_ref,
-                "source_form": workflow.source_form,
-            },
-        )
-        for step in workflow.steps
+    lowered_block = _lower_source_block(
+        workflow.source_block,
+        source_form=workflow.source_form,
+        initial_output_producers={},
     )
-    routes = tuple(
-        Route(
-            id=f"{source.id}-{target.id}",
-            source=source.id,
-            target=target.id,
-            source_span=target.source_span,
-            metadata={"source_form": workflow.source_form},
-        )
-        for source, target in zip(workflow.steps, workflow.steps[1:])
+    policy = _merge_workflow_policies(
+        _lower_workflow_policy_bindings(workflow.policies),
+        _lower_workflow_policy(workflow.intrinsics),
     )
-    policy = _lower_workflow_policy(workflow.intrinsics)
     return Pipeline(
         id=workflow.id,
         version=workflow.version,
-        steps=steps,
-        routes=routes,
+        steps=lowered_block.steps,
+        routes=lowered_block.routes,
         policy=policy,
         source_span=workflow.source_span,
         metadata={"source_form": workflow.source_form},
+    )
+
+
+def _lower_source_block(
+    block: ParsedSourceBlock,
+    *,
+    source_form: str,
+    initial_output_producers: Mapping[str, str],
+) -> _LoweredSourceBlock:
+    steps: list[Step] = []
+    routes: list[Route] = []
+    entry_step_id: str | None = None
+    pending_exits: tuple[str, ...] = ()
+    output_producers: dict[str, str] = dict(initial_output_producers)
+
+    for statement in block.statements:
+        if isinstance(statement, ParsedStepCall):
+            step = _lower_step_call(statement, source_form)
+            if entry_step_id is None:
+                entry_step_id = step.id
+            routes.extend(
+                _default_route(source_id, step.id, statement.source_span, source_form)
+                for source_id in pending_exits
+            )
+            steps.append(step)
+            pending_exits = (step.id,)
+            for output in statement.outputs:
+                output_producers[output.name] = statement.id
+        elif isinstance(statement, ParsedSubflowCall):
+            step = _lower_subflow_call(statement, source_form)
+            if entry_step_id is None:
+                entry_step_id = step.id
+            routes.extend(
+                _default_route(source_id, step.id, statement.source_span, source_form)
+                for source_id in pending_exits
+            )
+            steps.append(step)
+            pending_exits = (step.id,)
+        elif isinstance(statement, ParsedBranchBlock):
+            branch = _lower_branch_block(
+                statement,
+                source_form=source_form,
+                output_producers=output_producers,
+            )
+            if entry_step_id is None:
+                entry_step_id = branch.entry_step_id
+            steps.extend(branch.steps)
+            routes.extend(branch.routes)
+            pending_exits = branch.exit_step_ids
+            for name in statement.merged_outputs:
+                producer = branch.output_producers.get(name)
+                if producer is not None:
+                    output_producers[name] = producer
+        elif isinstance(statement, ParsedLoopBlock):
+            loop = _lower_source_block(
+                statement.body,
+                source_form=source_form,
+                initial_output_producers=output_producers,
+            )
+            if entry_step_id is None:
+                entry_step_id = loop.entry_step_id
+            if loop.entry_step_id is not None:
+                routes.extend(
+                    _default_route(source_id, loop.entry_step_id, statement.source_span, source_form)
+                    for source_id in pending_exits
+                )
+            backedge_condition_ref = _loop_backedge_condition_ref(statement.policy)
+            steps.extend(
+                _attach_loop_policy_to_entry_step(
+                    step,
+                    loop.entry_step_id,
+                    statement.policy,
+                    backedge_condition_ref,
+                )
+                for step in loop.steps
+            )
+            routes.extend(loop.routes)
+            if loop.entry_step_id is not None and len(loop.exit_step_ids) == 1:
+                tail_step_id = loop.exit_step_ids[0]
+                routes.append(
+                    _loop_backedge_route(
+                        statement,
+                        source_id=tail_step_id,
+                        target_id=loop.entry_step_id,
+                        condition_ref=backedge_condition_ref,
+                        source_form=source_form,
+                    )
+                )
+            pending_exits = loop.exit_step_ids
+            output_producers.update(loop.output_producers)
+
+    return _LoweredSourceBlock(
+        steps=tuple(steps),
+        routes=tuple(routes),
+        entry_step_id=entry_step_id,
+        exit_step_ids=pending_exits,
+        output_producers=MappingProxyType(output_producers),
+    )
+
+
+def _lower_branch_block(
+    branch: ParsedBranchBlock,
+    *,
+    source_form: str,
+    output_producers: Mapping[str, str],
+) -> _LoweredSourceBlock:
+    steps: list[Step] = []
+    branch_routes: list[Route] = []
+    arm_routes: list[Route] = []
+    exit_step_ids: list[str] = []
+    branch_output_producers: dict[str, str] = {}
+    decision_source = output_producers[branch.decision_output]
+    has_else = any(arm.condition is None for arm in branch.arms)
+
+    for arm in branch.arms:
+        lowered_arm = _lower_source_block(
+            arm.body,
+            source_form=source_form,
+            initial_output_producers=output_producers,
+        )
+        steps.extend(lowered_arm.steps)
+        if lowered_arm.entry_step_id is not None:
+            branch_routes.append(
+                _branch_route(
+                    branch,
+                    arm,
+                    source_id=decision_source,
+                    target_id=lowered_arm.entry_step_id,
+                    source_form=source_form,
+                )
+            )
+        arm_routes.extend(lowered_arm.routes)
+        if not arm.terminal:
+            exit_step_ids.extend(lowered_arm.exit_step_ids)
+            for name in branch.merged_outputs:
+                producer = lowered_arm.output_producers.get(name)
+                if producer is not None:
+                    branch_output_producers.setdefault(name, producer)
+    if not has_else and any(arm.terminal for arm in branch.arms):
+        exit_step_ids.append(decision_source)
+
+    return _LoweredSourceBlock(
+        steps=tuple(steps),
+        routes=(*branch_routes, *arm_routes),
+        entry_step_id=steps[0].id if steps else None,
+        exit_step_ids=tuple(exit_step_ids),
+        output_producers=MappingProxyType(branch_output_producers),
+    )
+
+
+def _lower_step_call(step: ParsedStepCall, source_form: str) -> Step:
+    return Step(
+        id=step.id,
+        kind=step.component.step_type,
+        label=step.component.label,
+        inputs=tuple(
+            Input(
+                name=input_binding.name,
+                value_ref=input_binding.value_ref,
+                source_span=input_binding.source_span,
+            )
+            for input_binding in step.inputs
+        ),
+        outputs=tuple(
+            Output(
+                name=output_binding.name,
+                source_span=output_binding.source_span,
+            )
+            for output_binding in step.outputs
+        ),
+        policy=_lower_step_policy_bindings(step.policies),
+        source_span=step.source_span,
+        metadata={
+            "component_ref": step.component_ref,
+            "source_form": source_form,
+        },
+    )
+
+
+def _lower_subflow_call(subflow: ParsedSubflowCall, source_form: str) -> Step:
+    return Step(
+        id=subflow.id,
+        kind="subpipeline",
+        label=subflow.component.label,
+        inputs=tuple(
+            Input(
+                name=input_binding.name,
+                value_ref=input_binding.value_ref,
+                source_span=input_binding.source_span,
+            )
+            for input_binding in subflow.inputs
+        ),
+        source_span=subflow.source_span,
+        subpipeline=SubpipelineRef(
+            manifest_hash=subflow.manifest_hash,
+            alias=subflow.alias,
+        ),
+        metadata={
+            "component_ref": subflow.component_ref,
+            "source_form": source_form,
+        },
+    )
+
+
+def _lower_step_policy_bindings(policies: Sequence[StepPolicyBinding]) -> WorkflowPolicy | None:
+    if not policies:
+        return None
+    retry: RetryPolicy | None = None
+    timing: TimingPolicy | None = None
+    authority: list[AuthorityRequirement] = []
+    control_transitions: list[ControlTransitionSlot] = []
+    for binding in policies:
+        component = binding.component
+        config = component.config
+        if component.policy_type == "retry":
+            retry = RetryPolicy(
+                max_attempts=config.get("max_attempts", 1),
+                backoff=config.get("backoff", "none"),
+                retry_on=tuple(config.get("retry_on", ())),
+            )
+        elif component.policy_type == "timing":
+            timing = TimingPolicy(
+                timeout_seconds=config.get("timeout_seconds"),
+                deadline_ref=config.get("deadline_ref"),
+                ttl_seconds=config.get("ttl_seconds"),
+            )
+        elif component.policy_type in {"approval", "authority"}:
+            authority.append(
+                AuthorityRequirement(
+                    authority_id=config.get("authority_id", component.id),
+                    action=config.get("action", component.policy_type),
+                    evidence_schema_hash=config.get("evidence_schema_hash"),
+                    capability_id=config.get("capability_id"),
+                )
+            )
+        elif component.policy_type == "control-transition":
+            control_transitions.append(
+                ControlTransitionSlot(
+                    transition_id=config.get("transition_id", component.id),
+                    transition_type=config.get("transition_type", "policy"),
+                    trigger_ref=config.get("trigger_ref"),
+                    target_ref=config.get("target_ref"),
+                    payload_schema_hash=config.get("payload_schema_hash"),
+                    policy_ref=config.get("policy_ref"),
+                )
+            )
+    return WorkflowPolicy(
+        retry=retry,
+        timing=timing,
+        control_transitions=tuple(control_transitions),
+        authority=tuple(authority),
+    )
+
+
+def _lower_workflow_policy_bindings(
+    policies: Sequence[WorkflowPolicyBinding],
+) -> WorkflowPolicy | None:
+    if not policies:
+        return None
+    authority: list[AuthorityRequirement] = []
+    control_transitions: list[ControlTransitionSlot] = []
+    suspension_routes: list[SuspensionRoute] = []
+    for binding in policies:
+        component = binding.component
+        config = component.config
+        if component.policy_type in {"approval", "authority"}:
+            authority.append(
+                AuthorityRequirement(
+                    authority_id=config.get("authority_id", component.id),
+                    action=config.get("action", component.policy_type),
+                    evidence_schema_hash=config.get("evidence_schema_hash"),
+                    capability_id=config.get("capability_id"),
+                )
+            )
+        elif component.policy_type == "control-transition":
+            control_transitions.append(
+                ControlTransitionSlot(
+                    transition_id=config.get("transition_id", component.id),
+                    transition_type=config.get("transition_type", "policy"),
+                    trigger_ref=config.get("trigger_ref"),
+                    target_ref=config.get("target_ref"),
+                    payload_schema_hash=config.get("payload_schema_hash"),
+                    policy_ref=config.get("policy_ref"),
+                )
+            )
+        elif component.policy_type == "suspension":
+            suspension_routes.append(
+                SuspensionRoute(
+                    route_id=config.get("route_id", component.id),
+                    capability_id=config.get("capability_id"),
+                    reentry_id=config.get("reentry_id"),
+                    payload_schema_hash=config.get("payload_schema_hash"),
+                    resume_schema_hash=config.get("resume_schema_hash"),
+                    resume_schema_ref=config.get("resume_schema_ref"),
+                    resume_payload_ref=config.get("resume_payload_ref"),
+                )
+            )
+    return WorkflowPolicy(
+        authority=tuple(authority),
+        control_transitions=tuple(control_transitions),
+        suspension_routes=tuple(suspension_routes),
+    )
+
+
+def _merge_workflow_policies(*policies: WorkflowPolicy | None) -> WorkflowPolicy | None:
+    present = [policy for policy in policies if policy is not None]
+    if not present:
+        return None
+    return WorkflowPolicy(
+        control_transitions=tuple(
+            transition
+            for policy in present
+            for transition in policy.control_transitions
+        ),
+        suspension_routes=tuple(
+            route
+            for policy in present
+            for route in policy.suspension_routes
+        ),
+        authority=tuple(
+            requirement
+            for policy in present
+            for requirement in policy.authority
+        ),
+    )
+
+
+def _attach_loop_policy_to_entry_step(
+    step: Step,
+    entry_step_id: str | None,
+    policy: ParsedLoopPolicy,
+    backedge_condition_ref: str,
+) -> Step:
+    if entry_step_id is None or step.id != entry_step_id:
+        return step
+    return replace(
+        step,
+        policy=WorkflowPolicy(
+            loop=LoopPolicy(
+                max_iterations=policy.max_iterations,
+                until_ref=policy.until_ref,
+            ),
+            suspension_routes=(
+                SuspensionRoute(
+                    route_id=f"{step.id}-reentry",
+                    reentry_id=backedge_condition_ref,
+                ),
+            ),
+        ),
+    )
+
+
+def _loop_backedge_condition_ref(policy: ParsedLoopPolicy) -> str:
+    policy_name = policy.policy_ref.rsplit(":", 1)[-1]
+    return f"loop:{policy_name}:reentry:{policy.reentry_id}"
+
+
+def _loop_backedge_route(
+    loop: ParsedLoopBlock,
+    *,
+    source_id: str,
+    target_id: str,
+    condition_ref: str,
+    source_form: str,
+) -> Route:
+    return Route(
+        id=f"{source_id}-{target_id}",
+        source=source_id,
+        target=target_id,
+        label="reentry",
+        condition_ref=condition_ref,
+        source_span=loop.source_span,
+        metadata={
+            "source_form": source_form,
+            "loop_policy_ref": loop.policy.policy_ref,
+        },
+    )
+
+
+def _default_route(
+    source_id: str,
+    target_id: str,
+    source_span: SourceSpan,
+    source_form: str,
+) -> Route:
+    return Route(
+        id=f"{source_id}-{target_id}",
+        source=source_id,
+        target=target_id,
+        source_span=source_span,
+        metadata={"source_form": source_form},
+    )
+
+
+def _branch_route(
+    branch: ParsedBranchBlock,
+    arm: ParsedBranchArm,
+    *,
+    source_id: str,
+    target_id: str,
+    source_form: str,
+) -> Route:
+    if arm.condition is None:
+        label = "else"
+        condition_ref = f"{source_id}.{branch.decision_output}.else"
+    else:
+        label = arm.condition.literal
+        condition_ref = f"{source_id}.{branch.decision_output}.eq.{arm.condition.literal}"
+    return Route(
+        id=f"{source_id}-{target_id}",
+        source=source_id,
+        target=target_id,
+        label=label,
+        condition_ref=condition_ref,
+        source_span=arm.source_span,
+        metadata={"source_form": source_form},
     )
 
 
@@ -1325,6 +3057,7 @@ def _diagnostic(
     source_span: SourceSpan,
     import_ref: ImportRef | None = None,
     component_ref: str | None = None,
+    details: Mapping[str, Any] | None = None,
 ) -> AuthoringDiagnostic:
     spec = diagnostic_spec(code)
     return AuthoringDiagnostic(
@@ -1335,6 +3068,7 @@ def _diagnostic(
         import_ref=import_ref,
         component_ref=component_ref,
         remediation=spec.remediation,
+        details={} if details is None else details,
     )
 
 
@@ -1344,6 +3078,17 @@ __all__ = [
     "ComponentResolver",
     "ImportBinding",
     "LowerWorkflowSourceResult",
+    "ParsedBranchArm",
+    "ParsedBranchBlock",
+    "ParsedBranchCondition",
+    "ParsedIntrinsicCall",
+    "ParsedLoopBlock",
+    "ParsedLoopPolicy",
+    "ParsedSourceBlock",
+    "ParsedSourceStatement",
+    "ParsedStepCall",
+    "ParsedSubflowCall",
+    "ParsedUnsupportedStatement",
     "ParsedWorkflowSource",
     "SourceCompilationError",
     "SourceCompileError",
@@ -1352,6 +3097,7 @@ __all__ = [
     "StepCall",
     "StepInputBinding",
     "StepOutputBinding",
+    "SubflowCall",
     "WorkflowDeclaration",
     "check_workflow_file",
     "check_workflow_source",

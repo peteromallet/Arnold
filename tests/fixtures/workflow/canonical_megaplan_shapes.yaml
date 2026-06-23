@@ -311,3 +311,209 @@ shapes:
         target: tourney-winner
         label: winner
         condition_ref: tests.arnold.patterns._fixtures:judge_winner
+
+python_authoring_m3:
+  supported_subset:
+    branch_routes:
+      fixture: tests/fixtures/workflow_authoring/m3/valid_m3_branch_routes.py
+      canonical_shape: branch
+      topology_hash: sha256:3f24a804768e6dd18ac04b7a1bade1edc6552eaa8d022f250872ab085c9faa2c
+      manifest_hash: sha256:bde84d01b81f90018be816f84cca8d05228cc608eff5680ec58d1f212288648b
+      nodes:
+        - id: route
+          kind: agent
+        - id: execute
+          kind: agent
+        - id: review-approved
+          kind: agent
+        - id: revise-plan
+          kind: agent
+        - id: review-revised
+          kind: agent
+        - id: review-fallback
+          kind: agent
+      edges:
+        - id: route-execute
+          source: route
+          target: execute
+          label: approve
+          condition_ref: route.decision.eq.approve
+        - id: route-revise-plan
+          source: route
+          target: revise-plan
+          label: revise
+          condition_ref: route.decision.eq.revise
+        - id: route-review-fallback
+          source: route
+          target: review-fallback
+          label: else
+          condition_ref: route.decision.else
+        - id: execute-review-approved
+          source: execute
+          target: review-approved
+          label: default
+          condition_ref: null
+        - id: revise-plan-review-revised
+          source: revise-plan
+          target: review-revised
+          label: default
+          condition_ref: null
+
+    bounded_review_loop:
+      fixture: tests/fixtures/workflow_authoring/m3/valid_m3_bounded_loop.py
+      canonical_shape: loop_revise
+      topology_hash: sha256:95bafa9aae2729b45e2a032525755cb6ec4b0921a4c5c63bba6341253974ef29
+      manifest_hash: sha256:3a90136d081ac2784e56077c87816560880164fe261e7fdd0389b01ddc7d9055
+      nodes:
+        - id: plan
+          kind: agent
+        - id: execute
+          kind: agent
+        - id: review
+          kind: agent
+        - id: revise
+          kind: agent
+      edges:
+        - id: plan-execute
+          source: plan
+          target: execute
+          label: default
+          condition_ref: null
+        - id: execute-review
+          source: execute
+          target: review
+          label: default
+          condition_ref: null
+        - id: review-revise
+          source: review
+          target: revise
+          label: default
+          condition_ref: null
+        - id: revise-execute
+          source: revise
+          target: execute
+          label: reentry
+          condition_ref: loop:bounded_review_loop:reentry:execute
+      policies:
+        execute:
+          loop:
+            max_iterations: 3
+            until_ref: review.approved
+          suspension_routes:
+            - route_id: execute-reentry
+              capability_id: null
+              reentry_id: loop:bounded_review_loop:reentry:execute
+
+    policy_refs:
+      fixture: tests/fixtures/workflow_authoring/m3/valid_m3_policy_refs.py
+      canonical_shape: retry
+      topology_hash: sha256:c05e1a33c42b70e2e1f5fb25d616c1a528939b4e5bb3ce13e21b6b05ef028650
+      manifest_hash: sha256:eb8a462c4258dda1adcf5055b6855712e40a1a12ce8931e71fca54af011d215e
+      nodes:
+        - id: plan
+          kind: agent
+        - id: execute
+          kind: agent
+        - id: review
+          kind: agent
+      edges:
+        - id: plan-execute
+          source: plan
+          target: execute
+          label: default
+          condition_ref: null
+        - id: execute-review
+          source: execute
+          target: review
+          label: default
+          condition_ref: null
+      policies:
+        execute:
+          retry:
+            max_attempts: 2
+            backoff: none
+            retry_on:
+              - transient
+        review:
+          timing:
+            timeout_seconds: 60
+          authority:
+            - authority_id: review-approval
+              action: approve-review
+              capability_id: human.review
+          control_transitions:
+            - transition_id: handoff
+              transition_type: approval-handoff
+              trigger_ref: review.needs_approval
+              target_ref: reviewer
+              policy_ref: review_approval
+      workflow_policy:
+        suspension_routes:
+          - route_id: operator
+            capability_id: human.review
+            reentry_id: execute
+            resume_schema_ref: operator.resume
+        authority:
+          - authority_id: review-approval
+            action: approve-review
+            capability_id: human.review
+        control_transitions:
+          - transition_id: handoff
+            transition_type: approval-handoff
+            trigger_ref: review.needs_approval
+            target_ref: reviewer
+            policy_ref: review_approval
+
+    subpipeline_ref:
+      fixture: tests/fixtures/workflow_authoring/m3/valid_m3_subflow_ref.py
+      canonical_shape: subpipeline
+      topology_hash: sha256:bdd336706c58d3cea6b740c6582a138a55be53296b8ca3716f5436203599fc54
+      manifest_hash: sha256:9f1470c87355418df5fca4d7f60fbadbaffed67e9668cf8893bfbebef441f9a2
+      nodes:
+        - id: plan
+          kind: agent
+        - id: execute
+          kind: agent
+        - id: nested-review
+          kind: subpipeline
+      edges:
+        - id: plan-execute
+          source: plan
+          target: execute
+          label: default
+          condition_ref: null
+        - id: execute-nested-review
+          source: execute
+          target: nested-review
+          label: default
+          condition_ref: null
+      subpipelines:
+        nested-review:
+          manifest_hash: sha256:1111111111111111111111111111111111111111111111111111111111111111
+          alias: review
+
+  deferred_canonical_shapes:
+    fanout_panel:
+      reason: Python-shaped source has no M3 fanout/panel syntax.
+      expected_diagnostic: AWF014_UNSUPPORTED_POLICY_CARRIER
+    retry:
+      reason: M3 lowers retry as a policy carrier, not as an explicit retry wrapper node.
+    suspension_capability:
+      reason: M3 lowers suspension as workflow policy/intrinsic carriers, not as a standalone capability-gated suspension node fixture.
+    override_fallback:
+      reason: M3 branch labels are literal decision routes; override/fallback route policy syntax is not supported.
+    escalation:
+      reason: M3 control transitions lower to policy slots, not explicit escalation edges.
+    compensation:
+      reason: M3 has no lowerable compensation carrier in this checkout.
+    supervisor_promotion:
+      reason: M3 has no supervisor promotion route syntax.
+    feedback:
+      reason: M3 allows only bounded review/rework loop backedges with loop policy.
+    robustness_budget:
+      reason: M3 deliberately diagnoses robustness/budget-like policy families without explicit carriers.
+      expected_diagnostic: AWF014_UNSUPPORTED_POLICY_CARRIER
+    dynamic_topology_overlay:
+      reason: M3 source lowering does not expose dynamic topology overlay slots.
+    tournament:
+      reason: M3 source lowering does not expose tournament/tiebreaker syntax.
