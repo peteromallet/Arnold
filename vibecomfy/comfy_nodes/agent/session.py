@@ -10,9 +10,9 @@ import uuid
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable, Literal
+from typing import Any, Callable, Iterator, Literal
 
-from .contracts import FailureEnvelope, FailureKind, TurnContext, failure_envelope
+from .contracts import DiagnosticRecord, FailureEnvelope, FailureKind, TurnContext, failure_envelope
 
 STATE_FILE_NAME = "session_state.json"
 LOCK_FILE_NAME = ".session_state.lock"
@@ -567,6 +567,102 @@ def read_state(session_dir: Path) -> dict[str, Any]:
     _normalize_baseline_state(path.parent, merged)
     merged["schema_version"] = STATE_SCHEMA_VERSION
     return merged
+
+
+def _load_json(path: Path) -> dict[str, Any] | None:
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError, UnicodeDecodeError):
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def iter_turn_records(
+    session_root: Path | str,
+    session_id: str,
+) -> Iterator[DiagnosticRecord]:
+    """Yield typed diagnostic records for every turn under *session_id*.
+
+    This is the canonical server-side iterator used by audit/reporting and by
+    the CLI debug tool.  It depends only on the stdlib, ``pathlib`` and the
+    shared ``DiagnosticRecord`` contract, so it can be imported in lightweight
+    consumers without pulling in ComfyUI or torch.
+    """
+    session_dir = Path(session_root) / session_id
+    if not session_dir.is_dir():
+        return
+
+    state = _load_json(session_dir / STATE_FILE_NAME) or {}
+    st_turns: dict[str, Any] = state.get("turns") if isinstance(state.get("turns"), dict) else {}
+    baseline_turn_id = state.get("baseline_turn_id")
+    turns_dir = session_dir / "turns"
+    if not turns_dir.is_dir():
+        return
+
+    for turn_dir in sorted(turns_dir.iterdir()):
+        if not turn_dir.is_dir():
+            continue
+        turn_id = turn_dir.name
+        response = _load_json(turn_dir / "response.json") or {}
+        request = _load_json(turn_dir / "request.json") or {}
+        life = st_turns.get(turn_id, {})
+        gates = response.get("gates") or {}
+        ok = response.get("ok")
+        kind = response.get("kind")
+        unchanged = response.get("graph_unchanged")
+        lifecycle = life.get("state")
+
+        if lifecycle == "accepted":
+            outcome = "\u2705 APPLIED"
+        elif lifecycle == "rejected":
+            outcome = "\u2717 rejected"
+        elif lifecycle == "unknown" and life.get("superseded_by_turn_id"):
+            outcome = "\u21b7 superseded"
+        elif ok is True and unchanged:
+            outcome = "clarify/noop"
+        elif ok is True:
+            outcome = "candidate"
+        elif kind:
+            outcome = f"FAIL:{kind}"
+        elif ok is False:
+            outcome = "FAIL"
+        else:
+            outcome = lifecycle or "?"
+
+        candidate_graph = response.get("graph")
+        candidate_nodes = (
+            len(candidate_graph.get("nodes", []))
+            if isinstance(candidate_graph, dict)
+            else None
+        )
+
+        yield DiagnosticRecord(
+            session_id=session_id,
+            turn_id=turn_id,
+            baseline_turn_id=baseline_turn_id if turn_id == baseline_turn_id else None,
+            ok=ok,
+            kind=kind,
+            outcome=outcome,
+            lifecycle=lifecycle,
+            fidelity_ok=gates.get("ui_fidelity_ok"),
+            state_match_ok=gates.get("state_match_ok"),
+            queue_validate_ok=gates.get("queue_validate_ok"),
+            canvas_apply_allowed=response.get("canvas_apply_allowed"),
+            queue_allowed=response.get("queue_allowed"),
+            candidate_nodes=candidate_nodes,
+            task=request.get("task") or response.get("task") or "",
+            route=request.get("route") or "",
+            protocol=life.get("agent_edit_protocol"),
+            summary=(
+                response.get("done_summary")
+                or response.get("message")
+                or response.get("user_facing_message")
+                or ""
+            ),
+            is_baseline=(turn_id == baseline_turn_id),
+            accepted_at=life.get("accepted_at"),
+            live_token=life.get("submitted_client_live_canvas_token"),
+        )
 
 
 def _natural_id_key(value: Any) -> tuple[int, int | str]:

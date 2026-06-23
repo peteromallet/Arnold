@@ -8,6 +8,7 @@ from vibecomfy.comfy_nodes.agent.contracts import (
     AGENT_EDIT_TURN_CONTRACT_VERSION,
     CANVAS_APPLY_GATE_NAMES,
     DEFAULT_GATE_NAMES,
+    DiagnosticRecord,
     FAILURE_SPECS,
     PUBLIC_OUTCOME_KINDS,
     SCAN_CODE_FAILURE_KIND,
@@ -32,6 +33,7 @@ from vibecomfy.comfy_nodes.agent.contracts import (
     failure_envelope,
     product_failure_envelope_fields,
     public_outcome_from_turn_outcome,
+    repair_field_changes,
     success_envelope,
     turn_envelope,
 )
@@ -1510,3 +1512,67 @@ def test_all_internal_turn_outcome_kinds_map_to_public_union() -> None:
                 f"{internal_kind!r} should map to {internal_to_public[internal_kind]!r}, "
                 f"got {result['kind']!r}"
             )
+
+
+def test_diagnostic_record_round_trips_through_dict() -> None:
+    record = DiagnosticRecord(
+        session_id="sess-1",
+        turn_id="0003",
+        path="/tmp/sess-1/turns/0003/response.json",
+        mtime=1234567890.0,
+        baseline_turn_id="0001",
+        ok=True,
+        kind="edit",
+        outcome="candidate",
+        lifecycle="candidate",
+        fidelity_ok=True,
+        state_match_ok=True,
+        queue_validate_ok=True,
+        canvas_apply_allowed=True,
+        queue_allowed=True,
+        candidate_nodes=7,
+        task="make it pop",
+        route="edit",
+        protocol="v2",
+        summary="changed saturation",
+        is_baseline=False,
+        accepted_at=None,
+        live_token="token-abc",
+    )
+    payload = record.to_dict()
+    restored = DiagnosticRecord.from_dict(payload)
+    assert restored == record
+    # Extra fields in older on-disk records are ignored.
+    payload["future_field"] = "ignored"
+    assert DiagnosticRecord.from_dict(payload) == record
+
+
+def test_repair_field_changes_fills_missing_old_value_from_ui_graph() -> None:
+    graph = {
+        "nodes": [
+            {
+                "id": 1,
+                "type": "KSampler",
+                "widgets_values": [20, "euler", 1.0],
+            }
+        ]
+    }
+    changes = (FieldChange(uid="1", field_path="widgets_values[0]", old=None, new=25),)
+    repaired = repair_field_changes(graph, changes)
+    assert len(repaired) == 1
+    assert repaired[0].old == 20
+    assert repaired[0].new == 25
+
+
+def test_repair_field_changes_keeps_tuple_when_nothing_changes() -> None:
+    graph = {
+        "nodes": [
+            {
+                "id": "n1",
+                "properties": {"vibecomfy_uid": "n1"},
+                "widgets_values": {"seed": 42},
+            }
+        ]
+    }
+    changes = (FieldChange(uid="n1", field_path="seed", old=42, new=43),)
+    assert repair_field_changes(graph, changes) is changes
