@@ -13,7 +13,7 @@ from pathlib import Path
 import pytest
 import yaml
 
-from arnold_pipelines.megaplan.pipeline import build_and_compile_pipeline
+from arnold_pipelines.megaplan.pipeline import build_and_compile_pipeline, build_pipeline
 
 FIXTURE_PATH = Path(__file__).parent / "fixtures" / "megaplan_m4_topology.yaml"
 AMENDMENT_PATH = Path(__file__).parents[3] / "docs" / "arnold" / "workflow-manifest-amendments.md"
@@ -44,6 +44,10 @@ class TestTopologyFixtureLock:
         node_ids = {n.id for n in manifest.nodes}
         assert node_ids == set(fixture["nodes"])
 
+    def test_authored_node_order_matches_fixture(self, fixture: dict) -> None:
+        pipeline = build_pipeline()
+        assert [step.id for step in pipeline.steps] == fixture["nodes"]
+
     def test_compiled_capabilities_match_fixture(self, fixture: dict) -> None:
         manifest = build_and_compile_pipeline()
         cap_ids = {c.capability_id for c in manifest.capabilities}
@@ -68,6 +72,38 @@ class TestTopologyFixtureLock:
         }
         expected = {(item["label"], item["target"]) for item in fixture["tiebreaker_targets"]}
         assert edges == expected
+
+    def test_compiled_review_edges_match_fixture(self, fixture: dict) -> None:
+        manifest = build_and_compile_pipeline()
+        edges = {
+            (e.label, e.target)
+            for e in manifest.edges
+            if e.source == "review"
+        }
+        expected = {(item["label"], item["target"]) for item in fixture["review_targets"]}
+        assert edges == expected
+
+    def test_route_order_for_branch_nodes_is_stable(self) -> None:
+        pipeline = build_pipeline()
+        labels_by_source = {
+            source: [route.label for route in pipeline.routes if route.source == source]
+            for source in ("gate", "tiebreaker_decide", "review")
+        }
+
+        assert labels_by_source == {
+            "gate": [
+                "proceed",
+                "iterate",
+                "tiebreaker",
+                "escalate",
+                "abort",
+                "suspend",
+                "blocked_preflight",
+                "force_proceed",
+            ],
+            "tiebreaker_decide": ["iterate", "proceed", "escalate"],
+            "review": ["default", "rework"],
+        }
 
 
 class TestAmendmentEnforcement:
