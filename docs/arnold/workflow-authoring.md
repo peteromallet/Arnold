@@ -1,11 +1,18 @@
 # Workflow Authoring Contract
 
-The canonical authoring surface for Arnold workflows is ``arnold.workflow``.  A
-shipped pipeline package exposes a ``build_pipeline()`` entrypoint that returns a
-``arnold.workflow.Pipeline`` instance.  The compiler lowers that instance to a
-neutral ``WorkflowManifest`` with deterministic hashes.
+The canonical V1 source contract for new Python-shaped workflow authoring is
+[`python-shaped-authoring-contract.md`](python-shaped-authoring-contract.md).
+That source grammar is versioned as
+``arnold.workflow.authoring.v1``.
 
-## Authoring Return Type
+The explicit-node ``arnold.workflow`` DSL is backend compiler data. A
+Python-shaped workflow source file lowers into ``arnold.workflow.Pipeline`` and
+then into a neutral ``WorkflowManifest`` with deterministic hashes. Shipped
+packages may still expose a ``build_pipeline()`` entrypoint returning a
+``Pipeline`` while the frontend compiler lands, but the DSL objects are not the
+user-facing V1 grammar.
+
+## Backend DSL Shape
 
 ```python
 from arnold.workflow import Pipeline, Step, Route, Input, Output, Capability
@@ -25,8 +32,14 @@ def build_pipeline() -> Pipeline:
     )
 ```
 
-``WorkflowManifest`` is compiler output.  Packages must not hand-author manifest
-hashes, runtime state, or ``WorkflowManifest`` objects as package source.
+``Pipeline`` is explicit-node backend data. ``WorkflowManifest`` is compiler
+output. Packages must not hand-author manifest hashes, runtime state, or
+``WorkflowManifest`` objects as package source.
+
+Python-shaped V1 source must not hand-author this explicit-node DSL either. It
+uses imports from ``arnold.workflow.authoring`` plus typed component imports as
+described in the Python-shaped contract, and the compiler produces the DSL
+object before manifest lowering.
 
 ## Package Metadata And Discovery
 
@@ -42,9 +55,9 @@ Packages must also ship a sibling ``SKILL.md`` describing the workflow's purpose
 inputs, outputs, capabilities, and suspension/resume semantics for agentic
 consumers.
 
-## Stable Authoring Surface
+## Stable Backend Surface
 
-The public surface is intentionally small and pure data:
+The explicit-node backend surface is intentionally small and pure data:
 
 - ``arnold.workflow``: ``Pipeline``, ``Step``, ``Route``, ``Input``, ``Output``,
   ``Capability``, ``compile_pipeline``, ``inspect_manifest``, ``dry_run``,
@@ -52,6 +65,9 @@ The public surface is intentionally small and pure data:
 
 These modules must not import ``arnold.execution`` or product-specific modules.
 They reject live callables, closures, bound methods, and callable instances.
+Python-shaped source adds a stricter static import boundary: workflow files may
+import only compiler intrinsics from ``arnold.workflow.authoring`` and typed
+workflow components.
 
 ## Inspect And Dry-Run Fields
 
