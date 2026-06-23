@@ -7,13 +7,73 @@ workflow manifest discovery rules.
 
 ## Workflow Authoring Contract
 
-The canonical authoring target is ``arnold.workflow.Pipeline``.  A package's
-``build_pipeline()`` entrypoint must return a ``workflow.Pipeline`` instance
-authored with stable node IDs and durable refs.  ``WorkflowManifest`` is the
-compiler output produced by ``arnold.workflow.compile_pipeline()`` and must not
-be hand-authored as package source.  See
-[`workflow-authoring.md`](workflow-authoring.md) for the full authoring surface,
-loop/reentry rules, and stable inspect/dry-run fields.
+The V1 source contract for new Python-shaped workflows is
+``arnold.workflow.authoring.v1``.  In that source shape, workflow imports are the
+package's dependency graph and source of truth: workflow files import typed
+module-level component exports and declare a workflow over those imports.  The
+compiler lowers that constrained source to ``arnold.workflow.dsl.Pipeline`` and
+then to ``WorkflowManifest`` data.
+
+A package's current public entrypoint is still ``build_pipeline()``.  Discovery,
+``arnold workflow check``, dry runs, and package registries continue to address
+the package as ``<module>:build_pipeline``.  The entrypoint must remain
+importable and callable from the registry's perspective; it may build the
+explicit-node DSL directly today or, once the compiler is wired in, delegate to
+the Python-shaped source compiler.  It must not treat generated catalogs or
+manifest JSON as editable source.
+
+``WorkflowManifest`` remains compiler output produced by
+``arnold.workflow.compile_pipeline()``.  Generated component catalogs may exist
+later for inspection, caching, packaging, or editor support, but they are
+derived artifacts from typed component exports and workflow imports.  They are
+not canonical workflow source and must not be hand-edited to define package
+behavior.  See [`workflow-authoring.md`](workflow-authoring.md) and
+[`python-shaped-authoring-contract.md`](python-shaped-authoring-contract.md) for
+the full authoring boundary.
+
+## Component Layout
+
+Python-shaped workflow packages should keep authored components as module-level
+typed exports.  Recommended package-local files are:
+
+```text
+arnold_pipelines/<package>/
+  __init__.py              # metadata and build_pipeline()
+  workflow.py              # imports components and declares workflow(...)
+  steps.py                 # StepComponent exports
+  prompts.py               # PromptComponent exports
+  policies.py              # PolicyComponent exports
+  schemas.py               # SchemaComponent exports
+  subflows.py              # SubflowComponent exports
+```
+
+Kind-based files are a readability convention, not a resolver rule.  Feature
+modules are also valid when they export typed component objects.  The contract is
+the module-level export shape: step, prompt, policy, schema, and subflow
+components must carry the component kind and stable provenance needed for static
+validation without executing workflow source.
+
+Workflow source should import these exports explicitly:
+
+```python
+from arnold.workflow.authoring import workflow
+from .steps import plan, execute, review
+
+workflow(
+    id="my-pipeline",
+    version="1.0",
+    steps=[
+        plan(id="plan"),
+        execute(id="execute"),
+        review(id="review"),
+    ],
+)
+```
+
+Do not route workflow authoring through root-package imports, star imports,
+dynamic imports, legacy/native builders, or generated catalogs.  Aliased
+component imports are allowed only when provenance preserves the original
+``module:qualname`` and the local alias.
 
 ## Field Table
 
@@ -25,7 +85,7 @@ loop/reentry rules, and stable inspect/dry-run fields.
 | ``capabilities`` | **required** | Labels used by the CLI, contracts, and registry filtering to classify what the pipeline can do. | ``tuple[str, ...]`` |
 | ``driver`` | **required** | Declares the execution driver shape. Accepts a plain string or a tuple of strings. | ``str`` or ``tuple[str, ...]`` |
 | ``entrypoint`` | **required** | The callable that returns a ``Pipeline``. Two formats are accepted: a bare name (e.g. ``"build_pipeline"``) or a ``"module:name"`` string. | ``str`` |
-| ``build_pipeline`` | **required** | The nullary (or effectively nullary) entrypoint callable. For M5 authoring it returns ``arnold.workflow.Pipeline``. Must be importable and callable with no arguments from the registry's perspective. | ``Callable[[], Pipeline]`` |
+| ``build_pipeline`` | **required** | The nullary (or effectively nullary) package entrypoint callable. It currently returns ``arnold.workflow.dsl.Pipeline`` and is the registry/CLI target. It may later delegate to the Python-shaped source compiler, but remains the package entrypoint rather than a generated catalog. | ``Callable[[], Pipeline]`` |
 | ``default_profile`` | **recommended** | The default profile name when the caller does not specify one. May be ``None``. | ``str`` or ``None`` |
 | ``supported_modes`` | **recommended** | Tuple of mode strings the pipeline explicitly supports. | ``tuple[str, ...]`` |
 
@@ -52,6 +112,11 @@ arnold workflow check --module arnold_pipelines.evidence_pack:build_pipeline
 This deliberately diverges from static discovery: runtime validation checks
 correctness, while static discovery checks identity.
 
+For Python-shaped packages, runtime validation still enters through
+``build_pipeline``.  The workflow ``.py`` source and its imports define the
+authored workflow; generated manifests and catalogs are checked as outputs of
+that authoring path, not as replacement package sources.
+
 ## SKILL.md Expectations
 
 Every discoverable package should ship a sibling ``SKILL.md`` that describes the
@@ -67,4 +132,7 @@ module metadata above, but it must stay consistent with the ``capabilities``,
   layout, entrypoint rules, static identity, and runtime interaction.
 - [`workflow-authoring.md`](workflow-authoring.md) — explicit-node authoring
   contract and stable inspect/dry-run fields.
+- [`python-shaped-authoring-contract.md`](python-shaped-authoring-contract.md)
+  — V1 Python-shaped source grammar, component imports, diagnostics, and
+  provenance rules.
 - [`workflow-manifest.md`](workflow-manifest.md) — serialized manifest contract.

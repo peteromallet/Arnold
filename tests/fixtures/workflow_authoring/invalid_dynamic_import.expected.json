@@ -1,0 +1,17 @@
+{
+  "grammar_version": "arnold.workflow.authoring.v1",
+  "source_path": "tests/fixtures/workflow_authoring/invalid_dynamic_import.py",
+  "outcome": "invalid",
+  "expected_diagnostics": [
+    {
+      "code": "AWF002_UNSUPPORTED_SYNTAX",
+      "message": "dynamic imports are not part of the static authoring grammar",
+      "source_span": {
+        "start_line": 5,
+        "start_column": 1,
+        "end_line": 5,
+        "end_column": 71
+      }
+    }
+  ]
+}
