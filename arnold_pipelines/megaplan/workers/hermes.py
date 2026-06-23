@@ -355,11 +355,52 @@ def _extract_json_from_mutating_tool_markup(content: str) -> str | None:
 
     candidates: list[str] = []
 
+    def _balanced_json_blocks(text: str) -> list[str]:
+        """Return top-level brace/bracket-delimited blocks honoring string escapes."""
+        blocks: list[str] = []
+        i = 0
+        n = len(text)
+        while i < n:
+            c = text[i]
+            if c not in ("{", "["):
+                i += 1
+                continue
+            opener, closer = ("{", "}") if c == "{" else ("[", "]")
+            stack = [opener]
+            j = i + 1
+            in_str = False
+            esc = False
+            while j < n and stack:
+                ch = text[j]
+                if in_str:
+                    if esc:
+                        esc = False
+                    elif ch == "\\":
+                        esc = True
+                    elif ch == '"':
+                        in_str = False
+                else:
+                    if ch == '"':
+                        in_str = True
+                    elif ch == opener:
+                        stack.append(opener)
+                    elif ch == closer:
+                        stack.pop()
+                j += 1
+            if not stack:
+                blocks.append(text[i:j])
+            i = j
+        return blocks
+
     # 1. Plain XML tags: <write_file ...> ... </write_file>
     tag_pattern = re.compile(
         r"<(?P<tag>write_file|file_write|write|edit_file|patch|apply_patch|delete_file|bash|run_command|terminal)\b[^>]*>"
         r"(?P<body>.*?)"
         r"</(?P=tag)>",
+        re.DOTALL | re.IGNORECASE,
+    )
+    heredoc_pattern = re.compile(
+        r"<<\\?['\"]?(\w+)\\?['\"]?[^\n]*\n(.*?)\n\s*\1\s*$",
         re.DOTALL | re.IGNORECASE,
     )
     for match in tag_pattern.finditer(content):
@@ -372,6 +413,11 @@ def _extract_json_from_mutating_tool_markup(content: str) -> str | None:
         # Also keep the whole body in case JSON is directly inside the tag.
         if content_match:
             candidates.append(body.strip())
+        # For shell tags, a heredoc is a common way the model writes JSON.
+        if match.group("tag").lower() in {"bash", "run_command", "terminal"}:
+            heredoc_match = heredoc_pattern.search(body)
+            if heredoc_match:
+                candidates.append(heredoc_match.group(2).strip())
 
     # 2. <invoke name="write_file"> ... <parameter name="content">...</parameter> ...
     invoke_pattern = re.compile(
@@ -421,12 +467,9 @@ def _extract_json_from_mutating_tool_markup(content: str) -> str | None:
     for match in self_closing_pattern.finditer(content):
         candidates.append(match.group("value").strip())
 
-    # 5. Fall back to JSON-ish blocks anywhere in the markup, preferring
-    # the largest plausible block first so nested braces inside heredocs
-    # are captured before tiny fragments.
-    for match in re.finditer(r"(\{(?:[^{}]|\{[^}]*\))*\}|\[(?:[^\[\]]|\[[^\]]*\])*\])", content, re.DOTALL):
-        candidates.append(match.group(1).strip())
-
+        # 5. Fall back to balanced JSON-ish blocks anywhere in the markup.
+    for block in _balanced_json_blocks(content):
+        candidates.append(block.strip())
     for candidate in candidates:
         if not candidate:
             continue
