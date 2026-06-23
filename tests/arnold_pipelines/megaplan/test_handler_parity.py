@@ -23,6 +23,63 @@ from arnold_pipelines.megaplan.handlers.structured_output import (
 from arnold_pipelines.megaplan.workers import WorkerResult
 
 
+class TestAdaptiveCritiqueRouting:
+    def test_tier_models_win_over_global_pin_with_pin_as_missing_tier_fallback(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from arnold_pipelines.megaplan.execute import batch
+        from arnold_pipelines.megaplan.handlers.critique import _apply_adaptive_critique_routing
+
+        def fake_resolve_tier_spec(args: argparse.Namespace, spec: str, *, phase: str = "execute"):
+            assert phase == "critique"
+            agent, model = spec.split(":", 1)
+            return agent, "fresh", model
+
+        monkeypatch.setattr(batch, "_resolve_tier_spec", fake_resolve_tier_spec)
+
+        state = {
+            "config": {
+                "critic_model_explicit": True,
+                "critic_model": "deepseek-v4-pro",
+            }
+        }
+        args = argparse.Namespace(
+            tier_models={
+                "critique": {
+                    4: "codex:gpt-5.5",
+                    2: "hermes:deepseek:deepseek-v4-flash",
+                }
+            }
+        )
+        checks = [
+            {"id": "hard", "question": "Hard?", "complexity": 4},
+            {"id": "fallback", "question": "Fallback?", "complexity": 5},
+        ]
+
+        assert _apply_adaptive_critique_routing(state, args, checks) is None
+
+        hard_mode = checks[0]["_resolved_agent_mode"]
+        fallback_mode = checks[1]["_resolved_agent_mode"]
+        assert hard_mode.agent == "codex"
+        assert hard_mode.resolved_model == "gpt-5.5"
+        assert checks[0]["_routing_selected_spec"] == "codex:gpt-5.5"
+        assert fallback_mode.agent == "hermes"
+        assert fallback_mode.model == "deepseek:deepseek-v4-pro"
+        assert checks[1]["_routing_selected_spec"] == "critic_model:deepseek-v4-pro"
+        assert all(check["_routing_tier_active"] is True for check in checks)
+
+    def test_missing_tier_without_pin_still_fails(self) -> None:
+        from arnold_pipelines.megaplan.handlers.critique import _apply_adaptive_critique_routing
+        from arnold_pipelines.megaplan.types import CliError
+
+        state = {"config": {}}
+        args = argparse.Namespace(tier_models={"critique": {4: "codex:gpt-5.5"}})
+        checks = [{"id": "missing", "question": "Missing?", "complexity": 5}]
+
+        with pytest.raises(CliError, match="No tier spec for complexity 5"):
+            _apply_adaptive_critique_routing(state, args, checks)
+
+
 class TestCritiqueScratchPromotion:
     def test_strip_unknown_keys_drops_injected_commentary(self) -> None:
         payload = {
