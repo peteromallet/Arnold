@@ -1,10 +1,10 @@
 {
   "schema_version": 0,
-  "current_milestone_index": 3,
-  "current_plan_name": "m4-diagnostics-reporter-20260623-0108",
+  "current_milestone_index": 4,
+  "current_plan_name": "m5-extension-manager-and-20260623-0336",
   "last_state": "done",
-  "pr_number": 57,
-  "pr_state": "open",
+  "pr_number": null,
+  "pr_state": null,
   "completed": [
     {
       "label": "m1-preview-truth-contract-freeze",
@@ -92,13 +92,42 @@
         "ran": true,
         "artifact": "full_suite_backstop.json"
       }
+    },
+    {
+      "label": "m4-diagnostics-schemaform-lifecycle",
+      "plan": "m4-diagnostics-reporter-20260623-0108",
+      "status": "done",
+      "pr_number": 57,
+      "pr_state": "merged",
+      "full_suite_backstop": {
+        "mode": "shadow",
+        "status": "failed",
+        "blocks": false,
+        "reason": "full_suite_backstop_mode=shadow: recorded only",
+        "passed": 8,
+        "failed": 3,
+        "failing_tests": [
+          "vendor/timeline-schema/tests/test_materialize_output.py::MaterializeOutputTests::test_materialize_output_from_2rp_theme",
+          "vendor/timeline-schema/tests/test_materialize_output.py::ResolveThemeTests::test_resolve_theme_2rp",
+          "vendor/timeline-schema/tests/test_materialize_output.py::ResolveThemeTests::test_resolve_theme_with_overrides"
+        ],
+        "newly_failing": [],
+        "deleted_tests": [],
+        "baseline_failing_count": 3,
+        "current_failing_count": 3,
+        "delta_computed": true,
+        "command": "pytest --tb=no -q --no-header -rA",
+        "duration_s": 1.9576868748990819,
+        "ran": true,
+        "artifact": "full_suite_backstop.json"
+      }
     }
   ],
-  "branch_head": "cf86556a629f0fbc9116420400e96320ee3a6fe7",
-  "pr_head": "ef9e313fc3b68b53f6f8c61a3c50ecfc7f2337f7",
-  "last_pushed_commit": "cf86556a629f0fbc9116420400e96320ee3a6fe7",
+  "branch_head": "dd678a55cc9c323c83fec9ca0a6ba89f318b9006",
+  "pr_head": "dd678a55cc9c323c83fec9ca0a6ba89f318b9006",
+  "last_pushed_commit": "dd678a55cc9c323c83fec9ca0a6ba89f318b9006",
   "dirty_flag": false,
-  "sync_state": "stale",
+  "sync_state": "clean",
   "extra_repos": [],
   "chain_session": null,
   "resolved_workspace": null,
@@ -120,7 +149,7 @@
       "target_root": "/Users/peteromalley/Documents/reigh-workspace/reigh-app",
       "work_dir": "/Users/peteromalley/Documents/reigh-workspace/reigh-app",
       "engine_root": "/Users/peteromalley/.pyenv/versions/3.11.11/lib/python3.11/site-packages",
-      "target_head": "cf86556a629f0fbc9116420400e96320ee3a6fe7",
+      "target_head": "dd678a55cc9c323c83fec9ca0a6ba89f318b9006",
       "target_base": "d4e6c2d35eec78fe4cdc8f166a8c737c9de7ff59",
       "target_base_ref": "main",
       "target_fallback_reason": null
