@@ -49,6 +49,8 @@ import {
   getManifestSettingsSchemaVersion,
 } from './extensionSettingsMigration';
 import type { SettingsMigrationHandler } from './extensionSettingsMigration';
+import Ajv from 'ajv';
+import type { ValidateFunction } from 'ajv';
 
 // ---------------------------------------------------------------------------
 // Settings prefix
@@ -408,6 +410,77 @@ export function createExtensionSettingsService(
   }
 
   // -----------------------------------------------------------------------
+  // Ajv-backed atomic save validation (T12)
+  // -----------------------------------------------------------------------
+
+  /**
+   * Compiled Ajv validator for the full settings candidate, or null when
+   * the manifest does not declare a settings JSON Schema.
+   */
+  const settingsSchemaValidator: ValidateFunction | null = (() => {
+    const settingsSchema = manifest.settingsSchema;
+    if (!settingsSchema || !settingsSchema.schema) return null;
+
+    const rawSchema = settingsSchema.schema as Record<string, unknown>;
+    // We only support JSON Schema with type:'object' and properties
+    if (rawSchema.type !== 'object' || !rawSchema.properties) return null;
+
+    try {
+      const ajv = new Ajv({ allErrors: true });
+      return ajv.compile(rawSchema);
+    } catch {
+      // Schema compilation failed — fall back to permissive mode
+      return null;
+    }
+  })();
+
+  /**
+   * Build the full candidate settings state: merge manifest defaults,
+   * snapshot values, and localStorage overrides, then apply the
+   * pending key/value change.
+   */
+  function buildCandidateState(key: string, value: unknown): Record<string, unknown> {
+    const candidate: Record<string, unknown> = { ...settingsDefaults };
+
+    // Apply snapshot values (overrides defaults)
+    for (const [sk, sv] of Object.entries(snapshotValues)) {
+      if (!deletedKeys.has(sk)) {
+        candidate[sk] = sv;
+      }
+    }
+
+    // Apply localStorage overrides (wins over snapshot + defaults)
+    try {
+      for (let i = 0; i < localStorage.length; i++) {
+        const lsKey = localStorage.key(i);
+        if (lsKey && lsKey.startsWith(settingsPrefix)) {
+          const shortKey = lsKey.slice(settingsPrefix.length);
+          try {
+            const raw = localStorage.getItem(lsKey);
+            if (raw !== null) {
+              candidate[shortKey] = JSON.parse(raw);
+            }
+          } catch {
+            // parse error on a key — skip it
+          }
+        }
+      }
+    } catch {
+      // localStorage enumeration failed — use what we have
+    }
+
+    // Remove deleted keys
+    for (const dk of deletedKeys) {
+      delete candidate[dk];
+    }
+
+    // Apply the pending key/value change
+    candidate[key] = value;
+
+    return candidate;
+  }
+
+  // -----------------------------------------------------------------------
   // Service
   // -----------------------------------------------------------------------
 
@@ -416,6 +489,18 @@ export function createExtensionSettingsService(
       return getEffectiveValue<T>(key);
     },
     set<T = unknown>(key: string, value: T): void {
+      // T12: Ajv-backed atomic save — validate the full candidate before
+      // writing to localStorage. Blocks invalid saves to prevent partial
+      // corruption of the existing valid override state.
+      if (settingsSchemaValidator) {
+        const candidate = buildCandidateState(key, value);
+        const valid = settingsSchemaValidator(candidate);
+        if (!valid) {
+          // Validation failed — block the save, preserving existing overrides
+          return;
+        }
+      }
+
       try {
         localStorage.setItem(settingsPrefix + key, JSON.stringify(value));
         writtenKeys.add(key);

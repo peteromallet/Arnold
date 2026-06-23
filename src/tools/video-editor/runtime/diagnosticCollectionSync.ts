@@ -4,6 +4,7 @@ import type {
   ExtensionDiagnostic,
   LiveSourceDiagnostic,
 } from '@reigh/editor-sdk';
+import { DIAGNOSTIC_SOURCE_EXTENSION, getSettingsPrefix } from '@reigh/editor-sdk';
 import type {
   CapabilityFinding,
   RenderBlocker,
@@ -43,13 +44,22 @@ export function extensionDiagnosticToCollectionDiagnostic(
   index: number,
 ): Diagnostic {
   const detail = diagnostic.detail ?? {};
-  const originalSource = detail.source;
+  // Extension-authored diagnostics carry provenance in two layers:
+  // 1. The top-level Diagnostic.source is always set to
+  //    DIAGNOSTIC_SOURCE_EXTENSION so that clean-up by extension ID
+  //    scopes correctly without touching host-owned diagnostic sources.
+  // 2. The caller may stash finer-grained info (e.g. 'fragment' for
+  //    a shader stage) inside detail.source; we move that into
+  //    diagnosticSource before the provider source overwrites
+  //    detail.source.
+  const callerDetailSource = detail.source;
 
   return {
     id: diagnosticId(source, diagnostic, index),
     severity: diagnostic.severity,
     code: diagnostic.code,
     message: diagnostic.message,
+    source: DIAGNOSTIC_SOURCE_EXTENSION,
     ...(diagnostic.extensionId ? { extensionId: diagnostic.extensionId } : {}),
     ...(diagnostic.contributionId ? { contributionId: diagnostic.contributionId } : {}),
     ...(diagnostic.milestone ? { milestone: diagnostic.milestone } : {}),
@@ -57,7 +67,7 @@ export function extensionDiagnosticToCollectionDiagnostic(
     ...(diagnostic.relatedRanges ? { relatedRanges: diagnostic.relatedRanges } : {}),
     detail: {
       ...detail,
-      ...(originalSource !== undefined ? { diagnosticSource: originalSource } : {}),
+      ...(callerDetailSource !== undefined ? { diagnosticSource: callerDetailSource } : {}),
       source,
     },
   };
@@ -84,7 +94,9 @@ export function removeExtensionDiagnosticsFromCollection(
   collection: DiagnosticCollection | undefined,
   extensionId: string,
 ): void {
-  collection?.remove((diagnostic) => diagnostic.extensionId === extensionId);
+  // Use removeByExtensionId to scope removal to extension-authored
+  // diagnostics without touching host-owned diagnostic sources.
+  collection?.removeByExtensionId(extensionId);
 }
 
 export function plannerFindingToDiagnostic(
@@ -119,6 +131,29 @@ export function syncPlannerDiagnosticsToCollection(
   });
 }
 
+
+/**
+ * Clear all localStorage settings keys for a given extension.
+ *
+ * This is the settings-derived UI state reset counterpart to
+ * removeExtensionDiagnosticsFromCollection. Callers should invoke both from
+ * the shared ExtensionLifecycleHost.onLifecycleDisposed callback to
+ * guarantee that disable/unload clears the targeted extension's diagnostics
+ * and settings UI state without touching unrelated extension state.
+ */
+export function clearExtensionSettingsFromLocalStorage(extensionId: string): void {
+  const prefix = getSettingsPrefix(extensionId);
+  try {
+    for (let i = localStorage.length - 1; i >= 0; i--) {
+      const key = localStorage.key(i);
+      if (key && key.startsWith(prefix)) {
+        localStorage.removeItem(key);
+      }
+    }
+  } catch {
+    // localStorage unavailable — silently no-op
+  }
+}
 
 export function syncLiveDiagnosticsToCollection(
   collection: DiagnosticCollection | undefined,

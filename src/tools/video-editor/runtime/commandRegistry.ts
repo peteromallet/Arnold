@@ -949,14 +949,21 @@ export function createCommandRegistry(): CommandRegistry {
   function unregisterAll(extensionId: string): void {
     if (guardDisposed('unregisterAll')) return;
 
-    // Remove all commands for this extension
-    let cmdCount = 0;
+    // Collect command IDs for this extension before removal so we can
+    // scope run-status cleanup to only the disposed extension's commands.
+    const removedCommandIds: string[] = [];
     commands.forEach((cmd, id) => {
       if (cmd.extensionId === extensionId) {
-        commands.delete(id);
-        cmdCount++;
+        removedCommandIds.push(id);
       }
     });
+
+    // Remove all commands for this extension
+    let cmdCount = 0;
+    for (const id of removedCommandIds) {
+      commands.delete(id);
+      cmdCount++;
+    }
 
     // Remove all keybindings for this extension
     let kbCount = 0;
@@ -980,8 +987,11 @@ export function createCommandRegistry(): CommandRegistry {
       }
     });
 
-    // Clean up run statuses (they're lightweight, but clear for tidiness)
-    runStatuses.clear();
+    // Clean up run statuses only for the removed commands, preserving
+    // invocation history for unrelated extensions.
+    for (const id of removedCommandIds) {
+      runStatuses.delete(id);
+    }
 
     if (cmdCount > 0 || kbCount > 0 || cmCount > 0) {
       invalidateSnapshot();

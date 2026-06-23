@@ -70,6 +70,22 @@ export interface DisposeHandle {
 
 export type DiagnosticSeverity = 'error' | 'warning' | 'info';
 
+/**
+ * Diagnostic provenance source.
+ *
+ * - `extension` — authored by a trusted local extension (the only source
+ *   extensions themselves can produce).  The SDK pins this value for
+ *   extension-reported diagnostics.
+ * - `render` — emitted by the host render pipeline.
+ * - `provider` — emitted by a host provider (editor runtime, etc.).
+ *
+ * Extensions MUST NOT set host-owned sources.
+ */
+export type DiagnosticSource = 'extension' | 'render' | 'provider';
+
+/** The only diagnostic source extensions are permitted to use. */
+export const DIAGNOSTIC_SOURCE_EXTENSION: DiagnosticSource = 'extension';
+
 export interface ExtensionDiagnostic {
   severity: DiagnosticSeverity;
   code: string;
@@ -78,6 +94,11 @@ export interface ExtensionDiagnostic {
   contributionId?: string;
   /** The earliest milestone that is expected to activate this feature. */
   milestone?: string;
+  /**
+   * Diagnostic provenance source.
+   * Extension-authored diagnostics always use {@link DIAGNOSTIC_SOURCE_EXTENSION}.
+   */
+  source?: DiagnosticSource;
   /** Additional structured detail (clip reference, effect ID, etc.). */
   detail?: Record<string, unknown>;
 }
@@ -99,10 +120,15 @@ export interface DiagnosticCollection {
   readonly snapshot: readonly Diagnostic[];
   publish(diagnostic: Diagnostic): void;
   remove(predicate: (diagnostic: Diagnostic) => boolean): void;
+  /** Remove all diagnostics belonging to the given extension ID. */
+  removeByExtensionId(extensionId: string): void;
   clear(): void;
   subscribe(listener: () => void): DisposeHandle;
   getSnapshot(): readonly Diagnostic[];
 }
+
+/** Default per-extension diagnostic capacity before oldest-first eviction. */
+export const DEFAULT_DIAGNOSTIC_PER_EXTENSION_CAPACITY = 100;
 
 function freezeDiagnostic(diagnostic: Diagnostic): Diagnostic {
   return Object.freeze({
@@ -115,7 +141,22 @@ function freezeDiagnostic(diagnostic: Diagnostic): Diagnostic {
   });
 }
 
-export function createDiagnosticCollection(initialDiagnostics: readonly Diagnostic[] = []): DiagnosticCollection {
+export interface CreateDiagnosticCollectionOptions {
+  /**
+   * Maximum number of diagnostics allowed per extension ID.
+   * When publishing a new diagnostic (not replacing an existing one by ID)
+   * would exceed this limit, the oldest diagnostic for that extension is
+   * evicted before the new one is added.
+   * @default {@link DEFAULT_DIAGNOSTIC_PER_EXTENSION_CAPACITY}
+   */
+  perExtensionCapacity?: number;
+}
+
+export function createDiagnosticCollection(
+  initialDiagnostics: readonly Diagnostic[] = [],
+  options: CreateDiagnosticCollectionOptions = {},
+): DiagnosticCollection {
+  const capacity = options.perExtensionCapacity ?? DEFAULT_DIAGNOSTIC_PER_EXTENSION_CAPACITY;
   const diagnostics: Diagnostic[] = initialDiagnostics.map(freezeDiagnostic);
   const listeners = new Set<() => void>();
   let snapshot: readonly Diagnostic[] = Object.freeze([...diagnostics]);
@@ -127,6 +168,16 @@ export function createDiagnosticCollection(initialDiagnostics: readonly Diagnost
     }
   };
 
+  const evictOldestForExtension = (extensionId: string): void => {
+    // Find the oldest (lowest index) diagnostic for this extension
+    for (let i = 0; i < diagnostics.length; i += 1) {
+      if (diagnostics[i].extensionId === extensionId) {
+        diagnostics.splice(i, 1);
+        return; // only evict one — the oldest
+      }
+    }
+  };
+
   return {
     get snapshot(): readonly Diagnostic[] {
       return snapshot;
@@ -135,8 +186,20 @@ export function createDiagnosticCollection(initialDiagnostics: readonly Diagnost
       const frozen = freezeDiagnostic(diagnostic);
       const existingIndex = diagnostics.findIndex((item) => item.id === frozen.id);
       if (existingIndex >= 0) {
+        // Replace in-place — does NOT count toward capacity
         diagnostics[existingIndex] = frozen;
       } else {
+        // New diagnostic: enforce per-extension capacity
+        const extId = frozen.extensionId;
+        if (extId) {
+          const extCount = diagnostics.reduce(
+            (count, d) => count + (d.extensionId === extId ? 1 : 0),
+            0,
+          );
+          if (extCount >= capacity) {
+            evictOldestForExtension(extId);
+          }
+        }
         diagnostics.push(frozen);
       }
       publishSnapshot();
@@ -145,6 +208,18 @@ export function createDiagnosticCollection(initialDiagnostics: readonly Diagnost
       let changed = false;
       for (let index = diagnostics.length - 1; index >= 0; index -= 1) {
         if (predicate(diagnostics[index])) {
+          diagnostics.splice(index, 1);
+          changed = true;
+        }
+      }
+      if (changed) {
+        publishSnapshot();
+      }
+    },
+    removeByExtensionId(extensionId: string): void {
+      let changed = false;
+      for (let index = diagnostics.length - 1; index >= 0; index -= 1) {
+        if (diagnostics[index].extensionId === extensionId) {
           diagnostics.splice(index, 1);
           changed = true;
         }
@@ -3034,7 +3109,12 @@ export interface ExtensionI18nService {
 
 /** Diagnostics service: emit structured diagnostics from extension code. */
 export interface ExtensionDiagnosticsService {
-  report(diagnostic: Omit<ExtensionDiagnostic, 'extensionId'>): void;
+  /**
+   * Report a diagnostic.  `extensionId` and `source` are owned by the
+   * extension lifecycle — the host overwrites any caller-provided values
+   * with the authoritative extension ID and {@link DIAGNOSTIC_SOURCE_EXTENSION}.
+   */
+  report(diagnostic: Omit<ExtensionDiagnostic, 'extensionId' | 'source'>): void;
   /** All diagnostics emitted by this extension (live snapshot). */
   readonly diagnostics: readonly ExtensionDiagnostic[];
 }
@@ -3530,10 +3610,11 @@ export function createExtensionContext(
   // ---- diagnostics service ------------------------------------------------
   const diagnosticsList: ExtensionDiagnostic[] = [];
   const diagnosticsService: ExtensionDiagnosticsService = {
-    report(diag: Omit<ExtensionDiagnostic, 'extensionId'>): void {
+    report(diag: Omit<ExtensionDiagnostic, 'extensionId' | 'source'>): void {
       const full: ExtensionDiagnostic = Object.freeze({
         ...diag,
         extensionId,
+        source: DIAGNOSTIC_SOURCE_EXTENSION,
       });
       diagnosticsList.push(full);
     },

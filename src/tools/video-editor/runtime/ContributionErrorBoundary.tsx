@@ -48,6 +48,20 @@ export interface ContributionErrorBoundaryProps {
   kind: ErrorBoundaryContributionKind;
   /** Human-readable label shown in the fallback UI (defaults to contributionId). */
   label?: string;
+  /**
+   * Opaque recovery key.  When this value changes, the boundary clears any
+   * caught error and attempts a fresh render of `children`.
+   *
+   * If a `recoveryKey` is provided, the boundary will **not** auto-reset on
+   * arbitrary children-reference changes — it only resets when the recovery
+   * key changes.  This prevents infinite crash→recover→crash loops that would
+   * otherwise occur when a parent re-renders a persistently-broken renderer.
+   *
+   * When no `recoveryKey` is given the boundary falls back to the legacy
+   * behaviour of resetting whenever the `children` reference changes
+   * (e.g. HMR or extension replacement).
+   */
+  recoveryKey?: string;
   /** Called when the boundary catches an error. */
   onError?: (info: ContributionErrorInfo) => void;
   children: ReactNode;
@@ -126,9 +140,13 @@ export class ContributionErrorBoundary extends Component<
   ContributionErrorBoundaryProps,
   ContributionErrorBoundaryState
 > {
+  /** Last recovery key seen by this boundary — used to detect explicit reset. */
+  private _lastRecoveryKey: string | undefined;
+
   constructor(props: ContributionErrorBoundaryProps) {
     super(props);
     this.state = { error: null };
+    this._lastRecoveryKey = props.recoveryKey;
   }
 
   static getDerivedStateFromError(error: Error): ContributionErrorBoundaryState {
@@ -161,11 +179,25 @@ export class ContributionErrorBoundary extends Component<
   }
 
   componentDidUpdate(
-    _prevProps: ContributionErrorBoundaryProps,
+    prevProps: ContributionErrorBoundaryProps,
     prevState: ContributionErrorBoundaryState,
   ): void {
-    // Reset error state when children change (e.g. HMR or extension replacement).
-    if (prevState.error !== null && this.props.children !== _prevProps.children) {
+    if (prevState.error === null) return;
+
+    const recoveryKeyChanged =
+      this.props.recoveryKey !== undefined &&
+      this.props.recoveryKey !== this._lastRecoveryKey;
+
+    const childrenChanged = this.props.children !== prevProps.children;
+
+    // When a recoveryKey is provided, only reset on explicit key change.
+    // Without a recoveryKey, fall back to the legacy children-change reset.
+    const shouldReset =
+      recoveryKeyChanged ||
+      (this.props.recoveryKey === undefined && childrenChanged);
+
+    if (shouldReset) {
+      this._lastRecoveryKey = this.props.recoveryKey;
       this.setState({ error: null });
     }
   }

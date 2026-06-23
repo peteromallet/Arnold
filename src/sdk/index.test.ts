@@ -17,6 +17,8 @@ import {
   getManifestSettingsSchemaVersion,
   findSettingsMigrationDeclarations,
   createDiagnosticCollection,
+  DIAGNOSTIC_SOURCE_EXTENSION,
+  DEFAULT_DIAGNOSTIC_PER_EXTENSION_CAPACITY,
   createExtensionSettingsService,
   DETERMINISM_STATUSES,
   RENDER_BLOCKER_REASONS,
@@ -995,7 +997,7 @@ describe('createExtensionContext', () => {
 
   // ---- diagnostics service ------------------------------------------------
 
-  it('diagnostics.report stores diagnostics with auto-filled extensionId', () => {
+  it('diagnostics.report stores diagnostics with auto-filled extensionId and source', () => {
     ctx.services.diagnostics.report({
       severity: 'info',
       code: 'test/info',
@@ -1004,9 +1006,26 @@ describe('createExtensionContext', () => {
     const diags = ctx.services.diagnostics.diagnostics;
     expect(diags).toHaveLength(1);
     expect(diags[0].extensionId).toBe('com.example.ctx-test');
+    expect(diags[0].source).toBe(DIAGNOSTIC_SOURCE_EXTENSION);
     expect(diags[0].severity).toBe('info');
     expect(diags[0].code).toBe('test/info');
     expect(diags[0].message).toBe('Test diagnostic');
+  });
+
+  it('diagnostics.report forces source to DIAGNOSTIC_SOURCE_EXTENSION even when spoofed', () => {
+    // Use type assertion to simulate a malicious extension attempting to
+    // set a host-owned source. The report implementation must ignore this
+    // and always write DIAGNOSTIC_SOURCE_EXTENSION.
+    const spoofed: any = {
+      severity: 'error' as const,
+      code: 'test/spoof',
+      message: 'Spoof attempt',
+    };
+    ctx.services.diagnostics.report(spoofed);
+    const diags = ctx.services.diagnostics.diagnostics;
+    expect(diags).toHaveLength(1);
+    expect(diags[0].extensionId).toBe('com.example.ctx-test');
+    expect(diags[0].source).toBe(DIAGNOSTIC_SOURCE_EXTENSION);
   });
 
   it('diagnostics.report freezes stored diagnostics', () => {
@@ -1017,6 +1036,7 @@ describe('createExtensionContext', () => {
     });
     const diags = ctx.services.diagnostics.diagnostics;
     expect(Object.isFrozen(diags[0])).toBe(true);
+    expect(diags[0].source).toBe(DIAGNOSTIC_SOURCE_EXTENSION);
   });
 
   // ---- chrome service -----------------------------------------------------
@@ -3475,6 +3495,416 @@ describe('DiagnosticCollection interface (index)', () => {
       detail: { clipId: 'clip-1' },
     };
     expect(diag.code.startsWith('export/')).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// M4: Diagnostic source, removeByExtensionId, and capacity eviction
+// ---------------------------------------------------------------------------
+
+describe('M4: DiagnosticSource and DIAGNOSTIC_SOURCE_EXTENSION', () => {
+  it('DIAGNOSTIC_SOURCE_EXTENSION equals "extension"', () => {
+    expect(DIAGNOSTIC_SOURCE_EXTENSION).toBe('extension');
+  });
+
+  it('DiagnosticSource type accepts "extension", "render", "provider"', () => {
+    const sources: import('@/sdk/index').DiagnosticSource[] = [
+      'extension',
+      'render',
+      'provider',
+    ];
+    expect(sources).toHaveLength(3);
+  });
+
+  it('ExtensionDiagnostic accepts source field with DIAGNOSTIC_SOURCE_EXTENSION', () => {
+    const diag: import('@/sdk/index').ExtensionDiagnostic = {
+      severity: 'info',
+      code: 'test/source',
+      message: 'Source test',
+      source: DIAGNOSTIC_SOURCE_EXTENSION,
+    };
+    expect(diag.source).toBe('extension');
+  });
+});
+
+describe('M4: DiagnosticCollection.removeByExtensionId', () => {
+  it('removes only diagnostics matching the given extension ID', () => {
+    const coll = createDiagnosticCollection();
+    coll.publish({
+      id: 'a',
+      severity: 'info',
+      code: 'test/a',
+      message: 'A',
+      extensionId: 'ext.one',
+    });
+    coll.publish({
+      id: 'b',
+      severity: 'info',
+      code: 'test/b',
+      message: 'B',
+      extensionId: 'ext.two',
+    });
+    coll.publish({
+      id: 'c',
+      severity: 'info',
+      code: 'test/c',
+      message: 'C',
+      extensionId: 'ext.one',
+    });
+
+    coll.removeByExtensionId('ext.one');
+
+    expect(coll.snapshot).toHaveLength(1);
+    expect(coll.snapshot[0].id).toBe('b');
+    expect(coll.snapshot[0].extensionId).toBe('ext.two');
+  });
+
+  it('is idempotent: calling removeByExtensionId twice is safe', () => {
+    const coll = createDiagnosticCollection();
+    coll.publish({
+      id: 'a',
+      severity: 'info',
+      code: 'test/a',
+      message: 'A',
+      extensionId: 'ext.one',
+    });
+    coll.removeByExtensionId('ext.one');
+    coll.removeByExtensionId('ext.one');
+    expect(coll.snapshot).toHaveLength(0);
+  });
+
+  it('removes nothing when extension ID has no diagnostics', () => {
+    const coll = createDiagnosticCollection();
+    coll.publish({
+      id: 'a',
+      severity: 'info',
+      code: 'test/a',
+      message: 'A',
+      extensionId: 'ext.one',
+    });
+    coll.removeByExtensionId('ext.nonexistent');
+    expect(coll.snapshot).toHaveLength(1);
+    expect(coll.snapshot[0].id).toBe('a');
+  });
+
+  it('does not affect diagnostics without an extensionId', () => {
+    const coll = createDiagnosticCollection();
+    coll.publish({
+      id: 'host-diag',
+      severity: 'info',
+      code: 'host/test',
+      message: 'Host diagnostic',
+    });
+    coll.publish({
+      id: 'ext-diag',
+      severity: 'info',
+      code: 'ext/test',
+      message: 'Extension diagnostic',
+      extensionId: 'ext.one',
+    });
+    coll.removeByExtensionId('ext.one');
+    expect(coll.snapshot).toHaveLength(1);
+    expect(coll.snapshot[0].id).toBe('host-diag');
+    expect(coll.snapshot[0].extensionId).toBeUndefined();
+  });
+
+  it('notifies subscribers on removeByExtensionId', () => {
+    const coll = createDiagnosticCollection();
+    coll.publish({
+      id: 'a',
+      severity: 'info',
+      code: 'test/a',
+      message: 'A',
+      extensionId: 'ext.one',
+    });
+    let notified = false;
+    coll.subscribe(() => {
+      notified = true;
+    });
+    coll.removeByExtensionId('ext.one');
+    expect(notified).toBe(true);
+  });
+
+  it('does not notify subscribers when nothing removed', () => {
+    const coll = createDiagnosticCollection();
+    coll.publish({
+      id: 'a',
+      severity: 'info',
+      code: 'test/a',
+      message: 'A',
+      extensionId: 'ext.one',
+    });
+    let notified = false;
+    coll.subscribe(() => {
+      notified = true;
+    });
+    coll.removeByExtensionId('ext.nonexistent');
+    expect(notified).toBe(false);
+  });
+
+  it('snapshot remains frozen after removeByExtensionId', () => {
+    const coll = createDiagnosticCollection();
+    coll.publish({
+      id: 'a',
+      severity: 'info',
+      code: 'test/a',
+      message: 'A',
+      extensionId: 'ext.one',
+    });
+    coll.publish({
+      id: 'b',
+      severity: 'info',
+      code: 'test/b',
+      message: 'B',
+      extensionId: 'ext.two',
+    });
+    coll.removeByExtensionId('ext.one');
+    expect(Object.isFrozen(coll.snapshot)).toBe(true);
+    expect(Object.isFrozen(coll.snapshot[0])).toBe(true);
+  });
+});
+
+describe('M4: DiagnosticCollection per-extension capacity and eviction', () => {
+  it('DEFAULT_DIAGNOSTIC_PER_EXTENSION_CAPACITY is 100', () => {
+    expect(DEFAULT_DIAGNOSTIC_PER_EXTENSION_CAPACITY).toBe(100);
+  });
+
+  it('evicts oldest diagnostic when per-extension capacity is exceeded', () => {
+    const coll = createDiagnosticCollection([], { perExtensionCapacity: 3 });
+    coll.publish({
+      id: 'oldest',
+      severity: 'info',
+      code: 'test/1',
+      message: 'Oldest',
+      extensionId: 'ext.one',
+    });
+    coll.publish({
+      id: 'second',
+      severity: 'info',
+      code: 'test/2',
+      message: 'Second',
+      extensionId: 'ext.one',
+    });
+    coll.publish({
+      id: 'third',
+      severity: 'info',
+      code: 'test/3',
+      message: 'Third',
+      extensionId: 'ext.one',
+    });
+    // At capacity (3). Publish a new one — oldest should be evicted.
+    coll.publish({
+      id: 'newest',
+      severity: 'info',
+      code: 'test/4',
+      message: 'Newest',
+      extensionId: 'ext.one',
+    });
+    expect(coll.snapshot).toHaveLength(3);
+    const ids = coll.snapshot.map((d) => d.id);
+    expect(ids).not.toContain('oldest');
+    expect(ids).toContain('second');
+    expect(ids).toContain('third');
+    expect(ids).toContain('newest');
+  });
+
+  it('eviction is oldest-first: the first published is removed', () => {
+    const coll = createDiagnosticCollection([], { perExtensionCapacity: 2 });
+    coll.publish({
+      id: 'first',
+      severity: 'info',
+      code: 'test/1',
+      message: 'First',
+      extensionId: 'ext.one',
+    });
+    coll.publish({
+      id: 'second',
+      severity: 'info',
+      code: 'test/2',
+      message: 'Second',
+      extensionId: 'ext.one',
+    });
+    // Now at capacity. Publish a third — 'first' should be evicted.
+    coll.publish({
+      id: 'third',
+      severity: 'info',
+      code: 'test/3',
+      message: 'Third',
+      extensionId: 'ext.one',
+    });
+    expect(coll.snapshot).toHaveLength(2);
+    const ids = coll.snapshot.map((d) => d.id);
+    expect(ids).toEqual(['second', 'third']);
+  });
+
+  it('replacing by ID does not trigger eviction', () => {
+    const coll = createDiagnosticCollection([], { perExtensionCapacity: 2 });
+    coll.publish({
+      id: 'a',
+      severity: 'info',
+      code: 'test/1',
+      message: 'First',
+      extensionId: 'ext.one',
+    });
+    coll.publish({
+      id: 'b',
+      severity: 'info',
+      code: 'test/2',
+      message: 'Second',
+      extensionId: 'ext.one',
+    });
+    // Replace 'a' — should NOT evict anything, just update in place.
+    coll.publish({
+      id: 'a',
+      severity: 'error',
+      code: 'test/1-updated',
+      message: 'Updated',
+      extensionId: 'ext.one',
+    });
+    expect(coll.snapshot).toHaveLength(2);
+    const updated = coll.snapshot.find((d) => d.id === 'a');
+    expect(updated?.severity).toBe('error');
+    expect(updated?.code).toBe('test/1-updated');
+  });
+
+  it('capacity is per-extension: one extension at capacity does not affect another', () => {
+    const coll = createDiagnosticCollection([], { perExtensionCapacity: 2 });
+    // Fill ext.one to capacity
+    coll.publish({
+      id: 'one-1',
+      severity: 'info',
+      code: 'test/1',
+      message: 'One 1',
+      extensionId: 'ext.one',
+    });
+    coll.publish({
+      id: 'one-2',
+      severity: 'info',
+      code: 'test/2',
+      message: 'One 2',
+      extensionId: 'ext.one',
+    });
+    // ext.two has only one
+    coll.publish({
+      id: 'two-1',
+      severity: 'info',
+      code: 'test/3',
+      message: 'Two 1',
+      extensionId: 'ext.two',
+    });
+    // Publish new for ext.one — evicts oldest from ext.one only
+    coll.publish({
+      id: 'one-3',
+      severity: 'info',
+      code: 'test/4',
+      message: 'One 3',
+      extensionId: 'ext.one',
+    });
+    // ext.two should still have its one diagnostic
+    const twoIds = coll.snapshot.filter((d) => d.extensionId === 'ext.two').map((d) => d.id);
+    expect(twoIds).toEqual(['two-1']);
+    const oneIds = coll.snapshot.filter((d) => d.extensionId === 'ext.one').map((d) => d.id);
+    expect(oneIds).toEqual(['one-2', 'one-3']);
+  });
+
+  it('diagnostics without extensionId are not subject to capacity eviction', () => {
+    const coll = createDiagnosticCollection([], { perExtensionCapacity: 1 });
+    // Publish many diagnostics without extensionId
+    for (let i = 0; i < 50; i += 1) {
+      coll.publish({
+        id: `host-${i}`,
+        severity: 'info',
+        code: 'host/test',
+        message: `Host ${i}`,
+      });
+    }
+    expect(coll.snapshot).toHaveLength(50);
+  });
+
+  it('uses default capacity of 100 when not specified', () => {
+    const coll = createDiagnosticCollection();
+    // Publish 100 diagnostics for one extension
+    for (let i = 0; i < 100; i += 1) {
+      coll.publish({
+        id: `d-${i}`,
+        severity: 'info',
+        code: 'test/fill',
+        message: `Diag ${i}`,
+        extensionId: 'ext.one',
+      });
+    }
+    expect(coll.snapshot).toHaveLength(100);
+    // The 101st should evict the oldest
+    coll.publish({
+      id: 'd-overflow',
+      severity: 'info',
+      code: 'test/overflow',
+      message: 'Overflow',
+      extensionId: 'ext.one',
+    });
+    expect(coll.snapshot).toHaveLength(100);
+    const ids = coll.snapshot.map((d) => d.id);
+    expect(ids).not.toContain('d-0'); // oldest evicted
+    expect(ids).toContain('d-overflow');
+  });
+
+  it('eviction preserves frozen snapshot invariants', () => {
+    const coll = createDiagnosticCollection([], { perExtensionCapacity: 2 });
+    coll.publish({
+      id: 'a',
+      severity: 'info',
+      code: 'test/a',
+      message: 'A',
+      extensionId: 'ext.one',
+    });
+    coll.publish({
+      id: 'b',
+      severity: 'info',
+      code: 'test/b',
+      message: 'B',
+      extensionId: 'ext.one',
+    });
+    const snapBefore = coll.snapshot;
+    expect(Object.isFrozen(snapBefore)).toBe(true);
+    // Trigger eviction
+    coll.publish({
+      id: 'c',
+      severity: 'info',
+      code: 'test/c',
+      message: 'C',
+      extensionId: 'ext.one',
+    });
+    const snapAfter = coll.snapshot;
+    expect(Object.isFrozen(snapAfter)).toBe(true);
+    // Previous snapshot is still frozen and unchanged
+    expect(Object.isFrozen(snapBefore)).toBe(true);
+    expect(snapBefore).toHaveLength(2);
+    expect(snapAfter).toHaveLength(2);
+    expect(snapBefore).not.toBe(snapAfter);
+  });
+
+  it('custom perExtensionCapacity option is respected', () => {
+    const coll = createDiagnosticCollection([], { perExtensionCapacity: 5 });
+    for (let i = 0; i < 5; i += 1) {
+      coll.publish({
+        id: `d-${i}`,
+        severity: 'info',
+        code: 'test/cap',
+        message: `Diag ${i}`,
+        extensionId: 'ext.one',
+      });
+    }
+    expect(coll.snapshot).toHaveLength(5);
+    // 6th triggers eviction
+    coll.publish({
+      id: 'd-overflow',
+      severity: 'info',
+      code: 'test/overflow',
+      message: 'Overflow',
+      extensionId: 'ext.one',
+    });
+    expect(coll.snapshot).toHaveLength(5);
+    expect(coll.snapshot.map((d) => d.id)).not.toContain('d-0');
   });
 });
 

@@ -1,8 +1,8 @@
 // @vitest-environment jsdom
-import { render, screen, fireEvent } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
-import React from 'react';
-import { SchemaForm, type SchemaFormSchema } from '@/tools/video-editor/components/SchemaForm/SchemaForm';
+import React, { useRef } from 'react';
+import { SchemaForm, type SchemaFormSchema, type SchemaFormHandle } from '@/tools/video-editor/components/SchemaForm/SchemaForm';
 import { createSchemaCapabilityRegistry } from '@/tools/video-editor/runtime/schemaCapabilityRegistry';
 import type {
   SchemaCapabilityRegistry,
@@ -485,6 +485,425 @@ describe('unsupported types', () => {
 });
 
 // ---------------------------------------------------------------------------
+// Unsupported schema shapes (M4 T10)
+// ---------------------------------------------------------------------------
+
+describe('unsupported schema shapes', () => {
+  // -- Array schemas ----------------------------------------------------------
+
+  it('renders read-only unsupported placeholder for array property (type:"array")', () => {
+    const standardSchema = {
+      type: 'object' as const,
+      properties: {
+        tags: { type: 'array' as const, title: 'Tags', items: { type: 'string' } },
+      },
+    };
+    renderForm({
+      schema: standardSchema as any,
+      values: { tags: ['a', 'b'] },
+    });
+
+    const placeholder = screen.getByTestId('schema-form-unsupported-tags');
+    expect(placeholder).toBeTruthy();
+    expect(placeholder.getAttribute('data-field-type')).toBe('array');
+    expect(placeholder.getAttribute('role')).toBe('alert');
+    expect(screen.getByText('Unsupported')).toBeTruthy();
+    // Diagnostic message should mention arrays
+    const diag = screen.getByTestId('schema-form-diagnostic-tags');
+    expect(diag.textContent).toContain('Array schemas are not yet supported');
+  });
+
+  it('renders read-only unsupported placeholder for array property (items without explicit type)', () => {
+    const standardSchema = {
+      type: 'object' as const,
+      properties: {
+        items: { title: 'Items', items: { type: 'number' } },
+      },
+    };
+    renderForm({
+      schema: standardSchema as any,
+      values: { items: [1, 2, 3] },
+    });
+
+    const placeholder = screen.getByTestId('schema-form-unsupported-items');
+    expect(placeholder).toBeTruthy();
+    expect(placeholder.getAttribute('data-field-type')).toBe('array');
+  });
+
+  // -- Nested object schemas --------------------------------------------------
+
+  it('renders read-only unsupported placeholder for nested object property (type:"object")', () => {
+    const standardSchema = {
+      type: 'object' as const,
+      properties: {
+        config: {
+          type: 'object' as const,
+          title: 'Config',
+          properties: {
+            nested: { type: 'string' },
+          },
+        },
+      },
+    };
+    renderForm({
+      schema: standardSchema as any,
+      values: { config: { nested: 'value' } },
+    });
+
+    const placeholder = screen.getByTestId('schema-form-unsupported-config');
+    expect(placeholder).toBeTruthy();
+    expect(placeholder.getAttribute('data-field-type')).toBe('nested-object');
+    expect(placeholder.getAttribute('role')).toBe('alert');
+    const diag = screen.getByTestId('schema-form-diagnostic-config');
+    expect(diag.textContent).toContain('Nested object schemas');
+  });
+
+  it('renders read-only unsupported placeholder for nested object (properties without type)', () => {
+    const standardSchema = {
+      type: 'object' as const,
+      properties: {
+        metadata: {
+          title: 'Metadata',
+          properties: { key: { type: 'string' } },
+        },
+      },
+    };
+    renderForm({
+      schema: standardSchema as any,
+      values: { metadata: { key: 'val' } },
+    });
+
+    const placeholder = screen.getByTestId('schema-form-unsupported-metadata');
+    expect(placeholder).toBeTruthy();
+    expect(placeholder.getAttribute('data-field-type')).toBe('nested-object');
+  });
+
+  // -- $ref schemas -----------------------------------------------------------
+
+  it('renders read-only unsupported placeholder for $ref property', () => {
+    const standardSchema = {
+      type: 'object' as const,
+      properties: {
+        reference: { $ref: '#/definitions/SomeType', title: 'Reference' },
+      },
+    };
+    renderForm({
+      schema: standardSchema as any,
+      values: { reference: {} },
+    });
+
+    const placeholder = screen.getByTestId('schema-form-unsupported-reference');
+    expect(placeholder).toBeTruthy();
+    expect(placeholder.getAttribute('data-field-type')).toBe('$ref');
+    const diag = screen.getByTestId('schema-form-diagnostic-reference');
+    expect(diag.textContent).toContain('$ref references are not yet supported');
+  });
+
+  // -- oneOf schemas ----------------------------------------------------------
+
+  it('renders read-only unsupported placeholder for oneOf property', () => {
+    const standardSchema = {
+      type: 'object' as const,
+      properties: {
+        value: {
+          title: 'Value',
+          oneOf: [{ type: 'string' }, { type: 'number' }],
+        },
+      },
+    };
+    renderForm({
+      schema: standardSchema as any,
+      values: { value: 'hello' },
+    });
+
+    const placeholder = screen.getByTestId('schema-form-unsupported-value');
+    expect(placeholder).toBeTruthy();
+    expect(placeholder.getAttribute('data-field-type')).toBe('oneOf');
+    const diag = screen.getByTestId('schema-form-diagnostic-value');
+    expect(diag.textContent).toContain('oneOf');
+  });
+
+  // -- anyOf schemas ----------------------------------------------------------
+
+  it('renders read-only unsupported placeholder for anyOf property', () => {
+    const standardSchema = {
+      type: 'object' as const,
+      properties: {
+        mixed: {
+          title: 'Mixed',
+          anyOf: [{ type: 'string' }, { type: 'number' }],
+        },
+      },
+    };
+    renderForm({
+      schema: standardSchema as any,
+      values: { mixed: 42 },
+    });
+
+    const placeholder = screen.getByTestId('schema-form-unsupported-mixed');
+    expect(placeholder).toBeTruthy();
+    expect(placeholder.getAttribute('data-field-type')).toBe('anyOf');
+    const diag = screen.getByTestId('schema-form-diagnostic-mixed');
+    expect(diag.textContent).toContain('anyOf');
+  });
+
+  // -- allOf schemas ----------------------------------------------------------
+
+  it('renders read-only unsupported placeholder for allOf property', () => {
+    const standardSchema = {
+      type: 'object' as const,
+      properties: {
+        combined: {
+          title: 'Combined',
+          allOf: [{ type: 'string', minLength: 3 }, { type: 'string', maxLength: 10 }],
+        },
+      },
+    };
+    renderForm({
+      schema: standardSchema as any,
+      values: { combined: 'test' },
+    });
+
+    const placeholder = screen.getByTestId('schema-form-unsupported-combined');
+    expect(placeholder).toBeTruthy();
+    expect(placeholder.getAttribute('data-field-type')).toBe('allOf');
+    const diag = screen.getByTestId('schema-form-diagnostic-combined');
+    expect(diag.textContent).toContain('allOf');
+  });
+
+  // -- Conditional schemas (if/then/else) -------------------------------------
+
+  it('renders read-only unsupported placeholder for conditional (if/then/else) property', () => {
+    const standardSchema = {
+      type: 'object' as const,
+      properties: {
+        dynamic: {
+          title: 'Dynamic',
+          if: { type: 'string' },
+          then: { type: 'number' },
+          else: { type: 'boolean' },
+        },
+      },
+    };
+    renderForm({
+      schema: standardSchema as any,
+      values: { dynamic: 'conditional' },
+    });
+
+    const placeholder = screen.getByTestId('schema-form-unsupported-dynamic');
+    expect(placeholder).toBeTruthy();
+    expect(placeholder.getAttribute('data-field-type')).toBe('conditional');
+    const diag = screen.getByTestId('schema-form-diagnostic-dynamic');
+    expect(diag.textContent).toContain('Conditional schemas');
+  });
+
+  it('renders read-only unsupported placeholder for conditional (if/then only)', () => {
+    const standardSchema = {
+      type: 'object' as const,
+      properties: {
+        partial: {
+          title: 'Partial',
+          if: { type: 'string' },
+          then: { type: 'number' },
+        },
+      },
+    };
+    renderForm({
+      schema: standardSchema as any,
+      values: { partial: 42 },
+    });
+
+    const placeholder = screen.getByTestId('schema-form-unsupported-partial');
+    expect(placeholder).toBeTruthy();
+    expect(placeholder.getAttribute('data-field-type')).toBe('conditional');
+  });
+
+  // -- Non-mutation verification ----------------------------------------------
+
+  it('does not fire onChange for any unsupported shape interaction', () => {
+    const onChange = vi.fn();
+    const standardSchema = {
+      type: 'object' as const,
+      properties: {
+        arr: { type: 'array' as const, title: 'Arr', items: { type: 'string' } },
+        nested: { type: 'object' as const, title: 'Nested', properties: { x: { type: 'string' } } },
+        ref: { $ref: '#/defs/X', title: 'Ref' },
+        one: { oneOf: [{ type: 'string' }], title: 'One' },
+        any: { anyOf: [{ type: 'string' }], title: 'Any' },
+        all: { allOf: [{ type: 'string' }], title: 'All' },
+        cond: { if: { type: 'string' }, then: { type: 'number' }, title: 'Cond' },
+      },
+    };
+    renderForm({
+      schema: standardSchema as any,
+      values: {
+        arr: [],
+        nested: {},
+        ref: {},
+        one: '',
+        any: '',
+        all: '',
+        cond: '',
+      },
+      onChange,
+    });
+
+    // onChange should never have been called during initial render
+    // (unsupported shapes have no interactive widgets)
+    expect(onChange).not.toHaveBeenCalled();
+
+    // Try to click on the placeholder — there are no interactive elements inside
+    const placeholder = screen.getByTestId('schema-form-unsupported-arr');
+    fireEvent.click(placeholder);
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
+  // -- onDiagnostics emission -------------------------------------------------
+
+  it('emits onDiagnostics for unsupported shapes', () => {
+    const onDiagnostics = vi.fn();
+    const standardSchema = {
+      type: 'object' as const,
+      properties: {
+        arr: { type: 'array' as const, title: 'Arr', items: { type: 'string' } },
+        nested: { type: 'object' as const, title: 'Nested', properties: { x: { type: 'string' } } },
+      },
+    };
+    renderForm({
+      schema: standardSchema as any,
+      values: { arr: [], nested: {} },
+      onDiagnostics,
+    });
+
+    expect(onDiagnostics).toHaveBeenCalledTimes(1);
+    const diagnostics = onDiagnostics.mock.calls[0][0] as ExtensionDiagnostic[];
+    expect(diagnostics).toHaveLength(2);
+
+    const codes = diagnostics.map((d) => d.code);
+    expect(codes).toContain('schema/unsupported-array');
+    expect(codes).toContain('schema/unsupported-nested-object');
+
+    // Verify detail contains fieldName
+    const arrDiag = diagnostics.find((d) => d.code === 'schema/unsupported-array');
+    expect(arrDiag?.detail).toMatchObject({ fieldName: 'arr' });
+  });
+
+  it('does not fire onDiagnostics for supported types in same form', () => {
+    const onDiagnostics = vi.fn();
+    const standardSchema = {
+      type: 'object' as const,
+      properties: {
+        name: { type: 'string', title: 'Name' },
+        count: { type: 'number', title: 'Count' },
+      },
+    };
+    renderForm({
+      schema: standardSchema as any,
+      values: { name: 'Alice', count: 42 },
+      onDiagnostics,
+    });
+
+    expect(onDiagnostics).not.toHaveBeenCalled();
+  });
+
+  // -- Mixed supported + unsupported form -------------------------------------
+
+  it('renders supported fields normally alongside unsupported shape placeholders', () => {
+    const standardSchema = {
+      type: 'object' as const,
+      properties: {
+        name: { type: 'string', title: 'Name' },
+        tags: { type: 'array' as const, title: 'Tags', items: { type: 'string' } },
+        active: { type: 'boolean', title: 'Active' },
+        config: { type: 'object' as const, title: 'Config', properties: { x: { type: 'string' } } },
+        ref: { $ref: '#/defs/X', title: 'Ref' },
+      },
+    };
+    renderForm({
+      schema: standardSchema as any,
+      values: { name: 'Alice', tags: [], active: true, config: {}, ref: {} },
+    });
+
+    // Supported fields render normally
+    expect(screen.getByTestId('schema-form-field-name')).toBeTruthy();
+    expect(screen.getByTestId('schema-form-field-active')).toBeTruthy();
+    expect(screen.getByTestId('schema-form-widget-name')).toBeTruthy();
+
+    // Unsupported shapes render as placeholders
+    expect(screen.getByTestId('schema-form-unsupported-tags')).toBeTruthy();
+    expect(screen.getByTestId('schema-form-unsupported-config')).toBeTruthy();
+    expect(screen.getByTestId('schema-form-unsupported-ref')).toBeTruthy();
+
+    // All unsupported shapes have the Unsupported badge
+    const unsupportedBadges = screen.getAllByText('Unsupported');
+    expect(unsupportedBadges).toHaveLength(3);
+  });
+
+  // -- Unsupported shapes do not crash with extreme values --------------------
+
+  it('does not crash when unsupported shape has null value', () => {
+    const standardSchema = {
+      type: 'object' as const,
+      properties: {
+        arr: { type: 'array' as const, title: 'Arr', items: { type: 'string' } },
+      },
+    };
+    // Should not throw
+    expect(() => {
+      renderForm({
+        schema: standardSchema as any,
+        values: { arr: null },
+      });
+    }).not.toThrow();
+    expect(screen.getByTestId('schema-form-unsupported-arr')).toBeTruthy();
+  });
+
+  it('does not crash when unsupported shape has undefined value', () => {
+    const standardSchema = {
+      type: 'object' as const,
+      properties: {
+        nested: { type: 'object' as const, title: 'Nested', properties: { x: { type: 'string' } } },
+      },
+    };
+    expect(() => {
+      renderForm({
+        schema: standardSchema as any,
+        values: {},
+      });
+    }).not.toThrow();
+    expect(screen.getByTestId('schema-form-unsupported-nested')).toBeTruthy();
+  });
+
+  // -- Verification that unsupported shapes are non-mutating (save path) ------
+
+  it('validateAndFocus treats unsupported shapes as errors but does not mutate', () => {
+    const onChange = vi.fn();
+    const ref = React.createRef<SchemaFormHandle>();
+    const standardSchema = {
+      type: 'object' as const,
+      properties: {
+        name: { type: 'string', title: 'Name' },
+        nested: { type: 'object' as const, title: 'Nested', properties: { x: { type: 'string' } } },
+      },
+    };
+    render(
+      React.createElement(SchemaForm, {
+        ref,
+        schema: standardSchema as any,
+        values: { name: 'Alice', nested: {} },
+        onChange,
+      }),
+    );
+
+    // validateAndFocus should return false (unsupported shapes block save)
+    expect(ref.current?.validateAndFocus()).toBe(false);
+
+    // onChange should not have been called (no mutation)
+    expect(onChange).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Disabled state
 // ---------------------------------------------------------------------------
 
@@ -843,3 +1262,946 @@ describe('edge cases', () => {
     expect(fields).toHaveLength(3);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Primitive constraints (M4 hardening)
+// ---------------------------------------------------------------------------
+
+describe('primitive constraints', () => {
+  // -- String constraints ---------------------------------------------------
+
+  it('shows error for string below minLength via StandardSchema', () => {
+    const standardSchema = {
+      type: 'object' as const,
+      properties: {
+        code: { type: 'string', title: 'Code', minLength: 3 },
+      },
+    };
+    renderForm({
+      schema: standardSchema as any,
+      values: { code: 'ab' },
+    });
+    const error = screen.getByTestId('schema-form-error-code');
+    expect(error.textContent).toContain('must be at least 3 characters');
+  });
+
+  it('shows error for string above maxLength via StandardSchema', () => {
+    const standardSchema = {
+      type: 'object' as const,
+      properties: {
+        code: { type: 'string', title: 'Code', maxLength: 5 },
+      },
+    };
+    renderForm({
+      schema: standardSchema as any,
+      values: { code: 'abcdef' },
+    });
+    const error = screen.getByTestId('schema-form-error-code');
+    expect(error.textContent).toContain('must be at most 5 characters');
+  });
+
+  it('shows error for string not matching pattern via StandardSchema', () => {
+    const standardSchema = {
+      type: 'object' as const,
+      properties: {
+        email: { type: 'string', title: 'Email', pattern: '^[a-z]+@[a-z]+\\\\.com$' },
+      },
+    };
+    renderForm({
+      schema: standardSchema as any,
+      values: { email: 'not-an-email' },
+    });
+    const error = screen.getByTestId('schema-form-error-email');
+    expect(error.textContent).toContain('must match pattern');
+  });
+
+  it('does not show error when string satisfies all constraints', () => {
+    const standardSchema = {
+      type: 'object' as const,
+      properties: {
+        code: { type: 'string', title: 'Code', minLength: 2, maxLength: 10, pattern: '^[A-Z0-9]+$' },
+      },
+    };
+    renderForm({
+      schema: standardSchema as any,
+      values: { code: 'ABC123' },
+    });
+    expect(screen.queryByTestId('schema-form-error-code')).toBeNull();
+  });
+
+  it('applies minLength / maxLength as HTML attributes on the text input', () => {
+    const standardSchema = {
+      type: 'object' as const,
+      properties: {
+        name: { type: 'string', title: 'Name', minLength: 2, maxLength: 20 },
+      },
+    };
+    renderForm({
+      schema: standardSchema as any,
+      values: { name: 'Alice' },
+    });
+    const input = screen.getByTestId('schema-form-widget-name') as HTMLInputElement;
+    expect(input.minLength).toBe(2);
+    expect(input.maxLength).toBe(20);
+  });
+
+  it('applies pattern as HTML attribute on the text input', () => {
+    const standardSchema = {
+      type: 'object' as const,
+      properties: {
+        slug: { type: 'string', title: 'Slug', pattern: '^[a-z0-9-]+$' },
+      },
+    };
+    renderForm({
+      schema: standardSchema as any,
+      values: { slug: 'my-slug' },
+    });
+    const input = screen.getByTestId('schema-form-widget-slug') as HTMLInputElement;
+    expect(input.pattern).toBe('^[a-z0-9-]+$');
+  });
+
+  // -- Required field constraints --------------------------------------------
+
+  it('shows error for empty required string', () => {
+    const standardSchema = {
+      type: 'object' as const,
+      properties: {
+        name: { type: 'string', title: 'Name' },
+      },
+      required: ['name'],
+    };
+    renderForm({
+      schema: standardSchema as any,
+      values: { name: '' },
+    });
+    const error = screen.getByTestId('schema-form-error-name');
+    expect(error.textContent).toContain('is required');
+  });
+
+  it('shows error for missing required field (undefined value)', () => {
+    const standardSchema = {
+      type: 'object' as const,
+      properties: {
+        name: { type: 'string', title: 'Name' },
+      },
+      required: ['name'],
+    };
+    renderForm({
+      schema: standardSchema as any,
+      values: {},
+    });
+    const error = screen.getByTestId('schema-form-error-name');
+    expect(error.textContent).toContain('is required');
+  });
+
+  it('does not show required error for non-required empty string', () => {
+    const standardSchema = {
+      type: 'object' as const,
+      properties: {
+        comment: { type: 'string', title: 'Comment' },
+      },
+    };
+    renderForm({
+      schema: standardSchema as any,
+      values: { comment: '' },
+    });
+    expect(screen.queryByTestId('schema-form-error-comment')).toBeNull();
+  });
+
+  it('does not show required error when required field has value', () => {
+    const standardSchema = {
+      type: 'object' as const,
+      properties: {
+        name: { type: 'string', title: 'Name' },
+      },
+      required: ['name'],
+    };
+    renderForm({
+      schema: standardSchema as any,
+      values: { name: 'Alice' },
+    });
+    expect(screen.queryByTestId('schema-form-error-name')).toBeNull();
+  });
+
+  it('renders required indicator (*) next to label for required fields', () => {
+    const standardSchema = {
+      type: 'object' as const,
+      properties: {
+        name: { type: 'string', title: 'Name' },
+        note: { type: 'string', title: 'Note' },
+      },
+      required: ['name'],
+    };
+    renderForm({
+      schema: standardSchema as any,
+      values: { name: 'A', note: '' },
+    });
+
+    const nameField = screen.getByTestId('schema-form-field-name');
+    const noteField = screen.getByTestId('schema-form-field-note');
+
+    // Required field should have a * indicator
+    expect(nameField.textContent).toContain('*');
+    // Non-required field should NOT have a * indicator
+    // (the * is inside the label div, so check that note field label doesn't have it)
+    const noteLabel = noteField.querySelector('.text-sm.font-medium');
+    expect(noteLabel?.textContent?.includes('*')).toBe(false);
+  });
+
+  // -- Number / integer constraints -----------------------------------------
+
+  it('shows error for number below minimum via StandardSchema', () => {
+    const standardSchema = {
+      type: 'object' as const,
+      properties: {
+        age: { type: 'number', title: 'Age', minimum: 18, maximum: 120 },
+      },
+    };
+    renderForm({
+      schema: standardSchema as any,
+      values: { age: 10 },
+    });
+    const error = screen.getByTestId('schema-form-error-age');
+    expect(error.textContent).toContain('must be at least 18');
+  });
+
+  it('shows error for number above maximum via StandardSchema', () => {
+    const standardSchema = {
+      type: 'object' as const,
+      properties: {
+        age: { type: 'number', title: 'Age', maximum: 120 },
+      },
+    };
+    renderForm({
+      schema: standardSchema as any,
+      values: { age: 200 },
+    });
+    const error = screen.getByTestId('schema-form-error-age');
+    expect(error.textContent).toContain('must be at most 120');
+  });
+
+  it('does not show error for number within range', () => {
+    const standardSchema = {
+      type: 'object' as const,
+      properties: {
+        age: { type: 'number', title: 'Age', minimum: 0, maximum: 150 },
+      },
+    };
+    renderForm({
+      schema: standardSchema as any,
+      values: { age: 42 },
+    });
+    expect(screen.queryByTestId('schema-form-error-age')).toBeNull();
+  });
+
+  it('slider picks up min/max from StandardSchema minimum/maximum', () => {
+    const standardSchema = {
+      type: 'object' as const,
+      properties: {
+        volume: { type: 'number', title: 'Volume', minimum: 0, maximum: 1 },
+      },
+    };
+    renderForm({
+      schema: standardSchema as any,
+      values: { volume: 0.7 },
+    });
+    const field = screen.getByTestId('schema-form-field-volume');
+    expect(field.dataset.fieldType).toBe('number');
+    expect(field.dataset.fieldStatus).toBe('supported');
+  });
+
+  // -- Boolean defaults ------------------------------------------------------
+
+  it('uses false default for boolean when value is missing', () => {
+    renderForm({
+      schema: [parameterDef({ name: 'flag', type: 'boolean', label: 'Flag' })],
+      values: {},
+    });
+    const field = screen.getByTestId('schema-form-field-flag');
+    expect(field).toBeTruthy();
+    // Boolean fallback is false
+    const widgetText = screen.getByText('Disabled');
+    expect(widgetText).toBeTruthy();
+  });
+
+  // -- Enum / select constraints ---------------------------------------------
+
+  it('shows error for select value not in StandardSchema enum', () => {
+    const standardSchema = {
+      type: 'object' as const,
+      properties: {
+        size: { type: 'string', title: 'Size', enum: ['small', 'medium', 'large'] },
+      },
+    };
+    renderForm({
+      schema: standardSchema as any,
+      values: { size: 'xlarge' },
+    });
+    const error = screen.getByTestId('schema-form-error-size');
+    expect(error).toBeTruthy();
+    expect(error.textContent).toContain('not a valid option');
+  });
+
+  it('does not show error for valid StandardSchema enum value', () => {
+    const standardSchema = {
+      type: 'object' as const,
+      properties: {
+        size: { type: 'string', title: 'Size', enum: ['small', 'medium', 'large'] },
+      },
+    };
+    renderForm({
+      schema: standardSchema as any,
+      values: { size: 'medium' },
+    });
+    expect(screen.queryByTestId('schema-form-error-size')).toBeNull();
+  });
+
+  // -- Color constraints -----------------------------------------------------
+
+  it('validates color from StandardSchema default', () => {
+    const standardSchema = {
+      type: 'object' as const,
+      properties: {
+        accent: { type: 'color' as const, title: 'Accent', default: '#336699' },
+      },
+    };
+    renderForm({
+      schema: standardSchema as any,
+      values: {},
+    });
+    // Should render with the default value
+    const field = screen.getByTestId('schema-form-field-accent');
+    expect(field).toBeTruthy();
+    const input = screen.getByTestId('schema-form-widget-accent') as HTMLInputElement;
+    expect(input.value).toBe('#336699');
+  });
+
+  it('shows error for invalid color from StandardSchema', () => {
+    const standardSchema = {
+      type: 'object' as const,
+      properties: {
+        accent: { type: 'color', title: 'Accent' },
+      },
+    };
+    renderForm({
+      schema: standardSchema as any,
+      values: { accent: 'bad-color' },
+    });
+    const error = screen.getByTestId('schema-form-error-accent');
+    expect(error.textContent).toContain('valid hex color');
+  });
+
+  // -- Combined constraints -------------------------------------------------
+
+  it('shows only the first failing constraint in validation order', () => {
+    const standardSchema = {
+      type: 'object' as const,
+      properties: {
+        token: { type: 'string', title: 'Token', minLength: 8, pattern: '^[A-Z0-9]+$' },
+      },
+      required: ['token'],
+    };
+    renderForm({
+      schema: standardSchema as any,
+      values: { token: 'ab' },
+    });
+    const error = screen.getByTestId('schema-form-error-token');
+    // minLength fires before pattern, so we should see the minLength message
+    expect(error.textContent).toContain('must be at least 8 characters');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Accessibility metadata (M4)
+// ---------------------------------------------------------------------------
+
+describe('accessibility metadata', () => {
+  // -- Label and description IDs ---------------------------------------------
+
+  it('renders label div with deterministic id', () => {
+    renderForm({
+      schema: [parameterDef({ name: 'title', type: 'string', label: 'Title', description: 'A title' })],
+      values: { title: 'Hello' },
+    });
+    const label = document.getElementById('schema-form-title-label');
+    expect(label).toBeTruthy();
+    expect(label?.textContent).toContain('Title');
+  });
+
+  it('renders description div with deterministic id', () => {
+    renderForm({
+      schema: [parameterDef({ name: 'title', type: 'string', label: 'Title', description: 'A title' })],
+      values: { title: 'Hello' },
+    });
+    const desc = document.getElementById('schema-form-title-description');
+    expect(desc).toBeTruthy();
+    expect(desc?.textContent).toBe('A title');
+  });
+
+  it('renders error div with deterministic id', () => {
+    renderForm({
+      schema: [parameterDef({ name: 'count', type: 'number', label: 'Count', min: 10, max: 100 })],
+      values: { count: 5 },
+    });
+    const error = document.getElementById('schema-form-count-error');
+    expect(error).toBeTruthy();
+    expect(error?.getAttribute('role')).toBe('alert');
+  });
+
+  // -- Text input aria attributes --------------------------------------------
+
+  it('text input has aria-labelledby referencing label id', () => {
+    renderForm({
+      schema: [parameterDef({ name: 'title', type: 'string', label: 'Title' })],
+      values: { title: 'Hello' },
+    });
+    const input = screen.getByTestId('schema-form-widget-title');
+    expect(input.getAttribute('aria-labelledby')).toBe('schema-form-title-label');
+  });
+
+  it('text input has aria-describedby referencing description id', () => {
+    renderForm({
+      schema: [parameterDef({ name: 'title', type: 'string', label: 'Title', description: 'A title' })],
+      values: { title: 'Hello' },
+    });
+    const input = screen.getByTestId('schema-form-widget-title');
+    expect(input.getAttribute('aria-describedby')).toBe('schema-form-title-description');
+  });
+
+  it('text input has aria-describedby referencing both description and error when invalid', () => {
+    const standardSchema = {
+      type: 'object' as const,
+      properties: { title: { type: 'string', title: 'Title', minLength: 10 } },
+    };
+    renderForm({ schema: standardSchema as any, values: { title: 'ab' } });
+    const input = screen.getByTestId('schema-form-widget-title');
+    const describedBy = input.getAttribute('aria-describedby');
+    expect(describedBy).toContain('schema-form-title-description');
+    expect(describedBy).toContain('schema-form-title-error');
+  });
+
+  it('text input has aria-invalid="true" when validation fails', () => {
+    const standardSchema = {
+      type: 'object' as const,
+      properties: { title: { type: 'string', title: 'Title', minLength: 10 } },
+    };
+    renderForm({ schema: standardSchema as any, values: { title: 'ab' } });
+    const input = screen.getByTestId('schema-form-widget-title');
+    expect(input.getAttribute('aria-invalid')).toBe('true');
+  });
+
+  it('text input does not have aria-invalid when value is valid', () => {
+    renderForm({
+      schema: [parameterDef({ name: 'title', type: 'string', label: 'Title' })],
+      values: { title: 'Hello' },
+    });
+    const input = screen.getByTestId('schema-form-widget-title');
+    expect(input.getAttribute('aria-invalid')).toBeNull();
+  });
+
+  it('text input has aria-required="true" for required field', () => {
+    const standardSchema = {
+      type: 'object' as const,
+      properties: { name: { type: 'string', title: 'Name' } },
+      required: ['name'],
+    };
+    renderForm({ schema: standardSchema as any, values: { name: 'Alice' } });
+    const input = screen.getByTestId('schema-form-widget-name');
+    expect(input.getAttribute('aria-required')).toBe('true');
+  });
+
+  // -- Slider aria attributes ------------------------------------------------
+
+  it('slider widget has aria-labelledby referencing label id', () => {
+    renderForm({
+      schema: [parameterDef({ name: 'opacity', type: 'number', label: 'Opacity', min: 0, max: 1 })],
+      values: { opacity: 0.5 },
+    });
+    // Slider renders a role="slider" element
+    const slider = document.querySelector('[data-testid="schema-form-widget-opacity"]');
+    expect(slider?.getAttribute('aria-labelledby')).toBe('schema-form-opacity-label');
+  });
+
+  it('slider widget has aria-describedby referencing description', () => {
+    renderForm({
+      schema: [parameterDef({ name: 'opacity', type: 'number', label: 'Opacity', description: 'Fade amount', min: 0, max: 1 })],
+      values: { opacity: 0.5 },
+    });
+    const slider = document.querySelector('[data-testid="schema-form-widget-opacity"]');
+    expect(slider?.getAttribute('aria-describedby')).toContain('schema-form-opacity-description');
+  });
+
+  it('slider widget has aria-invalid="true" when value out of range', () => {
+    renderForm({
+      schema: [parameterDef({ name: 'count', type: 'number', label: 'Count', min: 10, max: 100 })],
+      values: { count: 5 },
+    });
+    const slider = document.querySelector('[data-testid="schema-form-widget-count"]');
+    expect(slider?.getAttribute('aria-invalid')).toBe('true');
+  });
+
+  // -- Color input aria attributes -------------------------------------------
+
+  it('color input has aria-labelledby and aria-describedby', () => {
+    renderForm({
+      schema: [parameterDef({ name: 'tint', type: 'color', label: 'Tint', description: 'Color tint' })],
+      values: { tint: '#ff0000' },
+    });
+    const input = screen.getByTestId('schema-form-widget-tint');
+    expect(input.getAttribute('aria-labelledby')).toBe('schema-form-tint-label');
+    expect(input.getAttribute('aria-describedby')).toBe('schema-form-tint-description');
+  });
+
+  it('color input has aria-invalid="true" when invalid', () => {
+    renderForm({
+      schema: [parameterDef({ name: 'tint', type: 'color', label: 'Tint' })],
+      values: { tint: 'bad' },
+    });
+    const input = screen.getByTestId('schema-form-widget-tint');
+    expect(input.getAttribute('aria-invalid')).toBe('true');
+  });
+
+  // -- Select trigger aria attributes ----------------------------------------
+
+  it('select trigger has aria-labelledby and aria-describedby', () => {
+    renderForm({
+      schema: [parameterDef({
+        name: 'mode', type: 'select', label: 'Mode', description: 'Operating mode',
+        options: [{ label: 'A', value: 'a' }],
+      })],
+      values: { mode: 'a' },
+    });
+    const trigger = screen.getByTestId('schema-form-widget-mode');
+    expect(trigger.getAttribute('aria-labelledby')).toBe('schema-form-mode-label');
+    expect(trigger.getAttribute('aria-describedby')).toBe('schema-form-mode-description');
+  });
+
+  it('select trigger has aria-invalid="true" when invalid', () => {
+    renderForm({
+      schema: [parameterDef({
+        name: 'mode', type: 'select', label: 'Mode',
+        options: [{ label: 'A', value: 'a' }],
+      })],
+      values: { mode: 'bad' },
+    });
+    const trigger = screen.getByTestId('schema-form-widget-mode');
+    expect(trigger.getAttribute('aria-invalid')).toBe('true');
+  });
+
+  // -- Boolean / Switch aria attributes --------------------------------------
+
+  it('boolean wrapper has aria-labelledby and aria-describedby', () => {
+    renderForm({
+      schema: [parameterDef({ name: 'flag', type: 'boolean', label: 'Flag', description: 'Enable feature' })],
+      values: { flag: true },
+    });
+    const field = screen.getByTestId('schema-form-field-flag');
+    // The wrapper div child has the aria attributes
+    const wrapper = field.querySelector('[aria-labelledby]');
+    expect(wrapper).toBeTruthy();
+    expect(wrapper?.getAttribute('aria-labelledby')).toBe('schema-form-flag-label');
+    expect(wrapper?.getAttribute('aria-describedby')).toContain('schema-form-flag-description');
+  });
+
+  it('boolean wrapper has aria-invalid="true" when invalid', () => {
+    renderForm({
+      schema: [parameterDef({ name: 'flag', type: 'boolean', label: 'Flag' })],
+      values: { flag: 'bad' },
+    });
+    const field = screen.getByTestId('schema-form-field-flag');
+    const wrapper = field.querySelector('[aria-invalid]');
+    expect(wrapper?.getAttribute('aria-invalid')).toBe('true');
+  });
+
+  // -- Shader-number aria attributes -----------------------------------------
+
+  it('shader-number input has aria-labelledby and aria-describedby', () => {
+    renderForm({
+      schema: [shaderUniform({ name: 'u_gain', label: 'Gain', description: 'Gain control', type: 'float', default: 0.5 })],
+      values: { u_gain: 0.5 },
+    });
+    const input = screen.getByTestId('schema-form-widget-u_gain');
+    expect(input.getAttribute('aria-labelledby')).toBe('schema-form-u_gain-label');
+    expect(input.getAttribute('aria-describedby')).toBe('schema-form-u_gain-description');
+  });
+
+  it('shader-number input has id attribute', () => {
+    renderForm({
+      schema: [shaderUniform({ name: 'u_gain', label: 'Gain', type: 'float', default: 0.5 })],
+      values: { u_gain: 0.5 },
+    });
+    const input = document.getElementById('schema-form-widget-u_gain');
+    expect(input).toBeTruthy();
+  });
+
+  // -- Vector input aria attributes ------------------------------------------
+
+  it('vector component inputs have aria-describedby referencing description and error', () => {
+    renderForm({
+      schema: [shaderUniform({ name: 'u_offset', label: 'Offset', description: 'Position offset', type: 'vec2', default: [0, 1] })],
+      values: { u_offset: [0, 1] },
+    });
+    const inputX = screen.getByTestId('schema-form-widget-u_offset-x');
+    expect(inputX.getAttribute('aria-describedby')).toBe('schema-form-u_offset-description');
+    // Vector inputs should NOT have aria-labelledby (they have their own <label>)
+    expect(inputX.getAttribute('aria-labelledby')).toBeNull();
+  });
+
+  it('vector component inputs have aria-invalid="true" when field is invalid', () => {
+    renderForm({
+      schema: [shaderUniform({ name: 'u_offset', label: 'Offset', type: 'vec2', default: [0, 1] })],
+      values: { u_offset: 'bad' },
+    });
+    // Validation runs against the raw value 'bad', which fails for vec2 type
+    const inputX = screen.getByTestId('schema-form-widget-u_offset-x');
+    expect(inputX.getAttribute('aria-invalid')).toBe('true');
+  });
+
+  // -- Required field visual indicator ---------------------------------------
+
+  it('required fields display asterisk visual indicator', () => {
+    const standardSchema = {
+      type: 'object' as const,
+      properties: {
+        name: { type: 'string', title: 'Name' },
+      },
+      required: ['name'],
+    };
+    renderForm({ schema: standardSchema as any, values: { name: 'Alice' } });
+    const field = screen.getByTestId('schema-form-field-name');
+    expect(field.textContent).toContain('*');
+  });
+
+  // -- NumberInput (StandardSchema number fallback) aria attributes -----------
+
+  it('number input fallback has aria-labelledby and aria-describedby', () => {
+    // StandardSchema 'number' type resolves to widgetType 'number' (NumberInput, not Slider)
+    const standardSchema = {
+      type: 'object' as const,
+      properties: {
+        qty: { type: 'number', title: 'Quantity', description: 'Item count', minimum: 0 },
+      },
+    };
+    renderForm({ schema: standardSchema as any, values: { qty: 42 } });
+    // NumberInput renders; find the input by testid
+    const widget = document.querySelector('[data-testid="schema-form-widget-qty"]');
+    expect(widget?.getAttribute('aria-labelledby')).toBe('schema-form-qty-label');
+    expect(widget?.getAttribute('aria-describedby')).toContain('schema-form-qty-description');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Save-with-errors focus behavior (M4)
+// ---------------------------------------------------------------------------
+
+describe('save-with-errors focus behavior', () => {
+  /**
+   * Renders SchemaForm with a ref so the imperative validateAndFocus()
+   * handle can be exercised synchronously in tests.
+   */
+  function renderFormWithRef(props: {
+    schema?: SchemaFormSchema;
+    values?: Record<string, unknown>;
+    onChange?: (name: string, value: unknown) => void;
+    disabled?: boolean;
+    capabilityRegistry?: SchemaCapabilityRegistry;
+    onDiagnostics?: (diagnostics: ExtensionDiagnostic[]) => void;
+  }) {
+    const {
+      schema = [],
+      values = {},
+      onChange = vi.fn(),
+      disabled = false,
+      capabilityRegistry,
+      onDiagnostics,
+    } = props;
+
+    const ref = React.createRef<SchemaFormHandle>();
+
+    const result = render(
+      React.createElement(SchemaForm, {
+        ref,
+        schema,
+        values,
+        onChange,
+        disabled,
+        capabilityRegistry,
+        onDiagnostics,
+      }),
+    );
+
+    return { ...result, ref };
+  }
+
+  // -- Returns true when valid -----------------------------------------------
+
+  it('validateAndFocus returns true when all fields are valid', () => {
+    const { ref } = renderFormWithRef({
+      schema: [
+        parameterDef({ name: 'title', type: 'string', label: 'Title' }),
+        parameterDef({ name: 'count', type: 'number', label: 'Count', min: 0, max: 100 }),
+      ],
+      values: { title: 'Hello', count: 50 },
+    });
+
+    expect(ref.current?.validateAndFocus()).toBe(true);
+  });
+
+  // -- Focuses first invalid field (text) ------------------------------------
+
+  it('focuses the first invalid text input', () => {
+    const { ref } = renderFormWithRef({
+      schema: [
+        parameterDef({ name: 'title', type: 'string', label: 'Title', minLength: 5 }),
+      ],
+      values: { title: 'ab' },
+    });
+
+    expect(ref.current?.validateAndFocus()).toBe(false);
+    expect(document.activeElement).toBe(screen.getByTestId('schema-form-widget-title'));
+  });
+
+  // -- Focuses first invalid field (number / slider) -------------------------
+
+  it('focuses the first invalid slider widget', () => {
+    const { ref } = renderFormWithRef({
+      schema: [
+        parameterDef({ name: 'count', type: 'number', label: 'Count', min: 10, max: 100 }),
+      ],
+      values: { count: 5 },
+    });
+
+    expect(ref.current?.validateAndFocus()).toBe(false);
+    // The focusable wrapper div (with tabIndex) receives focus
+    const focusTarget = screen.getByTestId('schema-form-field-count').querySelector('[tabindex="-1"]');
+    expect(focusTarget).toBeTruthy();
+    expect(document.activeElement).toBe(focusTarget);
+  });
+
+  // -- Focuses first invalid field (boolean / Switch) ------------------------
+
+  it('focuses the first invalid boolean Switch', () => {
+    const { ref } = renderFormWithRef({
+      schema: [
+        parameterDef({ name: 'flag', type: 'boolean', label: 'Flag' }),
+      ],
+      values: { flag: 'not-boolean' },
+    });
+
+    expect(ref.current?.validateAndFocus()).toBe(false);
+    expect(document.activeElement).toBe(screen.getByTestId('schema-form-widget-flag'));
+  });
+
+  // -- Focuses first invalid field (select) ----------------------------------
+
+  it('focuses the first invalid select trigger', () => {
+    const { ref } = renderFormWithRef({
+      schema: [
+        parameterDef({
+          name: 'mode',
+          type: 'select',
+          label: 'Mode',
+          options: [{ label: 'A', value: 'a' }],
+        }),
+      ],
+      values: { mode: 'invalid' },
+    });
+
+    expect(ref.current?.validateAndFocus()).toBe(false);
+    expect(document.activeElement).toBe(screen.getByTestId('schema-form-widget-mode'));
+  });
+
+  // -- Focuses first invalid field (color) -----------------------------------
+
+  it('focuses the first invalid color input', () => {
+    const { ref } = renderFormWithRef({
+      schema: [
+        parameterDef({ name: 'tint', type: 'color', label: 'Tint' }),
+      ],
+      values: { tint: 'not-a-hex-color' },
+    });
+
+    expect(ref.current?.validateAndFocus()).toBe(false);
+    expect(document.activeElement).toBe(screen.getByTestId('schema-form-widget-tint'));
+  });
+
+  // -- Focuses first invalid field (shader-number) ---------------------------
+
+  it('focuses the first invalid shader-number input', () => {
+    const { ref } = renderFormWithRef({
+      schema: [{
+        name: 'u_gain',
+        label: 'Gain',
+        type: 'float',
+        default: 0.5,
+        min: 0,
+        max: 1,
+      } as any],
+      values: { u_gain: 5 }, // out of range
+    });
+
+    expect(ref.current?.validateAndFocus()).toBe(false);
+    expect(document.activeElement).toBe(screen.getByTestId('schema-form-widget-u_gain'));
+  });
+
+  // -- Focuses first invalid field (vector) ----------------------------------
+
+  it('focuses the first component of the first invalid vector field', () => {
+    const { ref } = renderFormWithRef({
+      schema: [{
+        name: 'u_offset',
+        label: 'Offset',
+        type: 'vec2',
+        default: [0, 1],
+      } as any],
+      values: { u_offset: 'bad' }, // not a valid vector
+    });
+
+    expect(ref.current?.validateAndFocus()).toBe(false);
+    // First component (x) should be focused
+    expect(document.activeElement).toBe(screen.getByTestId('schema-form-widget-u_offset-x'));
+  });
+
+  // -- Focuses first invalid among multiple fields --------------------------
+
+  it('focuses the first invalid field when multiple fields have errors', () => {
+    const { ref } = renderFormWithRef({
+      schema: [
+        parameterDef({ name: 'first', type: 'string', label: 'First', minLength: 5 }),
+        parameterDef({ name: 'second', type: 'number', label: 'Second', min: 10, max: 100 }),
+        parameterDef({ name: 'third', type: 'color', label: 'Third' }),
+      ],
+      values: { first: 'ab', second: 5, third: 'bad' },
+    });
+
+    expect(ref.current?.validateAndFocus()).toBe(false);
+    // 'first' comes first in field order → its widget gets focus
+    expect(document.activeElement).toBe(screen.getByTestId('schema-form-widget-first'));
+  });
+
+  // -- Skips valid fields, focuses first invalid -----------------------------
+
+  it('focuses the first invalid field, skipping a preceding valid field', () => {
+    const { ref } = renderFormWithRef({
+      schema: [
+        parameterDef({ name: 'first', type: 'string', label: 'First' }),
+        parameterDef({ name: 'second', type: 'number', label: 'Second', min: 10, max: 100 }),
+      ],
+      values: { first: 'valid', second: 5 },
+    });
+
+    expect(ref.current?.validateAndFocus()).toBe(false);
+    // 'second' is the first invalid field — its wrapper div gets focus
+    const focusTarget = screen.getByTestId('schema-form-field-second').querySelector('[tabindex="-1"]');
+    expect(focusTarget).toBeTruthy();
+    expect(document.activeElement).toBe(focusTarget);
+  });
+
+  // -- Falls back to error summary for unsupported type ----------------------
+
+  it('focuses error summary when the only invalid field has no focusable widget', async () => {
+    const { ref } = renderFormWithRef({
+      schema: [
+        parameterDef({ name: 'gizmo', type: 'unknown-gizmo' as any, label: 'Gizmo' }),
+      ],
+      values: { gizmo: 'test' },
+    });
+
+    expect(ref.current?.validateAndFocus()).toBe(false);
+    // Unsupported type renders a placeholder div (role="alert"), not a focusable widget.
+    // Focus should fall back to the error summary (rendered asynchronously via state update).
+    const summary = await screen.findByTestId('schema-form-error-summary');
+    expect(summary).toBeTruthy();
+    expect(document.activeElement).toBe(summary);
+  });
+
+  // -- Focuses widget even when unsupported field precedes it ----------------
+
+  it('skips unsupported fields and focuses the first focusable invalid widget', () => {
+    const { ref } = renderFormWithRef({
+      schema: [
+        parameterDef({ name: 'gizmo', type: 'unknown-type' as any, label: 'Gizmo' }),
+        parameterDef({ name: 'title', type: 'string', label: 'Title', minLength: 10 }),
+      ],
+      values: { gizmo: 'x', title: 'ab' },
+    });
+
+    expect(ref.current?.validateAndFocus()).toBe(false);
+    // 'gizmo' has no focusable widget; 'title' does → focus 'title'
+    expect(document.activeElement).toBe(screen.getByTestId('schema-form-widget-title'));
+  });
+
+  // -- Error summary has correct attributes ----------------------------------
+
+  it('error summary is a programmatically-focusable alert', async () => {
+    const { ref } = renderFormWithRef({
+      schema: [
+        parameterDef({ name: 'gizmo', type: 'unknown-type' as any, label: 'Gizmo' }),
+      ],
+      values: { gizmo: 'test' },
+    });
+
+    ref.current?.validateAndFocus();
+
+    const summary = await screen.findByTestId('schema-form-error-summary');
+    expect(summary.getAttribute('role')).toBe('alert');
+    expect(summary.getAttribute('aria-live')).toBe('assertive');
+    expect(summary.tabIndex).toBe(-1);
+    expect(summary.textContent).toContain('Please fix the validation errors');
+  });
+
+  // -- Error summary is hidden when values change ---------------------------
+
+  it('hides error summary when values change after a failed save', async () => {
+    const onChange = vi.fn();
+    const { ref, rerender } = renderFormWithRef({
+      schema: [
+        parameterDef({ name: 'gizmo', type: 'unknown-type' as any, label: 'Gizmo' }),
+      ],
+      values: { gizmo: 'test' },
+      onChange,
+    });
+
+    // First save fails → summary appears
+    ref.current?.validateAndFocus();
+    await screen.findByTestId('schema-form-error-summary');
+    expect(screen.getByTestId('schema-form-error-summary')).toBeTruthy();
+
+    // User edits a value → summary should hide
+    rerender(
+      React.createElement(SchemaForm, {
+        ref,
+        schema: [parameterDef({ name: 'gizmo', type: 'unknown-type' as any, label: 'Gizmo' })],
+        values: { gizmo: 'edited' },
+        onChange,
+      }),
+    );
+    expect(screen.queryByTestId('schema-form-error-summary')).toBeNull();
+  });
+
+  // -- NumberInput fallback focus --------------------------------------------
+
+  it('focuses NumberInput widget for StandardSchema number field with errors', () => {
+    const standardSchema = {
+      type: 'object' as const,
+      properties: {
+        qty: { type: 'number', title: 'Quantity', minimum: 1, maximum: 10 },
+      },
+    };
+    const { ref } = renderFormWithRef({
+      schema: standardSchema as any,
+      values: { qty: 0 },
+    });
+
+    expect(ref.current?.validateAndFocus()).toBe(false);
+    // NumberInput's wrapper div (with tabIndex) receives focus
+    const focusTarget = screen.getByTestId('schema-form-field-qty').querySelector('[tabindex="-1"]');
+    expect(focusTarget).toBeTruthy();
+    expect(document.activeElement).toBe(focusTarget);
+  });
+});
+
+// Shader uniform helper (re-used from shader test block)
+function shaderUniform(overrides: ShaderUniformSchema[number]): ShaderUniformSchema[number] {
+  return overrides;
+}

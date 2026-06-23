@@ -44,6 +44,12 @@ export type ParameterDefinition = {
   max?: number;
   step?: number;
   options?: ParameterOption[];
+  /** Minimum string length (StandardSchema `minLength`). */
+  minLength?: number;
+  /** Maximum string length (StandardSchema `maxLength`). */
+  maxLength?: number;
+  /** Regex pattern constraint (StandardSchema `pattern`). */
+  pattern?: string;
 };
 
 export type ParameterSchema = ParameterDefinition[];

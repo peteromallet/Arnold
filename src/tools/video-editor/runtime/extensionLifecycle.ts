@@ -501,6 +501,10 @@ export interface ExtensionLifecycleHost {
  *   will orphan-dispose live sources owned by extensions when they are removed
  *   or when the host itself is disposed. Tombstones are preserved so that
  *   orphaned/disposed bindings continue to be diagnosed after remount.
+ *
+ *   NOTE: The live data registry is future-only scaffolding. It is not yet
+ *   exposed as a public extension contribution system. Extension-authored live
+ *   data sources are not supported in the current release.
  */
 export function createExtensionLifecycleHost(
   liveDataRegistry?: LiveDataRegistry,

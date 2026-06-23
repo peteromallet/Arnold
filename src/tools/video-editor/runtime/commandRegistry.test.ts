@@ -1208,3 +1208,151 @@ describe('CommandRegistry — multiple extensions coexistence', () => {
     }
   });
 });
+
+// ---------------------------------------------------------------------------
+// T19: Run-status preservation across unregisterAll
+// ---------------------------------------------------------------------------
+
+describe('CommandRegistry — run-status preservation across unregisterAll (T19)', () => {
+  it('preserves run statuses for unrelated extensions after unregisterAll', async () => {
+    const registry = createFreshRegistry();
+    const handler1 = vi.fn();
+    const handler2 = vi.fn();
+
+    registerTestCommand(registry, 'ext1', 'ext1.cmd', handler1);
+    registerTestCommand(registry, 'ext2', 'ext2.cmd', handler2);
+
+    // Execute ext1's command twice to build up invocation history
+    await registry.executeCommand('ext1.cmd');
+    await registry.executeCommand('ext1.cmd');
+
+    // Execute ext2's command once
+    await registry.executeCommand('ext2.cmd');
+
+    // Verify run statuses before unregister
+    const ext1StatusBefore = registry.getStatus('ext1.cmd');
+    expect(ext1StatusBefore.invocationCount).toBe(2);
+    expect(ext1StatusBefore.lastRunOk).toBe(true);
+
+    const ext2StatusBefore = registry.getStatus('ext2.cmd');
+    expect(ext2StatusBefore.invocationCount).toBe(1);
+    expect(ext2StatusBefore.lastRunOk).toBe(true);
+
+    // Unregister ext2 — ext1's run status should survive
+    registry.unregisterAll('ext2');
+
+    // ext2's command should be gone
+    expect(registry.getCommand('ext2.cmd')).toBeUndefined();
+    // ext1's command should survive
+    expect(registry.getCommand('ext1.cmd')).toBeDefined();
+
+    // ext1's run status should be preserved
+    const ext1StatusAfter = registry.getStatus('ext1.cmd');
+    expect(ext1StatusAfter.invocationCount).toBe(2);
+    expect(ext1StatusAfter.lastRunOk).toBe(true);
+    expect(ext1StatusAfter.lastRunAt).toBeGreaterThan(0);
+  });
+
+  it('clears run statuses for the unregistered extension only', async () => {
+    const registry = createFreshRegistry();
+    registerTestCommand(registry, 'ext1', 'ext1.cmdA', vi.fn());
+    registerTestCommand(registry, 'ext1', 'ext1.cmdB', vi.fn());
+    registerTestCommand(registry, 'ext2', 'ext2.cmd', vi.fn());
+
+    // Execute all commands once
+    await registry.executeCommand('ext1.cmdA');
+    await registry.executeCommand('ext1.cmdB');
+    await registry.executeCommand('ext2.cmd');
+
+    // Verify all have run statuses
+    expect(registry.getStatus('ext1.cmdA').invocationCount).toBe(1);
+    expect(registry.getStatus('ext1.cmdB').invocationCount).toBe(1);
+    expect(registry.getStatus('ext2.cmd').invocationCount).toBe(1);
+
+    // Unregister ext1
+    registry.unregisterAll('ext1');
+
+    // ext1 run statuses should be cleared (back to default zero-state)
+    expect(registry.getStatus('ext1.cmdA').invocationCount).toBe(0);
+    expect(registry.getStatus('ext1.cmdA').lastRunAt).toBe(0);
+    expect(registry.getStatus('ext1.cmdB').invocationCount).toBe(0);
+
+    // ext2's run status should be preserved
+    expect(registry.getStatus('ext2.cmd').invocationCount).toBe(1);
+    expect(registry.getStatus('ext2.cmd').lastRunOk).toBe(true);
+  });
+
+  it('re-enabling an extension does not create duplicate command entries', () => {
+    const registry = createFreshRegistry();
+
+    // First enable: register commands for ext1
+    registerTestCommand(registry, 'ext1', 'ext1.cmd', vi.fn());
+    registry.ingestKeybindingContribution('ext1', makeKeybindingContribution({
+      key: 'Ctrl+K',
+      command: 'ext1.cmd',
+    }));
+    registry.ingestContextMenuItemContribution('ext1', makeContextMenuContribution({
+      target: 'clip',
+      command: 'ext1.cmd',
+    }));
+
+    const snap1 = registry.getSnapshot();
+    expect(snap1.commands.filter((c) => c.extensionId === 'ext1')).toHaveLength(1);
+    expect(snap1.keybindings.filter((k) => k.extensionId === 'ext1')).toHaveLength(1);
+    expect(snap1.contextMenuItems.filter((m) => m.extensionId === 'ext1')).toHaveLength(1);
+
+    // Disable: unregister ext1
+    registry.unregisterAll('ext1');
+
+    const snap2 = registry.getSnapshot();
+    expect(snap2.commands.filter((c) => c.extensionId === 'ext1')).toHaveLength(0);
+    expect(snap2.keybindings.filter((k) => k.extensionId === 'ext1')).toHaveLength(0);
+    expect(snap2.contextMenuItems.filter((m) => m.extensionId === 'ext1')).toHaveLength(0);
+
+    // Re-enable: re-register the same commands
+    registerTestCommand(registry, 'ext1', 'ext1.cmd', vi.fn());
+    registry.ingestKeybindingContribution('ext1', makeKeybindingContribution({
+      key: 'Ctrl+K',
+      command: 'ext1.cmd',
+    }));
+    registry.ingestContextMenuItemContribution('ext1', makeContextMenuContribution({
+      target: 'clip',
+      command: 'ext1.cmd',
+    }));
+
+    const snap3 = registry.getSnapshot();
+    expect(snap3.commands.filter((c) => c.extensionId === 'ext1')).toHaveLength(1);
+    expect(snap3.keybindings.filter((k) => k.extensionId === 'ext1')).toHaveLength(1);
+    expect(snap3.contextMenuItems.filter((m) => m.extensionId === 'ext1')).toHaveLength(1);
+  });
+
+  it('re-enabling an extension preserves unrelated extension commands', () => {
+    const registry = createFreshRegistry();
+
+    // Register ext1 and ext2
+    registerTestCommand(registry, 'ext1', 'ext1.cmd', vi.fn());
+    registerTestCommand(registry, 'ext2', 'ext2.cmd', vi.fn());
+    registry.ingestKeybindingContribution('ext1', makeKeybindingContribution({ key: 'Ctrl+K', command: 'ext1.cmd' }));
+    registry.ingestKeybindingContribution('ext2', makeKeybindingContribution({ key: 'Ctrl+J', command: 'ext2.cmd' }));
+
+    // Disable ext1
+    registry.unregisterAll('ext1');
+    expect(registry.getCommand('ext1.cmd')).toBeUndefined();
+    expect(registry.getCommand('ext2.cmd')).toBeDefined();
+    expect(registry.getKeybinding('ctrl+j')).toBeDefined();
+
+    // Re-enable ext1
+    registerTestCommand(registry, 'ext1', 'ext1.cmd', vi.fn());
+    registry.ingestKeybindingContribution('ext1', makeKeybindingContribution({ key: 'Ctrl+K', command: 'ext1.cmd' }));
+
+    // Both should be present, no duplicates
+    expect(registry.getCommand('ext1.cmd')).toBeDefined();
+    expect(registry.getCommand('ext2.cmd')).toBeDefined();
+    expect(registry.getKeybinding('ctrl+k')).toBeDefined();
+    expect(registry.getKeybinding('ctrl+j')).toBeDefined();
+
+    const snap = registry.getSnapshot();
+    expect(snap.commands).toHaveLength(2);
+    expect(snap.keybindings).toHaveLength(2);
+  });
+});

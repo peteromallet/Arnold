@@ -70,6 +70,7 @@ import { createAgentToolRegistry, type AgentToolRegistry } from '@/tools/video-e
 import { createAgentToolInvocationService, type AgentToolInvocationService } from '@/tools/video-editor/runtime/agentToolInvocationService.ts';
 import type { AgentToolContribution, AgentToolRegistrationService, AgentToolHandler, ShaderRegistrationService } from '@reigh/editor-sdk';
 import {
+  clearExtensionSettingsFromLocalStorage,
   removeExtensionDiagnosticsFromCollection,
   syncExtensionDiagnosticsToCollection,
   syncLiveDiagnosticsToCollection,
@@ -509,11 +510,15 @@ function EditorRuntimeEffectRegistryLifecycle({
     const commandRegistry = commandRegistryRef.current;
     const agentToolRegistry = agentToolRegistryRef.current;
     if (!host) return;
+    // Contribution cleanup per-family:
+    // - command, effect, diagnostics, settings: production lifecycle-owned
+    // - agentTool: future-only scaffolding, not yet a public contribution system
     const handle = host.onLifecycleDisposed((extensionId: string) => {
       commandRegistry?.unregisterAll(extensionId);
       effectRegistry.unregisterOwner(extensionId);
       agentToolRegistry?.unregisterAll(extensionId);
       removeExtensionDiagnosticsFromCollection(diagnosticCollection, extensionId);
+      clearExtensionSettingsFromLocalStorage(extensionId);
     });
     return () => handle.dispose();
   }, [commandRegistryRef, diagnosticCollection, effectRegistry, lifecycleHostRef, agentToolRegistryRef]);
@@ -570,6 +575,7 @@ function EditorRuntimeTransitionRegistryLifecycle({
       commandRegistry?.unregisterAll(extensionId);
       transitionRegistry.unregisterOwner(extensionId);
       removeExtensionDiagnosticsFromCollection(diagnosticCollection, extensionId);
+      clearExtensionSettingsFromLocalStorage(extensionId);
     });
     return () => handle.dispose();
   }, [commandRegistryRef, diagnosticCollection, transitionRegistry, lifecycleHostRef]);
@@ -605,6 +611,7 @@ function EditorRuntimeShaderRegistryLifecycle({
     const handle = host.onLifecycleDisposed((extensionId: string) => {
       shaderRegistry.unregisterOwner(extensionId);
       removeExtensionDiagnosticsFromCollection(diagnosticCollection, extensionId);
+      clearExtensionSettingsFromLocalStorage(extensionId);
     });
     return () => handle.dispose();
   }, [diagnosticCollection, shaderRegistry, lifecycleHostRef]);
@@ -660,6 +667,7 @@ function EditorRuntimeClipTypeRegistryLifecycle({
       commandRegistry?.unregisterAll(extensionId);
       clipTypeRegistry.unregisterOwner(extensionId);
       removeExtensionDiagnosticsFromCollection(diagnosticCollection, extensionId);
+      clearExtensionSettingsFromLocalStorage(extensionId);
     });
     return () => handle.dispose();
   }, [commandRegistryRef, diagnosticCollection, clipTypeRegistry, lifecycleHostRef]);

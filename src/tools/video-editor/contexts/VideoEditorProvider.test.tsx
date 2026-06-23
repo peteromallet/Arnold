@@ -24,8 +24,13 @@ import {
 } from '@/shared/state/selectionStore';
 import { useVideoEditorRuntime } from '@/tools/video-editor/contexts/DataProviderContext';
 import { buildVideoEditorLightboxMedia, VideoEditorProvider } from '@/tools/video-editor/contexts/VideoEditorProvider';
+import { ExtensionSettingsPanel } from '@/tools/video-editor/components/ExtensionSettings/ExtensionSettingsPanel';
 import type { EffectRegistryRecord } from '@/tools/video-editor/effects/registry/types';
 import { useEffectRegistryContext } from '@/tools/video-editor/effects/registry/EffectRegistryContext';
+import { useTransitionRegistryContext } from '@/tools/video-editor/transitions/registry/index';
+import type { TransitionRegistryRecord } from '@/tools/video-editor/transitions/registry/types';
+import { useClipTypeRegistryContext } from '@/tools/video-editor/clip-types/ClipTypeRegistryContext';
+import type { ClipTypeRegistryRecord } from '@/tools/video-editor/clip-types/ClipTypeRegistry';
 import {
   INTERNAL_GESTURE_TIMELINE_MUTATIONS,
   PUBLIC_TIMELINE_COMMAND_NAMES,
@@ -514,6 +519,59 @@ function trustedEffectRecord(
           route: 'browser-export',
           status: 'supported',
           determinism: 'deterministic',
+        },
+      ],
+    },
+    dispose,
+  };
+}
+
+function trustedTransitionRecord(
+  transitionId: string,
+  ownerExtensionId: string,
+  dispose: () => void,
+): TransitionRegistryRecord {
+  return {
+    transitionId,
+    contributionId: `${ownerExtensionId}.transition`,
+    renderer: () => null,
+    provenance: 'bundled-extension',
+    ownerExtensionId,
+    status: 'active',
+    renderability: {
+      defaultRoute: 'preview',
+      determinism: 'preview-only',
+      capabilities: [
+        {
+          route: 'preview',
+          status: 'supported',
+          determinism: 'preview-only',
+        },
+      ],
+    },
+    dispose,
+  };
+}
+
+function trustedClipTypeRecord(
+  clipTypeId: string,
+  ownerExtensionId: string,
+  dispose: () => void,
+): ClipTypeRegistryRecord {
+  return {
+    clipTypeId,
+    contributionId: `${ownerExtensionId}.clipType`,
+    renderer: () => null,
+    ownerExtensionId,
+    status: 'active',
+    renderability: {
+      defaultRoute: 'preview',
+      determinism: 'preview-only',
+      capabilities: [
+        {
+          route: 'preview',
+          status: 'supported',
+          determinism: 'preview-only',
         },
       ],
     },
@@ -1761,6 +1819,167 @@ describe('VideoEditorProvider', () => {
   });
 
   // -------------------------------------------------------------------------
+  // M4: Diagnostic collection sync and cleanup parity with EditorRuntimeProvider
+  // -------------------------------------------------------------------------
+  // Verify that VideoEditorProvider feeds diagnostics from lifecycle, command,
+  // and effect registry sources into the diagnostic collection, and that
+  // extension-owned diagnostics are cleared on disable while host-owned
+  // diagnostics survive.
+
+  it('feeds provider diagnostic collection from lifecycle, command, and registry sources', async () => {
+    const provider: DataProvider = {
+      loadTimeline: vi.fn(),
+      saveTimeline: vi.fn(),
+      loadAssetRegistry: vi.fn(),
+      resolveAssetUrl: vi.fn(),
+    };
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    const extensionId = 'com.vp.diagnostics';
+    let collection = null as ReturnType<typeof useVideoEditorRuntime>['diagnosticCollection'] | null;
+
+    const extension = defineExtension({
+      manifest: {
+        id: extensionId as never,
+        version: '1.0.0',
+        label: 'VP diagnostics extension',
+        contributions: [
+          {
+            id: 'vp.diagnostics.effect' as never,
+            kind: 'effect',
+            effectId: 'vp-diagnostics-effect',
+            label: 'VP Diagnostics effect',
+          },
+          {
+            id: 'vp.diagnostics.command' as never,
+            kind: 'command',
+            command: 'reigh.reserved',
+            label: 'VP Reserved command',
+          },
+        ],
+      },
+      activate() {
+        throw new Error('activation failed for vp diagnostics test');
+      },
+    });
+
+    function CaptureDiagnostics({ enabled }: { enabled: boolean }) {
+      const runtime = useVideoEditorRuntime();
+      const { registry } = useEffectRegistryContext();
+      collection = runtime.diagnosticCollection ?? null;
+
+      useEffect(() => {
+        if (!enabled || !runtime.diagnosticCollection) return undefined;
+        // Host-owned diagnostic (no extensionId) — should survive
+        // extension disable/unload without being removed.
+        runtime.diagnosticCollection.publish({
+          id: 'vp-host-owned-diagnostic',
+          severity: 'warning',
+          code: 'host/timeline-stale',
+          message: 'Host-owned stale warning via VP',
+          detail: { source: 'host-owned' },
+        });
+        // Extension-owned diagnostic published directly
+        runtime.diagnosticCollection.publish({
+          id: 'vp-export-stale-diagnostic',
+          severity: 'error',
+          code: 'export/unrenderable-effect',
+          message: 'VP stale export blocker',
+          extensionId,
+          contributionId: 'vp.diagnostics.effect',
+          detail: { source: 'export-guard' },
+        });
+        const first = registry.register(trustedEffectRecord(
+          'vp-diagnostics-duplicate',
+          extensionId,
+          vi.fn(),
+        ));
+        const second = registry.register(trustedEffectRecord(
+          'vp-diagnostics-duplicate',
+          extensionId,
+          vi.fn(),
+        ));
+        return () => {
+          second.dispose();
+          first.dispose();
+        };
+      }, [enabled, registry, runtime.diagnosticCollection]);
+
+      return null;
+    }
+
+    function Host({ enabled }: { enabled: boolean }) {
+      return (
+        <MemoryRouter>
+          <QueryClientProvider client={queryClient}>
+            <AgentChatProvider>
+              <VideoEditorProvider
+                dataProvider={provider}
+                projectId="project-vp-diag"
+                timelineId="timeline-vp-diag"
+                userId="user-vp-diag"
+                extensions={enabled ? [extension] : []}
+              >
+                <CaptureDiagnostics enabled={enabled} />
+              </VideoEditorProvider>
+            </AgentChatProvider>
+          </QueryClientProvider>
+        </MemoryRouter>
+      );
+    }
+
+    const { rerender } = render(<Host enabled />);
+
+    await waitFor(() => {
+      const diagnostics = collection?.getSnapshot() ?? [];
+      expect(diagnostics.some(
+        (diagnostic) =>
+          diagnostic.detail?.source === 'extension-lifecycle'
+          && diagnostic.code === 'lifecycle/activation-failed',
+      )).toBe(true);
+      expect(diagnostics.some(
+        (diagnostic) =>
+          diagnostic.detail?.source === 'command-registry'
+          && diagnostic.code === 'command-registry/reserved-command',
+      )).toBe(true);
+      expect(diagnostics.some(
+        (diagnostic) =>
+          diagnostic.detail?.source === 'effect-registry'
+          && diagnostic.code === 'effect-registry/duplicate-effect',
+      )).toBe(true);
+      expect(diagnostics.some(
+        (diagnostic) =>
+          diagnostic.detail?.source === 'export-guard'
+          && diagnostic.code === 'export/unrenderable-effect',
+      )).toBe(true);
+      // Host-owned diagnostic must be present before disable.
+      expect(diagnostics.some(
+        (diagnostic) =>
+          diagnostic.id === 'vp-host-owned-diagnostic'
+          && diagnostic.detail?.source === 'host-owned',
+      )).toBe(true);
+    });
+
+    rerender(<Host enabled={false} />);
+
+    await waitFor(() => {
+      const snapshot = collection?.getSnapshot() ?? [];
+      // Extension-owned diagnostics must be cleared on disable.
+      const disabledOwnerDiagnostics = snapshot.filter(
+        (diagnostic) => diagnostic.extensionId === extensionId,
+      );
+      expect(disabledOwnerDiagnostics).toEqual([]);
+      // Host-owned diagnostic (no extensionId) must survive.
+      expect(snapshot.some(
+        (diagnostic) =>
+          diagnostic.id === 'vp-host-owned-diagnostic'
+          && diagnostic.detail?.source === 'host-owned',
+      )).toBe(true);
+    });
+  });
+
+  // -------------------------------------------------------------------------
   // T15: Compatibility — direct extensions synchronize through the lifecycle host
   // -------------------------------------------------------------------------
   // Prove that direct `extensions` prop inputs (no repository, no pack records,
@@ -1875,5 +2094,935 @@ describe('VideoEditorProvider', () => {
     });
     // The lifecycle host must have disposed the extension
     expect(effectDeactivated).toBe(true);
+  });
+
+  // -------------------------------------------------------------------------
+  // M4: Extension settings surface via SchemaForm inside VideoEditorProvider
+  // -------------------------------------------------------------------------
+
+  describe('VideoEditorProvider extension settings surface', () => {
+    const SETTINGS_EXTENSION_ID = 'com.example.settings.vp';
+    const settingsManifest = {
+      id: SETTINGS_EXTENSION_ID as never,
+      version: '1.0.0',
+      label: 'Settings Extension VP',
+      settingsSchema: {
+        schema: {
+          type: 'object',
+          properties: {
+            apiKey: {
+              type: 'string',
+              title: 'API Key',
+              description: 'Your API key for the service',
+              default: '',
+              minLength: 3,
+            },
+            maxRetries: {
+              type: 'integer',
+              title: 'Max Retries',
+              description: 'Maximum number of retries',
+              default: 3,
+              minimum: 1,
+              maximum: 10,
+            },
+            enableDebug: {
+              type: 'boolean',
+              title: 'Enable Debug',
+              description: 'Enable debug logging',
+              default: false,
+            },
+          },
+          required: ['apiKey'],
+        },
+      },
+    };
+
+    beforeEach(() => {
+      // Clean up localStorage for the settings extension
+      const prefix = `reigh.ext.${SETTINGS_EXTENSION_ID}.`;
+      const keysToRemove: string[] = [];
+      for (let i = 0; i < localStorage.length; i++) {
+        const key = localStorage.key(i);
+        if (key && key.startsWith(prefix)) {
+          keysToRemove.push(key);
+        }
+      }
+      keysToRemove.forEach((k) => localStorage.removeItem(k));
+    });
+
+    function makeProvider() {
+      return {
+        loadTimeline: vi.fn(),
+        saveTimeline: vi.fn(),
+        loadAssetRegistry: vi.fn(),
+        resolveAssetUrl: vi.fn(),
+      } as DataProvider;
+    }
+
+    it('renders settings form inside VideoEditorProvider and loads defaults', async () => {
+      const queryClient = new QueryClient({
+        defaultOptions: { queries: { retry: false } },
+      });
+      const dataProvider = makeProvider();
+      let formRendered = false;
+
+      function CaptureForm() {
+        const runtime = useVideoEditorRuntime();
+        const ext = runtime.extensionRuntime?.extensions.find(
+          (e) => e.manifest.id === SETTINGS_EXTENSION_ID,
+        );
+        formRendered = ext != null;
+        return ext ? (
+          <ExtensionSettingsPanel
+            extensionId={SETTINGS_EXTENSION_ID}
+            manifest={ext.manifest}
+          />
+        ) : null;
+      }
+
+      render(
+        <MemoryRouter>
+          <QueryClientProvider client={queryClient}>
+            <AgentChatProvider>
+              <VideoEditorProvider
+                dataProvider={dataProvider}
+                projectId="project-vp-settings"
+                timelineId="timeline-vp-settings"
+                userId="user-vp-settings"
+                extensions={[
+                  defineExtension({ manifest: settingsManifest }),
+                ]}
+              >
+                <CaptureForm />
+              </VideoEditorProvider>
+            </AgentChatProvider>
+          </QueryClientProvider>
+        </MemoryRouter>,
+      );
+
+      await waitFor(() => {
+        expect(formRendered).toBe(true);
+      });
+
+      // The form should show the apiKey field (required) with an empty default
+      const apiKeyInput = document.querySelector(
+        '[data-testid="schema-form-widget-apiKey"]',
+      ) as HTMLInputElement | null;
+      expect(apiKeyInput).not.toBeNull();
+      expect(apiKeyInput?.value).toBe('');
+
+      // The maxRetries field (integer → number, rendered as slider) should exist
+      const maxRetriesField = document.querySelector(
+        '[data-testid="schema-form-field-maxRetries"]',
+      ) as HTMLElement | null;
+      expect(maxRetriesField).not.toBeNull();
+
+      // The enableDebug field (boolean, rendered as switch) should exist
+      const enableDebugField = document.querySelector(
+        '[data-testid="schema-form-field-enableDebug"]',
+      ) as HTMLElement | null;
+      expect(enableDebugField).not.toBeNull();
+    });
+
+    it('saves valid settings and reloads persisted values', async () => {
+      const queryClient = new QueryClient({
+        defaultOptions: { queries: { retry: false } },
+      });
+      const dataProvider = makeProvider();
+
+      function CaptureForm() {
+        const runtime = useVideoEditorRuntime();
+        const ext = runtime.extensionRuntime?.extensions.find(
+          (e) => e.manifest.id === SETTINGS_EXTENSION_ID,
+        );
+        return ext ? (
+          <ExtensionSettingsPanel
+            extensionId={SETTINGS_EXTENSION_ID}
+            manifest={ext.manifest}
+          />
+        ) : null;
+      }
+
+      const providerElement = (
+        <MemoryRouter>
+          <QueryClientProvider client={queryClient}>
+            <AgentChatProvider>
+              <VideoEditorProvider
+                dataProvider={dataProvider}
+                projectId="project-vp-settings"
+                timelineId="timeline-vp-settings"
+                userId="user-vp-settings"
+                extensions={[
+                  defineExtension({ manifest: settingsManifest }),
+                ]}
+              >
+                <CaptureForm />
+              </VideoEditorProvider>
+            </AgentChatProvider>
+          </QueryClientProvider>
+        </MemoryRouter>
+      );
+
+      const { rerender } = render(providerElement);
+
+      await waitFor(() => {
+        const apiKeyInput = document.querySelector(
+          '[data-testid="schema-form-widget-apiKey"]',
+        ) as HTMLInputElement | null;
+        expect(apiKeyInput).not.toBeNull();
+      });
+
+      // Fill in a valid apiKey
+      const apiKeyInput = document.querySelector(
+        '[data-testid="schema-form-widget-apiKey"]',
+      ) as HTMLInputElement;
+      fireEvent.change(apiKeyInput, { target: { value: 'my-secret-key' } });
+
+      // Click save
+      const saveBtn = document.querySelector(
+        '[data-testid="extension-settings-save"]',
+      ) as HTMLButtonElement;
+      expect(saveBtn).not.toBeNull();
+      expect(saveBtn.disabled).toBe(false);
+      fireEvent.click(saveBtn);
+
+      // Verify the value was persisted to localStorage
+      await waitFor(() => {
+        const raw = localStorage.getItem(
+          `reigh.ext.${SETTINGS_EXTENSION_ID}.apiKey`,
+        );
+        expect(raw).toBe('"my-secret-key"');
+      });
+
+      // Re-render to verify persisted values are loaded
+      rerender(providerElement);
+
+      await waitFor(() => {
+        const reloadedInput = document.querySelector(
+          '[data-testid="schema-form-widget-apiKey"]',
+        ) as HTMLInputElement | null;
+        expect(reloadedInput?.value).toBe('my-secret-key');
+      });
+    });
+
+    it('blocks save on invalid field and focuses error (invalid focus behavior)', async () => {
+      const queryClient = new QueryClient({
+        defaultOptions: { queries: { retry: false } },
+      });
+      const dataProvider = makeProvider();
+
+      function CaptureForm() {
+        const runtime = useVideoEditorRuntime();
+        const ext = runtime.extensionRuntime?.extensions.find(
+          (e) => e.manifest.id === SETTINGS_EXTENSION_ID,
+        );
+        return ext ? (
+          <ExtensionSettingsPanel
+            extensionId={SETTINGS_EXTENSION_ID}
+            manifest={ext.manifest}
+          />
+        ) : null;
+      }
+
+      render(
+        <MemoryRouter>
+          <QueryClientProvider client={queryClient}>
+            <AgentChatProvider>
+              <VideoEditorProvider
+                dataProvider={dataProvider}
+                projectId="project-vp-settings"
+                timelineId="timeline-vp-settings"
+                userId="user-vp-settings"
+                extensions={[
+                  defineExtension({ manifest: settingsManifest }),
+                ]}
+              >
+                <CaptureForm />
+              </VideoEditorProvider>
+            </AgentChatProvider>
+          </QueryClientProvider>
+        </MemoryRouter>,
+      );
+
+      await waitFor(() => {
+        const apiKeyInput = document.querySelector(
+          '[data-testid="schema-form-widget-apiKey"]',
+        ) as HTMLInputElement | null;
+        expect(apiKeyInput).not.toBeNull();
+      });
+
+      // Enter a value below minLength (3) — "ab" is only 2 chars
+      const apiKeyInput = document.querySelector(
+        '[data-testid="schema-form-widget-apiKey"]',
+      ) as HTMLInputElement;
+      fireEvent.change(apiKeyInput, { target: { value: 'ab' } });
+
+      // Click save
+      const saveBtn = document.querySelector(
+        '[data-testid="extension-settings-save"]',
+      ) as HTMLButtonElement;
+      fireEvent.click(saveBtn);
+
+      // The save should have been blocked — SchemaForm validateAndFocus
+      // returns false, so no localStorage write should have occurred
+      await waitFor(() => {
+        const raw = localStorage.getItem(
+          `reigh.ext.${SETTINGS_EXTENSION_ID}.apiKey`,
+        );
+        // Should still be null (no save occurred)
+        expect(raw).toBeNull();
+      });
+
+      // The apiKey input should still have aria-invalid="true"
+      const invalidInput = document.querySelector(
+        '[data-testid="schema-form-widget-apiKey"]',
+      ) as HTMLInputElement | null;
+      expect(invalidInput?.getAttribute('aria-invalid')).toBe('true');
+    });
+
+    it('resets to defaults after saving overrides', async () => {
+      const queryClient = new QueryClient({
+        defaultOptions: { queries: { retry: false } },
+      });
+      const dataProvider = makeProvider();
+
+      function CaptureForm() {
+        const runtime = useVideoEditorRuntime();
+        const ext = runtime.extensionRuntime?.extensions.find(
+          (e) => e.manifest.id === SETTINGS_EXTENSION_ID,
+        );
+        return ext ? (
+          <ExtensionSettingsPanel
+            extensionId={SETTINGS_EXTENSION_ID}
+            manifest={ext.manifest}
+          />
+        ) : null;
+      }
+
+      render(
+        <MemoryRouter>
+          <QueryClientProvider client={queryClient}>
+            <AgentChatProvider>
+              <VideoEditorProvider
+                dataProvider={dataProvider}
+                projectId="project-vp-settings"
+                timelineId="timeline-vp-settings"
+                userId="user-vp-settings"
+                extensions={[
+                  defineExtension({ manifest: settingsManifest }),
+                ]}
+              >
+                <CaptureForm />
+              </VideoEditorProvider>
+            </AgentChatProvider>
+          </QueryClientProvider>
+        </MemoryRouter>,
+      );
+
+      await waitFor(() => {
+        const apiKeyInput = document.querySelector(
+          '[data-testid="schema-form-widget-apiKey"]',
+        ) as HTMLInputElement | null;
+        expect(apiKeyInput).not.toBeNull();
+      });
+
+      // Save a value first
+      const apiKeyInput = document.querySelector(
+        '[data-testid="schema-form-widget-apiKey"]',
+      ) as HTMLInputElement;
+      fireEvent.change(apiKeyInput, { target: { value: 'some-key' } });
+      const saveBtn = document.querySelector(
+        '[data-testid="extension-settings-save"]',
+      ) as HTMLButtonElement;
+      fireEvent.click(saveBtn);
+
+      await waitFor(() => {
+        const raw = localStorage.getItem(
+          `reigh.ext.${SETTINGS_EXTENSION_ID}.apiKey`,
+        );
+        expect(raw).toBe('"some-key"');
+      });
+
+      // Click reset
+      const resetBtn = document.querySelector(
+        '[data-testid="extension-settings-reset"]',
+      ) as HTMLButtonElement;
+      fireEvent.click(resetBtn);
+
+      // Verify localStorage key was cleared and form reverted to default (empty)
+      await waitFor(() => {
+        const raw = localStorage.getItem(
+          `reigh.ext.${SETTINGS_EXTENSION_ID}.apiKey`,
+        );
+        expect(raw).toBeNull();
+      });
+
+      const revertedInput = document.querySelector(
+        '[data-testid="schema-form-widget-apiKey"]',
+      ) as HTMLInputElement;
+      expect(revertedInput.value).toBe('');
+    });
+
+    it('cancels edits and reverts to last-saved values', async () => {
+      const queryClient = new QueryClient({
+        defaultOptions: { queries: { retry: false } },
+      });
+      const dataProvider = makeProvider();
+
+      function CaptureForm() {
+        const runtime = useVideoEditorRuntime();
+        const ext = runtime.extensionRuntime?.extensions.find(
+          (e) => e.manifest.id === SETTINGS_EXTENSION_ID,
+        );
+        return ext ? (
+          <ExtensionSettingsPanel
+            extensionId={SETTINGS_EXTENSION_ID}
+            manifest={ext.manifest}
+          />
+        ) : null;
+      }
+
+      render(
+        <MemoryRouter>
+          <QueryClientProvider client={queryClient}>
+            <AgentChatProvider>
+              <VideoEditorProvider
+                dataProvider={dataProvider}
+                projectId="project-vp-settings"
+                timelineId="timeline-vp-settings"
+                userId="user-vp-settings"
+                extensions={[
+                  defineExtension({ manifest: settingsManifest }),
+                ]}
+              >
+                <CaptureForm />
+              </VideoEditorProvider>
+            </AgentChatProvider>
+          </QueryClientProvider>
+        </MemoryRouter>,
+      );
+
+      await waitFor(() => {
+        const apiKeyInput = document.querySelector(
+          '[data-testid="schema-form-widget-apiKey"]',
+        ) as HTMLInputElement | null;
+        expect(apiKeyInput).not.toBeNull();
+      });
+
+      // Save a value first
+      const apiKeyInput = document.querySelector(
+        '[data-testid="schema-form-widget-apiKey"]',
+      ) as HTMLInputElement;
+      fireEvent.change(apiKeyInput, { target: { value: 'saved-key' } });
+      const saveBtn = document.querySelector(
+        '[data-testid="extension-settings-save"]',
+      ) as HTMLButtonElement;
+      fireEvent.click(saveBtn);
+
+      await waitFor(() => {
+        const raw = localStorage.getItem(
+          `reigh.ext.${SETTINGS_EXTENSION_ID}.apiKey`,
+        );
+        expect(raw).toBe('"saved-key"');
+      });
+
+      // Now edit without saving
+      fireEvent.change(apiKeyInput, { target: { value: 'unsaved-change' } });
+
+      // Click cancel
+      const cancelBtn = document.querySelector(
+        '[data-testid="extension-settings-cancel"]',
+      ) as HTMLButtonElement;
+      fireEvent.click(cancelBtn);
+
+      // The input should revert to the last-saved value
+      await waitFor(() => {
+        expect(apiKeyInput.value).toBe('saved-key');
+      });
+
+      // localStorage should still have the saved value (not the unsaved change)
+      const raw = localStorage.getItem(
+        `reigh.ext.${SETTINGS_EXTENSION_ID}.apiKey`,
+      );
+      expect(raw).toBe('"saved-key"');
+    });
+
+    // T17: Shared cleanup helper — diagnostics removal and settings UI state reset
+    // on disable/unload, preserving unrelated extension state.
+    it('disable clears targeted extension diagnostics and settings while preserving unrelated extension state', async () => {
+      const OTHER_EXTENSION_ID = 'com.example.other.vp';
+      const otherManifest = {
+        id: OTHER_EXTENSION_ID as never,
+        version: '1.0.0',
+        label: 'Other Extension VP',
+        settingsSchema: {
+          schema: {
+            type: 'object',
+            properties: {
+              otherKey: {
+                type: 'string',
+                title: 'Other Key',
+                default: 'other-default',
+              },
+            },
+          },
+        },
+      };
+
+      // Pre-populate localStorage for both extensions
+      localStorage.setItem(
+        `reigh.ext.${SETTINGS_EXTENSION_ID}.apiKey`,
+        '"settings-key-vp"',
+      );
+      localStorage.setItem(
+        `reigh.ext.${OTHER_EXTENSION_ID}.otherKey`,
+        '"other-key-vp"',
+      );
+
+      // Define extensions once so manifest references are stable across re-renders
+      const settingsExt = defineExtension({ manifest: settingsManifest });
+      const otherExt = defineExtension({ manifest: otherManifest });
+
+      const queryClient = new QueryClient({
+        defaultOptions: { queries: { retry: false } },
+      });
+      const dataProvider = makeProvider();
+
+      let capturedRuntime: ReturnType<typeof useVideoEditorRuntime> | null =
+        null;
+
+      function CaptureRuntime() {
+        capturedRuntime = useVideoEditorRuntime();
+        return null;
+      }
+
+      function Host({ includeSettings }: { includeSettings: boolean }) {
+        const exts = includeSettings
+          ? [settingsExt, otherExt]
+          : [otherExt];
+        return (
+          <MemoryRouter>
+            <QueryClientProvider client={queryClient}>
+              <AgentChatProvider>
+                <VideoEditorProvider
+                  dataProvider={dataProvider}
+                  projectId="project-vp-t17"
+                  timelineId="timeline-vp-t17"
+                  userId="user-vp-t17"
+                  extensions={exts}
+                >
+                  <CaptureRuntime />
+                </VideoEditorProvider>
+              </AgentChatProvider>
+            </QueryClientProvider>
+          </MemoryRouter>
+        );
+      }
+
+      const { rerender } = render(<Host includeSettings />);
+
+      await waitFor(() => {
+        expect(capturedRuntime).not.toBeNull();
+      });
+
+      // Both extensions' settings should be in localStorage
+      expect(
+        localStorage.getItem(`reigh.ext.${SETTINGS_EXTENSION_ID}.apiKey`),
+      ).toBe('"settings-key-vp"');
+      expect(
+        localStorage.getItem(`reigh.ext.${OTHER_EXTENSION_ID}.otherKey`),
+      ).toBe('"other-key-vp"');
+
+      // Disable the settings extension (remove from props)
+      rerender(<Host includeSettings={false} />);
+
+      await waitFor(() => {
+        // Targeted extension's settings localStorage must be cleared
+        expect(
+          localStorage.getItem(`reigh.ext.${SETTINGS_EXTENSION_ID}.apiKey`),
+        ).toBeNull();
+      });
+
+      // Unrelated extension's settings localStorage must be preserved
+      expect(
+        localStorage.getItem(`reigh.ext.${OTHER_EXTENSION_ID}.otherKey`),
+      ).toBe('"other-key-vp"');
+
+      // Targeted extension's diagnostics must be cleared
+      const snapshot =
+        capturedRuntime?.diagnosticCollection?.getSnapshot() ?? [];
+      const settingsExtDiags = snapshot.filter(
+        (d) => d.extensionId === SETTINGS_EXTENSION_ID,
+      );
+      expect(settingsExtDiags).toEqual([]);
+
+      // Unrelated extension's diagnostics should still be present
+      const otherExtDiags = snapshot.filter(
+        (d) => d.extensionId === OTHER_EXTENSION_ID,
+      );
+      expect(otherExtDiags.length).toBeGreaterThan(0);
+    });
+  });
+});
+
+describe('VideoEditorProvider render-boundary recovery', () => {
+  const SLOT_EXTENSION_ID = 'com.example.slot-ext-vp';
+
+  const slotManifest = {
+    id: SLOT_EXTENSION_ID as never,
+    version: '1.0.0',
+    label: 'Slot Extension VP',
+    contributions: [
+      {
+        kind: 'slot' as const,
+        id: 'slot-ext-header-vp',
+        slot: 'header',
+        order: 0,
+      },
+    ],
+  };
+
+  function makeProvider() {
+    return {
+      loadTimeline: vi.fn(),
+      saveTimeline: vi.fn(),
+      loadAssetRegistry: vi.fn(),
+      resolveAssetUrl: vi.fn(),
+    } as unknown as DataProvider;
+  }
+
+  function makeQueryClient() {
+    return new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+  }
+
+  it('surface detach removes contributions on disable — re-enable restores them fresh', async () => {
+    const slotExt = defineExtension({ manifest: slotManifest });
+    const queryClient = makeQueryClient();
+    const provider = makeProvider();
+
+    let capturedConfigSlots: string[] | null = null;
+
+    function Capture() {
+      const rt = useVideoEditorRuntime();
+      capturedConfigSlots = rt?.extensionRuntime?.config?.slots
+        ? Object.keys(rt.extensionRuntime.config.slots)
+        : null;
+      return null;
+    }
+
+    function Host({ includeSlot }: { includeSlot: boolean }) {
+      const exts = includeSlot ? [slotExt] : [];
+      return (
+        <MemoryRouter>
+          <QueryClientProvider client={queryClient}>
+            <AgentChatProvider>
+              <VideoEditorProvider
+                dataProvider={provider}
+                projectId="project-1"
+                timelineId="timeline-1"
+                userId="user-1"
+                extensions={exts}
+              >
+                <Capture />
+              </VideoEditorProvider>
+            </AgentChatProvider>
+          </QueryClientProvider>
+        </MemoryRouter>
+      );
+    }
+
+    const { rerender } = render(<Host includeSlot />);
+
+    await waitFor(() => {
+      expect(capturedConfigSlots).toContain('header');
+    });
+
+    // Disable the extension
+    rerender(<Host includeSlot={false} />);
+
+    await waitFor(() => {
+      expect(capturedConfigSlots).not.toContain('header');
+    });
+
+    // Re-enable the extension
+    rerender(<Host includeSlot />);
+
+    await waitFor(() => {
+      expect(capturedConfigSlots).toContain('header');
+    });
+
+    expect(capturedConfigSlots).toHaveLength(1);
+  });
+
+  it('re-enable after disable produces fresh contributions with no duplicates', async () => {
+    const slotExt = defineExtension({ manifest: slotManifest });
+    const queryClient = makeQueryClient();
+    const provider = makeProvider();
+
+    let capturedConfigSlots: string[] | null = null;
+
+    function Capture() {
+      const rt = useVideoEditorRuntime();
+      capturedConfigSlots = rt?.extensionRuntime?.config?.slots
+        ? Object.keys(rt.extensionRuntime.config.slots)
+        : null;
+      return null;
+    }
+
+    function Host({ includeSlot }: { includeSlot: boolean }) {
+      const exts = includeSlot ? [slotExt] : [];
+      return (
+        <MemoryRouter>
+          <QueryClientProvider client={queryClient}>
+            <AgentChatProvider>
+              <VideoEditorProvider
+                dataProvider={provider}
+                projectId="project-1"
+                timelineId="timeline-1"
+                userId="user-1"
+                extensions={exts}
+              >
+                <Capture />
+              </VideoEditorProvider>
+            </AgentChatProvider>
+          </QueryClientProvider>
+        </MemoryRouter>
+      );
+    }
+
+    const { rerender } = render(<Host includeSlot />);
+
+    await waitFor(() => {
+      expect(capturedConfigSlots).toContain('header');
+    });
+
+    // Disable → Re-enable → Disable → Re-enable
+    rerender(<Host includeSlot={false} />);
+    await waitFor(() => {
+      expect(capturedConfigSlots).not.toContain('header');
+    });
+
+    rerender(<Host includeSlot />);
+    await waitFor(() => {
+      expect(capturedConfigSlots).toContain('header');
+    });
+
+    rerender(<Host includeSlot={false} />);
+    await waitFor(() => {
+      expect(capturedConfigSlots).not.toContain('header');
+    });
+
+    rerender(<Host includeSlot />);
+    await waitFor(() => {
+      expect(capturedConfigSlots).toContain('header');
+    });
+
+    // Only 'header' should be present, with no duplicates
+    expect(capturedConfigSlots).toHaveLength(1);
+    expect(capturedConfigSlots![0]).toBe('header');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// T22: Focused per-registry scoped cleanup tests
+// ---------------------------------------------------------------------------
+// These tests verify that each lifecycle-owned contribution registry
+// (effects, transitions, clip-types) correctly scopes cleanup to only the
+// removed extension's records, preserving unrelated extensions.
+//
+// Agent tools and live data registries are future-only scaffolding and are
+// NOT exposed as public contribution systems (see provider comments).
+
+describe('VideoEditorProvider transition registry scoped cleanup', () => {
+  it('clears only the removed extension transition records and preserves unrelated extension records', async () => {
+    const EXT_A = 'com.example.vp-transition-ext-a';
+    const EXT_B = 'com.example.vp-transition-ext-b';
+    const transitionAId = 'vp-transition-a';
+    const transitionBId = 'vp-transition-b';
+    const disposeA = vi.fn();
+    const disposeB = vi.fn();
+    const provider: DataProvider = {
+      loadTimeline: vi.fn(),
+      saveTimeline: vi.fn(),
+      loadAssetRegistry: vi.fn(),
+      resolveAssetUrl: vi.fn(),
+    };
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+
+    let latestRecords: readonly TransitionRegistryRecord[] = [];
+
+    const extA = defineExtension({
+      manifest: {
+        id: EXT_A as never,
+        version: '1.0.0',
+        label: 'VP Transition Extension A',
+      },
+    });
+    const extB = defineExtension({
+      manifest: {
+        id: EXT_B as never,
+        version: '1.0.0',
+        label: 'VP Transition Extension B',
+      },
+    });
+
+    function CaptureTransitions() {
+      const { registry } = useTransitionRegistryContext();
+      latestRecords = useTransitionRegistryContext().snapshot.records;
+
+      useEffect(() => {
+        const hA = registry.register(trustedTransitionRecord(transitionAId, EXT_A, disposeA));
+        const hB = registry.register(trustedTransitionRecord(transitionBId, EXT_B, disposeB));
+        return () => {
+          hA.dispose();
+          hB.dispose();
+        };
+      }, [registry]);
+
+      return null;
+    }
+
+    function Host({ includeA }: { includeA: boolean }) {
+      const exts = includeA ? [extA, extB] : [extB];
+      return (
+        <MemoryRouter>
+          <QueryClientProvider client={queryClient}>
+            <AgentChatProvider>
+              <VideoEditorProvider
+                dataProvider={provider}
+                projectId="project-1"
+                timelineId="timeline-1"
+                userId="user-1"
+                extensions={exts}
+              >
+                <CaptureTransitions />
+              </VideoEditorProvider>
+            </AgentChatProvider>
+          </QueryClientProvider>
+        </MemoryRouter>
+      );
+    }
+
+    const { rerender } = render(<Host includeA />);
+
+    await waitFor(() => {
+      expect(latestRecords.map((r) => r.transitionId)).toEqual(
+        expect.arrayContaining([transitionAId, transitionBId]),
+      );
+    });
+
+    // Remove extension A
+    rerender(<Host includeA={false} />);
+
+    await waitFor(() => {
+      // Extension A's transition record must be removed
+      expect(latestRecords.map((r) => r.transitionId)).not.toContain(transitionAId);
+    });
+
+    // Extension B's transition record must be preserved
+    expect(latestRecords.map((r) => r.transitionId)).toContain(transitionBId);
+    expect(latestRecords.map((r) => r.transitionId)).toHaveLength(1);
+    expect(disposeA).toHaveBeenCalled();
+    expect(disposeB).not.toHaveBeenCalled();
+  });
+});
+
+describe('VideoEditorProvider clip-type registry scoped cleanup', () => {
+  it('clears only the removed extension clip-type records and preserves unrelated extension records', async () => {
+    const EXT_A = 'com.example.vp-cliptype-ext-a';
+    const EXT_B = 'com.example.vp-cliptype-ext-b';
+    const clipAId = 'vp-clip-type-a';
+    const clipBId = 'vp-clip-type-b';
+    const disposeA = vi.fn();
+    const disposeB = vi.fn();
+    const provider: DataProvider = {
+      loadTimeline: vi.fn(),
+      saveTimeline: vi.fn(),
+      loadAssetRegistry: vi.fn(),
+      resolveAssetUrl: vi.fn(),
+    };
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+
+    let latestRecords: readonly ClipTypeRegistryRecord[] = [];
+
+    const extA = defineExtension({
+      manifest: {
+        id: EXT_A as never,
+        version: '1.0.0',
+        label: 'VP ClipType Extension A',
+      },
+    });
+    const extB = defineExtension({
+      manifest: {
+        id: EXT_B as never,
+        version: '1.0.0',
+        label: 'VP ClipType Extension B',
+      },
+    });
+
+    function CaptureClipTypes() {
+      const { registry } = useClipTypeRegistryContext();
+      latestRecords = useClipTypeRegistryContext().snapshot.records;
+
+      useEffect(() => {
+        const hA = registry.register(trustedClipTypeRecord(clipAId, EXT_A, disposeA));
+        const hB = registry.register(trustedClipTypeRecord(clipBId, EXT_B, disposeB));
+        return () => {
+          hA.dispose();
+          hB.dispose();
+        };
+      }, [registry]);
+
+      return null;
+    }
+
+    function Host({ includeA }: { includeA: boolean }) {
+      const exts = includeA ? [extA, extB] : [extB];
+      return (
+        <MemoryRouter>
+          <QueryClientProvider client={queryClient}>
+            <AgentChatProvider>
+              <VideoEditorProvider
+                dataProvider={provider}
+                projectId="project-1"
+                timelineId="timeline-1"
+                userId="user-1"
+                extensions={exts}
+              >
+                <CaptureClipTypes />
+              </VideoEditorProvider>
+            </AgentChatProvider>
+          </QueryClientProvider>
+        </MemoryRouter>
+      );
+    }
+
+    const { rerender } = render(<Host includeA />);
+
+    await waitFor(() => {
+      expect(latestRecords.map((r) => r.clipTypeId)).toEqual(
+        expect.arrayContaining([clipAId, clipBId]),
+      );
+    });
+
+    // Remove extension A
+    rerender(<Host includeA={false} />);
+
+    await waitFor(() => {
+      // Extension A's clip-type record must be removed
+      expect(latestRecords.map((r) => r.clipTypeId)).not.toContain(clipAId);
+    });
+
+    // Extension B's clip-type record must be preserved
+    expect(latestRecords.map((r) => r.clipTypeId)).toContain(clipBId);
+    expect(latestRecords.map((r) => r.clipTypeId)).toHaveLength(1);
+    expect(disposeA).toHaveBeenCalled();
+    expect(disposeB).not.toHaveBeenCalled();
   });
 });

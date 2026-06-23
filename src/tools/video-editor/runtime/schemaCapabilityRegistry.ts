@@ -400,16 +400,22 @@ function buildValidationPaths(): ReadonlyMap<string, ValidationPathEntry> {
         return null;
       },
     }],
-    // Select: value must be in options
+    // Select / enum: value must be in options (applies to select, enum, and
+    // string types that carry StandardSchema `enum` as options).
     ['select-path', {
       path: 'select-path',
       validate(value: unknown, def: ParameterDefinition): string | null {
-        if ((def.type as string) !== 'select' && (def.type as string) !== 'enum') return null;
+        const type = def.type as string;
+        if (type !== 'select' && type !== 'enum' && type !== 'string') return null;
+        // Only validate string-typed fields that actually carry enum options
+        if (type === 'string' && (!def.options || def.options.length === 0)) return null;
         if (value === undefined || value === null) return null;
         if (typeof value !== 'string') {
           return `"${def.label}" must be a string option value.`;
         }
         const validValues = new Set((def.options ?? []).map((o) => o.value));
+        // For text-typed StandardSchema fields without options, skip
+        if (validValues.size === 0) return null;
         if (!validValues.has(value)) {
           return `"${value}" is not a valid option for "${def.label}".`;
         }
@@ -427,6 +433,50 @@ function buildValidationPaths(): ReadonlyMap<string, ValidationPathEntry> {
         }
         if (!/^#[0-9a-fA-F]{3,8}$/.test(value)) {
           return `"${value}" is not a valid hex color.`;
+        }
+        return null;
+      },
+    }],
+    // String: minLength, maxLength, pattern
+    ['string-path', {
+      path: 'string-path',
+      validate(value: unknown, def: ParameterDefinition): string | null {
+        if ((def.type as string) !== 'string' && (def.type as string) !== 'text') return null;
+        if (value === undefined || value === null) return null;
+        if (typeof value !== 'string') {
+          return `"${def.label}" must be a string.`;
+        }
+        if (def.minLength !== undefined && value.length < def.minLength) {
+          return `"${def.label}" must be at least ${def.minLength} characters.`;
+        }
+        if (def.maxLength !== undefined && value.length > def.maxLength) {
+          return `"${def.label}" must be at most ${def.maxLength} characters.`;
+        }
+        if (def.pattern !== undefined) {
+          try {
+            const regex = new RegExp(def.pattern);
+            if (!regex.test(value)) {
+              return `"${def.label}" must match pattern ${def.pattern}.`;
+            }
+          } catch {
+            // Invalid regex pattern — skip validation rather than crash
+            return null;
+          }
+        }
+        return null;
+      },
+    }],
+    // Required-field validation
+    ['required-path', {
+      path: 'required-path',
+      validate(value: unknown, def: ParameterDefinition): string | null {
+        // Only validate required flag via the def shape — the validator
+        // receives the definition spread which may include minLength etc.
+        // We check for required via a custom property passed by validateField.
+        const isRequired = (def as Record<string, unknown>).isRequired;
+        if (!isRequired) return null;
+        if (value === undefined || value === null || value === '') {
+          return `"${def.label}" is required.`;
         }
         return null;
       },

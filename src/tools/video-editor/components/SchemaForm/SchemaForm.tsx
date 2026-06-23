@@ -13,7 +13,7 @@
  * @module SchemaForm
  */
 
-import { useMemo, useEffect } from 'react';
+import { useMemo, useEffect, useRef, useState, useCallback, useImperativeHandle, forwardRef } from 'react';
 import { NumberInput } from '@/shared/components/ui/number-input.tsx';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/shared/components/ui/select.tsx';
 import { Slider } from '@/shared/components/ui/slider.tsx';
@@ -34,7 +34,7 @@ import type { ExtensionDiagnostic } from '@reigh/editor-sdk';
 
 /** A single property definition in the minimal StandardSchema subset. */
 export interface StandardSchemaProperty {
-  type: string;
+  type?: string;
   title?: string;
   description?: string;
   default?: unknown;
@@ -42,6 +42,19 @@ export interface StandardSchemaProperty {
   minimum?: number;
   maximum?: number;
   multipleOf?: number;
+  minLength?: number;
+  maxLength?: number;
+  pattern?: string;
+  // Unsupported shapes — detected during normalization
+  items?: unknown;
+  properties?: Record<string, unknown>;
+  $ref?: string;
+  oneOf?: unknown[];
+  anyOf?: unknown[];
+  allOf?: unknown[];
+  if?: unknown;
+  then?: unknown;
+  else?: unknown;
 }
 
 /** Minimal StandardSchema object schema — only `object` with `properties`. */
@@ -88,6 +101,18 @@ export interface SchemaFormProps {
   diagnostics?: readonly ExtensionDiagnostic[];
 }
 
+/** Imperative handle exposed by SchemaForm for save-time focus management. */
+export interface SchemaFormHandle {
+  /**
+   * Validate all fields and focus the first invalid focusable widget.
+   *
+   * @returns `true` if every field passes validation; `false` if any
+   * errors exist (and focus was directed to the first invalid widget or
+   * to the error summary fallback).
+   */
+  validateAndFocus: () => boolean;
+}
+
 // ---------------------------------------------------------------------------
 // Internal normalised field
 // ---------------------------------------------------------------------------
@@ -103,6 +128,9 @@ interface NormalizedField {
   step?: number;
   options?: Array<{ label: string; value: string }>;
   isRequired: boolean;
+  minLength?: number;
+  maxLength?: number;
+  pattern?: string;
   _source: 'parameter' | 'standardschema' | 'shader';
   _capability: SchemaCapabilityEntry;
 }
@@ -230,10 +258,113 @@ function validateField(field: NormalizedField, value: unknown, registry: SchemaC
       max: field.max,
       step: field.step,
       options: field.options,
-    });
+      minLength: field.minLength,
+      maxLength: field.maxLength,
+      pattern: field.pattern,
+      isRequired: field.isRequired,
+    } as ParameterDefinition & { isRequired?: boolean });
     if (result !== null) return result;
   }
   return null;
+}
+
+// ---------------------------------------------------------------------------
+// Unsupported shape detection
+// ---------------------------------------------------------------------------
+
+/** Shape labels and diagnostic messages for unsupported schema constructs. */
+const UNSUPPORTED_SHAPE_DEFS: Record<string, { label: string; message: string }> = {
+  array: {
+    label: 'Array',
+    message: 'Array schemas are not yet supported in SchemaForm. Nested lists must be flattened or managed externally.',
+  },
+  'nested-object': {
+    label: 'Nested Object',
+    message: 'Nested object schemas beyond the top-level properties are not supported in V1 SchemaForm.',
+  },
+  $ref: {
+    label: '$ref Reference',
+    message: '$ref references are not yet supported in SchemaForm. Resolve references before passing to the form.',
+  },
+  oneOf: {
+    label: 'oneOf',
+    message: '"oneOf" composition is not yet supported in SchemaForm. Provide a flat, concrete schema.',
+  },
+  anyOf: {
+    label: 'anyOf',
+    message: '"anyOf" composition is not yet supported in SchemaForm. Provide a flat, concrete schema.',
+  },
+  allOf: {
+    label: 'allOf',
+    message: '"allOf" composition is not yet supported in SchemaForm. Provide a flat, concrete schema.',
+  },
+  conditional: {
+    label: 'Conditional Schema',
+    message: 'Conditional schemas (if/then/else) are not yet supported in SchemaForm. Provide a flat, concrete schema.',
+  },
+};
+
+/**
+ * Inspect a StandardSchema property for unsupported JSON Schema shapes
+ * (arrays, nested objects, `$ref`, `oneOf`, `anyOf`, `allOf`, conditionals).
+ *
+ * @returns The shape key if unsupported, or `null` if the property is a
+ * supported flat primitive or unknown type.
+ */
+function detectUnsupportedShape(prop: StandardSchemaProperty): string | null {
+  // Arrays
+  if (prop.type === 'array' || prop.items !== undefined) {
+    return 'array';
+  }
+  // Nested objects (type === 'object' with nested properties)
+  if (prop.type === 'object' || (prop.properties !== undefined && typeof prop.properties === 'object')) {
+    return 'nested-object';
+  }
+  // $ref
+  if (prop.$ref !== undefined) {
+    return '$ref';
+  }
+  // oneOf
+  if (prop.oneOf !== undefined) {
+    return 'oneOf';
+  }
+  // anyOf
+  if (prop.anyOf !== undefined) {
+    return 'anyOf';
+  }
+  // allOf
+  if (prop.allOf !== undefined) {
+    return 'allOf';
+  }
+  // Conditional schemas (if/then/else)
+  if (prop.if !== undefined || prop.then !== undefined || prop.else !== undefined) {
+    return 'conditional';
+  }
+  return null;
+}
+
+/**
+ * Build an unsupported capability entry for a schema shape that is known but
+ * not yet handled by SchemaForm V1.
+ */
+function buildUnsupportedShapeCapability(shape: string): SchemaCapabilityEntry {
+  const def = UNSUPPORTED_SHAPE_DEFS[shape] ?? {
+    label: 'Unsupported Schema Shape',
+    message: `Schema shape "${shape}" is not supported by SchemaForm V1.`,
+  };
+  return {
+    type: shape,
+    widgetType: undefined,
+    status: 'unsupported',
+    label: def.label,
+    diagnostic: {
+      severity: 'warning',
+      code: `schema/unsupported-${shape}`,
+      message: def.message,
+      detail: { unsupportedShape: shape },
+    },
+    isCustomPlaceholder: false,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -273,6 +404,9 @@ function normalizeSchema(
         step: param.step,
         options: param.options ? Array.from(param.options) : undefined,
         isRequired: true,
+        minLength: param.minLength,
+        maxLength: param.maxLength,
+        pattern: param.pattern,
         _source: isShader ? 'shader' as const : 'parameter' as const,
         _capability: capability,
       };
@@ -282,18 +416,36 @@ function normalizeSchema(
   // StandardSchema — object with properties
   const required = new Set(schema.required ?? []);
   return Object.entries(schema.properties).map(([name, prop]) => {
-    const capability = registry.resolve(prop.type);
+    // Detect unsupported schema shapes before resolving the type
+    const unsupportedShape = detectUnsupportedShape(prop);
+    if (unsupportedShape !== null) {
+      return {
+        name,
+        label: prop.title ?? name,
+        description: prop.description ?? '',
+        type: unsupportedShape,
+        default: prop.default,
+        isRequired: required.has(name),
+        _source: 'standardschema' as const,
+        _capability: buildUnsupportedShapeCapability(unsupportedShape),
+      };
+    }
+
+    const capability = registry.resolve(prop.type ?? 'string');
     return {
       name,
       label: prop.title ?? name,
       description: prop.description ?? '',
-      type: prop.type,
+      type: prop.type ?? 'string',
       default: prop.default,
       min: prop.minimum,
       max: prop.maximum,
       step: prop.multipleOf,
       options: prop.enum?.map((v) => ({ label: String(v), value: String(v) })),
       isRequired: required.has(name),
+      minLength: prop.minLength,
+      maxLength: prop.maxLength,
+      pattern: prop.pattern,
       _source: 'standardschema' as const,
       _capability: capability,
     };
@@ -313,8 +465,12 @@ function normalizeSchema(
  *
  * `onChange(name, value)` fires for every value change, matching the
  * {@link ParameterControls} contract exactly.
+ *
+ * Exposes an imperative {@link SchemaFormHandle} via `ref` so parent
+ * save flows can call `validateAndFocus()` to direct focus to the first
+ * invalid field or to an error summary.
  */
-export function SchemaForm({
+export const SchemaForm = forwardRef<SchemaFormHandle, SchemaFormProps>(function SchemaForm({
   schema,
   values,
   onChange,
@@ -323,13 +479,73 @@ export function SchemaForm({
   capabilityRegistry,
   onDiagnostics,
   diagnostics,
-}: SchemaFormProps) {
+}, ref) {
   const registry = useMemo(
     () => capabilityRegistry ?? createSchemaCapabilityRegistry(),
     [capabilityRegistry],
   );
 
   const fields = useMemo(() => normalizeSchema(schema, registry), [schema, registry]);
+
+  // ---- Focus management state ----
+  const [showErrorSummary, setShowErrorSummary] = useState(false);
+  const widgetRefs = useRef<Map<string, HTMLElement>>(new Map());
+  const errorSummaryRef = useRef<HTMLDivElement | null>(null);
+
+  // Stable callback ref factory — stores each widget's DOM node keyed by field name.
+  const setWidgetRef = useCallback((name: string) => (el: unknown) => {
+    if (el instanceof HTMLElement) {
+      widgetRefs.current.set(name, el);
+    } else {
+      widgetRefs.current.delete(name);
+    }
+  }, []);
+
+  // Focus the error summary after it renders.
+  useEffect(() => {
+    if (showErrorSummary && errorSummaryRef.current) {
+      errorSummaryRef.current.focus();
+    }
+  }, [showErrorSummary]);
+
+  // Reset error summary visibility when values change (user is editing).
+  useEffect(() => {
+    setShowErrorSummary(false);
+  }, [values]);
+
+  // Imperative handle: validate all fields → focus first invalid widget, or fallback to error summary.
+  useImperativeHandle(ref, () => ({
+    validateAndFocus: (): boolean => {
+      const errors: Array<{ name: string }> = [];
+      for (const field of fields) {
+        // Fields with unsupported or custom status cannot be saved
+        if (field._capability.status === 'unsupported' || field._capability.status === 'custom') {
+          errors.push({ name: field.name });
+          continue;
+        }
+        const rawValue = values[field.name];
+        const errorMessage = validateField(field, rawValue, registry);
+        if (errorMessage) {
+          errors.push({ name: field.name });
+        }
+      }
+
+      if (errors.length === 0) return true;
+
+      // Try to focus the first invalid field with a registered widget element.
+      for (const error of errors) {
+        const element = widgetRefs.current.get(error.name);
+        if (element) {
+          element.focus();
+          return false;
+        }
+      }
+
+      // No focusable widget — show and focus the error summary fallback.
+      setShowErrorSummary(true);
+      return false;
+    },
+  }), [fields, values, registry]);
 
   // Emit diagnostics for unsupported types
   useEffect(() => {
@@ -412,10 +628,27 @@ export function SchemaForm({
         </div>
       ))}
 
+      {/* Save-error summary — programmatically focused when no individual widget can receive focus */}
+      {showErrorSummary && (
+        <div
+          ref={errorSummaryRef}
+          tabIndex={-1}
+          data-testid="schema-form-error-summary"
+          className="rounded-lg border-2 border-destructive bg-destructive/10 p-3 outline-none"
+          role="alert"
+          aria-live="assertive"
+        >
+          <div className="text-sm font-semibold text-destructive">
+            Please fix the validation errors below before saving.
+          </div>
+        </div>
+      )}
+
       {fields.map((field) => {
         const rawValue = values[field.name];
         const value = getDisplayValue(field, rawValue);
         const errorMessage = validateField(field, rawValue, registry);
+        const describedBy = `schema-form-${field.name}-description${errorMessage ? ` schema-form-${field.name}-error` : ''}`;
 
         // ---- Unsupported type: diagnostic placeholder ----
         if (field._capability.status === 'unsupported') {
@@ -469,15 +702,18 @@ export function SchemaForm({
             {/* Label row */}
             <div className="flex items-start justify-between gap-3">
               <div className="min-w-0">
-                <div className="text-sm font-medium text-foreground">
+                <div id={`schema-form-${field.name}-label`} className="text-sm font-medium text-foreground">
                   {field.label}
+                  {field.isRequired && (
+                    <span className="ml-1 text-destructive" aria-label="required" title="Required">*</span>
+                  )}
                   {isCustom && (
                     <span className="ml-2 rounded bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-amber-600">
                       Custom
                     </span>
                   )}
                 </div>
-                <div className="text-xs text-muted-foreground">{field.description}</div>
+                <div id={`schema-form-${field.name}-description`} className="text-xs text-muted-foreground">{field.description}</div>
               </div>
               {/* Value badge for certain types */}
               {field._capability.widgetType === 'slider' && typeof value === 'number' && (
@@ -493,6 +729,7 @@ export function SchemaForm({
             {/* Validation error */}
             {errorMessage && (
               <div
+                id={`schema-form-${field.name}-error`}
                 className="rounded-md bg-destructive/10 px-3 py-1.5 text-xs text-destructive"
                 data-testid={`schema-form-error-${field.name}`}
                 role="alert"
@@ -506,10 +743,20 @@ export function SchemaForm({
             {/* Text widget (string) */}
             {field._capability.widgetType === 'text' && (
               <input
+                ref={setWidgetRef(field.name)}
                 type="text"
+                id={`schema-form-widget-${field.name}`}
                 value={typeof value === 'string' ? value : String(value ?? '')}
                 onChange={(event) => onChange(field.name, event.target.value)}
                 disabled={disabled}
+                required={field.isRequired}
+                minLength={field.minLength}
+                maxLength={field.maxLength}
+                pattern={field.pattern}
+                aria-labelledby={`schema-form-${field.name}-label`}
+                aria-describedby={describedBy}
+                aria-invalid={errorMessage ? true : undefined}
+                aria-required={field.isRequired ? true : undefined}
                 data-testid={`schema-form-widget-${field.name}`}
                 className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
               />
@@ -517,21 +764,29 @@ export function SchemaForm({
 
             {/* Slider widget (number) */}
             {field._capability.widgetType === 'slider' && (
-              <Slider
-                min={field.min ?? 0}
-                max={field.max ?? 100}
-                step={field.step ?? 1}
-                value={typeof value === 'number' ? value : Number(value) || 0}
-                onValueChange={(nextValue) => onChange(field.name, nextValue)}
-                disabled={disabled}
-                data-testid={`schema-form-widget-${field.name}`}
-              />
+              <div ref={setWidgetRef(field.name)} tabIndex={-1} className="outline-none">
+                <Slider
+                  tabIndex={-1}
+                  min={field.min ?? 0}
+                  max={field.max ?? 100}
+                  step={field.step ?? 1}
+                  value={typeof value === 'number' ? value : Number(value) || 0}
+                  onValueChange={(nextValue) => onChange(field.name, nextValue)}
+                  disabled={disabled}
+                  aria-labelledby={`schema-form-${field.name}-label`}
+                  aria-describedby={describedBy}
+                  aria-invalid={errorMessage ? true : undefined}
+                  data-testid={`schema-form-widget-${field.name}`}
+                />
+              </div>
             )}
 
             {/* Compact shader scalar widget */}
             {field._capability.widgetType === 'shader-number' && (
               <input
+                ref={setWidgetRef(field.name)}
                 type="number"
+                id={`schema-form-widget-${field.name}`}
                 inputMode={field.type === 'int' || field.type === 'frame' ? 'numeric' : 'decimal'}
                 value={typeof value === 'number' ? value : Number(value) || 0}
                 min={field.min}
@@ -544,6 +799,10 @@ export function SchemaForm({
                   }
                 }}
                 disabled={disabled}
+                aria-labelledby={`schema-form-${field.name}-label`}
+                aria-describedby={describedBy}
+                aria-invalid={errorMessage ? true : undefined}
+                aria-required={field.isRequired ? true : undefined}
                 data-testid={`schema-form-widget-${field.name}`}
                 className="flex h-9 w-full rounded-md border border-input bg-background px-2.5 py-1.5 text-sm tabular-nums ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
               />
@@ -552,6 +811,8 @@ export function SchemaForm({
             {/* Number widget (fallback for number without slider — StandardSchema number with widgetType 'number') */}
             {field._capability.widgetType === 'number' && (
               <NumberInput
+                ref={setWidgetRef(field.name)}
+                tabIndex={-1}
                 value={typeof value === 'number' ? value : 0}
                 min={field.min}
                 max={field.max}
@@ -560,20 +821,30 @@ export function SchemaForm({
                   if (nextValue !== null) onChange(field.name, nextValue);
                 }}
                 disabled={disabled}
+                aria-labelledby={`schema-form-${field.name}-label`}
+                aria-describedby={describedBy}
+                aria-invalid={errorMessage ? true : undefined}
                 data-testid={`schema-form-widget-${field.name}`}
               />
             )}
 
             {/* Boolean widget */}
             {field._capability.widgetType === 'boolean' && (
-              <div className="flex items-center justify-between rounded-md border border-border/70 px-3 py-2">
+              <div
+                className="flex items-center justify-between rounded-md border border-border/70 px-3 py-2"
+                aria-labelledby={`schema-form-${field.name}-label`}
+                aria-describedby={describedBy}
+                aria-invalid={errorMessage ? true : undefined}
+              >
                 <div className="text-sm text-foreground">
                   {value ? 'Enabled' : 'Disabled'}
                 </div>
                 <Switch
+                  ref={setWidgetRef(field.name)}
                   checked={Boolean(value)}
                   onCheckedChange={(nextValue) => onChange(field.name, nextValue)}
                   disabled={disabled}
+                  aria-labelledby={`schema-form-${field.name}-label`}
                   data-testid={`schema-form-widget-${field.name}`}
                 />
               </div>
@@ -598,7 +869,9 @@ export function SchemaForm({
                         {label}
                       </span>
                       <input
+                        ref={index === 0 ? setWidgetRef(field.name) : undefined}
                         type="number"
+                        id={`schema-form-widget-${field.name}-${label}`}
                         inputMode="decimal"
                         value={vectorValue[index] ?? 0}
                         step={field.step ?? 0.01}
@@ -612,6 +885,8 @@ export function SchemaForm({
                           onChange(field.name, nextValue);
                         }}
                         disabled={disabled}
+                        aria-describedby={describedBy}
+                        aria-invalid={errorMessage ? true : undefined}
                         data-testid={`schema-form-widget-${field.name}-${label}`}
                         className="h-9 w-full rounded-md border border-input bg-background px-2 py-1.5 text-sm tabular-nums ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
                       />
@@ -628,7 +903,13 @@ export function SchemaForm({
                 onValueChange={(nextValue) => onChange(field.name, nextValue)}
                 disabled={disabled}
               >
-                <SelectTrigger data-testid={`schema-form-widget-${field.name}`}>
+                <SelectTrigger
+                  ref={setWidgetRef(field.name)}
+                  data-testid={`schema-form-widget-${field.name}`}
+                  aria-labelledby={`schema-form-${field.name}-label`}
+                  aria-describedby={describedBy}
+                  aria-invalid={errorMessage ? true : undefined}
+                >
                   <SelectValue placeholder="Select an option" />
                 </SelectTrigger>
                 <SelectContent>
@@ -645,10 +926,16 @@ export function SchemaForm({
             {field._capability.widgetType === 'color' && !isShaderColorValue(field, value) && (
               <div className="flex items-center gap-3">
                 <input
+                  ref={setWidgetRef(field.name)}
                   type="color"
+                  id={`schema-form-widget-${field.name}`}
                   value={typeof value === 'string' ? value : String(value)}
                   onChange={(event) => onChange(field.name, event.target.value)}
                   disabled={disabled}
+                  aria-labelledby={`schema-form-${field.name}-label`}
+                  aria-describedby={describedBy}
+                  aria-invalid={errorMessage ? true : undefined}
+                  aria-required={field.isRequired ? true : undefined}
                   data-testid={`schema-form-widget-${field.name}`}
                   className="h-10 w-16 cursor-pointer p-1"
                 />
@@ -675,7 +962,11 @@ export function SchemaForm({
                     }}
                     disabled={disabled}
                   >
-                    <SelectTrigger data-testid={`schema-form-widget-${field.name}-source`}>
+                    <SelectTrigger
+                      ref={setWidgetRef(field.name)}
+                      data-testid={`schema-form-widget-${field.name}-source`}
+                      aria-describedby={describedBy}
+                    >
                       <SelectValue placeholder="Select audio source" />
                     </SelectTrigger>
                     <SelectContent>
@@ -699,6 +990,7 @@ export function SchemaForm({
                       }
                     }}
                     disabled={disabled}
+                    aria-describedby={describedBy}
                     data-testid={`schema-form-widget-${field.name}-min`}
                   />
                 </div>
@@ -714,6 +1006,7 @@ export function SchemaForm({
                       }
                     }}
                     disabled={disabled}
+                    aria-describedby={describedBy}
                     data-testid={`schema-form-widget-${field.name}-max`}
                   />
                 </div>
@@ -724,4 +1017,4 @@ export function SchemaForm({
       })}
     </div>
   );
-}
+});

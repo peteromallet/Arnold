@@ -1,4 +1,4 @@
-import { render, waitFor } from '@testing-library/react';
+import { fireEvent, render, waitFor } from '@testing-library/react';
 import { useEffect } from 'react';
 import type { FC, ReactNode } from 'react';
 import { describe, expect, it, vi } from 'vitest';
@@ -11,10 +11,13 @@ import { useTransitionRegistryContext } from '@/tools/video-editor/transitions/r
 import type { TransitionRegistryRecord } from '@/tools/video-editor/transitions/registry/types.ts';
 import { useShaderEffectRegistryContext } from '@/tools/video-editor/shaders/registry/index.ts';
 import type { ShaderEffectRegistryRecord } from '@/tools/video-editor/shaders/registry/types.ts';
+import { useClipTypeRegistryContext } from '@/tools/video-editor/clip-types/ClipTypeRegistryContext.tsx';
+import type { ClipTypeRegistryRecord } from '@/tools/video-editor/clip-types/ClipTypeRegistry.ts';
 import { useVideoEditorRuntime } from '@/tools/video-editor/contexts/DataProviderContext.tsx';
 import { EditorRuntimeProvider } from '@/tools/video-editor/contexts/EditorRuntimeProvider.tsx';
 import type { LiveDataRegistry } from '@/tools/video-editor/runtime/liveDataRegistry.ts';
 import type { LivePermissionService } from '@/tools/video-editor/runtime/livePermissions.ts';
+import { ExtensionSettingsPanel } from '@/tools/video-editor/components/ExtensionSettings/ExtensionSettingsPanel';
 
 const mocks = vi.hoisted(() => {
   const syncSlices = vi.fn();
@@ -151,6 +154,59 @@ function shaderRecord(
     ownerExtensionId,
     status: 'error',
     diagnostics,
+    renderability: {
+      defaultRoute: 'preview',
+      determinism: 'preview-only',
+      capabilities: [
+        {
+          route: 'preview',
+          status: 'supported',
+          determinism: 'preview-only',
+        },
+      ],
+    },
+    dispose,
+  };
+}
+
+function transitionRecord(
+  transitionId: string,
+  ownerExtensionId: string,
+  dispose: () => void,
+): TransitionRegistryRecord {
+  return {
+    transitionId,
+    contributionId: `${ownerExtensionId}.transition`,
+    renderer: () => null,
+    provenance: 'bundled-extension',
+    ownerExtensionId,
+    status: 'active',
+    renderability: {
+      defaultRoute: 'preview',
+      determinism: 'preview-only',
+      capabilities: [
+        {
+          route: 'preview',
+          status: 'supported',
+          determinism: 'preview-only',
+        },
+      ],
+    },
+    dispose,
+  };
+}
+
+function clipTypeRecord(
+  clipTypeId: string,
+  ownerExtensionId: string,
+  dispose: () => void,
+): ClipTypeRegistryRecord {
+  return {
+    clipTypeId,
+    contributionId: `${ownerExtensionId}.clipType`,
+    renderer: () => null,
+    ownerExtensionId,
+    status: 'active',
     renderability: {
       defaultRoute: 'preview',
       determinism: 'preview-only',
@@ -500,6 +556,15 @@ describe('EditorRuntimeProvider effect registry lifecycle', () => {
 
       useEffect(() => {
         if (!enabled || !runtime.diagnosticCollection) return undefined;
+        // Host-owned diagnostic (no extensionId) — should survive
+        // extension disable/unload without being removed.
+        runtime.diagnosticCollection.publish({
+          id: 'host-owned-diagnostic',
+          severity: 'warning',
+          code: 'host/timeline-stale',
+          message: 'Host-owned stale warning',
+          detail: { source: 'host-owned' },
+        });
         runtime.diagnosticCollection.publish({
           id: 'export-stale-diagnostic',
           severity: 'error',
@@ -601,15 +666,29 @@ describe('EditorRuntimeProvider effect registry lifecycle', () => {
           diagnostic.detail?.source === 'render-planner'
           && diagnostic.code === 'planner/browser-export/route-unsupported',
       )).toBe(true);
+      // Host-owned diagnostic must be present before disable.
+      expect(diagnostics.some(
+        (diagnostic) =>
+          diagnostic.id === 'host-owned-diagnostic'
+          && diagnostic.detail?.source === 'host-owned',
+      )).toBe(true);
     });
 
     rerender(<Host enabled={false} />);
 
     await waitFor(() => {
-      const disabledOwnerDiagnostics = collection?.getSnapshot().filter(
+      const snapshot = collection?.getSnapshot() ?? [];
+      // Extension-owned diagnostics must be cleared on disable.
+      const disabledOwnerDiagnostics = snapshot.filter(
         (diagnostic) => diagnostic.extensionId === extensionId,
-      ) ?? [];
+      );
       expect(disabledOwnerDiagnostics).toEqual([]);
+      // Host-owned diagnostic (no extensionId) must survive.
+      expect(snapshot.some(
+        (diagnostic) =>
+          diagnostic.id === 'host-owned-diagnostic'
+          && diagnostic.detail?.source === 'host-owned',
+      )).toBe(true);
     });
   });
 });
@@ -906,5 +985,889 @@ describe('EditorRuntimeProvider live data registry lifecycle', () => {
       )).toBe(true);
       expect(liveDiagnostics.every((diagnostic) => diagnostic.extensionId === undefined)).toBe(true);
     });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// M4: Extension settings surface via SchemaForm inside EditorRuntimeProvider
+// ---------------------------------------------------------------------------
+
+describe('EditorRuntimeProvider extension settings surface', () => {
+  const SETTINGS_EXTENSION_ID = 'com.example.settings';
+  const settingsManifest = {
+    id: SETTINGS_EXTENSION_ID as never,
+    version: '1.0.0',
+    label: 'Settings Extension',
+    settingsSchema: {
+      schema: {
+        type: 'object',
+        properties: {
+          apiKey: {
+            type: 'string',
+            title: 'API Key',
+            description: 'Your API key for the service',
+            default: '',
+            minLength: 3,
+          },
+          maxRetries: {
+            type: 'integer',
+            title: 'Max Retries',
+            description: 'Maximum number of retries',
+            default: 3,
+            minimum: 1,
+            maximum: 10,
+          },
+          enableDebug: {
+            type: 'boolean',
+            title: 'Enable Debug',
+            description: 'Enable debug logging',
+            default: false,
+          },
+        },
+        required: ['apiKey'],
+      },
+    },
+  };
+
+  beforeEach(() => {
+    // Clean up localStorage for the settings extension
+    const prefix = `reigh.ext.${SETTINGS_EXTENSION_ID}.`;
+    const keysToRemove: string[] = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (key && key.startsWith(prefix)) {
+        keysToRemove.push(key);
+      }
+    }
+    keysToRemove.forEach((k) => localStorage.removeItem(k));
+  });
+
+  it('renders settings form inside EditorRuntimeProvider and loads defaults', async () => {
+    let formRendered = false;
+
+    function CaptureForm() {
+      const runtime = useVideoEditorRuntime();
+      const ext = runtime.extensionRuntime?.extensions.find(
+        (e) => e.manifest.id === SETTINGS_EXTENSION_ID,
+      );
+      formRendered = ext != null;
+      return ext ? (
+        <ExtensionSettingsPanel
+          extensionId={SETTINGS_EXTENSION_ID}
+          manifest={ext.manifest}
+        />
+      ) : null;
+    }
+
+    render(
+      <EditorRuntimeProvider
+        dataProvider={{} as DataProvider}
+        timelineId="timeline-1"
+        userId="user-1"
+        extensions={[
+          defineExtension({ manifest: settingsManifest }),
+        ]}
+      >
+        <CaptureForm />
+      </EditorRuntimeProvider>,
+    );
+
+    await waitFor(() => {
+      expect(formRendered).toBe(true);
+    });
+
+    // The form should show the apiKey field (required) with an empty default
+    const apiKeyInput = document.querySelector(
+      '[data-testid="schema-form-widget-apiKey"]',
+    ) as HTMLInputElement | null;
+    expect(apiKeyInput).not.toBeNull();
+    expect(apiKeyInput?.value).toBe('');
+
+    // The maxRetries field (integer → number, rendered as slider) should exist
+    const maxRetriesField = document.querySelector(
+      '[data-testid="schema-form-field-maxRetries"]',
+    ) as HTMLElement | null;
+    expect(maxRetriesField).not.toBeNull();
+
+    // The enableDebug field (boolean, rendered as switch) should exist
+    const enableDebugField = document.querySelector(
+      '[data-testid="schema-form-field-enableDebug"]',
+    ) as HTMLElement | null;
+    expect(enableDebugField).not.toBeNull();
+  });
+
+  it('saves valid settings and reloads persisted values', async () => {
+    function CaptureForm() {
+      const runtime = useVideoEditorRuntime();
+      const ext = runtime.extensionRuntime?.extensions.find(
+        (e) => e.manifest.id === SETTINGS_EXTENSION_ID,
+      );
+      return ext ? (
+        <ExtensionSettingsPanel
+          extensionId={SETTINGS_EXTENSION_ID}
+          manifest={ext.manifest}
+        />
+      ) : null;
+    }
+
+    const { rerender } = render(
+      <EditorRuntimeProvider
+        dataProvider={{} as DataProvider}
+        timelineId="timeline-1"
+        userId="user-1"
+        extensions={[
+          defineExtension({ manifest: settingsManifest }),
+        ]}
+      >
+        <CaptureForm />
+      </EditorRuntimeProvider>,
+    );
+
+    await waitFor(() => {
+      const apiKeyInput = document.querySelector(
+        '[data-testid="schema-form-widget-apiKey"]',
+      ) as HTMLInputElement | null;
+      expect(apiKeyInput).not.toBeNull();
+    });
+
+    // Fill in a valid apiKey
+    const apiKeyInput = document.querySelector(
+      '[data-testid="schema-form-widget-apiKey"]',
+    ) as HTMLInputElement;
+    fireEvent.change(apiKeyInput, { target: { value: 'my-secret-key' } });
+
+    // Click save
+    const saveBtn = document.querySelector(
+      '[data-testid="extension-settings-save"]',
+    ) as HTMLButtonElement;
+    expect(saveBtn).not.toBeNull();
+    expect(saveBtn.disabled).toBe(false);
+    fireEvent.click(saveBtn);
+
+    // Verify the value was persisted to localStorage
+    await waitFor(() => {
+      const raw = localStorage.getItem(
+        `reigh.ext.${SETTINGS_EXTENSION_ID}.apiKey`,
+      );
+      expect(raw).toBe('"my-secret-key"');
+    });
+
+    // Re-render to verify persisted values are loaded
+    rerender(
+      <EditorRuntimeProvider
+        dataProvider={{} as DataProvider}
+        timelineId="timeline-1"
+        userId="user-1"
+        extensions={[
+          defineExtension({ manifest: settingsManifest }),
+        ]}
+      >
+        <CaptureForm />
+      </EditorRuntimeProvider>,
+    );
+
+    await waitFor(() => {
+      const reloadedInput = document.querySelector(
+        '[data-testid="schema-form-widget-apiKey"]',
+      ) as HTMLInputElement | null;
+      expect(reloadedInput?.value).toBe('my-secret-key');
+    });
+  });
+
+  it('blocks save on invalid field and focuses error (invalid focus behavior)', async () => {
+    function CaptureForm() {
+      const runtime = useVideoEditorRuntime();
+      const ext = runtime.extensionRuntime?.extensions.find(
+        (e) => e.manifest.id === SETTINGS_EXTENSION_ID,
+      );
+      return ext ? (
+        <ExtensionSettingsPanel
+          extensionId={SETTINGS_EXTENSION_ID}
+          manifest={ext.manifest}
+        />
+      ) : null;
+    }
+
+    render(
+      <EditorRuntimeProvider
+        dataProvider={{} as DataProvider}
+        timelineId="timeline-1"
+        userId="user-1"
+        extensions={[
+          defineExtension({ manifest: settingsManifest }),
+        ]}
+      >
+        <CaptureForm />
+      </EditorRuntimeProvider>,
+    );
+
+    await waitFor(() => {
+      const apiKeyInput = document.querySelector(
+        '[data-testid="schema-form-widget-apiKey"]',
+      ) as HTMLInputElement | null;
+      expect(apiKeyInput).not.toBeNull();
+    });
+
+    // Enter a value below minLength (3) — "ab" is only 2 chars
+    const apiKeyInput = document.querySelector(
+      '[data-testid="schema-form-widget-apiKey"]',
+    ) as HTMLInputElement;
+    fireEvent.change(apiKeyInput, { target: { value: 'ab' } });
+
+    // Click save
+    const saveBtn = document.querySelector(
+      '[data-testid="extension-settings-save"]',
+    ) as HTMLButtonElement;
+    fireEvent.click(saveBtn);
+
+    // The save should have been blocked — SchemaForm validateAndFocus
+    // returns false, so no localStorage write should have occurred
+    await waitFor(() => {
+      const raw = localStorage.getItem(
+        `reigh.ext.${SETTINGS_EXTENSION_ID}.apiKey`,
+      );
+      // Should still be null (no save occurred)
+      expect(raw).toBeNull();
+    });
+
+    // The apiKey input should still have aria-invalid="true"
+    const invalidInput = document.querySelector(
+      '[data-testid="schema-form-widget-apiKey"]',
+    ) as HTMLInputElement | null;
+    expect(invalidInput?.getAttribute('aria-invalid')).toBe('true');
+  });
+
+  it('resets to defaults after saving overrides', async () => {
+    function CaptureForm() {
+      const runtime = useVideoEditorRuntime();
+      const ext = runtime.extensionRuntime?.extensions.find(
+        (e) => e.manifest.id === SETTINGS_EXTENSION_ID,
+      );
+      return ext ? (
+        <ExtensionSettingsPanel
+          extensionId={SETTINGS_EXTENSION_ID}
+          manifest={ext.manifest}
+        />
+      ) : null;
+    }
+
+    render(
+      <EditorRuntimeProvider
+        dataProvider={{} as DataProvider}
+        timelineId="timeline-1"
+        userId="user-1"
+        extensions={[
+          defineExtension({ manifest: settingsManifest }),
+        ]}
+      >
+        <CaptureForm />
+      </EditorRuntimeProvider>,
+    );
+
+    await waitFor(() => {
+      const apiKeyInput = document.querySelector(
+        '[data-testid="schema-form-widget-apiKey"]',
+      ) as HTMLInputElement | null;
+      expect(apiKeyInput).not.toBeNull();
+    });
+
+    // Save a value first
+    const apiKeyInput = document.querySelector(
+      '[data-testid="schema-form-widget-apiKey"]',
+    ) as HTMLInputElement;
+    fireEvent.change(apiKeyInput, { target: { value: 'some-key' } });
+    const saveBtn = document.querySelector(
+      '[data-testid="extension-settings-save"]',
+    ) as HTMLButtonElement;
+    fireEvent.click(saveBtn);
+
+    await waitFor(() => {
+      const raw = localStorage.getItem(
+        `reigh.ext.${SETTINGS_EXTENSION_ID}.apiKey`,
+      );
+      expect(raw).toBe('"some-key"');
+    });
+
+    // Click reset
+    const resetBtn = document.querySelector(
+      '[data-testid="extension-settings-reset"]',
+    ) as HTMLButtonElement;
+    fireEvent.click(resetBtn);
+
+    // Verify localStorage key was cleared and form reverted to default (empty)
+    await waitFor(() => {
+      const raw = localStorage.getItem(
+        `reigh.ext.${SETTINGS_EXTENSION_ID}.apiKey`,
+      );
+      expect(raw).toBeNull();
+    });
+
+    const revertedInput = document.querySelector(
+      '[data-testid="schema-form-widget-apiKey"]',
+    ) as HTMLInputElement;
+    expect(revertedInput.value).toBe('');
+  });
+
+  it('cancels edits and reverts to last-saved values', async () => {
+    function CaptureForm() {
+      const runtime = useVideoEditorRuntime();
+      const ext = runtime.extensionRuntime?.extensions.find(
+        (e) => e.manifest.id === SETTINGS_EXTENSION_ID,
+      );
+      return ext ? (
+        <ExtensionSettingsPanel
+          extensionId={SETTINGS_EXTENSION_ID}
+          manifest={ext.manifest}
+        />
+      ) : null;
+    }
+
+    render(
+      <EditorRuntimeProvider
+        dataProvider={{} as DataProvider}
+        timelineId="timeline-1"
+        userId="user-1"
+        extensions={[
+          defineExtension({ manifest: settingsManifest }),
+        ]}
+      >
+        <CaptureForm />
+      </EditorRuntimeProvider>,
+    );
+
+    await waitFor(() => {
+      const apiKeyInput = document.querySelector(
+        '[data-testid="schema-form-widget-apiKey"]',
+      ) as HTMLInputElement | null;
+      expect(apiKeyInput).not.toBeNull();
+    });
+
+    // Save a value first
+    const apiKeyInput = document.querySelector(
+      '[data-testid="schema-form-widget-apiKey"]',
+    ) as HTMLInputElement;
+    fireEvent.change(apiKeyInput, { target: { value: 'saved-key' } });
+    const saveBtn = document.querySelector(
+      '[data-testid="extension-settings-save"]',
+    ) as HTMLButtonElement;
+    fireEvent.click(saveBtn);
+
+    await waitFor(() => {
+      const raw = localStorage.getItem(
+        `reigh.ext.${SETTINGS_EXTENSION_ID}.apiKey`,
+      );
+      expect(raw).toBe('"saved-key"');
+    });
+
+    // Now edit without saving
+    fireEvent.change(apiKeyInput, { target: { value: 'unsaved-change' } });
+
+    // Click cancel
+    const cancelBtn = document.querySelector(
+      '[data-testid="extension-settings-cancel"]',
+    ) as HTMLButtonElement;
+    fireEvent.click(cancelBtn);
+
+    // The input should revert to the last-saved value
+    await waitFor(() => {
+      expect(apiKeyInput.value).toBe('saved-key');
+    });
+
+    // localStorage should still have the saved value (not the unsaved change)
+    const raw = localStorage.getItem(
+      `reigh.ext.${SETTINGS_EXTENSION_ID}.apiKey`,
+    );
+    expect(raw).toBe('"saved-key"');
+  });
+
+  // T17: Shared cleanup helper — diagnostics removal and settings UI state reset
+  // on disable/unload, preserving unrelated extension state.
+  it('disable clears targeted extension diagnostics and settings while preserving unrelated extension state', async () => {
+    const OTHER_EXTENSION_ID = 'com.example.other';
+    const otherManifest = {
+      id: OTHER_EXTENSION_ID as never,
+      version: '1.0.0',
+      label: 'Other Extension',
+      settingsSchema: {
+        schema: {
+          type: 'object',
+          properties: {
+            otherKey: {
+              type: 'string',
+              title: 'Other Key',
+              default: 'other-default',
+            },
+          },
+        },
+      },
+    };
+
+    // Pre-populate localStorage for both extensions to simulate saved settings
+    localStorage.setItem(
+      `reigh.ext.${SETTINGS_EXTENSION_ID}.apiKey`,
+      '"settings-key"',
+    );
+    localStorage.setItem(
+      `reigh.ext.${OTHER_EXTENSION_ID}.otherKey`,
+      '"other-key"',
+    );
+
+    // Define extensions once so manifest references are stable across re-renders
+    const settingsExt = defineExtension({ manifest: settingsManifest });
+    const otherExt = defineExtension({ manifest: otherManifest });
+
+    let capturedRuntime: ReturnType<typeof useVideoEditorRuntime> | null = null;
+
+    function CaptureRuntime() {
+      capturedRuntime = useVideoEditorRuntime();
+      return null;
+    }
+
+    function Host({ includeSettings }: { includeSettings: boolean }) {
+      const exts = includeSettings
+        ? [settingsExt, otherExt]
+        : [otherExt];
+      return (
+        <EditorRuntimeProvider
+          dataProvider={{} as DataProvider}
+          timelineId="timeline-1"
+          userId="user-1"
+          extensions={exts}
+        >
+          <CaptureRuntime />
+        </EditorRuntimeProvider>
+      );
+    }
+
+    const { rerender } = render(<Host includeSettings />);
+
+    await waitFor(() => {
+      expect(capturedRuntime).not.toBeNull();
+    });
+
+    // Both extensions' settings should be in localStorage
+    expect(
+      localStorage.getItem(`reigh.ext.${SETTINGS_EXTENSION_ID}.apiKey`),
+    ).toBe('"settings-key"');
+    expect(
+      localStorage.getItem(`reigh.ext.${OTHER_EXTENSION_ID}.otherKey`),
+    ).toBe('"other-key"');
+
+    // Disable the settings extension (remove from props)
+    rerender(<Host includeSettings={false} />);
+
+    await waitFor(() => {
+      // Targeted extension's settings localStorage must be cleared
+      expect(
+        localStorage.getItem(`reigh.ext.${SETTINGS_EXTENSION_ID}.apiKey`),
+      ).toBeNull();
+    });
+
+    // Unrelated extension's settings localStorage must be preserved
+    expect(
+      localStorage.getItem(`reigh.ext.${OTHER_EXTENSION_ID}.otherKey`),
+    ).toBe('"other-key"');
+
+    // Targeted extension's diagnostics must be cleared
+    const snapshot = capturedRuntime?.diagnosticCollection?.getSnapshot() ?? [];
+    const settingsExtDiags = snapshot.filter(
+      (d) => d.extensionId === SETTINGS_EXTENSION_ID,
+    );
+    expect(settingsExtDiags).toEqual([]);
+
+    // Unrelated extension's diagnostics should still be present
+    const otherExtDiags = snapshot.filter(
+      (d) => d.extensionId === OTHER_EXTENSION_ID,
+    );
+    expect(otherExtDiags.length).toBeGreaterThan(0);
+  });
+});
+
+describe('EditorRuntimeProvider render-boundary recovery', () => {
+  const SLOT_EXTENSION_ID = 'com.example.slot-ext';
+
+  const slotManifest = {
+    id: SLOT_EXTENSION_ID as never,
+    version: '1.0.0',
+    label: 'Slot Extension',
+    contributions: [
+      {
+        kind: 'slot' as const,
+        id: 'slot-ext-header',
+        slot: 'header',
+        order: 0,
+      },
+    ],
+  };
+
+  it('surface detach removes contributions on disable — re-enable restores them fresh', async () => {
+    const slotExt = defineExtension({ manifest: slotManifest });
+
+    let capturedConfigSlots: string[] | null = null;
+    let capturedRuntime: ReturnType<typeof useVideoEditorRuntime> | null = null;
+
+    function Capture() {
+      capturedRuntime = useVideoEditorRuntime();
+      capturedConfigSlots = capturedRuntime?.extensionRuntime?.config?.slots
+        ? Object.keys(capturedRuntime.extensionRuntime.config.slots)
+        : null;
+      return null;
+    }
+
+    function Host({ includeSlot }: { includeSlot: boolean }) {
+      return (
+        <EditorRuntimeProvider
+          dataProvider={{} as DataProvider}
+          timelineId="timeline-1"
+          userId="user-1"
+          extensions={includeSlot ? [slotExt] : []}
+        >
+          <Capture />
+        </EditorRuntimeProvider>
+      );
+    }
+
+    const { rerender } = render(<Host includeSlot />);
+
+    await waitFor(() => {
+      expect(capturedRuntime).not.toBeNull();
+    });
+
+    // Slot 'header' should be in the config while the extension is loaded
+    expect(capturedConfigSlots).toContain('header');
+
+    // Disable the extension (remove from extensions list)
+    rerender(<Host includeSlot={false} />);
+
+    await waitFor(() => {
+      // After disable, the slot should be gone from the config
+      expect(capturedConfigSlots).not.toContain('header');
+    });
+
+    // Re-enable the extension
+    rerender(<Host includeSlot />);
+
+    await waitFor(() => {
+      // After re-enable, the slot should be back — fresh surface mount
+      expect(capturedConfigSlots).toContain('header');
+    });
+
+    // Verify diagnostics are clean after re-enable (no stale error state)
+    const snapshot = capturedRuntime?.diagnosticCollection?.getSnapshot() ?? [];
+    const slotDiags = snapshot.filter(
+      (d) => d.extensionId === SLOT_EXTENSION_ID && d.severity === 'error',
+    );
+    expect(slotDiags).toEqual([]);
+  });
+
+  it('re-enable after disable produces fresh contributions with no duplicates', async () => {
+    const slotExt = defineExtension({ manifest: slotManifest });
+
+    let capturedConfigSlots: string[] | null = null;
+
+    function Capture() {
+      const rt = useVideoEditorRuntime();
+      capturedConfigSlots = rt?.extensionRuntime?.config?.slots
+        ? Object.keys(rt.extensionRuntime.config.slots)
+        : null;
+      return null;
+    }
+
+    function Host({ includeSlot }: { includeSlot: boolean }) {
+      return (
+        <EditorRuntimeProvider
+          dataProvider={{} as DataProvider}
+          timelineId="timeline-1"
+          userId="user-1"
+          extensions={includeSlot ? [slotExt] : []}
+        >
+          <Capture />
+        </EditorRuntimeProvider>
+      );
+    }
+
+    const { rerender } = render(<Host includeSlot />);
+
+    await waitFor(() => {
+      expect(capturedConfigSlots).toContain('header');
+    });
+
+    // First disable
+    rerender(<Host includeSlot={false} />);
+    await waitFor(() => {
+      expect(capturedConfigSlots).not.toContain('header');
+    });
+
+    // Re-enable
+    rerender(<Host includeSlot />);
+    await waitFor(() => {
+      expect(capturedConfigSlots).toContain('header');
+    });
+
+    // Disable again
+    rerender(<Host includeSlot={false} />);
+    await waitFor(() => {
+      expect(capturedConfigSlots).not.toContain('header');
+    });
+
+    // Re-enable again — should still get exactly one slot contribution
+    rerender(<Host includeSlot />);
+    await waitFor(() => {
+      expect(capturedConfigSlots).toContain('header');
+    });
+
+    // Only 'header' should be present, with no duplicates
+    expect(capturedConfigSlots).toHaveLength(1);
+    expect(capturedConfigSlots![0]).toBe('header');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// T22: Focused per-registry scoped cleanup tests
+// ---------------------------------------------------------------------------
+// These tests verify that each lifecycle-owned contribution registry
+// (effects, transitions, shaders, clip-types) correctly scopes cleanup to
+// only the removed extension's records, preserving unrelated extensions.
+//
+// Agent tools and live data registries are future-only scaffolding and are
+// NOT exposed as public contribution systems (see provider comments).
+
+describe('EditorRuntimeProvider transition registry scoped cleanup', () => {
+  it('clears only the removed extension transition records and preserves unrelated extension records', async () => {
+    const EXT_A = 'com.example.transition-ext-a';
+    const EXT_B = 'com.example.transition-ext-b';
+    const transitionAId = 'transition-a';
+    const transitionBId = 'transition-b';
+    const disposeA = vi.fn();
+    const disposeB = vi.fn();
+
+    let latestRecords: readonly TransitionRegistryRecord[] = [];
+
+    const extA = defineExtension({
+      manifest: {
+        id: EXT_A as never,
+        version: '1.0.0',
+        label: 'Transition Extension A',
+      },
+    });
+    const extB = defineExtension({
+      manifest: {
+        id: EXT_B as never,
+        version: '1.0.0',
+        label: 'Transition Extension B',
+      },
+    });
+
+    function CaptureTransitions() {
+      const { registry } = useTransitionRegistryContext();
+      latestRecords = useTransitionRegistryContext().snapshot.records;
+
+      useEffect(() => {
+        const hA = registry.register(transitionRecord(transitionAId, EXT_A, disposeA));
+        const hB = registry.register(transitionRecord(transitionBId, EXT_B, disposeB));
+        return () => {
+          hA.dispose();
+          hB.dispose();
+        };
+      }, [registry]);
+
+      return null;
+    }
+
+    function Host({ includeA }: { includeA: boolean }) {
+      const exts = includeA ? [extA, extB] : [extB];
+      return (
+        <EditorRuntimeProvider
+          dataProvider={{} as DataProvider}
+          timelineId="timeline-1"
+          userId="user-1"
+          extensions={exts}
+        >
+          <CaptureTransitions />
+        </EditorRuntimeProvider>
+      );
+    }
+
+    const { rerender } = render(<Host includeA />);
+
+    await waitFor(() => {
+      expect(latestRecords.map((r) => r.transitionId)).toEqual(
+        expect.arrayContaining([transitionAId, transitionBId]),
+      );
+    });
+
+    // Remove extension A
+    rerender(<Host includeA={false} />);
+
+    await waitFor(() => {
+      // Extension A's transition record must be removed
+      expect(latestRecords.map((r) => r.transitionId)).not.toContain(transitionAId);
+    });
+
+    // Extension B's transition record must be preserved
+    expect(latestRecords.map((r) => r.transitionId)).toContain(transitionBId);
+    expect(latestRecords.map((r) => r.transitionId)).toHaveLength(1);
+    expect(disposeA).toHaveBeenCalled();
+    expect(disposeB).not.toHaveBeenCalled();
+  });
+});
+
+describe('EditorRuntimeProvider shader registry scoped cleanup', () => {
+  it('clears only the removed extension shader records and preserves unrelated extension records', async () => {
+    const EXT_A = 'com.example.shader-ext-a';
+    const EXT_B = 'com.example.shader-ext-b';
+    const shaderAId = 'shader.ext.a.grade';
+    const shaderBId = 'shader.ext.b.blur';
+    const disposeA = vi.fn();
+    const disposeB = vi.fn();
+
+    let latestRecords: readonly ShaderEffectRegistryRecord[] = [];
+
+    const extA = defineExtension({
+      manifest: {
+        id: EXT_A as never,
+        version: '1.0.0',
+        label: 'Shader Extension A',
+      },
+    });
+    const extB = defineExtension({
+      manifest: {
+        id: EXT_B as never,
+        version: '1.0.0',
+        label: 'Shader Extension B',
+      },
+    });
+
+    function CaptureShaders() {
+      const { registry } = useShaderEffectRegistryContext();
+      latestRecords = useShaderEffectRegistryContext().snapshot.records;
+
+      useEffect(() => {
+        const hA = registry.register(shaderRecord(shaderAId, EXT_A, [], disposeA));
+        const hB = registry.register(shaderRecord(shaderBId, EXT_B, [], disposeB));
+        return () => {
+          hA.dispose();
+          hB.dispose();
+        };
+      }, [registry]);
+
+      return null;
+    }
+
+    function Host({ includeA }: { includeA: boolean }) {
+      const exts = includeA ? [extA, extB] : [extB];
+      return (
+        <EditorRuntimeProvider
+          dataProvider={{} as DataProvider}
+          timelineId="timeline-1"
+          userId="user-1"
+          extensions={exts}
+        >
+          <CaptureShaders />
+        </EditorRuntimeProvider>
+      );
+    }
+
+    const { rerender } = render(<Host includeA />);
+
+    await waitFor(() => {
+      expect(latestRecords.map((r) => r.shaderId)).toEqual(
+        expect.arrayContaining([shaderAId, shaderBId]),
+      );
+    });
+
+    // Remove extension A
+    rerender(<Host includeA={false} />);
+
+    await waitFor(() => {
+      // Extension A's shader record must be removed
+      expect(latestRecords.map((r) => r.shaderId)).not.toContain(shaderAId);
+    });
+
+    // Extension B's shader record must be preserved
+    expect(latestRecords.map((r) => r.shaderId)).toContain(shaderBId);
+    expect(latestRecords.map((r) => r.shaderId)).toHaveLength(1);
+    expect(disposeA).toHaveBeenCalled();
+    expect(disposeB).not.toHaveBeenCalled();
+  });
+});
+
+describe('EditorRuntimeProvider clip-type registry scoped cleanup', () => {
+  it('clears only the removed extension clip-type records and preserves unrelated extension records', async () => {
+    const EXT_A = 'com.example.cliptype-ext-a';
+    const EXT_B = 'com.example.cliptype-ext-b';
+    const clipAId = 'clip-type-a';
+    const clipBId = 'clip-type-b';
+    const disposeA = vi.fn();
+    const disposeB = vi.fn();
+
+    let latestRecords: readonly ClipTypeRegistryRecord[] = [];
+
+    const extA = defineExtension({
+      manifest: {
+        id: EXT_A as never,
+        version: '1.0.0',
+        label: 'ClipType Extension A',
+      },
+    });
+    const extB = defineExtension({
+      manifest: {
+        id: EXT_B as never,
+        version: '1.0.0',
+        label: 'ClipType Extension B',
+      },
+    });
+
+    function CaptureClipTypes() {
+      const { registry } = useClipTypeRegistryContext();
+      latestRecords = useClipTypeRegistryContext().snapshot.records;
+
+      useEffect(() => {
+        const hA = registry.register(clipTypeRecord(clipAId, EXT_A, disposeA));
+        const hB = registry.register(clipTypeRecord(clipBId, EXT_B, disposeB));
+        return () => {
+          hA.dispose();
+          hB.dispose();
+        };
+      }, [registry]);
+
+      return null;
+    }
+
+    function Host({ includeA }: { includeA: boolean }) {
+      const exts = includeA ? [extA, extB] : [extB];
+      return (
+        <EditorRuntimeProvider
+          dataProvider={{} as DataProvider}
+          timelineId="timeline-1"
+          userId="user-1"
+          extensions={exts}
+        >
+          <CaptureClipTypes />
+        </EditorRuntimeProvider>
+      );
+    }
+
+    const { rerender } = render(<Host includeA />);
+
+    await waitFor(() => {
+      expect(latestRecords.map((r) => r.clipTypeId)).toEqual(
+        expect.arrayContaining([clipAId, clipBId]),
+      );
+    });
+
+    // Remove extension A
+    rerender(<Host includeA={false} />);
+
+    await waitFor(() => {
+      // Extension A's clip-type record must be removed
+      expect(latestRecords.map((r) => r.clipTypeId)).not.toContain(clipAId);
+    });
+
+    // Extension B's clip-type record must be preserved
+    expect(latestRecords.map((r) => r.clipTypeId)).toContain(clipBId);
+    expect(latestRecords.map((r) => r.clipTypeId)).toHaveLength(1);
+    expect(disposeA).toHaveBeenCalled();
+    expect(disposeB).not.toHaveBeenCalled();
   });
 });

@@ -15,13 +15,20 @@ interface NumberInputProps {
   id?: string
   placeholder?: string
   prefix?: string
+  tabIndex?: number
+  'aria-labelledby'?: string
+  'aria-describedby'?: string
+  'aria-invalid'?: boolean
+  'aria-required'?: boolean
+  'data-testid'?: string
 }
 
 const NumberInput = React.forwardRef<HTMLDivElement, NumberInputProps>(
-  ({ value, onChange, onValueCommitted, min, max, step = 1, disabled, className, id, placeholder, prefix }, ref) => {
+  ({ value, onChange, onValueCommitted, min, max, step = 1, disabled, className, id, placeholder, prefix, tabIndex, 'aria-labelledby': ariaLabelledby, 'aria-describedby': ariaDescribedby, 'aria-invalid': ariaInvalid, 'aria-required': ariaRequired, 'data-testid': dataTestid }, ref) => {
     return (
       <NumberField.Root
         ref={ref}
+        tabIndex={tabIndex}
         value={value}
         onValueChange={(val) => {
           onChange(val)
@@ -31,6 +38,11 @@ const NumberInput = React.forwardRef<HTMLDivElement, NumberInputProps>(
         max={max}
         step={step}
         disabled={disabled}
+        aria-labelledby={ariaLabelledby}
+        aria-describedby={ariaDescribedby}
+        aria-invalid={ariaInvalid}
+        aria-required={ariaRequired}
+        data-testid={dataTestid}
       >
         <NumberField.Group
           className={cn(
