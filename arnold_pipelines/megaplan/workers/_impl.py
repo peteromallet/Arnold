@@ -2003,9 +2003,10 @@ def _deepseek_tool_markup_names(raw: str) -> set[str]:
     if not raw or "<" not in raw:
         return names
     for match in _DEEPSEEK_TOOL_TAG_RE.finditer(raw):
-        name = match.group("name").lower()
+        name = match.group("name")
         if name.startswith(_DSML_PREFIX):
             name = name[len(_DSML_PREFIX):]
+        name = name.lower()
         if name == "invoke":
             invoked = _DEEPSEEK_INVOKE_NAME_RE.search(match.group("attrs") or "")
             if invoked:

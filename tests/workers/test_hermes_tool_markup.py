@@ -10,7 +10,11 @@ from arnold_pipelines.megaplan.workers.hermes import (
     _content_xml_tool_calls,
     _normalize_response_content_tool_calls,
 )
-from arnold_pipelines.megaplan.workers._impl import _repair_worker_json_once
+from arnold_pipelines.megaplan.workers._impl import (
+    _contains_mutating_deepseek_tool_markup,
+    _deepseek_tool_markup_names,
+    _repair_worker_json_once,
+)
 
 
 def _arguments(call: SimpleNamespace) -> dict[str, object]:
@@ -35,12 +39,49 @@ def test_content_tool_calls_parse_invoke_read_alias() -> None:
     assert _arguments(calls[0]) == {"path": "src/app.py"}
 
 
-def test_normalize_response_rejects_write_tool_markup() -> None:
+def test_normalize_response_recovers_write_tool_markup() -> None:
     response = SimpleNamespace(
         choices=[
             SimpleNamespace(
                 message=SimpleNamespace(
                     content='<write_file path="critique_check_scope.json">{"checks":[]}</write_file>',
+                    tool_calls=None,
+                )
+            )
+        ]
+    )
+
+    _normalize_response_content_tool_calls(response)
+    assert response.choices[0].message.content == '{"checks":[]}'
+
+
+def test_normalize_response_recovers_invoke_write_file_markup() -> None:
+    response = SimpleNamespace(
+        choices=[
+            SimpleNamespace(
+                message=SimpleNamespace(
+                    content=(
+                        '<invoke name="write_file">'
+                        '<parameter name="path">critique_check_scope.json</parameter>'
+                        '<parameter name="content">{"checks":[{"id":"scope","status":"ok"}]}</parameter>'
+                        '</invoke>'
+                    ),
+                    tool_calls=None,
+                )
+            )
+        ]
+    )
+
+    _normalize_response_content_tool_calls(response)
+    assert json.loads(response.choices[0].message.content)["checks"][0]["id"] == "scope"
+
+
+def test_normalize_response_still_rejects_unrecoverable_write_markup() -> None:
+    response = SimpleNamespace(
+        choices=[
+            SimpleNamespace(
+                message=SimpleNamespace(
+                    content='<write_file path="x.txt">not valid json</write_file>',
                     tool_calls=None,
                 )
             )
@@ -71,3 +112,52 @@ def test_critique_repair_reports_tool_markup_and_check_context() -> None:
     assert "scope" in error.message
     assert error.extra["unsupported_tool_call_markup"] is True
     assert error.extra["critique_template_unchanged"] is True
+
+
+def test_deepseek_tool_markup_names_detects_dsml_invoke() -> None:
+    raw = '<｜DSML｜invoke name="write_file"><｜DSML｜parameter name="path">x.json</｜DSML｜parameter></｜DSML｜invoke>'
+    assert "write_file" in _deepseek_tool_markup_names(raw)
+    assert _contains_mutating_deepseek_tool_markup(raw)
+
+
+def test_normalize_response_recovers_dsml_invoke_write_file_markup() -> None:
+    payload = json.dumps({"checks": [{"id": "scope", "status": "ok"}]})
+    response = SimpleNamespace(
+        choices=[
+            SimpleNamespace(
+                message=SimpleNamespace(
+                    content=(
+                        '<｜DSML｜invoke name="write_file">'
+                        '<｜DSML｜parameter name="path">critique_check_scope.json</｜DSML｜parameter>'
+                        f'<｜DSML｜parameter name="content">{payload}</｜DSML｜parameter>'
+                        '</｜DSML｜invoke>'
+                    ),
+                    tool_calls=None,
+                )
+            )
+        ]
+    )
+
+    _normalize_response_content_tool_calls(response)
+    assert json.loads(response.choices[0].message.content)["checks"][0]["id"] == "scope"
+
+
+def test_normalize_response_recovers_bash_heredoc_markup() -> None:
+    payload = json.dumps({"checks": [{"id": "scope", "status": "ok"}]})
+    response = SimpleNamespace(
+        choices=[
+            SimpleNamespace(
+                message=SimpleNamespace(
+                    content=(
+                        '<bash>cat <<\'EOF\' > critique_check_scope.json\n'
+                        f'{payload}\n'
+                        'EOF</bash>'
+                    ),
+                    tool_calls=None,
+                )
+            )
+        ]
+    )
+
+    _normalize_response_content_tool_calls(response)
+    assert json.loads(response.choices[0].message.content)["checks"][0]["id"] == "scope"
