@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import subprocess
 from pathlib import Path
 
@@ -14,11 +15,21 @@ BEHAVIORAL_GOLDENS = (
 )
 
 
+def _base_ref() -> str:
+    # In CI, compare against the PR target branch; locally fall back to origin/main.
+    base = os.environ.get("GITHUB_BASE_REF", "main")
+    ref = f"origin/{base}"
+    # Make sure the base ref is available in CI (actions/checkout may not fetch it).
+    if "GITHUB_BASE_REF" in os.environ:
+        subprocess.run(["git", "fetch", "origin", base], check=False, capture_output=True)
+    return ref
+
+
 @pytest.mark.parametrize("fixture", BEHAVIORAL_GOLDENS)
 def test_existing_behavioral_goldens_do_not_change_without_explanation(fixture: str) -> None:
     path = Path(fixture)
     old = subprocess.run(
-        ["git", "show", f"origin/main:{fixture}"],
+        ["git", "show", f"{_base_ref()}:{fixture}"],
         check=True,
         text=True,
         capture_output=True,

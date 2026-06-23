@@ -7,6 +7,7 @@ import pytest
 import yaml
 
 import arnold.patterns as patterns
+import arnold.workflow as workflow_api
 from arnold.workflow import (
     BudgetPolicy,
     Capability,
@@ -31,6 +32,11 @@ FIXTURE_PATH = Path(__file__).parent.parent.parent / "fixtures" / "workflow" / "
 def _load_shapes() -> dict[str, Any]:
     with FIXTURE_PATH.open("r", encoding="utf-8") as handle:
         return yaml.safe_load(handle)["shapes"]
+
+
+def _load_fixture_matrix() -> dict[str, Any]:
+    with FIXTURE_PATH.open("r", encoding="utf-8") as handle:
+        return yaml.safe_load(handle)
 
 
 def _build_pipeline() -> Pipeline:
@@ -267,6 +273,122 @@ def _assert_shape_matches(manifest, shape: dict[str, Any]) -> None:
             assert node.metadata.get(key) == value, f"metadata mismatch for {node_id}.{key}"
 
 
+def _assert_subset(expected: dict[str, Any], actual: dict[str, Any]) -> None:
+    assert {key: actual.get(key) for key in expected} == expected
+
+
+def _authority_contract(requirement) -> dict[str, Any]:
+    return {
+        "authority_id": requirement.authority_id,
+        "action": requirement.action,
+        "capability_id": requirement.capability_id,
+    }
+
+
+def _control_transition_contract(slot) -> dict[str, Any]:
+    return {
+        "transition_id": slot.transition_id,
+        "transition_type": slot.transition_type,
+        "trigger_ref": slot.trigger_ref,
+        "target_ref": slot.target_ref,
+        "policy_ref": slot.policy_ref,
+    }
+
+
+def _suspension_route_contract(route) -> dict[str, Any]:
+    return {
+        "route_id": route.route_id,
+        "capability_id": route.capability_id,
+        "reentry_id": route.reentry_id,
+        "resume_schema_ref": route.resume_schema_ref,
+    }
+
+
+def _assert_m3_policy_matches(policy, expected_policy: dict[str, Any], *, subject: str) -> None:
+    assert policy is not None, f"{subject} missing expected policy"
+    if "loop" in expected_policy:
+        assert policy.loop is not None
+        _assert_subset(
+            expected_policy["loop"],
+            {
+                "max_iterations": policy.loop.max_iterations,
+                "until_ref": policy.loop.until_ref,
+            },
+        )
+    if "retry" in expected_policy:
+        assert policy.retry is not None
+        _assert_subset(
+            expected_policy["retry"],
+            {
+                "max_attempts": policy.retry.max_attempts,
+                "backoff": policy.retry.backoff,
+                "retry_on": list(policy.retry.retry_on),
+            },
+        )
+    if "timing" in expected_policy:
+        assert policy.timing is not None
+        _assert_subset(
+            expected_policy["timing"],
+            {
+                "timeout_seconds": policy.timing.timeout_seconds,
+                "deadline_ref": policy.timing.deadline_ref,
+                "ttl_seconds": policy.timing.ttl_seconds,
+            },
+        )
+    if "authority" in expected_policy:
+        assert [_authority_contract(requirement) for requirement in policy.authority] == expected_policy[
+            "authority"
+        ]
+    if "control_transitions" in expected_policy:
+        assert [
+            _control_transition_contract(slot)
+            for slot in policy.control_transitions
+        ] == expected_policy["control_transitions"]
+    if "suspension_routes" in expected_policy:
+        actual_routes = [_suspension_route_contract(route) for route in policy.suspension_routes]
+        expected_routes = expected_policy["suspension_routes"]
+        assert len(actual_routes) == len(expected_routes)
+        for expected_route, actual_route in zip(expected_routes, actual_routes, strict=True):
+            _assert_subset(expected_route, actual_route)
+
+
+def _assert_m3_supported_subset_matches(manifest, contract: dict[str, Any]) -> None:
+    assert manifest.topology_hash == contract["topology_hash"]
+    assert manifest.manifest_hash == contract["manifest_hash"]
+
+    nodes_by_id = {node.id: node for node in manifest.nodes}
+    edges_by_id = {edge.id: edge for edge in manifest.edges}
+
+    for expected_node in contract["nodes"]:
+        node = nodes_by_id.get(expected_node["id"])
+        assert node is not None, f"missing node {expected_node['id']}"
+        assert node.kind == expected_node["kind"]
+
+    for expected_edge in contract["edges"]:
+        edge = edges_by_id.get(expected_edge["id"])
+        assert edge is not None, f"missing edge {expected_edge['id']}"
+        assert edge.source == expected_edge["source"]
+        assert edge.target == expected_edge["target"]
+        assert edge.label == expected_edge["label"]
+        assert edge.condition_ref == expected_edge["condition_ref"]
+
+    for node_id, expected_policy in contract.get("policies", {}).items():
+        _assert_m3_policy_matches(nodes_by_id[node_id].policy, expected_policy, subject=node_id)
+
+    if "workflow_policy" in contract:
+        _assert_m3_policy_matches(
+            manifest.policy,
+            contract["workflow_policy"],
+            subject=f"{manifest.id} workflow",
+        )
+
+    for node_id, expected_subpipeline in contract.get("subpipelines", {}).items():
+        node = nodes_by_id[node_id]
+        assert node.subpipeline is not None
+        assert node.subpipeline.manifest_hash == expected_subpipeline["manifest_hash"]
+        assert node.subpipeline.alias == expected_subpipeline["alias"]
+
+
 @pytest.mark.parametrize("shape_name", list(_load_shapes().keys()))
 def test_canonical_shape(shape_name: str) -> None:
     shapes = _load_shapes()
@@ -311,3 +433,33 @@ def test_loop_revise_is_explicit_bounded_reentry() -> None:
 
     assert any(edge.condition_ref == "retry" for edge in manifest.edges)
     assert any(edge.condition_ref == "retry-revise" for edge in manifest.edges)
+
+
+@pytest.mark.parametrize(
+    "contract_name",
+    list(_load_fixture_matrix()["python_authoring_m3"]["supported_subset"].keys()),
+)
+def test_python_authoring_m3_supported_subset_matches_canonical_contracts(
+    contract_name: str,
+) -> None:
+    matrix = _load_fixture_matrix()["python_authoring_m3"]["supported_subset"]
+    contract = matrix[contract_name]
+
+    result = workflow_api.check_workflow_file(Path(contract["fixture"]))
+    manifest = workflow_api.compile_workflow_file(Path(contract["fixture"]))
+
+    assert result.ok
+    _assert_m3_supported_subset_matches(manifest, contract)
+
+
+def test_python_authoring_m3_deferred_canonical_shapes_are_annotated() -> None:
+    matrix = _load_fixture_matrix()
+    canonical_shapes = set(matrix["shapes"])
+    deferred = matrix["python_authoring_m3"]["deferred_canonical_shapes"]
+    diagnostic_codes = {code.value for code in workflow_api.diagnostics.DiagnosticCode}
+
+    assert set(deferred) <= canonical_shapes
+    for shape_name, annotation in deferred.items():
+        assert annotation["reason"], shape_name
+        if "expected_diagnostic" in annotation:
+            assert annotation["expected_diagnostic"] in diagnostic_codes

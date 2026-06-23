@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import sys
 from pathlib import Path
 
 import pytest
@@ -8,6 +9,7 @@ import pytest
 from arnold.manifest.refs import ImportRef
 import arnold.workflow as workflow
 from arnold.workflow import authoring, diagnostics
+from arnold.workflow import source_compiler
 
 
 PUBLIC_SOURCE_APIS = (
@@ -17,6 +19,25 @@ PUBLIC_SOURCE_APIS = (
     "lower_workflow_file",
     "compile_workflow_source",
     "compile_workflow_file",
+)
+FIXTURE_DIR = Path("tests/fixtures/workflow_authoring")
+M3_FIXTURE_DIR = Path("tests/fixtures/workflow_authoring/m3")
+M3_VALID_FIXTURES = (
+    "valid_m3_branch_routes",
+    "valid_m3_bounded_loop",
+    "valid_m3_policy_refs",
+    "valid_m3_subflow_ref",
+)
+M3_INVALID_FIXTURES = (
+    "invalid_m3_non_literal_routing",
+    "invalid_m3_unsupported_mutation",
+    "invalid_m3_ambiguous_loop",
+    "invalid_m3_loop_missing_bounds",
+    "invalid_m3_loop_dynamic_bounds",
+    "invalid_m3_loop_non_true_test",
+    "invalid_m3_unsupported_policy_carrier",
+    "invalid_m3_dynamic_subflow_identity",
+    "invalid_m3_unreachable_path",
 )
 
 
@@ -239,6 +260,285 @@ def test_source_compiler_lowers_function_body_dataflow_in_source_order() -> None
     ]
 
 
+def test_source_compiler_reserved_step_keywords_are_not_dataflow_inputs() -> None:
+    source = """
+from arnold.workflow.authoring import workflow
+from tests.fixtures.workflow_authoring.components import plan
+
+@workflow(id="reserved-step-keyword")
+def flow(brief):
+    plan_output = plan(id="plan", policy=brief)
+    plan(id="schema-step", schema=plan_output)
+    plan(id="policies-step", policies=brief)
+"""
+
+    result = workflow.check_workflow_source(source, source_path="reserved_step_keyword.py")
+
+    assert _diagnostic_payloads(result) == [
+        {
+            "code": "AWF010_RESERVED_CALL_KEYWORD",
+            "message": "step call keyword 'policy' is reserved for compiler-owned authoring syntax",
+            "source_span": {
+                "path": "reserved_step_keyword.py",
+                "start_line": 7,
+                "start_column": 35,
+                "end_line": 7,
+                "end_column": 47,
+            },
+        },
+        {
+            "code": "AWF010_RESERVED_CALL_KEYWORD",
+            "message": "step call keyword 'schema' is reserved for compiler-owned authoring syntax",
+            "source_span": {
+                "path": "reserved_step_keyword.py",
+                "start_line": 8,
+                "start_column": 28,
+                "end_line": 8,
+                "end_column": 46,
+            },
+        },
+        {
+            "code": "AWF010_RESERVED_CALL_KEYWORD",
+            "message": "step call keyword 'policies' is reserved for compiler-owned authoring syntax",
+            "source_span": {
+                "path": "reserved_step_keyword.py",
+                "start_line": 9,
+                "start_column": 30,
+                "end_line": 9,
+                "end_column": 44,
+            },
+        },
+    ]
+    assert result.parsed_source.workflow is not None
+    assert result.parsed_source.workflow.steps == ()
+
+
+def test_source_compiler_lowers_reserved_step_policy_keywords() -> None:
+    source = """
+from arnold.workflow.authoring import workflow
+from tests.fixtures.workflow_authoring.components import fast_retry, plan, review, review_timeout
+
+@workflow(id="reserved-policy-keywords")
+def flow(brief):
+    plan_output = plan(id="plan", brief=brief)
+    review(id="review", evidence=plan_output, policy=fast_retry, policies=[review_timeout])
+"""
+
+    pipeline = workflow.lower_workflow_source(source, source_path="reserved_policy_keywords.py")
+
+    review_step = {step.id: step for step in pipeline.steps}["review"]
+    assert [(input_binding.name, input_binding.value_ref) for input_binding in review_step.inputs] == [
+        ("evidence", "output:plan_output")
+    ]
+    assert review_step.policy is not None
+    assert review_step.policy.retry is not None
+    assert review_step.policy.retry.max_attempts == 2
+    assert review_step.policy.retry.retry_on == ("transient",)
+    assert review_step.policy.timing is not None
+    assert review_step.policy.timing.timeout_seconds == 60
+
+
+def test_source_compiler_lowers_authority_and_control_policy_keywords() -> None:
+    source = """
+from arnold.workflow.authoring import workflow
+from tests.fixtures.workflow_authoring.components import handoff_transition, plan, review, review_approval
+
+@workflow(id="authority-policy-keywords")
+def flow(brief):
+    plan_output = plan(id="plan", brief=brief)
+    review(id="review", evidence=plan_output, policies=[review_approval, handoff_transition])
+"""
+
+    pipeline = workflow.lower_workflow_source(source, source_path="authority_policy_keywords.py")
+
+    review_step = {step.id: step for step in pipeline.steps}["review"]
+    assert review_step.policy is not None
+    assert list(review_step.policy.authority) == [
+        workflow.AuthorityRequirement(
+            authority_id="review-approval",
+            action="approve-review",
+            capability_id="human.review",
+        )
+    ]
+    assert list(review_step.policy.control_transitions) == [
+        workflow.ControlTransitionSlot(
+            transition_id="handoff",
+            transition_type="approval-handoff",
+            trigger_ref="review.needs_approval",
+            target_ref="reviewer",
+            policy_ref="review_approval",
+        )
+    ]
+
+
+def test_source_compiler_lowers_workflow_control_policy_keywords() -> None:
+    source = """
+from arnold.workflow.authoring import workflow
+from tests.fixtures.workflow_authoring.components import handoff_transition, operator_suspend, plan, review_approval
+
+@workflow(id="workflow-control-policy", policies=[operator_suspend, review_approval, handoff_transition])
+def flow(brief):
+    plan(id="plan", brief=brief)
+"""
+
+    pipeline = workflow.lower_workflow_source(source, source_path="workflow_control_policy.py")
+
+    assert pipeline.policy is not None
+    assert list(pipeline.policy.suspension_routes) == [
+        workflow.SuspensionRoute(
+            route_id="operator",
+            capability_id="human.review",
+            reentry_id="execute",
+            resume_schema_ref="operator.resume",
+        )
+    ]
+    assert list(pipeline.policy.authority) == [
+        workflow.AuthorityRequirement(
+            authority_id="review-approval",
+            action="approve-review",
+            capability_id="human.review",
+        )
+    ]
+    assert list(pipeline.policy.control_transitions) == [
+        workflow.ControlTransitionSlot(
+            transition_id="handoff",
+            transition_type="approval-handoff",
+            trigger_ref="review.needs_approval",
+            target_ref="reviewer",
+            policy_ref="review_approval",
+        )
+    ]
+
+
+def test_source_compiler_rejects_unsupported_workflow_policy_families() -> None:
+    source = """
+from arnold.workflow.authoring import workflow
+from tests.fixtures.workflow_authoring.components import dynamic_model_router, plan, robustness_guard
+
+@workflow(id="unsupported-workflow-policy", policies=[dynamic_model_router, robustness_guard])
+def flow(brief):
+    plan(id="plan", brief=brief)
+"""
+
+    result = workflow.check_workflow_source(source, source_path="unsupported_workflow_policy.py")
+
+    assert _diagnostic_payloads(result) == [
+        {
+            "code": "AWF014_UNSUPPORTED_POLICY_CARRIER",
+            "message": "workflow policy type 'model-routing' does not map to an existing workflow-level control carrier",
+            "source_span": {
+                "path": "unsupported_workflow_policy.py",
+                "start_line": 5,
+                "start_column": 55,
+                "end_line": 5,
+                "end_column": 75,
+            },
+        },
+        {
+            "code": "AWF014_UNSUPPORTED_POLICY_CARRIER",
+            "message": "workflow policy type 'robustness' does not map to an existing workflow-level control carrier",
+            "source_span": {
+                "path": "unsupported_workflow_policy.py",
+                "start_line": 5,
+                "start_column": 77,
+                "end_line": 5,
+                "end_column": 93,
+            },
+        },
+    ]
+
+
+def test_source_compiler_rejects_unsupported_policy_families() -> None:
+    source = """
+from arnold.workflow.authoring import workflow
+from tests.fixtures.workflow_authoring.components import plan, reprompt_guard, review, robustness_guard
+
+@workflow(id="unsupported-policy-families")
+def flow(brief):
+    plan_output = plan(id="plan", brief=brief)
+    review(id="review", evidence=plan_output, policies=[robustness_guard, reprompt_guard])
+"""
+
+    result = workflow.check_workflow_source(source, source_path="unsupported_policy_families.py")
+
+    assert _diagnostic_payloads(result) == [
+        {
+            "code": "AWF014_UNSUPPORTED_POLICY_CARRIER",
+            "message": "policy type 'robustness' does not map to an existing manifest carrier",
+            "source_span": {
+                "path": "unsupported_policy_families.py",
+                "start_line": 8,
+                "start_column": 57,
+                "end_line": 8,
+                "end_column": 73,
+            },
+        },
+        {
+            "code": "AWF014_UNSUPPORTED_POLICY_CARRIER",
+            "message": "policy type 'reprompt' does not map to an existing manifest carrier",
+            "source_span": {
+                "path": "unsupported_policy_families.py",
+                "start_line": 8,
+                "start_column": 75,
+                "end_line": 8,
+                "end_column": 89,
+            },
+        },
+    ]
+
+
+def test_source_compiler_rejects_policy_components_as_ordinary_inputs() -> None:
+    source = """
+from arnold.workflow.authoring import workflow
+from tests.fixtures.workflow_authoring.components import fast_retry, plan, review
+
+@workflow(id="policy-as-dataflow")
+def flow(brief):
+    plan_output = plan(id="plan", brief=brief)
+    review(id="review", evidence=plan_output, retry=fast_retry)
+"""
+
+    result = workflow.check_workflow_source(source, source_path="policy_as_dataflow.py")
+
+    assert _diagnostic_payloads(result) == [
+        {
+            "code": "AWF010_RESERVED_CALL_KEYWORD",
+            "message": "policy components must be passed with reserved policy= or policies= syntax",
+            "source_span": {
+                "path": "policy_as_dataflow.py",
+                "start_line": 8,
+                "start_column": 53,
+                "end_line": 8,
+                "end_column": 63,
+            },
+        }
+    ]
+
+
+def test_source_compiler_normal_step_keywords_remain_dataflow_inputs() -> None:
+    source = """
+from arnold.workflow.authoring import workflow
+from tests.fixtures.workflow_authoring.components import plan, review
+
+@workflow(id="normal-keyword-dataflow")
+def flow(brief):
+    evidence = plan(id="plan", brief=brief)
+    review(id="review", evidence=evidence)
+"""
+
+    result = workflow.check_workflow_source(source, source_path="normal_keyword_dataflow.py")
+
+    assert result.ok
+    assert result.parsed_source.workflow is not None
+    assert [
+        [(input_binding.name, input_binding.value_ref) for input_binding in step.inputs]
+        for step in result.parsed_source.workflow.steps
+    ] == [
+        [("brief", "param:brief")],
+        [("evidence", "output:evidence")],
+    ]
+
+
 def test_source_compiler_compiles_function_body_bindings_through_manifest_contract() -> None:
     source_path = Path("tests/fixtures/workflow_authoring/valid_function_linear.py")
     manifest = workflow.compile_workflow_file(source_path)
@@ -290,6 +590,722 @@ def test_source_compiler_valid_fixture_manifest_goldens_are_stable(
         "plan-execute",
     ]
     assert all(node["metadata"]["component_ref"].endswith(f":{node['id']}") for node in manifest_payload["nodes"])
+
+
+def test_source_compiler_m3_expectation_fixture_set_is_complete() -> None:
+    source_cases = {path.stem for path in M3_FIXTURE_DIR.glob("*.py")}
+    sidecar_cases = {
+        path.name.removesuffix(".expected.json")
+        for path in M3_FIXTURE_DIR.glob("*.expected.json")
+    }
+
+    assert source_cases == set(M3_VALID_FIXTURES) | set(M3_INVALID_FIXTURES)
+    assert sidecar_cases == source_cases
+
+
+@pytest.mark.parametrize("fixture_name", M3_VALID_FIXTURES)
+def test_source_compiler_m3_valid_expectation_fixtures_lower_to_pinned_contract(
+    fixture_name: str,
+) -> None:
+    sidecar = _load_m3_sidecar(fixture_name)
+    source_path = M3_FIXTURE_DIR / f"{fixture_name}.py"
+    expected = sidecar["expected_lowering"]
+
+    pipeline = workflow.lower_workflow_file(source_path)
+
+    assert sidecar["outcome"] == "valid"
+    assert pipeline.id == expected["workflow_id"]
+    assert [step.id for step in pipeline.steps] == expected["nodes"]
+
+    expected_routes = expected.get("routes", [])
+    if expected_routes:
+        assert [
+            _route_contract(route)
+            for route in pipeline.routes
+        ] == expected_routes
+
+    expected_loop = expected.get("loop_policy")
+    if expected_loop is not None:
+        loop_nodes = [
+            step for step in pipeline.steps
+            if step.policy is not None and step.policy.loop is not None
+        ]
+        assert len(loop_nodes) == 1
+        assert loop_nodes[0].policy is not None
+        assert loop_nodes[0].policy.loop is not None
+        assert loop_nodes[0].policy.loop.max_iterations == expected_loop["max_iterations"]
+        assert loop_nodes[0].policy.loop.until_ref == expected_loop["until_ref"]
+        assert any(
+            route.source == expected["backedge"]["source"]
+            and route.target == expected["backedge"]["target"]
+            and route.condition_ref == expected["backedge"]["condition_ref"]
+            for route in pipeline.routes
+        )
+
+    expected_node_policies = expected.get("node_policies", {})
+    if expected_node_policies:
+        nodes = {step.id: step for step in pipeline.steps}
+        for node_id, policy_contract in expected_node_policies.items():
+            assert nodes[node_id].policy is not None
+            if "retry" in policy_contract:
+                assert nodes[node_id].policy.retry is not None
+                assert (
+                    nodes[node_id].policy.retry.max_attempts
+                    == policy_contract["retry"]["max_attempts"]
+                )
+                assert list(nodes[node_id].policy.retry.retry_on) == policy_contract["retry"]["retry_on"]
+            if "timing" in policy_contract:
+                assert nodes[node_id].policy.timing is not None
+                assert (
+                    nodes[node_id].policy.timing.timeout_seconds
+                    == policy_contract["timing"]["timeout_seconds"]
+                )
+
+    expected_subflows = expected.get("subflows", {})
+    if expected_subflows:
+        nodes = {step.id: step for step in pipeline.steps}
+        for node_id, subflow_contract in expected_subflows.items():
+            assert nodes[node_id].kind == "subpipeline"
+            assert nodes[node_id].subpipeline is not None
+            assert nodes[node_id].subpipeline.manifest_hash == subflow_contract["manifest_hash"]
+            assert nodes[node_id].subpipeline.alias == subflow_contract["alias"]
+
+
+@pytest.mark.parametrize("fixture_name", M3_INVALID_FIXTURES)
+def test_source_compiler_m3_negative_sidecars_pin_source_diagnostics(
+    fixture_name: str,
+) -> None:
+    sidecar = _load_m3_sidecar(fixture_name)
+    source_path = M3_FIXTURE_DIR / f"{fixture_name}.py"
+
+    result = workflow.check_workflow_file(source_path)
+
+    assert sidecar["outcome"] == "invalid"
+    assert _diagnostic_payloads(result) == sidecar["expected_diagnostics"]
+
+
+def test_source_compiler_m3_regression_keeps_existing_direct_and_function_linear_contracts() -> None:
+    direct = workflow.lower_workflow_file(FIXTURE_DIR / "valid_direct_linear.py")
+    function = workflow.lower_workflow_file(FIXTURE_DIR / "valid_function_linear.py")
+
+    assert [step.id for step in direct.steps] == ["plan", "execute", "review"]
+    assert [route.id for route in direct.routes] == ["plan-execute", "execute-review"]
+    assert [step.id for step in function.steps] == ["plan", "execute", "review"]
+    assert [route.id for route in function.routes] == ["plan-execute", "execute-review"]
+
+
+def test_source_compiler_m3_parses_subflow_calls_before_generic_steps() -> None:
+    source_path = M3_FIXTURE_DIR / "valid_m3_subflow_ref.py"
+
+    result = workflow.check_workflow_file(source_path)
+
+    assert result.diagnostics == ()
+    assert result.parsed_source.workflow is not None
+    block = result.parsed_source.workflow.source_block
+    assert [type(statement).__name__ for statement in block.statements] == [
+        "ParsedStepCall",
+        "ParsedStepCall",
+        "ParsedSubflowCall",
+    ]
+    subflow = block.subflows[0]
+    assert subflow.id == "nested-review"
+    assert subflow.manifest_hash == (
+        "sha256:1111111111111111111111111111111111111111111111111111111111111111"
+    )
+    assert subflow.alias == "review"
+    assert [(binding.name, binding.value_ref) for binding in subflow.inputs] == [
+        ("evidence", "output:evidence")
+    ]
+
+
+def test_source_compiler_m3_subflow_uses_resolver_provided_manifest_identity() -> None:
+    source = """
+from arnold.workflow.authoring import workflow
+from tests.fixtures.workflow_authoring.components import execute, plan, review_subflow
+
+@workflow(id="metadata-subflow")
+def flow(brief):
+    plan_output = plan(id="plan", brief=brief)
+    evidence = execute(id="execute", plan=plan_output)
+    review_subflow(id="nested-review", evidence=evidence)
+"""
+
+    pipeline = workflow.lower_workflow_source(source, source_path="metadata_subflow.py")
+
+    subflow = pipeline.steps[-1]
+    assert subflow.kind == "subpipeline"
+    assert subflow.subpipeline is not None
+    assert subflow.subpipeline.manifest_hash == (
+        "sha256:1111111111111111111111111111111111111111111111111111111111111111"
+    )
+    assert subflow.subpipeline.alias is None
+    assert [(input.name, input.value_ref) for input in subflow.inputs] == [
+        ("evidence", "output:evidence")
+    ]
+
+
+def test_source_compiler_m3_subflow_resolver_identity_does_not_import_child_workflow() -> None:
+    source = """
+from arnold.workflow.authoring import workflow
+from project.workflow_components import plan, review_subflow
+
+@workflow(id="resolver-subflow")
+def flow(brief):
+    evidence = plan(id="plan", brief=brief)
+    review_subflow(id="nested-review", evidence=evidence)
+"""
+    child_module = "project.child_workflows.review"
+    sys.modules.pop(child_module, None)
+    resolver = _Resolver(
+        {
+            "project.workflow_components:plan": authoring.StepComponent(
+                id="plan",
+                provenance=authoring.ComponentProvenance(
+                    module="project.workflow_components",
+                    qualname="plan",
+                    export_name="plan",
+                ),
+            ),
+            "project.workflow_components:review_subflow": authoring.SubflowComponent(
+                id="review_subflow",
+                provenance=authoring.ComponentProvenance(
+                    module="project.workflow_components",
+                    qualname="review_subflow",
+                    export_name="review_subflow",
+                ),
+                workflow_id=child_module,
+                version="1.0",
+                metadata={
+                    "manifest_hash": (
+                        "sha256:2222222222222222222222222222222222222222222222222222222222222222"
+                    )
+                },
+            ),
+        }
+    )
+
+    pipeline = workflow.lower_workflow_source(
+        source,
+        source_path="resolver_subflow.py",
+        resolver=resolver,
+    )
+
+    subflow = pipeline.steps[-1]
+    assert subflow.kind == "subpipeline"
+    assert subflow.subpipeline is not None
+    assert subflow.subpipeline.manifest_hash == (
+        "sha256:2222222222222222222222222222222222222222222222222222222222222222"
+    )
+    assert resolver.resolved == (
+        ImportRef("project.workflow_components", "plan"),
+        ImportRef("project.workflow_components", "review_subflow"),
+    )
+    assert child_module not in sys.modules
+
+
+def test_source_compiler_m3_subflow_rejects_workflow_id_version_without_manifest_hash() -> None:
+    source = """
+from arnold.workflow.authoring import workflow
+from project.workflow_components import plan, review_subflow
+
+@workflow(id="workflow-id-only-subflow")
+def flow(brief):
+    evidence = plan(id="plan", brief=brief)
+    review_subflow(id="nested-review", evidence=evidence)
+"""
+    resolver = _Resolver(
+        {
+            "project.workflow_components:plan": authoring.StepComponent(
+                id="plan",
+                provenance=authoring.ComponentProvenance(
+                    module="project.workflow_components",
+                    qualname="plan",
+                    export_name="plan",
+                ),
+            ),
+            "project.workflow_components:review_subflow": authoring.SubflowComponent(
+                id="review_subflow",
+                provenance=authoring.ComponentProvenance(
+                    module="project.workflow_components",
+                    qualname="review_subflow",
+                    export_name="review_subflow",
+                ),
+                workflow_id="nested-review",
+                version="1.0",
+            ),
+        }
+    )
+
+    result = workflow.check_workflow_source(
+        source,
+        source_path="workflow_id_only_subflow.py",
+        resolver=resolver,
+    )
+
+    assert _diagnostic_payloads(result) == [
+        {
+            "code": "AWF015_UNSUPPORTED_SUBFLOW_REFERENCE",
+            "message": "subflow manifest_hash must be a literal or resolver-provided identity",
+            "source_span": {
+                "path": "workflow_id_only_subflow.py",
+                "start_line": 8,
+                "start_column": 5,
+                "end_line": 8,
+                "end_column": 58,
+            },
+        }
+    ]
+    assert result.parsed_source.workflow is not None
+    assert result.parsed_source.workflow.source_block.subflows == ()
+
+
+def test_source_compiler_m3_subflow_rejects_non_canonical_resolver_manifest_hash() -> None:
+    source = """
+from arnold.workflow.authoring import workflow
+from project.workflow_components import plan, review_subflow
+
+@workflow(id="bad-resolver-subflow")
+def flow(brief):
+    evidence = plan(id="plan", brief=brief)
+    review_subflow(id="nested-review", evidence=evidence)
+"""
+    resolver = _Resolver(
+        {
+            "project.workflow_components:plan": authoring.StepComponent(
+                id="plan",
+                provenance=authoring.ComponentProvenance(
+                    module="project.workflow_components",
+                    qualname="plan",
+                    export_name="plan",
+                ),
+            ),
+            "project.workflow_components:review_subflow": authoring.SubflowComponent(
+                id="review_subflow",
+                provenance=authoring.ComponentProvenance(
+                    module="project.workflow_components",
+                    qualname="review_subflow",
+                    export_name="review_subflow",
+                ),
+                workflow_id="nested-review",
+                version="1.0",
+                metadata={"manifest_hash": "nested-review:1.0"},
+            ),
+        }
+    )
+
+    result = workflow.check_workflow_source(
+        source,
+        source_path="bad_resolver_subflow.py",
+        resolver=resolver,
+    )
+
+    assert _diagnostic_payloads(result) == [
+        {
+            "code": "AWF015_UNSUPPORTED_SUBFLOW_REFERENCE",
+            "message": "subflow manifest_hash must be a literal or resolver-provided identity",
+            "source_span": {
+                "path": "bad_resolver_subflow.py",
+                "start_line": 8,
+                "start_column": 5,
+                "end_line": 8,
+                "end_column": 58,
+            },
+        }
+    ]
+
+
+def test_source_compiler_m3_rejects_executable_child_workflow_code_in_subflow_calls() -> None:
+    source = """
+from arnold.workflow.authoring import workflow
+from tests.fixtures.workflow_authoring.components import execute, plan, review_subflow
+
+@workflow(id="child-code-subflow")
+def flow(brief):
+    plan_output = plan(id="plan", brief=brief)
+    evidence = execute(id="execute", plan=plan_output)
+    review_subflow(id="nested-review", steps=[plan(id="child")], evidence=evidence)
+"""
+
+    result = workflow.check_workflow_source(source, source_path="child_code_subflow.py")
+
+    assert _diagnostic_payloads(result) == [
+        {
+            "code": "AWF015_UNSUPPORTED_SUBFLOW_REFERENCE",
+            "message": (
+                "subflow calls must reference a manifest identity, not executable child workflow code"
+            ),
+            "source_span": {
+                "path": "child_code_subflow.py",
+                "start_line": 9,
+                "start_column": 5,
+                "end_line": 9,
+                "end_column": 84,
+            },
+        }
+    ]
+
+
+def test_source_compiler_m3_parses_literal_branch_blocks_without_lowering_routes() -> None:
+    source_path = M3_FIXTURE_DIR / "valid_m3_branch_routes.py"
+
+    result = workflow.check_workflow_file(source_path)
+
+    assert result.diagnostics == ()
+    assert result.parsed_source.workflow is not None
+    block = result.parsed_source.workflow.source_block
+    assert [type(statement).__name__ for statement in block.statements] == [
+        "ParsedStepCall",
+        "ParsedBranchBlock",
+    ]
+    branch = block.branches[0]
+    assert branch.decision_output == "decision"
+    assert [
+        arm.condition.literal if arm.condition is not None else "else"
+        for arm in branch.arms
+    ] == ["approve", "revise", "else"]
+    assert [arm.terminal for arm in branch.arms] == [False, False, False]
+    assert branch.merged_outputs == {}
+
+
+def test_source_compiler_m3_merges_only_outputs_from_every_reachable_branch() -> None:
+    source = """
+from arnold.workflow.authoring import workflow
+from tests.fixtures.workflow_authoring.components import execute, review, route
+
+@workflow(id="merge-branch")
+def flow(brief):
+    decision = route(id="route", brief=brief)
+    if decision == "approve":
+        shared = execute(id="execute-approved", plan=decision)
+    else:
+        shared = execute(id="execute-fallback", plan=decision)
+    review(id="review", evidence=shared)
+"""
+
+    result = workflow.check_workflow_source(source, source_path="merge_branch.py")
+
+    assert result.diagnostics == ()
+    assert result.parsed_source.workflow is not None
+    block = result.parsed_source.workflow.source_block
+    assert [type(statement).__name__ for statement in block.statements] == [
+        "ParsedStepCall",
+        "ParsedBranchBlock",
+        "ParsedStepCall",
+    ]
+    assert set(block.branches[0].merged_outputs) == {"shared"}
+    assert block.steps[-1].inputs[0].value_ref == "output:shared"
+
+    pipeline = workflow.lower_workflow_source(source, source_path="merge_branch.py")
+    assert [step.id for step in pipeline.steps] == [
+        "route",
+        "execute-approved",
+        "execute-fallback",
+        "review",
+    ]
+    assert [_route_contract(route) for route in pipeline.routes] == [
+        {
+            "source": "route",
+            "target": "execute-approved",
+            "label": "approve",
+            "condition_ref": "route.decision.eq.approve",
+        },
+        {
+            "source": "route",
+            "target": "execute-fallback",
+            "label": "else",
+            "condition_ref": "route.decision.else",
+        },
+        {"source": "execute-approved", "target": "review"},
+        {"source": "execute-fallback", "target": "review"},
+    ]
+
+
+@pytest.mark.parametrize(
+    ("condition", "expected_message"),
+    [
+        (
+            'decision == "approve" or decision == "revise"',
+            "branch route conditions must compare a decision output to a literal string",
+        ),
+        (
+            "decision == 1",
+            "branch route comparisons must use a literal string target",
+        ),
+    ],
+)
+def test_source_compiler_m3_rejects_unsupported_branch_conditions(
+    condition: str,
+    expected_message: str,
+) -> None:
+    source = f"""
+from arnold.workflow.authoring import workflow
+from tests.fixtures.workflow_authoring.components import execute, route
+
+@workflow(id="invalid-branch")
+def flow(brief):
+    decision = route(id="route", brief=brief)
+    if {condition}:
+        execute(id="execute", plan=decision)
+"""
+
+    result = workflow.check_workflow_source(source, source_path="invalid_branch.py")
+
+    assert _diagnostic_payloads(result)[0]["code"] == "AWF011_DYNAMIC_ROUTING_CONDITION"
+    assert _diagnostic_payloads(result)[0]["message"] == expected_message
+
+
+def test_source_compiler_m3_rejects_repeated_branch_conditions() -> None:
+    source = """
+from arnold.workflow.authoring import workflow
+from tests.fixtures.workflow_authoring.components import execute, route
+
+@workflow(id="repeated-branch")
+def flow(brief):
+    decision = route(id="route", brief=brief)
+    if decision == "approve":
+        execute(id="execute-approved", plan=decision)
+    elif decision == "approve":
+        execute(id="execute-repeated", plan=decision)
+"""
+
+    result = workflow.check_workflow_source(source, source_path="repeated_branch.py")
+
+    assert _diagnostic_payloads(result)[0]["code"] == "AWF011_DYNAMIC_ROUTING_CONDITION"
+    assert (
+        _diagnostic_payloads(result)[0]["message"]
+        == "branch route comparisons must not repeat literal targets"
+    )
+
+
+def test_source_compiler_m3_rejects_implicit_branch_fallthrough() -> None:
+    source = """
+from arnold.workflow.authoring import workflow
+from tests.fixtures.workflow_authoring.components import execute, review, route
+
+@workflow(id="missing-fallthrough")
+def flow(brief):
+    decision = route(id="route", brief=brief)
+    if decision == "approve":
+        execute_output = execute(id="execute", plan=decision)
+        review(id="review-approved", evidence=execute_output)
+"""
+
+    result = workflow.check_workflow_source(source, source_path="missing_fallthrough.py")
+
+    assert _diagnostic_payloads(result)[0]["code"] == "AWF017_MISSING_FALLTHROUGH_ROUTE"
+    assert (
+        _diagnostic_payloads(result)[0]["message"]
+        == "branch routes require an else arm to avoid implicit fallthrough"
+    )
+
+
+def test_source_compiler_m3_parses_bounded_loop_block_before_backedge_lowering() -> None:
+    source_path = M3_FIXTURE_DIR / "valid_m3_bounded_loop.py"
+
+    result = workflow.check_workflow_file(source_path)
+
+    assert result.diagnostics == ()
+    assert result.parsed_source.workflow is not None
+    block = result.parsed_source.workflow.source_block
+    assert [type(statement).__name__ for statement in block.statements] == [
+        "ParsedStepCall",
+        "ParsedLoopBlock",
+    ]
+    loop = block.loops[0]
+    assert loop.policy.policy_ref.endswith(":bounded_review_loop")
+    assert loop.policy.max_iterations == 3
+    assert loop.policy.reentry_id == "execute"
+    assert loop.policy.until_ref == "review.approved"
+    assert type(loop.entry_statement).__name__ == "ParsedStepCall"
+    assert loop.entry_statement is not None
+    assert loop.entry_statement.id == "execute"
+    assert [type(statement).__name__ for statement in loop.body.statements] == [
+        "ParsedStepCall",
+        "ParsedStepCall",
+        "ParsedBranchBlock",
+        "ParsedStepCall",
+    ]
+    assert [statement.id for statement in loop.body_tail_statements] == ["revise"]
+    assert loop.follow_statement is None
+    branch = loop.body.branches[0]
+    assert [arm.condition.literal for arm in branch.arms if arm.condition] == ["approved"]
+    assert [arm.terminal for arm in branch.arms] == [True]
+
+
+def test_source_compiler_m3_lowers_bounded_loop_backedge_and_policy_for_cycle_validation() -> None:
+    source_path = M3_FIXTURE_DIR / "valid_m3_bounded_loop.py"
+    sidecar = _load_m3_sidecar("valid_m3_bounded_loop")
+    expected = sidecar["expected_lowering"]
+
+    pipeline = workflow.lower_workflow_file(source_path)
+
+    assert [step.id for step in pipeline.steps] == expected["nodes"]
+    routes = [_route_contract(route) for route in pipeline.routes]
+    assert routes == [
+        {"source": "plan", "target": "execute"},
+        {"source": "execute", "target": "review"},
+        {"source": "review", "target": "revise"},
+        {
+            "source": expected["backedge"]["source"],
+            "target": expected["backedge"]["target"],
+            "label": "reentry",
+            "condition_ref": expected["backedge"]["condition_ref"],
+        },
+    ]
+
+    loop_nodes = [
+        step for step in pipeline.steps
+        if step.policy is not None and step.policy.loop is not None
+    ]
+    assert [step.id for step in loop_nodes] == [expected["backedge"]["target"]]
+    loop_policy = loop_nodes[0].policy
+    assert loop_policy is not None
+    assert loop_policy.loop is not None
+    assert loop_policy.loop.max_iterations == expected["loop_policy"]["max_iterations"]
+    assert loop_policy.loop.until_ref == expected["loop_policy"]["until_ref"]
+    assert len(loop_policy.suspension_routes) == 1
+    assert (
+        loop_policy.suspension_routes[0].reentry_id
+        == expected["backedge"]["condition_ref"]
+    )
+
+    manifest = workflow.compile_workflow_file(source_path)
+
+    nodes = {node.id: node for node in manifest.nodes}
+    edges = {edge.id: edge for edge in manifest.edges}
+    assert nodes["execute"].policy is not None
+    assert nodes["execute"].policy.loop is not None
+    assert nodes["execute"].policy.suspension_routes[0].reentry_id == edges[
+        "revise-execute"
+    ].condition_ref
+
+
+@pytest.mark.parametrize(
+    ("fixture_name", "expected_message"),
+    [
+        (
+            "invalid_m3_loop_missing_bounds",
+            "loop policy requires a positive literal max_iterations bound",
+        ),
+        (
+            "invalid_m3_loop_dynamic_bounds",
+            "loop policy must reference an imported literal PolicyComponent",
+        ),
+        (
+            "invalid_m3_loop_non_true_test",
+            "bounded loops must use while True with an adjacent literal loop policy",
+        ),
+    ],
+)
+def test_source_compiler_m3_rejects_unsupported_loop_contracts(
+    fixture_name: str,
+    expected_message: str,
+) -> None:
+    result = workflow.check_workflow_file(M3_FIXTURE_DIR / f"{fixture_name}.py")
+
+    assert _diagnostic_payloads(result)[0]["code"] == "AWF013_AMBIGUOUS_LOOP"
+    assert _diagnostic_payloads(result)[0]["message"] == expected_message
+
+
+@pytest.mark.parametrize(
+    ("body", "expected_message"),
+    [
+        (
+            "        break\n",
+            "bounded loop bodies do not support break or continue",
+        ),
+        (
+            "        continue\n",
+            "bounded loop bodies do not support break or continue",
+        ),
+        (
+            "        return verdict\n",
+            "bounded loop bodies only support return None as a terminal exit",
+        ),
+        (
+            "        while True:\n            execute(id=\"nested\", plan=plan_output)\n",
+            "nested while loops require a separate adjacent literal loop policy",
+        ),
+    ],
+)
+def test_source_compiler_m3_rejects_unsupported_loop_body_controls(
+    body: str,
+    expected_message: str,
+) -> None:
+    source = f"""
+from arnold.workflow.authoring import loop, workflow
+from tests.fixtures.workflow_authoring.components import bounded_review_loop, execute, plan, review
+
+@workflow(id="invalid-loop-control")
+def flow(brief):
+    plan_output = plan(id="plan", brief=brief)
+    loop(policy=bounded_review_loop, reentry_id="execute")
+    while True:
+        evidence = execute(id="execute", plan=plan_output)
+        verdict = review(id="review", evidence=evidence)
+{body}
+"""
+
+    result = workflow.check_workflow_source(source, source_path="invalid_loop_control.py")
+
+    assert _diagnostic_payloads(result)[0]["code"] == "AWF013_AMBIGUOUS_LOOP"
+    assert _diagnostic_payloads(result)[0]["message"] == expected_message
+
+
+def test_source_compiler_parsed_statement_wrappers_preserve_linear_fixture_parity() -> None:
+    expected = {
+        "valid_direct_linear": {
+            "nodes": ["plan", "execute", "review"],
+            "routes": ["plan-execute", "execute-review"],
+            "bindings": {
+                "plan": {},
+                "execute": {},
+                "review": {},
+            },
+            "topology_hash": "sha256:b8241316a814bb9145914b9fa079363215a7b71b7b634390374edb0174a47bc5",
+            "manifest_hash": "sha256:a1d884c2d6116aa82d1d8304b36f6c728b81e71ca2a69dd51d37d6bcdfec8585",
+        },
+        "valid_function_linear": {
+            "nodes": ["plan", "execute", "review"],
+            "routes": ["plan-execute", "execute-review"],
+            "bindings": {
+                "plan": {"brief": "param:brief"},
+                "execute": {"plan": "output:plan_output"},
+                "review": {"evidence": "output:evidence"},
+            },
+            "topology_hash": "sha256:552872e0ffacd32b29cd25ad55298ef4866d186be0326d3f7c90293f70ad866e",
+            "manifest_hash": "sha256:63846e02a691f11141d8a439f647eda7f25609f1a9f9e803b86d0b6ca6a18ada",
+        },
+    }
+
+    for fixture_name, contract in expected.items():
+        source_path = FIXTURE_DIR / f"{fixture_name}.py"
+        checked = workflow.check_workflow_file(source_path)
+        pipeline = workflow.lower_workflow_file(source_path)
+        manifest = workflow.compile_workflow_file(source_path)
+
+        assert checked.diagnostics == ()
+        assert checked.parsed_source.workflow is not None
+        parsed_workflow = checked.parsed_source.workflow
+        assert all(
+            isinstance(statement, source_compiler.ParsedStepCall)
+            for statement in parsed_workflow.source_block.statements
+        )
+        assert parsed_workflow.source_block.steps == parsed_workflow.steps
+        assert parsed_workflow.source_block.intrinsics == ()
+        assert parsed_workflow.source_block.unsupported == ()
+
+        assert [step.id for step in pipeline.steps] == contract["nodes"]
+        assert [route.id for route in pipeline.routes] == contract["routes"]
+        assert {
+            step.id: {
+                input_binding.name: input_binding.value_ref
+                for input_binding in step.inputs
+            }
+            for step in pipeline.steps
+        } == contract["bindings"]
+        assert manifest.topology_hash == contract["topology_hash"]
+        assert manifest.manifest_hash == contract["manifest_hash"]
 
 
 def test_source_compiler_function_fixture_pins_parameter_local_and_tuple_ordering() -> None:
@@ -381,23 +1397,42 @@ from tests.fixtures.workflow_authoring.components import plan, execute
 def flow(brief):
     plan_output = plan(id="plan", brief=brief)
     execute(id="execute", plan=plan_output)
-    suspend(route_id="operator", reentry_id="execute")
-    transition(id="operator-resume", type="override", trigger_ref="operator.resume", target_ref="execute")
-    halt(id="operator-stop", trigger_ref="operator.stop")
+    suspend(route_id="operator", capability_id="human.review", reentry_id="execute", resume_schema_ref="operator.resume")
+    transition(id="operator-resume", type="override", trigger_ref="operator.resume", target_ref="execute", policy_ref="review_approval")
+    halt(id="operator-stop", trigger_ref="operator.stop", payload_schema_hash="sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
 """
 
     pipeline = workflow.lower_workflow_source(source, source_path="intrinsic_linear.py")
 
     assert pipeline.policy is not None
+    assert list(pipeline.policy.suspension_routes) == [
+        workflow.SuspensionRoute(
+            route_id="operator",
+            capability_id="human.review",
+            reentry_id="execute",
+            resume_schema_ref="operator.resume",
+        )
+    ]
     assert [
-        route.route_id for route in pipeline.policy.suspension_routes
-    ] == ["operator"]
-    assert [
-        (transition.transition_id, transition.transition_type, transition.trigger_ref, transition.target_ref)
+        (
+            transition.transition_id,
+            transition.transition_type,
+            transition.trigger_ref,
+            transition.target_ref,
+            transition.payload_schema_hash,
+            transition.policy_ref,
+        )
         for transition in pipeline.policy.control_transitions
     ] == [
-        ("operator-resume", "override", "operator.resume", "execute"),
-        ("operator-stop", "halt", "operator.stop", None),
+        ("operator-resume", "override", "operator.resume", "execute", None, "review_approval"),
+        (
+            "operator-stop",
+            "halt",
+            "operator.stop",
+            None,
+            "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            None,
+        ),
     ]
 
     manifest = workflow.compile_workflow_source(source, source_path="intrinsic_linear.py")
@@ -452,6 +1487,13 @@ def test_source_compiler_rejects_malformed_intrinsic_usage() -> None:
             "def flow():\n"
             "    transition(id='operator-resume', type='override', unsupported='x')\n"
         ),
+        "dynamic_transition": (
+            "from arnold.workflow.authoring import workflow, transition\n"
+            "TYPE = 'override'\n"
+            "@workflow(id='x')\n"
+            "def flow():\n"
+            "    transition(id='operator-resume', type=TYPE)\n"
+        ),
     }
 
     results = {
@@ -470,6 +1512,7 @@ def test_source_compiler_rejects_malformed_intrinsic_usage() -> None:
     )
     assert diagnostics.DiagnosticCode.UNSUPPORTED_SYNTAX in _codes(results["nonliteral"])
     assert diagnostics.DiagnosticCode.UNSUPPORTED_SYNTAX in _codes(results["unknown_keyword"])
+    assert diagnostics.DiagnosticCode.UNSUPPORTED_SYNTAX in _codes(results["dynamic_transition"])
 
 
 def test_source_compiler_rejects_function_body_dataflow_outside_linear_subset() -> None:
@@ -699,6 +1742,23 @@ def _diagnostic_payloads(result: workflow.CheckWorkflowSourceResult) -> list[dic
             payload["component_ref"] = diagnostic.component_ref
         payloads.append(payload)
     return payloads
+
+
+def _load_m3_sidecar(fixture_name: str) -> dict[str, object]:
+    with (M3_FIXTURE_DIR / f"{fixture_name}.expected.json").open(encoding="utf-8") as handle:
+        return json.load(handle)
+
+
+def _route_contract(route: workflow.Route) -> dict[str, object]:
+    payload: dict[str, object] = {
+        "source": route.source,
+        "target": route.target,
+    }
+    if route.label != "default":
+        payload["label"] = route.label
+    if route.condition_ref is not None:
+        payload["condition_ref"] = route.condition_ref
+    return payload
 
 
 class _Resolver:
