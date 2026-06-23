@@ -3,8 +3,8 @@
   "current_milestone_index": 4,
   "current_plan_name": "m5-extension-manager-and-20260623-0336",
   "last_state": "done",
-  "pr_number": null,
-  "pr_state": null,
+  "pr_number": 58,
+  "pr_state": "open",
   "completed": [
     {
       "label": "m1-preview-truth-contract-freeze",
