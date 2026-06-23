@@ -1,3 +1,8 @@
+---
+name: new-arnold-pipeline
+description: Steps to create a new Arnold workflow pipeline package from the template.
+---
+
 # Skill: Create a New Arnold Workflow Pipeline
 
 1. Copy `arnold_pipelines/_template/` to `arnold_pipelines/<your_pipeline>/`.
