@@ -1,0 +1,51 @@
+# How Should Existing Cloud Supervise Fit?
+
+## Direct Answer
+
+Existing cloud supervise should be **wrapped as Guardian's first operation-type plugin**, not rewritten, not replaced, and not elevated to the system-level supervision loop itself. `cloud_supervise_tick()` becomes the `megaplan_chain` classifier/action plugin. Guardian owns the operation-registry loop and delegates per-operation-type inspection to plugins like this one. This is the pattern the plan itself recommends and it is correct.
+
+## Rationale
+
+The plan's reuse audit is explicit: **"Strong for chains. Wrap as a chain-operation plugin before generalizing."** Cloud supervise already knows how to inspect chain state, classify outcomes, and take safe one-shot repair actions. That logic is battle-tested and should be preserved whole.
+
+The architectural reason is separation of concerns. Guardian is a **generic operation-registry scheduler** — it loops, discovers active operations, dispatches by kind, records tick results, and enforces the safe/unsafe action boundary. Cloud supervise is **one operation kind's expertise** — it understands Megaplan chain internals, tmux session state, plan/chain progress markers, and chain-specific recovery paths. Merging those two layers would create tight coupling that breaks the moment we add a Codex or Claude operation kind.
+
+The ordering matters too. By wrapping cloud supervise as a plugin first, we prove the plugin interface on a known-good implementation before we design adapters for new operation kinds (Codex, Claude, subagent, shell). If the interface can't accommodate cloud supervise cleanly, it won't accommodate anything else either.
+
+## Existing Mechanics This Depends On
+
+| Component | Role |
+|---|---|
+| `cloud/supervise.py` | One-shot chain state inspection, classification, and safe action |
+| `supervisor/*` package | Chain-level supervision utilities (progress detection, failure modes) |
+| `scripts/megaplan_live_watchdog.py` | Local plan/process liveness scanning — complementary to cloud supervise |
+| `watchdog/*` | Watchdog abstractions the Guardian can compose |
+| Resident scheduler | Proves the periodic-wake pattern for systemd service design |
+
+The plan also correctly notes: **"The live watchdog scans local plans/processes; cloud supervise performs safe one-shot chain actions. Guardian should be an operation-registry loop that calls these existing engines."** Both watchdog and cloud supervise become Guardian subroutines, not replacements.
+
+## Risks and Caveats
+
+1. **Transport assumption.** Cloud supervise may assume SSH or Docker transport context (the `cloud/providers/ssh.py` layer). AgentBox Guardian runs locally on the Hetzner box. The wrapper must strip or stub the transport layer — the same checks (tmux liveness, log tail, chain state file) work locally without SSH tunneling.
+
+2. **Process ownership ambiguity.** Cloud supervise in its current form may behave as if it owns the chain process lifecycle (start, stop, restart). Under Guardian, the process runner owns lifecycle; the supervise plugin only *classifies and recommends* actions. Guardian decides whether to execute them based on the safe/unsafe policy boundary. This split must be explicit in the plugin contract.
+
+3. **Idempotency.** Guardian calls the plugin every tick (every 5–15 minutes). `cloud_supervise_tick()` must be safe to call repeatedly on the same operation in the same state. If it currently assumes one-shot invocation, it needs an idempotency guard or a "no change since last tick" fast path.
+
+4. **State writes.** Cloud supervise may write directly to chain state files. That's fine for chain-internal state, but Guardian needs a clean separation: **operation registry state** (status, last_check, tick report) is written by Guardian after the plugin returns. The plugin must not bypass the registry.
+
+## One Concrete Design Implication
+
+**The Guardian plugin interface should standardize exactly what `cloud_supervise_tick()` already does: inspect → classify → recommend → report.** The interface shape:
+
+```
+Plugin.tick(operation) → TickResult(
+    classification: "running" | "stalled" | "blocked" | "failed" | "completed",
+    recommended_action: "none" | "restart" | "continue_chain" | "diagnose" | "ask_user",
+    action_detail: {...},
+    summary: str,
+    is_safe: bool
+)
+```
+
+This means the plugin interface is **not invented from scratch** — it's extracted from the existing cloud supervise contract. Future adapters for Codex, Claude, and subagent operations implement the same `tick()` method with the same return type. Cloud supervise validates the interface; other adapters conform to it. That is the right dependency direction.

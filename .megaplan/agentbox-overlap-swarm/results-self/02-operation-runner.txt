@@ -1,0 +1,122 @@
+# AgentBox ↔ Megaplan Cloud: Overlap Audit
+
+## 1. Operation Registry
+
+**Reusable directly:**
+- `ChainLaunchContext` dataclass (`cloud/cli.py:580–600`) already captures identity, slug, digest, workspace, session name, log path, state path, and marker path — a strong scaffold for the proposed operation record.
+- Session marker JSON files (`/workspace/.megaplan/cloud-sessions/{session_name}.json`, `cloud/cli.py:573`) are a lightweight pre-existing registry indexed by session name. The `_cloud_chain_launch_provenance()` function (`cloud/cli.py:700–750`) produces structured metadata (repo head, chain config, tmux status, log refs) that maps cleanly to the proposed operation record fields.
+- `DriverOutcomeStatus` (`types.py:20–38`) provides 18 granular status values (done, stalled, blocked, awaiting_human, etc.) — directly reusable as the status classifier vocabulary.
+
+**Needs extraction/generalization:**
+- Session markers are per-chain files with no cross-operation query surface. Must become a unified file- or SQLite-backed registry (proposal mentions both). The marker directory pattern should be promoted from a chain-only convention to an operation-wide one.
+- The existing identity model is chain-specific (`_chain_identity_for`, `cloud/cli.py:620`). Must generalize to support all operation kinds (codex, claude, shell, test, etc.).
+- No `source` field (discord/cli/api) exists yet. No PR/branch/CI metadata attachment path exists.
+
+**Verdict:** ~40% exists. The provenance dict and `ChainLaunchContext` are directly morphable into operation records. The missing piece is the central queryable store.
+
+---
+
+## 2. Tmux / Process Runner
+
+**Reusable directly:**
+- Session naming convention (`cloud/cli.py:576`: `megaplan-chain-{slug}-{digest[:8]}`) generalizes trivially to `op-{id}`.
+- `_tmux_launch_status()` (`cloud/cli.py:690`) classifies sessions as `started` / `already_running` / `unknown` — a direct precursor to the process liveness check the Guardian needs.
+- SSH provider's `_remote_run()` (`ssh.py:60–76`) is a fully generic remote command executor with capture/non-capture modes. All launch/stop/attach operations can route through it.
+
+**Needs extraction/generalization:**
+- `SshProvider.attach()` (`ssh.py:145`) is hardcoded to `tmux attach -t agent`. Must accept a session name parameter to support per-operation attach.
+- The deploy workflow (`ssh.py:105–125`) assumes one container per machine with a fixed name. AgentBox needs one machine, many tmux sessions — but no container-per-operation requirement. The SSH transport (`_ssh_transport_argv`, `ssh.py:40`) is fully reusable; only the command payloads change.
+- No stop/restart commands exist outside `down` (container stop) and `destroy` (container remove + cleanup). Must add per-session `tmux kill-session` and restart logic with safety checks.
+
+**Verdict:** ~60% exists. SSH transport, session naming, and launch status exist. Attach parameterization and stop/restart are straightforward gaps.
+
+---
+
+## 3. Logs
+
+**Reusable directly:**
+- Log path derivation (`cloud/cli.py:630`: workspace-relative `.megaplan/cloud-chain-{session}.log`) maps easily to AgentBox's `/workspace/runs/<op>/log.txt` — just change the path convention.
+- `Provider.logs()` interface (`base.py:110`) with `follow: bool` parameter is already the right abstraction.
+- Stream redaction (`base.py:55–65`, `stream_redact`) for credential safety is production-ready.
+- The `logs` and `logs --no-follow` CLI subcommands (`cloud/cli.py:90–96`) provide the user-facing surface.
+
+**Needs extraction/generalization:**
+- SSH provider's `logs()` (`ssh.py:148–157`) reads container logs (`docker logs`), not per-session files. Must switch to `tail -f /workspace/runs/<op>/log.txt` or similar. The `_logs_follow` helper (`base.py:42`) works with any argv — just change the remote command.
+- No structured log events (JSON lines) exist yet; everything is raw text. The Guardian proposal implies parseable log events for automated status classification.
+
+**Verdict:** ~70% exists. The interface and redaction are done. Path convention and log format are the only changes.
+
+---
+
+## 4. Status
+
+**Reusable directly:**
+- `status_payload()` (`base.py:115`, `ssh.py:160`) returns structured JSON from `arnold status`. The existing payload includes plan state, phase info, cost, and session metadata — all mappable to operation health summaries.
+- `status --all` subcommand (`cloud/cli.py:72`) lists active tmux sessions — exactly the "what is running?" query the Discord Operator needs.
+- `supervise --chain` (`cloud/cli.py:120–130`) is a one-shot supervision tick that reads state, inspects sessions, and can advance chains. This is the Guardian's core loop in miniature — already working.
+- `ActivePhase`, `PlanMeta`, `HistoryEntry` TypedDicts (`types.py:60–115`) provide granular state tracking the Guardian can consume.
+
+**Needs extraction/generalization:**
+- `supervise` is chain-scoped, not operation-registry-scoped. Must widen to iterate all active operations.
+- Status is currently fetched on-demand via SSH exec. A Guardian daemon needs a local polling loop, not per-invocation SSH. Consider running the supervisor *on* the remote machine (systemd service) rather than from the laptop.
+- No health summary aggregation exists — each plan is inspected independently.
+
+**Verdict:** ~55% exists. The supervision logic and status payloads are strong foundations. The loop scope and locality need rethinking.
+
+---
+
+## 5. Attach / Stop / Restart
+
+**Reusable directly:**
+- `attach` CLI + Provider method (`base.py:100`, `ssh.py:141–145`) provides the interactive PTY path.
+- `attach --session` (`cloud/cli.py:80`) already accepts session name overrides — this is the parameterization AgentBox needs.
+- `down` (container stop) and `destroy` (container remove + cleanup) exist as coarse-grained lifecycle controls.
+
+**Needs extraction/generalization:**
+- `attach()` must work with the new session naming scheme (not hardcoded `agent`).
+- No `stop` or `restart` commands exist at the operation level. `down` stops the entire container. Need per-session `tmux kill-session -t <op>` and a safe restart path (check for in-flight git operations before restarting).
+- The AgentBox proposal requires Guardian-driven auto-restart when "the operation type has a known-safe restart path." This policy engine doesn't exist yet — it's new logic, not extraction.
+
+**Verdict:** ~35% exists. Attach is mostly there. Stop/restart are new surface area built on existing SSH transport.
+
+---
+
+## Missing Pieces (Not in Megaplan Cloud)
+
+| Piece | Gap |
+|---|---|
+| Multi-repo worktrees | Cloud mode uses single workspace checkout; `worktree.py` + `--in-worktree` exist but aren't wired into cloud paths |
+| Guardian daemon loop | Only one-shot `supervise` exists; needs systemd service + polling cadence |
+| Discord Operator | Entirely new; needs Discord bot + operation registry query surface |
+| Credential sync system | Referenced but not in provided excerpts (Codex OAuth seed logic exists) |
+| Agent adapters (codex, claude, subagent, shell) | Cloud only knows megaplan chain/plan |
+| Safety/approval engine | `DriverOutcomeStatus.awaiting_human` exists as a state value but no approval queue or blocking logic |
+
+---
+
+## Risks & Gotchas
+
+1. **Container vs. bare-metal tmux:** SSH provider wraps everything in `docker exec`. AgentBox proposes direct tmux on the host. If the host runs Docker, the existing commands work as-is. If bare-metal, drop the `docker exec` wrapper — the SSH transport itself is unchanged.
+
+2. **Session name collisions:** Current naming uses `{slug}-{digest[:8]}` — 8 hex chars. With many concurrent operations (different kinds, different repos), this may collide. The `op-{date}-{id}` scheme is safer.
+
+3. **Supervision locality:** Running Guardian from the laptop via periodic SSH exec accumulates latency and risks disconnection. Run it as a systemd timer/service *on the remote machine*, using the same Python code but invoked locally.
+
+4. **Log path migration:** Existing cloud deployments write to `.megaplan/cloud-chain-{session}.log` inside the workspace. AgentBox proposes `/workspace/runs/<op>/log.txt`. Backward compatibility or migration path needed if coexisting.
+
+5. **State file fragmentation:** Chain state (`chain_state.json`), session markers, and plan state are separate files with no unified index. The operation registry must aggregate these without duplicating data.
+
+---
+
+## Recommended First Implementation Slice
+
+**Slice: Single-repo operation registry + parameterized attach/status/logs**
+
+1. Build the operation registry as a JSON-file-per-operation store at `/workspace/operations/{op_id}.json`, seeded from existing `ChainLaunchContext` fields plus new `kind`, `source`, `status` fields.
+2. Parameterize `SshProvider.attach()` to accept session name (trivial — already has `--session` in CLI).
+3. Add `stop` (tmux kill-session) and `restart` commands to the SSH provider.
+4. Switch log reading from `docker logs` to `tail -f /workspace/runs/<op>/log.txt`.
+5. Extend `status --all` to query the operation registry, not just tmux session lists.
+6. Ship a `supervise` loop that iterates the registry, checks tmux liveness, and updates status — the Guardian's first heartbeat.
+
+This slice reuses SSH transport, status payloads, log redaction, session naming, and the provenance dictionary. It delivers multi-operation visibility on the existing infrastructure without requiring worktree support, Discord, or multi-repo — which come in slices 2 and 3.

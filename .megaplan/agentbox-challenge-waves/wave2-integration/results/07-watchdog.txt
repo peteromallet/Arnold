@@ -1,0 +1,188 @@
+I now have enough from the extensive inventory to give a thorough analysis. Let me map the exact overlaps, risks, and seams based on the code surface inventory provided.
+
+---
+
+# AgentBox Watchdog Integration: System-Fit Verdict
+
+## 1. Verdict: **FIT WITH EXTRACTION**
+
+The watchdog engine (`watchdog/discovery.py`, `registry.py`, `retry.py`, `repair_runner.py`, `snapshot.py`) maps structurally onto Guardian's tick loop. The core loop of *scan → snapshot → classify → repair → retry → recheck* is the same. But two extraction seams are missing, and one duplicate-loop conflict must be resolved before integration.
+
+---
+
+## 2. Existing Functionality That Should Be Reused (not rewritten)
+
+| Existing code | Why reuse | How |
+|---|---|---|
+| **`watchdog/retry.py` — `RetryLoop`, `RetryOutcome`** | Retry-with-cap logic already exists; Guardian's "retry cap" is the same concern. | Import directly into Guardian's tick. Do not reimplement retry counting. |
+| **`watchdog/snapshot.py` — `build_snapshot`** | The pattern of building a point-in-time state picture from events + live state is exactly what Guardian needs per-operation. | Generalize to accept an operation-id + operation record instead of only a plan directory. |
+| **`watchdog/repair_runner.py` — `RepairRunner`** | The repair-dispatch mechanic (try safe path → classify failure → escalate) is the Guardian's core behavior. | Wrap `RepairRunner` as Guardian's default repair engine. Extend it with new repair kinds (credential, merge-conflict, product-decision). |
+| **`watchdog/tmux_scan.py`** | Tmux liveness detection (`tmux has-session`) already exists here and in `cloud/cli.py`. Duplicated concern across files. | Consolidate tmux liveness into one module called by both watchdog and Guardian. |
+| **`cloud/supervise.py` — `cloud_supervise_tick`** | One-shot chain supervision: classify, restart dead tmux, resume stalled chains. This *is* the `megaplan_chain` Guardian plugin body. | Wrap it as `GuardianPlugin.megaplan_chain.tick()` — the plan already states this correctly. |
+| **`observability/fold.py` — `read_events`, `fold_events`** | Reads `events.ndjson`, replays state snapshots. Guardian needs this to understand chain state without parsing raw logs. | Import directly; no changes needed. Already pure and well-scoped. |
+| **`scripts/simulate_watchdog_end_to_end.py`** | An integration test that exercises repair → relaunch → recheck. Guardian needs the same verification pattern. | Extend to test Guardian's operation-registry-based loop. Keep the same simulation harness. |
+
+---
+
+## 3. Missing Seams or Incompatibilities (with exact inventory evidence)
+
+### Seam A: Watchdog scans plan directories; Guardian must scan the operation registry
+
+**Evidence:** `scripts/megaplan_live_watchdog.py:25` imports `DEFAULT_SCAN_ROOTS` from `watchdog/discovery.py`. The watchdog walks local directories looking for `state.json`/`events.ndjson` files.
+
+**Problem:** Guardian has no plan directories to walk. It has an operation registry (which doesn't exist yet). The discovery layer hardcodes its scan target.
+
+**Required extraction:** `discovery.py` needs an `OperationSource` abstraction:
+```python
+# Current (hardcoded to filesystem):
+DEFAULT_SCAN_ROOTS = [...]  # plan directories
+
+# Needed:
+class OperationSource(Protocol):
+    def list_active_operations(self) -> list[OperationRef]: ...
+    def read_state(self, op: OperationRef) -> dict: ...
+    def read_events(self, op: OperationRef) -> list[dict]: ...
+```
+
+Without this seam, Guardian either rewrites discovery (losing the watchdog) or the watchdog and Guardian diverge in what they scan (creating the duplicate-loop risk).
+
+### Seam B: `WatchdogRegistry` vs `OperationRegistry` — two registries, overlapping schemas
+
+**Evidence:** `watchdog/registry.py` exports `Observation` and `WatchdogRegistry`. `DEFAULT_REGISTRY_PATH = "~/.megaplan/watchdog/registry.ndjson"` in `megaplan_live_watchdog.py:33`.
+
+**Problem:** The watchdog has its own persistent registry (ndjson file) for tracking what it found. The AgentBox plan calls for an operation registry (JSON or SQLite). If both exist, they will diverge on the same plans — the watchdog's `Observation` record and the operation registry's operation record will fight over who owns the status field.
+
+**Required extraction:** Either:
+- (A) The operation registry **is** the watchdog registry, promoted from ndjson to the chosen backend. The watchdog's `Observation` schema becomes the operation record schema.
+- (B) The watchdog's registry becomes a read-through cache of the operation registry, with the operation registry as the single source of truth.
+
+Option A is simpler for v0. The existing `Observation` record already has fields that map to operation records.
+
+### Seam C: Two repair engines with no shared policy
+
+**Evidence:** `watchdog/repair_runner.py` exports `RepairRunner`. `cloud/supervise.py` has its own restart logic (`_tmux_chain_restart_command` called at lines 479, 546, 678). `scripts/simulate_watchdog_end_to_end.py:161-166` writes synthetic events then calls the watchdog.
+
+**Problem:** The watchdog's `RepairRunner` and `cloud_supervise_tick` both try to restart dead tmux sessions, but they don't coordinate. If both run (see Seam D below), they could restart the same chain twice, or one could kill a session the other just started.
+
+**Required extraction:** A single `RepairPolicy` that both the watchdog (via RepairRunner) and Guardian (via cloud_supervise_tick wrapper) consult. The policy defines: max-restarts-per-hour, min-cooldown-between-restarts, and which repair actions are exclusive (only one actor may perform them at a time). The operation registry provides the coordination point via `last_check` and `status` fields.
+
+### Seam D: Duplicate scheduling loops — the concrete conflict
+
+**Evidence:** Three scheduling mechanisms exist in the inventory:
+1. **`megaplan_live_watchdog.py`** — CLI script intended to be run periodically (cron/systemd timer)
+2. **`resident/scheduler.py`** — `claim_due_scheduled_jobs`, `list_scheduled_jobs` in `store/base.py` — the resident runtime's own scheduler
+3. **AgentBox Guardian** — the proposed periodic loop
+
+**Problem:** If all three run on the same machine, you get three independent loops all inspecting the same plans/operations, each with its own repair logic. The `scripts/simulate_watchdog_end_to_end.py:216` explicitly tests "repair + 10s recheck" — a recheck window. If Guardian also rechecks in a different window, they race.
+
+**Required resolution:** Guardian must **own** the cadence. The watchdog script becomes a library imported by Guardian, not a competing daemon. The resident scheduler should be limited to non-Guardian jobs (e.g., daily briefing, credential health checks). This is partially stated in the plan ("do not run a separate watchdog daemon beside Guardian") but the resident scheduler conflict is not addressed.
+
+### Seam E: `events.ndjson` is per-plan, not per-operation
+
+**Evidence:** `observability/events.py:3` — "Every plan gets one `events.ndjson` file in its plan directory." `observability/fold.py:18` — `_NDJSON_FILE = "events.ndjson"`. The file lives at `plan_dir/events.ndjson`, not at `operation_run_dir/events.ndjson`.
+
+**Problem:** The AgentBox plan places `events.ndjson` at `/workspace/runs/op-123/events.ndjson` — per-operation, not per-plan. But the existing watchdog and fold code reads `plan_dir/events.ndjson`. If an operation's worktree lives at `/workspace/worktrees/op-123/megaplan`, the events file at `/workspace/runs/op-123/events.ndjson` won't be found by existing `read_events(plan_dir)` calls.
+
+**Required extraction:** Either:
+- Copy/mirror events to the plan directory (wasteful, fragile), or
+- Parameterize `read_events` to accept an explicit events path (small change to `fold.py:21`), or
+- Symlink `plan_dir/events.ndjson` → `/workspace/runs/op-123/events.ndjson` (brittle with worktree cleanup).
+
+The least-invasive path: add an `events_path` parameter to `read_events` with the current plan-dir behavior as default.
+
+---
+
+## 4. Exact Plan Changes Recommended
+
+### Change 1: Promote watchdog to a Guardian library, not a competing process
+
+Add to the Guardian section of the plan:
+
+> Guardian's tick loop imports from the watchdog package:
+> - `build_snapshot(watchdog/snapshot.py)` to construct per-operation health pictures
+> - `RetryLoop` / `RetryOutcome` (`watchdog/retry.py`) for retry counting
+> - `RepairRunner` (`watchdog/repair_runner.py`) as the default repair dispatcher
+> - `Observation` / `WatchdogRegistry` (`watchdog/registry.py`) — either promoted to the operation registry schema or aliased
+>
+> The `scripts/megaplan_live_watchdog.py` CLI becomes a thin wrapper that instantiates Guardian for a single tick. It does not run as an independent daemon.
+
+### Change 2: Add an `OperationSource` abstraction
+
+Add to Phase 3 (Operation Registry):
+
+> Before Guardian v0, extract the watchdog's discovery layer to accept an `OperationSource`:
+> ```python
+> class OperationSource(Protocol):
+>     def list_active(self) -> list[str]: ...        # operation ids
+>     def get_record(self, op_id: str) -> dict: ...
+>     def get_events(self, op_id: str) -> list[dict]: ...
+> ```
+> The file-backed implementation reads the operation registry. The watchdog's existing directory scanner becomes `FileSystemPlanSource`, used only for standalone watchdog invocations.
+
+### Change 3: Resolve the `events.ndjson` path conflict
+
+Add to Phase 3:
+
+> `read_events(plan_dir)` in `observability/fold.py` must accept an optional `events_path` parameter. When Guardian reads events for an operation, it passes `/workspace/runs/<op-id>/events.ndjson`. When called from existing plan-scoped code, the plan-dir default applies.
+
+### Change 4: Add resident scheduler scope restriction
+
+Add to Phase 5 (Guardian Daemon):
+
+> The existing resident scheduler (`resident/scheduler.py`) must be scoped to non-Guardian jobs only: daily briefing, credential health checks, cleanup reminders. It must not claim, inspect, or repair operations that Guardian owns. This is enforced by a job-kind allowlist in Guardian's config.
+
+### Change 5: Add an explicit duplicate-loop prevention test
+
+Add to Phase 5:
+
+> **Acceptance test:** Run the watchdog CLI (`megaplan_live_watchdog.py`) and Guardian simultaneously against the same operation. Verify that only one actor performs any repair action. The operation registry's `last_check` field and a file-level lock (`fcntl.flock`, already used in `observability/events.py` for `.events.seq`) must serialize repair access.
+
+### Change 6: Watchdog registry migration path
+
+Add to Phase 3:
+
+> If the watchdog's `WatchdogRegistry` (ndjson at `~/.megaplan/watchdog/registry.ndjson`) contains existing records, AgentBox must either:
+> - (v0) ignore it and start fresh with the operation registry, or
+> - (v0.1) migrate existing watchdog observations into operation records
+>
+> Running both registries in parallel is disallowed. The operation registry is the single source of truth.
+
+---
+
+## 5. Things Already Correctly Handled
+
+1. **Guardian should wrap `cloud_supervise_tick`, not rewrite it.** The plan correctly identifies this as the `megaplan_chain` plugin body. The supervise module already handles dead tmux restart, chain resumption, and status classification. This is the right reuse boundary.
+
+2. **Discord Operator should reuse `ResidentDiscordService` and the resident runtime.** The plan correctly identifies the existing `resident/discord.py`, `resident/runtime.py`, `resident/auth.py` as the shell for the Operator. Building a fresh bot would duplicate the message parsing, conversation keys, allowlists, turns, and tool calls already built.
+
+3. **Worktree isolation should reuse `bakeoff/worktree.py`.** The existing `validate_worktree_name`, `create_named_worktree`, `remove_worktree` and dirty-state carry helpers are the right primitives. The plan correctly identifies that the extraction needed is path/scoping generalization, not a rewrite.
+
+4. **Credential seeding should generalize `seed_codex_oauth()`.** The plan correctly identifies the pattern in `cloud/auth.py` and proposes `SecretSpec` as the generalization. This avoids dumping environment variables.
+
+5. **Guardian and Discord Operator should be separate processes.** The plan correctly identifies that the Discord service owns an asyncio loop while Guardian is periodic. Sharing the operation store without process coupling is the right architecture.
+
+6. **The operation registry is the center.** The plan correctly identifies that the missing piece is a unified operation record tying together id, kind, repo, worktree, tmux session, log path, status, approvals, Discord refs, and PR metadata. Everything else wraps around this.
+
+7. **Approvals should be rare and focused.** The plan correctly limits approvals to merge, cleanup, credentials, product decisions, and quality debt. The existing `resident/auth.py` confirmation manager already supports this pattern.
+
+8. **Live watchdog E2E test exists.** `scripts/simulate_watchdog_end_to_end.py` already exercises the repair → relaunch → recheck flow that Guardian needs. This is a ready-made integration test harness.
+
+---
+
+## Code-Inspection Tasks to Add to the Plan
+
+These are questions the inventory cannot answer and must be resolved by reading the actual source:
+
+1. **Read `watchdog/repair_runner.py`** to confirm whether `RepairRunner` assumes plan-directory scope or can accept an arbitrary operation context. If it hardcodes `plan_dir` path construction, note the exact lines that need parameterization.
+
+2. **Read `watchdog/registry.py`** to confirm the `Observation` record schema. Map each field to the proposed operation record and identify gaps (missing `discord_refs`, `pr_metadata`, `approvals` fields).
+
+3. **Read `resident/scheduler.py`** to confirm whether scheduled jobs can be scoped by kind. If the scheduler processes all jobs indiscriminately, note the exact dispatch point where a job-kind filter must be inserted.
+
+4. **Read `cloud/supervise.py:172-200`** (`cloud_supervise_tick` signature and first 30 lines) to confirm the parameters needed. If it requires a provider object (SSH/Railway) that wouldn't exist in a local AgentBox context, note the coupling point.
+
+5. **Read `bakeoff/worktree.py`** to confirm hardcoded path assumptions (`~/Documents/.megaplan-worktrees`). Note every line that constructs absolute paths so the extraction can parameterize the worktree root.
+
+---
+
+**Bottom line:** The watchdog fits as a Guardian plugin — but only if the duplicate-loop conflict is resolved (Guardian owns the cadence, watchdog runs as an imported library, not a competing daemon) and the three extraction seams (discovery target, registry schema, events path) are parameterized before integration. The plan gets the architectural direction right but needs the six specific changes above to avoid the concrete collision between the watchdog's plan-directory world and Guardian's operation-registry world.

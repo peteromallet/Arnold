@@ -1,0 +1,71 @@
+# Smallest Interaction to Start Useful Work
+
+**Direct answer:** A single natural-language Discord message describing the task, with no required flags, slash commands, or operation-kind selection. E.g., `"fix the cloud ssh provider"` or `"run this chain: briefs/agentbox/chain.yaml"`.
+
+The Operator resolves repos, picks the right operation kind, creates the operation record, and replies with an operation id and estimated scope.
+
+---
+
+## Rationale
+
+The plan is explicit that this is a **single-user, Discord-first** system and that "the user should not need to know the exact CLI command most of the time. The Operator can choose the right Megaplan/ticket/epic/chain command from the message."
+
+From first principles, the value proposition of AgentBox is that Peter delegates cognitive overhead to the machine. If Peter must already know whether something is a `megaplan-chain`, a `codex` run, or a `shell` command, and must specify `--repo megaplan --kind megaplan-chain --spec briefs/foo/chain.yaml`, then AgentBox has failed at its core job: the Discord Operator is just a thin CLI-over-chat wrapper, not a reasoning agent.
+
+The smallest defensible interaction is therefore a **free-form task description** in a single Discord message. The Operator (an LLM with AgentBox tools) does the disambiguation:
+
+| Message | Operator inference |
+|---|---|
+| `"fix the cloud ssh provider"` | Looks up related tickets/chains, picks `megaplan-chain` or `codex`, selects `megaplan` repo |
+| `"run this chain: briefs/agentbox/chain.yaml"` | Recognizes explicit chain path, uses `megaplan-chain` kind |
+| `"what is running?"` | Calls `status` tool, no operation created |
+
+The plan's revised first-slice Operator tools (`ticket_new`, `chain_create`, `chain_launch`, `status`, `logs`, `guardian_check`, `creds_test`) exist behind the scenes, not as commands Peter types.
+
+---
+
+## Existing Mechanics This Depends On
+
+1. **Resident Discord runtime** (`arnold_pipelines/megaplan/resident/discord.py`, `runtime.py`, `auth.py`) — message parsing, inbound/outbound events, conversation keys, allowlists. This already exists and provides the message-receive-to-agent-turn pipeline.
+
+2. **Megaplan worktree helpers** (`bakeoff/worktree.py`) — the Operator doesn't need Peter to specify a repo if it can infer one from task context or use a default. The worktree service creates the isolation.
+
+3. **Chain spec format** — chain YAML files with milestone order, failure behavior, and repo references already carry enough metadata for the Operator to launch without Peter spelling everything out.
+
+4. **Ticket/epic system** — for requests like `"add a ticket about cleanup"`, the Operator has existing `ticket_new` primitives.
+
+---
+
+## Risks and Caveats
+
+**Ambiguity is the main risk.** If Peter types `"fix the bug"` with no context, the Operator has nothing to route on. The plan accounts for this implicitly: the Operator "asks a concrete follow-up" when it can't resolve the request. The floor isn't a single message — it's a single message *or* one clarification exchange. That's still far smaller than knowing CLI taxonomy.
+
+**Repo disambiguation** — with many repos on the box, some messages won't be self-disambiguating. The Operator should default to `megaplan` (the home repo) when no other repo is clearly indicated, and confirm if the inference might be wrong.
+
+**One-time setup is a prerequisite, not part of "starting work."** Before any task messages work, Peter must have:
+- Bootstrapped the box (`agentbox bootstrap`)
+- Added repos (`agentbox repo add`)
+- Pushed credentials (`agentbox creds push`)
+
+These are setup steps, not per-task friction. The design should make them one-time and verifiable (`agentbox status` confirming all repos synced, creds healthy).
+
+**Credential expiry** — a single message won't start work if a needed credential is missing. The Operator should detect this during operation preparation and surface a specific message: `"Missing Codex auth. Run: agentbox creds push"`. This is a fault, not normal interaction design.
+
+---
+
+## One Concrete Design Implication
+
+**The Discord Operator must carry a repo-and-operation-kind router as its first reasoning step, before any tool call.**
+
+This means the Operator's agent prompt needs a structured preamble:
+
+```
+When you receive a user message:
+1. Classify intent: [status_query, ticket_only, chain_launch, code_run, shell_run, cleanup, approval]
+2. If launching work, infer the repo(s). Default to megaplan unless specified or obvious.
+3. If launching work, pick the operation kind. Prefer megaplan-chain when a chain spec exists.
+4. If anything is ambiguous (repo, kind, spec path), ask ONE clarifying question.
+5. Otherwise, create the operation and reply with the operation id.
+```
+
+This routing step is the design heart of "smallest interaction." Without it, the Operator is a CLI parser. With it, Peter sends intent and gets action.

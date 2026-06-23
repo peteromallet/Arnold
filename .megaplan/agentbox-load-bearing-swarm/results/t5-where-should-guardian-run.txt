@@ -1,0 +1,49 @@
+## Direct Answer
+
+**Guardian should run locally on the AgentBox machine** — the Hetzner VM — as a systemd service or long-lived daemon process, directly on the host, not inside a container or via SSH from the laptop.
+
+---
+
+## Rationale
+
+**1. Topology demands co-location.** Guardian's job is to inspect tmux session liveness, read local log files, check process health, and access the operation registry. Every one of those resources lives on the AgentBox filesystem (`/workspace/runs/<op>/log.txt`, `/workspace/manager/agentbox.db`, tmux socket). Running Guardian anywhere else means tunneling all of that access over SSH, adding latency, fragility, and credential surface.
+
+**2. The plan explicitly calls this out.** Key Finding #4 states: *"SSH transport exists, but AgentBox should run locally on the box. Current SSH provider often wraps commands in Docker. AgentBox needs a local execution path for Guardian running on the Hetzner host."* The design intentionally separates bootstrap/remote-control SSH (from the laptop) from the resident supervision loop (on the box).
+
+**3. Decouple from laptop availability.** Guardian is meant to run on a fixed cadence — every 5–15 minutes, 24/7. If Guardian ran on the user's laptop, it would lose coverage whenever the laptop sleeps, disconnects, or shuts down. The entire value proposition of a persistent remote machine collapses if the supervisor requires the laptop to be online.
+
+**4. Separate process from Discord Operator.** The plan recommends Guardian and Discord Operator be *"separate systemd services sharing the same operation store to avoid event-loop coupling."* The Discord service owns an asyncio client loop; Guardian is a periodic batch supervisor. Both run on the box, but as distinct services.
+
+**5. Simple failure domain.** Guardian restarts via systemd. Its liveness is independent of tmux sessions, agent processes, or the Discord bot loop. If the box itself dies, nothing runs anyway — but if any single component fails, systemd restarts it.
+
+---
+
+## Existing Mechanics This Depends On
+
+- **Systemd** — Guardian v0 is explicitly scoped as a systemd service. The bootstrap phase installs systemd services for both Guardian and Discord.
+- **Operation registry** — Guardian reads/writes the operation store (SQLite at `/workspace/manager/agentbox.db`). This is local-first; there is no remote DB or API layer.
+- **Tmux socket** — Guardian attaches/inspects tmux sessions on the local machine. This is a local Unix socket operation.
+- **`cloud/supervise.py` and watchdog code** — Guardian wraps these as plugins, calling them in-process or as subprocesses on the same host.
+- **Megaplan Cloud SSH provider** — used only for bootstrap and laptop→box remote control, *not* for Guardian's runtime path.
+
+---
+
+## Risks or Caveats
+
+1. **Resource contention.** Guardian loops are cheap (state checks, log tails), but if the box is under memory/CPU pressure from running agents, Guardian must still be able to run. Mitigation: keep Guardian lightweight; add resource-pressure detection to its health checks.
+
+2. **Single point of failure.** If the box goes down, both Guardian and all operations go down. That's acceptable for a single-user system — the box *is* the domain. Guardian restarts with systemd on reboot and re-scans the operation registry, so it recovers automatically.
+
+3. **Guardian cannot self-diagnose during catastrophic failure.** If the box has disk-full or OOM conditions, Guardian may also fail. Mitigation: ensure systemd restarts it, and the Discord Operator (separate process) can still report the outage if it survives.
+
+4. **Bare-repo worktree liveness.** Guardian needs to handle bare repos (`/workspace/repos/*.git`) correctly when checking branch/worktree state — current Megaplan worktree helpers may assume a normal checkout.
+
+---
+
+## Concrete Design Implication
+
+**Guardian must be a local-first, zero-network supervisor for its core loop.** The Guardian should not call any external API or remote service to decide whether an operation is alive. It reads the local operation registry, checks local tmux sessions, tails local log files, and classifies locally. External calls (Discord notifications, DeepSeek subagent diagnostics, GitHub PR status checks) are *actions taken after classification*, not dependencies of the classification itself. This means:
+
+- `agentbox guardian check` (the tick function) should complete with zero network I/O in the happy path.
+- Network-dependent enrichment (PR CI status, subagent repair) should be fire-and-forget or queued, not block the tick loop.
+- The design ensures Guardian stays responsive even when Discord, GitHub, or LLM APIs are degraded.

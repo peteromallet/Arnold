@@ -1,0 +1,47 @@
+## Direct Answer
+
+The persistence subsystem should be **Megaplan's existing store layer** (`store/base.py`), with the operation registry built as a new store type on that foundation. The plan already identifies this: *"The store layer is a strong candidate for operation registry persistence, or at least the model to copy."* The first-slice recommendation reinforces it: *"AgentBox operation registry, backed by existing store patterns."*
+
+## Rationale
+
+The store layer is the right choice because it already solves the three hard problems the operation registry introduces:
+
+1. **Concurrent access.** The Guardian (periodic daemon) and the Discord Operator (event-driven agent) both read and write the same operation records. The store layer already mediates this pattern — it handles resident conversations, scheduled jobs, cloud runs, and events concurrently. Duplicating this with raw file I/O or a bespoke SQLite wrapper would recreate solved problems.
+
+2. **Structured state with metadata.** An operation record isn't a flat log line. It's a typed object with `id`, `kind`, `repos`, `worktrees`, `branch`, `tmux_session`, `log_path`, `status`, `last_check`, `pending_approvals`, `discord_refs`, and `metadata`. The store layer already serializes and deserializes structured state objects with metadata envelopes. Chain state, cloud session markers, and resident conversations already flow through this layer.
+
+3. **Backend flexibility.** The open design decision (#2) asks SQLite or files. The store layer abstracts this — `store/base.py` presumably defines an interface that file and DB stores implement. Starting with SQLite (recommended for concurrent Guardian/Discord updates) plus per-operation manifest files for human inspection becomes a backend choice, not an architecture decision.
+
+The alternative — building a standalone operation registry from scratch — would diverge from the plan's explicit reuse philosophy: *"AgentBox should not start as a greenfield system."*
+
+## Existing Mechanics This Depends On
+
+- **`store/base.py`** — the abstract store interface and existing backends (file store, DB store). This is the direct dependency.
+- **Megaplan chain state model** — provides the field shape and status lifecycle that the operation registry should generalize.
+- **Resident conversation storage** — proves the store layer handles the Guardian→Discord Operator write path (Guardian writes a pending approval; Operator reads and acts on it).
+- **Cloud run and session markers** — existing precedent for persisting tmux session IDs, log paths, and remote process metadata through the store.
+
+## Risks and Caveats
+
+1. **Store layer coupling.** If `store/base.py` is tightly coupled to chain semantics (e.g., assumes every record has a chain context), generalizing it to operations of kind `codex`, `claude`, `subagent`, `test`, or `shell` may require refactoring the base interface. The "partial reuse" verdict on the operation registry acknowledges this: *"Good fields exist, but no unified registry."*
+
+2. **Schema evolution.** The operation record will grow fields (PR metadata, Guardian tick history, event streams). If the store layer doesn't support schema migration, field additions become painful. Validate this before committing.
+
+3. **SQLite concurrency.** The plan recommends SQLite for concurrent access, but SQLite's default journal mode serializes writes. For Guardian writing a tick while the Operator reads status, this is fine. If the workload grows to dozens of concurrent operations all updating state, WAL mode or a different backend becomes necessary.
+
+4. **Per-operation manifest files as secondary source.** The plan wants both SQLite and per-operation manifest YAML. If these diverge (crash mid-write, partial update), reconciliation logic is needed. The store layer should be the source of truth; manifest files should be exported views.
+
+## Concrete Design Implication
+
+**The operation registry should be implemented as a new `OperationStore` class that extends the existing store base, not as a standalone module.** This means:
+
+```python
+# Inside arnold_pipelines/megaplan/store/ (or extracted to agentbox/store/)
+class OperationStore(BaseStore):
+    def create(self, op: OperationRecord) -> str: ...
+    def update_status(self, op_id: str, status: str, tick: dict) -> None: ...
+    def list_active(self) -> list[OperationRecord]: ...
+    def get_by_tmux_session(self, session: str) -> OperationRecord | None: ...
+```
+
+The Guardian and Discord Operator then share a single `OperationStore` instance, inheriting whatever backend (SQLite, file, future Postgres) the store layer already supports. This keeps the operation registry inside the existing persistence architecture instead of creating a parallel persistence silo.

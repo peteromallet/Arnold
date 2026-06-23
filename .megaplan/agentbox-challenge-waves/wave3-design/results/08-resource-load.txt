@@ -1,0 +1,46 @@
+# Wave 3 Review: Resource and Concurrency Load
+
+## 1. Verdict: **UNDER-SPECIFIED**
+
+The architecture handles *isolation* well — one worktree per operation, one tmux session per operation, `lock_version` for registry writes. But it has no model for *contention*. For a single-user box that intends to run 5+ concurrent operations plus subagent repair swarms, this is a genuine gap, not a deferred optimization.
+
+---
+
+## 2. The One Most Important Design Pressure
+
+**Subagent spawn storms from Guardian repair loops.**
+
+The Guardian's repair policy says: "launch a repair agent or subagent to diagnose and patch the issue" for non-trivial failures, and "launch a DeepSeek diagnostic subagent for unclear failures." If three chains fail simultaneously (e.g., a shared credential expires, or a remote API is down), Guardian on its next tick could spawn three subagents. Each subagent is itself an LLM-backed process doing git operations, test runs, and analysis. On a 32 GB box, three concurrent DeepSeek/Codex/Claude repair agents plus their chain runners could exhaust memory or CPU. There is no throttle, queue, semaphore, or `max_concurrent_subagents` anywhere in the plan.
+
+The plan acknowledges this implicitly with "optional resource limits later" (sections 6 and 8), but subagent spawning is a *core* Guardian behavior, not an optional feature. The first time Guardian encounters a correlated failure, the box will either OOM or thrash — and Guardian itself may not survive to report it.
+
+Secondary pressures worth noting:
+- **Git worktree concurrency on bare repos**: `git worktree add` on a shared bare repo is not reentrant-safe. Two simultaneous worktree creates can race on `$GIT_DIR/worktrees/` and `$GIT_DIR/index`. The plan mentions bare repos as an "open risk" but only for discovery/removal, not for concurrent mutation.
+- **Guardian sequential bottleneck**: If Guardian checks 20 operations serially and each check takes 15+ seconds (log reads, git status, chain state inspection), the 5-minute cadence slips. The plan doesn't address parallel inspection or staggered scheduling.
+
+---
+
+## 3. Concrete Plan Change
+
+Add a **concurrency budget** to the operation registry and Guardian. Not a scheduler framework — just two hard limits:
+
+```yaml
+# agentbox.yaml
+concurrency:
+  max_active_operations: 16      # hard cap on running ops
+  max_concurrent_subagents: 3    # hard cap on repair/diagnostic subagents
+```
+
+Guardian must check both before launching a repair subagent. If the subagent budget is exhausted, Guardian records the failure as `awaiting_capacity` and retries on the next tick rather than spawning anyway. This prevents storm cascades without adding a queue, priority system, or enterprise ceremony.
+
+For git worktree safety, add a **per-repo advisory lock** (a simple `fcntl.flock` on `$GIT_DIR/agentbox.lock` or equivalent) around worktree create/remove operations. This is ~5 lines of Python and prevents the most common bare-repo race without touching git internals.
+
+---
+
+## 4. What I Would Explicitly Avoid Adding
+
+- **cgroups, container runtimes, or process sandboxing.** Tmux session isolation is sufficient for a single-user box. Resource limits can be soft caps in the config, not kernel-enforced.
+- **A priority queue or weighted fair scheduler for operations.** Peter is the only user. If something is urgent, he can stop other operations from Discord.
+- **Per-operation CPU/memory profiling or metrics dashboards.** The daily briefing's machine-health summary (disk, memory, stale worktrees) is the right granularity.
+- **Kubernetes, Nomad, or any orchestrator.** The plan already says "do not force the full resident-machine model into Railway's persistent-container model." Same applies here. systemd services for Guardian and Discord Operator, plus the concurrency budget above, is the right ceiling.
+- **Multi-tenant isolation primitives.** No user namespaces, no network policies, no quotas per "project." The repo/worktree boundary is the right isolation unit.

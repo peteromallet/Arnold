@@ -1,0 +1,201 @@
+# Wave 1 UX Challenge Review: Ticket Epic Megaplan Chain Intent
+
+## 1. Verdict
+
+**FITS WITH CHANGES**
+
+The architecture is sound. The operation registry, Guardian loop, worktree isolation, and reuse of existing Megaplan cloud/chain mechanics all hold. But the Discord Operator's intent classification — the load-bearing path that turns Peter's natural-language messages into the correct tool calls — is **underspecified in ways that will produce misclassifications and silent failures at first contact**. Five material gaps require additions to the plan, not redesign.
+
+---
+
+## 2. Top 5 Material Gaps
+
+### Gap 1 — No intent classification specification exists
+
+**What the plan says:** "The Operator decides whether the request is a ticket, a Megaplan, an epic, a chain launch, a status question, or a maintenance task." It lists example user messages and a set of Operator tools. Period.
+
+**What's missing:** There is zero specification for *how* the Operator makes that decision. No classification system prompt. No routing rules. No few-shot examples mapping sample messages → tool calls. No fallback behavior when intent is ambiguous.
+
+**Why it matters:** This is the first thing that happens on every Discord message. If the Operator misclassifies "set up a megaplan for fixing the cloud ssh provider and run it" as a ticket instead of a chain-create-then-launch, the system silently does the wrong thing. The plan's own failure standard (H10: "The system should say what failed, what it tried, what evidence it used, and what exact decision/input it needs") cannot apply because the Operator won't know it misclassified. The error is invisible until the user notices nothing ran.
+
+---
+
+### Gap 2 — No `epic` tool exists in the Operator profile
+
+**What the plan says:** The user journey expects "set up an epic for AgentBox Guardian v0" to work. The Operator tool list is: `ticket_new`, `chain_create`, `chain_launch`, `status`, `logs`, `guardian_check`, `creds_test`. No epic tool.
+
+**What's missing:** The plan says "Chains as the epic execution backbone" and "Chain specs already express milestone order," which *implies* `chain_create` should handle epics. But that mapping (`"epic" → chain_create with epic semantics`) is never stated. An Operator without this mapping will see the word "epic," find no `epic_create` tool, and either fail or guess.
+
+**Why it matters:** The user will say "epic." The plan's own A3 answer says "sequenced multi-milestone work → chain/epic" — acknowledging both terms exist. If the answer is "use `chain_create` for epics," the Operator profile must say so explicitly. If the answer is "epic is a distinct entity from chain," a tool is missing. Either way, the current plan leaves the Operator to guess.
+
+---
+
+### Gap 3 — Compound intent "setup and run" has no defined decomposition
+
+**What the plan says:** User message: "set up a megaplan for fixing the cloud ssh provider **and run it**." The tools are discrete: `chain_create` and `chain_launch`.
+
+**What's missing:** No guidance on whether the Operator should:
+- Decompose into sequential tool calls (create, then launch)
+- Ask for confirmation between steps
+- Treat "setup and run" as `chain_launch` with auto-create-if-missing semantics
+- Reject the compound intent and ask the user to split it
+
+**Why it matters:** If the Operator calls only `chain_launch` and the spec doesn't exist, it fails. If it calls only `chain_create`, the user expected work to run and it didn't. The plan's safety model (H2: "Routine operational recovery should be attempted autonomously") doesn't help — this isn't recovery, it's a first-contact classification gap. A compound intent that breaks the tool model is the kind of thing that should be caught in spec, not discovered in production.
+
+---
+
+### Gap 4 — Chain spec path resolution is unspecified
+
+**What the plan says:** User message: "run this chain in megaplan: briefs/agentbox/chain.yaml." The `chain_launch` tool presumably takes a repo and a spec path.
+
+**What's missing:** 
+- Does "in megaplan" mean the `megaplan` repo or the Megaplan tool?
+- Is `briefs/agentbox/chain.yaml` relative to the repo root? The worktree? The user's local checkout?
+- How does the Operator select the repo when the user says "in megaplan" — by name match against the repo registry? By convention?
+- What happens if the path doesn't exist in that repo?
+
+**Why it matters:** This is the most concrete user journey example. If the Operator can't resolve it, the showcase flow breaks. The repo registry exists (Phase 2), the worktree service exists (Phase 3), but the translation from natural language "in megaplan: path/to/spec" → `chain_launch(repo="megaplan", spec="briefs/agentbox/chain.yaml")` is never documented.
+
+---
+
+### Gap 5 — "Maintenance task" is mentioned but never defined
+
+**What the plan says:** "The Operator decides whether the request is a ticket, a Megaplan, an epic, a chain launch, a status question, or a **maintenance task**." The Discord Operator build commands include `cleanup`, `creds test`, `repos`, `summarize`, `stop`, `restart`. But "maintenance" as a classification bucket has no definition, no tool list, and no examples.
+
+**What's missing:**
+- What user messages classify as maintenance? ("clean up old worktrees"? "check disk space"? "sync the repos"?)
+- Which tools are maintenance tools vs. operational tools?
+- Is `cleanup op-123` maintenance, or is it an operational action on a specific operation?
+- Is `creds test` maintenance, or is it its own category?
+
+**Why it matters:** If a user says "clean up old worktrees," the Operator must classify it. Without a definition, it might try to create a ticket, launch a chain, or fail silently. The plan lists `cleanup`, `creds test`, and `repos` as Discord commands but never tells the Operator which intent bucket they fall into or whether "maintenance" is a distinct routing target with its own toolset.
+
+---
+
+## 3. Recommended Plan Changes
+
+### Change 1 — Add an Operator Intent Classification section
+
+Insert after the "Discord Operator" component description (section 9), before "Approval and Safety" (section 10):
+
+```markdown
+### 9b. Operator Intent Classification
+
+The Operator must classify each Discord message into one of six intents before
+dispatching tools. Classification uses the message text, conversation context,
+and the operation registry snapshot.
+
+**Intent table:**
+
+| User says (examples) | Intent | Primary tool | Notes |
+|---|---|---|---|
+| "add a ticket about X", "ticket: Y" | `ticket` | `ticket_new` | Creates a Megaplan ticket. If "to megaplan" or "in epic" is specified, link it. |
+| "set up an epic for X", "create epic Y" | `epic` | `chain_create` with `kind=epic` | Epics are chains with milestone semantics. Use `chain_create`. |
+| "set up a megaplan for X", "plan out Y" | `plan` | `chain_create` with `kind=plan` | A bounded implementation plan. Does NOT run it unless "and run it" is present. |
+| "run this chain", "run megaplan X", "set up a megaplan for X and run it" | `launch` | `chain_create` then `chain_launch` if compound; `chain_launch` alone if spec exists | Compound "setup and run" decomposes into create-then-launch without asking. If create fails, report failure before launching. |
+| "what is running?", "what is blocked?", "show logs for X", "summarize" | `status` | `status`, `logs`, `guardian_check` | Read-only. Never creates or mutates operations. |
+| "clean up X", "sync repos", "creds test", "stop op-N", "restart op-N" | `maintenance` | `cleanup`, `creds_test`, `repo_sync`, `stop`, `restart` | Actions on the machine or existing operations that don't launch new work. |
+
+**Classification rules:**
+
+1. If the message contains "and run it" or "and launch", the intent is `launch` and the
+   Operator decomposes into create + launch.
+2. If the message starts with "what", "show", "list", or "summarize", the intent is
+   `status` unless an action verb follows.
+3. If the message is ambiguous between `epic` and `plan`, default to `plan` and ask
+   "Did you want a bounded implementation plan or a multi-milestone epic?"
+4. If the message is ambiguous between `ticket` and `plan`, default to `ticket` (lower
+   ceremony) and ask if the user wants a plan instead.
+5. If no intent matches, the Operator responds with: "I'm not sure what to do with that.
+   I can: add a ticket, set up an epic, set up a megaplan, run a chain, check status,
+   or do maintenance (cleanup, creds, repo sync)."
+
+**Repo resolution for launch intents:**
+
+- "in megaplan" or "on megaplan" → match against the repo registry by name.
+- If no repo is specified and only one repo exists, use it.
+- If no repo is specified and multiple repos exist, ask which repo.
+- Spec paths (e.g., "briefs/agentbox/chain.yaml") are resolved relative to the
+  selected repo's canonical checkout or bare repo HEAD.
+```
+
+### Change 2 — Add `epic` semantics to the Operator tool profile
+
+In the "Discord Operator" section under "Revised First Product Slice," change:
+
+```
+tools: `ticket_new`, `chain_create`, `chain_launch`, `status`, `logs`, `guardian_check`, `creds_test`;
+```
+
+to:
+
+```
+tools: `ticket_new`, `chain_create` (handles both epics and megaplans via `kind` parameter:
+  `kind=epic` for multi-milestone chains, `kind=plan` for bounded implementations),
+  `chain_launch`, `status`, `logs`, `guardian_check`, `creds_test`, `repo_list`;
+```
+
+And add to the Discord Operator build commands list:
+
+```
+- `epic_create` → delegates to `chain_create(kind=epic)`
+- `plan_create` → delegates to `chain_create(kind=plan)`
+```
+
+### Change 3 — Define maintenance in the Operator profile
+
+In the "Discord Operator" component section, add after the build commands list:
+
+```markdown
+**Maintenance tools (separate from work-launch tools):**
+
+- `cleanup <operation-or-all>` — remove completed worktrees, archive logs, prune branches.
+  Requires confirmation for destructive steps per approval policy.
+- `creds_test` — verify all synced credentials are healthy.
+- `repo_sync [repo]` — fetch latest from remotes for all or specified repos.
+- `repo_status` — show dirty, stale, or unpushed branches across all repos.
+- `stop <operation>` — stop a running operation gracefully.
+- `restart <operation>` — restart a stopped or failed operation if safe.
+
+Maintenance intents are classified by action verbs on machine/repo state
+("clean up", "sync", "check") rather than on work items ("add", "set up", "run").
+```
+
+### Change 4 — Add compound intent handling to the worktree service
+
+In the "Worktree Service" section, add:
+
+```markdown
+**Compound intent support:**
+
+When the Operator receives "set up X and run it", the worktree service must support:
+1. `chain_create` creates the chain spec and returns a spec reference.
+2. `chain_launch` accepts that spec reference and creates the worktree + operation record.
+3. If step 1 fails, step 2 does not execute and the Operator reports the failure.
+
+The Operator should NOT ask "shall I run it?" when the user explicitly said "and run it."
+The compound phrase implies pre-authorized execution per H2/H7.
+```
+
+---
+
+## 4. Things the Plan Already Covers — Do Not Change
+
+| What's covered | Where | Why it's correct |
+|---|---|---|
+| Operation registry as central data model | Section 5, T1, T2 | Unambiguously the load-bearing center. Every agent in the validation swarm converged here independently. |
+| Per-operation worktree + tmux isolation | Section 3, A6 | No shared checkout mutation. Correct and well-specified. |
+| Guardian autonomous repair loop | Section 8, A4, A5, H5 | "Diagnose, try known-safe repair, use subagents for ambiguous failures, only ask Peter when stuck." Exactly right. |
+| Guardian/Operator as separate processes | T6, Key Finding 7 | Discord owns asyncio; Guardian is periodic. Separate services sharing the operation store is the correct architecture. |
+| Completion DM flow | H4, H6, Completion and Approval | "Summary, validation, branch/PR link, and suggested next action." Well-specified and matches user expectations. |
+| Approval gates: merge, destructive cleanup, debt, credentials, product decisions | H7, Section 10 | Narrow and explicit. No ceremony for routine operations. Correct for single-user. |
+| cleanup-loose-branches as consolidation mechanism | H8, Completion and Approval | Survey → recommend land/delete/park → explicit approval for destructive steps. Reuses an existing discipline rather than inventing a new one. |
+| Existing cloud supervise wrapped as megaplan_chain plugin | Key Finding 2, T7 | Do not rewrite `cloud/supervise.py`. Wrap it. This reuse strategy is correct. |
+| Registry-only handoff (no direct IPC) | Validation adjustment 7 | Operator writes; Guardian reads on next tick. No synchronous coupling. Correct and now explicit. |
+| Discord-first, no dashboard for v1 | H9, Validation outcome | The product is conversational. The operation registry supports future UI but v1 doesn't need it. |
+
+---
+
+## Summary
+
+The plan has the right bones: registry, Guardian, worktree isolation, reuse of existing Megaplan mechanics, and a clear single-user approval model. The five gaps are all in the **Operator's intent classification layer** — the thin but load-bearing slice that turns "add a ticket" into `ticket_new` and "set up an epic" into `chain_create(kind=epic)`. Without that specification, the Discord-first UX falls at the first message. The four changes above add the missing classification table, tool mappings, compound intent handling, and maintenance definition without altering the architecture.

@@ -1,0 +1,73 @@
+# How Should the Live Watchdog Fit?
+
+## Direct Answer
+
+The live watchdog (`scripts/megaplan_live_watchdog.py` and `arnold_pipelines/megaplan/watchdog/*`) should be **absorbed into the Guardian's per-tick inspection layer**, not run as a separate process. Specifically, it becomes the **inspection/classification plugin** for `megaplan_chain` operations within the Guardian's tick loop. Guardian queries the operation registry, iterates active operations, and for each `megaplan_chain` operation calls the watchdog logic to detect issues (dead tmux, stalled chains, liveness gaps). The cloud supervisor then handles any safe repair actions the watchdog's diagnosis warrants. This creates a clean **sensors → classifier → actuator** pipeline inside each Guardian tick.
+
+The watchdog should **not** remain a standalone daemon. Running it alongside Guardian creates two processes scanning the same operations with overlapping responsibilities, risking race conditions, duplicate notifications, and inconsistent state. It should be extracted into callable functions that Guardian invokes per-operation.
+
+## Rationale
+
+1. **Single supervisor principle.** The plan explicitly states: "Watchdog plus cloud supervisor as Guardian v0. The live watchdog scans local plans/processes; cloud supervise performs safe one-shot chain actions. Guardian should be an operation-registry loop that calls these existing engines." The watchdog is already identified as the "scan" half and cloud supervise as the "act" half of the same control loop.
+
+2. **Separation of concerns preserved.** The watchdog keeps its scanning/diagnosis expertise. Guardian handles scheduling, registry iteration, and dispatching results to Discord. Cloud supervise handles safe actuation. Nothing is rewritten — the watchdog is composed into a larger loop rather than replaced.
+
+3. **Existing code matches the shape.** The plan documents that the live watchdog "scans local plans/processes" and cloud supervise "performs safe one-shot chain actions." These are already complementary. The missing piece is the operation registry tying them together, which is exactly what Guardian provides.
+
+## Existing Mechanics This Depends On
+
+| Component | Role in the fit |
+|---|---|
+| `scripts/megaplan_live_watchdog.py` | Extracted into callable inspection functions: process liveness check, chain-state staleness detection, log scanning for failure signatures. |
+| `arnold_pipelines/megaplan/watchdog/*` | Same extraction. Likely contains classification heuristics (running vs. stalled vs. blocked vs. failed). |
+| `arnold_pipelines/megaplan/cloud/supervise.py` | Receives watchdog's diagnosis as input and decides safe repair actions (restart, continue chain, escalate to subagent). |
+| Operation registry (to-be-built) | The loop substrate: Guardian iterates it, watchdog inspects per-record state, supervisor updates status fields. |
+| `cloud_supervise_tick()` | The function signature Guardian calls. Watchdog output should flow into this as structured diagnosis data, not raw logs. |
+
+## Risks and Caveats
+
+1. **Local-filesystem assumptions.** The current watchdog likely assumes it runs on the user's laptop with `~/Documents/.megaplan-worktrees` paths and access to the local plans directory. Extraction must parameterize paths for the AgentBox worktree root (`/workspace/worktrees`) and run directory (`/workspace/runs`).
+
+2. **Overlap with cloud/supervise.py.** Both the watchdog and cloud supervise may already contain some overlapping liveness/state checks. Extraction should deduplicate: watchdog owns classification, cloud supervise owns safe-action policy with classification as input.
+
+3. **Process boundary matters.** The watchdog code must not assume it owns an event loop, timer, or notification channel. Those belong to Guardian. Watchdog functions should be pure inspection: input = operation record + filesystem paths, output = structured diagnosis.
+
+4. **Subagent escalation path.** When the watchdog classifies a failure as ambiguous, Guardian should launch a DeepSeek diagnostic subagent (as the plan specifies). The watchdog must produce a clear "ambiguous" signal, not a best-guess fix attempt that could compound errors.
+
+## Concrete Design Implication
+
+The `OperationAdapter` interface defined in the plan (section 7, Agent Adapters) should gain a `diagnose(operation) -> Diagnosis` method. For `megaplan_chain` operations, this method wraps the extracted watchdog inspection logic:
+
+```python
+class MegaplanChainAdapter:
+    def diagnose(self, operation: Operation) -> Diagnosis:
+        # 1. Check tmux session liveness (extracted from live_watchdog)
+        # 2. Read chain state JSON for step progress
+        # 3. Scan tail of log.txt for known failure signatures
+        # 4. Return structured Diagnosis with:
+        #    - status: running | stalled | blocked | failed | completed
+        #    - cause: str | None
+        #    - safe_actions: list[str]  # e.g., ["restart_session", "continue_chain"]
+        #    - needs_subagent: bool
+        #    - needs_approval: bool
+        ...
+
+    def repair(self, operation: Operation, diagnosis: Diagnosis) -> ActionResult:
+        # Dispatch to cloud_supervise based on diagnosis.safe_actions
+        ...
+```
+
+Guardian's tick becomes:
+
+```python
+for op in registry.active_operations():
+    adapter = get_adapter(op.kind)
+    diagnosis = adapter.diagnose(op)
+    if diagnosis.needs_subagent:
+        launch_diagnostic_subagent(op, diagnosis)
+    elif diagnosis.safe_actions:
+        adapter.repair(op, diagnosis)
+    registry.update(op.id, last_check=now(), diagnosis=diagnosis)
+```
+
+This keeps the watchdog's expertise intact, gives it a clean input/output contract, and makes Guardian orchestrator-agnostic to operation kind. The watchdog fits as a **per-kind diagnostic plugin**, not a peer process.

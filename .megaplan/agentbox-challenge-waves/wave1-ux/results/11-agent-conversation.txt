@@ -1,0 +1,185 @@
+# Wave 1 UX Challenge: Discord Operator Conversational Audit
+
+## 1. Verdict
+
+**FITS WITH CHANGES**
+
+The architecture is correct in its bones — separate Operator process, shared operation registry, resident runtime reuse, clear intent-classification model. However, the plan describes a *command-tool agent* and calls it conversational. There are specific, material gaps between "agent that executes tools on Discord messages" and "agent Peter can talk to." These are fillable with targeted additions, not a redesign.
+
+---
+
+## 2. Top Material Gaps (ranked by impact on conversational UX)
+
+### Gap 1: No turn-to-turn conversational memory mechanism
+
+**Why it matters:** The Operator is described as "an on-demand agent launched by Discord messages." Each message may spawn a fresh agent instance. The resident runtime has conversation keys and history concepts, but the plan never specifies that the Operator *loads prior conversation context at start*. Without this, every turn is a stateless command parse:
+
+```
+Peter: "run the megaplan for cloud ssh"
+Bot: "launched op-42"
+
+Peter: "actually use the reigh-app repo not megaplan"
+Bot: "I don't understand. Did you mean /run?"
+```
+
+With context, the Operator knows op-42 was just launched and can amend it. Without, it's a CLI with extra steps.
+
+**The plan says** the Operator "needs conversation history/hot context" (A1) but never says it *will receive it* at spawn time or how that context is assembled.
+
+### Gap 2: No clarify-then-resume pattern for multi-turn conversations
+
+**Why it matters:** The plan covers two uncertainty paths (A10, deviation #1): inspect state first, ask Peter if intent is ambiguous. But there is no mechanism for what happens *after* Peter answers. The Operator needs to:
+
+1. Ask a concrete question.
+2. Record that the question is pending (a conversational state record, not an operation record).
+3. When Peter responds, load the prior turn context, connect the answer to the pending question, and continue.
+
+Without this, "ask Peter directly with concrete options" is a dead end — the Operator fires a question into Discord and the next message starts a fresh, contextless turn. The confirmation manager may partially cover approval flows, but not open-ended clarification.
+
+### Gap 3: Operator profile is a tool list, not a conversational agent profile
+
+**Why it matters:** The plan defines the Operator by its tools (`ticket_new`, `chain_create`, `chain_launch`, `status`, `logs`, etc.) and responsibilities. But being conversational requires more than tools — it requires:
+
+- A system prompt that establishes the Operator as a *resident agent Peter talks to*, not a command dispatcher.
+- Instructions on when to summarize vs. ask vs. act.
+- The ability to explain *why* it chose an action, offer alternatives unprompted, and remember Peter's preferences across turns.
+- Conversational guardrails: tone, verbosity, when to volunteer information vs. wait to be asked.
+
+The plan treats the Operator as `tools + routing`. The desired experience (H1: "Peter should be able to send a natural Discord message") requires `personality + memory + tools + routing`.
+
+### Gap 4: No Discord threading/disambiguation strategy
+
+**Why it matters:** Peter may have multiple concurrent conversations with the Operator — one about an in-progress chain, another about a new ticket, a third about credentials. The plan mentions "Discord conversation/thread/message ids" on operation records but never specifies:
+
+- How the Operator determines which conversation thread a message belongs to.
+- Whether the Operator maintains separate conversational state per thread.
+- What happens when Peter sends a message to the main channel vs. a thread vs. DM.
+
+Without this, concurrent conversations collide, and the Operator cannot maintain coherent multi-topic discussions.
+
+### Gap 5: No Operator-initiated conversation pattern
+
+**Why it matters:** The plan correctly assigns outbound notifications to Guardian (blocked, completed, failed). But a conversational Operator should also be able to:
+
+- Proactively follow up: "Hey Peter, that chain you launched yesterday finished. Want me to push the branch?"
+- Surface options before being asked: "I noticed three completed ops ready for consolidation. Want a cleanup-loose-branches rundown?"
+- Check in on parked work: "You paused op-56 last week. Still relevant?"
+
+The plan's notification model is event-driven from Guardian. The Operator is purely reactive (message in → action out). This is the single biggest difference between "command bot" and "conversational operator" — the Operator should occasionally initiate.
+
+---
+
+## 3. Exact Plan Changes Recommended
+
+### Change 1: Add a Conversation Context Contract (addresses Gaps 1, 2)
+
+Add to the Discord Operator section, before "Build commands":
+
+```markdown
+### Conversation Context
+
+Every Operator turn must receive:
+
+- The current user message.
+- The prior N messages in the same conversation scope (channel/thread/DM).
+- Any pending Operator questions that have not been answered, keyed by conversation scope.
+- A summary of unresolved approval requests and their operation ids.
+
+When the Operator asks Peter a clarifying question, it must persist:
+
+- The question text and timestamp.
+- The conversation scope (channel/thread/DM id).
+- The operation id(s) involved, if any.
+- An expected answer shape (choice, free text, credential, confirmation).
+
+On the next turn in the same scope, the Operator loads this pending state and routes Peter's response to the pending question before classifying it as a new request.
+```
+
+### Change 2: Add an Operator System Profile (addresses Gap 3)
+
+Add as a new subsection under Discord Operator:
+
+```markdown
+### Operator Agent Profile
+
+The Operator is configured as a conversational resident agent, not a command parser. Its system instructions should establish:
+
+- **Identity:** "You are the AgentBox Operator, Peter's on-machine assistant. You live on the Hetzner box and manage repos, worktrees, operations, tickets, and chains. Peter talks to you through Discord."
+- **Conversation stance:** Prefer brief, concrete replies with operation ids. Explain decisions in one sentence when the choice isn't obvious. Volunteer relevant state when asked an open-ended question like 'what's up?'.
+- **Memory expectation:** You have access to recent conversation history and the operation registry. Refer back to what Peter just said or asked. Do not treat each message as a clean slate.
+- **Uncertainty:** If Peter's intent is ambiguous, ask one concrete question with two or three options. If machine state is unclear, inspect logs/registry or launch a diagnostic subagent first.
+- **Initiative:** The Operator is primarily reactive. Guard-initiated notifications (completion, blockage, failure) are delivered by the Guardian. The Operator may surface status on request but should not duplicate Guardian notifications.
+```
+
+### Change 3: Add Thread/Scope Routing (addresses Gap 4)
+
+Add to the Discord Operator build section:
+
+```markdown
+### Conversation Scoping
+
+- Each Discord message is tagged with its scope: DM channel id, guild channel id, or thread id.
+- The Operator maintains separate conversational state per scope.
+- Operation records include the Discord scope where they were launched.
+- When Peter asks "what's running?" or "show logs for that last one," the Operator resolves "that last one" by looking up the most recent operation created in the current scope.
+- The Guardian's outbound notifications use the scope recorded on the operation, or DM if no scope is set.
+```
+
+### Change 4: Clarify Operator Lifecycle (addresses Gap 1)
+
+Add to the Discord Operator section after the responsibilities list:
+
+```markdown
+### Lifecycle
+
+The Operator is not a persistent process. It is an agent turn launched per Discord message. The launch sequence is:
+
+1. Discord resident runtime receives a message.
+2. The runtime assembles turn context: message text, recent conversation history in the current scope, operation registry snapshot for operations tied to this scope, pending questions, and pending approvals.
+3. The runtime spawns an Operator agent turn with this context and the full AgentBox tool profile.
+4. The agent reasons, calls tools, and produces a response.
+5. The resident runtime delivers the response to Discord.
+6. Any pending questions or state changes are persisted before the turn ends.
+```
+
+### Change 5: Expand Tools for Conversational Quality (addresses Gaps 2, 3)
+
+In the Operator's tool list, add two meta-tools:
+
+```markdown
+- `ask_user(question, options, operation_id)` — persist a pending question and return a response that asks Peter. On the next turn in this scope, the question is loaded as active context.
+- `summarize_scope()` — return a concise status of all operations, pending questions, and pending approvals in the current conversation scope. Used by the Operator when Peter asks open-ended questions like "what's happening?"
+```
+
+---
+
+## 4. What the Plan Already Covers (Do Not Change)
+
+| Element | Why it's correct as-is |
+|---|---|
+| **Operation registry as the center** | This is the right load-bearing data model. It tracks machine state perfectly. The gaps are in *conversational* state, which should sit alongside the registry, not replace it. |
+| **Separate Guardian and Operator processes** | Correct architectural decision. Don't couple the event loop. The handoff via registry is sound. |
+| **Resident runtime reuse** | Using `ResidentDiscordService`, `DiscordInboundMessage`, `DiscordOutboundSink`, and existing conversation key management is the right foundation. The gaps are about what context is assembled for the Operator turn, not about the runtime itself. |
+| **Intent classification model** | "The Operator decides whether the request is a ticket, a Megaplan, an epic, a chain launch, a status question, or a maintenance task" — this is correct. The missing piece is that this classification should happen with conversation history, not on each message in isolation. |
+| **Narrow approval gates** | Merge, destructive cleanup, credentials, quality debt, product judgement. Correct. Don't add ceremony. |
+| **"Ask Peter with concrete options"** | The principle is right. The gap is the *mechanism* for asking and resuming, not the principle. |
+| **Completion DM with summary + next step** | Perfect. Don't change this. |
+| **cleanup-loose-branches as consolidation** | Correct. Don't invent a new consolidation system. |
+| **No dashboard, Discord-first, single-user** | These constraints are correct. Don't add multi-user ceremony or UI. |
+| **Megaplan chain as first operation kind** | Correct sequencing. Don't change. |
+| **Guardian bias toward autonomous repair** | Correct. Don't make Guardian ask permission for operational fixes. |
+| **Events.ndjson as operation contract** | Strong callout from validation. Keep this. |
+
+---
+
+## Summary
+
+The plan is a strong machine-operations architecture with a thin conversational layer painted on top. The bones are right. To close the gap between "command bot" and "conversational operator," add:
+
+1. A **conversation context contract** — what the Operator receives at turn start and persists at turn end.
+2. A **pending-question/resume mechanism** — so "let me ask Peter" is a workflow step, not a dead end.
+3. An **Operator system profile** — personality, stance, memory expectations, not just a tool list.
+4. **Conversation scoping** — per-thread/DM state so concurrent conversations don't collide.
+5. **`ask_user` and `summarize_scope` tools** — first-class conversational primitives.
+
+These are ~10 paragraphs of specification, not a subsystem rewrite. The rest of the plan — operation registry, Guardian loop, worktree isolation, credential sync, approval model — is solid and should ship as written.

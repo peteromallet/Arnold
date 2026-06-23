@@ -1,0 +1,207 @@
+Now I have enough to deliver my analysis. The code-surface inventory is substantial even without being able to read the files directly. Let me compile my findings.
+
+---
+
+# AgentBox Worktree Service — Current-System Fit Analysis
+
+## 1. Verdict: **FIT WITH EXTRACTION**
+
+The existing `bakeoff/worktree.py` module already has the correct primitives: `validate_worktree_name`, `create_worktree`, `remove_worktree`, `resolve_ref`, `branch_exists`, `worktree_registered`, and dirty-state carry helpers. These are the right building blocks. The problem is scope — everything is command-scoped (CWD as implicit repo) and single-repo. AgentBox needs machine-scoped, multi-repo, bare-repo-aware variants. The gap is well-defined parameterization, not architecture redesign. The tmux session management in `cloud/cli.py` (`_tmux_chain_launch_command`, `_tmux_chain_restart_command`) and `cloud/supervise.py` (`cloud_supervise_tick`) also directly reusable with session-name parameterization.
+
+**Bottom line**: Extraction, not rebuild. But there are 4 specific conflicts that must be resolved before AgentBox worktree operations will actually work.
+
+---
+
+## 2. Existing Functionality That Should Be Reused
+
+| What | Where | How to reuse |
+|---|---|---|
+| `create_worktree` / `create_named_worktree` | `bakeoff/worktree.py` | Wrap, add `repo_path` + `worktree_root` + `--git-dir` params |
+| `remove_worktree` | `bakeoff/worktree.py` | Wrap for bare-repo awareness |
+| `worktree_registered` (git worktree list parser) | `bakeoff/worktree.py` | Promote to machine-wide listing with repo-name tagging |
+| `resolve_ref` / `branch_exists` | `bakeoff/worktree.py` | Make bare-repo-aware; reuse as-is for regular checkouts |
+| `_tmux_chain_launch_command` | `cloud/cli.py:987` | Already builds the correct `tmux has-session ... new-session` idempotent shell command; parameterize session name and workspace path |
+| `_tmux_chain_restart_command` | `cloud/cli.py:1049` | Kill+restart pattern is exactly what Guardian needs for dead-session recovery |
+| `cloud_supervise_tick` | `cloud/supervise.py:172` | Three recovery paths (lines 479, 546, 678) all call `_tmux_chain_restart_command`; extract the recovery logic as a `megaplan_chain` operation plugin |
+| `tmux has-session -t` liveness check | `cloud/cli.py:1170` | Directly reusable for Guardian's per-operation liveness check |
+| Watchdog `DEFAULT_SCAN_ROOTS` / discovery | `watchdog/discovery.py`, `scripts/megaplan_live_watchdog.py` | Rescope from "scan directories for plans" to "scan operation registry for active operations" |
+| `events.ndjson` append pattern | `observability/events.py` (`.events.seq` + `flock`) | Reuse as the per-operation event stream path; `events.ndjson` → `/workspace/runs/<op>/events.ndjson` |
+
+---
+
+## 3. Missing Seams and Incompatibilities (Must Be Addressed)
+
+### Seam A: CWD-based repo detection → Named repo parameter
+
+The existing worktree functions detect the repo from `os.getcwd()`. AgentBox has a repo registry (`/workspace/repos/repo.git`). The `create_worktree` function needs a `repo_path: Path` parameter. Without this, every shim function would need `os.chdir()` gymnastics, which breaks when Guardian runs as a systemd service from `/` or a bare repo that has no working directory.
+
+**Conflict severity**: Hard blocker for machine-scoped use.
+
+### Seam B: Bare repo worktree commands
+
+The plan recommends bare repos (`/workspace/repos/*.git`). But `git worktree add <path> -b <branch>` works only from inside a working checkout. For bare repos you need:
+
+```bash
+git --git-dir=/workspace/repos/repo.git worktree add \
+  /workspace/worktrees/op-123/repo \
+  -b agent/op-123 \
+  origin/main
+```
+
+This changes every git command in the worktree module: add, remove, list, prune. The existing `resolve_ref` / `branch_exists` likely call plain `git` which works against the worktree's own `.git`, not a bare repo's objects. If the existing code hardcodes `git worktree add` without `--git-dir`, all worktree operations silently break on bare repos.
+
+**Conflict severity**: Hard blocker. Either support bare repos with `--git-dir` variants or abandon bare repos and use normal checkouts. The plan's open design decision #1 says "use bare repos" — but the existing code may not support it.
+
+**→ Code-inspection task**: Read `bakeoff/worktree.py` and confirm whether any function already accepts a `git_dir` parameter or whether every `subprocess.run(["git", ...])` call assumes a working checkout. This determines whether extraction is 4-line parameterization or a full function rewrite.
+
+### Seam C: Single-repo worktree creation → Multi-repo operations
+
+The existing `create_worktree` creates one worktree. AgentBox operations declare multiple repos:
+
+```yaml
+repos:
+  - name: megaplan
+    worktree: /workspace/worktrees/op-123/megaplan
+  - name: reigh-app
+    worktree: /workspace/worktrees/op-123/reigh-app
+```
+
+No existing code creates N worktrees atomically or ties them to a single operation ID. The AgentBox worktree service needs a `create_operation_worktrees(operation_id, repos: list[RepoSpec])` function that creates all worktrees, validates all succeeded, and rolls back (removes created worktrees) on partial failure.
+
+**Conflict severity**: Medium. The per-worktree primitives are fine; the orchestration layer is missing.
+
+### Seam D: Worktree root path hardcoded → Parameterized
+
+The plan states worktree root is `~/Documents/.megaplan-worktrees`. AgentBox needs `/workspace/worktrees`. This is straightforward parameterization, but it must flow through every call site — not just `create_worktree` but also `remove_worktree`, `worktree_registered` (listing), and any validation that compares paths against the hardcoded root.
+
+**→ Code-inspection task**: Grep `bakeoff/worktree.py` and `cli/__init__.py` for `Documents/.megaplan-worktrees` or any hardcoded path constant. Count the number of sites that need a `worktree_root` parameter.
+
+### Seam E: Supervision is provider/chain-scoped, not operation-scoped
+
+`cloud_supervise_tick(root, args, spec, provider)` at `cloud/supervise.py:172` supervises one chain on one provider. AgentBox Guardian needs to iterate over all active operations in the registry, each potentially a different kind (chain, codex, claude, shell, subagent), with different repos, different session names, and different recovery strategies.
+
+The recovery logic inside `cloud_supervise_tick` (dead session → restart, stale chain → resume, repeated failure → cap) is correct and should be extracted as an `OperationAdapter.classify_and_repair()` plugin for `megaplan_chain`. But the orchestration loop — "scan registry → for each active op → dispatch to adapter" — doesn't exist anywhere.
+
+**Conflict severity**: Medium. The inner logic is reusable; the outer loop must be built.
+
+### Seam F: `validate_worktree_name` constraints
+
+If the existing validator enforces bakeoff/chain-specific naming patterns (like requiring certain prefixes or forbidding hyphens), it may reject AgentBox operation IDs like `op-20260623-foo`. This is likely a minor config change rather than a code rewrite.
+
+**→ Code-inspection task**: Read `validate_worktree_name` and check if it rejects any of these patterns: `op-{date}-{slug}`, `op-{uuid}`, agent-branch-style names.
+
+---
+
+## 4. Exact Plan Changes Recommended
+
+### Change A: Add a code-inspection spike before Phase 2
+
+The plan's Phase 2 says "reuse or extraction of existing Megaplan worktree helpers." But the inventory doesn't show the actual function signatures in `bakeoff/worktree.py`. Before writing any AgentBox worktree service, someone must:
+
+1. Read `arnold_pipelines/megaplan/bakeoff/worktree.py` top-to-bottom
+2. For each function, document: signature, whether it accepts a repo path, whether git commands use `--git-dir`, and which path constants are hardcoded
+3. Read `arnold_pipelines/megaplan/cli/__init__.py` worktree-related sections for hardcoded roots and naming conventions
+4. Produce a one-page "extraction surface" table: function → current constraint → needed parameter → risk level
+
+This is a half-day task and de-risks the entire Phase 2.
+
+### Change B: Add a `--git-dir` / bare-repo decision gate before Phase 2
+
+The plan's open design decision #1 says "use bare repos." Before any worktree code is written, confirm:
+
+- Does `bakeoff/worktree.py` already support bare repos? If yes, extraction is trivial. If no, estimate the rewrite scope.
+- Are there other Megaplan subsystems (chain state, git_ops, PR merge) that also assume working checkouts? If so, bare repos may cascade into a much larger change.
+
+If bare repos require rewriting more than 3 functions, fall back to normal canonical checkouts at `/workspace/repos/<name>/` with a single `main` worktree. Bare repos can be a v2 optimization.
+
+### Change C: Split `worktree.py` functions into pure-git helpers and orchestration
+
+The current `create_worktree` likely mixes git commands with Megaplan-specific metadata (plan state, argparse mutation). For AgentBox reuse, extract pure-git functions:
+
+```python
+# In a new shared module, or as parameterized variants in worktree.py:
+def git_worktree_add(git_dir: Path, worktree_path: Path, branch: str, start_point: str) -> None
+def git_worktree_remove(git_dir: Path, worktree_path: Path) -> None
+def git_worktree_list(git_dir: Path) -> list[WorktreeInfo]
+def git_worktree_prune(git_dir: Path) -> None
+```
+
+The Megaplan-specific orchestration (plan state updates, argparse) stays in the existing module. AgentBox calls the pure-git functions with its own orchestration.
+
+### Change D: Extract `_tmux_chain_launch_command` and `_tmux_chain_restart_command` from `cloud/cli.py` into a shared `tmux_utils.py`
+
+These two functions (lines 987-1088 in `cloud/cli.py`) are already clean: they build shell commands given `(name, workspace, chain_cmd)` and don't depend on args/parser/provider. Promoting them to a shared module lets both `cloud/cli.py` and AgentBox call them with different session naming conventions. The existing call sites in `cloud/supervise.py` (lines 479, 546, 678) import from `cloud/cli.py` — change those imports to the new shared module.
+
+### Change E: Make `cloud_supervise_tick` decomposable into an `OperationAdapter` plugin
+
+Before building the Guardian loop, refactor `cloud_supervise_tick` so it can be called as:
+
+```python
+# Guardian per-operation tick:
+def guardian_check_operation(op: OperationRecord) -> TickReport:
+    adapter = get_adapter(op.kind)  # megaplan_chain → CloudSuperviseAdapter
+    return adapter.tick(op)
+```
+
+The current `cloud_supervise_tick(root, args, spec, provider)` takes CLI artifacts. Extract the three recovery paths (dead session, stale chain, repeated failure) into a function that takes `(operation_id, worktree_path, session_name, log_path)` instead. The existing CLI entry point at `cloud/cli.py:1508` can wrap this with argument parsing; AgentBox calls it with operation-record fields.
+
+### Change F: Add `worktree_root` to `agentbox.yaml` from Phase 2
+
+Rather than passing `worktree_root` as a parameter everywhere, define it once in the AgentBox config and inject it into all worktree calls. This also prevents drift between the worktree service, Guardian, and Operator from using different roots.
+
+---
+
+## 5. Things Already Correctly Handled
+
+| What | Why it's right |
+|---|---|
+| **Worktree/branch naming as `agent/{op-id}`** | The plan's convention matches existing Megaplan branch naming; `git_ops.py` and `chain/git_ops.py` already work with `agent/`-prefixed branches for PRs |
+| **Tmux as the process container** | `cloud/cli.py`'s `tmux new-session -d -s {name} -c {workspace} {cmd}` pattern is battle-tested across SSH and Railway providers. AgentBox using the same pattern means Guardian can reuse the `tmux has-session -t` liveness check verbatim |
+| **`events.ndjson` per operation** | The observability module (`observability/events.py`) already has `.events.seq` + `flock` for safe concurrent appends. Per-operation `events.ndjson` at `/workspace/runs/<op>/events.ndjson` is the same pattern at a different path |
+| **Operation record shape** | The plan's operation record fields (`id`, `kind`, `repos`, `worktrees`, `branch`, `tmux_session`, `log_path`, `status`, `last_check`, `pending_approvals`, `discord_refs`) align well with existing `ChainLaunchContext` and cloud session markers. The `store/base.py` `list_cloud_runs()` and `list_progress_events()` patterns are close enough to inform the registry schema |
+| **Guardian recovery strategy** | The three recovery paths in `cloud_supervise.py` (dead session restart at line 479, stale chain resume at line 546, repeated failure cap at line 678) match the plan's Guardian v0 acceptance criteria exactly. No new recovery strategy needs to be invented |
+| **Credential seeding before work** | The plan's "check credentials before creating the worktree" rule is already proven by `seed_codex_oauth()` in `cloud/auth.py` and the preflight checks in `cloud/preflight.py`. AgentBox creds `test` command can wrap these |
+| **Discord resident runtime as Operator shell** | `ResidentDiscordService`, inbound/outbound messages, confirmation manager, allowlists — all match the Operator's needs. The plan correctly says "add an AgentBox tool profile" rather than building a new bot |
+| **Single-user simplifications** | The plan correctly identifies that multi-tenant ceremony (role hierarchy, complex permissions, slash-command dispatch) is unnecessary for v1. The existing resident auth/allowlist pattern is sufficient |
+| **Cleanup via `cleanup-loose-branches`** | The plan defers post-run consolidation to the existing cleanup discipline rather than inventing new merge policies. This is correct — the existing discipline already handles branch/worktree/PR survey and requires explicit approval for destructive steps |
+
+---
+
+## Summary Table
+
+```
+VERDICT: FIT WITH EXTRACTION
+
+REUSE (9 items):
+  worktree.py create/remove/list/validate  → wrap with params
+  cloud/cli.py _tmux_chain_launch_command   → extract to shared tmux_utils
+  cloud/cli.py _tmux_chain_restart_command  → extract to shared tmux_utils
+  cloud/supervise.py recovery paths          → extract as OperationAdapter
+  tmux has-session liveness check            → use verbatim
+  events.ndjson append pattern               → replicate per operation
+  cloud/auth.py credential seeding           → wrap as creds test
+  resident/discord.py runtime                → add AgentBox tool profile
+  cleanup-loose-branches discipline          → use as-is
+
+SEAMS MISSING (6):
+  A. CWD→named repo parameter              → BLOCKER
+  B. Bare repo --git-dir support            → BLOCKER (inspect first)
+  C. Multi-repo worktree orchestration      → MEDIUM
+  D. Hardcoded worktree root                → MEDIUM
+  E. Provider/chain→operation supervision   → MEDIUM
+  F. Worktree name validation rules         → LOW (inspect first)
+
+CODE-INSPECTION TASKS TO ADD:
+  1. Read bakeoff/worktree.py — all function signatures
+  2. Grep for hardcoded path constants
+  3. Check validate_worktree_name against op-id patterns
+  4. Check if any existing code uses --git-dir
+
+PLAN CHANGES (6):
+  A. Add inspection spike before Phase 2
+  B. Add bare-repo decision gate before Phase 2
+  C. Split worktree.py into pure-git helpers + orchestration
+  D. Extract tmux commands to shared tmux_utils.py
+  E. Make cloud_supervise_tick decomposable as OperationAdapter
+  F. Add worktree_root to agentbox.yaml config
+```

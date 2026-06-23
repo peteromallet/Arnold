@@ -1,0 +1,247 @@
+# AgentBox Current-System Fit Challenge: Verdict
+
+## 1. Verdict: **FIT WITH EXTRACTION**
+
+The existing Megaplan codebase contains approximately 70–80% of what AgentBox needs, but the pieces are **command-scoped, chain-scoped, and provider-scoped** rather than machine-scoped. The operation registry is the only genuinely missing center. Everything else requires extraction seams — parameterizing currently-hardcoded paths, breaking apart functions that bundle plan-level concerns with machine-level concerns, and adding a cross-kind adapter interface. No greenfield build is required, but this is not a simple "wrap existing and ship." The extraction work is real and non-trivial.
+
+---
+
+## 2. Existing Functionality That Should Be Reused
+
+### Resident Discord Runtime (fully reuse, extend)
+
+`resident/discord.py`, `resident/runtime.py`, `resident/auth.py`, `resident/coalescing.py`, `resident/agent_loop.py`, `resident/tool_registry.py`, `resident/tool_schemas.py`, `resident/profile.py`, `resident/config.py`
+
+This is the single strongest asset. The resident runtime already handles:
+- Inbound message parsing with conversation keys
+- Allowlist enforcement and authorization subjects
+- Agent turn orchestration with tool calls and recovery
+- Outbound message sink (Discord DM/channel)
+- Confirmation storage
+- Tool schema registration
+
+**What AgentBox needs to add**: An `AgentBoxOperatorProfile` that registers AgentBox tools (status, logs, run, approve, creds_test, cleanup, consolidate) alongside the existing cloud-operation tools. Do not build a new bot.
+
+### Cloud Supervision Core (reuse as chain-plugin)
+
+`cloud/supervise.py` → `cloud_supervise_tick()`  
+`cloud/cli.py` → `_tmux_chain_launch_command()`, `_tmux_chain_restart_command()`, `_tmux_launch_status()`, session existence checks  
+`cloud/cli.py` → chain launch wrapper around `_run_chain_wrapper`
+
+These already do what Guardian v0 needs for `megaplan_chain` operations: check tmux liveness, classify state, restart dead sessions, detect stall. The plan's recommendation is correct: wrap `cloud_supervise_tick()` as the first operation-kind plugin in the Guardian's per-operation dispatch loop.
+
+### Watchdog Mechanics (compose, don't rewrite)
+
+`watchdog/discovery.py`, `watchdog/snapshot.py`, `watchdog/repair_runner.py`, `watchdog/retry.py`, `watchdog/tmux_scan.py`, `watchdog/correlate.py`, `watchdog/registry.py`
+
+The live watchdog (`scripts/megaplan_live_watchdog.py`) already scans local plans/processes, classifies state, runs repair, retries with caps, and writes a registry. Guardian should compose these modules — specifically, the watchdog's discovery → snapshot → classify → repair pipeline maps directly to Guardian's per-operation tick. The key difference is that Guardian feeds operation records from the registry instead of scanning the filesystem.
+
+### Worktree Primitives (extract, don't duplicate)
+
+`bakeoff/worktree.py` — `validate_worktree_name`, `resolve_ref`, `branch_exists`, `worktree_registered`, `create_named_worktree`, `create_worktree`, `remove_worktree`
+
+All the Git mechanics already exist. The extraction needed is parameterizing paths and repo identity rather than hardcoding `~/Documents/.megaplan-worktrees` and inferring the repo from `cwd`.
+
+### Store Patterns (adopt for operation registry)
+
+`store/base.py` — abstract store interface with `list_cloud_runs`, `claim_due_scheduled_jobs`, `upsert_resident_conversation`, `list_progress_events`, `create_ticket`, `link_ticket_to_epic`
+
+`store/file.py` — file-backed store with transaction support, event logging, `_events_path`, `_progress_events_dir`, `_scheduled_jobs_dir`
+
+`store/db.py` — SQLite-backed store with write-ahead log, `sortedcontainers` indices
+
+The store abstraction layer is battle-tested. The operation registry should use either the SQLite store pattern directly or copy its interface. The file store's events.jsonl pattern is close to the proposed `events.ndjson` per operation.
+
+### Ticket System (reuse as-is)
+
+`tickets/core.py`, `tickets/registry.py`, `tickets/files.py`, `tickets/identity.py`
+
+Prefer local tickets over GitHub issues for v0. The ticket system already has CRUD, tags, file/DB storage, search, and source metadata. The Discord Operator just needs a tool that wraps ticket creation.
+
+### Chain/Epic Mechanics (reuse as backbone)
+
+`chain/spec.py` — chain spec parsing with milestone order, failure behavior, PR/merge policy  
+`chain/git_ops.py` — branch/PR state tracking  
+`supervisor/` — ladder, state, pr_merge, driver, outcomes, chain_runner, bakeoff_runner
+
+Do not create a second epic runner; chains are already the execution backbone.
+
+### Observability Patterns (extend, don't replace)
+
+`observability/events.py` — `events.ndjson` with `fcntl.flock`-protected `.events.seq` counter, `emit()` function, event envelope  
+`observability/fold.py` — `read_events()`, `fold_events()`, `rebuild_state_from_wal()`, `assert_fold_equiv()`  
+`observability/introspect.py` — liveness computation, event counting, subprocess event extraction
+
+The `events.ndjson` pattern is proven. AgentBox should use the same atomic-append-with-seq pattern per operation, not invent a new event format.
+
+### Credential Seeding Pattern (generalize)
+
+`cloud/auth.py` → `seed_codex_oauth()`  
+`cloud/cli.py` → credential seeding during bootstrap and chain launch
+
+The pattern of copying local auth files to remote destinations with verification already works. AgentBox needs to generalize this from `seed_codex_oauth(spec, provider)` to `SecretSpec(local_path, persistent_dest, runtime_dest, permissions, health_check)`.
+
+---
+
+## 3. Missing Seams and Incompatibilities
+
+### Seam A: Coalescing vs. Intent Classification Ordering (UNRESOLVED)
+
+`resident/coalescing.py` merges multiple Discord messages into a coherent agent turn. The AgentBox plan proposes intent classification before tools run. These interact: if coalescing merges two messages with different intents (e.g., "what is running?" followed immediately by "run this chain"), the merged turn has ambiguous intent. Conversely, if classification happens per-message, it may break coalescing's purpose of providing coherent context.
+
+**Code-inspection task needed**: Read `resident/coalescing.py` to determine:
+1. Does it merge messages from the same conversation scope into a single agent invocation?
+2. Is there a pre-coalescing hook where per-message intent could be classified?
+3. Can coalescing be informed by intent classification to split or batch differently?
+
+**Recommendation**: Classify AFTER coalescing (treat the coalesced batch as a single Operator turn) but add a pre-coalescing "urgency detector" that prevents coalescing when a message matches `status_query` or `approval_response` (which should be answered immediately, not merged).
+
+### Seam B: Worktree Path and Repo Scoping (EXTRACTION REQUIRED)
+
+`bakeoff/worktree.py` is command-scoped (infers repo from `cwd`) and hardcodes paths to `~/Documents/.megaplan-worktrees`. AgentBox needs:
+- Parameterized worktree root (`/workspace/worktrees/`)
+- Named repo lookup (not `cwd` inference)
+- Bare-repo-aware creation (`git --git-dir=/workspace/repos/repo.git worktree add`)
+- Multi-repo operation support (one operation → worktrees across multiple repos)
+
+**Code-inspection task needed**: Confirm exactly where `bakeoff/worktree.py` hardcodes `~/Documents/.megaplan-worktrees` and whether it assumes the current working directory is inside a normal checkout. Check `worktree_registered()` and `remove_worktree()` for bare-repo incompatibility (they may call `git worktree list` from a path that doesn't exist for bare repos).
+
+### Seam C: No Unified Operation Registry (BUILD REQUIRED)
+
+Existing store types handle different entity kinds: `ChainLaunchContext`, cloud session markers, `ChainState`, epic events, scheduled jobs, cloud runs, progress events, resident conversations. None of these is a cross-kind record that ties together:
+
+```
+operation_id → kind → repos → worktrees → tmux_session → log_path → status → last_check → pending_approvals → discord_refs → pr_refs
+```
+
+This is the product-specific core AgentBox must build. The store abstraction (`store/base.py` abstract interface) should be the persistence layer. The model should be new.
+
+### Seam D: Cloud Supervision is Chain-Only (EXTRACTION REQUIRED)
+
+`cloud_supervise_tick()` in `cloud/supervise.py` takes `root`, `args`, `spec`, `provider` — all chain/cloud-scoped. It does not operate on a generic operation record. Guardian needs a dispatch loop:
+
+```python
+for op in registry.active_operations():
+    if op.kind == "megaplan_chain":
+        cloud_supervise_tick(op)  # adapted
+    elif op.kind == "codex":
+        codex_supervise_tick(op)  # new
+```
+
+**Code-inspection task needed**: Read `cloud_supervise_tick()` signature and determine whether its `root`/`args`/`spec`/`provider` parameters can be derived from an operation record, or whether the function needs to be refactored to accept an operation record directly.
+
+### Seam E: Resident Auth and Tool Scope (EXTENSION REQUIRED)
+
+`resident/auth.py` defines authorization subjects. The existing subjects are likely scoped to Megaplan cloud operations (start chain, check status, read logs). AgentBox needs broader subjects: repo management, credential operations, cleanup/consolidation, subagent launch, operation stop/restart.
+
+**Code-inspection task needed**: Read `resident/auth.py` to determine the current authorization subject list and whether it can be extended with a plugin/register pattern or requires a fork.
+
+### Seam F: Events are Plan-Scoped, Not Operation-Scoped (EXTENSION REQUIRED)
+
+`observability/events.py` emits events into `plan_dir/events.ndjson`. AgentBox operations are not plans — they are broader (Codex runs, shell commands, subagent swarms). The events system needs to accept an arbitrary `events_dir` parameter rather than deriving it from a plan directory.
+
+**Code-inspection task needed**: Confirm whether `emit()` in `observability/events.py` can already accept an arbitrary directory path, or whether it always derives the path from `RunEnvelope` / plan context.
+
+### Seam G: Guardian vs. Resident Scheduler Process Separation (DESIGN CONFLICT)
+
+`resident/scheduler.py` exists as a scheduler within the resident runtime. The plan correctly states that Guardian and Discord Operator must be separate processes. But the existing scheduler is embedded in the resident process. Two options:
+
+1. **Extract the scheduler as a standalone service** that both Guardian and Discord Operator can trigger jobs through.
+2. **Run Guardian as a completely separate systemd service** that shares the operation store with the resident process, and have the resident scheduler handle only Discord-triggered jobs (daily briefing, credential health checks via Operator turns).
+
+**Recommendation**: Option 2. The existing scheduler stays in the resident runtime for Discord-triggered work. Guardian is a separate systemd timer + service that reads/writes the operation store independently. The only shared interface is the store.
+
+### Seam H: Credential Validation Timing (PROACTIVE CHECK MISSING)
+
+The existing code seeds credentials during cloud bootstrap (`cloud/auth.py`, `cloud/cli.py`). AgentBox needs proactive credential validation BEFORE worktree creation, not just during bootstrap. No existing code does this. This is a new build that wraps the existing seeding functions with a test-first approach.
+
+---
+
+## 4. Exact Plan Changes Recommended
+
+### Change 1: Add Coalescing-Intent Integration Task to Phase 6
+
+In **Phase 6: Discord Operator Integration**, add a sub-task:
+
+> **6a. Coalescing-intent handshake**: Read `resident/coalescing.py`. Determine whether intent classification happens before or after coalescing. If after, ensure coalescing does not merge messages with different classified intents (especially status_query and approval_response, which should bypass coalescing). Add a pre-coalescing urgency filter if needed.
+
+### Change 2: Add Bare-Repo Worktree Extraction to Phase 2
+
+In **Phase 2: Repo And Worktree Service**, add explicit sub-tasks:
+
+> **2a. Audit worktree.py for bare-repo assumptions**: Check `worktree_registered()` and `remove_worktree()` for bare-repo incompatibility. If they call `git worktree list` from the repo path, they will fail on bare repos that lack a primary worktree.  
+> **2b. Parameterize worktree root**: Replace hardcoded `~/Documents/.megaplan-worktrees` with a configurable root path (`/workspace/worktrees`).  
+> **2c. Add repo-scoped worktree operations**: Extract `resolve_ref`, `create_worktree`, and `remove_worktree` to accept an explicit repo canonical path rather than inferring from `cwd`.
+
+### Change 3: Add Operation Registry Model Before Guardian (Reorder)
+
+The plan lists Guardian (Phase 5) before Discord Operator (Phase 6), but the operation registry (Phase 3) must be stable before either. This ordering is correct. However, Phase 3 should explicitly list:
+
+> **3d. Define operation record model**: YAML or Python dataclass with fields: `id`, `kind`, `status`, `source`, `created_at`, `repos` (list of `{name, branch, worktree}`), `tmux_session`, `log_path`, `events_path`, `manifest_path`, `last_check`, `pending_approvals`, `discord_refs`, `pr_refs`, `chain_spec_path`.  
+> **3e. Implement store-backed operations**: Use `store/base.py` abstract interface. Implement file-backed store first (copy pattern from `store/file.py`), SQLite-backed store second.
+
+### Change 4: Add Cloud-Supervise Extraction Task to Phase 5
+
+In **Phase 5: Guardian Daemon**, the plan says "calls existing cloud_supervise_tick()". This needs a concrete extraction task:
+
+> **5a. Adapt cloud_supervise_tick for operation records**: Read `cloud/supervise.py:cloud_supervise_tick()`. If its `root`/`args`/`spec`/`provider` parameters can be derived from an operation record, write a thin adapter. If not, extract the core supervision logic into a function that accepts an operation record and a provider factory, leaving the CLI-facing wrapper intact.
+
+### Change 5: Add Auth Extension Task to Phase 6
+
+> **6b. Extend resident auth subjects**: Read `resident/auth.py`. Add authorization subjects for AgentBox tools (repo management, credential operations, cleanup, subagent launch, operation stop/restart). Prefer a register/plugin pattern over forking.
+
+### Change 6: Add Events Path Parameterization Task to Phase 3
+
+> **3f. Ensure events system supports arbitrary directories**: Confirm that `observability/events.py:emit()` can write to an arbitrary `events.ndjson` path. If it requires a plan directory context, extract the file-writing core into a function that accepts an explicit `events_dir` parameter.
+
+### Change 7: Clarify Scheduler Separation in Phase 5
+
+> **5f. Run Guardian as a systemd timer+service, not inside the resident process**: The existing `resident/scheduler.py` stays in the resident runtime for Discord-triggered jobs. Guardian is a separate `systemd` timer that reads/writes the operation store independently. No shared event loop.
+
+### Change 8: Add Credential Pre-Flight to Phase 4
+
+> **4c. Add proactive credential validation**: Before any operation creates a worktree, test required credentials. Wrap existing `seed_codex_oauth()` and Claude refresh-token patterns with a `SecretSpec` model that includes a `health_check` callable. If validation fails, surface the exact missing credential in Discord before work starts.
+
+---
+
+## 5. Things Already Correctly Handled
+
+1. **Resident runtime reuse over new bot**: The plan correctly avoids building a fresh Discord bot. `ResidentDiscordService` and the resident runtime are the right shell.
+
+2. **Guardian as operation-registry loop over rewrite**: The plan correctly identifies that Guardian should be a per-tick dispatch over operation kinds, calling existing supervision engines, not rewriting them.
+
+3. **Watchdog as library, not competing daemon**: The plan explicitly says "do not run a separate watchdog daemon beside Guardian." This is correct. Watchdog modules (discovery, snapshot, repair, retry) should be composed into Guardian's per-operation tick.
+
+4. **Single-user simplifications**: No multi-tenant UI, no role hierarchy, simple allowlists. The plan correctly avoids over-engineering.
+
+5. **Tickets-first over GitHub issues**: The local ticket system exists and works. GitHub issue mirroring is correctly deferred.
+
+6. **Chains as epic execution backbone**: No second epic runner. Correct.
+
+7. **Completion as the main approval event**: Not every intermediate action needs approval. The plan correctly scopes approvals to merge, cleanup, credentials, and accepting debt.
+
+8. **Separate Guardian and Discord processes**: The plan identifies the event-loop coupling risk and correctly requires separate systemd services sharing only the operation store.
+
+9. **Bare repos for canonical checkouts**: The plan's recommendation for bare repos under `/workspace/repos/*.git` is technically correct for managed worktrees. The risk is acknowledged.
+
+10. **`events.ndjson` as the structured event format**: The existing observability system already uses this exact pattern with atomic appends and sequence counters. No format invention needed.
+
+11. **Credential sync as explicit specs, not env dumps**: The plan correctly identifies that `seed_codex_oauth()` proves the pattern and should be generalized to `SecretSpec`, not replaced with wholesale environment dumping.
+
+12. **`cleanup-loose-branches` for consolidation**: The plan correctly defers to the existing cleanup discipline rather than inventing a new merge policy.
+
+13. **Hetzner over Railway for the persistent machine**: Railway's persistent-container model is the wrong substrate for a resident daemon. The plan correctly favors a real VM.
+
+14. **Thin Discord path required for v0**: "CLI-only launch is a useful engineering checkpoint, but it is not a complete first product slice." Correct. The plan requires Discord message → operation creation → completion DM as the v0 product journey.
+
+---
+
+## Summary
+
+| Dimension | Assessment |
+|---|---|
+| **Reuse surface** | ~70–80% exists, mostly in `resident/`, `cloud/supervise.py`, `watchdog/`, `bakeoff/worktree.py`, `store/`, and `observability/` |
+| **Missing center** | Operation registry — the only genuinely new build |
+| **Extraction seams needed** | 8 identified: coalescing-intent ordering, worktree path/repo scoping, cloud-supervise parameterization, auth subject extension, events path generalization, scheduler separation, credential pre-flight, bare-repo worktree support |
+| **Design conflicts** | Scheduler embedding in resident process (resolved by separate systemd services); coalescing vs. intent classification (needs code inspection) |
+| **Plan quality** | The plan correctly identifies reuse targets, avoids rewrites, and scopes the v0 product slice appropriately. All recommended changes are additive clarifications or extraction tasks, not structural redesigns. |

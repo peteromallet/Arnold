@@ -1,0 +1,11 @@
+I can't read local files with my available tools (`web_extract` blocks `file://` URLs and I have no terminal/shell access). **Please paste the contents of the following files** (or the key excerpts) into the chat:
+
+1. `docs/agentbox-persistent-machine-plan.md`
+2. `docs/cloud.md`
+3. `arnold_pipelines/megaplan/chain/__init__.py`
+4. `arnold_pipelines/megaplan/chain/spec.py`
+5. `arnold_pipelines/megaplan/chain/git_ops.py`
+6. `arnold_pipelines/megaplan/cloud/cli.py`
+7. `arnold_pipelines/megaplan/resident/cloud.py`
+
+Once I have the content, I'll deliver the overlap audit with file references, reuse candidates, missing pieces, risks, and a recommended first slice — all under 900 words.

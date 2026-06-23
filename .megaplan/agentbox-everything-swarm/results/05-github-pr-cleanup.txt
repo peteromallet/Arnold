@@ -1,0 +1,149 @@
+Here's the decisive inventory — every reusable mechanic mapped, with file refs, gaps, and concrete recommendations.
+
+---
+
+## AgentBox Inventory: Reusable Mechanics for Discord-First Pipelines
+
+### 1. Push / PR / Merge — the Core Delivery Spine
+
+**Primary source:** `arnold_pipelines/megaplan/chain/git_ops.py`
+
+The chain's `_commit_and_push_phase()` is the reference push→PR→merge pipeline and the single highest-value reusable block:
+
+| Mechanic | Function | Why it fits AgentBox |
+|---|---|---|
+| Milestone branch checkout | `_checkout_milestone_branch()` — creates/resumes branches, forks from `origin/<base>` (not stale local) to absorb prior squash-merged PRs | AgentBox work spawned from Discord needs the same fork-from-authoritative-origin pattern |
+| Phase commit + push | `_commit_phase()` + `_commit_and_push_phase()` — stages, commits `--no-verify`, handles preexisting dirty paths, rebases against origin, force-pushes with lease on conflict | Directly reusable; the dirty-path guard (unstage preexisting untracked work) is battle-tested |
+| Auto-merge + squash | `_enable_auto_merge()` — `gh pr merge --auto --squash --delete-branch`, with stash/pop around merge and `--delete-branch` worktree fallback | The stash dance (stash dirty tree → merge → pop) is critical for agent worktrees that may have plan-telemetry dirt |
+| PR ready + auto-merge | `_mark_pr_ready()` + `_enable_auto_merge()` — draft→ready→auto-merge chain | Discord-triggered work that passes gates can flow through identical `gh pr ready` + `gh pr merge --auto` |
+| `gh` env token hygiene | `_command_env()` strips `GH_TOKEN`/`GITHUB_TOKEN` to prefer `gh`'s own keychain auth — prevents stale token poisoning in long sessions | **Must carry forward** — agent sessions are long-lived |
+| Rebase reconciliation | `_commit_and_push_phase()` fetches origin, rebases, force-pushes on conflict | Same pattern needed when multiple Discord-sourced chains land on the same branch |
+
+**Gap:** No explicit "what happens when merge fails due to required CI checks pending" — only a fallback log. AgentBox needs a retry-with-wait loop for CI-required repos.
+
+**Recommendation:** Extract `_commit_and_push_phase()` and `_enable_auto_merge()` into a shared `agentbox/git_ops.py`. Add a `--wait-for-ci` retry block that polls `gh pr checks` before merge.
+
+---
+
+### 2. Chain State Machine — the Sequential Milestone Engine
+
+**Primary source:** `arnold_pipelines/megaplan/chain/__init__.py` (lines ~1590–2325)
+
+The chain loop is a state machine driving milestone plans:
+
+```
+seed plan → milestone[0] → milestone[1] → ... → done
+```
+
+Each iteration: `_drive_plan_with_blocked_execute_recovery()` → gate checks → `_commit_and_push_phase()` → PR → merge → advance state.
+
+**Reusable for AgentBox:**
+- `ChainState` serialization + `chain_spec.save_chain_state()` — persisted progress across restarts. Discord-originated chains need identical crash-recovery.
+- `completed` list tracking per-milestone with PR number, commit SHA, and backstop summary.
+- `format_chain_status()` / `_write_chain_status_pretty()` — ready-made status formatting for Discord embeds.
+- `_result()` dict structure: `{status, reason, chain_state, events, base_branch}` — maps directly to Discord reply payloads.
+
+**Gap:** The chain currently discovers its own repo/root from CWD. Discord-first AgentBox needs a `--repo-url` or `--project-dir` override that doesn't depend on being inside a git checkout.
+
+---
+
+### 3. Blocked-Run Guardian / Watchdog — Repair + Relaunch
+
+**Primary sources:**
+- `scripts/simulate_watchdog_end_to_end.py` — production-validated e2e test of repair→relaunch→recheck
+- `arnold_pipelines/megaplan/watchdog/repair_runner.py`
+- `arnold_pipelines/megaplan/watchdog/retry.py`
+- `arnold_pipelines/megaplan/watchdog/signals.py`
+
+The watchdog pattern:
+1. Scan for blocked plans (process correlation + state snapshot)
+2. Classify block type (authority divergence, CI stall, dirty worktree, process death)
+3. Run repair agent against the blocked plan
+4. Relaunch the chain from persisted state
+5. Recheck (poll status until terminal)
+6. Report cleanup candidates
+
+**Directly reusable for AgentBox "Discord → repair blocked run":**
+- The three-step loop: **scan → repair → relaunch**
+- `correlate.py` process-to-plan matching
+- `repair_runner.py` repair agent invocation
+- The e2e simulation script as a test harness
+
+**Gap:** The watchdog currently operates on local filesystem state stores. Discord-first needs it to work against a remotely-stored plan state (the `_db/` SQLite stores or a cloud shim).
+
+**Recommendation:** Port the watchdog's scan/repair/relaunch loop intact. Add a Discord trigger (`/repair <chain_id>`) that maps to `repair_runner.repair_plan()`. The `simulate_watchdog_end_to_end.py` script is the integration test template.
+
+---
+
+### 4. Loose Branch Cleanup — the Consolidation Endgame
+
+**Primary source:** User-provided `cleanup-loose-branches/SKILL.md` (1,220-line skill file)
+
+This is **the** consolidation playbook. Key patterns:
+
+| Phase | Mechanic | File/Command Ref |
+|---|---|---|
+| Survey — uncommitted work (ITEM ZERO) | `git status --short --branch`, `git diff --stat HEAD`, `git ls-files --others` | Lines ~40–65 of SKILL |
+| Survey — worktrees | `git worktree list --porcelain` + globs for `.megaplan-worktrees`, `.megaplan/bakeoffs/*`, `~/.claude/projects/*/worktrees/*` | Lines ~70–90 |
+| Survey — branches | `git for-each-ref` + `git cherry $MAIN <br>` — the `+N` check catches squash-merged work that `merge-base --is-ancestor` misses | **Critical** — this is the safety check before deleting any branch |
+| Survey — stashes | `git stash list` + cross-reference to branch table | Lines ~120–130 |
+| Classification | `land-on-main` / `delete` / `keep` / `parked` with mandatory go/no-go | Lines ~15–25 |
+| Fan-out for ambiguity | Subagent briefs for 5+ commit branches, conflicts, unclear supersession | Lines ~30–45 |
+| Safe dirty-tree preservation | Fingerprint→snapshot→restore pattern OR scratch worktree pattern | Lines ~55–65 |
+
+**Recommendation:** This entire skill **is** the AgentBox consolidation flow. Package it as a discrete tool (`agentbox cleanup --repo <url>`). The only adaptation needed: run it server-side against a cloned repo rather than assuming local filesystem access.
+
+---
+
+### 5. Gate Pipeline — Done/Blocked/Pass Decision Points
+
+**Primary sources:**
+- `scripts/chain_done_gate.py` — blocks chain completion until all milestones done, backstops non-blocking, PR reviewers cleared
+- `scripts/m6_purge_gate.py` — validates legacy code removal (AST-based import boundary checks)
+- `arnold_pipelines/megaplan/chain/hinge_gate.py` — likely the hinge/wait gate
+
+The gate pattern: `check → {pass, fail_with_errors} → block or advance`. Each gate returns structured errors. This composable pattern is AgentBox-ready: Discord commands like `/chain status` can run the same gates and return results as embeds.
+
+**Directly reusable:** `chain_done_gate.check_chain_done()` — takes a chain spec path, state path, blockers path; returns pass or a list of blocking errors. Add a Discord command wrapper and it's done.
+
+---
+
+### 6. Ticket/Epic Store — the Persistence Layer
+
+**Primary sources:**
+- `arnold_pipelines/megaplan/store/_db/*.py` — SQLite stores for epics, plans, sprints, tickets, checklists, events
+- `arnold_pipelines/megaplan/store/_file/*.py` — file-backed equivalents
+- `arnold_pipelines/megaplan/tickets/core.py` — ticket lifecycle
+
+This is the "start tickets/epics from Discord" backbone. Discord messages → ticket rows → epic decomposition → plan generation. The DB schema already covers the full lifecycle.
+
+**Gap:** No Discord message → ticket row adapter exists. Need a lightweight bridge that takes a Discord message ID/channel, extracts structured intent, and routes to `tickets/core.py` or `store/_db/tickets.py`.
+
+---
+
+### 7. Subagent Fan-out — DeepSeek Parallelism
+
+**Primary sources:**
+- `arnold_pipelines/megaplan/pipelines/epic_blitz.py` — parallel brief fan-out across 15+ prompt dimensions
+- `arnold_pipelines/megaplan/_core/hermes_fanout.py` / `worker_fanout.py` — the fan-out engine
+- `arnold_pipelines/megaplan/workers/hermes.py` — Hermes agent worker
+
+The pattern: spawn N read-only DeepSeek/subagent briefs, collect results, synthesize. Already used for epic decomposition and ambiguity resolution in cleanup. Directly pluggable into AgentBox: a Discord `/epic <description>` spawns the epic_blitz pipeline.
+
+---
+
+### Summary: What to Build vs. What to Reuse
+
+| What AgentBox Needs | Reuse From | Effort |
+|---|---|---|
+| Push/PR/merge pipeline | `chain/git_ops.py` — extract `_commit_and_push_phase` + `_enable_auto_merge` | Low |
+| Chain state machine | `chain/__init__.py` — port as-is, add `--repo-url` | Medium |
+| Blocked-run repair | `watchdog/repair_runner.py` + `watchdog/retry.py` | Low |
+| Consolidation/cleanup | `cleanup-loose-branches` skill — wrap as CLI tool | Low |
+| Gate checks | `chain_done_gate.py` + `m6_purge_gate.py` | Low |
+| Ticket/epic persistence | `store/_db/*.py` — add Discord→ticket adapter | Medium |
+| Subagent parallelism | `epic_blitz.py` + `_core/hermes_fanout.py` | Low |
+| Discord message → work item | **New** — build the bridge | Medium |
+| Remote repo access (not local CWD) | **New** — extend chain/git_ops with `--repo-url` + clone-on-demand | Medium |
+
+**The critical gap:** Everything assumes local filesystem access to a git repo. AgentBox needs a `RepoHandle` abstraction that can either use a local checkout or clone-on-demand to a temp worktree. All the mechanics above are ready once that adapter exists.

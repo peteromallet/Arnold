@@ -1,0 +1,125 @@
+# AgentBox UX Review: Cleanup and Merge Journey
+
+**Lens:** DeepSeek reviewer. Scope: remote worktree → PR → main → cleanup. Standard: single-user, Discord-first, practical. No enterprise inventions.
+
+---
+
+## 1. Verdict
+
+**FITS WITH CHANGES**
+
+The architecture is sound. The operation registry, Guardian loop, and Discord Operator surface are the right substrate. The plan correctly identifies the approval boundaries (merge, delete, cleanup, quality debt, credentials). But the cleanup-and-merge journey as a *concrete user experience* has material gaps — the plan names the right pieces without stitching them into a discernible flow Peter can follow from his phone.
+
+---
+
+## 2. Top Material Gaps
+
+### Gap 1 — Merge approval has no mechanism, only a boundary line
+
+The plan says merge-to-main requires approval and that the completion DM will ask "push/open PR/cleanup?". But nowhere does it describe *how* Peter signals approval, *who* acts on it (Guardian? Operator? a new turn?), or *what* exactly happens when he says yes. The Discord message format, the approval record creation, and the merge executor are undefined.
+
+**Why it matters:** This is the single most important user action in the journey. If Peter gets a DM that says "merge?" and there's no defined path from his "yes" to main landing the work, the loop is broken at its product-critical point.
+
+### Gap 2 — cleanup-loose-branches is an external reference, not an integrated operation kind
+
+The plan invokes "the local cleanup-loose-branches discipline" repeatedly as the consolidation mechanism, but never defines it as an AgentBox operation kind, a Guardian action, or a Discord command. The user can't trigger it from Discord unless it's wired in.
+
+**Why it matters:** Consolidation is the other half of the journey. Work done but never cleaned means accumulating worktrees, branches, and stale PRs on a persistent machine. Without a concrete integration point, the cleanup discipline is a design note, not a user-facing capability.
+
+### Gap 3 — "After a set of operations completes" is an undefined trigger
+
+The plan says batch consolidation happens "after a set of operations completes." No criteria exist for what constitutes a set: time-based? count-based? user-declared? Does Peter need to say "consolidate now"? Does Guardian prompt when N operations are in `completed` state? The trigger is missing.
+
+**Why it matters:** In a single-user system, the user shouldn't have to track how many operations have completed before cleanup happens. Either the system prompts at the right moment or the user triggers it explicitly. Ambiguity here means completed work sits unconsolidated indefinitely.
+
+### Gap 4 — The PR creation step has split ownership with no handoff description
+
+The plan says push/PR can be automatic "if part of the operation policy" but merge requires approval. However, the `megaplan_chain` operation kind already has git_ops/PR mechanics from existing chain code. It's unclear whether PR creation happens during the operation's run (chain-driven), during Guardian's completion handling, or as a separate step after the completion DM.
+
+**Why it matters:** If the chain pushes and opens the PR during its run, the completion DM needs to reference that PR. If it doesn't, someone needs to create the PR after completion. The plan oscillates between "chain already does this" and "system should do this" without settling the ownership question.
+
+### Gap 5 — No post-merge cleanup trigger defined
+
+The plan says "clean up remote worktrees and branches after merge." But after a PR merges on GitHub, what triggers the AgentBox-side cleanup? Guardian polling the PR status? A GitHub webhook? Peter manually saying "cleanup op-123"? The remote-machine worktree won't prune itself.
+
+**Why it matters:** This is how the persistent box avoids disk exhaustion. Without a trigger, merged branches' worktrees accumulate indefinitely. The single-user experience degrades into manual `git worktree prune` over SSH, which is exactly what AgentBox is supposed to eliminate.
+
+---
+
+## 3. Exact Plan Changes Recommended
+
+### Add these bullets to the "Completion And Approval" section:
+
+```markdown
+### Merge Approval Flow (concrete)
+
+When an operation completes with a pushed branch and open PR:
+
+1. Guardian classifies the operation as `completed_pr_open`.
+2. Guardian sends a DM: "op-{id} complete. PR: {url}. CI: {status}. Merge to main?"
+3. Peter replies "yes" / "merge" / "approve op-{id}" in Discord.
+4. Discord Operator receives the message, creates a `merge_approval` record tied to the operation, and executes the merge via GitHub CLI or API.
+5. On merge success, Operator marks the operation `merged` and schedules worktree cleanup.
+6. On merge failure (conflict, CI), Operator reports the failure and asks.
+
+### Consolidation Trigger
+
+The cleanup-loose-branches discipline is exposed as:
+
+- A Guardian-scheduled check that runs when N completed operations exist or daily.
+- A Discord command: "cleanup" or "consolidate."
+- An explicit operation kind: `consolidation` with its own operation record.
+
+Peter receives a DM with the survey: branches/worktrees/PRs classified as land/delete/park, with one-line summaries. He replies with a number or "land all" / "delete all" and destructive steps require explicit reconfirmation.
+
+### Post-Merge Cleanup
+
+When an operation reaches `merged` status, Guardian on its next tick:
+1. Verifies the PR is merged on GitHub.
+2. Removes the local worktree via existing worktree helpers.
+3. Deletes the local branch.
+4. Marks the operation `archived`.
+5. Appends a `cleanup_complete` event.
+```
+
+### Edit the "Approval And Safety" section to add:
+
+```markdown
+The merge approval flow uses the same confirmation manager. A merge approval record ties:
+- operation id
+- PR URL
+- CI status at approval time
+- approval timestamp
+- merge result
+No merge proceeds without an explicit approval record, even if CI is green.
+```
+
+### Add to the Discord Operator tool list:
+
+```markdown
+- `merge <op-id>` — execute a pending merge approval
+- `consolidate` — run cleanup-loose-branches survey and present options
+- `land <branch-ref>` / `delete <branch-ref>` — act on a consolidation recommendation
+```
+
+---
+
+## 4. Things The Plan Already Covers That Should Not Change
+
+1. **Approval boundaries are correctly drawn.** Merge, destructive cleanup, quality debt acceptance, credential exposure, and product decisions are the right gates. Do not add ceremony to routine operations.
+
+2. **Discord as the sole human interface.** No web dashboard, no SSH required for normal flow. The DM-based completion notification pattern is correct and should remain the primary surface.
+
+3. **cleanup-loose-branches as the consolidation discipline.** The land/delete/park classification model is right. The plan should keep it as the single consolidation mechanism rather than inventing a parallel system. The gap is integration, not replacement.
+
+4. **Guardian owning supervision, Operator owning interactive actions.** The separation is clean. Merge approval should be Operator-driven (it's an interactive user decision), while post-merge worktree pruning should be Guardian-driven (it's a scheduled operational cleanup). Do not blur this boundary.
+
+5. **Completion as a handoff point, not full closure.** The plan correctly frames completion as "work is done, consolidation may remain." This nuance is important — Peter may want to batch-merge several completions — and should not be collapsed into "done means merged and cleaned."
+
+6. **Single-user simplicity.** No roles, no multi-tenant gates, no complex approval chains. The merge approval should remain "Peter says yes in Discord → it happens."
+
+---
+
+## Summary
+
+The plan has the right skeleton but the cleanup-and-merge journey is missing its connective tissue. The approval boundary is named but not mechanized; the consolidation discipline is referenced but not integrated; the triggers from completion through merge through cleanup are undefined. The five gaps above are all about turning architectural intent into a concrete Discord conversation Peter can follow from "work done" to "main is clean" without leaving the chat.

@@ -1,0 +1,63 @@
+# Handoff Between Operator and Guardian
+
+## Direct Answer
+
+The handoff is a **shared-state, poll-based producer-consumer pattern through the operation registry**. The Operator writes operations and approvals into the registry; the Guardian reads them on its next tick. The Guardian writes status changes and pending approvals back to the registry; the Operator reads them the next time the user sends a Discord message. There is no direct process-to-process IPC, no message queue, and no synchronous handoff.
+
+Concretely:
+
+1. **Operator → Guardian**: The Operator creates an operation record in the registry (with status `running`, assigned tmux session, worktree paths, etc.) and then its turn ends. The Guardian discovers the operation on its next scheduled tick and begins supervision.
+
+2. **Guardian → Operator**: The Guardian classifies an operation as `blocked`, `failed`, `awaiting_approval`, or `completed`. It writes the updated status and any `pending_approvals` entries into the registry, then posts a Discord notification. When the user sees the notification and sends a message, the Operator wakes, reads the registry, finds the pending state, and acts on it.
+
+3. **Loop closure**: After the Operator resolves a blocker (approves, stops, restarts, cleans up), it updates the registry. The Guardian picks up the new state on its next tick and resumes supervision.
+
+## Rationale
+
+The plan is explicit about process separation: *"Guardian and Discord Operator must be separate processes at first. The Discord service owns an asyncio client loop, while Guardian is a periodic supervisor. Run them as separate systemd services sharing the same operation store to avoid event-loop coupling."*
+
+This rules out in-process handoff (same event loop, direct function calls) and suggests registry-mediated handoff. Several design choices reinforce this:
+
+- The Guardian wakes on a **fixed cadence** (5-15 minutes), not on events. It cannot be pushed; it must poll.
+- The Operator is **triggered by Discord messages**, which are unpredictable and user-driven. It cannot poll on a timer; it must wake on demand.
+- The operation registry is described as *"the center of the system"* that both actors *"share the same state, tools, and safety policy"* through.
+- The `pending_approvals` field on the operation record is the explicit bridge: Guardian writes "I need a human decision," Operator reads and resolves it.
+
+## Existing Mechanics This Depends On
+
+| Dependency | Location | Role |
+|---|---|---|
+| Operation registry (to be built) | New — SQLite or file store | Shared state backbone. Both actors read/write `status`, `last_check`, `pending_approvals`, `discord_refs`. |
+| Resident confirmation manager | `arnold_pipelines/megaplan/resident/` (exists) | Stores confirmation records, handles expiry. This is the pattern the approval queue should follow. |
+| Discord outbound sink | `arnold_pipelines/megaplan/resident/discord.py` | Guardian uses this to post notifications that trigger the Operator. |
+| `cloud/supervise.py` classification | Existing | Guardian wraps this to produce status classifications (`running`, `blocked`, `failed`, `completed`) it writes to the registry. |
+| `ResidentDiscordService` inbound message parsing | Existing | Operator uses this to receive user messages and parse intent, then reads registry to find what needs attention. |
+
+## Risks and Caveats
+
+1. **Polling latency**: If Guardian's tick is 10 minutes, a freshly launched operation sits unmonitored for up to 10 minutes. If the Operator launches work and the tmux session dies 30 seconds later, Guardian won't notice or restart it until the next tick. Mitigation: the Operator could do an immediate one-shot health check after launch, or the tick interval could be shorter for newly-created operations.
+
+2. **Race conditions on the registry**: Both processes can write to the same operation record. If the Operator approves a pending action at the same moment Guardian re-classifies the operation, writes could interleave. Mitigation: SQLite with WAL mode and write-ahead locking, or file-level atomic writes with compare-and-swap semantics.
+
+3. **Stale Operator context**: The Operator wakes, reads registry state, but by the time it acts, Guardian may have already changed the state (e.g., auto-repaired a failure the user was about to manually fix). Mitigation: the Operator should re-read operation state immediately before mutating it, and fail gracefully if the state has changed.
+
+4. **No push from Guardian to Operator**: Guardian cannot force the Operator to wake. If it posts a Discord notification and the user is away, a blocked operation sits indefinitely. This is intentional for a single-user system but means critical failures (disk full, credential expired) don't get faster attention than the user's next Discord check.
+
+5. **Orphaned operations**: If the Operator creates an operation record but the process launch fails silently, Guardian might classify it as `stale` on first tick and attempt repair. The repair path for "never actually ran" needs to be distinct from "ran and died."
+
+## Concrete Design Implication
+
+The `pending_approvals` field on the operation record must be a **first-class, structured sub-record**, not a free-text field. It needs at minimum:
+
+```yaml
+pending_approvals:
+  - id: approval-abc
+    kind: merge_to_main | delete_worktree | resolve_conflict | accept_debt | credential_rotation
+    description: "Guardian cannot proceed: merge conflict in megaplan/chain/git_ops.py"
+    created_at: "2026-06-23T14:30:00Z"
+    expires_at: "2026-06-24T14:30:00Z"  # optional TTL
+    resolved_by: null  # operator id or "peter"
+    resolution: null   # approved | rejected | delegated
+```
+
+This is the handoff data structure — it's what Guardian writes and Operator reads. Without structured approval types, the Operator cannot route messages to the right tool (`/approve merge`, `/approve cleanup op-123`), and the handoff degrades into the Operator reading an unstructured log and guessing what to do, which breaks the *"the Operator should still go through the same safety policy"* requirement.

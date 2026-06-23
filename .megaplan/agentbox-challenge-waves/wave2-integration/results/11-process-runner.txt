@@ -1,0 +1,261 @@
+All execution tools (execute_code, terminal, process) are hitting the same `_interrupt_event` import error in this environment. I'll work from the extensive code surface inventory provided in the context — it contains exact line numbers, function signatures, and structural patterns for every relevant file. That's sufficient for a thorough analysis.
+
+---
+
+# Current-System Fit Challenge: Process Runner and Tmux
+
+## 1. Verdict: **FIT WITH EXTRACTION**
+
+The existing Megaplan cloud tmux/wrapper conventions are a strong substrate for AgentBox's local process runner, but three extraction seams must be cut first: (a) session naming must be parameterized away from hardcoded defaults, (b) SSH-provider indirection must be bypassable for local execution, and (c) a per-operation command construction interface must be generalized from the chain-specific shell-string generators. The extraction surface is small — roughly 150 lines across `cloud/cli.py` and `cloud/supervise.py` — and the overall shape matches. This is not a conflict and not a greenfield build.
+
+---
+
+## 2. Existing Functionality That Should Be Reused
+
+### 2a. `_tmux_chain_launch_command` (cloud/cli.py, ~line 987)
+
+This function already constructs exactly the shell command AgentBox needs: a `tmux has-session` guard followed by `tmux new-session -d`. The core pattern is:
+
+```
+if tmux has-session -t <name>; then [maybe-restart-logic]; fi
+tmux new-session -d -s <name> -c <workspace> <command>
+```
+
+**Reuse verdict:** Extract into a shared `process_runner.py` module, rename to `_tmux_session_launch_command(session_name, workspace, command)`, and drop the chain-specific `$CHAIN_COMMAND` construction. The `shlex.quote()` safety wrapping should be preserved.
+
+### 2b. `_tmux_chain_restart_command` (cloud/cli.py, ~line 1049)
+
+Already handles the kill-then-relaunch pattern:
+
+```
+tmux kill-session -t <name> 2>/dev/null; tmux new-session -d -s <name> -c <workspace> <command>
+```
+
+**Reuse verdict:** Extract as `_tmux_session_restart_command(session_name, workspace, command)`. This is Guardian's primary recovery primitive for dead sessions.
+
+### 2c. `cloud_supervise_tick` (cloud/supervise.py, ~line 172)
+
+This is the correct shape for Guardian's per-operation inspection loop. It already:
+- Checks liveness via `tmux has-session`
+- Calls `_tmux_chain_restart_command` for dead sessions
+- Classifies chain state (running/stale/completed/failed)
+- Returns a structured report
+
+**Reuse verdict:** Wrap as a `megaplan_chain` operation plugin. The tick interface becomes `guardian_tick(operation) → Report`. The existing restart and classification logic stays intact; only the input changes from `(root, args, spec, provider)` to `(operation_record)`.
+
+### 2d. Tmux session templates (cloud/template.py, lines 60-75)
+
+The `_IDLE_RUNNER` and chain-session templates already encode the correct `tmux new-session -d -s <name> -c <workspace>` invocation pattern.
+
+**Reuse verdict:** Replace hardcoded `agent` session name with `{session_name}` template variable. Keep the `bash -l` / `bash -lc <command>` invocation pattern.
+
+### 2e. `tmux has-session` liveness check (cloud/cli.py, ~line 1170)
+
+```python
+alive = subprocess.run(["tmux", "has-session", "-t", session], 
+                       stdout=subprocess.DEVNULL, 
+                       stderr=subprocess.DEVNULL).returncode == 0
+```
+
+**Reuse verdict:** This is the canonical liveness primitive. Extract into `_tmux_session_alive(session_name) → bool`. It's already correct and needs no modification beyond parameterization.
+
+### 2f. Watchdog tmux scan and process monitoring (watchdog/tmux_scan.py, watchdog/processes.py)
+
+The watchdog already knows how to discover running processes, scan tmux sessions, and correlate them to plans.
+
+**Reuse verdict:** The discovery/scan/correlate engine should be library code called by Guardian's operation-registry loop. The `watchdog/tmux_scan.py` module can serve as the tmux-session discovery layer, cross-referenced against the operation registry to find orphan sessions.
+
+### 2g. Events.ndjson pattern (observability/events.py, observability/fold.py)
+
+The plan-scoped `events.ndjson` with `STATE_WRITTEN` events and `fold_events()` replay is exactly the right logging model for operations. Key functions to reuse:
+- `emit(kind, **payload)` — append-only event writer with `fcntl.flock` protection
+- `read_events(plan_dir)` — sequential event reader
+- `fold_events(events)` — pure state reconstruction from event stream
+
+**Reuse verdict:** Copy the event emission pattern to `/workspace/runs/<op>/events.ndjson` per operation. Add operation-level event kinds (`operation_started`, `operation_heartbeat`, `operation_phase`, `operation_completed`, `operation_failed`, `operation_restarted`, `operation_blocked`). The `fold_events` replay becomes Guardian's state reconstruction primitive.
+
+---
+
+## 3. Missing Seams and Incompatibilities
+
+### 3a. [INCOMPATIBILITY] Session name is hardcoded to `"megaplan-chain"` or `"agent"`
+
+**Evidence:** `_tmux_chain_launch_command` defaults `session_name: str = "megaplan-chain"`. The templates in `cloud/template.py` hardcode `-s agent`. The attach/list commands in `cloud/cli.py` (lines 118, 130, 151) reference `--session` but assume a single-session model.
+
+**AgentBox requires:** Per-operation session names derived from operation ID (e.g., `op-20260623-foo`). Multiple concurrent sessions must coexist without collision.
+
+**Fix:** Extract `session_name` as a required parameter (no default). Use operation ID as the session name. Add `session_name` to the operation registry record.
+
+### 3b. [INCOMPATIBILITY] All execution routes through SSH providers
+
+**Evidence:** `cloud/cli.py` line 1380 calls `_tmux_chain_launch_command(...)` then passes the result through `ssh_exec()`. `cloud_supervise_tick` takes a `provider` parameter and calls `ssh_exec` for every action. The `cloud/providers/local.py` provider exists but wraps commands in Docker (see `cloud/preflight.py` lines 36-38 which require `bun`, `claude`, `tmux`, `codex` as Docker preflight checks).
+
+**AgentBox requires:** Guardian runs directly on the Hetzner host. Process launch/stop/status must use local `subprocess.run()`, not SSH-wrapped Docker exec.
+
+**Fix:** Add a `local_exec(cmd: str) → CompletedProcess` path that bypasses the provider abstraction. The SSH path is retained for bootstrap and laptop-initiated operations. The `cloud/providers/local.py` provider should be inspected to determine whether its Docker wrapping can be toggled off for bare-metal execution. **Code-inspection task:** Read `cloud/providers/local.py` to confirm whether Docker is mandatory or optional.
+
+### 3c. [MISSING SEAM] Workspace path is provider-scoped, not operation-scoped
+
+**Evidence:** Templates use `${WORKSPACE_PATH}` which resolves to a single cloud workspace (`/root/workspace` or similar). `_tmux_chain_launch_command` takes a single `workspace` parameter.
+
+**AgentBox requires:** Per-operation workspace paths like `/workspace/worktrees/op-123/megaplan`. Multi-repo operations need multiple `-c` directories (one per repo worktree, though tmux sessions have a single working directory — the primary repo).
+
+**Fix:** The operation record stores `worktrees: {repo_name: path}`. The tmux session uses the primary repo's worktree as its `-c` directory. This matches existing behavior (one workspace per session) and only requires the path to be operation-scoped.
+
+### 3d. [CONFLICT] Command construction is chain-specific
+
+**Evidence:** `_tmux_chain_launch_command` constructs the chain command inline from `spec.args` and chain parameters. It does not accept an arbitrary command string. `_tmux_chain_restart_command` similarly hardcodes chain command logic.
+
+**AgentBox requires:** Generic command construction for different operation kinds (`megaplan-chain`, `codex`, `claude`, `shell`, `test`, `subagent`). Each adapter produces its own command string.
+
+**Fix:** Change the function signature to accept `command: str` directly. Move chain-specific command construction into the `megaplan_chain` adapter's `command(operation)` method. The shared `_tmux_session_launch_command` becomes purely a shell-command generator.
+
+### 3e. [MISSING SEAM] No stop or attach command primitives
+
+**Evidence:** The cloud CLI has attach functionality (`--attach` flag at line 130, session list at line 151), but no extracted `_tmux_session_stop_command()` or `_tmux_session_attach_command()` functions. Stop is only available as part of restart (kill + new).
+
+**AgentBox requires:** Programmatic stop (`tmux kill-session -t <name>`), attach (`tmux attach-session -t <name>`), and log capture (`tmux capture-pane -t <name> -p -S -`).
+
+**Fix:** Add these as new primitives in the extracted `process_runner.py`:
+```python
+def _tmux_session_stop_command(session_name: str) -> str:
+    return f"tmux kill-session -t {shlex.quote(session_name)} 2>/dev/null"
+
+def _tmux_session_capture_command(session_name: str) -> str:
+    return f"tmux capture-pane -t {shlex.quote(session_name)} -p -S -"
+```
+
+### 3f. [CONFLICT] Cloud supervise assumes one chain at a time
+
+**Evidence:** `cloud_supervise_tick` operates on a single root directory and single chain. It doesn't iterate over multiple operations. The `cloud/cli.py` list-sessions command (line 1541) runs `tmux list-sessions` but only for diagnostics, not as part of a supervision loop.
+
+**AgentBox requires:** Guardian iterates over all active operations in the registry, checks each one's tmux session, classifies status, and takes appropriate action.
+
+**Fix:** Guardian's main loop becomes: `for op in registry.list_active(): plugin = get_plugin(op.kind); report = plugin.tick(op); registry.update(op.id, status=report.status)`. The existing `cloud_supervise_tick` becomes the `megaplan_chain` plugin's tick implementation.
+
+---
+
+## 4. Exact Plan Changes Recommended
+
+### Change 4A: Add "Process Runner Extraction" as a prerequisite to Phase 3
+
+**Current plan Phase 3:** "Operation Registry And Runner" treats process runner as greenfield.
+
+**Recommended:** Add a pre-step before Phase 3:
+
+> **Phase 2.5: Extract Process Runner Primitives from Cloud CLI**
+> 
+> 1. Create `arnold_pipelines/megaplan/process_runner.py` with:
+>    - `tmux_session_launch_command(session_name, workspace, command) → str`
+>    - `tmux_session_restart_command(session_name, workspace, command) → str`
+>    - `tmux_session_stop_command(session_name) → str`
+>    - `tmux_session_capture_command(session_name) → str`
+>    - `tmux_session_alive(session_name) → bool`
+>    - `tmux_list_sessions() → list[str]`
+> 2. Extract from `cloud/cli.py`: `_tmux_chain_launch_command` → generalized, `_tmux_chain_restart_command` → generalized, `tmux has-session` check → `tmux_session_alive`.
+> 3. Extract from `cloud/template.py`: generalize `_IDLE_RUNNER` to accept `{session_name}` and `{command}` template variables.
+> 4. Add `local_exec(cmd: str | list[str], cwd: str = None) → subprocess.CompletedProcess` that runs commands directly (no SSH, no Docker).
+> 5. Add `operation_log_capture(op_id, session_name) → str` that pipes `tmux capture-pane` output to `/workspace/runs/<op>/log.txt`.
+> 6. Back-propagate: Replace inline tmux command construction in `cloud/cli.py` and `cloud/supervise.py` with calls to the extracted primitives.
+
+### Change 4B: Add local execution path specification
+
+**Current plan:** Phase 1 "Box Bootstrap" mentions SSH access but doesn't specify local vs. remote execution paths.
+
+**Recommended addition to Phase 1:**
+
+> Guardian and process runner run locally on the Hetzner host via `local_exec()`. The SSH provider remains for bootstrap commands from the laptop (`agentbox bootstrap`, `agentbox ssh`, `agentbox creds push`). The `cloud/providers/local.py` provider must be inspected to determine if Docker wrapping can be toggled off for bare-metal execution. If Docker is mandatory in the local provider, add a `--no-docker` flag or create a `BareMetalProvider`.
+
+### Change 4C: Add operation-registry-to-tmux mapping to Phase 3
+
+**Current plan Phase 3** lists "tmux session launch" and "log capture" but doesn't specify the mapping.
+
+**Recommended detail:**
+
+> **Operation → Tmux mapping rules:**
+> - `operation.tmux_session` = `operation.id` (e.g., `op-20260623-foo`)
+> - `operation.log_path` = `/workspace/runs/<op.id>/log.txt`
+> - `operation.events_path` = `/workspace/runs/<op.id>/events.ndjson`
+> - Session `-c` directory = primary repo's worktree path from `operation.worktrees`
+> - Session command = `adapter.command(operation)` from the operation kind's adapter
+> - Guardian liveness check = `tmux_session_alive(operation.tmux_session)`
+> - Guardian log inspection = `tmux_session_capture_command(operation.tmux_session)` piped to `operation.events_path`
+
+### Change 4D: Add Guardian tick interface to Phase 5
+
+**Current plan Phase 5** says "periodic operation checks" and "calls existing cloud supervise/watchdog repair" but doesn't specify the plugin interface.
+
+**Recommended detail:**
+
+> **Guardian tick plugin interface:**
+> ```python
+> class OperationPlugin(Protocol):
+>     def tick(self, operation: OperationRecord) -> TickReport: ...
+>     def command(self, operation: OperationRecord) -> str: ...
+>     def classify(self, operation: OperationRecord) -> OperationStatus: ...
+> ```
+> 
+> **`megaplan_chain` plugin:** Wraps `cloud_supervise_tick` from `cloud/supervise.py`. The tick:
+> 1. Checks `tmux_session_alive(operation.tmux_session)`
+> 2. If dead: calls `_tmux_chain_restart_command` logic (extracted from supervise.py)
+> 3. Reads `events.ndjson` from `operation.events_path` to classify chain state
+> 4. Returns `TickReport(status, action_taken, needs_approval, discord_message)`
+>
+> The existing watchdog `repair_runner.py` becomes a Guardian library for repair attempts, not a competing daemon.
+
+### Change 4E: Add code-inspection tasks for uncertainty
+
+**Recommended additions to the plan as investigation tasks:**
+
+> **CI-1:** Inspect `cloud/providers/local.py` to determine if local execution can bypass Docker. Check whether the `exec` method always wraps in Docker or has a bare-metal path.
+> 
+> **CI-2:** Inspect `_tmux_chain_launch_command` for edge cases: Does the has-session guard handle zombie sessions (session exists but pane is dead)? If `tmux has-session` returns true for a session whose process has exited, the restart logic won't trigger, and a dead session will appear alive.
+> 
+> **CI-3:** Inspect `watchdog/tmux_scan.py` to determine if it can serve as the operation-to-tmux correlation layer directly (scan all tmux sessions, match names against registry patterns) or if it's too plan-specific.
+> 
+> **CI-4:** Inspect `cloud/wrappers/mp-heartbeat` to understand the heartbeat event format. Determine if heartbeat events can be generalized from chain-scope to operation-scope for Guardian staleness detection.
+
+---
+
+## 5. Things Already Correctly Handled
+
+### 5a. Tmux as process container
+The plan's choice of one tmux session per operation exactly matches the existing convention. `cloud/cli.py` and `cloud/template.py` already use `tmux new-session -d` for background process isolation.
+
+### 5b. Session lifecycle primitives
+Launch, restart (kill+create), and liveness-check are already implemented in `cloud/cli.py`. Only parameterization is needed, not new logic.
+
+### 5c. Log and event separation
+The plan's `log.txt` (human) + `events.ndjson` (machine) split matches the existing `observability/events.py` pattern. The `fold_events()` replay mechanism provides exactly the state reconstruction Guardian needs.
+
+### 5d. Guardian tick shape
+The `cloud_supervise_tick` function already implements the correct check-decide-act-report cycle. The plan correctly identifies it as the starting point rather than proposing a rewrite.
+
+### 5e. Credential validation before work starts
+The plan's proactive credential check before expensive operations (Section 4: "Proactive Credential Validation") correctly mirrors the existing `seed_codex_oauth()` pattern in `cloud/auth.py` where credentials are validated during bootstrap, not after failure.
+
+### 5f. Watchdog as library, not competitor
+The plan correctly identifies that `watchdog/repair_runner.py` and `watchdog/snapshot.py` should be Guardian library code, not a separate daemon. The existing watchdog already knows how to discover, classify, and repair plans — it just needs an operation-registry integration layer.
+
+### 5g. Multi-process architecture
+The plan's separation of Guardian (periodic supervisor) from Discord Operator (on-demand agent) as separate systemd services matches the correct observation that the Discord service owns an asyncio client loop while Guardian is a synchronous tick loop. The existing `resident/discord.py` and `scripts/megaplan_live_watchdog.py` are already separate processes.
+
+### 5h. events.ndjson as the canonical state stream
+The plan's choice of `events.ndjson` per operation (with `fold_events` replay) mirrors the existing plan-scoped event system. The `STATE_WRITTEN` event kind and last-snapshot-wins semantics transfer directly.
+
+---
+
+## Summary Table
+
+| Concern | Status | Action |
+|---|---|---|
+| Tmux launch/restart command construction | Exists, chain-locked | Extract + parameterize in `process_runner.py` |
+| Session liveness check | Exists (`tmux has-session`) | Extract into `tmux_session_alive()` |
+| Local execution path | Wrapped in SSH/Docker | Add `local_exec()` + inspect `local.py` provider |
+| Per-operation session naming | Hardcoded to `"megaplan-chain"` | Parameterize; use operation ID |
+| Operation-to-tmux mapping | None | Add `tmux_session` field to registry |
+| Stop/attach/capture commands | Missing | Add as new primitives |
+| Multi-operation supervision loop | Single-chain assumption | Wrap `cloud_supervise_tick` as plugin |
+| Log + event separation | Matches existing pattern | Extend to operation scope |
+| Heartbeat/staleness detection | Exists in chain scope | Generalize with operation event kinds |
+| Zombie session detection | Unknown — needs inspection | Add CI-2 to plan |

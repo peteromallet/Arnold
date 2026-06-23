@@ -1,0 +1,47 @@
+## Direct Answer
+
+Guardian should launch a DeepSeek subagent only when it **cannot classify or repair a failure through deterministic rules and safe recovery paths alone**. This is an escalation gate, not a default behavior.
+
+The plan gives four explicit triggers: **failing tests without obvious cause, repeated chain stalls, ambiguous PR/branch state, or unclear cleanup recommendations**. The common thread: the failure is ambiguous and requires inspection-level reasoning that Guardian's tick-based classifier is not designed to provide.
+
+## Rationale
+
+Guardian runs on a fixed cadence (every 5–15 minutes) with bounded, deterministic logic: scan operations, check liveness, match failure patterns, apply known-safe recovery. That handles the vast majority of operational failures — dead tmux session, stale chain worker, heartbeat gap.
+
+But there is a sharp ceiling. Guardian cannot read a test traceback and decide whether the bug is in the code or the test. It cannot determine whether a chain has genuinely stalled or is just slow. It cannot judge whether a dirty branch is safe to delete or contains salvageable work. These require an LLM with context, log-reading ability, and diagnostic reasoning.
+
+A DeepSeek subagent is expensive (API cost, token burn, latency) and not infallible. Firing it on every failure wastes resources and risks hallucinated diagnoses. The trigger should be: **deterministic classification returned low confidence OR safe recovery already failed OR the failure type is inherently ambiguous**.
+
+## Existing Mechanics This Depends On
+
+- **Operation registry** — the subagent needs structured context: operation kind, repo, branch, worktree, log path, status history, Guardian tick history. Without the registry, the subagent has no ground truth. The plan explicitly says the registry is "the missing center," so this must exist first.
+
+- **Guardian v0 classification loop** — Guardian must classify failures before it can know they're ambiguous. It depends on existing `cloud/supervise.py` / watchdog logic for chain operations. If classification is weak, everything looks ambiguous and subagent cost explodes.
+
+- **DeepSeek/Hermes worker path** — the plan cites `workers/hermes.py`, `runtime/key_pool.py`, and local `subagent-launcher` skill as the existing execution path. This is the transport.
+
+- **Process runner and log capture** — the subagent needs clean access to `/workspace/runs/<op>/log.txt` and potentially the worktree itself. If logs aren't captured reliably, the subagent has nothing to diagnose.
+
+## Risks and Caveats
+
+1. **Cost runaways.** If the classification threshold is too low, Guardian fires subagents on deterministic failures (dead session, timeout), burning API credits for no benefit. Mitigation: require a "low-confidence" flag or "recovery already attempted" gate before escalation.
+
+2. **Scope creep.** A subagent launched for diagnosis might be tempted to patch code, modify branches, or restart things autonomously. The plan explicitly separates "diagnostic subagent" from "repair operation." The subagent should return findings and recommendations, not act. Repair should be a separate, recorded operation (possibly launched by the Diagnostic Operator after subagent findings).
+
+3. **Hallucinated diagnosis.** The subagent may confidently misattribute a failure (blame a network timeout on a code bug). Guardian should log subagent findings as metadata, not automatically act on them. The Discord Operator or the user should review ambiguous escalations.
+
+4. **Guardian stall during subagent wait.** Guardian runs synchronously on a tick. If the subagent takes 60+ seconds, Guardian's tick cycle can't block. The subagent call must be async/fire-and-poll: Guardian launches it, records the escalation, and picks up results on the next tick.
+
+## One Concrete Design Implication
+
+**Guardian needs an explicit `escalate()` decision function with a confidence threshold, not an implicit "try subagent" fallback.**
+
+The function should:
+
+1. Attempt deterministic classification and safe recovery.
+2. If classification confidence is below a threshold, OR recovery was attempted and the operation is still in the same failed/blocked state, AND the failure type matches a whitelist (`test_failure`, `chain_stall`, `branch_ambiguous`, `cleanup_ambiguous`):
+3. Fire a diagnostic subagent with scoped context (operation id, log path, recent Guardian tick history, failure classification attempt).
+4. Record the escalation in the operation record as `pending_subagent_diagnosis`.
+5. On next tick, if results exist, surface them to the Discord Operator for review or apply the recommended repair as a new recorded operation.
+
+This prevents the subagent from becoming a lazy default and keeps Guardian's behavior predictable and auditable.

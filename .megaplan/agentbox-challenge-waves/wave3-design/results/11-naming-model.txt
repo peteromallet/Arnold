@@ -1,0 +1,42 @@
+# Wave 3 Review: Naming and Mental Model
+
+## 1. Verdict
+
+**CLEAN WITH CHANGES**
+
+The two-actor model (Guardian / Operator) is crisp. "Operation" as the central registry primitive is the right abstraction level. "Worktree" correctly reuses an existing git concept rather than inventing a new term. The mental model of scheduled supervisor + on-demand interactive controller sharing a registry-only handoff is coherent and appropriately simple for one user.
+
+There is one genuine naming ambiguity that a reader implementing this plan will trip over, and it's fixable with a sentence.
+
+---
+
+## 2. The One Most Important Design Pressure
+
+**The "operation" umbrella spans entities with materially different lifecycle semantics.** A Megaplan chain has step-by-step state-machine progression, heartbeats, and resumable phases. A `shell` operation is fire-and-forget. A `codex` or `claude` operation is an interactive agent session with its own internal loop. A `subagent` operation is a child repair task that may or may not return structured output. The plan acknowledges this with the adapter interface (`prepare`, `command`, `classify`, `stop`), but the registry schema and Guardian supervision loop will inevitably need kind-specific classification logic, restart policies, and staleness heuristics. The risk is not that the abstraction is wrong — it's that the adapter interface will swell until each `kind` effectively has its own Guardian fork, and "operation" becomes a thin wrapper over divergent subsystems. The Registry-is-the-center architecture is the right defense here, but the naming alone won't hold it; the adapter contract needs to be the hard boundary.
+
+---
+
+## 3. Concrete Plan Change
+
+**Clarify whether "plan" and "chain" are the same thing.** The plan uses both terms and the intent-classification table gives them separate entries:
+
+| User says | Intent | Tool path |
+|---|---|---|
+| "set up a Megaplan for X" | `megaplan_create` | "Megaplan plan/chain authoring path" |
+| "run this chain" | `chain_launch` | "chain launch into operation" |
+
+But the operation kinds list only `megaplan-chain` and `megaplan-plan` — and the first slice explicitly targets `megaplan_chain` as the sole initial kind. A developer reading this will ask: is a "plan" a pre-execution artifact (a spec file), while a "chain" is the running execution of that spec? Or is "plan" a simpler execution mode than "chain"? If the answer is "a plan is a chain with a default profile" or "a plan is a chain spec that hasn't been launched yet," state it in one sentence. If plans are genuinely distinct from chains, add the operation kind. Otherwise, collapse the `megaplan_create` intent description to remove the ambiguous "plan/chain" language.
+
+**Suggested addition to the definitions section:**
+
+> "Plan" refers to a Megaplan plan spec (a YAML file describing the work). "Chain" refers to the execution of a plan — the running state machine that the Guardian supervises. There is no separate "plan" operation kind. Every Megaplan execution is a chain.
+
+---
+
+## 4. What I Would Explicitly Avoid Adding
+
+- **A third named actor.** Guardian + Operator is the right count. Do not split Guardian into "Watcher" + "Healer," do not extract a separate "Notifier" actor for Discord messages. The Guardian owns supervision AND notification; the Operator owns interaction AND launch. Two actors, one registry.
+
+- **"Epic" as a distinct system concept.** The plan already says "Do not create a second epic runner" — enforce that. "Epic" is user vocabulary for a chain with milestone tracking. It should not become an operation kind, a separate registry table, or a different adapter. If someone proposes an `epic` field on the operation record, push back: that's metadata on a chain, not a new primitive.
+
+- **More intent types than the classification table already has.** The nine intents listed are already generous. Resist `status_detail`, `chain_pause`, `chain_resume`, `operation_retry` as separate classified intents until the Operator proves it can't handle them through the existing resolver + tool path. Compound requests and the resolver tool already cover composition.

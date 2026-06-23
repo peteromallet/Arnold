@@ -1,0 +1,168 @@
+I've read the entire plan document with this specific UX lens. Here's my review.
+
+---
+
+## 1. Verdict: **FITS WITH CHANGES**
+
+The plan already nails the intent — H11, H4, H10, and the Guardian notification design all point in the right direction. Peter's core question ("what's running, blocked, completed, needs-me, dirty?") is directly anticipated. The gaps are not in vision but in specificity: the status taxonomy, the query mechanics, and two important states ("needs-me" vs "blocked", and "dirty") are under-specified to the point where implementing H11's "concise table" would require guesswork.
+
+---
+
+## 2. Top 5 Material Gaps
+
+### Gap 1: No finite, defined status taxonomy
+
+The plan mentions at least seven status-like terms: `running`, `waiting`, `blocked`, `failed`, `completed`, `stale`, `needs-me`, `awaiting approval`. H11 asks for output grouped by `running/blocked/completed/needs-me`. But nowhere does the plan define which of these are first-class operation statuses, which are transient sub-states, and what the allowed transitions are.
+
+**Why it matters:** Without an enumerated status set, the "concise table" from H11 is impossible to implement consistently. The Guardian, Operator, and registry will each develop their own ad-hoc status vocabulary, and Peter will see inconsistent language in Discord. When you say "what is blocked?", the system needs to know whether that means `blocked` (operational failure, Guardian can retry), `needs-me` (awaiting Peter's decision), or `stale` (no heartbeat but not yet classified). These have completely different next actions for Peter.
+
+### Gap 2: "Needs-me" is discussed but not modeled
+
+The plan says Guardian should "notify Discord when a run blocks, fails, completes, or needs human input" and H11 explicitly groups output by `needs-me`. The validation section also adds clarity: "if uncertainty is about Peter's intent or product choice, ask directly." But `needs-me` has no first-class representation in the operation record schema, no transition rules, and no clear separation from `blocked`.
+
+**Why it matters:** From Peter's perspective, `blocked` and `needs-me` are the most important states to distinguish. `Blocked` means "the machine is working on it, leave it alone." `Needs-me` means "the machine cannot proceed until you act." Conflating them forces Peter to read each notification to determine whether he needs to do something, defeating the purpose of status at a glance.
+
+### Gap 3: "Dirty" detection exists in events but not in the query UX
+
+The plan lists "dirty/unpushed branch warning" as a Discord notification event and mentions "dirty worktree summaries" in the repo service. But H11's status table groups don't include `dirty` (or `unpushed`), and there's no design for how dirty state surfaces in response to "what is running?" or "summarize AgentBox."
+
+**Why it matters:** Dirty worktrees represent uncommitted work that can be lost on cleanup. Unpushed branches represent work that exists only on the AgentBox machine. From Peter's perspective, `dirty` is as important as `blocked` — it's a state that requires his attention before proceeding. If it's only surfaced as a push notification and not discoverable on query, Peter can easily miss it.
+
+### Gap 4: Status query freshness is unspecified
+
+H11 says the Operator should return "a concise table" of current state. But the plan treats Guardian (periodic, every X minutes) and Operator (on-demand, triggered by Discord) as having different freshness models. It's unclear whether a "what is running?" query hits the registry (potentially stale by up to X minutes since the last Guardian tick), or does live tmux/process inspection for freshness.
+
+**Why it matters:** If Peter asks "what is running?" and gets a registry-only answer that's 9 minutes stale out of a 10-minute Guardian interval, he'll see operations as `running` that have actually crashed. This erodes trust in the Discord status UX and pushes him back toward raw log spelunking or SSH. The plan needs to say whether the Operator does a lightweight live check on query, or if the Guardian interval is short enough to make staleness irrelevant.
+
+### Gap 5: "Summarize AgentBox" has no defined content contract
+
+H11 mentions "summarize AgentBox" as a distinct query from "what is running?" The plan also lists `summarize` as a Discord Operator command. But there's nothing defining what goes into a summary vs. a status table — should it include disk/RAM pressure? Recent Guardian actions? Pending approvals count? Cleanup backlog?
+
+**Why it matters:** Without a content contract, the "summarize" command becomes a dumping ground that either omits critical information or overwhelms Peter with detail. This is exactly the "raw log spelunking" failure mode the plan is trying to avoid.
+
+---
+
+## 3. Recommended Plan Changes
+
+### Change 1: Define the operation status taxonomy
+
+Add a new section under "Operation Registry" or "Guardian Daemon":
+
+```markdown
+### Operation Status Taxonomy (v1)
+
+Every operation has exactly one of these user-visible statuses:
+
+| Status | Definition | Peter sees | Guardian behavior |
+|--------|-----------|------------|-------------------|
+| `running` | Process is alive with recent heartbeat | No notification | Continue periodic checks |
+| `blocked` | Operational failure; Guardian is attempting repair | Notification + repair summary | Diagnose, repair, retry |
+| `needs-input` | Cannot proceed without Peter's decision, credential, or approval | DM with concrete options | Stop attempting repair; hold |
+| `completed` | Plan/chain reached done state with validation | DM with summary, branch, next action | Ready for cleanup/consolidation |
+| `failed` | Unrecoverable after retries exhausted | DM with evidence, what was tried | Stop; mark for review |
+| `dirty` | Uncommitted changes in worktree; or unpushed commits on branch | Included in status table as warning | Flag; do not clean up |
+
+Transition rules:
+- `running` → `blocked`: Guardian detects dead session, failed tests, stalled chain
+- `running` → `completed`: Chain/plan terminal state reached
+- `blocked` → `running`: Guardian repair succeeds
+- `blocked` → `needs-input`: Guardian cannot safely proceed
+- `blocked` → `failed`: Guardian retries exhausted
+- `needs-input` → `running`: Peter provides input/approval, Operator resumes
+- Any → `dirty`: Can co-exist with other statuses as a secondary flag
+```
+
+### Change 2: Make `events.ndjson` carry status transitions
+
+Add this to the "Process Runner" or "Operation Registry" section:
+
+```markdown
+Every status transition MUST emit an `events.ndjson` line with:
+`{"type": "status", "from": "running", "to": "blocked", "reason": "tmux session dead", "timestamp": "..."}`
+
+The Operator constructs the Discord status table from the most recent status event per operation. For freshness on explicit query ("what is running?"), the Operator also checks tmux liveness for `running` operations before replying — but does NOT perform a full Guardian tick.
+```
+
+### Change 3: Define dirty detection
+
+Add to the "Repo Registry" or "Guardian Daemon" section:
+
+```markdown
+### Dirty State Detection
+
+Per-operation dirty checks:
+1. **Worktree dirty**: `git status --porcelain` returns non-empty in the operation worktree. Indicates uncommitted changes that would be lost on worktree removal.
+2. **Branch unpushed**: The operation branch has commits not present on the remote tracking branch (`git log origin/<branch>..<branch> --oneline` is non-empty).
+
+Dirty state is a secondary flag that co-exists with the primary status. An operation can be `running` AND dirty, or `completed` AND dirty.
+
+Discord presentation: dirty operations appear in the status table with a ⚠ marker and a count of dirty files or unpushed commits. The `summarize` command includes a dedicated "Dirty / Unpushed" section.
+```
+
+### Change 4: Define the `summarize` content contract
+
+Add under "Discord Operator" or create a new subsection:
+
+```markdown
+### Summarize Content Contract
+
+`/summarize` or "summarize AgentBox" returns:
+
+1. **Operations summary** (same table as "what is running?"):
+   - Grouped by primary status: running, blocked, needs-input, completed-today, failed
+   - Each row: op-id, kind, repo, branch, status, brief one-liner (from manifest), age
+
+2. **Pending approvals**: count and list of operations needing Peter's input, with one-line description of what's needed
+
+3. **Dirty / Unpushed**: operations with uncommitted work or unpushed branches
+
+4. **Machine health** (one line): disk % used, RAM, active tmux sessions, last Guardian tick
+
+5. **Recent Guardian actions** (last 3): op-id, action taken, outcome
+
+Hard constraint: the entire summary must fit in 2-3 Discord messages (≈4000 chars). Detail is available via `/logs <op>` or `/status <op>`.
+```
+
+### Change 5: Explicitly separate Guardian push from Operator pull
+
+Add to the "Guardian Daemon" section:
+
+```markdown
+### Notification vs. Query Freshness
+
+**Guardian push**: On each tick, Guardian updates the operation registry and notifies Discord of material state transitions (running→blocked, blocked→needs-input, →completed, →failed). Peter does not need to poll.
+
+**Operator pull**: When Peter explicitly queries ("what is running?", "summarize"), the Operator:
+1. Reads the registry for all operation records.
+2. For operations with status `running`, performs a lightweight tmux liveness check (`tmux has-session -t <session>`).
+3. If tmux is dead but registry says `running`, the Operator notes "may be stale" and triggers an immediate Guardian tick for that operation.
+4. Returns the table within 3 seconds.
+
+This keeps queries fast without requiring a full Guardian inspection on every Discord message.
+```
+
+---
+
+## 4. What The Plan Already Covers Well (Do Not Change)
+
+- **H11 is correct and well-scoped.** The grouping by running/blocked/completed/needs-me is exactly the right taxonomy for Peter's mental model. Don't add groupings.
+
+- **H4 (meaningful state changes only, no heartbeat noise) is the right notification posture.** Don't add periodic "still running" pings.
+
+- **H10 (say what failed, what was tried, what evidence, what's needed) is the right failure UX.** Don't change it.
+
+- **Guardian notification events list** (operation started/blocked/approval needed/completed/failed/dirty warning) already has the right coverage. Don't remove any.
+
+- **"No dashboard for v1" and "conversational first"** (H9, H12) are the right constraints. Don't add web UI or slash-command completeness requirements.
+
+- **Discord Operator tools: `status`, `logs`, `guardian_check`** are the right primitives. The `summarize` command should build on these, not replace them.
+
+- **Completion DM format** (summary, validation, branch/PR link, suggested next action) is well-specified. Don't change it.
+
+- **The "two path" clarification for Operator uncertainty** (machine state → inspect first; Peter's intent → ask directly) is the right design refinement from validation. Keep it.
+
+- **Guardian owns the loop; watchdog is a plugin, not a competing daemon.** The validation adjustment is correct. Don't reintroduce a separate watchdog process.
+
+---
+
+**Bottom line:** The plan understands the UX problem. The gaps are all in the execution specificity — define the status values, wire dirty state into the query UX, decide freshness semantics, and give `summarize` a content contract. These are additions, not redesigns.

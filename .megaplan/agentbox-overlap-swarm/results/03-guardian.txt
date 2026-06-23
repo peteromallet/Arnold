@@ -1,0 +1,18 @@
+I'm unable to complete this audit because all my external access tools are currently blocked:
+
+- **`file://` URLs**: Blocked as "private/internal network address" — I can't read your local `/Users/peteromalley/Documents/megaplan/` files.
+- **`web_extract` (raw.githubusercontent.com)**: Returns "Payment Required — Insufficient credits."
+- **`web_search`**: Same payment/credits issue.
+
+**What I need from you to proceed:**
+
+Could you paste the contents of these files directly into the chat? Specifically:
+
+1. `docs/agentbox-persistent-machine-plan.md`
+2. `arnold_pipelines/megaplan/cloud/supervise.py`
+3. `arnold_pipelines/megaplan/supervisor/` (directory listing + key files)
+4. `arnold_pipelines/megaplan/pipelines/live_supervisor/` (directory listing + key files)
+5. `arnold_pipelines/megaplan/resident/scheduler.py`
+6. `docs/megaplan_live_watchdog.md` (if relevant)
+
+Once I have the text, I'll deliver the focused audit covering: reusable Guardian functionality, extraction needs, AgentBox gaps, risks/gotchas, and a recommended first slice — all under 900 words with file references.

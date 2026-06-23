@@ -1,0 +1,47 @@
+# Discord Operator Context at Turn Start
+
+## Direct Answer
+
+The Discord Operator needs the following context bundle at the start of every turn:
+
+1. **The triggering Discord message** — raw text, parsed intent, conversation/channel/thread identifiers, and the authenticated sender identity (user id, guild, channel).
+2. **A snapshot of the operation registry** — all active operations with their `id`, `kind`, `status`, `repo`, `worktree`, `branch`, `tmux_session`, `log_path`, `last_check`, and `pending_approvals` fields. This is the single most important piece of state.
+3. **The repo registry** — canonical repo names, URLs, default branches, and their local paths under `/workspace/repos/`.
+4. **Guardian's most recent tick summary** — which operations were classified as running, stale, blocked, failed, completed, or awaiting approval; any pending approvals the Guardian filed.
+5. **Authorization and safety policy** — allowlist (user/channel check), the safe/confirm/forbidden action taxonomy, and any active confirmation records.
+6. **Discord conversation context** — recent messages in the same thread or channel so the Operator can resolve pronouns like "that chain" or "the one from yesterday."
+7. **Machine health snapshot** — disk, memory, and key process liveness, for questions like "is the box healthy?"
+
+## Rationale
+
+The Operator is described as "an on-demand agent launched by Discord messages" that must handle eight distinct responsibility classes: status queries, work launches (plan/chain/Codex/Claude/subagent/shell/test), log inspection, stuck-operation diagnosis, approval actions, stop/restart/cleanup, repo/branch inspection, and PR/push operations.
+
+Each of these responsibilities demands a different subset of context, but the Operator cannot afford a round-trip to fetch state for every question. If Peter asks "what is running?" the Operator must answer immediately from a preloaded snapshot. If Peter asks "what is blocked?" the answer lives in both the operation registry (status field) and the Guardian's last tick. If Peter says "run the chain from yesterday," the Operator needs conversation history to resolve the reference.
+
+The critical design insight from the plan is that the Operator and Guardian share the operation registry. The Operator does not need to re-inspect tmux sessions or read logs at turn start — those are expensive operations. It needs the *registry summary* (status, last_check, pending_approvals) and the Guardian's interpretation (classification, filed approvals). Deep inspection happens on demand when the user asks "show logs for op-123."
+
+## Existing Mechanics This Depends On
+
+- **Operation registry** (the plan's "missing center") — without it, there is nothing to snapshot. This is the hard dependency.
+- **`ResidentDiscordService`** from `arnold_pipelines/megaplan/resident/discord.py` — already provides message parsing, conversation keys, inbound/outbound events, allowlists, and turn lifecycle. The context bundle plugs into this existing runtime.
+- **Repo registry** (`agentbox.yaml`) — needed for the Operator to know what repos exist when the user says "run a chain on megaplan."
+- **Guardian tick output** — the Guardian must write its findings somewhere the Operator can read at turn start (the pending_approvals field in the registry, or a separate tick report).
+- **Store patterns** from `arnold_pipelines/megaplan/store/base.py` — the file/DB store layer for durability of all the above.
+
+## Risks and Caveats
+
+1. **Staleness of the snapshot.** If the Guardian runs every 5–15 minutes and the Operator uses the Guardian's last tick, a newly-launched operation might not appear. The Operator should refresh the operation registry snapshot at turn start (cheap, since it's a single query) rather than relying solely on the Guardian's cached view.
+
+2. **Conversation history growth.** Long Discord threads could blow out the context window. The plan mentions "Discord conversation/thread/message ids" as operation-record fields, which suggests linking operations to threads. The Operator likely needs only the last N messages from the active thread, plus message IDs from any referenced operations.
+
+3. **Authorization latency.** If authorization checks require an external call (e.g., validating a token), they should be done once at turn start and the result cached for the turn, not rechecked per tool call.
+
+4. **Guardian-Operator race conditions.** If the Guardian modifies an operation while the Operator is acting on it, the Operator could make decisions on stale state. The registry should support basic optimistic concurrency (e.g., a version field or last-modified timestamp) so the Operator can detect conflicts.
+
+## Concrete Design Implication
+
+**The turn-start context should be a single structured payload assembled by the resident runtime before the agent turn begins.** Specifically, `ResidentDiscordService` should construct an `AgentBoxTurnContext` object (or JSON blob) containing all seven elements above and pass it as system context to the agent. The agent should not need to make its own initial tool calls to discover state — that state should arrive pre-loaded.
+
+This means the resident runtime needs a new method: `assemble_operator_context(message: DiscordInboundMessage) -> AgentBoxTurnContext`, which queries the operation registry, repo registry, Guardian tick store, and recent messages in a single critical path before spawning the agent. If any of those queries fail, the Operator should still start but with a degraded context (e.g., "operation registry unavailable — ask the user to check manually").
+
+This turns the Operator from a generic agent-with-tools into an agent that starts already situated in the machine's current reality.

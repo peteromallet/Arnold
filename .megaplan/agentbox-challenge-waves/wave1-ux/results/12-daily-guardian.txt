@@ -1,0 +1,73 @@
+# AgentBox UX Review: Daily Guardian Review Habit
+
+## Verdict: **FITS WITH CHANGES**
+
+The plan supports daily autonomous operations well through continuous Guardian monitoring, material-transition notifications, and on-demand status queries. However, it designs Peter’s interaction as purely *event-driven* (he asks, or he gets pinged on transitions). It never designs a *proactive, predictable daily check-in* — the structured moment that turns autonomous operations into a reviewable *habit*. This is a material but addressable gap.
+
+---
+
+## Top 5 Material Gaps
+
+### 1. No proactive daily briefing from Guardian
+
+**Why it matters:** The Guardian notifies on material transitions (blocked, failed, completed, needs input), but never produces a consolidated daily summary unprompted. For a *daily review habit*, Peter shouldn't have to remember to type “summarize AgentBox” every morning. The system should deliver a predictable morning digest — what ran overnight, what completed, what's still running, what needs him — so the habit forms around *receiving*, not *asking*.
+
+The plan mentions “summarize AgentBox” (H11) only as an on-demand Operator query. That's useful, but it doesn't build a habit.
+
+### 2. Guardian cadence is uniform (every X minutes) with no daily rollup behavior
+
+**Why it matters:** The 5–15 minute tick is correct for continuous monitoring. But there is no concept of a longer-period “daily tick” that consolidates activity, computes trends (“3 completed, 1 blocked since yesterday, 0 needs-you”), or surfaces patterns that matter at human timescale. A Guardian that only thinks in 10-minute increments never synthesizes the day.
+
+### 3. “Needs-me” grouping is mentioned but never explicitly defined as a Guardian output
+
+**Why it matters:** H11 says “summarize AgentBox” should return a table grouped by running/blocked/completed/needs-me. The individual triggers for “ask Peter” are scattered across load-bearing questions (H2, H5, H7) — missing credentials, merge conflicts, destructive cleanup, product decisions, quality debt — but the plan never specifies that the Guardian should **actively maintain a “needs-Peter” queue** and surface it in a daily briefing. It's implied, not built.
+
+### 4. Completion notifications are per-operation, with no batch/digest option
+
+**Why it matters:** If Peter launches 8 operations in a day, he gets up to 8 separate completion DMs at unpredictable times. For a daily review rhythm, this fragments his attention. The system should offer (not mandate) an option to batch non-urgent completions into the daily digest, while still DMing immediately for failures, blockers, or approval-needing items. The plan treats all material transitions identically; they aren't.
+
+### 5. No designed “daily check-in moment”
+
+**Why it matters:** The plan's interaction model is purely event-driven: Guardian acts, Guardian notifies, Peter reacts. There's no designed moment where the Guardian says “here's your morning briefing, here's everything that needs you, approve/reject/redirect in one session.” A daily check-in point — structured, predictable, actionable — is the behavioral anchor that makes autonomous operations feel *managed* rather than *forgotten*. The raw pieces exist (status, logs, approvals) but they aren't composed into a daily-ritual interaction.
+
+---
+
+## Exact Plan Changes Recommended
+
+Add these bullets or sections to the plan:
+
+### Add to “Guardian” responsibilities (or add a new subsection “Daily Briefing”):
+
+> **Daily briefing.** Once per day at a configured time (default: 08:00 local), Guardian produces a structured digest DM to Peter containing:
+> - **Completed since last briefing:** operation id, summary, branch/PR status, validation result.
+> - **Still running:** operation id, kind, repo, elapsed time, current phase.
+> - **Blocked or failed:** operation id, failure classification, what Guardian tried, what's needed.
+> - **Needs Peter:** pending approvals, credential requests, ambiguous product decisions, destructive cleanup confirmations — each with a concrete question and suggested options.
+> - **Machine health:** disk, memory, dirty repos, stale worktrees.
+>
+> The daily briefing is the primary proactive touchpoint. Real-time DMs remain for failures, blockers, and approval-needing items that can't wait. Routine completions may be deferred to the daily digest by user preference.
+
+### Add to “Guardian Daemon” build section:
+
+> - Daily rollup tick: aggregates per-operation tick history into a daily summary; detects patterns (e.g., repeated stalls on same repo, increasing failure rate); populates the “needs Peter” queue.
+
+### Add to “Discord Operator” build commands:
+
+> - `daily` or `briefing` — returns the current daily briefing on demand (same format as the proactive digest).
+
+### Clarify in the plan text (near H11 or the Operator section):
+
+> The “needs-me” category is defined as the union of: pending approvals, credential-missing operations, operations that failed after maximum retries, operations requiring product decisions, and operations proposing destructive actions. Guardian maintains this category actively in the operation registry, not computed on-the-fly when Peter asks.
+
+---
+
+## What The Plan Already Covers That Should Not Change
+
+1. **Continuous Guardian loop (every X minutes)** — correct for operational monitoring. The daily tick should *add to* this, not replace it.
+2. **Material transition notifications** (blocked, failed, completed, needs input) — correct. These remain for urgent items.
+3. **“Summarize AgentBox” on-demand query** — correct. The daily briefing supplements this; it doesn't replace it.
+4. **H10 failure experience** — “what failed, what it tried, what evidence, what decision” is exactly right. The daily briefing should use this format for any “needs Peter” items.
+5. **H4 “routine heartbeats available on request, not noisy”** — correct. The daily digest is the one proactive heartbeat; everything else stays on-request.
+6. **Discord-first, no dashboard** — correct. The daily briefing is a Discord DM, not a web UI.
+7. **Guardian’s autonomous repair bias** — correct. The daily briefing surfaces what Guardian *couldn't* fix, not what it already handled.
+8. **Single-user, narrow approval model** — correct. The daily “needs Peter” queue reflects this model exactly.

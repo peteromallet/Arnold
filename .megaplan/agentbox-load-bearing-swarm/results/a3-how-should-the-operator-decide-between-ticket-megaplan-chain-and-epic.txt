@@ -1,0 +1,52 @@
+## Direct Answer
+
+The Operator should classify user requests along two axes: **execution ambition** and **structural complexity**.
+
+| User wants… | Operator selects | Why |
+|---|---|---|
+| Track an idea/bug/todo without running anything now | **Ticket** | Lightweight persistent item; no runner, no worktree, no tmux session |
+| Plan and execute a single focused task in one shot | **Megaplan** (plan) | Single planning+execution cycle; one worktree, one outcome |
+| Execute a multi-step workflow with dependencies, state tracking, failure handling, and PR policy | **Chain** | Structured state machine with ordered milestones, supervision, and repair paths |
+| Define a milestone scope or group related tickets/chains | **Epic** | Organizational container; chains execute epics, epics don't execute themselves |
+
+The decision tree is:
+
+1. **No execution needed** (just record it) → Ticket
+2. **Execution needed, single discrete task** (fix this, build that, investigate X) → Megaplan plan
+3. **Execution needed, multi-step with ordering/dependencies** (build feature with tests, review, merge) → Chain
+4. **Organizational grouping** (milestone, theme, collection of related work) → Epic
+
+When the user explicitly names the type ("add a ticket…", "set up an epic…", "run this chain…"), the Operator should honor that. When ambiguous, default to Chain for complex/multi-repo work and Megaplan for single-shot tasks.
+
+## Rationale
+
+The plan states: *"Chains as the epic execution backbone. Chain specs already express milestone order, failure behavior, profile/robustness/depth, PR/merge policy, and state. Do not create a second epic runner."* This means epics are organizational wrappers and chains are the execution engine. A ticket is explicitly non-executing — the ticket system is described for CRUD and linking, not for launching runners. The Megaplan plan is the single-shot alternative to the chain's stateful multi-step model.
+
+The user journey examples reinforce this: "add a ticket" means save it; "set up a megaplan… and run it" means plan+execute; "run this chain" means execute against an existing spec; "set up an epic" means define scope, not run.
+
+## Existing Mechanics This Depends On
+
+- **Ticket system**: `arnold_pipelines/megaplan/tickets/*` — already supports CRUD, tags, storage, search, and epic linking
+- **Chain spec/state**: `arnold_pipelines/megaplan/chain/spec.py` — already models milestones, failure behavior, and PR/merge policy
+- **Megaplan plan execution**: `megaplan init` / plan workflows — existing planning+execution cycle
+- **Operation registry (to be built)**: must record `kind` as `ticket`, `megaplan-plan`, `megaplan-chain`, or `epic` — each kind has different lifecycle expectations (tickets have no tmux session, chains have supervisor state, epics are containers)
+
+## Risks and Caveats
+
+1. **Ambiguity between plan and chain**: A user saying "fix the SSH cloud provider" could reasonably be either. The Operator should default to plan for focused single-repo work and chain when the user mentions sequencing, multiple repos, or "step by step."
+
+2. **Over-classification into chains**: The plan says chains are the backbone — there's a risk of routing everything through chains when a simpler plan would suffice. The Operator should ask itself: "Does this need ordered milestones with failure handling, or just plan-then-execute?"
+
+3. **Epic-to-chain linkage is underspecified**: The plan says tickets link to epics and chains execute epics, but the exact mechanism for "run this epic" (which chains does it spawn?) is not designed yet. The Operator should treat epics as organizational only in v1.
+
+4. **Tickets accumulating without execution**: If the Operator creates tickets for everything ambiguous, the system fills with unexecuted items. The Operator should prefer execution-oriented classifications when the intent is clearly "do this now."
+
+## Concrete Design Implication
+
+The `AgentBoxOperatorProfile` tool profile needs a **classification step before action**. When the Operator receives a Discord message, its first internal decision should be:
+
+```
+intent = classify(message)  # returns: ticket | plan | chain | epic | status | maintenance
+```
+
+This classification should be an explicit first-pass tool call (or internal LLM step) that the Operator records in its reasoning before creating any operation record. The operation registry's `kind` field is then set from this classification, and downstream behavior (worktree creation, tmux launch, supervisor attachment) branches on it. This avoids the Operator mid-execution realizing it should have used a different kind and needing to tear down and rebuild.

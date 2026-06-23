@@ -1,0 +1,42 @@
+# How Agents Should Handle Logs
+
+## Direct Answer
+
+Every operation writes a **structured line-delimited JSON (NDJSON) event log** to `/workspace/runs/<op-id>/events.ndjson`, alongside a raw plaintext capture (`log.txt`) piped from the tmux session. Agents must write at minimum three event types: `lifecycle` (started, paused, resumed, completed, failed), `phase` (chain step, test suite, subagent spawn), and `heartbeat` (periodic "still alive" markers with progress summaries). The event log is the authoritative source for Guardian classification and Operator inspection. The plaintext log is the fallback for human debugging.
+
+## Rationale
+
+The plan already shows `events.ndjson` in the run directory layout but treats it as unspecified. From first principles, log handling must satisfy three consumers with different needs:
+
+1. **Guardian (periodic machine reader):** Needs fast, structured access to recent events to classify operation state — stale, blocked, failed, running. Parsing freeform agent output every tick is expensive and fragile. NDJSON lets Guardian `tail -n 200` and parse only the last few lines into typed records.
+
+2. **Discord Operator (on-demand human-facing reader):** Needs both summaries (from structured events) and raw context (from plaintext) when a user asks "what happened in op-123?" or "why did it fail?" The structured log feeds summaries; the raw log provides the full transcript.
+
+3. **Developer debugging (offline human reader):** Needs the complete, unmodified stdout/stderr of whatever process ran — including ANSI escape codes, stack traces, and subagent chatter. `log.txt` captures this verbatim.
+
+A dual-stream approach (structured events + raw capture) is standard in systems that mix machine supervision with human debugging (Kubernetes, CI runners, systemd journal). The key AgentBox-specific reasoning is that **Guardian must not reparse agent-specific output formats** (Codex JSON lines vs Claude streaming vs Megaplan chain progress vs pytest output). The event log is the normalization layer.
+
+The heartbeat event is critical: Guardian cannot distinguish "chain is stalled" from "tmux session is alive but silently looping" without explicit progress markers. Every agent adapter must emit a heartbeat at a configurable interval (recommended: 60 seconds) with a summary like `{"current_step": "implement add_user_endpoint", "tokens_used": 45000}`.
+
+## Existing Mechanics This Depends On
+
+- **Operation registry** (the center of the plan): logs are addressable by operation ID. Guardian and Operator already know where to look.
+- **Process runner / tmux session**: the raw capture pipe already exists in the tmux launch conventions inherited from Megaplan Cloud.
+- **Agent adapters**: each adapter must implement an `events` writer. This is a new requirement on the adapter interface proposed in the plan, but it fits neatly as a shared base-class concern.
+- **Megaplan chain state**: existing chain state already has structured progress fields (`current_step`, `completed_steps`). The event log is a superset — chain phase events can mirror chain state transitions, keeping backward compatibility with `cloud_supervise_tick()`.
+
+## Risks and Caveats
+
+1. **Adapter compliance:** If an adapter (e.g., a raw `shell` operation) doesn't write heartbeat or lifecycle events, Guardian must fall back to tmux-liveness-only classification, which is coarser. The `shell` adapter should at minimum emit lifecycle markers from a wrapper script.
+
+2. **Event log growth:** NDJSON files grow unboundedly. The cleanup policy must rotate or truncate event logs along with raw logs. Recommendation from the plan: cleanup after operation archival, with a retention window (e.g., 30 days).
+
+3. **Clock skew:** No NTP assumption is stated in the plan. Event timestamps should be UTC ISO 8601 and the machine should run `systemd-timesyncd` as part of bootstrap.
+
+4. **Agent crashes mid-line:** If a process dies mid-write to `events.ndjson`, the last line may be truncated. Guardian's parser must be tolerant of trailing partial lines (standard NDJSON practice: discard incomplete final line).
+
+5. **Sensitive data leakage:** Agents may echo credentials or tokens to stdout. The raw `log.txt` will contain them. This is acceptable for a single-user box with permissioned files, but it means the cleanup/archive policy must treat logs as sensitive material (same tier as `/workspace/secrets`).
+
+## Concrete Design Implication
+
+**Add `event_log` as a required field on the operation record and a required method on the `OperationAdapter` interface.** The plan's proposed adapter interface (`prepare`, `command`, `classify`, `stop`) needs a fifth method: `emit_event(operation, event_type, payload)`. This method writes to `events.ndjson` and optionally updates `state.json` for backward-compatible chain state fields. Guardian's tick loop then reads from `events.ndjson` first, falling back to `log.txt` grep only when no recent events exist (stale or legacy operations). This imposes a small initial cost but prevents the entire Guardian classification system from becoming a tangled regex-matching layer over heterogeneous agent output.

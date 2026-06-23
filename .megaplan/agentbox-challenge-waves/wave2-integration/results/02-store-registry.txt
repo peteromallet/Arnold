@@ -1,0 +1,308 @@
+I have sufficient data from the inventory to do a thorough assessment. Let me now write the review.
+
+---
+
+# AgentBox Operation Registry — Current-System Fit Review
+
+## 1. VERDICT: **FIT WITH EXTRACTION**
+
+The existing Megaplan store, cloud-run tracking, watchdog registry, and resident conversation mechanics provide **strong substrate** for an AgentBox operation registry, but they are **scattered across four separate systems** with overlapping concerns and no unifying record. The operation registry is not a greenfield build — it is an **extraction-and-unification task** that pulls fields from existing code and removes the duplication. The plan correctly identifies "the operation registry is the missing center." What it understates is how much the **existing systems will fight each other** if not explicitly consolidated.
+
+---
+
+## 2. EXISTING FUNCTIONALITY THAT SHOULD BE REUSED
+
+### 2a. `store/base.py` — The store abstract interface already has the right shape
+
+The abstract `Store` class (from the inventory) already exposes:
+
+| Method | What it tracks | AgentBox relevance |
+|---|---|---|
+| `list_cloud_runs()` | Cloud chain runs with status, provider, session | **Direct.** This is the closest existing thing to an operation record. |
+| `list_scheduled_jobs()` | Recurring jobs with claim mechanics | **Direct.** Guardian's periodic tick is a scheduled job. |
+| `upsert_resident_conversation()` | Discord conversation state | **Direct.** Operation ↔ Discord ref mapping lives here. |
+| `list_progress_events()` | Structured progress ticks | **Direct.** Heartbeat and phase-change events. |
+| `create_ticket()` / `link_ticket_to_epic()` | Ticket and epic state | Indirect but useful for linking operations to tickets. |
+| `events_for_plan()` | Per-plan event stream | Pattern to copy, not reuse directly. |
+
+**Action:** The operation registry should be a new table/collection in this store, not a separate SQLite file or JSON store. The existing `list_cloud_runs` should become a **filtered view** over the unified operation table. Cloud runs are a `kind=megaplan_chain` operation with `provider=ssh|railway`.
+
+### 2b. `watchdog/registry.py` — The WatchdogRegistry already does operation tracking
+
+From the inventory and `scripts/megaplan_live_watchdog.py`:
+
+```python
+DEFAULT_REGISTRY_PATH = "~/.megaplan/watchdog/registry.ndjson"
+```
+
+The watchdog has `Observation` records and a `WatchdogRegistry` that tracks:
+- Plan discovery (scanning `DEFAULT_SCAN_ROOTS`)
+- Process liveness
+- Repair attempts
+- Retry outcomes
+- Snapshots
+
+This is a **partial operation registry** already. It tracks plan identity, process state, repair history, and retry caps — all of which the AgentBox plan wants in the operation registry. The watchdog's registry is currently file-backed ndjson, separate from the main store.
+
+**Action:** Fold the watchdog's `Observation` fields into the unified operation record. Replace `~/.megaplan/watchdog/registry.ndjson` with queries against the store. The watchdog becomes a Guardian plugin that writes to the same registry rather than its own file.
+
+### 2c. `cloud/supervise.py` — `cloud_supervise_tick` is Guardian v0 for chains
+
+The plan correctly calls this out. The signature we can infer from the inventory:
+
+```python
+def cloud_supervise_tick(root, args, spec, provider) -> report
+```
+
+It already does:
+- Tmux session health checks (`tmux has-session`)
+- Chain state inspection
+- Safe restart via `_tmux_chain_restart_command`
+- Status classification
+- Dead session restart
+
+**Action:** Wrap `cloud_supervise_tick` as the first `OperationAdapter.classify_and_repair()` plugin. Don't rewrite it — add the operation-record read/write around it.
+
+### 2d. `resident/discord.py` + `resident/runtime.py` — The Discord shell is built
+
+`ResidentDiscordService`, `DiscordInboundMessage`, `DiscordOutboundSink`, allowlists, confirmation manager, and the resident runtime already handle:
+- Message parsing and routing
+- Conversation keys and scoping
+- Tool calls and turn management
+- Recovery and error handling
+- Authorization subjects
+
+The plan's "Discord Operator profile" is really a **new tool set** plugged into the existing `ResidentDiscordService`, not a new bot. This is correctly identified.
+
+### 2e. `bakeoff/worktree.py` — Worktree primitives exist but are command-scoped
+
+The inventory shows:
+- `validate_worktree_name`
+- `ensure_no_inprogress_op`
+- `resolve_ref`
+- `branch_exists`
+- `worktree_registered`
+- `create_named_worktree`
+- `create_worktree`
+- `remove_worktree`
+
+These are directly reusable but need **parameterization**:
+- Worktree root path is hardcoded to `~/Documents/.megaplan-worktrees` — must become a configurable `/workspace/worktrees`
+- Repo discovery is current-working-directory based — must accept an explicit repo name/id
+- Return values mutate argparse — must return structured metadata
+
+### 2f. `observability/events.py` + `fold.py` — The per-plan event model is a pattern to generalize
+
+The existing `events.ndjson` + `.events.seq` + `fold_events` / `read_events` / `STATE_WRITTEN` replay pattern is well-tested. AgentBox operations should use the **same ndjson + seq counter pattern** for their per-operation `events.ndjson`. The plan already specifies this — confirmed as correct.
+
+---
+
+## 3. MISSING SEAMS AND INCOMPATIBILITIES
+
+### 3a. **CRITICAL: Four separate registries must be consolidated — or they will diverge**
+
+| Registry | Location | Tracks |
+|---|---|---|
+| Cloud runs | Store (DB or file) | Chain runs on cloud providers |
+| Watchdog registry | `~/.megaplan/watchdog/registry.ndjson` | Plans, processes, repair state |
+| Scheduled jobs | Store | Recurring job claims |
+| Resident conversations | Store | Discord message state |
+
+The plan proposes a **fifth** registry (AgentBox operation registry). If added alongside the existing four, you get:
+- Cloud runs in the store AND operations in the store — duplicate identity for chain launches
+- Watchdog scanning plans AND Guardian scanning operations — divergent state views
+- Scheduled jobs for Guardian ticks AND a separate Guardian loop — two schedulers
+
+**The missing seam is a migration path from four registries to one.** The plan says "add an operation registry" but doesn't specify whether `list_cloud_runs` continues to exist, whether the watchdog registry is deleted or merged, or whether scheduled jobs become a Guardian configuration concern.
+
+### 3b. **MISSING: No `operation_id` field in existing cloud run records**
+
+The inventory shows `list_cloud_runs` exists, but we don't see a consistent `operation_id` field across the system. The cloud CLI uses `session_name` (e.g., `megaplan-chain`) as the tmux identifier. The watchdog uses plan directory paths. The resident conversations use Discord message/channel IDs. There is **no existing foreign key** that ties a cloud run to a watchdog observation to a Discord conversation.
+
+**The extraction seam is:** AgentBox needs to introduce `operation_id` as the primary key, then backfill it into existing cloud run records, and replace path/session-based identity with operation-id-based identity in the watchdog and resident layers.
+
+### 3c. **MISSING: Worktree helpers assume one repo per operation**
+
+`bakeoff/worktree.py` functions like `create_named_worktree` and `remove_worktree` operate on "the current repo." The AgentBox plan envisions multi-repo operations:
+
+```yaml
+repos:
+  - name: megaplan
+    branch: agent/op-123
+    worktree: /workspace/worktrees/op-123/megaplan
+  - name: reigh-app
+    branch: agent/op-123
+    worktree: /workspace/worktrees/op-123/reigh-app
+```
+
+**The missing seam is a `create_operation_worktrees(repos: list[RepoSpec])` function** that calls the existing single-repo helpers in a loop against a repo registry, not the CWD. This is extraction, not rewrite, but it's a new composition layer that doesn't exist yet.
+
+### 3d. **MISSING: Guardian tick vs. resident scheduler conflict**
+
+Two things exist:
+
+1. `resident/scheduler.py` — schedules resident jobs (the inventory shows it exists)
+2. `scripts/megaplan_live_watchdog.py` — standalone watchdog process
+
+The AgentBox plan proposes a systemd-based Guardian daemon. But the resident runtime already has scheduling. **The missing seam is:** Will Guardian be a resident-scheduled job, a standalone systemd service, or both? If both, how do they avoid double-ticking the same operation?
+
+The plan says "separate systemd services sharing the same operation store" — but the resident scheduler is inside the Discord runtime process. A separate Guardian process reading the store is fine for reads, but what about writes? Two processes writing `status`, `last_check`, and `pending_approvals` to the same operation record need a concurrency strategy. The existing store appears to use file-level or transaction-level consistency (from `store/base.py`'s `Transaction` references), but we need to verify it handles concurrent cross-process writes.
+
+### 3e. **MISSING: Credential specs need extraction from provider-specific code**
+
+The plan correctly identifies `cloud/auth.py`'s `seed_codex_oauth()` as the pattern. But credential handling is currently:
+- Buried inside the cloud bootstrap flow (OAuth seeding happens during deploy)
+- Provider-specific (SSH upload vs. Railway env vars vs. local files)
+- Not separately testable
+
+**The missing seam is a `SecretSpec` class and a `credential_registry` table** that decouples credential definitions from the cloud deploy path. The plan proposes this — confirmed as correct and necessary.
+
+### 3f. **RISK: Bare repo worktree support is untested against existing helpers**
+
+The plan recommends bare repos under `/workspace/repos/*.git`. The inventory shows `worktree_registered` and `remove_worktree` in `bakeoff/worktree.py`. The plan itself flags (Finding #5): "Existing worktree helpers assume a normal repo/main worktree in places such as registered-worktree discovery and removal."
+
+**Code-inspection task to add to the plan:** Before committing to bare repos, audit `worktree_registered`, `remove_worktree`, and dirty-state carry helpers for bare-repo compatibility. Specifically:
+- Does `worktree_registered` use `git worktree list` (bare-repo-safe) or inspect the main working tree?
+- Does `remove_worktree` call `git worktree remove` (safe) or `rm -rf` + `git branch -D` (may miss bare-repo prune)?
+- Do dirty-state carry helpers assume a main-worktree index?
+
+### 3g. **RISK: `cloud_supervise_tick` may assume remote SSH transport**
+
+From the inventory, `cloud_supervise_tick` calls `_tmux_chain_restart_command` which uses `tmux has-session` / `tmux kill-session` / `tmux new-session`. On a remote provider, these run via SSH. On the local AgentBox Hetzner host, they should run locally.
+
+**Code-inspection task:** Verify whether `cloud_supervise_tick` and its callees can operate in a "local" mode without SSH wrapping, or whether a local adapter is needed.
+
+---
+
+## 4. EXACT PLAN CHANGES RECOMMENDED
+
+### Change 1: Replace "Add an operation registry" with "Unify four registries into one"
+
+**Current plan text (Phase 3 / First Slice):**
+> "Add an operation registry: one JSON or SQLite record per operation; fields for id, kind, repos, worktrees, branch, tmux_session, log_path, status, last_check, pending_approvals, discord_refs, and metadata."
+
+**Replace with:**
+
+> **Phase 2.5: Registry Unification (before Phase 3)**
+>
+> Before adding a fifth registry, consolidate the four existing ones:
+>
+> 1. Add an `operations` table to the existing store (next to cloud_runs, scheduled_jobs, resident_conversations).
+> 2. Migrate `list_cloud_runs()` to be a filtered view: `SELECT * FROM operations WHERE kind = 'megaplan_chain' AND provider IS NOT NULL`.
+> 3. Add `operation_id` as a foreign key to `resident_conversations` (maps Discord scope to operation).
+> 4. Replace `WatchdogRegistry`'s ndjson file with store queries — watchdog Observations become operation status snapshots.
+> 5. Add `guardian_tick` as a `scheduled_job` kind (reuses existing claim mechanics).
+> 6. Keep the old tables read-only for one version, then drop.
+
+### Change 2: Add a multi-repo worktree composition layer
+
+**Add to Phase 2 (Repo and Worktree Service):**
+
+> **Multi-repo worktree creation:**
+>
+> ```python
+> # New: arnold_pipelines/agentbox/worktree_service.py
+> def create_operation_worktrees(operation_id: str, repo_specs: list[RepoSpec], base_ref: str = "main") -> dict[str, WorktreeResult]:
+>     """Create worktrees for all repos in an operation. Wraps existing bakeoff/worktree.py helpers."""
+> ```
+>
+> This delegates to existing `create_named_worktree` per repo but against the repo registry, not CWD. It returns structured results per repo rather than mutating argparse.
+
+### Change 3: Add bare-repo compatibility audit to Phase 1 or 2
+
+**Add to Phase 1 (Box Bootstrap) or Phase 2 (Repo and Worktree Service):**
+
+> **Bare-repo compatibility task (code inspection, not build):**
+>
+> Before committing to bare canonical repos under `/workspace/repos/*.git`, audit:
+> - `bakeoff/worktree.py::worktree_registered` — does it use `git worktree list` (bare-safe) or inspect the main worktree?
+> - `bakeoff/worktree.py::remove_worktree` — does it use `git worktree remove` (bare-safe) or manual cleanup?
+> - Dirty-state carry helpers — do they assume a main-worktree index?
+> - `git_ops.py` branch/push helpers — do they work against a bare repo with `--git-dir`?
+>
+> If any helper fails bare-repo scenarios, either fix it or start with normal (non-bare) canonical checkouts for v0 and add bare support later.
+
+### Change 4: Add concurrency strategy for Guardian + Discord Operator writes
+
+**Add to Phase 5 (Guardian Daemon):**
+
+> **Operation record concurrency:**
+>
+> The Guardian and Discord Operator run in separate processes but both write to operation records (status, last_check, pending_approvals). The existing store uses transactions (`store/base.py::Transaction`). Verify:
+> - Does the store support optimistic concurrency or row-level locking?
+> - If file-backed: does the write-and-rename pattern prevent partial reads?
+> - If SQLite-backed: are writes wrapped in `BEGIN IMMEDIATE` transactions?
+>
+> Document the concurrency guarantee in `agentbox/registry.py` docstring. If the existing store does not guarantee safe cross-process writes, add an `agentbox registry lock` context manager using `fcntl.flock` (already used by `observability/events.py`'s `.events.seq`).
+
+### Change 5: Add Guardian-as-scheduled-job path alongside systemd
+
+**Add to Phase 5 (Guardian Daemon):**
+
+> **Two deployment modes for Guardian:**
+>
+> 1. **Systemd service** (primary, for Hetzner): `agentbox guardian serve` runs a long-lived loop.
+> 2. **Resident scheduled job** (optional, for Railway or single-process deploys): Guardian tick registered as a `scheduled_job` kind, claimed and executed by the resident scheduler.
+>
+> Both modes read/write the same operation store. The scheduled-job mode reuses `store/base.py::claim_due_scheduled_jobs` and `list_scheduled_jobs` to avoid double-execution.
+
+### Change 6: Resolve the `cloud_supervise_tick` local-vs-remote question
+
+**Add to Phase 7 (Megaplan Native Integration):**
+
+> **Code-inspection task:** Before wrapping `cloud_supervise_tick` as the `megaplan_chain` operation adapter, verify:
+> - Can it operate without SSH transport (local tmux commands)?
+> - Does it require a `CloudSpec` / `Provider` object, or can it work with just a root directory and session name?
+> - If it requires provider abstraction, add a `LocalProvider` that issues tmux commands directly.
+>
+> The plan says "AgentBox needs a local execution path" — this is the concrete verification step for that claim.
+
+---
+
+## 5. THINGS ALREADY CORRECTLY HANDLED
+
+### ✅ Per-operation `events.ndjson` pattern
+The plan correctly adopts the existing `events.ndjson` + `.events.seq` + `fold_events` pattern. This is battle-tested in Megaplan and maps directly to per-operation event streams. No change needed.
+
+### ✅ Guardian as plugin architecture over `cloud_supervise_tick`
+The plan correctly says "wrap `cloud_supervise_tick()` as the first classifier/action plugin for `megaplan_chain` operations" rather than rewriting it. This preserves the existing repair logic (dead tmux restart, stale chain resume, retry caps).
+
+### ✅ Discord Operator as a tool profile on existing resident runtime
+The plan correctly identifies that `ResidentDiscordService` + `resident/runtime.py` already handle message parsing, conversation scoping, tool dispatch, and recovery. The "Operator" is a new tool profile, not a new bot. Confirmed correct.
+
+### ✅ Cleanup-loose-branches for post-run consolidation
+The plan correctly defers to the existing cleanup discipline rather than inventing a new merge/delete policy. The survey → land/delete/park → explicit approval flow is correct.
+
+### ✅ Single-user scope
+The plan correctly identifies that multi-tenant ceremony is not needed. Discord allowlist for one user, no role hierarchy, natural-language messages sufficient for v1.
+
+### ✅ Credential pre-flight before expensive work
+The plan correctly adds credential validation before worktree creation, not after a run fails. This is not in the existing cloud code (which seeds credentials during deploy) — the plan's addition of proactive validation is correct and necessary.
+
+### ✅ Completion flow: DM Peter, include summary/validation/PR/next-action
+The plan correctly makes completion a first-class notification path rather than requiring the user to poll.
+
+### ✅ Watchdog as Guardian plugin, not competing daemon
+The plan correctly says "do not run a separate watchdog daemon beside Guardian in v1." The watchdog's discovery/repair/retry/snapshot mechanics are consumed by Guardian, not run in parallel.
+
+### ✅ Thin Discord path required for v0
+The plan correctly insists that CLI-only launch is not a complete slice. The v0 must include `add a ticket`, `run this chain`, `what is running/blocked`, `show logs`, and completion DM. This is the right minimum bar.
+
+---
+
+## Summary Table
+
+| Concern | Status | Action |
+|---|---|---|
+| Four separate registries exist | **Conflict risk** | Unify into one operations table; migrate cloud_runs, watchdog, scheduled_jobs |
+| No operation_id across systems | **Missing seam** | Add operation_id FK to cloud_runs, resident_conversations, watchdog observations |
+| Worktree helpers are single-repo | **Needs extraction** | Add multi-repo composition layer wrapping existing helpers |
+| Bare repo compatibility | **Unknown risk** | Code-inspection task: audit worktree helpers for bare-repo safety |
+| Guardian + Discord Operator concurrency | **Missing seam** | Document store's cross-process write guarantees; add lock if needed |
+| cloud_supervise_tick local mode | **Unknown** | Code-inspection task: verify local tmux path without SSH |
+| Per-operation events.ndjson | ✅ Correct | Pattern matches existing observability system |
+| Guardian as plugin architecture | ✅ Correct | Preserves existing repair logic |
+| Discord Operator on resident runtime | ✅ Correct | No new bot needed |
+| Completion DM flow | ✅ Correct | Well-specified |
+| Credential pre-flight | ✅ Correct | Necessary addition |
+| Single-user scope | ✅ Correct | Right simplification |

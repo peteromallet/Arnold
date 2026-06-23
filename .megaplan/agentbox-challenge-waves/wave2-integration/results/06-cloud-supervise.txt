@@ -1,0 +1,194 @@
+Now I have enough context from the extensive plan and code-surface inventory to deliver a thorough analysis. Let me compile my findings into the requested five-part assessment.
+
+---
+
+# Wave 2 Current-System Fit Challenge: Cloud Supervise as Guardian Plugin
+
+## 1. Verdict: **FIT WITH EXTRACTION**
+
+`cloud/supervise.py` and `cloud/cli.py` contain the exact supervision skeleton Guardian needs — chain liveness checks, tmux restart, outcome classification, and session management. But the current code is **three layers too coupled** to work as a Guardian plugin without extraction:
+
+- **Provider-coupled**: `cloud_supervise_tick(root, args, spec, provider)` takes a cloud provider object (SSH or Railway). Guardian runs **locally on the Hetzner box**, not through a provider. The supervision logic (`_tmux_chain_restart_command`, liveness checks, outcome classification) is tangled into provider-specific execution paths.
+- **CLI-args-coupled**: The function consumes `argparse.Namespace` (`args`). Guardian is a daemon with no CLI invocation per tick.
+- **Single-plan-scoped**: It supervises one chain at a time, discovered through the cloud deployment lifecycle. Guardian must iterate over **many operations** from a registry.
+
+The verdict is **FIT WITH EXTRACTION** — not STRONG FIT, not CONFLICT. The extraction is concrete and bounded (see §4 below). The plan already says "Do not rewrite cloud/supervise.py. Wrap cloud_supervise_tick() as the first classifier/action plugin for megaplan_chain operations." That is correct, but it understates the extraction surface needed before the wrap is possible.
+
+---
+
+## 2. Existing Functionality That Should Be Reused
+
+I map each to the specific code surface from the inventory:
+
+| AgentBox need | Reuse this | Why it fits |
+|---|---|---|
+| **Chain liveness check** | `cloud_supervise_tick()` (L172, `cloud/supervise.py`) + `_tmux_chain_restart_command()` (L1049, `cloud/cli.py`) | Already classifies running/stale/blocked/completed; already restarts dead tmux sessions for chains. |
+| **Tmux session management** | `_tmux_chain_launch_command()` (L987) and `_tmux_chain_restart_command()` (L1049) in `cloud/cli.py`; `tmux has-session` checks (L1170, L2032-2036) | Battle-tested commands for creating, killing, and checking tmux sessions. Guardian needs exactly these primitives. |
+| **Operation discovery and health scanning** | `WatchdogRegistry` (`watchdog/registry.py`), `RepairRunner` (`watchdog/repair_runner.py`), `RetryLoop` (`watchdog/retry.py`), `build_snapshot` (`watchdog/snapshot.py`) — all orchestrated by `scripts/megaplan_live_watchdog.py` | Already scans for blocked/failed plans, runs repair, retries with backoff. Guardian should compose these, not rewrite them. |
+| **Worktree creation/removal** | `create_named_worktree`, `create_worktree`, `remove_worktree`, `validate_worktree_name`, `worktree_registered` in `bakeoff/worktree.py` | These are the exact primitives AgentBox needs for operation isolation. |
+| **Discord message handling** | `ResidentDiscordService` (`resident/discord.py`), resident runtime (`resident/runtime.py`), `resident/auth.py` | Message parsing, conversation keys, inbound/outbound events, allowlists, turns, tool calls, and recovery already exist. Only needs an AgentBox tool profile. |
+| **Credential seeding pattern** | `seed_codex_oauth()` (`cloud/auth.py`) + entrypoint OAuth restore (`cloud/templates/entrypoint.sh.tmpl`) | Proves the pattern of selective credential copying. AgentBox should generalize to `SecretSpec`. |
+| **Chain state / event stream** | `fold_events()` / `read_events()` / `rebuild_state_from_wal()` (`observability/fold.py`), `events.ndjson` convention (`observability/events.py`) | The event-stream model is already proven. AgentBox's `events.ndjson` per operation directly reuses this pattern. |
+| **Approval/confirmation manager** | Resident confirmation manager (`resident/runtime.py` references), `cloud/supervise.py` refusal policy | The "safe/confirm/forbidden" policy shape already exists. |
+| **Megaplan ticket system** | `tickets/core.py`, `tickets/registry.py`, `tickets/files.py` | Tickets CRUD, tags, epic linking already exist. Only needs Discord-facing tool wrapper. |
+| **Chain spec as epic backbone** | `chain/spec.py`, chain state model | Already expresses milestone order, failure behavior, profile/robustness/depth, PR/merge policy. Do not create a second epic runner. |
+| **Git/PR operations** | `chain/git_ops.py`, `supervisor/pr_merge.py` | Branch/PR/CI tracking already prototyped. |
+
+---
+
+## 3. Missing Seam or Incompatibility That Must Be Addressed
+
+Here are the concrete gaps, ordered by blocking severity:
+
+### 3A. **Provider coupling in `cloud_supervise_tick()` — BLOCKING**
+
+The function signature from the inventory is:
+
+```python
+# cloud/supervise.py:172
+def cloud_supervise_tick(root, args, spec, provider):
+```
+
+It consumes `provider` (SSH or Railway) and `args` (argparse). Guardian runs locally and has no CLI args per tick. The supervision logic is interleaved with provider-specific `ssh_exec` / remote command execution.
+
+**Code-inspection task to add to plan**: Read `cloud_supervise_tick()` body (L172–end of `cloud/supervise.py`). Identify every line that touches `provider.*` or `args.*`. For each, determine whether it can be replaced with a local operation (tmux has-session, log read, state.json read) without changing the supervision decision logic. If the decision logic (what to classify, when to restart, when to escalate) is separable from the transport, the extraction is mechanical. If the decision logic depends on provider-specific semantics (e.g., Railway's deploy lifecycle vs SSH's process lifecycle), the extraction is harder and may need two plugins.
+
+The plan currently says "Wrap cloud_supervise_tick() as the first classifier/action plugin" — but doesn't specify the extraction step. This is the single highest-risk gap.
+
+### 3B. **Watchdog scans filesystem; Guardian must scan registry — MODERATE**
+
+`scripts/megaplan_live_watchdog.py` imports:
+
+```python
+from arnold_pipelines.megaplan.watchdog.discovery import DEFAULT_SCAN_ROOTS  # L25
+```
+
+The watchdog discovers plans by scanning directories. Guardian discovers operations by reading the operation registry. The watchdog's `RepairRunner` and `RetryLoop` are reusable **if** they can be fed operation records instead of filesystem paths.
+
+**Code-inspection task**: Read `watchdog/discovery.py` and `WatchdogRegistry` (`watchdog/registry.py`). Determine if `WatchdogRegistry` can accept externally-provided entries (not just filesystem-discovered ones). If it can, Guardian feeds it operation records. If it cannot, add an `add_operation()` method.
+
+### 3C. **Worktree functions are current-repo-scoped — MODERATE**
+
+`bakeoff/worktree.py` functions like `create_named_worktree` and `validate_worktree_name` likely operate on the current working directory's git repo. AgentBox needs:
+
+- Worktree creation by **repo name** (not cwd): `create_named_worktree(repo_name="megaplan", worktree_name="op-123")`
+- **Multi-repo worktree bundles**: one operation may span multiple repos
+- **Bare-repo-aware variants**: functions like `worktree_registered` may assume a normal checkout with a main worktree. Bare repos (`/workspace/repos/megaplan.git`) have no main worktree, so discovery/removal logic may break.
+
+**Code-inspection task**: Audit `bakeoff/worktree.py` functions for cwd dependency and bare-repo compatibility. Specifically: `worktree_registered`, `ensure_no_inprogress_op`, and `remove_worktree` — do they assume a non-bare repo?
+
+### 3D. **No local-only execution path in cloud CLI — MODERATE**
+
+`cloud/cli.py` has local execution paths (there's a `cloud/providers/local.py` in the file list), but the chain supervision path (`cloud supervise --chain`) may still go through provider abstraction even when local. Guardian needs to run tmux commands directly (no Docker wrapper, no SSH):
+
+```bash
+tmux has-session -t op-123 2>/dev/null && echo alive || echo dead
+```
+
+Not:
+```bash
+ssh hetzner "tmux has-session -t op-123 ..."
+```
+
+**Code-inspection task**: Read `cloud/providers/local.py`. Determine if `cloud_supervise_tick()` works correctly when passed a local provider, or if it still shells out through unnecessary abstraction layers. Also check if the `--provider local` path in `cloud/cli.py` (referenced at L118-L151) creates Docker containers or runs directly on the host.
+
+### 3E. **Credential seeding is deploy-time, not runtime — MINOR**
+
+`seed_codex_oauth()` (`cloud/auth.py`) runs during deployment. AgentBox needs credential validation:
+
+- At operation **creation** time (before expensive work starts)
+- Periodically by Guardian (for daily briefing staleness checks)
+- On-demand via Discord (`creds test`)
+
+The plan correctly identifies this as a generalization needed ("from OAuth seeds to explicit secret specs"), but doesn't detail the runtime validation hook.
+
+### 3F. **No operation-id to plan-dir mapping — MINOR**
+
+`cloud/supervise.py` and the watchdog discover plans by filesystem path. AgentBox operations are identified by `operation_id`. The mapping from operation to plan directory needs to be explicit and durable:
+
+```python
+# New: Operation record field
+"plan_dir": "/workspace/worktrees/op-20260623-foo/megaplan/.megaplan/plans/cloud-chain"
+```
+
+Without this, Guardian can't find the chain state to supervise.
+
+---
+
+## 4. Exact Plan Changes Recommended
+
+The plan should add these concrete steps. I organize them as additions to the existing phase structure:
+
+### Add to Phase 5 (Guardian Daemon), before "periodic operation checks":
+
+**5a. Extract `_supervise_chain_local(operation_record) -> SupervisionReport`:**
+- Read `cloud_supervise_tick()` (L172, `cloud/supervise.py`)
+- Identify transport-dependent lines (provider.*, args.*)
+- Extract a local-only variant that:
+  - Takes an operation record (dict or dataclass with `operation_id`, `plan_dir`, `tmux_session`, `log_path`, `chain_spec_path`)
+  - Uses local `subprocess.run(["tmux", "has-session", ...])` instead of provider SSH
+  - Reads logs and state.json from local filesystem
+  - Returns a standardized `SupervisionReport` dict with keys: `status`, `classification`, `action_taken`, `needs_peter`, `discord_message`
+- This extraction must pass an existing chain test before Phase 5 proceeds.
+
+**5b. Add operation-to-plan-dir mapping to registry schema:**
+- Operation record must include `plan_dir` field for `megaplan_chain` operations.
+- Guardian resolves `operation_id` → `plan_dir` → calls extracted supervision function.
+
+**5c. Bridge watchdog registry to operation registry:**
+- Read `WatchdogRegistry` (`watchdog/registry.py`) to determine ingest API.
+- If `WatchdogRegistry` accepts programmatic entries, feed it from the operation registry.
+- If not, add `WatchdogRegistry.add_operation(operation_id, plan_dir, tmux_session)`.
+- Guardian's per-operation tick: lookup operation → feed to watchdog registry → run `RepairRunner` → collect `RetryOutcome` → update operation record.
+
+**5d. Add local-provider chain supervision validation:**
+- Run `cloud_supervise_tick()` with `cloud/providers/local.py` on a test chain.
+- Verify tmux commands run directly (no Docker), log capture works, and status classification is correct.
+
+### Add to Phase 2 (Repo and Worktree Service):
+
+**2a. Bare-repo audit of worktree helpers:**
+- Inspect `worktree_registered`, `ensure_no_inprogress_op`, `remove_worktree` in `bakeoff/worktree.py` for bare-repo assumptions.
+- If they depend on a main worktree existing, add bare-aware variants or start with normal checkouts (contradicting the plan's bare-repo recommendation — this audit resolves the open design decision).
+
+### Add to Phase 4 (Credential Sync):
+
+**4a. Runtime credential validation hook:**
+- Before `megaplan_chain` launch, validate GitHub, Codex, and Claude credentials.
+- Store credential requirements in operation manifest.
+- Guardian's daily briefing includes credential staleness checks.
+
+### Add to Phase 6 (Discord Operator):
+
+**6a. Classify `args` dependency in cloud supervision:**
+- The Operator may need to launch chains with specific `args` (profile, robustness, depth).
+- Determine if the extracted `_supervise_chain_local()` needs any `args`-equivalent parameters (profile selection, retry caps). If so, store them in the operation manifest, not as CLI args.
+
+---
+
+## 5. Things That Are Already Correctly Handled
+
+The plan gets these right and they should not change:
+
+| What the plan says | Why it's correct | Evidence from inventory |
+|---|---|---|
+| **"Do not rewrite cloud/supervise.py. Wrap as plugin."** | The supervision logic works. Extraction is cheaper than rewrite. | `cloud_supervise_tick()` already handles restart (L479, L546, L678), classification, and escalation. |
+| **"Guardian should start as a scheduler over operation plugins."** | The plugin-per-operation-kind model isolates chain supervision from future Codex/Claude/test adapters. | The plan's `OperationAdapter` interface matches this. |
+| **"The operation registry is the missing center."** | No existing subsystem ties operation id, tmux session, log path, approvals, Discord refs, and PR metadata together. | Confirmed: chain state is plan-scoped, cloud markers are deploy-scoped, Discord conversations are scope-scoped. No cross-cutting record exists. |
+| **"Guardian and Discord Operator must be separate processes."** | Discord owns an asyncio client loop; Guardian is a periodic supervisor. Sharing a process creates event-loop coupling. | `resident/discord.py` is asyncio; watchdog/cloud-supervise are synchronous subprocess calls. |
+| **"Live watchdog reused as Guardian plugin, not competing daemon."** | The watchdog already has discovery, repair, retry, and snapshot. Guardian adds registry iteration and operation-kind dispatch. | `WatchdogRegistry`, `RepairRunner`, `RetryLoop`, `build_snapshot` are proven in `scripts/megaplan_live_watchdog.py`. |
+| **"Bare repos recommended for canonical storage."** | Cleaner for managed worktrees — avoids a main checkout that no agent should touch. | The concern (worktree helpers may assume non-bare) is flagged as an audit task in §4 above. |
+| **"Tickets first, GitHub issues later."** | The ticket system already exists and links to epics. GitHub mirroring is secondary. | `tickets/core.py`, `tickets/registry.py`, `tickets/files.py`, `store/base.py:create_ticket`, `store/base.py:link_ticket_to_epic`. |
+| **"Cleanup-loose-branches for post-run consolidation."** | Don't invent a new merge policy. Reuse the existing discipline. | Plan references the local `cleanup-loose-branches` skill. |
+| **"Discord thin path required for v0."** | CLI-only is not a complete product slice. | Plan explicitly lists the 6 Discord interactions needed for v0. |
+| **"Credentials checked before expensive work, not after."** | Avoids wasting agent time on auth failures. | Plan lists validation at megaplan-chain launch, codex launch, claude launch, and push/PR actions. |
+| **"Single-user simplifications."** | No multi-tenant UI, no role hierarchy, simple allowlists, natural-language over slash commands. | Plan explicitly scopes to Peter's user id, one guild. |
+| **"Completion DM with push/open PR/cleanup options."** | The approval boundary is at completion and destructive actions, not every intermediate step. | Plan's completion flow section matches this. |
+
+---
+
+## Summary
+
+The cloud/supervise module is the right substrate for Guardian v0, but **it cannot be wrapped directly** — it needs extraction of the supervision decision logic from the provider/transport layer. This is a bounded, inspectable extraction (one function, `cloud_supervise_tick`, plus its tmux helper commands). The code-inspection tasks in §3 above de-risk this by precisely identifying the coupling points before any code is written. Once extracted, the Guardian loop is: iterate operation registry → for each `megaplan_chain` operation → call extracted `_supervise_chain_local(operation_record)` → feed repair outcomes through existing watchdog `RepairRunner`/`RetryLoop` → update registry → notify Discord on material transitions.
+
+The plan's reuse map is accurate but understates the extraction surface. The recommended additions in §4 above close that gap without changing the plan's architecture or phase ordering.

@@ -1,0 +1,46 @@
+# What Peter Needs to Know When Work Starts
+
+## Direct Answer
+
+**The Guardian will operate autonomously—and aggressively—on operational failures without asking.** Peter needs to understand the exact boundary between "the machine fixes it silently" and "the machine asks Peter." The system is designed to self-repair for dead tmux sessions, stalled chains, missing runners, and test failures with obvious causes. It will *not* ask before restarting work, launching diagnostic subagents, or advancing unambiguous chain steps. Peter only gets notified (and asked) for: merge conflicts, ambiguous product decisions, destructive cleanup (worktree deletion, branch resets), accepting quality debt, credential gaps, and completion approval.
+
+The corollary: if Peter sends a Discord message and the machine goes quiet, that's normal—it means the Guardian didn't find a reason to escalate. Peter checks status (`/status`, `/logs op-NNN`) when curious, not because the system needs attention.
+
+## Rationale
+
+The plan is explicit: **"The Guardian should be biased toward 'figure out what's wrong and fix it' for operational failures."** This is the defining architectural posture. Without understanding this, Peter will either:
+
+1. Micro-manage by constantly checking Discord, defeating the purpose of autonomous supervision, or
+2. Assume the machine is broken when it goes quiet, because modern SaaS trains us to expect constant status pings.
+
+The Discord Operator is for *Peter-initiated* work (launching plans, asking questions). The Guardian is for *continuous supervision*. These are separate processes with separate trigger conditions. Peter should not expect the Guardian to behave like a chat agent—it's a daemon that posts only meaningful state changes.
+
+## Existing Mechanics This Depends On
+
+1. **Megaplan cloud supervision** (`cloud/supervise.py`, `supervisor/*`) — the Guardian wraps these, so Peter benefits from already-battle-tested chain state classification and safe-tick behavior.
+
+2. **Megaplan resident Discord runtime** (`resident/discord.py`, `resident/runtime.py`) — notifications route through the same outbound sink that already handles conversation threading and delivery. Peter doesn't need a new notification channel.
+
+3. **cleanup-loose-branches discipline** — the post-completion consolidation playbook. Peter should know this exists and that the system will invoke it (with approval gates) rather than leaving loose state.
+
+4. **Credential sync (`agentbox creds push/test`)** — Peter must know this is explicit. The machine won't pull Secrets from his laptop automatically, and a missing credential is one of the few things that will block the Guardian with a notification.
+
+## Risks and Caveats
+
+- **Guardian overconfidence.** Autonomous repair of "unambiguous" failures is the design intent, but misclassification in early versions is likely. Peter should expect some false-positive repairs that need rollback. The first few weeks will tune the repair/ask boundary.
+
+- **Quiet failure masking.** If the Guardian misclassifies a real problem as "not worth escalating," Peter may not discover it until he checks `/status`. The plan doesn't specify a heartbeat or "everything is fine" summary, so silence could mean health or could mean a bug in the classification loop.
+
+- **Bare repos are invisible to manual inspection.** The plan recommends bare repos under `/workspace/repos/*.git`. If Peter SSHes in to debug, there's no default working tree to `cd` into—he must navigate through worktrees. This is a UX friction point worth flagging.
+
+- **Single-user assumption cuts both ways.** No multi-tenant ceremony simplifies the design enormously, but if Peter ever wants a collaborator to interact with AgentBox, the allowlist model and approval flows would need retrofitting.
+
+- **Credential churn.** Codex OAuth tokens and Claude refresh tokens expire. The Guardian will notify when a credential is missing, but it won't auto-refresh. Peter needs a habit of running `agentbox creds test` periodically or accepting that some operations will stall on credential expiry.
+
+## One Concrete Design Implication
+
+**The first thing AgentBox should do on launch is post a "Guardian initialized" message to Discord that explicitly states its repair policy in plain language.** Something like:
+
+> Guardian v0 active. I'll check operations every 10 minutes. I'll restart dead runners, resume stalled chains, and launch diagnostic subagents for unclear failures—all without asking. I'll only notify you for merge conflicts, credential gaps, destructive cleanup, quality debt decisions, and completions. Check `/status` anytime.
+
+This sets Peter's expectations immediately, establishes the interaction model, and makes the autonomy boundary explicit rather than discoverable through trial and error. Without this, the design intent (aggressive autonomous repair) becomes a hidden assumption that Peter learns only when work disappears and reappears without explanation.

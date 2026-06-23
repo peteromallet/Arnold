@@ -1,0 +1,171 @@
+Now I have deep context. Let me produce my structured assessment.
+
+---
+
+# Wave 2 Current-System Fit: DeepSeek Review
+
+## 1. Verdict: **FIT WITH EXTRACTION**
+
+The plan correctly identifies nearly all existing mechanics to reuse. The architecture is sound. **However, the phase ordering contains a chicken-and-egg defect** that will force rework: the plan defers Megaplan Native Integration (Phase 7) until after Guardian (Phase 5) and Discord Operator (Phase 6) are built, but both actors depend on the Megaplan chain adapter being the first real operation kind to be testable and useful.
+
+---
+
+## 2. Existing Functionality That Should Be Reused
+
+These are confirmed by the inventory's line-level references and should be treated as load-bearing:
+
+| Existing code | What it does | How AgentBox should reuse it |
+|---|---|---|
+| `cloud/supervise.py:172` — `cloud_supervise_tick()` | One-shot chain supervision: inspects plan dir, classifies running/stale/failed, restarts dead tmux, classifies outcomes | **Direct call** from Guardian's per-operation loop. Do not rewrite. |
+| `cloud/cli.py:987` — `_tmux_chain_launch_command()` / `:1049` — `_tmux_chain_restart_command()` | Builds idempotent shell commands for tmux session management (create if absent, kill+restart) | Extract as a shared helper, not re-implement. AgentBox's Process Runner should call these. |
+| `bakeoff/worktree.py` — `create_named_worktree()`, `create_worktree()`, `remove_worktree()`, `validate_worktree_name()`, `branch_exists()`, `worktree_registered()` | Full worktree lifecycle for a single repo | Extract by parameterizing `worktree_root` and `repo` as explicit arguments instead of reading from argparse/cwd. |
+| `resident/discord.py` — `ResidentDiscordService` + `resident/runtime.py` — agent loop | Discord message ingress, auth, outbound sink, tool dispatch, conversation tracking | **Use as the Discord Operator shell.** Add an `AgentBoxOperatorProfile` with AgentBox tools, don't build a new bot. |
+| `store/base.py` — `list_cloud_runs()`, `list_progress_events()`, `upsert_resident_conversation()`, `claim_due_scheduled_jobs()` | Durable records for runs, events, conversations, scheduled work | **Model for operation registry.** The interface shape (id-keyed records, typed events, scheduled polling) is exactly right. |
+| `observability/events.py` — `emit()`, `EventKind`, `read_events()`, ndjson with `fcntl.flock` | Appended structured events with sequence numbers | **Adopt the ndjson + `.events.seq` pattern** for `/workspace/runs/<op>/events.ndjson`. The format and locking are proven. |
+| `watchdog/registry.py` — `WatchdogRegistry` + `watchdog/discovery.py` — `DEFAULT_SCAN_ROOTS` | Scans filesystem for plans, correlates processes, tracks observations | **Pattern for Guardian's operation scan.** Guardian reads the operation registry instead of filesystem scanning, but the observation→repair→retry shape matches. |
+| `cloud/auth.py` — `seed_codex_oauth()` | Copies local OAuth files to remote destinations with structured seeding events | **Foundation for `SecretSpec`.** The local→remote copy pattern, destination resolution, and event reporting are correct. Generalize the spec. |
+| `chain/spec.py` — ChainSpec, `chain/git_ops.py` — branch/PR state | Chain spec parsing and git branch/PR tracking | **Reuse directly** for the `megaplan_chain` operation adapter. No changes needed. |
+
+---
+
+## 3. Missing Seam or Incompatibility That Must Be Addressed
+
+### 3A. Critical: Phase Ordering Defect
+
+**The plan puts Megaplan Native Integration at Phase 7, after Guardian (5) and Discord Operator (6).** This is backwards.
+
+The evidence from the inventory:
+- `cloud_supervise_tick()` (the Guardian's primary inspection call) operates on **Megaplan plan directories** with **chain state files**. Without a `megaplan_chain` operation adapter that creates worktrees and launches chains in the expected format, Guardian has nothing real to supervise.
+- The Discord Operator's `chain_launch` tool depends on the chain adapter existing before it can route user messages to actual work.
+- The plan's own "First Slice Recommended By The Swarm" section says: *"Add a single operation kind: megaplan_chain … launch by wrapping existing cloud chain / chain start behavior."* Then: *"Add Guardian v0 … for megaplan_chain, calls existing cloud_supervise_tick()."* These two steps are co-requisite, not sequential.
+
+**Fix: Fold the megaplan_chain adapter into Phase 3 (Operation Registry) or make it Phase 4, before Guardian.**
+
+### 3B. Missing: Worktree Parameterization Seam
+
+The inventory confirms that `bakeoff/worktree.py` functions are **command-scoped and current-repo-scoped**:
+
+> "*Current limitation: these are command-scoped and current-repo scoped. AgentBox needs them promoted into a machine-scoped operation service.*"
+
+The code-inspection task the plan needs: audit every function in `bakeoff/worktree.py` for hardcoded references to:
+- `~/Documents/.megaplan-worktrees` (the default worktree root)
+- Current working directory for repo discovery
+- `args.worktree` from argparse context
+
+Each of these must be replaced with explicit `worktree_root: Path` and `repo: RepoSpec` parameters. This is extraction work, not rewrite work — the logic is sound, only the plumbing is too narrow.
+
+### 3C. Missing: Guardian Plugin Interface
+
+The plan says Guardian should call existing `cloud_supervise_tick()` as the first plugin, then add more later. But **no plugin dispatch interface exists in the plan's component list**. The operation registry stores `kind: megaplan_chain` — Guardian needs a dispatcher that maps `operation.kind` → `classifier_fn` → `repair_fn`. This is a one-file interface, but it isn't in the plan at all.
+
+Specifically:
+```python
+# This mapping doesn't exist yet and must be built before Guardian v0
+OPERATION_PLUGINS = {
+    "megaplan_chain": ChainOperationPlugin(
+        classify=cloud_supervise_tick,
+        repair=cloud_repair_path,
+        stop=tmux_kill_session,
+    ),
+}
+```
+
+### 3D. Missing: Bare Repo Worktree Paths
+
+The plan recommends bare repos (`/workspace/repos/*.git`) but the existing worktree helpers assume a **normal repo checkout with a main worktree**. The inventory confirms this is an open risk:
+
+> "*Existing worktree helpers assume a normal repo/main worktree in places such as registered-worktree discovery and removal.*"
+
+This is a **code-inspection task to add to Phase 2**: grep `bakeoff/worktree.py` for any code that traverses `.git` as a directory (expecting a normal checkout) vs. operating on a `--git-dir`-qualified bare repo. Add a `repo_format: "bare" | "checkout"` flag to the repo registry and branch on it in worktree creation.
+
+### 3E. Missing: Credential Preflight Before Launch
+
+The plan's Proactive Credential Validation section is correct, but Phase 4 (Credential Sync) is ordered **after** Phase 3 (Operation Registry + Runner). The operation runner in Phase 3 will launch chain processes that need credentials. The plan should move credential validation into the operation launch path in Phase 3, or Phase 4 must precede Phase 3's "runner" sub-component.
+
+---
+
+## 4. Exact Plan Changes Recommended
+
+### Change 1: Merge Phase 7's megaplan_chain adapter into Phase 3
+
+Replace Phase 3's scope from:
+
+> *"Phase 3: Operation Registry And Runner — operation IDs, manifests, tmux session launch, log capture, status/logs/attach/stop"*
+
+To:
+
+> *"Phase 3: Operation Registry, Runner, and Megaplan Chain Adapter"*
+
+Add to Phase 3 deliverables:
+- `megaplan_chain` operation adapter (wraps existing `_tmux_chain_launch_command`, `_tmux_chain_restart_command`, `cloud_supervise_tick`)
+- Plugin dispatch interface (maps `operation.kind` to classify/repair/stop functions)
+- Chain worktree creation using extracted `bakeoff/worktree.py` helpers with `--git-dir` bare-repo support
+
+**Rationale:** Guardian (Phase 5) and Discord Operator (Phase 6) need the chain adapter to be real. Building them against stubs that get replaced in Phase 7 is wasted work.
+
+### Change 2: Add worktree parameterization audit to Phase 2
+
+Add to Phase 2's deliverables:
+
+> *"Code-inspection task: audit `bakeoff/worktree.py` for hardcoded paths (worktree root, repo discovery from cwd, argparse coupling). Produce parameterized variants accepting explicit `worktree_root: Path` and `repo: RepoSpec`."*
+
+### Change 3: Add bare-repo audit to Phase 2
+
+Add to Phase 2's deliverables:
+
+> *"Code-inspection task: identify all `bakeoff/worktree.py` code paths that assume a normal checkout (e.g., `.git` directory traversal, main-worktree discovery). Add `repo_format` branching to worktree creation/removal."*
+
+### Change 4: Move credential preflight into Phase 3 launch path
+
+Add to Phase 3's runner component:
+
+> *"Before launching any operation, run credential preflight for that operation kind: check GitHub token for chain PR work, check Codex/Claude auth for agent operations, check chain-declared secrets. Fail fast with a specific missing-credential message before creating the worktree."*
+
+Phase 4 (Credential Sync) remains the *push/sync mechanism*, but the *validation gate* must live in Phase 3's launch path.
+
+### Change 5: Add the Guardian plugin dispatch to Phase 5
+
+Add to Phase 5's deliverables:
+
+> *"Operation plugin dispatch: mapping from `operation.kind` → plugin with `classify(op)`, `repair(op)`, and `stop(op)` methods. `megaplan_chain` plugin wraps `cloud_supervise_tick()` and `_tmux_chain_restart_command()`. Plugin interface is an abstract base; new operation kinds add new plugins."*
+
+### Change 6: Renumber phases
+
+Proposed new ordering:
+
+| Phase | Name | Scope |
+|---|---|---|
+| 1 | Box Bootstrap | Unchanged |
+| 2 | Repo, Worktree, and Bare-Repo Audit | Phase 2 + bare-repo/parameterization audits |
+| 3 | Operation Registry, Runner, and Chain Adapter | Phase 3 + Phase 7 megaplan_chain + plugin dispatch + credential preflight gate |
+| 4 | Credential Sync | Unchanged (push/list/test/rotate) |
+| 5 | Guardian Daemon | Phase 5 + plugin dispatch confirmation + watchdog library integration |
+| 6 | Discord Operator Integration | Phase 6 + AgentBoxOperatorProfile |
+| 7 | Additional Agent Adapters | Remaining Phase 7 (codex, claude, shell, subagent, test) |
+| 8 | Hardening | Unchanged |
+
+---
+
+## 5. Things Already Correctly Handled
+
+1. **The operation registry as the center of the system.** The plan identifies that existing chain state, cloud markers, and session provenance are "close, but no unified registry exists." This is the correct diagnosis — build one new thing and wrap existing things as plugins.
+
+2. **Guardian composing watchdog + cloud supervisor, not rewriting them.** The plan explicitly says: *"Do not run a separate watchdog daemon beside Guardian in v1. Guardian owns the cadence and operation registry; watchdog discovery/repair/retry/snapshot mechanics feed Guardian's per-operation inspection."* The inventory confirms both exist (`scripts/megaplan_live_watchdog.py` + `arnold_pipelines/megaplan/watchdog/*` and `cloud/supervise.py`). This composition strategy is correct.
+
+3. **Discord Operator reusing the resident runtime.** The inventory confirms that `ResidentDiscordService`, `DiscordInboundMessage`, `DiscordOutboundSink`, confirmations, and allowlists "already match the shape." The plan says "add an AgentBox tool profile" — this is the correct scope.
+
+4. **Guardian and Discord Operator as separate processes.** The plan explicitly avoids coupling the Discord asyncio event loop with the Guardian's periodic supervisor. Both share the operation store. This is correct and avoids a common architectural trap.
+
+5. **Single-user simplification choices.** No multi-tenant UI, no role hierarchy, natural-language Discord messages for v1, approvals focused on completion/merge/cleanup — all appropriate for a single-user system.
+
+6. **Credential validation before work, not after failures.** The Proactive Credential Validation section is correctly placed in the design. The defect is only in the implementation phase ordering (Phase 4 after Phase 3 runner), not in the concept.
+
+7. **cleanup-loose-branches as the post-run consolidation discipline.** The plan correctly identifies this existing skill as the consolidation playbook rather than inventing a new "merge everything" policy.
+
+8. **ndjson event stream adoption.** The `events.ndjson` pattern from `observability/events.py` (with `.events.seq` counter and `fcntl.flock` locking) is correctly identified as the format for per-operation structured logging. The connection to `observability/fold.py`'s `fold_events()` for state reconstruction is also correct.
+
+---
+
+## Summary
+
+The plan has **high design quality** — it correctly identifies what to reuse, what to extract, and what to build new. The single problem is **phase ordering**: Phase 7's megaplan_chain adapter must move to Phase 3 so that Guardian and Discord Operator are built against a real, operational substrate rather than stubs that get replaced. The three code-inspection tasks (worktree parameterization, bare-repo paths, and credential preflight gate) are concrete additions needed in Phases 2-3.

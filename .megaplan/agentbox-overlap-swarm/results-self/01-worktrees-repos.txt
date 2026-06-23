@@ -1,0 +1,87 @@
+# AgentBox ↔ Megaplan Overlap Audit — Repo Registry & Worktree Service
+
+## 1. Directly Reusable from Megaplan
+
+**Worktree primitives** (`arnold_pipelines/megaplan/bakeoff/worktree.py`) are the strongest reuse candidates:
+
+| Function | Reuse | Notes |
+|---|---|---|
+| `validate_worktree_name` | **As-is** | Regex `^[a-z0-9][a-z0-9._-]{0,63}$` — already correct for op-namespaced IDs |
+| `ensure_no_inprogress_op` | **As-is** | Guards rebase/merge/cherry-pick/bisect — essential safety check before any worktree fork |
+| `resolve_ref` | **As-is** | Resolves arbitrary ref → full SHA |
+| `branch_exists` | **As-is** | Checks local + remote branches |
+| `worktree_registered` | **As-is** (with caveat) | Works for regular repos; needs bare-repo adaptation (see risks below) |
+| `create_named_worktree` | **As-is** | Creates worktree + branch in one shot — exactly what AgentBox ops need |
+| `create_worktree` | **As-is** | Detached-HEAD variant for read-only/CI-style ops |
+| `remove_worktree` | **As-is** | Clean removal with `--force` option |
+| `capture_base_sha` | **As-is** | Captures HEAD before mutation |
+| Dirty-state carry pipeline | **As-is** | `has_dirty_state`, `_list_untracked`, `_capture_tracked_patch`, `_apply_patch` — preserves uncommitted work across worktree forks |
+
+**Discord resident runtime** (`arnold_pipelines/megaplan/resident/discord.py`, `runtime.py`, `auth.py`, `cloud.py`): The resident-bot pattern (persistent process, message-triggered dispatch, auth) is directly reusable for the Discord Operator skeleton.
+
+**CLI worktree safety flow** (`cli/__init__.py`, `_setup_init_worktree` and `_setup_chain_worktree`): The ordered validation pipeline — validate name → find repo → check no in-progress op → check no target collision → check branch doesn't exist → resolve ref → create worktree → carry dirty state — is exactly the AgentBox worktree allocation protocol. The *logic* is reusable; the *argparse coupling* is not.
+
+---
+
+## 2. Needing Extraction / Generalization
+
+| What | Current state | Required change |
+|---|---|---|
+| **Worktree module location** | `arnold_pipelines.megaplan.bakeoff.worktree` — deep inside Megaplan bakeoff subsystem | Extract to `agentbox/worktrees/service.py` as a standalone, repo-agnostic module |
+| **Repo discovery** | `_find_git_root(Path.cwd())` — single-repo, cwd-walk-up | Replace with repo registry lookup: `registry.get_repo(name) → Path` |
+| **Worktree root path** | Hardcoded `~Documents/.megaplan-worktrees/{name}` | Configurable: `/workspace/worktrees/{op_id}/{repo_name}/` |
+| **Multi-repo per operation** | Each CLI invocation binds one repo | Operation may span N repos → allocate N worktrees, one per repo |
+| **Worktree metadata** | Stashed on `args._worktree_meta` (CLI Namespace hack) | Persist into operation registry as structured fields |
+| **Operation lifecycle** | Megaplan plan state (plan-scoped, not machine-scoped) | New `OperationRegistry` — machine-scoped, survives restarts, queryable by Guardian and Operator |
+| **Discord integration** | Resident runtime fires on messages, runs plans | Adapt to Operator pattern: query operations, launch ops, approve/reject actions |
+
+---
+
+## 3. Missing Pieces (No Megaplan Analog)
+
+1. **Repo registry**: Store/query managed repos with paths, remotes, fetch status. No existing Megaplan component manages multiple repos.
+2. **Operation registry** (`agentbox.db`): Durable record per operation with the full schema from the plan (id, kind, repos[], worktrees[], branches[], tmux session, log path, status, last_check, pending_approvals, Discord metadata, PR/CI metadata).
+3. **Machine-scoped worktree allocator**: Assigns worktree paths under `/workspace/worktrees/op-{id}/` across multiple repos, preventing path collisions, tracking the 1:N operation→worktree relationship.
+4. **Guardian daemon**: Periodic scan loop, tmux liveness checks, status classification, restart logic, approval filing — entirely new.
+5. **Tmux session management**: Launching, attaching, monitoring process groups — no existing Megaplan tmux integration.
+6. **Approval workflow**: Guardian files pending approvals → Operator approves/rejects → actions execute. No approval pipeline exists.
+7. **Secrets management**: Secure injection of `/workspace/secrets/` into operation environments.
+8. **Operation cleanup/GC**: Pruning old worktrees, branches, and logs based on retention policy.
+
+---
+
+## 4. Risks & Gotchas
+
+1. **Bare repos break `worktree_registered` and `_main_worktree_for`** — both assume a non-bare repo with a main worktree. If AgentBox uses bare repos as the canonical checkout, these functions need a bare-aware variant or the plan should commit to non-bare only.
+2. **Git lock contention** — many concurrent worktrees on one repo share `packed-refs` and object store. Practical ceiling is ~dozens, not hundreds.
+3. **Branch name collision** — Megaplan uses worktree name as branch name. AgentBox ops must namespace branches (e.g., `op-{id}/{repo-name}`) to avoid collisions across concurrent ops on the same repo.
+4. **Guardian ↔ Operator race** — both read/write the operation registry. Needs file locks or optimistic concurrency (compare-and-swap on `last_check` timestamp).
+5. **Dirty-state carry across repos** — current carry logic is single-repo. Multi-repo ops that carry dirty state from N source repos need the diff+untracked capture loop generalized.
+6. **Discord Operator auth boundary** — Operator has access to all AgentBox state and tools. Discord messages are the trigger, not a bypass, so command parsing must validate caller identity and permissions.
+7. **Disk pressure** — 320 GB on CX53 disappears fast with N worktrees × (checkout + logs + build artifacts). Need monitoring and automatic GC.
+8. **Extraction coupling risk** — `worktree.py` imports `CliError` from `arnold_pipelines.megaplan.types` and uses `atomic_write_json` from `_core.io`. These must be extracted or vendored to avoid dragging the entire Megaplan dependency tree.
+
+---
+
+## 5. Recommended First Implementation Slice
+
+**Repo Registry + Worktree Service + Minimal Operation Record.** This proves the core substrate before building the Guardian or Discord Operator.
+
+### Slice contents
+
+1. **`agentbox/repos/registry.py`** — Add/list/remove repos at `/workspace/repos/`. Store metadata (path, remote URL, last-fetched) in a JSON file or SQLite row. Support non-bare repos initially (defer bare-repo complexity).
+
+2. **`agentbox/worktrees/service.py`** — Extract worktree primitives from Megaplan's `worktree.py` into a standalone module. Add:
+   - `allocate_worktrees(operation_id, repos: list[str]) → dict[repo_name, Path]` — creates `/workspace/worktrees/{op_id}/{repo_name}/` per repo
+   - `deallocate_worktrees(operation_id)` — removes all worktrees for an operation + prunes branches
+   - Preserve all existing safety checks (in-progress ops, branch collision, target collision)
+
+3. **`agentbox/operations/record.py`** — Minimal operation schema: id, repos[], worktrees (path map), branches[], status, created_at, updated_at. Stored as JSON files under `/workspace/runs/{op_id}/manifest.yaml` (prefigures the full registry).
+
+### Explicitly deferred
+
+Guardian daemon, Discord Operator, tmux integration, approval workflow, secrets injection, cleanup GC. These all build on the three components above.
+
+### Key extraction task
+
+Pull `worktree.py` out of `arnold_pipelines.megaplan.bakeoff` and make it repo-path-parameterized (remove the single-repo cwd assumption). The 14 functions listed in §1 move nearly intact; the only surgery is decoupling from `CliError` and `atomic_write_json` — either vendor those or define AgentBox equivalents.

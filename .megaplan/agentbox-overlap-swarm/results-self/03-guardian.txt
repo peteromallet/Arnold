@@ -1,0 +1,97 @@
+# AgentBox Guardian vs. Existing Megaplan: Overlap Audit
+
+## 1. Existing Functionality Reusable Directly
+
+### Core tick loop structure (`supervise.py`, lines 140–560)
+The full read→refresh→re-read→classify→act→report cycle is a direct match. Steps (a)–(g) in `cloud_supervise_tick()` are the Guardian's heartbeat: read status, refresh sync, block on provider mismatch, map status to safe action, execute only safe mutations, produce structured report. Zero rewrite needed for chain operations.
+
+### Status classification & safe/unsafe boundary (`supervise.py`, lines 40–95)
+`READ_ONLY_STATUSES = {running, complete, human_prerequisite, quality_gate}` is the exact safe-action policy the Guardian needs. `BLOCKED_REFUSAL_REASONS` provides canonical refusal messages. The status→action mapping (running→noop, complete→done, human_prerequisite→blocked, quality_gate→blocked, awaiting_pr_merge→probe+advance, stale_bookkeeping→restart) already covers 80% of Guardian's classification needs.
+
+### Scheduled job infrastructure (`scheduler.py`, lines 1–200)
+`ScheduledJobWorker`, `StoreScheduledJobBackend`, atomic claiming with worker_id + idempotency keys, retry with backoff, max-attempts-before-cancel — all reusable for Guardian's periodic tick cadence. The `cloud_check` handler pattern (load state → run check → persist → reschedule-or-notify) is exactly the tick-per-operation pattern.
+
+### Safe restart mechanics (`supervise.py`, `_tmux_chain_restart_command`)
+The dead-runner detection (stale_bookkeeping + runner_status in {dead, unavailable}) and tmux restart command construction already exist. PR-merge advancement (`awaiting_pr_merge` → probe `gh pr view` → auto-advance if merged) is battle-tested.
+
+### Sync refresh & human verification (`supervise.py`, lines 200–310)
+Branch/PR/extra-repo sync refresh (steps b-c), plus T11 human-verification probing with semantic validation (`latest_verdict` semantics check) — all directly reusable.
+
+### Notification pipeline (`scheduler.py`, `_notify_cloud_transition`)
+Transition notification on terminal/input-needed classifications already dispatches through `OutboundSink`/`EmitProtocol`. The pattern exists; only the Discord transport needs adding.
+
+---
+
+## 2. Functionality Needing Extraction/Generalization
+
+| What | Where it lives | What needs to change |
+|---|---|---|
+| **Operation registry** | Tightly coupled to `CloudRun` schema (`scheduler.py` line ~150) | Extract to polymorphic `Operation` model with kind-specific payloads (chain, plan, codex, claude, shell, test) |
+| **Classification** | `effective_status` in `supervise.py` is chain-specific | Build operation-kind → classifier dispatch; wrap `cloud_supervise_tick()` as one plugin |
+| **Provider abstraction** | `provider.ssh_exec` assumed everywhere in `supervise.py` | Add `local_exec` path for same-machine operations (AgentBox Guardian runs locally, not via SSH) |
+| **Approval queue** | Refusals are inline in `supervise.py`; `ConfirmationManager` handles expiry only | Extract pending-approval as a first-class durable concept: file, list, approve, reject, expire |
+| **Health summaries** | Per-tick reports only (`_tick_report`) | Aggregate across all operations into a cross-operation health view |
+| **Discord channel** | `OutboundSink` is generic (`scheduler.py` line ~80) | Add Discord-specific metadata (channel_id, thread_id, message_id) to notification payloads |
+| **Multi-repo scanning** | Single chain spec assumed | Scan operation registry across repos/worktrees; repo-agnostic discovery |
+
+---
+
+## 3. Missing Pieces
+
+1. **Guardian daemon loop** — Neither `supervise.py` (one-shot argparse entry) nor `scheduler.py` (job dispatch) implements a persistent `while True: tick_all(); sleep(X)` loop with signal handling.
+
+2. **Operation registry data model** — The plan defines fields (operation id, kind, repo, worktree, tmux session, log path, status, approvals, Discord ids) but no implementation exists.
+
+3. **Operation-kind classification matrix** — Non-chain operation types (Codex, Claude, shell, test) have no status-determination logic. Each needs: how to check liveness, what "done" means, what constitutes "stale."
+
+4. **"Advance chain when next step is unambiguous"** — Only PR-merge advancement exists. Generic chain-step advancement (non-PR steps, plan advancement) is unimplemented.
+
+5. **Discord Operator integration** — Discord message → operation lookup → tool dispatch → shared safety policy path doesn't exist.
+
+6. **Pending approval lifecycle** — `ConfirmationManager` handles `confirmation_expiry` but has no approve/reject API, no Discord-facing UX.
+
+7. **Disk/RAM/process pressure checks** — Mentioned in plan, no code.
+
+8. **Dirty/unpushed repo detection** — Mentioned in plan, no code.
+
+9. **Stale log heuristic** — Tmux liveness is checked, but "process alive, no output for N minutes" (stuck agent) is not detected.
+
+---
+
+## 4. Risks & Gotchas
+
+| Risk | Detail |
+|---|---|
+| **Coupling to `cloud.cli`** | `supervise.py` imports `_chain_start_command`, `_resolve_remote_chain_spec`, `cloud_chain_status_payload` from `arnold_pipelines.megaplan.cloud.cli`. Generalizing without breaking the existing chain supervisor requires careful dependency inversion. |
+| **SSH-only execution** | All commands go through `ssh_meth`. Guardian on AgentBox runs locally — doubling SSH overhead or failing when SSH isn't configured for localhost. |
+| **Status namespace collision** | `supervise.py` statuses (human_prerequisite, quality_gate, stale_bookkeeping) don't map cleanly to AgentBox's planned statuses (stale, awaiting_approval). Merging without breaking chain supervision requires a mapping layer. |
+| **Chain-specific payload fields** | `chain_state`, `current_plan_name`, `extra_repos` are assumed. Generalizing means optional/kind-specific fields that must not break the chain path. |
+| **Idempotency key collision** | `scheduler.py` uses deterministic keys. If Guardian and Operator both touch the same operation, key collisions could silently drop mutations. |
+| **Race on operation state** | Atomic claiming protects scheduler jobs, but Guardian's per-operation tick has no equivalent. Operator approving while Guardian is classifying could race. |
+| **Approval UX gap** | `supervise.py` prints refusal reasons to a report dict. The plan requires Discord notification + interactive approval. The bridge is entirely missing. |
+
+---
+
+## 5. Recommended First Implementation Slice
+
+**Guardian core loop + operation registry + chain supervision.** Highest reuse, lowest risk.
+
+### Build order:
+
+1. **Operation registry** — Define `Operation` dataclass/schema matching the plan's fields. Back with the existing `Store` abstraction. Add `operation_kind` discriminator.
+
+2. **Guardian daemon loop** — `while True: for op in registry.list_active(): classify_and_act(op); sleep(config.interval)`. Reuse `scheduler.py`'s error handling patterns (retry, max attempts, idempotency).
+
+3. **Chain classifier plugin** — Wrap `supervise.py`'s `cloud_supervise_tick()` as `classify_chain_operation(op) → TickReport`. Maps the tick report into operation health fields. This gives immediate value: existing chain supervision runs under Guardian with zero behavior change. **The 1,200-line supervise.py becomes a plugin, not something to extract/rewrite.**
+
+4. **Local execution provider** — Add `local_exec` alongside `ssh_exec` in the provider interface. Guardian detects "same machine" and uses local path.
+
+5. **Classification registry** — `{operation_kind: classifier_fn}` dict. Start with one entry: `{"megaplan_chain": classify_chain_operation}`. Proves the plugin pattern.
+
+6. **Discord notification adapter** — Minimal: wrap `_notify_cloud_transition` output through a Discord webhook. Defer full Operator integration.
+
+### Deferred to later slices:
+Discord Operator actor, multi-repo discovery, non-chain operation classifiers, approval queue UX, disk/RAM checks, dirty repo detection, stale log heuristics.
+
+### Rationale:
+This slice takes the 1,200-line, battle-tested `supervise.py` and plugs it into the new architecture without refactoring its internals. The risky generalization (multi-kind classification, approval lifecycle, Operator integration) is deferred until the loop + registry + plugin pattern is proven with real chain workloads. Most AgentBox Guardian lines in this slice are new (registry, loop, local provider) rather than rewrites of existing code — minimizing regression surface.

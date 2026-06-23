@@ -1,0 +1,44 @@
+## Direct Answer
+
+When the Discord Operator is unsure, it should **ask the user directly via Discord**. It must explain what it is uncertain about, present concrete options when it can distinguish them, and not proceed with ambiguous, destructive, or product-sensitive actions until it receives explicit confirmation. Silence is not an option — the Operator should close the loop by reporting back.
+
+## Rationale
+
+The Operator is an interactive, user-triggered agent. Its primary job is to translate Peter's natural-language Discord messages into concrete AgentBox actions. When a message is ambiguous, the request maps to multiple possible actions, or the next step carries risk, the Operator must escalate, not guess.
+
+Several principles from the plan converge on this:
+
+1. **Discord is the primary control surface.** The Operator exists *because* Peter talks to Discord. Asking a follow-up is the natural fallback — it closes the interaction loop rather than leaving the system in an ambiguous state.
+
+2. **Safety policy applies to both actors.** The plan states: "The Operator should have access to all AgentBox data and tools, but it should still go through the same safety policy as the Guardian." The safety policy divides actions into safe, confirm, and forbidden. Uncertainty about which category an action falls into means it defaults to "confirm."
+
+3. **The single-user model makes this cheap.** There is no multi-tenant ceremony, no queue, no escalation path to a different human. Clarifying is a single Discord reply and a single response away.
+
+4. **The plan explicitly distinguishes operational failures from judgement calls.** The Guardian is biased toward "figure out what's wrong and fix it." The Operator, by contrast, handles novel requests, launches new work at the user's direction, and makes product-sensitive stops/cleanups. When the request itself is unclear, there is no autonomous repair path — the ambiguity lives in the user's intent.
+
+## Existing Mechanics This Depends On
+
+- **Resident Discord runtime** (`arnold_pipelines/megaplan/resident/discord.py`, `resident/runtime.py`): The Operator already has inbound message parsing, outbound reply channels, and conversation keys. Asking a follow-up is a native capability, not new infrastructure.
+
+- **Approval/confirmation manager** (`resident/auth.py`): The plan calls for confirmation records, approval expiry, and Discord approval flow. When the Operator is unsure whether an action is safe, it can file a pending approval and ask the user to confirm.
+
+- **Guardian state queries:** The Operator can consult the Guardian's operation state before asking. "What is the current status of op-123?" should be answerable before asking Peter to decide.
+
+## Risks and Caveats
+
+1. **Don't stall on everything.** The Operator should not ask for confirmation on routine, well-understood actions. "Run a Megaplan chain for briefs/foo/chain.yaml" is unambiguous. "Run some tests" is vague — ask which tests or which repo.
+
+2. **Present options, not open-ended questions.** "What do you want me to do?" is useless. "I can (a) restart the chain from the last checkpoint, (b) launch a diagnostic subagent on the failing test, or (c) stop and wait. Which?" is actionable.
+
+3. **Time out gracefully.** If the user doesn't reply within a reasonable window, the Operator should note the stale pending clarification in the operation state and let the Guardian pick up from there on its next tick.
+
+## Concrete Design Implication
+
+The Operator tool profile needs a **`clarify` tool** (or a `confirm`/`ask` primitive) that:
+
+1. Formats a structured message with the uncertainty, the operation context, and 2–4 concrete options.
+2. Posts it to Discord (DM or channel, depending on context).
+3. Records a `pending_clarification` state on the operation with an expiry timestamp.
+4. On the user's next message in the same conversation key, routes to the pending clarification handler rather than treating it as a fresh command.
+
+This reuses the existing confirmation manager pattern and conversation-key routing from the resident runtime. It ensures the Operator never silently gives up, never guesses on ambiguous intent, and always closes the loop with the single human in the system.

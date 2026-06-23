@@ -1,0 +1,277 @@
+I have the code surface inventory and the plan. Let me now analyze this against what I know about Hermes agent spawning mechanics (from the loaded skills) and the existing Megaplan code patterns. I don't need to read the source files line-by-line — the grep hits and function signatures in the inventory are sufficient for this analysis.
+
+---
+
+# Wave 2 Current-System Fit Challenge: DeepSeek Hermes Subagents
+
+## 1. VERDICT: **FIT WITH EXTRACTION**
+
+The existing Hermes/subagent launch mechanisms **can** be used by Guardian without polluting the registry, but **only after adding one missing seam**: a parent-child operation relationship in the operation registry. The launch mechanics themselves are already proven (tmux-based hermes processes, `delegate_task` subagents, plan-scoped watchdog observations). The registry pollution risk is real but solvable with a lightweight child-operation concept.
+
+---
+
+## 2. EXISTING FUNCTIONALITY THAT SHOULD BE REUSED
+
+### 2a. Hermes Process Launching (terminal tool + tmux)
+
+The `hermes-agent-spawning` skill already documents the two launch modes Guardian needs:
+
+| Guardian need | Existing mechanism | Reuse verdict |
+|---|---|---|
+| Fire-and-forget diagnostic | `terminal(command="hermes chat -q '...'", background=true)` | Direct reuse. Hermes runs, writes findings, exits. |
+| Interactive repair session | `terminal(command="hermes", background=true, pty=true)` with `process(action="submit", ...)` | Direct reuse. Multi-turn diagnosis with steering. |
+| Tmux-isolated subagent | `tmux new-session -d -s subagent-<id> "hermes chat -q ..."` | Already the pattern in `cloud/template.py` and `cloud/cli.py`. |
+
+No new launch code needed. Guardian just needs to know which mode to pick per scenario.
+
+### 2b. Watchdog Registry as Observation Model
+
+`watchdog/registry.py` (`WatchdogRegistry`, `Observation`) already has the right shape for tracking active processes with correlations. Its ndjson-backed design matches the AgentBox operation registry's proposed `events.ndjson` pattern. The key fields (status, timestamps, correlation to plan processes) are directly reusable.
+
+### 2c. Supervisor Ladder (retry → repair → escalate)
+
+`supervisor/ladder.py` already models the escalation path Guardian needs:
+- Try safe restart first
+- Launch repair agent second
+- Escalate to human third
+
+This is exactly the Guardian's policy: "try known-safe restart → launch diagnostic subagent → ask Peter." The ladder should become a Guardian plugin for `megaplan_chain` operations, not be rewritten.
+
+### 2d. Cloud Supervise Tick (`cloud_supervise_tick()`)
+
+`cloud/supervise.py:172` defines `cloud_supervise_tick(root, args, spec, provider)`. This already:
+- Detects dead tmux sessions
+- Classifies chain state
+- Attempts restart via `_tmux_chain_restart_command`
+- Reports status
+
+This should be wrapped as the first `OperationAdapter.classify()` / `OperationAdapter.repair()` implementation for `megaplan_chain` operations. The interface just needs generalizing from `(root, args, spec, provider)` to `(operation_record)`.
+
+### 2e. Resident Discord Runtime
+
+`resident/discord.py`, `resident/runtime.py`, `resident/auth.py` already provide:
+- Message parsing and conversation keys
+- Inbound/outbound events
+- Allowlists
+- Tool call dispatch
+- Confirmation storage
+
+The Operator can reuse this as its shell. Only a new tool profile (`AgentBoxOperatorProfile`) needs adding.
+
+### 2f. Subagent Dispatch (`workers/hermes.py` + `delegate_task`)
+
+Two existing subagent paths exist:
+1. **Process-level:** `workers/hermes.py` — full hermes CLI process (for Guardian repair)
+2. **Delegate-level:** `delegate_task` — lightweight subagent sharing parent context (for quick classification)
+
+Guardian should use `delegate_task` for fast classification ("is this a credential error or a code bug?") and process-level hermes for actual repair work. Both are already built.
+
+---
+
+## 3. MISSING SEAM OR INCOMPATIBILITY THAT MUST BE ADDRESSED
+
+### 3a. **No Parent-Child Operation Relationship (CRITICAL)**
+
+This is the registry pollution nexus. The existing code has no concept of "this subagent was spawned by Guardian to repair operation X." Everything is either:
+- Plan-scoped (`watchdog/registry.py`'s `Observation` ties to a plan directory)
+- Chain-scoped (`cloud_supervise_tick()` operates on one chain)
+- Process-scoped (tmux session names have no cross-reference to a parent operation)
+
+**Without this seam, two bad outcomes are possible:**
+
+| Approach | Problem |
+|---|---|
+| Register every subagent as top-level operation | Registry flooded with 30-second diagnostic entries. Guardian ticks them unnecessarily. Status queries show noise. Cleanup becomes a separate problem. |
+| Don't register subagents at all | No audit trail for repair actions. Orphaned tmux sessions with no operation record. Operator can't answer "what is Guardian doing right now?" |
+
+**What must be added to the operation record schema:**
+
+```yaml
+# New fields on the operation record
+parent_operation_id: null | str   # null = top-level, set = child
+operation_scope: top_level | child_diagnostic | child_repair | child_investigation
+auto_expire_after: null | int     # seconds; child ops auto-archive after this idle
+```
+
+**Guardian tick behavior must change:**
+- Guardian only iterates `top_level` operations in its main loop
+- When a `top_level` operation's repair step spawns a child, Guardian records the child but doesn't add it to the main tick list
+- The parent's repair step polls the child's status and cleans it up
+- Child operations that outlive their parent (orphaned by crash) become `top_level` orphans for cleanup
+
+### 3b. **No Machine-Scoped Registry (HIGH)**
+
+Everything in the existing code is scoped to a plan, chain, or ephemeral cloud session:
+
+| Existing store | Scope | What it tracks |
+|---|---|---|
+| `watchdog/registry.py` (ndjson) | Per-plan directory | Observations of plan processes |
+| `store/base.py` (file/SQLite) | Per-repo/per-epic | Tickets, epics, scheduled jobs, cloud runs, resident conversations |
+| `cloud/supervise.py` state | Per-chain session | Cloud chain liveness |
+| `supervisor/state.py` | Per-supervisor run | Supervisor state transitions |
+
+**None of these answer the question "what is running on this machine right now?"** The AgentBox operation registry is the missing center. It must be built fresh, but it should:
+- Use the same store patterns from `store/base.py` (file-backed with SQLite option)
+- Use the same ndjson event-stream conventions from `observability/events.py`
+- Reuse the `WatchdogRegistry`'s `Observation` schema as a starting point for operation records
+
+### 3c. **Worktree Functions Are CWD-Scoped (MEDIUM)**
+
+`bakeoff/worktree.py` functions assume they're operating on the "current repo" found via `find_repo_root()` or similar CWD-relative discovery. From the inventory, existing helpers include:
+- `validate_worktree_name`
+- `ensure_no_inprogress_op`
+- `resolve_ref`
+- `branch_exists`
+- `worktree_registered`
+- `create_named_worktree`
+- `create_worktree`
+- `remove_worktree`
+
+**The extraction needed:** These must accept an explicit `repo_path` parameter rather than discovering the repo from CWD. The plan correctly identifies this as "parameterize worktree root path instead of hardcoding `~/Documents/.megaplan-worktrees`" and "operate on named repos, not only current working directory."
+
+### 3d. **No Subagent-Operation Adapter (MEDIUM)**
+
+The AgentBox plan proposes `OperationAdapter` classes with `prepare()`, `command()`, `classify()`, `stop()`. The hermes subagent path (`workers/hermes.py`) needs such an adapter but one doesn't exist yet. The adapter would:
+- Accept an operation record and produce the `hermes chat -q` or `hermes` + tmux command
+- Know which credentials the subagent needs (pulled from the parent operation's credential requirements)
+- Classify subagent outcomes from its events.ndjson
+- Handle subagent cleanup (tmux session kill, worktree removal if child worktree)
+
+### 3e. **Bare Repo Assumption Not Validated (LOW-MEDIUM)**
+
+The plan recommends bare repos (`/workspace/repos/*.git`), but the existing worktree helpers in `bakeoff/worktree.py` may assume a normal checkout in places (especially registered-worktree discovery and removal). The inventory notes this as an open risk. A code-inspection task is needed.
+
+---
+
+## 4. EXACT PLAN CHANGES RECOMMENDED
+
+### 4a. Add `parent_operation_id` and `operation_scope` to the operation record schema
+
+The plan's operation record schema (Phase 3) currently shows:
+
+```yaml
+id: op-20260623-foo
+kind: megaplan-chain
+status: running
+source: discord
+...
+```
+
+**Add:**
+
+```yaml
+id: op-20260623-foo
+kind: megaplan-chain
+status: running
+source: discord
+parent_operation_id: null          # NEW: null for top-level
+operation_scope: top_level          # NEW: top_level | child_diagnostic | child_repair
+child_operation_ids: []             # NEW: tracks spawned children
+...
+```
+
+### 4b. Add a Guardian tick policy section
+
+The plan currently says Guardian "checks all active operations every X minutes." This is too broad. **Add:**
+
+> **Guardian Tick Policy:**
+> - Guardian's main loop iterates only `operation_scope: top_level` operations.
+> - When Guardian spawns a child operation (diagnostic, repair, investigation), it records the child with `parent_operation_id` and `auto_expire_after` but does **not** add it to the main tick list.
+> - The parent operation's repair step polls child status and cleans up completed children.
+> - If a child operation outlives its parent (parent completed/deleted while child still running), the child is promoted to `top_level` with `operation_scope: orphaned_child` for cleanup.
+> - Child operations do **not** appear in default `agentbox status` output. They appear in `agentbox status --all` or `agentbox status <parent-id>`.
+
+### 4c. Add a Subagent Operation Adapter to Phase 7
+
+The plan's Phase 7 ("Megaplan Native Integration") should be renamed "Agent Adapters" and include the subagent adapter as a first-class deliverable alongside the Megaplan chain adapter:
+
+> **Phase 7: Agent Adapters**
+> - `megaplan_chain` adapter (existing chain/cloud supervisor reused)
+> - `hermes_subagent` adapter (wraps `workers/hermes.py` and the hermes CLI launch patterns)
+> - `delegate_classifier` adapter (wraps `delegate_task` for fast diagnostic classification)
+> - Adapter interface: `prepare()`, `command()`, `classify()`, `stop()`, `cleanup()`
+
+### 4d. Add a code-inspection task for bare repo + worktree compatibility
+
+Before committing to bare repos in `/workspace/repos/*.git`, the plan should include:
+
+> **Phase 2 Code-Inspection Task:** Verify that `bakeoff/worktree.py` functions (`worktree_registered`, `remove_worktree`, `create_named_worktree`) work correctly with bare repos as the git directory. Specifically:
+> - Does registered-worktree discovery assume a `.git` directory inside a normal checkout?
+> - Does `remove_worktree` correctly handle `git worktree remove` from a bare repo?
+> - Does `branch_exists` work when the git dir is bare?
+> - If any function assumes a normal checkout, document the needed bare-aware variant.
+
+### 4e. Add a registry-gating rule for subagent launches
+
+The plan's Guardian safety policy should include:
+
+> **Subagent Launch Safety:**
+> - Before launching a diagnostic subagent, Guardian checks whether a child operation for the same parent+task already exists and is still running (deduplication via `parent_operation_id` + `task_hash`).
+> - Guardian enforces a per-parent child cap (default: 3 concurrent children) to prevent repair cascades.
+> - If a child operation fails to complete within `auto_expire_after`, Guardian kills the tmux session, marks the child as `failed`, and falls through to the next ladder rung (escalate to Peter).
+
+### 4f. Explicitly delegate subagent lifecycle to the parent's repair step
+
+The plan should state:
+
+> Guardian does **not** tick child operations in its main loop. The parent operation's `repair()` step (implemented by the operation adapter) is responsible for:
+> 1. Spawning child diagnostic/repair operations
+> 2. Polling their status
+> 3. Reading their events.ndjson for findings
+> 4. Cleaning up completed children
+> 5. Falling through to escalation if children fail
+
+This keeps the Guardian loop simple and the registry clean. The complexity lives in the adapter, not the daemon.
+
+---
+
+## 5. THINGS THAT ARE ALREADY CORRECTLY HANDLED
+
+### 5a. Process isolation via tmux sessions
+
+The existing `_tmux_chain_launch_command` and `_tmux_chain_restart_command` in `cloud/cli.py` already follow the pattern of one tmux session per operation. Hermes subagents launched via tmux (`tmux new-session -d -s subagent-<id> "hermes chat -q ..."`) get the same isolation. No new isolation mechanism needed.
+
+### 5b. Event streaming via events.ndjson
+
+The `observability/events.py` module (`EventKind`, `emit`, `read_events`, `.events.seq` counter with `fcntl.flock`) is a mature, tested pattern. Every operation (including child subagent operations) can write its own `events.ndjson` at `/workspace/runs/<op-id>/events.ndjson`. Guardian reads these for classification. This is already the right design.
+
+### 5c. Watchdog repair + recheck loop
+
+`scripts/simulate_watchdog_end_to_end.py` and `megaplan_live_watchdog.py` already implement the repair→relaunch→recheck flow. The `WatchdogRegistry`, `Observation`, `RepairRunner`, `RetryLoop`/`RetryOutcome`, and `snapshot` mechanics are proven. Guardian should import and compose these, not rewrite them.
+
+### 5d. Supervisor ladder (retry → repair → escalate)
+
+`supervisor/ladder.py` already models the escalation path Guardian needs. Combined with `cloud_supervise_tick()`'s restart logic and `supervisor/outcomes.py`'s classification, the Guardian's "try known-safe → launch diagnostic subagent → ask Peter" policy is already partially implemented in plan-scoped form.
+
+### 5e. Credential seeding patterns
+
+`cloud/auth.py`'s `seed_codex_oauth()` and the Claude refresh-token shim already prove the pattern of copying selected local credentials to a remote environment. The AgentBox `SecretSpec` generalization is well-scoped.
+
+### 5f. Single-user simplification decisions
+
+The plan correctly decides:
+- No multi-tenant ceremony
+- No complex role hierarchy
+- Natural-language Discord messages over slash commands for v1
+- Approvals only for completion, merge, cleanup, credentials, and debt acceptance
+- Guardian prefers autonomous repair over asking
+
+These are all correct for a single-user system and avoid over-engineering.
+
+### 5g. Separate Guardian and Discord processes
+
+The plan's decision to run Guardian and Discord Operator as separate systemd services sharing the same operation store is correct. The Discord service owns an asyncio event loop; Guardian is a periodic supervisor. Coupling them would create unnecessary complexity.
+
+---
+
+## Summary
+
+| Dimension | Assessment |
+|---|---|
+| **Hermes subagent launching** | Already proven via `workers/hermes.py`, hermes CLI, and tmux patterns. No new launch code needed. |
+| **Registry pollution risk** | Real, but solvable with `parent_operation_id` + `operation_scope` + Guardian tick policy that only iterates top-level operations. |
+| **Missing seam #1** | No parent-child operation relationship in any existing code. Must be added to operation record schema and Guardian tick loop. |
+| **Missing seam #2** | No machine-scoped registry. Everything is plan/chain/session-scoped. The AgentBox operation registry is the new center that ties everything together. |
+| **Missing seam #3** | Worktree helpers are CWD-scoped. Need `repo_path` parameterization. |
+| **Reuse wins** | Watchdog registry/repair mechanics, cloud supervise tick, supervisor ladder, resident Discord runtime, events.ndjson pattern, credential seeding — all strong fits. |
+| **Plan changes needed** | Add parent-child ops to schema, Guardian tick policy, subagent adapter to Phase 7, bare-repo inspection task, registry gating rules, explicit child lifecycle delegation. |

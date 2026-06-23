@@ -1,0 +1,51 @@
+## Direct Answer
+
+Worktrees should be represented as **linked git worktrees created from bare canonical repos**, with a **separate operation registry** as the authoritative source of truth. The technical stack is:
+
+1. **Bare canonical repo** at `/workspace/repos/<name>.git` — the shared object database.
+2. **Linked worktree** at `/workspace/worktrees/<op-id>/<repo>/` — created via `git worktree add` with a dedicated branch (e.g., `agent/op-20260623-foo`).
+3. **Operation registry record** — a SQLite row or manifest file that owns the mapping `(operation_id, repo, worktree_path, branch, tmux_session)` independently of git's internal bookkeeping.
+
+The git-level representation is standard: each worktree has a `.git` *file* (not directory) containing a path to the bare repo and a reference into `$GIT_DIR/worktrees/<name>/`. The operation registry is the non-git overlay that gives each worktree an operation identity, status, and lifecycle.
+
+## Rationale
+
+**Bare repos are the right canonical store.** A normal checkout creates ambiguity — is the "main" worktree the canonical state or just another worktree? Bare repos remove that ambiguity. Every checkout is a worktree; there is no privileged working directory. The plan's Open Design Decision #1 already converges on this, and it's the correct call.
+
+**The operation registry must be the source of truth, not git's worktree list.** `git worktree list` tells you what git thinks exists. The operation registry tells you *why* a worktree exists, what operation owns it, whether it's active/stale/completed, and what tmux session it's tied to. The registry is the bridge between git-level isolation and machine-level orchestration. Without it, the Guardian can't classify worktrees or decide what's safe to prune.
+
+**Per-operation branches keep isolation simple.** The plan's convention of `agent/op-<date>-<slug>` branches means no two operations share a branch. Worktree creation (`-b agent/op-123 origin/main`) is atomic and doesn't race. The branch name itself carries the operation id, making cross-referencing resilient even if the registry is temporarily unavailable.
+
+## Existing Mechanics This Depends On
+
+- **`arnold_pipelines/megaplan/bakeoff/worktree.py`** — `create_named_worktree`, `validate_worktree_name`, `ensure_no_inprogress_op`, `remove_worktree`, and dirty-state carry helpers. These already know how to create and destroy worktrees safely. The extraction needed: parameterize the root path (currently hardcoded) and accept a repo argument instead of assuming the current working directory.
+- **Operation registry** (to be built) — the plan's centerpiece. Worktree metadata lives here, not scattered across git configs.
+- **Repo registry** (`/workspace/repos/*.git`) — the worktree service needs to know which bare repos exist and where to find `origin/main` for branch creation.
+
+## Risks and Caveats
+
+1. **Bare repos mean no human-friendly default checkout.** SSH-ing into the box and typing `git status` in `/workspace/repos/megaplan.git` won't work. This is acceptable for a machine-managed system, but the workaround is to inspect an active worktree or create a throwaway one.
+
+2. **Git worktree pruning is fragile.** If a worktree directory is deleted manually (not via `git worktree remove`), the bare repo retains a stale entry in `worktrees/`. `git worktree prune` cleans these, but the Guardian should never rely on `git worktree list` alone. Always cross-reference the operation registry.
+
+3. **Multi-repo operations create N worktrees for one operation.** The operation record must track a list of `(repo, worktree_path, branch)` tuples, not a single path. Cleanup must remove all N worktrees atomically or at least consistently.
+
+4. **Concurrent worktree creation on the same bare repo is safe** (git handles the locking), but the operation registry must serialize operation creation to prevent double-allocating the same branch name.
+
+## One Concrete Design Implication
+
+The **operation registry schema must include a `worktrees` field that is a list of objects**, not a single path:
+
+```yaml
+worktrees:
+  - repo: megaplan
+    path: /workspace/worktrees/op-123/megaplan
+    branch: agent/op-123
+    base_ref: origin/main
+  - repo: reigh-app
+    path: /workspace/worktrees/op-123/reigh-app
+    branch: agent/op-123
+    base_ref: origin/main
+```
+
+This means the `create_worktree` helper in `bakeoff/worktree.py` must be extracted to accept a `repo_name` parameter that resolves to the bare repo path from the repo registry, rather than discovering the repo implicitly via `cwd` or `git rev-parse`. The current `--in-worktree NAME` behavior mutates argparse state; the extracted version must return structured data suitable for writing into the operation record.

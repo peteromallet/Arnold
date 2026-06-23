@@ -1,0 +1,52 @@
+# How Agents Avoid Trampling Each Other
+
+## Direct Answer
+
+Agents avoid trampling each other through **mandatory worktree-per-operation isolation** enforced by the operation registry. Every operation receives its own git worktree(s) under `/workspace/worktrees/<op-id>/<repo>`, its own branch(es), and its own tmux session. The operation registry is the single source of truth that prevents two operations from claiming the same resource. The bare canonical repos at `/workspace/repos/*.git` are never written to directly; they exist only as the shared source of truth that worktrees fork from. No two agents ever mutate the same checkout.
+
+## Rationale
+
+The plan is explicit: "Each operation gets its own isolated worktree and branch. No two agents mutate the same checkout." This is the architectural guarantee.
+
+Trampling has four attack vectors, and each is addressed:
+
+1. **Filesystem collisions** — Worktrees are disjoint directories. Two operations operating on the same repo (e.g., `megaplan`) get `/workspace/worktrees/op-123/megaplan` and `/workspace/worktrees/op-456/megaplan`. They cannot step on each other's files because the paths never overlap.
+
+2. **Branch collisions** — Each operation gets a unique branch name (`agent/op-<id>`). Two agents cannot push to the same branch, rebase onto each other, or produce merge-conflict noise from shared refs.
+
+3. **Process collisions** — Each operation owns one tmux session (`op-<id>`). Agents cannot signal, kill, or interfere with each other's process trees. The Guardian additionally monitors for defunct sessions and can clean up orphaned processes.
+
+4. **Resource starvation** — This is the softest boundary. The Guardian monitors disk/RAM/process pressure and warns via Discord, but the plan does not enforce per-operation resource quotas in v1. This is a known risk, not a solved one.
+
+The operation registry is the coordination mechanism. Before creating a worktree or launching a process, the system checks the registry for conflicts (worktree path, branch name, tmux session name). The existing Megaplan helper `ensure_no_inprogress_op` from `bakeoff/worktree.py` already encodes this pattern — AgentBox promotes it from command-scoped to machine-scoped.
+
+## Existing Mechanics This Depends On
+
+- **`arnold_pipelines/megaplan/bakeoff/worktree.py`** — `create_named_worktree`, `validate_worktree_name`, `ensure_no_inprogress_op`, `worktree_registered`, `remove_worktree`. These are the filesystem isolation primitives.
+- **Bare repo convention** — `git clone --bare` under `/workspace/repos/*.git` ensures the canonical refs are never in a checkout that an agent could accidentally write to.
+- **`cloud/supervise.py` and watchdog** — Guardian inherits the ability to detect stale/dead sessions and classify operation health.
+- **Operation registry** — The new piece that ties worktree ownership to operation identity, preventing double-claim.
+
+## Risks and Caveats
+
+1. **Bare repo discovery edge cases** — The plan notes this as an "open risk." Existing worktree helpers assume a normal repo/main worktree for operations like `worktree_registered`. Bare repos need bare-aware variants of these functions before the isolation guarantee holds.
+
+2. **Multi-repo operations** — An operation spanning `megaplan` and `reigh-app` creates two worktrees but one operation ID. If one worktree creation succeeds and the other fails, the operation registry must track this partial state and avoid leaving orphaned worktrees that another operation might later collide with.
+
+3. **Worktree leaks** — If Guardian or the Operator crashes mid-creation, a worktree exists on disk but not in the registry, or vice versa. The plan mentions "detect registered-but-missing worktrees" but not the inverse (dangling worktrees not in the registry). Both directions matter for trampling prevention.
+
+4. **No filesystem locking** — The isolation is convention-backed-by-registry, not a kernel-level lock. If the registry itself has a bug or race condition (two simultaneous launches), two operations could theoretically claim the same worktree path. SQLite with WAL mode mitigates this; file-based state does not.
+
+5. **Shared mutable state outside worktrees** — If agents write to `/workspace/secrets`, `/workspace/runs`, or shared caches, they can trample at those paths. The plan doesn't scope these as per-operation; they need clear ownership rules or append-only semantics.
+
+## Concrete Design Implication
+
+**The operation registry must atomically reserve worktree paths before creating them.** Specifically, the `create_operation()` path should:
+
+1. Generate the operation ID and derive worktree paths.
+2. Check the registry for any existing operation claiming those paths.
+3. Insert the operation record with `status: preparing`.
+4. Only then call `create_named_worktree()`.
+5. If worktree creation fails, mark the operation `failed` and release the path claim.
+
+This prevents the race where two launch requests compute the same timestamp-based ID (e.g., `op-20260623-140500`) and both try to create the same worktree. The registry is the lock; the filesystem is the resource.

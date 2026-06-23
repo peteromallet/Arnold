@@ -1,0 +1,32 @@
+## Direct answer
+
+Almost no traditional UI is needed. The design is single-user and Discord‑first; the **user interface is Discord itself** — natural‑language messages sent and received in a channel or DM. A local CLI exists but only for bootstrap, emergency management, and SSH/tmux attach when Discord is unavailable or the user wants a direct terminal. No web dashboard, no TUI status board, no slash‑command builder, and no multi‑tenant UI are required for the first working slice.
+
+## Rationale
+
+1. **Single‑user eliminates the need for a UI.** There is no org chart, no role hierarchy, no audit‑review dashboard, and no collaboration workflow. The only consumer is Peter.
+
+2. **The Discord Operator agent is the “UI.”** The plan already provides a resident Discord service that can spawn an agent turn on every inbound message. That agent has a known tool profile — `status`, `run`, `logs`, `approve`, `stop`, `cleanup`, `repos`, `creds test` — and can map natural‑language requests onto those tools. The user says *“run this chain”* or *“what is blocked?”* and the Operator decides the right action. This is the exact pattern the Megaplan resident runtime already supports.
+
+3. **Guardian pushes, the user pulls.** The Guardian daemon posts status‑change notifications (blocked, failed, completed, approval needed) directly to Discord. The user does not need to poll a dashboard; they see the messages in the same place they would have sent a command.
+
+4. **A local CLI covers the bootstrap/emergency path.** The plan already defines `agentbox bootstrap`, `agentbox ssh`, `agentbox repo add`, `agentbox creds push`, `agentbox logs`, and `agentbox attach`. Those are enough for initial machine setup and for the rare cases where the user wants a raw terminal into a tmux session.
+
+In short, the combination of *Discord Operator (interactive) + Guardian notifications (reactive) + local CLI (administrative)* provides the full interaction surface with zero custom UI code.
+
+## Existing mechanics this depends on
+
+- **Resident Discord runtime** (`resident/discord.py`, `resident/runtime.py`, `resident/auth.py`, `resident/profile.py`) — already handles inbound message parsing, conversation keys, tool‑call dispatch, outbound message formatting, and allowlists.
+- **Confirmation manager** — already supports approval records, expiry, and Discord‑channel replies; used for the few actions that need human sign‑off (merge, delete, credential rotate).
+- **Existing Megaplan cloud status/log/attach patterns** — provide the templates for the CLI commands that the Operator will wrap.
+
+## Risks and caveats
+
+- **Discord as a dependency.** If Discord is down or the bot token expires, the primary interaction channel disappears. The local CLI and SSH are the fallback; they must be kept working and documented.
+- **Natural‑language ambiguity.** *“Run the thing”* without a spec, repo, or previous context can fail. The Operator must default to asking a concrete follow‑up rather than guessing. This is a social convention (single‑user), not a technical guarantee.
+- **No offline or async‑poll UI.** The user cannot open a web page, filter operations by status, or scroll through structured history. Discord’s message history is the audit trail. That may be acceptable for a single‑user prototype but will fray if the scope ever grows.
+- **Log viewing through Discord is coarse.** The Operator can summarize logs but cannot stream a thousand lines. The `agentbox logs` CLI or SSH attach is still needed for deep debugging.
+
+## Concrete design implication
+
+Because the UI is a conversational agent and not a fixed form, **the Operator’s tool profile must be small, stable, and semantically clean.** Every new tool or tool‑parameter change becomes a potential conversation break. The safest design is to keep the tool surface limited to the 8‑10 commands listed in the plan (`status`, `run`, `logs`, `attach`, `approve`, `stop`, `restart`, `cleanup`, `creds test`, `summarize`) and let the Operator compose richer behavior through existing Megaplan primitives (e.g., chain launch) rather than exposing every sub‑option as a new tool. This keeps the “UI” — the agent’s understanding of the user’s intent — reliable without building a UI framework.

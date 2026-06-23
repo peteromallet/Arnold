@@ -1,0 +1,148 @@
+# AgentBox Reuse Inventory — Megaplan Mechanics Mapped to Discord-First AgentBox
+
+**TL;DR**: 85% of the desired AgentBox launch/supervise/chain/worktree/tmux mechanics already exist in mature form across `arnold_pipelines/megaplan/`. The primary gaps are: (a) Discord as the *initiating* channel for megaplan operations (resident already has Discord read/reply, but not `init`/`chain`/`bootstrap` triggers), (b) DeepSeek subagent routing in `workers/`, and (c) streamlined operation creation from chat. The cloud/tmux/log scaffolding is production-grade and needs zero new invention.
+
+---
+
+## 1. Megaplan Init / Bootstrap → Worktree → Plan Creation
+
+**What exists (immediate reuse)**:
+
+| Capability | File | Key Functions/Constants |
+|---|---|---|
+| Init with `--in-worktree` | `cli/__init__.py` L1798+ | `_setup_init_worktree()` — creates worktree, carries dirty state, rewrites args |
+| Chain with `--in-worktree` | `cli/__init__.py` L2138+ | `_setup_chain_worktree()` — shared worktree, engine isolation via `MEGAPLAN_ENGINE_ROOT` |
+| Worktree primitives | `bakeoff/worktree.py` | `validate_worktree_name`, `create_named_worktree`, `carry_dirty_state_atomic`, `branch_exists`, `resolve_ref`, `ensure_no_inprogress_op`, `worktree_registered` |
+| Cloud bootstrap (remote) | `cloud/cli.py` L260+ | `_run_bootstrap_wrapper` — uploads idea file, calls `arnold init` remotely |
+| Cloud chain (remote) | `cloud/cli.py` L600+ | `_run_chain_wrapper` — uploads chain spec, launches in tmux, verifies, returns provenance |
+
+**What's needed for Discord-first**:
+- A Discord slash command → `megaplan init --in-worktree <name>` binding. Trivial: `resident/discord.py` already has message handling; add a command handler that shells out to `_setup_init_worktree` or replays through `resident/cloud.py`'s `CloudToolRequest` dispatch.
+- Worktree naming from Discord context (channel + user slug). `validate_worktree_name` already enforces `^[a-z0-9][a-z0-9._-]{0,63}$`.
+
+**Gap**: Discord → worktree-init plumbing. No new worktree code needed.
+
+---
+
+## 2. Cloud / Tmux / Session / Log Path
+
+**This is the strongest reuse area — nearly complete.**
+
+| Capability | File | Details |
+|---|---|---|
+| Chain launch context | `cloud/cli.py` L600–680 | `ChainLaunchContext` dataclass: `identity`, `digest`, `workspace`, `remote_spec_path`, `session_name`, `log_path`, `state_path`, `marker_path` |
+| Session naming | `cloud/cli.py` | `CHAIN_SESSION_NAME = "megaplan-chain"`, derived as `megaplan-chain-{slug}-{digest[:8]}` |
+| Log paths | `cloud/cli.py` | `_CHAIN_LOG_RELATIVE = ".megaplan/cloud-chain.log"`, materialized per-session: `.megaplan/cloud-chain-{session_name}.log` |
+| Session markers | `cloud/cli.py` | `_CHAIN_SESSION_MARKER_DIR = "/workspace/.megaplan/cloud-sessions"`, `{session_name}.json` markers with provenance |
+| Tmux launch + verification | `cloud/cli.py` | `_tmux_launch_status()` classifies output, `_CHAIN_VERIFY_ATTEMPTS=6` with 5s sleep |
+| Remote supervision tick | `cloud/cli.py` + `cloud/supervise.py` | `cloud supervise --chain` triggers one-shot supervisor on remote |
+| Tmux scanning | `watchdog/tmux_scan.py` | Scans tmux sessions, correlates processes to plans |
+| Cloud wrappers | `cloud/wrappers/` | `mp-chain`, `mp-heartbeat`, `mp-run`, `mp-supervise` (+ `arnold-*` variants) |
+| Resident cloud ops | `resident/cloud.py` | `CloudToolRequest`, `CloudToolResult`, `CloudClassification` enum, `CloudCliBackend.async run()` |
+
+**Recommendation**: `ChainLaunchContext` + `_derive_chain_launch_context` is the canonical factory. For AgentBox, simply expose a `discord_chain_start` command that calls through `resident/cloud.py`'s `cloud_start_chain` operation. The log path, session name, and marker are all derived deterministically — Discord can display these as rich embeds.
+
+**Gap**: None in mechanics. Missing: Discord embed rendering of `_cloud_chain_launch_provenance()`.
+
+---
+
+## 3. Guardian / Watchdog — Repair, Relaunch, Blocked Runs
+
+**Full end-to-end simulation exists.**
+
+| Capability | File | Details |
+|---|---|---|
+| Watchdog core | `watchdog/__init__.py` | Entry point |
+| Repair runner | `watchdog/repair_runner.py` | Executes repair steps against blocked plans |
+| Process correlation | `watchdog/correlate.py` | Maps OS processes to megaplan plans |
+| Orphan detection | `watchdog/orphans.py` | Finds plans with dead workers |
+| Tmux scanning | `watchdog/tmux_scan.py` | Cross-references tmux sessions with plan state |
+| Retry logic | `watchdog/retry.py` | Backoff + retry for transient failures |
+| Snapshot | `watchdog/snapshot.py` | Captures state before/after repair |
+| E2E simulation | `scripts/simulate_watchdog_end_to_end.py` | Creates synthetic blocked plan, runs repair + recheck, verifies cleanup |
+
+**Recommendation**: The watchdog already runs as a cron or daemon. For AgentBox, bind it to a Discord "guardian" command: `!guardian scan` → runs watchdog tick, `!guardian repair <plan>` → executes `repair_runner`, `!guardian status` → returns correlated plan/process table. `resident/scheduler.py` can trigger periodic scans.
+
+**Gap**: Discord event emission from watchdog events (`watchdog/signals.py` already has signal infrastructure; needs a Discord webhook or resident dispatch).
+
+---
+
+## 4. Chain Execution — Milestones, Gates, CI Hooks
+
+| Capability | File | Details |
+|---|---|---|
+| Chain spec | `chain/spec.py` | `ChainSpec` model with milestones, base_branch, policies |
+| Chain driver | `supervisor/chain_runner.py` | Iterates milestones, forks worktree per milestone |
+| CI hook | `chain/ci_hook.py` | Triggers external CI on plan completion |
+| Hinge gate | `chain/hinge_gate.py` | Blocks chain advance until milestone gates pass |
+| Dual green (M3) | `chain/m3_dual_green.py` | Requires both bakeoff + CI green |
+| Eval gates (M5) | `chain/m5_eval_gates.py` | Model evaluation quality gates |
+| Git ops | `chain/git_ops.py` | Branch, merge, rebase for chain milestones |
+| PR merge | `supervisor/pr_merge.py` | Auto-merge reviewed PRs |
+| Done gate | `scripts/chain_done_gate.py` | Validates chain completion: all milestones done, blockers resolved |
+
+**Recommendation**: Chain mechanics are complete. AgentBox needs: Discord command `!chain start <spec>` → calls `cloud chain` or local `_setup_chain_worktree` + `chain_runner`. Chain progress can be pushed as Discord embeds via `resident/discord.py`.
+
+---
+
+## 5. DeepSeek / Subagent Routing
+
+**What exists**:
+
+| Capability | File | Details |
+|---|---|---|
+| Hermes worker | `workers/hermes.py` | Spawns Hermes agent as subprocess worker |
+| Shannon worker | `workers/shannon.py`, `shannon_session.py`, `shannon_stream.py` | Shannon model workers |
+| Subscription gate | `workers/subscription_gate.py` | Routes work to available workers |
+| Worker fanout | `_core/worker_fanout.py` | Fan-out orchestration |
+| Hermes fanout | `_core/hermes_fanout.py` | Hermes-specific fan-out |
+| Subagent appendix (Claude) | `data/claude_subagent_appendix.md` | Documentation for Claude subagent routing |
+| Subagent appendix (Codex) | `data/codex_subagent_appendix.md` | Documentation for Codex subagent routing |
+
+**Gap**: No DeepSeek worker in `workers/`. Need `workers/deepseek.py` modeled after `workers/hermes.py` + `workers/shannon.py`. The worker factory pattern is well-established — `_impl.py` registers workers, `subscription_gate.py` routes to them. Adding DeepSeek is a ~50-line worker implementation.
+
+**Recommendation**: Create `workers/deepseek.py` with the same `Worker` protocol as `hermes.py`. Register in `workers/__init__.py`. The `resident/tool_registry.py` already supports registering tools — add `deepseek_agent` as a tool.
+
+---
+
+## 6. Operation Creation from Discord
+
+**What exists**:
+
+| Capability | File | Details |
+|---|---|---|
+| Operation DB store | `store/_db/operations.py` | Persistent operations table |
+| Operation file store | `store/_file/operations.py` | File-backed operations |
+| Cloud operation types | `resident/cloud.py` | `CloudOperation` Literal type, `CloudToolRequest` dataclass |
+| Tool registry | `resident/tool_registry.py` | Registers + dispatches tools |
+| Agent loop | `resident/agent_loop.py` | Main resident loop reading Discord + executing |
+
+**Gap**: No `!op create` or equivalent command that creates a persistent operation record. The store layer exists; the command handler doesn't.
+
+**Recommendation**: Add a Discord command handler in `resident/discord.py` that:
+1. Parses `!op create <idea>` or `!op bootstrap <file>`
+2. Creates an operation record via `store/_db/operations.py`
+3. Dispatches via `resident/cloud.py`'s `CloudCliBackend`
+4. Returns operation ID + status embed
+
+---
+
+## 7. Store / Persistence (Already Complete)
+
+`store/` covers every entity AgentBox needs: `epics`, `plans`, `tickets`, `operations`, `sprints`, `conversations`, `events`, `checklists`, `code_artifacts`, `images`, `feedback`, `second_opinions`. Dual backend (DB via SQLite + file via JSON). No new persistence code needed.
+
+---
+
+## Summary: What to Build (Ranked by Effort)
+
+| # | Item | Effort | Reuses |
+|---|---|---|---|
+| 1 | Discord command → `megaplan init --in-worktree` | Low (~30 lines) | `cli/__init__.py:_setup_init_worktree`, `bakeoff/worktree.py` |
+| 2 | Discord command → `cloud chain start` | Low (~40 lines) | `cloud/cli.py:_run_chain_wrapper`, `ChainLaunchContext`, `resident/cloud.py` |
+| 3 | Discord guardian commands (scan/repair/status) | Low (~50 lines) | `watchdog/` entire module |
+| 4 | DeepSeek worker | Low (~50 lines) | `workers/hermes.py` as template, `subscription_gate.py` |
+| 5 | Operation creation from Discord | Medium (~80 lines) | `store/_db/operations.py`, `resident/cloud.py` |
+| 6 | Discord embed rendering for chain provenance | Low (~30 lines) | `_cloud_chain_launch_provenance()` dict |
+| 7 | Watchdog → Discord event emission | Low (~30 lines) | `watchdog/signals.py`, `resident/discord.py` |
+
+**Total new code estimate**: ~310 lines across 7 touchpoints, all thin wrappers over existing mature machinery. Zero new infrastructure.

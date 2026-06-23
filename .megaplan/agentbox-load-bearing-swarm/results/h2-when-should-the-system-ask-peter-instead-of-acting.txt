@@ -1,0 +1,84 @@
+## Direct Answer
+
+The system should ask Peter only when an action is **destructive**, **ambiguous**, requires **product judgment**, or involves **credentials**. Everything else — operational failures, dead processes, chain continuation, status classification, branch pushes, PR creation — should be handled autonomously.
+
+The plan draws a bright line: *operational/mechanical failures → autonomous repair; value judgments and irreversible mutations → ask Peter.*
+
+---
+
+## Rationale
+
+The plan states the policy in three reinforcing layers:
+
+**1. Guardian explicit prohibitions:**
+> "The Guardian should not silently make product decisions, resolve merge conflicts, delete worktrees, merge PRs, or accept quality debt. Those become explicit pending approvals."
+
+**2. Guardian escalation trigger:**
+> "It should only ask Peter when the next step requires product judgement, credential input, destructive cleanup, or accepting quality debt."
+
+**3. Approval boundary definition:**
+> "The approval boundary is mostly: merge to main; delete/cleanup worktrees or branches; accept failing validation or quality debt; resolve ambiguous product decisions; expose or rotate credentials."
+
+The unifying principle: **ask Peter when acting could lose work, lower quality, or require a value choice that no automation can resolve.** Conversely, the Guardian is explicitly *biased toward repair*:
+
+> "The Guardian should be biased toward 'figure out what's wrong and fix it' for operational failures."
+
+So the system should autonomously: restart dead tmux sessions, resume stalled chains, reclassify blocked operations, push branches, open PRs (when part of operation policy), launch diagnostic subagents, and collect logs. It should **not** autonomously: delete worktrees, merge to main, resolve merge conflicts, accept failing tests, or rotate credentials.
+
+The single-user simplification reinforces this: *"approvals should be rare and focused on completion, merge, cleanup, credentials, or accepting debt."*
+
+---
+
+## Concrete Taxonomy
+
+| Category | Actions | Ask Peter? |
+|---|---|---|
+| **Safe (autonomous)** | Restart dead runner, resume chain, collect logs, push branch, open draft PR, classify status, launch diagnostic subagent, notify Discord | Never |
+| **Confirm (ask)** | Delete worktree, reset branch, merge PR, accept failing validation, resolve merge conflict, kill unknown processes, destructive cleanup, expose/rotate credentials | Always |
+| **Forbidden** | Not specified in plan, but implied as a policy category for undefined extreme actions | N/A for now |
+
+The **completion event** is the primary approval surface. On completion, the system DMs Peter with summary, validation, branch/PR status, and asks: *push/open PR/cleanup?* This is the handoff back to human judgment.
+
+---
+
+## Existing Mechanics This Depends On
+
+1. **Megaplan resident confirmation manager** — already stores confirmation records, approval expiry, and authorization subjects. AgentBox reuses this for the `pending_approvals` field on operations.
+2. **Megaplan cloud supervisor refusal policy** — already encodes "don't do X without confirmation" patterns. Guardian wraps this.
+3. **cleanup-loose-branches discipline** — already requires explicit approval for destructive cleanup. AgentBox invokes this for post-run consolidation.
+4. **Operation registry `pending_approvals` field** — new, but specified in the plan as a required operation record field.
+
+---
+
+## Risks and Caveats
+
+1. **Blurry boundary**: "Operational failure" vs. "product judgment" can overlap. A failing test might be a flaky test (operational) or a genuine regression (product). The plan mitigates this by having Guardian launch a DeepSeek diagnostic subagent for unclear failures before escalating.
+
+2. **Autonomous repair loops**: If Guardian restarts a failing operation that immediately fails again, it could loop. The plan's operation registry tracks `last_check` timestamps and status history, which should enable loop detection. This needs explicit guard logic.
+
+3. **Push/PR as safe action**: The plan treats push and PR creation as safe (autonomous) when part of operation policy. This is reasonable for draft PRs on agent branches, but if the repo has branch protection rules or CI that auto-deploys, even a draft PR could trigger side effects. The implementation should check repo settings.
+
+4. **Missing credential detection**: When Guardian detects a missing credential, it notifies Peter — but if Peter is offline, the operation stalls. The plan doesn't specify a timeout or fallback.
+
+---
+
+## One Concrete Design Implication
+
+**The operation registry needs an `approval_state` machine with explicit timeouts.**
+
+Waiting on Peter should not block the machine indefinitely. Each pending approval should carry a creation timestamp and an expiry policy. If Peter doesn't respond within, say, 24 hours for a non-destructive approval (e.g., "merge to main?"), the default should be to *not* act (safety-preserving). Guardian should re-notify on each cycle. This prevents the registry from accumulating stale approval records that block downstream operations while Peter is away.
+
+Implementation sketch for the operation record:
+
+```yaml
+pending_approvals:
+  - id: conf-001
+    kind: merge-to-main
+    created_at: "2026-06-23T14:00:00Z"
+    expires_at: "2026-06-24T14:00:00Z"
+    default_if_expired: reject
+    discord_msg_id: "1234567890"
+    status: awaiting_response
+```
+
+This makes the approval system self-cleaning and prevents the machine from becoming a queue of unactionable human prompts.

@@ -1,0 +1,73 @@
+# Safety Policy Review: AgentBox Persistent Machine Plan
+
+## 1. Verdict: **CLEAN WITH CHANGES**
+
+The architecture is elegant and appropriately simple for one user. The Guardian/Operator split, operation registry as the center, and reuse-first posture are all correct. The safety model has the right instincts — approvals should be rare, Guardian should prefer autonomous repair, and the approval boundary is largely at completion/consolidation. But the plan gestures at a policy (`safe/confirm/forbidden`) without ever defining it, and that gap creates ambiguity about the single most important operational boundary: **when does Guardian fix things itself vs. when does it escalate?**
+
+---
+
+## 2. The One Most Important Design Pressure
+
+**The safe/confirm/forbidden taxonomy is named but never populated.** Section 10 declares the categories exist. Guardian lists "safe actions" and "unsafe actions requiring confirmation" inline. But:
+
+- **Forbidden actions are never enumerated anywhere.** If nothing is forbidden, say so explicitly. If credential rotation or mass worktree deletion is forbidden without a specific approval track, say so.
+- **Safe vs. confirm boundaries are scattered.** Guardian has one list, the completion/approval section has another, and the Operator's safety boundaries are implicit (it "should still go through the same safety policy") but never enumerated for Operator-specific actions like `stop`, `restart`, `cleanup`, or `consolidate`.
+- **The single-user simplification is underspecified at the safety layer.** The plan says "approvals should be rare and focused on completion, merge, cleanup, credentials, or accepting debt." That's the right spirit, but it never gets codified into a concrete policy the Guardian and Operator can actually enforce. Without an explicit list, the Guardian will either over-escalate (slowing Peter) or under-escalate (making decisions it shouldn't).
+
+This is the pressure: the plan's safety instincts are correct, but they are gestural. A concrete, enumerated policy would cost ~15 lines of spec and prevent months of Guardian tuning guesswork.
+
+---
+
+## 3. Concrete Plan Change
+
+Add an explicit **Safety Policy Table** to Section 10. Replace the current gestural text with something like:
+
+```markdown
+### Safety Policy Table
+
+All AgentBox actions fall into one of three categories. Both Guardian and Operator enforce the same table.
+
+**SAFE (no approval required, no notification):**
+- Create operation records, worktrees, branches, tmux sessions
+- Launch chains, plans, codex, claude, subagent, test, shell runs
+- Read logs, state, registry, repo status
+- Restart dead tmux sessions or resume stale chains (operational recovery)
+- Push branches and open/update draft PRs (when operation policy permits)
+- Classify and report operation state
+- Run diagnostic subagents for unclear failures
+- Credential health checks (read-only)
+- Daily briefing compilation
+
+**CONFIRM (requires Peter approval via Discord, one message round-trip):**
+- Merge PR to main
+- Delete worktrees or branches (destructive cleanup)
+- Accept failing validation or known quality debt as complete
+- Resolve ambiguous product decisions
+- Rotate or expose credentials
+- Stop or restart an operation Peter launched interactively
+- Consolidate/land loose branches (cleanup-loose-branches survey)
+
+**FORBIDDEN (never performed, Guardian or Operator must refuse):**
+- Delete the operation registry or agentbox.db
+- Modify another operation's worktree or branch outside a declared subagent relationship
+- Push to main directly (merge via PR only)
+- Execute credential rotation without an explicit approval record
+- Run commands outside /workspace without a declared and approved path
+```
+
+This is small. It is exhaustive enough to remove ambiguity. It preserves the single-user bias: most actions are SAFE, CONFIRM is a short list of irreversible or quality-judgment actions, and FORBIDDEN is a safety rail. No ceremony beyond "one message round-trip" is added.
+
+---
+
+## 4. What I Would Explicitly Avoid Adding
+
+**Never add intermediate-step approval gates.** The plan already says "The main approval event is completion, not every intermediate action." That's correct. Do not add:
+
+- Per-step chain approval ("step 3/7 is done — continue?")
+- Per-agent-launch approval ("Claude wants to run — allow?")
+- Per-file-change approval
+- Approval expiry or timeouts that re-prompt Peter on routine operations
+- An approval queue UI or complex state machine for confirmations — one pending question per conversation scope, matched by the next message, is sufficient
+- Role hierarchies, permission levels, or multi-user approval chains — this is a single-user system, and `safe/confirm/forbidden` should be a flat table, not a role-based access control model
+
+The approval UX should remain: Peter sends a message, the system does the right thing 95% of the time, and the 5% that needs confirmation is a single Discord DM with concrete options. Anything that adds friction to the 95% path is overbuilding.

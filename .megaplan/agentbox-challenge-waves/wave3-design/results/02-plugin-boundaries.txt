@@ -1,0 +1,37 @@
+# Wave 3 Review: Adapter & Plugin Boundaries
+
+## 1. Verdict: **CLEAN WITH CHANGES**
+
+The three-way separation (Process Runner / Guardian / Discord Operator) is justified and clean. The extraction seams are correctly identified. But the OperationAdapter class hierarchy is both premature and underspecified for the one operation kind that will prove it.
+
+---
+
+## 2. Single Most Important Design Pressure
+
+**The OperationAdapter interface implies a `command → run → classify → stop` lifecycle, but `megaplan_chain` is a state machine that progresses through steps over time.** The `classify()` method must swallow all of `cloud_supervise_tick()`'s chain-state inspection, heartbeat detection, stall classification, and resume logic. Meanwhile `command()` can only return a single string, yet chain launch involves worktree creation, env setup, and multi-step bootstrap. The adapter is being asked to be both a launcher and a supervisor, and the interface doesn't distinguish which methods are called when. The abstraction will be wrong until at least two operation kinds reveal what's actually common vs. what's chain-specific. Formalizing it now guarantees a rewrite later.
+
+---
+
+## 3. Concrete Plan Change
+
+**Replace the `OperationAdapter` class with a flat kind→handler function dispatch.** Delete the four-method interface. Instead:
+
+- Guardian v0 calls `handle_megaplan_chain(operation_record)` directly — a single function that wraps the extracted `cloud_supervise_tick()` logic, owns its own launch/classify/restart internals, and returns a status delta plus any pending approvals.
+- When a second operation kind arrives, extract the common parts from both handlers into shared helpers (tmux restart, log tail, approval filing) that both handlers call. Then — and only then — decide if a protocol/class is warranted.
+- The dispatch table is a literal Python dict: `OPERATION_HANDLERS = {"megaplan_chain": handle_megaplan_chain}`. No discovery, no registration decorators, no base class.
+
+This preserves the extraction seam the plan correctly wants (wrapping `cloud_supervise_tick` without rewriting it) while avoiding an interface that the first implementation will immediately violate.
+
+---
+
+## 4. What To Explicitly Avoid Adding
+
+**A plugin framework.** Specifically:
+
+- No `@register_operation_kind` decorator
+- No `OperationAdapter` base class with default methods
+- No plugin discovery (directory scanning, entry points, config-driven loading)
+- No adapter configuration files separate from the handler function itself
+- No "plugin scheduler" abstraction in Guardian — Guardian's loop iterates operations and dispatches by kind. That's one `if`/`elif` chain or dict lookup, not a scheduler framework
+
+The dispatch table should live in one module. Adding a new operation kind should mean writing one function and adding one line to the dict. Anything more elaborate is enterprise ceremony for a single-user system with one operation kind.

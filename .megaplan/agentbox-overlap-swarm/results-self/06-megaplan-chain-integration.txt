@@ -1,0 +1,96 @@
+# AgentBox–Megaplan Overlap Audit
+
+## 1. Directly Reusable Existing Functionality
+
+### `arnold_pipelines/megaplan/resident/cloud.py` (entire module)
+This is the **highest-value artifact**. It already wraps cloud CLI operations for resident tools with:
+- **`CloudCliBackend`**: dispatches `CloudToolRequest` → calls `run_cloud_cli`; ready for Guardian/Discord Operator.
+- **`CloudClassification`**: `Literal["running", "blocked", "failed", "gate-needed", "completed", "unknown"]` — maps directly to AgentBox operation statuses.
+- **`classify_cloud_payload()`**: token-matches against `gate_needed`, `failed`, `blocked`, `completed`, `running` — usable as-is for the Guardian's tick classification.
+- **`CloudToolRequest`/`CloudToolResult`**: structured dispatch that a Discord handler can map incoming `/agentbox status` or `/agentbox launch` commands onto.
+
+### `arnold_pipelines/megaplan/cloud/cli.py` cloud operations
+- **`cloud bootstrap`** (line ~240): launches a plan from an idea file remotely. AgentBox calls this with `--repo-url`, `--repo-branch`, `--repo-workspace` overrides.
+- **`cloud chain`**: uploads chain spec + idea files, dispatches `chain start --spec` in a tmux session (`megaplan-chain`), writes `last_chain.json` marker. AgentBox uses this verbatim.
+- **`cloud status --chain`** (line ~260): fetches `chain_state.json`, reuses core chain status formatting. This is the Operator's "what is running?" backend.
+- **`cloud supervise --chain`**: **one-shot supervisor tick** — reads chain status, refreshes branch/PR sync, classifies `effective_status`, executes at most one safe mutation (restart/advance), emits structured JSON. **This is a pre-built Guardian tick.**
+
+### `arnold_pipelines/megaplan/chain/spec.py` — `ChainState`
+All 20+ persisted fields (`current_milestone_index`, `last_state`, `pr_number`, `pr_state`, `sync_state`, `extra_repo_sync`, `retry_counts`, etc.) are directly mappable into the AgentBox operation registry. No reimplementation needed.
+
+### Chain worktree support (`chain/__init__.py` lines 2290–2370)
+`--in-worktree`, `--worktree-from`, `--clean-worktree`, `--fresh` — the AgentBox `op-{date}-{slug}` worktree scheme can use this with minor wrapper scripts.
+
+---
+
+## 2. Needing Extraction/Generalization
+
+### `cloud supervise --chain` → Generic Guardian tick
+The supervisor tick currently lives inside the cloud CLI's chain subcommand (line ~440 in `cli.py`). **Extract** the tick logic into a shared function (`megaplan.supervise.tick()`) so Guardian can call it without the CLI layer. The classification (`_run_supervise_tick`) already follows the "observe → classify → decide → act" loop — make the decision policy injectable (e.g., `auto_advance=True` vs. `require_approval=True`).
+
+### Operation registry
+AgentBox needs an `op-{id}` → `{kind, repos, worktrees, branches, tmux_session, status, approvals, last_check}` mapping. No such registry exists — `chain_state.json` is per-chain, not cross-chain. **Build** a lightweight JSON store under `/workspace/runs/registry.json` with a `CloudRun` dataclass that wraps `ChainState` plus AgentBox-specific fields (tmux session, Guardian last_check, Discord thread_id).
+
+### Classification unification
+`resident/cloud.py` has `CloudClassification`; `cloud supervise` has its own `effective_status`. Merge these into a single `OperationStatus` enum used by both Guardian and Operator.
+
+---
+
+## 3. Missing Pieces
+
+| Gap | Notes |
+|-----|-------|
+| **Guardian daemon loop** | `cloud supervise` is one-shot. AgentBox needs a `while True: sleep(X); tick_all()` loop with a watchdog. |
+| **Tmux session management** | `cloud chain` creates `megaplan-chain` tmux session but there's no inventory of all active sessions. Need `tmux list-sessions` → registry sync. |
+| **Cross-operation state query** | Can't ask "show me all running operations across all repos." Need registry + `registry.query(status=running)`. |
+| **Approval queue** | `cloud supervise` emits `refused_reason` but has no persistent approval table. AgentBox needs `approvals.json` with `op_id, action, requester, timestamp, status`. |
+| **Discord command dispatch** | No Discord bot integration exists. Need message → `CloudToolRequest` mapping plus permission gating. |
+| **Worktree lifecycle per operation** | Chain worktrees exist but there's no cleanup (`--fresh` per-chain only). Need `op archive/delete` commands. |
+| **Multi-repo operations** | `extra_repos` in `ChainState` handles siblings but AgentBox lists repos as first-class (`/workspace/repos/`); need a repo registry. |
+| **Guardian restart safety** | `cloud supervise` restarts tmux for the chain but doesn't know if the operation type has a "known-safe restart path" (AgentBox requirement). |
+
+---
+
+## 4. Risks & Gotchas
+
+1. **`cloud supervise` mutation scoping** (cli.py ~480): The tick "executes at most one safe mutation" — but "safe" is chain-specific (restart, advance). For AgentBox, the Guardian must also handle `cloud bootstrap` runs and non-chain `cloud status` operations. Extend the action table.
+
+2. **`ChainState` volatility**: `chain_state.json` is rewritten on every milestone advance. Concurrent reads by Guardian during a write could see partial JSON. Use atomic write (`tempfile + os.rename`) or add a read lock.
+
+3. **Railway vs. Hetzner path divergence**: `cloud supervise` resolves spec precedence from `~/.megaplan/cloud/markers/` which assumes Railway's persistent deploy dir. On Hetzner, use `/workspace/runs/op-{id}/` instead. Abstract the marker path.
+
+4. **`resident/cloud.py` needs `await`**: `CloudCliBackend.run` is `async` but calls synchronous `run_cloud_cli`. For Guardian's background loop, run in a thread pool executor or make it fully async.
+
+5. **Tmux session naming collisions**: `cloud chain` hardcodes `megaplan-chain`. AgentBox needs `tmux new-session -d -s op-{id}-chain` per operation. Patch the chain dispatch args to pass `--session-name`.
+
+6. **Approval safety**: AgentBox spec says Guardian "should not silently make product decisions, resolve merge conflicts, delete worktrees, merge PRs." The current `cloud supervise` already refuses these (it "never invents approvals"). This is good alignment — just make the refusal policy configurable.
+
+---
+
+## 5. Recommended First Implementation Slice
+
+**Slice 0: AgentBox Bootstrap + Single-Chain Launch + Guardian Tick**
+
+### What to build:
+1. **Repo/worktree bootstrap script**: clones repos to `/workspace/repos/`, validates layout.
+2. **Operation registry** (`registry.json`): create/read/update operations backed by `ChainState` + tmux session + Guardian fields.
+3. **Launch adapter**: wraps `cloud chain` (via `resident/cloud.py`'s `CloudCliBackend`) with `--in-worktree op-{id}` and `--session-name op-{id}-chain`.
+4. **Guardian daemon (v0)**: loops every 5 min, calls `cloud supervise --chain` per active op, writes results to registry, logs to Discord webhook (not bot yet — just webhook).
+5. **`agentbox status` CLI**: reads registry, prints table of all ops with classification.
+
+### What to defer:
+- Discord bot command parsing (use webhooks + manual inspect for first slice).
+- Multi-repo simultaneous ops.
+- Approval queue.
+- Worktree cleanup/archival.
+
+### Files to touch:
+| File | Change |
+|------|--------|
+| `arnold_pipelines/megaplan/resident/cloud.py` | Already done — no changes. |
+| `arnold_pipelines/megaplan/cloud/cli.py` | Extract `_run_supervise_tick` into shared module; add `--session-name` passthrough. |
+| **NEW** `agentbox/registry.py` | Operation CRUD + `CloudRun` dataclass. |
+| **NEW** `agentbox/guardian.py` | Daemon loop calling `CloudCliBackend` + `classify_cloud_payload`. |
+| **NEW** `agentbox/cli.py` | `agentbox status`, `agentbox launch`, `agentbox supervise`. |
+
+This slice validates the core hypothesis — that Guardian can operate on Megaplan chains using existing infrastructure — with minimal new code. Estimated: 300–400 LOC of glue.

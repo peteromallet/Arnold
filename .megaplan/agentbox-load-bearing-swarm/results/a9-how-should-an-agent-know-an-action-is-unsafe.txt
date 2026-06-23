@@ -1,0 +1,42 @@
+## Direct Answer
+
+An agent should know an action is unsafe by consulting a **shared, explicit safety policy** that classifies every action domain into one of three categories: **safe** (auto-execute), **confirm** (require approval via the operation registry), or **forbidden** (refuse entirely). The agent does not guess. It looks up the action against this policy before execution, and if the action is `confirm`-class, it creates a `pending_approval` record in the operation registry and blocks until that approval is resolved.
+
+## Rationale
+
+The plan already draws a clear line. The Guardian section (Section 8) distinguishes safe actions (restart a missing runner, continue an unambiguous chain step, notify Discord) from unsafe ones (delete worktrees, reset branches, resolve merge conflicts, merge PRs, kill unknown processes, push sensitive branches). Section 10 explicitly defines policy categories: `safe`, `confirm`, `forbidden`.
+
+The architecture has **two resident actors** (Guardian and Discord Operator) sharing the same state and safety policy. If safety classification were embedded in Guardian-only code, the Discord Operator could take destructive actions without the same guardrails. A shared policy artifact—loaded by both actors—closes this gap.
+
+The actual determination is mechanical, not judgmental: an agent that intends to, say, delete a worktree checks the policy, sees `confirm`, writes a pending approval, and stops. The human resolves it later via Discord or CLI. An agent that intends to restart a dead tmux session checks the policy, sees `safe`, and proceeds.
+
+This is consistent with the plan's bias: Guardian should "prefer autonomous repair over asking for permission on operational failures" but must not "silently make product decisions, resolve merge conflicts, delete worktrees, merge PRs, or accept quality debt." The policy is the encoding of that bias.
+
+## Existing Mechanics This Depends On
+
+1. **Operation registry `pending_approvals` field** — listed in the operation record schema. This is where blocked actions wait.
+
+2. **Resident confirmation manager** — referenced in Section 10 ("Reuse: Megaplan resident confirmation manager"). This likely provides the approval lifecycle (create, expire, resolve, audit).
+
+3. **Guardian's explicit safe/unsafe action enumeration** in Section 8 — the raw material for the policy.
+
+4. **Approval boundary** stated in the completion flow: merge to main, delete/cleanup worktrees, accept failing validation, resolve ambiguous product decisions, expose/rotate credentials. These define the `confirm` scope.
+
+## Risks and Caveats
+
+- **Policy gap.** An action not enumerated in the policy defaults to unknown. The safe default should be `confirm` (ask), not `safe` (proceed), to avoid silent destruction.
+- **Context sensitivity.** A `git push` to a feature branch might be safe; a `git push --force` to `main` is not. The policy needs parameterized rules, not just verb-level classification.
+- **Guardian repair chains.** If Guardian launches a repair subagent that wants to delete a failed worktree, the subagent must also go through the policy. There is no "acting on behalf of Guardian" bypass.
+- **Approval fatigue.** If too many actions are `confirm`, the human becomes a bottleneck. The plan already constrains this ("approvals should be rare and focused"), but the initial policy must be tuned carefully.
+- **Policy staleness.** As new operation kinds (Codex, Claude, subagent) are added, their action domains must be classified. An unclassified adapter should default to conservative policy.
+
+## Concrete Design Implication
+
+The safety policy should be a **single, versioned, queryable artifact** (a YAML file or a table in the operation store), not scattered across Guardian source code. Both Guardian and Discord Operator load it at startup. It should support:
+
+- **Action domain** (e.g., `worktree.delete`, `branch.force-push`, `pr.merge`, `process.restart`)
+- **Classification** (`safe`, `confirm`, `forbidden`)
+- **Optional conditions** (e.g., `branch.force-push` is `confirm` on `main`, `safe` on `agent/*`)
+- **Approval expiry** (e.g., pending approvals auto-deny after 24h)
+
+This means the approval system is not "Guardian decides and asks"—it is "Agent proposes, policy classifies, registry holds, human resolves." The agent knows an action is unsafe because the policy told it so before it took the action.

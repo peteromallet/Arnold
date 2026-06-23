@@ -1,0 +1,181 @@
+Let me proceed with the analysis directly. I have sufficient information from the code surface inventory and the plan's own thorough self-audit.
+
+---
+
+# AgentBox Current-System Fit Challenge: Megaplan Chain/Cloud as First Operation Kind
+
+## 1. Verdict: **FIT WITH EXTRACTION**
+
+The Megaplan chain/cloud mechanics are the **correct** first operation kind. The substrate is strong, but four extraction seams are mandatory before AgentBox can use it — not just "nice to have." Without them, you'll build parallel systems that diverge immediately. With them, the adapter is thin.
+
+---
+
+## 2. Existing Functionality That Should Be Reused
+
+The plan's reuse map is accurate, but I'll be concrete about **exactly what** to reuse and **why**:
+
+### A. `cloud_supervise_tick()` — the single most important reuse
+From `arnold_pipelines/megaplan/cloud/supervise.py:172`. The plan says "wrap as a plugin." Correct, but the extraction seam is more specific than that. `cloud_supervise_tick(root, args, spec, provider)` currently receives its own argument bundle. The adapter needs to **break the args/spec/provider coupling** and feed it from the operation registry record instead. The internal logic (tmux liveness check, chain state classification, restart command generation, stale detection) is what you want — you just need to give it a different input shape.
+
+### B. `_tmux_chain_launch_command()` and `_tmux_chain_restart_command()`
+From `arnold_pipelines/megaplan/cloud/cli.py:987` and `:1049`. These are already parameterized by `name`, `workspace`, and `chain_cmd`. They need **zero changes** for AgentBox. Your operation record's `tmux_session` and `worktree` fields map directly to their parameters. This is the cleanest reuse boundary in the entire system.
+
+### C. `bakeoff/worktree.py` — the full function set
+The listed functions (`validate_worktree_name`, `create_named_worktree`, `create_worktree`, `remove_worktree`, `resolve_ref`, `branch_exists`, `worktree_registered`) are all correct to reuse. The extraction needed is:
+- **Parameterize the worktree root** — currently hardcoded to `~/Documents/.megaplan-worktrees`; needs to accept `/workspace/worktrees` from config.
+- **Accept a repo path parameter** — currently derives from `os.getcwd()`; needs explicit `repo_path` or `git_dir`.
+
+### D. Resident runtime — `ResidentDiscordService` + tool infrastructure
+From `arnold_pipelines/megaplan/resident/discord.py`, `runtime.py`, `auth.py`, `profile.py`, `tool_schemas.py`, `tool_registry.py`, `agent_loop.py`. This is the right shell. The plan correctly identifies that the new work is an `AgentBoxOperatorProfile` tool set, not a new bot loop.
+
+### E. Store patterns from `store/base.py`
+`list_cloud_runs`, `list_scheduled_jobs`, `list_progress_events`, `upsert_resident_conversation` — these are the persistence models to copy for the operation registry. The file-backed store in `store/file.py` (with `_events_path`, `_progress_events_dir`, `_scheduled_jobs_dir`) is the right structural template.
+
+### F. Watchdog mechanics
+From `watchdog/registry.py` (`Observation`, `WatchdogRegistry`), `watchdog/repair_runner.py` (`RepairRunner`), `watchdog/retry.py` (`RetryLoop`, `RetryOutcome`), `watchdog/snapshot.py` (`build_snapshot`). The plan says "Guardian composes these." Correct — but the **extraction seam** is that the watchdog currently discovers plans by scanning filesystem roots (`DEFAULT_SCAN_ROOTS`), while Guardian should drive from the operation registry. The watchdog's repair/retry/snapshot machinery should be called **per-operation-record**, not per-filesystem-scan.
+
+### G. `events.ndjson` format and the fold infrastructure
+From `observability/events.py`, `observability/fold.py`. The plan correctly proposes `events.ndjson` per operation. The existing `emit()`, `EventKind`, `.events.seq` counter with `fcntl.flock`, `read_events()`, and `fold_events()` / `rebuild_state_from_wal()` are all reusable with zero changes — just point them at `/workspace/runs/<op>/events.ndjson`.
+
+---
+
+## 3. Missing Seams and Incompatibilities
+
+These are ranked by **blocking-ness**. #1 blocks everything else.
+
+### SEAM 1 (BLOCKING): No operation registry model exists
+The plan identifies this as "the missing center" and is correct. But the inventory reveals a **more specific gap**: the existing models (`ChainLaunchContext`, `CloudRun`, `ScheduledJob`, `WatchdogRegistry`, `HotContext`) each carry **pieces** of what an operation record needs, but none carries the **cross-kind union**. The specific missing binding is:
+
+| Field | Closest existing carrier | Gap |
+|---|---|---|
+| `operation_id` | Plan name / plan_dir conventions | No cross-kind id scheme |
+| `kind` (enum) | Implicit from which CLI was called | No stored kind discriminator |
+| `tmux_session` | `ChainLaunchContext.session_name` | Only exists for cloud chains, not local |
+| `repos[]` (list) | Single implicit repo from cwd | No multi-repo support anywhere |
+| `pending_approvals[]` | Resident confirmation manager | Scoped to Discord, not operation record |
+| `guardian_last_check` | None | New field |
+| `discord_refs` | `upsert_resident_conversation` | Conversation key exists, but not linked to operation id |
+| `source` (discord/cli/guardian) | None | New field |
+| `events_path` | Plan-scoped `events.ndjson` | Needs operation-scoped path |
+
+**What the plan gets wrong**: It proposes adding `pending_approvals` to the operation record. The inventory shows the resident runtime already has a **confirmation manager** that stores pending confirmations by conversation scope. Adding a **second** approval store on the operation record creates a split-brain. Instead, the operation record should carry `pending_confirmation_ids[]` that **reference** the resident confirmation manager's records, not duplicate them.
+
+### SEAM 2 (BLOCKING): `cloud_supervise_tick()` is tightly coupled to its call site
+From `cloud/cli.py:1511-1513`:
+```python
+from arnold_pipelines.megaplan.cloud.supervise import cloud_supervise_tick
+report = cloud_supervise_tick(root, args, spec, provider)
+```
+
+The function signature expects `(root, args, spec, provider)` — an argparse namespace, a cloud spec object, and a provider instance. AgentBox can't feed it that from the operation registry without building fake argparse and provider objects. **Extraction needed**: a sister function `cloud_supervise_tick_from_record(plan_dir, session_name, provider_config_dict)` that takes plain data, or an adapter that constructs the needed objects from the operation record.
+
+Similarly, the cloud CLI's `_tmux_chain_launch_command` and `_tmux_chain_restart_command` are **importable** but nested in `cloud/cli.py` (a very large file — referenced across 2000+ lines). They should be extracted to a shared module so AgentBox can import them without dragging in the entire CLI argument parser.
+
+### SEAM 3: Hardcoded session name "agent" in cloud templates
+From `cloud/template.py:60-75`:
+```python
+tmux new-session -d -s agent -c ${WORKSPACE_PATH} ...
+```
+
+The cloud template consistently uses `session_name="agent"`. The CLI has `--session` overrides, but the **template** is hardcoded. AgentBox needs per-operation session names (`op-20260623-foo`). This is fixable by parameterizing the template, but it's an actual code change, not just a configuration change.
+
+### SEAM 4: Worktree helpers are single-repo and cwd-bound
+The inventory shows `bakeoff/worktree.py` functions like `ensure_no_inprogress_op` and `worktree_registered` operate on the **current working directory's repo**. They don't accept a `repo_path` or `git_dir` parameter. AgentBox needs to call these for arbitrary repos in `/workspace/repos/`. This is an extraction task: add `git_dir` or `repo_path` as an explicit parameter to these functions.
+
+### SEAM 5: Watchdog discovers by filesystem scan, not by registry
+`scripts/megaplan_live_watchdog.py:25` imports `DEFAULT_SCAN_ROOTS` from `watchdog/discovery.py`. The watchdog walks directories to find plans. Guardian needs to iterate the operation registry instead. The repair/retry/snapshot machinery is reusable — but the **discovery layer** needs a registry-backed alternative. This is correctly identified in the plan.
+
+### SEAM 6: Bare repo risk — not theoretical
+The plan proposes `/workspace/repos/megaplan.git` (bare repos). The worktree helpers in `bakeoff/worktree.py` have functions like `worktree_registered` and `remove_worktree` that were written assuming a normal checkout with a main worktree. The plan acknowledges this as "an open risk" but doesn't assign it to a phase. **Code-inspection task needed**: audit `worktree_registered`, `remove_worktree`, and `branch_exists` for bare-repo compatibility before committing to bare repos.
+
+---
+
+## 4. Exact Plan Changes Recommended
+
+### Change 1: Add a Phase 2.5 — "Extraction Seams" — before Phase 3
+
+The current phase ordering is:
+```
+Phase 1: Box Bootstrap
+Phase 2: Repo And Worktree Service
+Phase 3: Operation Registry And Runner
+```
+
+Phase 2 cannot complete without extraction work on `bakeoff/worktree.py`. And Phase 3 depends on the worktree service. Insert:
+
+**Phase 2.5: Extraction Seams**
+Deliverables:
+- `worktree.py`: add `repo_path`/`git_dir` parameter to `ensure_no_inprogress_op`, `worktree_registered`, `create_named_worktree`, `create_worktree`, `remove_worktree`. Remove hardcoded `~/Documents/.megaplan-worktrees`.
+- `cloud/supervise.py`: add `cloud_supervise_tick_from_record(plan_dir, session_name, provider_kind, provider_config)` alongside existing `cloud_supervise_tick(root, args, spec, provider)`.
+- `cloud/cli.py`: extract `_tmux_chain_launch_command` and `_tmux_chain_restart_command` to `cloud/tmux_commands.py` (or keep in `cli.py` but make them importable without argparse side effects).
+- `cloud/template.py`: parameterize session name in all tmux template strings. Accept `session_name` as a parameter rather than hardcoding `"agent"`.
+- `watchdog/discovery.py`: add `discover_from_registry(registry: WatchdogRegistry)` alongside `discover_from_scan_roots()`.
+- Bare repo audit: inspect `worktree_registered`, `remove_worktree`, `branch_exists` for bare-repo compatibility. If they assume a main worktree, add bare-repo variants or document the constraint and use normal checkouts for v0.
+
+### Change 2: Operation registry should reference resident confirmation manager, not duplicate it
+
+Under "Operation Registry" in the plan:
+> fields for `pending_approvals`
+
+Change to:
+> fields for `pending_confirmation_ids` — references into the resident confirmation manager's store, not duplicated approval records.
+
+Reason: The resident runtime already has confirmation storage (`upsert_resident_conversation` and confirmation manager patterns). Creating a second approval store on the operation record will diverge.
+
+### Change 3: First product slice should explicitly include extraction work
+
+The "Revised First Product Slice" lists 6 items. Add:
+
+> 0. **Extraction seams**: parameterize worktree helpers for multi-repo, extract `cloud_supervise_tick_from_record`, parameterize tmux session names, add registry-backed watchdog discovery.
+
+Without this, items 1-4 are blocked by import errors or silently-wrong behavior (wrong repo path, wrong session name, wrong worktree root).
+
+### Change 4: Add code-inspection tasks for bare repo compatibility
+
+Under "Open Design Decisions":
+> 1. Should canonical repos be bare mirrors or normal main checkouts?
+
+Add:
+> **Required before Phase 2**: Audit `bakeoff/worktree.py` functions (`worktree_registered`, `remove_worktree`, `branch_exists`) for bare-repo compatibility. Check whether they call `git worktree list` or `git branch` in ways that assume a non-bare checkout. If they do, either add `--git-dir` variants or start v0 with normal checkouts.
+
+### Change 5: Session naming conflict in cloud templates
+
+The plan says operation records get `tmux_session: op-20260623-foo`. The cloud templates hardcode `session_name="agent"`. This needs explicit resolution:
+
+Add to Phase 2.5 or Phase 3:
+> Cloud templates parameterized: all tmux session names accept a `session_name` parameter. Default changed from `"agent"` to `"megaplan-chain"` (matching the CLI default at `cloud/cli.py:541`). AgentBox overrides to `op-{id}`.
+
+---
+
+## 5. Things Already Correctly Handled
+
+These are things the plan gets right and should not be changed:
+
+1. **Guardian and Discord Operator as separate processes.** The plan correctly identifies that `ResidentDiscordService` owns an asyncio loop and Guardian is a periodic supervisor. Keeping them as separate systemd services sharing the operation store avoids event-loop coupling. This is the right call and matches the code inventory (Discord runtime is asyncio-based; watchdog is a CLI entry point).
+
+2. **Megaplan chain as first operation kind.** The inventory confirms this: `cloud_supervise_tick`, `_tmux_chain_launch_command`, `_tmux_chain_restart_command`, `_tmux_launch_status`, `chain/spec.py`, `chain/git_ops.py`, `supervisor/chain_runner.py`, and `supervisor/pr_merge.py` form a complete chain lifecycle. Codex, Claude, shell, and subagent adapters would require **new** lifecycle code. Chains already have it. Starting with chains is correct.
+
+3. **Reuse of `events.ndjson` format.** The existing `emit()`, `.events.seq` counter with `fcntl.flock`, `read_events()`, and `fold_events()` are a mature observability substrate. Pointing them at `/workspace/runs/<op>/events.ndjson` is a zero-change reuse.
+
+4. **Discord thin path required for v0.** The plan correctly insists that CLI-only is not a complete first slice. The code inventory confirms the resident Discord infrastructure exists — it would be wasteful to ship v0 without it.
+
+5. **Credential generalization to `SecretSpec`.** The plan correctly identifies that `seed_codex_oauth()` proves the pattern but should be generalized. The existing code has `cloud/auth.py` for OAuth seeding, template-based env injection, and SSH upload. A `SecretSpec(local_path, persistent_dest, runtime_dest, permissions, health_check)` model that wraps these is the right abstraction.
+
+6. **Cleanup via `cleanup-loose-branches` discipline.** The plan correctly defers to the existing cleanup skill rather than inventing a new merge policy. The supervisor package already has `pr_merge.py` for PR handling; consolidation should use the cleanup discipline for the survey/recommend/approve flow.
+
+7. **Not boiling the ocean.** The plan's first slice (operation registry + one kind + Guardian v0 + status/log CLI + discord notifications) is the right scope. The plan resists the temptation to build Codex/Claude/shell adapters, multi-tenant auth, or workspace UI before proving the core loop.
+
+8. **Host recommendation (Hetzner CX53).** The plan correctly avoids forcing the resident-machine model into Railway's persistent-container model. The existing `cloud/providers/railway.py` and `cloud/providers/ssh.py` confirm two different execution models; the plan picks the right one for AgentBox while keeping Railway for simpler one-off runners.
+
+---
+
+## Summary
+
+**Fit with extraction** — not because the plan is wrong, but because four concrete code changes in the existing Megaplan codebase are prerequisites:
+
+1. Parameterize worktree helpers for multi-repo (hardcoded cwd → explicit `repo_path`).
+2. Add `cloud_supervise_tick_from_record()` alongside `cloud_supervise_tick()`.
+3. Parameterize tmux session names in cloud templates (hardcoded `"agent"` → parameter).
+4. Add registry-backed watchdog discovery.
+
+The plan correctly identifies these as "needed extraction" but doesn't assign them to a phase or make them blocking prerequisites. They should be **Phase 2.5**, before the operation registry, because the operation registry depends on the worktree service and the worktree service depends on the extraction.

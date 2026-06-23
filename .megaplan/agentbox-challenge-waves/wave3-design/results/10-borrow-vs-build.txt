@@ -1,0 +1,45 @@
+## Borrow vs Build Posture Review
+
+### 1. Verdict: **CLEAN WITH CHANGES**
+
+The plan's borrow-vs-build posture is fundamentally correct: local Megaplan code is the right primary substrate, and external projects are appropriately positioned as design references rather than code dependencies. There is one concrete gap in execution, not philosophy.
+
+---
+
+### 2. Primary Design Pressure
+
+**The plan promises external inspection but doesn't schedule it.** Five external projects are named with specific "likely uses" — Rover's session/worktree UX, CCManager's lifecycle/status patterns, OpenACP's permission UX — but the Extraction Checklist Before Implementation contains **only** local-code extraction tasks. The external inspection that would validate the "build locally" decision is left as intention, not task. If the plan is wrong about what CCManager's state machine looks like, the operation registry schema is being designed blind to the closest prior art.
+
+---
+
+### 3. Concrete Change
+
+Add two inspection tasks to the Extraction Checklist, before the operation registry schema is finalized:
+
+```
+9.  CCManager lifecycle audit: review CCManager's busy/waiting/idle/completed
+    state model and transition rules. Map to the proposed AgentBox operation
+    statuses (running, blocked, failed, completed, stale, awaiting_approval).
+    Extract any state machine edge cases the plan currently misses.
+
+10. Rover session/worktree UX audit: review Rover's worktree naming, session
+    isolation, and cleanup conventions. Validate that the proposed
+    /workspace/worktrees/op-{id}/{repo} layout and operation-scoped branches
+    don't miss patterns Rover already solved.
+```
+
+These are **inspection-only** tasks — consistent with the plan's posture. They exist to stress-test the local design against working prior art before building, not to adopt dependencies. If the audits find nothing useful, the tasks close in 30 minutes. If they find edge cases, the registry schema improves before Phase 3.
+
+---
+
+### 4. What I Would Explicitly Avoid Adding
+
+- **Any of the five external projects as code dependencies or vendored libraries.** The plan's posture — inspect for design, build on local Megaplan substrate — is correct. Coder's workspace templates, Netclode's k3s/microVM/JuiceFS stack, OpenACP's multi-platform bridge — all would add dependency weight and architectural ceremony to a single-user system that doesn't need them.
+
+- **A "unified agent adapter" abstraction that tries to normalize Rover's agent model with Megaplan's.** Rover supports Claude Code, Codex, Cursor, Gemini, Qwen. Megaplan supports its own chain/plan/agent conventions. A compatibility layer across these is premature abstraction. The `OperationAdapter` interface in the plan is the right level: wrap what AgentBox actually launches (`megaplan_chain`, `codex`, `claude`, `subagent`, `test`, `shell`) and don't design for agents that won't run on this box.
+
+- **OpenACP's multi-platform bridge as runtime.** Megaplan already has a working resident Discord runtime. Adding OpenACP's Slack/Telegram routing as a dependency would be ceremony without demand.
+
+---
+
+**Bottom line:** The plan's instinct to build locally and inspect externally is right. The fix is one line-item follow-through: inspect the two most relevant external projects (CCManager for lifecycle, Rover for session/worktree) before locking the registry schema, then proceed as designed.

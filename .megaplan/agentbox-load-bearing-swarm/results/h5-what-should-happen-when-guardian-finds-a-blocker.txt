@@ -1,0 +1,63 @@
+## Direct Answer
+
+When Guardian finds a blocked, stuck, or failed operation, it should attempt **active autonomous repair** before notifying the human. The prescribed pipeline is:
+
+1. **Inspect** — read current operation state, logs, and structured plan/chain state.
+2. **Classify** — determine the likely cause (dead tmux session, chain stall, test failure, missing credential, merge conflict, etc.).
+3. **Repair** — execute the known-safe recovery path for that classification.
+4. **Escalate if needed** — if repair fails or the blocker requires product judgment, credential input, destructive cleanup, or accepting quality debt, file a pending approval and notify Peter via Discord.
+5. **Record** — write what it did to the operation record for audit.
+
+In short: Guardian is biased toward "figure out what's wrong and fix it." It only asks Peter when the next step crosses a safety boundary.
+
+---
+
+## Rationale
+
+The plan explicitly states: *"The Guardian's default behavior should be active repair, not passive reporting."* This flows from two design principles:
+
+**Operational failures are usually mechanical.** A dead tmux session, a chain stall with no active worker, or a test failure with a clear root cause are problems the system can diagnose and often fix without human reasoning. Asking Peter to restart a dead session manually defeats the purpose of a supervisor daemon.
+
+**Single-user simplification.** Because AgentBox serves one user, there is no multi-tenant safety concern. The plan's "Single-User Simplifications" section says: *"Guardian should prefer autonomous repair over asking for permission on operational failures."* The approval boundary is deliberately narrow — merge to main, destructive cleanup, ambiguous product choices, credential exposure, and accepting quality debt.
+
+**Economic use of human attention.** If Guardian pings Peter for every test failure or stale worker, the Discord channel becomes noise. Notifications should signal *meaningful state changes* and *irrecoverable blocks*, not routine mechanical issues Guardian can handle itself.
+
+---
+
+## Existing Mechanics This Depends On
+
+| Dependency | Role |
+|---|---|
+| `cloud/supervise.py` + watchdog | Provides the classification/action primitives Guardian wraps as a tick loop for `megaplan_chain` operations |
+| Operation registry | Stores status, last-check timestamps, and Guardian action history so it knows what it already tried |
+| Subagent launcher (DeepSeek/Hermes) | Invoked when Guardian cannot classify a failure cheaply — "failing tests without obvious cause, repeated chain stalls, ambiguous PR/branch state" |
+| Discord resident runtime | Notification sink for escalations; the `DiscordOutboundSink` and confirmation manager handle approval requests |
+| Safe/unsafe action classification | The Guardian Daemon component spec defines which actions are safe (restart runner, continue chain if unambiguous) vs. unsafe (delete worktrees, merge PRs, resolve merge conflicts, kill unknown processes) |
+
+---
+
+## Risks and Caveats
+
+1. **Cascading repair failures.** If Guardian misclassifies a blocker and applies the wrong repair, it could make the problem worse — e.g., restarting a chain that has a corrupted branch state could produce duplicated work or lost progress. The repair should be *idempotent where possible* and *recorded* so Guardian can detect if it already tried and failed.
+
+2. **Classification ambiguity.** The plan lists five example blocker types, but real failures will blur the lines. A test failure might look like a code issue but actually be a missing credential. Guardian must not loop indefinitely on the same misdiagnosis.
+
+3. **Subagent cost and latency.** Launching a DeepSeek subagent for ambiguous failures is expensive and slow. Guardian should have a cheap-first heuristic: try known-safe mechanical fixes first, then escalate to subagent diagnosis only when those fail.
+
+4. **The safe/unsafe boundary is fuzzy.** "Continue a Megaplan chain if the next step is unambiguous" sounds clean, but chain state can be ambiguous in practice. Guardian needs a confidence threshold — if unsure, stop and ask.
+
+---
+
+## One Concrete Design Implication
+
+**The operation registry must include a `guardian_actions` log field** — an append-only sequence of `{timestamp, classification, action_taken, result}` entries. Without this, Guardian cannot know what it already attempted and risks looping on the same repair, or compounding a bad repair with another. This audit trail also lets Peter inspect *why* Guardian escalated: "I tried X, then Y, both failed, now I need you."
+
+A secondary implication: Guardian's response should be **tiered**, not a single decision point. The flow should be:
+
+```
+detect blocker → classify → try safe repair → recheck → 
+  still blocked? → launch subagent diagnosis → recheck →
+  still blocked? → file pending approval → notify Discord
+```
+
+Each tier escalation is gated by the operation record's `guardian_actions` log so Guardian doesn't retry the same dead path.

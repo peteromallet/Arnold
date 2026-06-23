@@ -1,0 +1,170 @@
+I have sufficient information from the inventory and loaded skills to produce a thorough assessment. Here is my analysis:
+
+---
+
+# Wave 2 Current-System Fit Challenge: Git PR Cleanup Path
+
+## 1. Verdict
+
+**CONFLICT — with specific extraction seams needed before the path can work.**
+
+The plan correctly identifies `git_ops`/`supervisor/pr_merge` as the push/PR/merge substrate and `cleanup-loose-branches` as the consolidation playbook. However, the plan **understates two structural conflicts** and **relies on a skill that does not exist**. The path is architecturally sound in concept but cannot work as described without: (a) building the missing cleanup-loose-branches skill, (b) resolving a bare-repo incompatibility in `worktree.py`, and (c) extracting three specific seams from chain-scoped to operation-scoped code.
+
+---
+
+## 2. Existing Functionality That Should Be Reused
+
+| Component | What exists | How to reuse |
+|---|---|---|
+| **Push/PR lifecycle** | `github-pr-workflow` skill (complete): branch creation, push, PR open, CI monitoring, squash-merge, auto-merge, branch cleanup. Also `chain/git_ops.py` tracks branch/PR state for a running chain. | AgentBox operations should call the `github-pr-workflow` pattern from within the operation's worktree directory. The skill already handles both `gh` CLI and `curl` fallback paths. |
+| **PR merge mechanics** | `supervisor/pr_merge.py` in the supervisor package. The plan describes it as "PR merge logic" in the chain execution path. | Wrap `pr_merge.py` as the merge step in the completion flow. It already knows chain state and can validate preconditions. |
+| **Branch/worktree isolation** | `bakeoff/worktree.py`: `create_named_worktree`, `remove_worktree`, `validate_worktree_name`, `branch_exists`, `worktree_registered`. Also chain worktree flags: `--in-worktree`, `--fresh`, `--carry-dirty`. | These are the correct primitives for operation worktree creation. Every operation gets a named worktree through `create_named_worktree`. |
+| **Tmux session management** | `cloud/cli.py`: `_tmux_chain_launch_command`, `_tmux_chain_restart_command`, `tmux has-session` checks, session listing. | The tmux session-per-operation model already exists. Reuse these exact shell command builders. |
+| **Chain supervision** | `cloud/supervise.py`: `cloud_supervise_tick()` — detects dead sessions, restarts them, classifies chain health. | Guardian v0 should call `cloud_supervise_tick()` as its `megaplan_chain` plugin. Don't rebuild this. |
+| **Confirmation/approval** | `resident/` confirmation manager: pending approvals, expiry, per-channel scoping. | Existing confirmation records + Discord DM flow should gate merge and cleanup approvals. |
+| **Event stream** | `observability/events.py`: ndjson per plan directory with `fcntl.flock`, seq counter, `STATE_WRITTEN` events. | Operation registry should mirror this pattern with operation-scoped ndjson. The code in `events.py` is directly reusable if plan_dir is generalized to run_dir. |
+| **Watchdog repair/retry** | `watchdog/registry.py` (Observation/WatchdogRegistry), `watchdog/repair_runner.py` (RepairRunner), `watchdog/retry.py` (RetryLoop/RetryOutcome). | Guardian's per-operation inspection loop should compose RepairRunner for operational failures, RetryLoop for retry caps. |
+
+---
+
+## 3. Missing Seams and Incompatibilities (Three Critical)
+
+### Seam A: `worktree.py` assumes a normal checkout, not a bare repo
+
+The plan proposes bare repos at `/workspace/repos/*.git`. The existing `worktree.py` functions — particularly `worktree_registered` and `remove_worktree` — likely call `git worktree list` against a normal checkout. With bare repos, the command must be `git --git-dir=/workspace/repos/megaplan.git worktree list`. The inventory shows no `--git-dir` parameter in the worktree function signatures.
+
+**Evidence**: The plan itself flags this: "Existing worktree helpers assume a normal repo/main worktree … Either start with normal canonical checkouts or add bare-aware variants." The subagent overlap audit (finding #5) confirms: "Bare repos are an open risk."
+
+**Impact**: If this seam isn't extracted, `remove_worktree`, `worktree_registered`, and dirty-state detection will fail silently or crash when the canonical ref is a bare repo. The cleanup-loose-branches survey would produce garbage classifications.
+
+**Required extraction**: Add `git_dir: Path | None = None` parameter to `worktree_registered`, `remove_worktree`, and any function that calls `git worktree list`. When `git_dir` is provided, prefix with `--git-dir`.
+
+### Seam B: No unified operation→PR→branch mapping exists
+
+`chain/git_ops.py` tracks branch/PR state for a single running chain, but there is no cross-operation mapping that lets the cleanup-loose-branches survey answer: "Which branches on origin are associated with which completed operations? Which have open PRs? Which have been merged to main?"
+
+**Evidence**: The plan's reuse map says "Partial. Good fields exist, but no unified registry." The operation registry is described as "the missing center." The specific fields `PR/CI metadata` are listed in the operation record design but have no existing backing code.
+
+**Impact**: The cleanup survey cannot classify branches as land/delete/park without knowing PR state (open? merged? closed?) and operation state (completed? abandoned?). The plan assumes cleanup-loose-branches can produce recommendations; it cannot without this mapping.
+
+**Required extraction**: The operation registry must include a `pr_number`, `pr_state` (open/merged/closed), and `merge_commit_sha` field. On operation completion, the completion flow must query GitHub for the PR state and write it to the registry. This is net-new code — it's not an extraction from existing code, it's a build requirement.
+
+### Seam C: `cleanup-loose-branches` as a skill does not exist
+
+The plan's entire consolidation and housekeeping story depends on a "local cleanup-loose-branches skill" that:
+- Surveys branches, worktrees, stashes, PRs, and loose remote state
+- Classifies each as land, delete, or park
+- Requires explicit approval for destructive cleanup
+- Cleans up remote worktrees and branches after merge
+
+**Evidence**: I searched all 128 available skills. No `cleanup-loose-branches` skill exists. No grep hits for "cleanup-loose-branches" or "cleanup_loose_branches" appear in the code inventory. The plan references it by name 6+ times as if it's a working component.
+
+**Impact**: This is the **critical path blocker**. Every other component (operation registry, Guardian, Discord Operator, git_ops, pr_merge) feeds into this consolidation step. Without it, completed operations accumulate unbounded worktrees, branches, and stashes. The plan's approval flow ("merge it", "clean it up", "park that one") has nothing to invoke.
+
+**Required action**: This skill must be built as part of Phase 2 (Repo and Worktree Service) or Phase 8 (Hardening), not deferred. It is not optional — it's the closing bracket on the entire workflow.
+
+---
+
+## 4. Exact Plan Changes Recommended
+
+### Change 1: Add `cleanup-loose-branches` as an explicit deliverable in Phase 2
+
+**Current state**: The plan mentions cleanup-loose-branches in prose but never lists building it as a deliverable. Phase 2 says "Repo and Worktree Service" but only lists repo registry, bare repo support, and worktree creation/removal.
+
+**Recommended**: Add to Phase 2 deliverables:
+```
+- cleanup-loose-branches survey script:
+  - git branch -a across all canonical repos
+  - git worktree list across all canonical repos
+  - gh pr list / curl equivalent for open PRs per repo
+  - git stash list for dirty state detection
+  - classification: land (merged PR + pushed branch), delete (stale/abandoned), park (in-progress or awaiting decision)
+  - output: JSON report consumable by Guardian and Discord Operator
+```
+
+### Change 2: Resolve the bare-repo seam before committing the worktree design
+
+**Current state**: The plan says "recommend bare repos" in Open Design Decisions but notes the risk. It doesn't commit to a resolution.
+
+**Recommended**: Add a code-inspection task before Phase 2 code begins:
+```
+Before implementing Phase 2, inspect:
+- bakeoff/worktree.py: worktree_registered(), remove_worktree()
+- Check: do they call `git worktree list` without --git-dir?
+- Check: does create_named_worktree support bare repos?
+- Decision: if incompatible, either switch to normal checkouts as canonical
+  or extract bare-aware variants before building the worktree service.
+```
+
+### Change 3: Add PR state fields to the operation registry
+
+**Current state**: The operation record YAML shows `repos` with `branch` and `worktree` but no PR fields.
+
+**Recommended**: Add to the operation record schema:
+```yaml
+pr:
+  number: 42               # GitHub PR number
+  state: open|merged|closed # Current PR state
+  merge_commit_sha: abc123  # If merged
+  url: https://github.com/... 
+  ci_status: success|failure|pending|null
+```
+
+These fields must be populated by the completion flow (push → open PR → query state → write to registry). The cleanup-loose-branches survey reads from here.
+
+### Change 4: Don't defer the cleanup-loose-branches skill to Phase 8
+
+**Current state**: The plan places "cleanup policies" in Phase 8 (Hardening). But cleanup-loose-branches is architecturally load-bearing — the completion DM asks "Next: push/open PR/cleanup?" and the approval flow expects "clean it up" to work.
+
+**Recommended**: Move cleanup-loose-branches survey + classification to Phase 2 (alongside worktree service) or Phase 3 (alongside operation registry, since it reads from the registry). Destructive cleanup approval (merge, delete, remote cleanup) can remain gated behind Discord approval, but the survey itself must exist early.
+
+### Change 5: Clarify the event.ndjson collision risk
+
+**Current state**: The plan says every operation writes `events.ndjson` to `/workspace/runs/<op>/events.ndjson`. But Megaplan chain operations also write `events.ndjson` to their plan directory. If the chain's plan_dir is inside the operation's worktree, there will be two events.ndjson files in the same tree.
+
+**Recommended**: Add a note in the operation registry design:
+```
+For megaplan_chain operations, the chain's own events.ndjson lives inside 
+the plan directory under the worktree. The operation's events.ndjson at 
+/workspace/runs/<op>/events.ndjson is the operation-level stream 
+(lifecycle, heartbeat, approval events). Do not merge these — they serve 
+different scopes. Guardian reads both: operation events for liveness, 
+chain events for phase/progress.
+```
+
+---
+
+## 5. Things Already Correctly Handled
+
+1. **The operation→tmux→worktree isolation model**: The plan correctly maps one operation → one tmux session → one worktree → one branch. This matches how `cloud/cli.py` already launches chains into named tmux sessions with `_tmux_chain_launch_command`. No conflict here.
+
+2. **Guardian as a scheduler over plugins (not a rewrite)**: The plan correctly says "Wrap `cloud_supervise_tick()` as the first classifier/action plugin for `megaplan_chain` operations." This avoids the trap of rebuilding chain supervision. `cloud_supervise_tick` already handles dead session detection, restart, and state classification.
+
+3. **Completion → DM → approval flow**: The plan's completion notification design is sound: DM Peter with op-id, repo, branch, summary, validation, and a "push/open PR/cleanup?" prompt. The `resident/confirmation_manager` already supports pending approvals with scoping and expiry. The `github-pr-workflow` skill already handles push, PR creation, and merge. The pieces fit.
+
+4. **Separate processes for Guardian and Discord Operator**: The plan correctly identifies event-loop coupling as a risk and mandates separate systemd services sharing an operation store. This matches the existing architecture where the resident Discord service has its own asyncio loop.
+
+5. **Credential validation before work starts**: The proactive credential check design (check GitHub auth before push/PR, check Codex/Claude auth before launch) is correct. `cloud/auth.py`'s `seed_codex_oauth` already proves the pattern. The `github-auth` skill shows credential detection logic.
+
+6. **Single-user simplifications**: The plan correctly avoids multi-tenant ceremony, role hierarchies, and slash-command requirements for v1. The existing `resident/auth.py` allowlists and authorization subjects can be simplified to one Discord user ID.
+
+7. **Watchdog reuse**: The plan correctly says "do not run a separate watchdog daemon beside Guardian." The watchdog's `RepairRunner`, `RetryLoop`, and `build_snapshot` are library components that Guardian composes per-operation. This avoids having two competing supervisors.
+
+8. **DeepSeek subagents for ambiguous repair**: The plan correctly identifies that Guardian should launch a diagnostic subagent (using existing `workers/hermes.py`) when it cannot classify a failure cheaply. This is already a proven pattern from the watchdog's repair agent.
+
+---
+
+## Summary Table
+
+| Aspect | Status | Action |
+|---|---|---|
+| Push/PR/merge mechanics (`git_ops`, `pr_merge`, `github-pr-workflow`) | ✅ Reusable | Wrap as completion flow steps |
+| Tmux session per operation | ✅ Reusable | Same pattern as `cloud/cli.py` |
+| Chain supervision (`cloud_supervise_tick`) | ✅ Reusable | Guardian plugin |
+| Worktree create/remove per operation | ⚠️ Needs extraction | Add `git_dir` parameter for bare repos |
+| Operation→PR mapping in registry | ❌ Missing | Build as net-new operation registry fields |
+| `cleanup-loose-branches` skill | ❌ Does not exist | Must build — critical path blocker |
+| Event.ndjson collision (chain vs operation) | ⚠️ Risk | Clarify scope separation in design |
+| Credential validation before git operations | ✅ Correctly designed | Implement per the plan |
+| Guardian/Discord process separation | ✅ Correctly designed | Implement per the plan |
+| Approval flow for merge/cleanup | ✅ Reusable | Uses existing confirmation_manager |

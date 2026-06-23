@@ -1,0 +1,49 @@
+# Should Guardian and Discord Operator Be One Process?
+
+## Direct Answer
+
+**No.** They must be separate processes. The plan's own finding #7 is correct: run Guardian and Discord Operator as independent systemd services that share only the operation registry.
+
+## Rationale
+
+The two actors have fundamentally incompatible wake-up models that create dangerous coupling when merged:
+
+**Guardian** is timer-driven. It runs on a fixed cadence (every 5–15 minutes), does its scan, and goes idle. Its lifecycle is a simple `while True: sleep(X); tick()` loop. It has no persistent connection to any external service.
+
+**Discord Operator** is event-driven. It holds a persistent WebSocket connection to Discord's gateway, maintains an asyncio event loop, and must respond to inbound messages with sub-second latency. The existing `ResidentDiscordService` in `arnold_pipelines/megaplan/resident/discord.py` is already built this way.
+
+Merging them forces one of two bad compromises:
+
+1. **Put Guardian's timer in the asyncio loop.** This works technically (`asyncio.create_task` with a tick loop) but means Guardian checks stop if the Discord WebSocket disconnects or the event loop blocks on a slow operation. A Discord API outage shouldn't silence the supervisor.
+
+2. **Put Discord into Guardian's blocking loop.** This is worse. Discord's gateway protocol requires heartbeat ACKs and persistent connection management. A blocking tick loop cannot meet those timing requirements.
+
+The correct architecture is **shared-state, not shared-process**. Both read and write the operation registry (SQLite or files). Guardian owns the health scan; Discord Operator owns the interactive control plane. They coordinate through data, not through process memory or shared event loops. This is the classic Unix pattern: separate concerns, separate processes, shared state via a durable store.
+
+## Existing Mechanics This Depends On
+
+1. **`arnold_pipelines/megaplan/resident/discord.py`** — Already owns an asyncio client loop for the Discord gateway. Adding periodic scheduling here would couple two unrelated concerns.
+
+2. **`arnold_pipelines/megaplan/cloud/supervise.py`** and **`scripts/megaplan_live_watchdog.py`** — Existing supervision code is synchronous/blocking, designed to be called on a schedule, not woven into an event loop.
+
+3. **Operation registry** (to be built) — This is the seam. Both processes must read/write it concurrently. SQLite with WAL mode handles this well if writes are infrequent (Guardian writes once per tick, Operator writes on user commands).
+
+## Risks and Caveats
+
+1. **Concurrent write contention.** If Guardian updates an operation's status at the same moment the Operator does, SQLite will serialize writes. This is acceptable for the expected write frequency (tens per minute, not thousands). Use WAL mode and keep transactions short.
+
+2. **State staleness.** The Operator might read stale data between Guardian ticks. Mitigation: the Operator can trigger an on-demand Guardian scan (`guardian_check` tool) before responding to a "what's running?" query.
+
+3. **Process supervision.** If one process dies, the other shouldn't. systemd `Restart=always` on both, with independent restart policies.
+
+4. **Deployment complexity.** Two systemd units instead of one. This is a feature, not a bug — it means you can update and restart the Discord Operator without touching Guardian.
+
+## Concrete Design Implication
+
+**The operation registry's concurrency model is a first-class design concern, not an afterthought.** Since two independent processes (and potentially short-lived repair subagents) will read and write it concurrently, the registry must:
+
+- Use SQLite in WAL mode from day one (not deferred journal mode), or use per-operation file writes with atomic renames.
+- Include a `last_guardian_tick` timestamp so the Operator can detect stale Guardian data without probing the process.
+- Never assume exclusive access. Every write path must tolerate another writer having modified the record since it was last read (optimistic concurrency with a version column or `last_modified` check).
+
+This constraint pushes the registry design toward a proper concurrent store rather than a flat file that happens to be JSON. That's the right direction anyway — the operation registry is the system's center, and it should be built for concurrent access from the start.

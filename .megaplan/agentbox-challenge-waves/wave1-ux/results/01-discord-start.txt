@@ -1,0 +1,108 @@
+# AgentBox Wave 1 UX Review: Natural Discord Start
+
+## 1. Verdict
+
+**FITS WITH CHANGES**
+
+The architecture is correct for the goal: Operator agent, operation registry, Guardian supervision, per-operation worktrees. But the plan describes *what* the Operator should do ("decides whether the request is a ticket, a Megaplan...") without specifying *how* that classification and operand-resolution step works. Five material gaps need closing before Peter can reliably start real work from ordinary Discord messages without learning CLI syntax.
+
+---
+
+## 2. Top 5 Material Gaps
+
+### Gap 1: Intent classification is a hand-wave, not a specification
+
+**Where:** "The Operator decides whether the request is a ticket, a Megaplan, an epic, a chain launch, a status question, or a maintenance task."
+
+**Why it matters:** This is the entire UX surface. If Peter says "add a ticket about the SSH flakiness" and the Operator launches a Megaplan chain in the wrong repo, the experience is broken at step zero. The plan has no classification prompt, no fallback, no confidence threshold, and no disambiguation protocol. "The agent decides" is architecture, not UX design.
+
+**What's missing:** A concrete classification tier with examples, a confidence model, and a "stop and ask" threshold.
+
+### Gap 2: Compound intent has no resolution protocol
+
+**Where:** Example message: "set up a megaplan for fixing the cloud ssh provider and run it."
+
+**Why it matters:** This is two ordered actions (create plan → run plan). The plan shows this as an example of natural language but never specifies: must the Operator sequence them correctly? Should it confirm the first result before launching the second? What if step one fails? The validator's resolution added "if the Discord request itself is ambiguous, ask Peter directly with concrete options" — but compound requests are not ambiguous; they are multi-step. The Operator needs explicit sequencing rules.
+
+### Gap 3: Natural language to operand mapping is unspecified
+
+**Where:** Peter says "run the SSH fix" or "what's blocking?" or "restart the broken one."
+
+**Why it matters:** The Operator must resolve vague references to concrete objects: which repo? Which operation? Which chain spec? The plan assumes the Operator can do this with "access to AgentBox tools and context" but names no tool for resolving Peter-isms to operation IDs. Without a `resolve_intent` or lookup tool that searches the operation registry, repo registry, and chain/epic store by description, the Operator will guess — and guessing wrong means launching work in the wrong place.
+
+### Gap 4: Multi-turn conversational state is assumed but not designed
+
+**Where:** A1 mentions "conversation history/hot context" as Operator context at turn start.
+
+**Why it matters:** Peter will have conversations, not isolated commands. "Run the megaplan I made yesterday" → "no, the other one" → "use the reigh-app repo instead." The Operator needs to track: active topic, pending confirmations, referenced operations, and conversation phase. Without this, every Discord message is a cold start that loses Peter's earlier clarification. The plan has no hot-context schema, no conversation-key design, and no rules for when to carry state vs. start fresh.
+
+### Gap 5: No help/discovery tool
+
+**Where:** Not mentioned.
+
+**Why it matters:** Peter's first message will likely be "help" or "what can you do?" The plan defines Operator tools (`status`, `run`, `logs`, etc.) but has no `help` tool that lists available actions with examples. Without discovery, Peter must either read documentation (failing the "no CLI syntax to learn" goal) or guess at messages. Every successful natural-language system has a discoverable capability surface. AgentBox's plan doesn't.
+
+---
+
+## 3. Exact Plan Changes
+
+### Change A: Add an intent-classification tier to the Discord Operator section
+
+Add under "Discord Operator → Expected behavior" or as a new sub-bullet:
+
+> **Intent classification:**
+> - Classify messages into one of: `ticket_create`, `epic_create`, `megaplan_launch`, `chain_launch`, `status_query`, `logs_query`, `approval_action`, `agent_run` (Codex/Claude/shell), `help`.
+> - If confidence is below a threshold or the message fits multiple categories equally, reply with concrete options: "Did you mean: (a) create a ticket about X, or (b) launch a megaplan for X?"
+> - The classification prompt must be explicit in the Operator profile, not left to general LLM reasoning.
+
+### Change B: Add compound-request sequencing rules
+
+Add under Discord Operator section:
+
+> **Compound requests:** When a single message contains multiple ordered actions (e.g., "set up X and run it"), the Operator must:
+> 1. Parse and confirm the full sequence to Peter in one reply.
+> 2. Execute the first action and report its result before starting the second.
+> 3. Stop the sequence if any step fails, reporting what succeeded and what didn't.
+> 4. Never assume success of step N when deciding to launch step N+1.
+
+### Change C: Add a `resolve` or lookup tool for operand mapping
+
+Add to "Discord Operator → Build commands" or the Operator tool list:
+
+> **`resolve <description>`** — search the operation registry, repo registry, chain/epic store, and ticket store for items matching a natural-language description. Returns ranked matches with ids, statuses, and discriminators. Used by the Operator whenever Peter refers to work by description rather than by id. Examples: "resolve the SSH fix", "resolve the megaplan I made yesterday", "resolve what's blocking."
+
+### Change D: Add hot-context/Conversation-Key specification
+
+Add to "Discord Operator → Shared State" or as a new sub-section:
+
+> **Conversation state:** The Operator must maintain per-conversation context:
+> - `conversation_id` (Discord channel or DM key).
+> - `last_topic` — the subject of the current task (e.g., "megaplan SSH fix").
+> - `pending_confirmation` — any question awaiting Peter's reply.
+> - `referenced_ops` — operation ids mentioned in this conversation.
+> - Context expires: if Peter sends an unrelated message or 30 minutes pass with no follow-up, the Operator treats the next message as a new topic.
+> - Replying "status" in an ongoing conversation about op-123 means "status of op-123", not a global status query.
+
+### Change E: Add `help` to the first-pass Operator tools
+
+Add to the Operator tool list:
+
+> **`help`** — reply with a concise summary of available actions and 2-3 example messages Peter can send, using only natural language. Examples: "Ask me to 'add a ticket about X', 'run a megaplan for Y', 'what is running?', 'show logs for op-123', or 'summarize AgentBox'."
+
+---
+
+## 4. Things The Plan Already Covers (Do Not Change)
+
+- **Uncertainty protocol (A10).** The plan already says: inspect state or launch a diagnostic subagent before asking Peter; if still blocked, ask one concrete question with evidence. The validation resolution added "if the request itself is ambiguous, ask Peter directly" — this is correct and covers the agent-level behavior. Gap 1 is about the classification tier that triggers this, not the protocol itself.
+
+- **Status-discovery messages (H11).** "What is running?", "what is blocked?", and "summarize AgentBox" are already specified as returning concise tables. This is concrete and correct.
+
+- **Failure UX (H10).** "Say what failed, what it tried, what evidence it used, and what exact decision/input it needs" — this is an excellent specification and should not be diluted.
+
+- **Start notification (H3).** "Report operation id, repo/worktree/branch, what it launched, where logs are, and that Guardian is watching it" — correct scope.
+
+- **Single-user simplicity.** No dashboards, no roles, no multi-tenant ceremony, no slash-command completeness in v1. All correct and should stay.
+
+- **Guardian repair bias.** "Figure out what's wrong and fix it" for operational failures; ask only for product judgement, credentials, destructive cleanup, quality debt, or merge choices. This is the right posture and should not be weakened by adding more approval gates for the sake of UX safety.
+
+- **Discord as primary UI.** The plan is clear: Discord is the human control surface. A small CLI exists for bootstrap and machine operations. No web app. Correct.

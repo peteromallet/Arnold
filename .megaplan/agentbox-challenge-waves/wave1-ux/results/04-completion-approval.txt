@@ -1,0 +1,175 @@
+# Wave 1 UX Review: Completion & Approval DM Flow
+
+## 1. Verdict
+
+**FITS WITH CHANGES**
+
+The philosophy is right — narrow approval gates, low ceremony, single-user simplicity, Guardian autonomy, completion-as-handoff. But the concrete DM interaction design has material gaps. The plan tells you *what* should happen at completion but not *how* Peter interacts with it in Discord. A developer reading the plan today would have to invent the interaction model during implementation, and several reasonable interpretations would produce confusing or high-friction experiences.
+
+---
+
+## 2. Top 5 Material Gaps
+
+### Gap 1 — The completion DM is a dead-end notification, not an actionable interaction
+
+**What the plan says:**
+
+```
+op-123 completed.
+Repo: megaplan
+Branch: agent/op-123
+Summary: ...
+Validation: ...
+Next: push/open PR/cleanup?
+```
+
+**Why it matters:** This is a summary with a question mark. It doesn't tell Peter how to answer. Does he reply to the DM? Type `/approve op-123 merge`? Is the question rhetorical (the system will proceed on its own)? The core UX of "low-ceremony" lives or dies on whether the completion moment is a one-tap reply or a multi-step command. Without this, every completion becomes a cognitive speed bump where Peter has to remember the syntax. For a single-user system, this is the highest-leverage UX detail in the entire plan.
+
+### Gap 2 — Push and PR are presented as alternatives Peter must choose, but they should be automatic in the happy path
+
+**Why it matters:** The plan already says "For ordinary successful runs, the system can push the branch and open/update a PR if that is already part of the operation policy." This is correct. But the DM template contradicts it by presenting push and PR as choices. For a Megaplan chain that already has a PR/merge policy, the flow should be:
+
+1. Op completes →
+2. System pushes branch, opens/updates PR (automatic, per policy) →
+3. DM says "PR #456 open. Merge to main?" ← the *only* choice is merge approval
+
+Presenting push/PR as choices when they should be automated creates unnecessary ceremony exactly where the plan says it shouldn't exist.
+
+### Gap 3 — No concrete DM reply mechanism is specified
+
+**Why it matters:** The Discord Operator receives messages and routes them. But the completion DM is sent *to* Peter — how does Peter's reply get routed back to the approval system? The plan has:
+
+- CLI: `agentbox approve conf-456`
+- Discord: `/approve conf-456`
+
+But the DM doesn't include a `conf-456` ID. There's no design for "Peter replies 'merge it' and the Operator processes it." Without this, the implementation will default to Peter having to type explicit slash commands, which is higher-ceremony than the plan's stated intent.
+
+### Gap 4 — The completion DM assumes success; the failure/validation-failure DM is absent
+
+**Why it matters:** The plan says approval is needed for "accepting failing validation or quality debt." This is a distinct completion variant: the work is done but the tests don't pass, or validation is red, or there's known debt. This completion DM needs to look different — it should say what failed, what the options are (fix, accept debt and merge anyway, abandon), and what evidence is available. The plan's single DM template only covers the happy path. The failure-variant DM is arguably more important UX because it's the moment Peter actually needs to make a judgement call.
+
+### Gap 5 — Per-operation cleanup prompting conflicts with the batch-consolidation model
+
+**Why it matters:** The completion DM asks "cleanup?" right after a single operation finishes. But the plan also says: "Use cleanup-loose-branches for consolidation after a *batch* of work" and "Periodic consolidation should invoke the cleanup-loose-branches discipline." These are contradictory signals. If cleanup is batched, don't ask at completion time. If it's per-operation, don't describe it as batch consolidation. The user needs to know: does cleanup happen now, later, or both? What's the ceremony difference?
+
+---
+
+## 3. Exact Plan Changes Recommended
+
+### Change 1: Replace the completion DM template with a state-aware template
+
+Add to the **Completion And Approval** section:
+
+```markdown
+### Completion DM Variants
+
+**Happy path (validation passing, PR auto-opened):**
+
+> op-123 completed ✅
+> Repo: megaplan  |  Branch: agent/op-123
+> PR: #456 (opened)
+> Summary: Added SSH provider retry with exponential backoff
+> Validation: 23/23 tests passing, coverage 91%
+>
+> Merge to main?
+>   Reply "merge" or "merge op-123" to approve
+>   Reply "hold" to leave the PR open for later review
+
+**Validation-failing (work done, tests red, needs judgement):**
+
+> op-123 completed ⚠️
+> Repo: megaplan  |  Branch: agent/op-123
+> Summary: Added SSH provider retry
+> Validation: 18/23 passing, 5 failing (log: /workspace/runs/op-123/log.txt)
+> PR: #456 (draft, CI failing)
+>
+> Next steps:
+>   Reply "fix" to launch a repair operation
+>   Reply "accept" to merge despite failing validation
+>   Reply "close" to abandon and close the PR
+
+**Cleanup — not asked at completion. Instead, Guardian surfaces batched cleanup weekly or when disk pressure triggers:**
+See Consolidation section.
+```
+
+### Change 2: Define the DM reply-to-approval flow explicitly
+
+Add to **Approval And Safety** or **Discord Operator**:
+
+```markdown
+### DM Reply Approval Flow
+
+When the system sends a completion DM to Peter, it records a `pending_approval` on the operation with:
+- `approval_id`: a short slug (e.g., `merge-op-123`)
+- `kind`: merge, accept_debt, cleanup_delete, credential_rotate
+- `expires_at`: 72 hours from creation
+- `discord_channel_id`: the DM channel
+
+Peter replies in the same DM channel. The Discord Operator:
+1. Classifies the reply as an approval response (not a new command).
+2. Matches it to the most recent pending approval in that channel.
+3. Accepts natural replies: "merge", "yes", "do it", "merge it", "approved", "accept debt", "clean it up".
+4. On match, executes the action, updates the operation record, and confirms back.
+5. If the reply is ambiguous ("maybe later", "what do you think"), the Operator asks a concrete follow-up.
+
+No confirmation IDs or slash commands are required for the happy path. Peter can also use `/approve merge-op-123` from any channel.
+```
+
+### Change 3: Clarify push/PR automation vs. merge approval
+
+Replace the completion DM template sentence in the **Completion And Approval** section:
+
+**Current:**
+> For ordinary successful runs, the system can push the branch and open/update a PR if that is already part of the operation policy. The approval boundary is mostly: merge to main; delete/cleanup worktrees or branches; accept failing validation or quality debt; resolve ambiguous product decisions; expose or rotate credentials.
+
+**Replace with:**
+> For ordinary successful runs, the system automatically pushes the branch and opens/updates a PR as defined by the operation's chain policy. This is not an approval gate — it happens before Peter sees the completion DM. The completion DM reflects the actual state (PR open, CI status known) and asks only for the remaining approval: merge to main. Push and PR creation are pre-authorized by the operation launch intent; only merge, destructive cleanup, quality-debt acceptance, and credential operations require explicit approval.
+
+### Change 4: Decouple cleanup from completion; add a Guardian-driven consolidation cadence
+
+Add to **Cleanup And Backup**:
+
+```markdown
+### Cleanup Cadence
+
+Cleanup is NOT prompted per-operation at completion time. Instead:
+
+1. **Guardian surfaces batched cleanup weekly** (or when disk exceeds a threshold).
+2. The message lists all completed-but-unconsolidated operations with their branch/PR/worktree status.
+3. cleanup-loose-branches is invoked on the batch.
+4. Peter approves or rejects the consolidation plan as a whole, or item-by-item.
+5. Destructive steps (delete worktree, delete remote branch) require the single approval; landing valuable work on main is the default recommendation.
+
+Peter can also invoke cleanup manually: "cleanup what's ready" or "/cleanup status".
+```
+
+### Change 5: Add the validation-failure DM variant to H6 (completion moment definition)
+
+In the **Load-Bearing Questions** section under H6, add:
+
+```markdown
+When validation fails, completion is still reached (the plan/chain is in its terminal state), but the DM includes failing evidence, repair/fix options, and the explicit accept-debt approval gate if Peter chooses to merge anyway.
+```
+
+---
+
+## 4. Things The Plan Already Gets Right — Do Not Change
+
+| What the plan covers | Why it's correct |
+|---|---|
+| **Narrow approval gates** (merge, destructive cleanup, quality debt, credentials, product decisions) | These are exactly the right boundaries for a single-user system. Adding more gates would create ceremony; removing any would risk destructive actions. |
+| **Guardian autonomy for operational recovery** (restart, resume, diagnose, repair) | The bias toward "fix it, don't just report it" is the single most important UX decision in the plan. It prevents notification fatigue. |
+| **Completion DM includes summary, validation, branch/PR status, and next action** | The content is right. The gap is only in the interaction mechanism, not the information content. |
+| **Push/PR can be automated by policy** | Correct. This is pre-authorized intent from the moment Peter launches the work. |
+| **cleanup-loose-branches as the consolidation mechanism** | Right tool. It already handles the survey/classify/recommend/approve flow. The gap is only in *when* it's invoked, not how. |
+| **Single-user simplifications** (no multi-tenant ceremony, no role hierarchy, Discord allowlists are simple) | These constraints are correctly stated and should be preserved. |
+| **Guardian and Discord Operator as separate processes sharing the operation store** | Correct architectural decision. Don't couple the event loop to the supervisor cadence. |
+| **Handoff is registry-only** (no direct IPC between Operator and Guardian) | Clean separation. The registry is the API between the two actors. |
+| **"What should failure feel like to Peter?" (H10)** — system says what failed, what it tried, what evidence it used, what exact input it needs | This principle is excellent and should inform the failure-variant DM design. |
+| **"Operator uncertainty about state → inspect first; uncertainty about intent → ask directly" (A10 resolution)** | This is correctly resolved in the load-bearing validation and applies perfectly to the approval flow. |
+
+---
+
+## Summary
+
+The plan's skeleton is sound — the approval philosophy, the actor separation, the automation boundaries, and the information content of completion messages are all correct. But the plan underspecifies the concrete interaction design at the highest-leverage UX moment: when Peter reads a completion DM and needs to act on it. Five targeted additions (state-aware DM variants, reply-to-approve mechanics, push/PR automation clarified, cleanup decoupled from completion, and failure-variant defined) would close these gaps without changing any architectural decisions.

@@ -1,0 +1,46 @@
+**1. Recommended Sequencing**
+
+Launch AgentBox **after python-shaped M3 is merged and green**, not after M4/M5/M7. Waiting for M4+ gives little protection and delays the Arnold runtime work that AgentBox M1/M2 need. But do **not** launch while M3 is still draft/UNSTABLE.
+
+Best path: start AgentBox M1/M2 immediately on the post-M3 mainline. Treat AgentBox M3 as allowed, but keep it adapter-level and chain-state-level, not canonical-workflow-source-level.
+
+**2. What Must Be True After M3**
+
+Before AgentBox starts cleanly:
+
+- M3 PR #98 is merged into the intended base with green required checks.
+- The M3 compiler contract is stable enough to represent Megaplan branches, loops, halt/suspend, retry/timeout/model-routing policy refs, and bounded loop policy without a second runtime.
+- Existing `build_pipeline()` / manifest behavior still works from the explicit DSL path until M4 migrates it.
+- Manifest/golden tests prove the loop-heavy Megaplan topology lowers correctly.
+- Unsupported control flow fails loudly with source-oriented diagnostics.
+- There is no unresolved late M3 design churn around policy slots, suspension semantics, or route labels that AgentBox would accidentally bake into operation status handling.
+
+**3. Likely M4-M8 Churn**
+
+Manageable, if AgentBox stays disciplined.
+
+Likely conflict/churn areas:
+
+- **M4:** highest churn around `arnold_pipelines/megaplan/pipeline.py`, new `arnold_pipelines.megaplan.workflows/planning.py`, component exports, prompts, policies, golden fixtures, manifest identity. AgentBox should not touch these except through public chain/manifest APIs.
+- **M5:** CLI namespace churn around `arnold workflow check/compile/inspect/explain`; low conflict unless AgentBox adds competing CLI patterns.
+- **M6:** docs/examples/render/explain outputs; possible generated-doc conflicts, not architectural.
+- **M7:** runtime conformance may touch event journals, artifact refs, resume/suspension behavior. This is the real semantic overlap with Guardian/operation state, but AgentBox M1/M2 can proceed before it.
+- **M8:** generated assets, ledgers, snapshots, catalogs. Mostly mechanical merge churn.
+
+AgentBox’s natural touchpoints are Store/runtime contracts, scheduled tasks, typed resources, worktrees, tmux/log resources, resident Discord, and chain supervision. Those overlap more with existing cloud/resident/chain machinery than with python-shaped authoring.
+
+**4. Should AgentBox Change First Milestones?**
+
+Slightly, yes. Do not reorder the whole epic, but tighten early gates:
+
+- Add an explicit post-M3 preflight at the start of AgentBox M1: confirm package boundaries, naming around existing `OperationRegistry`, Store migration shape, and no dependency on python-shaped workflow internals.
+- Keep M1 Arnold runtime core first.
+- Keep M2 host provider second.
+- In M3, require the `megaplan_chain` adapter to consume chain specs/state as opaque operation inputs. It should not inspect or depend on `workflows/planning.py`, generated DSL internals, or M4’s canonical authored source.
+- Defer any Guardian behavior that reasons about workflow topology until after M7 conformance, or make it strictly adapter-reported status.
+
+**5. Go / No-Go**
+
+**Go after M3 merge, no-go before.**
+
+Subsequent merge churn is manageable if AgentBox M1/M2 begin from post-M3 main and AgentBox M3 stays behind the Megaplan chain adapter boundary. Waiting for M4/M5/M7 is overly conservative; those milestones will change the authoring surface, but AgentBox’s first durable primitives should be intentionally below and beside that surface, not built on top of it.

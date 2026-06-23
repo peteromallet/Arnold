@@ -1,0 +1,66 @@
+# Central Data Model: The Operation Registry
+
+## Direct Answer
+
+The central data model is the **Operation Registry** — a durable, machine-scoped record that gives every unit of work a unified identity and ties together all runtime, repository, process, approval, and communication state. Every operation (Megaplan chain, Codex run, Claude session, subagent swarm, test suite, shell command) shares the same record shape, making the Guardian and Discord Operator interoperable without per-kind translation layers.
+
+## Rationale
+
+The plan is explicit on this point, calling the operation registry "the center of the system" and "the missing center" that existing components orbit but don't yet unify.
+
+**Why nothing else qualifies:**
+
+- **Repo registry** — static configuration; doesn't carry runtime state.
+- **Worktree service** — a mechanism, not the thing being tracked. Worktrees are *properties of* operations, not the entity itself.
+- **Process runner** — an executor. The operation record is what the runner consults and mutates.
+- **tmux sessions** — ephemeral process containers. The registry outlives them and tracks their liveness.
+- **Megaplan ChainState** — chain-scoped. AgentBox needs a *cross-kind* model that treats a Megaplan chain, a Codex run, and a subagent swarm as the same class of thing.
+
+The operation record is the single place where the two resident actors — Guardian (autonomous, cadence-driven) and Discord Operator (user-triggered, interactive) — converge. They share no direct coupling; the registry is their only coupling surface. This design means either actor can be replaced or evolved independently as long as it reads/writes the same record shape.
+
+## Operation Record Shape
+
+From the plan, the durable fields are:
+
+```
+id (compound key, e.g. "op-20260623-foo")
+kind (megaplan-chain | codex | claude | subagent | test | shell)
+status (running | blocked | failed | completed | stale | awaiting-approval)
+source (discord | manual | guardian)
+created_at
+repos[] → {name, branch, worktree}
+tmux_session
+command
+log_path
+manifest_path
+last_check (Guardian tick timestamp)
+pending_approvals[]
+discord_refs (conversation/thread/message IDs)
+pr_refs (PR number, CI status)
+metadata (kind-specific extension bucket)
+```
+
+## Existing Mechanics This Depends On
+
+| Dependency | What it provides |
+|---|---|
+| Megaplan `bakeoff/worktree.py` | Worktree creation, validation, and removal primitives. The operation record stores the resulting worktree path and branch. |
+| Megaplan chain state model (`ChainLaunchContext`, `ChainState`) | Provenance and status fields that inform the operation record's `metadata` extension field for `megaplan-chain` operations. |
+| Megaplan resident store patterns (`store/base.py`) | File-backed and DB-backed store abstractions. The operation registry should follow (or directly extend) this pattern for persistence. |
+| Megaplan cloud tmux/session conventions | Session naming and log-capture paths that the operation record references. |
+| Megaplan resident confirmation manager | Approval record shape for the `pending_approvals` field. |
+| Megaplan chain `git_ops.py` | Branch/PR CI metadata to link back into the registry. |
+
+## Risks and Caveats
+
+1. **Schema evolution under concurrent access.** The Guardian and Discord Operator may both read/write the same operation record. SQLite (the plan's recommendation) handles this with WAL mode, but file-backed JSON will race. The plan says "start with both SQLite and per-operation manifest files" — this dual-write scheme introduces consistency risk if one path falls behind.
+
+2. **Kind-specific metadata sprawl.** The `metadata` extension bucket is a necessary escape hatch, but without a per-kind schema contract, Guardian plugins and Operator tools will drift in what they expect to find there. The adapter interface (`OperationAdapter.classify(operation)`) partially mitigates this by hiding kind-specific inspection behind a uniform API, but the raw record still needs structure.
+
+3. **Bare repo worktree discovery.** The plan flags that existing worktree helpers "assume a normal repo/main worktree" for registered-worktree discovery and removal. If canonical repos are bare mirrors (`/workspace/repos/*.git`), the worktree service must be patched to query `git worktree list` from the bare repo instead of scanning a main checkout. The operation record stores the worktree path, so it only needs correct creation and removal — not discovery.
+
+4. **No operation lifecycle state machine is defined yet.** The plan lists status values (`running`, `blocked`, etc.) but doesn't specify valid transitions or who can initiate them. Without this, Guardian and Operator may produce conflicting status updates.
+
+## Concrete Design Implication
+
+**Guardian plugins must be keyed on `kind`, not on ad-hoc operation inspection.** When the Guardian wakes and scans active operations, it should dispatch to `GuardianPlugin.for_kind(op.kind).tick(op)` rather than introspecting tmux sessions or log files directly. This keeps the Guardian's core loop kind-agnostic and makes adding a new operation kind (say, `codex`) a matter of registering a new plugin, not modifying the scheduler. The plugin reads the registry record, calls the existing Megaplan supervisor code (e.g., `cloud_supervise_tick()` for chains), and writes results back to the same record. This is exactly what the plan intends when it says "Guardian should start as a scheduler over operation plugins."

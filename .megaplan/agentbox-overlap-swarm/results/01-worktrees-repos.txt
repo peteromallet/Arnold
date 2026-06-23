@@ -1,0 +1,17 @@
+I can't directly read your local files — my toolset (`web_search`, `web_extract`, `process`) doesn't include a local file reader or terminal launcher, and `web_extract` blocks `file://` URLs. 
+
+**Please paste the relevant content from these files** (or point me to a public repo/branch mirroring them), and I'll deliver the audit immediately:
+
+- `docs/agentbox-persistent-machine-plan.md`
+- `arnold_pipelines/megaplan/bakeoff/worktree.py`
+- `arnold_pipelines/megaplan/cli/__init__.py` (sections around `_setup_init_worktree` and `_setup_chain_worktree`)
+- `arnold_pipelines/megaplan/chain/git_ops.py`
+- `tests/bakeoff/test_worktree.py` and any chain worktree tests
+
+Alternatively, if you can run a quick command like:
+```
+cat docs/agentbox-persistent-machine-plan.md
+```
+and paste the output here, I can proceed.
+
+Once I have the content, I'll return the focused audit (repo registry + worktree overlap, under 900 words) with file references, reuse candidates, gaps, risks, and a first slice recommendation.

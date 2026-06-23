@@ -1,0 +1,231 @@
+# Wave 1 UX Review: Single-User Simplicity
+
+**Reviewer lens:** One user (Peter), Discord-first, no enterprise drag. I read every section twice, once as the plan presents itself and once squinting at it as Peter would experience it.
+
+---
+
+## 1. Verdict
+
+**FITS WITH CHANGES**
+
+The core architecture is correct: operation registry, Guardian as autonomous repair loop, Discord Operator as the interactive face, worktree isolation, Megaplan chain as first operation kind. The plan *understands* single-user. But it carries ceremony in three places that a one-person system doesn't earn, and those places will add friction at build time and brittleness at runtime. The changes needed are removals, not additions.
+
+---
+
+## 2. Material Gaps (Top 5)
+
+### Gap 1 — The approval subsystem is enterprise machinery for one person.
+
+**Where:** Component 10 (Approval And Safety) plus Guardian's "unsafe actions" list.
+
+**What the plan says:**
+> confirmation records; approval expiry; per-user and per-channel allow lists; Discord approval flow; audit log; policy categories: safe, confirm, forbidden.
+
+**Why it matters:** Peter is one person talking to one bot in one Discord DM. The natural approval flow is:
+
+> Bot: "Op-123 done. Branch `agent/op-123`, 3 tests pass. Push and open PR?"
+> Peter: "yes"
+
+There is no second user. There is no channel permission to check. There is no expiry on Peter's own answer. A formal confirmation-record system with IDs, expiry timestamps, audit trails, and a three-tier policy taxonomy is weight the system doesn't carry. The plan itself admits this in H7 ("There should be little ceremony") and the Single-User Simplifications section ("approvals should be rare and focused"), but Component 10 contradicts both.
+
+**What this costs:** Build time on a subsystem that does nothing the Discord message stream doesn't already do. Runtime complexity maintaining state that duplicates the conversation.
+
+---
+
+### Gap 2 — Guardian's confirmation list is too cautious for pre-authorized work.
+
+**Where:** Component 8 (Guardian Daemon), "Unsafe actions requiring confirmation."
+
+**What the plan says Guardian must ask about:**
+> delete worktrees; reset branches; resolve merge conflicts; merge PRs; kill unknown processes; push or publish sensitive branches when policy requires approval.
+
+**Why it matters:** When Peter says "run this chain" or "fix the SSH provider," he has pre-authorized everything inside that operation short of merge-to-main and credential exposure. Guardian should not be filing approval requests for deleting the worktree of an operation Peter asked it to clean up, or resetting a branch within the operation Peter asked it to retry. The plan elsewhere (H2, H7, "Completion And Approval") limits the approval boundary to merge, destructive cleanup of *valuable* work, credentials, quality debt, and product decisions. That narrower list is correct. The Guardian section's longer list will cause noisy DM interruptions for routine operational recovery.
+
+**What this costs:** Peter gets pinged for things he already implicitly authorized. The bot feels needy instead of competent.
+
+---
+
+### Gap 3 — The CLI surface competes with the Discord surface.
+
+**Where:** "CLI Surface" section, plus components that define CLI commands before Discord equivalents.
+
+**What the plan says:**
+```bash
+agentbox run --repo megaplan --kind codex --task "fix the ssh cloud provider"
+agentbox run --repos megaplan,reigh-app --kind shell --cmd "pytest -q"
+agentbox run --repo megaplan --kind megaplan-chain --spec briefs/foo/chain.yaml
+```
+
+**Why it matters:** The plan's own stated goal is:
+
+> "The user should not need to know the exact CLI command most of the time. The Operator can choose the right Megaplan/ticket/epic/chain command from the message."
+
+If the product is Discord-first, `agentbox run` with explicit `--kind`, `--repo`, and `--spec` flags is not the product. It's a debug/test entry point. The plan should frame the CLI as exactly that — bootstrap, ssh, creds push, and emergency debugging — not as a parallel interface with command-by-command Discord equivalents. Defining both surfaces in equal detail signals that both are first-class, which dilutes the Discord-first commitment.
+
+**What this costs:** Design attention split between two surfaces. Risk that CLI gets built first "because it's easier" and Discord becomes a thin wrapper instead of the product.
+
+---
+
+### Gap 4 — Eight formal phases read as corporate roadmap, not build order.
+
+**Where:** "Implementation Phases" section.
+
+**What the plan says:** Eight numbered phases with formal "Deliverables" bullets, from Box Bootstrap through Hardening, sequenced as a linear progression.
+
+**Why it matters:** This is a one-person system. The build order matters, but phasing it like an enterprise project — with named phases, formal deliverable lists, and a sequential dependency chain — adds ceremony to the plan itself. More importantly, it obscures what the plan elsewhere correctly identifies: the MVP is a tight vertical slice (operation registry + chain launch + Guardian tick + completion DM), and everything else is subsequent tool-profile work. The phase structure is product-manager language for a system that needs engineer language.
+
+**What this costs:** The plan feels heavier than the system, which makes it harder to use as a build guide. The eight-phase structure competes with the simpler "first slice" recommendation already in the document.
+
+---
+
+### Gap 5 — The repo registry is named like a subsystem for one YAML file.
+
+**Where:** Component 2 (Repo Registry), CLI commands: `agentbox repo add/sync/status/remove`.
+
+**What the plan says:** A named "Repo Registry" component with four CLI subcommands and config:
+```yaml
+repos:
+  - name: megaplan
+    url: git@github.com:peteromallet/megaplan.git
+    ...
+```
+
+**Why it matters:** For one user with 3–5 repos, this is a flat YAML block in `agentbox.yaml`. Calling it a "registry" and defining four CLI commands to manage it implies CRUD operations on a data store that a single-user system doesn't need. Peter can edit a YAML file. The plan should say "a repos list in agentbox.yaml, editable by hand or via a helper command," not "Repo Registry."
+
+**What this costs:** Naming. But naming shapes thinking. A "registry" implies a CRUD service; a "config list" implies a file Peter edits. The latter is simpler and correct.
+
+---
+
+## 3. Exact Plan Changes
+
+### Change 1: Replace Component 10 (Approval And Safety) with a policy paragraph in Guardian.
+
+**Delete** the standalone "Approval And Safety" component (Component 10) in its entirety: confirmation records, approval expiry, audit log, and the safe/confirm/forbidden taxonomy.
+
+**Replace with** a paragraph inside Component 8 (Guardian Daemon):
+
+> **Approval policy (single-user):** Guardian acts autonomously on operational failures within a user-launched operation. It asks Peter only when the action crosses into: merge to main, delete worktrees/branches containing unlanded work, accept failing validation or quality debt, expose or rotate credentials, or resolve a product decision the logs cannot answer. Asking means sending one Discord message with the specific choice and waiting for a reply. No separate confirmation record system, expiry, or audit log is needed — the Discord message thread is the record.
+
+This keeps the same narrow approval gates the plan already agrees on (H2, H7, Completion And Approval) without the enterprise machinery. The Discord conversation *is* the audit trail.
+
+---
+
+### Change 2: Narrow Guardian's "unsafe" list to match the completion/approval boundary.
+
+**In Component 8 (Guardian Daemon), replace** the "Unsafe actions requiring confirmation" list:
+
+```diff
+- Unsafe actions requiring confirmation:
+-   delete worktrees;
+-   reset branches;
+-   resolve merge conflicts;
+-   merge PRs;
+-   kill unknown processes;
+-   push or publish sensitive branches when policy requires approval.
+
++ Actions requiring Peter's approval:
++ - merge to main
++ - delete worktrees or branches containing unlanded/completed work
++ - accept failing validation or known quality debt
++ - expose, push, or rotate credentials
++ - resolve product decisions where the logs show multiple valid paths
++ 
++ All other operational recovery (restart, reset, retry within the same
++ operation Peter launched, delete empty/failed worktrees, etc.) runs
++ autonomously. Peter pre-authorized the operation by launching it.
+```
+
+This aligns Guardian's behavior with the plan's own statements in H2, H7, and the "Completion And Approval" section. It also removes the contradiction where the plan says "Guardian should prefer autonomous repair" in one place and "delete worktrees requires confirmation" in another.
+
+---
+
+### Change 3: Reframe the CLI as bootstrap/debug only, not a parallel product surface.
+
+**In the "CLI Surface" section, replace** the full command listing:
+
+```diff
+- Local commands:
+- agentbox bootstrap
+- agentbox ssh
+- agentbox repo add megaplan git@github.com:peteromallet/megaplan.git
+- agentbox repo sync megaplan
+- agentbox repo status
+- agentbox creds push
+- agentbox creds test
+- agentbox run --repo megaplan --kind codex --task "..."
+- agentbox run --repos megaplan,reigh-app --kind shell --cmd "pytest -q"
+- agentbox run --repo megaplan --kind megaplan-chain --spec briefs/foo/chain.yaml
+- agentbox status
+- agentbox logs op-123
+- agentbox attach op-123
+- agentbox stop op-123
+- agentbox cleanup op-123
+
++ CLI (bootstrap and emergency access only):
++ agentbox bootstrap          # provision the machine
++ agentbox ssh                # open shell on the machine
++ agentbox creds push         # sync credentials from laptop
++ agentbox creds test         # verify credentials work
++ agentbox status             # quick local overview (same data as Discord /status)
++ agentbox logs <op>          # tail logs locally when SSH'd in
++ agentbox attach <op>        # attach to tmux session locally
++ 
++ The CLI is not the product. Peter's normal path is Discord messages.
++ `agentbox run` exists for testing the runner directly, but the product
++ launch path is: Peter sends a Discord message; Operator creates the
++ operation and runs it.
+```
+
+**Delete** the "Discord command equivalents" subsection entirely. The Discord surface is the product. Listing slash-command equivalents to CLI commands frames Discord as a mirror of the CLI rather than the primary interface. The Discord Operator's tool profile (Component 9) already defines what it can do. That's sufficient.
+
+---
+
+### Change 4: Collapse the eight phases into the first-slice recommendation.
+
+**Replace** the "Implementation Phases" section with the single paragraph already in the plan under "First Slice Recommended By The Swarm" and "Revised First Product Slice":
+
+> **Build order:** The first shippable slice is: operation registry → Discord Operator with `status`/`run`/`logs` → `megaplan_chain` operation kind via existing worktree helpers → Guardian v0 periodic tick → completion DM. Prove that loop with real Megaplan chains on a Hetzner box. After that, add credential sync, more operation kinds (Codex, Claude, subagent, test), cleanup-loose-branches consolidation, and hardening. Each addition is tool-profile work against the same registry/Guardian/Operator core.
+
+The eight-phase list can remain as an appendix ("Full Component Build Order") if the author wants it, but it should not be the primary build narrative. The primary narrative should be the vertical slice.
+
+---
+
+### Change 5: Rename "Repo Registry" to "Repo Config."
+
+**In Component 2, replace** the heading and description:
+
+```diff
+- ### 2. Repo Registry
+- Purpose: track which repos live on the machine and where their canonical refs are stored.
++ ### 2. Repo Config
++ Purpose: a flat list in agentbox.yaml of repos on the machine and their canonical refs.
++ For a single-user system this is a YAML block, not a CRUD service. Peter can
++ edit it by hand. A helper command (`agentbox repo add`) is nice-to-have.
+```
+
+**Remove** `agentbox repo sync`, `agentbox repo status`, and `agentbox repo remove` from the CLI surface. `git fetch --all` in a cron or Guardian tick handles sync. Status and removal are file edits.
+
+---
+
+## 4. Things the Plan Already Covers That Should NOT Change
+
+These are correct and should be defended:
+
+| Element | Why it's right |
+|---|---|
+| **Operation registry as central model** | The single load-bearing structure. Everything else hangs off it. Don't simplify this — it's the minimum viable state machine. |
+| **Guardian as autonomous repair, not passive reporter** | The plan's strongest single-user instinct. A system that just tells you things broke is worse than no system. Keep the bias toward "figure out what's wrong and fix it." |
+| **Isolated worktrees per operation** | Non-negotiable. Shared checkouts create trampling that Peter will have to untangle manually. The ceremony of one-worktree-per-op earns its weight. |
+| **Discord-first, no dashboard** | Correct. Do not let "we should add a web UI" creep in. The plan's resistance to this is right. |
+| **Cleanup-loose-branches for consolidation** | Reusing an existing discipline rather than inventing a new merge/cleanup policy is the right instinct. Don't build a new consolidation system. |
+| **Separate Guardian and Discord Operator processes** | The plan's technical reasoning (asyncio loop vs. periodic supervisor) is sound. Combining them would couple things that don't need coupling. |
+| **Credential sync as explicit specs, not env dumps** | Correct. `SecretSpec(local_path, persistent_dest, runtime_dest, permissions, health_check)` is the right abstraction. Don't relax this to "just copy .env." |
+| **Megaplan chain as first operation kind** | Correct. It has the most existing substrate. Don't start with a greenfield operation kind. |
+| **Structured events (`events.ndjson`) as part of the operation contract** | The validation swarm was right to insist on this. It's not enterprise — it's the minimum machine-readable state for Guardian to make decisions without parsing freeform logs. Keep it. |
+| **Single-user simplifications section** | This section is self-aware and correct. It should be moved earlier in the document so it sets the tone before the component descriptions, which will make the enterprise-heavy bits more visible as contradictions. |
+
+---
+
+## Summary
+
+The plan's compass points the right way: Discord-first, autonomous Guardian, minimal approvals, single-user pragmatism. The problems are in the furniture — a formal approval subsystem, a CLI surface described as co-equal to Discord, eight corporate-style phases, and component names that imply services for things that are config files. Five targeted cuts remove the enterprise smell without touching the architecture. After those changes, the plan is M-shaped: heavy where it must be (operation registry, worktree isolation, event stream), light everywhere else. That's the right shape for one user.

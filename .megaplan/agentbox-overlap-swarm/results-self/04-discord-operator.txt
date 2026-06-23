@@ -1,0 +1,88 @@
+# Discord Operator Overlap Audit: AgentBox vs. Megaplan Resident
+
+## 1. Directly Reusable (≈60% of what you need)
+
+### Discord Transport Layer — `discord.py:1-220`
+The entire Discord plumbing is a drop-in take:
+
+- **`DiscordDeliveryTarget`** (L18-40): guild/channel/thread/DM routing with `conversation_key` format (`discord:guild:{gid}:channel:{cid}:thread:{tid}`). AgentBox needs identical conversation-scoped state.
+- **`DiscordInboundMessage.from_discord_message()`** (L54-106): parses raw `discord.py` messages, handles thread parent resolution, bot filtering, DM detection, and idempotency keys (`discord:message:{id}`). Zero changes needed.
+- **`DiscordOutboundSink`** (L112-138): resolves channels/users and delivers `OutboundMessage` objects. The `bind_client` pattern works for late-bound client injection.
+- **`ResidentDiscordService`** (L142-210): the `discord.Client` event loop wiring (`on_ready`, `on_message`, `on_error`), recovery of abandoned turns on startup, and `asyncio.run()` entry point. This is the full service skeleton.
+
+### Auth & Access Control — `config.py:1-120`, `discord.py` references `auth.py`
+- **`ResidentConfig`** (L18-92): `allowed_guild_ids`, `allowed_channel_ids`, `allowed_user_ids`, `admin_user_ids` with CSV/env parsing and Pydantic validation. Covers AgentBox's "who can trigger the operator" requirement.
+- **`AuthorizationSubject`** (referenced in `discord.py` L105-110): carries `user_id`, `guild_id`, `channel_id` on every inbound event. AgentBox confirms/approvals can reuse this model verbatim.
+- **`StoreBackedConfirmationManager`** (referenced in `cli.py` L92, L142): pending confirmations with expiry (`confirmation_expiry_s: 900s`). AgentBox's `approve <confirmation>` command maps directly to this.
+
+### Cloud Operation Classification — `cloud.py:1-124`
+- **`CloudClassification`** (L14-21): `running | blocked | failed | gate-needed | completed | unknown`. AgentBox operations have the same lifecycle states.
+- **`classify_cloud_payload()`** (L86-106): token-based classification from structured output. Reusable for classifying AgentBox operation logs/statuses.
+- **`cloud_run_status_for_classification()`** (L122-133): maps classifications to stored status values.
+
+### Conversation State Persistence
+- `store.list_resident_conversations(transport="discord")` in `cli.py` L76 — AgentBox needs the same durable conversation tracking.
+- `store.list_stale_control_messages()`, `store.list_recent_turns()` — provides abandoned-turn recovery that AgentBox's operator will need when it restarts mid-conversation.
+
+---
+
+## 2. Needs Extraction/Generalization (≈30%)
+
+### `ResidentRuntime` — Tightly Coupled Hub
+The `ResidentRuntime` (wired in `cli.py` L131-144) couples the agent loop, tool profile, authorizer, and store into one object created at service start. For AgentBox, you need to:
+
+1. **Extract the generic interface**: `receive(InboundEvent) → run agent loop → send(OutboundMessage)` is reusable. The `InboundEvent`/`OutboundMessage` model (with `conversation_key`, `idempotency_key`, `subject`, `content`) is clean and should be lifted into a shared package.
+2. **Swap the tool profile**: `MegaplanResidentProfile` (L137) provides Megaplan-specific tools (cloud status, chain start, bootstrap). AgentBox needs its own profile with `status`, `repos`, `run`, `logs`, `attach`, `cleanup`, `creds` tools. The profile interface (providing tool definitions + handlers) should be a protocol that both implement.
+3. **Swap the agent runner**: `OpenAICompatibleAgentRunner` (L138) is likely generic enough if it accepts an arbitrary tool profile. The `max_tool_calls_per_turn: 8` config suggests bounded agent loops — keep that.
+
+### Confirmation System Narrowing
+`StoreBackedConfirmationManager` currently gates `require_cloud_start_confirmation` (config L70). AgentBox needs a superset: confirmations for stop, restart, cleanup, and push/PR operations. Abstract the confirmation *kinds* (action enum + target reference) while reusing the expiry/store backend.
+
+### Health/Dashboard — `cli.py:65-99`
+`_resident_health()` returns pending jobs, claimed jobs, conversations, stale control messages, confirmations, abandoned turns. AgentBox's `status` command needs the same shape but with operation registry records (operation id, kind, repo, worktree, tmux session, log path) instead of scheduled jobs. The health aggregation pattern is reusable; the record schemas are not.
+
+---
+
+## 3. Missing Pieces (AgentBox-specific)
+
+| Piece | Why it's missing |
+|---|---|
+| **Operation registry** | Megaplan has scheduled jobs + cloud runs; AgentBox needs `operation id, kind, repo(s), worktree(s), branch(es), tmux session, command, log path, status, pending approvals, discord thread ids, PR/CI metadata` — none of this exists. |
+| **Git worktree management tools** | `git worktree add`, `git worktree remove`, bare-repo checkouts — no Megaplan equivalent. |
+| **Tmux session management** | Creating, attaching, inspecting, and killing tmux sessions — AgentBox-specific. |
+| **AgentBox operator tools** | `repos`, `credits test`, `attach`, `summarize` — entirely new tool definitions. |
+| **Notification events** | `disk/memory warning`, `dirty/unpushed branch warning` — out of scope for Megaplan. |
+| **Multi-repo worktree layout** | `/workspace/repos/`, `/workspace/worktrees/op-{date}-{name}/` — AgentBox-specific filesystem conventions. |
+
+---
+
+## 4. Risks & Gotchas
+
+1. **`discord.py` event loop ownership** (`discord.py` L181: `await client.start(self.token)`): `discord.py` owns the asyncio event loop. AgentBox's Guardian (a scheduled daemon) can't share the same process if it also needs an event loop. Run them as separate processes sharing the store.
+
+2. **Store coupling**: `ResidentRuntime` accepts `Store` as a dependency (L133). If AgentBox's operation registry is a different store namespace, you'll need either separate Store instances or namespace isolation within the same store.
+
+3. **Idempotency key format**: `discord:message:{message_id}` (L97) — if AgentBox adds non-Discord triggers later, the key namespace must stay collision-free.
+
+4. **Conversation state drift**: `stale_turn_timeout_s: 1800s` and `stale_control_claim_timeout_s: 600s` — these timeouts assume cloud operations complete within those windows. AgentBox operations (long-running tmux sessions) may need much longer timeouts or explicit liveness checks instead.
+
+5. **Single-process assumption**: `ResidentDiscordService.run()` blocks on `asyncio.run()`. To co-host with a Guardian daemon, extract the `client.start()` call into a task within a shared event loop, or run separate processes.
+
+6. **Admin bypass risk**: `admin_user_ids` in config has no tool-level enforcement shown — the agent profile decides which tools respect admin-only. Ensure AgentBox's destructive tools (`stop`, `cleanup`) check this.
+
+---
+
+## 5. Recommended First Slice
+
+**Slice 1: "Discord Operator Shell"** — the minimum viable interactive control plane:
+
+1. Copy `discord.py` (DiscordDeliveryTarget, DiscordInboundMessage, DiscordOutboundSink, ResidentDiscordService) into AgentBox — rename to `DiscordOperator`.
+2. Port `config.py`'s `ResidentConfig` allowlists and model settings.
+3. Swap in a minimal `AgentBoxOperatorProfile` with exactly three tools:
+   - `status` — returns a hardcoded health snapshot (no operation registry yet).
+   - `repos` — runs `ls /workspace/repos`.
+   - `help` — lists available commands.
+4. Wire a generic `ResidentRuntime` with `OpenAICompatibleAgentRunner` and the new profile.
+5. Start the Discord service and verify: bot comes online, responds to messages, respects allowlists.
+
+This proves the Discord→Agent→Response pipeline works end-to-end. Slices 2+ add the operation registry, worktree management, tmux tools, and Guardian co-hosting.

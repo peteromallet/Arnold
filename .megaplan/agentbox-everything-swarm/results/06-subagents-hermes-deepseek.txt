@@ -1,0 +1,197 @@
+I now have enough context from the extensive excerpts, inventory, and loaded skills. Let me compile the decisive inventory:
+
+---
+
+# AgentBox Read-Only Inventory — Reusable Mechanics
+
+## 1. DeepSeek/Subagent/Hermes Mechanics Already in Repo
+
+### Subagent Launcher (highest leverage)
+**`subagent-launcher/SKILL.md`** + companion scripts — **fully reusable as-is**. Three dispatch pathways:
+
+| Pathway | Invocation | Model | Best for |
+|---|---|---|---|
+| **Hermes agentic** (default) | `launch_hermes_agent.py --toolsets="file,web,terminal"` | DeepSeek V4 Pro/Flash, Kimi K2.7, Zhipu GLM, MiMo | Tool-using subagents with repo access |
+| **Codex** | `codex exec --sandbox <level>` | GPT-5.5 | Sandboxed implementation |
+| **Claude** | `launch_claude_agent.py --model=opus` | Claude Opus/Sonnet | Same-family isolation |
+
+**Key mechanics already built:**
+- **Fan-out** (`fan.py`): N agents in one process, shared import (~5-15× RAM savings vs N subprocesses). Briefs directory → per-task output + `_report.json`.
+- **Escalation ladder**: MiMo (cheapest, fast scans) → DeepSeek Flash (non-reasoning, coding-tuned) → DeepSeek Pro (judgement) → Codex/Claude (complexity). "Start low, escalate on evidence" rule coded into tool selection.
+- **Liveness detection**: stderr heartbeat (`[tool]`/`[done]` every 1-5s), `</dev/null` anti-wedge for Codex, `--task-timeout=1800` default.
+- **Multi-lens jury**: Fan same prompt to Codex + DeepSeek + Kimi for high-stakes calls; divergence = signal.
+- **Network sandbox awareness**: Codex's `CODEX_SANDBOX_NETWORK_DISABLED=1` documented; Hermes agents need outbound network to provider APIs — `danger-full-access` required for Codex-orchestrated Hermes subagents.
+
+**File refs**: `~/.claude/skills/subagent-launcher/launch_hermes_agent.py`, `fan.py`, `launch_claude_agent.py`
+
+---
+
+### Hermes Worker (megaplan agentic runtime)
+**`arnold_pipelines/megaplan/workers/hermes.py`** — **directly reusable for AgentBox**. Core capabilities:
+
+- `AIAgent` + `SessionDB` from vendored `arnold.agent` (via `_import_hermes_runtime()`)
+- Session continuity across plan phases (`session_key_for`, reload from DB)
+- Pre-dispatch budget check (`_pre_dispatch_budget_check`) — fails fast before API call if prompt exceeds model window
+- Schema-enforced output (JSON validation against step schemas)
+- Full toolset routing: `file` (read_file, search_files, patch, write_file), `web` (web_extract, web_search), `terminal` (shell)
+- Content-tool aliasing (`_CONTENT_TOOL_ALIASES`): normalizes `read`→`read_file`, `search`→`search_files`, `web_extract`↔`fetch_url`
+- Mutating tool markup detection (`_contains_mutating_deepseek_tool_markup`) — prevents unsafe operations in read-only phases
+- Worker options surface: `output_path`, `template_path`, `session_db_path`, `resolved_model`, `max_tokens`, `reasoning_config`
+- `_worker_db_path`: sandboxes per-worker state under `.hermes_state/state_<id>.db`
+
+**Gap**: The Hermes worker is tightly coupled to megaplan's plan/step lifecycle (`step in ("plan","critique","revise","review","execute")`). For AgentBox, the worker's `run_hermes_worker()` would need a `step`-agnostic entry point or a new "diagnostic" / "repair" step enum.
+
+---
+
+### Key Pool (API key management)
+**`arnold_pipelines/megaplan/runtime/key_pool.py`** — **reusable as-is**. Key features:
+
+- Multi-provider key pool: DeepSeek, Kimi, Zhipu, Google, Fireworks, MiMo, OpenRouter, Claude (blocked from silent OpenRouter fallback), Codex (blocked from silent OpenRouter fallback)
+- `resolve_model(model)` — prefix-based routing: `deepseek:`, `kimi:`, `zhipu:`, `google:`, `fireworks:`, `openrouter:`, `mimo:`, `minimax:`
+- `acquire_key(provider)` / `report_429` / `report_failure` — rate-limit awareness
+- Blocking guards: Claude and Codex models silently routed through OpenRouter now raise `CliError` with explicit recovery instructions
+- Governor integration: charges spend budgets per envelope
+- `_raise_claude_via_openrouter_blocked` / `_raise_codex_via_openrouter_blocked` — reusable pattern for provider routing guards
+
+**File refs**: `arnold/agent/providers/pool.py` (SSoT `KeyPool`), `arnold_pipelines/megaplan/runtime/key_pool.py` (megaplan wrappers)
+
+---
+
+## 2. Diagnostics & Repair — How Operator/Guardian Can Spin Subagents
+
+### Watchdog (closest to AgentBox Guardian)
+**`arnold_pipelines/megaplan/watchdog/`** — **nearly complete Guardian skeleton**. Module surface from inventory:
+
+| Module | Role | AgentBox relevance |
+|---|---|---|
+| `repair_runner.py` | Runs repairs on blocked/stranded plans | **Core Guardian mechanic** — spin diagnostic subagent, apply fix, recheck |
+| `correlate.py` | Maps processes to plans | Match running agents to known work |
+| `signals.py` | Signal handling | Graceful shutdown, interrupt relay |
+| `discovery.py` | Discovers active plans | Find all running/blocked work |
+| `processes.py` | Process scanning | Detect zombie/live agent processes |
+| `orphans.py` | Orphaned plan detection | Find work with no active process |
+| `retry.py` | Retry logic with backoff | Repair attempts with exponential backoff |
+| `tmux_scan.py` | Tmux session scanning | Find agents running in tmux sessions |
+| `snapshot.py` | Plan state snapshots | Capture state before/after repair |
+| `registry.py` | Watchdog registry | Persist watchdog's own state |
+| `log.py` | Structured logging | Audit trail for repairs |
+| `watchdog/__init__.py` | Entry point | Main watchdog loop |
+
+**Existing test**: `scripts/simulate_watchdog_end_to_end.py` — full end-to-end simulation of blocked plan → watchdog repair → relaunch → recheck. This is a **working proof of concept** for the AgentBox Guardian flow.
+
+**How it maps to AgentBox:**
+1. Watchdog scans for blocked plans (`discovery.py` + `correlate.py`)
+2. Spawns repair agent (`repair_runner.py` — currently calls megaplan CLI, but the pattern generalizes to `launch_hermes_agent.py --toolsets="file,web,terminal"` with a diagnostic prompt)
+3. Checks if repair succeeded (recheck)
+4. Relaunches or escalates
+
+**Gap**: The watchdog currently uses a fake megaplan CLI in simulation. For AgentBox, it needs to be wired to spawn Hermes/DeepSeek subagents directly via `launch_hermes_agent.py` or the `AIAgent` primitive.
+
+---
+
+### Live Supervisor (repair agent infrastructure)
+**`arnold_pipelines/megaplan/pipelines/live_supervisor/`** — **partial AgentBox Supervisor**. Module surface:
+
+- `repair_agent.py` — **directly reusable** repair agent definition
+- `steps.py` — supervisor step definitions (scan → diagnose → repair → verify)
+- `rules.py` — supervisor decision rules (when to repair vs. escalate)
+- `model.py` — supervisor state model
+- `pipelines.py` — pipeline definitions for supervisor execution
+- `SKILL.md` — documented skill for live supervision
+
+**How it maps to AgentBox:**
+- The supervisor's repair agent can be reconfigured to use DeepSeek instead of whatever model it defaults to
+- Step pipeline (scan → diagnose → repair → verify → relaunch) maps directly to AgentBox's Guardian repair flow
+- Rules engine determines when automated repair is safe vs. human escalation needed
+
+**Gap**: Needs Discord notification hooks — currently supervisor outputs to logs/state files; AgentBox needs Discord-native status updates ("repairing plan X", "repair failed, escalating").
+
+---
+
+### Parallel Critique/Review (fan-out patterns)
+**`arnold_pipelines/megaplan/orchestration/parallel_critique.py`** and **`review/parallel.py`** — **reusable fan-out mechanics**:
+
+- `scatter_worker_units` → parallel `AIAgent` instances
+- Session isolation per worker (`_critique_db_path`, `_review_worker_db_path`)
+- Reasoning-off guard for DeepSeek/Qwen families (prevents budget burn on mechanical checks)
+- `aggregate_rate_limits` — merges rate-limit info across workers
+- Preloaded-template-ID convention: write exact slot shape first, have each agent fill it
+
+**AgentBox relevance**: When Guardian needs to diagnose a blocked plan, it could fan N diagnostic subagents (each with a different lens: code analysis, dependency check, environment check) and aggregate findings — same pattern as parallel critique.
+
+---
+
+### Chain Supervisor (execution gating)
+**`arnold_pipelines/megaplan/supervisor/`** — **reusable for AgentBox's "completed work gets pushed/PRd/consolidated" requirement**:
+
+- `driver.py` — drives chain execution
+- `chain_runner.py` — runs chains through milestones
+- `pr_merge.py` — PR merging
+- `state.py` — persisted chain state (completion tracking)
+- `bakeoff_runner.py` / `bakeoff_binding.py` — worktree-based bakeoff execution
+- `ladder.py` — progression through stages
+- `outcomes.py` — outcome classification
+
+**Existing gate**: `scripts/chain_done_gate.py` — blocks chain completion when milestones incomplete, backstops non-blocking, or review blockers open. Verifies `completion_contract_mode=enforce` and `full_suite_backstop_mode=enforce`.
+
+**Gap**: Needs Discord-driven gating — currently chain gates are CLI/CI; AgentBox would need Discord-native approval flow (reaction-based approval, thread-based review).
+
+---
+
+## 3. Discord Integration — Already Built
+
+**`arnold_pipelines/megaplan/resident/discord.py`** — existing Discord integration. The resident system (`resident/agent_loop.py`, `resident/scheduler.py`, `resident/cli.py`) has a Discord adapter that:
+- Receives commands from Discord
+- Routes to agent loop
+- Sends responses back
+
+**AgentBox gap**: The resident Discord integration routes to megaplan's plan/execute lifecycle, not to the AgentBox-specific flow (ticket→epic→chain from Discord, Guardian repair). The Discord adapter needs to be extended with AgentBox-specific command handlers.
+
+---
+
+## 4. Storage — Already Built
+
+**`arnold_pipelines/megaplan/store/`** — dual-backend storage (SQLite + file), already stores:
+- Epics, tickets, plans, operations, checklists, sprints
+- Conversations, events, code artifacts, codebases
+- External requests, feedback, images, second opinions
+- `plan_repository.py` — plan-level repository
+- `snapshot.py` — canonical snapshots with SHA-256
+- `warrant.py` / `warrant_sources.py` — authority tracking
+
+**AgentBox relevance**: Nearly complete — just needs a "Discord origin" field on tickets/epics and a "repair history" field on operations.
+
+---
+
+## 5. Gaps & Recommendations
+
+### Gaps (what doesn't exist yet)
+
+| Gap | Severity | What's needed |
+|---|---|---|
+| **Discord→ticket/epic/chain initiator** | High | Extend `resident/discord.py` with AgentBox-specific command parsing: `/agentbox ticket <desc>`, `/agentbox epic <desc>`, `/agentbox chain <spec>` |
+| **Guardian→DeepSeek diagnostic subagent wiring** | High | Wire `watchdog/repair_runner.py` to call `launch_hermes_agent.py` (or `AIAgent` directly) with diagnostic prompts instead of fake megaplan CLI |
+| **Discord-native status notifications** | Medium | Guardian/supervisor currently logs to files; need Discord webhook/thread updates for repair progress |
+| **Discord approval gates** | Medium | Reaction-based approval for chain gates, PR review approval via Discord |
+| **Step-agnostic Hermes worker entry point** | Medium | Current `run_hermes_worker()` is hardcoded to plan phases; need `step="diagnostic"` / `step="repair"` variants |
+| **Consolidation upon completion** | Low | `supervisor/pr_merge.py` already merges PRs; extend to auto-close Discord threads, archive tickets |
+
+### Concrete Recommendations
+
+1. **Start with the watchdog simulation as your integration test harness.** `scripts/simulate_watchdog_end_to_end.py` already models blocked plan → repair → relaunch → recheck. Swap the fake megaplan CLI for `launch_hermes_agent.py --model="deepseek:deepseek-v4-pro" --toolsets="file,web,terminal"` with a diagnostic prompt. This proves the core Guardian loop in < 1 day.
+
+2. **Reuse the parallel critique pattern for diagnostic fan-out.** When Guardian encounters a blocked plan, scatter 3 diagnostic subagents (DeepSeek Flash for log scanning, DeepSeek Pro for root-cause analysis, Kimi for alternative perspective), aggregate with the same `aggregate_rate_limits` + merge pattern already in `review/parallel.py`.
+
+3. **Extend `resident/discord.py` with AgentBox command handlers, don't rewrite it.** The resident already handles auth, routing, and Discord protocol. Add handler methods for the AgentBox lifecycle (ticket→epic→chain→consolidate) and leave the Discord transport alone.
+
+4. **Use the existing store as-is.** Add `origin="discord"` and `discord_thread_id` fields to ticket/epic schemas. The dual-backend storage, snapshot hashing, and warrant system are already production-grade.
+
+5. **Guardian repair escalation ladder.** Use the subagent-launcher's model escalation: first repair attempt = DeepSeek Flash (cheap, fast), second = DeepSeek Pro (judgement), third = escalate to human via Discord. The "start low, escalate on evidence" rule is already coded in the launcher skill.
+
+### Total Inventory Summary
+
+**Reusable as-is (zero code changes):** Subagent launcher (3 pathways + fan-out), key pool (7+ providers), parallel critique/review fan-out pattern, Hermes worker `AIAgent` + `SessionDB`, store (DB + file backends), chain supervisor gates, snapshot/canonical hashing.
+
+**Needs minor wiring:** Watchdog repair runner (swap fake CLI for real subagent launch), resident Discord adapter (add AgentBox handlers), live supervisor repair agent (configure DeepSeek model).
+
+**Needs new code:** Discord-native approval flow (reaction-based gating), step-agnostic diagnostic/repair worker entry points.

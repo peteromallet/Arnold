@@ -1,0 +1,43 @@
+I've read the full plan closely, focusing on every mention of state, stores, and how data flows between them.
+
+---
+
+## Wave 3 Review: State Model Simplicity
+
+### 1. Verdict: **CLEAN WITH CHANGES**
+
+The core split is sound. The operation registry (current state) + per-op events.ndjson (temporal) + per-op log.txt (raw) is exactly right — it's a lightweight event-sourcing pattern without the ceremony. Pending approvals living *inside* the operation record rather than as a separate store is the correct call. The repo registry is configuration, not runtime state, so it's fine as a sibling. The conversation store is inherited from the resident runtime and not an AgentBox addition. No enterprise bloat detected.
+
+The one crack: **pending questions are being modeled as a separate state concept when they shouldn't be.**
+
+---
+
+### 2. The One Most Important Design Pressure
+
+**Conversation state is being split into two stores without clear benefit:** the resident runtime already persists conversations (messages, turns, scopes). The plan then adds a separate "pending questions" store — "conversation scope, timestamp, related operation ids, question text, and expected answer shape" — with matching logic on the next incoming message. For a single-user system where the Operator is stateless-per-turn and conversation context is loaded from the resident runtime on each invocation, a pending question is indistinguishable from *the last unreplied message the Operator sent*. The resident runtime already knows which messages have responses. Adding a parallel question-tracking store creates a synchronization problem: what happens when the pending-questions store says a question is open but the conversation stream shows Peter already answered? Which is authoritative? For one user, the answer is always the conversation.
+
+---
+
+### 3. Concrete Plan Change
+
+**Collapse pending questions into the conversation context, not a separate store.**
+
+Change this:
+
+> "When the Operator asks Peter a clarifying question, it records a pending question with the conversation scope, timestamp, related operation ids, question text, and expected answer shape. The next message in that scope is first matched against pending questions and approvals before being classified as a new request."
+
+To this:
+
+> "When the Operator asks Peter a clarifying question, the question and its expected-answer shape are persisted as metadata on the conversation turn that sent it. On the next turn, the Operator inspects the most recent Assistant message in the loaded conversation scope: if it ended with a question and has no qualifying user response after it, the incoming message is treated as an answer to that question before any new intent classification. No separate question store."
+
+The resident runtime already loads conversation context per turn. The question *is* a message. The answer *is* a message. Don't model them in two places.
+
+---
+
+### 4. What I Would Explicitly Avoid Adding
+
+**A pending-questions table or store with its own lifecycle (expiration, matching, cleanup).** It is the definition of ceremony for a single-user system. A question is open if the last Operator message asked something and hasn't been answered. A question is closed when Peter replies. That's it. The conversation already encodes this. Any additional structure becomes a reconciliation burden, not a simplification.
+
+---
+
+**Bonus observation (low signal, not required reading):** The `manifest.yaml` per-operation file is mentioned in the layout but never defined. If it duplicates fields already in the operation registry record, delete it — the registry is the source of truth. If it captures the original launch parameters (spec path, profile, requested depth) that the registry doesn't, keep it but name it explicitly as the *input spec*, not a "manifest." The word "manifest" invites field creep.

@@ -1,0 +1,35 @@
+## Direct Answer
+
+**`megaplan-chain`** (also written as `megaplan_chain` in the plan). This is the first operation kind that AgentBox should support.
+
+## Rationale
+
+The plan is explicit in multiple places that the first operation kind is `megaplan-chain`. The "Reuse Map" table states "First operation kind should be Megaplan chain." The "First Slice Recommended By The Swarm" says: "Add a single operation kind: `megaplan_chain`." The "Revised First Product Slice" repeats: "Megaplan chain operation kind."
+
+This choice is strategic. Chains are the "epic execution backbone" of Megaplan — they already express milestone order, failure behavior, PR/merge policy, and state. By making `megaplan-chain` the first kind, AgentBox validates its architecture against the most mature, most valuable operation type that already has real production mechanics. It is not a toy: chains already push work to GitHub, track branch/PR state, carry structured provenance, and have a known launch/supervise lifecycle. If the operation registry, worktree service, Guardian loop, and Discord Operator can handle a Megaplan chain end-to-end, then adding lighter operation kinds (codex, claude, shell, test, subagent) is a tool-profile exercise, not an architecture rewrite.
+
+## Existing Mechanics This Depends On
+
+1. **`arnold_pipelines/megaplan/bakeoff/worktree.py`** — The worktree substrate. `megaplan-chain` operations need `create_named_worktree`, `create_worktree`, worktree registration, and branch management. The plan calls for extracting these from command-scoped helpers into a machine-scoped operation service.
+
+2. **`arnold_pipelines/megaplan/cloud/supervise.py`** — The cloud supervisor. The Guardian should wrap `cloud_supervise_tick()` as the first classifier/action plugin for `megaplan_chain` operations, rather than rewriting supervision logic.
+
+3. **`arnold_pipelines/megaplan/chain/spec.py` and chain CLI** — Chain specs define what gets run, in what order, with what failure behavior. The `megaplan-chain` adapter needs these to construct the correct command, classify state, and decide whether a step is resumable.
+
+4. **`arnold_pipelines/megaplan/chain/git_ops.py`** — Branch/PR state tracking. The operation record needs PR metadata populated from chain git operations.
+
+5. **Megaplan Cloud tmux/session/log conventions** — Process runner behavior (tmux session per operation, log capture to `/workspace/runs/<op>/log.txt`) inherits from existing cloud provider patterns.
+
+## Risks And Caveats
+
+1. **Bare-repo worktree assumptions.** Existing worktree helpers assume a normal repo checkout in places (registered-worktree discovery and removal). If AgentBox uses bare repos at `/workspace/repos/*.git`, the helpers need bare-aware variants before the first `megaplan-chain` operation can successfully create and later clean up a worktree.
+
+2. **Chain supervisor is chain-centric.** `cloud/supervise.py` was designed for Megaplan chains in cloud context. Wrapping it as an operation plugin may surface assumptions about cloud providers (SSH, Railway) that don't apply when the Guardian runs locally on the Hetzner host. The adapter must separate "what to check" from "how to reach the process."
+
+3. **Stale chain state.** Chains can stall in ways that look like "still running." The Guardian's tick-based classification must distinguish a chain stuck in a step from a chain that is legitimately waiting (e.g., for a long test suite). A misclassification could trigger an unnecessary restart or leave a truly blocked operation unreported.
+
+4. **Credential availability.** Megaplan chains often need Codex, Claude, or GitHub credentials at launch time. If the credential sync subsystem isn't built before the first chain operation, the chain will fail on the remote box with no clear diagnostic. The plan's phase ordering (registration before credential sync) may need adjustment.
+
+## One Concrete Design Implication
+
+The `megaplan-chain` adapter's `classify()` method must be the first real implementation of the operation status classifier. It needs to read chain state (from chain spec/state files), tmux session liveness, log output recency, and structured step status, then map them into the operation registry's status enum: `running`, `stale`, `blocked`, `failed`, `completed`, `awaiting_approval`. The classifications made for `megaplan-chain` will set the pattern for every subsequent operation kind — so this is where the system's supervision philosophy gets encoded. Get it right here, and Codex/Claude/shell adapters slot in cleanly. Get it wrong, and every adapter inherits a confused status model.

@@ -1,0 +1,46 @@
+## Direct Answer
+
+The AgentBox approval model is **optimistic-autonomous with narrow human gates at destructive boundaries**. The system acts autonomously for operational tasks — restarting dead runners, resuming stalled chains, diagnosing and patching failures — and only requests human approval at five specific junctures: completion/merge decisions, destructive cleanup, accepting quality debt, resolving ambiguous product judgments, and credential exposure/rotation.
+
+## Rationale
+
+The plan is explicit that this is a single-user system for one person (Peter). There is no multi-tenant ceremony, no role hierarchy, and no complex permission lattice. The approval design flows from two principles stated directly in the plan:
+
+1. **"The Guardian should be biased toward 'figure out what's wrong and fix it' for operational failures."** The Guardian is an active repair agent, not a passive notifier. It restarts sessions, resumes chains, launches diagnostic subagents, and only escalates to Peter when the next step is genuinely ambiguous or destructive.
+
+2. **"The main approval event is completion, not every intermediate action."** The system does not ask permission for each step of a chain or each tool call. It pushes branches and opens PRs automatically when that policy is already defined. The approval boundary is concentrated at the end.
+
+The plan explicitly scopes what must not be autonomous: "merge to main; delete/cleanup worktrees or branches; accept failing validation or quality debt; resolve ambiguous product decisions; expose or rotate credentials." Everything else — restarting processes, continuing chains, classifying failures, launching repair subagents — is safe and automatic.
+
+## Existing Mechanics This Depends On
+
+The plan reuses Megaplan's **resident confirmation manager** (`arnold_pipelines/megaplan/resident/` — referenced in Sections 9 and 10). This already provides confirmation records, approval expiry, per-user allowlists, and Discord-based approval flows. AgentBox wraps these rather than rebuilding them.
+
+The approval model also depends on the **operation registry's `pending_approvals` field** (Section 5), which ties specific approval requests to specific operations and tracks their resolution.
+
+For the Discord-facing approval flow, it depends on the **ResidentDiscordService** (Section "Discord Operator Integration") to carry approval prompts, confirmation IDs, and user responses through Discord DMs or channels.
+
+## Risks and Caveats
+
+1. **Over-autonomy on chains**: The plan says the Guardian should "continue a Megaplan chain if the next step is unambiguous." Ambiguity is a judgment call. A step that looks unambiguous to the Guardian (e.g., "the next task is `run_tests`") could mask a subtle failure that a human should inspect. The classification logic needs strong guardrails.
+
+2. **Completion-as-gate may create bottlenecks**: If Peter is offline, work accumulates but cannot merge or clean up. The plan should consider a "presumed safe" auto-merge window for simple, fully-green operations to avoid the batch effect described in `cleanup-loose-branches`.
+
+3. **Approval scope creep**: The five approval categories are clear in theory, but ambiguous operations (e.g., "should this test failure block merge?") could blur the line between operational repair and product judgment. The Guardian's diagnostic subagents (DeepSeek) need to err on the side of asking when uncertain.
+
+## Concrete Design Implication
+
+The **operation registry must model approval as a first-class state**, not an ad-hoc Discord message. Each operation record needs:
+
+```yaml
+pending_approvals:
+  - id: conf-456
+    kind: merge | cleanup | quality-debt | product-decision | credential
+    description: "Merge agent/op-123 into main after all CI passes"
+    created_at: ...
+    expires_at: ...  # null = permanent
+    state: pending | approved | rejected | expired
+    discord_message_id: ...
+```
+
+This allows both the Guardian and the Discord Operator to query "what needs approval right now" independent of who generated the request, and to expire stale approvals without human intervention. The plan's Section 10 already sketches confirmation records and expiry — this makes it a schema-level commitment.

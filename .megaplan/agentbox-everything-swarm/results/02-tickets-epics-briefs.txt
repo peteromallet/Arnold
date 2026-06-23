@@ -1,0 +1,181 @@
+Now I have the full picture. Here's the decisive inventory.
+
+---
+
+# AgentBox Inventory — What Already Exists
+
+## 1. Tickets → Directly Reusable for "Discord Operator Adds a Ticket"
+
+**File:** `arnold_pipelines/megaplan/tickets/core.py` (1,260 lines)
+**CLI:** `megaplan ticket new/list/search/edit/link`
+
+Every ticket mechanic the brief needs already exists:
+- **Create:** `ticket new "title" -b "body" --tags t1,t2` → prints ULID
+- **Store:** `.megaplan/tickets/{ulid}-{slug}.md` (local) + `tickets`/`ticket_epics` tables (cloud via `DBStore`/`FileStore`/`MultiStore`)
+- **Auto-source:** `MEGAPLAN_TURN_ID` set → `source=agent`, else `source=human`
+- **Auto-address:** `link <tid> <eid> --resolves` → ticket auto-flips to `addressed` when epic hits `done`
+- **Cross-repo search:** `ticket search foo --all-projects --json`
+- **Identity:** Codebase resolved via root commit SHA; survives rename/transfer
+
+**What the Discord Operator would call:** `megaplan ticket new "Discord-reported bug..." -b "..." --tags from-discord`
+
+**Gap:** No Discord-specific `source` value (only `agent`/`human` today). Trivial to add `source=discord` when `MEGAPLAN_DISCORD_CHANNEL_ID` is set.
+
+**Skill file:** `arnold_pipelines/megaplan/skills/megaplan-tickets/SKILL.md` — already a complete reference.
+
+---
+
+## 2. Epics / Chain Specs → Directly Reusable for "Set Up an Epic, Launch a Chain"
+
+**File:** `arnold_pipelines/megaplan/chain/spec.py` (660 lines)  
+**Skill:** `arnold_pipelines/megaplan/skills/megaplan-epic/SKILL.md`
+
+The `ChainSpec` dataclass is the canonical serialization of an epic. `chain.yaml` declares:
+```yaml
+base_branch: main
+milestones:
+  - label: m1-schema
+    idea: .megaplan/briefs/.../m1-schema.md
+    profile: apex
+    robustness: thorough
+    depth: high
+on_failure:       # stop_chain | skip_milestone | retry_milestone
+  retry: retry_milestone
+  escalate: bump_profile
+  abort: stop_chain
+merge_policy: auto
+```
+
+**ChainState** persists progress (`current_milestone_index`, `completed`, `retry_counts`, `ladder_stage`, `pr_number`). Resumes deterministically. Autonomy ladder bumps profile/robustness/depth on failure.
+
+**CLI entry:** `megaplan chain start --spec chain.yaml` (or `--one` for single-step)
+
+**What Discord Operator needs:** Write a `chain.yaml` to `.megaplan/briefs/<epic-slug>/chain.yaml`, run `megaplan chain start`. For Discord-driven creation, pipe a structured JSON from the Discord command to a `chain.yaml` template writer.
+
+**Gap:** No "create chain.yaml from a brief JSON/command" helper. Existing `megaplan epic` handles snapshot/migration, not orchestration — the skill explicitly warns "not the orchestration entry point."
+
+---
+
+## 3. Watchdog / Guardian → Directly Reusable for "Guardian Repairs/Relaunches Blocked Runs"
+
+**Files:**
+- `arnold_pipelines/megaplan/watchdog/__init__.py`
+- `arnold_pipelines/megaplan/watchdog/repair_runner.py`
+- `scripts/simulate_watchdog_end_to_end.py` (end-to-end test)
+
+The watchdog already:
+- Scans for live megaplan processes (via `tmux_scan.py`, `processes.py`, `discovery.py`)
+- Correlates processes with plan state (`correlate.py`)
+- Identifies orphans, stalled, blocked, crashed runs (`orphans.py`, `signals.py`)
+- Applies repair actions: restart, recheck, escalate, clean up (`repair_runner.py`, `retry.py`)
+- Takes periodic snapshots for audit trail (`snapshot.py`)
+- Has a `--repair` mode with configurable recheck interval
+
+**The end-to-end simulation** (`simulate_watchdog_end_to_end.py`) creates a synthetic blocked plan, runs the watchdog, and verifies repair + relaunch + recheck, including cleanup of orphaned processes.
+
+**What Discord Operator would need:** The watchdog is CLI-driven today. To make it Discord-first, wrap the watchdog as a resident loop (see #4) that listens for Discord commands to start a repair cycle, or run it as a cron via the existing scheduler and have results posted back to Discord.
+
+---
+
+## 4. Resident Agent Loop → The Discord Operator's Runtime
+
+**Files:**
+- `arnold_pipelines/megaplan/resident/__init__.py`
+- `arnold_pipelines/megaplan/resident/agent_loop.py`
+- `arnold_pipelines/megaplan/resident/discord.py` ← **the key file**
+- `arnold_pipelines/megaplan/resident/cli.py`
+- `arnold_pipelines/megaplan/resident/scheduler.py`
+- `arnold_pipelines/megaplan/resident/coalescing.py`
+
+The resident module is a long-running agent loop that:
+- Connects to Discord (`discord.py`)
+- Runs an agent loop (`agent_loop.py`)
+- Has scheduling (`scheduler.py`)
+- Handles tool registration (`tool_registry.py`, `tool_schemas.py`)
+- Manages auth and profiles (`auth.py`, `profile.py`)
+- Does request coalescing (`coalescing.py`)
+
+**This is the closest existing thing to "Discord Operator."** The `discord.py` file is the integration point — the loop listens on Discord channels and dispatches actions.
+
+---
+
+## 5. Subagent Spawning → DeepSeek/Subagent Mechanics
+
+**Skills:**
+- `autonomous-ai-agents/hermes-agent-spawning` — spawns independent hermes subprocesses
+- `autonomous-ai-agents/claude-code` — delegates to Claude Code CLI
+- `autonomous-ai-agents/codex` — delegates to OpenAI Codex
+- `autonomous-ai-agents/opencode` — delegates to OpenCode CLI
+- `software-development/subagent-driven-development` — two-stage review (spec → quality) per task
+
+Each delegates coding tasks to autonomous subprocesses with isolated contexts. The `subagent-driven-development` skill defines the pattern: fresh subagent per task, spec compliance review first, code quality review second, never skip reviews.
+
+**The DeepSeek angle:** The brief mentions DeepSeek/subagents. Nothing in the repo is DeepSeek-specific today, but the `ChainSpec` supports a `deepseek_provider` field (`direct` | `fireworks`). The subagent spawning infrastructure is provider-agnostic — you point it at whichever model.
+
+---
+
+## 6. Webhook Subscriptions → Discord Event Ingestion
+
+**Skill:** `devops/webhook-subscriptions`
+
+Already supports Discord as a delivery target. The webhook platform:
+- Creates dynamic subscriptions with HMAC-SHA256 auth
+- Renders `{payload.fields}` from incoming POSTs into agent prompts
+- Delivers agent output to Discord (`--deliver discord --deliver-chat-id "..."`)
+- Supports `--deliver-only` for zero-LLM passthrough
+
+**For AgentBox:** Discord slash commands → HTTP POST to webhook → agent run → response delivered back to Discord. This is the existing bridge.
+
+---
+
+## 7. Kanban → Multi-Agent Task Orchestration
+
+**Skills:** `kanban-orchestrator`, `kanban-worker`
+
+Provides: task creation with parent/child dependencies, specialist assignment (researcher, analyst, backend-eng, etc.), auto-promotion on parent completion, heartbeat/block/complete lifecycle. The `webhook-subscriptions` skill already integrates with this.
+
+**Overlap with chains:** Chains are linear milestone sequences with autonomy ladders. Kanban is a graph with fan-out/fan-in. For AgentBox, chains handle the "epic execution" vertical; Kanban handles the "multi-agent coordination" horizontal.
+
+---
+
+## 8. Cloud Deployment → Where the Operator Lives
+
+**Files:** `arnold_pipelines/megaplan/cloud/` (20+ files)  
+**Skill:** `arnold_pipelines/megaplan/skills/megaplan-cloud/SKILL.md`
+
+Full cloud deployment system: Docker templates, Railway provider, SSH provider, supervision wrappers, health checks. Chain mode (`mode: chain` in `cloud.yaml`) runs chains unattended in containers.
+
+**For AgentBox:** The Discord Operator runs inside `megaplan cloud` so it survives terminal sessions. The cloud infra already exists.
+
+---
+
+## Summary of Reusable Mechanics
+
+| What AgentBox needs | Already exists | File/Skill | Gap |
+|---|---|---|---|
+| Discord → ticket | `ticket new` + `discord.py` resident | `tickets/core.py`, `resident/discord.py` | Add `source=discord` |
+| Discord → epic setup | `chain.yaml` spec + `chain start` | `chain/spec.py`, `megaplan-epic` skill | No "create chain from Discord JSON" helper |
+| Guardian repair/relaunch | Watchdog scan/repair/recheck | `watchdog/`, `simulate_watchdog_end_to_end.py` | Needs Discord control surface |
+| Completed → PR/consolidate | Chain PR lifecycle (`pr_merge.py`, `ci_hook.py`, `hinge_gate.py`) | `supervisor/`, `chain/` | Works; needs Discord notification |
+| DeepSeek/subagent dispatch | `hermes-agent-spawning`, `claude-code`, `codex`, `opencode`, `subagent-driven-development` | Skills | `deepseek_provider` field exists in ChainSpec; provider-agnostic spawning works |
+| Discord event ingestion | Webhook subscriptions with Discord delivery | `webhook-subscriptions` skill | Ready |
+| Long-running operator | Cloud mode + resident loop | `cloud/`, `resident/` | Ready |
+
+## Concrete Recommendations
+
+1. **Thin Discord Operator shim** in `resident/discord.py`: expose these slash commands by mapping them to the CLI verbs that already work:
+   - `/ticket new` → `megaplan ticket new`
+   - `/epic start` → template a `chain.yaml` + `megaplan chain start`
+   - `/chain status` → `megaplan chain status`
+   - `/watchdog repair` → `megaplan watchdog --repair`
+   - `/pr push` → chain PR pipeline
+
+2. **Set `source=discord`** in `tickets/core.py` `_derive_source()` when `MEGAPLAN_DISCORD_CHANNEL_ID` is set.
+
+3. **Wire watchdog results to Discord** — currently the watchdog writes reports; add a `--notify discord` flag that posts the repair report.
+
+4. **Keep chains as the epic backbone** — they already handle ordering, failure semantics, autonomy ladders, and state persistence. Don't rebuild. Add a Discord-friendly `chain.yaml` generator.
+
+5. **Use the webhook skill for event ingestion** — it already does HMAC, Discord delivery, and prompt templating. The Discord Operator subscribes to GitHub/Discord events via this mechanism.
+
+**The shortest path to a working AgentBox:** Wrap the existing `resident/discord.py` resident loop around a command parser that maps Discord slash commands to the megaplan CLI verbs that already work. Everything substantive — tickets, chains, watchdog, cloud, subagent spawning — is already built.

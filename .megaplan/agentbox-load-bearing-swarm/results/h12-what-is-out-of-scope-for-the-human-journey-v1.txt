@@ -1,0 +1,60 @@
+## Direct Answer
+
+For the human journey v1, the following are **out of scope**:
+
+1. **Full message-triggered Discord Operator.** V1 gets Discord *notifications* (Guardian posting blocked/completed/failed), not an interactive bot that parses arbitrary natural-language commands and launches agents. The plan is explicit: "full message-triggered Operator comes after the operation registry is stable."
+
+2. **Any agent adapter beyond `megaplan_chain`.** The first slice defines exactly one operation kind: Megaplan chain. Codex, Claude, subagent-swarm, test-runner, and shell adapters are deferred. This means the human cannot ask Discord to "run Codex on X" or "run tests on Y" in v1.
+
+3. **Slash commands.** The plan states: "natural-language Discord messages are enough for v1; slash commands can come later."
+
+4. **GitHub PR push/merge automation.** The completion flow in v1 notifies Peter and *asks* whether to push/PR/cleanup — it does not push branches or open PRs autonomously. CI integration and PR metadata tracking on the operation record are later phases.
+
+5. **Multi-repo operations.** The first slice launches a Megaplan chain in a single worktree on one repo. Multi-repo worktree creation is described in the worktree service component but is not part of the first product slice.
+
+6. **Intermediate approval flows.** The plan states approvals should be "rare and focused on completion, merge, cleanup, credentials, or accepting debt." The Guardian v0 does not have an approval queue; it either auto-repairs or notifies. The approval/confirmation manager exists in Megaplan but is not wired into the first-slice loop.
+
+7. **Automated cleanup/consolidation.** `cleanup-loose-branches` is the prescribed playbook, but it runs manually post-batch. No automated worktree pruning, log rotation, or disk-pressure monitoring in v1.
+
+8. **Docker-based operation isolation.** Explicitly: "do not require Docker per operation in v1."
+
+9. **Encrypted-at-rest secrets.** V1 uses permissioned files; `age`/`pass`/1Password integration is deferred.
+
+10. **Credential rotation and multi-provider secret specs.** V1 includes `creds push` and `creds test` but not `creds rotate` or the full `SecretSpec` model with health checks.
+
+11. **Non-Megaplan repos in the operation registry.** The first slice tests the loop with the Megaplan repo only. The repo registry (`agentbox repo add/sync`) is a Phase 2 deliverable but operation creation against arbitrary repos is not in the first-slice loop.
+
+---
+
+## Rationale
+
+The plan follows a "smallest loop that proves the architecture" strategy. The swarm explicitly recommends: "This avoids boiling the ocean. It proves that one persistent machine can launch a chain into a worktree, track it as an operation, and have Guardian keep checking it." Every out-of-scope item above is either (a) explicitly deferred to a later implementation phase, (b) listed as an open design decision, or (c) absent from the revised first product slice while present elsewhere in the plan.
+
+The sequencing logic is: operation registry → Guardian loop → Discord notifications → then full Discord Operator and additional adapters. The human journey in v1 is therefore: Peter launches a Megaplan chain via CLI (`agentbox run --repo megaplan --kind megaplan-chain`), Guardian supervises it, and Peter gets Discord DMs on completion/failure. Peter does not yet *initiate* work from Discord.
+
+**Existing mechanics this depends on:**
+
+- `arnold_pipelines/megaplan/bakeoff/worktree.py` — worktree creation and validation functions
+- `arnold_pipelines/megaplan/cloud/supervise.py` — the cloud supervision tick wrapped as Guardian's first plugin
+- `arnold_pipelines/megaplan/cloud/providers/ssh.py` — SSH transport for remote execution (though AgentBox runs locally on the box)
+- `arnold_pipelines/megaplan/resident/discord.py` — `ResidentDiscordService` and outbound sink for notifications
+- `arnold_pipelines/megaplan/store/base.py` — store patterns for the operation registry
+- `scripts/megaplan_live_watchdog.py` — composed into Guardian's repair logic
+
+---
+
+## Risks and Caveats
+
+1. **Discord notifications without a bot loop feel half-built.** If Guardian can post to Discord, Peter will naturally try to reply. Without the Operator listening, those replies land in a void. This creates a UX dead-end that may frustrate testing. Mitigation: the notification should include a clear "reply not supported yet" footer, or the Operator should be a read-only responder even in v1.
+
+2. **Single operation kind masks multi-agent coordination problems.** The plan describes Guardian launching "a repair agent or subagent to diagnose and patch the issue" — but without subagent/test adapters, Guardian's repair surface is limited to chain resumption. The repair ambition may outrun the adapter availability.
+
+3. **CLI-first launch contradicts the "Discord-first" aspiration.** The user journey section describes Peter sending Discord messages to start work, but the first slice launches via `agentbox run` on the CLI. The human journey v1 is CLI-driven with Discord as a notification channel — not Discord-driven.
+
+4. **Bare repo risk is unresolved.** The plan flags that worktree helpers assume a normal checkout and may break with bare repos (`/workspace/repos/*.git`). V1 builds on these helpers immediately; a bare-repo bug in `worktree_registered` or `remove_worktree` would block the first slice.
+
+---
+
+## Concrete Design Implication
+
+**The `agentbox run` CLI command must accept a `--notify-discord` flag** that links the operation to a Discord DM channel for completion/failure notifications. Without this, the v1 human journey has no Discord surface at all — undermining the whole "Discord as primary human control surface" premise while the full Operator is deferred. The notification path should be wired on operation creation, stored in the operation record's `discord_refs` field, and triggered by Guardian's tick on status transitions. This is the minimum bridge between the CLI-first v1 reality and the Discord-first vision.

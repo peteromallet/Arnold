@@ -1,0 +1,64 @@
+# What Should Be Recorded for Every Agent Action
+
+## Direct Answer
+
+For every agent action, AgentBox must record a **structured event** containing:
+
+1. **Identity**: `operation_id`, `event_id` (monotonic or UUID), and `actor` (Guardian, Discord Operator, subagent name, chain step).
+2. **Temporal**: `timestamp` (ISO 8601 UTC) and `tick` or `sequence` number within the operation.
+3. **Action type**: A machine-readable label — `launch`, `classify`, `repair`, `restart`, `approve`, `reject`, `stop`, `cleanup`, `notify`, `push`, `open_pr`, `tick_report`, `credential_test`, etc.
+4. **Pre-state capture**: The operation `status` before the action and any relevant health signals (tmux liveness, chain step index, log tail hash, branch HEAD SHA, PR state).
+5. **Post-state capture**: The new `status`, updated health signals, and any side effects (new tmux session PID, branch pushed, PR URL, Discord message ID sent).
+6. **Outcome**: `success`, `failure`, `blocked`, `deferred_approval`, `no_op`, or `error`.
+7. **Rationale/decision**: A short human-readable summary of *why* the action was taken and *what* was done — critical for later Guardian diagnosis and human inspection.
+8. **Approval context** (if applicable): Which confirmation ID was approved or created, by whom, and with what scope/expiry.
+9. **References**: Links to log offsets, Discord conversation/message IDs, PR numbers, tmux session names, subagent run IDs.
+
+The concrete shape is the `events.ndjson` file already shown in the plan's `/workspace/runs/<op>/` directory — one JSON line per action, append-only, both Guardian and Operator writing to the same stream.
+
+## Rationale
+
+**The operation registry is the center of the system** (per the plan), but the registry holds *current* state. Events hold *history*. Without per-action events:
+
+- The Guardian cannot distinguish "I already tried restarting this and it failed again" from "this is the first sign of trouble." It would loop.
+- The Discord Operator cannot answer "what happened?" or "why is this blocked?" without replaying actions.
+- Approval decisions (merge, cleanup, credential rotation) have no audit trail.
+- Subagent diagnosis (Guardian step 6: "launch a DeepSeek diagnostic subagent for unclear failures") requires the subagent to read the event stream to understand what was tried.
+
+Recording every action as an append-only event gives the Guardian a **memory of its own interventions** and gives the human user a **replayable narrative** of what the machine decided autonomously.
+
+## Existing Mechanics This Depends On
+
+1. **`events.ndjson` layout**: Already in the plan's `/workspace/runs/<op>/` directory structure. No new format needed — just a commitment to append on every action.
+
+2. **`state.json`**: The current-state snapshot. Events record transitions; `state.json` records the latest. Both must agree. This is already in the plan's layout.
+
+3. **Megaplan resident store patterns** (cited in the plan as "strong candidate for operation registry persistence"). These already have file/DB write conventions. The event stream is a natural extension: write to both the operation registry row (current state) and the events file (history).
+
+4. **Guardian tick loop**: The plan says Guardian "updates operation state and health summaries" and "records what it did." This is the trigger for writing most events.
+
+5. **Discord confirmation manager** (from Megaplan resident): Already exists. Approval events carry confirmation IDs from this subsystem.
+
+## Risks and Caveats
+
+1. **Event volume under fast Guardian loops**: If Guardian ticks every 5 minutes and does nothing (status unchanged, health unchanged), recording a full event per tick is noise. Mitigation: only emit events on *state transitions* or *action taken*. A pure health-check with no change can skip the event or emit a lightweight heartbeat marker (just timestamp + `no_op` + current status).
+
+2. **Schema drift**: Guardian and Operator must agree on event shape. If they diverge, the event stream becomes unreadable to diagnostic subagents. Mitigation: define the event schema once in a shared module (e.g., `agentbox/events.py`) and validate on write.
+
+3. **Event file growth**: Append-only `.ndjson` per operation grows unboundedly on long-lived operations (e.g., a chain that runs for days with many Guardian ticks). Mitigation: rotate or archive on operation completion, and size-limit live event files with periodic compaction (keep last N entries + state snapshots).
+
+4. **Atomicity**: If Guardian writes an event and crashes before updating the SQLite row, the event stream says one thing and `state.json` says another. Mitigation: write the event *first* (append-only is safe), then update the registry row. On recovery, replay the last event to reconcile.
+
+## One Concrete Design Implication
+
+**The Guardian's repair loop must be event-driven, not purely state-driven.**
+
+Currently the plan says: "loop over active operations, classify, try repair." Without events, Guardian has no way to know it already tried restarting `op-123` three ticks ago and it failed each time. It would retry indefinitely.
+
+With per-action events, Guardian can:
+
+1. Read the last N events for the operation.
+2. If the last three events are `repair_attempt → failure`, escalate: stop retrying, file a pending approval, and notify Discord.
+3. If the last event is `awaiting_approval`, skip the operation entirely — don't touch it until the Operator records an `approve` or `reject` event.
+
+This turns the Guardian from a stateless polling loop into a **stateful supervisor with memory**, which is the difference between a watchdog that barks usefully and one that barks in circles.

@@ -1,0 +1,61 @@
+# How Work Should Move from Remote Worktree to Main
+
+## Direct Answer
+
+Work moves from a remote worktree to main through a **push → PR → approve → merge → cleanup** pipeline, with explicit human approval gating the merge step:
+
+1. **Operation completes** — the agent finishes work on branch `agent/op-XXX` within its isolated worktree.
+2. **Branch is pushed** to GitHub remote (this can be automatic if the operation policy permits it).
+3. **PR is opened or updated** — a draft or ready PR is created, linked back to the operation record.
+4. **CI runs** — results are tracked on the operation record and surfaced to Discord.
+5. **Human approves the merge** — this is the hard approval boundary. The system notifies Peter via Discord DM with a summary, validation results, and the question: "merge to main?"
+6. **PR is merged** — only after explicit human approval.
+7. **Cleanup** — the `cleanup-loose-branches` discipline runs: remote branch deleted, local worktree removed, local branch pruned, and the canonical bare repo fetches the updated main.
+
+The Guardian must **not** merge PRs, resolve merge conflicts, or delete worktrees without approval. These are explicitly classified as unsafe actions in the plan.
+
+## Rationale
+
+The plan draws a clear boundary between operational autonomy and product decisions. The Guardian is biased toward autonomous repair of operational failures (dead tmux sessions, stalled chains, missing runners), but product outcomes — "is this code good enough to land on main?" — require human judgment. The approval boundary is narrow and focused:
+
+> "The approval boundary is mostly: merge to main; delete/cleanup worktrees or branches; accept failing validation or quality debt; resolve ambiguous product decisions."
+
+This means:
+- **Push and PR creation can be automatic.** The plan says "For ordinary successful runs, the system can push the branch and open/update a PR if that is already part of the operation policy." These are safe, reversible actions.
+- **Merge is the gate.** Merging to main is irreversible and affects all future worktrees (since they all fork from main). It must stay a human decision.
+- **Cleanup follows merge.** The plan explicitly calls out `cleanup-loose-branches` as the consolidation playbook, not a separate decision point per operation.
+
+## Existing Mechanics This Depends On
+
+| Dependency | Origin | Role |
+|---|---|---|
+| `chain/git_ops.py` | Megaplan | Branch push and PR creation/update logic |
+| `supervisor/pr_merge.py` | Megaplan | Merge mechanics (invoked only after approval) |
+| `cleanup-loose-branches` skill | Local discipline | Post-merge survey: classify branches as land/delete/park, remove worktrees, prune remotes |
+| Operation registry | AgentBox (new) | Tracks PR URL, CI status, and branch metadata per operation |
+| Discord Operator confirmation manager | Megaplan resident runtime | Surfaces the "merge to main?" approval request to Peter |
+| Bare repo (`/workspace/repos/*.git`) | AgentBox (new) | Must fetch after merge so future worktrees start from updated main |
+
+## Risks and Caveats
+
+1. **CI failure loop.** If CI fails and the Guardian autonomously launches a repair agent, the cycle must have a cutoff. Without one, the machine could loop: repair → push → CI fail → repair again. The operation should enter `blocked` or `awaiting_approval` after a bounded number of repair attempts.
+
+2. **Stale worktrees post-merge.** After main advances, all in-progress worktrees forked from an older main are now behind. The Guardian should detect this and either flag it or, for simple operations, offer to rebase. This is not in the current plan but is a natural consequence.
+
+3. **Conflict between concurrent operations.** Two operations on the same repo may produce conflicting changes. The PR merge order matters, and the second PR may need rebase after the first lands. The Guardian should detect merge conflicts on the PR and surface them rather than attempt resolution (which is explicitly an unsafe action).
+
+4. **Bare repo fetch timing.** If the canonical bare repo is not fetched after merge, new operations will fork from stale main. The merge flow must include a `git fetch origin main:main` step on the bare repo.
+
+5. **The approval bottleneck.** If Peter is offline, completed operations pile up with open PRs waiting for merge approval. This is acceptable for a single-user system but means the Guardian should not block new operations just because old ones await approval — worktrees are isolated.
+
+## Concrete Design Implication
+
+**The operation record must have a `pr_status` field that drives the state machine.** The lifecycle becomes:
+
+```
+running → completed → pushed → pr_open → ci_passed → awaiting_merge → merged → cleaned
+                                                      ↘ ci_failed → blocked (retry bounded)
+                                                      ↘ conflict → blocked (needs human)
+```
+
+Each transition updates the operation record. The Guardian inspects this field to decide whether to notify, retry, or wait. The Discord Operator reads it to answer "what is blocked?" The `cleanup-loose-branches` discipline scans for `merged` operations ready for final teardown. This single field is the spine connecting the worktree, the GitHub PR, and the human approval gate.

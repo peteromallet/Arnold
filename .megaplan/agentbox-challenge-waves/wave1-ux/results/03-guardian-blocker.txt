@@ -1,0 +1,239 @@
+# Guardian Blocker Repair Flow — Wave 1 UX Review
+
+## 1. Verdict: **FITS WITH CHANGES**
+
+The plan has the right architectural intent — Guardian as an autonomous repair loop with its own cadence, separate from the Discord Operator, biased toward fixing rather than reporting. But the repair flow itself is described at the aspiration level, not the build level. When a developer sits down to implement Guardian's repair tick, the plan gives examples but no concrete mechanics. The gap is not in philosophy but in specification density.
+
+---
+
+## 2. Top Material Gaps
+
+### Gap 1 — No diagnostic classifier specification
+
+**What the plan says:** "classify the likely cause" and lists examples (dead tmux, chain stalled, tests failed, missing credential, merge conflict).
+
+**What's missing:** There is no concrete classifier interface, no signal-to-cause mapping, and no definition of what Guardian reads to classify. The plan says events.ndjson should contain lifecycle/phase/heartbeat/action/outcome events, but never says *which exact fields Guardian inspects* to distinguish "dead tmux session" from "process alive but stalled" from "process died with exit code 3."
+
+**Why it matters:** Without a classifier spec, Guardian either becomes a brittle pile of grep-and-heuristics or never gets built. The first repair tick is classification — without it, everything downstream is unreachable.
+
+**Specific missing artifacts:**
+- `events.ndjson` schema (field names, required fields, event types)
+- A `classify(operation) → FailureCause` function signature with enumerated causes
+- Signal sources per cause (e.g., "dead tmux" reads `tmux has-session` exit code + operation `last_heartbeat`; "stalled chain" reads events.ndjson for last `phase_progress` event timestamp)
+- A "healthy" baseline so Guardian knows what normal looks like
+
+---
+
+### Gap 2 — Recovery actions are examples, not a catalog
+
+**What the plan says:** Six examples under "Guardian Finds A Blocker" — restart chain session, clear/resume stale chain, launch repair operation for test failures, notify for missing credential, stop-and-ask for merge conflict, stop-and-ask for destructive cleanup.
+
+**What's missing:** These are described as prose, not as an enumerated action catalog with preconditions. A developer building Guardian needs:
+- The full set of `RecoveryAction` types
+- Preconditions for each (what state must be true before attempting)
+- How each action translates to concrete system calls (which tmux command? which chain CLI invocation? what subagent launch parameters?)
+- Which actions are `SAFE` (auto-execute), `CAUTIOUS` (auto-execute but log + notify), and `BLOCKED` (file pending approval)
+
+**Why it matters:** Without this, Guardian's "safe restart" is whatever the implementer guesses. The plan already defines safe/unsafe categories at the operation level (merge, delete, reset require approval), but doesn't map those to the recovery catalog. A dead tmux session with clean chain state is safe to restart; a dead tmux session after a test failure may not be.
+
+---
+
+### Gap 3 — Repair subagent handoff is undefined
+
+**What the plan says:** "launch a repair agent or subagent to diagnose and patch the issue" when local heuristics fail.
+
+**What's missing:**
+- What context the subagent receives (operation id? worktree path? log excerpt? events.ndjson tail? the full chain state?)
+- Whether the subagent is itself an operation record (with its own worktree) or an ephemeral process
+- How results return to Guardian (file in `/runs/op-X/diagnosis.md`? events.ndjson `repair_attempt` event? stdout?)
+- How Guardian decides the repair succeeded vs. failed vs. needs escalation
+- Timeout and resource bounds for the subagent
+- What happens if the subagent itself crashes
+
+**Why it matters:** This is the most important recovery path for ambiguous failures, and it's also the one most likely to go wrong in production. A subagent that runs unbounded, writes to the wrong worktree, or returns unstructured results creates more problems than it solves.
+
+---
+
+### Gap 4 — No retry policy or escalation state machine
+
+**What the plan says:** Guardian should "relaunch or resume the operation" after repair.
+
+**What's missing:**
+- Maximum repair attempts before escalation to Peter
+- Backoff/cooldown between attempts (Guardian runs every N minutes — does it try repair every tick until it works?)
+- Distinction between "repair failed but operation is still blocking" vs. "repair succeeded and operation should resume"
+- What happens when the same operation reaches Guardian on consecutive ticks in the same state — idempotency guard or re-attempt?
+- How repair attempt history is stored in the operation record (the plan says "record what it did" but doesn't define the `repair_history` field or its schema)
+
+**Why it matters:** Without retry limits, Guardian will loop forever on an unfixable problem, spamming repair subagents and logs. Without idempotency, it will re-attempt the same repair every tick even when it already tried and failed.
+
+---
+
+### Gap 5 — The `OperationAdapter` interface has `classify` and `stop` but no `diagnose` or `repair`
+
+**What the plan says:** OperationAdapter has `prepare`, `command`, `classify`, and `stop`.
+
+**What's missing:** Guardian's repair loop needs operation-kind-specific diagnosis and repair. Different operation kinds fail differently:
+- `megaplan_chain`: chain state stalled, step failed, tmux session dead
+- `codex`: agent exited with error, tool loop detected, cost limit hit
+- `claude`: permission denied, token limit, tool failure
+- `test`: pytest exit code, coverage threshold, flaky detection
+- `shell`: non-zero exit code, timeout, output pattern match
+
+The adapter interface needs `diagnose(operation) → DiagnosisResult` and `repair(operation, diagnosis) → RepairResult` (or at minimum a `recover(operation)` method that encapsulates both). Without this, Guardian can only do generic process-level checks (is tmux alive?) and can't do operation-kind-specific recovery.
+
+**Why it matters:** Generic recovery (restart tmux session) applied to a chain that already completed step 3 of 5 is wrong — it would restart from the beginning. Guardian needs the adapter to say "step 3 completed, step 4 needs launching" vs. "nothing completed, restart from step 1."
+
+---
+
+## 3. Exact Plan Changes Recommended
+
+### Change 1 — Add `events.ndjson` schema to the operation registry section
+
+Add under "Operation Registry" or a new subsection:
+
+```yaml
+## Event Stream Schema
+
+Every operation writes `events.ndjson` with one JSON object per line.
+Guardian reads this stream to classify and diagnose.
+
+Required event types and fields:
+
+- lifecycle: {type: "lifecycle", phase: "created"|"launched"|"running"|"paused"|"resumed"|"completed"|"failed"|"cleaned", timestamp, metadata: {}}
+- heartbeat: {type: "heartbeat", timestamp, agent_pid, tmux_session_alive: bool, last_action: str|null}
+- phase: {type: "phase", name: str, status: "started"|"completed"|"failed"|"skipped", timestamp, detail: str|null, exit_code: int|null}
+- action: {type: "action", tool: str, input_summary: str, output_summary: str, status: "ok"|"error", timestamp, duration_ms: int}
+- repair: {type: "repair", attempt: int, diagnosis: str, action: str, outcome: "success"|"failure"|"partial", timestamp, evidence: str}
+- approval: {type: "approval", action: str, status: "pending"|"approved"|"rejected", timestamp, by: str, expires: str|null}
+
+Guardian classification reads:
+- Last heartbeat timestamp vs. now → stale/live
+- Last phase event → current chain/plan step
+- Last action event → what was happening when it failed
+- tmux_session_alive in heartbeat → process liveness
+```
+
+### Change 2 — Add a recovery catalog to the Guardian section
+
+Add under "Guardian Daemon" after "Safe actions":
+
+```yaml
+## Recovery Catalog
+
+Guardian maps each FailureCause to a RecoveryAction with preconditions.
+
+| Cause | Action | Preconditions | Safety |
+|---|---|---|---|
+| dead_tmux_session | restart_tmux_session | Chain state shows clean resume point; no uncommitted work detected | SAFE |
+| chain_stalled_no_worker | resume_chain_step | Last phase completed; next phase unambiguous; no approval gate at next step | SAFE |
+| chain_step_failed | diagnose_then_recover | Step exit code non-zero | CAUTIOUS |
+| test_failure_with_diff | launch_repair_subagent | Test output contains actionable failure; worktree is clean aside from the operation's own changes | CAUTIOUS |
+| missing_credential | request_credential_from_user | Credential name known; spec exists in secret registry | BLOCKED |
+| merge_conflict | request_user_resolution | Git status shows conflict markers; both sides have identifiable authors | BLOCKED |
+| disk_full | alert_and_pause | df shows <5% free on /workspace | BLOCKED |
+| repeated_repair_failure | escalate_to_user | Same cause + same repair attempted ≥3 times without success | BLOCKED |
+
+Safety levels:
+- SAFE: Guardian executes automatically, records in events.ndjson
+- CAUTIOUS: Guardian executes automatically, records + notifies Discord  
+- BLOCKED: Guardian files pending approval, notifies Discord, does not act
+```
+
+### Change 3 — Add subagent repair specification
+
+Add a subsection under Guardian:
+
+```yaml
+## Repair Subagent Protocol
+
+When Guardian launches a repair subagent for an operation:
+
+1. Context passed to subagent:
+   - operation id
+   - worktree path
+   - last 200 lines of events.ndjson
+   - last 500 lines of log.txt
+   - the Guardian's classification and evidence
+   - a prompt: "Diagnose why operation {id} failed and propose a concrete fix. 
+     If you can apply the fix safely, do so and report. If not, explain why."
+
+2. Subagent runs as a child operation:
+   - kind: "subagent"
+   - worktree: same as parent operation (or child worktree if mutation needed)
+   - timeout: 10 minutes
+   - on completion, writes diagnosis to /runs/{parent_id}/diagnosis-{attempt}.md
+   - appends repair event to parent's events.ndjson
+
+3. Guardian reads the diagnosis:
+   - If subagent applied a fix → Guardian relaunches parent operation
+   - If subagent diagnosed but could not fix → Guardian attempts the recommended fix
+   - If subagent failed or timed out → Guardian escalates after max_repair_attempts
+   - If subagent says "needs human judgement" → Guardian files pending approval
+
+4. Max repair attempts: 3 per operation per Guardian tick session.
+   After 3 failed repair cycles across ticks, operation is marked "blocked-needs-human".
+```
+
+### Change 4 — Extend OperationAdapter with recovery methods
+
+Add to the "Agent Adapters" section:
+
+```python
+class OperationAdapter:
+    def prepare(operation): ...
+    def command(operation): ...
+    def classify(operation) -> FailureCause: ...
+    def diagnose(operation) -> DiagnosisResult:
+        """Operation-kind-specific diagnosis using events+logs. 
+        Returns structured diagnosis with confidence score."""
+    def recover(operation, diagnosis: DiagnosisResult) -> RecoveryResult:
+        """Apply operation-kind-specific recovery. 
+        Returns success/failure + new operation state."""
+    def stop(operation): ...
+```
+
+---
+
+### Change 5 — Add retry/backoff policy to Guardian daemon spec
+
+Add under Guardian daemon:
+
+```yaml
+## Retry and Escalation Policy
+
+- Guardian attempts recovery at most once per tick per operation.
+- If a recovery action was attempted in the previous tick and the operation 
+  is still in a failed/blocked state, Guardian checks whether the same 
+  diagnosis still applies before re-attempting.
+- Same diagnosis + same recovery → increment attempt counter, do not re-attempt
+  until attempt counter resets (after 3 ticks or manual intervention).
+- Different diagnosis → reset attempt counter, attempt new recovery.
+- After 3 unsuccessful repair attempts (any diagnosis), operation transitions 
+  to "blocked-needs-human" and Guardian stops autonomous repair for that operation.
+- Peter can manually reset the attempt counter via Discord Operator: `/retry op-123`.
+```
+
+---
+
+## 4. What The Plan Already Covers Well (Do Not Change)
+
+1. **Guardian/Discord Operator process separation** — correct and validated. Don't couple them.
+
+2. **Bias toward autonomous repair vs. asking Peter** — the philosophy is right. The plan just needs the mechanics to execute on it.
+
+3. **Approval gates** (merge, destructive cleanup, credentials, quality debt, product decisions) — well-scoped. Don't add more approval gates for operational recovery.
+
+4. **Notification policy** (only on material state changes, not routine heartbeats) — correct. Don't make Guardian chattier.
+
+5. **Operation registry as the handoff point** — registry-only coupling between Guardian and Operator is the right architecture. Don't add direct IPC.
+
+6. **First slice: megaplan_chain** — correct starting point. Don't try to implement the full recovery catalog for all operation kinds in phase 1. The megaplan_chain adapter's diagnose/recover methods are the right place to prototype the recovery interface.
+
+7. **Cleanup-loose-branches for consolidation** — correct. Don't add a second consolidation mechanism.
+
+8. **DeepSeek/subagent for ambiguous repair** — correct direction. The plan just needs the protocol around it (Change 3 above).
+
+9. **Structured events (events.ndjson)** — the plan already identifies this as load-bearing. The gap is only in schema specificity (Change 1 above).
+
+10. **Reuse of existing cloud supervise and watchdog** — correct. Don't rewrite them; wrap them as Guardian plugins.

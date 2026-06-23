@@ -1,0 +1,49 @@
+I've read the full plan carefully through the failure-modes lens. Here's my assessment.
+
+---
+
+## 1. Verdict: **UNDER-SPECIFIED**
+
+The plan is strong on happy-path architecture, reuse analysis, and component decomposition. It is weak on what happens when things break. The Guardian is invoked as a catch-all ("detects X," "classifies Y") without concrete failure-recovery mechanisms, and the operation registry — the system's single point of truth — has no crash-safety or corruption-recovery design at all.
+
+---
+
+## 2. The one most important design pressure
+
+**Crash safety and state integrity of the operation registry.**
+
+Every other failure mode (zombie tmux, stuck Guardian, disk-full mid-op, corrupt state) becomes recoverable if the registry survives. Nothing is recoverable if the registry is lost or silently corrupt. The plan says "file or SQLite-backed" and mentions a `lock_version` field for concurrency, but says nothing about:
+
+- What happens if the writing process (Guardian or Operator) crashes mid-write.
+- Whether the store uses WAL mode, fsync guarantees, or append-only semantics.
+- How corruption is detected (checksums? schema validation on read?).
+- How the registry is recovered if it's damaged.
+- Whether the `events.ndjson` stream is the durable source of truth that the registry can be rebuilt from.
+
+This isn't enterprise ceremony — it's the difference between "the machine needs a manual kick" and "the machine silently loses track of its own work." For a single-user system, the latter is worse: Peter trusts it to manage state so he doesn't have to.
+
+---
+
+## 3. Concrete plan change I would make
+
+**Make `events.ndjson` the durable append-only source of truth, and define the registry as a materialized view reconstructable from it.**
+
+The principle: every state mutation writes one line of JSON to the operation's event stream *first* (with `O_APPEND` + `fsync`), then updates the registry. On crash recovery, Guardian replays event streams from the last known sequence and rebuilds the registry state. This is a single-user design, not enterprise ceremony — it's the same pattern that `rsync` file-lists, `git` reflogs, and SQLite WAL use.
+
+Concretely, add one paragraph to the plan under "Operation Registry" or a new "Crash Recovery" section:
+
+> **Crash safety:** Every state transition is written as an append-only event to `events.ndjson` before the registry is updated. On startup, Guardian replays events with `seq > last_event_seq` to rebuild in-memory state and repair the registry. The event stream is the durable source of truth; the registry (SQLite or in-memory) is a materialized view. This means a crash during a state update leaves the registry stale but the event stream intact, and the next Guardian tick self-heals.
+
+This also kills two birds with one stone: it gives the `last_event_seq` field (already in the plan) a concrete purpose, and it means the `lock_version` concurrency field has a fallback — if two writers clash, the loser's events are still in the stream and replay catches them.
+
+---
+
+## 4. What I would explicitly avoid adding
+
+**A watchdog-for-the-Guardian daemon (meta-watchdog).**
+
+The plan already says "the live watchdog does not run as a separate timer" and "avoid duplicate scheduling loops." Adding a separate process whose job is to check whether Guardian is alive introduces a recursive problem: who watches the watcher-of-the-watcher? Systemd `Restart=always` with a sensible `RestartSec` is sufficient for v1. If Guardian hangs on a single operation's inspection, the fix is a per-operation timeout inside Guardian's loop (e.g., `supervise_tick` must complete within 60s or Guardian logs a warning and moves to the next operation), not an external supervisor process. The per-operation timeout is a ~10-line addition to the Guardian loop; the meta-watchdog is a second daemon with its own failure modes, state, and deployment surface.
+
+---
+
+**Summary:** The architecture is elegant and buildable. The failure-mode coverage is not. Fix the registry's crash safety first (append-only events as source of truth), and the rest — zombie tmux recovery, Guardian restart, disk-full detection — become operational details with a solid foundation under them. Don't add second-order daemons.

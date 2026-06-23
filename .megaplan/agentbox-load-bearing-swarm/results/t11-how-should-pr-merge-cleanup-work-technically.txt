@@ -1,0 +1,44 @@
+## Direct Answer
+
+PR/merge cleanup should be a **two-phase, approval-gated consolidation flow** built on the existing `cleanup-loose-branches` discipline. The phases are:
+
+1. **Per-operation push/PR creation (automated within policy)** — When an operation completes successfully, the system pushes the branch and opens a draft PR if the operation policy permits. The Guardian monitors CI. This is safe and reversible.
+
+2. **Batch consolidation via cleanup-loose-branches (approval-gated)** — After a batch of work accumulates, Peter (or the system prompted by a Guardian notification) invokes the cleanup discipline, which surveys all branches, worktrees, stashes, PRs, and loose remote state; classifies each item as **land** (merge to main), **delete** (prune), or **park** (keep active); and surfaces a recommendation. Destructive actions — merging PRs, deleting worktrees, pruning branches — require explicit human approval. After merge, remote branches and local worktrees are pruned.
+
+The Guardian must never silently merge PRs or delete worktrees. Those become pending approvals.
+
+## Rationale
+
+The plan already establishes the correct boundary: the Guardian is biased toward autonomous repair for operational failures, but **merge, destructive cleanup, and quality-debt acceptance are approval events**. PR merge sits squarely in that category — it's the irreversible gate where work lands on main. Batching this through cleanup-loose-branches is better than per-operation auto-merge because:
+
+- **Main-line integrity.** Landing multiple branches independently risks merge conflicts and a chaotic main history. A periodic survey lets the discipline sequence merges safely.
+- **Human review cadence.** Peter doesn't want a notification for every completed operation. A batch summary ("3 PRs ready to land, 2 stale branches to delete") is the right interaction granularity.
+- **Reuses proven mechanics.** The plan repeatedly cites `cleanup-loose-branches` as the consolidation playbook. Building a new per-operation merge policy would duplicate an existing capability.
+
+## Existing Mechanics This Depends On
+
+| Dependency | Location | Role |
+|---|---|---|
+| cleanup-loose-branches discipline | Local skill (cited in plan) | Survey/classify/approve workflow for loose state |
+| `chain/git_ops.py` | Megaplan chain layer | Branch push, PR creation, PR state tracking |
+| `supervisor/pr_merge.py` | Megaplan supervisor | Merge execution mechanics |
+| Operation registry | To be built | Tracks PR URL, PR status, CI status per operation |
+| GitHub CLI / connector | Existing Megaplan tools | PR open/update/monitor |
+| Guardian approval queue | To be built | Pending merge approvals visible in Discord |
+
+## Risks and Caveats
+
+1. **Concurrent merges on multi-repo operations.** An operation spanning `megaplan` and `reigh-app` produces two PRs. The cleanup discipline must recognize these as an atomic set — merging one without the other could leave the system in a broken state. Solution: group related PRs by operation id; land them together or not at all.
+
+2. **Bare-repo worktree removal.** Existing worktree helpers may assume a normal checkout for discovery and removal (`worktree_registered`, `remove_worktree`). If canonical repos are bare (the plan's recommendation), these helpers need bare-aware variants before cleanup can prune worktrees reliably. This is the same open risk the plan already flags.
+
+3. **CI failures break the flow.** If CI fails on a pushed branch, the cleanup discipline should not offer it for merge. The operation should stay in `blocked` status until either the Guardian launches a repair subagent or Peter intervenes. CI status must be queryable from the operation record.
+
+4. **Stale PRs accumulate if Peter is away.** The Guardian should surface a "N PRs awaiting review" summary periodically, but should not escalate to merge without approval — even if CI is green. This prevents silent landings.
+
+5. **cleanup-loose-branches may need adaptation.** The existing skill likely assumes single-repo, local-machine context. AgentBox needs it to operate across multiple repos, bare canonical mirrors, and the operation registry to correlate branches with operation records.
+
+## Concrete Design Implication
+
+**The operation registry must carry a `pr` sub-record** with at minimum: `url`, `number`, `status` (open/draft/merged/closed), `ci_status` (pending/success/failure), and `ci_url`. The cleanup discipline queries the registry (not raw `git branch -r`) to discover mergeable work. Without this, the discipline can't distinguish between "branch from completed operation with green CI" and "stale branch from abandoned experiment" — they look identical at the git level. The registry is the source of truth for what's ready to land.

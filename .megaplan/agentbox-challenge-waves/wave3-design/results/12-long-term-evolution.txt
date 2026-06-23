@@ -1,0 +1,27 @@
+**Verdict: CLEAN WITH CHANGES**
+
+The architecture is cohesive. The operation registry as center, the Guardian/Operator two-actor model, worktree-per-operation isolation, and Discord as the single-user control plane form a clean, buildable system. The reuse map is honest about what exists and what needs extraction. The single-machine constraint is the right discipline, and the plan is appropriately allergic to enterprise ceremony.
+
+But there is one real issue.
+
+---
+
+**One Most Important Design Pressure:**
+
+The extraction seam between existing Megaplan code and the new machine-scoped model is the critical path, and bare repos are the sharpest edge on it. Current worktree helpers assume a normal checkout in places (registered-worktree discovery, removal, dirty-state carry). Bare repos introduce silent hazards: `git gc` can prune objects reachable only from a worktree's detached HEAD if not configured correctly; `git worktree prune` interacts differently with bare repos; stale references accumulate differently. The plan's extraction checklist is good but undersells the bare-repo-specific risks. If the worktree parameterization ships with a single bare-repo `git gc --auto` footgun, trust in the isolation model erodes immediately. The fix is small — pin `gc.auto=0` on bare repos used for worktree hosting, and add a bare-repo worktree integrity check to the daily briefing — but the plan doesn't name this as a specific extraction deliverable.
+
+---
+
+**Concrete Plan Change:**
+
+Constrain Guardian v0 to **diagnostic-only** subagents. The acceptance criteria says "launch a repair operation or diagnostic subagent for non-trivial test/validation failures." This is ambiguous about whether the subagent can patch code autonomously. Change it to:
+
+> "For non-trivial test/validation failures, launch a **diagnostic** subagent that inspects and reports findings. The subagent must not patch code, mutate branches, or modify operation state. Based on the diagnostic report, Guardian either applies a known-safe restart path or escalates to `needs_peter` with the findings."
+
+Code-patching repair subagents are a v1 feature that should be proven in isolation before Guardian drives them autonomously. v0 Guardian's active-repair scope should be: restart dead tmux, resume stalled chains, re-run known-safe commands, and diagnose everything else. This is still useful and avoids the risk of autonomous code-churn loops consuming Peter's API budget while he sleeps.
+
+---
+
+**What I Would Explicitly Avoid Adding:**
+
+**Any form of distributed coordination.** No Redis. No message queues. No leader election. No distributed locks. The optimistic concurrency field (`lock_version`) on the operation registry is the right level of coordination for a two-actor, single-machine system. The moment someone says "what if we add a second machine later" and starts designing for it now, the system will silently accumulate Kubernetes-shaped assumptions (service discovery, consensus, failover) that are dead weight for a single user. Stay on one box. Grow vertically. Move to a bigger Hetzner dedicated server when needed. The architecture doesn't break at 50 repos or 20 concurrent operations on one machine — it breaks when you add a second machine, and that should be a deliberate, separate design exercise, not a gradual creep.

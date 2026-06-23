@@ -1,0 +1,47 @@
+## Direct Answer
+
+Peter discovers current state through **Discord-first, dual-mode access**:
+
+1. **Pull (ask):** He sends Discord messages like `"what is running?"`, `"what is blocked?"`, `"show logs for op-123"`. The Discord Operator queries the operation registry and responds inline in Discord.
+
+2. **Push (notified):** The Guardian proactively DMs Peter on meaningful state transitions — operation blocked, failed, completed, or needs approval. Completion DMs include summary, validation, branch/PR status, and recommended next action.
+
+3. **Secondary CLI:** For local access on the machine itself, `agentbox status`, `agentbox logs <op>`, and `agentbox attach <op>` provide the same registry-backed discovery without going through Discord.
+
+## Rationale
+
+The plan is unambiguous that Discord is the *primary human control surface* — the phrase "Discord-first" appears throughout. The user journey section explicitly lists discovery messages (`"what is running?"`, `"what is blocked?"`) as first-class inputs. The Operator's tool profile includes `status` and `logs` as discovery verbs, and the Guardian's responsibilities include "notify Discord when a run blocks, fails, completes, or needs human input."
+
+This is not a dashboard or TUI system. It's a conversation. Peter talks to the machine, and the machine talks back — both reactively (Operator answers questions) and proactively (Guardian pushes alerts). The CLI exists for cases where Discord is unavailable or Peter is SSH'd into the box, but it's secondary.
+
+The central enabling piece is the operation registry — both actors read the same durable state, so whether Peter asks the Operator or the Guardian volunteers information, the answer comes from one source of truth.
+
+## Existing Mechanics This Depends On
+
+- **Operation registry** (to be built) — the single source of truth both actors query.
+- **Resident Discord runtime** (`resident/discord.py`, `resident/runtime.py`) — inbound message parsing, conversation keys, outbound event routing, and DM delivery already exist.
+- **Discord Operator tool profile** — `status`, `logs`, and `guardian_check` tools that wrap registry queries.
+- **Guardian periodic loop** — classification of operations as running/stale/blocked/failed/completed, with Discord notification for meaningful state changes.
+- **Guardian tick history** — stored per-operation, so the Guardian knows what it already reported and avoids duplicate notifications.
+
+## Risks and Caveats
+
+- **Discord dependency:** If Discord is down or the resident service crashes, Peter loses the primary discovery path. Long-term, the CLI should be robust enough to serve as a fallback without requiring Discord connectivity.
+- **Notification tuning:** The plan says Guardian reports "only meaningful state changes." Getting signal-to-noise right is hard — too chatty and Peter ignores messages; too silent and Peter misses real blockers. This needs an explicit suppression/dedup policy (e.g., don't re-report the same failure if nothing changed since last tick).
+- **No persistent visual dashboard:** Peter has no always-visible summary of what's running. He must either ask or wait for a notification. A `/status` pinned message or periodic summary could fill this gap but isn't designed yet.
+- **Concurrent registry access:** Both Guardian and Discord Operator read/write the same registry. SQLite with WAL mode handles this fine, but file-based state would risk races on status updates.
+
+## Concrete Design Implication
+
+**The Discord Operator's `status` tool must return a scannable summary, not a raw data dump.** A Discord message has limited real estate. The tool should return grouped, prioritized output:
+
+```
+🟢 Running (2): op-123 (megaplan-chain, 23m), op-124 (codex, 5m)
+🟡 Blocked (1): op-120 (megaplan-chain, needs creds test)
+🔴 Failed  (1): op-119 (test, 3 failures in reigh-app)
+✅ Done    (3): op-115..op-117 (ready for cleanup)
+
+Last Guardian tick: 2m ago
+```
+
+This means the operation registry needs a query interface that supports filtering by status, sorting by recency, and efficient grouping — not just point lookups by operation ID. The Operator should compose this from registry queries rather than expecting the registry to produce Discord-formatted output directly.

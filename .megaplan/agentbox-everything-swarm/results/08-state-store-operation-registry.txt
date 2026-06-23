@@ -1,0 +1,106 @@
+I have enough from the provided excerpts. Here is the inventory.
+
+---
+
+# AgentBox Reuse Inventory — Store & State Models
+
+## 1. Store Model Registry (directly reusable)
+
+The `arnold_pipelines/megaplan/schemas/arnold.py` + `store/base.py` file pair is a **full, production-strength state model**. Every record type below has Pydantic shapes, input types, two backend implementations (JSON-file + PostgreSQL), and idempotency key support. These are the bones of AgentBox:
+
+| Domain | Models | Backend files |
+|---|---|---|
+| **Operations registry** | `Epic`, `EpicLock`, `ExecutionLease`, `ControlMessage` | `store/_db/epics.py`, `store/_file/epics.py` |
+| **Conversations (Discord-first)** | `ResidentConversation` (transport=discord, guild/channel/thread/dm IDs), `Message` (direction, discord_message_id, bot_turn_id), `BotTurn` (status, model_version, prompt_snapshot) | `store/_db/conversations.py` (lines ~140-280), `store/_file/conversations.py` (lines ~160-300) |
+| **Scheduled jobs** | `ScheduledJob` + `ScheduledJobInput` (job_type, scheduled_for, max_attempts, payload, epic_id, cloud_run_id) | In `store/base.py` (line ~500 area) |
+| **Cloud runs** | `CloudRun` + `CloudRunInput` (operation, provider, provider_run_id, command_summary, idempotency_key, started_by_actor_id) | In `store/base.py` |
+| **Confirmations / external ledger** | `ExternalRequest` (pending→confirmed→failed→orphaned lifecycle, idempotency_key, provider, attempt_count) | `store/base.py` lines ~650+ |
+| **Events / progress** | `EpicEvent` (canonical JSON/SHA256 snapshots), `ProgressEvent` + `ProgressEventInput`, `EpicSnapshot`, `SystemLog` | `store/_file/events.py`, `store/_db/events.py`, `store/snapshot.py` |
+
+## 2. The Store Contract (the interface AgentBox needs)
+
+`store/base.py` defines a Protocol `Store` (~760 lines of method signatures) covering exactly what AgentBox requires:
+
+- **Epic CRUD** — `load_epic`, `save_epic`, `update_epic`, `search_epics` with optimistic-concurrency `revision` field
+- **Lock/lease** — `acquire_lock(id, holder_id, ttl)`, `release_lock`, `acquire_lease`, `release_lease` → prevents double-execution
+- **Conversation hub** — `create_message`, `create_turn`, `search_messages`, `load_hot_context`, `find_unprocessed_messages`
+- **Job scheduling** — `create_scheduled_job`, `list_due_jobs`, `mark_job_completed`
+- **Cloud run tracking** — `create_cloud_run`, `update_cloud_run`
+- **Event journal** — `record_event(epic_id, kind, phase, payload, scope, idempotency_key)`, `events_for_epic`, `events_for_plan`
+- **External ledger** — `insert_pending` / `mark_confirmed` / `mark_failed` / `mark_orphaned` + `find_pending_external_requests` → confirmation/retry backbone
+- **Progress** — `create_progress_event`, `list_progress_events`
+- **Feedback** — `create_feedback`, `mark_resolved`, `list_active_feedback`
+
+Both backends (file and DB) implement this contract. The `multi.py` router can front either.
+
+## 3. Discord-Specific Building Blocks
+
+`resident/discord.py` + `resident/agent_loop.py` exist as a Discord resident module. Key models:
+
+```
+ResidentConversation: transport="discord", conversation_key, guild_id, channel_id, thread_id, dm_user_id
+Message: discord_message_id, direction="inbound"|"outbound", bot_turn_id, has_code_attachment, has_image_attachment
+BotTurn: triggered_by_message_ids, status="in_progress"|"completed"|"failed"|"abandoned"
+```
+
+The `find_unprocessed_messages(epic_id, started_at, exclude_ids)` method on the store contract is purpose-built for the "catch up on unread Discord messages since last turn" flow AgentBox needs.
+
+## 4. Watchdog / Guardian Repair (blocked-run relaunch)
+
+`watchdog/` implements the exact Guardian repair loop AgentBox describes:
+
+| File | Role |
+|---|---|
+| `watchdog/signals.py` | Detects blocked/abandoned states |
+| `watchdog/correlate.py` | Correlates processes to plans |
+| `watchdog/repair_runner.py` | Executes repair actions |
+| `watchdog/retry.py` | Retry logic with backoff |
+| `watchdog/snapshot.py` | State snapshot before repair |
+
+`scripts/simulate_watchdog_end_to_end.py` is a complete e2e simulation: creates a synthetic blocked plan, runs watchdog, verifies repair → relaunch → recheck.
+
+## 5. Chain/Pipeline Orchestration (epic→ticket→PR flow)
+
+`chain/` and `supervisor/` implement the "start tickets from Discord, push/PR completed work" pipeline:
+
+| File | Role |
+|---|---|
+| `chain/spec.py` | Chain YAML spec |
+| `supervisor/chain_runner.py` | Executes chain stages |
+| `chain/git_ops.py` | Branch/commit/PR |
+| `chain/m3_dual_green.py` | Pre-merge gates |
+| `scripts/chain_done_gate.py` | Milestone completion gating |
+
+## 6. Cloud Run Infrastructure
+
+`cloud/` provides multi-provider cloud run templates (Railway, SSH, local) with Dockerfile, docker-compose, healthserver, and wrapper scripts (`arnold-run`, `arnold-chain`, `arnold-supervise`, `arnold-heartbeat`). The `CloudRun` model tracks provider, run ID, and lifecycle.
+
+## 7. Subagent Dispatch (DeepSeek/subagent use)
+
+Two skill families exist:
+
+- **`kanban-orchestrator`** — Decomposition playbook, specialist roster, anti-temptation rules ("decompose, don't execute"). Parent/child task dependencies with auto-promotion.
+- **`kanban-worker`** — Worker lifecycle (orient→work→heartbeat→block/complete), workspace types (scratch/dir/worktree), retry diagnostics, tenant isolation.
+- **`subagent-driven-development`** — Fresh `delegate_task` per task, two-stage review (spec compliance → code quality), integration review. Directly supports "DeepSeek/subagents can be used" requirement.
+
+## 8. Gaps for AgentBox
+
+| Gap | Severity | Notes |
+|---|---|---|
+| No Discord bot gateway in local skills/files | **High** | `resident/discord.py` exists in the repo but is not a local skill. Need a `discord-gateway` skill wrapping it. |
+| No "start from Discord message" trigger | **High** | The message/turn models exist but no skill chains Discord event → epic creation → ticket → fanout. The resident module likely has this; not surfaced as a skill. |
+| No consolidated PR/push workflow skill | **Medium** | `chain/git_ops.py` + `supervisor/pr_merge.py` exist but nothing wraps the full "completed → git branch → PR → merge → milestone advance" flow into a named skill. |
+| No unified AgentBox skill | **Low** | Just needs composition of what already exists. |
+| Cloud run confirmation polling | **Low** | `ExternalRequest` model handles confirmations generically; no cloud-specific polling skill. |
+
+## 9. Concrete Recommendation
+
+**Build AgentBox as a composition skill** that wires together five existing subsystems:
+
+1. **Entry** — Discord message → `ResidentConversation` + `Message` → `BotTurn` (reuse `resident/`)
+2. **Registry** — Ticket → Epic → Sprint decomposition (reuse `store/` + `tickets/` + `kanban-orchestrator`)
+3. **Fanout** — `kanban_create` with parent/child DAG for parallel workstreams
+4. **Guardian** — `watchdog/repair_runner.py` for blocked-run detection + relaunch
+5. **Completion** — `supervisor/chain_runner.py` → `chain/git_ops.py` → PR → milestone gate (`chain_done_gate.py`)
+
+The store models (`schemas/arnold.py` + `store/base.py`) are the single most valuable reusable asset — they cover every domain object AgentBox needs (operations, conversations, jobs, runs, confirmations, events) with dual-backend persistence, idempotency, and optimistic concurrency already built.

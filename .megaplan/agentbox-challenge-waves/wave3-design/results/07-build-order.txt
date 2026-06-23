@@ -1,0 +1,25 @@
+## Verdict: **CLEAN WITH CHANGES**
+
+The architecture is sound — operation registry as center, Guardian/Operator separation, reuse of existing Megaplan substrate. But the phase ordering risks a big-bang reveal where five infrastructure phases deliver zero user-visible value before Phase 6 finally exposes the control plane. For a single-user system, that's the wrong build order.
+
+---
+
+## Design Pressure
+
+**Infrastructure-first phasing vs. value-first product slice.** The plan's "Revised First Product Slice" puts Discord Operator at step 2 (right after registry). The "Implementation Phases" push it to Phase 6. These are contradictory. The build order serves dependency resolution, not user feedback. For one user with existing Megaplan code on disk, you can interleave thin interaction with infrastructure instead of stacking all foundation before any surface.
+
+---
+
+## Concrete Change
+
+**Collapse the thin Discord path into Phase 2-3, not Phase 6.** After bootstrap (Phase 1), the next deliverable should combine a minimal operation registry *plus* a thin Discord path that can answer "what is running?" and launch a single chain. The plan already defines the thin path scope:
+
+> add a ticket; run a chain; what is running/blocked; show logs; completion DM
+
+That's five capabilities. Move them to Phase 2, using the existing resident runtime skeleton. The full natural-language Operator profile can still mature in Phase 6, but the thin path proves the loop early and catches integration problems (Discord auth, store writes, tmux session naming) before five more phases are built on top of unvalidated assumptions.
+
+---
+
+## Explicitly Avoid
+
+**Building a standalone worktree service (Phase 2) and standalone credential sync (Phase 4) as separate deliverable phases before any user-visible operation loop exists.** The worktree extraction is necessary work — parameterizing those helpers is the right move. But it should be pulled forward only when a concrete operation kind (megaplan_chain) needs it, not speculatively. Same for credential sync: implement the minimum `creds test` that the chain-launch path needs, not the full push/list/rotate surface. These are internal seams, not user-facing deliverables. Treating them as phases inflates the plan with infrastructure ceremony that a single-user system doesn't need.

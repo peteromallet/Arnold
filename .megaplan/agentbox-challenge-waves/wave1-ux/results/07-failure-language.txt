@@ -1,0 +1,168 @@
+# AgentBox Failure and Recovery Language Review
+
+## 1. Verdict
+
+**FITS WITH CHANGES**
+
+The plan architecturally aligns with the desired failure experience. H10, H5, and A7 collectively state the right goal: tell Peter what failed, what was tried, what evidence was used, and what input is needed. But the plan stops at principle. There is no concrete contract, schema, escalation policy, or message template to ensure the implementation actually delivers that experience. The gap is between intent and specification.
+
+---
+
+## 2. Top 5 Material Gaps
+
+### Gap 1: No failure-notification content contract or template
+
+**Why it matters:** H10 describes *what failure should feel like* in human terms ("say what failed, what it tried, what evidence it used, and what exact decision/input it needs"), but the plan contains zero specification for how a Guardian or Operator notification actually assembles those pieces. Without a shared contract, the Discord Operator and Guardian will produce inconsistent messages — some will dump raw logs, some will give vague "something went wrong" messages, none will reliably deliver the four-part structure the plan promises. The good intentions don't survive implementation without a template.
+
+### Gap 2: No structured failure event in the operation record or event stream
+
+**Why it matters:** The plan defines `events.ndjson` as part of the operation contract and lists lifecycle/phase/heartbeat/action/outcome event types, but "repair attempt" and "escalation to human" are not first-class event types. If Guardian's repair attempts are only recorded as free-text in `log.txt`, then (a) the Operator cannot programmatically extract "what Guardian tried" when Peter asks, and (b) the eventual failure message has no machine-readable source for the "attempted repair" section. Structured repair-attempt and escalation events are the plumbing that make the H10 promise deliverable.
+
+### Gap 3: "Notify Discord only when useful" is undefined and risks silent failures
+
+**Why it matters:** The Guardian section says "notify Discord only when useful," while H4 says "only meaningful state changes: blocked, repaired, failed after retries, completed, needs credential, or needs judgement." These statements are in tension. What counts as "useful" vs. a "meaningful state change"? If Guardian silently retries three times over 45 minutes and then succeeds, was that useful to notify? What if it retries five times and fails? There is no escalation threshold, no maximum-silent-repair-attempts policy, and no "I'm still working on it" heartbeat. This risks a system where Guardian burns time on repair attempts Peter would have short-circuited with a credential or decision, because Peter never knew anything was wrong.
+
+### Gap 4: The "exact input Peter needs" specification is credential-specific but not generalized
+
+**Why it matters:** The one concrete example of a good failure message is the credential case: "notify Peter with the exact missing credential and the `agentbox creds push/test` command." This is excellent and specific. But the plan does not extend the same specificity to the other approval gates: merge conflict choices, ambiguous product decisions, destructive cleanup confirmations, or accepting quality debt. For each of those, what exact information does Peter need to make the decision without inspecting raw state? The plan defines *when* to ask but not *what* to include in the ask.
+
+### Gap 5: No Operator tool for interrogating Guardian repair history
+
+**Why it matters:** A10 says the Operator should "inspect state or launch a narrow diagnostic subagent before asking Peter." But there is no tool on the Operator's tool list (status, logs, guardian_check, creds_test) that retrieves "what Guardian tried and why it gave up." If Peter sends "what's wrong with op-123?", the Operator needs to answer with Guardian's diagnosis, repair attempts, and escalation reason — not just tail the raw log. Without a structured repair-history accessor, the Operator cannot deliver the H10 experience when responding to a user query.
+
+---
+
+## 3. Exact Plan Changes Recommended
+
+### Change A: Add a failure-notification content contract
+
+Add under the **Guardian Finds A Blocker** section, after the bullet list, a concrete notification template:
+
+```markdown
+### Failure Notification Content Contract
+
+When Guardian or Operator notifies Peter about a blocked or failed operation,
+every notification MUST include these four sections:
+
+1. **What failed:** The operation id, kind, and the specific failure classification
+   (e.g., "op-456 megaplan_chain: tests failed at step 3/7").
+
+2. **What evidence:** The decisive signal that triggered the classification
+   (e.g., "pytest exit code 1, 3 of 47 tests failed, last passing heartbeat
+   was at 14:22 UTC").
+
+3. **What was attempted:** A numbered list of repair actions taken, with outcomes
+   (e.g., "1. Restarted tmux session — session recovered but tests still fail.
+   2. Launched repair subagent op-457 — subagent identified `test_auth.py`
+   assertion mismatch. 3. Could not determine correct assertion without
+   product context.").
+
+4. **What Peter needs to provide:** The exact decision or input, phrased as a
+   concrete question or command (e.g., "Should `test_auth.py:42` expect
+   `403` or `401` for expired tokens? Reply with the expected status code
+   or 'inspect yourself' to let the repair subagent examine the spec.").
+
+Notifications that cannot populate all four sections should explicitly note the
+missing section and explain why (e.g., "No repair attempted: credential missing,
+cannot proceed").
+```
+
+### Change B: Add `repair_attempt` and `escalated` event types to the operation event contract
+
+In the **Process Runner** section, where `events.ndjson` is described, add:
+
+```markdown
+The `events.ndjson` stream MUST include these event types for failure and
+recovery:
+
+- `repair_attempt`: {attempt_number, strategy, outcome, evidence_summary, timestamp}
+- `escalated`: {reason, evidence_summary, repair_attempts_summary, required_input, timestamp}
+- `resumed`: {after_repair_attempt, timestamp}
+- `abandoned`: {reason, final_state, timestamp}
+
+These events are the machine-readable source for the four-part failure
+notification contract. The Operator's `guardian_check` tool reads and formats
+the most recent `repair_attempt` and `escalated` events for the operation.
+```
+
+### Change C: Define an escalation policy with explicit thresholds
+
+Add a new subsection under **Guardian Daemon → Safe actions**:
+
+```markdown
+### Escalation Policy
+
+Guardian MUST escalate to Discord when:
+
+- An operation enters `blocked` or `failed` state AND no known-safe repair path
+  applies (notify immediately).
+- Three consecutive repair attempts fail for the same root cause (notify after
+  the third, with repair history).
+- An operation has been in `blocked` or `failed` state for more than 30 minutes
+  regardless of repair activity (notify with a "still blocked" update).
+- A credential, approval, or product decision is required (notify immediately
+  with the four-part contract).
+
+Guardian MUST NOT notify Discord for:
+
+- A single repair attempt that succeeds and resumes the operation.
+- Transient failures that self-resolve within one Guardian tick.
+- Routine heartbeat or "still running" status unless explicitly requested.
+```
+
+### Change D: Generalize the "exact input" pattern to all approval gates
+
+Under **Approval And Safety → Build**, add:
+
+```markdown
+### Approval Request Content Contract
+
+When the system creates a pending approval that requires Peter's input, the
+Discord notification MUST include:
+
+1. **Context:** What operation and what gate (merge, cleanup, credential, debt,
+   product choice).
+2. **Evidence:** The specific state that triggers this gate (e.g., "branch
+   `agent/op-123` has 3 commits ahead of main, CI passed, but 2 of 47 tests
+   were skipped").
+3. **Options:** Concrete choices Peter can make, each with the system's
+   recommendation and consequence (e.g., "A) Merge to main anyway — skips 2
+   edge-case tests. B) Launch repair subagent to fix skipped tests — est. 5-10
+   min. C) Abandon and archive — worktree deleted, branch kept.").
+4. **Default:** What happens if Peter does not respond within the approval
+   expiry window.
+```
+
+### Change E: Add a `repair_history` accessor to the Operator tool profile
+
+In the **Discord Operator → Build commands** list, add:
+
+```markdown
+- `diagnose <operation>`: returns Guardian's most recent diagnosis, repair
+  attempt history, and escalation reason, formatted per the four-part failure
+  notification contract. This is the Operator's tool for answering "what's
+  wrong with op-X?" without dumping raw logs.
+```
+
+---
+
+## 4. What the Plan Already Covers and Should Not Change
+
+These elements are correctly specified and need no modification:
+
+| Element | Why it's correct |
+|---|---|
+| **H10 principle** ("say what failed, what it tried, what evidence, what input") | The right goal. The gaps above are about *how*, not *what*. |
+| **Autonomous repair bias** (H2, H5, A12: "figure out what's wrong and fix it") | Correct posture. Escalation should be the exception, not the default. |
+| **Completion DM format** (summary, validation, branch/PR, next action) | Well-specified and concrete. This is the template the failure messages should match in specificity. |
+| **Credential-specific failure message example** ("exact missing credential and the `agentbox creds push/test` command") | The gold standard for "exact input needed." The gap is only that this specificity isn't generalized to other gates. |
+| **A7 log handling** ("summarize logs by default, extract decisive error and recovery attempt history") | Correct principle. The gap is that no tool or event schema enforces this extraction. |
+| **A12 undesirable behaviors** ("passive reporting of recoverable failures, noisy updates") | Correct guardrails. The escalation policy (Change C) gives these teeth. |
+| **Separate Guardian/Operator processes with registry-only handoff** (T6, A11, Resolution 7) | Correct architecture. Avoids event-loop coupling and keeps failure communication clean. |
+| **cleanup-loose-branches as the consolidation mechanism** | Correct; no failure-language issue here. |
+
+---
+
+## Summary
+
+The plan's failure and recovery philosophy is correct. The gap is that good intentions are stated as human-experience goals without the concrete contracts, event schemas, escalation thresholds, and Operator tools needed to make those goals mechanically deliverable. Five targeted additions (a notification template, structured failure events, an escalation policy, generalized approval-ask contract, and a `diagnose` Operator tool) close the gap without architectural changes.

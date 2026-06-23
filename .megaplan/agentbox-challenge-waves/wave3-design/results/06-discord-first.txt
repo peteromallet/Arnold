@@ -1,0 +1,70 @@
+# Wave 3 Review — Discord First Product Shape
+
+## 1. Verdict
+
+**CLEAN WITH CHANGES**
+
+The architecture is solid and appropriately simple for one user. The reuse strategy is correct. The operation registry is the right center. But the design has a product-shape tension that needs resolving before build: it describes **two co-equal interfaces** that mirror each other, which means neither is truly first-class. The CLI surface section is a parallel feature, not a subordinate tool.
+
+---
+
+## 2. The One Most Important Design Pressure
+
+**The plan treats Discord as a command surface when it should treat it as a conversation.**
+
+Evidence — the Discord command equivalents section:
+
+```
+/status
+/repos
+/run megaplan fix the ssh cloud provider
+/logs op-123
+/approve conf-456
+/stop op-123
+/cleanup op-123
+```
+
+These are slash commands. They are CLI commands with a `/` prefix. The plan *explicitly says* "natural-language Discord messages are enough for v1; slash commands can come later" — but then includes slash commands as the primary examples and structures the intent classification table as a dispatch router.
+
+A conversation-first shape looks different. Peter says "hey, what's going on?" The bot says "three operations running: op-123 is on phase 4/7 of the ssh fix, op-124 is waiting for credentials, op-122 just finished. Want details on any of them?" Peter says "did op-122 pass tests?" The bot says "yes, all green. Branch is `agent/op-122`. Want me to open a PR?" Peter says "yeah, draft PR to main." The bot says "done: https://github.com/…/pull/456. I'll watch CI."
+
+That is a thread. That is product. The current plan has the *pieces* — pending questions, approval matching, conversation scope — but the structural weight is on command routing, not conversational product.
+
+**The ratio tells the story:** ~200 words on product shape, ~5000 words on infrastructure. The design knows what it wants to build but not what it wants to *be*.
+
+---
+
+## 3. Concrete Plan Change
+
+**Demote the CLI to an engineering surface. Commit to natural-language conversation as the only Discord interface for v0/v1.**
+
+Specific edits:
+
+1. **Delete the "Discord command equivalents" slash-command table.** Replace it with 2-3 annotated conversational threads showing the full interaction model: Peter describes work → bot clarifies → work launches → Guardian notifies in-thread → Peter approves or redirects conversationally.
+
+2. **Relabel the CLI surface section.** Add a header like "CLI (Engineering/Debug Interface)" with a note: *"The CLI exists for bootstrap, machine provisioning, and debugging. The primary product interface is Discord conversation. No feature is considered complete until it works conversationally."*
+
+3. **Add a "Conversation Model" section before "Operator Intent Classification."** It should specify:
+   - Every interaction is a turn in a persistent thread (DM or channel thread).
+   - The bot maintains conversational state: what was just discussed, what was asked, what Peter was about to decide.
+   - The bot should ask clarifying questions with concrete options, not wait for Peter to guess the right command syntax.
+   - Completion notifications go to the **originating thread**, not a generic channel. The thread is the unit of work context.
+   - Guardian notifications for an operation thread back to that operation's thread.
+
+4. **Reframe the intent classification table as "classification guidance," not "command routing."** The table is useful for the agent to understand what tools to reach for. But it must not prevent the agent from asking a clarifying question, suggesting an alternative, or handling a compound request conversationally. Add a rule: *"If the classification is ambiguous or the agent could take two different reasonable actions, ask before acting."*
+
+---
+
+## 4. What I Would Explicitly Avoid Adding
+
+**A slash-command registry.**
+
+Do not build `/status`, `/run`, `/logs`, `/approve` as registered Discord slash commands for v0 or v1. Once slash commands exist, they become the permanent UI — Peter will type them, the product team will document them, and the conversational surface will atrophy. The natural-language path will be seen as "nice to have" rather than the product.
+
+The system should accept natural language from day one. "What's running?" not `/status`. "Run the ssh fix chain" not `/run megaplan fix the ssh cloud provider`. "Show me op-123 logs" not `/logs op-123`. "Yeah, push it" not `/approve conf-456`.
+
+If Discord slash commands are ever added, they should come *after* the conversational interface is proven and stable, and they should be thin convenience wrappers that decompose to the same natural-language agent path — not a parallel command dispatch.
+
+---
+
+**Summary:** The architecture is right. The reuse strategy is right. The operation registry is right. But the product shape needs a single decision: **is Discord a conversation or a command line?** The plan currently says "conversation" in prose and "command line" in structure. Pick conversation and remove the command-line shadow.

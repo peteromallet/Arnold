@@ -1,0 +1,152 @@
+# Wave 1 UX Review: Notification Noise and Attention
+
+## 1. Verdict
+
+**FITS WITH CHANGES**
+
+The principles are sound — the plan correctly identifies that routine heartbeats should be pull-only, that recoverable failures should not generate notifications, and that Guardian should repair-first, notify-second. But the notification pipeline has five material gaps that, if unaddressed, would produce either noise fatigue or anxious silence in practice.
+
+---
+
+## 2. Top 5 Material Gaps
+
+### Gap 1 — "Blocked" notification fires at the wrong time
+
+**Where:** Guardian responsibilities say "notify Discord when a run blocks, fails, completes, or needs human input." The notification event table lists `operation blocked`.
+
+**Problem:** H5 says Guardian should diagnose, try repair, use subagents, and "only DM Peter when it cannot proceed safely." But "blocked" as an event type doesn't distinguish *blocked-before-repair* from *blocked-after-repair-exhausted*. If Guardian fires `operation blocked` the moment it detects a dead tmux session, Peter gets a notification for something Guardian is about to fix silently. This is the most common source of notification noise in supervisor systems.
+
+**Why it matters:** A single-user system running multiple concurrent operations will generate transient blocks regularly. Notifying on every block-before-repair turns the DM channel into a firehose and trains Peter to ignore it.
+
+### Gap 2 — No notification during Guardian's repair loop
+
+**Where:** The plan says Guardian should diagnose, try safe recovery, launch subagents, relaunch, and record what it did — but "notify Discord only when useful" is the sole guidance on when repair progress warrants a message.
+
+**Problem:** A repair loop that takes 5–15 minutes (subagent diagnosis, code fix, relaunch, recheck) produces radio silence. Peter might check manually, launch a competing repair, or lose trust that the system is still working. There is no defined "I'm on it" notification threshold.
+
+**Why it matters:** The inverse of noise is anxious silence. A repair that takes 3+ Guardian ticks with no update makes the system feel dead. A single "repair in progress" message with a concrete diagnosis is not noise — it's a trust signal.
+
+### Gap 3 — No notification coalescing or severity model
+
+**Where:** The notification event table is a flat list: `operation started`, `operation blocked`, `approval needed`, `operation completed`, `operation failed`, `disk/memory warning`, `dirty/unpushed branch warning`.
+
+**Problem:** Nothing addresses what happens when multiple events fire in the same Guardian tick or Discord Operator turn. Three operations completing in one window = three DMs? Guardian finds a disk warning AND two blocked operations = three separate pings? For a single-user Discord experience, notification storms are the fastest path to mute/ignore.
+
+**Why it matters:** A 15-minute Guardian cadence could realistically produce 3–5 state changes across active operations. Without coalescing (one digest DM per tick), Peter gets notification fragmentation that undermines the "only meaningful changes" principle.
+
+### Gap 4 — "Operation started" lacks a DM-vs-channel delivery rule
+
+**Where:** The notification event table lists `operation started`. H3 defines good content for the start message. The user journey says Peter sends a Discord message and the bot replies.
+
+**Problem:** The plan never specifies whether `operation started` fires as a DM, as a reply in the same channel, or both. If Peter launches work from a channel and gets the start confirmation as a DM, context is split. If the bot replies in-channel and Guardian later DMs about completion, Peter has two notification surfaces to watch.
+
+**Why it matters:** Consistent delivery surface is load-bearing for attention. A single-user system should pick one notification channel and stick to it, or define clear rules for which events go where.
+
+### Gap 5 — "Dirty/unpushed branch" warning has no trigger gating
+
+**Where:** The notification event table includes `dirty/unpushed branch warning`.
+
+**Problem:** If Guardian checks every operation every tick and emits this warning whenever a branch has unpushed commits, Peter gets this on every tick for every active operation that hasn't been pushed yet — which is essentially all running operations. The plan correctly identifies push/PR as something that can be automated by policy (see Final Shape #9), making this warning redundant for operations with auto-push. Even without auto-push, warning while an operation is still actively committing is noise; this should fire at completion or after N ticks of idle-with-unpushed-commits.
+
+**Why it matters:** This is the most concrete example of a notification that the plan's own principles should suppress but doesn't yet.
+
+---
+
+## 3. Exact Plan Changes
+
+### Change 1 — Replace "blocked" with two distinct notification events
+
+**Edit the notification event table in section 9 (Discord Operator):**
+
+Replace:
+```
+- operation blocked;
+```
+With:
+```
+- operation blocked (unrecoverable — Guardian repair exhausted, needs human);
+```
+
+**Add to Guardian section 8 under "Safe actions" vs "Unsafe actions":**
+
+Add this bullet to clarify the notification gate:
+```
+- Guardian must not notify on a block that it is actively repairing.
+  A block notification fires only after the repair loop (including
+  subagent diagnosis) has exhausted safe recovery paths.
+```
+
+### Change 2 — Add a "repairing" progress notification
+
+**Add to Guardian section 8, after the repair loop description:**
+
+```
+- If a repair attempt spans more than one Guardian tick (e.g., subagent
+  diagnosis + code fix + relaunch), Guardian should send a single
+  "repair in progress" DM with: operation id, classified cause, repair
+  action taken, and expected next check. Do not repeat on subsequent
+  ticks unless the diagnosis or action changes materially.
+```
+
+**Add to notification event table in section 9:**
+
+```
+- repair in progress (fired once per repair attempt, not per tick);
+```
+
+### Change 3 — Add notification coalescing rule
+
+**Add to section 9 (Discord Operator), before the notification event list:**
+
+```
+- All Guardian-triggered notifications from a single tick should be
+  coalesced into one DM (a "Guardian digest") rather than sent as
+  individual messages. The digest should group events by severity:
+  needs-human, completed, failed, warning. If no events require
+  Peter's attention, Guardian sends nothing.
+```
+
+### Change 4 — Define notification delivery surface
+
+**Add to section 9 (Discord Operator):**
+
+```
+- Delivery rules:
+  - Interactive replies (status, logs, run confirmation) go to the
+    same channel/DM where Peter sent the triggering message.
+  - Guardian notifications (blocked-unrecoverable, completed, failed,
+    approval-needed, repair-progress) are always DMs.
+  - Warnings (disk/memory) are DMs, coalesced into the Guardian digest.
+  - "Operation started" fires in the channel where the launch was
+    requested, not as a DM.
+```
+
+### Change 5 — Gate the "dirty/unpushed branch" warning
+
+**Edit the notification event table in section 9:**
+
+Replace:
+```
+- dirty/unpushed branch warning;
+```
+With:
+```
+- dirty/unpushed branch warning (only at operation completion or after
+  N consecutive Guardian ticks with unpushed commits and no active
+  agent process; suppressed for operations with auto-push policy);
+```
+
+---
+
+## 4. Things Already Covered — Do Not Change
+
+| Principle | Where it lives | Status |
+|---|---|---|
+| "Routine heartbeats should be available on request, not noisy by default" | H4 | ✅ Correct, do not touch |
+| Guardian should repair-first, notify-second | H5, Guardian responsibilities | ✅ Correct, do not touch |
+| "Passive reporting of recoverable failures" is explicitly undesirable agent behavior | A12 | ✅ Correct, do not touch |
+| Failure messages must include: what failed, what was tried, evidence, and exact decision needed | H10 | ✅ Correct, do not touch |
+| Completion DM content: summary, validation, branch/PR, suggested next action | H6, section 5 | ✅ Correct, do not touch |
+| Guardian and Operator share state via registry only, no direct IPC | Final Shape #7, validation adjustment | ✅ Correct, do not touch |
+| "Approval needed" as a distinct notification type | Notification event table | ✅ Correct; the gating is right, just needs coalescing |
+| "Disk/memory warning" as a notification | Notification event table | ✅ Correct for a persistent machine; just needs coalescing |

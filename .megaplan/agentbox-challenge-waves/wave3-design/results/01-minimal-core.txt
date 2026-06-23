@@ -1,0 +1,66 @@
+# Wave 3 Review: Minimal Core — DeepSeek Lens
+
+I've read the full updated plan. Here is my strict review.
+
+---
+
+## 1. Verdict: **CLEAN WITH CHANGES**
+
+The core architecture — operation registry → adapters → Guardian + Discord Operator sharing the same store — is **elegant and buildable**. It is the right minimal core. The plan correctly identifies that the operation registry is the missing center, that adapters should wrap existing code rather than rewrite it, and that two processes sharing one store is simpler than a single event-loop monolith.
+
+The problem is **the plan does not trust its own architecture**. It keeps adding ceremonial infrastructure to v0 that the core pattern doesn't need yet, while simultaneously gate-keeping implementation behind an extraction audit that could run for weeks without a single running process.
+
+---
+
+## 2. The One Most Important Design Pressure
+
+**The extraction checklist as a gate vs. the "prove the loop first" instinct.**
+
+The plan says:
+
+> "Do not rewrite `cloud/supervise.py`. Wrap `cloud_supervise_tick()` as the first classifier/action plugin."
+
+But also:
+
+> "Extraction Checklist Before Implementation: 8 high-value code-inspection tasks before writing the first AgentBox module."
+
+These are in direct tension. You cannot wrap existing code *and* require a full parameterization audit before writing a single line. The extraction work is real — worktree helpers are cwd-scoped, cloud supervise mixes provider and classification logic, tmux session names are hardcoded — but the way to discover what actually needs extraction is to **write the adapter, hit the wall, and extract only then**. The checklist is architecture by anticipation; the adapter is architecture by confrontation.
+
+The design pressure is: **will the extraction list grow unbounded, or will the team ship a running loop and let the code tell them what needs generalization?**
+
+---
+
+## 3. Concrete Plan Change
+
+**Remove the extraction checklist as a prerequisite phase. Move each item into the adapter work where it is actually needed.**
+
+The plan already has the right instinct:
+
+> "AgentBox should add thin extraction layers before building new behavior on top of them."
+
+But "extraction layers" should be the adapter itself. The first `MegaplanChainAdapter.launch()` should call the existing worktree and chain code *as-is*, even if it means temporarily hardcoding paths, assuming a normal checkout, or importing from `arnold_pipelines.megaplan.bakeoff.worktree` with an ugly `sys.path` hack. Ugly is fine for v0. The adapter proves what needs extraction by failing at runtime on the real box, not by code audit.
+
+Specific change: **Collapse extraction into the adapter implementation phase.** Each adapter's first working version is the extraction audit. When `create_worktree` crashes because it assumes `os.getcwd()`, that is when you parameterize it — not before. This cuts the pre-work phase to zero and gets a running loop faster.
+
+---
+
+## 4. What I Would Explicitly Avoid Adding
+
+**The intent classification table (10 intents) in v0 of the Discord Operator.**
+
+The plan says:
+
+> "Every Discord message is classified before tools run. The classification should be explicit in the Operator profile rather than left to generic agent instinct."
+
+This is ceremony for one user. Peter knows what he wants. The Operator is an agent with tools. Natural language already handles all 10 intents without a classification layer between the message and the tool dispatch. The classification table adds:
+
+- A new code path to maintain.
+- A new failure mode (misclassified intent → wrong tool → confusing reply).
+- A new testing surface (10 intents × N message phrasings).
+- A false sense of control — the LLM will still route messages, the table just makes it feel deterministic.
+
+For v0, drop the classification table. The Operator profile gets: the message, conversation context, tools, and instructions to "do what Peter asked or ask one clarifying question." If routing errors are a real problem in practice, add classification later with data from real failures. Premature classification is the enterprise ceremony the plan correctly wants to avoid.
+
+---
+
+**Summary:** The architecture is right. The scope discipline is not. Ship the loop, let the code teach you what needs extraction, and resist the urge to classify before you route.

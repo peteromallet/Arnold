@@ -1,0 +1,901 @@
+# High-signal symbol matches
+scripts/check_workflow_pipeline_inventory.py:92:    "arnold_pipelines/megaplan/pipelines/epic_blitz.py": {
+scripts/check_workflow_pipeline_inventory.py:104:    "arnold/pipelines/epic_blitz": {
+scripts/check_workflow_pipeline_inventory.py:120:    "arnold/pipelines/briefs": {
+scripts/check_workflow_pipeline_inventory.py:165:    "arnold_pipelines/megaplan/pipelines/epic-blitz": {
+scripts/check_workflow_pipeline_inventory.py:201:    "arnold/pipelines/epic_blitz",
+scripts/check_workflow_pipeline_inventory.py:205:    "arnold/pipelines/briefs",
+scripts/check_workflow_pipeline_inventory.py:208:    "arnold_pipelines/megaplan/pipelines/epic_blitz.py",
+scripts/check_workflow_pipeline_inventory.py:209:    "arnold_pipelines/megaplan/pipelines/epic-blitz",
+scripts/check_workflow_pipeline_inventory.py:231:    "docs/arnold/arnold-megaplan-cleanup-plan.md",
+scripts/check_workflow_pipeline_inventory.py:232:    "docs/arnold/arnold-megaplan-subagent-review-synthesis.md",
+scripts/check_workflow_pipeline_inventory.py:243:def _normalize_root(path: Path) -> str:
+scripts/check_workflow_pipeline_inventory.py:247:def _discover_shipped_roots() -> list[Path]:
+scripts/check_workflow_pipeline_inventory.py:260:def _is_archival(path: Path) -> bool:
+scripts/check_workflow_pipeline_inventory.py:268:def _check_forbidden_strings(path: Path) -> list[str]:
+scripts/check_workflow_pipeline_inventory.py:281:def _check_forbidden_doc_strings(path: Path) -> list[str]:
+scripts/check_workflow_pipeline_inventory.py:294:def _python_files_under(root: Path) -> list[Path]:
+scripts/check_workflow_pipeline_inventory.py:300:def main(argv: list[str] | None = None) -> int:
+arnold_pipelines/megaplan/store/snapshot.py:1:"""Canonical epic snapshot helpers shared by store backends."""
+arnold_pipelines/megaplan/store/snapshot.py:13:def _canonicalize(value: Any) -> Any:
+arnold_pipelines/megaplan/store/snapshot.py:25:def canonical_json_dumps(value: Any) -> str:
+arnold_pipelines/megaplan/store/snapshot.py:30:def canonical_sha256(value: Any) -> str:
+arnold_pipelines/megaplan/store/snapshot.py:34:class SnapshotStore(Protocol):
+arnold_pipelines/megaplan/store/snapshot.py:35:    def load_epic(self, epic_id: str) -> Any | None:
+arnold_pipelines/megaplan/store/snapshot.py:38:    def load_body(self, epic_id: str) -> str:
+arnold_pipelines/megaplan/store/snapshot.py:41:    def list_checklist_items(self, epic_id: str, *, status: str | None = None) -> list[Any]:
+arnold_pipelines/megaplan/store/snapshot.py:44:    def list_sprints(self, epic_id: str, *, status: str | None = None) -> list[Any]:
+arnold_pipelines/megaplan/store/snapshot.py:47:    def list_sprint_items(self, sprint_id: str) -> list[Any]:
+arnold_pipelines/megaplan/store/snapshot.py:50:    def list_images(self, *, epic_id: str, source: str | None = None, active: bool | None = True) -> list[Any]:
+arnold_pipelines/megaplan/store/snapshot.py:53:    def list_second_opinions(self, epic_id: str, *, limit: int | None = None) -> list[Any]:
+arnold_pipelines/megaplan/store/snapshot.py:57:def _model_json(value: Any) -> dict[str, Any]:
+arnold_pipelines/megaplan/store/snapshot.py:63:def capture_epic_snapshot(store: SnapshotStore, epic_id: str) -> EpicSnapshot:
+arnold_pipelines/megaplan/store/snapshot.py:64:    epic = store.load_epic(epic_id)
+arnold_pipelines/megaplan/store/snapshot.py:65:    if epic is None:
+arnold_pipelines/megaplan/store/snapshot.py:66:        raise FileNotFoundError(epic_id)
+arnold_pipelines/megaplan/store/snapshot.py:68:        store.list_checklist_items(epic_id),
+arnold_pipelines/megaplan/store/snapshot.py:72:        store.list_sprints(epic_id),
+arnold_pipelines/megaplan/store/snapshot.py:80:        store.list_images(epic_id=epic_id, active=None),
+arnold_pipelines/megaplan/store/snapshot.py:84:        store.list_second_opinions(epic_id, limit=None),
+arnold_pipelines/megaplan/store/snapshot.py:89:        for part in (epic.title, epic.goal, store.load_body(epic_id))
+arnold_pipelines/megaplan/store/snapshot.py:93:        epic_id=epic_id,
+arnold_pipelines/megaplan/store/snapshot.py:94:        revision=epic.revision,
+arnold_pipelines/megaplan/store/snapshot.py:95:        epic=_model_json(epic),
+arnold_pipelines/megaplan/store/snapshot.py:96:        body=store.load_body(epic_id),
+scripts/chain_done_gate.py:18:def _chain_state_path_for(spec_path: Path) -> Path:
+scripts/chain_done_gate.py:25:        / ".chains"
+scripts/chain_done_gate.py:30:def _load_json(path: Path) -> dict[str, Any]:
+scripts/chain_done_gate.py:42:def _load_yaml(path: Path) -> dict[str, Any]:
+scripts/chain_done_gate.py:52:def _milestone_labels(spec: dict[str, Any]) -> list[str]:
+scripts/chain_done_gate.py:55:        raise ValueError("chain spec must contain a milestones list")
+scripts/chain_done_gate.py:64:def _plans_root_candidates(
+scripts/chain_done_gate.py:95:def _read_plan_state(plan_name: str, plans_roots: list[Path]) -> tuple[Path | None, dict[str, Any] | None]:
+scripts/chain_done_gate.py:104:def _open_blockers(blockers_path: Path | None) -> list[str]:
+scripts/chain_done_gate.py:127:def check_chain_done(
+scripts/chain_done_gate.py:135:    state = _load_json(state_path or _chain_state_path_for(spec_path))
+scripts/chain_done_gate.py:142:            "completion_contract_mode must be enforce before chain completion "
+scripts/chain_done_gate.py:148:            "full_suite_backstop_mode must be enforce before chain completion "
+scripts/chain_done_gate.py:154:        errors.append("chain state completed field must be a list")
+scripts/chain_done_gate.py:165:            errors.append(f"milestone {label!r} is not recorded in chain_state.completed")
+scripts/chain_done_gate.py:194:def main(argv: list[str] | None = None) -> int:
+scripts/chain_done_gate.py:197:            "Fail a chain completion if any milestone's plan state is not done, "
+scripts/chain_done_gate.py:198:            "if chain backstops are non-blocking, or if review blockers remain open."
+scripts/chain_done_gate.py:201:    parser.add_argument("--spec", type=Path, help="Path to chain.yaml")
+scripts/chain_done_gate.py:202:    parser.add_argument("--state", type=Path, help="Path to the persisted chain state JSON")
+scripts/chain_done_gate.py:230:            errors = check_chain_done(
+scripts/chain_done_gate.py:237:        print(f"chain done gate failed: {exc}", file=sys.stderr)
+scripts/chain_done_gate.py:242:            print(f"chain done gate failed: {error}", file=sys.stderr)
+scripts/chain_done_gate.py:244:    print("chain done gate passed")
+scripts/simulate_watchdog_end_to_end.py:2:"""End-to-end simulation of the live watchdog repair + relaunch + recheck flow.
+scripts/simulate_watchdog_end_to_end.py:4:This script creates a synthetic blocked plan, runs the watchdog against it with a
+scripts/simulate_watchdog_end_to_end.py:5:fake megaplan CLI, and verifies the watchdog:
+scripts/simulate_watchdog_end_to_end.py:30:def _write_json(path: Path, data: dict[str, object]) -> None:
+scripts/simulate_watchdog_end_to_end.py:34:def _make_fake_megaplan_cli(bin_dir: Path) -> Path:
+scripts/simulate_watchdog_end_to_end.py:48:project_dir = os.environ.get("MEGAPLAN_PROJECT_DIR", os.getcwd())
+scripts/simulate_watchdog_end_to_end.py:54:def now_utc():
+scripts/simulate_watchdog_end_to_end.py:57:def read_state():
+scripts/simulate_watchdog_end_to_end.py:63:def write_state(state):
+scripts/simulate_watchdog_end_to_end.py:66:def append_event(kind, payload=None):
+scripts/simulate_watchdog_end_to_end.py:81:if cmd == "watchdog-worker":
+scripts/simulate_watchdog_end_to_end.py:83:    # Keep this process alive so the watchdog sees a live megaplan-correlated
+scripts/simulate_watchdog_end_to_end.py:109:    # Start a fake worker process so the next watchdog scan sees a live process.
+scripts/simulate_watchdog_end_to_end.py:113:        [sys.executable, str(Path(__file__).resolve()), "watchdog-worker", str(plan_dir)],
+scripts/simulate_watchdog_end_to_end.py:125:if cmd == "chain":
+scripts/simulate_watchdog_end_to_end.py:126:    print("[fake megaplan chain] noop")
+scripts/simulate_watchdog_end_to_end.py:138:def _setup_blocked_plan(repo_dir: Path) -> Path:
+scripts/simulate_watchdog_end_to_end.py:172:def _run_watchdog(args: list[str], env: dict[str, str]) -> dict[str, object]:
+scripts/simulate_watchdog_end_to_end.py:173:    """Run the watchdog CLI and return the combined report."""
+scripts/simulate_watchdog_end_to_end.py:175:        [sys.executable, "-B", str(REPO_ROOT / "scripts" / "megaplan_live_watchdog.py"), *args],
+scripts/simulate_watchdog_end_to_end.py:183:        raise RuntimeError(f"watchdog failed with rc={result.returncode}")
+scripts/simulate_watchdog_end_to_end.py:193:def main() -> int:
+scripts/simulate_watchdog_end_to_end.py:205:        log_path = tmp / "watchdog.log"
+scripts/simulate_watchdog_end_to_end.py:216:        print("\n=== Running watchdog (repair + 10s recheck) ===")
+scripts/simulate_watchdog_end_to_end.py:217:        report = _run_watchdog(
+scripts/simulate_watchdog_end_to_end.py:237:            print(f"cleanup_candidates: {len(r['cleanup_candidates'])}")
+scripts/simulate_watchdog_end_to_end.py:269:        # Best-effort cleanup of the detached fake worker so we do not leave
+scripts/m6_purge_gate.py:15:DEFAULT_PRODUCT_ROOTS = ("arnold_pipelines",)
+scripts/m6_purge_gate.py:23:def _iter_product_roots(repo_root: Path, roots: Iterable[str]) -> list[Path]:
+scripts/m6_purge_gate.py:27:def _legacy_dirs(product_root: Path) -> list[Path]:
+scripts/m6_purge_gate.py:37:def _top_level_function_names(path: Path) -> set[str]:
+scripts/m6_purge_gate.py:49:def _literal_all_exports(path: Path) -> set[str]:
+scripts/m6_purge_gate.py:78:def _init_surface_errors(init_path: Path, repo_root: Path) -> list[str]:
+scripts/m6_purge_gate.py:156:def _pipeline_surface_errors(repo_root: Path) -> list[str]:
+scripts/m6_purge_gate.py:183:class _TestUsageVisitor(ast.NodeVisitor):
+scripts/m6_purge_gate.py:194:    def __init__(self, legacy_names: set[str]) -> None:
+scripts/m6_purge_gate.py:200:    def visit(self, node: ast.AST) -> None:
+scripts/m6_purge_gate.py:207:    def visit_Import(self, node: ast.Import) -> None:
+scripts/m6_purge_gate.py:219:    def visit_ImportFrom(self, node: ast.ImportFrom) -> None:
+scripts/m6_purge_gate.py:233:    def visit_Call(self, node: ast.Call) -> None:
+scripts/m6_purge_gate.py:274:    def visit_Name(self, node: ast.Name) -> None:
+scripts/m6_purge_gate.py:285:    def _is_func_of_parent_call(self, node: ast.Name) -> bool:
+scripts/m6_purge_gate.py:294:    def _is_hasattr_call(node: ast.Call) -> bool:
+scripts/m6_purge_gate.py:302:    def _is_getattr_call(node: ast.Call) -> bool:
+scripts/m6_purge_gate.py:309:    def _in_negation_context(self) -> bool:
+scripts/m6_purge_gate.py:327:    def _is_pytest_raises_attrerror(expr: ast.expr) -> bool:
+scripts/m6_purge_gate.py:347:def _is_allowlisted_test_keepalive_path(path: Path, repo_root: Path) -> bool:
+scripts/m6_purge_gate.py:358:def _test_keepalive_errors(repo_root: Path, test_roots: Iterable[str]) -> list[str]:
+scripts/m6_purge_gate.py:412:def check_m6_purge(
+scripts/m6_purge_gate.py:415:    product_roots: Iterable[str] = DEFAULT_PRODUCT_ROOTS,
+scripts/m6_purge_gate.py:430:def main(argv: list[str] | None = None) -> int:
+scripts/m6_purge_gate.py:454:            product_roots=args.product_root or DEFAULT_PRODUCT_ROOTS,
+scripts/generate_arnold_docs.py:74:def _now() -> str:
+scripts/generate_arnold_docs.py:78:def _relative(path: Path) -> str:
+scripts/generate_arnold_docs.py:85:def _provenance_header(
+scripts/generate_arnold_docs.py:100:def _annotation_name(annotation: Any) -> str:
+scripts/generate_arnold_docs.py:124:def _dataclass_field_rows(model: type[Any]) -> list[tuple[str, str, str]]:
+scripts/generate_arnold_docs.py:138:def _table(headers: tuple[str, ...], rows: Iterable[tuple[Any, ...]]) -> list[str]:
+scripts/generate_arnold_docs.py:139:    def cell(value: Any) -> str:
+scripts/generate_arnold_docs.py:151:def _node_name(node: ast.AST) -> str | None:
+scripts/generate_arnold_docs.py:163:def _source_lines_for_symbols(path: Path, symbols: Iterable[str]) -> str:
+scripts/generate_arnold_docs.py:189:def _extract_step_symbols(steps_path: Path) -> tuple[str, ...]:
+scripts/generate_arnold_docs.py:200:def _builder_target(info: ShippedPipelineInfo) -> str:
+scripts/generate_arnold_docs.py:207:def _compile_and_validate(info: ShippedPipelineInfo) -> WorkflowManifest:
+scripts/generate_arnold_docs.py:219:def _fake_run(manifest: WorkflowManifest) -> None:
+scripts/generate_arnold_docs.py:232:def _render_example(info: ShippedPipelineInfo) -> Path | None:
+scripts/generate_arnold_docs.py:329:def render_examples() -> dict[Path, str]:
+scripts/generate_arnold_docs.py:342:def _workflow_subcommand_rows(parser: argparse.ArgumentParser) -> list[tuple[str, str]]:
+scripts/generate_arnold_docs.py:355:def _manifest_field_rows() -> list[tuple[str, str, str]]:
+scripts/generate_arnold_docs.py:359:def _node_field_rows() -> list[tuple[str, str, str]]:
+scripts/generate_arnold_docs.py:363:def _edge_field_rows() -> list[tuple[str, str, str]]:
+scripts/generate_arnold_docs.py:367:def _pipeline_registry_rows() -> list[tuple[str, str, str, str, str]]:
+scripts/generate_arnold_docs.py:385:def render_reference() -> str:
+scripts/generate_arnold_docs.py:457:def _render_skill(info: ShippedPipelineInfo) -> str:
+scripts/generate_arnold_docs.py:503:def render_codex_skills() -> dict[Path, str]:
+scripts/generate_arnold_docs.py:513:def _render_composed_skill(name: str, description: str) -> str:
+scripts/generate_arnold_docs.py:556:def render_composed_rules() -> dict[Path, str]:
+scripts/generate_arnold_docs.py:570:def _registries_to_update() -> dict[Path, tuple[ShippedPipelineInfo, ...]]:
+scripts/generate_arnold_docs.py:588:def _load_registry(path: Path) -> dict[str, Any]:
+scripts/generate_arnold_docs.py:594:def render_registries() -> dict[Path, str]:
+scripts/generate_arnold_docs.py:619:def generated_files() -> dict[Path, str]:
+scripts/generate_arnold_docs.py:629:def _is_gitignored(path: Path) -> bool:
+scripts/generate_arnold_docs.py:642:def _check_files(files: dict[Path, str]) -> list[str]:
+scripts/generate_arnold_docs.py:664:def write_files(files: dict[Path, str]) -> None:
+scripts/generate_arnold_docs.py:670:def main(argv: list[str] | None = None) -> int:
+arnold/conformance/routing.py:32:def iter_pipeline_stages(pipeline: Pipeline) -> list[Stage | ParallelStage]:
+arnold/conformance/routing.py:45:def iter_pipeline_stage_names(pipeline: Pipeline) -> list[str]:
+arnold/conformance/routing.py:58:def _has_routing_vocabulary(stage: Stage | ParallelStage) -> bool:
+arnold/conformance/routing.py:63:def _has_routing_edges(stage: Stage | ParallelStage) -> bool:
+arnold/conformance/routing.py:71:def detect_routing_stages(
+arnold/conformance/routing.py:99:def check_vocabulary_coverage(
+arnold/conformance/routing.py:153:def check_vocabulary_edge_consistency(
+arnold/conformance/routing.py:227:def check_resolve_edge_normal_match(
+arnold/conformance/routing.py:286:def check_resolve_edge_decision_match(
+arnold/conformance/routing.py:333:def check_resolve_edge_override_match(
+arnold/conformance/routing.py:380:def check_resolve_edge_halt(
+arnold/conformance/routing.py:408:def check_resolve_edge_unmatched_signal(
+arnold/conformance/routing.py:451:def check_resolve_edge_vocabulary_validation(
+arnold/conformance/routing.py:512:def run_routing_conformance_suite(
+arnold/workflow/dry_run.py:18:def dry_run(manifest: WorkflowManifest) -> dict[str, Any]:
+arnold/workflow/dry_run.py:67:def to_data(report: dict[str, Any]) -> dict[str, Any]:
+arnold/workflow/validation.py:33:FORBIDDEN_PRODUCT_IMPORTS = (
+arnold/workflow/validation.py:50:class ManifestValidationError(ValueError):
+arnold/workflow/validation.py:54:def validate_manifest(manifest: WorkflowManifest) -> None:
+arnold/workflow/validation.py:121:def _validate_id(name: str, value: str, errors: list[str]) -> None:
+arnold/workflow/validation.py:125:def _validate_ref(name: str, value: str, errors: list[str]) -> None:
+arnold/workflow/validation.py:133:def _validate_optional_ref(name: str, value: str | None, errors: list[str]) -> None:
+arnold/workflow/validation.py:138:def _validate_hash(name: str, value: str | None, errors: list[str]) -> None:
+arnold/workflow/validation.py:143:def _validate_policy(name: str, policy: WorkflowPolicy | None, errors: list[str]) -> None:
+arnold/workflow/validation.py:182:def _validate_suspension_route(
+arnold/workflow/validation.py:204:def _validate_timing_policy(name: str, timing: TimingPolicy | None, errors: list[str]) -> None:
+arnold/workflow/validation.py:212:def _validate_idempotency_policy(
+arnold/workflow/validation.py:225:def _validate_effects(name: str, effects: Iterable[EffectRef], errors: list[str]) -> None:
+arnold/workflow/validation.py:231:def _validate_effect_ref(
+arnold/workflow/validation.py:248:def _validate_reducers(name: str, reducers: Iterable[ReducerRef], errors: list[str]) -> None:
+arnold/workflow/validation.py:259:def _validate_compensation_policy(
+arnold/workflow/validation.py:275:def _validate_compensation_target(
+arnold/workflow/validation.py:290:def _validate_escalation_policy(
+arnold/workflow/validation.py:310:def _validate_control_transitions(
+arnold/workflow/validation.py:329:def _validate_topology_overlays(
+arnold/workflow/validation.py:348:def _validate_authority_requirements(
+arnold/workflow/validation.py:367:def _validate_optional_hash(name: str, value: str | None, errors: list[str]) -> None:
+arnold/workflow/validation.py:372:def _validate_optional_positive_int(name: str, value: int | None, errors: list[str]) -> None:
+arnold/workflow/validation.py:379:def _validate_optional_positive_number(name: str, value: float | None, errors: list[str]) -> None:
+arnold/workflow/validation.py:391:def _validate_metadata(name: str, metadata: Mapping[str, Any], errors: list[str]) -> None:
+arnold/workflow/validation.py:398:def _validate_json_value(name: str, value: Any, errors: list[str]) -> None:
+arnold/workflow/validation.py:419:def _validate_cycles(
+arnold/workflow/validation.py:436:    def visit(node_id: str) -> None:
+arnold/workflow/validation.py:463:def _cycle_has_bounded_reentry(
+arnold/workflow/validation.py:478:def _edges_between(
+arnold/workflow/validation.py:486:def _is_explicit_bounded_reentry(
+arnold/workflow/validation.py:510:def check_neutral_import_boundary(paths: Iterable[Path]) -> dict[str, tuple[str, ...]]:
+arnold/workflow/validation.py:531:def _record_forbidden_import(module: str, hits: set[str]) -> None:
+arnold/workflow/validation.py:532:    for forbidden in FORBIDDEN_PRODUCT_IMPORTS:
+arnold/workflow/expressions.py:17:class ExpressionRef:
+arnold/workflow/expressions.py:24:    def __post_init__(self) -> None:
+arnold/workflow/expressions.py:33:    def key(self) -> str:
+arnold/workflow/expressions.py:39:    def __bool__(self) -> bool:
+arnold/workflow/expressions.py:42:    def __str__(self) -> str:
+arnold/workflow/expressions.py:46:def expression_ref(
+scripts/render_package_disposition_md.py:51:def _load_manifest(path: Path) -> dict[str, Any]:
+scripts/render_package_disposition_md.py:60:def _group_rows_by_disposition(
+scripts/render_package_disposition_md.py:71:def _group_rows_by_source_prefix(
+scripts/render_package_disposition_md.py:83:def _split_parents_and_children(
+scripts/render_package_disposition_md.py:105:def _md_code(s: str) -> str:
+scripts/render_package_disposition_md.py:112:def _md_bullet_list(items: list[str], indent: int = 0) -> str:
+scripts/render_package_disposition_md.py:118:def _md_bullet_list_from_strs(items: list[Any], indent: int = 0) -> str:
+scripts/render_package_disposition_md.py:124:def _obj_list_to_table(
+scripts/render_package_disposition_md.py:145:def _render_header() -> str:
+scripts/render_package_disposition_md.py:155:def _render_overview(data: dict[str, Any]) -> str:
+scripts/render_package_disposition_md.py:188:def _render_exclusions(data: dict[str, Any]) -> str:
+scripts/render_package_disposition_md.py:207:def _render_row_detail(row: dict[str, Any], heading_level: int = 3) -> str:
+scripts/render_package_disposition_md.py:311:def _render_split_section(
+scripts/render_package_disposition_md.py:340:def _render_rows_by_disposition(data: dict[str, Any]) -> str:
+scripts/render_package_disposition_md.py:358:def _render_parity_gates(data: dict[str, Any]) -> str:
+scripts/render_package_disposition_md.py:375:def _render_runtime_settings_gates(data: dict[str, Any]) -> str:
+scripts/render_package_disposition_md.py:396:def _render_next_milestone_recommendations(data: dict[str, Any]) -> str:
+scripts/render_package_disposition_md.py:429:def _render_import_policy_summary(data: dict[str, Any]) -> str:
+scripts/render_package_disposition_md.py:497:def render_markdown(data: dict[str, Any]) -> str:
+scripts/render_package_disposition_md.py:524:def main(argv: list[str] | None = None) -> int:
+scripts/validate_package_disposition.py:65:class Row:
+scripts/validate_package_disposition.py:74:    def label(self) -> str:
+scripts/validate_package_disposition.py:78:def _normalize_path(raw: str, *, allow_glob: bool) -> str:
+scripts/validate_package_disposition.py:104:def _load_yaml(path: Path) -> dict[str, Any]:
+scripts/validate_package_disposition.py:111:def _tracked_python_files(repo_root: Path) -> list[str]:
+scripts/validate_package_disposition.py:126:def _canonical_source_path(raw: str) -> str:
+scripts/validate_package_disposition.py:133:def _expect_string_list(
+scripts/validate_package_disposition.py:152:def _validate_object_list(
+scripts/validate_package_disposition.py:174:def _matches(pattern: str, tracked_files: list[str]) -> list[str]:
+scripts/validate_package_disposition.py:180:def _directory_members(path: str, tracked_files: list[str]) -> list[str]:
+scripts/validate_package_disposition.py:185:def _validate_top_level(data: dict[str, Any], errors: list[str]) -> None:
+scripts/validate_package_disposition.py:199:            "valid_dispositions must exactly match the approved enum list in order"
+scripts/validate_package_disposition.py:211:def _parse_rows(data: dict[str, Any], tracked_files: list[str], errors: list[str]) -> list[Row]:
+scripts/validate_package_disposition.py:359:def _validate_gates(data: dict[str, Any], errors: list[str]) -> None:
+scripts/validate_package_disposition.py:395:def _validate_exclusions(
+scripts/validate_package_disposition.py:429:def _validate_coverage(
+scripts/validate_package_disposition.py:506:def validate_manifest(data: dict[str, Any], tracked_files: list[str]) -> list[str]:
+scripts/validate_package_disposition.py:516:def render_summary(data: dict[str, Any], tracked_files: list[str]) -> str:
+scripts/validate_package_disposition.py:541:def main(argv: list[str] | None = None) -> int:
+scripts/README.md:8:- `adopt_plan.py` adopts a finalized plan directory into an existing chain so
+scripts/README.md:9:  the chain can resume at execute.
+scripts/README.md:12:- `chain_done_gate.py` blocks chain completion when persisted chain state says a
+scripts/README.md:19:  handlers and direct `stderr` writes, then classifies them for the M3a cleanup
+scripts/README.md:28:python scripts/chain_done_gate.py \
+scripts/README.md:29:  --spec .megaplan/briefs/workflow-manifest-runtime/chain.yaml \
+scripts/README.md:30:  --state .megaplan/briefs/workflow-manifest-runtime/.megaplan/plans/.chains/chain-dd4726d3997c.json \
+scripts/README.md:31:  --blockers .megaplan/briefs/workflow-manifest-runtime/blockers.json
+scripts/check_pipeline_id_registry.py:27:def discover_registry_files(root: Path | None = None) -> list[Path]:
+scripts/check_pipeline_id_registry.py:72:def _is_under(path: Path, parent: Path) -> bool:
+scripts/check_pipeline_id_registry.py:80:def _repo_root() -> Path:
+scripts/check_pipeline_id_registry.py:93:def _fallback_glob(root: Path) -> list[Path]:
+scripts/check_pipeline_id_registry.py:103:def _load_registry_json(path: str | Path) -> dict[str, Any]:
+scripts/check_pipeline_id_registry.py:110:def _pipeline_aliases(item: dict[str, Any]) -> set[str]:
+scripts/check_pipeline_id_registry.py:123:def find_pipeline_id_renames(
+scripts/check_pipeline_id_registry.py:177:def check_aggregate_uniqueness(paths: list[Path]) -> list[str]:
+scripts/check_pipeline_id_registry.py:198:def _survivor_registry_ids() -> frozenset[str]:
+scripts/check_pipeline_id_registry.py:207:def _expected_manifest_hashes() -> dict[str, str]:
+scripts/check_pipeline_id_registry.py:218:def _load_registry_data(path: Path) -> dict[str, Any]:
+scripts/check_pipeline_id_registry.py:222:def check_registry_hashes(paths: list[Path]) -> list[str]:
+scripts/check_pipeline_id_registry.py:255:def check_survivor_only_refs(paths: list[Path]) -> list[str]:
+scripts/check_pipeline_id_registry.py:273:def check_composed_rule_refs(root: Path | None = None) -> list[str]:
+scripts/check_pipeline_id_registry.py:302:def _collect_refs(value: Any) -> set[str]:
+scripts/check_pipeline_id_registry.py:321:def _relative_path(path: Path, root: Path) -> str:
+scripts/check_pipeline_id_registry.py:328:def _registry_entries_by_stable_id(
+scripts/check_pipeline_id_registry.py:346:def _docs_ref(path_text: str | None, root: Path) -> dict[str, Any] | None:
+scripts/check_pipeline_id_registry.py:353:def _example_docs_ref(pipeline_id: str, root: Path) -> dict[str, Any]:
+scripts/check_pipeline_id_registry.py:359:def build_manifest_identity_report(
+scripts/check_pipeline_id_registry.py:420:def render_manifest_identity_report(report: dict[str, Any]) -> str:
+scripts/check_pipeline_id_registry.py:426:def check_manifest_identity_report(report_path: Path, expected: dict[str, Any]) -> list[str]:
+scripts/check_pipeline_id_registry.py:447:def _git_show_file(rev: str, path: str) -> str:
+scripts/check_pipeline_id_registry.py:457:def _write_temp_text(text: str) -> Path:
+scripts/check_pipeline_id_registry.py:466:def _resolve_base_registry_from_git(
+scripts/check_pipeline_id_registry.py:489:def _relative_to_root(path: Path) -> str:
+scripts/check_pipeline_id_registry.py:503:def main(argv: list[str] | None = None) -> int:
+arnold/workflow/diagnostics.py:28:class ImportForm(StrEnum):
+arnold/workflow/diagnostics.py:51:class DiagnosticSeverity(StrEnum):
+arnold/workflow/diagnostics.py:58:class DiagnosticCode(StrEnum):
+arnold/workflow/diagnostics.py:68:    ALIAS_PROVENANCE_LOSS = "AWF008_ALIAS_PROVENANCE_LOSS"
+arnold/workflow/diagnostics.py:72:class DiagnosticFamily(StrEnum):
+arnold/workflow/diagnostics.py:82:    ALIAS_PROVENANCE = "alias_provenance"
+arnold/workflow/diagnostics.py:87:class DiagnosticCodeSpec:
+arnold/workflow/diagnostics.py:96:    def __post_init__(self) -> None:
+arnold/workflow/diagnostics.py:156:        code=DiagnosticCode.ALIAS_PROVENANCE_LOSS,
+arnold/workflow/diagnostics.py:157:        family=DiagnosticFamily.ALIAS_PROVENANCE,
+arnold/workflow/diagnostics.py:178:class AuthoringDiagnostic:
+arnold/workflow/diagnostics.py:191:    def __post_init__(self) -> None:
+arnold/workflow/diagnostics.py:203:def diagnostic_spec(code: DiagnosticCode | str) -> DiagnosticCodeSpec:
+arnold/workflow/diagnostics.py:209:def _freeze_mapping(value: Mapping[str, Any]) -> Mapping[str, Any]:
+arnold/workflow/diagnostics.py:213:def _freeze_value(value: Any) -> Any:
+arnold/execution/state.py:15:class RouteCoordinate:
+arnold/execution/state.py:29:    def replace(
+arnold/execution/state.py:48:class LoopProjection:
+arnold/execution/state.py:57:class RetryProjection:
+arnold/execution/state.py:66:class FanoutProjection:
+arnold/execution/state.py:76:class RoutingState:
+arnold/execution/state.py:98:    def is_complete(self) -> bool:
+arnold/execution/state.py:103:    def node_is_completed(self, node_ref: str, scope_stack: tuple[str, ...] = ()) -> bool:
+arnold/execution/state.py:106:    def node_is_failed(self, node_ref: str, scope_stack: tuple[str, ...] = ()) -> bool:
+arnold/conformance/join.py:36:def _sentinel_join(
+arnold/conformance/join.py:49:def _make_sentinel_parallel_stage() -> ParallelStage:
+arnold/conformance/join.py:64:def check_join_delegation(
+arnold/conformance/join.py:139:def check_join_delegation_with_child_results(
+arnold/conformance/join.py:159:    def recording_join(
+arnold/conformance/join.py:212:def check_join_delegation_non_delegating(
+arnold/conformance/join.py:258:def check_join_delegation_context_forwarding(
+arnold/conformance/join.py:272:    def context_recording_join(
+arnold/conformance/join.py:329:def run_join_conformance_suite(
+arnold_pipelines/megaplan/store/base.py:35:    ResidentConversation,
+arnold_pipelines/megaplan/store/base.py:59:def deterministic_idempotency_key(*parts: object) -> str:
+arnold_pipelines/megaplan/store/base.py:67:class StoreError(RuntimeError):
+arnold_pipelines/megaplan/store/base.py:83:def validate_epic_update_fields(changes: Mapping[str, object]) -> None:
+arnold_pipelines/megaplan/store/base.py:87:        raise StoreError(f"Unknown epic update field(s): {', '.join(unknown)}. Allowed fields: {allowed}")
+arnold_pipelines/megaplan/store/base.py:90:class RevisionConflict(StoreError):
+arnold_pipelines/megaplan/store/base.py:94:class LockConflict(StoreError):
+arnold_pipelines/megaplan/store/base.py:95:    """Raised when an epic lock is held by another actor."""
+arnold_pipelines/megaplan/store/base.py:98:class LeaseConflict(StoreError):
+arnold_pipelines/megaplan/store/base.py:102:class ChecklistItemInput(StorageModel):
+arnold_pipelines/megaplan/store/base.py:114:class SprintItemInput(StorageModel):
+arnold_pipelines/megaplan/store/base.py:124:class MessageSearchHit(Message):
+arnold_pipelines/megaplan/store/base.py:129:class SprintWithItems(Sprint):
+arnold_pipelines/megaplan/store/base.py:133:class HotContext(StorageModel):
+arnold_pipelines/megaplan/store/base.py:134:    epic: Epic | None = None
+arnold_pipelines/megaplan/store/base.py:147:class ArtifactRef(StorageModel):
+arnold_pipelines/megaplan/store/base.py:157:class ArtifactStat(StorageModel):
+arnold_pipelines/megaplan/store/base.py:166:class StoredEvent:
+arnold_pipelines/megaplan/store/base.py:179:def validate_plan_artifact_name(name: str) -> str:
+arnold_pipelines/megaplan/store/base.py:193:class ControlMessageInput(StorageModel):
+arnold_pipelines/megaplan/store/base.py:194:    epic_id: str
+arnold_pipelines/megaplan/store/base.py:202:class ResidentConversationInput(StorageModel):
+arnold_pipelines/megaplan/store/base.py:205:    active_epic_id: str | None = None
+arnold_pipelines/megaplan/store/base.py:213:class ScheduledJobInput(StorageModel):
+arnold_pipelines/megaplan/store/base.py:217:    epic_id: str | None = None
+arnold_pipelines/megaplan/store/base.py:223:class CloudRunInput(StorageModel):
+arnold_pipelines/megaplan/store/base.py:226:    epic_id: str | None = None
+arnold_pipelines/megaplan/store/base.py:238:class ProgressEventInput(StorageModel):
+arnold_pipelines/megaplan/store/base.py:239:    epic_id: str
+arnold_pipelines/megaplan/store/base.py:252:class Transaction(Protocol):
+arnold_pipelines/megaplan/store/base.py:255:    def __enter__(self) -> Transaction:
+arnold_pipelines/megaplan/store/base.py:258:    def __exit__(
+arnold_pipelines/megaplan/store/base.py:268:class Store(Protocol):
+arnold_pipelines/megaplan/store/base.py:276:    def transaction(self, epic_id: str | None = None) -> AbstractContextManager[Transaction]:
+arnold_pipelines/megaplan/store/base.py:280:    def create_epic(
+arnold_pipelines/megaplan/store/base.py:292:    def load_epic(self, epic_id: str) -> Epic | None:
+arnold_pipelines/megaplan/store/base.py:295:    def update_epic(
+arnold_pipelines/megaplan/store/base.py:297:        epic_id: str,
+arnold_pipelines/megaplan/store/base.py:305:    def list_epics(
+arnold_pipelines/megaplan/store/base.py:314:    def search_epics(
+arnold_pipelines/megaplan/store/base.py:323:    def capture_epic_snapshot(self, epic_id: str) -> EpicSnapshot:
+arnold_pipelines/megaplan/store/base.py:326:    def revert(
+arnold_pipelines/megaplan/store/base.py:328:        epic_id: str,
+arnold_pipelines/megaplan/store/base.py:336:    def get_epic_at_time(self, epic_id: str, when: datetime | str) -> EpicSnapshot | None:
+arnold_pipelines/megaplan/store/base.py:340:    def load_body(self, epic_id: str) -> str:
+arnold_pipelines/megaplan/store/base.py:343:    def update_body(self, epic_id: str, body: str, *, expected_revision: int, idempotency_key: str | None = None) -> Epic:
+arnold_pipelines/megaplan/store/base.py:347:    def seed_checklist(self, epic_id: str, items: Sequence[str],
+arnold_pipelines/megaplan/store/base.py:353:    def list_checklist_items(
+arnold_pipelines/megaplan/store/base.py:355:        epic_id: str,
+arnold_pipelines/megaplan/store/base.py:361:    def add_checklist_items(
+arnold_pipelines/megaplan/store/base.py:363:        epic_id: str,
+arnold_pipelines/megaplan/store/base.py:370:    def update_checklist_item(self, item_id: str, *, idempotency_key: str | None = None,
+arnold_pipelines/megaplan/store/base.py:374:    def delete_checklist_items(self, item_ids: Sequence[str],
+arnold_pipelines/megaplan/store/base.py:380:    def replace_checklist(
+arnold_pipelines/megaplan/store/base.py:382:        epic_id: str,
+arnold_pipelines/megaplan/store/base.py:390:    def create_sprint(
+arnold_pipelines/megaplan/store/base.py:393:        epic_id: str,
+arnold_pipelines/megaplan/store/base.py:405:    def load_sprint(self, sprint_id: str) -> Sprint | None:
+arnold_pipelines/megaplan/store/base.py:408:    def list_sprints(
+arnold_pipelines/megaplan/store/base.py:410:        epic_id: str,
+arnold_pipelines/megaplan/store/base.py:416:    def list_sprints_with_items(self, epic_id: str) -> list[SprintWithItems]:
+arnold_pipelines/megaplan/store/base.py:419:    def update_sprint(
+arnold_pipelines/megaplan/store/base.py:429:    def delete_sprint(self, sprint_id: str,
+arnold_pipelines/megaplan/store/base.py:435:    def replace_sprint_items(
+arnold_pipelines/megaplan/store/base.py:444:    def list_sprint_items(self, sprint_id: str) -> list[SprintItem]:
+arnold_pipelines/megaplan/store/base.py:447:    def set_sprint_queue(
+arnold_pipelines/megaplan/store/base.py:449:        epic_id: str,
+arnold_pipelines/megaplan/store/base.py:458:    def record_epic_event(
+arnold_pipelines/megaplan/store/base.py:461:        epic_id: str,
+arnold_pipelines/megaplan/store/base.py:477:    def list_epic_events(
+arnold_pipelines/megaplan/store/base.py:479:        epic_id: str,
+arnold_pipelines/megaplan/store/base.py:488:    def list_epic_events_for_replay(self, epic_id: str) -> list[EpicEvent]:
+arnold_pipelines/megaplan/store/base.py:491:    def latest_transaction_id(self, epic_id: str) -> str | None:
+arnold_pipelines/megaplan/store/base.py:494:    def events_by_transaction(self, transaction_id: str) -> list[EpicEvent]:
+arnold_pipelines/megaplan/store/base.py:497:    def append_telemetry_event(
+arnold_pipelines/megaplan/store/base.py:506:    def events_for_plan(self, plan_id: str) -> Iterator[StoredEvent]:
+arnold_pipelines/megaplan/store/base.py:510:    def create_message(
+arnold_pipelines/megaplan/store/base.py:513:        epic_id: str | None,
+arnold_pipelines/megaplan/store/base.py:530:    def load_message(self, message_id: str) -> Message | None:
+arnold_pipelines/megaplan/store/base.py:533:    def load_messages(self, message_ids: Sequence[str]) -> list[Message]:
+arnold_pipelines/megaplan/store/base.py:536:    def update_message(self, message_id: str, *, idempotency_key: str | None = None,
+arnold_pipelines/megaplan/store/base.py:540:    def latest_outbound_message(self, *, epic_id: str | None = None) -> Message | None:
+arnold_pipelines/megaplan/store/base.py:543:    def create_turn(
+arnold_pipelines/megaplan/store/base.py:546:        epic_id: str | None,
+arnold_pipelines/megaplan/store/base.py:556:    def update_turn(self, turn_id: str, *, idempotency_key: str | None = None,
+arnold_pipelines/megaplan/store/base.py:560:    def find_abandoned_turns(self, older_than_seconds: int) -> list[BotTurn]:
+arnold_pipelines/megaplan/store/base.py:563:    def list_recent_turns(
+arnold_pipelines/megaplan/store/base.py:567:        epic_id: str | None = None,
+arnold_pipelines/megaplan/store/base.py:571:    def search_messages(
+arnold_pipelines/megaplan/store/base.py:575:        epic_id: str | None = None,
+arnold_pipelines/megaplan/store/base.py:580:    def record_tool_call(
+arnold_pipelines/megaplan/store/base.py:593:    def search_tool_calls_by(
+arnold_pipelines/megaplan/store/base.py:597:        epic_id: str | None = None,
+arnold_pipelines/megaplan/store/base.py:603:    def log_system_event(
+arnold_pipelines/megaplan/store/base.py:612:        epic_id: str | None = None,
+arnold_pipelines/megaplan/store/base.py:617:    def load_hot_context(self, epic_id: str | None) -> HotContext:
+arnold_pipelines/megaplan/store/base.py:620:    def find_unprocessed_messages(
+arnold_pipelines/megaplan/store/base.py:622:        epic_id: str,
+arnold_pipelines/megaplan/store/base.py:629:    def insert_pending(
+arnold_pipelines/megaplan/store/base.py:642:    def mark_confirmed(
+arnold_pipelines/megaplan/store/base.py:652:    def mark_failed(
+arnold_pipelines/megaplan/store/base.py:661:    def find_pending_external_requests(self, older_than_seconds: int) -> list[ExternalRequest]:
+arnold_pipelines/megaplan/store/base.py:664:    def mark_orphaned(
+arnold_pipelines/megaplan/store/base.py:674:    def create_image(
+arnold_pipelines/megaplan/store/base.py:677:        epic_id: str,
+arnold_pipelines/megaplan/store/base.py:698:    def attach_image(
+arnold_pipelines/megaplan/store/base.py:701:        epic_id: str,
+arnold_pipelines/megaplan/store/base.py:716:    def resolve_image_reference(
+arnold_pipelines/megaplan/store/base.py:718:        epic_id: str,
+arnold_pipelines/megaplan/store/base.py:726:    def load_image(self, image_id: str) -> Image | None:
+arnold_pipelines/megaplan/store/base.py:729:    def list_images(
+arnold_pipelines/megaplan/store/base.py:732:        epic_id: str,
+arnold_pipelines/megaplan/store/base.py:738:    def update_image(self, image_id: str, *, idempotency_key: str | None = None,
+arnold_pipelines/megaplan/store/base.py:742:    def list_active_images(self, epic_id: str) -> list[Image]:
+arnold_pipelines/megaplan/store/base.py:745:    def load_active_image_by_reference(self, epic_id: str, reference_key: str) -> Image | None:
+arnold_pipelines/megaplan/store/base.py:748:    def active_image_reference_exists(self, epic_id: str, reference_key: str) -> bool:
+arnold_pipelines/megaplan/store/base.py:751:    def deactivate_active_image_reference(self, epic_id: str, reference_key: str,
+arnold_pipelines/megaplan/store/base.py:758:    def create_second_opinion(
+arnold_pipelines/megaplan/store/base.py:761:        epic_id: str,
+arnold_pipelines/megaplan/store/base.py:774:    def list_second_opinions(self, epic_id: str, *, limit: int | None = None) -> list[SecondOpinion]:
+arnold_pipelines/megaplan/store/base.py:777:    def set_second_opinion_checklist_items(
+arnold_pipelines/megaplan/store/base.py:787:    def create_codebase(
+arnold_pipelines/megaplan/store/base.py:797:        associated_epic_id: str | None = None,
+arnold_pipelines/megaplan/store/base.py:807:    def upsert_codebase(
+arnold_pipelines/megaplan/store/base.py:817:        associated_epic_id: str | None = None,
+arnold_pipelines/megaplan/store/base.py:826:    def load_codebase(self, codebase_id: str) -> Codebase | None:
+arnold_pipelines/megaplan/store/base.py:829:    def find_codebase(self, owner: str, name: str) -> Codebase | None:
+arnold_pipelines/megaplan/store/base.py:832:    def list_codebases(
+arnold_pipelines/megaplan/store/base.py:837:        epic_id: str | None = None,
+arnold_pipelines/megaplan/store/base.py:842:    def update_codebase(self, codebase_id: str, *, idempotency_key: str | None = None,
+arnold_pipelines/megaplan/store/base.py:846:    def remove_codebase(self, codebase_id: str,
+arnold_pipelines/megaplan/store/base.py:852:    def touch_codebase_accessed(
+arnold_pipelines/megaplan/store/base.py:861:    def mark_codebase_verified(
+arnold_pipelines/megaplan/store/base.py:871:    def load_codebase_by_associated_epic(self, epic_id: str) -> Codebase | None:
+arnold_pipelines/megaplan/store/base.py:874:    def resolve_codebase_by_root_sha(self, root_commit_sha: str) -> Codebase | None:
+arnold_pipelines/megaplan/store/base.py:877:    def create_ticket(
+arnold_pipelines/megaplan/store/base.py:888:        ticket_id: str | None = None,
+arnold_pipelines/megaplan/store/base.py:893:    def load_ticket(self, ticket_id: str) -> Ticket | None:
+arnold_pipelines/megaplan/store/base.py:896:    def list_tickets(
+arnold_pipelines/megaplan/store/base.py:911:    def update_ticket(self, ticket_id: str, *, idempotency_key: str | None = None, **changes: Any) -> Ticket:
+arnold_pipelines/megaplan/store/base.py:914:    def link_ticket_to_epic(
+arnold_pipelines/megaplan/store/base.py:917:        ticket_id: str,
+arnold_pipelines/megaplan/store/base.py:918:        epic_id: str,
+arnold_pipelines/megaplan/store/base.py:924:    def unlink_ticket_from_epic(
+arnold_pipelines/megaplan/store/base.py:927:        ticket_id: str,
+arnold_pipelines/megaplan/store/base.py:928:        epic_id: str,
+arnold_pipelines/megaplan/store/base.py:933:    def list_ticket_epic_links(
+arnold_pipelines/megaplan/store/base.py:936:        ticket_id: str | None = None,
+arnold_pipelines/megaplan/store/base.py:937:        epic_id: str | None = None,
+arnold_pipelines/megaplan/store/base.py:941:    def address_tickets_resolved_by_epic(self, epic_id: str) -> list[str]:
+arnold_pipelines/megaplan/store/base.py:944:    def create_code_artifact(
+arnold_pipelines/megaplan/store/base.py:951:        epic_id: str | None = None,
+arnold_pipelines/megaplan/store/base.py:963:    def load_code_artifact(self, artifact_id: str) -> CodeArtifact | None:
+arnold_pipelines/megaplan/store/base.py:966:    def list_code_artifacts(
+arnold_pipelines/megaplan/store/base.py:970:        epic_id: str | None = None,
+arnold_pipelines/megaplan/store/base.py:980:    def update_code_artifact(self, artifact_id: str, *, idempotency_key: str | None = None,
+arnold_pipelines/megaplan/store/base.py:984:    def delete_code_artifact(self, artifact_id: str,
+arnold_pipelines/megaplan/store/base.py:990:    def touch_code_artifact_used(
+arnold_pipelines/megaplan/store/base.py:999:    def get_api_cache(
+arnold_pipelines/megaplan/store/base.py:1008:    def upsert_api_cache(
+arnold_pipelines/megaplan/store/base.py:1016:        epic_id: str | None = None,
+arnold_pipelines/megaplan/store/base.py:1025:    def cleanup_expired_api_cache(self, *, now: str | None = None,
+arnold_pipelines/megaplan/store/base.py:1031:    def create_feedback(
+arnold_pipelines/megaplan/store/base.py:1038:        epic_id: str | None = None,
+arnold_pipelines/megaplan/store/base.py:1045:    def load_feedback(self, feedback_id: str) -> Feedback | None:
+arnold_pipelines/megaplan/store/base.py:1048:    def update_feedback(self, feedback_id: str, *, idempotency_key: str | None = None,
+arnold_pipelines/megaplan/store/base.py:1052:    def list_feedback(
+arnold_pipelines/megaplan/store/base.py:1055:        epic_id: str | None = None,
+arnold_pipelines/megaplan/store/base.py:1062:    def list_observations(
+arnold_pipelines/megaplan/store/base.py:1071:    def create_plan(
+arnold_pipelines/megaplan/store/base.py:1075:        epic_id: str | None,
+arnold_pipelines/megaplan/store/base.py:1083:    def load_plan(self, plan_id: str) -> Plan | None:
+arnold_pipelines/megaplan/store/base.py:1086:    def update_plan(
+arnold_pipelines/megaplan/store/base.py:1096:    def list_plans(
+arnold_pipelines/megaplan/store/base.py:1100:        epic_id: str | None = None,
+arnold_pipelines/megaplan/store/base.py:1105:    def read_plan_artifact(self, plan_id: str, name: str) -> bytes | None:
+arnold_pipelines/megaplan/store/base.py:1108:    def write_plan_artifact(
+arnold_pipelines/megaplan/store/base.py:1119:    def list_plan_artifacts(self, plan_id: str) -> list[ArtifactRef]:
+arnold_pipelines/megaplan/store/base.py:1122:    def stat_plan_artifact(self, plan_id: str, name: str) -> ArtifactStat | None:
+arnold_pipelines/megaplan/store/base.py:1126:    def acquire_execution_lease(
+arnold_pipelines/megaplan/store/base.py:1133:        epic_id: str | None = None,
+arnold_pipelines/megaplan/store/base.py:1138:    def heartbeat_lease(self, plan_id: str, holder_id: str,
+arnold_pipelines/megaplan/store/base.py:1144:    def release_lease(self, plan_id: str, holder_id: str,
+arnold_pipelines/megaplan/store/base.py:1150:    def get_active_lease(self, plan_id: str) -> Lease | None:
+arnold_pipelines/megaplan/store/base.py:1153:    def find_active_leases_for_epic(self, epic_id: str) -> list[Lease]:
+arnold_pipelines/megaplan/store/base.py:1157:    def acquire_lock(self, epic_id: str, holder_id: str, ttl_seconds: int,
+arnold_pipelines/megaplan/store/base.py:1163:    def release_lock(self, epic_id: str, holder_id: str,
+arnold_pipelines/megaplan/store/base.py:1170:    def put_control_message(self, msg: ControlMessageInput,
+arnold_pipelines/megaplan/store/base.py:1176:    def claim_pending_control_messages(
+arnold_pipelines/megaplan/store/base.py:1185:    def mark_control_message_processed(self, msg_id: str, result: JSONDict,
+arnold_pipelines/megaplan/store/base.py:1191:    def recover_stale_control_messages(
+arnold_pipelines/megaplan/store/base.py:1201:    def list_stale_control_messages(
+arnold_pipelines/megaplan/store/base.py:1209:    # ---------- Resident orchestration ----------
+arnold_pipelines/megaplan/store/base.py:1210:    def upsert_resident_conversation(
+arnold_pipelines/megaplan/store/base.py:1212:        conversation: ResidentConversationInput,
+arnold_pipelines/megaplan/store/base.py:1215:    ) -> ResidentConversation:
+arnold_pipelines/megaplan/store/base.py:1218:    def load_resident_conversation(self, conversation_id: str) -> ResidentConversation | None:
+arnold_pipelines/megaplan/store/base.py:1221:    def get_resident_conversation_by_key(
+arnold_pipelines/megaplan/store/base.py:1226:    ) -> ResidentConversation | None:
+arnold_pipelines/megaplan/store/base.py:1229:    def list_resident_conversations(
+arnold_pipelines/megaplan/store/base.py:1233:        active_epic_id: str | None = None,
+arnold_pipelines/megaplan/store/base.py:1235:    ) -> list[ResidentConversation]:
+arnold_pipelines/megaplan/store/base.py:1238:    def update_resident_conversation(
+arnold_pipelines/megaplan/store/base.py:1244:    ) -> ResidentConversation:
+arnold_pipelines/megaplan/store/base.py:1247:    def create_scheduled_job(
+arnold_pipelines/megaplan/store/base.py:1255:    def load_scheduled_job(self, job_id: str) -> ScheduledJob | None:
+arnold_pipelines/megaplan/store/base.py:1258:    def update_scheduled_job(
+arnold_pipelines/megaplan/store/base.py:1267:    def claim_due_scheduled_jobs(
+arnold_pipelines/megaplan/store/base.py:1279:    def list_scheduled_jobs(
+arnold_pipelines/megaplan/store/base.py:1290:    def create_cloud_run(
+arnold_pipelines/megaplan/store/base.py:1298:    def load_cloud_run(self, run_id: str) -> CloudRun | None:
+arnold_pipelines/megaplan/store/base.py:1301:    def update_cloud_run(
+arnold_pipelines/megaplan/store/base.py:1310:    def list_cloud_runs(
+arnold_pipelines/megaplan/store/base.py:1314:        epic_id: str | None = None,
+arnold_pipelines/megaplan/store/base.py:1322:    def append_progress_event(self, event: ProgressEventInput,
+arnold_pipelines/megaplan/store/base.py:1328:    def list_progress_events(
+arnold_pipelines/megaplan/store/base.py:1332:        epic_id: str | None = None,
+arnold_pipelines/megaplan/store/base.py:1338:    def create_automation_actor(
+arnold_pipelines/megaplan/store/base.py:1343:        granted_epic_ids: str | Sequence[str],
+arnold_pipelines/megaplan/store/base.py:1349:    def load_automation_actor(self, actor_id: str) -> AutomationActor | None:
+arnold_pipelines/megaplan/store/base.py:1352:    def update_automation_actor(self, actor_id: str, *, idempotency_key: str | None = None,
+arnold_pipelines/megaplan/store/base.py:1372:    "ResidentConversationInput",
+arnold/workflow/authoring.py:19:class ComponentKind(StrEnum):
+arnold/workflow/authoring.py:23:    PROMPT = "prompt"
+arnold/workflow/authoring.py:30:class ComponentProvenance:
+arnold/workflow/authoring.py:37:    def __post_init__(self) -> None:
+arnold/workflow/authoring.py:48:    def ref(self) -> str:
+arnold/workflow/authoring.py:55:class ComponentContract:
+arnold/workflow/authoring.py:64:    def __post_init__(self) -> None:
+arnold/workflow/authoring.py:71:class PromptComponent(ComponentContract):
+arnold/workflow/authoring.py:77:    def __init__(
+arnold/workflow/authoring.py:89:            kind=ComponentKind.PROMPT,
+arnold/workflow/authoring.py:99:class PolicyComponent(ComponentContract):
+arnold/workflow/authoring.py:105:    def __init__(
+arnold/workflow/authoring.py:127:class SchemaComponent(ComponentContract):
+arnold/workflow/authoring.py:133:    def __init__(
+arnold/workflow/authoring.py:155:class SubflowComponent(ComponentContract):
+arnold/workflow/authoring.py:161:    def __init__(
+arnold/workflow/authoring.py:183:class AuthoredStep:
+arnold/workflow/authoring.py:194:    def __post_init__(self) -> None:
+arnold/workflow/authoring.py:200:class StepComponent(ComponentContract):
+arnold/workflow/authoring.py:209:    def __init__(
+arnold/workflow/authoring.py:235:    def __call__(
+arnold/workflow/authoring.py:259:class IntrinsicDeclaration:
+arnold/workflow/authoring.py:264:    def __post_init__(self) -> None:
+arnold/workflow/authoring.py:267:    def __call__(self, *_args: Any, **_kwargs: Any) -> None:
+arnold/workflow/authoring.py:273:def _freeze_mapping(value: Mapping[str, Any]) -> Mapping[str, Any]:
+arnold/workflow/authoring.py:277:def _freeze_value(value: Any) -> Any:
+arnold/workflow/authoring.py:287:def _require_identifier(name: str, value: str) -> str:
+arnold/workflow/authoring.py:293:def _require_identifier_path(name: str, value: str) -> str:
+arnold/workflow/authoring.py:301:def _require_qualname(name: str, value: str) -> str:
+arnold/workflow/authoring.py:309:def _require_ref(name: str, value: str) -> str:
+arnold/conformance/__init__.py:40:class ConformanceCheckResult:
+arnold/conformance/__init__.py:62:class ConformanceSuiteResult:
+arnold/conformance/__init__.py:77:    def passed(self) -> bool:
+arnold/conformance/__init__.py:82:    def failures(self) -> tuple[ConformanceCheckResult, ...]:
+arnold/conformance/__init__.py:87:    def failure_count(self) -> int:
+arnold/conformance/__init__.py:92:    def check_count(self) -> int:
+arnold/conformance/__init__.py:102:def assert_conformance(result: ConformanceCheckResult) -> None:
+arnold/conformance/__init__.py:114:def assert_suite_compliant(suite: ConformanceSuiteResult) -> None:
+arnold/conformance/__init__.py:132:def __getattr__(name: str):
+arnold/workflow/compiler.py:27:class CompileDiagnosticError(ValueError):
+arnold/workflow/compiler.py:30:    def __init__(
+arnold/workflow/compiler.py:50:def _diagnostic(
+arnold/workflow/compiler.py:59:def _freeze_metadata(value: Mapping[str, Any]) -> Mapping[str, Any]:
+arnold/workflow/compiler.py:76:def _freeze_value(value: Any) -> Any:
+arnold/workflow/compiler.py:84:def _compile_capability(capability: Capability) -> CapabilityRequirement:
+arnold/workflow/compiler.py:92:def _compile_input(input_binding: Input) -> dict[str, Any]:
+arnold/workflow/compiler.py:101:def _compile_output(output: Output) -> dict[str, Any]:
+arnold/workflow/compiler.py:108:def _compile_step(step: Step) -> WorkflowNode:
+arnold/workflow/compiler.py:134:def _compile_route(route: Route) -> WorkflowEdge:
+arnold/workflow/compiler.py:145:def compile_pipeline(pipeline: Pipeline) -> WorkflowManifest:
+arnold/workflow/compiler.py:206:class CompileResult:
+arnold/execution/registries.py:25:class CapabilityHandler(Protocol):
+arnold/execution/registries.py:28:    def check(
+arnold/execution/registries.py:38:class EffectHandler(Protocol):
+arnold/execution/registries.py:41:    def execute(
+arnold/execution/registries.py:53:class ReducerHandler(Protocol):
+arnold/execution/registries.py:56:    def reduce(
+arnold/execution/registries.py:66:class ControlHandler(Protocol):
+arnold/execution/registries.py:69:    def apply(
+arnold/execution/registries.py:80:class AuthorityHandler(Protocol):
+arnold/execution/registries.py:83:    def verify(
+arnold/execution/registries.py:98:class _Registry:
+arnold/execution/registries.py:101:    def __init__(self, handlers: Mapping[str, Any] | None = None) -> None:
+arnold/execution/registries.py:104:    def register(self, key: str, handler: Any) -> None:
+arnold/execution/registries.py:109:    def get(self, key: str) -> Any:
+arnold/execution/registries.py:115:    def has(self, key: str) -> bool:
+arnold/execution/registries.py:119:class CapabilityRegistry(_Registry):
+arnold/execution/registries.py:122:    def register(self, key: str, handler: CapabilityHandler) -> None:
+arnold/execution/registries.py:127:    def check(
+arnold/execution/registries.py:138:class EffectRegistry(_Registry):
+arnold/execution/registries.py:141:    def register(self, key: str, handler: EffectHandler) -> None:
+arnold/execution/registries.py:146:    def execute(
+arnold/execution/registries.py:167:class ReducerRegistry(_Registry):
+arnold/execution/registries.py:170:    def register(self, key: str, handler: ReducerHandler) -> None:
+arnold/execution/registries.py:175:    def reduce(
+arnold/execution/registries.py:186:class ControlRegistry(_Registry):
+arnold/execution/registries.py:189:    def register(self, key: str, handler: ControlHandler) -> None:
+arnold/execution/registries.py:194:    def apply(
+arnold/execution/registries.py:211:class AuthorityRegistry(_Registry):
+arnold/execution/registries.py:214:    def register(self, key: str, handler: AuthorityHandler) -> None:
+arnold/execution/registries.py:219:    def verify(
+arnold/execution/registries.py:242:class ExecutionRegistries:
+arnold/execution/registries.py:260:    def __post_init__(self) -> None:
+arnold/execution/registries.py:280:class AgentCapabilityHandler:
+arnold/execution/registries.py:289:    def __init__(
+arnold/execution/registries.py:300:    def check(
+arnold/execution/registries.py:319:class AgentEffectHandler:
+arnold/execution/registries.py:327:    def __init__(
+arnold/execution/registries.py:338:    def execute(
+arnold/execution/registries.py:357:class AgentReducerHandler:
+arnold/execution/registries.py:360:    def __init__(
+arnold/execution/registries.py:371:    def reduce(
+arnold/execution/registries.py:388:def build_agent_adapter_bridge(
+arnold/conformance/workflow_manifest_runtime.py:10:NEUTRAL_PACKAGE_PREFIXES = (
+arnold/conformance/workflow_manifest_runtime.py:19:FORBIDDEN_PRODUCT_PREFIXES = (
+arnold/conformance/workflow_manifest_runtime.py:27:class GoldenRegressionRule:
+arnold/conformance/workflow_manifest_runtime.py:33:    def is_explained(self, *, old_text: str, new_text: str) -> bool:
+arnold/conformance/workflow_manifest_runtime.py:41:def scan_neutral_product_imports(paths: Iterable[Path]) -> dict[str, tuple[str, ...]]:
+arnold/conformance/workflow_manifest_runtime.py:49:        if not module.startswith(NEUTRAL_PACKAGE_PREFIXES):
+arnold/conformance/workflow_manifest_runtime.py:64:def _record_import(module: str, hits: set[str]) -> None:
+arnold/conformance/workflow_manifest_runtime.py:65:    for forbidden in FORBIDDEN_PRODUCT_PREFIXES:
+arnold/conformance/workflow_manifest_runtime.py:70:def _module_name(path: Path) -> str:
+arnold_pipelines/megaplan/store/blob.py:20:class BlobMissingError(FileNotFoundError):
+arnold_pipelines/megaplan/store/blob.py:24:class BlobRef(StorageModel):
+arnold_pipelines/megaplan/store/blob.py:31:class BlobStat(StorageModel):
+arnold_pipelines/megaplan/store/blob.py:39:class BlobStore(Protocol):
+arnold_pipelines/megaplan/store/blob.py:42:    def put(self, blob_id: str, content: bytes, *, content_type: str) -> BlobRef:
+arnold_pipelines/megaplan/store/blob.py:45:    def get(self, blob_id: str) -> bytes:
+arnold_pipelines/megaplan/store/blob.py:48:    def url(self, blob_id: str, *, signed: bool = False, ttl: int = 3600) -> str:
+arnold_pipelines/megaplan/store/blob.py:51:    def delete(self, blob_id: str) -> None:
+arnold_pipelines/megaplan/store/blob.py:54:    def stat(self, blob_id: str) -> BlobStat | None:
+arnold_pipelines/megaplan/store/blob.py:58:class LocalDirBlobStore:
+arnold_pipelines/megaplan/store/blob.py:66:    def __init__(self, root: str | Path) -> None:
+arnold_pipelines/megaplan/store/blob.py:70:    def _blob_dir(self, blob_id: str) -> Path:
+arnold_pipelines/megaplan/store/blob.py:73:    def _find_data_path(self, blob_id: str) -> Path | None:
+arnold_pipelines/megaplan/store/blob.py:84:    def _meta_path(self, blob_id: str) -> Path:
+arnold_pipelines/megaplan/store/blob.py:87:    def _extension_for_content_type(self, content_type: str) -> str:
+arnold_pipelines/megaplan/store/blob.py:91:    def put(self, blob_id: str, content: bytes, *, content_type: str) -> BlobRef:
+arnold_pipelines/megaplan/store/blob.py:114:    def get(self, blob_id: str) -> bytes:
+arnold_pipelines/megaplan/store/blob.py:120:    def url(self, blob_id: str, *, signed: bool = False, ttl: int = 3600) -> str:
+arnold_pipelines/megaplan/store/blob.py:127:    def delete(self, blob_id: str) -> None:
+arnold_pipelines/megaplan/store/blob.py:135:    def stat(self, blob_id: str) -> BlobStat | None:
+arnold_pipelines/megaplan/store/blob.py:160:class SupabaseStorageBlobStore:
+arnold_pipelines/megaplan/store/blob.py:163:    def __init__(self, *, supabase_url: str, service_role_key: str, bucket: str) -> None:
+arnold_pipelines/megaplan/store/blob.py:168:    def _object_url(self, blob_id: str) -> str:
+arnold_pipelines/megaplan/store/blob.py:172:    def _request(
+arnold_pipelines/megaplan/store/blob.py:193:    def put(self, blob_id: str, content: bytes, *, content_type: str) -> BlobRef:
+arnold_pipelines/megaplan/store/blob.py:208:    def get(self, blob_id: str) -> bytes:
+arnold_pipelines/megaplan/store/blob.py:211:    def url(self, blob_id: str, *, signed: bool = False, ttl: int = 3600) -> str:
+arnold_pipelines/megaplan/store/blob.py:224:    def delete(self, blob_id: str) -> None:
+arnold_pipelines/megaplan/store/blob.py:227:    def stat(self, blob_id: str) -> BlobStat | None:
+arnold/workflow/inspect.py:21:def inspect_manifest(manifest: WorkflowManifest) -> dict[str, Any]:
+arnold/workflow/inspect.py:135:def to_dot(manifest: WorkflowManifest) -> str:
+arnold/workflow/inspect.py:151:def to_yaml(data: Any) -> str:
+scripts/megaplan_live_watchdog.py:25:from arnold_pipelines.megaplan.watchdog.discovery import DEFAULT_SCAN_ROOTS
+scripts/megaplan_live_watchdog.py:26:from arnold_pipelines.megaplan.watchdog.log import DEFAULT_LOG_PATH, log_event, setup_logging
+scripts/megaplan_live_watchdog.py:27:from arnold_pipelines.megaplan.watchdog.registry import Observation, WatchdogRegistry
+scripts/megaplan_live_watchdog.py:28:from arnold_pipelines.megaplan.watchdog.repair_runner import RepairRunner
+scripts/megaplan_live_watchdog.py:29:from arnold_pipelines.megaplan.watchdog.retry import RetryLoop, RetryOutcome
+scripts/megaplan_live_watchdog.py:30:from arnold_pipelines.megaplan.watchdog.snapshot import build_snapshot
+scripts/megaplan_live_watchdog.py:33:DEFAULT_REGISTRY_PATH = "~/.megaplan/watchdog/registry.ndjson"
+scripts/megaplan_live_watchdog.py:36:def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+scripts/megaplan_live_watchdog.py:97:        help="Path to the watchdog log file.",
+scripts/megaplan_live_watchdog.py:109:def _run_pipeline_once(snapshot_dict: dict[str, Any]) -> dict[str, Any]:
+scripts/megaplan_live_watchdog.py:156:def _is_terminal_state(state: dict[str, Any] | None) -> bool:
+scripts/megaplan_live_watchdog.py:165:def _is_stale_lock_only(incident: dict[str, Any]) -> bool:
+scripts/megaplan_live_watchdog.py:174:def _select_problem_incidents(
+scripts/megaplan_live_watchdog.py:178:    """Return non-all_good classifications split into problems and cleanup candidates.
+scripts/megaplan_live_watchdog.py:180:    Terminal plans whose only issue is a stale lock are considered cleanup
+scripts/megaplan_live_watchdog.py:197:    cleanup_candidates: list[dict[str, Any]] = []
+scripts/megaplan_live_watchdog.py:215:            cleanup_candidates.append(item)
+scripts/megaplan_live_watchdog.py:221:    cleanup_candidates.sort(key=sort_key)
+scripts/megaplan_live_watchdog.py:222:    return problems, cleanup_candidates
+scripts/megaplan_live_watchdog.py:225:def _run_repair(
+scripts/megaplan_live_watchdog.py:289:def _record_observations_and_transitions(
+scripts/megaplan_live_watchdog.py:347:def _run_scan(
+scripts/megaplan_live_watchdog.py:388:    problems, cleanup_candidates = _select_problem_incidents(
+scripts/megaplan_live_watchdog.py:406:        cleanup_candidates=len(cleanup_candidates),
+scripts/megaplan_live_watchdog.py:420:    for candidate in cleanup_candidates:
+scripts/megaplan_live_watchdog.py:423:            "cleanup_candidate",
+scripts/megaplan_live_watchdog.py:471:        "cleanup_candidates": cleanup_candidates,
+scripts/megaplan_live_watchdog.py:483:        cleanup_candidates=len(cleanup_candidates),
+scripts/megaplan_live_watchdog.py:490:def main(argv: list[str] | None = None) -> int:
+scripts/megaplan_live_watchdog.py:518:        "final_cleanup_candidates": reports[-1].get("cleanup_candidates", []),
+arnold/workflow/dsl.py:9:The DSL is intentionally pure data.  It provides no builder, fluent chaining,
+arnold/workflow/dsl.py:26:PROVISIONAL_EXPORTS = ()
+arnold/workflow/dsl.py:35:    "PROVISIONAL_EXPORTS",
+arnold/workflow/dsl.py:42:def _freeze_metadata(value: Mapping[str, Any]) -> Mapping[str, Any]:
+arnold/workflow/dsl.py:46:def _freeze_value(value: Any) -> Any:
+arnold/workflow/dsl.py:56:def _require_ref(name: str, value: str) -> str:
+arnold/workflow/dsl.py:64:def _optional_ref(name: str, value: str | None) -> str | None:
+arnold/workflow/dsl.py:71:class Input:
+arnold/workflow/dsl.py:80:    def __post_init__(self) -> None:
+arnold/workflow/dsl.py:87:class Output:
+arnold/workflow/dsl.py:95:    def __post_init__(self) -> None:
+arnold/workflow/dsl.py:101:class Capability:
+arnold/workflow/dsl.py:110:    def __post_init__(self) -> None:
+arnold/workflow/dsl.py:117:class Route:
+arnold/workflow/dsl.py:128:    def __post_init__(self) -> None:
+arnold/workflow/dsl.py:142:class Step:
+arnold/workflow/dsl.py:156:    def __post_init__(self) -> None:
+arnold/workflow/dsl.py:166:class Pipeline:
+arnold/workflow/dsl.py:178:    def __post_init__(self) -> None:
+arnold/workflow/dsl.py:186:    def entry(self) -> str:
+arnold/workflow/__init__.py:9:    PROVISIONAL_EXPORTS,
+arnold/workflow/__init__.py:80:    "PROVISIONAL_EXPORTS",
+scripts/adopt_plan.py:2:"""adopt_plan.py — Adopt a pre-built FINALIZED megaplan plan into a chain run.
+scripts/adopt_plan.py:5:directory into a chain so the chain RESUMES IT AT EXECUTE instead of
+scripts/adopt_plan.py:11:        --spec <chain.yaml> \
+scripts/adopt_plan.py:18:2. Refuse if milestone label is already in chain-state completed[].
+scripts/adopt_plan.py:23:5. Patch chain-state JSON: current_milestone_index → resolved index,
+scripts/adopt_plan.py:50:def _compute_chain_state_path(spec_path: Path) -> Path:
+scripts/adopt_plan.py:51:    """Compute the chain-state JSON path from the resolved spec path.
+scripts/adopt_plan.py:53:    Mirrors megaplan.chain._state_path_for exactly:
+scripts/adopt_plan.py:55:        → .megaplan/plans/.chains/<stem>-<digest>.json
+scripts/adopt_plan.py:63:        / ".chains"
+scripts/adopt_plan.py:68:def _load_yaml(path: Path) -> dict[str, Any]:
+scripts/adopt_plan.py:79:def _load_json(path: Path) -> dict[str, Any]:
+scripts/adopt_plan.py:90:def _save_json(path: Path, data: dict[str, Any]) -> None:
+scripts/adopt_plan.py:100:def _find_milestone(spec: dict[str, Any], label: str) -> tuple[int, dict[str, Any]]:
+scripts/adopt_plan.py:122:def _check_not_completed(chain_state: dict[str, Any], label: str) -> None:
+scripts/adopt_plan.py:124:    completed: list[dict[str, Any]] = chain_state.get("completed") or []
+scripts/adopt_plan.py:128:                f"ERROR: milestone '{label}' is already in chain-state completed[] "
+scripts/adopt_plan.py:134:def _resolve_plan_name(from_plan_dir: Path) -> str:
+scripts/adopt_plan.py:139:def _target_plan_path(project_dir: Path, plan_name: str) -> Path:
+scripts/adopt_plan.py:144:def _rewrite_premium_vendor(spec: Any, vendor: str) -> Any:
+scripts/adopt_plan.py:145:    """Rewrite claude:/codex: premium specs to the chain-selected vendor."""
+scripts/adopt_plan.py:165:def _patch_config_from_milestone(
+scripts/adopt_plan.py:169:    """Apply chain milestone knobs to a copied finalized plan config."""
+scripts/adopt_plan.py:186:def adopt(
+scripts/adopt_plan.py:210:    # 2. Load chain-state
+scripts/adopt_plan.py:211:    chain_state_path = _compute_chain_state_path(spec_path)
+scripts/adopt_plan.py:212:    chain_state = _load_json(chain_state_path)
+scripts/adopt_plan.py:215:        "action": "load_chain_state",
+scripts/adopt_plan.py:216:        "path": str(chain_state_path),
+scripts/adopt_plan.py:217:        "exists": chain_state_path.exists(),
+scripts/adopt_plan.py:221:    _check_not_completed(chain_state, milestone_label)
+scripts/adopt_plan.py:377:    # 8. Patch the chain-state JSON
+scripts/adopt_plan.py:378:    chain_before_index = chain_state.get("current_milestone_index")
+scripts/adopt_plan.py:379:    chain_before_plan = chain_state.get("current_plan_name")
+scripts/adopt_plan.py:380:    chain_before_last = chain_state.get("last_state")
+scripts/adopt_plan.py:381:    chain_before_retries = chain_state.get("retry_counts", {}).get(milestone_label)
+scripts/adopt_plan.py:384:        chain_state["current_milestone_index"] = milestone_idx
+scripts/adopt_plan.py:385:        chain_state["current_plan_name"] = plan_name
+scripts/adopt_plan.py:386:        chain_state["last_state"] = None
+scripts/adopt_plan.py:388:        retry_counts = chain_state.get("retry_counts")
+scripts/adopt_plan.py:391:            chain_state["retry_counts"] = retry_counts
+scripts/adopt_plan.py:394:        _save_json(chain_state_path, chain_state)
+scripts/adopt_plan.py:397:        "action": "patch_chain_state",
+scripts/adopt_plan.py:398:        "path": str(chain_state_path),
+scripts/adopt_plan.py:400:            "before": chain_before_index,
+scripts/adopt_plan.py:404:            "before": chain_before_plan,
+scripts/adopt_plan.py:408:            "before": chain_before_last,
+scripts/adopt_plan.py:413:                milestone_label: chain_before_retries,
+scripts/adopt_plan.py:429:def main() -> None:
+scripts/adopt_plan.py:431:        description="Adopt a pre-built FINALIZED plan into a chain run at EXECUTE",
+scripts/adopt_plan.py:443:        help="Path to the chain spec YAML (e.g. chain.yaml)",
+scripts/adopt_plan.py:511:        chain_state_path = _compute_chain_state_path(args.spec)
+scripts/adopt_plan.py:513:        print(f"  Chain state: {chain_state_path}")
+scripts/adopt_plan.py:516:        print(f"\nNext chain run will RESUME at EXECUTE for this milestone.")
+scripts/adopt_plan.py:521:def _fmt(val: Any) -> str:
+arnold/execution/topology.py:36:class ControlProjection:
+arnold/execution/topology.py:46:    def targets_for(
+arnold/execution/topology.py:54:def control_transition_payload(
+arnold/execution/topology.py:79:def project_control_transitions(
+arnold/execution/topology.py:112:def dispatch_control_transition(
+arnold/execution/topology.py:142:def dispatch_topology_overlay(
+arnold/execution/topology.py:181:def control_transition_from_projection(
+arnold/execution/topology.py:201:def collect_declared_transitions(
+arnold/execution/topology.py:212:def collect_declared_overlays(
+arnold/execution/backend.py:101:class ExecutionBackend(Protocol):
+arnold/execution/backend.py:104:    def run_manifest(
+arnold/execution/backend.py:117:class SkeletalBackend:
+arnold/execution/backend.py:120:    def run_manifest(
+arnold/execution/backend.py:140:class NodeState(StrEnum):
+arnold/execution/backend.py:151:class ArtifactSpec:
+arnold/execution/backend.py:162:class NodeOutcome:
+arnold/execution/backend.py:178:class ExecutionContext:
+arnold/execution/backend.py:187:class LocalJournalBackend:
+arnold/execution/backend.py:195:    def __init__(
+arnold/execution/backend.py:218:    def _now(self) -> datetime:
+arnold/execution/backend.py:221:    def _monotonic(self) -> float:
+arnold/execution/backend.py:224:    def _create_artifact_store(self, root: Path) -> FileBackedArtifactStore:
+arnold/execution/backend.py:227:    def _make_run_id(self) -> str:
+arnold/execution/backend.py:232:    def _make_reentry_id(self) -> str | None:
+arnold/execution/backend.py:235:    def _check_authority(self, action: str, evidence: Mapping[str, Any]) -> bool:
+arnold/execution/backend.py:258:    def _check_capability(self, requirement, context: ExecutionContext):
+arnold/execution/backend.py:273:    def _budget_for_node(
+arnold/execution/backend.py:281:    def _execute_node_payload(
+arnold/execution/backend.py:289:    def _execute_fanout_child(
+arnold/execution/backend.py:303:    def _reduce(
+arnold/execution/backend.py:317:    def _execute_effect(
+arnold/execution/backend.py:349:    def _select_branch(
+arnold/execution/backend.py:370:    def _load_subpipeline_manifest(self, node: WorkflowNode) -> WorkflowManifest | None:
+arnold/execution/backend.py:376:    def _execute_subpipeline_scope(
+arnold/execution/backend.py:388:    def _emit_control_signals(
+arnold/execution/backend.py:407:    def run_manifest(
+arnold/execution/backend.py:654:    def _manifest_ref(self) -> ManifestReference:
+arnold/execution/backend.py:660:    def _append(
+arnold/execution/backend.py:687:    def _next_event_counter(self) -> int:
+arnold/execution/backend.py:691:    def _node_by_id(self, node_ref: str) -> WorkflowNode:
+arnold/execution/backend.py:697:    def _outgoing_edges(self, node_ref: str) -> tuple[WorkflowEdge, ...]:
+arnold/execution/backend.py:705:    def _terminal_failures(self, routing: RoutingState) -> set[RouteCoordinate]:
+arnold/execution/backend.py:728:    def _node_budget(self, node: WorkflowNode | None) -> GovernorBudget:
+arnold/execution/backend.py:731:        def _to_governor(policy: BudgetPolicy | None) -> GovernorBudget | None:
+arnold/execution/backend.py:744:    def _check_budget(self, reservation: BudgetReservation) -> None:
+arnold/execution/backend.py:758:    def _collect_outputs(self) -> dict[str, Any]:
+arnold/execution/backend.py:767:    def _build_resume_cursor(self, coordinate: RouteCoordinate) -> ManifestCursor:
+arnold/execution/backend.py:779:    def _check_deadline_ttl(self) -> ExecutionState | None:
+arnold/execution/backend.py:810:    def _save_checkpoint(self, status: str) -> None:
+arnold/execution/backend.py:859:    def _execute_coordinate(
+arnold/execution/backend.py:1205:    def _run_node_body(
+arnold/execution/backend.py:1222:    def _execute_fanout_child_coordinate(
+arnold/execution/backend.py:1238:    def _execute_reducer_coordinate(
+arnold/execution/backend.py:1269:    def _run_effect(
+arnold/execution/backend.py:1350:    def _write_artifact(
+arnold/execution/backend.py:1386:    def _journal_control_transition(
+arnold/execution/backend.py:1399:    def _apply_control_transitions(
+arnold/execution/backend.py:1446:    def _process_control_signals(
+arnold/execution/backend.py:1480:    def _execute_compensation_effect(
+arnold/execution/backend.py:1531:    def _maybe_compensate(
+arnold/execution/backend.py:1616:    def _execute_escalation_target(
+arnold/execution/backend.py:1646:    def _maybe_escalate(
+arnold/execution/backend.py:1682:    def _release_budget(self, reservation_id: str, reservation: BudgetReservation) -> None:
+arnold/execution/backend.py:1713:class _TerminalState(Exception):
+arnold/execution/backend.py:1716:    def __init__(self, state: ExecutionState) -> None:
+arnold/kernel/effect.py:9:class EffectKind(StrEnum):
+arnold/kernel/effect.py:19:class EffectDescriptor:
+arnold_pipelines/megaplan/store/warrant.py:20:class WarrantError(ValueError):
+arnold_pipelines/megaplan/store/warrant.py:21:    """Base class for machine-readable Warrant failures."""
+arnold_pipelines/megaplan/store/warrant.py:23:    def __init__(self, error_kind: str, message: str, **details: Any) -> None:
+arnold_pipelines/megaplan/store/warrant.py:30:class WarrantBuildResult:
+arnold_pipelines/megaplan/store/warrant.py:35:def _resolve_warrant_key(
+arnold_pipelines/megaplan/store/warrant.py:52:def _required_source_errors(projection: WarrantSourceProjection) -> list[str]:
+arnold_pipelines/megaplan/store/warrant.py:71:def _incomplete_source_details(projection: WarrantSourceProjection) -> dict[str, Any]:
+arnold_pipelines/megaplan/store/warrant.py:99:def _warrant_envelope(
+arnold_pipelines/megaplan/store/warrant.py:133:def _stable_warrant_id(projection: WarrantSourceProjection, metadata: Mapping[str, Any]) -> str:
+arnold_pipelines/megaplan/store/warrant.py:148:def build_warrant(
+arnold_pipelines/megaplan/store/warrant.py:195:def warrant_signed_envelope(warrant: Warrant) -> dict[str, Any]:
+arnold_pipelines/megaplan/store/warrant.py:202:def verify_warrant(
+arnold/execution/runner.py:17:def run(
+arnold/conformance/checks.py:43:def check_adapter_protocol_conformance(
+arnold/conformance/checks.py:155:def check_adapter_unknown_kind_fail_closed(
+arnold/conformance/checks.py:207:def check_contract_result_schema_round_trip(
+arnold/conformance/checks.py:280:def check_contract_result_schema_version_skew() -> ConformanceCheckResult:
+arnold/conformance/checks.py:322:def check_contract_result_empty_schema_version_accepted() -> ConformanceCheckResult:
+arnold/conformance/checks.py:372:def check_generic_arnold_megaplan_coupling(
+arnold/conformance/checks.py:437:def check_package_name_staleness(
+arnold/conformance/checks.py:486:def check_import_coupling(
+arnold/conformance/checks.py:503:def check_semantic_coupling(
+arnold/conformance/checks.py:543:def check_public_workflow_layering(
+arnold/conformance/checks.py:585:def check_never_port_artifacts(
+arnold/conformance/checks.py:594:    def _is_allowed(rel: str) -> bool:
+arnold/conformance/checks.py:614:            reason = "Hermes runtime state"
+arnold/conformance/checks.py:639:class _NoOpAdapter:
+arnold/conformance/checks.py:642:    def invoke(self, invocation: StepInvocation) -> None:
+arnold/conformance/checks.py:646:def _make_representative_contract() -> ContractResult:
+arnold/conformance/checks.py:674:            chain=("claim", "evidence"),
+arnold/conformance/checks.py:684:def _diff_contracts(original: ContractResult, restored: ContractResult) -> dict[str, Any]:
+arnold/conformance/checks.py:705:def _read_megaplan_coupling_allowlist(path: Path) -> set[str]:
+arnold/conformance/checks.py:714:def _scan_generic_arnold_megaplan_imports(root: Path) -> dict[str, tuple[str, ...]]:
+arnold/conformance/checks.py:739:def _is_excluded_from_generic_arnold_scan(root: Path, path: Path) -> bool:
+arnold/conformance/checks.py:746:def _module_name_from_path(root: Path, path: Path) -> str:
+arnold/conformance/checks.py:754:def _megaplan_imports_from_node(
+arnold/conformance/checks.py:781:def _resolve_import_from_module(
+arnold/conformance/checks.py:803:def _is_megaplan_import(module: str) -> bool:
+arnold/conformance/checks.py:810:def _string_constants(tree: ast.AST) -> set[str]:
+arnold/conformance/checks.py:830:def check_adapter_smoke_invocation(
+arnold/conformance/checks.py:866:def check_adapter_registry_round_trip(
+arnold/supervisor/outcomes.py:63:class NormalizedOutcome:
+arnold/supervisor/outcomes.py:93:    def to_run_result_metadata(self) -> RunResultMetadata:
+arnold/supervisor/outcomes.py:104:def normalize_driver_outcome(
+arnold/supervisor/outcomes.py:140:def normalize_driver_outcome_from_dict(
+arnold/kernel/ids.py:9:def _sha256_text(value: str) -> str:
+arnold/kernel/ids.py:14:class RunId:
+arnold/kernel/ids.py:21:class ReentryId:
+arnold/kernel/ids.py:27:def derive_pipeline_identity(alias: str, manifest_hash: str) -> str:
+arnold/kernel/ids.py:33:def derive_idempotency_key(*parts: str) -> str:
+arnold/cli/operators.py:27:def _load_manifest_from_artifact_root(root: Path) -> WorkflowManifest:
+arnold/cli/operators.py:44:def _cmd_status(args: argparse.Namespace) -> int:
+arnold/cli/operators.py:63:def _cmd_trace(args: argparse.Namespace) -> int:
+arnold/cli/operators.py:71:def _cmd_inspect(args: argparse.Namespace) -> int:
+arnold/cli/operators.py:80:def _cmd_override(args: argparse.Namespace) -> int:
+arnold/cli/operators.py:111:def main(argv: Sequence[str] | None = None) -> int:

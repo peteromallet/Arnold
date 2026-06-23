@@ -1,0 +1,50 @@
+# What Should Failure Feel Like to Peter?
+
+## Direct Answer
+
+Failure should feel like **a competent teammate flagging a specific, well-diagnosed problem that genuinely requires Peter's judgment** — never like a fragile system that silently breaks or a nagging bot that escalates every hiccup. Peter should experience three sensations: (1) the machine *tried* to fix itself first, (2) when it couldn't, the diagnosis is clear and actionable, and (3) he only hears about it when his input is the bottleneck. The emotional takeaway is relief, not burden — the system absorbed the operational chaos and surfaced only the decision Peter actually needs to make.
+
+## Rationale
+
+The plan explicitly biases the Guardian toward autonomous repair. It says: "figure out what's wrong and fix it" for operational failures, and only escalate when "the next step requires product judgement, credential input, destructive cleanup, or accepting quality debt." The Guardian should "not silently make product decisions, resolve merge conflicts, delete worktrees, merge PRs, or accept quality debt."
+
+This means Peter's failure experience has two tracks:
+
+- **Operational failures** (dead tmux session, stale chain, test failures with a concrete code issue, missing credential): Peter should never see these as failures. The Guardian repairs or restarts them autonomously. At most, Peter gets a Discord notification saying *"op-123 hit a transient issue, restarted, looks fine now"* — but the preferred default is silence.
+
+- **Judgment failures** (merge conflict, ambiguous product decision, accepting failing validation, destructive cleanup): These reach Peter with a clear diagnosis, a summary of what the Guardian already tried, and a concrete ask. The message should feel like a colleague saying *"I've done the legwork; here's the one call only you can make."*
+
+The plan also says "approvals should be rare and focused on completion, merge, cleanup, credentials, or accepting debt." So Peter should feel that escalations are unusual and meaningful.
+
+## Existing Mechanics This Depends On
+
+- **Guardian classification pipeline**: must correctly distinguish operational failures (auto-repairable) from judgment failures (escalatable). If classification is wrong, Peter gets noise or blind spots.
+- **DeepSeek subagent diagnostic capability**: the plan says "Guardian should call a subagent when it cannot classify a failure cheaply." This is the diagnostic layer Peter never sees.
+- **Pending approval queue and confirmation manager**: from `resident/confirmation_manager` — approvals need expiry, deduplication, and association with operations. Peter shouldn't get the same approval request twice.
+- **Discord notification infrastructure**: `ResidentDiscordService` with DM capability for completion/blocker events, and the outbound sink for structured messages.
+- **Safety policy categories** (safe/confirm/forbidden): determines what reaches Peter vs. what the Guardian handles silently.
+- **cleanup-loose-branches discipline**: post-consolidation approvals should feel like a clean summary, not a pile of ambiguous branch names.
+
+## Risks and Caveats
+
+1. **Classification false negatives**: If the Guardian misclassifies a judgment failure as operational and tries to auto-repair, it could make things worse (e.g., force-pushing a broken branch). Peter's trust collapses if he discovers damage that was hidden from him.
+
+2. **Notification fatigue from misclassification**: If too many operational failures are escalated, Peter learns to ignore Discord messages — the opposite of the intended experience. The initial threshold for escalation should be conservative and tuned downward over time.
+
+3. **The "silent success" blind spot**: If the Guardian auto-repairs everything, Peter may not realize how often repairs are happening. A periodic health digest (not per-incident) might be needed so Peter can spot patterns.
+
+4. **Guardian repair loops**: Without a retry cap or escalating repair strategy, a persistent unrecoverable error could cause the Guardian to loop silently while Peter assumes everything is fine.
+
+5. **Credential failures are awkward**: The plan says missing credentials trigger *"notify Peter with the exact missing credential and the agentbox creds push/test command."* But if Peter's Discord is the only channel and he's not checking it, the machine is dead. A push notification or alternate path matters.
+
+## One Concrete Design Implication
+
+**Every Guardian escalation to Peter must carry a structured "repair trail."** The Discord notification for a judgment failure must include:
+
+- What the Guardian observed (state, logs, error signals)
+- What it tried (restart? subagent diagnosis? chain resume?)
+- Why those attempts didn't resolve it
+- What specifically Peter needs to decide or provide
+- The consequence of not acting (e.g., "op-123 will remain blocked; no further worktrees can use megaplan's main until resolved")
+
+This means the operation registry needs a `guardian_actions` log (not just a status field), and the Discord Operator must format escalations from that log. Without this, Peter gets context-free "op-123 failed" messages and the system feels like a fragile black box instead of a competent teammate who did the homework before asking for help.

@@ -1,0 +1,86 @@
+# The Guardian's Agentic Loop
+
+## Direct Answer
+
+The Guardian's agentic loop is a **periodic supervision cycle** that runs on a fixed cadence (e.g., every 5, 10, or 15 minutes). On each tick, it iterates over every active operation in the registry, inspects its liveness and progress, classifies its state, attempts safe autonomous recovery where possible, escalates to pending approval where not, notifies Discord for meaningful state changes, and updates the operation record — then sleeps until the next tick.
+
+Concretely, the loop per operation is:
+
+1. **Inspect** — check tmux session liveness, read recent logs, examine structured chain/plan state.
+2. **Classify** — assign one of: `running`, `stale`, `blocked`, `failed`, `completed`, or `awaiting_approval`.
+3. **Act on classification**:
+   - **Running** → update `last_check` timestamp, continue.
+   - **Completed** → record completion, trigger Discord notification, queue for cleanup-consolidation.
+   - **Stale / blocked / failed** → enter the recovery sub-loop.
+4. **Recovery sub-loop** (for non-running, non-completed operations):
+   - Try a known-safe restart (e.g., relaunch missing tmux session when chain state is resumable).
+   - Advance a Megaplan chain if the next step is unambiguous.
+   - If the cause is unclear, spawn a DeepSeek diagnostic subagent to classify and patch.
+   - If recovery succeeds → reclassify as `running` and record what was done.
+   - If recovery requires product judgment, merge conflicts, credentials, destructive cleanup, or accepting quality debt → file a pending approval and notify Discord.
+5. **Notify** — post to Discord only for meaningful state transitions (blocked, failed, completed, needs human input). Do not spam on every healthy tick.
+6. **Persist** — write updated status, health summary, and tick report back to the operation registry.
+
+The daemon then sleeps until the next scheduled wake.
+
+---
+
+## Rationale
+
+This loop design follows from three explicit constraints in the plan:
+
+**Constraint 1: "The Guardian should not silently make product decisions."** The loop must have a hard boundary between safe operational recovery (restart a dead process, advance an unambiguous chain step) and unsafe actions (merge PRs, resolve conflicts, delete worktrees, accept quality debt). The classification step enforces this by routing unsafe cases to the pending-approval queue rather than attempting recovery.
+
+**Constraint 2: "The Guardian should be biased toward 'figure out what's wrong and fix it' for operational failures."** The recovery sub-loop reflects this bias. It tries known-safe paths first, then escalates to a diagnostic subagent for unclear failures, and only asks the human when genuinely stuck.
+
+**Constraint 3: "Guardian should start as a scheduler over operation plugins."** The plan explicitly says not to rewrite `cloud/supervise.py` but to wrap `cloud_supervise_tick()` as the first classifier/action plugin for `megaplan_chain` operations. The loop is therefore a generic operation-iteration shell that dispatches to per-kind plugins — not a monolithic chain supervisor.
+
+The cadence (5–15 minutes) is chosen because this is a background supervision daemon, not a real-time controller. Operations run for minutes to hours; checking more frequently adds noise without meaningful intervention opportunities.
+
+---
+
+## Existing Mechanics This Depends On
+
+1. **`arnold_pipelines/megaplan/cloud/supervise.py`** — The existing cloud supervisor performs one-shot chain inspection and safe actions. Guardian wraps this as the `megaplan_chain` operation plugin, calling `cloud_supervise_tick()` or an extracted equivalent per tick.
+
+2. **`scripts/megaplan_live_watchdog.py` and `arnold_pipelines/megaplan/watchdog/*`** — The live watchdog already scans local plans/processes for liveness. Guardian composes this pattern into the operation-registry loop.
+
+3. **`arnold_pipelines/megaplan/resident/scheduler.py`** — Existing resident scheduling patterns provide the periodic-wake infrastructure.
+
+4. **Operation registry** — The loop depends on a durable cross-operation store (SQLite or files) that tracks `id`, `kind`, `status`, `last_check`, `tmux_session`, `log_path`, and `pending_approvals`. This is the new piece being built.
+
+5. **Subagent mechanics** (`workers/hermes.py`, `runtime/key_pool.py`) — The diagnostic subagent spawn in the recovery path uses existing Hermes/DeepSeek subagent infrastructure.
+
+---
+
+## Risks and Caveats
+
+1. **Race conditions between Guardian and Discord Operator.** Both actors share the operation registry. If Guardian restarts an operation while the Operator is inspecting or stopping it, state can diverge. Mitigation: the registry must support atomic status transitions with a lock or compare-and-swap.
+
+2. **Recovery loops.** A failed operation that the Guardian restarts, which fails again, which the Guardian restarts again, creates a silent thrash cycle. The loop needs a retry cap and escalating backoff — after N failed recoveries, stop trying and file a pending approval instead of looping forever.
+
+3. **Plugin dispatch fragility.** If the Guardian dispatches to a `megaplan_chain` plugin that calls `cloud_supervise_tick()`, and that function has side effects or makes blocking network calls, the entire loop stalls. Each plugin tick must be non-blocking or have a timeout wrapper.
+
+4. **Notification fatigue.** "Notify Discord only when useful" is easy to say and hard to tune. If every tick-on-tick status change fires a message, the Discord channel becomes noise. The notification policy needs explicit state-change detection (e.g., `running → blocked` fires, `blocked → blocked` does not).
+
+5. **Bare repo interaction.** Existing worktree helpers assume a normal main checkout for some operations (registered worktree discovery, removal). If canonical repos are bare mirrors under `/workspace/repos/*.git`, the Guardian's worktree inspection may need bare-aware variants.
+
+---
+
+## Concrete Design Implication
+
+**The operation registry must expose a `guardian_tick(operation_id)` interface that returns a structured result with explicit action permissions, not raw state.**
+
+Rather than the Guardian reading raw state and deciding what to do ad-hoc, each operation kind should implement a tick method that returns:
+
+```python
+@dataclass
+class GuardianTickResult:
+    new_status: str                    # running, blocked, failed, completed, awaiting_approval
+    safe_actions_taken: list[str]      # e.g., ["restarted_tmux", "advanced_chain_step"]
+    pending_approvals: list[Approval]  # actions needing human sign-off
+    should_notify: bool                # true only for meaningful transitions
+    notification_message: str | None   # pre-formatted Discord message
+```
+
+This separates the loop mechanics (iterate, call tick, persist result, notify if needed) from the per-kind intelligence (what does "check a megaplan chain" actually mean?). The Guardian daemon becomes a thin scheduler; the plugins become the policy. This also makes it trivial to add new operation kinds (Codex, Claude, tests, subagent swarms) later — each just implements `guardian_tick()`.

@@ -1,0 +1,162 @@
+# AgentBox Inventory — Reusable Mechanics for Discord-First Guardian
+
+## Executive Summary
+
+The repo contains a **mature watchdog/repair/supervise stack** that can carry ~70% of AgentBox's Guardian requirements out of the box. The gap is not mechanics — it's packaging: wrapping the CLI watchdog into a persistent, Discord-triggered resident with subagent dispatch.
+
+---
+
+## 1. WATCHDOG — THE CORE REUSABLE (Crown Jewel)
+
+**`scripts/megaplan_live_watchdog.py`** (~550 lines) is a complete production-grade live watchdog supervisor:
+
+| Mechanic | File | What It Does |
+|----------|------|-------------|
+| **Discovery** | `watchdog/discovery.py` | Scans roots (`DEFAULT_SCAN_ROOTS`) for live Megaplan/Arnold runs via tmux, process trees, and state-file mtime checks |
+| **Snapshot** | `watchdog/snapshot.py` | Builds a structured snapshot of all plans + incidents with triage (LIVE, RECENT, MAYBE_LIVE, STALE) |
+| **Classification** | `pipelines/live_supervisor/` | Runs the `live-supervisor` Arnold workflow pipeline to classify each plan's health (`ALL_GOOD`, `BLOCKED`, `STALLED`, etc.) |
+| **Repair Runner** | `watchdog/repair_runner.py` | Executes allowlisted repair commands (`doctor`, `auto`, `resume`, `chain`, `rm`, `kill`) via subprocess with broken-CLI resilience — returns structured results even when executables are missing |
+| **Retry Loop** | `watchdog/retry.py` | Bounded 3-attempt state machine with `RESOLVED`/`UNRESOLVED`/`TERMINAL` outcomes; raises `RetryCapExceeded` on overflow |
+| **Registry** | `watchdog/registry.py` | NDJSON-persisted observation registry tracking per-plan lifecycle transitions (DISAPPEARED→IDLE→RUNNING→STALLED, etc.) |
+| **Recheck** | watchdog CLI (`--recheck-after-seconds`) | Optional post-repair verification scan to confirm plan recovery |
+| **Cleanup Separation** | `_select_problem_incidents()` | Distinguishes terminal-state + stale-lock (cleanup candidates) from active problems — avoids wasting repair budget on dead plans |
+
+**Reuse verdict: 100%.** This is the Guardian repair engine. Feed it a scan trigger, receive classified incidents, execute bounded repairs.
+
+---
+
+## 2. CLOUD SUPERVISOR — CHAIN TICK MECHANICS
+
+**`arnold_pipelines/megaplan/cloud/supervise.py`** (~350 lines) provides per-tick chain supervision:
+
+- **Safe action policy**: `READ_ONLY_STATUSES` (`running`, `complete`, `human_prerequisite`, `quality_gate`) — never mutated by supervisor
+- **Blocked refusal reasons**: `human_prerequisite` → "human must resolve"; `quality_gate` → "accept with debt or fix"
+- **Sync-before-decide**: Refreshes branch/PR/extra-repo sync *before* any restart/advance decisions
+- **Provider consistency check**: Blocks if cloud provider state mismatches chain state
+- **TMUX restart**: Constructs `megaplan chain start` commands for runner restart
+- **Human verification probing (T11)**: Probes remote `awaiting_human_verify` status
+
+**Reuse verdict: 80%.** The tick logic and safe-action policy translate directly to Guardian's "inspect then decide" pattern. The cloud-specific SSH/tmux wrappers need adaptation to Discord-native commands.
+
+---
+
+## 3. RESIDENT SCHEDULER — PERSISTENT JOB WORKER
+
+**`arnold_pipelines/megaplan/resident/scheduler.py`** (~280 lines) provides:
+
+| Mechanic | Detail |
+|----------|--------|
+| **StoreScheduledJobBackend** | Claim-due-jobs with atomic worker-ID locking, stale-after-seconds timeout, configurable retry delay |
+| **Job handlers** | `cloud_check`, `deferred_turn`, `heartbeat`, `confirmation_expiry` — extensible handler registry |
+| **Retry policy** | Per-job `max_attempts` with exponential-ish backoff via `scheduled_for` bump |
+| **Idempotency** | Every mutation carries a deterministic idempotency key |
+
+**Reuse verdict: 90%.** Add a `watchdog_tick` job handler, schedule it on a heartbeat, and Guardian becomes a persistent resident daemon with zero new scheduling infrastructure.
+
+---
+
+## 4. REPAIR RUNNER — ALLOWLISTED EXECUTION
+
+**`watchdog/repair_runner.py`** (~120 lines) is the repair command adapter:
+
+```python
+class RepairRunner:
+    def _argv_for_command(self, command: str) -> tuple[list[str], str | None]:
+        # Rewrites megaplan subcommands → python -m arnold_pipelines.megaplan
+        # Passes through system commands (rm, kill)
+        # Returns command_unavailable if executable missing
+```
+
+**Key resilience features:**
+- `command_unavailable` status (never crashes on missing tool)
+- 300s timeout
+- Auto-detects `cd /path && cmd` injection markers
+- Falls back to plan parent directory as cwd
+
+**Reuse verdict: 100%.** Guardian repairs need exactly this: safe, bounded, allowlisted command execution with structured results.
+
+---
+
+## 5. EXISTING DISCORD INFRASTRUCTURE
+
+**`arnold_pipelines/megaplan/resident/discord.py`** — Discord resident module exists (file present, not fully excerpted). Combined with:
+
+- **Webhook subscriptions** (skill `webhook-subscriptions`): Full HMAC-auth'd webhook system, `--deliver discord` supported, prompt templates with `{dot.notation}`
+- **`--deliver-only` mode**: Forward messages without LLM round-trip for notifications/pings
+
+**Reuse verdict: 70%.** Discord listener exists but needs a `/guardian` slash-command handler and a message→watchdog bridge.
+
+---
+
+## 6. SUBAGENT/DEEPSEEK DISPATCH
+
+| Capability | Skill/File | How |
+|-----------|-----------|-----|
+| **Hermes subagent spawn** | `hermes-agent` skill | `hermes chat -q '...'` for one-shot repair analysis; PTY for interactive debugging |
+| **Claude Code dispatch** | `claude-code` skill | For code-fix subagents on stuck PRs |
+| **Two-stage review** | `subagent-driven-development` skill | Spec compliance + code quality review for repair PRs |
+| **Multi-agent orchestration** | `kanban-orchestrator` skill | Decompose repair into parallel researcher→analyst→implementer pipelines |
+
+**Reuse verdict: 85%.** All subagent dispatch mechanics exist; missing only the Discord→subagent trigger and result→Discord reply plumbing.
+
+---
+
+## 7. GAPS — WHAT AGENTBOX NEEDS TO BUILD
+
+| Gap | Severity | Recommendation |
+|-----|----------|---------------|
+| **Discord-first init trigger** | Critical | Wrap `_run_scan()` behind a `/guardian scan` Discord slash command in `resident/discord.py` |
+| **Guardian persistent daemon** | Critical | Add `watchdog_tick` handler to `ResidentJobHandlers`, schedule via heartbeat in `resident/scheduler.py` |
+| **Repair command gateway** | High | Expose `RepairRunner.run()` results back to Discord channel as embed cards |
+| **Post-repair PR automation** | High | Use `github-pr-workflow` skill + `hermes-agent` subagent to auto-create consolidation PRs after successful repairs |
+| **Guardian identity/voice** | Medium | Define a Guardian system prompt that routes through `resident/runtime.py` EmitProtocol → Discord |
+| **Observability dashboard** | Medium | Expose `WatchdogRegistry` lifecycle transitions as Discord embeds |
+| **Rate limiting / repair budget** | Low | Already partially done (`max_retries=3`, `recheck_seconds`); add per-plan daily budget |
+
+---
+
+## 8. CONCRETE BUILD PLAN (Guardian MVP)
+
+```
+1. Add watchdog_tick handler to resident/scheduler.py
+   → Reuse StoreScheduledJobBackend with heartbeat schedule
+   → Calls _run_scan() from scripts/megaplan_live_watchdog.py
+
+2. Extend resident/discord.py with /guardian slash commands
+   → /guardian scan    → triggers watchdog tick
+   → /guardian status  → reads WatchdogRegistry, returns embed
+   → /guardian repair <plan_id> → runs RepairRunner, returns result
+
+3. Bridge repair results → subagent dispatch
+   → If repair fails after 3 retries, spawn hermes-agent -q
+     "Investigate why plan X is stuck, propose fix"
+   → If repair succeeds, spawn hermes-agent -q
+     "Create a PR consolidating the repaired changes"
+
+4. Wire webhook subscriptions for GitHub events
+   → PR merged → watchdog recheck
+   → New branch pushed → auto-classify
+```
+
+---
+
+## 9. KEY FILE REFS (Quick Index)
+
+| Purpose | File |
+|---------|------|
+| Watchdog CLI (reuse as-is) | `scripts/megaplan_live_watchdog.py` |
+| Repair runner | `arnold_pipelines/megaplan/watchdog/repair_runner.py` |
+| Retry loop | `arnold_pipelines/megaplan/watchdog/retry.py` |
+| Discovery/snapshot | `arnold_pipelines/megaplan/watchdog/discovery.py`, `snapshot.py` |
+| Registry | `arnold_pipelines/megaplan/watchdog/registry.py` |
+| Cloud supervisor tick | `arnold_pipelines/megaplan/cloud/supervise.py` |
+| Resident scheduler | `arnold_pipelines/megaplan/resident/scheduler.py` |
+| Discord resident | `arnold_pipelines/megaplan/resident/discord.py` |
+| Live supervisor pipeline | `arnold_pipelines/megaplan/pipelines/live_supervisor/` |
+| Watchdog E2E simulation | `scripts/simulate_watchdog_end_to_end.py` |
+| Hermes subagent skill | `autonomous-ai-agents/hermes-agent/SKILL.md` |
+| Webhook subscriptions | `devops/webhook-subscriptions/SKILL.md` |
+
+---
+
+**Bottom line:** The watchdog/repair/supervise stack is battle-tested and carries 70% of Guardian. The remaining 30% is a thin Discord gateway + persistent scheduling wrapper — roughly one sprint of integration work. AgentBox should inherit all watchdog mechanics directly and focus new development on the Discord-first UX and subagent dispatch pipeline.

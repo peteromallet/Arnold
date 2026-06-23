@@ -1,0 +1,47 @@
+## Direct Answer
+
+Peter needs a **filtered, signal-only view** of what the machine is doing. Specifically:
+
+1. **What's running** — a one-line-per-operation summary he can request on demand (or see on change).
+2. **What's blocked and why** — only when the Guardian has tried and failed to auto-resolve, and human judgment is required.
+3. **What needs approval** — pending confirmations for merge, cleanup, credential use, or quality-debt acceptance.
+4. **What completed** — a DM with summary, validation result, branch/PR pointer, and the next-action question (push? merge? cleanup?).
+5. **Machine health warnings** — disk pressure, dirty/unpushed branches, credential expiry.
+
+He explicitly does **not** need: routine Guardian tick reports, auto-resolved transient failures, intermediate chain-step progress (unless he asks), or green "everything's fine" spam. The system's default posture is *silence unless there's a decision Peter must make or a result he should see*.
+
+## Rationale
+
+The Guardian is explicitly designed with an **autonomous-repair bias**:
+
+> "The Guardian should be biased toward 'figure out what's wrong and fix it' for operational failures. It should only ask Peter when the next step requires product judgement, credential input, destructive cleanup, or accepting quality debt."
+
+This means Peter's relationship with AgentBox should be **pull, not push**. He starts work via Discord messages. The machine runs it. He's notified only at decision-gates (blocked, completed, approval needed) or when he asks. This is fundamentally a delegation model — not a monitoring dashboard.
+
+The Discord Operator reinforces this: Peter can ask "what's running?" or "what's blocked?" anytime, so push notifications can be sparse because pull is always available.
+
+The single-user nature matters too. There's no team that needs broadcast status. One person, one machine, one notification channel. Noise has nowhere to dissipate — it all lands on Peter. So the signal must be very clean.
+
+## Existing Mechanics This Depends On
+
+- **Guardian notification events** (from the plan): "operation started; operation blocked; approval needed; operation completed; operation failed; disk/memory warning; dirty/unpushed branch warning." These are the push-surface.
+- **Pending approval queue** — the confirmation records managed by `ResidentDiscordService`'s confirmation manager. Peter sees the queue, not every internal state transition.
+- **Discord Operator `status` tool** — Peter's pull mechanism. "The Operator should have access to all AgentBox data and tools" to answer "what is running?" instantly.
+- **Operation registry** — the durable record that lets both Guardian and Operator answer status questions without re-scanning tmux sessions.
+- **Completion DM flow**: "DM Peter when an operation completes; include summary, validation, branch/PR status, and next action."
+
+## Risks and Caveats
+
+1. **Notification threshold drift.** If Guardian auto-resolves 90% of failures silently, Peter may not notice when a class of failure becomes chronic. The system needs a periodic summary ("last week: 47 auto-recovered stalls, 3 escalated") or Peter will lose awareness of machine health.
+
+2. **Silent credential rot.** If Codex/Claude tokens expire and Guardian can't fix them, it notifies Peter. But if the Discord bot token itself expires, there's no notification channel. This is an out-of-band dependency.
+
+3. **"What's blocked?" must be fast and correct.** If Peter asks this and gets a stale or incomplete answer because the Guardian hasn't ticked recently, trust erodes. The Operator should be able to force a tick before answering.
+
+4. **Completion noise on batch work.** If Peter launches 5 chains in rapid succession and gets 5 completion DMs, it's noise. A batched summary ("3 of 5 completed, 1 blocked, 1 running") is better for multi-operation launches.
+
+5. **Guardian overconfidence.** If Guardian's autonomous repair makes wrong decisions (e.g., restarting a chain from a state that lost context), Peter only learns about it at completion when the output is wrong. The repair log must be accessible even for "successful" recoveries.
+
+## Concrete Design Implication
+
+**The operation registry should model a `user_visible_state` that is narrower than internal state.** Internal states might include: `launching`, `running`, `tmux_alive`, `chain_step_3_of_7`, `guardian_repairing`, `guardian_awaiting_retry`. Peter should see a compressed set like: `running`, `blocked` (with a one-line reason), `awaiting_approval` (with the confirmation id), `completed`, or `failed`. The Operator's `status` command queries this field directly. The Guardian updates it only at meaningful boundaries — never on routine ticks. This keeps the "what's running?" answer to a single Discord message, not a wall of text, and ensures every notification Peter receives maps to something he can actually act on.

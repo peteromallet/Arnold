@@ -1,0 +1,40 @@
+# Minimal Vertical Slice for AgentBox
+
+## Direct Answer
+
+The minimal vertical slice is: **an operation registry that records a Megaplan chain launch into an isolated worktree, a Guardian daemon that supervises that single operation, and Discord notification when it completes or blocks.** The user triggers this from Discord with a message like "run this chain: briefs/agentbox/chain.yaml" and gets a response when work finishes, stalls, or needs input. Everything else (interactive Operator commands, multi-operation kinds, credential sync, cleanup) is phase 2.
+
+## Rationale
+
+A vertical slice proves the architecture end-to-end: user intent → machine action → visible outcome. The AgentBox architecture has one core innovation — the operation registry sits between the user (Discord) and the workers (Megaplan chains, Codex, Claude, etc.). If the registry doesn't work, nothing works. So the slice must exercise:
+
+1. **Operation creation** — a durable record with id, kind, repo, worktree, tmux session, log path, status.
+2. **Real work launch** — not a stub; an actual Megaplan chain running in a worktree, because chains are the most proven existing substrate and the plan explicitly calls them "the first operation kind."
+3. **Autonomous supervision** — Guardian checking the operation, classifying its state, and deciding whether to repair or notify.
+4. **User-visible notification** — Discord is the "primary human control surface," so the slice must close the loop there, even if only as a one-way notification (not full interactive Operator).
+
+The slice excludes interactive `/status`, `/logs`, `/stop` until phase 2 because those require a stable registry and tool profile. It also excludes credential sync (manual SSH upload works for one chain), multi-repo worktrees (start with one), and cleanup (manual for now). The point is proving the registry → worktree → supervision → notification loop with the fewest moving parts.
+
+## Existing Mechanics This Depends On
+
+- **`arnold_pipelines/megaplan/bakeoff/worktree.py`** — `create_named_worktree`, `validate_worktree_name`, `branch_exists`, `worktree_registered`, `remove_worktree`. Must be parameterized for a machine-scoped worktree root instead of `~/Documents/.megaplan-worktrees`.
+- **`arnold_pipelines/megaplan/cloud/supervise.py`** — existing one-shot chain supervision logic. Guardian v0 wraps this as the first `megaplan_chain` plugin.
+- **`arnold_pipelines/megaplan/resident/discord.py`** — `ResidentDiscordService`, outbound sink, and conversation routing. Used initially for notification only (not full message-triggered agent turns).
+- **Megaplan chain launch mechanics** — `cloud chain`, `cloud bootstrap`, chain spec/state models. These already produce structured state that can seed the operation registry.
+- **Store patterns** from `store/base.py` — file or SQLite persistence models for the registry.
+
+## Risks and Caveats
+
+1. **Bare repo worktree compatibility.** Existing worktree helpers assume a normal checkout with a main worktree for discovery and removal. If canonical repos are bare mirrors (`/workspace/repos/*.git`), some helpers may break. Mitigation: start with a normal checkout for the first slice; add bare-aware variants later.
+
+2. **Guardian cadence is a tuning problem, not a design problem.** If the tick interval is too long, the user waits; if too short, it's noisy. The first slice should make the interval configurable and log every tick so behavior is observable.
+
+3. **Notification-only Discord is a half-measure.** Users will naturally reply to a "chain completed" message expecting interaction. The boundary between "notification" and "interactive Operator" is leaky. The slice should at minimum route replies into the pending-approval queue so they aren't lost.
+
+4. **Single-operation assumption hides concurrency bugs.** The registry must handle concurrent Guardian ticks and user-triggered status checks from day one, even if only one operation exists. Use SQLite with WAL mode or file locking.
+
+5. **Tmux session naming collision with existing usage.** Megaplan cloud already uses tmux sessions. AgentBox must use a distinct naming convention (e.g., `agentbox-op-<id>`) to avoid clashing with existing cloud sessions on the same box.
+
+## Concrete Design Implication
+
+**The operation registry schema must be extensible in its first version.** Even though the first slice only has `kind: megaplan_chain`, the schema should include a `metadata` JSON/column for kind-specific fields (chain spec path, chain state, step index) alongside the fixed fields (id, kind, status, tmux_session, log_path, created_at, last_check). This avoids a schema migration when adding `kind: codex` or `kind: test` in phase 2. The Guardian's `classify()` function should dispatch on `kind` from day one, even if only one dispatch target exists. This keeps the plugin boundary honest and prevents hardcoding chain-specific logic into the supervision loop.

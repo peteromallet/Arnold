@@ -1,0 +1,206 @@
+现在我对现有代码库和本地技能有了全面的了解。以下是我的决定性清单。
+
+---
+
+## AgentBox 清单：可复用机制、缺口和建议
+
+### 1. Discord 输入/输出边界（高复用价值）
+
+**现有资源：** `arnold_pipelines/megaplan/resident/discord.py` (1220 行)
+
+Discord 消息到 `InboundEvent` 的转换流程已完全实现并经过测试：
+
+```
+discord.py on_message → DiscordInboundMessage.from_discord_message()
+  → extracts: message_id, author_id, guild_id, channel_id, thread_id, dm_user_id
+  → conversation_key: "discord:guild:{g}:channel:{c}" 或 "discord:dm:{u}"
+  → InboundEvent(idempotency_key="discord:message:{id}", content, subject)
+```
+
+**出站：** `DiscordOutboundSink` 通过 conversation_key 将回复传回渠道。自动解析频道/用户/私信目标，并将 discord_message_id 写回元数据。
+
+**可直接复用：** 整个 Discord 适配器边界。用你选择的任何机器人库（discord.py、hikari、nextcord）替换 discord.py，或保持原样。conversation_key 格式独立于库。
+
+---
+
+### 2. 常驻运行时（核心编排器 — 80% 可复用）
+
+**现有资源：** `arnold_pipelines/megaplan/resident/runtime.py` (1340 行)
+
+每个用户消息的**处理管道**：
+
+```
+receive(event)
+  → authorize (allowlist: user/guild/channel)
+  → persist (upsert conversation → create inbound message → update cursor)
+  → coalesce (AsyncBurstCoalescer: idle_delay_s + max_delay_s batch window)
+  → handle_batch:
+      → create turn (idempotency key: "resident-turn:{conv_id}:{msg_ids}")
+      → run agent loop (system prompt + hot context + tool catalog)
+      → record tool calls
+      → send outbound message → update conversation cursor
+      → mark turn completed
+```
+
+**你需要适配的部分：**
+- 将 `MegaplanResidentProfile` 替换为 AgentBox 配置文件（工具面、系统提示）
+- `AgentRunner` 可以根据你的提供商/模型进行替换
+- `Store` 后端——目前是 SQLite（生产环境）/基于文件（开发环境）
+
+**可直接复用的部分：** 防重复机制、突发合并、异常终止轮次恢复 (`recover_abandoned_turns`)、轮次生命周期跟踪、带 `deterministic_idempotency_key()` 的事件溯源持久化。
+
+---
+
+### 3. 授权和确认（可直接复用）
+
+**现有资源：** `arnold_pipelines/megaplan/resident/auth.py` (1260 行)
+
+三个可复用的层级：
+
+| 层级 | 机制 | AgentBox 用途 |
+|------|----------|-------------|
+| 入站授权 | 基于白名单（allowed_user_ids、allowed_guild_ids、allowed_channel_ids） | 谁可以使用 AgentBox |
+| 操作授权 | 高风险操作（cloud_start、repo_write、artifact_write）需要管理员身份 | 保护性变更 |
+| 确认 | 精确短语匹配，附带过期时间和持久化存储 | "输入 `confirm deploy abc123` 以继续" |
+
+`StoreBackedConfirmationManager` 将确认请求作为定时任务持久化，包含过期处理。
+
+**建议：** 保持这个确切的模型。它简单、可审计，并且 Discord 原生——确认短语自然地作为 Discord 消息流动。
+
+---
+
+### 4. 工具面（模式 — 需要为 AgentBox 重新设计）
+
+**现有资源：** `arnold_pipelines/megaplan/resident/profile.py` (1260 行) + `tool_registry.py` + `tool_schemas.py`
+
+配置文件定义了完整的 Pydantic 工具输入，包含 `actor_user_id`、`guild_id`、`channel_id` 用于归属。关键类别：
+
+- **Epic 生命周期：** CreateEpic、SelectEpic、EditEpicBody、TransitionEpicState
+- **清单/冲刺：** AddChecklistItems、UpdateChecklistItem、CreateOrUpdateSprints、QueueSprints
+- **云端操作：** CloudStartChain、CloudBootstrap、CloudResume、CloudLogs（带确认门控）
+- **计划执行：** 通过控制系统的 ControlToolInput
+- **发现：** SearchMessages、SearchEpics、SearchPlans、SearchCodeArtifacts
+- **定时：** ScheduleCloudCheck、CancelCloudCheck、ListCloudChecks
+
+**`ToolRegistry` 模式：** 注册表包装了一个 auth 检查 + 确认管理器 + 存储后端，将每个工具调用包装在 `authorize_action()` 中，可选择性地在 `require_confirmation()` 中进行门控。完全可复用。
+
+**AgentBox 需求：** 你需要一个不同的工具面——启动 epic/链/票证、查询状态、推送/提交 PR 结果。但**注册表/授权/确认包装器模式**是通用的。
+
+---
+
+### 5. 链和门控系统（适用于 AgentBox 执行的最大块）
+
+**现有资源：** `arnold_pipelines/megaplan/chain/`（hinge_gate、m3_dual_green、m5_eval_gates、spec、git_ops、ci_hook）+ `supervisor/chain_runner.py`
+
+链规范格式 (`chain/spec.py`) 定义了里程碑、门控和完成合约。`chain_done_gate.py` 脚本强制要求：
+
+```
+chain 完成需要：
+  - 所有里程碑在 chain_state.completed 中标记为已完成
+  - completion_contract_mode == "enforce"
+  - full_suite_backstop_mode == "enforce"  
+  - 无打开的审查阻碍项（blockers.json）
+```
+
+**这对于 AgentBox 来说非常有价值，因为：** 从 Discord 启动的链（通过 `/agentbox chain start` 或类似命令）需要与推送/PR 合并管道的完成门控完全相同。门控基础设施已经存在。
+
+---
+
+### 6. 看门狗（Guardian）修复/重启（可直接复用）
+
+**现有资源：** `arnold_pipelines/megaplan/watchdog/`（repair_runner、correlate、discovery、orphans、processes、retry、snapshot、tmux_scan）
+
+看门狗**已经**实现了你描述的 Guardian 流程：
+
+```
+看门狗循环：
+  1. discover（扫描计划/运行/tmux 会话）
+  2. correlate（将运行与计划状态匹配）
+  3. detect_blocked（识别停滞/卡住的运行）
+  4. repair（重新启动阻塞的运行，清理孤立进程）
+  5. recheck（等待，验证修复是否成功）
+```
+
+`simulate_watchdog_end_to_end.py` 脚本端到端地验证了此流程。
+
+**AgentBox 映射：** 看门狗 = AgentBox Guardian。完全相同的模式——检测阻塞的链执行，修复/重启它们，重新检查。状态转换和重试逻辑可直接复用。
+
+---
+
+### 7. 票证/问题（可复用模式 + GitHub 集成）
+
+**现有资源：** `arnold_pipelines/megaplan/tickets/`（core、files、identity、registry）+ 本地技能 `github-issues`
+
+票证系统管理带身份解析的文件支持票证。对于 AgentBox，**本地 `github-issues` 技能**直接相关——它支持创建、管理、分类和关闭 GitHub 问题，使用 `gh` CLI 或 REST API。将此 skill 作为 AgentBox 工具面中的工具暴露出来，你就可以实现 "start ticket" 功能。
+
+---
+
+### 8. 子代理生成（AgentBox 的 DeepSeek/子代理层）
+
+**现有资源：** 本地技能 `hermes-agent-spawning`、`claude-code`、`codex`、`opencode`、`subagent-driven-development`、`kanban-orchestrator`、`kanban-worker`
+
+这些技能已经实现了委托模式：
+- **hermes-agent-spawning：** 以 PTY 或单次模式生成完整的 hermes 进程
+- **claude-code/codex/opencode：** 委托给外部 AI 编码代理
+- **subagent-driven-development：** 基于计划的调度，每个任务配置新的子代理 + 两阶段审查（规范合规性 → 代码质量）
+- **kanban-orchestrator/worker：** 工作分解和路由
+
+对于 AgentBox：当 Discord 用户说 "start epic X" 时，编排器（kanban 模式）将 epic 分解为任务，为每个任务生成子代理（hermes-agent-spawning 模式），并协调结果推送/提交 PR（github-pr-workflow 技能）。
+
+---
+
+### 9. 存储（事件溯源持久化 — 可复用模式）
+
+**现有资源：** `arnold_pipelines/megaplan/store/`（SQLite `_db/*` + 基于文件 `_file/*`）
+
+存储抽象支持：对话、消息、轮次、工具调用、epic、冲刺、清单、计划、云端运行、定时任务、代码制品。所有关键操作都具有幂等性。
+
+**对于 AgentBox：** 你不需要完整的 epic/冲刺/云端模式，但**对话 → 消息 → 轮次 → 工具调用**的链式结构正是你追踪 "哪个 Discord 用户说了什么，哪个代理做了什么，结果如何" 所需的。
+
+---
+
+### 10. 云端/部署（适用于 AgentBox 执行环境）
+
+**现有资源：** `arnold_pipelines/megaplan/cloud/`（Railway、SSH、本地提供商、Docker 模板）
+
+对于 AgentBox 以 Discord 为先的执行：当用户启动链时，代码需要在某个地方运行。现有的云端提供商抽象（Railway 上的 Docker、SSH、本地）已准备就绪。`arnold-chain` 和 `arnold-run` 包装器封装了部署。
+
+---
+
+## 缺口和具体建议
+
+| # | 缺口 | 建议 |
+|---|------|-------------|
+| 1 | **Discord 斜杠命令或机器人框架** | resident 使用 discord.py `on_message`。为了更好的用户体验，迁移到支持斜杠命令的框架（hikari、nextcord 或 discord.py 2.x+），但保持 `DiscordInboundMessage` 适配器模式。 |
+| 2 | **AgentBox 特定的系统提示** | 当前的配置文件使用 "Megaplan 常驻" v1 提示。为新系统提示和热上下文加载器编写 AgentBox 配置文件，实现 `profile.py` 中的协议。 |
+| 3 | **结果推送/提交 PR/合并** | 目前已完成但未自动推送。为 AgentBox 工具面添加 "push_and_pr" 工具。规范：完成链 → 看门狗验证门控 → 代理调用 `git push` → 通过 `github-pr-workflow` 技能创建 PR → CI 通过 → 自动合并。 |
+| 4 | **Discord 中的状态反馈** | 常驻运行时会发送最终文本，但在长时间运行的工具执行期间不会流式传输进度。添加进展事件 → 出站通道的流式传输（工具运行时 update_conversation），以便用户看到 "thinking..." 或 "tool running..." 更新。 |
+| 5 | **代理选择路由** | 目前固定使用单一模型。当用户说 "use deepseek for this" 时，添加代理选择路由。`resident/runtime.py` 中的 `_model_seam_metadata()` 提供了挂载点。 |
+| 6 | **多工作区范围** | resident 假设单个项目。AgentBox 需要多仓库意识。扩展代码库注册表（`ListCodebases`、`RegisterCodebase`）以支持每个对话的上下文。 |
+| 7 | **从 Discord 启动的新 "开始" 工作流** | 添加斜杠命令处理程序：`/agentbox start-ticket "title"` → 创建 GitHub 问题 + 生成子代理。`/agentbox start-epic "name"` → 反编译 epic + 调度 kanban 工作者。现有的 epic-blitz 管道提供反编译逻辑。 |
+| 8 | **工具面减少** | 当前的 ~40 个工具对于用户来说太多了。AgentBox 应从 ~8 个核心工具开始：start_epic、start_ticket、check_status、push_pr、list_work、configure、help、cancel。根据需要逐步扩展。 |
+
+---
+
+## 高信号复用汇总
+
+**逐字复用：**
+- `DiscordDeliveryTarget` / `DiscordInboundMessage` 转换（不要重写）
+- `ResidentRuntime` 管道（授权 → 持久化 → 合并 → 代理 → 出站）
+- `ResidentAuthorizer` + `ConfirmationManager`（不要重写）
+- `Store` 抽象 + 幂等键模式
+- 看门狗修复/重启循环（Guardian）
+- 链规范格式 + `chain_done_gate.py`
+
+**适配复用：**
+- `MegaplanResidentProfile` → AgentBoxProfile（新工具，相同的注册表包装器）
+- `OpenAICompatibleAgentRunner` → 支持特定路由的 `AgentBoxRunner`
+- 工具注册表包装器模式（auth → confirm → execute）
+- 子代理生成技能（hermes-agent-spawning、kanban-orchestrator）
+- GitHub 技能（问题、PR、代码审查）
+
+**从头构建：**
+- Discord 斜杠命令处理（或适配现有的 `on_message`）
+- AgentBox 特定的系统提示和配置文件
+- 工具面减少和简化
+- 工具执行期间的进展流式传输到 Discord

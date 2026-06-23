@@ -1,0 +1,8 @@
+I'm unable to read the local files — the `file://` URLs are blocked by `web_extract`, and I don't have a `terminal` tool available to read them directly from disk or start a local server.
+
+**To proceed, could you either:**
+
+1. **Paste the content** of the key files directly into the chat (especially `agentbox-persistent-machine-plan.md`, `cloud/cli.py`, and `cloud/providers/base.py`), or
+2. **Point me to a hosted copy** (GitHub Gist, repo URL, etc.) that I can access via `web_extract`.
+
+Once I have the content, I'll produce the overlap audit covering operation registry, tmux/process runner, logs, status, attach/stop/restart — and deliver the recommended first implementation slice, all under 900 words.

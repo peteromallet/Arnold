@@ -1,0 +1,60 @@
+## Direct Answer
+
+The **process runner** is the subsystem that bridges declarative operation records (from the registry) to live, observable processes on the machine. Its core responsibility is to **manage the complete lifecycle of a running operation — launch, monitor, classify, stop, restart, and attach** — using tmux as the process container and standardized filesystem paths for logs and state.
+
+An operation record declares *what* should run (commmand, worktree, repo). The process runner handles *how* it runs: it creates a tmux session named after the operation id, executes the command from the correct worktree, redirects output to `/workspace/runs/<op>/log.txt`, and provides the hooks for the Guardian (or Discord Operator) to inspect liveness, read recent output, kill stale sessions, or restart known-safe operations.
+
+It is *not* the agent adapter. The adapter answers "what command should I run for this operation kind?" The runner answers "start it, keep its logs, tell me if it's alive, let me reconnect to it."
+
+---
+
+## Rationale
+
+The plan treats operations as first-class identities in a registry, but a registry record is a static declaration. Many actors (Guardian, Operator, CLI user) need to act on those operations while they're live. Without a shared process-runner abstraction, each actor would independently cobble together tmux commands, log paths, and liveness checks — duplicating logic and creating inconsistency.
+
+The runner is the **single authoriative layer for process reality**. Guardian doesn't need to know `tmux list-panes` syntax; it asks the runner "is op-123 alive?" The Operator doesn't need to know the log path convention; it asks the runner for op-123's log tail. This keeps the system's two resident actors thin and consistent.
+
+The design also deliberately separates the runner from the adapter: a Megaplan chain and a Claude Code session have different commands and classification logic, but they both need a tmux session, a log file, and a kill/attach interface. That uniformity belongs in the runner.
+
+---
+
+## Existing Mechanics This Depends On
+
+1. **Megaplan Cloud tmux conventions** — The existing `cloud tmux launch/status` patterns, provider `ssh_exec`, and attach/logs interfaces are the direct ancestor. The plan says transport exists but per-operation stop/restart/log paths are missing. The runner fills that gap.
+
+2. **Operation registry** — The runner looks up each operation's `id`, `kind`, `worktree`, `tmux_session`, and `log` path from the registry. It cannot function without the registry.
+
+3. **Worktree service** — Before launch, the worktree must exist. The runner doesn't create worktrees; it assumes they're ready and cds into them before executing.
+
+4. **Agent adapters** — The runner delegates command construction to the appropriate adapter (`adapter.command(operation)`), then wraps that command in tmux.
+
+5. **Linux tmux** — The low-level process isolation and session management primitive. The runner is effectively a structured wrapper around tmux.
+
+---
+
+## Risks And Caveats
+
+- **Tmux as a single point of failure.** Every operation lives in tmux. If the tmux server crashes, all operations die and the runner's liveness checks become invalid. The system needs a tmux resurrection or at least detection of a dead server.
+
+- **Log capture is fragile.** Redirecting stdout/stderr to a file from inside tmux means lost logs if the redirect fails silently. The runner should verify the log file is receiving data, not just that tmux is alive.
+
+- **No resource isolation boundary.** Tmux sessions share the same kernel, same filesystem, same memory. A runaway operation can exhaust disk or RAM and kill the Guardian itself. Resource limits (cgroups, ulimit) are marked "optional later" — but on a single-machine system, one rogue operation is a system-wide outage.
+
+- **Restart semantics are adapter-dependent.** The runner can restart a tmux session trivially, but whether that's *safe* depends on the operation kind. A chain might need state recovery; a shell command might be idempotent. The runner must consult the adapter's restart policy, not blindly re-run.
+
+- **The "attach" interface isn't specified.** `agentbox attach op-123` presumably drops the user into the tmux session via SSH. But what about the Discord Operator? It can't attach interactively. The runner needs both interactive attach (for human SSH users) and programmatic log/status access (for Guardian/Operator agents).
+
+---
+
+## One Concrete Design Implication
+
+The runner's stop/restart interface should be **idempotent and state-verified**, not fire-and-forget. When Guardian calls `runner.restart("op-123")`, the runner must:
+
+1. Check whether op-123's tmux session actually exists (it might have died naturally).
+2. If alive, send `tmux kill-session`.
+3. Wait for the session to terminate (don't immediately relaunch and collide).
+4. Re-read the operation record from the registry (the adapter or worktree may have changed).
+5. Re-launch via the adapter's `command()`.
+6. Verify the new session is alive before returning success.
+
+A naive "kill the old one, start a new one" will produce race conditions when Guardian restarts multiple operations in a single tick cycle. The runner must own the transition from old process to new process atomically per operation.

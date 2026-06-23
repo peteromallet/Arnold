@@ -1,0 +1,54 @@
+# Wave 3 Review — Process Model Lens
+
+## 1. Verdict
+
+**CLEAN WITH CHANGES.**
+
+The model is fundamentally sound for one user: systemd for daemon persistence, tmux for process grouping with built-in inspectability, flat files for event logs, and a simple registry for cross-process coordination. No message queues, no containers, no API gateways — the plan correctly avoids enterprise ceremony. But the polling-only notification model creates a real UX gap for a Discord-first interactive system, and the operation state taxonomy is over-specified before Guardian repair logic exists to use it. Fix those two things; don't add anything else.
+
+---
+
+## 2. The One Most Important Design Pressure
+
+**Polling latency vs. interactive expectations.**
+
+The Guardian polls every 5–15 minutes. That is fine for deep inspection — chain state classification, repair attempts, health summaries — but it is *not fine* for completion notifications. If Peter launches a chain and it finishes at minute 2 of a 15-minute poll window, he waits 13 minutes for a Discord DM that says "done." For a Discord-first system positioned as interactive, that is a real product defect, not a theoretical edge case.
+
+The plan already says: *"Completion notifications should be emitted from operation registry and event state, not depend on an active Discord Operator turn."* That correctly identifies that completion detection shouldn't wait for Peter's next message. But it doesn't solve the fact that Guardian polling is the only wake-up mechanism for notification.
+
+This pressure cascades: the same latency applies to failure detection for fast-running operations, credential-error surfacing, and "needs Peter" escalation. The polling model is right for *supervisory depth* but wrong for *signal latency*.
+
+---
+
+## 3. Concrete Plan Change
+
+**Add a two-tier Guardian cadence instead of one uniform poll interval.**
+
+The Guardian should run two loops, not one:
+
+| Loop | Cadence | Scope | Actions |
+|---|---|---|---|
+| **Liveness tick** | 30–60 seconds | All operations in `running` status | Check tmux session alive/dead. On dead: read exit code, classify as completed/failed, write status, emit Discord notification. Nothing else. |
+| **Deep tick** | 5–15 minutes (configurable) | All active operations + machine health | Full inspection: chain state, log scan, stall detection, repair attempt, credential health, disk/memory, daily briefing. |
+
+The liveness tick is trivial — no log parsing, no chain state classification, no subagent launch. It answers one question: *is the tmux session still alive?* If not, surface the outcome fast. The deep tick does everything else.
+
+This avoids adding a new process, a message bus, or an event-driven architecture. It's just two intervals in the same systemd timer or Guardian loop. The cost is zero additional components. The benefit is that completion notifications arrive within a minute instead of up to fifteen.
+
+**Why this instead of having the Process Runner push notifications directly:** That would work, but it couples the runner to Discord (which the plan correctly wants to keep in the Operator/Guardian layer). The two-tier Guardian keeps notification logic centralized while solving the latency problem structurally.
+
+---
+
+## 4. What I Would Explicitly Avoid Adding
+
+**Four things:**
+
+1. **A message queue or event bus.** The `events.ndjson` file is a durable append-only audit trail, not a message bus. `last_event_seq` is good for incremental consumption by the deep tick. Do not add Redis, RabbitMQ, or inotify-based file watchers to make events "real-time." The two-tier poll solves this with zero infrastructure.
+
+2. **A REST API or web dashboard.** Discord is the control plane. CLI is the debug backdoor. Adding an HTTP layer means TLS certs, auth tokens, CORS, and a new attack surface — all to serve one user who already has Discord and SSH. The plan correctly skips this; don't let "we could add a status page" drift into scope.
+
+3. **Smart tmux layouts or pane scripting.** tmux is a *dumb process container* in this architecture. It exists to group a command's stdout/stderr, survive SSH disconnects, and let Peter attach for debugging. The Process Runner should launch a single window with a single pane, capture output to `log.txt`, and detect session exit. No multi-pane dashboards, no tmux scripting, no window renaming logic. If Peter wants a fancy tmux view, he can SSH in and build it himself.
+
+4. **An operation state taxonomy with more than four values in v1.** The plan lists `running`, `stale`, `blocked`, `failed`, `completed`, and `awaiting approval`. That is too many states before Guardian repair logic exists to *act differently* based on the distinction. Start with: **`running`**, **`completed`**, **`failed`**, **`needs_peter`** (collapses blocked/stale/awaiting-approval into one user-facing category). Sub-classify with a `failure_reason` string field (`credential_missing`, `merge_conflict`, `tests_failed`, `tmux_dead_unknown_cause`, `stale_heartbeat`, etc.) that Guardian sets and the Operator reads. Add new top-level states only when Guardian has concrete, different behavior for them. Premature taxonomy creates state-transition bugs with no payoff.
+
+**Bonus avoidance:** Do not add `pr_number`, `pr_url`, `ci_status`, `pushed_branch`, and merge/cleanup fields to the operation registry in v1. Those are GitHub-integration concerns. For v1, the operation should record the branch name. PR creation and CI tracking can be a Phase 6 concern. The registry schema should be *the smallest set of fields that enable Guardian to supervise and Operator to answer "what is running?"* — not an aspirational data model. Fields are cheap to add later and expensive to remove.

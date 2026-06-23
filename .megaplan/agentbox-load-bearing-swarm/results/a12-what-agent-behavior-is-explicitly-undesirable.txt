@@ -1,0 +1,52 @@
+# What Agent Behavior Is Explicitly Undesirable
+
+## Direct Answer
+
+The AgentBox design explicitly forbids agents from **silently making irreversible, destructive, or product-level decisions without human approval**. The plan names five concrete actions the Guardian "should not" perform:
+
+1. **Silently make product decisions**
+2. **Resolve merge conflicts**
+3. **Delete worktrees**
+4. **Merge PRs**
+5. **Accept quality debt** (failing validation, known defects)
+
+These are not implementation accidents — they are the defined approval boundary. The plan further classifies these under "Unsafe actions requiring confirmation": delete worktrees, reset branches, resolve merge conflicts, merge PRs, kill unknown processes, and push/publish sensitive branches when policy requires approval.
+
+## Rationale
+
+The design draws a sharp line between *operational repair* (desired/autonomous) and *product-governance or destructive action* (undesired/implicit). 
+
+The Guardian is explicitly biased toward autonomous action: "figure out what's wrong and fix it" for operational failures — restart dead tmux sessions, resume stalled chains, launch diagnostic subagents, reload missing credentials. But the moment an action crosses into judgement about what the software *should be* (merge conflicts, PR merges, accepting broken tests) or what state should be *destroyed* (worktree deletion, branch resets), the design says: stop and file a pending approval.
+
+The approval boundary is defined as:
+- merge to main
+- delete/cleanup worktrees or branches
+- accept failing validation or quality debt
+- resolve ambiguous product decisions
+- expose or rotate credentials
+
+The broader philosophy: "The main approval event is completion, not every intermediate action" — and "Guardian should prefer autonomous repair over asking for permission on operational failures." So the undesirable behavior is not "asking the human" — it's acting *without* asking when the action crosses into product territory.
+
+## Existing Mechanics This Depends On
+
+- **Megaplan resident confirmation manager** — already exists in `resident/runtime.py` and handles confirmation storage, approval expiry, and Discord approval flow. AgentBox reuses this for pending approvals.
+- **Megaplan cloud supervisor refusal policy** — `cloud/supervise.py` already has classification logic for distinguishing safe from unsafe actions. Guardian wraps this.
+- **cleanup-loose-branches discipline** — establishes the pattern of "survey, recommend land/delete/park, require explicit approval for destructive steps." AgentBox reuses this for post-run consolidation.
+
+## Risks and Caveats
+
+1. **Over-permissioning the Guardian.** If the "operational repair" bias is too aggressive, the Guardian could restart a failing chain that produces subtly wrong output, burning compute and polluting branch state. The design needs a circuit-breaker: N consecutive restarts → escalate to human.
+
+2. **Under-categorized edge cases.** The explicit list covers the obvious ones, but operations like `git push --force`, rebasing a shared branch, or modifying environment variables on the box are ambiguous. The design should include a default-deny policy: if an action isn't on the explicit "safe" list, it requires confirmation.
+
+3. **Discord Operator bypass risk.** The plan says the Operator "should still go through the same safety policy as the Guardian," but Discord-triggered agents have a natural bias toward being helpful/direct. Without enforcement at the tool level (not just the policy document), an eager Operator could approve its own destructive actions.
+
+## Concrete Design Implication
+
+**The approval system must be enforced at the tool/operation-registry layer, not merely documented as policy.** The `pending_approvals` field on operation records should gate tool execution: when the Guardian or Operator attempts a destructive action, the operation runner checks the registry, and if the action class is `confirm` or `forbidden`, the call is rejected unless a valid, unexpired approval record exists. This means building an `ApprovalGuard` decorator or middleware that wraps the process runner, worktree service, and git-ops layer — not just relying on agent discretion.
+
+```text
+Safe:        restart tmux session, read logs, classify status, notify Discord
+Confirm:     delete worktree, merge PR, push force, accept quality debt, rotate creds
+Forbidden:   (initially empty; reserved for catastrophic actions)
+```

@@ -1,0 +1,56 @@
+## Direct Answer
+
+The Discord Operator must have four tools first, in priority order:
+
+1. **`status`** — read the operation registry to answer "what is running?" or "what is blocked?"
+2. **`run`** (or `chain_launch`) — create an operation record, provision a worktree, and launch a tmux-session process
+3. **`logs`** — stream or tail operation logs for diagnosis when the user asks "what happened?"
+4. **`stop`** — terminate a running operation by killing its tmux session and updating the registry
+
+These four tools close the essential loop: start work, observe it, inspect failures, and halt runaway processes. Everything else — approve, creds_test, cleanup, guardian_check — can be deferred to a second pass or handled through the Guardian's existing notification path.
+
+## Rationale
+
+The Operator's job is interactive control. The user sends a Discord message; the Operator acts and replies. The minimum viable conversation set is:
+
+- **"What is running?"** → `status` reads the operation registry. Without this, the Operator is blind.
+- **"Run X on repo Y"** → `run` creates an operation, provisions a worktree via the existing `bakeoff/worktree.py` helpers, launches a tmux session, records metadata in the registry, and replies with an operation ID. Without this, the Operator adds no value beyond what the Guardian already provides.
+- **"Show logs for op-123"** → `logs` reads `/workspace/runs/<op>/log.txt`. Without this, the user cannot diagnose issues without SSH-ing into the box, defeating the Discord-first design.
+- **"Stop op-123"** → `stop` kills the tmux session and marks the operation as stopped/cancelled. This is a safety requirement: the user must be able to halt work from Discord without needing SSH.
+
+**Why not `approve` in the first set?** The plan's safety model says approvals should be "rare and focused on completion, merge, cleanup, credentials, or accepting debt." For v0, the Guardian can DM Peter with a pending approval and Peter can reply in plain Discord text. A structured `approve` tool is cleaner but not load-bearing for the first loop.
+
+**Why not `guardian_check`?** The Guardian runs on a fixed cadence independently. The Operator can already read operation status from the registry. A dedicated `guardian_check` tool is syntactic sugar over `status` filtered for blocked/failed operations — useful, but not essential.
+
+**Why not `creds_test`?** Credential setup is a bootstrap task, not an ongoing operational concern. The Guardian already detects missing credentials and notifies Peter directly.
+
+## Existing Mechanics This Depends On
+
+| Tool | Depends On |
+|------|-----------|
+| `status` | Operation registry (SQLite + per-op manifest files). Must exist before the Operator can read it. |
+| `run` | `bakeoff/worktree.py` (`create_named_worktree`, `validate_worktree_name`), the repo registry (`/workspace/repos/*.git` bare mirrors), and the tmux/session launch conventions from Megaplan Cloud. Also depends on `chain/spec.py` for chain YAML parsing if the operation kind is `megaplan_chain`. |
+| `logs` | The process runner's log capture at `/workspace/runs/<op>/log.txt`. No external Megaplan dependency beyond file I/O. |
+| `stop` | tmux session management (`tmux kill-session`) and operation registry write access. Depends on the operation → tmux-session mapping in the registry. |
+
+All four tools also depend on the resident Discord runtime (`resident/discord.py`, `resident/runtime.py`, `resident/auth.py`) for message parsing, inbound/outbound events, and allowlist enforcement.
+
+## Risks and Caveats
+
+1. **`run` is the hardest to get right.** It spans repo lookup, worktree creation, branch naming, tmux launch, log path setup, and registry write — across multiple repos in multi-repo operations. A partial failure (worktree created but tmux didn't start) leaves orphaned state the Guardian must detect and clean.
+
+2. **`stop` can leave dirty state.** Killing a tmux session mid-operation may leave uncommitted changes, lock files, or orphaned child processes. The Operator should `stop` gracefully (SIGTERM, wait, then SIGKILL) and record the interrupted state so the Guardian can assess cleanup later.
+
+3. **Concurrency between Operator and Guardian.** Both write to the operation registry. The registry must support atomic status updates (SQLite WAL mode or lock files) to prevent the Operator marking an operation "stopped" while the Guardian simultaneously marks it "running."
+
+4. **Discord latency expectations.** `run` may take seconds (clone, worktree add, tmux new-session). The Operator should acknowledge the message immediately ("launching op-123…") and update when the operation is running, rather than blocking the Discord reply on process launch.
+
+## One Concrete Design Implication
+
+The `run` tool must accept a **kind** parameter from the start, even though only `megaplan_chain` is implemented in the first slice. The tool signature should be:
+
+```
+run(repo: str, kind: str, spec: str | None, task: str | None) → OperationRecord
+```
+
+This forces the Operator to route through an adapter lookup (`OperationAdapter.for_kind(kind)`) rather than hardcoding chain-launch logic into the Discord message handler. When `codex`, `claude`, `subagent`, and `test` adapters are added later, only the adapter registry grows — the Operator's `run` tool stays unchanged. The alternative (separate `chain_launch`, `codex_run`, `claude_run` tools) would require the Operator agent to parse natural-language intent into tool selection, which is fragile and adds unnecessary NLP surface area in the agent's prompt. A single `run` with a kind discriminator keeps the tool contract narrow and the agent's routing logic simple.

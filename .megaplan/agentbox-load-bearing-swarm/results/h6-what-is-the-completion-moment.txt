@@ -1,0 +1,55 @@
+# Completion Moment in AgentBox
+
+## Direct Answer
+
+The **completion moment** is the transition point where an operation's autonomous execution has finished (chain ended, plan exhausted, task resolved), but its output has not yet been consolidated into the permanent state of the repo. It is the handoff boundary between the Guardian's "keep it moving" responsibility and the human's "what do we do with this result" authority.
+
+Concretely, an operation is **complete** when:
+
+1. The underlying process (Megaplan chain, Codex run, shell task) has exited or reached a terminal state.
+2. The Guardian has classified the operation as `completed` (not `failed`, `stale`, or `blocked`).
+3. All work is on a branch, potentially in a draft PR.
+4. Validation has run and the summary is ready.
+
+It is **not yet closed** because the human must still decide: push, open/update PR, merge to main, or discard and clean up.
+
+## Rationale
+
+The plan is explicit that **completion is the main approval event, not every intermediate action.** The Guardian is biased toward autonomous repair for operational failures — restarting dead sessions, resuming stalled chains, launching diagnostic subagents. It should *not* silently merge to main, delete worktrees, resolve merge conflicts, or accept quality debt. Those become explicit pending approvals.
+
+The completion moment is therefore the threshold where the Guardian's mandate ends and the human's begins. The Guardian can diagnose, restart, and resume without asking; it cannot publish or destroy without asking. Completion is the event that fires the DM:
+
+```text
+op-123 completed.
+Repo: megaplan
+Branch: agent/op-123
+Summary: ...
+Validation: ...
+Next: push/open PR/cleanup?
+```
+
+The human's answer to "Next?" determines whether the operation transitions to `merged`, `pr-opened`, or `cleaned-up`.
+
+## Existing Mechanics This Depends On
+
+1. **Guardian's operation classifier.** The plan defines statuses: `running`, `stale`, `blocked`, `failed`, `completed`, `awaiting approval`. Completion detection depends on the Guardian correctly distinguishing "done and healthy" from "stuck and broken." For `megaplan_chain` operations, this reuses existing `cloud/supervise.py` and chain state inspection.
+
+2. **Operation registry.** The completion moment only works if every operation has a durable record with status, branch, PR metadata, Discord refs, and a `pending_approvals` field. Without this, there is no reliable way to know *which* operations completed or what they produced.
+
+3. **Discord notification path.** The plan specifies DMing Peter on completion. This depends on the resident Discord service (`arnold_pipelines/megaplan/resident/discord.py`, outbound sink) having the user's Discord ID and the operation's conversation context.
+
+4. **cleanup-loose-branches discipline.** After completion, consolidation uses this existing playbook: survey branches/worktrees/PRs, classify as land/delete/park, and require approval for destructive steps. Completion is the trigger; cleanup-loose-branches is the follow-through.
+
+## Risks and Caveats
+
+1. **Completion vs. failure ambiguity.** A chain that exits with partial success might look "complete" to a naive classifier but should actually be `failed` or `awaiting approval`. The Guardian must distinguish terminal success from terminal failure, which requires reading chain state semantics, not just exit codes.
+
+2. **Silent completion.** If the Discord notification fails (network, auth expiry, wrong user ID), an operation could sit completed with no human awareness. The Guardian's tick should re-notify for completed-but-unacknowledged operations on each cycle until the human responds.
+
+3. **Completion inflation.** If every subagent run or shell invocation creates a top-level operation, completion notifications become noise. The plan implies completion applies to Megaplan chains, epics, and explicitly launched operations — not every background repair the Guardian spawns.
+
+4. **Multi-repo operations.** An operation spanning `megaplan` and `reigh-app` may complete in one repo but not the other. The completion moment should be per-operation, not per-repo, and should gate on all constituent repos reaching their terminal state.
+
+## One Concrete Design Implication
+
+**The operation record needs an explicit `completed_at` timestamp and a `next_action` enum** (`push`, `open_pr`, `merge`, `cleanup`, `await_review`). The completion moment is not just a status flip — it's the point where the system sets these two fields and fires the DM. Without `next_action`, the human receives a "done" message with no clear path forward, breaking the completion-as-approval-boundary design. The Guardian should populate `next_action` based on operation policy (e.g., a chain spec's `pr_policy` field), and the human's Discord reply updates it before the cleanup-loose-branches consolidation runs.
