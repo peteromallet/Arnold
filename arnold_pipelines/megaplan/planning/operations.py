@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import argparse
+import os
+import subprocess
+import sys
 from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any
@@ -49,6 +52,19 @@ _OVERRIDE_CATALOG: dict[str, dict[str, Any]] = {
     "set-robustness": {"kind": "config"},
     "set-vendor": {"kind": "config"},
 }
+
+_MEGAPLAN_MODULE_COMMANDS = frozenset(
+    {
+        "plan",
+        "prep",
+        "critique",
+        "revise",
+        "gate",
+        "finalize",
+        "execute",
+        "review",
+    }
+)
 
 
 def override_catalog() -> dict[str, dict[str, Any]]:
@@ -104,6 +120,44 @@ def _payload_path(payload: Mapping[str, Any], key: str) -> Path | None:
 def _payload_str(payload: Mapping[str, Any], key: str) -> str | None:
     value = payload.get(key)
     return value if isinstance(value, str) and value else None
+
+
+def _phase_subprocess_command(argv: list[Any]) -> list[str]:
+    args = [str(entry) for entry in argv]
+    if not args:
+        return []
+    if args[0] == "megaplan":
+        return [sys.executable, "-m", "arnold_pipelines.megaplan", *args[1:]]
+    if args[0] in _MEGAPLAN_MODULE_COMMANDS:
+        return [sys.executable, "-m", "arnold_pipelines.megaplan", *args]
+    return args
+
+
+def _run_phase_subprocess(
+    phase: str,
+    *,
+    plan: str,
+    cwd: Path | None = None,
+    plan_dir: Path | None = None,
+    argv: list[Any] | None = None,
+    progress_env: Mapping[str, Any] | None = None,
+) -> tuple[int, str, str]:
+    del phase, plan, plan_dir
+    if not argv:
+        return 1, "", "missing command"
+
+    env = os.environ.copy()
+    if progress_env:
+        env.update({str(key): str(value) for key, value in progress_env.items()})
+    proc = subprocess.run(
+        _phase_subprocess_command(argv),
+        cwd=str(cwd) if cwd else None,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    return proc.returncode, proc.stdout, proc.stderr
 
 
 def _payload_state_view(payload: Mapping[str, Any], state: Mapping[str, Any]) -> RunStateView:
@@ -198,7 +252,7 @@ class PlanningOperationRegistry(OperationRegistry):
                 "run_phase payload.progress_env must be a mapping when provided"
             )
 
-        exit_code, stdout, stderr = _pipeline().run_phase(
+        exit_code, stdout, stderr = _run_phase_subprocess(
             phase,
             plan=plan,
             cwd=cwd,
@@ -264,16 +318,23 @@ class PlanningOperationRegistry(OperationRegistry):
         plan_dir = _payload_path(payload, "plan_dir")
         phase_runner: Callable[..., tuple[int, str, str]]
         if runner is None:
-            phase_runner = _pipeline().run_phase
+            phase_runner = _run_phase_subprocess
         else:
             phase_runner = runner
-        exit_code, stdout, stderr = phase_runner(
-            phase,
-            plan=plan,
-            cwd=root,
-            plan_dir=plan_dir,
-            argv=args,
-        )
+        try:
+            exit_code, stdout, stderr = phase_runner(
+                phase,
+                plan=plan,
+                cwd=root,
+                plan_dir=plan_dir,
+                argv=args,
+            )
+        except TypeError as error:
+            if runner is None:
+                raise
+            if "unexpected keyword" not in str(error):
+                raise
+            exit_code, stdout, stderr = runner(args, cwd=root)
         return OperationResult(
             ok=exit_code == 0,
             payload={
