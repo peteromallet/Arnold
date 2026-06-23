@@ -79,6 +79,54 @@ class TestAdaptiveCritiqueRouting:
         with pytest.raises(CliError, match="No tier spec for complexity 5"):
             _apply_adaptive_critique_routing(state, args, checks)
 
+    def test_persisted_state_tier_models_survive_stripped_args(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from arnold_pipelines.megaplan.execute import batch
+        from arnold_pipelines.megaplan.handlers.critique import _apply_adaptive_critique_routing
+
+        def fake_resolve_tier_spec(args: argparse.Namespace, spec: str, *, phase: str = "execute"):
+            assert phase == "critique"
+            agent, model = spec.split(":", 1)
+            return agent, "fresh", model
+
+        monkeypatch.setattr(batch, "_resolve_tier_spec", fake_resolve_tier_spec)
+
+        state = {
+            "config": {
+                "profile": "partnered-5",
+                "phase_model": ["critique=hermes:deepseek:deepseek-v4-pro"],
+                "tier_models": {
+                    "critique": {
+                        "3": "hermes:deepseek:deepseek-v4-pro",
+                        "4": "codex:gpt-5.4",
+                        "5": "codex:gpt-5.5",
+                    }
+                },
+            }
+        }
+        args = argparse.Namespace(
+            profile="partnered-5",
+            phase_model=["critique=hermes:deepseek:deepseek-v4-pro"],
+            tier_models=None,
+        )
+        checks = [
+            {"id": "scope", "question": "Scope?", "complexity": 3},
+            {"id": "correctness", "question": "Correct?", "complexity": 4},
+        ]
+
+        assert _apply_adaptive_critique_routing(state, args, checks) is None
+
+        scope_mode = checks[0]["_resolved_agent_mode"]
+        correctness_mode = checks[1]["_resolved_agent_mode"]
+        assert scope_mode.agent == "hermes"
+        assert scope_mode.resolved_model == "deepseek:deepseek-v4-pro"
+        assert checks[0]["_routing_selected_spec"] == "hermes:deepseek:deepseek-v4-pro"
+        assert correctness_mode.agent == "codex"
+        assert correctness_mode.resolved_model == "gpt-5.4"
+        assert checks[1]["_routing_selected_spec"] == "codex:gpt-5.4"
+        assert all(check["_routing_tier_active"] is True for check in checks)
+
 
 class TestCritiqueScratchPromotion:
     def test_strip_unknown_keys_drops_injected_commentary(self) -> None:

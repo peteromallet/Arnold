@@ -121,8 +121,16 @@ def _apply_adaptive_critique_routing(
         _tier_models = {}
     _critique_tiers = _tier_models.get("critique")
     # apply_profile_expansion strips critique tiers when a persisted/static
-    # phase_model entry for critique is present. Reload the raw profile tiers
-    # so adaptive routing can still honor complexity-based critic assignments.
+    # phase_model entry for critique is present. Prefer the tier table persisted
+    # with the plan before reloading the current profile from disk; profile files
+    # can legitimately drift during long-running chains, while state.json records
+    # the routing contract chosen at init time.
+    if not isinstance(_critique_tiers, dict) or not _critique_tiers:
+        _state_tier_models = (state.get("config") or {}).get("tier_models")
+        if isinstance(_state_tier_models, dict):
+            _critique_tiers = _state_tier_models.get("critique")
+    # If no persisted tier table exists, reload the raw profile tiers so
+    # adaptive routing can still honor complexity-based critic assignments.
     if not isinstance(_critique_tiers, dict) or not _critique_tiers:
         _profile_name = (
             getattr(args, "profile", None)
@@ -155,6 +163,12 @@ def _apply_adaptive_critique_routing(
     _complexity_cache: dict[int, _TierAgentMode] = {}
     _pin_agent_mode: _TierAgentMode | None = None
 
+    def _tier_spec_for(complexity: int) -> str | None:
+        _raw = _critique_tiers.get(complexity)
+        if _raw is None:
+            _raw = _critique_tiers.get(str(complexity))
+        return str(_raw) if _raw else None
+
     def _resolved_pin_agent_mode() -> _TierAgentMode:
         nonlocal _pin_agent_mode
         if _pin_agent_mode is None:
@@ -184,7 +198,7 @@ def _apply_adaptive_critique_routing(
                 "the evaluator output.",
             )
         if _cx not in _complexity_cache:
-            _spec = _critique_tiers.get(_cx)
+            _spec = _tier_spec_for(_cx)
             if not _spec:
                 if _pin:
                     _complexity_cache[_cx] = _resolved_pin_agent_mode()
@@ -208,7 +222,7 @@ def _apply_adaptive_critique_routing(
                     resolved_model=_t_model,
                 )
         _check["_resolved_agent_mode"] = _complexity_cache[_cx]
-        _check["_routing_selected_spec"] = _critique_tiers.get(_cx) or f"critic_model:{_pin}"
+        _check["_routing_selected_spec"] = _tier_spec_for(_cx) or f"critic_model:{_pin}"
         _check["_routing_tier"] = _cx
         _check["_routing_tier_active"] = True
 
