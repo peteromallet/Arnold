@@ -708,7 +708,9 @@ function _handleSubmitNetworkFailure(panel, payload) {
   panel.state.turnId = _stringOrCurrent(failure?.turn_id, panel.state.turnId);
   panel.state.sessionId = _stringOrCurrent(failure?.session_id, panel.state.sessionId);
   _handleSyncBaseline(panel, failure || {});
+  _syncRebaselineRecovery(panel, failure || {});
   panel.state.auditRef = failure?.audit_ref || null;
+  panel.state.syntheticAgentMessage = payload?.syntheticAgentMessage || null;
   panel.state.debugPayload = payload?.debugPayload || {
     ...(failure || {}),
     last_submit: panel.state.lastSubmit,
@@ -815,18 +817,44 @@ function _handleCandidateResponse(panel, payload) {
   panel.state.phase = PANEL_STATE.AWAITING_REVIEW;
   panel.state.sessionId = _stringOrCurrent(result.session_id, panel.state.sessionId);
   panel.state.turnId = typeof result.turn_id === "string" ? result.turn_id : null;
+
+  // SD2: Applyable means durable. When a candidate response arrives but both
+  // session_id and turn_id are absent in the raw response, the response is
+  // malformed/non-applyable. Override eligibility to block Apply with
+  // retry/debug guidance and prevent this path from being misclassified as
+  // stale/rebaseline.
+  // Check the raw response directly — panel.state may carry stale identity
+  // from a previous turn via _stringOrCurrent.
+  // Having at least one (session_id or turn_id) provides partial durable identity.
+  const candidateGraph = payload?.candidateGraph || null;
+  const rawSessionId = typeof result.session_id === "string" ? result.session_id : null;
+  const rawTurnId = typeof result.turn_id === "string" ? result.turn_id : null;
+  const hasDurableIdentity = Boolean(rawSessionId || rawTurnId);
+  const missingDurableEligibility =
+    !hasDurableIdentity && candidateGraph && typeof candidateGraph === "object"
+      ? {
+          applyable: false,
+          reason: "missing_durable_turn_metadata",
+          message:
+            "Candidate is missing durable session/turn metadata and cannot be applied. "
+            + "Retry the submit or inspect the raw response in the debug panel.",
+          warnings: ["missing_durable_turn_metadata"],
+        }
+      : null;
+
   _handleSyncBaseline(panel, result);
   _handleInvalidateCandidate(panel, { repaint: false });
-  panel.state.candidateGraph = payload?.candidateGraph || null;
+  panel.state.candidateGraph = candidateGraph;
   panel.state.candidateGraphHash = typeof payload?.candidateGraphHash === "string" ? payload.candidateGraphHash : null;
   panel.state.candidateReport = result.report || null;
   panel.state.serverSubmitGraphHash = typeof result.submit_graph_hash === "string" ? result.submit_graph_hash : null;
   panel.state.message = result.message || null;
   panel.state.failure = null;
   panel.state.clarification = payload?.clarification || null;
-  panel.state.applyEligibility = payload?.applyEligibility || null;
-  panel.state.applyAllowed = candidateActionAllowed;
-  panel.state.canvasApplyAllowed = candidateActionAllowed;
+  panel.state.applyEligibility =
+    missingDurableEligibility || payload?.applyEligibility || null;
+  panel.state.applyAllowed = missingDurableEligibility ? false : candidateActionAllowed;
+  panel.state.canvasApplyAllowed = missingDurableEligibility ? false : candidateActionAllowed;
   panel.state.queueAllowed = Boolean(result.queue_allowed);
   panel.state.auditRef = result.audit_ref || null;
   panel.state.lastSubmitFieldChanges = payload?.lastSubmitFieldChanges || null;
@@ -835,6 +863,7 @@ function _handleCandidateResponse(panel, payload) {
   panel.state.debugPayload = payload?.debugPayload || {
     ...result,
     last_submit: panel.state.lastSubmit,
+    ...(missingDurableEligibility ? { debug_branch: "malformed_metadata" } : {}),
   };
   return _obligations({
     render: true,
@@ -964,7 +993,15 @@ function _handleChatRehydrateSuccess(panel, payload) {
       return { render: false, stale: true };
     }
   }
-  panel.state.chatMessages = Array.isArray(payload?.messages) ? payload.messages : [];
+  // Reconcile durable backend messages with any in-flight optimistic entries
+  // (T9). When the panel is SUBMITTING, unmatched optimistic messages from the
+  // current epoch are preserved after canonical messages; otherwise canonical
+  // replaces wholesale (backward-compatible with existing behaviour).
+  panel.state.chatMessages = reconcileChatMessages(
+    Array.isArray(panel.state.chatMessages) ? panel.state.chatMessages : [],
+    Array.isArray(payload?.messages) ? payload.messages : [],
+    panel.state,
+  );
   panel.state.chatLoaded = true;
   panel.state.chatError = null;
   panel.state.chatSessionPath = typeof payload?.chatSessionPath === "string" ? payload.chatSessionPath : null;
@@ -1047,7 +1084,12 @@ function _handleChatRehydrateFailure(panel, payload) {
   if (_isStaleChatRehydrate(panel, payload?.requestEpoch)) {
     return { render: false, stale: true };
   }
-  panel.state.chatMessages = [];
+  // Preserve locally-built optimistic messages (including promoted pending
+  // response bubbles) so a failed backend rehydrate does not wipe the thread.
+  // Non-optimistic durable messages are cleared as before.
+  panel.state.chatMessages = Array.isArray(panel.state.chatMessages)
+    ? panel.state.chatMessages.filter((message) => message?.optimistic === true)
+    : [];
   panel.state.chatLoaded = false;
   panel.state.chatError = payload?.chatError || null;
   panel.state.chatSessionPath = null;
@@ -1450,4 +1492,108 @@ function _stringOrCurrent(value, current) {
 
 function _isStaleChatRehydrate(panel, requestEpoch) {
   return Number.isFinite(requestEpoch) && panel.state.chatRehydrateEpoch !== requestEpoch;
+}
+
+// ── Chat-message reconciliation (T9) ─────────────────────────────────────
+// When durable chatMessages arrive from the backend during an active submit,
+// we reconcile instead of wholesale-replacing: canonical messages are
+// authoritative and come first; in-flight optimistic entries from the
+// current submit epoch that have no canonical counterpart are preserved
+// after the durable messages so the user sees their pending request.
+// Outside of SUBMITTING, canonical replaces wholesale (current behaviour).
+
+/**
+ * Build a stable identity key for a chat message.
+ * Mirrors the priority in vibecomfy_roundtrip.js messageStableKey:
+ *   1. turn_id + role       → `turn:<turn_id>:<role>`
+ *   2. local_id             → `local:<local_id>`
+ * Returns null when no durable identity is present.
+ */
+function _chatMessageIdentity(msg) {
+  if (!msg || typeof msg !== "object") {
+    return null;
+  }
+  const turnId = typeof msg.turn_id === "string" && msg.turn_id ? msg.turn_id : null;
+  const role = typeof msg.role === "string" && msg.role ? msg.role : null;
+  if (turnId && role) {
+    return `turn:${turnId}:${role}`;
+  }
+  const localId = typeof msg.local_id === "string" && msg.local_id ? msg.local_id : null;
+  if (localId) {
+    return `local:${localId}`;
+  }
+  return null;
+}
+
+/**
+ * Returns true when a message is an optimistic/in-flight frontend entry
+ * (not yet confirmed by a durable backend response).
+ */
+function _isOptimisticMessage(msg) {
+  return Boolean(
+    msg && typeof msg === "object"
+    && (msg.optimistic === true || msg.pending_response === true || msg.executor_pending === true),
+  );
+}
+
+/**
+ * Reconcile existing chatMessages with canonical (durable) messages from
+ * the backend.
+ *
+ * - When the panel is NOT submitting, canonical is wholesale replacement.
+ * - When the panel IS submitting, canonical messages come first; unmatched
+ *   in-flight optimistic messages from the current submit epoch are
+ *   preserved after the durable set.
+ *
+ * @param {Array} existing  — current panel.state.chatMessages
+ * @param {Array} canonical — durable messages from backend rehydrate
+ * @param {object} panelState — panel.state (for phase + submitEpoch)
+ * @returns {Array} reconciled message array
+ */
+export function reconcileChatMessages(existing, canonical, panelState) {
+  const safeExisting = Array.isArray(existing) ? existing : [];
+  const safeCanonical = Array.isArray(canonical) ? canonical : [];
+
+  // Outside of an active submit, canonical is the sole authority.
+  if (!panelState || panelState.phase !== PANEL_STATE.SUBMITTING) {
+    return [...safeCanonical];
+  }
+
+  const currentEpoch = Number.isFinite(panelState.submitEpoch) ? panelState.submitEpoch : null;
+
+  // Build a set of identity keys present in the canonical batch.
+  const canonicalKeys = new Set();
+  for (const msg of safeCanonical) {
+    const key = _chatMessageIdentity(msg);
+    if (key) {
+      canonicalKeys.add(key);
+    }
+  }
+
+  // Start with durable messages (authoritative, ordered first).
+  const result = [...safeCanonical];
+
+  // Append in-flight optimistic messages from the current epoch that have
+  // no canonical counterpart. Stale optimistic entries (from a previous
+  // epoch or cancelled submit) are dropped.
+  for (const msg of safeExisting) {
+    if (!_isOptimisticMessage(msg)) {
+      continue;
+    }
+    // Only preserve in-flight entries belonging to the current submit epoch.
+    if (currentEpoch !== null && msg.submit_epoch !== currentEpoch) {
+      continue;
+    }
+    const key = _chatMessageIdentity(msg);
+    // If this optimistic entry has no durable identity we cannot safely
+    // preserve it — skip to avoid ghost duplicates.
+    if (!key) {
+      continue;
+    }
+    if (!canonicalKeys.has(key)) {
+      result.push(msg);
+    }
+  }
+
+  return result;
 }

@@ -126,9 +126,16 @@ def run_reply_turn(
     model: str,
     plan: ClassifyDecision | None = None,
     research_summary: str | None = None,
+    research_sources: tuple[dict[str, Any], ...] | None = None,
+    research_warnings: tuple[str, ...] | None = None,
+    research_precedent_slices: tuple[dict[str, Any], ...] | None = None,
     implementation_message: str | None = None,
     graph_summary: str | None = None,
     graph_inspection: str | None = None,
+    adaptation_plan: dict[str, Any] | None = None,
+    effective_route: str | None = None,
+    effective_task: str | None = None,
+    candidate_present: bool = False,
 ) -> str:
     """Run a single reply model turn through the provider seam.
 
@@ -148,6 +155,8 @@ def run_reply_turn(
         The classify decision (provides context for the reply).
     research_summary:
         Optional research findings summary.
+    research_sources:
+        Optional deduplicated research sources for reply context.
     implementation_message:
         Optional implementation result message.
     graph_summary:
@@ -156,14 +165,29 @@ def run_reply_turn(
         Optional detailed node-by-node graph inspection for inspect-only
         replies.  When provided, the model should describe the graph
         structure without suggesting edits.
+    adaptation_plan:
+        Optional serialized adaptation plan for route="adapt" replies.
+    effective_route:
+        The canonical route driving the reply phase.
+    effective_task:
+        The canonical task driving the reply phase.
+    candidate_present:
+        Whether a graph edit candidate was produced.
     """
     messages = build_reply_messages(
         query,
         plan=plan,
         research_summary=research_summary,
+        research_sources=research_sources,
+        research_warnings=research_warnings,
+        research_precedent_slices=research_precedent_slices,
         implementation_message=implementation_message,
         graph_summary=graph_summary,
         graph_inspection=graph_inspection,
+        adaptation_plan=adaptation_plan,
+        effective_route=effective_route,
+        effective_task=effective_task,
+        candidate_present=candidate_present,
     )
     model_turn_id = new_profile_id("model")
     with profiler_span(

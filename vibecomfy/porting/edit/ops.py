@@ -11,7 +11,7 @@ from vibecomfy.comfy_nodes.agent.provider import (
 )
 
 _JSON_FENCE_RE = re.compile(r"```(?:json)?\s*(.*?)```", re.DOTALL)
-_RELATIONS = frozenset({"near", "right_of", "below", "between"})
+_RELATIONS = frozenset({"near", "right_of", "left_of", "below", "between"})
 _REORDER_AXES = frozenset({"widgets", "slots"})
 _SET_MODE_VALUES = frozenset({0, 2, 4})
 _FORBIDDEN_RAW_NODE_KEYS = frozenset({"node", "raw_node", "node_payload"})
@@ -92,7 +92,7 @@ class LinkTargetRef:
 
 @dataclass(frozen=True, slots=True)
 class AnchorRef:
-    relation: Literal["near", "right_of", "below", "between"]
+    relation: Literal["near", "right_of", "left_of", "below", "between"]
     near: NodeTarget | None = None
     between: tuple[NodeTarget, NodeTarget] | None = None
     group_title: str | None = None

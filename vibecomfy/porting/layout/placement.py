@@ -59,7 +59,7 @@ class BatchRewirePlan:
 
 @dataclass(frozen=True, slots=True)
 class InferredAnchorHint:
-    relation: Literal["right_of", "between"]
+    relation: Literal["right_of", "left_of", "between"]
     near_name: str | None = None
     between_names: tuple[str, str] | None = None
 
@@ -112,6 +112,7 @@ def infer_add_node_anchor_hint(
     resolved_inputs: Mapping[str, Any],
     placement_facts: BatchPlacementFacts,
     current_input_source_ref: Callable[[str, str], Any | None],
+    target_has_any_link: Callable[[str], bool],
     uid_to_name: Mapping[str, str],
 ) -> InferredAnchorHint | None:
     """Infer the anchor hint for a newly added node in a batch."""
@@ -120,6 +121,7 @@ def infer_add_node_anchor_hint(
         resolved_inputs=resolved_inputs,
         rewires=placement_facts.rewires_by_source.get(target_name, ()),
         current_input_source_ref=current_input_source_ref,
+        target_has_any_link=target_has_any_link,
         uid_to_name=uid_to_name,
     )
     if splice_anchor is not None:
@@ -332,15 +334,22 @@ def _infer_splice_anchor_hint(
     resolved_inputs: Mapping[str, Any],
     rewires: tuple[BatchRewirePlan, ...],
     current_input_source_ref: Callable[[str, str], Any | None],
+    target_has_any_link: Callable[[str], bool],
     uid_to_name: Mapping[str, str],
 ) -> InferredAnchorHint | None:
-    if not resolved_inputs or not rewires:
+    if not rewires:
         return None
     for rewire in rewires:
         current_source = current_input_source_ref(rewire.target_name, rewire.target_field)
-        if current_source is None:
-            continue
         for source_ref in resolved_inputs.values():
+            source_name = uid_to_name.get(source_ref.uid)
+            if source_name and current_source is None and target_has_any_link(rewire.target_name):
+                return InferredAnchorHint(
+                    relation="between",
+                    between_names=(source_name, rewire.target_name),
+                )
+            if current_source is None:
+                continue
             if source_ref.scope_path != current_source.scope_path or source_ref.uid != current_source.uid:
                 continue
             if not _source_slots_match(source_ref.output_slot, current_source.output_slot):
@@ -349,6 +358,8 @@ def _infer_splice_anchor_hint(
                 relation="between",
                 between_names=(uid_to_name.get(current_source.uid, current_source.uid), rewire.target_name),
             )
+        if not resolved_inputs and target_has_any_link(rewire.target_name):
+            return InferredAnchorHint(relation="left_of", near_name=rewire.target_name)
     return None
 
 

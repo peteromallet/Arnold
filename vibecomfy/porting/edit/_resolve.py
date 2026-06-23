@@ -485,12 +485,12 @@ class _ResolveMixin:
                     issues.append(_unsafe(keyword.value, "invalid_relation_hint", "relation= must be a string literal."))
                     continue
                 relation = relation_value.strip()
-                if relation not in {"near", "right_of", "below"}:
+                if relation not in {"near", "right_of", "left_of", "below"}:
                     issues.append(
                         _unsafe(
                             keyword.value,
                             "invalid_relation_hint",
-                            "relation= must be one of 'near', 'right_of', or 'below' for Python add-node statements.",
+                            "relation= must be one of 'near', 'right_of', 'left_of', or 'below' for Python add-node statements.",
                         )
                     )
                 continue
@@ -600,6 +600,7 @@ class _ResolveMixin:
             resolved_inputs=resolved_inputs,
             placement_facts=placement_facts,
             current_input_source_ref=self._current_input_source_ref,
+            target_has_any_link=self._target_has_any_link,
             uid_to_name=self.name_by_uid,
         )
         if hint is None:
@@ -626,7 +627,7 @@ class _ResolveMixin:
         near = self._resolve_graph_name_soft(hint.near_name)
         if near is None or near.scope_path != scope_path:
             return None
-        return AnchorRef(relation="right_of", near=NodeTarget(near.scope_path, near.uid))
+        return AnchorRef(relation=hint.relation, near=NodeTarget(near.scope_path, near.uid))
 
     def _resolve_graph_name_soft(self, name: str) -> _ResolvedGraphName | None:
         node_ref, issues = self._resolve_graph_name(name)
@@ -664,6 +665,15 @@ class _ResolveMixin:
         slot_name = _output_slot_name(origin_node, origin_slot, self.schema_provider)
         output_slot: str | int = slot_name if slot_name is not None else origin_slot
         return LinkSourceRef(target.scope_path, origin_uid, output_slot)
+
+    def _target_has_any_link(self, target_name: str) -> bool:
+        target = self._resolve_graph_name_soft(target_name)
+        if target is None:
+            return False
+        inputs = target.node.get("inputs")
+        if not isinstance(inputs, list):
+            return False
+        return any(isinstance(slot, Mapping) and isinstance(slot.get("link"), int) for slot in inputs)
 
     def _node_by_id(self, scope_path: str, node_id: int) -> Mapping[str, Any] | None:
         scope = self.ledger.scopes.get(scope_path)

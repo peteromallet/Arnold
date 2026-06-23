@@ -87,13 +87,31 @@ _ROUTE_BEHAVIORS = MappingProxyType({
         reply_uses_graph_inspection=False,
         can_produce_candidate=False,
     ),
+    "respond": RouteBehavior(
+        route="respond",
+        needs_research=False,
+        needs_implement=False,
+        plan_summary="Answer directly from existing context without research or editing.",
+        clears_result_graph=False,
+        reply_uses_graph_inspection=False,
+        can_produce_candidate=False,
+    ),
     "inspect": RouteBehavior(
         route="inspect",
         needs_research=False,
         needs_implement=False,
-        plan_summary="Inspect the graph without editing.",
+        plan_summary="Inspect the graph without editing or outside research.",
         clears_result_graph=True,
         reply_uses_graph_inspection=True,
+        can_produce_candidate=False,
+    ),
+    "research": RouteBehavior(
+        route="research",
+        needs_research=True,
+        needs_implement=False,
+        plan_summary="Research workflows, nodes, or techniques, then answer without editing.",
+        clears_result_graph=True,
+        reply_uses_graph_inspection=False,
         can_produce_candidate=False,
     ),
     "revise": RouteBehavior(
@@ -125,13 +143,14 @@ def _canonical_route_for_plan(plan: ClassifyDecision) -> str:
     route = plan.effective_route
     if route in _ROUTE_BEHAVIORS:
         return route
+    # Fallback for ambiguous or legacy payloads not captured by effective_route.
     if plan.implement and plan.research:
         return "adapt"
     if plan.implement:
         return "revise"
     if plan.research:
-        return "inspect"
-    return "clarify"
+        return "research"
+    return "respond"
 
 
 def _route_behavior(plan: ClassifyDecision) -> RouteBehavior:
@@ -213,37 +232,88 @@ def _build_graph_reference_map(graph: dict[str, Any] | None) -> dict[str, str]:
 def _build_session_context(request: ExecutorRequest) -> dict[str, Any] | None:
     """Build session context for reference resolution in the classify phase.
 
-    Attempts to load recent conversation history and prior clarification
-    artifacts from the session store.  Returns ``None`` when no session
-    context is available (no session_id, store unavailable, etc.).
+    Loads the last ``PROMPT_MEMORY_MESSAGES`` (5) durable chat messages in
+    chronological order from persisted turn artifacts.  The backend-owned
+    durable session store is the **only** source of prompt history — frontend
+    ``recent_messages`` are never consulted as primary state (SD1: durable ==
+    canonical).
+
+    Also loads prior clarification context, latest candidate, and blocked
+    route/task from session state so downstream classify logic can resolve
+    follow-up references.
+
+    Defensively tolerates malformed historical chat artifacts (non-dict
+    messages, missing ``role`` / ``text`` keys, corrupt chat.json) by
+    skipping unrecoverable entries rather than raising.
+
+    Returns ``None`` when no session context is available (no session_id,
+    store unavailable, etc.).
     """
     if not request.session_id:
         return None
 
     context: dict[str, Any] = {}
+    chat_prior_clarification = False
 
-    # Try to load the same chat artifacts used by direct agent-edit prompt
-    # memory.  Session state stores turn bookkeeping, while chat.json carries
-    # the user/agent text needed to resolve follow-up references.
+    # ── Durable chat messages (backend-owned, SD1) ────────────────────────
     try:
         from vibecomfy.comfy_nodes.agent import edit as agent_edit
 
+        prompt_memory = getattr(agent_edit, "PROMPT_MEMORY_MESSAGES", 5)
         chat = agent_edit.read_session_chat(
             getattr(agent_edit, "_SESSION_ROOT"),
             request.session_id,
-            max_messages=getattr(agent_edit, "PROMPT_MEMORY_MESSAGES", 5),
+            max_messages=prompt_memory,
         )
         if isinstance(chat, dict):
-            messages = chat.get("messages")
-            if isinstance(messages, list) and messages:
-                context["recent_messages"] = messages[-6:]
+            raw_messages = chat.get("messages")
+            if isinstance(raw_messages, list):
+                # Defensively filter: keep only well-formed dicts with both
+                # ``role`` and ``text``.  Malformed entries are silently
+                # skipped so a single corrupt turn artifact cannot poison the
+                # entire prompt context.
+                durable_messages: list[dict[str, Any]] = []
+                for msg in raw_messages:
+                    if not isinstance(msg, dict):
+                        continue
+                    role = msg.get("role")
+                    text = msg.get("text")
+                    if not isinstance(role, str) or not role.strip():
+                        continue
+                    if not isinstance(text, str):
+                        continue
+                    # Normalise: store minimal fields consumed by prompt
+                    # construction and classifier reference resolution.
+                    entry: dict[str, Any] = {"role": role.strip(), "text": text}
+                    turn_id = msg.get("turn_id")
+                    if isinstance(turn_id, str) and turn_id.strip():
+                        entry["turn_id"] = turn_id.strip()
+                    outcome = msg.get("outcome")
+                    if isinstance(outcome, dict):
+                        entry["outcome"] = outcome
+                    change_details = msg.get("change_details")
+                    if isinstance(change_details, dict):
+                        entry["change_details"] = change_details
+                    durable_messages.append(entry)
+
+                # read_session_chat already caps at max_messages, but
+                # enforce the hard cap here as a defensive second gate.
+                if len(durable_messages) > prompt_memory:
+                    durable_messages = durable_messages[-prompt_memory:]
+
+                if durable_messages:
+                    context["recent_messages"] = durable_messages
+
             latest_candidate = chat.get("latest_candidate")
             if isinstance(latest_candidate, dict):
                 context["latest_candidate"] = latest_candidate
 
+            # Extract prior clarification from the most recent agent message
+            # whose outcome kind is ``clarify``.  Scan raw_messages (which may
+            # include entries skipped by the durable filter above).
             latest_agent = next(
                 (
-                    msg for msg in reversed(messages or [])
+                    msg for msg in reversed(raw_messages if isinstance(raw_messages, list) else [])
                     if isinstance(msg, dict)
                     and msg.get("role") == "agent"
                     and isinstance(msg.get("outcome"), dict)
@@ -274,6 +344,7 @@ def _build_session_context(request: ExecutorRequest) -> dict[str, Any] | None:
                     ]
                 if prior:
                     context["prior_clarification"] = prior
+                    chat_prior_clarification = True
 
         from vibecomfy.comfy_nodes.agent.session import (
             read_state,
@@ -282,9 +353,11 @@ def _build_session_context(request: ExecutorRequest) -> dict[str, Any] | None:
 
         state = read_state(session_dir_for(getattr(agent_edit, "_SESSION_ROOT"), request.session_id))
         if isinstance(state, dict):
-            # Carry forward prior clarification context if present.
+            # Carry forward prior clarification context if present.  Durable
+            # chat is newer/more specific than session_state, so don't let a
+            # stale saved clarification overwrite the latest chat turn.
             prior_clarification = state.get("prior_clarification")
-            if isinstance(prior_clarification, dict):
+            if isinstance(prior_clarification, dict) and not chat_prior_clarification:
                 context["prior_clarification"] = prior_clarification
 
             # Carry forward blocked route/task for continuation. Prefer the
@@ -292,10 +365,16 @@ def _build_session_context(request: ExecutorRequest) -> dict[str, Any] | None:
             # are present.
             prior_route = state.get("blocked_route") or state.get("prior_route")
             if isinstance(prior_route, str) and prior_route.strip():
-                context["prior_route"] = prior_route.strip()
+                route_text = prior_route.strip()
+                context["prior_route"] = route_text
+                if isinstance(state.get("blocked_route"), str) and state["blocked_route"].strip():
+                    context["blocked_route"] = route_text
                 prior_task = state.get("blocked_task") or state.get("prior_task")
                 if isinstance(prior_task, str) and prior_task.strip():
-                    context["prior_task"] = prior_task.strip()
+                    task_text = prior_task.strip()
+                    context["prior_task"] = task_text
+                    if isinstance(state.get("blocked_task"), str) and state["blocked_task"].strip():
+                        context["blocked_task"] = task_text
     except Exception:
         LOGGER.debug(
             "session_context: could not load session state for %r",
@@ -370,6 +449,99 @@ def _save_clarification_context(
         )
 
 
+_DELEGATED_CLARIFICATION_ANSWERS = (
+    "you figure it out",
+    "figure it out",
+    "choose for me",
+    "choose some",
+    "choose some please",
+    "pick some",
+    "pick some please",
+    "pick for me",
+    "decide for me",
+    "decide",
+    "please decide",
+    "your call",
+    "use your judgement",
+    "use your judgment",
+    "use your best judgement",
+    "use your best judgment",
+    "default for now",
+    "use the default",
+    "whatever you think",
+    "whatever seems best",
+)
+
+
+def _context_text_mentions_ltx_audio(session_context: dict[str, Any]) -> bool:
+    texts: list[str] = []
+    prior = session_context.get("prior_clarification")
+    if isinstance(prior, dict):
+        for key in ("clarification_question", "prior_request"):
+            value = prior.get(key)
+            if isinstance(value, str):
+                texts.append(value)
+        options = prior.get("clarification_options")
+        if isinstance(options, list):
+            texts.extend(str(option) for option in options)
+    recent = session_context.get("recent_messages")
+    if isinstance(recent, list):
+        for msg in recent[-5:]:
+            if isinstance(msg, dict) and isinstance(msg.get("text"), str):
+                texts.append(msg["text"])
+    combined = " ".join(texts).lower()
+    return (
+        "ltx" in combined
+        and any(term in combined for term in ("audio", "voice", "lipsync", "lip sync", "runexx"))
+    )
+
+
+def _delegated_clarification_plan(
+    request: ExecutorRequest,
+    session_context: dict[str, Any] | None,
+) -> ClassifyDecision | None:
+    """Resolve "you choose" follow-ups to the pending edit route.
+
+    A clarify turn asks the user to make a decision.  When the user explicitly
+    delegates that decision back to the agent, another clarify is a loop: the
+    executor should continue with the previously blocked edit route and let the
+    implementation prompt make the conservative default choice.
+    """
+    if not isinstance(session_context, dict):
+        return None
+    if not isinstance(session_context.get("prior_clarification"), dict):
+        return None
+    query = request.query.strip().lower()
+    if not query:
+        return None
+    if not any(phrase in query for phrase in _DELEGATED_CLARIFICATION_ANSWERS):
+        return None
+
+    prior_route = str(
+        session_context.get("blocked_route")
+        or session_context.get("prior_route")
+        or ""
+    ).strip()
+    if prior_route not in {"revise", "adapt"}:
+        prior_route = "revise" if request.graph is not None else "inspect"
+    if prior_route == "revise" and _context_text_mentions_ltx_audio(session_context):
+        prior_route = "adapt"
+
+    return ClassifyDecision(
+        research=(prior_route == "adapt"),
+        implement=(prior_route in {"revise", "adapt"}),
+        reply=True,
+        effort="medium",
+        intent="edit" if prior_route in {"revise", "adapt"} else "explain_graph",
+        route=prior_route,
+        task="edit_graph" if prior_route in {"revise", "adapt"} else "inspect_graph",
+        plan_summary=(
+            "The user delegated the pending clarification; proceed with a "
+            "conservative default decision instead of asking again."
+        ),
+    )
+
+
 def _clarify_markdown_reply(plan: ClassifyDecision, fallback: str) -> str:
     """Return a concrete Markdown clarification question with options."""
     question = (
@@ -426,364 +598,6 @@ def _resolve_spec(
             f"Profile '{name}' is missing the '{stage}' stage."
         )
     return spec
-
-
-# ── preclassify blockers (M3) ────────────────────────────────────────────────
-
-
-def _preclassify_blockers(
-    request: ExecutorRequest,
-    session_context: dict[str, Any] | None = None,
-) -> ClassifyDecision | None:
-    """Check for obvious unsafe or ambiguous edit-like requests before
-    the classify model is called.
-
-    When a blocker is found, returns a ``ClassifyDecision`` with
-    ``route="clarify"`` and a Markdown question/options so the executor
-    can short-circuit model classification.  Returns ``None`` when no
-    preclassify blockers apply, allowing normal model classification to
-    proceed.
-
-    Checked conditions (any single match forces ``clarify``):
-    * Missing graph on a request that looks like an edit.
-    * References to nonexistent node ids in the request text.
-    * Unresolved pronouns or ambiguous references (\"it\", \"that node\").
-    * Missing required attachments (e.g. image/model references without
-      uploaded files).
-    * Conflicting constraints in the request.
-    * Impossible free-tier video requests (>8K resolution or >5000 frames
-      without a paid tier indicator).
-    * Incompatible architecture splice requests (e.g. Flux + SDXL in the
-      same pipeline without a documented bridge).
-
-    This function is pure and deterministic — it reads only *request* and
-    *session_context*, never calls a model or provider.
-    """
-    import re
-
-    query = request.query.strip()
-    query_lower = query.lower()
-    graph = request.graph
-
-    prior_clarification = (
-        session_context.get("prior_clarification")
-        if isinstance(session_context, dict)
-        else None
-    )
-    prior_options = (
-        prior_clarification.get("clarification_options")
-        if isinstance(prior_clarification, dict)
-        else None
-    )
-    if not isinstance(prior_options, list):
-        prior_options = []
-    option_match = re.search(r'\b(?:option|choice)\s*#?\s*(\d+)\b', query_lower)
-    if option_match:
-        option_index = int(option_match.group(1))
-        if option_index < 1 or option_index > len(prior_options):
-            return ClassifyDecision(
-                research=False,
-                implement=False,
-                reply=True,
-                route="clarify",
-                task="respond",
-                clarification_question=(
-                    f"You referred to option {option_index}, but I do not "
-                    "have a matching prior clarification option in this session. "
-                    "Could you restate the option you want?"
-                ),
-                clarification_options=(
-                    "Restate the exact edit you want.",
-                    "Ask me to list the current graph nodes/options again.",
-                ),
-                plan_summary="Unresolved prior option reference requires clarification.",
-            )
-
-    # ── 1. Missing graph edit requests ──────────────────────────────────
-    if graph is None or not isinstance(graph, dict):
-        nodes = graph.get("nodes") if isinstance(graph, dict) else None
-        if not isinstance(nodes, list) or not nodes:
-            edit_keywords = (
-                "edit the graph", "modify the graph",
-                "change the graph", "fix this graph",
-                "splice", "patch the graph", "repair graph",
-            )
-            if any(kw in query_lower for kw in edit_keywords):
-                return ClassifyDecision(
-                    research=False,
-                    implement=False,
-                    reply=True,
-                    route="clarify",
-                    task="respond",
-                    clarification_question=(
-                        "You asked me to edit your graph, but no graph is "
-                        "attached. Would you like to:\n"
-                    ),
-                    clarification_options=(
-                        "Attach a graph and re-submit your edit request.",
-                        "Describe what kind of graph you want to build so I can help you construct one.",
-                        "Ask a different question about ComfyUI nodes or workflows.",
-                    ),
-                    plan_summary="Missing graph edit request requires clarification.",
-                )
-
-    # ── 2. Nonexistent node ids ─────────────────────────────────────────
-    if isinstance(graph, dict):
-        nodes = graph.get("nodes")
-        if isinstance(nodes, list) and nodes:
-            # Collect all node ids.
-            node_ids: set[str] = set()
-            for n in nodes:
-                if isinstance(n, dict):
-                    nid = n.get("id")
-                    if nid is not None:
-                        node_ids.add(str(nid))
-
-            # Check if query references a node id not in the graph.
-            id_pattern = re.compile(r'\bnode\s*[#\[]?\s*(\d+)\s*\]?\b', re.IGNORECASE)
-            for match in id_pattern.finditer(query):
-                ref_id = match.group(1)
-                if ref_id not in node_ids:
-                    return ClassifyDecision(
-                        research=False,
-                        implement=False,
-                        reply=True,
-                        route="clarify",
-                        task="respond",
-                        clarification_question=(
-                            f"You referenced node #{ref_id}, but that node "
-                            f"does not exist in the current graph "
-                            f"(available node ids: {', '.join(sorted(node_ids, key=int))}). "
-                            f"Would you like to:\n"
-                        ),
-                        clarification_options=(
-                            "Re-check the node id and re-submit.",
-                            "Describe the node by its class type or title instead.",
-                            "Ask me to list the nodes in the graph so you can pick the right one.",
-                        ),
-                        plan_summary=(
-                            f"Nonexistent node id #{ref_id} referenced in request."
-                        ),
-                    )
-
-    # ── 3. Unresolved pronouns / ambiguous references ───────────────────
-    ambiguous_patterns = [
-        r'\b(it|that|this)\s+(node|one)\b',
-        r'\b(the)\s+(node|connection|link|wire|edge)\b',
-        r'\b(change|fix|update|remove|delete)\s+(it|that|this)\b',
-    ]
-    # When the graph has ≤2 nodes, "the node" is unambiguous enough.
-    node_count = 0
-    if isinstance(graph, dict):
-        nodes_check = graph.get("nodes")
-        if isinstance(nodes_check, list):
-            node_count = len(nodes_check)
-    for pattern in ambiguous_patterns:
-        if re.search(pattern, query, re.IGNORECASE) and (
-            "node #" not in query_lower
-            and "node id" not in query_lower
-            and "the ksampler" not in query_lower
-            and "the clip" not in query_lower
-            and "the vae" not in query_lower
-            and "the checkpoint" not in query_lower
-            and "the loader" not in query_lower
-            and "the encode" not in query_lower
-            and "the decode" not in query_lower
-            and "the save" not in query_lower
-            and "the preview" not in query_lower
-            and "the sampler" not in query_lower
-            and not option_match
-            and not (
-                isinstance(session_context, dict)
-                and (
-                    session_context.get("latest_candidate")
-                    or len(prior_options) == 1
-                )
-            )
-            and not (node_count <= 2 and "the node" in query_lower)
-        ):
-            return ClassifyDecision(
-                research=False,
-                implement=False,
-                reply=True,
-                route="clarify",
-                task="respond",
-                clarification_question=(
-                    "Your request uses an ambiguous reference (e.g. \"it\", "
-                    "\"that node\") without specifying which node in the "
-                    "graph you mean. Could you clarify:\n"
-                ),
-                clarification_options=(
-                    "Specify the node by its id number (e.g. \"node #3\").",
-                    "Specify the node by its class type and title (e.g. \"the KSampler labeled 'Main Pass'\").",
-                    "Let me list the nodes in the graph first so you can pick one.",
-                ),
-                plan_summary="Ambiguous pronoun/reference in request requires clarification.",
-            )
-
-    # ── 4. Missing required attachments ─────────────────────────────────
-    # Only flag when the request clearly references a user-uploaded file,
-    # not a conceptual "my image/video/model" that means their use case.
-    attachment_keywords = [
-        "this image", "this video", "this audio", "this model",
-        "the attached", "uploaded", "my file",
-        "the file i uploaded", "the image i uploaded",
-    ]
-    if any(kw in query_lower for kw in attachment_keywords):
-        # Check session_context for evidence of uploaded files.
-        has_attachment = False
-        if isinstance(session_context, dict):
-            attachments = session_context.get("attachments")
-            if isinstance(attachments, (list, tuple)) and attachments:
-                has_attachment = True
-            elif session_context.get("has_attachment") is True:
-                has_attachment = True
-        if not has_attachment:
-            return ClassifyDecision(
-                research=False,
-                implement=False,
-                reply=True,
-                route="clarify",
-                task="respond",
-                clarification_question=(
-                    "Your request references an attached file or uploaded "
-                    "asset, but no attachment was found in this session. "
-                    "Would you like to:\n"
-                ),
-                clarification_options=(
-                    "Upload the file and re-submit your request.",
-                    "Describe the file/model you need and I can help you find it.",
-                    "Re-phrase your request without assuming an attachment.",
-                ),
-                plan_summary="Missing attachment referenced in request.",
-            )
-
-    # ── 5. Conflicting constraints ──────────────────────────────────────
-    conflict_pairs = [
-        (("remove", "keep"), ("remove all nodes but keep",)),
-        (("add", "remove"), ("add and remove the same",)),
-        (("8k", "480p"), ()),
-        (("flux", "sdxl"), ("flux and sdxl", "flux + sdxl")),
-        (("realistic", "anime"), ("realistic and anime",)),
-    ]
-    for (a, b), disambiguations in conflict_pairs:
-        has_both = (
-            a in query_lower and b in query_lower
-            and not any(d in query_lower for d in disambiguations)
-        )
-        if has_both:
-            return ClassifyDecision(
-                research=False,
-                implement=False,
-                reply=True,
-                route="clarify",
-                task="respond",
-                clarification_question=(
-                    f"Your request contains potentially conflicting "
-                    f"constraints (\"{a}\" and \"{b}\"). Could you clarify "
-                    f"which one you want:\n"
-                ),
-                clarification_options=(
-                    f"Focus on \"{a}\" — ignore \"{b}\".",
-                    f"Focus on \"{b}\" — ignore \"{a}\".",
-                    "Explain how these should work together and I'll try to reconcile them.",
-                ),
-                plan_summary=(
-                    f"Conflicting constraints '{a}'/'{b}' require clarification."
-                ),
-            )
-
-    # ── 6. Impossible free-tier video requests ──────────────────────────
-    # Detect >8K resolution or >5000 frames without a paid tier indicator.
-    resolution_match = re.search(
-        r'(\d{3,5})\s*[x×]\s*(\d{3,5})', query, re.IGNORECASE
-    )
-    frames_match = re.search(r'(\d{4,})\s*frames?', query, re.IGNORECASE)
-    resolution_too_large = False
-    frames_too_many = False
-
-    if resolution_match:
-        w = int(resolution_match.group(1))
-        h = int(resolution_match.group(2))
-        # >8K UHD = any dimension above 7680 or total pixels > ~33M
-        if w > 7680 or h > 7680 or (w * h) > 33_177_600:
-            resolution_too_large = True
-
-    if frames_match:
-        n_frames = int(frames_match.group(1))
-        if n_frames > 5000:
-            frames_too_many = True
-
-    if resolution_too_large or frames_too_many:
-        paid_indicators = (
-            "paid", "pro", "premium", "enterprise", "unlimited",
-            "priority", "dedicated",
-        )
-        if not any(pi in query_lower for pi in paid_indicators):
-            dimension_desc = (
-                f"{resolution_match.group(0)}"
-                if resolution_too_large
-                else f"{frames_match.group(0)} frames"
-            )
-            return ClassifyDecision(
-                research=False,
-                implement=False,
-                reply=True,
-                route="clarify",
-                task="respond",
-                clarification_question=(
-                    f"Your request targets {dimension_desc}, which exceeds "
-                    f"free-tier limits (max 7680×4320 resolution, 5000 frames). "
-                    f"Would you like to:\n"
-                ),
-                clarification_options=(
-                    "Reduce resolution/frame count to within free-tier limits.",
-                    "Confirm you have a paid/priority tier that supports this scale.",
-                    "Split the work into multiple smaller requests.",
-                ),
-                plan_summary=(
-                    "Impossible free-tier video request requires clarification."
-                ),
-            )
-
-    # ── 7. Incompatible architecture splice requests ────────────────────
-    architecture_pairs = [
-        (("flux", "sdxl"), "Flux and SDXL"),
-        (("flux", "sd1"), "Flux and SD1.x"),
-        (("sdxl", "sd3"), "SDXL and SD3"),
-        (("ltxv", "wan"), "LTX-Video and Wan"),
-    ]
-    for (arch_a, arch_b), label in architecture_pairs:
-        if arch_a in query_lower and arch_b in query_lower:
-            # Check for documented bridge/compatibility indicators.
-            bridge_indicators = (
-                "bridge", "convert", "adapter", "ipadapter",
-                "controlnet", "unified", "dual",
-            )
-            if not any(bi in query_lower for bi in bridge_indicators):
-                return ClassifyDecision(
-                    research=False,
-                    implement=False,
-                    reply=True,
-                    route="clarify",
-                    task="respond",
-                    clarification_question=(
-                        f"Your request combines {label} architectures, which "
-                        f"use incompatible latent spaces and require a "
-                        f"specialized bridge or adapter. Would you like to:\n"
-                    ),
-                    clarification_options=(
-                        f"Use only one architecture ({arch_a} or {arch_b}) for this workflow.",
-                        "Confirm you intend to use a specific bridge/adapter and name it.",
-                        "Let me research available {label} bridge nodes before proceeding.",
-                    ),
-                    plan_summary=(
-                        f"Incompatible architecture splice ({label}) requires clarification."
-                    ),
-                )
-
-    # No preclassify blockers detected.
-    return None
 
 
 # ── classify phase ───────────────────────────────────────────────────────────
@@ -992,7 +806,10 @@ def _run_implement(
             failure_envelope=failure,
         )
 
-    # Success: extract graph and message.
+    # Success: extract graph and message from the durable response,
+    # but preserve the full validated envelope so downstream
+    # serialization can attach session_id / turn_id to applyable
+    # candidates (SD2: applyable == durable).
     graph_out: dict[str, Any] | None = None
     if isinstance(result.get("graph"), dict):
         graph_out = result["graph"]
@@ -1005,7 +822,11 @@ def _run_implement(
     if isinstance(result.get("message"), str):
         message = result["message"]
 
-    return ImplementationResult(graph=graph_out, message=message)
+    return ImplementationResult(
+        graph=graph_out,
+        message=message,
+        durable_response=result,
+    )
 
 
 # ── reply phase ──────────────────────────────────────────────────────────────
@@ -1048,19 +869,50 @@ def _run_reply(
     if research_result is not None and research_result.adaptation_plan is not None:
         adaptation_plan = research_result.adaptation_plan.to_dict()
 
+    route_behavior = _route_behavior(plan)
+    effective_route = _canonical_route_for_plan(plan)
+    effective_task = plan.effective_task
+    candidate_present = (
+        route_behavior.can_produce_candidate
+        and implementation_result is not None
+        and implementation_result.graph is not None
+    )
+    research_sources: tuple[dict[str, Any], ...] | None = (
+        research_result.sources if research_result and research_result.sources else None
+    )
+    research_warnings: tuple[str, ...] | None = (
+        research_result.warnings if research_result and research_result.warnings else None
+    )
+    research_precedent_slices: tuple[dict[str, Any], ...] | None = None
+    if research_result and research_result.precedent_slices:
+        research_precedent_slices = tuple(
+            s.to_dict() for s in research_result.precedent_slices
+        )
+
     try:
         reply_kwargs: dict[str, Any] = {
             "route": spec.agent,
             "model": spec.model,
             "plan": plan,
             "research_summary": research_summary,
+            "research_sources": research_sources,
+            "research_warnings": research_warnings,
+            "research_precedent_slices": research_precedent_slices,
             "implementation_message": implementation_message,
             "graph_summary": effective_graph_context,
             "adaptation_plan": adaptation_plan,
+            "effective_route": effective_route,
+            "effective_task": effective_task,
+            "candidate_present": candidate_present,
         }
         # Gracefully degrade if the configured reply provider does not accept
         # newer keyword arguments.
-        optional_reply_kwargs = ("graph_summary", "adaptation_plan")
+        optional_reply_kwargs = (
+            "graph_summary", "adaptation_plan",
+            "research_sources", "research_warnings", "research_precedent_slices",
+            "effective_route", "effective_task",
+            "candidate_present",
+        )
         while True:
             try:
                 result = run_reply_turn(request.query, **reply_kwargs)
@@ -1266,77 +1118,80 @@ def run_executor(
         session_context = _build_session_context(request)
     graph_reference_map = _build_graph_reference_map(request.graph)
 
-    # ── Phase 1: preclassify blockers (M3) ───────────────────────────────
-    # Check for obvious unsafe/ambiguous requests before any model call.
-    pre_blocker = _preclassify_blockers(request, session_context=session_context)
-    if pre_blocker is not None:
-        plan = pre_blocker
-        profiler_log(
-            LOGGER,
-            "executor.preclassify_blocked",
-            **request_fields,
-            plan_route=plan.effective_route,
-            plan_task=plan.effective_task,
-            blocker_summary=plan.plan_summary,
-        )
+    # ── Phase 1: classify (always via model) ─────────────────────────────
+    try:
         _emit_executor_phase_event(
             request,
             executor_id=executor_id,
             phase="classify",
-            status="blocked",
+            status="start",
+            client_id=client_id,
+        )
+        with profiler_span(
+            LOGGER,
+            "executor.phase",
+            **request_fields,
+            phase="classify",
+            **_spec_fields(classify_spec),
+        ) as span:
+            plan = _run_classify(
+                request,
+                classify_spec,
+                session_context=session_context,
+                graph_reference_map=graph_reference_map,
+            )
+            span.update(
+                plan_research=plan.research,
+                plan_implement=plan.implement,
+                plan_reply=plan.reply,
+                plan_route=plan.effective_route,
+                plan_task=plan.effective_task,
+            )
+        _emit_executor_phase_event(
+            request,
+            executor_id=executor_id,
+            phase="classify",
+            status="progress",
             plan=plan,
             client_id=client_id,
         )
-        # ── Preserve clarification context for follow-up resolution (M3) ──
-        _save_clarification_context(
-            request,
-            plan,
-            blocked_route="revise",
-            blocked_task="edit_graph",
-        )
-        # Skip model classification entirely — proceed directly to reply.
-    else:
-        # ── Phase 1: classify (always via model) ─────────────────────────────
-        try:
-            _emit_executor_phase_event(
-                request,
-                executor_id=executor_id,
-                phase="classify",
-                status="start",
-                client_id=client_id,
+        # ── Delegated clarification loop-break ───────────────────────────
+        # When the user responds to a prior clarification with a delegation
+        # phrase ("pick some please", "you decide", etc.), deterministically
+        # continue with the previously blocked edit route instead of asking
+        # again.  This check runs after classify so the model is still called
+        # (preserving prompt context assembly), but the route is overridden
+        # to avoid a clarification loop.
+        delegated_plan: ClassifyDecision | None = None
+        if plan.effective_route == "clarify":
+            delegated_plan = _delegated_clarification_plan(
+                request, session_context
             )
-            with profiler_span(
-                LOGGER,
-                "executor.phase",
-                **request_fields,
-                phase="classify",
-                **_spec_fields(classify_spec),
-            ) as span:
-                plan = _run_classify(
-                    request,
-                    classify_spec,
-                    session_context=session_context,
-                    graph_reference_map=graph_reference_map,
-                )
-                span.update(
-                    plan_research=plan.research,
-                    plan_implement=plan.implement,
-                    plan_reply=plan.reply,
-                    plan_route=plan.effective_route,
-                    plan_task=plan.effective_task,
-                )
-            _emit_executor_phase_event(
-                request,
-                executor_id=executor_id,
-                phase="classify",
-                status="progress",
-                plan=plan,
-                client_id=client_id,
+        if delegated_plan is not None:
+            plan = delegated_plan
+            LOGGER.info(
+                "executor: delegated clarification follow-up → route=%s task=%s",
+                plan.effective_route,
+                plan.effective_task,
             )
-        except _ExecutorPhaseError as exc:
-            report = Report(plan=ClassifyDecision.respond_only())
-            return ExecutorResult.failure(
-                kind=exc.failure_kind,
+        elif plan.effective_route == "clarify":
+            intended_route = "adapt" if plan.research else None
+            if plan.intent == "edit":
+                intended_route = intended_route or "revise"
+            _save_clarification_context(
+                request,
+                plan,
+                blocked_route=intended_route,
+                blocked_task=(
+                    "edit_graph"
+                    if intended_route in {"revise", "adapt"}
+                    else None
+                ),
+            )
+    except _ExecutorPhaseError as exc:
+        report = Report(plan=ClassifyDecision.respond_only())
+        return ExecutorResult.failure(
+            kind=exc.failure_kind,
                 stage=exc.stage,
                 message=str(exc),
                 report=report,
@@ -1510,12 +1365,6 @@ def run_executor(
                 if route_behavior.reply_uses_graph_inspection
                 else None,
             )
-            if (
-                plan.route == "clarify"
-                or plan.clarification_question
-                or plan.clarification_options
-            ):
-                reply_text = _clarify_markdown_reply(plan, reply_text)
             span.update(reply_preview=short_text(reply_text))
     except _ExecutorPhaseError as exc:
         report = Report(

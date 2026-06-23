@@ -783,6 +783,20 @@ def test_classify_agent_response_json_decode_error() -> None:
     assert fe.kind is FailureKind.MALFORMED_MODEL_JSON
 
 
+def test_classify_agent_response_json_error_with_noisy_import_tail_stays_malformed() -> None:
+    ctx = TurnContext(session_id="s1")
+    exc = RuntimeError(
+        "JSONDecodeError: Expecting ',' delimiter: line 2 column 1463 (char 1464)\n\n"
+        "Worker output tail:\n"
+        "Could not register VibeComfy agent routes (No module named 'server'); "
+        "the ComfyUI server may not be available."
+    )
+
+    fe = classify_failure("agent_response", exc, ctx)
+
+    assert fe.kind is FailureKind.MALFORMED_MODEL_JSON
+
+
 def test_classify_agent_response_value_error_malformed() -> None:
     """Generic ValueError in agent_response -> MALFORMED_MODEL_JSON."""
     ctx = TurnContext(session_id="s1")

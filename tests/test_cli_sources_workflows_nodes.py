@@ -26,6 +26,7 @@ from vibecomfy.commands.nodes import (
 from vibecomfy.node_packs import LockEntry
 from vibecomfy.registry.pack_resolver import PackRef, PackResolution
 from vibecomfy.commands.workflows import (
+    build_onboarding_plan,
     _cmd_workflows_enrich_targets,
     _cmd_workflows_lens,
     _cmd_workflows_list,
@@ -218,6 +219,48 @@ def test_workflows_enrich_targets_treats_orchestrators_as_non_template_info(tmp_
             "message": "Target does not execute a VibeComfy template directly.",
         }
     ]
+
+
+def test_workflows_onboard_blocks_upload_until_description_and_public_source() -> None:
+    plan = build_onboarding_plan(
+        source="source.json",
+        ready_id="video/example",
+        out="ready_templates/video/example.py",
+        upload=True,
+    )
+
+    upload_stage = next(stage for stage in plan["stages"] if stage["id"] == "hivemind_upload")
+    describe_stage = next(stage for stage in plan["stages"] if stage["id"] == "describe")
+    assert plan["upload_ready"] is False
+    assert describe_stage["status"] == "needs_input"
+    assert upload_stage["status"] == "blocked"
+    assert "source must be marked public" in upload_stage["blockers"][0]
+    assert "description enrichment is required" in upload_stage["blockers"][1]
+    assert upload_stage["command"] is None
+
+
+def test_workflows_onboard_places_description_before_upload_command() -> None:
+    plan = build_onboarding_plan(
+        source="source.json",
+        ready_id="video/example",
+        out="ready_templates/video/example.py",
+        public_source=True,
+        description="Combines image-to-video generation with camera-control preprocessing.",
+        upload=True,
+        verify_upload=True,
+        dry_run_upload=True,
+    )
+
+    stages = {stage["id"]: stage for stage in plan["stages"]}
+    stage_order = [stage["id"] for stage in plan["stages"]]
+    assert stage_order.index("describe") < stage_order.index("hivemind_upload")
+    assert plan["upload_ready"] is True
+    assert stages["describe"]["status"] == "ready"
+    assert stages["hivemind_upload"]["status"] == "ready"
+    assert "--description 'Combines image-to-video generation with camera-control preprocessing.'" in stages["hivemind_upload"]["command"]
+    assert "--verify" not in stages["hivemind_upload"]["command"]
+    assert "--dry-run" in stages["hivemind_upload"]["command"]
+    assert stages["hivemind_upload"]["verify_after_upload"] is False
 
 
 def test_nodes_list_reports_malformed_index_with_recovery_hint(

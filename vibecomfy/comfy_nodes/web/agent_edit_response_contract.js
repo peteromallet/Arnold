@@ -8,6 +8,8 @@ const PUBLIC_OUTCOME_KINDS = Object.freeze([
 const CANONICAL_EXECUTOR_ROUTES = Object.freeze([
   "clarify",
   "inspect",
+  "respond",
+  "research",
   "revise",
   "adapt",
 ]);
@@ -27,6 +29,21 @@ const FAILURE_HINT_KEYS = Object.freeze([
 ]);
 
 const NORMALIZED_RESPONSE_MARKER = "__agentEditResponseNormalized";
+
+/** Routes that are allowed to carry Apply / candidate / review / rebaseline
+ * affordances in the browser UI.  All other routes render as normal
+ * assistant messages with no editing controls. */
+const APPLYABLE_ROUTES = Object.freeze(new Set(["revise", "adapt"]));
+
+/**
+ * Return true when `route` permits Apply / candidate / review / rebaseline
+ * affordances in the browser UI.  Non-applyable routes (clarify, respond,
+ * inspect, research) render as normal assistant messages.
+ */
+export function routeAllowsApplyAffordances(route) {
+  if (typeof route !== "string") return false;
+  return APPLYABLE_ROUTES.has(route.trim().toLowerCase());
+}
 
 function isObject(value) {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
@@ -314,6 +331,15 @@ function inferLegacyOutcome(response, { endpoint }) {
         ...clarificationPayload(response.reply || response.message),
       };
     }
+    // respond / research / inspect are answer-only routes — never candidate
+    if (response.route === "respond" || response.route === "research" || response.route === "inspect") {
+      return compactObject({
+        kind: "noop",
+        reason: asTrimmedString(response.reply)
+          || asTrimmedString(response.message)
+          || "Answer-only route",
+      });
+    }
     if (response.apply_eligible === true && responseHasCandidatePayload(response)) {
       return {
         kind: "candidate",
@@ -353,6 +379,17 @@ function inferLegacyOutcome(response, { endpoint }) {
   throw new Error(
     `Agent edit response${endpoint ? ` for ${endpoint}` : ""} is missing outcome and could not be inferred.`,
   );
+}
+
+function hasMissingDurableMetadata(response) {
+  if (!isObject(response)) {
+    return true;
+  }
+  const sessionId = asString(response.sessionId) || asString(response.session_id);
+  const turnId = asString(response.turnId) || asString(response.turn_id);
+  // SD2: both session_id and turn_id must be absent for malformed/non-applyable.
+  // Having at least one provides partial durable identity.
+  return !sessionId && !turnId;
 }
 
 function normalizeEligibility(response, candidateGraph) {
@@ -405,6 +442,21 @@ function normalizeEligibility(response, candidateGraph) {
       warnings: ["server_blocked"],
     };
   }
+
+  // SD2: A candidate graph present without durable turn metadata is
+  // malformed/non-applyable, never stale/rebaseline. Suppress Apply and
+  // guide the user towards retry or debug inspection.
+  if (isObject(candidateGraph) && hasMissingDurableMetadata(response)) {
+    return {
+      applyable: false,
+      reason: "missing_durable_turn_metadata",
+      message:
+        "Candidate is missing durable session/turn metadata and cannot be applied. "
+        + "Retry the submit or inspect the raw response in the debug panel.",
+      warnings: ["missing_durable_turn_metadata"],
+    };
+  }
+
   return null;
 }
 
@@ -451,6 +503,19 @@ function normalizeCandidateEnvelope(response, candidateGraph) {
   return {
     graph: candidateGraph,
   };
+}
+
+function normalizePublicRoute(rawRoute, outcome) {
+  if (CANONICAL_EXECUTOR_ROUTES.includes(rawRoute)) {
+    return rawRoute;
+  }
+  if (outcome?.kind === "candidate") {
+    return "revise";
+  }
+  if (outcome?.kind === "clarify") {
+    return "clarify";
+  }
+  return null;
 }
 
 function normalizeMessage(message, options) {
@@ -501,7 +566,19 @@ export function normalizeAgentEditResponse(raw, { endpoint = null, allowLegacy =
 
   const candidateGraph = normalizeCandidateGraph(raw, outcome);
   const eligibility = normalizeEligibility(raw, candidateGraph);
-  const rebaselineRecovery = extractRebaselineRecovery(raw);
+  const rawRebaselineRecovery = extractRebaselineRecovery(raw);
+
+  // SD2: Applyable means durable. A candidate missing both session_id and
+  // turn_id is malformed/non-applyable, never stale/rebaseline. Prevent
+  // rebaselineRecovery from being created so the UI never offers
+  // "Rebaseline & retry" actions for these responses.
+  // Eligibility override (disabling Apply) is handled by the lifecycle layer
+  // when it detects a candidate response without durable identity.
+  const rebaselineRecovery =
+    isObject(candidateGraph) && hasMissingDurableMetadata(raw)
+      ? null
+      : rawRebaselineRecovery;
+
   const latestCandidate = isObject(raw.latestCandidate) || isObject(raw.latest_candidate)
     ? normalizeAgentEditResponse(raw.latestCandidate || raw.latest_candidate, {
       endpoint: endpoint ? `${endpoint}:latest_candidate` : "latest_candidate",
@@ -516,7 +593,7 @@ export function normalizeAgentEditResponse(raw, { endpoint = null, allowLegacy =
     ok: asBooleanOrNull(raw.ok),
     exists: asBooleanOrNull(raw.exists),
     message: asString(raw.message) || asString(raw.reply),
-    route: CANONICAL_EXECUTOR_ROUTES.includes(raw.route) ? raw.route : null,
+    route: normalizePublicRoute(raw.route, outcome),
     reply: asString(raw.reply) || asString(raw.message),
     evidence: isObject(raw.evidence) || Array.isArray(raw.evidence) ? clonePlainData(raw.evidence) : null,
     outcome,

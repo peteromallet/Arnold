@@ -64,29 +64,20 @@ export const EXECUTOR_INTENTS = Object.freeze([
 ]);
 
 const EXECUTOR_ROUTES = Object.freeze([
-  "direct_edit",
+  "clarify",
   "inspect",
-  "inspect_only",
+  "respond",
+  "research",
   "revise",
   "adapt",
-  "asset_lookup",
-  "diagnose_repair",
-  "subgraph_preview",
-  "precedent_research",
-  "clarify",
 ]);
 
 const EXECUTOR_TASKS = Object.freeze([
-  "edit_graph",
   "inspect_graph",
   "revise_graph",
   "adapt_graph",
-  "find_assets",
-  "diagnose",
-  "preview_subgraph",
-  "research_precedent",
   "respond",
-  "research_nodes",
+  "research",
 ]);
 
 /**
@@ -98,21 +89,27 @@ const VALID_PROGRESS_VALUES = new Set(EXECUTOR_PROGRESS_VALUES);
 const VALID_EXECUTOR_ROUTES = new Set(EXECUTOR_ROUTES);
 const VALID_EXECUTOR_TASKS = new Set(EXECUTOR_TASKS);
 
+/** Routes that never execute or review — progress stops at research (or
+ *  classify for respond/inspect/clarify) and must never imply execute/review
+ *  completion. */
+const NON_APPLYABLE_ROUTES = new Set([
+  "clarify",
+  "inspect",
+  "respond",
+  "research",
+]);
+
 function normalizeAllowedString(value, allowedValues) {
   const normalized = typeof value === "string" ? value.trim().toLowerCase() : "";
   return normalized && allowedValues.has(normalized) ? normalized : null;
 }
 
 function executorRouteLabel(route) {
-  if (route === "direct_edit") return "Direct edit";
   if (route === "inspect") return "Inspect graph";
-  if (route === "inspect_only") return "Inspect graph";
+  if (route === "respond") return "Answer question";
+  if (route === "research") return "Research and answer";
   if (route === "revise") return "Revise graph";
   if (route === "adapt") return "Adapt graph";
-  if (route === "asset_lookup") return "Look up assets";
-  if (route === "diagnose_repair") return "Diagnose and repair";
-  if (route === "subgraph_preview") return "Preview subgraph";
-  if (route === "precedent_research") return "Research precedents";
   if (route === "clarify") return "Ask for clarification";
   return null;
 }
@@ -320,6 +317,24 @@ export function progressFromExecutorPhase(normalized) {
       });
     }
     if (phase === "reply") {
+      // Non-applyable routes (respond, research, inspect, clarify) never
+      // run execute/review — do not imply those stages are complete.
+      const route = String(normalized.route || "").toLowerCase();
+      if (NON_APPLYABLE_ROUTES.has(route)) {
+        // research/inspect routes complete their read-only work before reply;
+        // execute/review remain pending because no graph edit was run.
+        const researchDone = route === "research" || route === "inspect"
+          ? "done"
+          : "pending";
+        return createExecutorProgressSnapshot({
+          decide: "done",
+          research: researchDone,
+          execute: "pending",
+          review: "pending",
+          ...extras,
+        });
+      }
+      // Applyable routes (revise, adapt, legacy edit aliases): all stages done.
       return createExecutorProgressSnapshot({
         decide: "done",
         research: "done",
@@ -342,6 +357,8 @@ export function progressFromExecutorPhase(normalized) {
       });
     }
     if (phase === "implement") {
+      // When implement is skipped, research may or may not have run.
+      // For research-only routes research was done; for respond/inspect it wasn't.
       return createExecutorProgressSnapshot({
         decide: "done",
         research: "done",
@@ -391,6 +408,18 @@ export function progressFromExecutorPhase(normalized) {
     });
   }
   if (phase === "reply") {
+    // Active reply phase — for non-applyable routes, execute is never active.
+    const route = String(normalized.route || "").toLowerCase();
+    if (NON_APPLYABLE_ROUTES.has(route)) {
+      const researchDone = route === "research" ? "done" : "pending";
+      return createExecutorProgressSnapshot({
+        decide: "done",
+        research: researchDone,
+        execute: "pending",
+        review: "active",
+        ...extras,
+      });
+    }
     return createExecutorProgressSnapshot({
       decide: "done",
       research: "done",
@@ -449,6 +478,15 @@ export function executorProgressLabel(snapshot) {
   if (norm.execute === "active") return "Execute";
   if (norm.review === "active") return "Review";
   if (isExecutorProgressComplete(norm)) return "Complete";
+  if (norm.route === "research" && norm.decide === "done" && norm.research === "done") {
+    return "Research complete";
+  }
+  if (norm.route === "inspect" && norm.decide === "done") {
+    return "Inspect complete";
+  }
+  if ((norm.route === "respond" || norm.route === "clarify") && norm.decide === "done") {
+    return "Complete";
+  }
   return "Pending";
 }
 

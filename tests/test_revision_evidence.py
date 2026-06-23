@@ -577,8 +577,8 @@ class TestComputeScopedDiff:
         assert len(diff.after_hash) == 64
         assert diff.before_hash != diff.after_hash
         assert diff.has_diff is True
-        assert diff.candidate_eligible is False
-        assert "broad_unrelated_diff" in diff.eligibility_blockers
+        assert diff.candidate_eligible is True
+        assert diff.eligibility_blockers == ()
 
     def test_small_scoped_change_is_eligible_with_evidence(self) -> None:
         original = _two_node_graph()

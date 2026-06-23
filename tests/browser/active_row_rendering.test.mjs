@@ -393,7 +393,7 @@ test("DOM: Decide secondary text renders from progress label and clears on next 
   }
 });
 
-test("DOM: phase strip present while pending, hidden afterward, then exactly one active row", async () => {
+test("DOM: phase strip present while pending and legacy activity rows stay hidden", async () => {
   const harness = await createBrowserHarness({
     responses: {
       "/system_stats": { status: 200, body: { system: { comfyui_frontend_package: "1.39.19" } } },
@@ -499,22 +499,23 @@ test("DOM: phase strip present while pending, hidden afterward, then exactly one
 
     assert.doesNotMatch(text, /In progress\.\.\./);
 
-    // Clear pending → activity rows remain
+    // Clear pending -> the legacy below-thread activity strip stays disabled.
     panel.state.chatMessages = [];
+    panel.state.turns = [];
     mod.renderAgentPanel(panel, { dirtySections: ["THREAD"] });
 
     const activityRows = historyRegion.querySelectorAll(
       (node) => node.className === "vibecomfy-batch-row",
     );
-    assert.equal(activityRows.length, 1);
-    assert.equal(activityRows[0].dataset?.vibecomfyActivitySource, "canonical");
+    assert.equal(activityRows.length, 0);
+    assert.equal(historyRegion?.style.display, "none");
     assert.doesNotMatch(harness.textDump(), /In progress\.\.\./);
   } finally {
     await harness.dispose();
   }
 });
 
-test("DOM: expanded details include per-action rows, counts, diagnostics, no unsafe fields", async () => {
+test("DOM: pending bubble details include per-action rows, counts, diagnostics, no unsafe fields", async () => {
   const harness = await createBrowserHarness({
     responses: {
       "/system_stats": { status: 200, body: { system: { comfyui_frontend_package: "1.39.19" } } },
@@ -563,7 +564,16 @@ test("DOM: expanded details include per-action rows, counts, diagnostics, no uns
     });
 
     panel.state.turns = [activeTurn];
-    panel.state.chatMessages = [];
+    panel.state.chatMessages = [
+      {
+        role: "agent",
+        text: "Applying graph edits.",
+        pending_response: true,
+        progress: activeTurn.canonical_activity.phase_progress,
+        progress_label: activeTurn.canonical_activity.headline,
+        canonical_activity: activeTurn.canonical_activity,
+      },
+    ];
     panel.state.executorProgress = activeTurn.canonical_activity.phase_progress;
 
     mod.resetThreadRenderState(panel);
@@ -574,10 +584,14 @@ test("DOM: expanded details include per-action rows, counts, diagnostics, no uns
     const rows = historyRegion.querySelectorAll(
       (node) => node.className === "vibecomfy-batch-row",
     );
-    assert.equal(rows.length, 1);
+    assert.equal(rows.length, 0);
+    assert.equal(historyRegion?.style.display, "none");
 
-    // Click to expand
-    rows[0].click();
+    const detailToggle = harness.document.body.querySelectorAll(
+      (node) => node.textContent === "\u25b6 details" && typeof node.onclick === "function",
+    )[0];
+    assert.ok(detailToggle, "pending bubble should expose details");
+    detailToggle.click();
     mod.renderAgentPanel(panel, { dirtySections: ["THREAD"] });
 
     const expandedText = harness.textDump();
@@ -598,7 +612,7 @@ test("DOM: expanded details include per-action rows, counts, diagnostics, no uns
 
     // Counts
     assert.match(expandedText, /5 statements/i);
-    assert.match(expandedText, /3 applied/);
+    assert.match(expandedText, /3 landed/);
 
     // Diagnostics
     assert.match(expandedText, /NODE_ID_TAKEN/i);
@@ -612,19 +626,8 @@ test("DOM: expanded details include per-action rows, counts, diagnostics, no uns
       assert.doesNotMatch(expandedText, new RegExp(`\\b${unsafe}\\b`, "i"), `no ${unsafe} leak`);
     }
 
-    // Expanded box present
-    const expandedBoxes = harness.document.body.querySelectorAll(
-      (node) => node.className === "vibecomfy-batch-expanded",
-    );
-    assert.ok(expandedBoxes.length >= 1);
-
-    // Collapse
-    rows[0].click();
-    mod.renderAgentPanel(panel, { dirtySections: ["THREAD"] });
     assert.equal(
-      harness.document.body.querySelectorAll(
-        (node) => node.className === "vibecomfy-batch-expanded",
-      ).length,
+      historyRegion.querySelectorAll((node) => node.className === "vibecomfy-batch-row").length,
       0,
     );
   } finally {
@@ -932,6 +935,397 @@ test("DOM: vibecomfyActivitySource marker switches between canonical and raw", a
         (node) => node.dataset?.vibecomfyActivitySource === "raw",
       ).length >= 1,
     );
+  } finally {
+    await harness.dispose();
+  }
+});
+
+// ── Route-scoped rendering tests ──────────────────────────────────────────
+
+test("DOM: respond-route turn renders as normal assistant message, no candidate controls", async () => {
+  const harness = await createBrowserHarness({
+    responses: {
+      "/system_stats": { status: 200, body: { system: { comfyui_frontend_package: "1.39.19" } } },
+      "/vibecomfy/agent/status?route=auto": {
+        status: 200,
+        body: {
+          ok: true,
+          provider_available: true,
+          route: "deepseek",
+          requested_route: "auto",
+          route_options: {
+            auto: { requested_route: "auto", normalized_route: "deepseek", browser_api_key_allowed: false },
+            deepseek: { requested_route: "deepseek", normalized_route: "deepseek", browser_api_key_allowed: true },
+          },
+        },
+      },
+    },
+  });
+
+  try {
+    const mod = await harness.loadExtension();
+    await harness.setup();
+    await harness.invokeCommand("VibeComfy.AgentEdit");
+    await waitFor(() => harness.requests.some((r) => r.url === "/vibecomfy/agent/status?route=auto"));
+
+    const panel = mod.ensureAgentPanel();
+
+    const { canonical } = makeCanonicalTurn({
+      session_id: "sess-respond-ui",
+      turn_id: "0001",
+      turn_number: 1,
+      status: "done",
+      route: "respond",
+      message: "This graph uses an Euler sampler with cfg=7.5 for img2img generation.",
+      statement_count: 1,
+      landed_op_count: 0,
+      statements: [{ op_kind: "done", status: "done", message: "Turn complete" }],
+      done_summary: "Answered without graph changes.",
+    });
+
+    assert.equal(canonical.outcome.kind, "answered");
+    assert.equal(canonical.outcome.graph_changes, false);
+
+    panel.state.chatMessages = [
+      { role: "agent", text: canonical.outcome.summary, turn_id: "0001", source: "agent-edit" },
+    ];
+    panel.state.turns = [];
+
+    mod.resetThreadRenderState(panel);
+    mod.markAgentPanelDirty(panel, ["THREAD"]);
+    mod.renderAgentPanel(panel, { dirtySections: ["THREAD"] });
+
+    const text = harness.textDump();
+    assert.match(text, /Answered without graph changes/i);
+    assert.doesNotMatch(text, /not landed/i);
+
+    // Apply/Reject must be disabled for non-applyable respond route
+    const applyBtn = harness.document.getElementById("vibecomfy-agent-panel-apply");
+    const rejectBtn = harness.document.getElementById("vibecomfy-agent-panel-reject");
+    assert.ok(applyBtn, "apply button should exist");
+    assert.ok(rejectBtn, "reject button should exist");
+    assert.equal(applyBtn.disabled, true, "apply must be disabled for respond route");
+    assert.equal(rejectBtn.disabled, true, "reject must be disabled for respond route");
+
+    // No internal gate string leakage in DOM
+    assert.doesNotMatch(text, /no_candidate_reason/i);
+    assert.doesNotMatch(text, /route_not_applyable/i);
+  } finally {
+    await harness.dispose();
+  }
+});
+
+test("DOM: research-route turn renders as normal assistant message, no candidate controls", async () => {
+  const harness = await createBrowserHarness({
+    responses: {
+      "/system_stats": { status: 200, body: { system: { comfyui_frontend_package: "1.39.19" } } },
+      "/vibecomfy/agent/status?route=auto": {
+        status: 200,
+        body: {
+          ok: true,
+          provider_available: true,
+          route: "deepseek",
+          requested_route: "auto",
+          route_options: {
+            auto: { requested_route: "auto", normalized_route: "deepseek", browser_api_key_allowed: false },
+            deepseek: { requested_route: "deepseek", normalized_route: "deepseek", browser_api_key_allowed: true },
+          },
+        },
+      },
+    },
+  });
+
+  try {
+    const mod = await harness.loadExtension();
+    await harness.setup();
+    await harness.invokeCommand("VibeComfy.AgentEdit");
+    await waitFor(() => harness.requests.some((r) => r.url === "/vibecomfy/agent/status?route=auto"));
+
+    const panel = mod.ensureAgentPanel();
+
+    const { canonical } = makeCanonicalTurn({
+      session_id: "sess-research-ui",
+      turn_id: "0001",
+      turn_number: 1,
+      status: "done",
+      route: "research",
+      message: "LTX Video supports i2v with up to 768px resolution. PIL can be omitted.",
+      statement_count: 1,
+      landed_op_count: 0,
+      statements: [{ op_kind: "done", status: "done", message: "Turn complete" }],
+      done_summary: "Researched LTX compatibility without graph changes.",
+    });
+
+    assert.equal(canonical.outcome.kind, "answered");
+    assert.equal(canonical.outcome.graph_changes, false);
+
+    panel.state.chatMessages = [
+      { role: "agent", text: canonical.outcome.summary, turn_id: "0001", source: "agent-edit" },
+    ];
+    panel.state.turns = [];
+
+    mod.resetThreadRenderState(panel);
+    mod.markAgentPanelDirty(panel, ["THREAD"]);
+    mod.renderAgentPanel(panel, { dirtySections: ["THREAD"] });
+
+    const text = harness.textDump();
+    assert.match(text, /Researched LTX compatibility/i);
+    assert.doesNotMatch(text, /not landed/i);
+
+    // Apply/Reject must be disabled for non-applyable research route
+    const applyBtn = harness.document.getElementById("vibecomfy-agent-panel-apply");
+    const rejectBtn = harness.document.getElementById("vibecomfy-agent-panel-reject");
+    assert.equal(applyBtn.disabled, true, "apply must be disabled for research route");
+    assert.equal(rejectBtn.disabled, true, "reject must be disabled for research route");
+
+    // No internal gate string leakage in DOM
+    assert.doesNotMatch(text, /no_candidate_reason/i);
+    assert.doesNotMatch(text, /route_not_applyable/i);
+    assert.doesNotMatch(text, /research_summary/i, "internal research_summary field must not leak");
+    assert.doesNotMatch(text, /research_source_count/i, "internal research_source_count must not leak");
+  } finally {
+    await harness.dispose();
+  }
+});
+
+test("DOM: multi-turn chat renders respond → revise → research chronologically", async () => {
+  const harness = await createBrowserHarness({
+    responses: {
+      "/system_stats": { status: 200, body: { system: { comfyui_frontend_package: "1.39.19" } } },
+      "/vibecomfy/agent/status?route=auto": {
+        status: 200,
+        body: {
+          ok: true,
+          provider_available: true,
+          route: "deepseek",
+          requested_route: "auto",
+          route_options: {
+            auto: { requested_route: "auto", normalized_route: "deepseek", browser_api_key_allowed: false },
+            deepseek: { requested_route: "deepseek", normalized_route: "deepseek", browser_api_key_allowed: true },
+          },
+        },
+      },
+    },
+  });
+
+  try {
+    const mod = await harness.loadExtension();
+    await harness.setup();
+    await harness.invokeCommand("VibeComfy.AgentEdit");
+    await waitFor(() => harness.requests.some((r) => r.url === "/vibecomfy/agent/status?route=auto"));
+
+    const panel = mod.ensureAgentPanel();
+
+    const respondCanonical = makeCanonicalTurn({
+      session_id: "sess-multi", turn_id: "0001", turn_number: 1,
+      status: "done", route: "respond",
+      message: "The graph uses an Euler sampler.",
+      statement_count: 1, landed_op_count: 0,
+      statements: [{ op_kind: "done", status: "done" }],
+      done_summary: "Answered: graph uses Euler sampler.",
+    }).canonical;
+
+    const reviseCanonical = makeCanonicalTurn({
+      session_id: "sess-multi", turn_id: "0002", turn_number: 2,
+      status: "done", route: "revise",
+      message: "Added KScheduler node.",
+      statement_count: 3, landed_op_count: 2,
+      statements: [
+        { op_kind: "add_node", status: "done", message: "Added KScheduler", landed: true, ok: true },
+        { op_kind: "connect", status: "done", message: "Connected", landed: true, ok: true },
+        { op_kind: "done", status: "done" },
+      ],
+      done_summary: "Added scheduler node.",
+    }).canonical;
+
+    const researchCanonical = makeCanonicalTurn({
+      session_id: "sess-multi", turn_id: "0003", turn_number: 3,
+      status: "done", route: "research",
+      message: "PIL is compatible with 2.1 but requires additional nodes for 3.0.",
+      statement_count: 1, landed_op_count: 0,
+      statements: [{ op_kind: "done", status: "done" }],
+      done_summary: "Researched PIL compatibility.",
+    }).canonical;
+
+    panel.state.chatMessages = [
+      { role: "agent", text: respondCanonical.outcome.summary, turn_id: "0001", source: "agent-edit" },
+      { role: "agent", text: reviseCanonical.outcome.summary, turn_id: "0002", source: "agent-edit" },
+      { role: "agent", text: researchCanonical.outcome.summary, turn_id: "0003", source: "agent-edit" },
+    ];
+    panel.state.turns = [];
+
+    mod.resetThreadRenderState(panel);
+    mod.markAgentPanelDirty(panel, ["THREAD"]);
+    mod.renderAgentPanel(panel, { dirtySections: ["THREAD"] });
+
+    const text = harness.textDump();
+    // Verify all three messages render in order
+    assert.match(text, /graph uses Euler sampler/i);
+    assert.match(text, /Added scheduler node/i);
+    assert.match(text, /Researched PIL compatibility/i);
+
+    // Confirm chronological ordering: respond text before revise text before research text
+    const posRespond = text.indexOf("Euler sampler");
+    const posRevise = text.indexOf("scheduler node");
+    const posResearch = text.indexOf("PIL compatibility");
+    assert.ok(posRespond < posRevise, "respond message must appear before revise message");
+    assert.ok(posRevise < posResearch, "revise message must appear before research message");
+
+    // No internal leakage
+    assert.doesNotMatch(text, /no_candidate_reason/i);
+    assert.doesNotMatch(text, /route_not_applyable/i);
+  } finally {
+    await harness.dispose();
+  }
+});
+
+test("DOM: candidate-route controls are preserved for revise route", async () => {
+  const harness = await createBrowserHarness({
+    responses: {
+      "/system_stats": { status: 200, body: { system: { comfyui_frontend_package: "1.39.19" } } },
+      "/vibecomfy/agent/status?route=auto": {
+        status: 200,
+        body: {
+          ok: true,
+          provider_available: true,
+          route: "deepseek",
+          requested_route: "auto",
+          route_options: {
+            auto: { requested_route: "auto", normalized_route: "deepseek", browser_api_key_allowed: false },
+            deepseek: { requested_route: "deepseek", normalized_route: "deepseek", browser_api_key_allowed: true },
+          },
+        },
+      },
+    },
+  });
+
+  try {
+    const mod = await harness.loadExtension();
+    await harness.setup();
+    await harness.invokeCommand("VibeComfy.AgentEdit");
+    await waitFor(() => harness.requests.some((r) => r.url === "/vibecomfy/agent/status?route=auto"));
+
+    const panel = mod.ensureAgentPanel();
+
+    const { canonical } = makeCanonicalTurn({
+      session_id: "sess-revise-ui",
+      turn_id: "0001",
+      turn_number: 1,
+      status: "done",
+      route: "revise",
+      message: "Added upscale node and configured pipeline.",
+      statement_count: 3,
+      landed_op_count: 2,
+      statements: [
+        { op_kind: "add_node", status: "done", message: "Added node", landed: true, ok: true },
+        { op_kind: "set_field", status: "done", message: "Set cfg", landed: true, ok: true },
+        { op_kind: "done", status: "done" },
+      ],
+      done_summary: "Added upscale node and configured cfg.",
+    });
+
+    assert.equal(canonical.outcome.kind, "done");
+    assert.ok(canonical.outcome.landed_ops >= 2);
+
+    panel.state.chatMessages = [
+      { role: "agent", text: canonical.outcome.summary, turn_id: "0001", source: "agent-edit" },
+    ];
+    panel.state.turns = [];
+
+    mod.resetThreadRenderState(panel);
+    mod.markAgentPanelDirty(panel, ["THREAD"]);
+    mod.renderAgentPanel(panel, { dirtySections: ["THREAD"] });
+
+    const text = harness.textDump();
+    assert.match(text, /Added upscale node and configured cfg/i);
+    assert.doesNotMatch(text, /not landed/i);
+
+    // Apply/Reject buttons exist (candidate route preserves them)
+    const applyBtn = harness.document.getElementById("vibecomfy-agent-panel-apply");
+    const rejectBtn = harness.document.getElementById("vibecomfy-agent-panel-reject");
+    assert.ok(applyBtn, "apply button must exist for candidate route");
+    assert.ok(rejectBtn, "reject button must exist for candidate route");
+
+    // No internal leakage
+    assert.doesNotMatch(text, /no_candidate_reason/i);
+    assert.doesNotMatch(text, /route_not_applyable/i);
+  } finally {
+    await harness.dispose();
+  }
+});
+
+test("DOM: all non-applyable routes (clarify, inspect, respond, research) suppress candidate controls", async () => {
+  const harness = await createBrowserHarness({
+    responses: {
+      "/system_stats": { status: 200, body: { system: { comfyui_frontend_package: "1.39.19" } } },
+      "/vibecomfy/agent/status?route=auto": {
+        status: 200,
+        body: {
+          ok: true,
+          provider_available: true,
+          route: "deepseek",
+          requested_route: "auto",
+          route_options: {
+            auto: { requested_route: "auto", normalized_route: "deepseek", browser_api_key_allowed: false },
+            deepseek: { requested_route: "deepseek", normalized_route: "deepseek", browser_api_key_allowed: true },
+          },
+        },
+      },
+    },
+  });
+
+  try {
+    const mod = await harness.loadExtension();
+    await harness.setup();
+    await harness.invokeCommand("VibeComfy.AgentEdit");
+    await waitFor(() => harness.requests.some((r) => r.url === "/vibecomfy/agent/status?route=auto"));
+
+    const panel = mod.ensureAgentPanel();
+
+    const routeMessages = {
+      clarify: "Should I replace the sampler with an upscaler?",
+      inspect: "This workflow loads an image, applies VAE decode, and saves the output.",
+      respond: "The graph uses an Euler sampler with cfg=7.5.",
+      research: "LTX Video supports i2v at 768px; PIL is unnecessary for this pipeline.",
+    };
+
+    for (const [route, msg] of Object.entries(routeMessages)) {
+      const { canonical } = makeCanonicalTurn({
+        session_id: `sess-${route}-ui`,
+        turn_id: "0001",
+        turn_number: 1,
+        status: route === "clarify" ? "clarify" : "done",
+        route,
+        message: msg,
+        clarification_required: route === "clarify" ? true : false,
+        clarification_message: route === "clarify" ? msg : null,
+        statement_count: 1,
+        landed_op_count: 0,
+        statements: route === "clarify"
+          ? [{ op_kind: "clarify", status: "active", message: "Need clarification" }]
+          : [{ op_kind: "done", status: "done", message: "Turn complete" }],
+        done_summary: route === "clarify" ? null : `Completed: ${route}.`,
+      });
+
+      panel.state.sessionId = `sess-${route}-ui`;
+      panel.state.chatMessages = [
+        { role: "agent", text: canonical.outcome.summary || msg, turn_id: "0001", source: "agent-edit" },
+      ];
+      panel.state.turns = [];
+
+      mod.resetThreadRenderState(panel);
+      mod.markAgentPanelDirty(panel, ["THREAD"]);
+      mod.renderAgentPanel(panel, { dirtySections: ["THREAD"] });
+
+      const text = harness.textDump();
+      const applyBtn = harness.document.getElementById("vibecomfy-agent-panel-apply");
+      const rejectBtn = harness.document.getElementById("vibecomfy-agent-panel-reject");
+
+      assert.equal(applyBtn.disabled, true, `apply must be disabled for ${route} route`);
+      assert.equal(rejectBtn.disabled, true, `reject must be disabled for ${route} route`);
+      assert.doesNotMatch(text, /no_candidate_reason/i, `${route} route must not leak no_candidate_reason`);
+      assert.doesNotMatch(text, /route_not_applyable/i, `${route} route must not leak route_not_applyable`);
+    }
   } finally {
     await harness.dispose();
   }

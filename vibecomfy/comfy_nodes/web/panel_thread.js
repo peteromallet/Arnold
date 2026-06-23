@@ -6,6 +6,7 @@ import {
   formatStatementAction,
   isSubstantiveStatement,
 } from "./agent_turn_feed.js";
+import { routeAllowsApplyAffordances } from "./agent_edit_response_contract.js";
 
 const THREAD_WINDOW_SIZE = 30;
 const THREAD_NEAR_BOTTOM_TOLERANCE_PX = 120;
@@ -86,13 +87,33 @@ export function recordThreadRender(runtimePayload) {
   return runtime.lastThreadRender;
 }
 
-function bubbleDetailSignature(msg, detailSnapshot) {
+function _bubbleDetailTurnEntries(panel, msg, snapshot) {
+  const turnId =
+    (typeof msg?.turn_id === "string" && msg.turn_id)
+    || (typeof msg?.detail_turn_id === "string" && msg.detail_turn_id)
+    || (typeof snapshot?.turn_id === "string" && snapshot.turn_id)
+    || null;
+  if (!turnId || !Array.isArray(panel?.state?.turns)) {
+    return [];
+  }
+  return panel.state.turns.filter((entry) => (
+    entry
+    && (
+      entry.turn_id === turnId
+      || entry.parent_turn_id === turnId
+      || entry.raw_payload?.turn_id === turnId
+    )
+  ));
+}
+
+function bubbleDetailSignature(panel, msg, detailSnapshot) {
   const canonicalDetails = Array.isArray(msg?.canonical_activity?.details)
     ? String(msg.canonical_activity.details.length)
     : "";
   const canonicalDiagnostics = Array.isArray(msg?.canonical_activity?.diagnostics)
     ? String(msg.canonical_activity.diagnostics.length)
     : "";
+  const turnEntryCount = panel ? String(_bubbleDetailTurnEntries(panel, msg, detailSnapshot).length) : "";
   const detailSigParts = [
     detailSnapshot?.phase || "",
     detailSnapshot?.message || "",
@@ -105,6 +126,7 @@ function bubbleDetailSignature(msg, detailSnapshot) {
     msg?.turn_id || "",
     msg?.detail_turn_id || "",
     String(msg?.text || "").slice(0, 80),
+    turnEntryCount,
   ];
   return detailSigParts.join("|");
 }
@@ -145,6 +167,7 @@ function bubbleRenderSignature(panel, msg, deps = {}) {
     msg?.progress_label || "",
     Array.isArray(msg?.canonical_activity?.details) ? String(msg.canonical_activity.details.length) : "",
     Array.isArray(msg?.canonical_activity?.diagnostics) ? String(msg.canonical_activity.diagnostics.length) : "",
+    String(_bubbleDetailTurnEntries(panel, msg, snapshot).length),
   ];
   return signatureParts.join("|");
 }
@@ -794,6 +817,22 @@ export function populateAgentBubbleDetail(target, panel, message, snapshot = nul
   } = deps;
   clearNode(target);
 
+  // Extract route from message or panel state for applyability gating
+  const msgRoute = (message?.response && typeof message.response === "object")
+    ? (message.response.route || (message.response.raw && message.response.raw.route))
+    : (typeof message?.route === "string" ? message.route : null);
+  const canonicalRoute = typeof message?.canonical_activity?.route === "string"
+    ? message.canonical_activity.route
+    : null;
+  const latestRoute = panel?.state?.latestResponse?.route
+    || panel?.state?.route
+    || panel?.route;
+  const effectiveRoute = msgRoute || canonicalRoute || latestRoute || null;
+  const actionState = typeof deps.candidateActionState === "function"
+    ? deps.candidateActionState(panel, message, snapshot)
+    : null;
+  const allowsApply = routeAllowsApplyAffordances(effectiveRoute) || actionState?.visible === true;
+
   const isExecutorMessage = message?.pending_response === true || message?.executor_pending === true || message?.source === "agent-edit";
   if (!isExecutorMessage) {
     const metaSection = createBubbleDetailSection("Turn");
@@ -844,10 +883,24 @@ export function populateAgentBubbleDetail(target, panel, message, snapshot = nul
     }
   }
 
-  const candidateSection = createBubbleDetailSection("Candidate");
-  appendCandidateDetail(candidateSection.body, panel, message, snapshot);
-  if (candidateSection.body.children.length) {
-    target.appendChild(candidateSection.section);
+  // Candidate section: only for applyable routes (revise/adapt/legacy-aliases)
+  if (allowsApply) {
+    const candidateSection = createBubbleDetailSection("Candidate");
+    appendCandidateDetail(candidateSection.body, panel, message, snapshot);
+    if (candidateSection.body.children.length) {
+      target.appendChild(candidateSection.section);
+    }
+  }
+
+  // Applied-node feedback is shown on the applied turn bubble even when the
+  // route is no longer applyable.
+  const appliedFeedback = snapshot?.lastAppliedChanges || panel?.state?.lastAppliedChanges || null;
+  if (appliedFeedback?.items?.length) {
+    const feedbackSection = createBubbleDetailSection("Feedback");
+    appendCandidateDetail(feedbackSection.body, panel, message, snapshot);
+    if (feedbackSection.body.children.length) {
+      target.appendChild(feedbackSection.section);
+    }
   }
 
   const failureSection = createBubbleDetailSection("Failure");
@@ -963,7 +1016,7 @@ export function renderChatBubbleNode(bubble, panel, msg, messageKey, messageInde
   const detailSnapshot = typeof detailSnapshotForMessage === "function"
     ? detailSnapshotForMessage(panel, msg)
     : null;
-  const detailSignature = bubbleDetailSignature(msg, detailSnapshot);
+  const detailSignature = bubbleDetailSignature(panel, msg, detailSnapshot);
   const detailRow = el("div");
   Object.assign(detailRow.style, {
     marginTop: "3px",
@@ -2048,7 +2101,7 @@ function _formatRelativeTime(iso) {
 }
 
 function _renderBatchTurnRow(body, panel, entry, index, deps = {}) {
-  const { button, el, downloadTurnAudit } = deps;
+  const { appendCodeLine, button, el, downloadTurnAudit } = deps;
   const turnKey = entry.turn_key;
   const expanded = !!(panel.state.expandedTurnKeys && panel.state.expandedTurnKeys[turnKey]);
   // ── Canonical activity state (preferred over raw entry fields) ───────
@@ -2287,6 +2340,9 @@ function _renderBatchTurnRow(body, panel, entry, index, deps = {}) {
       expandedBox.appendChild(footer);
     }
 
+    if (entry.audit_ref?.path && typeof appendCodeLine === "function") {
+      appendCodeLine(expandedBox, `audit: ${entry.audit_ref.path}`, "#9ed0ff");
+    }
 
     const tsRel = _formatRelativeTime(entry.timestamp);
     if (tsRel) {
@@ -2505,44 +2561,41 @@ function _renderDurableTurnRow(body, panel, entry, index, deps = {}) {
   body.appendChild(turnCard);
 }
 
-export function populateActivityRows(body, panel, opts = {}, deps = {}) {
-  _injectProgressPulseStyle(deps);
+export function populateActivityRows(body, _panel, _opts = {}, deps = {}) {
   const { clearNode } = deps;
-  const { sessionId = null } = opts;
-  clearNode(body);
-
-  const hasPendingDurable = Array.isArray(panel?.state?.turns)
-    ? panel.state.turns.some((entry) => (
-      entry?.entry_type === "durable"
-      && entry.status === "pending"
-      && (!sessionId || !entry.session_id || entry.session_id === sessionId)
-    ))
-    : false;
-  const relevantTurns = Array.isArray(panel?.state?.turns)
-    ? panel.state.turns.filter((entry) => {
-      if (!entry) {
-        return false;
-      }
-      if (sessionId && entry.session_id && entry.session_id !== sessionId) {
-        return false;
-      }
-      if (hasPendingDurable && entry.entry_type === "batch") {
-        return false;
-      }
-      return isLiveActivityTurn(entry);
-    })
-    : [];
-  // Render every live batch turn; upserts are already deduplicated by turn_key
-  // in upsertBatchTurn, and sortPanelTurns keeps them newest-first.
-
-  for (let index = 0; index < relevantTurns.length; index += 1) {
-    const entry = relevantTurns[index];
-    if (entry.entry_type === "batch") {
-      _renderBatchTurnRow(body, panel, entry, index, deps);
-    } else {
-      _renderDurableTurnRow(body, panel, entry, index, deps);
-    }
+  if (typeof clearNode === "function") {
+    clearNode(body);
+  } else if (body) {
+    body.textContent = "";
   }
+  const panel = _panel;
+  const turns = Array.isArray(panel?.state?.turns) ? panel.state.turns : [];
+  turns.forEach((entry, index) => {
+    if (!entry || typeof entry !== "object") {
+      return;
+    }
+    if (entry.entry_type !== "batch" && entry.entry_type !== "durable") {
+      return;
+    }
+    // Durable turn rows (candidate/applied/failed/etc.) belong in the expanded
+    // bubble details, not in the transient live activity log.
+    if (entry.entry_type === "durable") {
+      return;
+    }
+    // Terminal batch rows (arrived as part of a finished server response) belong
+    // inside the expanded bubble details, not in the transient live activity log.
+    if (entry.entry_type === "batch") {
+      const status = typeof entry.status === "string" ? entry.status : "";
+      const isTerminal = status === "done"
+        || status === "clarify"
+        || entry.batch_ok === true
+        || entry.batch_ok === "true";
+      if (isTerminal) {
+        return;
+      }
+    }
+    _renderBatchTurnRow(body, panel, entry, index, deps);
+  });
 }
 
 function renderActivityRows(panel, deps = {}) {

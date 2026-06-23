@@ -1,4 +1,5 @@
 import { getAgentPanelRuntime } from "./panel_runtime.js";
+import { routeAllowsApplyAffordances } from "./agent_edit_response_contract.js";
 
 // Idempotent injector for the animated "Working…" ellipsis used on the Submit
 // button while a turn is in flight. The keyframes are also defined by
@@ -164,14 +165,28 @@ export function renderComposerNotice(panel, readinessState, deps = {}) {
   }
   clearNode(notice);
   let hasContent = false;
-  const recovery = panel.state.phase === PANEL_STATE.ERROR ? panel.state.rebaselineRecovery : null;
+
+  // Suppress rebaseline recovery for non-applyable routes (clarify/respond/inspect/research).
+  // When no route is known (e.g. a failed submit before classification), allow recovery
+  // so stale-state rebaseline actions can still surface.
+  const panelRoute = panel?.state?.latestResponse?.route
+    || panel?.state?.route
+    || panel?.route
+    || null;
+  const allowsApply = !panelRoute || routeAllowsApplyAffordances(panelRoute);
+
+  const recovery = (panel.state.phase === PANEL_STATE.ERROR && allowsApply)
+    ? panel.state.rebaselineRecovery
+    : null;
   if (recovery?.action === "rebaseline" && recovery.reason === "stale_state_recovery") {
     const heading = el("div", "Canvas changed");
     heading.style.color = "#ffb86c";
     heading.style.fontWeight = "700";
     heading.style.marginBottom = "4px";
     notice.appendChild(heading);
-    const message = el("div", "Rebaseline from the current canvas and retry the edit in one step.");
+    const failure = panel?.state?.failure;
+    const messageText = failure?.user_facing_message || failure?.message || "Rebaseline from the current canvas and retry the edit in one step.";
+    const message = el("div", messageText);
     message.style.color = "#edf2f7";
     notice.appendChild(message);
     const actionRow = el("div");

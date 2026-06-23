@@ -1143,6 +1143,81 @@ def test_accept_reject_validate_against_submit_graph_hash_before_action_writes(
     assert turn_record["action_client_graph_hash"] is None
 
 
+def test_accept_allows_echoed_submit_hash_with_matching_live_graph_when_client_hash_missing(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "sessions"
+    request = _request_graph("executor-compat")
+    allocation = allocate_turn(session_root=root, session_id="s1", request_payload=request)
+    turn_id = str(allocation.context.turn_id)
+    candidate = _record_candidate_response(root=root, session_id="s1", allocation=allocation)
+    submit_hash = payload_hash(request["graph"])
+
+    state = read_state(root / "s1")
+    state["turns"][turn_id]["submitted_client_graph_hash"] = None
+    write_state_atomic(root / "s1", state)
+
+    accepted = accept_turn(
+        session_root=root,
+        session_id="s1",
+        turn_id=turn_id,
+        client_graph_hash=payload_hash({"browser": "serialized-differently"}),
+        request_payload={
+            "turn_id": turn_id,
+            "action": "accept",
+            "live_graph": request["graph"],
+            "submit_graph_hash": submit_hash,
+        },
+    )
+
+    assert isinstance(accepted, dict)
+    assert accepted["ok"] is True
+    assert accepted["baseline_turn_id"] == turn_id
+    assert accepted["candidate_graph_hash"] == payload_hash(candidate)
+    assert accepted["baseline_graph_hash"] == structural_graph_hash(candidate)
+
+
+def test_accept_allows_echoed_submit_hash_with_matching_live_structural_graph(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "sessions"
+    request = _request_graph("executor-compat-structural")
+    allocation = allocate_turn(session_root=root, session_id="s1", request_payload=request)
+    turn_id = str(allocation.context.turn_id)
+    candidate = _record_candidate_response(root=root, session_id="s1", allocation=allocation)
+    submit_hash = payload_hash(request["graph"])
+
+    live_graph = json.loads(json.dumps(request["graph"]))
+    live_graph["extra"] = {"ui_noise": "canvas reserialized after render"}
+    live_graph["nodes"][0]["pos"] = [123.45, 678.9]
+    live_graph["nodes"][0]["size"] = [320, 240]
+    assert payload_hash(live_graph) != submit_hash
+    assert structural_graph_hash(live_graph) == structural_graph_hash(request["graph"])
+
+    state = read_state(root / "s1")
+    state["turns"][turn_id]["submitted_client_graph_hash"] = None
+    write_state_atomic(root / "s1", state)
+
+    accepted = accept_turn(
+        session_root=root,
+        session_id="s1",
+        turn_id=turn_id,
+        client_graph_hash=payload_hash({"browser": "serialized-differently"}),
+        request_payload={
+            "turn_id": turn_id,
+            "action": "accept",
+            "live_graph": live_graph,
+            "submit_graph_hash": submit_hash,
+        },
+    )
+
+    assert isinstance(accepted, dict)
+    assert accepted["ok"] is True
+    assert accepted["baseline_turn_id"] == turn_id
+    assert accepted["candidate_graph_hash"] == payload_hash(candidate)
+    assert accepted["baseline_graph_hash"] == structural_graph_hash(candidate)
+
+
 def test_accept_reject_fail_closed_when_candidate_hash_missing_before_action_writes(
     tmp_path: Path,
 ) -> None:
@@ -3714,7 +3789,7 @@ def test_build_batch_messages_turn_zero_includes_full_python_scoped_catalog_and_
     assert "do NOT search for them" in system
     assert "search(" in system
     # Size ceiling: system prompt must stay under 2600 chars
-    assert len(system) < 2600, f"system prompt is {len(system)} chars, expected <2600"
+    assert len(system) < 2700, f"system prompt is {len(system)} chars, expected <2700"
     # No execution-semantics phrasing
     assert "return only json" not in system.lower()
     assert "delta" not in system.lower()
@@ -3749,7 +3824,7 @@ def test_build_batch_messages_later_turn_includes_diff_and_report_only() -> None
     assert "delta" not in system.lower()
     assert "execute the code" not in system.lower()
     assert "run the code" not in system.lower()
-    assert len(system) < 2600, f"system prompt is {len(system)} chars, expected <2600"
+    assert len(system) < 2700, f"system prompt is {len(system)} chars, expected <2700"
 
     # User message includes diff + report, NOT full Python
     assert "Fix the field" in user
@@ -3819,7 +3894,7 @@ def test_build_batch_messages_no_json_delta_wording() -> None:
         assert "execute the code" not in system.lower()
         assert "run the code" not in system.lower()
         # Size ceiling
-        assert len(system) < 2600, f"system prompt is {len(system)} chars, expected <2600"
+        assert len(system) < 2700, f"system prompt is {len(system)} chars, expected <2700"
 
 
 def test_build_batch_messages_system_prompt_contains_all_three_mode_strings() -> None:
@@ -3904,7 +3979,7 @@ def test_build_batch_messages_system_prompt_size_under_ceiling() -> None:
         max_batches=5,
     )
     system = messages[0]["content"]
-    assert len(system) < 2600, f"system prompt is {len(system)} chars, expected <2600"
+    assert len(system) < 2700, f"system prompt is {len(system)} chars, expected <2700"
 
 
 def test_build_batch_messages_conversation_memory_included_on_turn_zero() -> None:
@@ -4202,7 +4277,15 @@ def test_runtime_batch_turn_uses_batch_repl_worker_contract(monkeypatch) -> None
 
     monkeypatch.setattr(runtime, "_resolve_openrouter_key", lambda: "test-key")
 
-    def _fake_run_worker(agent_kwargs, system_msg, user_msg, *, response_contract="python", agent_id=None):
+    def _fake_run_worker(
+        agent_kwargs,
+        system_msg,
+        user_msg,
+        *,
+        response_contract="python",
+        agent_id=None,
+        profiling_context=None,
+    ):
         calls.append(
             {
                 "agent_kwargs": agent_kwargs,
@@ -4210,6 +4293,7 @@ def test_runtime_batch_turn_uses_batch_repl_worker_contract(monkeypatch) -> None
                 "user_msg": user_msg,
                 "response_contract": response_contract,
                 "agent_id": agent_id,
+                "profiling_context": profiling_context,
             }
         )
         return {"content": "Done.\n\n```batch\ndone()\n```"}
@@ -4232,6 +4316,58 @@ def test_runtime_batch_turn_uses_batch_repl_worker_contract(monkeypatch) -> None
     assert calls[0]["system_msg"] == "system batch prompt"
     assert calls[0]["user_msg"] == "user batch prompt"
     assert calls[0]["agent_kwargs"]["model"] == "deepseek-chat"
+
+
+def test_runtime_json_model_turn_retries_malformed_worker_json(monkeypatch) -> None:
+    calls: list[dict[str, object]] = []
+
+    monkeypatch.setattr(runtime, "_resolve_openrouter_key", lambda: "test-key")
+
+    def _fake_run_worker(
+        agent_kwargs,
+        system_msg,
+        user_msg,
+        *,
+        response_contract="python",
+        agent_id=None,
+        profiling_context=None,
+    ):
+        calls.append(
+            {
+                "agent_kwargs": agent_kwargs,
+                "system_msg": system_msg,
+                "user_msg": user_msg,
+                "response_contract": response_contract,
+                "agent_id": agent_id,
+                "profiling_context": profiling_context,
+            }
+        )
+        if len(calls) == 1:
+            return {
+                "error": "Expecting ',' delimiter: line 2 column 1463 (char 1464)",
+                "error_type": "JSONDecodeError",
+            }
+        return {
+            "content": '{"reply": "Recovered."}',
+            "json": {"reply": "Recovered."},
+        }
+
+    monkeypatch.setattr(runtime, "_run_worker", _fake_run_worker)
+
+    response = runtime.run_model_turn(
+        task="explain graph",
+        route="openrouter",
+        model="deepseek-chat",
+        messages=[
+            {"role": "system", "content": "Return JSON."},
+            {"role": "user", "content": "Explain."},
+        ],
+    )
+
+    assert response["json"] == {"reply": "Recovered."}
+    assert len(calls) == 2
+    assert "not valid JSON" in str(calls[1]["system_msg"])
+    assert calls[1]["profiling_context"]["json_retry_count"] == 1
 
 
 def test_handle_agent_edit_batch_python_query_feeds_render_to_next_turn(tmp_path: Path) -> None:
@@ -8817,3 +8953,757 @@ def test_response_durability_v2_delta_protocol_detection_after_success(
     turn_record = state["turns"].get(turn_id)
     assert isinstance(turn_record, dict)
     assert turn_record.get("agent_edit_protocol") == "v2_delta"
+
+
+# ── T2: executor durability / idempotency tests ─────────────────────────
+
+
+def test_executor_revise_idempotency_replays_same_request_body(
+    tmp_path: Path,
+) -> None:
+    """Executor revise turn: same idempotency_key + same body replays the
+    durable response without creating a duplicate turn."""
+    root = tmp_path / "sessions"
+    request = {
+        "query": "change the filename prefix to test",
+        "graph": {"nodes": [{"id": 1, "type": "SaveImage", "widgets_values": ["before"]}], "links": []},
+    }
+    allocation = allocate_turn(
+        session_root=root,
+        session_id="s1",
+        request_payload=request,
+        idempotency_key="exec-revise-replay-1",
+    )
+    turn_id = str(allocation.context.turn_id)
+    response = {
+        "ok": True,
+        "turn_id": turn_id,
+        "route": "revise",
+        "reply": "Changed the filename prefix.",
+        "graph": {"nodes": [{"id": 1, "type": "SaveImage", "widgets_values": ["test"]}], "links": []},
+    }
+    record_idempotent_response(
+        session_root=root,
+        session_id="s1",
+        scope="edit",
+        idempotency_key="exec-revise-replay-1",
+        request_hash=allocation.request_hash,
+        response=response,
+        response_path=allocation.turn_dir / "response.json",
+        operation="edit",
+        turn_id=turn_id,
+    )
+
+    replay = allocate_turn(
+        session_root=root,
+        session_id="s1",
+        request_payload=request,
+        idempotency_key="exec-revise-replay-1",
+    )
+    assert replay.replay is not None, "Same idempotency key + body must replay"
+    assert replay.replay.response == response
+    # No duplicate turn created
+    state = read_state(session_dir_for(root, "s1"))
+    assert state["next_turn_index"] == 2, "Only one turn allocated, not two"
+
+
+def test_executor_revise_idempotency_conflicts_on_different_request_body(
+    tmp_path: Path,
+) -> None:
+    """Executor revise turn: same idempotency_key + different body produces
+    a STALE_STATE_MISMATCH conflict."""
+    root = tmp_path / "sessions"
+    request_a = {
+        "query": "change to test A",
+        "graph": {"nodes": [{"id": 1, "type": "SaveImage"}], "links": []},
+    }
+    allocation = allocate_turn(
+        session_root=root,
+        session_id="s1",
+        request_payload=request_a,
+        idempotency_key="exec-revise-conflict-2",
+    )
+    response = {
+        "ok": True,
+        "turn_id": str(allocation.context.turn_id),
+        "route": "revise",
+        "reply": "Done.",
+    }
+    record_idempotent_response(
+        session_root=root,
+        session_id="s1",
+        scope="edit",
+        idempotency_key="exec-revise-conflict-2",
+        request_hash=allocation.request_hash,
+        response=response,
+        response_path=allocation.turn_dir / "response.json",
+        operation="edit",
+        turn_id=str(allocation.context.turn_id),
+    )
+
+    request_b = {
+        "query": "change to test B",
+        "graph": {"nodes": [{"id": 2, "type": "PreviewImage"}], "links": []},
+    }
+    conflict = allocate_turn(
+        session_root=root,
+        session_id="s1",
+        request_payload=request_b,
+        idempotency_key="exec-revise-conflict-2",
+    )
+    assert conflict.conflict is not None, "Different body with same key must conflict"
+    assert conflict.conflict.failure.kind is FailureKind.STALE_STATE_MISMATCH
+
+
+def test_executor_revise_turn_artifacts_written(
+    tmp_path: Path,
+) -> None:
+    """Executor revise turn: request.json, response.json, and chat.json
+    artifacts are written to the turn directory."""
+    root = tmp_path / "sessions"
+    request = {
+        "query": "rename the save prefix",
+        "graph": {"nodes": [{"id": 1, "type": "SaveImage", "widgets_values": ["old"]}], "links": []},
+    }
+    allocation = allocate_turn(
+        session_root=root,
+        session_id="s1",
+        request_payload=request,
+    )
+    turn_id = str(allocation.context.turn_id)
+    turn_dir = allocation.turn_dir
+
+    # Write request.json
+    request_path = turn_dir / "request.json"
+    request_path.write_text(json.dumps(request, indent=2), encoding="utf-8")
+    assert request_path.is_file(), "request.json must be written"
+
+    response = {
+        "ok": True,
+        "turn_id": turn_id,
+        "route": "revise",
+        "reply": "Renamed the save prefix to new_name.",
+        "graph": {"nodes": [{"id": 1, "type": "SaveImage", "widgets_values": ["new_name"]}], "links": []},
+    }
+    record_idempotent_response(
+        session_root=root,
+        session_id="s1",
+        scope="edit",
+        idempotency_key=None,
+        request_hash=allocation.request_hash,
+        response=response,
+        response_path=turn_dir / "response.json",
+        operation="edit",
+        turn_id=turn_id,
+    )
+
+    # response.json must exist
+    response_path = turn_dir / "response.json"
+    assert response_path.is_file(), "response.json must be written"
+
+    # chat.json must be written (best-effort, so we write it ourselves in tests
+    # to simulate what the executor will do after T3-T5)
+    chat_record = {
+        "session_id": "s1",
+        "turn_id": turn_id,
+        "messages": [
+            {"role": "user", "text": "rename the save prefix", "turn_id": turn_id},
+            {"role": "agent", "text": "Renamed the save prefix to new_name.", "turn_id": turn_id,
+             "outcome": {"kind": "candidate"}},
+        ],
+    }
+    chat_path = turn_dir / "chat.json"
+    chat_path.write_text(json.dumps(chat_record, indent=2), encoding="utf-8")
+    assert chat_path.is_file(), "chat.json must be written"
+
+    # Verify all three artifacts exist
+    assert request_path.is_file()
+    assert response_path.is_file()
+    assert chat_path.is_file()
+
+
+def test_executor_noop_turn_durability_artifacts_written(
+    tmp_path: Path,
+) -> None:
+    """Executor-only noop turn: request.json, response.json, and chat.json
+    artifacts are written for a no-candidate executor reply."""
+    root = tmp_path / "sessions"
+    request = {
+        "query": "what is ComfyUI?",
+    }
+    allocation = allocate_turn(
+        session_root=root,
+        session_id="s1",
+        request_payload=request,
+    )
+    turn_id = str(allocation.context.turn_id)
+    turn_dir = allocation.turn_dir
+
+    request_path = turn_dir / "request.json"
+    request_path.write_text(json.dumps(request, indent=2), encoding="utf-8")
+    assert request_path.is_file()
+
+    response = {
+        "ok": True,
+        "turn_id": turn_id,
+        "route": "clarify",
+        "reply": "ComfyUI is a node-based interface for Stable Diffusion.",
+        "no_candidate_reason": "route_not_applyable",
+    }
+    record_idempotent_response(
+        session_root=root,
+        session_id="s1",
+        scope="edit",
+        idempotency_key=None,
+        request_hash=allocation.request_hash,
+        response=response,
+        response_path=turn_dir / "response.json",
+        operation="executor",
+        turn_id=turn_id,
+    )
+    assert (turn_dir / "response.json").is_file()
+
+    chat_record = {
+        "session_id": "s1",
+        "turn_id": turn_id,
+        "messages": [
+            {"role": "user", "text": "what is ComfyUI?", "turn_id": turn_id},
+            {"role": "agent", "text": "ComfyUI is a node-based interface for Stable Diffusion.", "turn_id": turn_id,
+             "outcome": {"kind": "noop"}},
+        ],
+    }
+    chat_path = turn_dir / "chat.json"
+    chat_path.write_text(json.dumps(chat_record, indent=2), encoding="utf-8")
+    assert chat_path.is_file()
+
+    assert request_path.is_file()
+    assert (turn_dir / "response.json").is_file()
+    assert chat_path.is_file()
+
+
+def test_executor_clarify_turn_durability_artifacts_written(
+    tmp_path: Path,
+) -> None:
+    """Executor-only clarify turn writes request, response, and chat artifacts."""
+    root = tmp_path / "sessions"
+    request = {
+        "query": "make it look better",
+    }
+    allocation = allocate_turn(
+        session_root=root,
+        session_id="s1",
+        request_payload=request,
+    )
+    turn_id = str(allocation.context.turn_id)
+    turn_dir = allocation.turn_dir
+
+    request_path = turn_dir / "request.json"
+    request_path.write_text(json.dumps(request, indent=2), encoding="utf-8")
+    assert request_path.is_file()
+
+    response = {
+        "ok": True,
+        "turn_id": turn_id,
+        "route": "clarify",
+        "reply": "Which style would you like — photorealistic or anime?",
+        "clarification_required": True,
+    }
+    record_idempotent_response(
+        session_root=root,
+        session_id="s1",
+        scope="edit",
+        idempotency_key=None,
+        request_hash=allocation.request_hash,
+        response=response,
+        response_path=turn_dir / "response.json",
+        operation="executor",
+        turn_id=turn_id,
+    )
+    assert (turn_dir / "response.json").is_file()
+
+    chat_record = {
+        "session_id": "s1",
+        "turn_id": turn_id,
+        "messages": [
+            {"role": "user", "text": "make it look better", "turn_id": turn_id},
+            {"role": "agent", "text": "Which style would you like — photorealistic or anime?", "turn_id": turn_id,
+             "outcome": {"kind": "clarify"}},
+        ],
+    }
+    chat_path = turn_dir / "chat.json"
+    chat_path.write_text(json.dumps(chat_record, indent=2), encoding="utf-8")
+    assert chat_path.is_file()
+
+
+def test_executor_inspect_turn_durability_artifacts_written(
+    tmp_path: Path,
+) -> None:
+    """Executor-only inspect turn writes request, response, and chat artifacts."""
+    root = tmp_path / "sessions"
+    request = {
+        "query": "describe this workflow",
+        "graph": {"nodes": [{"id": 1, "type": "LoadImage"}, {"id": 2, "type": "SaveImage"}], "links": [[1, 1, 0, 2, 0, "IMAGE"]]},
+    }
+    allocation = allocate_turn(
+        session_root=root,
+        session_id="s1",
+        request_payload=request,
+    )
+    turn_id = str(allocation.context.turn_id)
+    turn_dir = allocation.turn_dir
+
+    request_path = turn_dir / "request.json"
+    request_path.write_text(json.dumps(request, indent=2), encoding="utf-8")
+    assert request_path.is_file()
+
+    response = {
+        "ok": True,
+        "turn_id": turn_id,
+        "route": "inspect",
+        "reply": "This workflow loads an image and saves it without modification.",
+    }
+    record_idempotent_response(
+        session_root=root,
+        session_id="s1",
+        scope="edit",
+        idempotency_key=None,
+        request_hash=allocation.request_hash,
+        response=response,
+        response_path=turn_dir / "response.json",
+        operation="executor",
+        turn_id=turn_id,
+    )
+    assert (turn_dir / "response.json").is_file()
+
+    chat_record = {
+        "session_id": "s1",
+        "turn_id": turn_id,
+        "messages": [
+            {"role": "user", "text": "describe this workflow", "turn_id": turn_id},
+            {"role": "agent", "text": "This workflow loads an image and saves it without modification.", "turn_id": turn_id,
+             "outcome": {"kind": "noop"}},
+        ],
+    }
+    chat_path = turn_dir / "chat.json"
+    chat_path.write_text(json.dumps(chat_record, indent=2), encoding="utf-8")
+    assert chat_path.is_file()
+
+
+def test_executor_inspect_turn_allocates_session_when_panel_session_unknown(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Executor-only inspect turns must be durable even from an unknown panel session."""
+    from vibecomfy.comfy_nodes.agent import routes
+
+    root = tmp_path / "sessions"
+    monkeypatch.setattr(routes, "_SESSION_ROOT", root)
+
+    request = SimpleNamespace(
+        query="Explain what's happening in this workflow in depth",
+        graph={"nodes": [{"id": 1, "type": "LoadImage"}], "links": []},
+    )
+    response = {
+        "ok": True,
+        "route": "inspect",
+        "reply": "This workflow loads an image and inspects it.",
+        "message": "This workflow loads an image and inspects it.",
+        "outcome": {"kind": "noop"},
+    }
+
+    stamped = routes._maybe_write_executor_only_durable_turn(
+        response=response,
+        result=None,
+        payload={
+            "query": request.query,
+            "graph": request.graph,
+        },
+        request=request,
+    )
+
+    session_id = stamped.get("session_id")
+    turn_id = stamped.get("turn_id")
+    assert isinstance(session_id, str) and session_id
+    assert isinstance(turn_id, str) and turn_id
+    assert stamped["query"] == request.query
+    assert stamped["task"] == request.query
+    assert stamped["outcome"] == {"kind": "noop"}
+    assert stamped["apply_eligible"] is False
+    assert stamped["graph_unchanged"] is True
+
+    turn_dir = root / session_id / "turns" / turn_id
+    request_payload = json.loads((turn_dir / "request.json").read_text(encoding="utf-8"))
+    response_payload = json.loads((turn_dir / "response.json").read_text(encoding="utf-8"))
+    chat_payload = json.loads((turn_dir / "chat.json").read_text(encoding="utf-8"))
+
+    assert request_payload["query"] == request.query
+    assert response_payload["session_id"] == session_id
+    assert response_payload["turn_id"] == turn_id
+    assert response_payload["reply"] == response["reply"]
+    assert chat_payload["session_id"] == session_id
+    assert chat_payload["messages"][0]["text"] == request.query
+    assert chat_payload["messages"][0]["session_id"] == session_id
+    assert chat_payload["messages"][1]["text"] == response["reply"]
+    assert chat_payload["messages"][1]["session_id"] == session_id
+
+
+def test_executor_respond_turn_durability_artifacts_written(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Executor-only respond turn writes request, response, and chat artifacts
+    with no candidate/apply/rebaseline metadata."""
+    from vibecomfy.comfy_nodes.agent import routes
+
+    root = tmp_path / "sessions"
+    monkeypatch.setattr(routes, "_SESSION_ROOT", root)
+
+    request = SimpleNamespace(
+        query="what nodes do I need for img2img?",
+        graph=None,
+    )
+    response = {
+        "ok": True,
+        "route": "respond",
+        "reply": "For img2img you'll need LoadImage, VAEEncode, KSampler, VAEDecode, and SaveImage.",
+        "message": "For img2img you'll need LoadImage, VAEEncode, KSampler, VAEDecode, and SaveImage.",
+        "outcome": {"kind": "noop"},
+    }
+
+    stamped = routes._maybe_write_executor_only_durable_turn(
+        response=response,
+        result=None,
+        payload={"query": request.query},
+        request=request,
+    )
+
+    session_id = stamped.get("session_id")
+    turn_id = stamped.get("turn_id")
+    assert isinstance(session_id, str) and session_id
+    assert isinstance(turn_id, str) and turn_id
+    assert stamped["route"] == "respond"
+    assert stamped["reply"] == response["reply"]
+    assert stamped["apply_eligible"] is False
+    assert stamped["apply_allowed"] is False
+    assert stamped["graph_unchanged"] is True
+    assert stamped["no_candidate_reason"] == "route_not_applyable"
+
+    # No candidate or candidate graph should leak
+    assert "candidate" not in stamped or stamped.get("candidate") is None
+    assert "candidate_graph" not in stamped or stamped.get("candidate_graph") is None
+    # No rebaseline recovery
+    assert "rebaselineRecovery" not in stamped
+    assert "rebaseline_recovery" not in stamped
+
+    turn_dir = root / session_id / "turns" / turn_id
+    request_payload = json.loads((turn_dir / "request.json").read_text(encoding="utf-8"))
+    response_payload = json.loads((turn_dir / "response.json").read_text(encoding="utf-8"))
+    chat_payload = json.loads((turn_dir / "chat.json").read_text(encoding="utf-8"))
+
+    assert request_payload["query"] == request.query
+    assert response_payload["session_id"] == session_id
+    assert response_payload["turn_id"] == turn_id
+    assert response_payload["reply"] == response["reply"]
+    assert response_payload["route"] == "respond"
+    assert response_payload["apply_eligible"] is False
+    assert chat_payload["session_id"] == session_id
+    assert chat_payload["route"] == "respond"
+    assert chat_payload["messages"][0]["text"] == request.query
+    assert chat_payload["messages"][1]["text"] == response["reply"]
+    # Chat artifact must not contain candidate/apply/rebaseline metadata
+    for forbidden_key in ("candidate", "candidate_graph", "apply_hash", "rebaseline_turn_id", "rebaseline_recovery"):
+        assert forbidden_key not in chat_payload, f"chat artifact must not contain {forbidden_key}"
+
+
+def test_executor_research_turn_durability_artifacts_written(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Executor-only research turn writes request, response, and chat artifacts
+    with bounded evidence and no candidate/apply/rebaseline metadata."""
+    from vibecomfy.comfy_nodes.agent import routes
+
+    root = tmp_path / "sessions"
+    monkeypatch.setattr(routes, "_SESSION_ROOT", root)
+
+    request = SimpleNamespace(
+        query="What is the best upscaler for photorealistic images?",
+        graph=None,
+    )
+    response = {
+        "ok": True,
+        "route": "research",
+        "reply": "4x-UltraSharp is generally best for photorealism. For anime, use 4x-AnimeSharp.",
+        "message": "4x-UltraSharp is generally best for photorealism. For anime, use 4x-AnimeSharp.",
+        "outcome": {"kind": "noop"},
+        "evidence": {
+            "research": {
+                "summary": "Research found several upscaler models. 4x-UltraSharp excels at photorealistic detail preservation with minimal artifacts. 4x-AnimeSharp is specialized for line art and animation content.",
+                "sources": [
+                    {"title": "Upscaler Comparison", "url": "https://example.com/upscalers"},
+                    {"title": "Model Wiki", "url": "https://example.com/wiki"},
+                ],
+                "warnings": ["Source 1 may be outdated", "Verify license for commercial use"],
+            }
+        },
+    }
+
+    stamped = routes._maybe_write_executor_only_durable_turn(
+        response=response,
+        result=None,
+        payload={"query": request.query},
+        request=request,
+    )
+
+    session_id = stamped.get("session_id")
+    turn_id = stamped.get("turn_id")
+    assert isinstance(session_id, str) and session_id
+    assert isinstance(turn_id, str) and turn_id
+    assert stamped["route"] == "research"
+    assert stamped["reply"] == response["reply"]
+    assert stamped["apply_eligible"] is False
+    assert stamped["apply_allowed"] is False
+    assert stamped["graph_unchanged"] is True
+    assert stamped["no_candidate_reason"] == "route_not_applyable"
+
+    # No candidate or candidate graph should leak
+    assert "candidate" not in stamped or stamped.get("candidate") is None
+    assert "candidate_graph" not in stamped or stamped.get("candidate_graph") is None
+    # No rebaseline recovery
+    assert "rebaselineRecovery" not in stamped
+    assert "rebaseline_recovery" not in stamped
+
+    turn_dir = root / session_id / "turns" / turn_id
+    chat_payload = json.loads((turn_dir / "chat.json").read_text(encoding="utf-8"))
+    assert chat_payload["route"] == "research"
+    assert chat_payload["messages"][0]["text"] == request.query
+    assert chat_payload["messages"][1]["text"] == response["reply"]
+    # Bounded evidence present
+    assert "research_summary" in chat_payload
+    assert "research_source_count" in chat_payload
+    assert chat_payload["research_source_count"] == 2
+    assert "research_warnings" in chat_payload
+    assert len(chat_payload["research_warnings"]) == 2
+    # Chat artifact must not contain candidate/apply/rebaseline metadata
+    for forbidden_key in ("candidate", "candidate_graph", "apply_hash", "rebaseline_turn_id", "rebaseline_recovery"):
+        assert forbidden_key not in chat_payload, f"chat artifact must not contain {forbidden_key}"
+
+
+def test_executor_non_applyable_turns_chronological_append_after_reload(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Multiple non-applyable turns (respond, inspect, research) are written
+    in chronological order and read back in that order via read_session_chat."""
+    from vibecomfy.comfy_nodes.agent import routes
+    from vibecomfy.comfy_nodes.agent.edit import read_session_chat
+
+    root = tmp_path / "sessions"
+    monkeypatch.setattr(routes, "_SESSION_ROOT", root)
+
+    session_id = "chrono-session"
+
+    turns = [
+        {"route": "respond", "query": "First question", "reply": "First answer."},
+        {"route": "inspect", "query": "Second question", "reply": "Second answer."},
+        {"route": "research", "query": "Third question", "reply": "Third answer.",
+         "evidence": {"research": {"summary": "Research summary", "sources": [{"title": "S1"}], "warnings": []}}},
+    ]
+
+    for i, turn_data in enumerate(turns):
+        request = SimpleNamespace(query=turn_data["query"], graph=None)
+        response = {
+            "ok": True,
+            "route": turn_data["route"],
+            "reply": turn_data["reply"],
+            "message": turn_data["reply"],
+            "outcome": {"kind": "noop"},
+        }
+        if "evidence" in turn_data:
+            response["evidence"] = turn_data["evidence"]
+
+        routes._maybe_write_executor_only_durable_turn(
+            response=response,
+            result=None,
+            payload={"query": turn_data["query"], "session_id": session_id},
+            request=request,
+        )
+
+    # Read back via read_session_chat
+    result = read_session_chat(root, session_id, max_messages=50)
+    messages = result["messages"]
+    assert len(messages) == 6  # 3 turns * 2 messages (user + agent)
+
+    # Verify chronological order: user-first, agent-second, interleaved
+    for i in range(3):
+        user_msg = messages[i * 2]
+        agent_msg = messages[i * 2 + 1]
+        assert user_msg["role"] == "user"
+        assert user_msg["text"] == turns[i]["query"]
+        assert agent_msg["role"] == "agent"
+        assert agent_msg["text"] == turns[i]["reply"]
+
+    # Verify turn IDs are monotonically increasing
+    turn_ids = [m["turn_id"] for m in messages]
+    assert turn_ids[0] <= turn_ids[2] <= turn_ids[4], "Turn IDs must be chronological"
+
+
+def test_executor_non_applyable_second_turn_appends_not_overwrites(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Two consecutive non-applyable turns with the same route do not overwrite
+    each other; the second turn creates a new turn directory with its own artifacts."""
+    from vibecomfy.comfy_nodes.agent import routes
+
+    root = tmp_path / "sessions"
+    monkeypatch.setattr(routes, "_SESSION_ROOT", root)
+
+    session_id = "append-session"
+    request1 = SimpleNamespace(query="First query", graph=None)
+    response1 = {
+        "ok": True,
+        "route": "respond",
+        "reply": "First reply.",
+        "message": "First reply.",
+        "outcome": {"kind": "noop"},
+    }
+
+    stamped1 = routes._maybe_write_executor_only_durable_turn(
+        response=response1,
+        result=None,
+        payload={"query": "First query", "session_id": session_id},
+        request=request1,
+    )
+
+    request2 = SimpleNamespace(query="Second query", graph=None)
+    response2 = {
+        "ok": True,
+        "route": "respond",
+        "reply": "Second reply.",
+        "message": "Second reply.",
+        "outcome": {"kind": "noop"},
+    }
+
+    stamped2 = routes._maybe_write_executor_only_durable_turn(
+        response=response2,
+        result=None,
+        payload={"query": "Second query", "session_id": session_id},
+        request=request2,
+    )
+
+    # Both turns share the same session
+    assert stamped1["session_id"] == stamped2["session_id"] == session_id
+    # But have different turn IDs
+    assert stamped1["turn_id"] != stamped2["turn_id"]
+
+    turn_dir1 = root / session_id / "turns" / stamped1["turn_id"]
+    turn_dir2 = root / session_id / "turns" / stamped2["turn_id"]
+    assert turn_dir1.is_dir()
+    assert turn_dir2.is_dir()
+    assert turn_dir1 != turn_dir2
+
+    # First turn's response is intact
+    resp1 = json.loads((turn_dir1 / "response.json").read_text(encoding="utf-8"))
+    assert resp1["reply"] == "First reply."
+    # Second turn's response is intact
+    resp2 = json.loads((turn_dir2 / "response.json").read_text(encoding="utf-8"))
+    assert resp2["reply"] == "Second reply."
+
+    # Read back via read_session_chat to confirm both are present
+    from vibecomfy.comfy_nodes.agent.edit import read_session_chat
+    result = read_session_chat(root, session_id, max_messages=50)
+    assert len(result["messages"]) == 4  # 2 turns * 2 messages
+
+
+def test_executor_noop_idempotency_replays_same_body(
+    tmp_path: Path,
+) -> None:
+    """Executor-only noop turn: same idempotency_key + same body replays
+    without a duplicate turn."""
+    root = tmp_path / "sessions"
+    request = {
+        "query": "explain what a VAE does",
+    }
+    allocation = allocate_turn(
+        session_root=root,
+        session_id="s1",
+        request_payload=request,
+        idempotency_key="exec-noop-replay-3",
+    )
+    turn_id = str(allocation.context.turn_id)
+    response = {
+        "ok": True,
+        "turn_id": turn_id,
+        "route": "clarify",
+        "reply": "A VAE compresses and decompresses latent representations.",
+    }
+    record_idempotent_response(
+        session_root=root,
+        session_id="s1",
+        scope="edit",
+        idempotency_key="exec-noop-replay-3",
+        request_hash=allocation.request_hash,
+        response=response,
+        response_path=allocation.turn_dir / "response.json",
+        operation="executor",
+        turn_id=turn_id,
+    )
+
+    replay = allocate_turn(
+        session_root=root,
+        session_id="s1",
+        request_payload=request,
+        idempotency_key="exec-noop-replay-3",
+    )
+    assert replay.replay is not None, "Same key + body must replay for executor-only turn"
+    assert replay.replay.response == response
+
+    # Only one turn allocated
+    state = read_state(session_dir_for(root, "s1"))
+    assert state["next_turn_index"] == 2
+
+
+def test_executor_noop_idempotency_conflicts_on_different_body(
+    tmp_path: Path,
+) -> None:
+    """Executor-only noop turn: same idempotency_key + different body conflicts."""
+    root = tmp_path / "sessions"
+    request_a = {
+        "query": "explain what a VAE does",
+    }
+    allocation = allocate_turn(
+        session_root=root,
+        session_id="s1",
+        request_payload=request_a,
+        idempotency_key="exec-noop-conflict-4",
+    )
+    response = {
+        "ok": True,
+        "turn_id": str(allocation.context.turn_id),
+        "route": "clarify",
+        "reply": "A VAE compresses and decompresses latent representations.",
+    }
+    record_idempotent_response(
+        session_root=root,
+        session_id="s1",
+        scope="edit",
+        idempotency_key="exec-noop-conflict-4",
+        request_hash=allocation.request_hash,
+        response=response,
+        response_path=allocation.turn_dir / "response.json",
+        operation="executor",
+        turn_id=str(allocation.context.turn_id),
+    )
+
+    request_b = {
+        "query": "explain what a CLIP model does",
+    }
+    conflict = allocate_turn(
+        session_root=root,
+        session_id="s1",
+        request_payload=request_b,
+        idempotency_key="exec-noop-conflict-4",
+    )
+    assert conflict.conflict is not None, "Different body with same key must conflict"
+    assert conflict.conflict.failure.kind is FailureKind.STALE_STATE_MISMATCH

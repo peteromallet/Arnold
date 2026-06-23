@@ -175,18 +175,24 @@ class TestClassifyDecision:
         """effective_route derives correctly from legacy booleans when route is empty."""
         # implement=True, research=False → revise
         assert ClassifyDecision(research=False, implement=True).effective_route == "revise"
-        # research=True, implement=False → inspect
-        assert ClassifyDecision(research=True, implement=False).effective_route == "inspect"
-        # research=False, implement=False → clarify
-        assert ClassifyDecision(research=False, implement=False).effective_route == "clarify"
-        # research=True, implement=True → ambiguous (empty)
-        assert ClassifyDecision(research=True, implement=True).effective_route == ""
+        # research=True, implement=False → research
+        assert ClassifyDecision(research=True, implement=False).effective_route == "research"
+        # respond-only → respond
+        assert ClassifyDecision(research=False, implement=False).effective_route == "respond"
+        # explain_graph with no research/edit → inspect
+        assert ClassifyDecision(
+            research=False,
+            implement=False,
+            intent="explain_graph",
+        ).effective_route == "inspect"
+        # research=True, implement=True → adapt
+        assert ClassifyDecision(research=True, implement=True).effective_route == "adapt"
 
     def test_effective_route_explicit_wins(self) -> None:
         """Explicit route takes precedence over derived route."""
         d = ClassifyDecision(
             research=True,
-            implement=True,  # ambiguous legacy → derived ""
+            implement=True,  # legacy booleans derive adapt
             route="adapt",
         )
         assert d.effective_route == "adapt"
@@ -195,20 +201,24 @@ class TestClassifyDecision:
         """effective_task derives correctly from legacy booleans when task is empty."""
         # implement=True, research=False → edit_graph
         assert ClassifyDecision(research=False, implement=True).effective_task == "edit_graph"
-        # research=True, implement=False, intent=explain_graph → inspect_graph
-        assert ClassifyDecision(research=True, implement=False, intent="explain_graph").effective_task == "inspect_graph"
-        # research=True, implement=False, intent=research → research_nodes
+        # research=True, implement=False → research_nodes
         assert ClassifyDecision(research=True, implement=False, intent="research").effective_task == "research_nodes"
-        # research=False, implement=False → respond
+        # respond-only → respond
         assert ClassifyDecision(research=False, implement=False).effective_task == "respond"
-        # research=True, implement=True → ambiguous (empty)
-        assert ClassifyDecision(research=True, implement=True).effective_task == ""
+        # explain_graph with no research/edit → inspect_graph
+        assert ClassifyDecision(
+            research=False,
+            implement=False,
+            intent="explain_graph",
+        ).effective_task == "inspect_graph"
+        # research=True, implement=True → research_precedent
+        assert ClassifyDecision(research=True, implement=True).effective_task == "research_precedent"
 
     def test_effective_task_explicit_wins(self) -> None:
         """Explicit task takes precedence over derived task."""
         d = ClassifyDecision(
-            research=True,
-            implement=True,  # ambiguous → derived ""
+            research=False,
+            implement=True,  # legacy booleans derive edit_graph
             task="edit_graph",
         )
         assert d.effective_task == "edit_graph"
@@ -595,10 +605,10 @@ class TestAgentTurnResult:
         assert result.to_dict()["apply_eligible"] is True
         assert result.to_dict()["no_candidate_reason"] is None
 
-    def test_unknown_public_route_fails_closed_to_clarify(self) -> None:
+    def test_unknown_public_route_fails_closed_to_respond(self) -> None:
         result = AgentTurnResult(route="retired_route", reply="legacy")
 
-        assert result.to_dict()["route"] == "clarify"
+        assert result.to_dict()["route"] == "respond"
         assert result.to_dict()["candidate"] is None
         assert result.to_dict()["apply_eligible"] is False
 
@@ -813,7 +823,7 @@ class TestExecutorResult:
         r = ExecutorResult.failure(kind="TimeoutError", stage="classify", message="timed out")
         d = r.to_dict()
         assert d["ok"] is False
-        assert d["route"] == "clarify"
+        assert d["route"] == "respond"
         assert d["reply"] == "timed out"
         assert d["candidate"] is None
         assert d["apply_eligible"] is False
@@ -1585,9 +1595,9 @@ _SCENARIO_FIXTURES = [
         dict(
             research=True, implement=True, reply=True, effort="high",
             plan_summary="diagnose and repair dangling audio connections",
-            intent="edit", route="revise", task="diagnose",
+            intent="edit", route="adapt", task="diagnose",
         ),
-        "revise",
+        "adapt",
         True,
         True,
         "edit",
@@ -2239,14 +2249,398 @@ class TestResearchResultPrecedentFields:
 
 
 class TestCanonicalRouteVocabulary:
-    """Public route taxonomy is exactly the four canonical labels plus the
+    """Public route taxonomy is exactly the six canonical labels plus the
     internal empty-string sentinel."""
 
-    def test_allowed_routes_are_four_public_plus_empty_sentinel(self) -> None:
-        assert _ALLOWED_ROUTES == {"", "clarify", "inspect", "revise", "adapt"}
+    def test_allowed_routes_are_six_public_plus_empty_sentinel(self) -> None:
+        assert _ALLOWED_ROUTES == {
+            "",
+            "clarify",
+            "respond",
+            "inspect",
+            "research",
+            "revise",
+            "adapt",
+        }
 
     def test_route_options_prompt_lists_all_public_routes(self) -> None:
         options = format_route_options_for_prompt()
-        for route in ("clarify", "inspect", "revise", "adapt"):
+        for route in ("clarify", "respond", "inspect", "research", "revise", "adapt"):
             assert f'"{route}"' in options, f"route {route!r} missing from prompt"
         assert '""' in options or "empty string" in options.lower()
+
+
+# ── T7: Classifier decision table and prompt contract tests ──────────────────
+
+
+class TestClassifierDecisionTable:
+    """Verify the locked six-route decision table is fully present in the
+    classify system prompt."""
+
+    def test_system_prompt_contains_all_six_route_entries(self) -> None:
+        msgs = build_classify_messages("test query")
+        system = msgs[0]["content"]
+        # Every route must appear with its decision-table entry.
+        route_entries = {
+            "respond": 'route="respond"',
+            "research": 'route="research"',
+            "inspect": 'route="inspect"',
+            "revise": 'route="revise"',
+            "adapt": 'route="adapt"',
+            "clarify": 'route="clarify"',
+        }
+        for route, marker in route_entries.items():
+            assert marker in system, f"Decision-table entry for {route!r} missing from classify prompt"
+
+    def test_decision_table_maps_research_route_to_research_true_implement_false(self) -> None:
+        msgs = build_classify_messages("look up LTX audio workflows")
+        system = msgs[0]["content"]
+        # The decision table entry for research: "research=true, implement=false, reply=true"
+        assert "research=true" in system
+        assert "implement=false" in system
+
+    def test_decision_table_maps_respond_route_to_research_false_implement_false(self) -> None:
+        msgs = build_classify_messages("hello")
+        system = msgs[0]["content"]
+        assert "research=false" in system
+        assert "implement=false" in system
+
+    def test_decision_table_maps_adapt_route_to_research_true_implement_true(self) -> None:
+        msgs = build_classify_messages("adapt a VACE workflow")
+        system = msgs[0]["content"]
+        assert "research=true" in system
+        assert "implement=true" in system
+
+
+class TestNegativeRules:
+    """Verify the required negative rules are present in the classify prompt."""
+
+    def test_no_discretionary_clarification_rule(self) -> None:
+        msgs = build_classify_messages("pick some please")
+        system = msgs[0]["content"]
+        assert "No discretionary clarification" in system
+        assert "do not clarify merely because" in system
+
+    def test_no_outside_research_through_inspect_rule(self) -> None:
+        msgs = build_classify_messages("look up workflows without editing")
+        system = msgs[0]["content"]
+        assert 'No outside research through route="inspect"' in system
+
+    def test_no_no_edit_research_through_adapt_rule(self) -> None:
+        msgs = build_classify_messages("research a pattern without editing")
+        system = msgs[0]["content"]
+        assert 'No no-edit research through route="adapt"' in system
+
+    def test_no_implement_true_for_non_applyable_routes_rule(self) -> None:
+        msgs = build_classify_messages("explain this")
+        system = msgs[0]["content"]
+        assert "No implement=true for non-applyable routes" in system
+        assert "clarify, respond, inspect, and research" in system
+
+    def test_no_research_true_for_respond_inspect_revise_rule(self) -> None:
+        msgs = build_classify_messages("change the seed")
+        system = msgs[0]["content"]
+        assert "No research=true for respond, inspect, or revise" in system
+
+    def test_clarify_only_for_load_bearing_missing_info_rule(self) -> None:
+        msgs = build_classify_messages("change that thing")
+        system = msgs[0]["content"]
+        assert 'Use route="clarify" only when the missing information is load-bearing' in system
+
+    def test_delegation_no_clarify_rule(self) -> None:
+        msgs = build_classify_messages("you decide for me")
+        system = msgs[0]["content"]
+        assert "do not clarify merely because options exist" in system
+        assert "Continue with the most reasonable route" in system
+
+    def test_generic_edits_stay_revise_or_clarify_rule(self) -> None:
+        msgs = build_classify_messages("set sampler steps to 20")
+        system = msgs[0]["content"]
+        assert 'stay route="revise" when concrete' in system
+        assert 'route="clarify" when ambiguous' in system
+
+    def test_adapt_only_for_outside_pattern_borrowing_rule(self) -> None:
+        msgs = build_classify_messages("borrow the VACE identity travel pattern")
+        system = msgs[0]["content"]
+        assert 'Only use route="adapt" when the user explicitly asks to borrow' in system
+
+
+class TestRepresentativeExamples:
+    """Verify the required representative examples are present in the classify
+    prompt."""
+
+    def test_what_is_this_workflow_example(self) -> None:
+        msgs = build_classify_messages("What is this workflow doing?", has_graph=True)
+        system = msgs[0]["content"]
+        assert 'route="inspect"' in system
+
+    def test_ltx_audio_research_example(self) -> None:
+        msgs = build_classify_messages("What are people using for LTX audio?")
+        system = msgs[0]["content"]
+        assert 'route="research"' in system
+
+    def test_find_comfy_node_research_example(self) -> None:
+        msgs = build_classify_messages("Find a Comfy node for PIL image processing")
+        system = msgs[0]["content"]
+        assert 'route="research"' in system
+
+    def test_add_pil_node_revise_example(self) -> None:
+        msgs = build_classify_messages("Add a PIL transform code node after decode")
+        system = msgs[0]["content"]
+        assert 'route="revise"' in system
+
+    def test_research_then_add_adapt_example(self) -> None:
+        msgs = build_classify_messages("Research how people add PIL nodes, then add one")
+        system = msgs[0]["content"]
+        assert 'route="adapt"' in system
+
+    def test_explain_previous_failure_example(self) -> None:
+        msgs = build_classify_messages("Can you explain the previous failure?")
+        system = msgs[0]["content"]
+        assert 'route="respond"' in system
+        assert 'route="inspect"' in system
+
+    def test_pick_some_please_delegation_example(self) -> None:
+        msgs = build_classify_messages("Pick some please")
+        system = msgs[0]["content"]
+        assert "Pick some please" in system
+        assert "do not clarify again" in system
+
+
+class TestRouteAwareReplyConstraints:
+    """Verify the reply system prompt has per-route instructions for all six
+    routes, forbids internal gate names, and forbids apply/review language for
+    non-applyable routes."""
+
+    @pytest.mark.parametrize("route,marker", [
+        ("clarify", 'route="clarify"'),
+        ("respond", 'route="respond"'),
+        ("inspect", 'route="inspect"'),
+        ("research", 'route="research"'),
+        ("revise", 'route="revise"'),
+        ("adapt", 'route="adapt"'),
+    ])
+    def test_reply_prompt_has_per_route_instruction(self, route: str, marker: str) -> None:
+        from vibecomfy.executor.prompts import _REPLY_SYSTEM
+        assert marker in _REPLY_SYSTEM, (
+            f"Reply system prompt missing per-route instruction for {route!r}"
+        )
+
+    def test_reply_prompt_forbids_internal_gate_names(self) -> None:
+        from vibecomfy.executor.prompts import _REPLY_SYSTEM
+        assert "Do NOT mention internal gate names" in _REPLY_SYSTEM
+        assert "phase gates" in _REPLY_SYSTEM
+        assert "candidate engines" in _REPLY_SYSTEM
+
+    def test_reply_prompt_forbids_apply_language_for_non_applyable_routes(self) -> None:
+        from vibecomfy.executor.prompts import _REPLY_SYSTEM
+        assert "For non-applyable routes" in _REPLY_SYSTEM
+        assert "clarify, respond, inspect, research" in _REPLY_SYSTEM
+        assert "do not use apply/review/rebaseline language" in _REPLY_SYSTEM
+        assert "do not say a candidate is ready" in _REPLY_SYSTEM
+        assert "do not ask the user to approve an edit" in _REPLY_SYSTEM
+
+
+class TestBooleanToRouteDerivation:
+    """Verify _derive_route maps all boolean/intent combinations to the
+    correct six-route vocabulary."""
+
+    def test_derive_research_true_implement_false_yields_research(self) -> None:
+        from vibecomfy.executor.contracts import _derive_route
+        assert _derive_route(research=True, implement=False, intent="research") == "research"
+        assert _derive_route(research=True, implement=False, intent="edit") == "research"
+
+    def test_derive_research_false_implement_true_yields_revise(self) -> None:
+        from vibecomfy.executor.contracts import _derive_route
+        assert _derive_route(research=False, implement=True, intent="edit") == "revise"
+
+    def test_derive_research_true_implement_true_yields_adapt(self) -> None:
+        from vibecomfy.executor.contracts import _derive_route
+        assert _derive_route(research=True, implement=True, intent="edit") == "adapt"
+
+    def test_derive_research_false_implement_false_respond_intent_yields_respond(self) -> None:
+        from vibecomfy.executor.contracts import _derive_route
+        assert _derive_route(research=False, implement=False, intent="respond") == "respond"
+
+    def test_derive_research_false_implement_false_explain_graph_yields_inspect(self) -> None:
+        from vibecomfy.executor.contracts import _derive_route
+        assert _derive_route(research=False, implement=False, intent="explain_graph") == "inspect"
+
+    def test_derive_research_false_implement_false_no_clear_intent_yields_clarify(self) -> None:
+        from vibecomfy.executor.contracts import _derive_route
+        assert _derive_route(research=False, implement=False, intent="edit") == "clarify"
+
+    def test_derive_covers_all_six_routes(self) -> None:
+        from vibecomfy.executor.contracts import _derive_route
+        routes_seen: set[str] = set()
+        routes_seen.add(_derive_route(research=True, implement=True, intent="edit"))
+        routes_seen.add(_derive_route(research=False, implement=True, intent="edit"))
+        routes_seen.add(_derive_route(research=True, implement=False, intent="research"))
+        routes_seen.add(_derive_route(research=False, implement=False, intent="respond"))
+        routes_seen.add(_derive_route(research=False, implement=False, intent="explain_graph"))
+        routes_seen.add(_derive_route(research=False, implement=False, intent="edit"))
+        assert routes_seen == {"clarify", "respond", "inspect", "research", "revise", "adapt"}
+
+
+class TestContradictoryRouteCanonicalization:
+    """Verify that contradictory explicit route + boolean payloads are
+    canonicalized rather than rejected, with the route taking authority."""
+
+    def test_route_research_overrides_stale_implement_true(self) -> None:
+        """Explicit route=research forces implement=false even when stale implement=true."""
+        d = ClassifyDecision(
+            research=False,
+            implement=True,  # stale
+            reply=True,
+            intent="research",
+            route="research",
+            task="research_nodes",
+        )
+        assert d.route == "research"
+        assert d.implement is False
+        assert d.research is True  # forced by route_booleans
+        assert d.effective_route == "research"
+
+    def test_route_respond_overrides_stale_research_true(self) -> None:
+        """Explicit route=respond forces research=false even when stale research=true."""
+        d = ClassifyDecision(
+            research=True,  # stale
+            implement=True,  # stale
+            reply=True,
+            intent="respond",
+            route="respond",
+            task="respond",
+        )
+        assert d.route == "respond"
+        assert d.research is False
+        assert d.implement is False
+        assert d.effective_route == "respond"
+
+    def test_route_clarify_overrides_stale_booleans(self) -> None:
+        """Explicit route=clarify forces research=false, implement=false."""
+        d = ClassifyDecision(
+            research=True,  # stale
+            implement=True,  # stale
+            reply=True,
+            intent="edit",
+            route="clarify",
+            task="respond",
+        )
+        assert d.route == "clarify"
+        assert d.research is False
+        assert d.implement is False
+
+    def test_route_adapt_overrides_stale_research_false(self) -> None:
+        """Explicit route=adapt forces research=true when stale research=false."""
+        d = ClassifyDecision(
+            research=False,  # stale
+            implement=True,
+            reply=True,
+            intent="edit",
+            route="adapt",
+            task="research_precedent",
+        )
+        assert d.route == "adapt"
+        assert d.research is True
+        assert d.implement is True
+
+    def test_route_revise_overrides_stale_research_true(self) -> None:
+        """Explicit route=revise forces research=false when stale research=true."""
+        d = ClassifyDecision(
+            research=True,  # stale
+            implement=True,
+            reply=True,
+            intent="edit",
+            route="revise",
+            task="edit_graph",
+        )
+        assert d.route == "revise"
+        assert d.research is False
+        assert d.implement is True
+
+    def test_legacy_alias_normalize_preserves_boolean_canonicalization(self) -> None:
+        """Legacy aliases normalize AND force boolean consistency."""
+        for legacy, expected_route, force_research in [
+            ("precedent_research", "adapt", True),
+            ("direct_edit", "revise", False),
+            ("diagnose_repair", "revise", False),
+        ]:
+            d = ClassifyDecision(
+                research=(not force_research),  # stale opposite
+                implement=True,
+                reply=True,
+                intent="edit",
+                route=legacy,
+                task="research_precedent",
+            )
+            assert d.route == expected_route, f"{legacy} → {expected_route}"
+            assert d.research == force_research, f"{legacy}: research should be {force_research}"
+
+
+class TestReplyPromptWarningsAndEvidence:
+    """Verify build_reply_messages includes research warnings and structured
+    evidence when provided (T5 contract)."""
+
+    def test_research_warnings_rendered_in_user_prompt(self) -> None:
+        msgs = build_reply_messages(
+            "research something",
+            effective_route="research",
+            research_warnings=("hivemind timeout", "web search: no results"),
+        )
+        content = msgs[1]["content"]
+        assert "Research warnings (non-fatal):" in content
+        assert "hivemind timeout" in content
+        assert "web search: no results" in content
+
+    def test_research_precedent_slices_rendered_in_user_prompt(self) -> None:
+        msgs = build_reply_messages(
+            "research LTX audio",
+            effective_route="research",
+            research_precedent_slices=(
+                {"source_class_type": "LTXAudioLipsync", "node_ids": ["10", "11"]},
+                {"source_class_type": "KSampler", "node_ids": ["1"]},
+            ),
+        )
+        content = msgs[1]["content"]
+        assert "Research structured evidence (precedent slices):" in content
+        assert "LTXAudioLipsync" in content
+        assert "KSampler" in content
+
+    def test_research_warnings_omitted_when_none(self) -> None:
+        msgs = build_reply_messages("hello", effective_route="respond")
+        content = msgs[1]["content"]
+        assert "Research warnings" not in content
+        assert "Research structured evidence" not in content
+
+    def test_research_precedent_slices_omitted_when_none(self) -> None:
+        msgs = build_reply_messages("hello", effective_route="respond")
+        content = msgs[1]["content"]
+        assert "Research structured evidence" not in content
+
+    def test_research_warnings_truncated_at_six(self) -> None:
+        msgs = build_reply_messages(
+            "research",
+            effective_route="research",
+            research_warnings=tuple(f"warning {i}" for i in range(10)),
+        )
+        content = msgs[1]["content"]
+        # Only first 6 warnings should appear
+        assert "warning 0" in content
+        assert "warning 5" in content
+        assert "warning 6" not in content
+        assert "warning 9" not in content
+
+    def test_research_precedent_slices_truncated_at_five(self) -> None:
+        msgs = build_reply_messages(
+            "research",
+            effective_route="research",
+            research_precedent_slices=tuple(
+                {"source_class_type": f"Node{i}", "node_ids": [str(i)]}
+                for i in range(8)
+            ),
+        )
+        content = msgs[1]["content"]
+        assert "Node0" in content
+        assert "Node4" in content
+        assert "Node5" not in content
+        assert "Node7" not in content

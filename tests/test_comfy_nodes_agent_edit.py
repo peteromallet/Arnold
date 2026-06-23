@@ -48,7 +48,7 @@ from vibecomfy.comfy_nodes.agent.contracts import (
     classify_failure,
     failure_envelope,
 )
-from vibecomfy.executor.contracts import RevisionEvidence, ScopedDiff
+from vibecomfy.executor.contracts import ReadinessReport, RevisionEvidence, ScopedDiff, TopologyFindings
 from vibecomfy.comfy_nodes.agent.provider import ProviderError
 from vibecomfy.comfy_nodes.agent.session import (
     payload_hash,
@@ -938,6 +938,145 @@ def test_batch_repl_exec_insert_done_ignores_lint_false_positive_for_new_uid(
     assert "unknown_target" not in result["batch_turns"][0]["report"]
     assert result["debug"]["batch_repl"]["exit_mode"] == "done"
     assert result["debug"]["batch_repl"]["done_summary"]
+
+
+def test_batch_repl_code_node_addition_preserves_unrelated_unknown_graph_blockers(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("VIBECOMFY_AGENT_EDIT_BATCH_REPL", "1")
+    graph = _json_clone(_ui_graph())
+    graph["nodes"].append(
+        {
+            "id": 140,
+            "type": "VHS_VideoCombine",
+            "inputs": [{"name": "images"}],
+            "widgets_values": [],
+        }
+    )
+    source = (
+        "from PIL import ImageOps\n"
+        "processed = ImageOps.autocontrast(image)\n"
+        "return {\"image\": processed}"
+    )
+    batch = (
+        f"code_node = vibecomfy.exec(source={source!r}, "
+        "io={\"inputs\": [[\"image\", \"IMAGE\"]], \"outputs\": [[\"image\", \"IMAGE\"]]}, "
+        "in_0=loadimage.image)\n"
+        "saveimage.images = code_node.out_0\n"
+        "done()"
+    )
+    provider_calls = 0
+
+    def _client(_messages):
+        nonlocal provider_calls
+        provider_calls += 1
+        return {
+            "message": "Inserted a PIL processing code node.",
+            "batch": batch,
+        }
+
+    result = handle_agent_edit(
+        {
+            "graph": graph,
+            "task": "Add a code node that processes images with PIL",
+            "session_id": "batch-exec-insert-messy-graph",
+        },
+        schema_provider=_batch_repl_provider(),
+        deepseek_client=_client,
+        session_root=tmp_path,
+    )
+
+    assert provider_calls == 1
+    assert result["ok"] is True
+    assert result["apply_allowed"] is True
+    assert result["outcome"]["kind"] == "candidate"
+    assert result["candidate"] is not None
+    assert result["debug"]["batch_repl"]["exit_mode"] == "done"
+
+
+def test_localized_code_node_addition_keeps_new_candidate_blockers(tmp_path: Path) -> None:
+    from vibecomfy.comfy_nodes.agent import edit as agent_edit_module
+
+    state = AgentEditState(
+        task="Add a code node that processes images with PIL",
+        graph={"nodes": [{"id": 1, "type": "MissingPackNode"}], "links": []},
+        request_payload={},
+        schema_provider=None,
+        baseline_graph_hash=None,
+        submit_graph_hash=None,
+        submit_structural_graph_hash=None,
+        submitted_client_graph_hash=None,
+        submitted_client_structural_graph_hash=None,
+        session_dir=tmp_path,
+        turn_dir=tmp_path,
+        request_path=tmp_path / "request.json",
+        original_ui_path=tmp_path / "original.ui.json",
+        before_py_path=tmp_path / "before.py",
+        after_py_path=tmp_path / "after.py",
+        projection_path=tmp_path / "projection.txt",
+        model_request_path=tmp_path / "model_request.json",
+        model_response_path=tmp_path / "model_response.json",
+        candidate_ui_path=tmp_path / "candidate.ui.json",
+        messages_path=tmp_path / "messages.jsonl",
+        revision_evidence=RevisionEvidence(
+            topology=TopologyFindings(
+                unknown_class_types=("node_id=1: MissingPackNode",),
+                missing_required_inputs=(
+                    {
+                        "node_id": 1,
+                        "class_type": "MissingPackNode",
+                        "input_name": "images",
+                    },
+                ),
+            ),
+            readiness=ReadinessReport(
+                missing_models=("old-model.safetensors",),
+                missing_node_packs=("OldPack",),
+            ),
+        ),
+    )
+
+    (
+        original_topology,
+        original_readiness,
+        candidate_topology,
+        candidate_readiness,
+    ) = agent_edit_module._localized_additive_scoped_evidence(
+        state,
+        candidate_topology=TopologyFindings(
+            unknown_class_types=(
+                "node_id=1: MissingPackNode",
+                "node_id=9: NewlyBadNode",
+            ),
+            missing_required_inputs=(
+                {
+                    "node_id": 1,
+                    "class_type": "MissingPackNode",
+                    "input_name": "images",
+                },
+                {
+                    "node_id": 9,
+                    "class_type": "NewlyBadNode",
+                    "input_name": "required",
+                },
+            ),
+        ),
+        candidate_readiness=ReadinessReport(
+            missing_models=("old-model.safetensors", "new-model.safetensors"),
+            missing_node_packs=("OldPack", "NewPack"),
+        ),
+    )
+
+    assert original_topology is not None
+    assert original_readiness is not None
+    assert candidate_topology is not None
+    assert candidate_readiness is not None
+    assert candidate_topology.unknown_class_types == ("node_id=9: NewlyBadNode",)
+    assert len(candidate_topology.missing_required_inputs) == 1
+    assert candidate_topology.missing_required_inputs[0]["node_id"] == 9
+    assert candidate_readiness.missing_models == ("new-model.safetensors",)
+    assert candidate_readiness.missing_node_packs == ("NewPack",)
 
 
 def test_batch_repl_code_task_prefetches_vibecomfy_exec_signature(
@@ -2215,6 +2354,182 @@ def test_handle_agent_edit_batch_repl_reports_partial_success_hints_dependency_c
     )
 
 
+def test_batch_repl_refuses_read_only_done_after_partial_failed_edit_and_allows_repair(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    provider = _Provider(
+        {
+            "CheckpointLoaderSimple": NodeSchema(
+                class_type="CheckpointLoaderSimple",
+                pack=None,
+                inputs={"ckpt_name": InputSpec("CHOICE", choices=["juggernautXL_v8Rundiffusion.safetensors"])},
+                outputs=[
+                    OutputSpec("MODEL", "MODEL"),
+                    OutputSpec("CLIP", "CLIP"),
+                    OutputSpec("VAE", "VAE"),
+                ],
+                source_provider="test",
+                confidence=1.0,
+            ),
+            "EmptyLatentImage": NodeSchema(
+                class_type="EmptyLatentImage",
+                pack=None,
+                inputs={
+                    "width": InputSpec("INT"),
+                    "height": InputSpec("INT"),
+                    "batch_size": InputSpec("INT"),
+                },
+                outputs=[OutputSpec("LATENT", "LATENT")],
+                source_provider="test",
+                confidence=1.0,
+            ),
+            "LoadImage": NodeSchema(
+                class_type="LoadImage",
+                pack=None,
+                inputs={"image": InputSpec("CHOICE", required=True, choices=["example.png"])},
+                outputs=[OutputSpec("IMAGE", "IMAGE"), OutputSpec("MASK", "MASK")],
+                source_provider="test",
+                confidence=1.0,
+            ),
+            "VAEEncode": NodeSchema(
+                class_type="VAEEncode",
+                pack=None,
+                inputs={
+                    "pixels": InputSpec("IMAGE", required=True),
+                    "vae": InputSpec("VAE", required=True),
+                },
+                outputs=[OutputSpec("LATENT", "LATENT")],
+                source_provider="test",
+                confidence=1.0,
+            ),
+            "KSampler": NodeSchema(
+                class_type="KSampler",
+                pack=None,
+                inputs={
+                    "model": InputSpec("MODEL", required=True),
+                    "latent_image": InputSpec("LATENT", required=True),
+                    "denoise": InputSpec("FLOAT"),
+                },
+                outputs=[OutputSpec("LATENT", "LATENT")],
+                source_provider="test",
+                confidence=1.0,
+            ),
+            "VAEDecode": NodeSchema(
+                class_type="VAEDecode",
+                pack=None,
+                inputs={
+                    "samples": InputSpec("LATENT", required=True),
+                    "vae": InputSpec("VAE", required=True),
+                },
+                outputs=[OutputSpec("IMAGE", "IMAGE")],
+                source_provider="test",
+                confidence=1.0,
+            ),
+            "SaveImage": NodeSchema(
+                class_type="SaveImage",
+                pack=None,
+                inputs={
+                    "images": InputSpec("IMAGE", required=True),
+                    "filename_prefix": InputSpec("STRING"),
+                },
+                outputs=[],
+                source_provider="test",
+                confidence=1.0,
+            ),
+        }
+    )
+    monkeypatch.setenv("VIBECOMFY_AGENT_EDIT_BATCH_REPL", "1")
+
+    wf = VibeWorkflow("img2img-repair", WorkflowSource("img2img-repair"))
+    wf.nodes["1"] = VibeNode(
+        "1",
+        "CheckpointLoaderSimple",
+        inputs={"ckpt_name": "juggernautXL_v8Rundiffusion.safetensors"},
+    )
+    wf.nodes["2"] = VibeNode(
+        "2",
+        "EmptyLatentImage",
+        inputs={"width": 1024, "height": 1024, "batch_size": 1},
+    )
+    wf.nodes["3"] = VibeNode("3", "KSampler", inputs={"denoise": 1.0})
+    wf.nodes["4"] = VibeNode("4", "VAEDecode")
+    wf.nodes["5"] = VibeNode("5", "SaveImage", inputs={"filename_prefix": "before"})
+    wf.connect("1.0", "3.model")
+    wf.connect("2.0", "3.latent_image")
+    wf.connect("3.0", "4.samples")
+    wf.connect("1.2", "4.vae")
+    wf.connect("4.0", "5.images")
+    graph = emit_ui_json(wf, schema_provider=provider)
+
+    captured_messages: list[list[dict[str, str]]] = []
+    scripted_turns = iter(
+        [
+            {
+                "message": "Tried img2img with a placeholder input.",
+                "batch": "\n".join(
+                    [
+                        "del emptylatentimage",
+                        "loadimage = LoadImage(image='input.png')",
+                        "vaeencode = VAEEncode(pixels=loadimage.IMAGE, vae=checkpointloadersimple.VAE)",
+                        "ksampler.latent_image = vaeencode.LATENT",
+                        "ksampler.denoise = 0.8",
+                        "done()",
+                    ]
+                ),
+            },
+            {
+                "message": "Looked up the valid LoadImage input.",
+                "batch": 'search(focus_types=["LoadImage", "VAEEncode"])\ndone()',
+            },
+            {
+                "message": "Repaired the img2img pipeline with the available image.",
+                "batch": "\n".join(
+                    [
+                        "loadimage = LoadImage(image='example.png')",
+                        "vaeencode = VAEEncode(pixels=loadimage.IMAGE, vae=checkpointloadersimple.VAE)",
+                        "ksampler.latent_image = vaeencode.LATENT",
+                        "done()",
+                    ]
+                ),
+            },
+        ]
+    )
+
+    def _fake_batch_client(messages: list[dict[str, str]]) -> dict[str, str]:
+        captured_messages.append(messages)
+        return next(scripted_turns)
+
+    result = handle_agent_edit(
+        {
+            "graph": graph,
+            "task": "Make it img2img",
+            "session_id": "batch-read-only-done-after-partial-failure",
+            "max_batches": 4,
+            "max_consecutive_errors": 3,
+        },
+        schema_provider=provider,
+        deepseek_client=_fake_batch_client,
+        session_root=tmp_path,
+    )
+
+    assert result["ok"] is True
+    assert result["apply_allowed"] is True
+    assert result["outcome"]["kind"] == "candidate"
+    assert len(captured_messages) == 3
+    assert "done() was NOT accepted" in captured_messages[2][1]["content"]
+    assert "A search() is read-only and does NOT repair" in captured_messages[2][1]["content"]
+    assert "def LoadImage(image: CHOICE[\"example.png\"])" in captured_messages[2][1]["content"]
+
+    node_types = [node["type"] for node in result["graph"]["nodes"]]
+    assert "EmptyLatentImage" not in node_types
+    assert "LoadImage" in node_types
+    assert "VAEEncode" in node_types
+    ksampler = next(node for node in result["graph"]["nodes"] if node["type"] == "KSampler")
+    latent_input = next(item for item in ksampler["inputs"] if item["name"] == "latent_image")
+    assert latent_input["link"] is not None
+
+
 def test_handle_agent_edit_batch_repl_returns_successful_non_commit_clarification(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -2255,7 +2570,6 @@ def test_handle_agent_edit_batch_repl_returns_successful_non_commit_clarificatio
     assert result["contract_version"] == AGENT_EDIT_TURN_CONTRACT_VERSION
     assert result["outcome"]["kind"] == "clarify"
     assert result["outcome"]["question"].startswith("before or after the face restoration?")
-    assert "Options:\n-" in result["outcome"]["question"]
     assert result["outcome"]["clarification"]["message"] == result["outcome"]["question"]
     assert result["internal_outcome"] == {
         "kind": "clarify",
@@ -2372,7 +2686,6 @@ def test_handle_agent_edit_batch_repl_treats_followup_after_clarify_as_continuat
     assert '"active_request": "Can you switch this to img2img"' in user_msg
     assert '"current_user_request_is": "answer_to_pending_clarification"' in user_msg
     assert '"pending_clarification": "Which image file should be used as the input?' in user_msg
-    assert "Options:" in user_msg
     assert "User request:\nDefault for now" in user_msg
 
 
@@ -2426,7 +2739,7 @@ def test_handle_agent_edit_batch_repl_done_commits_and_exposes_gate_c_summary(
     assert result["debug"]["gates"] == result["gates"]
     assert result["debug"]["hashes"]["candidate_graph_hash"] == result["candidate_graph_hash"]
     assert result["debug"]["batch_repl"]["exit_mode"] == "done"
-    assert result["message"] == "Updated SaveImage filename_prefix from before to after."
+    assert result["message"] == "Ready to commit the candidate."
     assert result["done_summary"] not in result["message"]
     assert result["done_summary"].startswith("Gate A passed:")
     assert "Gate B passed:" in result["done_summary"]
@@ -5064,7 +5377,7 @@ def test_agent_edit_route_sanitizes_pure_clarify_candidate_and_apply_leaks(
     )
 
     assert result["outcome"]["kind"] == "clarify"
-    assert "Options:\n-" in result["message"]
+    assert result["message"] == "Which node should change?"
     assert result["outcome"]["question"] == result["message"]
     for forbidden in (
         "candidate",
@@ -5105,7 +5418,7 @@ def test_agent_executor_route_sanitizes_clarify_candidate_and_apply_fields(
     assert status == 200
     assert result["route"] == "clarify"
     assert result["outcome"]["kind"] == "clarify"
-    assert "Options:\n-" in result["reply"]
+    assert result["reply"] == "Which option should I use?"
     assert result["message"] == result["reply"]
     for forbidden in (
         "candidate",
@@ -7465,7 +7778,7 @@ def test_handle_agent_edit_revise_strips_target_mismatched_candidate(
     assert "target_mismatch" in evidence["scoped_diff"]["eligibility_blockers"]
 
 
-def test_handle_agent_edit_revise_strips_broad_unrelated_candidate(
+def test_handle_agent_edit_revise_strips_target_scope_violation_candidate(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -7493,7 +7806,7 @@ def test_handle_agent_edit_revise_strips_broad_unrelated_candidate(
             "executor_route": "revise",
             "provider_route": "codex",
             "executor_classification": {"route": "revise", "task": "edit_graph"},
-            "session_id": "revise-broad-candidate",
+            "session_id": "revise-target-scope-violation",
             "max_batches": 3,
         },
         schema_provider=provider,
@@ -7511,7 +7824,7 @@ def test_handle_agent_edit_revise_strips_broad_unrelated_candidate(
     assert evidence["no_candidate_reason"] == "no_changes"
     scoped = evidence["scoped_diff"]
     assert set(scoped["changed_nodes"]) == {"1", "2"}
-    assert "broad_unrelated_diff" in scoped["eligibility_blockers"]
+    assert "target_scope_violation" in scoped["eligibility_blockers"]
 
 
 def test_handle_agent_edit_revise_strips_confirmed_noop_candidate(
@@ -7630,6 +7943,273 @@ def test_handle_agent_edit_revise_readiness_blockers_skip_provider_and_emit_evid
     ]
 
 
+def test_handle_agent_edit_you_decide_pil_code_node_uses_classifier_summary_to_attempt_provider(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    provider = _Provider(
+        {
+            "CheckpointLoaderSimple": NodeSchema(
+                class_type="CheckpointLoaderSimple",
+                pack=None,
+                inputs={
+                    "ckpt_name": InputSpec(
+                        "CHOICE",
+                        required=False,
+                        choices=["present.safetensors"],
+                    )
+                },
+                outputs=[OutputSpec("MODEL", "MODEL")],
+                source_provider="test",
+                confidence=1.0,
+            ),
+            "LoadImage": _schema("LoadImage", [OutputSpec("IMAGE", "image")]),
+        }
+    )
+    graph = {
+        "nodes": [
+            {
+                "id": 1,
+                "type": "CheckpointLoaderSimple",
+                "widgets": [{"name": "ckpt_name"}],
+                "widgets_values": ["missing.safetensors"],
+            },
+            {"id": 2, "type": "MissingPackNode", "widgets_values": []},
+        ],
+        "links": [],
+    }
+    monkeypatch.setenv("VIBECOMFY_AGENT_EDIT_BATCH_REPL", "1")
+    captured_messages: list[list[dict[str, str]]] = []
+
+    def _provider(messages):
+        captured_messages.append(messages)
+        return {
+            "batch": "done()",
+            "message": "No concrete graph change was emitted.",
+        }
+
+    result = handle_agent_edit(
+        {
+            "graph": graph,
+            "task": "You decide",
+            "query": "You decide",
+            "route": "revise",
+            "executor_route": "revise",
+            "provider_route": "codex",
+            "executor_classification": {
+                "intent": "edit",
+                "route": "revise",
+                "task": "edit_graph",
+                "plan_summary": (
+                    "Add a PIL transformation code node to the video pipeline, "
+                    "applying resize and color jitter to frames before video combine."
+                ),
+            },
+            "session_id": "you-decide-pil-code-node",
+            "max_batches": 1,
+        },
+        schema_provider=provider,
+        deepseek_client=_provider,
+        session_root=tmp_path,
+    )
+
+    assert captured_messages, "classifier-resolved PIL/code-node edits should reach provider"
+    first_user_prompt = captured_messages[0][1]["content"]
+    assert "Resolved executor plan/context" in first_user_prompt
+    assert "Add a PIL transformation code node" in first_user_prompt
+    assert "def vibecomfy.exec" in first_user_prompt
+    assert result["ok"] is True
+    assert result["outcome"]["kind"] == "noop"
+    evidence = result["report"]["revision_evidence"]
+    assert evidence["safe_candidate_possible"] is False
+    turn_dir = turn_dir_for(tmp_path, "you-decide-pil-code-node", str(result["turn_id"]))
+    assert (turn_dir / "model_request.json").exists()
+
+
+def test_handle_agent_edit_empty_sd15_workflow_reaches_provider_with_seed_signatures(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    provider = _Provider(
+        {
+            "CheckpointLoaderSimple": NodeSchema(
+                class_type="CheckpointLoaderSimple",
+                pack=None,
+                inputs={
+                    "ckpt_name": InputSpec(
+                        "CHOICE",
+                        required=False,
+                        choices=["v1-5-pruned-emaonly.safetensors"],
+                    )
+                },
+                outputs=[
+                    OutputSpec("MODEL", "MODEL"),
+                    OutputSpec("CLIP", "CLIP"),
+                    OutputSpec("VAE", "VAE"),
+                ],
+                source_provider="test",
+                confidence=1.0,
+            ),
+            "CLIPTextEncode": NodeSchema(
+                class_type="CLIPTextEncode",
+                pack=None,
+                inputs={
+                    "text": InputSpec("STRING", required=True),
+                    "clip": InputSpec("CLIP", required=True),
+                },
+                outputs=[OutputSpec("CONDITIONING", "CONDITIONING")],
+                source_provider="test",
+                confidence=1.0,
+            ),
+            "EmptyLatentImage": NodeSchema(
+                class_type="EmptyLatentImage",
+                pack=None,
+                inputs={
+                    "width": InputSpec("INT", required=False),
+                    "height": InputSpec("INT", required=False),
+                    "batch_size": InputSpec("INT", required=False),
+                },
+                outputs=[OutputSpec("LATENT", "LATENT")],
+                source_provider="test",
+                confidence=1.0,
+            ),
+            "KSampler": NodeSchema(
+                class_type="KSampler",
+                pack=None,
+                inputs={
+                    "model": InputSpec("MODEL", required=True),
+                    "positive": InputSpec("CONDITIONING", required=True),
+                    "negative": InputSpec("CONDITIONING", required=True),
+                    "latent_image": InputSpec("LATENT", required=True),
+                    "seed": InputSpec("INT", required=False),
+                    "steps": InputSpec("INT", required=False),
+                    "cfg": InputSpec("FLOAT", required=False),
+                    "sampler_name": InputSpec("CHOICE", required=False, choices=["euler"]),
+                    "scheduler": InputSpec("CHOICE", required=False, choices=["normal"]),
+                    "denoise": InputSpec("FLOAT", required=False),
+                },
+                outputs=[OutputSpec("LATENT", "LATENT")],
+                source_provider="test",
+                confidence=1.0,
+            ),
+            "VAEDecode": NodeSchema(
+                class_type="VAEDecode",
+                pack=None,
+                inputs={
+                    "samples": InputSpec("LATENT", required=True),
+                    "vae": InputSpec("VAE", required=True),
+                },
+                outputs=[OutputSpec("IMAGE", "IMAGE")],
+                source_provider="test",
+                confidence=1.0,
+            ),
+            "SaveImage": NodeSchema(
+                class_type="SaveImage",
+                pack=None,
+                inputs={
+                    "images": InputSpec("IMAGE", required=True),
+                    "filename_prefix": InputSpec("STRING"),
+                },
+                outputs=[],
+                source_provider="test",
+                confidence=1.0,
+            ),
+        }
+    )
+    monkeypatch.setenv("VIBECOMFY_AGENT_EDIT_BATCH_REPL", "1")
+    captured_messages: list[list[dict[str, str]]] = []
+
+    def _provider(messages):
+        captured_messages.append(messages)
+        return {
+            "batch": (
+                'ckpt = CheckpointLoaderSimple(ckpt_name="v1-5-pruned-emaonly.safetensors")\n'
+                'pos = CLIPTextEncode(text="a beautiful landscape", clip=ckpt.CLIP)\n'
+                'neg = CLIPTextEncode(text="blurry, low quality", clip=ckpt.CLIP)\n'
+                "latent = EmptyLatentImage(width=512, height=512, batch_size=1)\n"
+                "sampler = KSampler(model=ckpt.MODEL, positive=pos.CONDITIONING, "
+                "negative=neg.CONDITIONING, latent_image=latent.LATENT, seed=42, "
+                'steps=20, cfg=7.0, sampler_name="euler", scheduler="normal", denoise=1.0)\n'
+                "decode = VAEDecode(samples=sampler.LATENT, vae=ckpt.VAE)\n"
+                'save = SaveImage(images=decode.IMAGE, filename_prefix="SD1.5")\n'
+                "done()"
+            ),
+            "message": (
+                "I created a standard SD1.5 text-to-image workflow with a "
+                "CheckpointLoaderSimple, positive and negative CLIPTextEncode "
+                "nodes, an EmptyLatentImage, KSampler, VAEDecode, and SaveImage."
+            ),
+        }
+
+    result = handle_agent_edit(
+        {
+            "graph": {
+                "config": {},
+                "extra": {},
+                "groups": [],
+                "id": "empty-sd15",
+                "last_link_id": 0,
+                "last_node_id": 0,
+                "links": [],
+                "nodes": [],
+                "version": 0.4,
+            },
+            "task": "Generate the standard SD1.5 workflow",
+            "query": "Generate the standard SD1.5 workflow",
+            "route": "revise",
+            "executor_route": "revise",
+            "provider_route": "codex",
+            "executor_classification": {
+                "effort": "medium",
+                "implement": True,
+                "intent": "edit",
+                "plan_summary": (
+                    "Create a standard SD1.5 text-to-image workflow with "
+                    "CheckpointLoader, CLIPTextEncode, KSampler, VAE Decode, "
+                    "and SaveImage."
+                ),
+                "research": False,
+                "route": "revise",
+                "task": "edit_graph",
+            },
+            "session_id": "empty-sd15-workflow",
+            "max_batches": 1,
+        },
+        schema_provider=provider,
+        deepseek_client=_provider,
+        session_root=tmp_path,
+    )
+
+    assert captured_messages, "empty-canvas workflow generation should reach provider"
+    first_user_prompt = captured_messages[0][1]["content"]
+    assert "Resolved executor plan/context" in first_user_prompt
+    assert "Create a standard SD1.5 text-to-image workflow" in first_user_prompt
+    assert "def CheckpointLoaderSimple" in first_user_prompt
+    assert "def CLIPTextEncode" in first_user_prompt
+    assert "def KSampler" in first_user_prompt
+    assert "def VAEDecode" in first_user_prompt
+    assert "def SaveImage" in first_user_prompt
+    system_prompt = captured_messages[0][0]["content"]
+    assert "visible chat reply" in system_prompt
+    assert "not a review/status placeholder" in system_prompt
+    assert result["ok"] is True
+    assert result["outcome"]["kind"] == "candidate"
+    assert result["message"] == (
+        "I created a standard SD1.5 text-to-image workflow with a "
+        "CheckpointLoaderSimple, positive and negative CLIPTextEncode nodes, "
+        "an EmptyLatentImage, KSampler, VAEDecode, and SaveImage."
+    )
+    assert result["apply_allowed"] is True
+    assert result["candidate"] is not None
+    assert len(result["candidate"]["graph"]["nodes"]) == 7
+    evidence = result["report"]["revision_evidence"]
+    assert evidence["candidate_eligible"] is True
+    assert evidence["scoped_diff"]["candidate_eligible"] is True
+    assert evidence["scoped_diff"]["eligibility_blockers"] == []
+    turn_dir = turn_dir_for(tmp_path, "empty-sd15-workflow", str(result["turn_id"]))
+    assert (turn_dir / "model_request.json").exists()
+
+
 def test_handle_agent_edit_no_gpu_runtime_request_is_read_only(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -7702,7 +8282,7 @@ def test_handle_agent_edit_direct_clarify_has_no_candidate_or_apply_state(
     )
 
     assert result["outcome"]["kind"] == "clarify"
-    assert "Options:" in result["message"]
+    assert result["message"] == "Which node should I change?"
     for forbidden in (
         "candidate",
         "graph",
@@ -9338,6 +9918,30 @@ def test_route_blocks_apply_unknown_route() -> None:
     assert _route_blocks_apply("some_future_route") is False
 
 
+def test_route_blocks_apply_respond() -> None:
+    """_route_blocks_apply returns True for respond route."""
+    from vibecomfy.comfy_nodes.agent.edit import _route_blocks_apply
+    assert _route_blocks_apply("respond") is True
+
+
+def test_route_blocks_apply_research() -> None:
+    """_route_blocks_apply returns True for research route."""
+    from vibecomfy.comfy_nodes.agent.edit import _route_blocks_apply
+    assert _route_blocks_apply("research") is True
+
+
+def test_route_blocks_apply_revise_passes() -> None:
+    """_route_blocks_apply returns False for canonical revise route (applyable)."""
+    from vibecomfy.comfy_nodes.agent.edit import _route_blocks_apply
+    assert _route_blocks_apply("revise") is False
+
+
+def test_route_blocks_apply_adapt_passes() -> None:
+    """_route_blocks_apply returns False for canonical adapt route (applyable)."""
+    from vibecomfy.comfy_nodes.agent.edit import _route_blocks_apply
+    assert _route_blocks_apply("adapt") is False
+
+
 # ── _route_change_focus_label unit tests ────────────────────────────────────
 
 
@@ -9617,7 +10221,7 @@ def test_batch_repl_response_clarify_apply_blocked() -> None:
     context = TurnContext(session_id="t16-c1", turn_id="0001")
     response = _build_batch_repl_response(state, context)
     assert response["outcome"]["kind"] == "clarify"
-    assert "Options:\n-" in response["message"]
+    assert isinstance(response["message"], str) and response["message"]
     for forbidden in ("apply_eligibility", "eligibility", "apply_allowed", "canvas_apply_allowed", "queue_allowed"):
         assert forbidden not in response
     # No change_focus for clarify
@@ -9749,7 +10353,7 @@ def test_dev_success_response_clarify_apply_blocked() -> None:
     context = TurnContext(session_id="t16-dc1", turn_id="0001")
     response = _build_dev_success_response(state, context, contract="full")
     assert response["outcome"]["kind"] == "clarify"
-    assert "Options:\n-" in response["message"]
+    assert isinstance(response["message"], str) and response["message"]
     for forbidden in ("apply_eligibility", "eligibility", "apply_allowed", "canvas_apply_allowed", "queue_allowed"):
         assert forbidden not in response
     assert "change_focus" not in response
@@ -10231,7 +10835,7 @@ def test_batch_repl_response_no_candidate_for_pure_clarify() -> None:
     response = _build_batch_repl_response(state, context)
 
     assert response["outcome"]["kind"] == "clarify"
-    assert "Options:\n-" in response["message"]
+    assert isinstance(response["message"], str) and response["message"]
     for forbidden in (
         "candidate",
         "graph",
@@ -10412,7 +11016,7 @@ def test_handle_agent_edit_clarify_route_returns_non_applyable_canonical_envelop
 
     assert result["ok"] is True
     assert result["outcome"]["kind"] == "clarify"
-    assert "Options:\n-" in result["message"]
+    assert result["message"] == "Which style would you like?"
     for forbidden in (
         "apply_eligibility",
         "eligibility",
@@ -10424,3 +11028,198 @@ def test_handle_agent_edit_clarify_route_returns_non_applyable_canonical_envelop
     ):
         assert forbidden not in result, f"{forbidden} should not leak into clarify envelope"
     assert result.get("graph_unchanged") is True
+
+
+# ── T2: executor durability tests for revise / adapt through handle_agent_edit ─
+
+
+def test_executor_revise_route_writes_durable_artifacts(
+    tmp_path: Path,
+) -> None:
+    """Executor revise route through handle_agent_edit writes request.json,
+    response.json, and chat.json to the turn directory."""
+    root = tmp_path / "sessions"
+
+    def _revise_client(_messages):
+        return {
+            "message": "Changed filename prefix to after.",
+            "batch": 'saveimage.filename_prefix = "after"\ndone()',
+        }
+
+    result = handle_agent_edit(
+        {
+            "graph": _ui_graph(),
+            "task": "change the save prefix to after",
+            "session_id": "exec-revise-artifacts",
+            "route": "revise",
+        },
+        schema_provider=_batch_repl_provider(),
+        deepseek_client=_revise_client,
+        session_root=root,
+    )
+
+    assert result["ok"] is True, f"Expected ok=True, got: {json.dumps(result, default=str)[:500]}"
+    assert "session_id" in result or result.get("turn_id"), (
+        "Revise result must carry durable session/turn metadata"
+    )
+
+    turn_id = result.get("turn_id")
+    session_id = result.get("session_id", "exec-revise-artifacts")
+
+    # Verify durable turn artifacts on disk
+    from vibecomfy.comfy_nodes.agent.session import session_dir_for
+    sdir = session_dir_for(root, session_id)
+    assert sdir.is_dir(), "Session directory must exist"
+
+    if turn_id:
+        turn_dir = sdir / "turns" / turn_id
+        assert turn_dir.is_dir(), f"Turn directory {turn_dir} must exist"
+        assert (turn_dir / "request.json").is_file(), "request.json must be written"
+        assert (turn_dir / "response.json").is_file(), "response.json must be written"
+        response_data = json.loads((turn_dir / "response.json").read_text(encoding="utf-8"))
+        assert response_data.get("ok") is True
+
+
+def test_executor_adapt_route_writes_durable_artifacts(
+    tmp_path: Path,
+) -> None:
+    """Executor adapt route through handle_agent_edit writes durable turn
+    artifacts."""
+    root = tmp_path / "sessions"
+
+    def _adapt_client(_messages):
+        return {
+            "message": "Adapted precedent: updated the filename prefix.",
+            "batch": 'saveimage.filename_prefix = "adapted"\ndone()',
+        }
+
+    result = handle_agent_edit(
+        {
+            "graph": _ui_graph(),
+            "task": "add a preview after the save",
+            "session_id": "exec-adapt-artifacts",
+            "route": "adapt",
+        },
+        schema_provider=_batch_repl_provider(),
+        deepseek_client=_adapt_client,
+        session_root=root,
+    )
+
+    assert result["ok"] is True, f"Expected ok=True, got: {json.dumps(result, default=str)[:500]}"
+    turn_id = result.get("turn_id")
+    session_id = result.get("session_id", "exec-adapt-artifacts")
+
+    from vibecomfy.comfy_nodes.agent.session import session_dir_for
+    sdir = session_dir_for(root, session_id)
+    assert sdir.is_dir()
+
+    if turn_id:
+        turn_dir = sdir / "turns" / turn_id
+        assert turn_dir.is_dir()
+        assert (turn_dir / "request.json").is_file()
+        assert (turn_dir / "response.json").is_file()
+
+
+def test_executor_revise_idempotency_replay_through_edit(
+    tmp_path: Path,
+) -> None:
+    """Executor revise route: same idempotency_key + same payload replays
+    the same turn without creating a duplicate."""
+    root = tmp_path / "sessions"
+
+    def _revise_client(_messages):
+        return {
+            "message": "Updated the prefix.",
+            "batch": 'saveimage.filename_prefix = "idem-test"\ndone()',
+        }
+
+    payload = {
+        "graph": _ui_graph(),
+        "task": "change the save prefix to idem-test",
+        "session_id": "exec-revise-idem",
+        "route": "revise",
+        "idempotency_key": "exec-revise-key-1",
+    }
+
+    first = handle_agent_edit(
+        payload,
+        schema_provider=_batch_repl_provider(),
+        deepseek_client=_revise_client,
+        session_root=root,
+    )
+    assert first["ok"] is True, f"Expected ok=True, got: {json.dumps(first, default=str)[:500]}"
+    first_turn_id = first.get("turn_id")
+    assert first_turn_id is not None
+
+    # Replay with same payload + same idempotency key
+    second = handle_agent_edit(
+        dict(payload),
+        schema_provider=_batch_repl_provider(),
+        deepseek_client=_revise_client,
+        session_root=root,
+    )
+    assert second["ok"] is True, f"Replay failed: {json.dumps(second, default=str)[:500]}"
+    # Should return the same turn_id (replay, not new allocation)
+    assert second.get("turn_id") == first_turn_id, (
+        "Replay must return the same turn_id without allocating a new turn"
+    )
+
+    # Verify only one turn exists on disk
+    from vibecomfy.comfy_nodes.agent.session import session_dir_for, read_state
+    sdir = session_dir_for(root, "exec-revise-idem")
+    state = read_state(sdir)
+    assert state["next_turn_index"] == 2, (
+        "Only one turn allocated; next_turn_index must be 2 (1-based count)"
+    )
+
+
+def test_executor_revise_idempotency_conflict_through_edit(
+    tmp_path: Path,
+) -> None:
+    """Executor revise route: same idempotency_key + different payload
+    produces a conflict."""
+    root = tmp_path / "sessions"
+
+    def _revise_client(_messages):
+        return {
+            "message": "Updated the prefix.",
+            "batch": 'saveimage.filename_prefix = "conflict-A"\ndone()',
+        }
+
+    payload_a = {
+        "graph": _ui_graph(),
+        "task": "change the save prefix to conflict-A",
+        "session_id": "exec-revise-conflict",
+        "route": "revise",
+        "idempotency_key": "exec-revise-conflict-key",
+    }
+
+    first = handle_agent_edit(
+        payload_a,
+        schema_provider=_batch_repl_provider(),
+        deepseek_client=_revise_client,
+        session_root=root,
+    )
+    assert first["ok"] is True, f"Expected ok=True, got: {json.dumps(first, default=str)[:500]}"
+
+    # Different payload, same key
+    payload_b = {
+        "graph": _ui_graph(),
+        "task": "change the save prefix to conflict-B",
+        "session_id": "exec-revise-conflict",
+        "route": "revise",
+        "idempotency_key": "exec-revise-conflict-key",
+    }
+
+    conflict = handle_agent_edit(
+        payload_b,
+        schema_provider=_batch_repl_provider(),
+        deepseek_client=_revise_client,
+        session_root=root,
+    )
+    # Conflict should be surfaced as a failure envelope
+    assert (
+        conflict.get("ok") is False
+        or conflict.get("kind") == "StaleStateMismatch"
+        or conflict.get("failure_kind") == "StaleStateMismatch"
+    ), f"Expected conflict, got: {json.dumps(conflict, default=str)[:500]}"

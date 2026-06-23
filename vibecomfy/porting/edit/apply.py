@@ -1728,6 +1728,8 @@ def _anchor_position(
         rect = _node_rect(spec.anchor_near.node)
         if anchor.relation == "below":
             return rect[0], rect[1] + rect[3] + _NODE_V_GAP
+        if anchor.relation == "left_of":
+            return _left_of_rect(rect, size)
         if anchor.relation == "right_of":
             return _right_of_rect(rect, size)
         return _right_of_rect(rect, size)
@@ -1931,6 +1933,10 @@ def _right_of_rect(rect: list[float], size: tuple[float, float]) -> tuple[float,
     return rect[0] + rect[2] + _NODE_H_GAP, rect[1]
 
 
+def _left_of_rect(rect: list[float], size: tuple[float, float]) -> tuple[float, float]:
+    return rect[0] - size[0] - _NODE_H_GAP, rect[1]
+
+
 def _between_rects(
     left: list[float],
     right: list[float],
@@ -1938,13 +1944,17 @@ def _between_rects(
 ) -> tuple[float, float]:
     gap_left = left[0] + left[2]
     gap_right = right[0]
-    if gap_right > gap_left:
+    if gap_right > gap_left and gap_right - gap_left >= size[0]:
         x = gap_left + max(0.0, (gap_right - gap_left - size[0]) / 2)
+        y = ((left[1] + right[1]) / 2)
+    elif gap_right > gap_left:
+        x = left[0]
+        y = max(left[1] + left[3], right[1] + right[3]) + _NODE_V_GAP
     else:
         left_center = left[0] + left[2] / 2
         right_center = right[0] + right[2] / 2
         x = ((left_center + right_center) / 2) - size[0] / 2
-    y = ((left[1] + right[1]) / 2)
+        y = max(left[1] + left[3], right[1] + right[3]) + _NODE_V_GAP
     return x, y
 
 

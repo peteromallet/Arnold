@@ -26,7 +26,9 @@ from .contracts import (
 
 _CLASSIFY_SYSTEM = (
     "You are a workflow intent classifier for a ComfyUI canvas editor.\n"
-    "Analyze the user request and decide what pipeline phases are needed.\n"
+    "Analyze the user request and choose exactly one locked route. "
+    "The executor will run deterministic safety checks after classification; "
+    "your job is to make the semantic route contract explicit.\n"
     "Return ONLY a JSON object with these keys:\n"
     '  "research": true/false — whether the executor should search for relevant nodes, '
     "templates, or techniques.\n"
@@ -39,27 +41,69 @@ _CLASSIFY_SYSTEM = (
     f"{format_route_options_for_prompt()}"
     f"{format_task_options_for_prompt()}"
     "\n"
-    "Rules:\n"
+    "Locked decision table:\n"
+    "- route=\"respond\": normal question answerable from existing context; no "
+    "outside research and no graph edit. Set intent=respond, research=false, "
+    "implement=false, reply=true.\n"
+    "- route=\"research\": look up workflows, nodes, or techniques and answer; "
+    "no graph edit. Set intent=research, research=true, implement=false, reply=true.\n"
+    "- route=\"inspect\": explain or analyze the current graph only; no outside "
+    "research and no graph edit. Set intent=explain_graph, research=false, "
+    "implement=false, reply=true.\n"
+    "- route=\"revise\": concrete graph edit from current context; no outside "
+    "research. Set intent=edit, research=false, implement=true, reply=true.\n"
+    "- route=\"adapt\": research precedent first, then edit the current graph. "
+    "Set intent=edit, research=true, implement=true, reply=true.\n"
+    "- route=\"clarify\": ask only when load-bearing information is missing and "
+    "the next safe route cannot be chosen.\n"
+    "\n"
+    "Negative rules:\n"
     "- intent must be exactly one of: edit, research, explain_graph, respond.\n"
-    "- Be conservative: when the user request is ambiguous, underspecified, or "
-    "references nodes/options/attachments without enough detail to safely edit, "
-    "prefer route=\"clarify\" with a concise clarification_question and "
-    "clarification_options array.\n"
-    "- The executor runs deterministic safety checks before this model is called; "
-    "those block obviously unsafe edit requests automatically. You do NOT need to "
-    "second-guess those checks — focus on intent classification, not validation.\n"
-    "- A chat / question with no graph edit intent → intent=respond, reply=true.\n"
-    "  Set intent=research when the user asks to look up, research, find out about, or "
-    "asks how something works.\n"
+    "- No discretionary clarification: do not clarify merely because several "
+    "reasonable choices exist, especially when the user asks you to choose.\n"
+    "- No outside research through route=\"inspect\". If the user asks to look "
+    "up workflows/nodes/techniques and does not ask for an edit, use "
+    "route=\"research\".\n"
+    "- No no-edit research through route=\"adapt\". If there is no requested "
+    "graph edit after research, use route=\"research\".\n"
+    "- No implement=true for non-applyable routes: clarify, respond, inspect, "
+    "and research must all set implement=false.\n"
+    "- No research=true for respond, inspect, or revise.\n"
+    "- Be conservative only when the user request is ambiguous, underspecified, "
+    "or references nodes/options/attachments without enough detail to safely "
+    "edit; then prefer route=\"clarify\" with a concise clarification_question "
+    "and clarification_options array.\n"
+    "- You are the authority for semantic routing. Do not assume another "
+    "pre-classifier has already blocked unsafe, ambiguous, or impossible "
+    "requests. Decide whether to clarify, respond, inspect, research, revise, "
+    "or adapt from the request, graph summary, node reference map, and "
+    "conversation context.\n"
+    "- Prefer useful localized edits when the requested change is concrete, even "
+    "if the broader graph has missing models, unknown custom nodes, or unrelated "
+    "environment problems. Those are validation/runtime concerns unless they "
+    "directly prevent the requested mutation.\n"
+    "- Use route=\"clarify\" only when the missing information is load-bearing "
+    "for the next action: no graph is available for an edit, a referenced node "
+    "cannot be resolved from the node map/conversation, a required attachment is "
+    "missing, the user gives incompatible constraints you cannot reconcile, a "
+    "named prior option does not exist, or the request asks for an architecture "
+    "splice that needs a specific bridge/adapter choice.\n"
+    "- When the user asks you to choose, decide, pick defaults, or use your "
+    "judgment, do not clarify merely because options exist. Continue with the "
+    "most reasonable route and summarize the default choice in plan_summary.\n"
+    "- A chat / question with no graph edit intent and no requested lookup "
+    "→ route=\"respond\".\n"
     "- A request to explain, describe, analyze, or inspect an attached graph "
-    "(e.g. \"what's happening in this graph?\") → intent=explain_graph, research=false, "
-    "implement=false, reply=true, effort=medium.  Set route=\"inspect\" when the "
-    "user ONLY wants explanation with no edit.\n"
+    "(e.g. \"what's happening in this graph?\") → route=\"inspect\".\n"
     "- A simple, concrete graph edit request with no research needed "
-    "→ intent=edit, implement=true, research=false, reply=true, route=\"revise\".\n"
-    "- A complex graph edit that needs precedent/template research first "
-    "→ intent=edit, implement=true, research=true, reply=true, "
-    "route=\"adapt\".\n"
+    "→ route=\"revise\".\n"
+    "- Requests to add a self-contained node, code node, PIL/video-frame "
+    "processing step, preview, note, label, or local parameter/wiring change are "
+    "usually route=\"revise\". Do not turn these into clarify/noop merely because "
+    "the surrounding workflow has pre-existing missing models or unknown node "
+    "packs.\n"
+    "- A graph edit that explicitly asks for precedent/template/workflow "
+    "research first → route=\"adapt\".\n"
     "- Never set implement=true without a graph to edit (but you don't need to check — "
     "the executor handles that).\n"
     "- For any request where the edit target is unclear, multiple interpretations "
@@ -74,6 +118,21 @@ _CLASSIFY_SYSTEM = (
     "- Generic edits to the current graph such as changing seeds, prompts, "
     "sampler steps, model names, node positions, or direct local wiring should "
     "stay route=\"revise\" when concrete, or route=\"clarify\" when ambiguous.\n"
+    "\n"
+    "Examples:\n"
+    "- \"What is this workflow doing?\" -> route=\"inspect\".\n"
+    "- \"What are people using for LTX audio workflows?\" -> route=\"research\".\n"
+    "- \"Find a Comfy node for PIL image processing\" -> route=\"research\".\n"
+    "- \"Add a PIL transform code node after decode\" -> route=\"revise\".\n"
+    "- \"Research how people add PIL transform code nodes, then add one\" -> "
+    "route=\"adapt\".\n"
+    "- \"Generate the standard SD1.5 workflow\" -> route=\"revise\".\n"
+    "- \"Switch this workflow to SDXL\" -> route=\"revise\".\n"
+    "- \"Can you explain the previous failure?\" with logs in context -> "
+    "route=\"respond\" or route=\"inspect\" depending on whether graph "
+    "inspection is needed; not route=\"research\".\n"
+    "- \"Pick some please\" after a clarification -> continue with a reasonable "
+    "choice; do not clarify again unless the prior options are impossible.\n"
     "- Do NOT wrap the JSON in markdown fences or add commentary.\n"
     "- The response must be a single JSON object on one line or multiple lines; "
     "no trailing text.\n"
@@ -112,19 +171,28 @@ def build_classify_messages(
     if graph_summary:
         parts.append(f"\nGraph summary: {graph_summary}")
 
-    # ── session context: recent messages ─────────────────────────────────
+    # ── session context: durable chat messages (backend-owned) ───────────
     if isinstance(session_context, dict):
         recent_messages = session_context.get("recent_messages")
         if isinstance(recent_messages, list) and recent_messages:
-            # Include last 3 exchanges for follow-up reference resolution.
-            recent = recent_messages[-6:]  # up to 3 user+assistant pairs
+            # Use the last 5 durable messages (already capped by
+            # _build_session_context → read_session_chat with
+            # PROMPT_MEMORY_MESSAGES).  The current user message is
+            # prepended separately as ``User request:`` above.
+            # Defensively skip any malformed entries (non-dict, missing
+            # role, or missing text) so a single corrupt chat artifact
+            # cannot poison the entire classify prompt.
             parts.append("\nRecent conversation (for reference resolution):")
-            for msg in recent:
-                if isinstance(msg, dict):
-                    role = msg.get("role", "unknown")
-                    content = msg.get("content") or msg.get("text") or ""
-                    if isinstance(content, str) and content.strip():
-                        parts.append(f"[{role}]: {content[:300]}")
+            for msg in recent_messages:
+                if not isinstance(msg, dict):
+                    continue
+                role = msg.get("role")
+                if not isinstance(role, str) or not role.strip():
+                    continue
+                content = msg.get("text") or msg.get("content") or ""
+                if not isinstance(content, str) or not content.strip():
+                    continue
+                parts.append(f"[{role}]: {content[:300]}")
 
         # ── prior clarification artifacts ────────────────────────────────
         prior_clarification = session_context.get("prior_clarification")
@@ -229,10 +297,23 @@ _REPLY_SYSTEM = (
     "- Acknowledge what was done (if anything).\n"
     "- Be concrete: mention node names, template names, or parameter values "
     "when relevant.\n"
+    "- Route-aware behavior: for route=\"clarify\", ask the clarifying question "
+    "plainly and do not imply work has run; for route=\"respond\", answer from "
+    "existing context only; for route=\"inspect\", explain the current graph "
+    "from inspection evidence only; for route=\"research\", summarize the "
+    "research findings without implying an edit; for route=\"revise\", describe "
+    "the concrete graph edit; for route=\"adapt\", explain how the researched "
+    "precedent informed the edit.\n"
     "- Prefer 1-3 sentences for simple status replies. For inspect-only or "
     "explain-style replies, use enough structure to stay readable instead of "
     "compressing everything into one paragraph.\n"
     "- Do NOT use fenced code blocks in the reply string.\n"
+    "- Do NOT mention internal gate names, phase gates, provider routes, "
+    "candidate engines, scoped diffs, rebaseline steps, or deterministic "
+    "no-candidate filler.\n"
+    "- For non-applyable routes (clarify, respond, inspect, research), do not "
+    "use apply/review/rebaseline language, do not say a candidate is ready, "
+    "and do not ask the user to approve an edit.\n"
     "- If research findings are present and implementation ran, include one brief "
     "reason the chosen approach/source informed the edit. Do not dump the research "
     "summary.\n"
@@ -258,10 +339,16 @@ def build_reply_messages(
     *,
     plan: ClassifyDecision | None = None,
     research_summary: str | None = None,
+    research_sources: tuple[dict[str, Any], ...] | None = None,
+    research_warnings: tuple[str, ...] | None = None,
+    research_precedent_slices: tuple[dict[str, Any], ...] | None = None,
     implementation_message: str | None = None,
     graph_summary: str | None = None,
     graph_inspection: str | None = None,
     adaptation_plan: dict[str, Any] | None = None,
+    effective_route: str | None = None,
+    effective_task: str | None = None,
+    candidate_present: bool = False,
 ) -> list[dict[str, str]]:
     """Build system + user messages for the reply phase.
 
@@ -276,6 +363,15 @@ def build_reply_messages(
     *adaptation_plan* is the serialized :class:`PrecedentAdaptationPlan` for
     route="adapt" requests; the reply should reference it at a high level while
     leaving the detailed candidate graph in the structured artifact.
+
+    *effective_route* and *effective_task* supply the canonical route/task for
+    per-route reply tailoring.  *research_sources* is the deduplicated source
+    list from the research phase.  *research_warnings* carries non-fatal
+    research warnings (e.g. Hivemind timeout) so the reply can acknowledge
+    degraded results.  *research_precedent_slices* provides structured evidence
+    from the research phase (only for research/adapt routes).
+
+    *candidate_present* indicates whether a graph edit candidate was produced.
     """
     parts = [f"User request:\n{query}"]
     if graph_inspection:
@@ -284,10 +380,34 @@ def build_reply_messages(
         )
     elif graph_summary:
         parts.append(f"\nAttached workflow graph: {graph_summary}")
+    if effective_route:
+        parts.append(f"\nActive route: {effective_route}"
+                     + (f", task: {effective_task}" if effective_task else ""))
     if plan is not None:
         parts.append(f"\nExecutor plan: {plan.plan_summary or 'completed'}")
+    if candidate_present:
+        parts.append("\nA graph edit candidate was produced and is available for review.")
     if research_summary:
         parts.append(f"\nResearch findings: {research_summary}")
+    if research_sources:
+        source_lines = [
+            f"  - {src.get('title', src.get('label', 'unnamed'))}"
+            for src in research_sources[:8]
+        ]
+        if source_lines:
+            parts.append("Research sources:\n" + "\n".join(source_lines))
+    if research_warnings:
+        warning_lines = [f"  - {w}" for w in research_warnings[:6]]
+        if warning_lines:
+            parts.append("Research warnings (non-fatal):\n" + "\n".join(warning_lines))
+    if research_precedent_slices:
+        slice_summaries = [
+            f"  - {s.get('source_class_type', 'unnamed')}"
+            + (f" ({len(s.get('node_ids', ())) or 0} nodes)" if isinstance(s.get('node_ids'), (list, tuple)) and s.get('node_ids') else "")
+            for s in research_precedent_slices[:5]
+        ]
+        if slice_summaries:
+            parts.append("Research structured evidence (precedent slices):\n" + "\n".join(slice_summaries))
     if implementation_message:
         parts.append(f"\nImplementation: {implementation_message}")
     if adaptation_plan:

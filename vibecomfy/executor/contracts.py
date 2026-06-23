@@ -97,7 +97,9 @@ def warning_detail_from_exception(exc: BaseException) -> dict[str, str]:
 _ALLOWED_ROUTES = frozenset({
     "",
     "clarify",
+    "respond",
     "inspect",
+    "research",
     "revise",
     "adapt",
 })
@@ -116,10 +118,12 @@ _ALLOWED_TASKS = frozenset({
 })
 
 _ROUTE_DESCRIPTIONS: dict[str, str] = {
-    "clarify": "ask a clarifying question or respond without editing.",
-    "inspect": "inspect or explain the current graph without editing.",
-    "revise": "revise the current graph using local context only.",
-    "adapt": "research or adapt a precedent before revising the graph.",
+    "clarify": "ask a clarifying question when load-bearing information is missing.",
+    "respond": "answer directly from existing context without research or editing.",
+    "inspect": "explain or analyze the current graph without outside research or editing.",
+    "research": "research workflows, nodes, or techniques, then answer without editing.",
+    "revise": "edit the current graph using local context only.",
+    "adapt": "research precedent or workflow patterns, then edit the graph.",
 }
 
 _PUBLIC_ROUTES = frozenset(_ROUTE_DESCRIPTIONS)
@@ -196,6 +200,8 @@ def _normalize_explicit_route(
             normalized = "adapt"
         elif implement:
             normalized = "revise"
+        elif research:
+            normalized = "research"
         else:
             normalized = "clarify"
         LOGGER.info(
@@ -304,10 +310,21 @@ class ClassifyDecision:
         )
         object.__setattr__(self, "route", normalized_route)
 
-        # Enforce read-only contract for inspect route (SD1).
-        # Stale implement=true is ignored when an explicit inspect route is present.
-        if self.route == "inspect":
-            object.__setattr__(self, "implement", False)
+        # Enforce route/boolean consistency (SD1).  Stale booleans from the
+        # classifier are canonicalized to the route's required values so
+        # downstream executor gates never see contradictory combinations.
+        route_booleans = {
+            "clarify": (False, False),
+            "respond": (False, False),
+            "inspect": (False, False),
+            "research": (True, False),
+            "revise": (False, True),
+            "adapt": (True, True),
+        }
+        if self.route in route_booleans:
+            expected_research, expected_implement = route_booleans[self.route]
+            object.__setattr__(self, "research", expected_research)
+            object.__setattr__(self, "implement", expected_implement)
 
         # Clamp task to allowed values.
         if self.task not in _ALLOWED_TASKS:
@@ -425,28 +442,26 @@ class ClassifyDecision:
 def _derive_route(*, research: bool, implement: bool, intent: str) -> str:
     """Derive a normalized route from legacy boolean + intent fields.
 
-    This is intentionally conservative: it only produces a route when the
-    legacy fields unambiguously map to a single route.  Ambiguous cases
-    (e.g. research=True + implement=True) return ``""`` so the caller knows
-    no explicit route was set.
-
-    The mapping follows the hard gate rules in SD2:
+    This follows the locked route vocabulary for the no-edit contract repair:
     * revise → implement without research
-    * inspect → research/inspect without implementation
-    * clarify → neither research nor implementation
-    * adapt is NOT derived — it requires an explicit ``route``
-      because legacy ``research=true, implement=true`` is ambiguous.
+    * adapt → research + implement (legacy booleans are unambiguous here)
+    * research → research without implementation and research intent
+    * inspect → explain_graph intent without implementation
+    * respond → respond intent without research or implementation
+    * clarify → neither research nor implementation when intent is ambiguous
     """
+    if implement and research:
+        return "adapt"
     if implement and not research:
-        # Edit with no research requirement → revise.
         return "revise"
     if research and not implement:
-        # Research/inspect without implementation → inspect.
-        return "inspect"
+        return "research"
     if not research and not implement:
-        # Neither research nor implementation → clarify.
+        if intent == "explain_graph":
+            return "inspect"
+        if intent == "respond":
+            return "respond"
         return "clarify"
-    # research=True, implement=True → ambiguous; do not derive.
     return ""
 
 
@@ -455,17 +470,18 @@ def _derive_task(*, research: bool, implement: bool, intent: str) -> str:
 
     Returns ``""`` when the mapping is ambiguous.
     """
+    if implement and research:
+        return "research_precedent"
     if implement and not research:
         return "edit_graph"
     if research and not implement:
+        return "research_nodes"
+    if not research and not implement:
         if intent == "explain_graph":
             return "inspect_graph"
-        if intent == "research":
-            return "research_nodes"
-        return "inspect_graph"
-    if not research and not implement:
+        if intent == "respond":
+            return "respond"
         return "respond"
-    # research=True, implement=True → ambiguous.
     return ""
 
 
@@ -993,14 +1009,47 @@ class ImplementationResult:
 
     Exactly one of ``graph`` or ``delta`` is populated.  ``message`` is the
     agent-facing explanation (carried into the reply phase for context).
+
+    ``durable_response`` carries the full validated response dict from
+    ``handle_agent_edit`` (SD1).  It preserves ``session_id``, ``turn_id``,
+    and other durable metadata so downstream serialization can attach them
+    to applyable candidates (SD2).
     """
 
     graph: dict[str, Any] | None = None
     delta: tuple[dict[str, Any], ...] = ()
     message: str = ""
+    durable_response: dict[str, Any] | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "delta", tuple(self.delta))
+        if self.durable_response is not None:
+            object.__setattr__(
+                self,
+                "durable_response",
+                MappingProxyType({
+                    str(k): _freeze_jsonish(v)
+                    for k, v in self.durable_response.items()
+                }),
+            )
+
+    @property
+    def durable_session_id(self) -> str | None:
+        """Return the session_id from the durable response, if present."""
+        dr = self.durable_response
+        if dr is None:
+            return None
+        sid = dr.get("session_id")
+        return sid if isinstance(sid, str) and sid.strip() else None
+
+    @property
+    def durable_turn_id(self) -> str | None:
+        """Return the turn_id from the durable response, if present."""
+        dr = self.durable_response
+        if dr is None:
+            return None
+        tid = dr.get("turn_id")
+        return tid if isinstance(tid, str) and tid.strip() else None
 
     def to_dict(self) -> dict[str, Any]:
         payload: dict[str, Any] = {"message": self.message}
@@ -1008,6 +1057,8 @@ class ImplementationResult:
             payload["graph"] = self.graph
         if self.delta:
             payload["delta"] = _thaw_jsonish(self.delta)
+        # Durable metadata is internal; only exposed through the
+        # candidate payload in AgentTurnResult, not here.
         return payload
 
 
@@ -1054,8 +1105,8 @@ def _public_route_for_plan(plan: ClassifyDecision) -> str:
     if plan.implement:
         return "revise"
     if plan.research:
-        return "inspect"
-    return "clarify"
+        return "research"
+    return "respond"
 
 
 @dataclass(frozen=True)
@@ -1114,7 +1165,7 @@ class AgentTurnResult:
     disposition: str = ""
 
     def __post_init__(self) -> None:
-        route = self.route if self.route in _PUBLIC_ROUTES else "clarify"
+        route = self.route if self.route in _PUBLIC_ROUTES else "respond"
         object.__setattr__(self, "route", route)
 
         candidate = self.candidate
@@ -1177,11 +1228,18 @@ class AgentTurnResult:
         if result.failure_message:
             warnings.append(result.failure_message)
 
-        candidate = (
-            {"graph": result.graph}
-            if route in _APPLY_ELIGIBLE_ROUTES and result.graph is not None
-            else None
-        )
+        candidate: dict[str, Any] | None = None
+        if route in _APPLY_ELIGIBLE_ROUTES and result.graph is not None:
+            candidate = {"graph": result.graph}
+            # Attach durable metadata (SD2: applyable == durable).
+            impl = result.report.implementation
+            if impl is not None:
+                sid = impl.durable_session_id
+                tid = impl.durable_turn_id
+                if sid is not None:
+                    candidate["session_id"] = sid
+                if tid is not None:
+                    candidate["turn_id"] = tid
         reason = _derive_no_candidate_reason(
             route=route,
             result=result,
@@ -1226,6 +1284,30 @@ def _derive_no_candidate_reason(
 
 # ── executor result (final envelope leaf) ────────────────────────────────────
 
+# Keys from the durable handle_agent_edit response that the executor propagates
+# to the top-level serialized envelope (SD1, SD2).  Executor-owned fields
+# (graph, message, route, candidate, apply_eligible) always take priority.
+_DURABLE_ENVELOPE_TOP_LEVEL_KEYS: tuple[str, ...] = (
+    "session_id",
+    "turn_id",
+    "baseline_turn_id",
+    "baseline_graph_hash",
+    "submit_graph_hash",
+    "submit_structural_graph_hash",
+    "submitted_client_graph_hash",
+    "submitted_client_structural_graph_hash",
+    "candidate_graph_hash",
+    "candidate_structural_graph_hash",
+    "outcome",
+    "apply_eligibility",
+    "change_details",
+    "audit_ref",
+    "artifacts",
+    "gates",
+    "debug",
+    "contract_version",
+)
+
 
 @dataclass(frozen=True)
 class ExecutorResult:
@@ -1253,6 +1335,19 @@ class ExecutorResult:
             "ok": self.ok,
             "report": self.report.to_dict(),
         }
+        # Propagate durable envelope fields from the implementation
+        # response (SD1, SD2) so downstream consumers see session_id,
+        # turn_id, hashes, outcome, apply_eligibility, change_details,
+        # audit/artifact refs, gates, debug, and contract_version at
+        # the top level.  Executor-owned fields (graph, message, route,
+        # candidate, apply_eligible) take priority over any collisions.
+        impl = self.report.implementation
+        if impl is not None and impl.durable_response is not None:
+            dr = impl.durable_response
+            for key in _DURABLE_ENVELOPE_TOP_LEVEL_KEYS:
+                value = dr.get(key)
+                if value is not None:
+                    payload[key] = _thaw_jsonish(value)
         payload.update(self.turn.to_dict())
         if self.graph is not None:
             payload["graph"] = self.graph

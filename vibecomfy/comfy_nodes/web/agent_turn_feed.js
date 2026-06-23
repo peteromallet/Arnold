@@ -243,6 +243,9 @@ export function normalizeAgentTurnPayload(raw) {
 
     // Timing
     timing: normalizeTiming(payload.timing),
+
+    // Route (when available — carry-through for progress derivation)
+    route: asString(payload.route),
   });
 
   return Object.freeze(normalized);
@@ -278,6 +281,12 @@ export function agentTurnProgressLabel(normalized) {
   }
   const status = normalized.status || "progress";
   if (status === "done") {
+    // Distinguish answer-only vs edit completion when route is known.
+    const route = (typeof normalized.route === "string" && normalized.route.toLowerCase()) || null;
+    if (route === "research") return "Research complete";
+    if (route === "respond" || route === "inspect" || route === "clarify") {
+      return "Answered";
+    }
     return "Complete";
   }
   if (status === "clarify") {
@@ -290,6 +299,12 @@ export function agentTurnProgressLabel(normalized) {
     return "Turn Error";
   }
   // "progress"
+  const route = (typeof normalized.route === "string" && normalized.route.toLowerCase()) || null;
+  if (route === "research") return "Researching";
+  if (route === "respond" || route === "inspect") {
+    return "Analyzing";
+  }
+  if (route === "clarify") return "Clarifying";
   const landed = normalized.landed_op_count;
   if (typeof landed === "number" && landed > 0) {
     return `Executing (${landed} ops landed)`;
@@ -615,16 +630,48 @@ function deriveOutcome(normalized, status, statements, latestSub) {
   });
 }
 
+/** Routes that never execute or review — progress stops at research (or
+ *  classify for respond/inspect/clarify) and must never imply execute/review
+ *  completion.  Mirrors NON_APPLYABLE_ROUTES in executor_progress.js. */
+const NON_APPLYABLE_ROUTES = new Set([
+  "clarify",
+  "inspect",
+  "respond",
+  "research",
+]);
+
 /**
  * Derive a phase_progress snapshot compatible with executor progress shape.
  * Uses the Decide → Research → Execute → Review framework.
+ *
+ * When a route is present and non-applyable (respond / research / inspect /
+ * clarify), terminal states never set execute or review to \"done\" because
+ * those phases were never run.  Research-only routes set research=done;
+ * respond/inspect/clarify leave research=pending.
  */
 function derivePhaseProgress(normalized, status, statements, latestSub) {
   const isTerminal = status === "done" || status === "clarify" || status === "budget_exhausted" || status === "error";
 
+  // Resolve route for progress gating — try normalized.route, then
+  // fall back to a route key on the raw payload (batch-turn entries
+  // may carry it in different shapes).
+  const route = (typeof normalized.route === "string" && normalized.route.toLowerCase())
+    || null;
+  const isNonApplyable = route && NON_APPLYABLE_ROUTES.has(route);
+  const researchRan = route === "research";
+
   if (isTerminal) {
+    if (isNonApplyable) {
+      // Non-applyable routes: execute + review never ran.
+      return Object.freeze({
+        decide: "done",
+        research: researchRan ? "done" : "pending",
+        execute: "pending",
+        review: "pending",
+      });
+    }
     return Object.freeze({
-      decide: status === "error" ? "done" : "done",
+      decide: "done",
       research: "done",
       execute: "done",
       review: "done",
@@ -648,6 +695,15 @@ function derivePhaseProgress(normalized, status, statements, latestSub) {
   }
 
   if (stmtCount > 0 || turnNum > 0) {
+    // During in-progress research/respond, execute is never active.
+    if (isNonApplyable && !researchRan) {
+      return Object.freeze({
+        decide: "done",
+        research: "pending",
+        execute: "pending",
+        review: "pending",
+      });
+    }
     return Object.freeze({
       decide: "done",
       research: "active",

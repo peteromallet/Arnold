@@ -2460,7 +2460,45 @@ def _mutate_turn_state(
             accepted_submit_hashes = {submit_graph_hash}
             if isinstance(submitted_client_graph_hash, str) and submitted_client_graph_hash:
                 accepted_submit_hashes.add(submitted_client_graph_hash)
-            if client_graph_hash not in accepted_submit_hashes:
+            request_submit_graph_hash = (
+                request_payload.get("submit_graph_hash")
+                if isinstance(request_payload, Mapping)
+                and isinstance(request_payload.get("submit_graph_hash"), str)
+                else None
+            )
+            request_live_graph = (
+                request_payload.get("live_graph")
+                if isinstance(request_payload, Mapping)
+                and isinstance(request_payload.get("live_graph"), Mapping)
+                else None
+            )
+            request_live_graph_hash = (
+                payload_hash(request_live_graph)
+                if request_live_graph is not None
+                else None
+            )
+            request_live_structural_graph_hash = (
+                structural_graph_hash(request_live_graph)
+                if request_live_graph is not None
+                else None
+            )
+            submit_structural_graph_hash = (
+                turn_record.get("submit_structural_graph_hash")
+                if isinstance(turn_record.get("submit_structural_graph_hash"), str)
+                else None
+            )
+            echoed_submit_graph_matches = (
+                isinstance(submit_graph_hash, str)
+                and request_submit_graph_hash == submit_graph_hash
+                and (
+                    request_live_graph_hash == submit_graph_hash
+                    or (
+                        isinstance(submit_structural_graph_hash, str)
+                        and request_live_structural_graph_hash == submit_structural_graph_hash
+                    )
+                )
+            )
+            if client_graph_hash not in accepted_submit_hashes and not echoed_submit_graph_matches:
                 return failure_envelope(
                     FailureKind.STALE_STATE_MISMATCH,
                     scope,
@@ -2471,6 +2509,10 @@ def _mutate_turn_state(
                         "client_graph_hash": client_graph_hash,
                         "submit_graph_hash": submit_graph_hash,
                         "submitted_client_graph_hash": submitted_client_graph_hash,
+                        "request_submit_graph_hash": request_submit_graph_hash,
+                        "request_live_graph_hash": request_live_graph_hash,
+                        "request_live_structural_graph_hash": request_live_structural_graph_hash,
+                        "submit_structural_graph_hash": submit_structural_graph_hash,
                     },
                 )
 

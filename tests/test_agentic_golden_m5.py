@@ -30,7 +30,7 @@ _AGENTIC_DIR = Path(__file__).resolve().parents[1] / "tests" / "agentic_harness"
 _SCENARIOS_DIR = _AGENTIC_DIR / "scenarios"
 _BRIEFS_DIR = _AGENTIC_DIR / "briefs"
 
-# -- Explicit 8-name set for the registration test (SET equality, not len) -----
+# -- Explicit 9-name set for the registration test (SET equality, not len) -----
 _EXPECTED_M5_BUILDER_NAMES: frozenset[str] = frozenset(
     {
         "diagnose-broken-graph",
@@ -41,6 +41,7 @@ _EXPECTED_M5_BUILDER_NAMES: frozenset[str] = frozenset(
         "embedded-run-no-gpu",
         "runpod-list-before-terminate",
         "two-stage-chain-both-ran",
+        "route-intent-map",
     }
 )
 
@@ -76,18 +77,28 @@ _GPU_POSITIVE_NAMES: frozenset[str] = frozenset(
     }
 )
 
-# Sanity: the three category sets must partition the full expected set.
-assert _INVESTIGATE_NAMES | _HONESTY_NEGATIVE_NAMES | _GPU_POSITIVE_NAMES == _EXPECTED_M5_BUILDER_NAMES
+_ROUTE_INTENT_NAMES: frozenset[str] = frozenset({"route-intent-map"})
+
+# Sanity: the category sets must partition the full expected set.
+assert (
+    _INVESTIGATE_NAMES
+    | _HONESTY_NEGATIVE_NAMES
+    | _GPU_POSITIVE_NAMES
+    | _ROUTE_INTENT_NAMES
+) == _EXPECTED_M5_BUILDER_NAMES
 assert not (_INVESTIGATE_NAMES & _HONESTY_NEGATIVE_NAMES)
 assert not (_INVESTIGATE_NAMES & _GPU_POSITIVE_NAMES)
+assert not (_INVESTIGATE_NAMES & _ROUTE_INTENT_NAMES)
 assert not (_HONESTY_NEGATIVE_NAMES & _GPU_POSITIVE_NAMES)
+assert not (_HONESTY_NEGATIVE_NAMES & _ROUTE_INTENT_NAMES)
+assert not (_GPU_POSITIVE_NAMES & _ROUTE_INTENT_NAMES)
 
 
 # --------------------------------------------------------------------------- #
 
 
 def test_m5_builders_registered() -> None:
-    """All 8 M5 builders must be registered; assert SET equality, not len."""
+    """All M5 builders must be registered; assert SET equality, not len."""
     actual = set(_M5_BUILDERS)
     expected = set(_EXPECTED_M5_BUILDER_NAMES)
     assert actual == expected, (
@@ -156,6 +167,8 @@ def test_m5_golden_builder_emits_valid_evidence(
         _check_investigate(name, manifest)
     elif is_honesty_negative:
         _check_honesty_negative(name, manifest, tmp_path)
+    elif name in _ROUTE_INTENT_NAMES:
+        _check_route_intent_map(name, manifest)
     elif is_gpu_positive:
         _check_gpu_positive(name, manifest)
     else:
@@ -291,6 +304,23 @@ def _check_gpu_positive(name: str, manifest: dict) -> None:
             assert field in body, (
                 f"{name}: {wp.name} body missing field {field!r}"
             )
+
+
+def _check_route_intent_map(name: str, manifest: dict) -> None:
+    route_map = Path(manifest["route_map_path"])
+    assert route_map.is_file(), f"{name}: missing route_intent_map.json ({route_map})"
+    records = json.loads(route_map.read_text(encoding="utf-8"))
+    assert {record.get("expected_route") for record in records} == {
+        "clarify",
+        "inspect",
+        "revise",
+        "adapt",
+    }
+    by_route = {record["expected_route"]: record for record in records}
+    assert by_route["clarify"]["apply_eligible"] is False
+    assert by_route["inspect"]["apply_eligible"] is False
+    assert by_route["revise"]["apply_eligible"] is True
+    assert by_route["adapt"]["apply_eligible"] is True
 
 
 # --------------------------------------------------------------------------- #

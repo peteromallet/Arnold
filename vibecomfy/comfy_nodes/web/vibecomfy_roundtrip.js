@@ -258,6 +258,7 @@ const APPLY_ELIGIBILITY_REASON = Object.freeze({
   APPLYABLE: "applyable",
   NO_CANDIDATE: "no_candidate",
   MISSING_CONTRACT: "missing_contract",
+  MISSING_DURABLE_TURN_METADATA: "missing_durable_turn_metadata",
   NOT_LATEST: "not_latest",
   SUPERSEDED: "superseded",
   SERVER_BLOCKED: "server_blocked",
@@ -5147,6 +5148,12 @@ function buildSyntheticAgentMessage(panel) {
   if (!panel?.state) {
     return null;
   }
+  // T10: Only create synthetic transcript entries from explicitly-set
+  // panel.state.syntheticAgentMessage (set by local-only failure/cancellation
+  // handlers).  Do NOT fall through to panel.state.message — that field is a
+  // status/display hint, not transcript storage.  Successful durable lifecycle
+  // events (submit, rehydrate, accept, reject, rebaseline) produce canonical
+  // backend chatMessages and MUST NOT generate synthetic assistant entries.
   if (panel.state.syntheticAgentMessage && typeof panel.state.syntheticAgentMessage === "object") {
     const synthetic = panel.state.syntheticAgentMessage;
     const text = typeof synthetic.text === "string" ? synthetic.text : "";
@@ -5164,39 +5171,11 @@ function buildSyntheticAgentMessage(panel) {
       : false;
     return alreadyInThread ? null : synthetic;
   }
-  const turnId = typeof panel.state.turnId === "string" && panel.state.turnId ? panel.state.turnId : null;
-  const text =
-    panel.state.message
-    || panel.state.clarification?.message
-    || panel.state.failure?.user_facing_message
-    || panel.state.failure?.message
-    || panel.state.failure?.error
-    || null;
-  if (!text) {
-    return null;
-  }
-  const existing = Array.isArray(panel.state.chatMessages)
-    ? panel.state.chatMessages.some((msg) => (
-        msg?.role === "agent"
-        && typeof msg.text === "string"
-        && msg.text === text
-        && (!turnId || msg.turn_id === turnId)
-      ))
-    : false;
-  if (existing) {
-    return null;
-  }
-  return {
-    role: "agent",
-    text,
-    turn_id: turnId || null,
-    session_id: panel.state.sessionId || null,
-    synthetic: true,
-    local_id: turnId ? undefined : `synthetic-terminal:${panel.state.phase || "unknown"}:${djb2Hash(text)}`,
-  };
+  return null;
 }
 
 function makePendingResponseChatMessage(panel, task, progress, submitEpoch) {
+  const epoch = submitEpoch || Date.now();
   return {
     role: "agent",
     text: "",
@@ -5206,7 +5185,8 @@ function makePendingResponseChatMessage(panel, task, progress, submitEpoch) {
     progress: progress || createExecutorProgressSnapshot({ decide: "active" }),
     optimistic: true,
     synthetic: false,
-    local_id: `executor-pending:${submitEpoch || Date.now()}`,
+    local_id: `executor-pending:${epoch}`,
+    submit_epoch: typeof submitEpoch === "number" ? submitEpoch : undefined,
     session_id: panel?.state?.sessionId || null,
     task: typeof task === "string" ? task : null,
     timestamp: new Date().toISOString(),
@@ -5242,6 +5222,66 @@ function updatePendingResponseProgress(panel, progress, label = null, canonicalA
     || progress.execute === "active";
   if (hasActivePhase || typeof label === "string") {
     pending.text = "";
+  }
+  return true;
+}
+
+function promotePendingResponseMessage(panel, result, options = {}) {
+  if (!Array.isArray(panel?.state?.chatMessages)) {
+    return false;
+  }
+  const pending = findPendingResponseMessage(panel);
+  if (!pending) {
+    return false;
+  }
+  const terminalText = options.message
+    || result?.message
+    || result?.reply
+    || (result?.outcome && typeof result.outcome === "object" ? result.outcome.message : null)
+    || null;
+  if (typeof terminalText === "string") {
+    pending.text = terminalText;
+  }
+  pending.pending_response = false;
+  pending.executor_pending = false;
+  // Keep the message marked optimistic until a successful backend rehydrate
+  // replaces it with durable canonical messages. This lets rehydrate failures
+  // preserve locally-built terminal bubbles instead of wiping the thread.
+  pending.local_id = undefined;
+  if (typeof result?.turnId === "string" && result.turnId) {
+    pending.turn_id = result.turnId;
+  }
+  if (typeof result?.sessionId === "string" && result.sessionId) {
+    pending.session_id = result.sessionId;
+  }
+  if (typeof result?.baselineTurnId === "string") {
+    pending.baseline_turn_id = result.baselineTurnId;
+  }
+  if (typeof result?.route === "string") {
+    pending.route = result.route;
+  }
+  if (result?.outcome && typeof result.outcome === "object") {
+    pending.outcome = clonePlainData(result.outcome);
+  }
+  if (result?.report && typeof result.report === "object") {
+    pending.report = clonePlainData(result.report);
+  }
+  if (result?.candidateGraph && typeof result.candidateGraph === "object") {
+    pending.candidateGraph = clonePlainData(result.candidateGraph);
+  }
+  if (result?.auditRef && typeof result.auditRef === "object") {
+    pending.audit_ref = clonePlainData(result.auditRef);
+  }
+  if (panel?.state?.changeDetails && typeof panel.state.changeDetails === "object") {
+    pending.change_details = clonePlainData(panel.state.changeDetails);
+  } else if (result?.raw?.change_details && typeof result.raw.change_details === "object") {
+    pending.change_details = clonePlainData(result.raw.change_details);
+  }
+  if (panel?.state?.lastSubmitFieldChanges && typeof panel.state.lastSubmitFieldChanges === "object") {
+    pending.field_changes = clonePlainData(panel.state.lastSubmitFieldChanges);
+  }
+  if (panel?.state?.applyEligibility && typeof panel.state.applyEligibility === "object") {
+    pending.apply_eligibility = clonePlainData(panel.state.applyEligibility);
   }
   return true;
 }
@@ -7563,9 +7603,6 @@ function appendFailureDetail(body, panel, snapshot = null) {
       "#8d93a1",
     );
   }
-  if (failure.audit_ref?.path) {
-    appendCodeLine(body, `audit: ${failure.audit_ref.path}`, "#9ed0ff");
-  }
   if (failure.audit_error) {
     appendTextLine(body, `audit_error: ${failure.audit_error}`, "#ffb86c");
   }
@@ -7886,18 +7923,24 @@ function appendTurnAuditEntry(body, panel, entry, index) {
 
 function appendAuditDetail(body, panel, message = null, snapshot = null) {
   const matchedTurns = turnEntriesForBubbleDetail(panel, message, snapshot);
+  const shownPaths = new Set();
   if (matchedTurns.length) {
     for (const { entry, index } of matchedTurns) {
       appendTurnAuditEntry(body, panel, entry, index);
+      if (entry.audit_ref?.path) {
+        shownPaths.add(entry.audit_ref.path);
+      }
     }
-    return;
   }
 
   const auditRef =
     (message?.audit_ref && typeof message.audit_ref === "object" ? message.audit_ref : null)
     || snapshot?.auditRef
     || panel.state.auditRef;
-  if (!appendAuditRefLines(body, auditRef)) {
+  if (auditRef?.path && !shownPaths.has(auditRef.path)) {
+    appendTextLine(body, "Latest audit", "#9ed0ff");
+    appendAuditRefLines(body, auditRef);
+  } else if (!matchedTurns.length && !appendAuditRefLines(body, auditRef)) {
     body.appendChild(muted("No audit artifact linked yet."));
   }
   const dlBtn = button("Download Audit Envelope", () => downloadCurrentAudit(panel));
@@ -8758,6 +8801,7 @@ async function submitAgentEdit(panel, { taskOverride } = {}) {
       });
       const obligations = transition(panel, "SUBMIT_MISSING_TASK", {
         failure,
+        syntheticAgentMessage: syntheticFailureAgentMessage(panel, failure, "frontend"),
         debugPayload: failure,
       });
       fulfillLifecycleTransitionObligations(panel, obligations);
@@ -8807,6 +8851,7 @@ async function submitAgentEdit(panel, { taskOverride } = {}) {
       });
       const obligations = transition(panel, "SUBMIT_SERIALIZE_ERROR", {
         failure,
+        syntheticAgentMessage: syntheticFailureAgentMessage(panel, failure, "frontend"),
         debugPayload: failure,
       });
       fulfillLifecycleTransitionObligations(panel, obligations);
@@ -8847,10 +8892,17 @@ async function submitAgentEdit(panel, { taskOverride } = {}) {
       panel.state.chatMessages = [];
     }
     clearPendingResponseMessages(panel);
+    // Stable local identity tied to submit epoch and idempotency key so
+    // rehydrate reconciliation can distinguish in-flight optimistic entries
+    // from stale/cancelled ones without duplicating or resurrecting messages.
+    const idempotencyKey = snapshot?.idempotencyKey || "";
     panel.state.chatMessages.push({
       role: "user",
       text: task,
       optimistic: true,
+      local_id: `submit-user:${submitEpoch}:${idempotencyKey}`,
+      submit_epoch: submitEpoch,
+      idempotency_key: idempotencyKey || undefined,
       timestamp: new Date().toISOString(),
     });
     const pendingProgress = createExecutorProgressSnapshot({ decide: "active" });
@@ -8967,6 +9019,7 @@ async function submitAgentEdit(panel, { taskOverride } = {}) {
       clearPendingResponseMessages(panel);
       const obligations = transition(panel, "SUBMIT_NETWORK_FAILURE", {
         failure,
+        syntheticAgentMessage: syntheticFailureAgentMessage(panel, failure, "frontend"),
         debugPayload: {
           ...failure,
           last_submit: panel.state.lastSubmit,
@@ -9034,6 +9087,7 @@ async function submitAgentEdit(panel, { taskOverride } = {}) {
         },
       });
       fulfillLifecycleTransitionObligations(panel, obligations);
+      promotePendingResponseMessage(panel, result, { message: clarifyMessage });
       clearPendingResponseMessages(panel);
       reconcileResponseBatchTurns(panel, result.raw || result);
       pushHistory(panel, "clarify", clarifyMessage);
@@ -9080,6 +9134,7 @@ async function submitAgentEdit(panel, { taskOverride } = {}) {
         },
       });
       fulfillLifecycleTransitionObligations(panel, obligations);
+      promotePendingResponseMessage(panel, result, { message: noopMessage });
       clearPendingResponseMessages(panel);
       reconcileResponseBatchTurns(panel, result.raw || result);
       pushHistory(panel, "noop", noopMessage);
@@ -9126,6 +9181,7 @@ async function submitAgentEdit(panel, { taskOverride } = {}) {
       const obligations = transition(panel, "ARRIVAL_SERIALIZE_FAILURE", {
         result: result.raw || result,
         failure,
+        syntheticAgentMessage: syntheticFailureAgentMessage(panel, failure, "frontend"),
         debugPayload: {
           ...failure,
           last_submit: panel.state.lastSubmit,
@@ -9186,6 +9242,7 @@ async function submitAgentEdit(panel, { taskOverride } = {}) {
       },
     );
     fulfillLifecycleTransitionObligations(panel, candidateObligations);
+    promotePendingResponseMessage(panel, result);
     clearPendingResponseMessages(panel);
     reconcileResponseBatchTurns(panel, result.raw || result);
     pushHistory(panel, "candidate", result.turnId ? `turn ${result.turnId}` : "candidate");
@@ -9422,6 +9479,7 @@ async function applyAgentCandidate(panel) {
         debugPayload: {
           ...failure,
           accept_request: acceptBody,
+          ...(authoritativeBackendReject ? { debug_branch: "backend_cas_mismatch" } : {}),
         },
       });
       fulfillLifecycleTransitionObligations(panel, obligations);
@@ -9456,6 +9514,10 @@ async function applyAgentCandidate(panel) {
       delta_ops_source: scopedDeltaOpsSource,
       accept_live_canvas_token: beforeApply.liveCanvasToken,
       current_live_canvas_token: currentBeforeLoad.liveCanvasToken,
+      accept_structural_hash: beforeApply.structuralHash,
+      current_structural_hash: currentBeforeLoad.structuralHash,
+      token_drift_detected: currentBeforeLoad.liveCanvasToken !== beforeApply.liveCanvasToken,
+      structural_hash_drift_detected: currentBeforeLoad.structuralHash !== beforeApply.structuralHash,
     };
 
     if (useScopedApply) {
@@ -9524,6 +9586,7 @@ async function applyAgentCandidate(panel) {
           expected_live_canvas_token: beforeApply.liveCanvasToken,
           accept_response: accepted.raw || accepted,
           canvas_apply: canvasApplyMeta,
+          debug_branch: "scoped_touched_region_mismatch",
           agent_failure_context: {
             issues: localScopedPrecheck.entries.filter((entry) => entry.status === "conflict"),
           },
@@ -9559,6 +9622,51 @@ async function applyAgentCandidate(panel) {
         renderLifecycleTransition(panel, obligations);
         return;
       }
+    } else if (currentBeforeLoad.structuralHash !== beforeApply.structuralHash) {
+      const failure = agentPanelFailure("StaleStateMismatch", "The canvas structural graph changed while Apply was waiting for backend acceptance. Candidate loading is blocked.", {
+        retryable: true,
+        graph_unchanged: true,
+        next_action: "Rebaseline and retry from the current canvas.",
+        client_graph_hash: currentBeforeLoad.graphHash,
+        client_structural_graph_hash: currentBeforeLoad.structuralHash,
+        expected_graph_hash: stateCheckGraphHash,
+        expected_structural_graph_hash: beforeApply.structuralHash,
+        client_live_canvas_token: currentBeforeLoad.liveCanvasToken,
+        expected_live_canvas_token: beforeApply.liveCanvasToken,
+        accept_response: accepted.raw || accepted,
+        canvas_apply: canvasApplyMeta,
+        debug_branch: "structural_hash_drift",
+      });
+      const obligations = transition(panel, "STALE_CANVAS_APPLY", {
+        failure,
+        rebaselineRecovery: recoveryForFailure(failure, panel, acceptBody),
+        syntheticAgentMessage: syntheticFailureAgentMessage(panel, failure, "frontend"),
+        debugPayload: {
+          ...failure,
+          canvas_apply: canvasApplyMeta,
+          canvas_apply_verification: buildCanvasApplyVerificationDebug(canvasApplyMeta),
+        },
+      });
+      fulfillLifecycleTransitionObligations(panel, obligations);
+      pushHistory(panel, "failure", failure.kind || "StaleStateMismatch");
+      pushTurnStatus(panel, "failed", {
+        session_id: failure.session_id || panel.state.sessionId,
+        turn_id: failure.turn_id || panel.state.turnId,
+        baseline_turn_id: failure.baseline_turn_id || panel.state.baselineTurnId,
+        failure_kind: failure.kind || "StaleStateMismatch",
+        failure_stage: failure.stage || "frontend",
+        message: failure.user_facing_message || failure.message || failure.error,
+        audit_ref: failure.audit_ref,
+        raw_payload: failure,
+      });
+      rememberTurnDetailSnapshot(panel, {
+        turn_id: failure.turn_id || panel.state.turnId,
+        session_id: failure.session_id || panel.state.sessionId,
+        failure,
+        message: failure.user_facing_message || failure.message || failure.error,
+      });
+      renderLifecycleTransition(panel, obligations);
+      return;
     } else if (currentBeforeLoad.liveCanvasToken !== beforeApply.liveCanvasToken) {
       const failure = agentPanelFailure("StaleStateMismatch", "The canvas changed while Apply was waiting for backend acceptance. Candidate loading is blocked.", {
         retryable: true,
@@ -9571,6 +9679,7 @@ async function applyAgentCandidate(panel) {
         expected_live_canvas_token: beforeApply.liveCanvasToken,
         accept_response: accepted.raw || accepted,
         canvas_apply: canvasApplyMeta,
+        debug_branch: "live_canvas_token_drift",
       });
       const obligations = transition(panel, "STALE_CANVAS_APPLY", {
         failure,
@@ -9796,9 +9905,11 @@ async function applyAgentCandidate(panel) {
       },
     });
     fulfillLifecycleTransitionObligations(panel, successObligations);
+    const appliedTurnId = accepted.turnId || panel.state.turnId;
+    const appliedSessionId = accepted.sessionId || panel.state.sessionId;
     rememberTurnDetailSnapshot(panel, {
-      turn_id: accepted.turnId || panel.state.turnId,
-      session_id: accepted.sessionId || panel.state.sessionId,
+      turn_id: appliedTurnId,
+      session_id: appliedSessionId,
       auditRef: accepted.auditRef || panel.state.auditRef,
       debugPayload: {
         accepted: accepted.raw || accepted,
@@ -9814,8 +9925,21 @@ async function applyAgentCandidate(panel) {
         }),
         undo_stack_depth: panel.state.undoStack.length,
       },
+      lastAppliedChanges,
       message: panel.state.message,
     });
+    const appliedAuditPath = accepted.auditRef?.path || panel.state.auditRef?.path || "";
+    const appliedMessage = panel.state.message || "Candidate applied.";
+    panel.state.syntheticAgentMessage = {
+      role: "agent",
+      text: appliedAuditPath
+        ? `${appliedMessage} audit: ${appliedAuditPath}`
+        : appliedMessage,
+      detail_turn_id: appliedTurnId || null,
+      session_id: appliedSessionId || null,
+      synthetic: true,
+      local_id: `applied:${appliedTurnId || "local"}:${Date.now()}`,
+    };
     renderLifecycleTransition(panel, successObligations);
   })();
 
@@ -9843,6 +9967,7 @@ async function rejectAgentCandidate(panel) {
     });
     const obligations = transition(panel, "REJECT_FAILURE", {
       failure,
+      syntheticAgentMessage: syntheticFailureAgentMessage(panel, failure, "frontend"),
       debugPayload: failure,
     });
     if (obligations.render) renderAgentPanel(panel);
@@ -9893,6 +10018,7 @@ async function rejectAgentCandidate(panel) {
         });
     const obligations = transition(panel, "REJECT_FAILURE", {
       failure,
+      syntheticAgentMessage: syntheticFailureAgentMessage(panel, failure, "frontend"),
       rejectBody,
       debugPayload: {
         ...failure,
@@ -10178,6 +10304,7 @@ async function undoLastApply(panel) {
     const failureObligations = transition(panel, "UNDO_REBASELINE_FAILURE", {
       previous,
       failure: normalizedFailure,
+      syntheticAgentMessage: syntheticFailureAgentMessage(panel, normalizedFailure, "frontend"),
       rebaselineRecovery:
         recoveryForPanelState(extractRebaselineRecovery(normalizedFailure)) || panel.state.rebaselineRecovery,
       undoStackDepth: panel.state.undoStack.length,

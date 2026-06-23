@@ -5,13 +5,14 @@ import dataclasses
 import json
 import logging
 import os
+import uuid
 from pathlib import Path
 from typing import Any, Mapping
 
 _LOGGER = logging.getLogger(__name__)
 
-from .audit import artifact_ref_for_path, write_audit
-from .edit import DEFAULT_CHAT_DISPLAY_MESSAGES, _SESSION_ROOT
+from .audit import artifact_ref_for_path, write_audit, write_json_artifact
+from .edit import DEFAULT_CHAT_DISPLAY_MESSAGES, _SESSION_ROOT, _write_turn_chat_artifact as _edit_write_turn_chat_artifact
 from .contracts import (
     ApplyEligibility,
     FailureKind,
@@ -25,9 +26,12 @@ from .provider import readiness, handle_credential_submission
 from .hivemind_feedback import submit_hivemind_feedback
 from .session import (
     accept_turn as _session_accept_turn,
+    allocate_turn as _session_allocate_turn,
     rebaseline_session as _session_rebaseline_session,
+    record_idempotent_response as _session_record_idempotent_response,
     reject_turn as _session_reject_turn,
     session_dir_for,
+    turn_dir_for,
 )
 
 
@@ -173,9 +177,16 @@ def _executor_request_payload(payload: dict[str, Any]) -> dict[str, Any]:
 
 
 def _executor_compatibility_fields(payload: Mapping[str, Any]) -> dict[str, Any]:
+    """Build legacy compatibility fields, preferring durable envelope fields.
+
+    Durable ``outcome`` and ``apply_eligibility`` from the edit engine are
+    preserved as-is when present; compatibility synthesis runs only as a
+    fallback for executors that produce results without durable metadata
+    (SD2: applyable == durable).
+    """
     reply = payload.get("reply")
     message = reply if isinstance(reply, str) else ""
-    route = payload.get("route") if isinstance(payload.get("route"), str) else "clarify"
+    route = payload.get("route") if isinstance(payload.get("route"), str) else "respond"
     candidate = payload.get("candidate") if isinstance(payload.get("candidate"), Mapping) else None
     candidate_graph = (
         candidate.get("graph")
@@ -184,45 +195,66 @@ def _executor_compatibility_fields(payload: Mapping[str, Any]) -> dict[str, Any]
     )
     apply_eligible = bool(payload.get("apply_eligible"))
 
-    if candidate_graph is not None and apply_eligible:
-        outcome = {"kind": "candidate", "changes": []}
-    elif route == "clarify":
-        outcome = {
-            "kind": "clarify",
-            "question": message,
-            "clarification": {"message": message},
-        }
-    else:
-        reason = payload.get("no_candidate_reason")
-        outcome = {
-            "kind": "noop",
-            "reason": str(reason) if isinstance(reason, str) and reason else message,
-        }
+    # ── Prefer durable envelope fields over synthesized compatibility ──
+    has_durable_outcome = isinstance(payload.get("outcome"), Mapping)
+    has_durable_apply_eligibility = isinstance(payload.get("apply_eligibility"), Mapping)
+    has_durable_graph = isinstance(payload.get("graph"), dict)
 
-    compatibility = {
+    compatibility: dict[str, Any] = {
         "message": message,
-        "outcome": outcome,
-        "apply_eligibility": {
+    }
+
+    # Only synthesize outcome when the durable envelope doesn't provide one.
+    if not has_durable_outcome:
+        if candidate_graph is not None and apply_eligible:
+            outcome = {"kind": "candidate", "changes": []}
+        elif route == "clarify":
+            outcome = {
+                "kind": "clarify",
+                "question": message,
+                "clarification": {"message": message},
+            }
+        else:
+            reason = payload.get("no_candidate_reason")
+            outcome = {
+                "kind": "noop",
+                "reason": str(reason) if isinstance(reason, str) and reason else message,
+            }
+        compatibility["outcome"] = outcome
+
+    # Only synthesize apply_eligibility when the durable envelope
+    # doesn't provide one.
+    if not has_durable_apply_eligibility:
+        compatibility["apply_eligibility"] = {
             "applyable": apply_eligible,
             "reason": "applyable" if apply_eligible else "no_candidate",
-            "message": "Ready to apply." if apply_eligible else "No candidate is available to apply.",
+            "message": (
+                "Ready to apply." if apply_eligible
+                else "No candidate is available to apply."
+            ),
             "warnings": [],
-        },
-        "apply_allowed": apply_eligible,
-        "canvas_apply_allowed": apply_eligible,
-        "queue_allowed": apply_eligible,
-        "graph_unchanged": candidate_graph is None,
-    }
-    if candidate_graph is not None:
+        }
+
+    # Legacy boolean aliases (no durable conflict — UI convenience fields).
+    compatibility["apply_allowed"] = apply_eligible
+    compatibility["canvas_apply_allowed"] = apply_eligible
+    compatibility["queue_allowed"] = apply_eligible
+    compatibility["graph_unchanged"] = candidate_graph is None
+
+    # Only add graph when durable graph isn't already present.
+    if candidate_graph is not None and not has_durable_graph:
         compatibility["graph"] = candidate_graph
+    # candidate_graph is a legacy alias; always emit when available.
+    if candidate_graph is not None:
         compatibility["candidate_graph"] = candidate_graph
+
     if route == "clarify":
         compatibility["clarification_required"] = True
         compatibility["clarification_message"] = message
     return compatibility
 
 
-_CLARIFY_FORBIDDEN_KEYS = {
+_NON_APPLYABLE_FORBIDDEN_KEYS = {
     "candidate",
     "graph",
     "candidate_graph",
@@ -234,34 +266,33 @@ _CLARIFY_FORBIDDEN_KEYS = {
     "queue_allowed",
 }
 
+# Legacy alias — kept for callers that reference the old name.
+_CLARIFY_FORBIDDEN_KEYS = _NON_APPLYABLE_FORBIDDEN_KEYS
+
 
 def _format_clarify_markdown(message: Any) -> str:
     text = message.strip() if isinstance(message, str) else ""
     if not text:
         text = "What detail should I use before continuing?"
-    if "Options:" in text:
-        return text
-    if not any(mark in text for mark in ("?", "Would you like to", "Could you")):
-        text = f"Could you clarify: {text.rstrip(':')}"
-    return (
-        text.rstrip()
-        + "\n\nOptions:\n"
-        + "- Provide the missing detail explicitly.\n"
-        + "- Ask me to inspect the current graph before editing."
-    )
+    return text
 
 
-def _strip_clarify_forbidden_fields(value: Any) -> Any:
+def _strip_non_applyable_forbidden_fields(value: Any) -> Any:
+    """Strip candidate/apply/eligibility fields from non-applyable route envelopes."""
     if isinstance(value, dict):
         stripped: dict[str, Any] = {}
         for key, item in value.items():
-            if key in _CLARIFY_FORBIDDEN_KEYS or key.startswith("candidate_"):
+            if key in _NON_APPLYABLE_FORBIDDEN_KEYS or key.startswith("candidate_"):
                 continue
-            stripped[key] = _strip_clarify_forbidden_fields(item)
+            stripped[key] = _strip_non_applyable_forbidden_fields(item)
         return stripped
     if isinstance(value, list):
-        return [_strip_clarify_forbidden_fields(item) for item in value]
+        return [_strip_non_applyable_forbidden_fields(item) for item in value]
     return value
+
+
+# Legacy alias kept for callers that reference the old name.
+_strip_clarify_forbidden_fields = _strip_non_applyable_forbidden_fields
 
 
 def _sanitize_clarify_payload(payload: Mapping[str, Any]) -> dict[str, Any]:
@@ -297,15 +328,40 @@ def _sanitize_clarify_payload(payload: Mapping[str, Any]) -> dict[str, Any]:
     internal_outcome = sanitized.get("internal_outcome")
     if isinstance(internal_outcome, Mapping) and internal_outcome.get("kind") == "clarify":
         sanitized["internal_outcome"] = {"kind": "clarify", "question": markdown}
-    return _strip_clarify_forbidden_fields(sanitized)
+    return _strip_non_applyable_forbidden_fields(sanitized)
+
+
+_NON_APPLYABLE_ROUTES = frozenset({"clarify", "respond", "inspect", "research"})
 
 
 def _serialize_executor_result(result: Any) -> dict[str, Any]:
+    """Serialise an executor result, preferring durable envelope fields.
+
+    Compatibility fields are layered under durable fields so the canonical
+    edit-envelope shape (``session_id``, ``turn_id``, ``outcome``,
+    ``apply_eligibility``, etc.) always wins.  Non-applyable routes
+    (clarify/respond/inspect/research) have candidate/apply fields stripped;
+    clarify routes additionally receive clarification-specific formatting.
+    """
     serialized = _to_serializable(result)
     if not isinstance(serialized, dict):
         serialized = {"ok": False, "error": "Non-dict executor result."}
     compatibility = _executor_compatibility_fields(serialized)
-    return _sanitize_clarify_payload({**compatibility, **serialized})
+    # Durable fields (serialized) overwrite synthesized compatibility fields.
+    merged = {**compatibility, **serialized}
+    route = merged.get("route") if isinstance(merged.get("route"), str) else ""
+    outcome = merged.get("outcome")
+    is_clarify = (
+        route == "clarify"
+        or (isinstance(outcome, Mapping) and outcome.get("kind") == "clarify")
+    )
+    # Non-applyable routes: strip candidate/apply/eligibility fields.
+    if route in _NON_APPLYABLE_ROUTES:
+        merged = _strip_non_applyable_forbidden_fields(merged)
+    # Clarify routes: apply clarify-specific formatting.
+    if is_clarify:
+        merged = _sanitize_clarify_payload(merged)
+    return merged
 
 
 def _handle_agent_executor_submit(
@@ -330,8 +386,290 @@ def _handle_agent_executor_submit(
         return _validated_failure_response("agent_executor", failure), 400
     result = run_executor(request, client_id=client_id)
     response = _serialize_executor_result(result)
+    # T7/T9: Durable turn writer for executor-only non-applyable turns
+    # (clarify/inspect/respond/research).  When the executor skips implementation,
+    # no durable response is produced by handle_agent_edit.  Allocate a lightweight
+    # turn and write request/response/chat artifacts so the frontend can rehydrate
+    # from canonical durable storage (SD1, SD2).
+    response = _maybe_write_executor_only_durable_turn(
+        response=response,
+        result=result,
+        payload=payload,
+        request=request,
+    )
     status = 200 if response.get("ok") is not False else 500
     return response, status
+
+
+# ── T7: Lightweight durable executor-only turn writer ──────────────────────────
+
+# Routes for which the executor skips the implement phase entirely.  These
+# turns still need durable session/turn/artifact bookkeeping so the UI can
+# rehydrate from canonical storage (SD1: backend is the source of truth).
+_EXECUTOR_ONLY_NON_APPLYABLE_ROUTES = frozenset({"clarify", "inspect", "respond", "research"})
+
+
+def _maybe_write_executor_only_durable_turn(
+    *,
+    response: dict[str, Any],
+    result: Any,
+    payload: dict[str, Any],
+    request: Any,
+) -> dict[str, Any]:
+    """Allocate a durable turn and write artifacts for executor-only non-applyable turns.
+
+    Returns the *response* unchanged (or enriched with durable metadata) when
+    the executor result already carries a ``durable_response`` from
+    ``handle_agent_edit`` (revise/adapt routes).  For clarify/inspect/respond/
+    research the executor skips the implement phase entirely, so this function
+    provides the missing durable bookkeeping.
+    """
+    # ── Guard: only act when durable metadata is missing and the route is non-applyable ──
+    route = response.get("route") if isinstance(response.get("route"), str) else ""
+    if route not in _EXECUTOR_ONLY_NON_APPLYABLE_ROUTES:
+        # revise/adapt — handle_agent_edit already wrote durable artifacts
+        return response
+
+    has_durable_session_id = isinstance(response.get("session_id"), str) and response["session_id"].strip()
+    has_durable_turn_id = isinstance(response.get("turn_id"), str) and response["turn_id"].strip()
+    if has_durable_session_id and has_durable_turn_id:
+        # Already has durable metadata from a prior allocation (e.g. idempotency replay)
+        return response
+
+    # ── Only allocate a turn when the executor succeeded ──
+    if response.get("ok") is False:
+        return response
+
+    session_id_raw = payload.get("session_id")
+    session_id = (
+        session_id_raw.strip()
+        if isinstance(session_id_raw, str) and session_id_raw.strip()
+        else uuid.uuid4().hex
+    )
+
+    session_root = _SESSION_ROOT
+    idempotency_key = payload.get("idempotency_key") if isinstance(payload.get("idempotency_key"), str) else None
+
+    try:
+        # Build a compact request-payload representation for the artifact.
+        query_text_raw = getattr(request, "query", "") or payload.get("query") or payload.get("task") or ""
+        query_text = query_text_raw if isinstance(query_text_raw, str) else ""
+        request_artifact_payload: dict[str, Any] = {
+            "query": query_text,
+            "task": query_text,
+            "session_id": session_id,
+        }
+        if hasattr(request, "graph") and request.graph is not None:
+            request_artifact_payload["graph"] = dict(request.graph) if isinstance(request.graph, dict) else request.graph
+
+        allocation = _session_allocate_turn(
+            session_root=session_root,
+            session_id=session_id,
+            request_payload=request_artifact_payload,
+            idempotency_key=idempotency_key,
+        )
+
+        if allocation.replay is not None:
+            # A prior idempotent response already exists — return it.
+            return dict(allocation.replay.response)
+        if allocation.conflict is not None:
+            # Idempotency conflict — don't overwrite; return original response.
+            return response
+
+        context = allocation.context
+        turn_dir = allocation.turn_dir
+
+        # ── Write request.json ──
+        write_json_artifact(turn_dir / "request.json", request_artifact_payload)
+
+        # ── Stamp durable metadata on the response ──
+        response_path = turn_dir / "response.json"
+        stamped = dict(response)
+        stamped["session_id"] = context.session_id
+        stamped["turn_id"] = context.turn_id
+        stamped["session_path"] = str(session_dir_for(session_root, context.session_id))
+        stamped["session_path_resolved"] = str(session_dir_for(session_root, context.session_id).resolve())
+        stamped["detail_json_path"] = str(response_path)
+        stamped["detail_json_path_resolved"] = str(response_path.resolve())
+        stamped["query"] = query_text
+        stamped["task"] = query_text
+        if context.baseline_turn_id is not None:
+            stamped["baseline_turn_id"] = context.baseline_turn_id
+
+        baseline_state = allocation.state
+        baseline_graph_hash = baseline_state.get("baseline_graph_hash") if isinstance(baseline_state, dict) else None
+        if isinstance(baseline_graph_hash, str):
+            stamped["baseline_graph_hash"] = baseline_graph_hash
+
+        # ── Non-applyable: no candidate, graph unchanged, clear reason ──
+        stamped["apply_eligibility"] = apply_eligibility_payload(
+            ApplyEligibility(
+                applyable=False,
+                reason="no_candidate",
+                message="No candidate is available to apply.",
+            ),
+            canvas_apply_allowed=False,
+            queue_allowed=False,
+        ).get("apply_eligibility", {
+            "applyable": False,
+            "reason": "no_candidate",
+            "message": "No candidate is available to apply.",
+            "warnings": [],
+        })
+        stamped["apply_eligible"] = False
+        stamped["apply_allowed"] = False
+        stamped["canvas_apply_allowed"] = False
+        stamped["queue_allowed"] = False
+        stamped["graph_unchanged"] = True
+        stamped["no_candidate_reason"] = "route_not_applyable"
+
+        outcome = stamped.get("outcome")
+        if not isinstance(outcome, dict):
+            # Synthesise a noop or clarify outcome based on route
+            if route == "clarify":
+                reply_text = stamped.get("reply") or stamped.get("message") or ""
+                stamped["outcome"] = {
+                    "kind": "clarify",
+                    "question": reply_text if isinstance(reply_text, str) else "",
+                    "clarification": {"message": reply_text if isinstance(reply_text, str) else ""},
+                }
+            else:
+                stamped["outcome"] = {
+                    "kind": "noop",
+                    "reason": "Executor-only non-applyable turn.",
+                }
+
+        if route == "clarify":
+            stamped = _sanitize_clarify_payload(stamped)
+
+        # ── Write response.json ──
+        write_json_artifact(response_path, stamped)
+
+        # ── Write chat.json (lightweight) ──
+        _write_executor_only_chat_artifact(
+            turn_dir=turn_dir,
+            context=context,
+            response=stamped,
+            route=route,
+        )
+
+        # ── Record idempotent response ──
+        _session_record_idempotent_response(
+            session_root=session_root,
+            session_id=session_id,
+            scope="edit",
+            idempotency_key=idempotency_key,
+            request_hash=allocation.request_hash,
+            response=stamped,
+            response_path=response_path,
+            operation="edit",
+            turn_id=context.turn_id,
+        )
+
+        return stamped
+    except Exception:
+        # Best-effort: durable turn writing failures must not break the
+        # executor response path.  Log and return the original response.
+        _LOGGER.warning(
+            "Executor-only durable turn write failed for session=%s route=%s (best-effort)",
+            session_id,
+            route,
+            exc_info=True,
+        )
+        return response
+
+
+def _write_executor_only_chat_artifact(
+    *,
+    turn_dir: Path,
+    context: Any,
+    response: dict[str, Any],
+    route: str,
+) -> None:
+    """Best-effort write of ``chat.json`` for an executor-only non-applyable turn.
+
+    Follows the same shape as ``_write_turn_chat_artifact`` in ``edit.py``
+    so ``read_session_chat`` can consume executor-only turns uniformly.
+
+    For ``research`` and ``respond`` routes, includes bounded evidence
+    (research summary/sources) and route metadata alongside chronological
+    chat history.  Candidate, apply, hash, and rebaseline metadata are
+    intentionally omitted for non-applyable routes.
+    """
+    agent_text_raw = response.get("reply") or response.get("message") or ""
+    agent_text: str = agent_text_raw if isinstance(agent_text_raw, str) else ""
+    if not agent_text.strip():
+        agent_text = "The agent inspected the graph and replied."
+
+    user_query = response.get("query") or response.get("task") or ""
+    if not isinstance(user_query, str):
+        user_query = ""
+
+    outcome_payload = response.get("outcome")
+    agent_msg: dict[str, Any] = {
+        "role": "agent",
+        "text": agent_text,
+        "turn_id": context.turn_id,
+        "session_id": context.session_id,
+    }
+    if isinstance(outcome_payload, dict):
+        agent_msg["outcome"] = dict(outcome_payload)
+
+    chat_record: dict[str, Any] = {
+        "session_id": context.session_id,
+        "turn_id": context.turn_id,
+        "route": route,
+        "session_path": str(turn_dir.parent.parent),
+        "turn_path": str(turn_dir),
+        "response_path": str(turn_dir / "response.json"),
+        "detail_json_path": str(turn_dir / "response.json"),
+        "messages": [
+            {
+                "role": "user",
+                "text": user_query,
+                "turn_id": context.turn_id,
+                "session_id": context.session_id,
+            },
+            agent_msg,
+        ],
+    }
+
+    # ── Bounded evidence for research / respond routes ──────────────────
+    if route in {"research", "respond"}:
+        evidence = response.get("evidence")
+        if isinstance(evidence, dict):
+            research_evidence = evidence.get("research")
+            if isinstance(research_evidence, dict):
+                summary = research_evidence.get("summary")
+                if isinstance(summary, str) and summary.strip():
+                    # Truncate long summaries for chat-readability.
+                    chat_record["research_summary"] = (
+                        summary[:512] + "…" if len(summary) > 512 else summary
+                    )
+                sources = research_evidence.get("sources")
+                if isinstance(sources, list) and sources:
+                    chat_record["research_source_count"] = len(sources)
+                warnings_list = research_evidence.get("warnings")
+                if isinstance(warnings_list, list) and warnings_list:
+                    chat_record["research_warnings"] = [
+                        str(w)[:256] for w in warnings_list[:6]
+                    ]
+
+    chat_path = turn_dir / "chat.json"
+    try:
+        turn_dir.mkdir(parents=True, exist_ok=True)
+        import json as _json
+
+        chat_path.write_text(
+            _json.dumps(chat_record, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+    except (OSError, ValueError, TypeError) as exc:
+        _LOGGER.warning(
+            "chat.json write failed for executor-only turn %s (best-effort): %s",
+            context.turn_id,
+            exc,
+        )
 
 
 def _session_root_path(session_root: Any) -> Path:

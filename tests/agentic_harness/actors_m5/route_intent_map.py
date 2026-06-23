@@ -8,11 +8,18 @@ rubric can verify route → phase gates → Apply eligibility.
 from __future__ import annotations
 
 import json
+import time
 from pathlib import Path
 from typing import Any
 from unittest import mock
 
-from vibecomfy.executor.contracts import ClassifyDecision, ExecutorRequest
+from tests.agentic_harness.actors import _write_command_log_jsonl
+from vibecomfy.executor.contracts import (
+    ClassifyDecision,
+    ExecutorRequest,
+    ImplementationResult,
+    ResearchResult,
+)
 from vibecomfy.executor.core import run_executor
 
 
@@ -41,12 +48,11 @@ def _fake_classify_for_route(expected_route: str, intent: str, task: str) -> Any
 
 
 def _fake_reply(
-    query: str,
+    _request: ExecutorRequest,
+    _spec: Any,
     *,
-    route: str = "",
-    model: str = "",
     plan: ClassifyDecision | None = None,
-    **kwargs: Any,
+    **_kwargs: Any,
 ) -> str:
     return f"reply for {plan.route if plan else 'unknown'}"
 
@@ -56,6 +62,18 @@ def _fake_handle_agent_edit(payload: dict[str, Any], **kwargs: Any) -> dict[str,
         "graph": payload.get("graph"),
         "message": "Edited graph.",
     }
+
+
+def _fake_research(*_args: Any, **_kwargs: Any) -> ResearchResult:
+    return ResearchResult(summary="Synthetic route-intent research.")
+
+
+def _fake_implementation(
+    request: ExecutorRequest,
+    *_args: Any,
+    **_kwargs: Any,
+) -> ImplementationResult:
+    return ImplementationResult(message="Edited graph.", graph=request.graph)
 
 
 def build_m5_route_intent_map_evidence(report_dir: Path) -> dict[str, Any]:
@@ -80,9 +98,9 @@ def build_m5_route_intent_map_evidence(report_dir: Path) -> dict[str, Any]:
         )
         with (
             mock.patch("vibecomfy.executor.core.run_classify_turn", side_effect=classify_fn),
-            mock.patch("vibecomfy.executor.core.run_reply_turn", side_effect=_fake_reply),
-            mock.patch("vibecomfy.executor.core.handle_agent_edit", side_effect=_fake_handle_agent_edit),
-            mock.patch("vibecomfy.executor.research.build_search_corpus", return_value=[]),
+            mock.patch("vibecomfy.executor.core._run_reply", side_effect=_fake_reply),
+            mock.patch("vibecomfy.executor.core._run_research", side_effect=_fake_research),
+            mock.patch("vibecomfy.executor.core._run_implement", side_effect=_fake_implementation),
         ):
             result = run_executor(request)
 
@@ -111,8 +129,28 @@ def build_m5_route_intent_map_evidence(report_dir: Path) -> dict[str, Any]:
             })
             for r in records
         )
+        + "\n"
+        + json.dumps({"op": "finalize_metadata", "status": "completed"})
         + "\n",
         encoding="utf-8",
+    )
+
+    ts = time.time()
+    _write_command_log_jsonl(
+        root / "command_log.jsonl",
+        [
+            {
+                "ts": ts + index * 0.1,
+                "command": "executor",
+                "argv": ["executor", "route-intent", record["expected_route"]],
+                "exit_code": 0,
+                "summary": (
+                    "Synthetic: executor produced "
+                    f"{record['result_route']} with apply_eligible={record['apply_eligible']}"
+                ),
+            }
+            for index, record in enumerate(records)
+        ],
     )
 
     (root / "report.md").write_text(
@@ -124,5 +162,6 @@ def build_m5_route_intent_map_evidence(report_dir: Path) -> dict[str, Any]:
         "scenario": "route-intent-map",
         "route_map_path": str(route_map_path),
         "actions_path": str(actions_path),
+        "command_log_path": str(root / "command_log.jsonl"),
         "report_path": str(root / "report.md"),
     }

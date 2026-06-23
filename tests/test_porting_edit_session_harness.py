@@ -411,6 +411,62 @@ def test_case_c_add_node_with_link(flat_ui: dict[str, Any]) -> None:
     )
 
 
+def test_recovery_add_nodes_anchor_to_downstream_rewire_after_failed_replacement_batch(
+    flat_ui: dict[str, Any],
+) -> None:
+    """Recovery nodes should not be dumped past the graph right edge.
+
+    This reproduces the SDXL replacement failure shape: a first batch tries an
+    invalid replacement loader, but still lands field edits, rewires, and deletes.
+    The recovery batch then adds a loader/text-encode cluster and wires it back
+    into the existing sampler/decoder. Placement must infer the downstream
+    rewire anchors even though the original upstream nodes are already gone.
+    """
+    import copy
+
+    ui = copy.deepcopy(flat_ui)
+    session = EditSession(ui, schema_provider=_flat_schema_provider())
+    session.render()
+
+    failed = session.apply_batch(
+        "dualclip = DualCLIPLoader(ckpt_name='juggernautXL_v8Rundiffusion.safetensors')\n"
+        "emptylatentimage.height = 1024\n"
+        "emptylatentimage.width = 1024\n"
+        "ksampler.latent_image = emptylatentimage.latent\n"
+        "del positive\n"
+        "del negative\n"
+        "del checkpointloadersimple\n"
+        "done()\n"
+    )
+    assert failed.ok is False
+    assert any(result.landed for result in failed.statements)
+
+    recovered = session.apply_batch(
+        "checkpointloader = CheckpointLoaderSimple(ckpt_name='juggernautXL_v8Rundiffusion.safetensors')\n"
+        "positive = CLIPTextEncode(clip=checkpointloader.clip, text='a beautiful landscape, masterpiece, best quality')\n"
+        "negative = CLIPTextEncode(clip=checkpointloader.clip, text='bad quality, worst quality, text, watermark')\n"
+        "ksampler.model = checkpointloader.model\n"
+        "ksampler.positive = positive.conditioning\n"
+        "ksampler.negative = negative.conditioning\n"
+        "ksampler.latent_image = emptylatentimage.latent\n"
+        "vaedecode.vae = checkpointloader.vae\n"
+        "done()\n"
+    )
+    assert recovered.ok is True
+
+    by_type = {}
+    for node in session.working_ui["nodes"]:
+        by_type.setdefault(node["type"], []).append(node)
+    sampler = by_type["KSampler"][0]
+    decoder = by_type["VAEDecode"][0]
+    loader = by_type["CheckpointLoaderSimple"][0]
+    text_nodes = by_type["CLIPTextEncode"]
+
+    assert loader["pos"][0] < sampler["pos"][0]
+    assert all(node["pos"][0] < decoder["pos"][0] for node in text_nodes)
+    assert max(node["pos"][0] for node in [loader, *text_nodes]) < decoder["pos"][0]
+
+
 # ═══════════════════════════════════════════════════════════════════════
 # Case (d): Subgraph internal edit — set_mode on subgraph node
 # ═══════════════════════════════════════════════════════════════════════

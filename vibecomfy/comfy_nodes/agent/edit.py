@@ -70,7 +70,11 @@ from .session import (
     structural_graph_hash,
     turn_dir_for,
 )
-from vibecomfy.executor.contracts import RevisionEvidence
+from vibecomfy.executor.contracts import (
+    ReadinessReport,
+    RevisionEvidence,
+    TopologyFindings,
+)
 from vibecomfy.executor.revision_evidence import (
     collect_readiness_evidence,
     collect_topology_evidence,
@@ -267,11 +271,18 @@ def _duration_ms(start: float) -> int:
 
 
 def _total_landed_edit_count(state: AgentEditState) -> int:
-    count = len(state.batch_field_changes)
+    # Only non-noop field changes count as landed edits.
+    real = _real_field_changes(tuple(state.batch_field_changes or ()))
+    count = len(real)
     if count > 0:
         return count
     total = 0
     for turn in state.batch_turns:
+        # Prefer the actual field changes list; if it exists and is empty,
+        # the turn produced no real edits (only no-ops) and should not count.
+        field_changes = turn.get("field_changes")
+        if isinstance(field_changes, list) and not field_changes:
+            continue
         landed = turn.get("landed_op_count")
         if isinstance(landed, int) and landed > 0:
             total += landed
@@ -563,20 +574,24 @@ def _first_link_source_label(
 def _structural_change_phrases(state: AgentEditState, labels: Mapping[str, str]) -> list[str]:
     before_by_uid = _ui_node_by_uid(state.graph)
     after_by_uid = _ui_node_by_uid(state.ui_payload)
-    if not before_by_uid or not after_by_uid:
+    if not after_by_uid:
         return []
     added = [after_by_uid[uid] for uid in sorted(set(after_by_uid) - set(before_by_uid))]
     removed = [before_by_uid[uid] for uid in sorted(set(before_by_uid) - set(after_by_uid))]
     phrases: list[str] = []
     if added:
         parts: list[str] = []
-        for node in added[:3]:
+        for node in added[:8]:
             node_text = _node_phrase(node)
             source = _first_link_source_label(node, state.ui_payload, labels)
             if source:
                 node_text = f"{node_text} fed by {source}"
             parts.append(node_text)
         text = _join_human_list(parts)
+        remaining = len(added) - len(parts)
+        if remaining > 0:
+            noun = "other node" if remaining == 1 else "other nodes"
+            text = f"{text}, plus {remaining} {noun}"
         article = _article_for(parts[0]) if len(parts) == 1 else ""
         phrases.append(f"added {article + ' ' if article else ''}{text}")
     if removed:
@@ -592,7 +607,7 @@ def _join_human_list(parts: list[str]) -> str:
         return parts[0]
     if len(parts) == 2:
         return f"{parts[0]} and {parts[1]}"
-    return f"{parts[0]}, {parts[1]}, and {parts[2]}"
+    return f"{', '.join(parts[:-1])}, and {parts[-1]}"
 
 
 def _human_change_phrase(
@@ -767,7 +782,7 @@ def _change_details_payload(state: AgentEditState, context: TurnContext) -> dict
     gate_b = gate_snapshot.get("isomorphic_ok") or gate_snapshot.get("ui_fidelity_ok")
     operations = _operation_detail_payload(tuple(state.batch_field_changes or ()))
     return {
-        "landed_operation_count": len(operations),
+        "landed_operation_count": _total_landed_edit_count(state),
         "done_summary": state.batch_done_summary or "",
         "final_summary": state.batch_final_summary or "",
         "gate_a": _json_safe(gate_a),
@@ -1892,31 +1907,41 @@ def read_session_chat(
             turn_ts = None
 
         # Extract display messages from the chat record.
+        # Defensively skip malformed entries (non-dict, missing role,
+        # non-string text) so a corrupt chat.json in one turn cannot
+        # poison the entire session history read.
         messages = chat_record.get("messages", [])
         if isinstance(messages, list):
             for msg in messages:
-                if isinstance(msg, dict) and msg.get("role") in ("user", "agent"):
-                    display_msg = {
-                        "role": msg["role"],
-                        "text": msg.get("text", ""),
-                        "turn_id": msg.get("turn_id", turn_id),
-                    }
-                    if turn_ts is not None:
-                        display_msg["timestamp"] = turn_ts
-                    stamped_outcome = _stamped_message_outcome(msg.get("outcome"))
-                    if msg["role"] == "agent" and stamped_outcome is None:
-                        stamped_outcome = fallback_agent_outcome
-                    if msg["role"] == "agent" and stamped_outcome is not None:
-                        display_msg["outcome"] = stamped_outcome
-                    if msg["role"] == "agent":
-                        # Carry a trimmed view of the agent's per-step reasoning so a
-                        # reloaded panel's diagnostic report can show what the agent
-                        # tried and why the engine rejected it (the on-disk
-                        # change_details is otherwise unreachable after reload).
-                        reasoning = _compact_chat_change_details(msg.get("change_details"))
-                        if reasoning is not None:
-                            display_msg["change_details"] = reasoning
-                    all_messages.append(display_msg)
+                if not isinstance(msg, dict):
+                    continue
+                role = msg.get("role")
+                if role not in ("user", "agent"):
+                    continue
+                text = msg.get("text", "")
+                if not isinstance(text, str):
+                    text = str(text) if text is not None else ""
+                display_msg = {
+                    "role": role,
+                    "text": text,
+                    "turn_id": msg.get("turn_id", turn_id),
+                }
+                if turn_ts is not None:
+                    display_msg["timestamp"] = turn_ts
+                stamped_outcome = _stamped_message_outcome(msg.get("outcome"))
+                if role == "agent" and stamped_outcome is None:
+                    stamped_outcome = fallback_agent_outcome
+                if role == "agent" and stamped_outcome is not None:
+                    display_msg["outcome"] = stamped_outcome
+                if role == "agent":
+                    # Carry a trimmed view of the agent's per-step reasoning so a
+                    # reloaded panel's diagnostic report can show what the agent
+                    # tried and why the engine rejected it (the on-disk
+                    # change_details is otherwise unreachable after reload).
+                    reasoning = _compact_chat_change_details(msg.get("change_details"))
+                    if reasoning is not None:
+                        display_msg["change_details"] = reasoning
+                all_messages.append(display_msg)
         latest_turn_id = turn_id
 
     # Take the last N messages for display.
@@ -2863,11 +2888,11 @@ def _build_precedent_adaptation_prompt(
 def _route_blocks_apply(route: str | None) -> bool:
     """Return True when *route* forbids Apply eligibility.
 
-    inspect routes only observe the graph without modifying it.
-    clarify routes ask the user a question and do not produce a candidate.
-    Both are semantically inapplicable for Apply.
+    Non-applyable routes (clarify, respond, inspect, research) do not
+    produce edits and must never carry a candidate, apply_eligible flag,
+    or apply-eligibility payload.  Only revise and adapt are apply-eligible.
     """
-    return _canonical_agent_edit_route(route) in {"inspect", "clarify"}
+    return _canonical_agent_edit_route(route) in {"clarify", "respond", "inspect", "research"}
 
 
 def _canonical_agent_edit_route(route: str | None) -> str | None:
@@ -2977,6 +3002,215 @@ def _revision_no_candidate_reason(evidence: RevisionEvidence) -> str | None:
     if evidence.topology.missing_graph:
         return "no_graph"
     return "no_changes"
+
+
+def _executor_classification_text(state: AgentEditState) -> str:
+    classification = state.request_payload.get("executor_classification")
+    if isinstance(classification, Mapping):
+        return " ".join(
+            str(classification.get(key) or "")
+            for key in ("plan_summary", "intent", "route", "task")
+        )
+    return ""
+
+
+def _effective_implementation_task(state: AgentEditState) -> str:
+    classification_text = _executor_classification_text(state).strip()
+    if not classification_text:
+        return state.task
+    return (
+        f"{state.task}\n\n"
+        "Resolved executor plan/context:\n"
+        f"{classification_text}"
+    )
+
+
+def _runtime_code_additive_request(state: AgentEditState) -> bool:
+    classification_text = _executor_classification_text(state)
+    task = (
+        f"{state.task} {state.request_payload.get('query') or ''} "
+        f"{classification_text}"
+    ).lower()
+    return (
+        (
+            "code node" in task
+            or "runtime code" in task
+            or "vibecomfy.exec" in task
+            or "imagecode" in task
+            or ("pil" in task and "transformation" in task)
+        )
+        and ("pil" in task or "image" in task or "frame" in task or "process" in task)
+    )
+
+
+def _executor_requested_implementation(state: AgentEditState) -> bool:
+    classification = state.request_payload.get("executor_classification")
+    if isinstance(classification, Mapping) and "implement" in classification:
+        return bool(classification.get("implement"))
+    return _canonical_agent_edit_route(state.route) in {"revise", "adapt", "dev"}
+
+
+def _state_runtime_execution_requested(state: AgentEditState) -> bool:
+    runtime = state.request_payload.get("runtime")
+    return isinstance(runtime, Mapping) and bool(runtime.get("execution_requested"))
+
+
+def _empty_graph_authoring_request(state: AgentEditState) -> bool:
+    evidence = state.revision_evidence
+    if evidence is None or not evidence.topology.missing_graph:
+        return False
+    if _state_runtime_execution_requested(state):
+        return False
+    return _executor_requested_implementation(state)
+
+
+_TEXT_TO_IMAGE_SEED_TYPES = (
+    "CheckpointLoaderSimple",
+    "CLIPTextEncode",
+    "EmptyLatentImage",
+    "KSampler",
+    "VAEDecode",
+    "SaveImage",
+)
+
+
+def _seed_focus_types_for_authoring(state: AgentEditState) -> set[str]:
+    task = _effective_implementation_task(state).lower()
+    if not _empty_graph_authoring_request(state):
+        return set()
+    if (
+        "sd1.5" in task
+        or "sd 1.5" in task
+        or "sd15" in task
+        or "stable diffusion" in task
+        or "text-to-image" in task
+        or "text to image" in task
+    ):
+        return set(_TEXT_TO_IMAGE_SEED_TYPES)
+    return set()
+
+
+def _can_attempt_local_additive_revise(state: AgentEditState) -> bool:
+    evidence = state.revision_evidence
+    if evidence is None:
+        return False
+    topology = evidence.topology
+    readiness = evidence.readiness
+    if _empty_graph_authoring_request(state):
+        if topology.dangling_links or topology.absent_endpoint_nodes:
+            return False
+        if readiness.no_gpu_detected or readiness.validation_errors or readiness.readiness_blockers:
+            return False
+        return True
+    if not _runtime_code_additive_request(state):
+        return False
+    if topology.missing_graph or topology.dangling_links or topology.absent_endpoint_nodes:
+        return False
+    if readiness.no_gpu_detected or readiness.validation_errors or readiness.readiness_blockers:
+        return False
+    return bool(
+        topology.unknown_class_types
+        or topology.missing_required_inputs
+        or readiness.missing_models
+        or readiness.missing_node_packs
+    )
+
+
+def _stable_blocker_key(value: Any) -> str:
+    try:
+        return json.dumps(value, sort_keys=True, default=str)
+    except TypeError:
+        return str(value)
+
+
+def _subtract_existing_blockers(
+    current: tuple[Any, ...],
+    existing: tuple[Any, ...],
+) -> tuple[Any, ...]:
+    existing_keys = {_stable_blocker_key(item) for item in existing}
+    return tuple(item for item in current if _stable_blocker_key(item) not in existing_keys)
+
+
+def _localized_additive_scoped_evidence(
+    state: AgentEditState,
+    *,
+    candidate_topology: TopologyFindings,
+    candidate_readiness: ReadinessReport,
+) -> tuple[
+    TopologyFindings | None,
+    ReadinessReport | None,
+    TopologyFindings | None,
+    ReadinessReport | None,
+]:
+    if not _can_attempt_local_additive_revise(state) or state.revision_evidence is None:
+        return None, None, None, None
+    topology = state.revision_evidence.topology
+    readiness = state.revision_evidence.readiness
+    empty_graph_authoring = _empty_graph_authoring_request(state)
+    filtered_original_topology = TopologyFindings(
+        missing_graph=False if empty_graph_authoring else topology.missing_graph,
+        dangling_links=topology.dangling_links,
+        absent_endpoint_nodes=topology.absent_endpoint_nodes,
+        schema_available=topology.schema_available,
+        summary=(
+            "pre-existing empty-graph authoring baseline ignored for new workflow"
+            if empty_graph_authoring
+            else "pre-existing unknown/custom-node blockers ignored for localized "
+            "runtime code-node addition"
+        ),
+    )
+    filtered_original_readiness = ReadinessReport(
+        validation_errors=readiness.validation_errors,
+        no_gpu_detected=readiness.no_gpu_detected,
+        readiness_blockers=readiness.readiness_blockers,
+        object_info_available=readiness.object_info_available,
+        summary=(
+            "pre-existing missing model/node-pack blockers ignored for localized "
+            "runtime code-node addition"
+        ),
+    )
+    filtered_candidate_topology = TopologyFindings(
+        missing_graph=candidate_topology.missing_graph,
+        dangling_links=candidate_topology.dangling_links,
+        absent_endpoint_nodes=candidate_topology.absent_endpoint_nodes,
+        unknown_class_types=_subtract_existing_blockers(
+            candidate_topology.unknown_class_types,
+            topology.unknown_class_types,
+        ),
+        missing_required_inputs=_subtract_existing_blockers(
+            candidate_topology.missing_required_inputs,
+            topology.missing_required_inputs,
+        ),
+        schema_available=candidate_topology.schema_available,
+        summary=(
+            "pre-existing unknown/custom-node blockers subtracted for localized "
+            "runtime code-node addition"
+        ),
+    )
+    filtered_candidate_readiness = ReadinessReport(
+        missing_models=_subtract_existing_blockers(
+            candidate_readiness.missing_models,
+            readiness.missing_models,
+        ),
+        missing_node_packs=_subtract_existing_blockers(
+            candidate_readiness.missing_node_packs,
+            readiness.missing_node_packs,
+        ),
+        validation_errors=candidate_readiness.validation_errors,
+        no_gpu_detected=candidate_readiness.no_gpu_detected,
+        readiness_blockers=candidate_readiness.readiness_blockers,
+        object_info_available=candidate_readiness.object_info_available,
+        summary=(
+            "pre-existing missing model/node-pack blockers subtracted for localized "
+            "runtime code-node addition"
+        ),
+    )
+    return (
+        filtered_original_topology,
+        filtered_original_readiness,
+        filtered_candidate_topology,
+        filtered_candidate_readiness,
+    )
 
 
 def _session_reference_map_for_evidence(
@@ -3352,11 +3586,33 @@ def _finalize_revision_evidence_with_candidate(
             else ()
         ),
     )
+    scoped_topology = state.revision_evidence.topology
+    scoped_readiness = state.revision_evidence.readiness
+    (
+        localized_topology,
+        localized_readiness,
+        localized_candidate_topology,
+        localized_candidate_readiness,
+    ) = _localized_additive_scoped_evidence(
+        state,
+        candidate_topology=candidate_topology,
+        candidate_readiness=candidate_readiness,
+    )
+    if (
+        localized_topology is not None
+        and localized_readiness is not None
+        and localized_candidate_topology is not None
+        and localized_candidate_readiness is not None
+    ):
+        scoped_topology = localized_topology
+        scoped_readiness = localized_readiness
+        candidate_topology = localized_candidate_topology
+        candidate_readiness = localized_candidate_readiness
     scoped_diff = compute_scoped_diff(
         state.graph,
         candidate_graph,
-        topology=state.revision_evidence.topology,
-        readiness=state.revision_evidence.readiness,
+        topology=scoped_topology,
+        readiness=scoped_readiness,
         candidate_topology=candidate_topology,
         candidate_readiness=candidate_readiness,
         target_node_ids=_revision_target_node_ids(state, route=route),
@@ -3434,7 +3690,9 @@ def _stage_agent_batch_repl(
     initial_render = session.render()
     present_types = _present_class_types(session)
     focus_types = set(present_types)
-    if _is_code_node_intent(state.task):
+    effective_task = _effective_implementation_task(state)
+    focus_types.update(_seed_focus_types_for_authoring(state))
+    if _is_code_node_intent(effective_task):
         focus_types.add("vibecomfy.exec")
     signature_catalog = session.search(focus_types=sorted(focus_types), formatted=True)
     available_node_names = _format_available_node_names(session.search(formatted=False))
@@ -3450,15 +3708,15 @@ def _stage_agent_batch_repl(
     )
     intent = classification.get("intent") if isinstance(classification, dict) else ""
     prefetch_research = intent == "research" or (
-        not intent and _is_research_intent(state.task)
+        not intent and _is_research_intent(effective_task)
     )
     # explain_graph intent now maps to the executor inspect route, which
     # never reaches the agent-edit pipeline.  Keep the text-pattern fallback
     # for revise / adapt operations where the task reads like a graph
     # explanation (provides helpful context in the batch-REPL prompt).
-    prefetch_explain = not intent and _is_graph_explain_intent(state.task)
+    prefetch_explain = not intent and _is_graph_explain_intent(effective_task)
     prefetch_research_summary = state.executor_research_summary or (
-        _prefetch_research_summary(state.task) if prefetch_research else ""
+        _prefetch_research_summary(effective_task) if prefetch_research else ""
     )
     if prefetch_research_summary and state.executor_research_sources:
         source_lines = [
@@ -3511,6 +3769,8 @@ def _stage_agent_batch_repl(
     done_noop_nudges = 0
     done_error_nudges = 0
     failed_edit_turns = 0
+    last_failed_edit_turn = -1
+    last_successful_edit_turn_after_failure = -1
     request_log: list[dict[str, Any]] = []
     response_log: list[dict[str, Any]] = []
 
@@ -3519,7 +3779,7 @@ def _stage_agent_batch_repl(
         include_full_render = turn_number == 0 or last_landed_count == 0
         node_variable_index = _format_node_variable_index(session)
         messages = build_batch_messages(
-            task=state.task,
+            task=effective_task,
             turn_number=turn_number,
             python_source=(initial_render if turn_number == 0 else current_render)
             if include_full_render
@@ -3951,6 +4211,17 @@ def _stage_agent_batch_repl(
         )
         if turn_failed_edit:
             failed_edit_turns += 1
+            last_failed_edit_turn = turn_number
+        elif effective_landed > 0 and last_failed_edit_turn >= 0:
+            last_successful_edit_turn_after_failure = turn_number
+        unresolved_failed_edit = (
+            last_failed_edit_turn >= 0
+            and last_successful_edit_turn_after_failure < last_failed_edit_turn
+        )
+        turn_is_read_only = effective_landed == 0 and all(
+            str(item.op_kind or "") in {"query", "done", "clarify"}
+            for item in batch_result.statements
+        )
         # Don't honor a premature done(): feed guidance back and let the model
         # self-correct. Two distinct cases, each separately bounded so a genuine
         # no-change request still commits and we can't loop forever:
@@ -3992,6 +4263,15 @@ def _stage_agent_batch_repl(
                         " `consumer.input = up.OUTPUT`), then call done(). If the graph"
                         " genuinely needs no change, call done() again to confirm."
                     )
+            elif unresolved_failed_edit and turn_is_read_only:
+                done_noop_nudges += 1
+                refuse_done = True
+                hint = (
+                    "an earlier edit batch failed after partially mutating the graph."
+                    " A search() is read-only and does NOT repair that incomplete"
+                    " candidate. Use the search result and diagnostics above to"
+                    " construct and wire the missing node(s), then call done()."
+                )
             elif (
                 (turn_number + 1) < max_batches
                 and total_landed == 0
@@ -4057,10 +4337,9 @@ def _stage_agent_batch_repl(
                         "done_summary": done_result.summary,
                     },
                 )
-            state.user_message = (
-                f"{turn_result.message}\n\n{done_result.summary}".strip()
-                if turn_result.message
-                else done_result.summary
+            state.user_message = ensure_sentence_message(
+                turn_result.message,
+                fallback="I made the requested workflow changes.",
             )
             state.report = {
                 "done_summary": done_result.summary,
@@ -4761,16 +5040,7 @@ def _format_clarify_markdown_message(message: Any) -> str:
     text = message.strip() if isinstance(message, str) else ""
     if not text:
         text = "What detail should I use before continuing?"
-    if "Options:" in text:
-        return text
-    if not any(mark in text for mark in ("?", "Would you like to", "Could you")):
-        text = f"Could you clarify: {text.rstrip(':')}"
-    return (
-        text.rstrip()
-        + "\n\nOptions:\n"
-        + "- Provide the missing detail explicitly.\n"
-        + "- Ask me to inspect the current graph before editing."
-    )
+    return text
 
 
 def _strip_clarify_forbidden_response_fields(value: Any) -> Any:
@@ -4970,7 +5240,13 @@ def _build_batch_repl_response(
         internal_outcome,
         response={"candidate": candidate_payload},
     )
-    message = _synthesize_batch_repl_message(state, outcome=internal_outcome)
+    if internal_outcome.kind == "edit":
+        message = ensure_sentence_message(
+            state.user_message,
+            fallback="I made the requested workflow changes.",
+        )
+    else:
+        message = _synthesize_batch_repl_message(state, outcome=internal_outcome)
     change_details = _change_details_payload(state, context)
     response.update(
         turn_envelope(
@@ -5213,6 +5489,7 @@ def _run_batch_repl_product_path(
     if (
         state.revision_evidence is not None
         and not state.revision_evidence.safe_candidate_possible
+        and not _can_attempt_local_additive_revise(state)
     ):
         _run_stage(
             "agent_batch",

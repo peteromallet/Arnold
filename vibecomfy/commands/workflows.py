@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import shlex
 import sys
 from pathlib import Path
 from typing import Any
@@ -205,6 +206,178 @@ def _cmd_workflows_enrich_targets(args: argparse.Namespace) -> int:
     else:
         print(payload, end="")
     return 0
+
+
+def _cmd_workflows_onboard(args: argparse.Namespace) -> int:
+    plan = build_onboarding_plan(
+        source=args.source,
+        ready_id=args.ready_id,
+        out=args.out,
+        public_source=bool(args.public_source),
+        description=args.description,
+        description_file=args.description_file,
+        upload=bool(args.upload),
+        verify_upload=bool(args.verify_upload),
+        dry_run_upload=bool(args.dry_run_upload),
+    )
+    return emit(plan, json=args.json, text_renderer=_render_onboarding_plan)
+
+
+def build_onboarding_plan(
+    *,
+    source: str,
+    ready_id: str,
+    out: str,
+    public_source: bool = False,
+    description: str | None = None,
+    description_file: str | None = None,
+    upload: bool = False,
+    verify_upload: bool = False,
+    dry_run_upload: bool = False,
+) -> dict[str, Any]:
+    """Build the sequenced workflow-onboarding runbook.
+
+    This keeps the human/agent handoff explicit: description enrichment happens
+    after conversion/validation has produced a readable Python workflow, but
+    before any Hivemind upload envelope is built.
+    """
+    description = " ".join(str(description or "").split())
+    description_file = str(description_file or "").strip()
+    has_description = bool(description or description_file)
+    template_filter = ready_id
+    stages: list[dict[str, Any]] = []
+
+    def command(parts: list[str]) -> str:
+        return " ".join(shlex.quote(str(part)) for part in parts if str(part) != "")
+
+    stages.append(
+        {
+            "id": "preflight",
+            "label": "Preflight source workflow",
+            "command": command(["vibecomfy", "port", "check", source, "--json"]),
+            "blocks_upload": True,
+        }
+    )
+    stages.append(
+        {
+            "id": "install_plan",
+            "label": "Identify required custom node packs",
+            "command": command(["vibecomfy", "nodes", "install-plan", source]),
+            "blocks_upload": True,
+        }
+    )
+    stages.append(
+        {
+            "id": "convert",
+            "label": "Convert to readable Python ready template",
+            "command": command(
+                [
+                    "vibecomfy",
+                    "port",
+                    "convert",
+                    source,
+                    "--ready-id",
+                    ready_id,
+                    "--out",
+                    out,
+                    "--json",
+                ]
+            ),
+            "blocks_upload": True,
+        }
+    )
+    stages.append(
+        {
+            "id": "refresh_index",
+            "label": "Refresh template index so upload metadata knows the converted workflow",
+            "command": command(["python", "tools/refresh_template_index.py"]),
+            "blocks_upload": True,
+        }
+    )
+    stages.append(
+        {
+            "id": "validate",
+            "label": "Validate converted Python workflow",
+            "command": command(["vibecomfy", "validate", out]),
+            "blocks_upload": True,
+        }
+    )
+    stages.append(
+        {
+            "id": "describe",
+            "label": "Enrich with a human-readable description",
+            "status": "ready" if has_description else "needs_input",
+            "description": (
+                description
+                or (f"Read from {description_file}" if description_file else "")
+                or "Add a short description of what the workflow does and what is special about it."
+            ),
+            "blocks_upload": not has_description,
+        }
+    )
+
+    upload_allowed = upload and public_source and has_description
+    upload_blockers: list[str] = []
+    if upload and not public_source:
+        upload_blockers.append("source must be marked public with --public-source")
+    if upload and not has_description:
+        upload_blockers.append("description enrichment is required before upload")
+    upload_command = [
+        "python",
+        "scripts/upload_ready_templates_to_hivemind.py",
+        "--only",
+        template_filter,
+    ]
+    if dry_run_upload:
+        upload_command.append("--dry-run")
+    if verify_upload and not dry_run_upload:
+        upload_command.append("--verify")
+    if description_file:
+        upload_command.extend(["--description-file", description_file])
+    elif description:
+        upload_command.extend(["--description", description])
+    stages.append(
+        {
+            "id": "hivemind_upload",
+            "label": "Upload public converted workflow to Hivemind",
+            "status": "ready" if upload_allowed else ("blocked" if upload else "optional"),
+            "command": command(upload_command) if upload_allowed else None,
+            "blockers": upload_blockers,
+            "verify_after_upload": bool(verify_upload and not dry_run_upload),
+            "blocks_upload": False,
+        }
+    )
+
+    return {
+        "producer": "vibecomfy.workflows.onboard",
+        "source": source,
+        "ready_id": ready_id,
+        "out": out,
+        "public_source": public_source,
+        "description_ready": has_description,
+        "upload_requested": upload,
+        "upload_ready": upload_allowed,
+        "stages": stages,
+    }
+
+
+def _render_onboarding_plan(plan: dict[str, Any]) -> str:
+    lines = [
+        f"workflow onboarding: {plan['source']} -> {plan['ready_id']}",
+        f"output: {plan['out']}",
+    ]
+    for idx, stage in enumerate(plan["stages"], start=1):
+        status = stage.get("status")
+        suffix = f" [{status}]" if status else ""
+        lines.append(f"{idx}. {stage['label']}{suffix}")
+        command_text = stage.get("command")
+        if command_text:
+            lines.append(f"   {command_text}")
+        if stage.get("blockers"):
+            lines.append(f"   blocked: {', '.join(stage['blockers'])}")
+        elif stage["id"] == "describe" and stage.get("status") == "needs_input":
+            lines.append("   write a short description before upload")
+    return "\n".join(lines)
 
 
 def enrich_target_manifest(
@@ -509,6 +682,23 @@ def register(subparsers) -> None:
     enrich.add_argument("--output")
     enrich.add_argument("--models-root", type=Path)
     enrich.set_defaults(func=_cmd_workflows_enrich_targets)
+
+    # onboard
+    onboard = workflows_sub.add_parser(
+        "onboard",
+        help="Plan the conversion, validation, description, and optional Hivemind upload sequence.",
+    )
+    onboard.add_argument("source", help="Source ComfyUI workflow JSON or existing workflow path")
+    onboard.add_argument("--ready-id", required=True, help="Ready template id to produce, e.g. video/my_flow")
+    onboard.add_argument("--out", required=True, help="Python ready-template path to write")
+    onboard.add_argument("--description", help="Description to attach before Hivemind upload")
+    onboard.add_argument("--description-file", help="Text file containing the description to attach")
+    onboard.add_argument("--public-source", action="store_true", help="Confirm the source is public and safe to upload")
+    onboard.add_argument("--upload", action="store_true", help="Include a Hivemind upload command if gates pass")
+    onboard.add_argument("--dry-run-upload", action="store_true", help="Make the upload command a dry run")
+    onboard.add_argument("--verify-upload", action="store_true", help="Verify Hivemind read-back after real upload")
+    onboard.add_argument("--json", action="store_true")
+    onboard.set_defaults(func=_cmd_workflows_onboard)
 
     # lens
     lens_cmd = workflows_sub.add_parser("lens")

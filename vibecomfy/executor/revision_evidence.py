@@ -813,13 +813,6 @@ def compute_scoped_diff(
     if not has_any_diff:
         eligibility_blockers.append("no_diff")
 
-    # Check for broad unrelated diff (>50% nodes changed/added/removed).
-    total_orig = len(orig_ids)
-    if total_orig > 0:
-        affected = len(changed_ids) + len(removed_ids) + len(added_ids)
-        if affected / total_orig > 0.5:
-            eligibility_blockers.append("broad_unrelated_diff")
-
     normalized_targets = tuple(
         str(node_id).strip()
         for node_id in target_node_ids
@@ -840,6 +833,18 @@ def compute_scoped_diff(
         target_matched = bool(touched_nodes & set(normalized_targets))
         if not target_matched:
             eligibility_blockers.append("target_mismatch")
+        scoped_material_changes = [
+            node_id
+            for node_id in [*changed_ids, *removed_ids]
+            if node_id not in set(normalized_targets)
+            and (
+                node_id in removed_ids
+                or _node_material_content_hash(orig_node_map.get(node_id, {}))
+                != _node_material_content_hash(cand_node_map.get(node_id, {}))
+            )
+        ]
+        if scoped_material_changes:
+            eligibility_blockers.append("target_scope_violation")
 
     candidate_eligible = (
         len(eligibility_blockers) == 0
@@ -922,6 +927,30 @@ def _node_content_hash(node: dict) -> str:
         serialized = json.dumps(node, sort_keys=True, default=str)
     except (TypeError, ValueError):
         serialized = str(node)
+    return hashlib.sha256(serialized.encode("utf-8")).hexdigest()
+
+
+def _node_material_content_hash(node: dict) -> str:
+    """Stable node hash that ignores output link bookkeeping."""
+    import hashlib
+    import json
+
+    cleaned = _node_for_scoped_diff(node)
+    outputs = cleaned.get("outputs")
+    if isinstance(outputs, list):
+        stripped_outputs = []
+        for output in outputs:
+            if isinstance(output, dict):
+                stripped = dict(output)
+                stripped.pop("links", None)
+                stripped_outputs.append(stripped)
+            else:
+                stripped_outputs.append(output)
+        cleaned = {**cleaned, "outputs": stripped_outputs}
+    try:
+        serialized = json.dumps(cleaned, sort_keys=True, default=str)
+    except (TypeError, ValueError):
+        serialized = str(cleaned)
     return hashlib.sha256(serialized.encode("utf-8")).hexdigest()
 
 

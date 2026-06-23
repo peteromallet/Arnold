@@ -27,6 +27,7 @@ from vibecomfy.executor.contracts import (
 )
 from vibecomfy.executor import core as executor_core
 from vibecomfy.executor.core import run_executor
+from vibecomfy.executor.prompts import build_classify_messages
 from vibecomfy.executor.profiles import set_profile_override_dir
 
 
@@ -318,6 +319,19 @@ def _empty_hivemind_client(query: str, timeout: float) -> dict[str, Any]:
     return {"results": []}
 
 
+def _one_hivemind_client(query: str, timeout: float) -> dict[str, Any]:
+    """Deterministic Hivemind client with one result, preventing web fallback."""
+    return {
+        "results": [
+            {
+                "title": "ComfyUI workflow research note",
+                "description": "Relevant workflow/node technique reference.",
+                "source": "test",
+            }
+        ]
+    }
+
+
 def _empty_web_search_client(query: str, timeout: float) -> dict[str, Any]:
     """Deterministic web search client that returns no results."""
     return {"results": []}
@@ -412,8 +426,8 @@ class TestRespondOnlyFlow:
 class TestResearchOnlyFlow:
     """Smoke tests for legacy research-only classify output.
 
-    Canonical route behavior resolves this shape to inspect: deterministic
-    graph inspection/reply only, with no corpus research and no edit.
+    Canonical route behavior resolves this shape to research: deterministic
+    research/reply only, with no edit.
     """
 
     @mock.patch("vibecomfy.executor.core.run_classify_turn", side_effect=_fake_classify_research_only)
@@ -422,7 +436,7 @@ class TestResearchOnlyFlow:
     def test_research_only_default_profile(
         self, mock_corpus, mock_reply, mock_classify, profile_dir: Path
     ) -> None:
-        """Research-only legacy output resolves to inspect and reply."""
+        """Research-only legacy output resolves to research and reply."""
         from vibecomfy.search.index import SearchEntry
 
         mock_corpus.return_value = [
@@ -439,19 +453,22 @@ class TestResearchOnlyFlow:
         request = ExecutorRequest(
             query="What sampling nodes are available?", profile="default"
         )
-        result = run_executor(request)
+        with mock.patch(
+            "vibecomfy.executor.core._default_hivemind_client",
+            side_effect=_one_hivemind_client,
+        ):
+            result = run_executor(request)
 
         assert result.ok is True
         assert result.reply is not None
         assert "KSampler" in result.reply
         assert result.report.plan.research is True
         assert result.report.plan.implement is False
-        assert result.to_dict()["route"] == "inspect"
+        assert result.to_dict()["route"] == "research"
         assert result.to_dict()["candidate"] is None
         assert result.to_dict()["apply_eligible"] is False
-        # Canonical inspect behavior does not run corpus research.
-        assert result.report.research is None
-        mock_corpus.assert_not_called()
+        assert result.report.research is not None
+        mock_corpus.assert_called_once()
         assert result.report.implementation is None
 
     @mock.patch("vibecomfy.executor.core.run_classify_turn", side_effect=_fake_classify_research_only)
@@ -460,7 +477,7 @@ class TestResearchOnlyFlow:
     def test_research_only_openai_profile(
         self, mock_corpus, mock_reply, mock_classify, profile_dir: Path
     ) -> None:
-        """Research-only legacy output uses inspect behavior with openai profile."""
+        """Research-only legacy output uses research behavior with openai profile."""
         from vibecomfy.search.index import SearchEntry
 
         mock_corpus.return_value = [
@@ -475,14 +492,18 @@ class TestResearchOnlyFlow:
         request = ExecutorRequest(
             query="What VAE nodes exist?", profile="openai"
         )
-        result = run_executor(request)
+        with mock.patch(
+            "vibecomfy.executor.core._default_hivemind_client",
+            side_effect=_one_hivemind_client,
+        ):
+            result = run_executor(request)
 
         assert result.ok is True
         assert result.reply is not None
         assert result.report.plan.research is True
-        assert result.to_dict()["route"] == "inspect"
-        assert result.report.research is None
-        mock_corpus.assert_not_called()
+        assert result.to_dict()["route"] == "research"
+        assert result.report.research is not None
+        mock_corpus.assert_called_once()
 
     @mock.patch("vibecomfy.executor.core.run_classify_turn", side_effect=_fake_classify_research_only)
     @mock.patch("vibecomfy.executor.core.run_reply_turn", side_effect=_fake_reply_research_only)
@@ -503,14 +524,18 @@ class TestResearchOnlyFlow:
         ]
 
         request = ExecutorRequest(query="text encoding nodes", profile="default")
-        result = run_executor(request)
+        with mock.patch(
+            "vibecomfy.executor.core._default_hivemind_client",
+            side_effect=_one_hivemind_client,
+        ):
+            result = run_executor(request)
 
         payload = result.to_dict()
-        assert payload["route"] == "inspect"
+        assert payload["route"] == "research"
         assert payload["candidate"] is None
         assert payload["apply_eligible"] is False
-        assert result.report.research is None
-        mock_corpus.assert_not_called()
+        assert result.report.research is not None
+        mock_corpus.assert_called_once()
 
     @mock.patch("vibecomfy.executor.core.run_classify_turn", side_effect=_fake_classify_research_only)
     @mock.patch("vibecomfy.executor.core.run_reply_turn", side_effect=_fake_reply_research_only)
@@ -522,17 +547,22 @@ class TestResearchOnlyFlow:
     def test_research_only_empty_corpus(
         self, mock_hivemind, mock_corpus, mock_reply, mock_classify, profile_dir: Path
     ) -> None:
-        """Inspect behavior succeeds even when the corpus would be empty."""
+        """Research behavior succeeds even when local and external corpora are empty."""
         mock_corpus.return_value = []
 
         request = ExecutorRequest(query="nonexistent node", profile="default")
-        result = run_executor(request)
+        with mock.patch(
+            "vibecomfy.executor.research._default_web_search_client",
+            side_effect=_empty_web_search_client,
+        ):
+            result = run_executor(request)
 
         assert result.ok is True
         assert result.reply is not None
-        assert result.report.research is None
-        mock_corpus.assert_not_called()
-        mock_hivemind.assert_not_called()
+        assert result.to_dict()["route"] == "research"
+        assert result.report.research is not None
+        mock_corpus.assert_called_once()
+        mock_hivemind.assert_called_once()
 
     @mock.patch("vibecomfy.executor.core.run_classify_turn", side_effect=_fake_classify_research_only)
     @mock.patch("vibecomfy.executor.core.run_reply_turn", side_effect=_fake_reply_hotshot)
@@ -540,7 +570,7 @@ class TestResearchOnlyFlow:
     def test_research_hotshot_xl_query(
         self, mock_corpus, mock_reply, mock_classify, profile_dir: Path
     ) -> None:
-        """A Hotshot XL research-only classifier output stays inspect-only."""
+        """A Hotshot XL research-only classifier output stays research-only."""
         from vibecomfy.search.index import SearchEntry
 
         mock_corpus.return_value = [
@@ -558,16 +588,20 @@ class TestResearchOnlyFlow:
             query="How do I add Hotshot XL to an SVD-XT workflow?",
             profile="default",
         )
-        result = run_executor(request)
+        with mock.patch(
+            "vibecomfy.executor.core._default_hivemind_client",
+            side_effect=_one_hivemind_client,
+        ):
+            result = run_executor(request)
 
         assert result.ok is True
         assert result.reply is not None
         assert "Hotshot" in result.reply
         assert result.report.plan.research is True
         assert result.report.plan.implement is False
-        assert result.to_dict()["route"] == "inspect"
-        assert result.report.research is None
-        mock_corpus.assert_not_called()
+        assert result.to_dict()["route"] == "research"
+        assert result.report.research is not None
+        mock_corpus.assert_called_once()
 
 
 # ── Simple edit flow tests ───────────────────────────────────────────────────
@@ -679,6 +713,77 @@ class TestSimpleEditFlow:
         assert "graph" in d
         assert d["report"]["executor"]["plan"]["implement"] is True
         assert d["report"]["executor"]["implementation"]["message"] is not None
+
+    @pytest.mark.parametrize("followup", ["You figure it out", "Pick some please"])
+    @mock.patch("vibecomfy.executor.core.run_classify_turn")
+    @mock.patch("vibecomfy.executor.core.run_reply_turn", side_effect=_fake_reply_edit)
+    @mock.patch("vibecomfy.executor.core.handle_agent_edit", side_effect=_fake_handle_agent_edit)
+    def test_delegated_clarification_followup_runs_prior_edit_route(
+        self,
+        mock_edit,
+        mock_reply,
+        mock_classify,
+        followup: str,
+        profile_dir: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A "you decide" answer to a prior clarify is resolved by classify."""
+        input_graph = {"nodes": [{"id": 1, "type": "LoadImage"}]}
+        monkeypatch.setattr(
+            executor_core,
+            "_build_session_context",
+            lambda _request: {
+                "prior_clarification": {
+                    "clarification_question": (
+                        "Load external audio or keep the current text-to-audio setup?"
+                    ),
+                    "clarification_options": [
+                        "Load external audio file",
+                        "Use text-to-audio generation",
+                    ],
+                },
+                "blocked_route": "revise",
+                "blocked_task": "edit_graph",
+            },
+        )
+
+        mock_classify.return_value = ClassifyDecision(
+            research=False,
+            implement=True,
+            reply=True,
+            effort="medium",
+            intent="edit",
+            route="revise",
+            task="edit_graph",
+            plan_summary=(
+                "The user delegated the pending clarification; choose a "
+                "reasonable default and continue the edit."
+            ),
+        )
+
+        result = run_executor(
+            ExecutorRequest(
+                query=followup,
+                graph=input_graph,
+                profile="default",
+                session_id="delegated-clarify",
+            )
+        )
+
+        assert result.ok is True
+        assert result.report.plan.effective_route == "revise"
+        assert result.report.plan.implement is True
+        assert result.report.plan.research is False
+        assert mock_classify.call_count == 1
+        classify_kwargs = mock_classify.call_args.kwargs
+        assert "messages" in classify_kwargs
+        classify_prompt = classify_kwargs["messages"][1]["content"]
+        assert "Prior clarification question:" in classify_prompt
+        assert "Load external audio or keep the current text-to-audio setup?" in classify_prompt
+        mock_edit.assert_called_once()
+        payload = mock_edit.call_args[0][0]
+        assert payload["route"] == "revise"
+        assert payload["executor_classification"]["task"] == "edit_graph"
 
 
 # ── Graph-describe flow tests ────────────────────────────────────────────────
@@ -1364,9 +1469,9 @@ def _fake_classify_inspect(
     graph_summary: str | None = None,
     **kwargs: Any,
 ) -> ClassifyDecision:
-    """Return an inspect classification (research only, no implement)."""
+    """Return an inspect classification (no research, no implement)."""
     return ClassifyDecision(
-        research=True,
+        research=False,
         implement=False,
         reply=True,
         effort="medium",
@@ -1439,11 +1544,39 @@ def _fake_reply_route_gate(
 class TestRouteGateFlows:
     """Verify that explicit routes invoke only their allowed phases.
 
+    respond: research ✗  implement ✗  reply ✓
     revise:  research ✗  implement ✓  reply ✓
-    inspect: research ✓  implement ✗  reply ✓
+    inspect: research ✗  implement ✗  reply ✓
     clarify:      research ✗  implement ✗  reply ✓
     adapt: research ✓  implement ✓  reply ✓
     """
+
+    @mock.patch("vibecomfy.executor.core.run_classify_turn", side_effect=_fake_classify_respond_only)
+    @mock.patch("vibecomfy.executor.core.run_reply_turn", side_effect=_fake_reply_route_gate)
+    def test_respond_skips_research_and_implementation(
+        self,
+        mock_reply: mock.MagicMock,
+        mock_classify: mock.MagicMock,
+        profile_dir: Path,
+    ) -> None:
+        """respond: research and implementation are skipped, reply runs."""
+        with mock.patch("vibecomfy.executor.core.handle_agent_edit") as mock_edit:
+            with mock.patch("vibecomfy.executor.research.build_search_corpus") as mock_corpus:
+                request = ExecutorRequest(
+                    query="can you explain the previous failure?",
+                    profile="default",
+                )
+                result = run_executor(request)
+
+        assert result.ok is True
+        assert result.reply is not None
+        assert result.report.plan.effective_route == "respond"
+        assert result.report.research is None
+        assert result.report.implementation is None
+        mock_corpus.assert_not_called()
+        mock_edit.assert_not_called()
+        mock_reply.assert_called_once()
+        mock_classify.assert_called_once()
 
     @mock.patch("vibecomfy.executor.core.run_classify_turn", side_effect=_fake_classify_revise)
     @mock.patch("vibecomfy.executor.core.run_reply_turn", side_effect=_fake_reply_route_gate)
@@ -1609,7 +1742,7 @@ class TestRouteGateFlows:
         assert result.ok is True
         assert result.report.plan.route == "inspect"
         assert result.report.plan.effective_route == "inspect"
-        assert result.report.plan.research is True
+        assert result.report.plan.research is False
         assert result.report.plan.implement is False
         # Research absent (inspect never runs research)
         assert result.report.research is None
@@ -2037,14 +2170,14 @@ class TestRouteGateFlows:
     @mock.patch("vibecomfy.executor.core.run_classify_turn", side_effect=_fake_classify_research_only)
     @mock.patch("vibecomfy.executor.core.run_reply_turn", side_effect=_fake_reply_research_only)
     @mock.patch("vibecomfy.executor.research.build_search_corpus")
-    def test_no_route_research_only_resolves_to_inspect_without_research_phase(
+    def test_no_route_research_only_resolves_to_research_with_research_phase(
         self,
         mock_corpus: mock.MagicMock,
         mock_reply: mock.MagicMock,
         mock_classify: mock.MagicMock,
         profile_dir: Path,
     ) -> None:
-        """Without explicit route, research-only resolves to inspect behavior."""
+        """Without explicit route, research-only resolves to research behavior."""
         from vibecomfy.search.index import SearchEntry
 
         mock_corpus.return_value = [
@@ -2063,14 +2196,18 @@ class TestRouteGateFlows:
                 query="what nodes are available?",
                 profile="default",
             )
-            result = run_executor(request)
+            with mock.patch(
+                "vibecomfy.executor.core._default_hivemind_client",
+                side_effect=_one_hivemind_client,
+            ):
+                result = run_executor(request)
 
         assert result.ok is True
-        assert result.to_dict()["route"] == "inspect"
+        assert result.to_dict()["route"] == "research"
         assert result.to_dict()["candidate"] is None
         assert result.to_dict()["apply_eligible"] is False
-        # Canonical inspect behavior uses deterministic graph inspection only.
-        mock_corpus.assert_not_called()
+        assert result.report.research is not None
+        mock_corpus.assert_called_once()
         mock_edit.assert_not_called()
 
     @mock.patch("vibecomfy.executor.core.run_classify_turn", side_effect=_fake_classify_simple_edit)
@@ -2140,7 +2277,7 @@ class TestRouteGateFlows:
         assert result.report.research is None
         assert result.report.implementation is None
         assert payload["route"] == "clarify"
-        assert "Options:\n-" in payload["reply"]
+        assert payload["reply"] == "Task completed."
         assert payload["candidate"] is None
         assert payload["apply_eligible"] is False
         mock_corpus.assert_not_called()
@@ -2587,10 +2724,10 @@ class TestInspectOnlyFlow:
 
 
 class TestSessionReferenceContext:
-    @mock.patch("vibecomfy.executor.core.run_classify_turn")
+    @mock.patch("vibecomfy.executor.core.run_classify_turn", side_effect=_fake_classify_clarify)
     @mock.patch("vibecomfy.executor.core.handle_agent_edit")
     @mock.patch("vibecomfy.executor.core.run_reply_turn", side_effect=_fake_reply_route_gate)
-    def test_preclassify_forced_clarify_skips_classify_and_implement_provider_calls(
+    def test_former_preclassify_case_reaches_classifier_before_clarify(
         self,
         mock_reply: mock.MagicMock,
         mock_edit: mock.MagicMock,
@@ -2610,7 +2747,7 @@ class TestSessionReferenceContext:
         assert payload["route"] == "clarify"
         assert payload["candidate"] is None
         assert payload["apply_eligible"] is False
-        mock_classify.assert_not_called()
+        mock_classify.assert_called_once()
         mock_edit.assert_not_called()
         mock_reply.assert_called_once()
 
@@ -2724,28 +2861,175 @@ class TestSessionReferenceContext:
         assert context["prior_clarification"]["clarification_question"] == "Which option?"
         assert context["prior_clarification"]["clarification_options"] == ["seed", "steps"]
 
-    def test_preclassify_allows_resolved_option_and_blocks_unresolved_option(self) -> None:
-        resolved = executor_core._preclassify_blockers(
-            ExecutorRequest(query="option 2", graph={"nodes": [{"id": 1, "type": "KSampler"}]}),
-            session_context={
-                "prior_clarification": {
-                    "clarification_options": ["seed", "steps"],
-                },
-            },
-        )
-        assert resolved is None
+    def test_session_context_prefers_latest_chat_clarify_over_stale_state(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from vibecomfy.comfy_nodes.agent import edit as agent_edit
 
-        unresolved = executor_core._preclassify_blockers(
-            ExecutorRequest(query="option 3", graph={"nodes": [{"id": 1, "type": "KSampler"}]}),
+        session_id = "latest-clarify-wins"
+        turn_dir = tmp_path / session_id / "turns" / "000002"
+        turn_dir.mkdir(parents=True)
+        (turn_dir / "chat.json").write_text(
+            json.dumps(
+                {
+                    "messages": [
+                        {
+                            "role": "agent",
+                            "text": "For LTX audio, use custom audio or generated audio?",
+                            "outcome": {
+                                "kind": "clarify",
+                                "question": "For LTX audio, use custom audio or generated audio?",
+                                "options": ["Load external audio file", "Use text-to-audio generation"],
+                            },
+                        },
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
+        monkeypatch.setattr(agent_edit, "_SESSION_ROOT", tmp_path)
+        executor_core._save_clarification_context(
+            ExecutorRequest(
+                query="It's LTX, not wan",
+                session_id=session_id,
+                graph={"nodes": [{"id": 1, "type": "LTXImageToVideo"}]},
+            ),
+            ClassifyDecision(
+                route="clarify",
+                task="respond",
+                clarification_question="Wan or LTX architecture?",
+                clarification_options=("Wan", "LTX"),
+            ),
+            blocked_route="adapt",
+            blocked_task="edit_graph",
+        )
+
+        context = executor_core._build_session_context(
+            ExecutorRequest(query="You figure it out", session_id=session_id)
+        )
+
+        assert context is not None
+        assert context["prior_clarification"]["clarification_question"].startswith("For LTX audio")
+        assert context["blocked_route"] == "adapt"
+        assert context["prior_route"] == "adapt"
+
+    @mock.patch("vibecomfy.executor.core.run_classify_turn")
+    @mock.patch("vibecomfy.executor.core.handle_agent_edit", side_effect=_fake_handle_agent_edit)
+    @mock.patch("vibecomfy.executor.core.run_reply_turn", side_effect=_fake_reply_route_gate)
+    def test_you_figure_it_out_after_ltx_audio_clarify_executes_adapt_without_classify(
+        self,
+        mock_reply: mock.MagicMock,
+        mock_edit: mock.MagicMock,
+        mock_classify: mock.MagicMock,
+        profile_dir: Path,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from vibecomfy.comfy_nodes.agent import edit as agent_edit
+
+        session_id = "ltx-audio-delegated"
+        turn_dir = tmp_path / session_id / "turns" / "000005"
+        turn_dir.mkdir(parents=True)
+        (turn_dir / "chat.json").write_text(
+            json.dumps(
+                {
+                    "messages": [
+                        {
+                            "role": "user",
+                            "text": "It's LTX, not wan. Figure it out",
+                        },
+                        {
+                            "role": "agent",
+                            "text": (
+                                "For LTX/RuneXX custom audio/lipsync, should I load "
+                                "external audio or use text-to-audio?"
+                            ),
+                            "outcome": {
+                                "kind": "clarify",
+                                "question": (
+                                    "For LTX/RuneXX custom audio/lipsync, should I load "
+                                    "external audio or use text-to-audio?"
+                                ),
+                                "options": [
+                                    "Load external audio file",
+                                    "Use text-to-audio generation",
+                                ],
+                            },
+                        },
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
+        monkeypatch.setattr(agent_edit, "_SESSION_ROOT", tmp_path)
+        executor_core._save_clarification_context(
+            ExecutorRequest(
+                query="It's LTX, not wan. Figure it out",
+                session_id=session_id,
+                graph={"nodes": [{"id": 1, "type": "LTXImageToVideo"}]},
+            ),
+            ClassifyDecision(
+                route="clarify",
+                task="respond",
+                clarification_question="Wan or LTX architecture?",
+                clarification_options=("Wan", "LTX"),
+            ),
+            blocked_route="revise",
+            blocked_task="edit_graph",
+        )
+
+        mock_classify.return_value = ClassifyDecision(
+            research=True,
+            implement=True,
+            reply=True,
+            effort="medium",
+            intent="edit",
+            route="adapt",
+            task="edit_graph",
+            plan_summary="Use the LTX clarification context and adapt with research.",
+        )
+
+        result = run_executor(
+            ExecutorRequest(
+                query="You figure it out",
+                session_id=session_id,
+                graph={"nodes": [{"id": 1, "type": "LTXImageToVideo"}]},
+                profile="default",
+            )
+        )
+        payload = result.to_dict()
+
+        assert payload["route"] == "adapt"
+        assert payload["report"]["executor"]["plan"]["research"] is True
+        assert payload["candidate"] is not None
+        assert payload["apply_eligible"] is True
+        mock_classify.assert_called_once()
+        mock_edit.assert_called_once()
+        mock_reply.assert_called_once()
+
+    def test_classifier_prompt_owns_former_preclassify_judgment(self) -> None:
+        messages = build_classify_messages(
+            "option 3",
+            has_graph=True,
+            graph_summary="1 node(s): KSampler",
             session_context={
                 "prior_clarification": {
                     "clarification_options": ["seed", "steps"],
                 },
             },
+            graph_reference_map={"1": "KSampler"},
         )
-        assert unresolved is not None
-        assert unresolved.effective_route == "clarify"
-        assert "Unresolved prior option reference" in unresolved.plan_summary
+
+        system = messages[0]["content"]
+        user = messages[1]["content"]
+        assert "You are the authority for semantic routing" in system
+        assert "Do not assume another pre-classifier" in system
+        assert "named prior option does not exist" in system
+        assert "missing models, unknown custom nodes" in system
+        assert "Prior clarification options" in user
+        assert "2. steps" in user
 
     def test_save_clarification_context_preserves_blocked_route(
         self,
@@ -2779,6 +3063,115 @@ class TestSessionReferenceContext:
         assert context["prior_route"] == "revise"
         assert context["prior_task"] == "edit_graph"
         assert context["prior_clarification"]["clarification_question"] == "Which node?"
+
+    def test_prompt_memory_includes_last_five_durable_messages_in_order(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Seed session with >5 durable chat messages, verify executor prompt
+        includes the last 5 messages in order plus the current user message.
+
+        This test does NOT depend on frontend ``recent_messages`` — it
+        inspects the backend-built prompt/context directly through
+        ``_build_session_context`` and ``build_classify_messages``.
+        """
+        from vibecomfy.comfy_nodes.agent import edit as agent_edit
+        from vibecomfy.executor.prompts import build_classify_messages
+
+        session_id = "prompt-memory-test"
+        turns_dir = tmp_path / session_id / "turns"
+
+        # Create 7 turns → 14 messages (user + agent per turn).
+        # This exceeds PROMPT_MEMORY_MESSAGES (5) so the memory window
+        # must select only the last 5.
+        for i in range(7):
+            tid = f"{i:04d}"
+            turn_dir = turns_dir / tid
+            turn_dir.mkdir(parents=True)
+            (turn_dir / "chat.json").write_text(
+                json.dumps(
+                    {
+                        "session_id": session_id,
+                        "turn_id": tid,
+                        "messages": [
+                            {
+                                "role": "user",
+                                "text": f"user query {i}",
+                                "turn_id": tid,
+                            },
+                            {
+                                "role": "agent",
+                                "text": f"agent response {i}",
+                                "turn_id": tid,
+                            },
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+        monkeypatch.setattr(agent_edit, "_SESSION_ROOT", tmp_path)
+
+        # ── build session context (same code path as executor pipeline) ──
+        current_query = "new follow-up request"
+        context = executor_core._build_session_context(
+            ExecutorRequest(query=current_query, session_id=session_id)
+        )
+
+        assert context is not None, "_build_session_context must return a dict"
+        recent = context.get("recent_messages")
+        assert isinstance(recent, list), "recent_messages must be a list"
+        assert len(recent) == 5, (
+            f"Expected exactly 5 recent messages (PROMPT_MEMORY_MESSAGES), "
+            f"got {len(recent)}: {[m.get('text','') for m in recent]}"
+        )
+
+        # Last 5 of 14 messages:
+        #   agent response 4, user query 5, agent response 5,
+        #   user query 6, agent response 6
+        expected_texts = [
+            "agent response 4",
+            "user query 5",
+            "agent response 5",
+            "user query 6",
+            "agent response 6",
+        ]
+        for idx, expected in enumerate(expected_texts):
+            actual = recent[idx].get("text", "")
+            assert actual == expected, (
+                f"Message {idx}: expected {expected!r}, got {actual!r}"
+            )
+
+        # ── verify the classifier prompt includes the messages ──────────
+        classify_msgs = build_classify_messages(
+            current_query,
+            session_context=context,
+        )
+        # System + user message.
+        assert len(classify_msgs) == 2, (
+            f"Expected 2 messages (system + user), got {len(classify_msgs)}"
+        )
+        user_content = classify_msgs[1]["content"]
+        assert isinstance(user_content, str)
+
+        # The current user message must appear.
+        assert current_query in user_content, (
+            f"Current query {current_query!r} not found in classify prompt"
+        )
+
+        # All five recent messages must appear in chronological order.
+        prev_pos = -1
+        for expected in expected_texts:
+            pos = user_content.find(expected)
+            assert pos >= 0, (
+                f"Expected recent message {expected!r} not found in classify prompt"
+            )
+            assert pos > prev_pos, (
+                f"Recent messages out of order: {expected!r} appears before "
+                f"previous message in classify prompt"
+            )
+            prev_pos = pos
 
 
 class TestPrecedentPayloadIntegrity:
@@ -3663,14 +4056,14 @@ class TestRouteIntentBoundaries:
     @mock.patch("vibecomfy.executor.core.run_classify_turn")
     @mock.patch("vibecomfy.executor.core.run_reply_turn", side_effect=_fake_reply_route_gate)
     @mock.patch("vibecomfy.executor.core.handle_agent_edit", side_effect=_fake_handle_agent_edit)
-    def test_legacy_research_only_intent_resolves_to_inspect(
+    def test_legacy_research_only_intent_resolves_to_research(
         self,
         mock_edit: mock.MagicMock,
         mock_reply: mock.MagicMock,
         mock_classify: mock.MagicMock,
         profile_dir: Path,
     ) -> None:
-        """A classifier that only sets research=True with explain_graph intent resolves to inspect."""
+        """A classifier that only sets research=True resolves to research."""
         mock_classify.return_value = ClassifyDecision(
             research=True,
             implement=False,
@@ -3685,12 +4078,18 @@ class TestRouteIntentBoundaries:
             graph={"nodes": [{"id": 1}]},
             profile="default",
         )
-        result = run_executor(request)
+        with mock.patch("vibecomfy.executor.research.build_search_corpus", return_value=[]):
+            with mock.patch(
+                "vibecomfy.executor.core._default_hivemind_client",
+                side_effect=_one_hivemind_client,
+            ):
+                result = run_executor(request)
 
         assert result.ok is True
-        assert result.turn.route == "inspect"
-        assert result.report.plan.effective_route == "inspect"
+        assert result.turn.route == "research"
+        assert result.report.plan.effective_route == "research"
         assert result.report.plan.implement is False
+        assert result.report.research is not None
         mock_edit.assert_not_called()
         assert result.graph is None
 
@@ -3779,3 +4178,380 @@ class TestApplyEligibilityMatrix:
         assert result.turn.route == "inspect"
         assert result.turn.apply_eligible is False
         assert result.graph is None
+
+
+# ── Durable edit-envelope preservation (T1) ───────────────────────────────────
+
+
+def _fake_handle_agent_edit_durable_revise(payload: dict, **kwargs: Any) -> dict:
+    """Fake handle_agent_edit returning a full durable envelope for revise."""
+    import hashlib, json, uuid
+
+    input_graph = payload.get("graph", {})
+    nodes = input_graph.get("nodes", [])
+    edited_nodes = list(nodes) + [{"id": len(nodes) + 1, "type": "KSampler"}]
+    candidate_graph = {"nodes": edited_nodes}
+    candidate_graph_hash = hashlib.sha256(
+        json.dumps(candidate_graph, sort_keys=True).encode()
+    ).hexdigest()
+
+    def _structural_hash(graph: dict) -> str:
+        structure = {
+            "node_count": len(graph.get("nodes", [])),
+            "node_types": sorted(
+                n.get("type") or n.get("class_type") or ""
+                for n in graph.get("nodes", [])
+                if isinstance(n, dict)
+            ),
+            "link_count": len(graph.get("links", [])),
+        }
+        return hashlib.sha256(
+            json.dumps(structure, sort_keys=True).encode()
+        ).hexdigest()
+
+    return {
+        "ok": True,
+        "session_id": payload.get("session_id", "sess-durable-revise"),
+        "turn_id": str(uuid.uuid4()),
+        "baseline_turn_id": None,
+        "baseline_graph_hash": "abc123baseline",
+        "submit_graph_hash": "def456submit",
+        "submit_structural_graph_hash": _structural_hash(input_graph),
+        "submitted_client_graph_hash": payload.get("client_graph_hash", "cli789hash"),
+        "submitted_client_structural_graph_hash": payload.get(
+            "client_structural_graph_hash", "cli000struct"
+        ),
+        "candidate_graph_hash": candidate_graph_hash,
+        "candidate_structural_graph_hash": _structural_hash(candidate_graph),
+        "graph": candidate_graph,
+        "message": "Added a KSampler node to the graph.",
+        "reply": "Added a KSampler node to the graph.",
+        "route": "revise",
+        "outcome": {
+            "kind": "candidate",
+            "changes": [{"node_id": str(len(nodes) + 1), "op": "add"}],
+        },
+        "candidate": {"graph": candidate_graph, "graph_hash": candidate_graph_hash},
+        "apply_eligible": True,
+        "apply_eligibility": {
+            "applyable": True,
+            "reason": "applyable",
+            "message": "Ready to apply.",
+            "warnings": [],
+        },
+        "change_details": {
+            "added_nodes": [str(len(nodes) + 1)],
+            "changed_nodes": [],
+            "removed_nodes": [],
+            "summary": "Added 1 node.",
+        },
+        "audit_ref": {
+            "path": "sessions/sess-durable-revise/turns/turn-1/audit/audit.json",
+            "format": "json",
+        },
+        "artifacts": {
+            "candidate_ui_json": "sessions/sess-durable-revise/turns/turn-1/candidate.ui.json",
+        },
+        "version": 1,
+        "report": {},
+        "gates": {},
+        "debug": {},
+        "contract_version": "1.0",
+    }
+
+
+def _fake_handle_agent_edit_durable_adapt(payload: dict, **kwargs: Any) -> dict:
+    """Fake handle_agent_edit returning a full durable envelope for adapt."""
+    import hashlib, json, uuid
+
+    input_graph = payload.get("graph", {})
+    nodes = input_graph.get("nodes", [])
+    edited_nodes = list(nodes) + [
+        {"id": len(nodes) + 1, "type": "KSampler"},
+        {"id": len(nodes) + 2, "type": "VAEDecode"},
+    ]
+    candidate_graph = {"nodes": edited_nodes}
+    candidate_graph_hash = hashlib.sha256(
+        json.dumps(candidate_graph, sort_keys=True).encode()
+    ).hexdigest()
+
+    def _structural_hash(graph: dict) -> str:
+        structure = {
+            "node_count": len(graph.get("nodes", [])),
+            "node_types": sorted(
+                n.get("type") or n.get("class_type") or ""
+                for n in graph.get("nodes", [])
+                if isinstance(n, dict)
+            ),
+            "link_count": len(graph.get("links", [])),
+        }
+        return hashlib.sha256(
+            json.dumps(structure, sort_keys=True).encode()
+        ).hexdigest()
+
+    return {
+        "ok": True,
+        "session_id": payload.get("session_id", "sess-durable-adapt"),
+        "turn_id": str(uuid.uuid4()),
+        "baseline_turn_id": "prior-turn-99",
+        "baseline_graph_hash": "xyz789baseline",
+        "submit_graph_hash": "uvw012submit",
+        "submit_structural_graph_hash": _structural_hash(input_graph),
+        "submitted_client_graph_hash": payload.get("client_graph_hash", "cli111hash"),
+        "submitted_client_structural_graph_hash": payload.get(
+            "client_structural_graph_hash", "cli222struct"
+        ),
+        "candidate_graph_hash": candidate_graph_hash,
+        "candidate_structural_graph_hash": _structural_hash(candidate_graph),
+        "graph": candidate_graph,
+        "message": "Researched precedent and adapted the graph with KSampler and VAEDecode.",
+        "reply": "Researched precedent and adapted the graph with KSampler and VAEDecode.",
+        "route": "adapt",
+        "outcome": {
+            "kind": "edit",
+            "changes": [
+                {"node_id": str(len(nodes) + 1), "op": "add"},
+                {"node_id": str(len(nodes) + 2), "op": "add"},
+            ],
+        },
+        "candidate": {"graph": candidate_graph, "graph_hash": candidate_graph_hash},
+        "apply_eligible": True,
+        "apply_eligibility": {
+            "applyable": True,
+            "reason": "applyable",
+            "message": "Ready to apply.",
+            "warnings": [],
+        },
+        "change_details": {
+            "added_nodes": [str(len(nodes) + 1), str(len(nodes) + 2)],
+            "changed_nodes": [],
+            "removed_nodes": [],
+            "summary": "Added 2 nodes from researched precedent.",
+            "precedent_source": "kijai/wan-control-lora",
+        },
+        "audit_ref": {
+            "path": "sessions/sess-durable-adapt/turns/turn-2/audit/audit.json",
+            "format": "json",
+        },
+        "artifacts": {
+            "candidate_ui_json": "sessions/sess-durable-adapt/turns/turn-2/candidate.ui.json",
+            "precedent_slice": "sessions/sess-durable-adapt/turns/turn-2/precedent.json",
+        },
+        "version": 1,
+        "report": {},
+        "gates": {},
+        "debug": {},
+        "contract_version": "1.0",
+    }
+
+
+class TestDurableEditEnvelopePreservation:
+    """Contract tests proving the executor preserves the full durable
+    handle_agent_edit() envelope for revise and adapt routes, including
+    session_id, turn_id, baseline/candidate hashes, audit/artifact refs,
+    apply_eligibility, graph, outcome, and change_details, while keeping
+    executor metadata nested under report.executor.
+    """
+
+    @mock.patch("vibecomfy.executor.core.run_classify_turn")
+    @mock.patch("vibecomfy.executor.core.run_reply_turn", side_effect=_fake_reply_route_gate)
+    def test_revise_preserves_durable_edit_envelope(
+        self,
+        mock_reply: mock.MagicMock,
+        mock_classify: mock.MagicMock,
+        profile_dir: Path,
+    ) -> None:
+        """Executor result for revise must carry session_id, turn_id, hashes,
+        audit_ref, apply_eligibility, graph, outcome, and change_details."""
+        mock_classify.return_value = ClassifyDecision(
+            research=False,
+            implement=True,
+            reply=True,
+            effort="low",
+            plan_summary="edit the current graph",
+            intent="edit",
+            route="revise",
+            task="edit_graph",
+        )
+
+        request = ExecutorRequest(
+            query="add a KSampler",
+            graph={"nodes": [{"id": 1, "type": "VAEDecode"}]},
+            profile="default",
+            session_id="sess-durable-revise",
+        )
+
+        with mock.patch(
+            "vibecomfy.executor.core.handle_agent_edit",
+            side_effect=_fake_handle_agent_edit_durable_revise,
+        ):
+            result = run_executor(request)
+            serialized = result.to_dict()
+
+        # Durable session/turn identity
+        assert serialized.get("session_id") == "sess-durable-revise", (
+            "ExecutorResult missing durable session_id; got %r" % serialized.get("session_id")
+        )
+        assert isinstance(serialized.get("turn_id"), str) and serialized["turn_id"], (
+            "ExecutorResult missing durable turn_id"
+        )
+
+        # Baseline and candidate hashes
+        assert isinstance(serialized.get("baseline_graph_hash"), str), (
+            "ExecutorResult missing baseline_graph_hash"
+        )
+        assert isinstance(serialized.get("submit_structural_graph_hash"), str), (
+            "ExecutorResult missing submit_structural_graph_hash"
+        )
+        assert isinstance(serialized.get("candidate_graph_hash"), str), (
+            "ExecutorResult missing candidate_graph_hash"
+        )
+        assert isinstance(serialized.get("candidate_structural_graph_hash"), str), (
+            "ExecutorResult missing candidate_structural_graph_hash"
+        )
+
+        # Audit/artifact refs
+        assert isinstance(serialized.get("audit_ref"), dict), (
+            "ExecutorResult missing durable audit_ref"
+        )
+        assert isinstance(serialized.get("artifacts"), dict), (
+            "ExecutorResult missing durable artifacts"
+        )
+
+        # apply_eligibility
+        eligibility = serialized.get("apply_eligibility")
+        assert isinstance(eligibility, dict), "ExecutorResult missing apply_eligibility"
+        assert eligibility.get("applyable") is True, (
+            "apply_eligibility.applyable should be True for revise"
+        )
+
+        # graph
+        assert isinstance(serialized.get("graph"), dict), (
+            "ExecutorResult missing durable graph"
+        )
+
+        # outcome
+        outcome = serialized.get("outcome")
+        assert isinstance(outcome, dict), "ExecutorResult missing outcome"
+        assert outcome.get("kind") in ("candidate", "edit"), (
+            "outcome.kind should be candidate/edit for revise, got %r" % outcome.get("kind")
+        )
+
+        # change_details
+        assert isinstance(serialized.get("change_details"), dict), (
+            "ExecutorResult missing durable change_details"
+        )
+
+        # report.executor metadata must be present (not flattened)
+        report = serialized.get("report")
+        assert isinstance(report, dict), "ExecutorResult missing report"
+        executor_meta = report.get("executor")
+        assert isinstance(executor_meta, dict), (
+            "report.executor metadata missing; report keys=%r"
+            % list(report.keys()) if isinstance(report, dict) else None
+        )
+        plan = executor_meta.get("plan")
+        assert isinstance(plan, dict), "report.executor.plan missing"
+        assert plan.get("route") == "revise", (
+            "report.executor.plan.route should be revise, got %r" % plan.get("route")
+        )
+
+    @mock.patch("vibecomfy.executor.core.run_classify_turn")
+    @mock.patch("vibecomfy.executor.core.run_reply_turn", side_effect=_fake_reply_route_gate)
+    def test_adapt_preserves_durable_edit_envelope(
+        self,
+        mock_reply: mock.MagicMock,
+        mock_classify: mock.MagicMock,
+        profile_dir: Path,
+    ) -> None:
+        """Executor result for adapt must carry the full durable envelope including
+        precedent_source in change_details."""
+        mock_classify.return_value = ClassifyDecision(
+            research=True,
+            implement=True,
+            reply=True,
+            effort="high",
+            plan_summary="research precedent workflow then edit",
+            intent="edit",
+            route="adapt",
+            task="research_precedent",
+        )
+
+        request = ExecutorRequest(
+            query="add the Wan control LoRA chain from the Kijai template",
+            graph={"nodes": [{"id": 1, "type": "LoadImage"}]},
+            profile="default",
+            session_id="sess-durable-adapt",
+        )
+
+        with mock.patch(
+            "vibecomfy.executor.core.handle_agent_edit",
+            side_effect=_fake_handle_agent_edit_durable_adapt,
+        ):
+            result = run_executor(request)
+            serialized = result.to_dict()
+
+        # Durable session/turn identity
+        assert serialized.get("session_id") == "sess-durable-adapt", (
+            "ExecutorResult missing durable session_id"
+        )
+        assert isinstance(serialized.get("turn_id"), str) and serialized["turn_id"], (
+            "ExecutorResult missing durable turn_id"
+        )
+
+        # Baseline and candidate hashes
+        assert isinstance(serialized.get("baseline_graph_hash"), str), (
+            "ExecutorResult missing baseline_graph_hash for adapt"
+        )
+        assert isinstance(serialized.get("candidate_graph_hash"), str), (
+            "ExecutorResult missing candidate_graph_hash for adapt"
+        )
+        assert isinstance(serialized.get("candidate_structural_graph_hash"), str), (
+            "ExecutorResult missing candidate_structural_graph_hash for adapt"
+        )
+
+        # Audit/artifact refs
+        assert isinstance(serialized.get("audit_ref"), dict), (
+            "ExecutorResult missing durable audit_ref for adapt"
+        )
+
+        # apply_eligibility
+        eligibility = serialized.get("apply_eligibility")
+        assert isinstance(eligibility, dict), "ExecutorResult missing apply_eligibility for adapt"
+        assert eligibility.get("applyable") is True, (
+            "apply_eligibility.applyable should be True for adapt"
+        )
+
+        # graph (candidate)
+        assert isinstance(serialized.get("graph"), dict), (
+            "ExecutorResult missing durable graph for adapt"
+        )
+
+        # outcome
+        outcome = serialized.get("outcome")
+        assert isinstance(outcome, dict), "ExecutorResult missing outcome for adapt"
+        assert outcome.get("kind") in ("candidate", "edit"), (
+            "outcome.kind should be candidate/edit for adapt, got %r" % outcome.get("kind")
+        )
+
+        # change_details
+        change_details = serialized.get("change_details")
+        assert isinstance(change_details, dict), (
+            "ExecutorResult missing durable change_details for adapt"
+        )
+        assert change_details.get("precedent_source") == "kijai/wan-control-lora", (
+            "change_details.preedent_source should be preserved for adapt"
+        )
+
+        # report.executor metadata
+        report = serialized.get("report")
+        assert isinstance(report, dict), "ExecutorResult missing report for adapt"
+        executor_meta = report.get("executor")
+        assert isinstance(executor_meta, dict), (
+            "report.executor metadata missing for adapt"
+        )
+        plan = executor_meta.get("plan")
+        assert isinstance(plan, dict), "report.executor.plan missing for adapt"
+        assert plan.get("route") == "adapt", (
+            "report.executor.plan.route should be adapt, got %r" % plan.get("route")
+        )

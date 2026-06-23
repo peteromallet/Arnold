@@ -1415,13 +1415,13 @@ test("normalizeExecutorPhasePayload preserves known route/task metadata", () => 
   const normalized = normalizeExecutorPhasePayload({
     phase: "classify",
     status: "progress",
-    route: "DIRECT_EDIT",
-    task: "EDIT_GRAPH",
+    route: "REVISE",
+    task: "REVISE_GRAPH",
   });
 
   assert.ok(normalized);
-  assert.equal(normalized.route, "direct_edit");
-  assert.equal(normalized.task, "edit_graph");
+  assert.equal(normalized.route, "revise");
+  assert.equal(normalized.task, "revise_graph");
 });
 
 test("normalizeExecutorPhasePayload ignores unknown route/task metadata", () => {
@@ -1443,12 +1443,12 @@ test("executorDecisionLabel derives route-aware fallback from classify route", (
   const normalized = normalizeExecutorPhasePayload({
     phase: "classify",
     status: "progress",
-    route: "precedent_research",
-    task: "research_precedent",
+    route: "research",
+    task: "research",
   });
 
   assert.ok(normalized);
-  assert.equal(executorDecisionLabel(normalized), "Deciding: Research precedents");
+  assert.equal(executorDecisionLabel(normalized), "Deciding: Research and answer");
 });
 
 test("executorDecisionLabel prefers plan_summary over route-aware fallback", () => {
@@ -1456,8 +1456,8 @@ test("executorDecisionLabel prefers plan_summary over route-aware fallback", () 
     phase: "classify",
     status: "progress",
     plan_summary: "Direct edit - patch the workflow in place.",
-    route: "direct_edit",
-    task: "edit_graph",
+    route: "revise",
+    task: "revise_graph",
   });
 
   assert.ok(normalized);
@@ -1480,14 +1480,14 @@ test("progressFromExecutorPhase preserves route/task metadata for route-aware de
   const normalized = normalizeExecutorPhasePayload({
     phase: "classify",
     status: "start",
-    route: "inspect_only",
+    route: "inspect",
     task: "inspect_graph",
   });
 
   assert.ok(normalized);
   const progress = progressFromExecutorPhase(normalized);
   assert.ok(progress);
-  assert.equal(progress.route, "inspect_only");
+  assert.equal(progress.route, "inspect");
   assert.equal(progress.task, "inspect_graph");
   assert.equal(executorProgressLabel(progress), "Inspect graph");
 
@@ -1651,12 +1651,13 @@ test("executorRouteLabel returns Inspect graph for canonical inspect", () => {
   assert.equal(executorProgressLabel(progress), "Inspect graph");
 });
 
-test("executorRouteLabel returns Inspect graph for legacy inspect_only", () => {
+test("executorRouteLabel ignores legacy inspect_only", () => {
   const progress = createExecutorProgressSnapshot({
     decide: "active",
     route: "inspect_only",
   });
-  assert.equal(executorProgressLabel(progress), "Inspect graph");
+  assert.equal(progress.route, undefined);
+  assert.equal(executorProgressLabel(progress), "Decide");
 });
 
 test("progressFromExecutorPhase preserves canonical inspect route", () => {
@@ -1677,7 +1678,7 @@ test("progressFromExecutorPhase preserves canonical inspect route", () => {
   assert.equal(executorProgressLabel(progress), "Inspect graph");
 });
 
-test("progressFromExecutorPhase preserves legacy inspect_only route for backward compatibility", () => {
+test("progressFromExecutorPhase ignores legacy inspect_only route", () => {
   const normalized = normalizeExecutorPhasePayload({
     phase: "classify",
     status: "start",
@@ -1686,16 +1687,16 @@ test("progressFromExecutorPhase preserves legacy inspect_only route for backward
   });
 
   assert.ok(normalized);
-  assert.equal(normalized.route, "inspect_only");
+  assert.equal(normalized.route, undefined);
 
   const progress = progressFromExecutorPhase(normalized);
   assert.ok(progress);
-  assert.equal(progress.route, "inspect_only");
+  assert.equal(progress.route, undefined);
   assert.equal(progress.task, "inspect_graph");
-  assert.equal(executorProgressLabel(progress), "Inspect graph");
+  assert.equal(executorProgressLabel(progress), "Decide");
 });
 
-test("progressFromExecutorPhase with inspect route during reply phase yields complete progress", () => {
+test("progressFromExecutorPhase with inspect route during reply phase yields read-only complete progress", () => {
   // When inspect completes, the reply phase emits done with route=inspect
   const normalized = normalizeExecutorPhasePayload({
     phase: "reply",
@@ -1709,11 +1710,11 @@ test("progressFromExecutorPhase with inspect route during reply phase yields com
   assert.ok(progress);
   assert.equal(progress.decide, "done");
   assert.equal(progress.research, "done");
-  assert.equal(progress.execute, "done");
-  assert.equal(progress.review, "done");
+  assert.equal(progress.execute, "pending");
+  assert.equal(progress.review, "pending");
   assert.equal(progress.route, "inspect");
-  assert.equal(executorProgressLabel(progress), "Complete");
-  assert.equal(isExecutorProgressComplete(progress), true);
+  assert.equal(executorProgressLabel(progress), "Inspect complete");
+  assert.equal(isExecutorProgressComplete(progress), false);
 });
 
 test("normalizeExecutorProgressSnapshot accepts canonical inspect route in snapshot", () => {
@@ -2258,4 +2259,315 @@ test("no duplicate labels — classify/research/implement executor phases map cl
     assert.equal(agentCanonLabel, execLabel,
       `labels must agree for phase '${map.execPhase}': agent=${agentCanonLabel} vs exec=${execLabel}`);
   }
+});
+
+// ── Route applyability contract tests ──────────────────────────────────────
+
+import { routeAllowsApplyAffordances } from "../../vibecomfy/comfy_nodes/web/agent_edit_response_contract.js";
+
+test("routeAllowsApplyAffordances — applyable routes (revise, adapt) return true", () => {
+  assert.equal(routeAllowsApplyAffordances("revise"), true);
+  assert.equal(routeAllowsApplyAffordances("adapt"), true);
+  assert.equal(routeAllowsApplyAffordances("  REVISE  "), true, "trimmed and case-insensitive");
+  assert.equal(routeAllowsApplyAffordances("Adapt"), true);
+});
+
+test("routeAllowsApplyAffordances — legacy applyable aliases are not public routes", () => {
+  for (const alias of ["direct_edit", "diagnose_repair", "precedent_research", "asset_lookup", "subgraph_preview"]) {
+    assert.equal(routeAllowsApplyAffordances(alias), false, `legacy alias '${alias}' should not be applyable`);
+  }
+});
+
+test("routeAllowsApplyAffordances — non-applyable routes (clarify, respond, inspect, research) return false", () => {
+  for (const route of ["clarify", "respond", "inspect", "research"]) {
+    assert.equal(routeAllowsApplyAffordances(route), false, `route '${route}' should NOT be applyable`);
+    assert.equal(routeAllowsApplyAffordances(route.toUpperCase()), false, `uppercase '${route}' should NOT be applyable`);
+  }
+});
+
+test("routeAllowsApplyAffordances — null/undefined/non-string returns false", () => {
+  assert.equal(routeAllowsApplyAffordances(null), false);
+  assert.equal(routeAllowsApplyAffordances(undefined), false);
+  assert.equal(routeAllowsApplyAffordances(42), false);
+  assert.equal(routeAllowsApplyAffordances([]), false);
+  assert.equal(routeAllowsApplyAffordances({}), false);
+  assert.equal(routeAllowsApplyAffordances(""), false);
+  assert.equal(routeAllowsApplyAffordances("   "), false);
+});
+
+// ── Respond and research payload normalization tests ───────────────────────
+
+test("normalizeAgentTurnPayload — respond route turn derives no graph changes, no candidate implications", () => {
+  const payload = normalizeAgentTurnPayload({
+    session_id: "sess-respond",
+    turn_id: "resp-01",
+    turn_number: 1,
+    status: "done",
+    route: "respond",
+    message: "The current graph uses an Euler ancestral sampler for img2img.",
+    statement_count: 1,
+    landed_op_count: 0,
+    statements: [{ op_kind: "done", status: "done", message: "Turn complete" }],
+    done_summary: "Answered without graph changes.",
+  });
+
+  assert.equal(payload.session_id, "sess-respond");
+  assert.equal(payload.status, "done");
+  assert.equal(payload.landed_op_count, 0);
+  const activity = deriveAgentActivityState(payload);
+  assert.equal(activity.outcome.kind, "answered", "respond route turn without edits is answered");
+  assert.equal(activity.outcome.graph_changes, false);
+  // Non-applyable route terminal: execute and review stay pending
+  assert.equal(activity.phase_progress.decide, "done");
+  assert.equal(activity.phase_progress.execute, "pending", "respond route never executes");
+  assert.equal(activity.phase_progress.review, "pending", "respond route never reviews");
+});
+
+test("normalizeAgentTurnPayload — research route turn derives research-done, no execute/review", () => {
+  const payload = normalizeAgentTurnPayload({
+    session_id: "sess-research",
+    turn_id: "res-01",
+    turn_number: 1,
+    status: "done",
+    route: "research",
+    message: "LTX Video supports i2v with 768px resolution; PIL is not needed.",
+    statement_count: 1,
+    landed_op_count: 0,
+    statements: [{ op_kind: "done", status: "done", message: "Turn complete" }],
+    done_summary: "Researched LTX compatibility without graph changes.",
+  });
+
+  assert.equal(payload.session_id, "sess-research");
+  assert.equal(payload.status, "done");
+  const activity = deriveAgentActivityState(payload);
+  assert.equal(activity.outcome.kind, "answered");
+  assert.equal(activity.outcome.graph_changes, false);
+  // Research route: research ran but execute/review never ran
+  assert.equal(activity.phase_progress.decide, "done");
+  assert.equal(activity.phase_progress.research, "done", "research route runs research phase");
+  assert.equal(activity.phase_progress.execute, "pending", "research route never executes");
+  assert.equal(activity.phase_progress.review, "pending", "research route never reviews");
+});
+
+test("normalizeAgentTurnPayload — respond in_progress with statements leaves execute pending", () => {
+  const payload = normalizeAgentTurnPayload({
+    session_id: "sess-respond-progress",
+    turn_id: "resp-02",
+    turn_number: 1,
+    status: "progress",
+    route: "respond",
+    message: "Analyzing graph structure...",
+    statement_count: 2,
+    landed_op_count: 0,
+    statements: [
+      { op_kind: "query", status: "done", message: "Inspected graph nodes" },
+      { op_kind: "query", status: "active", message: "Checking connections" },
+    ],
+  });
+
+  const activity = deriveAgentActivityState(payload);
+  assert.equal(activity.status, "in_progress");
+  // Non-applyable during progress: execute never active
+  assert.equal(activity.phase_progress.decide, "done");
+  assert.equal(activity.phase_progress.execute, "pending", "respond in_progress never sets execute=active");
+});
+
+test("normalizeAgentTurnPayload — revise route (applyable) terminal sets all phases done", () => {
+  const payload = normalizeAgentTurnPayload({
+    session_id: "sess-revise",
+    turn_id: "rev-01",
+    turn_number: 1,
+    status: "done",
+    route: "revise",
+    message: "Added KScheduler node and connected.",
+    statement_count: 3,
+    landed_op_count: 2,
+    statements: [
+      { op_kind: "add_node", status: "done", message: "Added KScheduler", landed: true, ok: true },
+      { op_kind: "connect", status: "done", message: "Connected pipeline", landed: true, ok: true },
+      { op_kind: "done", status: "done" },
+    ],
+    done_summary: "Added scheduler node.",
+  });
+
+  const activity = deriveAgentActivityState(payload);
+  assert.equal(activity.outcome.kind, "done");
+  // Applyable route terminal: ALL phases done
+  assert.equal(activity.phase_progress.decide, "done");
+  assert.equal(activity.phase_progress.research, "done");
+  assert.equal(activity.phase_progress.execute, "done");
+  assert.equal(activity.phase_progress.review, "done");
+});
+
+// ── No internal string leakage tests ───────────────────────────────────────
+
+test("normalizeAgentTurnPayload — no internal gate strings leak for respond route", () => {
+  const payload = normalizeAgentTurnPayload({
+    session_id: "sess-no-leak",
+    turn_id: "leak-01",
+    turn_number: 1,
+    status: "done",
+    route: "respond",
+    message: "Safe user-facing answer.",
+    statement_count: 1,
+    landed_op_count: 0,
+    statements: [{ op_kind: "done", status: "done" }],
+    done_summary: "Answer provided.",
+  });
+
+  const activity = deriveAgentActivityState(payload);
+  const json = JSON.stringify(activity);
+  const forbidden = ["no_candidate_reason", "route_not_applyable", "apply_eligible", "applyable",
+    "candidate_graph", "rebaseline_recovery", "raw_batch", "provider_metadata"];
+  for (const term of forbidden) {
+    assert.ok(!json.includes(term), `respond route activity must not leak '${term}'`);
+  }
+});
+
+test("normalizeAgentTurnPayload — no internal gate strings leak for research route", () => {
+  const payload = normalizeAgentTurnPayload({
+    session_id: "sess-no-leak-res",
+    turn_id: "leak-02",
+    turn_number: 1,
+    status: "done",
+    route: "research",
+    message: "Based on research, LTX is appropriate.",
+    statement_count: 1,
+    landed_op_count: 0,
+    statements: [{ op_kind: "done", status: "done" }],
+    done_summary: "Research completed.",
+  });
+
+  const activity = deriveAgentActivityState(payload);
+  const json = JSON.stringify(activity);
+  const forbidden = ["no_candidate_reason", "route_not_applyable", "apply_eligible",
+    "candidate_graph", "rebaseline_recovery", "raw_batch", "provider_metadata"];
+  for (const term of forbidden) {
+    assert.ok(!json.includes(term), `research route activity must not leak '${term}'`);
+  }
+});
+
+test("normalizeAgentTurnPayload — revise route (applyable) may carry candidate metadata without leaking internals", () => {
+  const payload = normalizeAgentTurnPayload({
+    session_id: "sess-revise-safe",
+    turn_id: "rev-safe-01",
+    turn_number: 1,
+    status: "done",
+    route: "revise",
+    message: "Added upscale node.",
+    statement_count: 2,
+    landed_op_count: 1,
+    statements: [
+      { op_kind: "add_node", status: "done", message: "Added node", landed: true, ok: true },
+      { op_kind: "done", status: "done" },
+    ],
+    done_summary: "Node added.",
+  });
+
+  const activity = deriveAgentActivityState(payload);
+  const json = JSON.stringify(activity);
+  // Revise (applyable) should NOT leak internal diagnostics
+  const forbidden = ["no_candidate_reason", "route_not_applyable", "raw_batch", "provider_metadata", "raw_source"];
+  for (const term of forbidden) {
+    assert.ok(!json.includes(term), `revise route activity must not leak '${term}'`);
+  }
+});
+
+// ── Chronological multi-turn assertions ────────────────────────────────────
+
+test("reduceAgentActivityFeed — chronological multi-turn: respond → revise → research sequence preserves order", () => {
+  let feed = [];
+
+  // Turn 1: respond (answer-only, no edits)
+  feed = reduceAgentActivityFeed(feed, makeActivityState({
+    session_id: "sess-chrono", turn_id: "0001", turn_number: 1,
+    status: "done", headline: "Answered graph question",
+    route: "respond",
+  }));
+  assert.equal(feed.length, 1);
+  assert.equal(feed[0].turn_id, "0001");
+
+  // Turn 2: revise (edit with candidate)
+  feed = reduceAgentActivityFeed(feed, makeActivityState({
+    session_id: "sess-chrono", turn_id: "0002", turn_number: 2,
+    status: "done", headline: "Added sampler node",
+    route: "revise",
+  }));
+  assert.equal(feed.length, 2);
+  assert.equal(feed[1].turn_id, "0002");
+
+  // Turn 3: research (answer-only, no edits)
+  feed = reduceAgentActivityFeed(feed, makeActivityState({
+    session_id: "sess-chrono", turn_id: "0003", turn_number: 3,
+    status: "done", headline: "Researched PIL compatibility",
+    route: "research",
+  }));
+  assert.equal(feed.length, 3);
+
+  // Verify order: respond (0001) → revise (0002) → research (0003)
+  assert.equal(feed[0].turn_id, "0001");
+  assert.equal(feed[1].turn_id, "0002");
+  assert.equal(feed[2].turn_id, "0003");
+});
+
+test("reduceAgentActivityFeed — chronological multi-turn: no candidate leakage across non-applyable turns", () => {
+  let feed = [];
+
+  feed = reduceAgentActivityFeed(feed, makeActivityState({
+    session_id: "sess-no-leak-seq", turn_id: "0001", turn_number: 1,
+    status: "done", headline: "Responded",
+    route: "respond",
+  }));
+  feed = reduceAgentActivityFeed(feed, makeActivityState({
+    session_id: "sess-no-leak-seq", turn_id: "0002", turn_number: 2,
+    status: "done", headline: "Researched",
+    route: "research",
+  }));
+  feed = reduceAgentActivityFeed(feed, makeActivityState({
+    session_id: "sess-no-leak-seq", turn_id: "0003", turn_number: 3,
+    status: "done", headline: "Inspected graph",
+    route: "inspect",
+  }));
+  feed = reduceAgentActivityFeed(feed, makeActivityState({
+    session_id: "sess-no-leak-seq", turn_id: "0004", turn_number: 4,
+    status: "done", headline: "Clarified",
+    route: "clarify",
+  }));
+
+  assert.equal(feed.length, 4);
+  // All non-applyable: verify no phase_progress implies execute/review ran
+  for (const entry of feed) {
+    assert.equal(entry.phase_progress.execute, "pending",
+      `non-applyable turn ${entry.turn_id} must not have execute=done`);
+    assert.equal(entry.phase_progress.review, "pending",
+      `non-applyable turn ${entry.turn_id} must not have review=done`);
+  }
+});
+
+// ── executor progress label route awareness ────────────────────────────────
+
+test("executorProgressLabel — pending progress for respond-route shape is a valid non-null label", () => {
+  // respond route: classify→reply, research/execute/review never ran
+  const progress = createExecutorProgressSnapshot({
+    decide: "done",
+    research: "pending",
+    execute: "pending",
+    review: "pending",
+  });
+  const label = executorProgressLabel(progress);
+  assert.ok(typeof label === "string" && label.length > 0, "label must be a valid string");
+  assert.doesNotMatch(label, /Execute|Review/i, "respond-route shape must not mention Execute or Review");
+});
+
+test("executorProgressLabel — pending progress for research-route shape is a valid non-null label", () => {
+  // research route: classify→research→reply, execute/review never ran
+  const progress = createExecutorProgressSnapshot({
+    decide: "done",
+    research: "done",
+    execute: "pending",
+    review: "pending",
+  });
+  const label = executorProgressLabel(progress);
+  assert.ok(typeof label === "string" && label.length > 0, "label must be a valid string");
+  assert.doesNotMatch(label, /Execute|Review/i, "research-route shape must not mention Execute or Review");
 });

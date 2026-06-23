@@ -1119,7 +1119,14 @@ def _is_runtime_unavailable(exc_or_issue: Any, lower_message: str) -> bool:
         error_type = getattr(exc_or_issue, "error_type", None)
     if isinstance(error_type, str) and error_type in runtime_exc_names:
         return True
-    return "no module named" in lower_message
+    if (
+        "no module named " in lower_message
+        or "cannot import name " in lower_message
+        or "importerror" in lower_message
+        or "modulenotfounderror" in lower_message
+    ):
+        return True
+    return False
 
 
 def _is_provider_credit_error(status_code: int | None, lower_message: str) -> bool:
@@ -1224,7 +1231,11 @@ def classify_failure(
     # broken editable install) is a setup fault, not a transient provider
     # outage.  Detect it before the stage-specific branches so it is never
     # mislabeled as a retryable ProviderError ("temporarily unavailable").
-    if _is_runtime_unavailable(exc_or_issue, lower_message):
+    # A JSONDecodeError embedded in the message (e.g. from a worker subprocess
+    # tail) takes precedence over a noisy import tail.
+    if "jsondecodeerror" not in lower_message and _is_runtime_unavailable(
+        exc_or_issue, lower_message
+    ):
         explanation = str(exc_or_issue)
         envelope = failure_envelope(
             FailureKind.AGENT_RUNTIME_UNAVAILABLE,
@@ -1253,6 +1264,13 @@ def classify_failure(
                 agent_failure_context={"explanation": str(exc_or_issue)},
             )
         if exc_name == "MalformedModelJSON":
+            return failure_envelope(
+                FailureKind.MALFORMED_MODEL_JSON,
+                stage,
+                context,
+                agent_failure_context={"explanation": str(exc_or_issue)},
+            )
+        if "jsondecodeerror" in lower_message:
             return failure_envelope(
                 FailureKind.MALFORMED_MODEL_JSON,
                 stage,

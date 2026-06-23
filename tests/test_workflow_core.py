@@ -435,6 +435,13 @@ def test_ui_workflow_normalizes_to_api() -> None:
     assert api["2"]["inputs"]["images"] == ["1", 0]
 
 
+def test_empty_workflow_shapes_are_valid_authoring_inputs() -> None:
+    assert detect_workflow_shape({}) == "api"
+    assert normalize_to_api({}) == {}
+    assert detect_workflow_shape({"nodes": [], "links": []}) == "ui"
+    assert normalize_to_api({"nodes": [], "links": []}) == {}
+
+
 @pytest.mark.skipif(
     importlib.util.find_spec("comfy_execution") is None,
     reason="GraphBuilder backend requires the installed HiddenSwitch ComfyUI runtime.",

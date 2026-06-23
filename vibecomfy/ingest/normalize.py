@@ -34,6 +34,8 @@ def detect_workflow_shape(raw: dict[str, Any]) -> str:
         return detect_workflow_shape(raw["prompt"])
     if isinstance(raw.get("nodes"), list):
         return "ui"
+    if raw == {}:
+        return "api"
     if raw and all(isinstance(value, dict) and "class_type" in value for value in raw.values()):
         return "api"
     return "unknown"
