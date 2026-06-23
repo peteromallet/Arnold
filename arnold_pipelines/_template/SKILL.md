@@ -2,7 +2,7 @@
 
 Copy `arnold_pipelines/_template/` to a new package under `arnold_pipelines/`,
 rename it (remove the leading underscore), and replace the skeleton
-`build_pipeline()` body with your explicit-node workflow.
+`build_pipeline()` body with your workflow entrypoint.
 
 ## Contract
 
@@ -10,6 +10,17 @@ rename it (remove the leading underscore), and replace the skeleton
 - Module-level metadata: `name`, `description`, `driver`, `entrypoint`,
   `arnold_api_version`, `capabilities`
 - Optional: `default_profile`, `supported_modes`, `recommended_profiles`
+
+For Python-shaped authoring, keep workflow source in a package-local module that
+imports typed module-level component exports. Recommended component modules are
+`steps.py`, `prompts.py`, `policies.py`, `schemas.py`, and `subflows.py`, though
+feature modules are fine when the exports carry typed component metadata. The
+workflow imports are the source of truth. Generated manifests and catalogs are
+derived artifacts, not editable source.
+
+`build_pipeline()` remains the current package entrypoint used by discovery and
+`arnold workflow check`. It may construct explicit-node DSL directly or delegate
+to the Python-shaped source compiler once available.
 
 ## Example
 
