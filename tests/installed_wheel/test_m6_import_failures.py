@@ -3,6 +3,7 @@ from __future__ import annotations
 import subprocess
 import sys
 import tarfile
+import textwrap
 from pathlib import Path
 from zipfile import ZipFile
 
@@ -48,21 +49,33 @@ def _build_sdist(tmp_path: Path) -> Path:
     return sdists[0]
 
 
-def _install_wheel_into_venv(tmp_path: Path, wheel: Path) -> Path:
-    """Create a clean venv, install *wheel* (with deps), return python path."""
-    venv_dir = tmp_path / "venv"
+def _install_artifact_into_venv(
+    tmp_path: Path, artifact: Path, *, venv_name: str = "venv"
+) -> Path:
+    """Create a clean venv, install *artifact* (with deps), return python path."""
+    venv_dir = tmp_path / venv_name
     subprocess.run([sys.executable, "-m", "venv", str(venv_dir)], check=True)
     pip = venv_dir / "bin" / "pip"
     python = venv_dir / "bin" / "python"
 
-    # Install the wheel with dependencies so that imports like pydantic resolve.
+    # Install with dependencies so that imports like pydantic resolve.
     subprocess.run(
-        [str(pip), "install", str(wheel)],
+        [str(pip), "install", str(artifact)],
         check=True,
         capture_output=True,
         text=True,
     )
     return python
+
+
+def _install_wheel_into_venv(tmp_path: Path, wheel: Path) -> Path:
+    """Create a clean venv, install *wheel* (with deps), return python path."""
+    return _install_artifact_into_venv(tmp_path, wheel)
+
+
+def _install_sdist_into_venv(tmp_path: Path, sdist: Path) -> Path:
+    """Create a clean venv, install *sdist* (with deps), return python path."""
+    return _install_artifact_into_venv(tmp_path, sdist, venv_name="sdist-venv")
 
 
 # ---------------------------------------------------------------------------
@@ -78,6 +91,42 @@ def _run_probe(python: Path, probe: str, *, cwd: Path | None = None) -> tuple[in
         cwd=cwd or str(REPO_ROOT),
     )
     return result.returncode, result.stdout.strip(), result.stderr.strip()
+
+
+DELETED_IMPORT_PREFIXES = (
+    "arnold.pipelines.megaplan",
+    "arnold_pipelines.megaplan._pipeline",
+    "arnold_pipelines.megaplan.stages",
+    "arnold_pipelines.megaplan._compatibility",
+)
+
+DELETED_CLI_HELP_FRAGMENTS = (
+    "arnold pipelines",
+    "arnold.pipelines.megaplan",
+    "arnold_pipelines.megaplan._pipeline",
+    "arnold_pipelines.megaplan.stages",
+    "arnold_pipelines.megaplan._compatibility",
+    "megaplan init",
+    "megaplan prep",
+    "megaplan plan",
+    "megaplan critique",
+    "megaplan gate",
+    "megaplan revise",
+    "megaplan finalize",
+    "megaplan execute",
+    "megaplan review",
+    "megaplan run",
+)
+
+WORKFLOW_HELP_SUBCOMMANDS = (
+    "check",
+    "manifest",
+    "dot",
+    "dry-run",
+    "run",
+    "resume",
+    "describe",
+)
 
 
 # ---------------------------------------------------------------------------
@@ -354,6 +403,132 @@ def test_sdist_lacks_deleted_paths(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Installed-sdist runtime conformance
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.wheel_smoke
+def test_sdist_install_imports_compile_and_cli_workflow(tmp_path: Path) -> None:
+    """A clean install from the sdist must expose the same shipped runtime
+    surface as the wheel smoke path."""
+    sdist = _build_sdist(tmp_path)
+    python = _install_sdist_into_venv(tmp_path, sdist)
+    arnold = python.parent / "arnold"
+
+    probe = (
+        "from importlib.resources import files\n"
+        "import arnold.kernel\n"
+        "import arnold.pipeline\n"
+        "import arnold.workflow\n"
+        "import arnold_pipelines.megaplan as mp\n"
+        "manifest = mp.build_and_compile_pipeline()\n"
+        "assert manifest.id == 'megaplan'\n"
+        "assert manifest.manifest_hash.startswith('sha256:')\n"
+        "assert (files('arnold') / 'py.typed').is_file()\n"
+        "assert (files('arnold_pipelines.megaplan') / 'py.typed').is_file()\n"
+        "assert (files('arnold_pipelines.evidence_pack') / 'pipeline_ids.json').is_file()\n"
+        "assert (files('arnold_pipelines.megaplan.data._composed') / 'claude_skill.md').is_file()\n"
+        'print("ok")\n'
+    )
+    rc, stdout, stderr = _run_probe(python, probe, cwd=tmp_path)
+    assert rc == 0, stderr
+    assert stderr == ""
+    assert stdout.splitlines()[-1] == "ok"
+
+    for subcommand in ("check", "manifest", "dry-run"):
+        result = subprocess.run(
+            [
+                str(arnold),
+                "workflow",
+                subcommand,
+                "--module",
+                "arnold_pipelines.megaplan.pipelines.jokes:build_pipeline",
+            ],
+            capture_output=True,
+            text=True,
+            cwd=tmp_path,
+        )
+        assert result.returncode == 0, (
+            f"arnold workflow {subcommand} failed after sdist install: {result.stderr}"
+        )
+        if subcommand in {"check", "manifest"}:
+            assert "sha256:" in result.stdout
+
+
+@pytest.mark.wheel_smoke
+def test_sdist_install_deleted_surfaces_fail(tmp_path: Path) -> None:
+    """Deleted modules and top-level legacy symbols must remain absent when the
+    package is installed from the sdist, not only from the wheel."""
+    sdist = _build_sdist(tmp_path)
+    python = _install_sdist_into_venv(tmp_path, sdist)
+
+    deleted_submodules = (
+        "arnold_pipelines.megaplan._pipeline",
+        "arnold_pipelines.megaplan._pipeline.builder",
+        "arnold_pipelines.megaplan._pipeline.runtime",
+        "arnold_pipelines.megaplan._pipeline.dispatch",
+        "arnold_pipelines.megaplan._pipeline.types",
+        "arnold_pipelines.megaplan.stages",
+        "arnold_pipelines.megaplan.stages.inprocess_step",
+        "arnold_pipelines.megaplan._compatibility",
+        "arnold.pipelines.megaplan",
+    )
+    deleted_symbols = (
+        "build_legacy_pipeline",
+        "compile_planning_pipeline",
+        "WorkflowManifest",
+        "run_pipeline",
+        "InProcessHandlerStep",
+        "HandlerStep",
+        "Stage",
+    )
+
+    probe_lines = [
+        "import importlib",
+        "import sys",
+        "import arnold_pipelines.megaplan as mp",
+    ]
+    for mod_name in deleted_submodules:
+        probe_lines.append(
+            f"try:\n"
+            f"    importlib.import_module({mod_name!r})\n"
+            f"    raise SystemExit('deleted module {mod_name} is still importable')\n"
+            f"except ModuleNotFoundError:\n"
+            f"    pass\n"
+        )
+    probe_lines.append(f"deleted_symbols = {deleted_symbols!r}")
+    probe_lines.append(
+        "for name in deleted_symbols:\n"
+        "    if hasattr(mp, name):\n"
+        "        raise SystemExit(f'deleted symbol {name!r} is still exposed')\n"
+        "    try:\n"
+        "        exec(f'from arnold_pipelines.megaplan import {name}')\n"
+        "        raise SystemExit(f'deleted symbol {name!r} is still importable')\n"
+        "    except ImportError:\n"
+        "        pass\n"
+    )
+    probe_lines.append(
+        "deleted_prefixes = (\n"
+        "    'arnold_pipelines.megaplan._pipeline',\n"
+        "    'arnold_pipelines.megaplan.stages',\n"
+        "    'arnold_pipelines.megaplan._compatibility',\n"
+        "    'arnold.pipelines.megaplan',\n"
+        ")\n"
+        "leaked = [\n"
+        "    key for key in sys.modules\n"
+        "    if any(key == p or key.startswith(p + '.') for p in deleted_prefixes)\n"
+        "]\n"
+        "if leaked:\n"
+        "    raise SystemExit(f'sys.modules leaks deleted prefixes: {leaked}')\n"
+        "print('ok')"
+    )
+
+    rc, stdout, stderr = _run_probe(python, "\n".join(probe_lines), cwd=tmp_path)
+    assert rc == 0, stderr
+    assert stdout == "ok"
+
+
+# ---------------------------------------------------------------------------
 # importlib.metadata.entry_points() probe
 # ---------------------------------------------------------------------------
 
@@ -384,6 +559,211 @@ def test_entry_points_lack_deleted_modules(tmp_path: Path) -> None:
     rc, stdout, stderr = _run_probe(python, probe)
     assert rc == 0, stderr
     assert stdout == "ok"
+
+
+@pytest.mark.wheel_smoke
+def test_installed_console_help_lacks_deleted_commands_and_paths(
+    tmp_path: Path,
+) -> None:
+    """Collect help from the installed console script and scan the shipped CLI
+    surface for deleted command strings and legacy import paths."""
+    wheel = _build_wheel(tmp_path)
+    python = _install_wheel_into_venv(tmp_path, wheel)
+    arnold = python.parent / "arnold"
+
+    commands = [
+        ("arnold --help", [str(arnold), "--help"]),
+        ("arnold workflow --help", [str(arnold), "workflow", "--help"]),
+        *(
+            (
+                f"arnold workflow {subcommand} --help",
+                [str(arnold), "workflow", subcommand, "--help"],
+            )
+            for subcommand in WORKFLOW_HELP_SUBCOMMANDS
+        ),
+    ]
+
+    collected: list[tuple[str, str]] = []
+    for label, command in commands:
+        result = subprocess.run(
+            command,
+            capture_output=True,
+            text=True,
+            cwd=tmp_path,
+        )
+        assert result.returncode == 0, (
+            f"{label} failed: stdout={result.stdout!r} stderr={result.stderr!r}"
+        )
+        collected.append((label, result.stdout + result.stderr))
+
+    violations = [
+        (label, fragment)
+        for label, output in collected
+        for fragment in DELETED_CLI_HELP_FRAGMENTS
+        if fragment in output
+    ]
+    assert not violations, f"installed CLI help leaked deleted strings: {violations}"
+
+
+@pytest.mark.wheel_smoke
+def test_installed_runtime_import_tracing_lacks_deleted_prefixes(
+    tmp_path: Path,
+) -> None:
+    """Trace dynamic import surfaces in a clean installed runtime.
+
+    The probe wraps importlib.import_module, builtins.__import__, package
+    __getattr__, entry point enumeration/loading, and shipped registry reads so
+    indirect lazy loads of deleted prefixes are recorded deterministically.
+    """
+    wheel = _build_wheel(tmp_path)
+    python = _install_wheel_into_venv(tmp_path, wheel)
+
+    probe = textwrap.dedent(
+        f"""
+        import builtins
+        import importlib
+        import importlib.metadata as metadata
+        import sys
+
+        deleted_prefixes = {DELETED_IMPORT_PREFIXES!r}
+        events = []
+
+        def record(kind, name):
+            if isinstance(name, str):
+                events.append((kind, name))
+
+        original_import = builtins.__import__
+
+        def traced_import(name, globals=None, locals=None, fromlist=(), level=0):
+            record("__import__", name)
+            for item in fromlist or ():
+                if isinstance(item, str):
+                    record("__import__.fromlist", f"{{name}}.{{item}}")
+            return original_import(name, globals, locals, fromlist, level)
+
+        builtins.__import__ = traced_import
+
+        original_import_module = importlib.import_module
+
+        def traced_import_module(name, package=None):
+            record("importlib.import_module", name)
+            return original_import_module(name, package)
+
+        importlib.import_module = traced_import_module
+
+        original_entry_points = metadata.entry_points
+
+        def traced_entry_points(*args, **kwargs):
+            record("metadata.entry_points", "importlib.metadata.entry_points")
+            eps = original_entry_points(*args, **kwargs)
+            try:
+                iterable = eps.select()
+            except AttributeError:
+                iterable = eps
+            for ep in iterable:
+                value = getattr(ep, "value", "")
+                record("metadata.entry_point", value)
+            return eps
+
+        metadata.entry_points = traced_entry_points
+
+        original_distribution = metadata.distribution
+
+        def traced_distribution(name):
+            record("metadata.distribution", name)
+            dist = original_distribution(name)
+            for ep in dist.entry_points:
+                record("metadata.distribution.entry_point", ep.value)
+            return dist
+
+        metadata.distribution = traced_distribution
+
+        original_ep_load = metadata.EntryPoint.load
+
+        def traced_ep_load(self):
+            record("metadata.EntryPoint.load", self.value)
+            return original_ep_load(self)
+
+        metadata.EntryPoint.load = traced_ep_load
+
+        import arnold.cli as cli
+        assert cli.main(["--help"]) == 0
+
+        dist = metadata.distribution("arnold")
+        for ep in dist.entry_points:
+            if ep.group == "console_scripts":
+                loaded = ep.load()
+                record("metadata.loaded_entry_point", f"{{ep.name}}={{loaded.__module__}}")
+
+        import arnold_pipelines.megaplan as megaplan_pkg
+        original_getattr = getattr(megaplan_pkg, "__getattr__", None)
+
+        def traced_package_getattr(name):
+            record("package.__getattr__", f"arnold_pipelines.megaplan.{{name}}")
+            if original_getattr is None:
+                raise AttributeError(name)
+            return original_getattr(name)
+
+        megaplan_pkg.__getattr__ = traced_package_getattr
+        for attr in (
+            "build_legacy_pipeline",
+            "compile_planning_pipeline",
+            "WorkflowManifest",
+            "run_pipeline",
+            "Stage",
+        ):
+            try:
+                getattr(megaplan_pkg, attr)
+            except AttributeError:
+                pass
+            else:
+                raise SystemExit(f"deleted attr {{attr!r}} resolved")
+
+        import arnold_pipelines.discovery as discovery
+        discovery.discover_shipped_pipelines()
+
+        import arnold_pipelines.megaplan.registry as registry
+        record("registry.access", "arnold_pipelines.megaplan.registry")
+        registry.registered_pipelines()
+        registry.describe_pipeline("planning")
+
+        leaked_events = [
+            (kind, name)
+            for kind, name in events
+            if any(name == prefix or name.startswith(prefix + ".") for prefix in deleted_prefixes)
+        ]
+        if leaked_events:
+            raise SystemExit(f"deleted prefix import event leakage: {{leaked_events}}")
+
+        for name in (
+            "arnold_pipelines.megaplan._pipeline",
+            "arnold_pipelines.megaplan._pipeline.builder",
+            "arnold_pipelines.megaplan.stages",
+            "arnold_pipelines.megaplan._compatibility",
+            "arnold.pipelines.megaplan",
+        ):
+            try:
+                importlib.import_module(name)
+            except ModuleNotFoundError:
+                pass
+            else:
+                raise SystemExit(f"deleted module {{name!r}} imported")
+
+        leaked_modules = [
+            name
+            for name in sys.modules
+            if any(name == prefix or name.startswith(prefix + ".") for prefix in deleted_prefixes)
+        ]
+        if leaked_modules:
+            raise SystemExit(f"deleted prefix sys.modules leakage: {{leaked_modules}}")
+        print("ok")
+        """
+    )
+
+    rc, stdout, stderr = _run_probe(python, probe, cwd=tmp_path)
+    assert rc == 0, stderr
+    assert stderr == ""
+    assert stdout.splitlines()[-1] == "ok"
 
 
 # ---------------------------------------------------------------------------

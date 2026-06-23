@@ -55,8 +55,9 @@ def test_new_generic_megaplan_import_fails_gate(tmp_path: Path) -> None:
     assert "new generic Arnold Megaplan coupling" in result.message
     assert result.details["unexpected"] == {
         "arnold.new_surface": (
-            "arnold_pipelines.megaplan",
+            "arnold.pipelines.megaplan",
             "arnold_pipelines.megaplan.run_outcome",
+            "arnold_pipelines.megaplan.run_outcome.RunOutcome",
         )
     }
 

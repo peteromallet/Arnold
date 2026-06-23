@@ -192,6 +192,7 @@ def check_aggregate_uniqueness(paths: list[Path]) -> list[str]:
 
 
 _HASH_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
+DEFAULT_IDENTITY_REPORT = REPO_ROOT / "docs" / "arnold" / "manifest-identity-report.json"
 
 
 def _survivor_registry_ids() -> frozenset[str]:
@@ -313,6 +314,132 @@ def _collect_refs(value: Any) -> set[str]:
 
 
 # ---------------------------------------------------------------------------
+# Manifest identity report
+# ---------------------------------------------------------------------------
+
+
+def _relative_path(path: Path, root: Path) -> str:
+    try:
+        return path.relative_to(root).as_posix()
+    except ValueError:
+        return path.as_posix()
+
+
+def _registry_entries_by_stable_id(
+    paths: list[Path], root: Path
+) -> dict[str, dict[str, Any]]:
+    entries: dict[str, dict[str, Any]] = {}
+    for path in paths:
+        data = _load_registry_data(path)
+        for item in data.get("pipelines") or []:
+            if not isinstance(item, dict):
+                continue
+            stable_id = item.get("stable_id")
+            if not isinstance(stable_id, str) or not stable_id:
+                continue
+            entry = dict(item)
+            entry["_registry_path"] = _relative_path(path, root)
+            entries[stable_id] = entry
+    return entries
+
+
+def _docs_ref(path_text: str | None, root: Path) -> dict[str, Any] | None:
+    if not path_text:
+        return None
+    path = root / path_text
+    return {"path": path_text, "exists": path.exists()}
+
+
+def _example_docs_ref(pipeline_id: str, root: Path) -> dict[str, Any]:
+    slug = pipeline_id.replace("_", "-")
+    path = root / "docs" / "arnold" / "examples" / f"{slug}.md"
+    return {"path": _relative_path(path, root), "exists": path.exists()}
+
+
+def build_manifest_identity_report(
+    *,
+    root: Path | None = None,
+    registry_paths: list[Path] | None = None,
+) -> dict[str, Any]:
+    """Derive the generated manifest identity coverage report.
+
+    The report intentionally recomputes manifest hashes from discovered
+    ``build_pipeline`` callables instead of storing hand-maintained expected
+    values in the checker.
+    """
+
+    if root is None:
+        root = _repo_root()
+    if registry_paths is None:
+        registry_paths = discover_registry_files(root)
+
+    registry_entries = _registry_entries_by_stable_id(registry_paths, root)
+    identities: list[dict[str, Any]] = []
+    for info in discover_migrated_pipelines():
+        if info.registry_id is None or info.builder is None:
+            continue
+        manifest = compile_pipeline(info.builder())
+        registry_entry = registry_entries.get(info.registry_id)
+        registry_manifest_hash = None
+        registry_path = None
+        if registry_entry is not None:
+            registry_entry = dict(registry_entry)
+            registry_path = registry_entry.pop("_registry_path", None)
+            registry_manifest_hash = registry_entry.get("manifest_hash")
+        identities.append(
+            {
+                "registry_id": info.registry_id,
+                "pipeline_id": info.id,
+                "package_path": info.package_path,
+                "package_exists": (root / info.package_path).exists(),
+                "compiled_manifest_hash": manifest.manifest_hash or "",
+                "registry_path": registry_path,
+                "registry_manifest_hash": registry_manifest_hash,
+                "registry_entry": registry_entry,
+                "skill_docs": _docs_ref(info.docs_path, root),
+                "example_docs": _example_docs_ref(info.id, root),
+                "generated_asset_path": info.generated_asset_path,
+                "disposition": info.disposition,
+            }
+        )
+
+    identities.sort(key=lambda item: (item["registry_id"], item["package_path"]))
+    return {
+        "version": 1,
+        "generated_by": "scripts/check_pipeline_id_registry.py --write-identity-report",
+        "source": (
+            "Derived from arnold_pipelines.discovery, discovered pipeline_ids.json "
+            "files, generated docs/skill paths, and compile_pipeline(builder())."
+        ),
+        "registry_files": [_relative_path(path, root) for path in sorted(registry_paths)],
+        "identity_count": len(identities),
+        "identities": identities,
+    }
+
+
+def render_manifest_identity_report(report: dict[str, Any]) -> str:
+    """Render a deterministic manifest identity report."""
+
+    return json.dumps(report, indent=2, sort_keys=True) + "\n"
+
+
+def check_manifest_identity_report(report_path: Path, expected: dict[str, Any]) -> list[str]:
+    """Return errors when the generated identity report is missing or stale."""
+
+    expected_text = render_manifest_identity_report(expected)
+    try:
+        current_text = report_path.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return [f"{report_path}: missing manifest identity report"]
+    if current_text != expected_text:
+        return [
+            f"{report_path}: stale manifest identity report; "
+            "run `python scripts/check_pipeline_id_registry.py --write-identity-report`"
+        ]
+    return []
+
+
+# ---------------------------------------------------------------------------
 # Git helpers
 # ---------------------------------------------------------------------------
 
@@ -405,6 +532,24 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="Skip per-file rename-drift comparison; run only aggregate uniqueness.",
     )
+    parser.add_argument(
+        "--identity-report",
+        default=str(DEFAULT_IDENTITY_REPORT),
+        help="Path to the generated manifest identity coverage report.",
+    )
+    parser.add_argument(
+        "--write-identity-report",
+        action="store_true",
+        help=(
+            "Write the generated manifest identity coverage report derived from "
+            "discovery, registry JSON, docs paths, and compiled manifests."
+        ),
+    )
+    parser.add_argument(
+        "--check-identity-report",
+        action="store_true",
+        help="Fail when the generated manifest identity coverage report is stale.",
+    )
     args = parser.parse_args(argv)
 
     # Resolve current registry paths
@@ -418,6 +563,18 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     all_errors: list[str] = []
+
+    identity_report = build_manifest_identity_report(registry_paths=registry_paths)
+    identity_report_path = Path(args.identity_report)
+    if args.write_identity_report:
+        identity_report_path.parent.mkdir(parents=True, exist_ok=True)
+        identity_report_path.write_text(
+            render_manifest_identity_report(identity_report),
+            encoding="utf-8",
+        )
+        print(f"wrote manifest identity report: {identity_report_path}")
+    if args.check_identity_report:
+        all_errors.extend(check_manifest_identity_report(identity_report_path, identity_report))
 
     # 1. Per-file rename-drift (when history is available)
     if not args.no_drift:

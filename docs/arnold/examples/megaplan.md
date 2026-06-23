@@ -19,6 +19,7 @@ Provenance:
 | --- | --- |
 | Package | arnold_pipelines/megaplan/pipelines/planning|
 | Manifest and builder | arnold_pipelines/megaplan/pipelines/planning/__init__.py|
+| Steps | arnold_pipelines/megaplan/pipelines/planning/steps.py|
 | Skill | arnold_pipelines/megaplan/pipelines/planning/SKILL.md|
 | Validation | `arnold workflow check --module arnold_pipelines.megaplan.pipelines.planning:build_pipeline`|
 | Manifest hash | sha256:245a06ac778caf20c645772b7c0570655af7a79a0d00eda959b19d2cf01a3eba|
@@ -30,6 +31,57 @@ The following snippet is extracted verbatim from the pack's `__init__.py`.
 ```python
 def build_pipeline():
     return _canonical_build_pipeline()
+```
+
+## Step Surface
+
+The following snippet is extracted verbatim from the pack's `steps.py`.
+
+```python
+def _promote_from_child_state(state: Mapping[str, Any]) -> str:
+    final = state.get("current_state", "")
+    if final == "critiqued":
+        return "iterate"
+    if final == "aborted":
+        return "escalate"
+    return "proceed"
+
+class TiebreakerStep(StepMixinProperty):
+    """Single-Step tiebreaker backed by the existing run/decide handlers."""
+
+    name: str = "tiebreaker"
+    kind: str = "subloop"
+    prompt_key: str | None = None
+    slot: str | None = "tiebreaker_researcher"
+    arg_overrides: Mapping[str, Any] = field(default_factory=dict)
+
+    def run(self, ctx: StepContext) -> StepResult:
+        run_step = InProcessHandlerStep(
+            name="tiebreaker_run",
+            kind="produce",
+            slot="tiebreaker_researcher",
+            handler=handle_tiebreaker_run,
+            arg_overrides=self.arg_overrides,
+        )
+        decide_step = InProcessHandlerStep(
+            name="tiebreaker_decide",
+            kind="produce",
+            slot="tiebreaker_challenger",
+            handler=handle_tiebreaker_decide,
+            arg_overrides=self.arg_overrides,
+        )
+        run_step.run(ctx)
+        decided = decide_step.run(ctx)
+        state = ctx.state if isinstance(ctx.state, Mapping) else {}
+        recommendation = _promote_from_child_state(state)
+        return StepResult(
+            outputs=decided.outputs,
+            verdict=PipelineVerdict(score=0.0, recommendation=recommendation),
+            next=recommendation,
+            state_patch=decided.state_patch,
+            contract_result=decided.contract_result,
+            envelope=decided.envelope,
+        )
 ```
 
 ## Dry-run report

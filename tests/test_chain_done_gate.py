@@ -5,7 +5,7 @@ from pathlib import Path
 
 import yaml
 
-from scripts.chain_done_gate import check_chain_done
+from scripts.chain_done_gate import check_chain_done, main
 
 
 def _write_chain(tmp_path: Path, *, mode: str = "enforce", backstop: str = "enforce") -> tuple[Path, Path, Path]:
@@ -94,3 +94,128 @@ def test_chain_done_gate_fails_open_review_blockers(tmp_path: Path) -> None:
     )
 
     assert any("unresolved blocker 'b1'" in error for error in errors)
+
+
+def test_chain_done_gate_blockers_only_fails_unresolved_without_chain_inputs(tmp_path: Path) -> None:
+    blockers_path = tmp_path / "blockers.json"
+    blockers_path.write_text(
+        json.dumps(
+            {
+                "blockers": [
+                    {
+                        "id": "b1",
+                        "title": "dynamic import trap",
+                        "source": "review.txt",
+                        "status": "open",
+                    }
+                ]
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    assert main(["--blockers-only", "--blockers", str(blockers_path)]) == 1
+
+
+def test_chain_done_gate_blockers_only_passes_resolved_without_chain_inputs(tmp_path: Path) -> None:
+    blockers_path = tmp_path / "blockers.json"
+    blockers_path.write_text(
+        json.dumps(
+            {
+                "blockers": [
+                    {
+                        "id": "b1",
+                        "title": "dynamic import trap",
+                        "source": "review.txt",
+                        "status": "resolved",
+                    }
+                ]
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    assert main(["--blockers-only", "--blockers", str(blockers_path)]) == 0
+
+
+def test_chain_done_gate_blockers_only_fails_malformed_blocker_rows(tmp_path: Path) -> None:
+    blockers_path = tmp_path / "blockers.json"
+    blockers_path.write_text(
+        json.dumps({"blockers": ["not an object"]}) + "\n",
+        encoding="utf-8",
+    )
+
+    assert main(["--blockers-only", "--blockers", str(blockers_path)]) == 1
+
+
+def test_chain_done_gate_blockers_only_fails_malformed_blockers_field(tmp_path: Path) -> None:
+    blockers_path = tmp_path / "blockers.json"
+    blockers_path.write_text(
+        json.dumps({"blockers": {"id": "b1", "status": "open"}}) + "\n",
+        encoding="utf-8",
+    )
+
+    assert main(["--blockers-only", "--blockers", str(blockers_path)]) == 2
+
+
+def test_chain_done_gate_blockers_only_requires_blockers() -> None:
+    try:
+        main(["--blockers-only"])
+    except SystemExit as exc:
+        assert exc.code == 2
+    else:
+        raise AssertionError("expected --blockers-only without --blockers to fail parsing")
+
+
+def test_chain_done_gate_blockers_only_rejects_full_mode_inputs(tmp_path: Path) -> None:
+    spec_path, state_path, plans_root = _write_chain(tmp_path)
+    blockers_path = tmp_path / "blockers.json"
+    blockers_path.write_text(json.dumps({"blockers": []}) + "\n", encoding="utf-8")
+
+    for extra_arg, value in (
+        ("--spec", spec_path),
+        ("--state", state_path),
+        ("--plans-root", plans_root),
+    ):
+        try:
+            main(["--blockers-only", "--blockers", str(blockers_path), extra_arg, str(value)])
+        except SystemExit as exc:
+            assert exc.code == 2
+        else:
+            raise AssertionError(f"expected --blockers-only with {extra_arg} to fail parsing")
+
+
+def test_chain_done_gate_full_mode_still_requires_spec(tmp_path: Path) -> None:
+    blockers_path = tmp_path / "blockers.json"
+    blockers_path.write_text(json.dumps({"blockers": []}) + "\n", encoding="utf-8")
+
+    try:
+        main(["--blockers", str(blockers_path)])
+    except SystemExit as exc:
+        assert exc.code == 2
+    else:
+        raise AssertionError("expected full mode without --spec to fail parsing")
+
+
+def test_chain_done_gate_full_mode_still_validates_chain_state(tmp_path: Path) -> None:
+    spec_path, state_path, plans_root = _write_chain(tmp_path, mode="shadow")
+    blockers_path = tmp_path / "blockers.json"
+    blockers_path.write_text(json.dumps({"blockers": []}) + "\n", encoding="utf-8")
+
+    assert (
+        main(
+            [
+                "--spec",
+                str(spec_path),
+                "--state",
+                str(state_path),
+                "--plans-root",
+                str(plans_root),
+                "--blockers",
+                str(blockers_path),
+            ]
+        )
+        == 1
+    )

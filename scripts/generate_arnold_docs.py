@@ -571,7 +571,6 @@ def _registries_to_update() -> dict[Path, tuple[ShippedPipelineInfo, ...]]:
     """Map registry JSON paths to the pipeline infos that belong in them."""
 
     by_registry: dict[Path, list[ShippedPipelineInfo]] = {
-        REPO_ROOT / "arnold_pipelines" / "megaplan" / "_pipeline" / "pipeline_ids.json": [],
         REPO_ROOT / "arnold_pipelines" / "evidence_pack" / "pipeline_ids.json": [],
     }
     for info in discover_migrated_pipelines():
@@ -582,9 +581,7 @@ def _registries_to_update() -> dict[Path, tuple[ShippedPipelineInfo, ...]]:
                 REPO_ROOT / "arnold_pipelines" / "evidence_pack" / "pipeline_ids.json"
             ].append(info)
         else:
-            by_registry[
-                REPO_ROOT / "arnold_pipelines" / "megaplan" / "_pipeline" / "pipeline_ids.json"
-            ].append(info)
+            continue
     return {path: tuple(infos) for path, infos in by_registry.items()}
 
 
