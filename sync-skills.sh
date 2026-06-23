@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Sync megaplan codex skills from this directory into ~/.claude, ~/.codex, and ~/.agents.
+# Sync megaplan codex skills from this directory into ~/.claude and ~/.codex.
 #
 # For each top-level directory under arnold/pipelines/megaplan/data/_codex_skills
 # (except _underscore ones), create a symlink in each target skills directory,
@@ -14,7 +14,6 @@ SRC_DIR="$REPO_ROOT/arnold/pipelines/megaplan/data/_codex_skills"
 SKILL_TARGETS=(
   "$HOME/.claude/skills"
   "$HOME/.codex/skills"
-  "$HOME/.agents/skills"
 )
 
 created=0
