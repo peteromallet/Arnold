@@ -5,9 +5,9 @@ schema, handler, toolset membership, and availability check.  ``model_tools.py``
 queries the registry instead of maintaining its own parallel data structures.
 
 Import chain (circular-import safe):
-    tools/registry.py  (no imports from model_tools or tool files)
+    tools/registry.py  (no imports from arnold.agent.tools.model_tools or tool files)
            ^
-    tools/*.py  (import from tools.registry at module level)
+    tools/*.py  (import from arnold.agent.tools.registry at module level)
            ^
     model_tools.py  (imports tools.registry + all tool modules)
            ^
@@ -124,7 +124,7 @@ class ToolRegistry:
             return json.dumps({"error": f"Unknown tool: {name}"})
         try:
             if entry.is_async:
-                from model_tools import _run_async
+                from arnold.agent.tools.model_tools import _run_async
                 return _run_async(entry.handler(args, **kwargs))
             return entry.handler(args, **kwargs)
         except Exception as e:

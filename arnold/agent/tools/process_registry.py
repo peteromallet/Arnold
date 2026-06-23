@@ -14,7 +14,7 @@ runs on the host machine unless TERMINAL_ENV=local. For Docker, Singularity,
 Modal, Daytona, and SSH backends, the command runs inside the sandbox.
 
 Usage:
-    from tools.process_registry import process_registry
+    from arnold.agent.tools.process_registry import process_registry
 
     # Spawn a background process (called from terminal_tool)
     session = process_registry.spawn(env, "pytest -v", task_id="task_123")
@@ -43,12 +43,12 @@ import uuid
 
 _IS_WINDOWS = platform.system() == "Windows"
 from arnold.runtime.process import kill_group, spawn
-from tools.environments.local import _find_shell, _sanitize_subprocess_env
+from arnold.agent.tools.environments.local import _find_shell, _sanitize_subprocess_env
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from hermes_cli.config import get_hermes_home
+from arnold.agent.hermes_cli.config import get_hermes_home
 
 logger = logging.getLogger(__name__)
 
@@ -430,7 +430,7 @@ class ProcessRegistry:
 
     def poll(self, session_id: str) -> dict:
         """Check status and get new output for a background process."""
-        from tools.ansi_strip import strip_ansi
+        from arnold.agent.tools.ansi_strip import strip_ansi
 
         session = self.get(session_id)
         if session is None:
@@ -456,7 +456,7 @@ class ProcessRegistry:
 
     def read_log(self, session_id: str, offset: int = 0, limit: int = 200) -> dict:
         """Read the full output log with optional pagination by lines."""
-        from tools.ansi_strip import strip_ansi
+        from arnold.agent.tools.ansi_strip import strip_ansi
 
         session = self.get(session_id)
         if session is None:
@@ -494,8 +494,8 @@ class ProcessRegistry:
             dict with status ("exited", "timeout", "interrupted", "not_found")
             and output snapshot.
         """
-        from tools.ansi_strip import strip_ansi
-        from tools.terminal_tool import _interrupt_event
+        from arnold.agent.tools.ansi_strip import strip_ansi
+        from arnold.agent.tools.terminal_tool import _interrupt_event
 
         default_timeout = int(os.getenv("TERMINAL_TIMEOUT", "180"))
         max_timeout = default_timeout
@@ -729,7 +729,7 @@ class ProcessRegistry:
                             "watcher_thread_id": s.watcher_thread_id,
                             "watcher_interval": s.watcher_interval,
                         })
-            
+
             # Atomic write to avoid corruption on crash
             from utils import atomic_json_write
             atomic_json_write(CHECKPOINT_PATH, entries)

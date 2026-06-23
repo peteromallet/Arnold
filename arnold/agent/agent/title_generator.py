@@ -8,7 +8,7 @@ import logging
 import threading
 from typing import Optional
 
-from agent.auxiliary_client import call_llm
+from arnold.agent.agent.auxiliary_client import call_llm
 
 logger = logging.getLogger(__name__)
 

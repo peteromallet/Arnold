@@ -5,7 +5,7 @@ import os
 import subprocess
 from pathlib import Path
 
-from hermes_cli.config import get_hermes_home
+from arnold.agent.hermes_cli.config import get_hermes_home
 
 
 def get_sandbox_dir() -> Path:
@@ -71,7 +71,7 @@ class BaseEnvironment(ABC):
             pass to Popen.  Callers that embed stdin via heredoc (modal,
             daytona) handle sudo_stdin in their own execute() method.
         """
-        from tools.terminal_tool import _transform_sudo_command
+        from arnold.agent.tools.terminal_tool import _transform_sudo_command
         return _transform_sudo_command(command)
 
     def _build_run_kwargs(self, timeout: int | None,

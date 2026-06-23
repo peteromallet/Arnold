@@ -46,7 +46,7 @@ def _load_skill_payload(skill_identifier: str, task_id: str | None = None) -> tu
         return None
 
     try:
-        from tools.skills_tool import SKILLS_DIR, skill_view
+        from arnold.agent.tools.skills_tool import SKILLS_DIR, skill_view
 
         identifier_path = Path(raw_identifier).expanduser()
         if identifier_path.is_absolute():
@@ -84,7 +84,7 @@ def _build_skill_message(
     runtime_note: str = "",
 ) -> str:
     """Format a loaded skill into a user/system message payload."""
-    from tools.skills_tool import SKILLS_DIR
+    from arnold.agent.tools.skills_tool import SKILLS_DIR
 
     content = str(loaded_skill.get("content") or "")
 
@@ -157,7 +157,7 @@ def scan_skill_commands() -> Dict[str, Dict[str, Any]]:
     global _skill_commands
     _skill_commands = {}
     try:
-        from tools.skills_tool import SKILLS_DIR, _parse_frontmatter, skill_matches_platform, _get_disabled_skill_names
+        from arnold.agent.tools.skills_tool import SKILLS_DIR, _parse_frontmatter, skill_matches_platform, _get_disabled_skill_names
         if not SKILLS_DIR.exists():
             return _skill_commands
         disabled = _get_disabled_skill_names()
