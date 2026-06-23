@@ -9928,13 +9928,10 @@ async function applyAgentCandidate(panel) {
       lastAppliedChanges,
       message: panel.state.message,
     });
-    const appliedAuditPath = accepted.auditRef?.path || panel.state.auditRef?.path || "";
     const appliedMessage = panel.state.message || "Candidate applied.";
     panel.state.syntheticAgentMessage = {
       role: "agent",
-      text: appliedAuditPath
-        ? `${appliedMessage} audit: ${appliedAuditPath}`
-        : appliedMessage,
+      text: appliedMessage,
       detail_turn_id: appliedTurnId || null,
       session_id: appliedSessionId || null,
       synthetic: true,

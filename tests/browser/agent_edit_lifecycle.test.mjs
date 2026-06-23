@@ -1908,6 +1908,7 @@ test("APPLY_SUCCESS atomically syncs baseline, invalidates candidate, clears que
   assert.equal(panel.state.queueAllowed, false);
   assert.deepEqual(panel.state.lastAppliedChanges, lastAppliedChanges);
   assert.equal(panel.state.message, "Candidate accepted and applied locally.");
+  assert.equal((panel.state.syntheticAgentMessage?.text || "").includes("audit:"), false);
   assert.deepEqual(panel.state.debugPayload, {
     accepted,
     undo_stack_depth: 1,
