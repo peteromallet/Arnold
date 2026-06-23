@@ -1,0 +1,339 @@
+"""Compile-time contract objects for Python-shaped workflow authoring.
+
+This module declares the neutral data shapes consumed by the future
+Python-shaped source compiler. It is intentionally not a runtime, registry,
+discovery system, or graph builder: workflow source is parsed statically and
+these objects describe imports the compiler may resolve.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from enum import StrEnum
+from types import MappingProxyType
+from typing import Any, Mapping
+
+GRAMMAR_VERSION = "arnold.workflow.authoring.v1"
+
+
+class ComponentKind(StrEnum):
+    """Typed component kinds recognized by the V1 authoring grammar."""
+
+    STEP = "step"
+    PROMPT = "prompt"
+    POLICY = "policy"
+    SCHEMA = "schema"
+    SUBFLOW = "subflow"
+
+
+@dataclass(frozen=True)
+class ComponentProvenance:
+    """Stable source identity for an imported authoring component."""
+
+    module: str
+    qualname: str
+    export_name: str | None = None
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "module", _require_identifier_path("module", self.module))
+        object.__setattr__(self, "qualname", _require_qualname("qualname", self.qualname))
+        if self.export_name is not None:
+            object.__setattr__(
+                self,
+                "export_name",
+                _require_identifier("export_name", self.export_name),
+            )
+
+    @property
+    def ref(self) -> str:
+        """Return the canonical ``module:qualname`` component reference."""
+
+        return f"{self.module}:{self.qualname}"
+
+
+@dataclass(frozen=True)
+class ComponentContract:
+    """Base contract for a statically resolvable workflow component export."""
+
+    id: str
+    kind: ComponentKind
+    provenance: ComponentProvenance
+    label: str | None = None
+    metadata: Mapping[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "id", _require_ref("id", self.id))
+        object.__setattr__(self, "kind", ComponentKind(self.kind))
+        object.__setattr__(self, "metadata", _freeze_mapping(self.metadata))
+
+
+@dataclass(frozen=True, init=False)
+class PromptComponent(ComponentContract):
+    """Prompt metadata referenced by a statically authored step."""
+
+    template: str | None = None
+    parameters: tuple[str, ...] = ()
+
+    def __init__(
+        self,
+        id: str,
+        provenance: ComponentProvenance,
+        *,
+        label: str | None = None,
+        template: str | None = None,
+        parameters: tuple[str, ...] = (),
+        metadata: Mapping[str, Any] | None = None,
+    ) -> None:
+        super().__init__(
+            id=id,
+            kind=ComponentKind.PROMPT,
+            provenance=provenance,
+            label=label,
+            metadata={} if metadata is None else metadata,
+        )
+        object.__setattr__(self, "template", template)
+        object.__setattr__(self, "parameters", tuple(parameters))
+
+
+@dataclass(frozen=True, init=False)
+class PolicyComponent(ComponentContract):
+    """Bounded control, budget, authority, or effect policy metadata."""
+
+    policy_type: str
+    config: Mapping[str, Any] = field(default_factory=dict)
+
+    def __init__(
+        self,
+        id: str,
+        provenance: ComponentProvenance,
+        *,
+        policy_type: str,
+        label: str | None = None,
+        config: Mapping[str, Any] | None = None,
+        metadata: Mapping[str, Any] | None = None,
+    ) -> None:
+        super().__init__(
+            id=id,
+            kind=ComponentKind.POLICY,
+            provenance=provenance,
+            label=label,
+            metadata={} if metadata is None else metadata,
+        )
+        object.__setattr__(self, "policy_type", _require_ref("policy_type", policy_type))
+        object.__setattr__(self, "config", _freeze_mapping({} if config is None else config))
+
+
+@dataclass(frozen=True, init=False)
+class SchemaComponent(ComponentContract):
+    """Input, output, payload, or resume schema metadata."""
+
+    schema_type: str | None = None
+    schema: Mapping[str, Any] = field(default_factory=dict)
+
+    def __init__(
+        self,
+        id: str,
+        provenance: ComponentProvenance,
+        *,
+        label: str | None = None,
+        schema_type: str | None = None,
+        schema: Mapping[str, Any] | None = None,
+        metadata: Mapping[str, Any] | None = None,
+    ) -> None:
+        super().__init__(
+            id=id,
+            kind=ComponentKind.SCHEMA,
+            provenance=provenance,
+            label=label,
+            metadata={} if metadata is None else metadata,
+        )
+        object.__setattr__(self, "schema_type", schema_type)
+        object.__setattr__(self, "schema", _freeze_mapping({} if schema is None else schema))
+
+
+@dataclass(frozen=True, init=False)
+class SubflowComponent(ComponentContract):
+    """Nested workflow component metadata for a manifest subpipeline ref."""
+
+    workflow_id: str
+    version: str | None = None
+
+    def __init__(
+        self,
+        id: str,
+        provenance: ComponentProvenance,
+        *,
+        workflow_id: str,
+        version: str | None = None,
+        label: str | None = None,
+        metadata: Mapping[str, Any] | None = None,
+    ) -> None:
+        super().__init__(
+            id=id,
+            kind=ComponentKind.SUBFLOW,
+            provenance=provenance,
+            label=label,
+            metadata={} if metadata is None else metadata,
+        )
+        object.__setattr__(self, "workflow_id", _require_ref("workflow_id", workflow_id))
+        object.__setattr__(self, "version", version)
+
+
+@dataclass(frozen=True)
+class AuthoredStep:
+    """Compile-time step call captured from a Python-shaped workflow body."""
+
+    id: str
+    component: "StepComponent"
+    prompt: PromptComponent | None = None
+    policy: PolicyComponent | None = None
+    input_schema: SchemaComponent | None = None
+    output_schema: SchemaComponent | None = None
+    metadata: Mapping[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "id", _require_ref("id", self.id))
+        object.__setattr__(self, "metadata", _freeze_mapping(self.metadata))
+
+
+@dataclass(frozen=True, init=False)
+class StepComponent(ComponentContract):
+    """Callable-shaped component that lowers to one workflow step."""
+
+    step_type: str = "agent"
+    prompt: PromptComponent | None = None
+    policy: PolicyComponent | None = None
+    input_schema: SchemaComponent | None = None
+    output_schema: SchemaComponent | None = None
+
+    def __init__(
+        self,
+        id: str,
+        provenance: ComponentProvenance,
+        *,
+        label: str | None = None,
+        step_type: str = "agent",
+        prompt: PromptComponent | None = None,
+        policy: PolicyComponent | None = None,
+        input_schema: SchemaComponent | None = None,
+        output_schema: SchemaComponent | None = None,
+        metadata: Mapping[str, Any] | None = None,
+    ) -> None:
+        super().__init__(
+            id=id,
+            kind=ComponentKind.STEP,
+            provenance=provenance,
+            label=label,
+            metadata={} if metadata is None else metadata,
+        )
+        object.__setattr__(self, "step_type", _require_ref("step_type", step_type))
+        object.__setattr__(self, "prompt", prompt)
+        object.__setattr__(self, "policy", policy)
+        object.__setattr__(self, "input_schema", input_schema)
+        object.__setattr__(self, "output_schema", output_schema)
+
+    def __call__(
+        self,
+        *,
+        id: str,
+        prompt: PromptComponent | None = None,
+        policy: PolicyComponent | None = None,
+        input_schema: SchemaComponent | None = None,
+        output_schema: SchemaComponent | None = None,
+        metadata: Mapping[str, Any] | None = None,
+    ) -> AuthoredStep:
+        """Return compile-time step-call data; this does not execute a step."""
+
+        return AuthoredStep(
+            id=id,
+            component=self,
+            prompt=self.prompt if prompt is None else prompt,
+            policy=self.policy if policy is None else policy,
+            input_schema=self.input_schema if input_schema is None else input_schema,
+            output_schema=self.output_schema if output_schema is None else output_schema,
+            metadata={} if metadata is None else metadata,
+        )
+
+
+@dataclass(frozen=True)
+class IntrinsicDeclaration:
+    """Reserved compiler intrinsic name imported by workflow source."""
+
+    name: str
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "name", _require_identifier("name", self.name))
+
+    def __call__(self, *_args: Any, **_kwargs: Any) -> None:
+        raise RuntimeError(
+            f"{self.name!r} is a compile-time workflow intrinsic and cannot be executed"
+        )
+
+
+def _freeze_mapping(value: Mapping[str, Any]) -> Mapping[str, Any]:
+    return MappingProxyType({str(key): _freeze_value(subvalue) for key, subvalue in value.items()})
+
+
+def _freeze_value(value: Any) -> Any:
+    if isinstance(value, Mapping):
+        return _freeze_mapping(value)
+    if isinstance(value, list):
+        return tuple(_freeze_value(item) for item in value)
+    if isinstance(value, tuple):
+        return tuple(_freeze_value(item) for item in value)
+    return value
+
+
+def _require_identifier(name: str, value: str) -> str:
+    if not isinstance(value, str) or not value.isidentifier():
+        raise ValueError(f"{name} must be a Python identifier")
+    return value
+
+
+def _require_identifier_path(name: str, value: str) -> str:
+    if not isinstance(value, str) or not value:
+        raise ValueError(f"{name} must be a non-empty dotted path")
+    for segment in value.split("."):
+        _require_identifier(name, segment)
+    return value
+
+
+def _require_qualname(name: str, value: str) -> str:
+    if not isinstance(value, str) or not value:
+        raise ValueError(f"{name} must be a non-empty qualname")
+    for segment in value.split("."):
+        _require_identifier(name, segment)
+    return value
+
+
+def _require_ref(name: str, value: str) -> str:
+    if not isinstance(value, str) or not value:
+        raise ValueError(f"{name} must be a non-empty string")
+    return value
+
+
+workflow = IntrinsicDeclaration("workflow")
+halt = IntrinsicDeclaration("halt")
+suspend = IntrinsicDeclaration("suspend")
+transition = IntrinsicDeclaration("transition")
+
+RESERVED_INTRINSIC_NAMES = (workflow.name, halt.name, suspend.name, transition.name)
+
+__all__ = [
+    "AuthoredStep",
+    "ComponentContract",
+    "ComponentKind",
+    "ComponentProvenance",
+    "GRAMMAR_VERSION",
+    "IntrinsicDeclaration",
+    "PolicyComponent",
+    "PromptComponent",
+    "RESERVED_INTRINSIC_NAMES",
+    "SchemaComponent",
+    "StepComponent",
+    "SubflowComponent",
+    "halt",
+    "suspend",
+    "transition",
+    "workflow",
+]
