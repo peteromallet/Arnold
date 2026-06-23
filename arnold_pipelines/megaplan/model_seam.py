@@ -661,9 +661,14 @@ def _normalize_critique_finding(finding: Mapping[str, Any]) -> dict[str, Any]:
 
 
 def _normalize_critique_flag(flag: Mapping[str, Any]) -> dict[str, Any]:
-    allowed = {"id", "concern", "category", "severity_hint", "evidence"}
+    # Models sometimes emit `severity`/`status` instead of the schema's
+    # `severity_hint`.  Accept `severity` as an alias and drop other extras.
+    allowed = {"id", "concern", "category", "severity_hint", "severity", "evidence"}
     normalized = {k: v for k, v in flag.items() if k in allowed}
     severity_hint = normalized.get("severity_hint")
+    if severity_hint is None and "severity" in normalized:
+        severity_hint = normalized.pop("severity")
+        normalized["severity_hint"] = severity_hint
     if severity_hint in {"high", "significant", "major", "critical"}:
         normalized["severity_hint"] = "likely-significant"
     elif severity_hint in {"low", "minor", "trivial", "cosmetic"}:
