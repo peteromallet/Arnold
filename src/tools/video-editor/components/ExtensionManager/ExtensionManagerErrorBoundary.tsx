@@ -10,6 +10,7 @@
 import { Component, type ErrorInfo, type ReactNode } from 'react';
 import { AlertTriangle, RefreshCw, RotateCcw, Puzzle } from 'lucide-react';
 import { Button } from '@/shared/components/ui/button.tsx';
+import { ExtensionTrustWarningBanner } from './ExtensionTrustWarningBanner';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -38,29 +39,35 @@ interface ExtensionManagerErrorBoundaryState {
 
 export function ManagerLoadingState() {
   return (
-    <div
-      className="flex flex-col items-center justify-center gap-3 py-8 text-muted-foreground"
-      role="status"
-      aria-label="Loading extensions"
-    >
-      <div className="h-8 w-8 animate-spin rounded-full border-2 border-muted-foreground/30 border-t-muted-foreground" />
-      <span className="text-sm">Loading extensions…</span>
+    <div className="flex flex-col gap-3">
+      <ExtensionTrustWarningBanner />
+      <div
+        className="flex flex-col items-center justify-center gap-3 py-8 text-muted-foreground"
+        role="status"
+        aria-label="Loading extensions"
+      >
+        <div className="h-8 w-8 animate-spin rounded-full border-2 border-muted-foreground/30 border-t-muted-foreground" />
+        <span className="text-sm">Loading extensions…</span>
+      </div>
     </div>
   );
 }
 
 export function ManagerEmptyState() {
   return (
-    <div
-      className="flex flex-col items-center justify-center gap-3 py-8 text-muted-foreground"
-      role="status"
-      aria-label="No extensions loaded"
-    >
-      <Puzzle className="h-8 w-8 opacity-40" />
-      <span className="text-sm">No extensions loaded.</span>
-      <span className="text-xs text-muted-foreground/60">
-        Extensions provided by the host will appear here.
-      </span>
+    <div className="flex flex-col gap-3">
+      <ExtensionTrustWarningBanner />
+      <div
+        className="flex flex-col items-center justify-center gap-3 py-8 text-muted-foreground"
+        role="status"
+        aria-label="No extensions loaded"
+      >
+        <Puzzle className="h-8 w-8 opacity-40" />
+        <span className="text-sm">No extensions loaded.</span>
+        <span className="text-xs text-muted-foreground/60">
+          Extensions provided by the host will appear here.
+        </span>
+      </div>
     </div>
   );
 }
@@ -75,44 +82,47 @@ export function ManagerRenderErrorState({
   onReset: () => void;
 }) {
   return (
-    <div
-      className="flex flex-col items-center justify-center gap-3 py-8 text-muted-foreground"
-      role="alert"
-      aria-label="Extension manager render error"
-    >
-      <AlertTriangle className="h-8 w-8 text-red-400" />
-      <span className="text-sm font-medium text-red-400">
-        Extension Manager Error
-      </span>
-      {error && (
-        <span
-          className="max-w-[280px] truncate text-xs text-red-400/70"
-          title={error.message}
-        >
-          {error.message}
+    <div className="flex flex-col gap-3">
+      <ExtensionTrustWarningBanner />
+      <div
+        className="flex flex-col items-center justify-center gap-3 py-8 text-muted-foreground"
+        role="alert"
+        aria-label="Extension manager render error"
+      >
+        <AlertTriangle className="h-8 w-8 text-red-400" />
+        <span className="text-sm font-medium text-red-400">
+          Extension Manager Error
         </span>
-      )}
-      <div className="flex gap-2">
-        <Button
-          type="button"
-          variant="outline"
-          size="sm"
-          onClick={onRetry}
-          aria-label="Retry loading extensions"
-        >
-          <RefreshCw className="mr-1 h-3.5 w-3.5" />
-          Retry
-        </Button>
-        <Button
-          type="button"
-          variant="ghost"
-          size="sm"
-          onClick={onReset}
-          aria-label="Reset extension manager"
-        >
-          <RotateCcw className="mr-1 h-3.5 w-3.5" />
-          Reset
-        </Button>
+        {error && (
+          <span
+            className="max-w-[280px] truncate text-xs text-red-400/70"
+            title={error.message}
+          >
+            {error.message}
+          </span>
+        )}
+        <div className="flex gap-2">
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={onRetry}
+            aria-label="Retry loading extensions"
+          >
+            <RefreshCw className="mr-1 h-3.5 w-3.5" />
+            Retry
+          </Button>
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            onClick={onReset}
+            aria-label="Reset extension manager"
+          >
+            <RotateCcw className="mr-1 h-3.5 w-3.5" />
+            Reset
+          </Button>
+        </div>
       </div>
     </div>
   );

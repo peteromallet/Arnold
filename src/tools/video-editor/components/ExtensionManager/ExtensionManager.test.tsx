@@ -1,8 +1,9 @@
 // @vitest-environment jsdom
-import { act, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { ExtensionManager } from '@/tools/video-editor/components/ExtensionManager/ExtensionManager';
+import { ManagerLoadingState } from '@/tools/video-editor/components/ExtensionManager/ExtensionManagerErrorBoundary';
 import type { Diagnostic, DiagnosticCollection, DisposeHandle } from '@reigh/editor-sdk';
 
 // ---------------------------------------------------------------------------
@@ -45,7 +46,7 @@ function makeEntry(input: PackageEntryInput) {
   };
 }
 
-function makeRuntime(entries: PackageEntryInput[]) {
+function makeRuntime(entries: PackageEntryInput[], extensions: unknown[] = []) {
   return {
     config: {
       slots: {},
@@ -63,7 +64,7 @@ function makeRuntime(entries: PackageEntryInput[]) {
       shaders: [],
       agentTools: [],
     },
-    extensions: [],
+    extensions,
     diagnostics: [],
     inactiveReserved: [],
     knownRenderIds: new Set<string>(),
@@ -610,6 +611,80 @@ describe('ExtensionManager — enable/disable controls', () => {
         expect(errorEl).toHaveTextContent('Failed to save: Boom');
       });
     });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Persistent trust warning tests (T10)
+// ---------------------------------------------------------------------------
+
+describe('ExtensionManager — persistent trust warning', () => {
+  beforeEach(() => {
+    mockUseVideoEditorRuntime.mockReset();
+  });
+
+  function expectTrustWarningVisible() {
+    const warning = screen.getByRole('note', { name: 'Extension trust warning' });
+    expect(warning).toBeInTheDocument();
+    expect(warning).toHaveTextContent('Extensions run as trusted, unsandboxed code.');
+    expect(warning).toHaveTextContent('Manifest permissions are declarative and are not enforced at runtime.');
+  }
+
+  it('shows the trust warning during loading state', () => {
+    render(<ManagerLoadingState />);
+
+    expect(screen.getByText('Loading extensions…')).toBeInTheDocument();
+    expectTrustWarningVisible();
+  });
+
+  it('shows the trust warning in empty inventory state', () => {
+    mockUseVideoEditorRuntime.mockReturnValue({
+      extensionRuntime: makeRuntime([]),
+      extensionStateRepository: null,
+      triggerExtensionRefresh: undefined,
+    });
+
+    render(<ExtensionManager />);
+
+    expect(screen.getByText('No packages in inventory.')).toBeInTheDocument();
+    expectTrustWarningVisible();
+  });
+
+  it('shows the trust warning above populated package inventory', () => {
+    mockUseVideoEditorRuntime.mockReturnValue({
+      extensionRuntime: makeRuntime([
+        { extensionId: 'ext.a', packageState: 'loaded', label: 'Package A' },
+      ]),
+      extensionStateRepository: makeRepository(),
+      triggerExtensionRefresh: vi.fn(),
+    });
+
+    render(<ExtensionManager />);
+
+    expect(screen.getByText('Package A')).toBeInTheDocument();
+    expectTrustWarningVisible();
+  });
+
+  it('keeps the trust warning visible when a package detail section is expanded', async () => {
+    const user = userEvent.setup();
+    const repo = makeRepository();
+    repo.getSettingsSnapshot = vi.fn().mockResolvedValue(null);
+    mockUseVideoEditorRuntime.mockReturnValue({
+      extensionRuntime: makeRuntime([
+        { extensionId: 'ext.a', packageState: 'loaded', label: 'Package A' },
+      ]),
+      extensionStateRepository: repo,
+      triggerExtensionRefresh: vi.fn(),
+    });
+
+    render(<ExtensionManager />);
+
+    await user.click(screen.getByRole('button', { name: 'Show extension settings' }));
+
+    await waitFor(() => {
+      expect(screen.getByText('No saved settings for this extension.')).toBeInTheDocument();
+    });
+    expectTrustWarningVisible();
   });
 });
 
@@ -1240,6 +1315,98 @@ describe('ExtensionManager — settings persistence', () => {
         expect(errorEl).toBeInTheDocument();
         expect(errorEl).toHaveTextContent('Settings error: Boom');
       });
+    });
+
+    it('rejects raw JSON settings that fail the manifest settings schema', async () => {
+      const user = userEvent.setup();
+      const repo = makeRepository();
+      repo.getSettingsSnapshot = vi.fn().mockResolvedValue(null);
+
+      const manifest = {
+        id: 'ext.raw',
+        version: '1.0.0',
+        label: 'Raw Settings Package',
+        settingsSchema: {
+          version: 1,
+          schema: {
+            type: 'object',
+            required: ['mode'],
+          },
+        },
+        contributions: [],
+      };
+
+      mockUseVideoEditorRuntime.mockReturnValue({
+        extensionRuntime: makeRuntime(
+          [{ extensionId: 'ext.raw', packageState: 'loaded', label: 'Raw Settings Package' }],
+          [{ manifest }],
+        ),
+        extensionStateRepository: repo,
+        triggerExtensionRefresh: vi.fn(),
+      });
+
+      render(<ExtensionManager />);
+
+      await user.click(screen.getByRole('button', { name: 'Show extension settings' }));
+
+      const rawEditor = await screen.findByRole('textbox', { name: 'Raw JSON settings editor' });
+      fireEvent.change(rawEditor, { target: { value: '{"other":"safe"}' } });
+      await user.click(screen.getByRole('button', { name: 'Save raw JSON extension settings' }));
+
+      await waitFor(() => {
+        const errorEl = document.querySelector('[data-video-editor-extension-settings-raw-json-error="ext.raw"]');
+        expect(errorEl).toBeInTheDocument();
+        expect(errorEl).toHaveTextContent('Missing required setting "mode".');
+      });
+      expect(repo.putSettingsSnapshot).not.toHaveBeenCalled();
+    });
+
+    it('saves raw JSON settings only after manifest schema validation passes', async () => {
+      const user = userEvent.setup();
+      const repo = makeRepository();
+      const triggerRefresh = vi.fn();
+      repo.getSettingsSnapshot = vi.fn().mockResolvedValue(null);
+
+      const manifest = {
+        id: 'ext.raw',
+        version: '1.0.0',
+        label: 'Raw Settings Package',
+        settingsSchema: {
+          version: 1,
+          schema: {
+            type: 'object',
+            required: ['mode'],
+          },
+        },
+        contributions: [],
+      };
+
+      mockUseVideoEditorRuntime.mockReturnValue({
+        extensionRuntime: makeRuntime(
+          [{ extensionId: 'ext.raw', packageState: 'loaded', label: 'Raw Settings Package' }],
+          [{ manifest }],
+        ),
+        extensionStateRepository: repo,
+        triggerExtensionRefresh: triggerRefresh,
+      });
+
+      render(<ExtensionManager />);
+
+      await user.click(screen.getByRole('button', { name: 'Show extension settings' }));
+
+      const rawEditor = await screen.findByRole('textbox', { name: 'Raw JSON settings editor' });
+      fireEvent.change(rawEditor, { target: { value: '{"mode":"safe"}' } });
+      await user.click(screen.getByRole('button', { name: 'Save raw JSON extension settings' }));
+
+      await waitFor(() => {
+        expect(repo.putSettingsSnapshot).toHaveBeenCalledTimes(1);
+      });
+      expect(repo.putSettingsSnapshot).toHaveBeenCalledWith(expect.objectContaining({
+        extensionId: 'ext.raw',
+        schemaVersion: 1,
+        values: { mode: 'safe' },
+      }));
+      expect(triggerRefresh).toHaveBeenCalledTimes(1);
     });
   });
 });

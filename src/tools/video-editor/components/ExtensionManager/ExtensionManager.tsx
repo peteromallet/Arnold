@@ -45,6 +45,7 @@ import type {
   ExtensionStateRepository,
 } from '@/tools/video-editor/runtime/extensionStateRepository';
 import { adaptManifestSettingsSchema } from '@/tools/video-editor/runtime/extensionSettings';
+import { ExtensionTrustWarningBanner } from './ExtensionTrustWarningBanner';
 
 // ---------------------------------------------------------------------------
 // State display helpers
@@ -290,6 +291,113 @@ type SettingsSectionState =
   | 'error'
   | 'raw-json';
 
+function isJsonObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function valueMatchesJsonSchemaType(value: unknown, rawType: unknown): boolean {
+  const types = Array.isArray(rawType)
+    ? rawType.filter((item): item is string => typeof item === 'string')
+    : typeof rawType === 'string'
+      ? [rawType]
+      : [];
+
+  if (types.length === 0) return true;
+  if (value === null) return types.includes('null');
+
+  return types.some((type) => {
+    switch (type) {
+      case 'object':
+        return isJsonObject(value);
+      case 'array':
+        return Array.isArray(value);
+      case 'string':
+        return typeof value === 'string';
+      case 'number':
+        return typeof value === 'number' && Number.isFinite(value);
+      case 'integer':
+        return typeof value === 'number' && Number.isInteger(value);
+      case 'boolean':
+        return typeof value === 'boolean';
+      default:
+        return true;
+    }
+  });
+}
+
+function validateRawSettingsAgainstManifestSchema(
+  values: Record<string, unknown>,
+  rawSchema: unknown,
+): string | null {
+  if (!isJsonObject(rawSchema)) {
+    return 'Manifest settings schema is missing or invalid; settings cannot be saved.';
+  }
+  if (rawSchema.type !== undefined && rawSchema.type !== 'object') {
+    return 'Manifest settings schema must describe a JSON object.';
+  }
+
+  const properties = isJsonObject(rawSchema.properties) ? rawSchema.properties : {};
+  const required = Array.isArray(rawSchema.required)
+    ? rawSchema.required.filter((item): item is string => typeof item === 'string')
+    : [];
+
+  for (const key of required) {
+    if (!(key in values)) {
+      return `Missing required setting "${key}".`;
+    }
+  }
+
+  if (rawSchema.additionalProperties === false) {
+    const knownKeys = new Set(Object.keys(properties));
+    const unknownKey = Object.keys(values).find((key) => !knownKeys.has(key));
+    if (unknownKey) {
+      return `Unknown setting "${unknownKey}" is not allowed by the manifest schema.`;
+    }
+  }
+
+  for (const [key, propSchema] of Object.entries(properties)) {
+    if (!(key in values) || !isJsonObject(propSchema)) continue;
+
+    const value = values[key];
+    if (!valueMatchesJsonSchemaType(value, propSchema.type)) {
+      return `Setting "${key}" does not match the manifest schema type.`;
+    }
+
+    if (Array.isArray(propSchema.enum) && !propSchema.enum.includes(value)) {
+      return `Setting "${key}" must be one of the manifest schema enum values.`;
+    }
+
+    if (typeof value === 'number') {
+      if (typeof propSchema.minimum === 'number' && value < propSchema.minimum) {
+        return `Setting "${key}" must be greater than or equal to ${propSchema.minimum}.`;
+      }
+      if (typeof propSchema.maximum === 'number' && value > propSchema.maximum) {
+        return `Setting "${key}" must be less than or equal to ${propSchema.maximum}.`;
+      }
+    }
+
+    if (typeof value === 'string') {
+      if (typeof propSchema.minLength === 'number' && value.length < propSchema.minLength) {
+        return `Setting "${key}" is shorter than the manifest schema minimum length.`;
+      }
+      if (typeof propSchema.maxLength === 'number' && value.length > propSchema.maxLength) {
+        return `Setting "${key}" is longer than the manifest schema maximum length.`;
+      }
+      if (typeof propSchema.pattern === 'string') {
+        try {
+          if (!new RegExp(propSchema.pattern).test(value)) {
+            return `Setting "${key}" does not match the manifest schema pattern.`;
+          }
+        } catch {
+          return `Setting "${key}" has an invalid manifest schema pattern.`;
+        }
+      }
+    }
+  }
+
+  return null;
+}
+
 // ---------------------------------------------------------------------------
 // Package settings section (host repository path)
 // ---------------------------------------------------------------------------
@@ -319,8 +427,6 @@ function PackageSettingsSection({
     return adaptManifestSettingsSchema(manifest);
   }, [manifest]);
 
-  // Supported schema: key-value editor can render typed fields.
-  const hasSupportedSchema = schemaAdaptation?.schema !== null && schemaAdaptation?.schema !== undefined;
   // Unsupported schema: manifest has settingsSchema but it can't be rendered as key-value.
   const hasUnsupportedSchema = schemaAdaptation !== null && schemaAdaptation.schema === null;
 
@@ -396,7 +502,7 @@ function PackageSettingsSection({
         setSectionState('error');
       }
     }
-  }, [sectionState, extensionId, repository]);
+  }, [sectionState, hasUnsupportedSchema, extensionId, repository]);
 
   // Enter editing mode
   const handleStartEdit = useCallback(() => {
@@ -502,6 +608,15 @@ function PackageSettingsSection({
     // Must be an object (settings are key-value)
     if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
       setRawJsonError('Settings must be a JSON object (e.g. {"key": "value"}), not an array or primitive.');
+      return;
+    }
+
+    const schemaError = validateRawSettingsAgainstManifestSchema(
+      parsed as Record<string, unknown>,
+      manifest?.settingsSchema?.schema,
+    );
+    if (schemaError) {
+      setRawJsonError(schemaError);
       return;
     }
 
@@ -1245,6 +1360,7 @@ function ManagerSummaryBar({
 
 /** Stable frozen reference for empty diagnostics — required by useSyncExternalStore. */
 const EMPTY_DIAGNOSTIC_SNAPSHOT: readonly Diagnostic[] = Object.freeze([]);
+const EMPTY_PACKAGE_STATE_INVENTORY: readonly PackageStateInventoryEntry[] = Object.freeze([]);
 
 // ---------------------------------------------------------------------------
 // Main component
@@ -1252,7 +1368,7 @@ const EMPTY_DIAGNOSTIC_SNAPSHOT: readonly Diagnostic[] = Object.freeze([]);
 
 export function ExtensionManager() {
   const { extensionRuntime, extensionStateRepository, triggerExtensionRefresh, diagnosticCollection } = useVideoEditorRuntime();
-  const packageStateInventory = extensionRuntime?.packageStateInventory ?? [];
+  const packageStateInventory = extensionRuntime?.packageStateInventory ?? EMPTY_PACKAGE_STATE_INVENTORY;
 
   // Subscribe to live diagnostic updates from the provider-scoped DiagnosticCollection.
   const allDiagnostics = useSyncExternalStore(
@@ -1314,22 +1430,26 @@ export function ExtensionManager() {
 
   if (packageStateInventory.length === 0) {
     return (
-      <div
-        className="flex flex-col items-center justify-center gap-3 py-8 text-muted-foreground"
-        role="status"
-        aria-label="No packages in inventory"
-      >
-        <Zap className="h-8 w-8 opacity-40" />
-        <span className="text-sm">No packages in inventory.</span>
-        <span className="text-xs text-muted-foreground/60">
-          Extensions supplied by the host will appear here.
-        </span>
+      <div className="flex flex-col gap-3">
+        <ExtensionTrustWarningBanner />
+        <div
+          className="flex flex-col items-center justify-center gap-3 py-8 text-muted-foreground"
+          role="status"
+          aria-label="No packages in inventory"
+        >
+          <Zap className="h-8 w-8 opacity-40" />
+          <span className="text-sm">No packages in inventory.</span>
+          <span className="text-xs text-muted-foreground/60">
+            Extensions supplied by the host will appear here.
+          </span>
+        </div>
       </div>
     );
   }
 
   return (
     <div className="flex flex-col gap-3">
+      <ExtensionTrustWarningBanner />
       <ManagerSummaryBar entries={packageStateInventory} />
       <div className="flex flex-col gap-2">
         {packageStateInventory.map((entry) => (

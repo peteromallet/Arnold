@@ -88,14 +88,8 @@ function InspectorRegistrySections({
 function PropertiesPanelComponent() {
   useRenderDiagnostic('PropertiesPanel');
   const [activePanelTab, setActivePanelTab] = useState<'inspector' | 'extensions'>('inspector');
-  const [managerRecoveryKey, setManagerRecoveryKey] = useState(0);
-
   const handleManagerError = (_info: ManagerErrorInfo) => {
     // Error already logged by the boundary; could aggregate to diagnostics sink in future.
-  };
-
-  const handleManagerReset = () => {
-    setManagerRecoveryKey((prev) => prev + 1);
   };
 
   const {
@@ -418,7 +412,6 @@ function PropertiesPanelComponent() {
         </TabsContent>
         <TabsContent value="extensions" className="mt-3 min-h-0 flex-1 overflow-auto">
           <ExtensionManagerErrorBoundary
-            recoveryKey={String(managerRecoveryKey)}
             onError={handleManagerError}
           >
             <ExtensionManager />

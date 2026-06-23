@@ -19,9 +19,180 @@ import {
   type DirectExtensionInput,
   type InstalledExtensionInput,
   type ExtensionLoaderInput,
+  type PackageMetadata,
 } from '@/tools/video-editor/runtime/extensionLoader';
 import type { ExtensionPackRecord } from '@/tools/video-editor/runtime/extensionStateRepository';
 import type { PackageStateInventoryEntry } from '@/tools/video-editor/runtime/extensionSurface';
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function extensionIdFromInput(input: ExtensionLoaderInput, diagnostics: readonly ExtensionDiagnostic[]): string {
+  if (input.kind === 'installed') {
+    return input.packRecord.extensionId;
+  }
+
+  const manifestId = input.extension.manifest.id;
+  if (typeof manifestId === 'string' && manifestId.length > 0) {
+    return manifestId;
+  }
+
+  return diagnostics.find((diagnostic) => diagnostic.extensionId)?.extensionId ?? '(unknown)';
+}
+
+function metadataFromManifest(manifest: Partial<ReighExtension['manifest']> | null | undefined): PackageMetadata | null {
+  if (!manifest || typeof manifest !== 'object') return null;
+
+  const id = typeof manifest.id === 'string' ? manifest.id : undefined;
+  const label = typeof manifest.label === 'string' ? manifest.label : id;
+  const version = typeof manifest.version === 'string' ? manifest.version : '0.0.0';
+  if (!label && !id) return null;
+
+  return {
+    label: label ?? id ?? '(unknown)',
+    version,
+    publisher: typeof manifest.publisher === 'string' ? manifest.publisher : undefined,
+    description: typeof manifest.description === 'string' ? manifest.description : undefined,
+    license: typeof manifest.license === 'string' ? manifest.license : undefined,
+  };
+}
+
+function metadataFromInput(input: ExtensionLoaderInput): PackageMetadata | null {
+  if (input.kind === 'installed') {
+    const manifest = input.packRecord.manifestSnapshot;
+    const manifestMetadata = metadataFromManifest(manifest);
+    return manifestMetadata
+      ? {
+          ...manifestMetadata,
+          publisher: input.packRecord.publisher ?? manifestMetadata.publisher,
+          license: input.packRecord.license ?? manifestMetadata.license,
+        }
+      : null;
+  }
+
+  return metadataFromManifest(input.extension.manifest);
+}
+
+function diagnosticMessage(diagnostics: readonly ExtensionDiagnostic[], fallback: string): string {
+  const messages = diagnostics
+    .map((diagnostic) => diagnostic.message)
+    .filter((message): message is string => typeof message === 'string' && message.length > 0);
+  return messages.length > 0 ? messages.join('; ') : fallback;
+}
+
+function settingValueMatchesType(value: unknown, rawType: unknown): boolean {
+  const types = Array.isArray(rawType)
+    ? rawType.filter((item): item is string => typeof item === 'string')
+    : typeof rawType === 'string'
+      ? [rawType]
+      : [];
+
+  if (types.length === 0) return true;
+  if (value === null) return types.includes('null');
+
+  return types.some((type) => {
+    switch (type) {
+      case 'object':
+        return isRecord(value);
+      case 'array':
+        return Array.isArray(value);
+      case 'string':
+        return typeof value === 'string';
+      case 'number':
+        return typeof value === 'number' && Number.isFinite(value);
+      case 'integer':
+        return typeof value === 'number' && Number.isInteger(value);
+      case 'boolean':
+        return typeof value === 'boolean';
+      default:
+        return true;
+    }
+  });
+}
+
+function validateSettingsValuesAgainstSchema(
+  values: Record<string, unknown>,
+  rawSchema: unknown,
+): string | null {
+  if (!isRecord(rawSchema)) {
+    return 'settingsSchema.schema must be an object.';
+  }
+  if (rawSchema.type !== undefined && rawSchema.type !== 'object') {
+    return 'settingsSchema.schema.type must be "object".';
+  }
+
+  const properties = isRecord(rawSchema.properties) ? rawSchema.properties : {};
+  const required = Array.isArray(rawSchema.required)
+    ? rawSchema.required.filter((item): item is string => typeof item === 'string')
+    : [];
+
+  for (const key of required) {
+    if (!(key in values)) {
+      return `Missing required setting "${key}".`;
+    }
+  }
+
+  if (rawSchema.additionalProperties === false) {
+    const knownKeys = new Set(Object.keys(properties));
+    const unknownKey = Object.keys(values).find((key) => !knownKeys.has(key));
+    if (unknownKey) {
+      return `Unknown setting "${unknownKey}" is not allowed by the manifest schema.`;
+    }
+  }
+
+  for (const [key, propSchema] of Object.entries(properties)) {
+    if (!(key in values) || !isRecord(propSchema)) continue;
+
+    const value = values[key];
+    if (!settingValueMatchesType(value, propSchema.type)) {
+      return `Setting "${key}" does not match the manifest schema type.`;
+    }
+
+    if (Array.isArray(propSchema.enum) && !propSchema.enum.includes(value)) {
+      return `Setting "${key}" must be one of the manifest schema enum values.`;
+    }
+
+    if (typeof value === 'number') {
+      if (typeof propSchema.minimum === 'number' && value < propSchema.minimum) {
+        return `Setting "${key}" must be greater than or equal to ${propSchema.minimum}.`;
+      }
+      if (typeof propSchema.maximum === 'number' && value > propSchema.maximum) {
+        return `Setting "${key}" must be less than or equal to ${propSchema.maximum}.`;
+      }
+    }
+
+    if (typeof value === 'string') {
+      if (typeof propSchema.minLength === 'number' && value.length < propSchema.minLength) {
+        return `Setting "${key}" is shorter than the manifest schema minimum length.`;
+      }
+      if (typeof propSchema.maxLength === 'number' && value.length > propSchema.maxLength) {
+        return `Setting "${key}" is longer than the manifest schema maximum length.`;
+      }
+      if (typeof propSchema.pattern === 'string') {
+        try {
+          if (!new RegExp(propSchema.pattern).test(value)) {
+            return `Setting "${key}" does not match the manifest schema pattern.`;
+          }
+        } catch {
+          return `Setting "${key}" has an invalid manifest schema pattern.`;
+        }
+      }
+    }
+  }
+
+  return null;
+}
+
+function createSettingsErrorDiagnostic(extensionId: string, reason: string): ExtensionDiagnostic {
+  return {
+    severity: 'error',
+    code: 'settings/resolution-failed',
+    message: `Settings resolution failed: ${reason}`,
+    extensionId,
+    detail: { source: 'extension-loader-wiring' },
+  };
+}
 
 // ---------------------------------------------------------------------------
 // Bundle content store (separate from metadata repo per SD2)
@@ -293,12 +464,78 @@ export function useExtensionLoaderWiring(
 
         if (cancelled) return;
 
+        const invalidPackageStateEntries: PackageStateInventoryEntry[] = validation.entries
+          .filter((entry) => !entry.valid)
+          .map((entry) => ({
+            extensionId: extensionIdFromInput(entry.input, entry.errors),
+            packageState: 'invalid',
+            stateReason: diagnosticMessage(entry.errors, 'Manifest validation failed.'),
+            packageMetadata: metadataFromInput(entry.input),
+          }));
+
         const validPackages = validation.entries
           .filter((entry) => entry.valid && entry.validatedPackage)
           .map((entry) => entry.validatedPackage!);
 
+        const settingsErrorEntries: PackageStateInventoryEntry[] = [];
+        const settingsDiagnostics: ExtensionDiagnostic[] = [];
+        const loadablePackages = validPackages.filter((pkg) => {
+          const manifest = pkg.form === 'workspace-source' ? pkg.manifest : pkg.pack.manifest;
+          const extensionId = manifest.id as string;
+          const snapshot = fullState.settings?.[extensionId];
+          if (!snapshot) return true;
+
+          try {
+            if (!isRecord(snapshot.values)) {
+              const diagnostic = createSettingsErrorDiagnostic(
+                extensionId,
+                'settings snapshot values must be a JSON object.',
+              );
+              settingsDiagnostics.push(diagnostic);
+              settingsErrorEntries.push({
+                extensionId,
+                packageState: 'settings-error',
+                stateReason: diagnostic.message,
+                packageMetadata: metadataFromManifest(manifest),
+              });
+              return false;
+            }
+
+            const validationError = validateSettingsValuesAgainstSchema(
+              snapshot.values,
+              manifest.settingsSchema?.schema,
+            );
+            if (validationError) {
+              const diagnostic = createSettingsErrorDiagnostic(extensionId, validationError);
+              settingsDiagnostics.push(diagnostic);
+              settingsErrorEntries.push({
+                extensionId,
+                packageState: 'settings-error',
+                stateReason: diagnostic.message,
+                packageMetadata: metadataFromManifest(manifest),
+              });
+              return false;
+            }
+          } catch (err) {
+            const diagnostic = createSettingsErrorDiagnostic(
+              extensionId,
+              err instanceof Error ? err.message : String(err),
+            );
+            settingsDiagnostics.push(diagnostic);
+            settingsErrorEntries.push({
+              extensionId,
+              packageState: 'settings-error',
+              stateReason: diagnostic.message,
+              packageMetadata: metadataFromManifest(manifest),
+            });
+            return false;
+          }
+
+          return true;
+        });
+
         // 4. Load (includes dependency + conflict resolution)
-        const loadResult = await loader.load(validPackages);
+        const loadResult = await loader.load(loadablePackages);
 
         if (cancelled) return;
 
@@ -306,17 +543,22 @@ export function useExtensionLoaderWiring(
 
         // Derive packageStateEntries from loader result entries
         const packageStateEntries: PackageStateInventoryEntry[] =
-          loadResult.entries.map((entry) => ({
-            extensionId: entry.extensionId,
-            packageState: entry.packageState,
-            stateReason: entry.stateReason,
-            packageMetadata: entry.packageMetadata,
-          }));
+          [
+            ...invalidPackageStateEntries,
+            ...settingsErrorEntries,
+            ...loadResult.entries.map((entry) => ({
+              extensionId: entry.extensionId,
+              packageState: entry.packageState,
+              stateReason: entry.stateReason,
+              packageMetadata: entry.packageMetadata,
+            })),
+          ];
 
         setState({
           resolvedExtensions: loadResult.loadedExtensions,
           diagnostics: [
             ...validation.diagnostics,
+            ...settingsDiagnostics,
             ...loadResult.diagnostics,
           ],
           loaderResult: loadResult,

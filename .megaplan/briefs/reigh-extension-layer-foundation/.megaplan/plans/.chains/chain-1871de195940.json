@@ -2,7 +2,7 @@
   "schema_version": 0,
   "current_milestone_index": 4,
   "current_plan_name": "m5-extension-manager-and-20260623-0336",
-  "last_state": "done",
+  "last_state": "stalled",
   "pr_number": 58,
   "pr_state": "open",
   "completed": [
@@ -123,9 +123,9 @@
       }
     }
   ],
-  "branch_head": "46c88050b316f369a3192188610c683ec3265b72",
-  "pr_head": "46c88050b316f369a3192188610c683ec3265b72",
-  "last_pushed_commit": "46c88050b316f369a3192188610c683ec3265b72",
+  "branch_head": "dd678a55cc9c323c83fec9ca0a6ba89f318b9006",
+  "pr_head": "dd678a55cc9c323c83fec9ca0a6ba89f318b9006",
+  "last_pushed_commit": "dd678a55cc9c323c83fec9ca0a6ba89f318b9006",
   "dirty_flag": false,
   "sync_state": "clean",
   "extra_repos": [],
@@ -149,8 +149,8 @@
       "target_root": "/Users/peteromalley/Documents/reigh-workspace/reigh-app",
       "work_dir": "/Users/peteromalley/Documents/reigh-workspace/reigh-app",
       "engine_root": "/Users/peteromalley/.pyenv/versions/3.11.11/lib/python3.11/site-packages",
-      "target_head": "dd678a55cc9c323c83fec9ca0a6ba89f318b9006",
-      "target_base": "d4e6c2d35eec78fe4cdc8f166a8c737c9de7ff59",
+      "target_head": "0ff903bd255907dd200b10579033bb17a8e5acc0",
+      "target_base": "59781823ab107e928cdc64eaa4c9ba55116c6171",
       "target_base_ref": "main",
       "target_fallback_reason": null
     }

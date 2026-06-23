@@ -1468,6 +1468,51 @@ describe('VideoEditorProvider', () => {
   // ExtensionLoader into the existing `extensions` prop and diagnostics
   // surfaces without duplicate activation.
 
+  function makeWiringRepository(
+    fullState: Awaited<ReturnType<ExtensionStateRepository['getFullExtensionState']>>,
+  ): ExtensionStateRepository {
+    let disposed = false;
+    return {
+      initialize: vi.fn().mockResolvedValue(undefined),
+      dispose: vi.fn().mockImplementation(async () => { disposed = true; }),
+      get isDisposed() { return disposed; },
+      putPackRecord: vi.fn().mockResolvedValue(undefined),
+      updatePackRecord: vi.fn().mockResolvedValue(undefined),
+      getPackRecord: vi.fn().mockResolvedValue(null),
+      getAllPackRecords: vi.fn().mockResolvedValue([]),
+      deletePackRecord: vi.fn().mockResolvedValue(undefined),
+      putEnablementState: vi.fn().mockResolvedValue(undefined),
+      getEnablementState: vi.fn().mockResolvedValue(null),
+      getAllEnablementStates: vi.fn().mockResolvedValue([]),
+      deleteEnablementState: vi.fn().mockResolvedValue(undefined),
+      putDevOverride: vi.fn().mockResolvedValue(undefined),
+      getDevOverride: vi.fn().mockResolvedValue(null),
+      getAllDevOverrides: vi.fn().mockResolvedValue([]),
+      deleteDevOverride: vi.fn().mockResolvedValue(undefined),
+      putSettingsSnapshot: vi.fn().mockResolvedValue(undefined),
+      getSettingsSnapshot: vi.fn().mockResolvedValue(null),
+      getAllSettingsSnapshots: vi.fn().mockResolvedValue([]),
+      deleteSettingsSnapshot: vi.fn().mockResolvedValue(undefined),
+      appendLifecycleEvent: vi.fn().mockResolvedValue(undefined),
+      queryLifecycleEvents: vi.fn().mockResolvedValue([]),
+      getLifecycleEvents: vi.fn().mockResolvedValue([]),
+      getLock: vi.fn().mockResolvedValue(fullState.lock),
+      putLockEntry: vi.fn().mockResolvedValue(undefined),
+      deleteLockEntry: vi.fn().mockResolvedValue(undefined),
+      getFullExtensionState: vi.fn().mockResolvedValue(fullState),
+    };
+  }
+
+  function emptyExtensionState(): Awaited<ReturnType<ExtensionStateRepository['getFullExtensionState']>> {
+    return {
+      packs: {},
+      enablement: {},
+      devOverrides: {},
+      settings: {},
+      lock: { entries: {}, lastUpdatedAt: '2026-01-01T00:00:00.000Z' },
+    };
+  }
+
   it('resolves direct extensions unchanged when no repository is provided (backward compatible)', async () => {
     // This test verifies the hook's fast-path: when repository is null,
     // direct extensions pass through unchanged.
@@ -1512,6 +1557,109 @@ describe('VideoEditorProvider', () => {
 
     expect(result.current.resolvedExtensions).toEqual([]);
     expect(result.current.isResolving).toBe(false);
+  });
+
+  it('surfaces invalid validation failures in packageStateEntries', async () => {
+    const invalidExtension = {
+      manifest: {
+        id: 'not a valid extension id',
+        version: '1.0.0',
+        label: 'Invalid Direct Extension',
+        contributions: [],
+      },
+      activate: vi.fn(),
+    } as unknown as ReighExtension;
+
+    const { result } = renderHook(() => useExtensionLoaderWiring({
+      directExtensions: [invalidExtension],
+      repository: makeWiringRepository(emptyExtensionState()),
+    }));
+
+    await waitFor(() => {
+      expect(result.current.isResolving).toBe(false);
+    });
+
+    expect(result.current.packageStateEntries).toEqual([
+      expect.objectContaining({
+        extensionId: 'not a valid extension id',
+        packageState: 'invalid',
+        packageMetadata: expect.objectContaining({
+          label: 'Invalid Direct Extension',
+          version: '1.0.0',
+        }),
+      }),
+    ]);
+    expect(result.current.diagnostics.some(
+      (diagnostic) => diagnostic.extensionId === 'not a valid extension id',
+    )).toBe(true);
+  });
+
+  it('surfaces settings snapshot schema failures in packageStateEntries', async () => {
+    const extensionId = 'com.t14.settings-error';
+    const extension: ReighExtension = defineExtension({
+      manifest: {
+        id: extensionId as never,
+        version: '1.0.0',
+        label: 'Settings Error Extension',
+        settingsSchema: {
+          version: 1,
+          schema: {
+            type: 'object',
+            required: ['mode'],
+            properties: {
+              mode: { type: 'string' },
+            },
+          },
+        },
+        contributions: [],
+      },
+      activate() {
+        return { dispose() {} };
+      },
+    });
+
+    const fullState = {
+      ...emptyExtensionState(),
+      settings: {
+        [extensionId]: {
+          extensionId,
+          schemaVersion: 1,
+          values: {},
+          lastWrittenAt: '2026-01-15T10:00:00.000Z',
+        },
+      },
+    };
+
+    const { result } = renderHook(() => useExtensionLoaderWiring({
+      directExtensions: [extension],
+      repository: makeWiringRepository(fullState),
+    }));
+
+    await waitFor(() => {
+      expect(result.current.isResolving).toBe(false);
+    });
+
+    expect(result.current.resolvedExtensions).toEqual([]);
+    expect(result.current.packageStateEntries).toEqual([
+      expect.objectContaining({
+        extensionId,
+        packageState: 'settings-error',
+        stateReason: expect.stringContaining('Missing required setting "mode".'),
+        packageMetadata: expect.objectContaining({
+          label: 'Settings Error Extension',
+          version: '1.0.0',
+        }),
+      }),
+    ]);
+    expect(result.current.diagnostics).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          extensionId,
+          code: 'settings/resolution-failed',
+          severity: 'error',
+        }),
+      ]),
+    );
   });
 
   it('accepts resolved extensions from the loader wiring hook as the extensions prop', async () => {
