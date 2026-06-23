@@ -392,9 +392,24 @@ def _extract_json_from_mutating_tool_markup(content: str) -> str | None:
             i = j
         return blocks
 
+    # Helper: add a candidate, optionally stripping markdown fences later.
+    def _add_candidate(text: str) -> None:
+        if text and text.strip():
+            candidates.append(text.strip())
+
+    # Tool names we are willing to treat as JSON-delivery wrappers.  Includes
+    # both mutating tools and read/search/shell tools that models sometimes
+    # emit when asked for structured output.
+    _JSON_TOOL_NAMES = (
+        "write_file|file_write|write|edit_file|patch|apply_patch|delete_file|"
+        "bash|run_command|run_shell|terminal|shell|"
+        "read_file|file_read|read|"
+        "search_files|search|file_search"
+    )
+
     # 1. Plain XML tags: <write_file ...> ... </write_file>
     tag_pattern = re.compile(
-        r"<(?P<tag>write_file|file_write|write|edit_file|patch|apply_patch|delete_file|bash|run_command|terminal)\b[^>]*>"
+        rf"<(?P<tag>{_JSON_TOOL_NAMES})\b[^>]*>"
         r"(?P<body>.*?)"
         r"</(?P=tag)>",
         re.DOTALL | re.IGNORECASE,
@@ -409,19 +424,20 @@ def _extract_json_from_mutating_tool_markup(content: str) -> str | None:
         content_match = re.search(
             r"<content\b[^>]*>(.*?)</content>", body, re.DOTALL | re.IGNORECASE
         )
-        candidates.append(content_match.group(1).strip() if content_match else body.strip())
-        # Also keep the whole body in case JSON is directly inside the tag.
         if content_match:
-            candidates.append(body.strip())
+            _add_candidate(content_match.group(1))
+            _add_candidate(body)
+        else:
+            _add_candidate(body)
         # For shell tags, a heredoc is a common way the model writes JSON.
-        if match.group("tag").lower() in {"bash", "run_command", "terminal"}:
+        if match.group("tag").lower() in {"bash", "run_command", "run_shell", "terminal", "shell"}:
             heredoc_match = heredoc_pattern.search(body)
             if heredoc_match:
-                candidates.append(heredoc_match.group(2).strip())
+                _add_candidate(heredoc_match.group(2))
 
     # 2. <invoke name="write_file"> ... <parameter name="content">...</parameter> ...
     invoke_pattern = re.compile(
-        r"<[^<>\s]*invoke\b[^<>]*\bname=[\"'](?P<name>write_file|file_write|write|edit_file|patch|apply_patch|delete_file|bash|run_command|terminal)[\"'][^<>]*>"
+        rf"<[^<>\s]*invoke\b[^<>]*\bname=[\"'](?P<name>{_JSON_TOOL_NAMES})[\"'][^<>]*>"
         r"(?P<body>.*?)"
         r"</[^<>\s]*invoke>",
         re.DOTALL | re.IGNORECASE,
@@ -435,14 +451,20 @@ def _extract_json_from_mutating_tool_markup(content: str) -> str | None:
     for match in invoke_pattern.finditer(content):
         body = match.group("body")
         for param in param_pattern.finditer(body):
-            candidates.append(param.group("value").strip())
-        candidates.append(body.strip())
+            _add_candidate(param.group("value"))
+        # Also look for nested <content> children.
+        content_match = re.search(
+            r"<content\b[^>]*>(.*?)</content>", body, re.DOTALL | re.IGNORECASE
+        )
+        if content_match:
+            _add_candidate(content_match.group(1))
+        _add_candidate(body)
 
     # 3. DSML-style tags: <｜DSML｜invoke name="write_file"> ...
     #    <｜DSML｜parameter name="content">...</｜DSML｜parameter> ...
     dsml_prefix = "\uff5cDSML\uff5c"
     dsml_invoke_pattern = re.compile(
-        rf"<{re.escape(dsml_prefix)}invoke\b[^<>]*\bname=[\"'](?P<name>write_file|file_write|write|edit_file|patch|apply_patch|delete_file|bash|run_command|terminal)[\"'][^<>]*>"
+        rf"<{re.escape(dsml_prefix)}invoke\b[^<>]*\bname=[\"'](?P<name>{_JSON_TOOL_NAMES})[\"'][^<>]*>"
         rf"(?P<body>.*?)"
         rf"</{re.escape(dsml_prefix)}invoke>",
         re.DOTALL | re.IGNORECASE,
@@ -453,23 +475,48 @@ def _extract_json_from_mutating_tool_markup(content: str) -> str | None:
         rf"</{re.escape(dsml_prefix)}parameter>",
         re.DOTALL | re.IGNORECASE,
     )
+    dsml_content_pattern = re.compile(
+        rf"<{re.escape(dsml_prefix)}content\b[^<>]*>(.*?)</{re.escape(dsml_prefix)}content>",
+        re.DOTALL | re.IGNORECASE,
+    )
     for match in dsml_invoke_pattern.finditer(content):
         body = match.group("body")
         for param in dsml_param_pattern.finditer(body):
-            candidates.append(param.group("value").strip())
-        candidates.append(body.strip())
+            _add_candidate(param.group("value"))
+        for content_match in dsml_content_pattern.finditer(body):
+            _add_candidate(content_match.group(1))
+        _add_candidate(body)
 
     # 4. Self-closing tags with a content= attribute.
     self_closing_pattern = re.compile(
-        r"<(write_file|file_write|write|edit_file|patch|apply_patch|delete_file)\b[^>]*\bcontent=[\"'](?P<value>[^\"']+)[\"'][^>]*/>",
+        rf"<({_JSON_TOOL_NAMES})\b[^>]*\bcontent=[\"'](?P<value>[^\"']+)[\"'][^>]*/>",
         re.DOTALL | re.IGNORECASE,
     )
     for match in self_closing_pattern.finditer(content):
-        candidates.append(match.group("value").strip())
+        _add_candidate(match.group("value"))
 
-        # 5. Fall back to balanced JSON-ish blocks anywhere in the markup.
+    # 5. Strip all recognized tool markup and look for any remaining JSON.
+    stripped = content
+    for match in sorted(
+        re.finditer(
+            rf"<({_JSON_TOOL_NAMES})\b[^>]*>.*?</(\1)>",
+            stripped,
+            re.DOTALL | re.IGNORECASE,
+        ),
+        key=lambda m: m.start(),
+        reverse=True,
+    ):
+        stripped = stripped[: match.start()] + stripped[match.end() :]
+    stripped = re.sub(r"<[^<>\s]*invoke\b[^<>]*>.*?</[^<>\s]*invoke>", "", stripped, flags=re.DOTALL | re.IGNORECASE)
+    stripped = re.sub(r"<\uff5cDSML\uff5cinvoke\b[^<>]*>.*?</\uff5cDSML\uff5cinvoke>", "", stripped, flags=re.DOTALL | re.IGNORECASE)
+    stripped = re.sub(r"<\uff5cDSML\uff5cparameter\b[^<>]*>.*?</\uff5cDSML\uff5cparameter>", "", stripped, flags=re.DOTALL | re.IGNORECASE)
+    for block in _balanced_json_blocks(stripped):
+        _add_candidate(block)
+
+    # 6. Fall back to balanced JSON-ish blocks anywhere in the original markup.
     for block in _balanced_json_blocks(content):
-        candidates.append(block.strip())
+        _add_candidate(block)
+
     for candidate in candidates:
         if not candidate:
             continue

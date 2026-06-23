@@ -472,10 +472,11 @@ def validate_evaluator_verdict(
 
         why = sk.get("why")
         if not isinstance(why, str) or not why.strip():
-            _reject(
-                f"skip entry {idx} ({cid}): every skip must have a "
-                f"non-empty `why` justification."
+            warnings.append(
+                f"skip entry {idx} ({cid}): `why` was empty; coercing to a "
+                f"placeholder justification."
             )
+            sk["why"] = "(no justification provided by evaluator)"
 
         if cid in skipped_ids:
             warnings.append(
@@ -486,7 +487,7 @@ def validate_evaluator_verdict(
         skipped_ids.add(cid)
         deduped_skipped.append(sk)
 
-    if len(deduped_skipped) != len(skipped):
+    if len(deduped_skipped) != len(skipped) or any(sk.get("why") == "(no justification provided by evaluator)" for sk in deduped_skipped):
         payload["skipped"] = deduped_skipped
 
     # ── coverage: union must be all check ids, no overlap ───────────────
