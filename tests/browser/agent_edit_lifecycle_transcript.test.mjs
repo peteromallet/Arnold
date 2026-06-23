@@ -313,7 +313,7 @@ test("NOOP_RESPONSE replaces message with the result message", () => {
   assert.equal(panel.state.phase, PANEL_STATE.IDLE);
 });
 
-test("APPLY_SUCCESS sets message to the confirmation text and does not resurrect old candidate messages", () => {
+test("APPLY_SUCCESS clears review message without adding a local confirmation", () => {
   const panel = makePanel({
     phase: PANEL_STATE.APPLYING,
     sessionId: "sess-apply-msg",
@@ -343,8 +343,8 @@ test("APPLY_SUCCESS sets message to the confirmation text and does not resurrect
     undoStackDepth: 1,
   });
 
-  assert.equal(panel.state.message, "Candidate accepted and applied locally.");
+  assert.equal(panel.state.message, null);
   assert.equal(panel.state.phase, PANEL_STATE.IDLE);
-  // Old message is gone, replaced by success message
+  // Old review message is cleared without adding a local apply-confirmation message.
   assert.notEqual(panel.state.message, "Review this candidate before applying.");
 });

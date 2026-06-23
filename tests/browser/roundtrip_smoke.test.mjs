@@ -3601,7 +3601,7 @@ test("VibeComfy v2 Apply uses scoped delta mutation, tolerates unrelated post-ac
     assert.equal(panel.state.debugPayload?.canvas_apply_verification?.local_precheck?.ok, true);
     assert.equal(panel.state.debugPayload?.canvas_apply_verification?.local_postcheck?.ok, true);
     expandAgentBubbleDetails(harness.document.body);
-    assert.match(harness.textDump(), /Applied - 1 changes verified on canvas\./);
+    assert.doesNotMatch(harness.textDump(), /Applied - 1 changes verified on canvas\./);
     assert.match(harness.textDump(), /canvas_apply/);
     assert.match(harness.textDump(), /canvas_apply_verification/);
     assert.doesNotMatch(harness.textDump(), /StaleStateMismatch/);

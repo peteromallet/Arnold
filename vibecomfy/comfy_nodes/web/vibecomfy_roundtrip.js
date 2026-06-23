@@ -9900,9 +9900,6 @@ async function applyAgentCandidate(panel) {
       accepted: accepted.raw || accepted,
       lastAppliedChanges,
       undoStackDepth: panel.state.undoStack.length,
-      message: useScopedApply
-        ? `Applied - ${localScopedPostcheck?.entries?.length || scopedDeltaOps.length} changes verified on canvas.`
-        : "Candidate accepted and applied locally.",
       toast: "Agent candidate applied",
       debugPayload: {
         accepted,
@@ -9943,15 +9940,6 @@ async function applyAgentCandidate(panel) {
       lastAppliedChanges,
       message: panel.state.message,
     });
-    const appliedMessage = panel.state.message || "Candidate applied.";
-    panel.state.syntheticAgentMessage = {
-      role: "agent",
-      text: appliedMessage,
-      detail_turn_id: appliedTurnId || null,
-      session_id: appliedSessionId || null,
-      synthetic: true,
-      local_id: `applied:${appliedTurnId || "local"}:${Date.now()}`,
-    };
     renderLifecycleTransition(panel, successObligations);
   })();
 

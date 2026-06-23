@@ -1193,7 +1193,7 @@ function _handleApplySuccess(panel, payload) {
   panel.state.baselineTurnId = panel.state.baselineTurnId || panel.state.turnId || null;
   panel.state.auditRef = accepted.audit_ref || panel.state.auditRef;
   _handleInvalidateCandidate(panel, { repaint: false });
-  panel.state.message = payload?.message || "Candidate accepted and applied locally.";
+  panel.state.message = null;
   panel.state.queueAllowed = false;
   panel.state.canvasApplyAllowed = false;
   panel.state.applyAllowed = false;
