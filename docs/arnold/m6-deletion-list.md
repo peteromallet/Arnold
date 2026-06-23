@@ -6,8 +6,8 @@
 > `delete` targets below have been removed from the source tree; `archive`
 > targets have been moved to `docs/archive/m5/` and removed from their original
 > locations. The public `arnold.pipeline` package no longer re-exports the
-> obsolete native symbols `PipelineBuilder`, `Stage`, `Edge`, `ParallelStage`, or
-> `run_pipeline`, and `arnold.cli` no longer delegates to legacy Megaplan CLI
+> obsolete legacy native symbols (`PipelineBuilder`, `Stage`, `Edge`, `ParallelStage`, or
+> `run_pipeline`), and `arnold.cli` no longer delegates to legacy Megaplan CLI
 > surfaces.
 >
 > **Phase B status:** Latent references to deleted surfaces were purged from
@@ -71,9 +71,7 @@ outcome.
 
 - Branch: `workflow-manifest-runtime-m6-purge`
 - Worktree: `/Users/peteromalley/Documents/.megaplan-worktrees/workflow-manifest-runtime-m6-purge`
-- Retirement criteria: Phase B conformance suite green, final gate green,
-  installed-wheel conformance green, generated artifacts up to date, no
-  `arnold.pipelines.megaplan` imports in production code.
+- Retirement criteria: Phase B conformance suite green, final gate green, installed-wheel conformance green, generated artifacts up to date, and no legacy `arnold.pipelines.megaplan` imports in production code.
 - After merge: this worktree can be removed; the branch should be deleted after
   PR merge. Any future resurrection of deleted surfaces must be treated as a
   new feature, not a revert.

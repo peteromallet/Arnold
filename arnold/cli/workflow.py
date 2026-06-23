@@ -228,7 +228,7 @@ def build_parser() -> argparse.ArgumentParser:
         ("dry-run", "Print a dry-run report without executing."),
         ("run", "Run a compiled workflow manifest."),
         ("resume", "Resume a workflow from a checkpoint or cursor."),
-        ("describe", "Manifest-backed describe (replaces arnold pipelines describe)."),
+        ("describe", "Inspect a compiled workflow manifest."),
     ]:
         sub = subparsers.add_parser(name, help=help_text)
         sub.add_argument(

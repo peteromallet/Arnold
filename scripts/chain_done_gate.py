@@ -198,7 +198,7 @@ def main(argv: list[str] | None = None) -> int:
             "if chain backstops are non-blocking, or if review blockers remain open."
         )
     )
-    parser.add_argument("--spec", required=True, type=Path, help="Path to chain.yaml")
+    parser.add_argument("--spec", type=Path, help="Path to chain.yaml")
     parser.add_argument("--state", type=Path, help="Path to the persisted chain state JSON")
     parser.add_argument(
         "--plans-root",
@@ -210,15 +210,29 @@ def main(argv: list[str] | None = None) -> int:
         type=Path,
         help="Optional JSON blocker checklist; any non-resolved blocker fails the gate",
     )
+    parser.add_argument(
+        "--blockers-only",
+        action="store_true",
+        help="Only evaluate the selected blocker checklist; requires --blockers",
+    )
     args = parser.parse_args(argv)
 
     try:
-        errors = check_chain_done(
-            spec_path=args.spec,
-            state_path=args.state,
-            plans_root=args.plans_root,
-            blockers_path=args.blockers,
-        )
+        if args.blockers_only:
+            if args.blockers is None:
+                parser.error("--blockers-only requires --blockers")
+            if args.spec is not None or args.state is not None or args.plans_root is not None:
+                parser.error("--blockers-only cannot be combined with --spec, --state, or --plans-root")
+            errors = _open_blockers(args.blockers)
+        else:
+            if args.spec is None:
+                parser.error("--spec is required unless --blockers-only is used")
+            errors = check_chain_done(
+                spec_path=args.spec,
+                state_path=args.state,
+                plans_root=args.plans_root,
+                blockers_path=args.blockers,
+            )
     except ValueError as exc:
         print(f"chain done gate failed: {exc}", file=sys.stderr)
         return 2

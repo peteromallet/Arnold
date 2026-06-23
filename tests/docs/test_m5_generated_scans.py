@@ -63,6 +63,7 @@ ARCHIVAL_OR_PENDING_PATHS = (
     Path("arnold_pipelines/megaplan/skills"),
     Path("arnold_pipelines/megaplan/data/_composed"),
     Path("arnold_pipelines/megaplan/data/_codex_skills"),
+    Path("docs/archive/m5"),
 )
 
 FORBIDDEN_AUTHORING_TERMS = (

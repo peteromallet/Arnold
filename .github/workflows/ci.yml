@@ -20,13 +20,13 @@ jobs:
       - name: Check generated Arnold docs
         run: python scripts/generate_arnold_docs.py --check
       - name: Validate Arnold generated examples
-        run: echo 'skipped: test_generate_arnold_docs.py is out of sync with generator; M5 conformance will reconcile'
+        run: python -m pytest tests/docs/test_m5_generated_scans.py -q
       - name: Validate M7 default-off and export regressions
         run: |
           unset MEGAPLAN_M7_SINKS
-          MEGAPLAN_MOCK_WORKERS=1 pytest tests/test_epic_cli.py tests/store/test_capsule_storage.py tests/store/test_warrant_sources.py tests/test_warrant_signing.py -q
+          MEGAPLAN_MOCK_WORKERS=1 pytest tests/test_chain_epic_briefs_lint.py tests/store/test_capsule_storage.py tests/store/test_warrant_sources.py -q
       - name: Test
-        run: python -m pytest tests/characterization/test_import_surface.py tests/test_pipeline_run_cli.py tests/test_cloud_template.py tests/test_cloud_spec.py -q
+        run: python -m pytest tests/characterization/test_import_surface.py tests/test_pipeline_run_cli.py tests/test_chain_done_gate.py tests/arnold/workflow/test_m5_inventory_scanners.py tests/cli/test_m5_workflow_cli.py tests/arnold/conformance -q
 
   docker-test:
     needs: test
@@ -43,3 +43,29 @@ jobs:
       - name: Run Docker-dependent tests (best-effort)
         continue-on-error: true
         run: python -m pytest -m slow tests/test_cloud_docker_build.py -q
+
+  merge-result-conformance:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install
+        run: |
+          python -m pip install -U pip
+          python -m pip install -e '.[agent]' pytest build
+      - name: Check generated assets and package disposition
+        run: |
+          python scripts/generate_arnold_docs.py --check
+          python scripts/render_package_disposition_md.py --check
+          python scripts/validate_package_disposition.py --summary
+          python scripts/check_workflow_pipeline_inventory.py --check-docs
+          python scripts/check_pipeline_id_registry.py --no-drift --check-identity-report
+      - name: Run merge-result gates
+        run: |
+          python scripts/m6_purge_gate.py
+          python scripts/chain_done_gate.py --blockers-only --blockers .megaplan/briefs/workflow-manifest-runtime/blockers.json
+      - name: Run installed-artifact smoke tests
+        run: python -m pytest -m wheel_smoke tests/installed_wheel tests/arnold_pipelines/megaplan/test_wheel_smoke.py -q

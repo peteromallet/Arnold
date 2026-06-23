@@ -30,6 +30,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     if not args:
         _print_usage()
         return 2
+    if args[0] in {"-h", "--help"}:
+        _print_usage()
+        return 0
 
     command = args[0]
     rest = args[1:]

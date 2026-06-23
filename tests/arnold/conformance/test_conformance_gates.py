@@ -98,7 +98,7 @@ assert not any("megaplan" in name for name in sys.modules)
 def test_active_megaplan_package_names_are_scanned() -> None:
     assert ACTIVE_MEGAPLAN_PACKAGE_NAMES == (
         "megaplan",
-        "arnold_pipelines.megaplan",
+        "arnold.pipelines.megaplan",
         "arnold_pipelines.megaplan",
     )
 
@@ -252,7 +252,8 @@ def test_dynamic_import_paths_fail_for_deleted_megaplan_surfaces() -> None:
     import importlib
 
     deleted_prefixes = (
-        "arnold_pipelines.megaplan",
+        "megaplan",
+        "arnold.pipelines.megaplan",
         "arnold.pipelines.jokes",
         "arnold.pipelines.creative",
         "arnold.pipelines.doc",
@@ -272,8 +273,8 @@ def test_dynamic_import_paths_fail_for_deleted_megaplan_surfaces() -> None:
 def test_eval_exec_cannot_resolve_deleted_megaplan_paths() -> None:
     """Deleted package paths must not be constructable via eval/exec."""
     for expr in (
-        "__import__('arnold_pipelines.megaplan')",
-        "__import__('arnold_pipelines.megaplan.agent')",
+        "__import__('arnold.pipelines.megaplan')",
+        "__import__('megaplan')",
     ):
         with pytest.raises(ModuleNotFoundError):
             eval(expr)  # noqa: S307
@@ -287,8 +288,10 @@ def test_sys_modules_audit_finds_no_deleted_megaplan_modules_after_conformance()
     deleted_loaded = [
         name
         for name in sys.modules
-        if name == "arnold_pipelines.megaplan"
-        or name.startswith("arnold_pipelines.megaplan.")
+        if name == "megaplan"
+        or name.startswith("megaplan.")
+        or name == "arnold.pipelines.megaplan"
+        or name.startswith("arnold.pipelines.megaplan.")
     ]
     assert deleted_loaded == []
 
