@@ -618,18 +618,51 @@ def _normalize_review_capture_payload(payload: dict[str, Any]) -> dict[str, Any]
 
 
 def _normalize_critique_capture_payload(payload: dict[str, Any]) -> dict[str, Any]:
-    normalized = dict(payload)
+    # Strip hallucinated extra properties so strict JSON schemas
+    # (additionalProperties=false) don't fail on keys like `check_id`
+    # or `critique_iteration` that models occasionally invent.
+    allowed_top = {"checks", "flags", "verified_flag_ids", "disputed_flag_ids"}
+    normalized = {k: v for k, v in payload.items() if k in allowed_top}
+
+    checks = normalized.get("checks")
+    if isinstance(checks, list):
+        normalized["checks"] = [
+            _normalize_critique_check(check) if isinstance(check, Mapping) else check
+            for check in checks
+        ]
+
     flags = normalized.get("flags")
     if isinstance(flags, list):
         normalized["flags"] = [
             _normalize_critique_flag(flag) if isinstance(flag, Mapping) else flag
             for flag in flags
         ]
+
+    normalized.setdefault("verified_flag_ids", [])
+    normalized.setdefault("disputed_flag_ids", [])
     return normalized
 
 
+def _normalize_critique_check(check: Mapping[str, Any]) -> dict[str, Any]:
+    allowed = {"id", "question", "findings"}
+    normalized = {k: v for k, v in check.items() if k in allowed}
+    findings = normalized.get("findings")
+    if isinstance(findings, list):
+        normalized["findings"] = [
+            _normalize_critique_finding(f) if isinstance(f, Mapping) else f
+            for f in findings
+        ]
+    return normalized
+
+
+def _normalize_critique_finding(finding: Mapping[str, Any]) -> dict[str, Any]:
+    allowed = {"detail", "flagged"}
+    return {k: v for k, v in finding.items() if k in allowed}
+
+
 def _normalize_critique_flag(flag: Mapping[str, Any]) -> dict[str, Any]:
-    normalized = dict(flag)
+    allowed = {"id", "concern", "category", "severity_hint", "evidence"}
+    normalized = {k: v for k, v in flag.items() if k in allowed}
     severity_hint = normalized.get("severity_hint")
     if severity_hint in {"high", "significant", "major", "critical"}:
         normalized["severity_hint"] = "likely-significant"
