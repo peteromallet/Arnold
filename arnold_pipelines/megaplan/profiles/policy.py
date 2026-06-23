@@ -994,11 +994,22 @@ def apply_profile_expansion(
     # resolved, so they must suppress the matching tier table here too. Without
     # this, a stored execute=codex:... pin can still leave tier_models.execute
     # active and route lower-complexity batches through a profile default.
+    # A pin that is merely a persisted copy of the profile default should not
+    # wipe out the adaptive tier table.
     tier_models_after_persisted = getattr(args, "tier_models", None)
     if tier_models_after_persisted:
+        effective_specs: dict[str, str] = {}
+        for pm in phase_models:
+            if isinstance(pm, str) and "=" in pm:
+                _step, _spec = pm.split("=", 1)
+                effective_specs[_step] = _spec
         for phase in ("execute", "critique"):
-            if phase in cli_steps:
-                tier_models_after_persisted.pop(phase, None)
+            if phase not in cli_steps:
+                continue
+            default_spec = profile_default_specs.get(phase)
+            if default_spec is not None and effective_specs.get(phase) == default_spec:
+                continue
+            tier_models_after_persisted.pop(phase, None)
         args.tier_models = tier_models_after_persisted or None
 
     args.phase_model = phase_models

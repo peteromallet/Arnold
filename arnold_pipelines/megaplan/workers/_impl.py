@@ -1965,11 +1965,16 @@ def parse_claude_envelope(raw: str) -> tuple[dict[str, Any], dict[str, Any]]:
     return envelope, payload
 
 
+# DeepSeek and Kimi sometimes emit tool markup using ASCII XML tags and
+# sometimes using DSML-style tags such as ``<｜DSML｜invoke name="write_file">``.
+# Detect both forms so the recovery path can extract the payload instead of
+# failing the whole worker turn.
+_DSML_PREFIX = "\uff5cDSML\uff5c"
 _DEEPSEEK_TOOL_TAG_RE = re.compile(
-    r"<(?P<name>read_file|file_read|read|search_files|file_search|search|"
-    r"web_extract|fetch_url|web_search|write_file|file_write|write|edit_file|"
-    r"patch|apply_patch|delete_file|run_command|bash|terminal|invoke|tool_call|"
-    r"tool_calls|tool_result)\b(?P<attrs>[^<>]*)>",
+    rf"<(?P<name>(?:\{_DSML_PREFIX})?(?:read_file|file_read|read|search_files|file_search|search|"
+    rf"web_extract|fetch_url|web_search|write_file|file_write|write|edit_file|"
+    rf"patch|apply_patch|delete_file|run_command|bash|terminal|invoke|tool_call|"
+    rf"tool_calls|tool_result))\b(?P<attrs>[^<>]*)>",
     re.IGNORECASE,
 )
 _DEEPSEEK_INVOKE_NAME_RE = re.compile(
@@ -1999,6 +2004,8 @@ def _deepseek_tool_markup_names(raw: str) -> set[str]:
         return names
     for match in _DEEPSEEK_TOOL_TAG_RE.finditer(raw):
         name = match.group("name").lower()
+        if name.startswith(_DSML_PREFIX):
+            name = name[len(_DSML_PREFIX):]
         if name == "invoke":
             invoked = _DEEPSEEK_INVOKE_NAME_RE.search(match.group("attrs") or "")
             if invoked:
