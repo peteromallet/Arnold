@@ -10,11 +10,15 @@ from arnold.workflow.dsl import Pipeline
 
 class TestM3Pipeline:
     def test_build_pipeline_returns_m3_pipeline(self) -> None:
-        from arnold_pipelines.megaplan.pipeline import build_pipeline
+        from arnold_pipelines.megaplan.pipeline import (
+            build_and_compile_pipeline,
+            build_pipeline,
+        )
 
         pipeline = build_pipeline()
         assert isinstance(pipeline, Pipeline)
         assert pipeline.id == "megaplan"
+        assert callable(build_and_compile_pipeline)
 
     def test_pipeline_steps_are_stable(self) -> None:
         from arnold_pipelines.megaplan.pipeline import build_pipeline
@@ -35,6 +39,16 @@ class TestM3Pipeline:
             "halt",
             "override",
         ]
+
+    def test_public_facade_exports_are_stable(self) -> None:
+        import arnold_pipelines.megaplan.pipeline as pipeline_mod
+
+        assert pipeline_mod.__all__ == [
+            "build_and_compile_pipeline",
+            "build_pipeline",
+        ]
+        assert callable(pipeline_mod.build_pipeline)
+        assert callable(pipeline_mod.build_and_compile_pipeline)
 
     def test_pipeline_compiles_to_valid_manifest(self) -> None:
         from arnold_pipelines.megaplan.pipeline import build_pipeline
@@ -61,6 +75,35 @@ class TestM3Pipeline:
             "force_proceed",
         ):
             assert label in gate_edges, f"missing gate route: {label}"
+
+    def test_gate_tiebreaker_and_review_route_order_is_stable(self) -> None:
+        from arnold_pipelines.megaplan.pipeline import build_pipeline
+
+        pipeline = build_pipeline()
+        route_labels_by_source = {
+            source: [route.label for route in pipeline.routes if route.source == source]
+            for source in ("gate", "tiebreaker_decide", "review")
+        }
+
+        assert route_labels_by_source["gate"] == [
+            "proceed",
+            "iterate",
+            "tiebreaker",
+            "escalate",
+            "abort",
+            "suspend",
+            "blocked_preflight",
+            "force_proceed",
+        ]
+        assert route_labels_by_source["tiebreaker_decide"] == [
+            "iterate",
+            "proceed",
+            "escalate",
+        ]
+        assert route_labels_by_source["review"] == [
+            "default",
+            "rework",
+        ]
 
     def test_revise_loop_is_bounded(self) -> None:
         from arnold_pipelines.megaplan.pipeline import build_pipeline
@@ -168,6 +211,7 @@ class TestM3Pipeline:
             "InProcessHandlerStep",
             "HandlerStep",
             "Stage",
+            "build_planning_pipeline",
         ):
             assert not hasattr(pipeline_mod, name), (
                 f"hasattr(pipeline, {name!r}) must be False"
