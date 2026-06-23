@@ -7,11 +7,18 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Mapping
 
-from .contracts import ArtifactRef, FailureEnvelope, StageResult, TurnContext
+from .contracts import ArtifactRef, DiagnosticRecord, FailureEnvelope, StageResult, TurnContext
 
 INLINE_LIMIT_BYTES = 4096
 PREVIEW_LIMIT_CHARS = 512
 REDACTED = "<REDACTED>"
+@dataclass(frozen=True)
+class AuditArtifactRef(ArtifactRef):
+    """ArtifactRef returned by ``write_audit`` with an attached typed diagnostic record."""
+
+    diagnostic_record: DiagnosticRecord | None = None
+
+
 REDACTION_CATEGORIES = frozenset(
     {
         "api_key",
@@ -302,7 +309,7 @@ def write_audit(
     response: Mapping[str, Any] | None = None,
     artifacts: Mapping[str, Path | ArtifactRef | Mapping[str, Any]] | None = None,
     metadata: Mapping[str, Any] | None = None,
-) -> ArtifactRef:
+) -> AuditArtifactRef:
     audit_dir.mkdir(parents=True, exist_ok=True)
     redactions: set[str] = set()
     artifact_payload: dict[str, Any] = {}
@@ -341,6 +348,7 @@ def write_audit(
         agent_edit_v2 = redacted_metadata.value.get("agent_edit_v2")
         if isinstance(agent_edit_v2, Mapping):
             redacted_metadata.value["agent_edit_v2"] = normalize_agent_edit_v2_metadata(agent_edit_v2)
+    gates = _gates_to_dict(context)
     audit_payload = {
         "schema_version": 1,
         "session_id": context.session_id if context is not None else None,
@@ -349,7 +357,7 @@ def write_audit(
         "turn_state": turn_state,
         "created_at": _now(),
         "stage_results": _stage_results_to_dict(stage_results),
-        "gates": _gates_to_dict(context),
+        "gates": gates,
         "failure": failure_payload,
         "artifacts": artifact_payload,
         "redactions": sorted(redactions),
@@ -358,7 +366,53 @@ def write_audit(
     }
     audit_path = audit_dir / "audit.json"
     audit_path.write_bytes(_json_bytes(audit_payload) + b"\n")
-    return artifact_ref_for_path(audit_path)
+    audit_ref = artifact_ref_for_path(audit_path)
+
+    response_dict = dict(response) if isinstance(response, Mapping) else {}
+    failure_kind = None
+    if isinstance(failure, FailureEnvelope):
+        failure_kind = failure.kind.value
+    elif isinstance(failure, Mapping):
+        failure_kind = failure.get("kind") or failure.get("failure_kind")
+    graph = response_dict.get("graph")
+    if not isinstance(graph, Mapping):
+        candidate = response_dict.get("candidate")
+        graph = candidate.get("graph") if isinstance(candidate, Mapping) else None
+    nodes = graph.get("nodes") if isinstance(graph, Mapping) else None
+    outcome = response_dict.get("outcome")
+    diagnostic = DiagnosticRecord(
+        session_id=audit_payload["session_id"] or "",
+        turn_id=audit_payload["turn_id"] or "",
+        path=str(audit_path),
+        mtime=audit_path.stat().st_mtime,
+        baseline_turn_id=audit_payload["baseline_turn_id"],
+        ok=response_dict.get("ok") if response_dict else (False if failure is not None else None),
+        kind=response_dict.get("kind") if response_dict else failure_kind,
+        outcome=str(outcome.get("kind")) if isinstance(outcome, Mapping) and outcome.get("kind") is not None else None,
+        lifecycle=turn_state,
+        fidelity_ok=gates.get("ui_fidelity_ok"),
+        state_match_ok=gates.get("state_match_ok"),
+        queue_validate_ok=gates.get("queue_validate_ok"),
+        canvas_apply_allowed=response_dict.get("canvas_apply_allowed"),
+        queue_allowed=response_dict.get("queue_allowed"),
+        candidate_nodes=len(nodes) if isinstance(nodes, list) else None,
+        task=response_dict.get("task") or response_dict.get("user_facing_message"),
+        route=response_dict.get("route"),
+        protocol=None,
+        summary=response_dict.get("done_summary")
+        or response_dict.get("message")
+        or response_dict.get("user_facing_message"),
+        is_baseline=False,
+        accepted_at=None,
+        live_token=None,
+    )
+    return AuditArtifactRef(
+        path=audit_ref.path,
+        sha256=audit_ref.sha256,
+        byte_count=audit_ref.byte_count,
+        preview=audit_ref.preview,
+        diagnostic_record=diagnostic,
+    )
 
 
 def write_allocation_failure_audit(
@@ -392,6 +446,8 @@ __all__ = [
     "RedactionResult",
     "artifact_entry",
     "artifact_ref_for_path",
+    "AuditArtifactRef",
+    "DiagnosticRecord",
     "normalize_agent_edit_v2_metadata",
     "redact_closed_set",
     "redact_audit_metadata",

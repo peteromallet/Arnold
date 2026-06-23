@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass, field, replace
 from enum import Enum
 from types import MappingProxyType
@@ -673,6 +674,7 @@ class ArtifactRef:
     sha256: str | None = None
     byte_count: int | None = None
     preview: str | None = None
+    diagnostic_record: "DiagnosticRecord | None" = field(default=None, compare=False, repr=False)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -1040,6 +1042,95 @@ class TurnOutcome:
         if self.kind in {"noop", "budget"} and self.reason is not None:
             payload["reason"] = self.reason
         return payload
+
+
+@dataclass(frozen=True)
+class DiagnosticRecord:
+    """Shared durable record schema for agent-edit diagnostics.
+
+    Both server-side audit writers (``audit.py``) and CLI debug consumers
+    (``_agent_edit_debug.py``) agree on this shape.  Extra fields present in
+    older on-disk records are ignored by ``from_dict`` so the schema can grow
+    without breaking existing session data.
+    """
+
+    session_id: str
+    turn_id: str
+    path: str | None = None
+    mtime: float | None = None
+    baseline_turn_id: str | None = None
+    ok: bool | None = None
+    kind: str | None = None
+    outcome: str | None = None
+    lifecycle: str | None = None
+    fidelity_ok: bool | None = None
+    state_match_ok: bool | None = None
+    queue_validate_ok: bool | None = None
+    canvas_apply_allowed: bool | None = None
+    queue_allowed: bool | None = None
+    candidate_nodes: int | None = None
+    task: str | None = None
+    route: str | None = None
+    protocol: str | None = None
+    summary: str | None = None
+    is_baseline: bool = False
+    accepted_at: str | None = None
+    live_token: str | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "session_id": self.session_id,
+            "turn_id": self.turn_id,
+            "path": self.path,
+            "mtime": self.mtime,
+            "baseline_turn_id": self.baseline_turn_id,
+            "ok": self.ok,
+            "kind": self.kind,
+            "outcome": self.outcome,
+            "lifecycle": self.lifecycle,
+            "fidelity_ok": self.fidelity_ok,
+            "state_match_ok": self.state_match_ok,
+            "queue_validate_ok": self.queue_validate_ok,
+            "canvas_apply_allowed": self.canvas_apply_allowed,
+            "queue_allowed": self.queue_allowed,
+            "candidate_nodes": self.candidate_nodes,
+            "task": self.task,
+            "route": self.route,
+            "protocol": self.protocol,
+            "summary": self.summary,
+            "is_baseline": self.is_baseline,
+            "accepted_at": self.accepted_at,
+            "live_token": self.live_token,
+        }
+
+    @classmethod
+    def from_dict(cls, payload: Mapping[str, Any]) -> "DiagnosticRecord":
+        fields = {
+            "session_id",
+            "turn_id",
+            "path",
+            "mtime",
+            "baseline_turn_id",
+            "ok",
+            "kind",
+            "outcome",
+            "lifecycle",
+            "fidelity_ok",
+            "state_match_ok",
+            "queue_validate_ok",
+            "canvas_apply_allowed",
+            "queue_allowed",
+            "candidate_nodes",
+            "task",
+            "route",
+            "protocol",
+            "summary",
+            "is_baseline",
+            "accepted_at",
+            "live_token",
+        }
+        kwargs = {name: payload.get(name) for name in fields}
+        return cls(**kwargs)
 
 
 def _response_has_candidate_payload(response: Mapping[str, Any] | None) -> bool:
@@ -1694,6 +1785,149 @@ def success_envelope(
     return payload
 
 
+# ---------------------------------------------------------------------------
+# Field-change repair helpers
+# ---------------------------------------------------------------------------
+
+_MISSING_FIELD_CHANGE_OLD = object()
+_ABSENT_FIELD_OLD = object()  # marker for fields genuinely absent from the original UI graph
+
+
+def _ui_node_uid(node: Mapping[str, Any]) -> str | None:
+    properties = node.get("properties")
+    if isinstance(properties, Mapping):
+        uid = properties.get("vibecomfy_uid")
+        if isinstance(uid, str) and uid:
+            return uid
+    node_id = node.get("id")
+    if isinstance(node_id, str) and node_id:
+        return node_id
+    if isinstance(node_id, int):
+        return str(node_id)
+    return None
+
+
+def _ui_node_uid_aliases(node: Mapping[str, Any]) -> tuple[str, ...]:
+    aliases: list[str] = []
+    primary = _ui_node_uid(node)
+    if primary:
+        aliases.append(primary)
+    node_id = node.get("id")
+    if isinstance(node_id, (int, str)) and str(node_id):
+        node_id_key = str(node_id)
+        if node_id_key not in aliases:
+            aliases.append(node_id_key)
+    return tuple(aliases)
+
+
+def _iter_ui_graph_nodes(graph: Mapping[str, Any]) -> tuple[Mapping[str, Any], ...]:
+    nodes = graph.get("nodes")
+    if not isinstance(nodes, list):
+        return ()
+    return tuple(node for node in nodes if isinstance(node, Mapping))
+
+
+def _widget_index_from_field_path(field_path: str) -> int | None:
+    match = re.fullmatch(r"widgets_values(?:\.|\[)(\d+)\]?", field_path)
+    if not match:
+        return None
+    try:
+        return int(match.group(1))
+    except ValueError:
+        return None
+
+
+def _ui_widget_value_for_field(node: Mapping[str, Any], field_path: str) -> Any:
+    # Lazy import: this module is also imported by lightweight consumers (e.g.
+    # ``session.py`` for ``DiagnosticRecord``) that must not pull in ComfyUI/torch.
+    from vibecomfy.porting.widgets.aliases import widget_names_for_class
+
+    widgets_values = node.get("widgets_values")
+    explicit_index = _widget_index_from_field_path(field_path)
+    if explicit_index is not None:
+        if isinstance(widgets_values, list) and 0 <= explicit_index < len(widgets_values):
+            return widgets_values[explicit_index]
+        return _MISSING_FIELD_CHANGE_OLD
+    if isinstance(widgets_values, Mapping):
+        return widgets_values[field_path] if field_path in widgets_values else _MISSING_FIELD_CHANGE_OLD
+    if isinstance(widgets_values, list):
+        class_type = str(node.get("type") or node.get("class_type") or "")
+        widget_names = widget_names_for_class(class_type) or []
+        for index, name in enumerate(widget_names):
+            if name == field_path and index < len(widgets_values):
+                return widgets_values[index]
+        widgets = node.get("widgets")
+        if isinstance(widgets, list):
+            for index, widget in enumerate(widgets):
+                if (
+                    isinstance(widget, Mapping)
+                    and widget.get("name") == field_path
+                    and index < len(widgets_values)
+                ):
+                    return widgets_values[index]
+    return _MISSING_FIELD_CHANGE_OLD
+
+
+def _original_ui_field_value(graph: Mapping[str, Any], change: FieldChange) -> Any:
+    for node in _iter_ui_graph_nodes(graph):
+        if _ui_node_uid(node) != change.uid:
+            continue
+        if change.field_path in node and not change.field_path.startswith("widgets_values"):
+            return node[change.field_path]
+        widget_value = _ui_widget_value_for_field(node, change.field_path)
+        if widget_value is not _MISSING_FIELD_CHANGE_OLD:
+            return widget_value
+        return _MISSING_FIELD_CHANGE_OLD
+    return _ABSENT_FIELD_OLD  # node not found in original UI graph — genuinely absent
+
+
+def repair_field_changes(
+    graph: Mapping[str, Any],
+    changes: tuple[FieldChange, ...],
+) -> tuple[FieldChange, ...]:
+    """Repair field-change ``old`` values using the original UI graph as ground truth.
+
+    This is the canonical implementation of the revision step the brief calls
+    "field-change normalization".  It lives in ``contracts.py`` because it
+    operates entirely on the canonical ``FieldChange`` type and has no
+    dependency on edit-stage state.
+    """
+    if not changes:
+        return ()
+    repaired: list[FieldChange] = []
+    changed = False
+    for change in changes:
+        if change.old is None:
+            old = _original_ui_field_value(graph, change)
+            if old is not _MISSING_FIELD_CHANGE_OLD and old is not _ABSENT_FIELD_OLD:
+                repaired.append(
+                    FieldChange(
+                        uid=change.uid,
+                        field_path=change.field_path,
+                        old=old,
+                        new=change.new,
+                    )
+                )
+                changed = True
+                continue
+            repaired.append(change)
+            continue
+        old = _original_ui_field_value(graph, change)
+        if old is _MISSING_FIELD_CHANGE_OLD or old is _ABSENT_FIELD_OLD or old == change.old:
+            repaired.append(change)
+            continue
+        repaired.append(
+            FieldChange(
+                uid=change.uid,
+                field_path=change.field_path,
+                old=old,
+                new=change.new,
+            )
+        )
+        changed = True
+    return tuple(repaired) if changed else changes
+
+
 __all__ = [
     "AGENT_EDIT_TURN_CONTRACT_VERSION",
     "AgentError",
@@ -1726,10 +1960,12 @@ __all__ = [
     "derive_apply_candidate_key",
     "derive_apply_eligibility",
     "derive_pending_response_key",
+    "DiagnosticRecord",
     "ensure_agent_edit_response_contract",
     "failure_envelope",
     "public_outcome_from_turn_outcome",
     "product_failure_envelope_fields",
+    "repair_field_changes",
     "success_envelope",
     "turn_envelope",
 ]

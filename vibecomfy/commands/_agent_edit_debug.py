@@ -47,6 +47,9 @@ to urllib. Never mutates session data.
 """
 from __future__ import annotations
 import argparse, datetime, glob, json, os, tarfile, urllib.request, shutil
+from pathlib import Path
+
+from vibecomfy.comfy_nodes.agent.session import iter_turn_records
 
 HOME = os.path.expanduser("~")
 COMFY_DIR = os.environ.get("COMFY_DIR", os.path.join(HOME, "Documents/reigh-workspace/ComfyUI"))
@@ -113,63 +116,42 @@ def _faithful_diff(before_graph, candidate_graph):
         "node_types": {i: (c.get(i) or {}).get("type") for i in added},
     }
 
+def _record_to_cli_dict(record, tdir: str):
+    """Convert a canonical ``DiagnosticRecord`` to the legacy CLI dict shape."""
+    return {
+        "session": record.session_id,
+        "turn": record.turn_id,
+        "dir": tdir,
+        "mtime": _mtime(os.path.join(tdir, "response.json"), _mtime(tdir)),
+        "task": record.task or "",
+        "route": record.route or "",
+        "protocol": record.protocol,
+        "ok": record.ok,
+        "kind": record.kind,
+        "outcome": record.outcome,
+        "lifecycle": record.lifecycle,
+        "is_baseline": record.is_baseline,
+        "accepted_at": record.accepted_at,
+        "fid": record.fidelity_ok,
+        "state_match": record.state_match_ok,
+        "queue_validate": record.queue_validate_ok,
+        "canvas_apply": record.canvas_apply_allowed,
+        "queue_allowed": record.queue_allowed,
+        "cand_nodes": record.candidate_nodes,
+        "live_token": record.live_token,
+        "summary": record.summary or "",
+    }
+
+
 def _iter_turns():
     """Yield a joined record per turn (response.json + session_state lifecycle)."""
     for sdir in sorted(glob.glob(os.path.join(SESS_ROOT, "*"))):
         if not os.path.isdir(sdir):
             continue
         sid = os.path.basename(sdir)
-        sstate = _load(os.path.join(sdir, "session_state.json")) or {}
-        st_turns = sstate.get("turns", {}) if isinstance(sstate, dict) else {}
-        baseline = sstate.get("baseline_turn_id")
-        for tdir in sorted(glob.glob(os.path.join(sdir, "turns", "*"))):
-            if not os.path.isdir(tdir):
-                continue
-            turn = os.path.basename(tdir)
-            resp = _load(os.path.join(tdir, "response.json")) or {}
-            req = _load(os.path.join(tdir, "request.json")) or {}
-            life = st_turns.get(turn, {}) if isinstance(st_turns, dict) else {}
-            gates = resp.get("gates") or {}
-            ok = resp.get("ok")
-            kind = resp.get("kind")
-            unchanged = resp.get("graph_unchanged")
-            lstate = life.get("state")  # accepted/rejected/candidate/unknown
-            if lstate == "accepted":
-                outcome = "\u2705 APPLIED"
-            elif lstate == "rejected":
-                outcome = "\u2717 rejected"
-            elif lstate in ("unknown",) and life.get("superseded_by_turn_id"):
-                outcome = "\u21b7 superseded"
-            elif ok is True and unchanged:
-                outcome = "clarify/noop"
-            elif ok is True:
-                outcome = "candidate"        # ready, not yet applied
-            elif kind:
-                outcome = f"FAIL:{kind}"
-            elif ok is False:
-                outcome = "FAIL"
-            else:
-                outcome = lstate or "?"
-            cand = resp.get("graph")
-            yield {
-                "session": sid, "turn": turn, "dir": tdir,
-                "mtime": _mtime(os.path.join(tdir, "response.json"), _mtime(tdir)),
-                "task": req.get("task") or resp.get("task") or "",
-                "route": req.get("route") or "",
-                "protocol": life.get("agent_edit_protocol"),
-                "ok": ok, "kind": kind, "outcome": outcome, "lifecycle": lstate,
-                "is_baseline": (turn == baseline),
-                "accepted_at": life.get("accepted_at"),
-                "fid": gates.get("ui_fidelity_ok"),
-                "state_match": gates.get("state_match_ok"),
-                "queue_validate": gates.get("queue_validate_ok"),
-                "canvas_apply": resp.get("canvas_apply_allowed"),
-                "queue_allowed": resp.get("queue_allowed"),
-                "cand_nodes": len(cand.get("nodes", [])) if isinstance(cand, dict) else None,
-                "live_token": life.get("submitted_client_live_canvas_token"),
-                "summary": (resp.get("done_summary") or resp.get("message")
-                            or resp.get("user_facing_message") or ""),
-            }
+        for record in iter_turn_records(SESS_ROOT, sid):
+            yield _record_to_cli_dict(record, os.path.join(sdir, "turns", record.turn_id))
+
 
 def _all_turns(args):
     rows = sorted(_iter_turns(), key=lambda r: r["mtime"])

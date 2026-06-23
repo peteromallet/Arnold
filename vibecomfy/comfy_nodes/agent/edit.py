@@ -34,6 +34,12 @@ from .contracts import (
     TurnIdentity,
     TurnContext,
     TurnOutcome,
+    _ABSENT_FIELD_OLD,
+    _MISSING_FIELD_CHANGE_OLD,
+    _iter_ui_graph_nodes,
+    _ui_node_uid,
+    _ui_node_uid_aliases,
+    _ui_widget_value_for_field,
     build_legacy_agent_edit_v1,
     classify_failure,
     derive_apply_eligibility,
@@ -41,11 +47,11 @@ from .contracts import (
     failure_envelope,
     product_failure_envelope_fields,
     public_outcome_from_turn_outcome,
+    repair_field_changes,
     success_envelope,
     turn_envelope,
 )
 from vibecomfy.porting.edit.types import FieldChange
-from vibecomfy.porting.widgets.aliases import widget_names_for_class
 from .gates import (
     apply_stage_gate_updates,
     derive_gates,
@@ -268,6 +274,13 @@ def _safe_session_id(value: str | None = None) -> str:
 
 def _artifact(path: Path) -> ArtifactRef:
     return artifact_ref_for_path(path)
+
+
+def _repair_field_changes_from_original_ui(
+    graph: Mapping[str, Any],
+    changes: tuple[FieldChange, ...],
+) -> tuple[FieldChange, ...]:
+    return repair_field_changes(graph, changes)
 
 
 def _duration_ms(start: float) -> int:
@@ -1330,137 +1343,6 @@ def _json_safe(value: Any) -> Any:
 
 def _field_changes_payload(changes: tuple[FieldChange, ...]) -> list[dict[str, Any]]:
     return [change.to_dict() for change in changes]
-
-
-_MISSING_FIELD_CHANGE_OLD = object()
-_ABSENT_FIELD_OLD = object()  # marker for fields genuinely absent from the original UI graph
-
-
-def _ui_node_uid(node: Mapping[str, Any]) -> str | None:
-    properties = node.get("properties")
-    if isinstance(properties, Mapping):
-        uid = properties.get("vibecomfy_uid")
-        if isinstance(uid, str) and uid:
-            return uid
-    node_id = node.get("id")
-    if isinstance(node_id, str) and node_id:
-        return node_id
-    if isinstance(node_id, int):
-        return str(node_id)
-    return None
-
-
-def _ui_node_uid_aliases(node: Mapping[str, Any]) -> tuple[str, ...]:
-    aliases: list[str] = []
-    primary = _ui_node_uid(node)
-    if primary:
-        aliases.append(primary)
-    node_id = node.get("id")
-    if isinstance(node_id, (int, str)) and str(node_id):
-        node_id_key = str(node_id)
-        if node_id_key not in aliases:
-            aliases.append(node_id_key)
-    return tuple(aliases)
-
-
-def _iter_ui_graph_nodes(graph: Mapping[str, Any]) -> tuple[Mapping[str, Any], ...]:
-    nodes = graph.get("nodes")
-    if not isinstance(nodes, list):
-        return ()
-    return tuple(node for node in nodes if isinstance(node, Mapping))
-
-
-def _widget_index_from_field_path(field_path: str) -> int | None:
-    match = re.fullmatch(r"widgets_values(?:\.|\[)(\d+)\]?", field_path)
-    if not match:
-        return None
-    try:
-        return int(match.group(1))
-    except ValueError:
-        return None
-
-
-def _ui_widget_value_for_field(node: Mapping[str, Any], field_path: str) -> Any:
-    widgets_values = node.get("widgets_values")
-    explicit_index = _widget_index_from_field_path(field_path)
-    if explicit_index is not None:
-        if isinstance(widgets_values, list) and 0 <= explicit_index < len(widgets_values):
-            return widgets_values[explicit_index]
-        return _MISSING_FIELD_CHANGE_OLD
-    if isinstance(widgets_values, Mapping):
-        return widgets_values[field_path] if field_path in widgets_values else _MISSING_FIELD_CHANGE_OLD
-    if isinstance(widgets_values, list):
-        class_type = str(node.get("type") or node.get("class_type") or "")
-        widget_names = widget_names_for_class(class_type) or []
-        for index, name in enumerate(widget_names):
-            if name == field_path and index < len(widgets_values):
-                return widgets_values[index]
-        widgets = node.get("widgets")
-        if isinstance(widgets, list):
-            for index, widget in enumerate(widgets):
-                if (
-                    isinstance(widget, Mapping)
-                    and widget.get("name") == field_path
-                    and index < len(widgets_values)
-                ):
-                    return widgets_values[index]
-    return _MISSING_FIELD_CHANGE_OLD
-
-
-def _original_ui_field_value(graph: Mapping[str, Any], change: FieldChange) -> Any:
-    for node in _iter_ui_graph_nodes(graph):
-        if _ui_node_uid(node) != change.uid:
-            continue
-        if change.field_path in node and not change.field_path.startswith("widgets_values"):
-            return node[change.field_path]
-        widget_value = _ui_widget_value_for_field(node, change.field_path)
-        if widget_value is not _MISSING_FIELD_CHANGE_OLD:
-            return widget_value
-        return _MISSING_FIELD_CHANGE_OLD
-    return _ABSENT_FIELD_OLD  # node not found in original UI graph — genuinely absent
-
-
-def _repair_field_changes_from_original_ui(
-    graph: Mapping[str, Any],
-    changes: tuple[FieldChange, ...],
-) -> tuple[FieldChange, ...]:
-    if not changes:
-        return ()
-    repaired: list[FieldChange] = []
-    changed = False
-    for change in changes:
-        if change.old is None:
-            old = _original_ui_field_value(graph, change)
-            if old is not _MISSING_FIELD_CHANGE_OLD and old is not _ABSENT_FIELD_OLD:
-                repaired.append(
-                    FieldChange(
-                        uid=change.uid,
-                        field_path=change.field_path,
-                        old=old,
-                        new=change.new,
-                    )
-                )
-                changed = True
-                continue
-            # Genuinely absent from original UI — keep old=None as the
-            # normalised absent marker (serialises as null via to_dict()).
-            # _ABSENT_FIELD_OLD is the internal sentinel; FieldChange stores None.
-            repaired.append(change)
-            continue
-        old = _original_ui_field_value(graph, change)
-        if old is _MISSING_FIELD_CHANGE_OLD or old is _ABSENT_FIELD_OLD or old == change.old:
-            repaired.append(change)
-            continue
-        repaired.append(
-            FieldChange(
-                uid=change.uid,
-                field_path=change.field_path,
-                old=old,
-                new=change.new,
-            )
-        )
-        changed = True
-    return tuple(repaired) if changed else changes
 
 
 def _write_turn_chat_artifact(
@@ -4080,7 +3962,7 @@ def _stage_agent_batch_repl(
             lint_dropped_count=lint_dropped_count,
             lint_diagnostics=lint_diag_dicts,
         )
-        field_changes = _repair_field_changes_from_original_ui(
+        field_changes = repair_field_changes(
             state.graph,
             tuple(batch_result.field_changes),
         )

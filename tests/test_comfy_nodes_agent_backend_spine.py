@@ -25,6 +25,7 @@ from vibecomfy.comfy_nodes.agent import provider as agent_provider
 from vibecomfy.comfy_nodes.agent import runtime
 from vibecomfy.comfy_nodes.agent.contracts import (
     APPLY_ELIGIBILITY_REASONS,
+    DiagnosticRecord,
     FailureKind,
     StageResult,
     TurnContext,
@@ -9845,3 +9846,39 @@ def test_executor_noop_idempotency_conflicts_on_different_body(
     )
     assert conflict.conflict is not None, "Different body with same key must conflict"
     assert conflict.conflict.failure.kind is FailureKind.STALE_STATE_MISMATCH
+
+
+def test_write_audit_attaches_diagnostic_record(tmp_path: Path) -> None:
+    audit_dir = tmp_path / "audit"
+    context = TurnContext(
+        session_id="sess-a",
+        turn_id="t1",
+        baseline_turn_id="t0",
+    )
+    response = {
+        "ok": True,
+        "kind": "edit",
+        "task": "boost contrast",
+        "route": "edit",
+        "canvas_apply_allowed": True,
+        "queue_allowed": False,
+        "graph": {"nodes": [{"id": 1}, {"id": 2}]},
+        "done_summary": "adjusted contrast",
+    }
+    ref = write_audit(
+        audit_dir,
+        context=context,
+        turn_state="candidate",
+        response=response,
+    )
+    assert isinstance(ref.diagnostic_record, DiagnosticRecord)
+    assert ref.diagnostic_record.session_id == "sess-a"
+    assert ref.diagnostic_record.turn_id == "t1"
+    assert ref.diagnostic_record.ok is True
+    assert ref.diagnostic_record.candidate_nodes == 2
+    assert ref.diagnostic_record.task == "boost contrast"
+    assert ref.diagnostic_record.summary == "adjusted contrast"
+    # Disk JSON remains the stable schema; diagnostic is runtime-only.
+    audit_payload = json.loads((audit_dir / "audit.json").read_text(encoding="utf-8"))
+    assert "diagnostic_record" not in audit_payload
+    assert audit_payload["session_id"] == "sess-a"
