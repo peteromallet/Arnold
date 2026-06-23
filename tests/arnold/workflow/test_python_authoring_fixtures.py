@@ -5,25 +5,35 @@ import json
 from pathlib import Path
 from typing import Any
 
+import arnold.workflow as workflow
 from arnold.workflow import diagnostics
 
 
 FIXTURE_DIR = Path("tests/fixtures/workflow_authoring")
 GRAMMAR_VERSION = "arnold.workflow.authoring.v1"
 EXPECTED_CASES = {
-    "valid_linear": "valid",
-    "invalid_forbidden_root_import": "invalid",
-    "invalid_star_import": "invalid",
-    "invalid_dynamic_import": "invalid",
-    "invalid_intrinsic_shadowing": "invalid",
+    "valid_direct_linear": "valid",
+    "valid_function_linear": "valid",
     "invalid_alias_provenance_loss": "invalid",
+    "invalid_duplicate_local_assignment": "invalid",
+    "invalid_dynamic_import": "invalid",
+    "invalid_function_header": "invalid",
+    "invalid_forbidden_root_import": "invalid",
+    "invalid_intrinsic_shadowing": "invalid",
+    "invalid_malformed_call": "invalid",
+    "invalid_star_import": "invalid",
+    "invalid_unknown_component": "invalid",
+    "invalid_unknown_reference": "invalid",
+    "invalid_unsupported_syntax": "invalid",
+    "invalid_wrong_component_kind": "invalid",
 }
+SUPPORT_MODULES = {"components"}
 SOURCE_SPAN_FIELDS = {"start_line", "start_column", "end_line", "end_column"}
 COMMON_SIDECAR_FIELDS = {"grammar_version", "source_path", "outcome", "expected_diagnostics"}
 
 
 def test_python_authoring_acceptance_fixture_set_is_complete() -> None:
-    source_cases = {path.stem for path in FIXTURE_DIR.glob("*.py")}
+    source_cases = {path.stem for path in FIXTURE_DIR.glob("*.py")} - SUPPORT_MODULES
     sidecar_cases = {path.name.removesuffix(".expected.json") for path in FIXTURE_DIR.glob("*.expected.json")}
 
     assert source_cases == set(EXPECTED_CASES)
@@ -57,19 +67,131 @@ def test_python_authoring_fixture_sidecars_match_contract() -> None:
                 _assert_span_matches_source(source_path, diagnostic["source_span"])
 
 
+def test_python_authoring_invalid_fixture_diagnostics_match_sidecars() -> None:
+    for case_name, outcome in EXPECTED_CASES.items():
+        if outcome != "invalid":
+            continue
+        source_path = FIXTURE_DIR / f"{case_name}.py"
+        expected = _load_sidecar(case_name)["expected_diagnostics"]
+
+        result = workflow.check_workflow_file(source_path)
+
+        assert [_diagnostic_payload(diagnostic) for diagnostic in result.diagnostics] == expected
+
+
+def test_python_authoring_valid_fixture_provenance_matches_sidecars() -> None:
+    for case_name, outcome in EXPECTED_CASES.items():
+        if outcome != "valid":
+            continue
+        source_path = FIXTURE_DIR / f"{case_name}.py"
+        expected = _load_sidecar(case_name)["expected_provenance"]
+
+        result = workflow.check_workflow_file(source_path)
+
+        assert result.ok
+        parsed = result.parsed_source
+        assert parsed.workflow is not None
+        assert {
+            "source_form": parsed.workflow.source_form,
+            "workflow": _workflow_provenance_payload(parsed.workflow),
+            "imports": [
+                _import_provenance_payload(binding)
+                for binding in parsed.scope.imports.values()
+            ],
+            "steps": [
+                _step_provenance_payload(step)
+                for step in parsed.workflow.steps
+            ],
+        } == expected
+
+
 def _load_sidecar(case_name: str) -> dict[str, Any]:
     with (FIXTURE_DIR / f"{case_name}.expected.json").open(encoding="utf-8") as handle:
         return json.load(handle)
 
 
+def _diagnostic_payload(diagnostic: diagnostics.AuthoringDiagnostic) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "code": diagnostic.code.value,
+        "message": diagnostic.message,
+    }
+    if diagnostic.import_ref is not None:
+        payload["import_ref"] = {
+            "module": diagnostic.import_ref.module,
+            "qualname": diagnostic.import_ref.qualname,
+        }
+    if diagnostic.component_ref is not None:
+        payload["component_ref"] = diagnostic.component_ref
+    if diagnostic.source_span is not None:
+        payload["source_span"] = _span_payload(diagnostic.source_span)
+    return payload
+
+
+def _workflow_provenance_payload(workflow_declaration: workflow.WorkflowDeclaration) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "id": workflow_declaration.id,
+        "source_span": _span_payload(workflow_declaration.source_span),
+    }
+    if workflow_declaration.function_name is not None:
+        payload["function_name"] = workflow_declaration.function_name
+    if workflow_declaration.parameters:
+        payload["parameters"] = list(workflow_declaration.parameters)
+    return payload
+
+
+def _import_provenance_payload(binding: workflow.ImportBinding) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "module": binding.import_ref.module,
+        "qualname": binding.import_ref.qualname,
+        "local_name": binding.local_name,
+        "kind": binding.kind,
+        "source_span": _span_payload(binding.source_span),
+    }
+    if binding.component is not None:
+        payload["component_id"] = binding.component.id
+    return payload
+
+
+def _step_provenance_payload(step: workflow.StepCall) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "id": step.id,
+        "component_ref": step.component_ref,
+        "generated_dsl_id": f"step:{step.id}",
+        "generated_manifest_node_id": step.id,
+        "source_span": _span_payload(step.source_span),
+    }
+    if step.outputs:
+        payload["output_spans"] = [_span_payload(output.source_span) for output in step.outputs]
+    if step.inputs:
+        payload["inputs"] = [
+            {
+                "name": input_binding.name,
+                "ref": input_binding.value_ref,
+                "source_span": _span_payload(input_binding.source_span),
+            }
+            for input_binding in step.inputs
+        ]
+    return payload
+
+
+def _span_payload(span: Any) -> dict[str, int]:
+    return {
+        "start_line": span.start_line,
+        "start_column": span.start_column,
+        "end_line": span.end_line,
+        "end_column": span.end_column,
+    }
+
+
 def _assert_valid_provenance_sidecar(sidecar: dict[str, Any], source_path: Path) -> None:
     provenance = sidecar["expected_provenance"]
-    assert provenance["workflow"]["id"] == "linear-import-first"
+    assert provenance["source_form"] in {"direct", "function"}
+    assert provenance["workflow"]["id"]
     _assert_span_matches_source(source_path, provenance["workflow"]["source_span"])
 
     imports = provenance["imports"]
-    assert [item["local_name"] for item in imports] == ["workflow", "plan", "execute", "review"]
-    assert {item["kind"] for item in imports} == {"intrinsic", "step"}
+    assert [item["local_name"] for item in imports]
+    assert {item["kind"] for item in imports} >= {"intrinsic", "step"}
     for item in imports:
         assert item["module"]
         assert item["qualname"]
@@ -82,6 +204,11 @@ def _assert_valid_provenance_sidecar(sidecar: dict[str, Any], source_path: Path)
         assert step["generated_dsl_id"] == f"step:{step['id']}"
         assert step["generated_manifest_node_id"] == step["id"]
         _assert_span_matches_source(source_path, step["source_span"])
+        for span in step.get("output_spans", []):
+            _assert_span_matches_source(source_path, span)
+        for binding in step.get("inputs", []):
+            assert set(binding) >= {"name", "ref", "source_span"}
+            _assert_span_matches_source(source_path, binding["source_span"])
 
 
 def _assert_span_matches_source(source_path: Path, span: dict[str, int]) -> None:

@@ -8,8 +8,7 @@
       "message": "aliased component import is missing original module:qualname provenance",
       "import_ref": {
         "module": "tests.fixtures.workflow_authoring.components",
-        "qualname": "plan",
-        "local_name": "first_step"
+        "qualname": "plan"
       },
       "source_span": {
         "start_line": 4,
