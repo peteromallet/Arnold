@@ -40,7 +40,12 @@ def select_provider(env_vars: dict[str, str] | None = None) -> str:
         env_vars.get("MEGAPLAN_ENGINE_ISOLATION_PROVIDER", "")
         or env_vars.get("MEGPLAN_ENGINE_ISOLATION_PROVIDER", "")
     ).strip()
-    if explicit in {"local_immutable_probe", "trusted_container_probe", "logical_local_dev"}:
+    if explicit in {
+        "local_immutable_probe",
+        "trusted_container_probe",
+        "logical_local_dev",
+        "self_hosted_editable",
+    }:
         return explicit
     trusted = (
         env_vars.get("MEGAPLAN_TRUSTED_CONTAINER")
@@ -92,6 +97,27 @@ def validate_logical_local_dev(env: ExecutionEnvironment) -> EngineIsolationProo
     )
 
 
+def validate_self_hosted_editable(env: ExecutionEnvironment) -> EngineIsolationProof:
+    """Accept intentional Megaplan-on-Megaplan editable development runs."""
+
+    target_ok = _probe_write_allowed(env.target_root)
+    overlap = classify_path_overlap(env.engine_root, env.target_root)
+    work_dir_is_target = normalize_path(env.work_dir) == normalize_path(env.target_root)
+    accepted = target_ok and overlap == "equal" and work_dir_is_target
+
+    return EngineIsolationProof(
+        provider="self_hosted_editable",
+        trusted_container=False,
+        engine_write_denied=False,
+        target_write_allowed=target_ok,
+        same_user_chmod_accepted=False,
+        diagnostic=None if accepted else "self_hosted_editable_contract_failed",
+        logical_dev_accepted=accepted,
+        engine_target_overlap=overlap,
+        worker_cwd_is_target=work_dir_is_target,
+    )
+
+
 def _validate_by_probe(
     env: ExecutionEnvironment,
     *,
@@ -133,6 +159,8 @@ def engine_write_barrier(
         proof = validate_local_immutable_by_probe(env)
     elif provider == "logical_local_dev":
         proof = validate_logical_local_dev(env)
+    elif provider == "self_hosted_editable":
+        proof = validate_self_hosted_editable(env)
     else:
         # When no provider is explicitly configured, try the logical local-dev
         # contract as a safe fallback for single-user local development with
@@ -153,6 +181,9 @@ def engine_write_barrier(
         proof.engine_write_denied and proof.target_write_allowed
     ) or (
         proof.provider == "logical_local_dev"
+        and bool(proof.logical_dev_accepted)
+    ) or (
+        proof.provider == "self_hosted_editable"
         and bool(proof.logical_dev_accepted)
     ) or (
         # Operator-asserted trusted container: the runtime probe cannot prove
@@ -184,6 +215,13 @@ def engine_write_barrier(
             "[megaplan] WARNING: using logical local-dev engine isolation; "
             "engine filesystem writes are not denied. This is intended only for "
             "single-user local development with disjoint engine/target roots.",
+            flush=True,
+        )
+    if proof.provider == "self_hosted_editable":
+        print(
+            "[megaplan] WARNING: using self-hosted editable engine mode; "
+            "engine writes are intentional target work product, not denied by "
+            "filesystem isolation.",
             flush=True,
         )
 
