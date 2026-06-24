@@ -13,9 +13,6 @@ from arnold_pipelines.megaplan._core import latest_plan_meta_path, load_flag_reg
 
 AGENT_AVAILABILITY_PREFLIGHT_CHECKS = frozenset({"claude_available", "codex_available"})
 OPERATIONAL_UNVERIFIABLE_REASON_MARKERS = (
-    "host premium-turn cap exhausted",
-    "premium-turn cap exhausted",
-    "turn cap exhausted",
     "rate limit",
     "rate_limit",
     "quota",
@@ -25,15 +22,6 @@ OPERATIONAL_UNVERIFIABLE_REASON_MARKERS = (
 
 def is_operational_unverifiable_check(check: dict[str, Any]) -> bool:
     """Return true when missing critique evidence is due to transient infrastructure."""
-    cause = str(check.get("cause") or check.get("unverifiable_cause") or "").lower()
-    error_kind = str(
-        check.get("error_kind") or check.get("unverifiable_error_kind") or ""
-    ).lower()
-    retryable = check.get("retryable")
-    if retryable is None:
-        retryable = check.get("unverifiable_retryable")
-    if cause == "host_turn_cap" and retryable is True and error_kind == "rate_limit":
-        return True
     reason = str(check.get("reason", "")).lower()
     return any(marker in reason for marker in OPERATIONAL_UNVERIFIABLE_REASON_MARKERS)
 

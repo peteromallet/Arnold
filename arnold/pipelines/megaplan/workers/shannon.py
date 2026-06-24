@@ -101,9 +101,6 @@ from arnold.pipelines.megaplan.workers.shannon_session import (
     _shannon_run_nonce,
     plan_session as _shared_plan_session,
 )
-from arnold.pipelines.megaplan.workers.turn_cap import acquire_turn_slot
-
-
 # Sentinel marker the vendored fork carries on line 2 of index.ts. Mirrors
 # ``_SHANNON_VENDOR_SENTINEL`` in ``megaplan/_core/io.py``.
 _SHANNON_VENDOR_SENTINEL = "MEGAPLAN_SHANNON_VENDORED v1"
@@ -786,29 +783,23 @@ def run_turn(turn: Turn, ctx: TurnContext) -> TurnResult:
         run_env = {**ctx.env, **typed_env}
 
     try:
-        with acquire_turn_slot(
-            engine="claude",
-            channel="shannon_tmux",
-            step=ctx.step,
-            plan=ctx.plan_dir,
-        ):
-            result = run_command(
-                launch_command,
-                cwd=ctx.work_dir,
-                stdin_text=stdin_text,
-                env=run_env,
-                timeout=turn.timeout,
-                activity_callback=_activity_callback_for_state(ctx.state, ctx.plan_dir),
-                idle_timeout=_worker_stream_idle_timeout_seconds(),
-                liveness_probe=_make_shannon_liveness_probe(
-                    ctx.tmux_session,
-                    turn.session_id,
-                    ctx.work_dir,
-                    claude_config_dir=ctx.claude_config_dir,
-                    home=ctx.env.get("HOME"),
-                ),
-                tmux_session=ctx.tmux_session,
-            )
+        result = run_command(
+            launch_command,
+            cwd=ctx.work_dir,
+            stdin_text=stdin_text,
+            env=run_env,
+            timeout=turn.timeout,
+            activity_callback=_activity_callback_for_state(ctx.state, ctx.plan_dir),
+            idle_timeout=_worker_stream_idle_timeout_seconds(),
+            liveness_probe=_make_shannon_liveness_probe(
+                ctx.tmux_session,
+                turn.session_id,
+                ctx.work_dir,
+                claude_config_dir=ctx.claude_config_dir,
+                home=ctx.env.get("HOME"),
+            ),
+            tmux_session=ctx.tmux_session,
+        )
     except CliError as error:
         if error.code in {"worker_stall", "worker_timeout", "connection_error"}:
             error.extra["session_id"] = turn.session_id

@@ -41,9 +41,6 @@ from arnold_pipelines.megaplan.workers.shannon_session import (
     _shannon_run_nonce,
     plan_session,
 )
-from arnold_pipelines.megaplan.workers.turn_cap import acquire_turn_slot
-
-
 _SHANNON_STREAM_READ_ONLY_ALLOWED_TOOLS = (
     "Read",
     "Grep",
@@ -1029,24 +1026,18 @@ def _run_native_stream_turn(
         work_dir=launch.cwd,
         session_id=turn.session_id,
     )
-    with acquire_turn_slot(
-        engine="claude",
-        channel="shannon_stream",
-        step=step,
-        plan=plan_dir,
-    ):
-        return run_command(
-            launch.command,
-            cwd=launch.cwd,
-            stdin_text=launch.stdin_text,
-            env=env,
-            timeout=turn.timeout,
-            activity_callback=_activity_callback_for_state(state, plan_dir),
-            activity_guard=liveness.activity_guard,
-            idle_timeout=config.stream_idle_timeout_seconds,
-            progress_liveness_probe=liveness.probe,
-            progress_liveness_grace_timeout=config.stream_idle_timeout_seconds,
-        )
+    return run_command(
+        launch.command,
+        cwd=launch.cwd,
+        stdin_text=launch.stdin_text,
+        env=env,
+        timeout=turn.timeout,
+        activity_callback=_activity_callback_for_state(state, plan_dir),
+        activity_guard=liveness.activity_guard,
+        idle_timeout=config.stream_idle_timeout_seconds,
+        progress_liveness_probe=liveness.probe,
+        progress_liveness_grace_timeout=config.stream_idle_timeout_seconds,
+    )
 
 
 def run_shannon_stream_step(

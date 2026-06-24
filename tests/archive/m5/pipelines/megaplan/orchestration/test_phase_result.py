@@ -424,9 +424,9 @@ class TestPhaseResultGuard:
             invocation_id="inv",
             exit_kind=ExitKind.external_error.value,
             external_error=ExternalError(
-                provider="host_turn_cap",
+                provider="codex",
                 error_kind="rate_limit",
-                source="host_turn_cap",
+                source="provider_rate_limit",
             ),
         )
         atomic_write_phase_result(plan_dir, existing)
@@ -447,7 +447,7 @@ class TestPhaseResultGuard:
         assert restored.phase == "plan"
         assert restored.exit_kind == ExitKind.external_error.value
         assert restored.external_error is not None
-        assert restored.external_error.provider == "host_turn_cap"
+        assert restored.external_error.provider == "codex"
 
     def test_skip_emission_without_state_json(self, tmp_path: Path) -> None:
         """When state.json doesn't exist at all, exception re-raises WITHOUT

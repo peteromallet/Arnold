@@ -6,11 +6,11 @@ from arnold_pipelines.megaplan.orchestration.gate_checks import (
 )
 
 
-def test_high_complexity_capacity_unverifiable_does_not_block_proceed() -> None:
+def test_high_complexity_rate_limit_unverifiable_does_not_block_proceed() -> None:
     check = {
         "id": "correctness",
-        "reason": "parallel critique worker failed for check 'correctness'",
-        "cause": "host_turn_cap",
+        "reason": "parallel critique worker failed for check 'correctness': provider rate limit",
+        "cause": "provider_rate_limit",
         "retryable": True,
         "error_kind": "rate_limit",
         "attention": "high_complexity_unverifiable",
@@ -21,10 +21,10 @@ def test_high_complexity_capacity_unverifiable_does_not_block_proceed() -> None:
     assert has_high_complexity_unverifiable_checks({"unverifiable_checks": [check]}) == []
 
 
-def test_legacy_capacity_reason_unverifiable_does_not_block_proceed() -> None:
+def test_legacy_provider_capacity_reason_unverifiable_does_not_block_proceed() -> None:
     check = {
         "id": "correctness",
-        "reason": "Host premium-turn cap exhausted (3/3 slots active).",
+        "reason": "provider capacity unavailable",
         "attention": "high_complexity_unverifiable",
         "complexity": 5,
     }
@@ -59,7 +59,7 @@ def test_annotate_unverifiable_preserves_machine_readable_cause() -> None:
                 "question": "Correct?",
                 "status": "unverifiable",
                 "unverifiable_reason": "worker unavailable",
-                "unverifiable_cause": "host_turn_cap",
+                "unverifiable_cause": "provider_rate_limit",
                 "unverifiable_retryable": True,
                 "unverifiable_error_kind": "rate_limit",
                 "findings": [
@@ -79,7 +79,7 @@ def test_annotate_unverifiable_preserves_machine_readable_cause() -> None:
             "id": "correctness",
             "question": "Correct?",
             "reason": "worker unavailable",
-            "cause": "host_turn_cap",
+            "cause": "provider_rate_limit",
             "retryable": True,
             "error_kind": "rate_limit",
             "complexity": 4,
@@ -97,17 +97,17 @@ def test_parallel_critique_unverifiable_payload_carries_retryable_cause() -> Non
         "correctness",
         "Correct?",
         "worker unavailable",
-        cause="host_turn_cap",
+        cause="provider_rate_limit",
         retryable=True,
         error_kind="rate_limit",
     )
 
-    assert payload["unverifiable_cause"] == "host_turn_cap"
+    assert payload["unverifiable_cause"] == "provider_rate_limit"
     assert payload["unverifiable_retryable"] is True
     assert payload["unverifiable_error_kind"] == "rate_limit"
 
 
-def test_historical_capacity_downgrade_is_recoverable_from_blocked_state() -> None:
+def test_historical_provider_capacity_downgrade_is_recoverable_from_blocked_state() -> None:
     from arnold_pipelines.megaplan.handlers.override import (
         _last_gate_is_operational_unverifiable_block,
     )
@@ -126,8 +126,7 @@ def test_historical_capacity_downgrade_is_recoverable_from_blocked_state() -> No
                             "id": "correctness",
                             "reason": (
                                 "parallel critique worker failed for check "
-                                "'correctness': Host premium-turn cap exhausted "
-                                "(3/3 slots active)."
+                                "'correctness': provider capacity unavailable."
                             ),
                             "attention": "high_complexity_unverifiable",
                             "complexity": 4,

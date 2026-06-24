@@ -403,11 +403,8 @@ def maybe_run_channel_shadow(
                 resolved=resolved,
                 prompt_override=prompt_override,
             )
-    except CliError as error:
-        if error.code == "rate_limit" and error.extra.get("source") == "host_turn_cap":
-            reason = "cap_pressure"
-        else:
-            reason = "shadow_unavailable"
+    except CliError:
+        reason = "shadow_unavailable"
         _append_record(
             root,
             experiment_id,

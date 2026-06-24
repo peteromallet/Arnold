@@ -92,14 +92,12 @@ pane-pids; under stream-json the Claude process is a direct child — use `proce
 an immediate *retryable* fail, so a denial can never wedge the channel (this is the fail-slow→fail-fast
 property failure #8 demands).
 
-**4.3 Concurrency cap now (governor deferred).** A blunt host-wide concurrency cap (~3, generalizing
-today's flock gate to cover Codex too, which has *zero* admission control while burning the same ChatGPT
-subscription). This kills the overload failures (6, 7 — they came from N≫3), keeps the account's usage
-shape modest (§7), and removes the throughput-enablement contradiction. The `rate_limit` field (§4.1) is
-still surfaced and *logged* for backpressure visibility, but no dynamic rate-governor is built yet. The
-real per-channel governor — shared token-bucket over all windows, hysteresis, slot-release-during-backoff,
-baseline pool — is **deferred until an API/enterprise billing boundary exists**; building it now would
-optimize the wrong layer.
+**4.3 No local admission throttle.** The former local concurrency throttle has been removed. It throttled
+unrelated agents at the host layer and produced synthetic `rate_limit` failures that looked like provider
+capacity. The `rate_limit` field (§4.1) is still surfaced and *logged* for backpressure visibility, but
+Megaplan now relies on provider/API signals and normal recovery policy rather than a local admission
+throttle. Any future governor must live at an explicit API/enterprise billing boundary with real quota
+semantics, not as a host-global slot file.
 
 **4.3b Prove the API adapter early (the replaceable path).** Through the *same* `run_step` seam, run a
 real phase on an **API key** instead of subscription OAuth — measuring cost, quota, and tool/permission
@@ -121,8 +119,8 @@ stream-vs-tmux parity.
 
 Migration triggers remain the same whether this record is dry-run or live: switch the auth axis to API
 when the subscription stream path's rate-event schema or permission semantics break, sustained utilization
-exceeds the host-wide cap's safe operating envelope, megaplan becomes multi-tenant or commercial, or
-provider policy/billing guidance requires API-key usage.
+requires provider-backed API quota or enterprise billing controls, megaplan becomes multi-tenant or
+commercial, or provider policy/billing guidance requires API-key usage.
 
 **4.4 Drift defense (always-on).** Today's "stream-json" is the vendored wrapper's *synthesized* events;
 the plan moves to Anthropic's **native** `--print` schema — a different, undocumented-stability surface,
@@ -152,9 +150,9 @@ Sized as four ~2-week milestones. Briefs: `.megaplan/briefs/shannon-stream/`.
   (e) re-home liveness onto the subprocess PID; (f) **drift defense** — defensive parsing, CI conformance
   smoke-test against the pinned binary, autoupdater lock. **Additive + flag-OFF** (the running engine
   keeps using the old tmux path). *Exit:* one real phase runs through it behind a flag.
-- **M3 — Concurrency cap + API-adapter proof.** Blunt cap (~3) replacing the governor (§4.3); the same
-  seam proven on an API key with cost/quota/parity measured + the migration-trigger list (§4.3b). *Exit:*
-  cap holds under induced contention; a phase completes on the API channel.
+- **M3 — API-adapter proof.** No local admission throttle; the same seam is proven on an API key with
+  cost/quota/parity measured + the migration-trigger list (§4.3b). *Exit:* contention surfaces provider
+  capacity through normal external-error paths; a phase completes on the API channel.
 - **M4 — Shadow + cutover; keep tmux.** Sampled shadow (**≤10%** of phases, reusing the bakeoff harness)
   on **deterministic artifacts** (`exit_kind`, payload schema validity, `landed_diff`, `worker_did_work`)
   at **N≥5**; flag-gated cutover with per-phase `fresh=True` on switch; rewrite the babysit ground-truth
