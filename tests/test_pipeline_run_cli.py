@@ -341,8 +341,6 @@ def _run_args(
 
 
 def _native_capable_megaplan_pipeline() -> SimpleNamespace:
-    from arnold.pipelines.megaplan.native_runner import NativeMegaplanRunner
-
     stage_order = (
         "prep",
         "plan",
@@ -357,7 +355,7 @@ def _native_capable_megaplan_pipeline() -> SimpleNamespace:
     return SimpleNamespace(
         entry="prep",
         stages={name: object() for name in stage_order},
-        resource_bundles=(NativeMegaplanRunner(),),
+        resource_bundles=stage_order,
     )
 
 
@@ -1031,7 +1029,7 @@ def test_run_loads_non_megaplan_profiles_via_arnold_loader_without_megaplan_fall
             "supported_modes": ("polish",),
             "default_profile": "@writing-panel-strict:standard",
             "manifest_hash": "sha256:test-manifest",
-            "source_path": str(tmp_path / "writing_panel_strict" / "__init__.py"),
+            "source_path": str(tmp_path / "writing_panel_strict.py"),
         },
     )
 
@@ -1206,8 +1204,6 @@ def test_preflight_resolves_symbolic_premium_with_default_vendor(monkeypatch) ->
 
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
-    monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
-    monkeypatch.delenv("FIREWORKS_API_KEY", raising=False)
     monkeypatch.setattr(
         profiles_module,
         "effective_premium_vendor",

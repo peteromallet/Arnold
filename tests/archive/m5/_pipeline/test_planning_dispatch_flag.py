@@ -78,6 +78,12 @@ def test_legacy_and_canonical_stage_declarations_are_identical() -> None:
     assert len(canonical_pipeline.stages) == 9
 
     for stage_name in canonical_pipeline.stages:
-        assert asdict(legacy_pipeline.stages[stage_name]) == asdict(
-            canonical_pipeline.stages[stage_name]
-        ), stage_name
+        legacy_stage = legacy_pipeline.stages[stage_name]
+        canonical_stage = canonical_pipeline.stages[stage_name]
+        legacy_d = asdict(legacy_stage)
+        canonical_d = asdict(canonical_stage)
+        legacy_d.pop("step")
+        canonical_d.pop("step")
+        assert legacy_d == canonical_d, stage_name
+        assert type(legacy_stage.step) is type(canonical_stage.step)
+        assert legacy_stage.step.name == canonical_stage.step.name

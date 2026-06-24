@@ -6,9 +6,8 @@ merges state like the graph executor, and persists resume cursors
 when execution is interrupted by a ``max_phases`` limit.
 
 The runtime does NOT import megaplan or register production pipelines.
-``require_native_runtime()`` is still called at the entrypoint for
-backwards-compatible hook points, but it is now a no-op because native
-execution is canonical by default.
+It is gated behind ``require_native_runtime()`` at the entrypoint level
+and is otherwise a pure library module.
 
 Parity with graph executor
 --------------------------
@@ -43,7 +42,6 @@ from arnold.pipeline.native.ir import (
     ParallelInstruction,
 )
 from arnold.pipeline.native.trace import NativeTraceHooks
-from arnold.pipeline.types import ContractStatus
 
 
 class NativeRuntimeError(Exception):
@@ -321,12 +319,6 @@ def run_native_pipeline(
             saved_state = frames.pop("__state__", None)
             if isinstance(saved_state, dict):
                 state = saved_state
-            # M4: merge caller-provided resume inputs (e.g. human_input) into
-            # the restored cursor state.  This lets a resumed phase that was
-            # suspended with ContractStatus.SUSPENDED see the payload that
-            # resolves the gate.
-            if isinstance(initial_state, dict) and initial_state:
-                state.update(initial_state)
             # Restore envelope from cursor frames if present
             saved_envelope = frames.pop("__envelope__", None)
             if saved_envelope is not None:
@@ -464,66 +456,6 @@ def run_native_pipeline(
                 step_envelope = result.get("envelope")
             envelope = _hooks.join_envelope(instr, envelope, step_envelope)
 
-            # ── Phase-level contract suspension ─────────────────────
-            # M4: phases may return ContractStatus.SUSPENDED (e.g. the
-            # evidence-pack human_review gate).  Persist a native resume
-            # cursor at the current pc so the phase re-executes on resume,
-            # and return suspended without advancing the program counter.
-            if contract_result is not None and getattr(contract_result, "status", None) == ContractStatus.SUSPENDED:
-                if _should_emit_stage_complete(instr):
-                    _hooks.on_stage_complete(instr, ctx, result, state, owned_keys)
-
-                reentry_stage = stage_id
-                cursor_state = _sanitize_cursor_state(state)
-                frames_with_state = dict(frames)
-                frames_with_state["__state__"] = cursor_state
-                if envelope is not None:
-                    frames_with_state["__envelope__"] = _serialize_envelope(envelope)
-                stage_reentry_points = _stage_reentry_points_for(stages)
-
-                suspension = getattr(contract_result, "suspension", None)
-                resume_cursor_val = getattr(suspension, "resume_cursor", None) if suspension is not None else None
-
-                persist_native_cursor(
-                    artifact_root,
-                    stage=stage_id,
-                    pc=pc,
-                    reentry_stage=reentry_stage,
-                    stages=list(stages),
-                    loops=dict(loops),
-                    frames=frames_with_state,
-                    cursor_id=_cursor_id,
-                    resume_cursor=resume_cursor_val,
-                    native_extra={"suspension_kind": "phase_suspended"},
-                    extra={"contract_result": contract_result.to_json()},
-                    stage_reentry_points=stage_reentry_points,
-                )
-
-                _cursor = _build_cursor_dict(
-                    stage=stage_id,
-                    pc=pc,
-                    reentry_stage=reentry_stage,
-                    stages=list(stages),
-                    loops=dict(loops),
-                    frames=frames_with_state,
-                    state=cursor_state,
-                    envelope=envelope,
-                    cursor_id=_cursor_id,
-                    resume_cursor=resume_cursor_val,
-                    native_extra={"suspension_kind": "phase_suspended"},
-                    extra={"contract_result": contract_result.to_json()},
-                )
-                _hooks.on_checkpoint(_cursor, cursor_state)
-
-                return NativeExecutionResult(
-                    state=dict(state),
-                    stages=list(stages),
-                    pc=pc,
-                    suspended=True,
-                    cursor_path=str(Path(artifact_root) / "resume_cursor.json"),
-                    envelope=envelope,
-                )
-
             # ── Hook: should_suspend (terminal exit) ────────────────
             do_suspend, suspend_reason = _hooks.should_suspend(instr, state, result)
             if do_suspend:
@@ -623,7 +555,7 @@ def run_native_pipeline(
                     make_human_suspension,
                     write_human_gate_checkpoint,
                 )
-                from arnold.pipeline.types import ContractResult
+                from arnold.pipeline.types import ContractResult, ContractStatus
 
                 _checkpoint_path = Path(artifact_root) / "awaiting_user.json"
                 _resume_cursor_payload: dict[str, Any] = {
@@ -1086,23 +1018,6 @@ def run_native_pipeline(
 def _safe_name(name: str) -> str:
     """Return a name safe for use as a stage-name prefix."""
     return name.replace(" ", "_").replace("-", "_")
-
-
-def _sanitize_cursor_state(state: dict[str, Any]) -> dict[str, Any]:
-    """Return a JSON-serializable copy of *state* for cursor persistence.
-
-    ContractResult objects published under ``__contract_results__`` are
-    converted via their ``to_json()`` method so the cursor can be written
-    without custom JSON encoders.
-    """
-    cursor_state = dict(state)
-    contract_results = cursor_state.get("__contract_results__")
-    if isinstance(contract_results, dict):
-        cursor_state["__contract_results__"] = {
-            key: (value.to_json() if hasattr(value, "to_json") else value)
-            for key, value in contract_results.items()
-        }
-    return cursor_state
 
 
 def _resolve_decision_label(result: Any) -> str:

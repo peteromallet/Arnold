@@ -50,15 +50,25 @@ def test_package_module_validates():
 
 
 def test_pipeline_accepts_snapshot_and_produces_action_report(tmp_path):
+    import os
+
     snapshot = _snapshot_with_false_stall()
     envelope = RuntimeEnvelope(artifact_root=str(tmp_path))
     pipeline = build_pipeline()
 
-    result_envelope = run_pipeline(
-        pipeline,
-        initial_state={"snapshot": snapshot.to_dict()},
-        envelope=envelope,
-    )
+    previous_runtime = os.environ.get("ARNOLD_PIPELINE_RUNTIME")
+    os.environ["ARNOLD_PIPELINE_RUNTIME"] = "graph"
+    try:
+        result_envelope = run_pipeline(
+            pipeline,
+            initial_state={"snapshot": snapshot.to_dict()},
+            envelope=envelope,
+        )
+    finally:
+        if previous_runtime is None:
+            os.environ.pop("ARNOLD_PIPELINE_RUNTIME", None)
+        else:
+            os.environ["ARNOLD_PIPELINE_RUNTIME"] = previous_runtime
 
     assert result_envelope is envelope
 

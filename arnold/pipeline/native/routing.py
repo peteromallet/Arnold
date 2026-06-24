@@ -19,6 +19,19 @@ RuntimeOwner = Literal["native", "graph"]
 RUNTIME_NATIVE: RuntimeOwner = "native"
 RUNTIME_GRAPH: RuntimeOwner = "graph"
 
+_MEGAPLAN_NATIVE_STAGE_ORDER: tuple[str, ...] = (
+    "prep",
+    "plan",
+    "critique",
+    "gate",
+    "revise",
+    "finalize",
+    "execute",
+    "review",
+    "tiebreaker",
+)
+
+
 @dataclass(frozen=True)
 class RuntimeDispatchDecision:
     """Resolved runtime for a pipeline dispatch call."""
@@ -112,14 +125,21 @@ def has_native_dispatch_capability(
 
     from arnold.pipeline.native.ir import NativeProgram
 
-    if getattr(pipeline, "native_program", None) is not None:
-        return True
-
     resource_bundles = tuple(getattr(pipeline, "resource_bundles", ()) or ())
     for bundle in resource_bundles:
         if isinstance(bundle, NativeProgram):
             return True
         if hasattr(bundle, "run_native_pipeline"):
+            return True
+
+    # The Megaplan bridge constructs a NativeMegaplanRunner adapter at dispatch
+    # time; recognise the canonical native-derived graph by key/stage layout.
+    canonical_key = str(pipeline_key or "").replace("_", "-")
+    if canonical_key == "megaplan":
+        stages = getattr(pipeline, "stages", None)
+        if isinstance(stages, Mapping) and set(_MEGAPLAN_NATIVE_STAGE_ORDER).issubset(
+            set(stages.keys())
+        ):
             return True
 
     return False

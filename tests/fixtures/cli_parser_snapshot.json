@@ -6876,12 +6876,13 @@
                 {
                   "action": "_StoreAction",
                   "choices": [
+                    "native",
                     "graph"
                   ],
                   "const": null,
-                  "default": "graph",
+                  "default": "native",
                   "dest": "driver",
-                  "help": "Scaffold driver shape. Only 'graph' is supported today.",
+                  "help": "Scaffold authoring style. 'native' uses @pipeline/@phase with derived graph validation; 'graph' emits the deprecated hand-built graph fallback shape.",
                   "metavar": null,
                   "nargs": null,
                   "option_strings": [
@@ -6899,6 +6900,109 @@
                   "default": null,
                   "dest": "pipeline_name",
                   "help": "Pipeline name to scaffold (e.g. my-pipeline)",
+                  "metavar": null,
+                  "nargs": null,
+                  "option_strings": [],
+                  "required": true,
+                  "type": null
+                }
+              ],
+              "subcommands": {}
+            },
+            "upgrade-cursor": {
+              "mutually_exclusive_groups": [
+                {
+                  "actions": [
+                    {
+                      "action": "_StoreTrueAction",
+                      "choices": null,
+                      "const": true,
+                      "default": false,
+                      "dest": "dry_run",
+                      "help": "Validate only; this is the default.",
+                      "metavar": null,
+                      "nargs": "0",
+                      "option_strings": [
+                        "--dry-run"
+                      ],
+                      "required": false,
+                      "type": null
+                    },
+                    {
+                      "action": "_StoreTrueAction",
+                      "choices": null,
+                      "const": true,
+                      "default": false,
+                      "dest": "write",
+                      "help": "Write the native cursor after retaining a graph cursor backup.",
+                      "metavar": null,
+                      "nargs": "0",
+                      "option_strings": [
+                        "--write"
+                      ],
+                      "required": false,
+                      "type": null
+                    }
+                  ],
+                  "required": false
+                }
+              ],
+              "options": [
+                {
+                  "action": "_HelpAction",
+                  "choices": null,
+                  "const": null,
+                  "default": "<SUPPRESS>",
+                  "dest": "help",
+                  "help": "show this help message and exit",
+                  "metavar": null,
+                  "nargs": "0",
+                  "option_strings": [
+                    "--help",
+                    "-h"
+                  ],
+                  "required": false,
+                  "type": null
+                },
+                {
+                  "action": "_StoreTrueAction",
+                  "choices": null,
+                  "const": true,
+                  "default": false,
+                  "dest": "dry_run",
+                  "help": "Validate only; this is the default.",
+                  "metavar": null,
+                  "nargs": "0",
+                  "option_strings": [
+                    "--dry-run"
+                  ],
+                  "required": false,
+                  "type": null
+                },
+                {
+                  "action": "_StoreTrueAction",
+                  "choices": null,
+                  "const": true,
+                  "default": false,
+                  "dest": "write",
+                  "help": "Write the native cursor after retaining a graph cursor backup.",
+                  "metavar": null,
+                  "nargs": "0",
+                  "option_strings": [
+                    "--write"
+                  ],
+                  "required": false,
+                  "type": null
+                }
+              ],
+              "positionals": [
+                {
+                  "action": "_StoreAction",
+                  "choices": null,
+                  "const": null,
+                  "default": null,
+                  "dest": "plan_dir",
+                  "help": "Plan directory containing resume_cursor.json",
                   "metavar": null,
                   "nargs": null,
                   "option_strings": [],
@@ -8454,6 +8558,42 @@
               "nargs": null,
               "option_strings": [
                 "--resume-choice"
+              ],
+              "required": false,
+              "type": null
+            },
+            {
+              "action": "_StoreAction",
+              "choices": [
+                "graph",
+                "native"
+              ],
+              "const": null,
+              "default": null,
+              "dest": "runtime",
+              "help": "Runtime for this run. Use 'graph' as the compatibility fallback; native requires a pipeline with native dispatch capability.",
+              "metavar": null,
+              "nargs": null,
+              "option_strings": [
+                "--runtime"
+              ],
+              "required": false,
+              "type": null
+            },
+            {
+              "action": "_StoreAction",
+              "choices": [
+                "graph",
+                "native"
+              ],
+              "const": null,
+              "default": null,
+              "dest": "executor",
+              "help": "Deprecated alias for --runtime.",
+              "metavar": null,
+              "nargs": null,
+              "option_strings": [
+                "--executor"
               ],
               "required": false,
               "type": null

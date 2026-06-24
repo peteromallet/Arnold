@@ -16,7 +16,6 @@ from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
-from arnold.pipeline import Edge, ParallelStage, Pipeline, Stage, Step
 from arnold.pipeline.native import (
     compile_pipeline,
     native_panel,
@@ -24,10 +23,18 @@ from arnold.pipeline.native import (
     pipeline,
     project_graph,
 )
-from arnold.runtime.envelope import EMPTY_ENVELOPE
+from arnold.pipelines.megaplan._pipeline.envelope import EMPTY_ENVELOPE
+from arnold.pipelines.megaplan._pipeline.pattern_topology import panel_parallel
 from arnold.pipelines.megaplan._pipeline.steps.agent import AgentStep
 from arnold.pipelines.megaplan._pipeline.steps.panel import PanelReviewerStep
-from arnold.pipelines.megaplan._pipeline.types import StepContext
+from arnold.pipelines.megaplan._pipeline.types import (
+    Edge,
+    ParallelStage,
+    Pipeline,
+    Stage,
+    Step,
+    StepContext,
+)
 
 _PIPELINE_DIR: Path = Path(__file__).parent / "epic-blitz"
 _PROMPTS: Path = _PIPELINE_DIR / "prompts"
@@ -41,11 +48,11 @@ description: str = (
     "chain-ready revised epic."
 )
 default_profile: str = "@epic-blitz:standard"
-supported_modes: tuple[str, ...] = ("native",)
+supported_modes: tuple[str, ...] = ()
 recommended_profiles: tuple[str, ...] = (
     "@epic-blitz:standard",
 )
-driver: tuple[str, str] = ("native", "epic-critique")
+driver: tuple[str, str] = ("graph", "dispatch+emit")
 entrypoint: str = "build_pipeline"
 arnold_api_version: str = "1.0"
 capabilities: tuple[str, ...] = ("epic", "critique", "revise")
@@ -512,34 +519,27 @@ def _make_panel_stage(
     panel_reviewer_order: Mapping[str, Sequence[str]],
     edge: Edge,
 ) -> ParallelStage:
-    reviewer_ids: tuple[str, ...] = tuple(rid for rid, _ in reviewers)
-    steps: tuple[Step, ...] = tuple(
-        _make_panel_reviewer_step(
-            stage_name,
-            reviewer_id,
-            prompt_ref,
-            inputs,
-            panel_reviewer_order,
+    reviewer_pairs: list[tuple[str, Step]] = []
+    for reviewer_id, prompt_ref in reviewers:
+        reviewer_pairs.append(
+            (
+                reviewer_id,
+                _make_panel_reviewer_step(
+                    stage_name,
+                    reviewer_id,
+                    prompt_ref,
+                    inputs,
+                    panel_reviewer_order,
+                ),
+            )
         )
-        for reviewer_id, prompt_ref in reviewers
-    )
-
-    def _join(results: list[Any], ctx: Any) -> Any:
-        del ctx  # join is path-agnostic; reviewer Steps own their artifact paths
-        outputs: dict[str, Any] = {}
-        for rid, result in zip(reviewer_ids, results):
-            for label, path in result.outputs.items():
-                outputs[f"{rid}.{label}"] = path
-        from arnold.pipelines.megaplan._pipeline.types import StepResult
-
-        return StepResult(outputs=outputs, next="next")
-
-    return ParallelStage(
-        name=stage_name,
-        steps=steps,
-        join=_join,
+    return panel_parallel(
+        stage_name,
+        tuple(reviewer_pairs),
         edges=(edge,),
+        merge_strategy="none",
         max_workers=None,
+        next_label="next",
     )
 
 
@@ -561,8 +561,7 @@ def _make_agent_stage(
 def _project_native_pipeline() -> Pipeline:
     """Compile/project the native declaration, then specialize Megaplan steps."""
 
-    program = compile_pipeline(epic_blitz)
-    projected = project_graph(program, key_mode="phase")
+    projected = project_graph(compile_pipeline(epic_blitz), key_mode="phase")
     actual_order = tuple(projected.stages.keys())
     if actual_order != _EPIC_BLITZ_STAGE_ORDER:
         raise RuntimeError(
@@ -619,7 +618,79 @@ def _project_native_pipeline() -> Pipeline:
             edges=(Edge("done", "halt"),),
         ),
     }
-    return Pipeline(stages=stages, entry=projected.entry, native_program=program)
+    return Pipeline(stages=stages, entry=projected.entry)
+
+
+def _build_legacy_graph_pipeline() -> Pipeline:
+    """Return the pre-native hand-built graph for parity baselines."""
+
+    pipeline = (
+        Pipeline.builder(
+            "epic-blitz",
+            description=description,
+            default_profile=default_profile,
+            supported_modes=supported_modes,
+            pipeline_dir=_PIPELINE_DIR,
+        )
+        .input("draft", file=True)
+        .panel(
+            "high_panel",
+            reviewers=_HIGH_REVIEWERS,
+            inputs=["draft"],
+            merge="none",
+        )
+        .agent(
+            "high_revise",
+            prompt=_HIGH_REVISE_PROMPT,
+            inputs=["draft", "high_panel.*"],
+        )
+        .panel(
+            "mid_panel",
+            reviewers=_MID_REVIEWERS,
+            inputs=["high_revise"],
+            merge="none",
+        )
+        .agent(
+            "mid_revise",
+            prompt=_MID_REVISE_PROMPT,
+            inputs=["high_revise", "mid_panel.*"],
+        )
+        .panel(
+            "low_panel",
+            reviewers=_LOW_REVIEWERS,
+            inputs=["mid_revise"],
+            merge="none",
+        )
+        .agent(
+            "readiness",
+            prompt=_READINESS_PROMPT,
+            inputs=["mid_revise", "low_panel.*"],
+        )
+        .build()
+    )
+
+    readiness_stage = pipeline.stages["readiness"]
+    if isinstance(readiness_stage, ParallelStage):
+        fixed = ParallelStage(
+            name=readiness_stage.name,
+            steps=readiness_stage.steps,
+            join=readiness_stage.join,
+            edges=readiness_stage.edges + (Edge("done", "halt"),),
+            max_workers=readiness_stage.max_workers,
+        )
+    else:
+        fixed = Stage(
+            name=readiness_stage.name,
+            step=readiness_stage.step,
+            edges=readiness_stage.edges + (Edge("done", "halt"),),
+        )
+    stages = dict(pipeline.stages)
+    stages["readiness"] = fixed
+    return Pipeline(
+        stages=stages,
+        entry=pipeline.entry,
+        overlays=pipeline.overlays,
+    )
 
 
 def build_pipeline() -> Pipeline:

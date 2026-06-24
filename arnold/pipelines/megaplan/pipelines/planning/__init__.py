@@ -16,8 +16,8 @@ description: str = (
     "thorough / extreme."
 )
 default_profile: str | None = None
-supported_modes: tuple[str, ...] = ("plan", "native")
-driver: tuple[str, str] = ("native", "megaplan")
+supported_modes: tuple[str, ...] = ("plan",)
+driver: tuple[str, str] = ("megaplan", "planning")
 entrypoint: str = "build_pipeline"
 arnold_api_version: str = "1.0"
 capabilities: tuple[str, ...] = ("plan", "execute", "review")

@@ -378,7 +378,7 @@ class MegaplanExecutorHooks:
     def is_parallel_safe(self, step: Any) -> bool:
         inner = getattr(step, "_inner_step", step)
         try:
-            from arnold.pipelines.megaplan.runtime.inprocess_step import InProcessHandlerStep
+            from arnold.pipelines.megaplan.stages.inprocess_step import InProcessHandlerStep
 
             return not isinstance(inner, InProcessHandlerStep)
         except ImportError:
@@ -598,15 +598,11 @@ def _find_pipeline_native_bundle(pipeline: Any) -> tuple[Any, Any]:
     Returns ``(adapter, program)`` where *adapter* is an object exposing
     ``run_native_pipeline`` (preferred) and *program* is a bare
     :class:`~arnold.pipeline.native.ir.NativeProgram` when present.
-
-    M1/M3: ``Pipeline.native_program`` is the canonical source of truth;
-    ``resource_bundles`` is still scanned for backwards compatibility with
-    bundles that pre-date the ``native_program`` field.
     """
     from arnold.pipeline.native.ir import NativeProgram
 
     adapter: Any = None
-    program: Any = getattr(pipeline, "native_program", None)
+    program: Any = None
     for bundle in getattr(pipeline, "resource_bundles", ()) or ():
         if hasattr(bundle, "run_native_pipeline") and adapter is None:
             adapter = bundle

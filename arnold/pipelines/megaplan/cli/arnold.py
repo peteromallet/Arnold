@@ -17,7 +17,6 @@ from arnold.pipelines.megaplan._pipeline.registry import (
     discover_python_pipelines,
     override_catalog_for,
     pipeline_metadata,
-    read_pipeline_skill_md,
     scan_python_pipelines,
     supported_operations_for,
 )
@@ -41,7 +40,6 @@ PLANNING_OVERRIDE_ACTIONS: tuple[str, ...] = (
 MODULE_VERBS: tuple[str, ...] = ("run", "check", "doctor", "describe", "auto")
 PIPELINES_ACTIONS: tuple[str, ...] = (
     "check",
-    "describe",
     "doctor",
     "list",
     "new",
@@ -166,8 +164,6 @@ def _handle_pipelines(argv: list[str]) -> int:
     list_parser.add_argument("--json", action="store_true", dest="as_json")
     check_parser = sub.add_parser("check", help="Validate a discovered module")
     check_parser.add_argument("module")
-    describe_parser = sub.add_parser("describe", help="Describe a discovered module")
-    describe_parser.add_argument("module")
     sub.add_parser("doctor", help="Print discovery dispositions")
     run_parser = sub.add_parser("run", help="Run a discovered module")
     run_parser.add_argument("module")
@@ -223,8 +219,6 @@ def _handle_pipelines(argv: list[str]) -> int:
         return 0
     if ns.action == "check":
         return _megaplan_main(["pipelines", "check", canonical_pipeline_name(ns.module)])
-    if ns.action == "describe":
-        return _print_pipeline_describe(canonical_pipeline_name(ns.module))
     if ns.action == "doctor":
         return _megaplan_main(["pipelines", "doctor"])
     if ns.action == "run":
@@ -246,55 +240,6 @@ def _handle_pipelines(argv: list[str]) -> int:
             ]
         )
     return 2
-
-
-def _format_metadata_value(value: object) -> str:
-    if isinstance(value, (list, tuple)):
-        return ", ".join(str(item) for item in value)
-    if isinstance(value, (set, frozenset)):
-        return ", ".join(str(item) for item in sorted(value, key=str))
-    return str(value)
-
-
-def _print_pipeline_describe(module: str) -> int:
-    if module not in _discovered_module_names():
-        print(f"arnold pipelines describe: unknown module {module!r}", file=sys.stderr)
-        return 2
-
-    metadata = pipeline_metadata(module)
-    lines: list[str] = [f"Pipeline: {module}"]
-    source_path = metadata.get("source_path")
-    if source_path:
-        lines.append(f"Source: {source_path}")
-    description = metadata.get("description")
-    if description:
-        lines.append("")
-        lines.append(str(description))
-    default_profile = metadata.get("default_profile")
-    if default_profile:
-        lines.append("")
-        lines.append(f"Default profile: {default_profile}")
-    recommended = metadata.get("recommended_profiles") or ()
-    if recommended:
-        lines.append(f"Recommended: {_format_metadata_value(recommended)}")
-    modes = metadata.get("supported_modes") or ()
-    if modes:
-        lines.append(f"Modes: {_format_metadata_value(modes)}")
-    driver = metadata.get("driver")
-    if driver:
-        lines.append(f"Driver: {_format_metadata_value(driver)}")
-    entrypoint = metadata.get("entrypoint")
-    if entrypoint:
-        lines.append(f"Entrypoint: {entrypoint}")
-
-    skill_md = read_pipeline_skill_md(module)
-    if skill_md:
-        lines.append("")
-        lines.append("─── SKILL.md ───")
-        lines.append(skill_md.strip())
-
-    print("\n".join(lines))
-    return 0
 
 
 def _handle_auto(argv: list[str]) -> int:

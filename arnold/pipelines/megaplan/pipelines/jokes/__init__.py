@@ -31,9 +31,9 @@ description: str = (
     "tightens the beat, and emits the final artifact."
 )
 default_profile: str | None = None
-supported_modes: tuple[str, ...] = ("native",)
+supported_modes: tuple[str, ...] = ("joke",)
 recommended_profiles: tuple[str, ...] = ()
-driver: tuple[str, str] = ("native", "joke")
+driver: tuple[str, str] = ("graph", "dispatch+emit")
 entrypoint: str = "build_pipeline"
 arnold_api_version: str = "1.0"
 capabilities: tuple[str, ...] = ("creative", "joke")
@@ -175,21 +175,16 @@ def _build_graph_pipeline(topic: str = "software release notes") -> Pipeline:
     return Pipeline(
         stages=stages,
         entry="draft",
-        resource_bundles=(),
+        resource_bundles=tuple(prompt_key for _stage, prompt_key, _next in STAGE_SPECS),
     )
 
 
 def build_pipeline(topic: str = "software release notes") -> Pipeline:
-    """Return the native-backed ``jokes`` :class:`Pipeline`.
-
-    The graph shell remains available for explicit legacy execution; the
-    canonical runtime dispatches through the attached ``native_program``.
-    """
+    """Return the graph-default pipeline with an opt-in native bundle."""
     graph = _build_graph_pipeline(topic=topic)
     return replace(
         graph,
-        native_program=_native_bundle(topic=topic),
-        resource_bundles=(),
+        resource_bundles=tuple(graph.resource_bundles) + (_native_bundle(topic=topic),),
     )
 
 

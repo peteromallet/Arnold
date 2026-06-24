@@ -14,8 +14,11 @@ arnold pipelines new my-planning-pipeline
 This creates a native-authored module and a sibling `SKILL.md` stub. The
 CLI-visible name is the hyphenated form: `my-planning-pipeline`.
 
-Do not use the graph scaffold for new work; `--driver graph` is deprecated
-and exists only for temporary compatibility baselines.
+Use the graph scaffold only for deprecated fallback work:
+
+```bash
+arnold pipelines new my-planning-pipeline --driver graph
+```
 
 ## 2. Replace the Skeleton
 
@@ -191,7 +194,7 @@ reentry point.
 
 - `arnold/pipelines/megaplan/pipeline.py` - native Megaplan planning topology.
 - `arnold/pipelines/megaplan/pipelines/epic_blitz.py` - native panels.
-- `arnold/pipelines/megaplan/pipelines/select_tournament/__init__.py` - fixed
+- `arnold/pipelines/megaplan/pipelines/select-tournament/__init__.py` - fixed
   native parallel branches with typed ports.
 - `docs/arnold/authoring-guide.md` and
   `docs/arnold/package-authoring-contract.md` - full contract details.
