@@ -415,6 +415,40 @@ class TestPhaseResultGuard:
 
         assert not (plan_dir / "phase_result.json").exists()
 
+    def test_skip_emission_without_active_phase_preserves_existing_result(self, tmp_path: Path) -> None:
+        """A cleared active_step must not overwrite a scoped prior result."""
+        plan_dir = tmp_path / "plan"
+        plan_dir.mkdir()
+        existing = PhaseResult(
+            phase="plan",
+            invocation_id="inv",
+            exit_kind=ExitKind.external_error.value,
+            external_error=ExternalError(
+                provider="host_turn_cap",
+                error_kind="rate_limit",
+                source="host_turn_cap",
+            ),
+        )
+        atomic_write_phase_result(plan_dir, existing)
+        (plan_dir / "state.json").write_text(
+            json.dumps({"meta": {"current_invocation_id": "inv"}}),
+            encoding="utf-8",
+        )
+
+        class TestError(Exception):
+            pass
+
+        with pytest.raises(TestError):
+            with phase_result_guard(plan_dir):
+                raise TestError("late cleanup failure")
+
+        restored = read_phase_result(plan_dir)
+        assert restored is not None
+        assert restored.phase == "plan"
+        assert restored.exit_kind == ExitKind.external_error.value
+        assert restored.external_error is not None
+        assert restored.external_error.provider == "host_turn_cap"
+
     def test_skip_emission_without_state_json(self, tmp_path: Path) -> None:
         """When state.json doesn't exist at all, exception re-raises WITHOUT
         writing phase_result.json."""

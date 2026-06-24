@@ -699,9 +699,10 @@ def phase_result_guard(plan_dir: Path):
                     if isinstance(meta, dict)
                     else None
                 )
-                if isinstance(invocation_id, str) and invocation_id:
+                phase = _active_phase_name(raw.get("active_step"))
+                if isinstance(invocation_id, str) and invocation_id and phase != "unknown":
                     result = PhaseResult(
-                        phase=_active_phase_name(raw.get("active_step")),
+                        phase=phase,
                         invocation_id=invocation_id,
                         exit_kind=ek,
                         external_error=external_error,
