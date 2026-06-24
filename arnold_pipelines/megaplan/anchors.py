@@ -15,6 +15,9 @@ from arnold_pipelines.megaplan.types import CliError
 SUPPORTED_ANCHOR_TYPES = frozenset({"north_star"})
 DEFAULT_ANCHOR_TYPE = "north_star"
 ANCHORS_SCHEMA_VERSION = 1
+ANCHOR_RENDER_FULL = "full"
+ANCHOR_RENDER_CHECK = "check"
+ANCHOR_RENDER_NONE = "none"
 
 ANCHOR_AUDIENCE_INSTRUCTIONS = {
     "plan": "Build a plan that advances the local brief while preserving the North Star. If scope is narrowed, state whether the narrowing is a bridge or a contradiction.",
@@ -33,6 +36,25 @@ ANCHOR_AUDIENCE_INSTRUCTIONS = {
     "parallel_review": "Review your focused dimension with North Star alignment in view. Record concrete evidence for any drift.",
     "compact_review": "Even in compact mode, keep North Star alignment in view and inspect the repository where needed.",
     "generic": "Use the North Star as durable alignment context for this stage.",
+}
+
+ANCHOR_AUDIENCE_RENDER_MODES = {
+    "plan": ANCHOR_RENDER_FULL,
+    "prep": ANCHOR_RENDER_FULL,
+    "prep-triage": ANCHOR_RENDER_FULL,
+    "prep-distill": ANCHOR_RENDER_FULL,
+    "critique": ANCHOR_RENDER_FULL,
+    "critique_evaluator": ANCHOR_RENDER_FULL,
+    "revise": ANCHOR_RENDER_FULL,
+    "gate": ANCHOR_RENDER_FULL,
+    "finalize": ANCHOR_RENDER_FULL,
+    "review": ANCHOR_RENDER_CHECK,
+    "compact_review": ANCHOR_RENDER_CHECK,
+    "parallel_review": ANCHOR_RENDER_CHECK,
+    "parallel_critique": ANCHOR_RENDER_CHECK,
+    "execute": ANCHOR_RENDER_NONE,
+    "execute-batch": ANCHOR_RENDER_NONE,
+    "feedback": ANCHOR_RENDER_NONE,
 }
 
 _SCOPE_FILENAME = {"epic": "epic.md", "plan": "plan.md"}
@@ -234,11 +256,10 @@ def attach_anchor_documents(
 def _write_combined_anchor(plan_dir: Path, anchor_type: str, documents: Sequence[Mapping[str, Any]]) -> None:
     sections: list[str] = []
     for metadata in documents:
-        scope = str(metadata.get("scope") or "")
         artifact_rel = metadata.get("artifact_path")
         if not isinstance(artifact_rel, str):
             continue
-        label = _SCOPE_TITLE.get(scope, "North Star")
+        label = _anchor_document_heading(metadata)
         title = metadata.get("title") if isinstance(metadata.get("title"), str) else label
         try:
             content = (plan_dir / artifact_rel).read_text(encoding="utf-8").strip()
@@ -316,16 +337,21 @@ def render_anchor_block(
     if bundle is None or not bundle.documents:
         return ""
     instruction = ANCHOR_AUDIENCE_INSTRUCTIONS.get(audience, ANCHOR_AUDIENCE_INSTRUCTIONS["generic"])
+    milestone_label = _current_milestone_label(state, bundle.documents)
     lines = [
         "## Anchor Context: North Star",
         "",
         "These anchors are durable alignment targets captured at plan initialization. They are not ordinary notes, generated success criteria, or optional background. Use them to keep this stage aligned with the end-state intent.",
         "",
+        "Scope map:",
+        "- Epic North Star: overall chain/epic objective. Preserve this across all milestones.",
+        "- Plan/Sprint/Milestone North Star: current plan or milestone objective. It extends or operationalizes the epic North Star for this sprint; it does not override it.",
+        "",
         "If local instructions, generated plan content, or a plan-level anchor appear to conflict with an epic anchor, do not resolve the conflict silently. Surface an explicit anchor conflict and explain what decision, replan, or user approval would be needed.",
     ]
     for document in bundle.documents:
         scope = str(document.metadata.get("scope") or "plan")
-        heading = _SCOPE_TITLE.get(scope, "North Star")
+        heading = _anchor_document_heading(document.metadata)
         title = document.metadata.get("title") if isinstance(document.metadata.get("title"), str) else heading
         artifact = document.metadata.get("artifact_path", "unknown")
         lines.extend(["", f"### {heading}: {title}", f"Source: `{document.metadata.get('source_path', 'unknown')}`", f"Captured artifact: `{artifact}`", f"Checksum: `{document.metadata.get('sha256', 'unknown')}`", "", "```md"])
@@ -334,12 +360,104 @@ def render_anchor_block(
         else:
             lines.append(_truncate_document(document.content, max_chars_per_document, str(artifact)))
         lines.append("```")
+    current_stage_lines = ["", "### Current Stage", f"Stage: `{audience}`", f"Plan directory: `{plan_dir}`"]
+    if milestone_label:
+        current_stage_lines.append(f"Current milestone: `{milestone_label}`")
+    lines.extend(current_stage_lines)
     lines.extend(["", "### Phase Instruction", instruction, "", "### Conflict Note", "Plan-level anchors extend epic anchors. They do not override them silently. When in doubt, flag the tension rather than optimizing around it."])
     block = "\n".join(lines).strip()
     if len(block) <= max_total_chars:
         return block
     suffix = "\n\n[Anchor block truncated; captured full copies are available under the plan `anchors/` directory.]"
     return block[: max(0, max_total_chars - len(suffix))].rstrip() + suffix
+
+
+def render_anchor_context(
+    state: Mapping[str, Any],
+    plan_dir: Path,
+    *,
+    audience: str,
+    mode: str | None = None,
+    max_chars_per_document: int = 10000,
+    max_total_chars: int = 18000,
+) -> str:
+    resolved_mode = mode or ANCHOR_AUDIENCE_RENDER_MODES.get(audience, ANCHOR_RENDER_FULL)
+    if resolved_mode == ANCHOR_RENDER_NONE:
+        return ""
+    if resolved_mode == ANCHOR_RENDER_FULL:
+        return render_anchor_block(
+            state,
+            plan_dir,
+            audience=audience,
+            max_chars_per_document=max_chars_per_document,
+            max_total_chars=max_total_chars,
+        )
+    if resolved_mode == ANCHOR_RENDER_CHECK:
+        return _render_anchor_check_block(state, plan_dir)
+    raise CliError("invalid_anchor_mode", f"unsupported anchor render mode: {resolved_mode}")
+
+
+def _render_anchor_check_block(state: Mapping[str, Any], plan_dir: Path) -> str:
+    bundle = load_anchor_bundle(state, plan_dir)
+    if bundle is None or not bundle.documents:
+        return ""
+    milestone_label = _current_milestone_label(state, bundle.documents)
+    lines = [
+        "## Anchor Check: North Star",
+        "",
+        "One or more North Stars are captured for this plan.",
+        "",
+        "Captured anchors:",
+    ]
+    for document in bundle.documents:
+        lines.append(
+            f"- {_anchor_check_label(document.metadata, milestone_label)}: `{document.metadata.get('artifact_path', 'unknown')}`"
+        )
+    lines.extend(
+        [
+            "",
+            "Do not restate the North Star. Do not reinterpret approved scope from scratch.",
+            "Raise an explicit anchor conflict/deviation only if the current step visibly violates a captured North Star.",
+        ]
+    )
+    return "\n".join(lines)
+
+
+def _anchor_document_heading(metadata: Mapping[str, Any]) -> str:
+    scope = str(metadata.get("scope") or "plan")
+    heading = _SCOPE_TITLE.get(scope, "North Star")
+    label = metadata.get("label")
+    source_kind = metadata.get("source_kind")
+    if scope == "plan" and (source_kind == "milestone" or isinstance(label, str)):
+        if isinstance(label, str) and label.strip():
+            return f"{heading} (current milestone {label.strip()})"
+        return f"{heading} (current milestone)"
+    return heading
+
+
+def _anchor_check_label(metadata: Mapping[str, Any], milestone_label: str | None) -> str:
+    scope = str(metadata.get("scope") or "plan")
+    if scope == "epic":
+        return "Epic North Star (overall chain/epic objective)"
+    label = metadata.get("label")
+    if not isinstance(label, str) or not label.strip():
+        label = milestone_label
+    if isinstance(label, str) and label.strip():
+        return f"Sprint/Milestone North Star (current milestone {label.strip()})"
+    return "Sprint/Milestone North Star (current plan/milestone objective)"
+
+
+def _current_milestone_label(state: Mapping[str, Any], documents: Sequence[AnchorDocument]) -> str | None:
+    meta = state.get("meta") if isinstance(state, Mapping) else None
+    chain_policy = meta.get("chain_policy") if isinstance(meta, Mapping) else None
+    label = chain_policy.get("milestone_label") if isinstance(chain_policy, Mapping) else None
+    if isinstance(label, str) and label.strip():
+        return label.strip()
+    for document in documents:
+        doc_label = document.metadata.get("label")
+        if isinstance(doc_label, str) and doc_label.strip():
+            return doc_label.strip()
+    return None
 
 
 def _truncate_document(content: str, max_chars: int, artifact_path: str) -> str:

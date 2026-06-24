@@ -40,7 +40,7 @@ Store durable epic artifacts under `.megaplan/briefs/<epic-slug>/`: put the exec
 ```yaml
 base_branch: main
 
-# Optional but recommended for long or drift-sensitive epics.
+# Required by default for epics. `brief epic` scaffolds this file.
 anchors:
   north_star: NORTHSTAR.md
 
@@ -86,6 +86,28 @@ driver:
   poll_sleep: 8.0
 ```
 
+### North Star requirement
+
+Epics require a top-level North Star by default. Put `NORTHSTAR.md` beside `chain.yaml` and declare it with `anchors.north_star: NORTHSTAR.md`. The North Star is the durable destination for the whole chain; milestone briefs narrow local scope, and milestone anchors may extend the destination for a slice, but they do not replace the top-level epic anchor.
+
+If an epic truly has no durable end-state beyond its milestone briefs, opt out explicitly:
+
+```bash
+megaplan chain start --spec .megaplan/briefs/my-epic/chain.yaml \
+  --no-require-anchor \
+  --missing-anchor-ack "Mechanical cleanup chain; no cross-milestone destination."
+```
+
+For non-interactive runs, encode the same decision in the spec:
+
+```yaml
+driver:
+  require_anchor: false
+  missing_anchor_ack: "Mechanical cleanup chain; no cross-milestone destination."
+```
+
+Do not rely on a colocated `NORTHSTAR.md` file without declaring it. Anchors are explicit and are snapshotted into each milestone plan at initialization.
+
 ### Milestone fields
 
 | Field | Required | Meaning |
@@ -122,11 +144,13 @@ The shorthand from megaplan-prep works for chain-spec notes: a milestone block a
 ## Running the chain
 
 ```bash
-# Drive the full chain until completion (or failure).
+# Drive the full chain until completion (or failure). This requires top-level anchors.north_star by default.
 megaplan chain start --spec /path/to/chain.yaml
 
-# Reject chains that lack a top-level North Star.
-megaplan chain start --require-anchor --spec /path/to/chain.yaml
+# Explicitly opt out only when the chain has no durable epic destination.
+megaplan chain start --spec /path/to/chain.yaml \
+  --no-require-anchor \
+  --missing-anchor-ack "Reason this epic does not need a North Star."
 
 # Drive at most one pending milestone, persist progress, stop cleanly.
 megaplan chain start --spec /path/to/chain.yaml --one
@@ -206,4 +230,4 @@ Shows current milestone index, current plan name, last state, completed mileston
 - **Don't tier-flatten** — uniformly picking `partnered` for every milestone misses the point of the per-milestone rubric. Differentiate; the high-stakes milestone deserves a higher tier and the cheap milestone doesn't.
 - **Don't bake-off inside a chain unless you genuinely need it.** Bakeoffs are independent runs; nesting them inside a chain spec multiplies the cost without typically producing useful signal.
 - **Don't edit the spec mid-flight expecting completed milestones to re-run.** State is sticky for completed entries by design — that's how resume works.
-- **Don't leave `NORTHSTAR.md` undeclared.** A file beside `chain.yaml` is not auto-discovered; declare `anchors.north_star: NORTHSTAR.md` or run with `--require-anchor` to make omission fail fast.
+- **Don't leave `NORTHSTAR.md` undeclared.** A file beside `chain.yaml` is not auto-discovered. Declare `anchors.north_star: NORTHSTAR.md`, or explicitly opt out with `driver.require_anchor: false` plus `driver.missing_anchor_ack`.

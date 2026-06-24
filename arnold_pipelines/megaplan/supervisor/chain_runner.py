@@ -107,6 +107,8 @@ def run_chain(
     binding: ControlBinding | str = "megaplan",
     ladder_policy: SupervisorLadderPolicy = SupervisorLadderPolicy(),
     one: bool = False,
+    require_anchor_override: bool | None = None,
+    missing_anchor_ack_override: str | None = None,
 ) -> dict[str, Any]:
     """Execute a chain spec serially in listed order through the supervisor.
 
@@ -120,10 +122,14 @@ def run_chain(
     spec_path = Path(spec_path).expanduser().resolve()
     root = Path(root).resolve()
     spec = chain_spec.load_spec(spec_path)
-    if spec.require_anchor:
-        chain_spec.validate_required_anchor(spec)
-    if warning := chain_spec.warn_undeclared_north_star(spec, spec_path):
-        writer(f"[supervisor-chain] WARNING: {warning}\n")
+    anchor_requirement = chain_spec.validate_anchor_requirement(
+        spec,
+        spec_path,
+        require_anchor_override=require_anchor_override,
+        missing_anchor_ack_override=missing_anchor_ack_override,
+    )
+    if anchor_requirement.warning:
+        writer(f"[supervisor-chain] WARNING: {anchor_requirement.warning}\n")
     chain_spec.validate_paths(spec, root, spec_path=spec_path)
     chain_state = chain_spec.load_chain_state(spec_path)
     env = resolve_execution_environment(

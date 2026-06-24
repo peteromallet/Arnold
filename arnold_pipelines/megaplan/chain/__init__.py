@@ -2061,15 +2061,21 @@ def run_chain(
     mode: str = "start",
     full_suite_backstop_mode: str | None = None,
     fresh: bool = False,
+    require_anchor_override: bool | None = None,
+    missing_anchor_ack_override: str | None = None,
 ) -> dict[str, Any]:
     """Drive the full chain. Returns a structured JSON-serializable result."""
     root = root.resolve(strict=False)
     spec_path = spec_path.resolve(strict=False)
     spec = chain_spec.load_spec(spec_path)
-    if spec.require_anchor:
-        chain_spec.validate_required_anchor(spec)
-    if warning := chain_spec.warn_undeclared_north_star(spec, spec_path):
-        writer(f"[chain] WARNING: {warning}\n")
+    anchor_requirement = chain_spec.validate_anchor_requirement(
+        spec,
+        spec_path,
+        require_anchor_override=require_anchor_override,
+        missing_anchor_ack_override=missing_anchor_ack_override,
+    )
+    if anchor_requirement.warning:
+        writer(f"[chain] WARNING: {anchor_requirement.warning}\n")
     chain_spec.validate_paths(spec, root, spec_path=spec_path)
     _preflight_agent_backends(spec, writer=writer)
     state = chain_spec.load_chain_state(spec_path)
@@ -2913,7 +2919,7 @@ def build_chain_parser(subparsers: Any) -> None:
         action="store_true",
         help="Drive at most one pending milestone, persist progress, then stop cleanly.",
     )
-    chain_parser.add_argument("--require-anchor", action="store_true", default=False, help="Reject chain specs that do not declare top-level anchors.north_star.")
+    _add_chain_anchor_args(chain_parser)
 
     start_parser = chain_sub.add_parser("start", help="Drive a chain spec")
     start_parser.add_argument(
@@ -2943,7 +2949,7 @@ def build_chain_parser(subparsers: Any) -> None:
         action="store_true",
         help="Drive at most one pending milestone, persist progress, then stop cleanly.",
     )
-    start_parser.add_argument("--require-anchor", action="store_true", default=False, help="Reject chain specs that do not declare top-level anchors.north_star.")
+    _add_chain_anchor_args(start_parser)
 
     status_parser = chain_sub.add_parser(
         "status", help="Show persisted chain progress without driving"
@@ -3050,6 +3056,29 @@ def _add_chain_worktree_args(parser: Any) -> None:
     )
 
 
+def _add_chain_anchor_args(parser: Any) -> None:
+    anchor_group = parser.add_mutually_exclusive_group()
+    anchor_group.add_argument(
+        "--require-anchor",
+        dest="require_anchor",
+        action="store_true",
+        default=None,
+        help="Require top-level anchors.north_star for this chain run (default unless spec opts out).",
+    )
+    anchor_group.add_argument(
+        "--no-require-anchor",
+        dest="require_anchor",
+        action="store_false",
+        default=None,
+        help="Opt out of the default top-level anchors.north_star requirement for this chain run.",
+    )
+    parser.add_argument(
+        "--missing-anchor-ack",
+        default=None,
+        help="Acknowledgement reason required when opting out and no top-level anchors.north_star is declared.",
+    )
+
+
 def run_chain_cli(
     root: Path, args: argparse.Namespace, *, writer=sys.stderr.write
 ) -> int:
@@ -3146,10 +3175,16 @@ def run_chain_cli(
     no_push = bool(getattr(args, "no_push", False))
     one = bool(getattr(args, "one", False))
     fresh = bool(getattr(args, "fresh", False))
+    require_anchor_override = getattr(args, "require_anchor", None)
+    missing_anchor_ack_override = getattr(args, "missing_anchor_ack", None)
     try:
         spec_for_anchor_check = chain_spec.load_spec(spec_path)
-        if bool(getattr(args, "require_anchor", False)) or spec_for_anchor_check.require_anchor:
-            chain_spec.validate_required_anchor(spec_for_anchor_check)
+        chain_spec.validate_anchor_requirement(
+            spec_for_anchor_check,
+            spec_path,
+            require_anchor_override=require_anchor_override,
+            missing_anchor_ack_override=missing_anchor_ack_override,
+        )
         if supervisor_tier_routing_on():
             from arnold_pipelines.megaplan.supervisor.chain_runner import (
                 run_chain as supervisor_run_chain,
@@ -3160,6 +3195,8 @@ def run_chain_cli(
                 root,
                 writer=writer,
                 one=one,
+                require_anchor_override=require_anchor_override,
+                missing_anchor_ack_override=missing_anchor_ack_override,
             )
         else:
             result = run_chain(
@@ -3169,6 +3206,8 @@ def run_chain_cli(
                 no_push=no_push,
                 one=one,
                 fresh=fresh,
+                require_anchor_override=require_anchor_override,
+                missing_anchor_ack_override=missing_anchor_ack_override,
             )
     except CliError as exc:
         return _emit_error(exc)

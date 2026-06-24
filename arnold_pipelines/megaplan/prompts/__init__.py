@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any, Callable, Mapping
 
 from arnold_pipelines.megaplan._core import creative_form_id, is_creative_mode
-from arnold_pipelines.megaplan.anchors import render_anchor_block
+from arnold_pipelines.megaplan.anchors import render_anchor_context
 from arnold_pipelines.megaplan.forms import get_form
 from arnold_pipelines.megaplan.types import CliError, PlanState
 
@@ -160,7 +160,7 @@ def _prepend_harness_guard(prompt: str) -> str:
 
 
 def _with_anchor_block(prompt: str, state: PlanState, plan_dir: Path, *, audience: str) -> str:
-    anchor_block = render_anchor_block(state, plan_dir, audience=audience)
+    anchor_block = render_anchor_context(state, plan_dir, audience=audience)
     if not anchor_block:
         return prompt
     return f"{anchor_block}\n\n{prompt}"

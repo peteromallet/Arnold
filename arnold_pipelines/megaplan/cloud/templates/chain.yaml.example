@@ -3,11 +3,11 @@
 # .megaplan/briefs/<epic-slug>/chain.yaml beside the milestone briefs.
 # Progress is persisted under .megaplan/plans/.chains/.
 
-# Optional durable alignment anchors. For epics and architecture migrations,
-# keep NORTHSTAR.md beside this chain.yaml and uncomment this block.
+# Required by default durable alignment anchor for epics.
+# Keep NORTHSTAR.md beside this chain.yaml and declare it here.
 # Anchor paths resolve relative to this chain.yaml, not the shell CWD.
-# anchors:
-#   north_star: NORTHSTAR.md
+anchors:
+  north_star: NORTHSTAR.md
 
 seed:
   # Plan that was kicked off manually before the chain took over. If its state
@@ -54,6 +54,9 @@ on_escalate:
 merge_policy: auto           # auto | review
 
 driver:
+  # Explicit opt-out, only when there is no durable epic destination:
+  # require_anchor: false
+  # missing_anchor_ack: "Mechanical cleanup chain; no cross-milestone destination."
   max_stall_iterations: 5
   max_iterations: 100
   phase_timeout: 3600

@@ -1280,7 +1280,43 @@
           }
         },
         "chain": {
-          "mutually_exclusive_groups": [],
+          "mutually_exclusive_groups": [
+            {
+              "actions": [
+                {
+                  "action": "_StoreTrueAction",
+                  "choices": null,
+                  "const": true,
+                  "default": null,
+                  "dest": "require_anchor",
+                  "help": "Require top-level anchors.north_star for this chain run (default unless spec opts out).",
+                  "metavar": null,
+                  "nargs": "0",
+                  "option_strings": [
+                    "--require-anchor"
+                  ],
+                  "required": false,
+                  "type": null
+                },
+                {
+                  "action": "_StoreFalseAction",
+                  "choices": null,
+                  "const": false,
+                  "default": null,
+                  "dest": "require_anchor",
+                  "help": "Opt out of the default top-level anchors.north_star requirement for this chain run.",
+                  "metavar": null,
+                  "nargs": "0",
+                  "option_strings": [
+                    "--no-require-anchor"
+                  ],
+                  "required": false,
+                  "type": null
+                }
+              ],
+              "required": false
+            }
+          ],
           "options": [
             {
               "action": "_HelpAction",
@@ -1452,13 +1488,43 @@
               "action": "_StoreTrueAction",
               "choices": null,
               "const": true,
-              "default": false,
+              "default": null,
               "dest": "require_anchor",
-              "help": "Reject chain specs that do not declare top-level anchors.north_star.",
+              "help": "Require top-level anchors.north_star for this chain run (default unless spec opts out).",
               "metavar": null,
               "nargs": "0",
               "option_strings": [
                 "--require-anchor"
+              ],
+              "required": false,
+              "type": null
+            },
+            {
+              "action": "_StoreFalseAction",
+              "choices": null,
+              "const": false,
+              "default": null,
+              "dest": "require_anchor",
+              "help": "Opt out of the default top-level anchors.north_star requirement for this chain run.",
+              "metavar": null,
+              "nargs": "0",
+              "option_strings": [
+                "--no-require-anchor"
+              ],
+              "required": false,
+              "type": null
+            },
+            {
+              "action": "_StoreAction",
+              "choices": null,
+              "const": null,
+              "default": null,
+              "dest": "missing_anchor_ack",
+              "help": "Acknowledgement reason required when opting out and no top-level anchors.north_star is declared.",
+              "metavar": null,
+              "nargs": null,
+              "option_strings": [
+                "--missing-anchor-ack"
               ],
               "required": false,
               "type": null
@@ -1574,7 +1640,43 @@
               "subcommands": {}
             },
             "start": {
-              "mutually_exclusive_groups": [],
+              "mutually_exclusive_groups": [
+                {
+                  "actions": [
+                    {
+                      "action": "_StoreTrueAction",
+                      "choices": null,
+                      "const": true,
+                      "default": null,
+                      "dest": "require_anchor",
+                      "help": "Require top-level anchors.north_star for this chain run (default unless spec opts out).",
+                      "metavar": null,
+                      "nargs": "0",
+                      "option_strings": [
+                        "--require-anchor"
+                      ],
+                      "required": false,
+                      "type": null
+                    },
+                    {
+                      "action": "_StoreFalseAction",
+                      "choices": null,
+                      "const": false,
+                      "default": null,
+                      "dest": "require_anchor",
+                      "help": "Opt out of the default top-level anchors.north_star requirement for this chain run.",
+                      "metavar": null,
+                      "nargs": "0",
+                      "option_strings": [
+                        "--no-require-anchor"
+                      ],
+                      "required": false,
+                      "type": null
+                    }
+                  ],
+                  "required": false
+                }
+              ],
               "options": [
                 {
                   "action": "_HelpAction",
@@ -1746,13 +1848,43 @@
                   "action": "_StoreTrueAction",
                   "choices": null,
                   "const": true,
-                  "default": false,
+                  "default": null,
                   "dest": "require_anchor",
-                  "help": "Reject chain specs that do not declare top-level anchors.north_star.",
+                  "help": "Require top-level anchors.north_star for this chain run (default unless spec opts out).",
                   "metavar": null,
                   "nargs": "0",
                   "option_strings": [
                     "--require-anchor"
+                  ],
+                  "required": false,
+                  "type": null
+                },
+                {
+                  "action": "_StoreFalseAction",
+                  "choices": null,
+                  "const": false,
+                  "default": null,
+                  "dest": "require_anchor",
+                  "help": "Opt out of the default top-level anchors.north_star requirement for this chain run.",
+                  "metavar": null,
+                  "nargs": "0",
+                  "option_strings": [
+                    "--no-require-anchor"
+                  ],
+                  "required": false,
+                  "type": null
+                },
+                {
+                  "action": "_StoreAction",
+                  "choices": null,
+                  "const": null,
+                  "default": null,
+                  "dest": "missing_anchor_ack",
+                  "help": "Acknowledgement reason required when opting out and no top-level anchors.north_star is declared.",
+                  "metavar": null,
+                  "nargs": null,
+                  "option_strings": [
+                    "--missing-anchor-ack"
                   ],
                   "required": false,
                   "type": null

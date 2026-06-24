@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any, Mapping
 
 from arnold_pipelines.megaplan.forms.provocations import select_active_checks
-from arnold_pipelines.megaplan.anchors import render_anchor_block
+from arnold_pipelines.megaplan.anchors import render_anchor_context
 from arnold_pipelines.megaplan._core import (
     configured_robustness,
     intent_brief_reference,
@@ -28,7 +28,7 @@ Self-monitor for non-convergence before spending more tool calls. This is NOT ab
 
 
 def _with_anchor_block(prompt: str, state: PlanState, plan_dir: Path, *, audience: str) -> str:
-    anchor_block = render_anchor_block(state, plan_dir, audience=audience)
+    anchor_block = render_anchor_context(state, plan_dir, audience=audience)
     if not anchor_block:
         return prompt
     return f"{anchor_block}\n\n{prompt}"

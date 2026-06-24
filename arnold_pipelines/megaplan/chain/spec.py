@@ -368,7 +368,8 @@ class ChainSpec:
     escalate_action: str = "force-proceed"
     robustness: str = "standard"
     auto_approve: bool = True
-    require_anchor: bool = False
+    require_anchor: bool = True
+    missing_anchor_ack: str | None = None
 
     @classmethod
     def from_dict(cls, raw: dict[str, Any]) -> "ChainSpec":
@@ -504,9 +505,14 @@ class ChainSpec:
             raise CliError(
                 "invalid_spec", "driver.require_clean_base must be a boolean"
             )
-        require_anchor = driver_raw.get("require_anchor", False)
+        require_anchor = driver_raw.get("require_anchor", True)
         if not isinstance(require_anchor, bool):
             raise CliError("invalid_spec", "driver.require_anchor must be a boolean")
+        missing_anchor_ack = driver_raw.get("missing_anchor_ack")
+        if missing_anchor_ack is not None:
+            if not isinstance(missing_anchor_ack, str) or not missing_anchor_ack.strip():
+                raise CliError("invalid_spec", "driver.missing_anchor_ack must be a non-empty string")
+            missing_anchor_ack = missing_anchor_ack.strip()
 
         return cls(
             milestones=milestones,
@@ -531,6 +537,7 @@ class ChainSpec:
             robustness=robustness,
             auto_approve=auto_approve,
             require_anchor=require_anchor,
+            missing_anchor_ack=missing_anchor_ack,
         )
 
 
@@ -808,6 +815,73 @@ def validate_required_anchor(spec: ChainSpec) -> None:
             "invalid_spec",
             "this chain requires a North Star anchor. Add:\n\nanchors:\n  north_star: NORTHSTAR.md\n\nPaths resolve relative to the chain.yaml directory.",
         )
+
+
+@dataclass(frozen=True)
+class AnchorRequirement:
+    require_anchor: bool
+    missing_anchor_ack: str | None
+    warning: str | None = None
+
+
+def resolve_anchor_requirement(
+    spec: ChainSpec,
+    spec_path: Path,
+    *,
+    require_anchor_override: bool | None = None,
+    missing_anchor_ack_override: str | None = None,
+) -> AnchorRequirement:
+    require_anchor = spec.require_anchor if require_anchor_override is None else require_anchor_override
+    missing_anchor_ack = _clean_missing_anchor_ack(
+        missing_anchor_ack_override
+        if missing_anchor_ack_override is not None
+        else spec.missing_anchor_ack
+    )
+    if spec.anchors.north_star:
+        return AnchorRequirement(require_anchor=require_anchor, missing_anchor_ack=missing_anchor_ack)
+    if require_anchor:
+        validate_required_anchor(spec)
+    if not missing_anchor_ack:
+        raise CliError(
+            "missing_anchor_ack",
+            "this chain is opted out of the default North Star requirement but has no top-level anchors.north_star. "
+            "Provide an explicit acknowledgement with `driver.missing_anchor_ack` or `--missing-anchor-ack TEXT`.",
+        )
+    warning = (
+        "North Star requirement explicitly disabled for this chain without top-level anchors.north_star. "
+        f"Acknowledgement: {missing_anchor_ack}"
+    )
+    if undeclared := warn_undeclared_north_star(spec, spec_path):
+        warning = f"{warning} {undeclared}"
+    return AnchorRequirement(
+        require_anchor=False,
+        missing_anchor_ack=missing_anchor_ack,
+        warning=warning,
+    )
+
+
+def validate_anchor_requirement(
+    spec: ChainSpec,
+    spec_path: Path,
+    *,
+    require_anchor_override: bool | None = None,
+    missing_anchor_ack_override: str | None = None,
+) -> AnchorRequirement:
+    return resolve_anchor_requirement(
+        spec,
+        spec_path,
+        require_anchor_override=require_anchor_override,
+        missing_anchor_ack_override=missing_anchor_ack_override,
+    )
+
+
+def _clean_missing_anchor_ack(value: str | None) -> str | None:
+    if value is None:
+        return None
+    stripped = value.strip()
+    if not stripped:
+        raise CliError("missing_anchor_ack", "`missing_anchor_ack` must be a non-empty string")
+    return stripped
 
 
 def warn_undeclared_north_star(spec: ChainSpec, spec_path: Path) -> str | None:
