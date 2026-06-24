@@ -8,7 +8,11 @@ from types import SimpleNamespace
 
 from arnold.runtime.durable_ops import OperationState
 from agentbox.config import AgentBoxConfig
-from agentbox.operations import create_agentbox_operation, update_agentbox_operation
+from agentbox.operations import (
+    create_agentbox_operation,
+    load_agentbox_operation,
+    update_agentbox_operation,
+)
 from agentbox.resident_profile import (
     AGENTBOX_OPERATOR_TOOL_NAMES,
     AgentBoxOperatorProfile,
@@ -730,6 +734,119 @@ def test_agentbox_operator_chain_launch_returns_validation_diagnostics(
     assert result["data"]["diagnostics"] == {"kind": "missing_spec", "message": "spec not found"}
 
 
+def test_agentbox_operator_chain_launch_persists_guardian_notification_metadata(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    agentbox_config = AgentBoxConfig(workspace_root=tmp_path / "agentbox")
+    handler = _FakeChainLaunchHandler(agentbox_config)
+    monkeypatch.setattr("agentbox.resident_profile.load_operation_adapter", lambda kind: handler)
+    store = FileStore(tmp_path / "store")
+    conversation = store.upsert_resident_conversation(
+        ResidentConversationInput(
+            conversation_key="discord:guild:g1:channel:c1",
+            active_epic_id="epic-1",
+        ),
+        idempotency_key="conversation-1",
+    )
+    profile = AgentBoxOperatorProfile(
+        store=store,
+        authorizer=ResidentAuthorizer(
+            ResidentConfig(
+                allowed_user_ids=("admin-1",),
+                admin_user_ids=("admin-1",),
+                require_cloud_start_confirmation=False,
+            )
+        ),
+        agentbox_config_factory=lambda: agentbox_config,
+    )
+    runner = FakeAgentRunner(
+        [
+            FakeAgentStep.call(
+                "chain_launch",
+                {"repo": "owner/repo", "spec": "plans/chain.yaml", "operation_id": "chain-1"},
+            ),
+            FakeAgentStep.final("done"),
+        ]
+    )
+
+    response = asyncio.run(
+        runner.run(
+            AgentRequest(
+                conversation_id=conversation.id,
+                messages=({"role": "user", "content": "launch chain"},),
+                system_prompt="test",
+                subject=AuthorizationSubject(user_id="admin-1", guild_id="g1", channel_id="c1"),
+            ),
+            profile.tools(),
+        )
+    )
+
+    result = response.tool_calls[0].result
+    run = load_agentbox_operation(agentbox_config, "chain-1")
+
+    assert result["ok"] is True
+    assert run.metadata["guardian_notification_conversation_id"] == conversation.id
+    assert (
+        run.metadata["guardian_notification_conversation_key"]
+        == "discord:guild:g1:channel:c1"
+    )
+    assert run.metadata["guardian_notifications_disabled"] is False
+
+
+def test_agentbox_operator_chain_launch_disables_guardian_notifications_without_conversation(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    agentbox_config = AgentBoxConfig(workspace_root=tmp_path / "agentbox")
+    handler = _FakeChainLaunchHandler(agentbox_config)
+    monkeypatch.setattr("agentbox.resident_profile.load_operation_adapter", lambda kind: handler)
+    store = FileStore(tmp_path / "store")
+    profile = AgentBoxOperatorProfile(
+        store=store,
+        authorizer=ResidentAuthorizer(
+            ResidentConfig(
+                allowed_user_ids=("admin-1",),
+                admin_user_ids=("admin-1",),
+                require_cloud_start_confirmation=False,
+            )
+        ),
+        agentbox_config_factory=lambda: agentbox_config,
+    )
+    runner = FakeAgentRunner(
+        [
+            FakeAgentStep.call(
+                "chain_launch",
+                {"repo": "owner/repo", "spec": "plans/chain.yaml", "operation_id": "chain-1"},
+            ),
+            FakeAgentStep.final("done"),
+        ]
+    )
+
+    response = asyncio.run(
+        runner.run(
+            AgentRequest(
+                conversation_id="missing-conversation",
+                messages=({"role": "user", "content": "launch chain"},),
+                system_prompt="test",
+                subject=AuthorizationSubject(user_id="admin-1", guild_id="g1", channel_id="c1"),
+            ),
+            profile.tools(),
+        )
+    )
+
+    result = response.tool_calls[0].result
+    run = load_agentbox_operation(agentbox_config, "chain-1")
+
+    assert result["ok"] is True
+    assert run.metadata["guardian_notification_conversation_id"] == "missing-conversation"
+    assert run.metadata["guardian_notifications_disabled"] is True
+    assert (
+        run.metadata["guardian_notifications_disabled_reason"]
+        == "resident_conversation_not_found"
+    )
+
+
 def test_agentbox_operator_status_resolves_operation_before_shared_status_view(
     tmp_path: Path,
 ) -> None:
@@ -1215,6 +1332,7 @@ class _FakeChainLaunchHandler:
         repo_name: str,
         spec_path: Path,
         base_ref: str | None = None,
+        metadata: dict[str, object] | None = None,
     ) -> object:
         assert config == self.config
         self.launch_calls.append(
@@ -1233,10 +1351,11 @@ class _FakeChainLaunchHandler:
                 command=("fake", "chain"),
                 repo_names=(repo_name,),
                 launch_state="failed_before_running",
-                metadata={
-                    "validation": {"status": "failed"},
-                    "launch_diagnostics": dict(self.error_diagnostics),
-                },
+            metadata={
+                **dict(metadata or {}),
+                "validation": {"status": "failed"},
+                "launch_diagnostics": dict(self.error_diagnostics),
+            },
             )
             update_agentbox_operation(config, operation_id, state=OperationState.FAILED)
             raise _FakeChainLaunchError(
@@ -1253,6 +1372,7 @@ class _FakeChainLaunchHandler:
             repo_names=(repo_name,),
             launch_state="running",
             metadata={
+                **dict(metadata or {}),
                 "resolved_spec_path": str(resolved_spec_path),
                 "validation": {
                     "status": "passed",
