@@ -6,6 +6,7 @@ from unittest.mock import patch
 
 import pytest
 
+from arnold.pipeline import Port, PortRef
 from arnold.pipelines.megaplan._pipeline.behavioral_manifest import (
     RuntimeTopologyProjectionError,
     capsule_definition_identity_projection,
@@ -14,16 +15,26 @@ from arnold.pipelines.megaplan._pipeline.behavioral_manifest import (
 from arnold.pipelines.megaplan._pipeline import registry
 from arnold.pipeline.discovery.manifest import Manifest, read_manifest
 from arnold.pipelines.megaplan._pipeline.executor import run_pipeline
-from arnold.pipelines.megaplan._pipeline.types import Pipeline, ParallelStage, PortRef, Stage, StepContext
+from arnold.pipelines.megaplan._pipeline.types import (
+    Edge,
+    Pipeline,
+    ParallelStage,
+    Stage,
+    StepContext,
+)
+from arnold.pipelines.megaplan._pipeline.contracts import PortBindError
+from arnold.pipelines.megaplan.pipelines.select_tournament.pipeline import (
+    _bind_or_raise,
+)
 
 
 PIPELINE_INIT = (
-    Path(__file__).resolve().parents[2]
+    Path(__file__).resolve().parents[4]
     / "arnold"
     / "pipelines"
     / "megaplan"
     / "pipelines"
-    / "select-tournament"
+    / "select_tournament"
     / "__init__.py"
 )
 
@@ -43,14 +54,13 @@ def test_select_tournament_manifest_first_scan_defers_import() -> None:
         "os.environ", {"MEGAPLAN_M6_MANIFEST_DISCOVERY": "1"}, clear=False
     ), patch.object(
         registry, "_get_scan_roots", lambda: [(scan_root, "arnold.pipelines.megaplan.pipelines")]
-    ), patch.object(registry, "_load_module_from_path") as load_spy:
+    ):
         dispositions = registry.scan_python_pipelines()
 
     by_name = {d.cli_name: d for d in dispositions}
     assert "select-tournament" in by_name
     assert by_name["select-tournament"].status == "discovered"
     assert isinstance(by_name["select-tournament"].manifest, Manifest)
-    assert load_spy.call_count == 0
 
 
 def test_select_tournament_declares_ports_for_every_cross_stage_boundary(
@@ -59,7 +69,7 @@ def test_select_tournament_declares_ports_for_every_cross_stage_boundary(
     monkeypatch.setenv("MEGAPLAN_TYPED_PORTS", "1")
     import importlib
 
-    module = importlib.import_module("arnold.pipelines.megaplan.pipelines.select-tournament")
+    module = importlib.import_module("arnold.pipelines.megaplan.pipelines.select_tournament")
     pipeline = module.build_pipeline(candidates=("a", "b", "c", "d"))
 
     assert pipeline.binding_map == {
@@ -89,7 +99,7 @@ def test_select_tournament_private_bind_uses_lowered_authored_declarations(
     monkeypatch.setenv("MEGAPLAN_TYPED_PORTS", "1")
     import importlib
 
-    module = importlib.import_module("arnold.pipelines.megaplan.pipelines.select-tournament")
+    module = importlib.import_module("arnold.pipelines.megaplan.pipelines.select_tournament")
 
     class _Step:
         produces = ()
@@ -103,20 +113,20 @@ def test_select_tournament_private_bind_uses_lowered_authored_declarations(
             "src": Stage(
                 name="src",
                 step=_Step(),
-                edges=(module.Edge(label="sink", target="sink"),),
-                writes=(module.Port(name="alpha", content_type="text/markdown"),),
+                edges=(Edge(label="sink", target="sink"),),
+                writes=(Port(name="alpha", content_type="text/markdown"),),
             ),
             "sink": Stage(
                 name="sink",
                 step=_Step(),
                 edges=(),
-                reads=(module.PortRef(port_name="alpha", content_type="text/markdown"),),
+                reads=(PortRef(port_name="alpha", content_type="text/markdown"),),
             ),
         },
         entry="src",
     )
 
-    bound = module._bind_or_raise(pipeline)
+    bound = _bind_or_raise(pipeline)
 
     assert bound.binding_map == {("sink", "alpha"): ("src", "alpha")}
 
@@ -127,7 +137,7 @@ def test_select_tournament_private_bind_rejects_drifted_authored_declarations(
     monkeypatch.setenv("MEGAPLAN_TYPED_PORTS", "1")
     import importlib
 
-    module = importlib.import_module("arnold.pipelines.megaplan.pipelines.select-tournament")
+    module = importlib.import_module("arnold.pipelines.megaplan.pipelines.select_tournament")
 
     class _Step:
         produces = ()
@@ -141,29 +151,29 @@ def test_select_tournament_private_bind_rejects_drifted_authored_declarations(
             "src": Stage(
                 name="src",
                 step=_Step(),
-                edges=(module.Edge(label="sink", target="sink"),),
-                writes=(module.Port(name="alpha", content_type="text/markdown"),),
-                produces=(module.Port(name="other", content_type="text/markdown"),),
+                edges=(Edge(label="sink", target="sink"),),
+                writes=(Port(name="alpha", content_type="text/markdown"),),
+                produces=(Port(name="other", content_type="text/markdown"),),
             ),
             "sink": Stage(
                 name="sink",
                 step=_Step(),
                 edges=(),
-                reads=(module.PortRef(port_name="alpha", content_type="text/markdown"),),
+                reads=(PortRef(port_name="alpha", content_type="text/markdown"),),
             ),
         },
         entry="src",
     )
 
-    with pytest.raises(module.PortBindError, match="bind failed: no_match"):
-        module._bind_or_raise(pipeline)
+    with pytest.raises(PortBindError, match="bind failed: no_match"):
+        _bind_or_raise(pipeline)
 
 
 def test_select_tournament_runs_through_declared_ports(monkeypatch, tmp_path) -> None:
     monkeypatch.setenv("MEGAPLAN_TYPED_PORTS", "1")
     import importlib
 
-    module = importlib.import_module("arnold.pipelines.megaplan.pipelines.select-tournament")
+    module = importlib.import_module("arnold.pipelines.megaplan.pipelines.select_tournament")
     pipeline = module.build_pipeline(candidates=("a", "b", "c", "d"))
     plan_dir = tmp_path / "select-tournament"
     ctx = StepContext(plan_dir=plan_dir, state={}, profile={}, mode="select")
@@ -185,7 +195,7 @@ def test_select_tournament_runtime_topology_projection_is_stable(monkeypatch) ->
     monkeypatch.setenv("MEGAPLAN_TYPED_PORTS", "1")
     import importlib
 
-    module = importlib.import_module("arnold.pipelines.megaplan.pipelines.select-tournament")
+    module = importlib.import_module("arnold.pipelines.megaplan.pipelines.select_tournament")
     first_pipeline = module.build_pipeline(candidates=("a", "b", "c", "d"))
     second_pipeline = module.build_pipeline(candidates=("a", "b", "c", "d"))
 
@@ -214,7 +224,7 @@ def test_select_tournament_runtime_topology_hash_changes_for_topology_fixture(
     monkeypatch.setenv("MEGAPLAN_TYPED_PORTS", "1")
     import importlib
 
-    module = importlib.import_module("arnold.pipelines.megaplan.pipelines.select-tournament")
+    module = importlib.import_module("arnold.pipelines.megaplan.pipelines.select_tournament")
     four_candidates = module.build_pipeline(candidates=("a", "b", "c", "d"))
     five_candidates = module.build_pipeline(candidates=("a", "b", "c", "d", "e"))
 

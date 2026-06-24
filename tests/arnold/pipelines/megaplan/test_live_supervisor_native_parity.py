@@ -365,17 +365,14 @@ def _enable_native_runtime(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 class TestLiveSupervisorNativeParity:
-    def test_topology_hash_matches_baseline_and_driver_stays_in_process(self) -> None:
+    def test_topology_hash_matches_baseline_and_driver_is_native(self) -> None:
         pipeline = build_pipeline()
 
-        assert live_supervisor_mod.driver == "in_process"
+        assert live_supervisor_mod.driver == ("native", "linear")
         assert compute_topology_hash(pipeline) == EXPECTED_LIVE_SUPERVISOR_TOPOLOGY_HASH
-        native_programs = [
-            bundle for bundle in pipeline.resource_bundles
-            if isinstance(bundle, NativeProgram)
-        ]
-        assert len(native_programs) == 1
-        assert [phase.name for phase in native_programs[0].phases] == list(
+        native_program = pipeline.native_program
+        assert isinstance(native_program, NativeProgram)
+        assert [phase.name for phase in native_program.phases] == list(
             EXPECTED_STAGE_SEQUENCE
         )
 

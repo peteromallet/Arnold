@@ -11,6 +11,8 @@ from types import SimpleNamespace
 
 import pytest
 
+from arnold.pipeline.native.ir import NativeProgram
+
 
 # ── Subprocess CLI tests ───────────────────────────────────────────────
 
@@ -355,7 +357,8 @@ def _native_capable_megaplan_pipeline() -> SimpleNamespace:
     return SimpleNamespace(
         entry="prep",
         stages={name: object() for name in stage_order},
-        resource_bundles=stage_order,
+        resource_bundles=(),
+        native_program=NativeProgram(name="megaplan"),
     )
 
 

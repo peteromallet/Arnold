@@ -27,7 +27,7 @@ from tests.arnold.pipelines.megaplan.test_graph_baseline import (
 )
 
 
-_SELECT_MODULE = "arnold.pipelines.megaplan.pipelines.select-tournament"
+_SELECT_MODULE = "arnold.pipelines.megaplan.pipelines.select_tournament"
 _EXPECTED_STAGE_SEQUENCE = ("score_candidates", "pairwise_bracket", "winner")
 _EXPECTED_ARTIFACTS = (
     "pairwise_bracket/v1.json",

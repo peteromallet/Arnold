@@ -62,7 +62,13 @@ before = set(sys.modules.keys())
 after = set(sys.modules.keys())
 
 new = sorted(after - before)
-legacy = [m for m in new if "_pipeline" in m.split(".") or "stages" in m.split(".")]
+legacy_prefixes = ("arnold.pipelines.megaplan.", "arnold_pipelines.megaplan.")
+legacy = [
+    m
+    for m in new
+    if m.startswith(legacy_prefixes)
+    and ("_pipeline" in m.split(".") or "stages" in m.split("."))
+]
 
 if legacy:
     print("LEGACY_LOADED:" + ",".join(legacy))

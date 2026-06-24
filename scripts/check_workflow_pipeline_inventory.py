@@ -48,22 +48,12 @@ PIPELINE_DISPOSITION: dict[str, dict[str, Any]] = {
         "registry_id": "megaplan.live_supervisor",
         "migrated": True,
     },
-    "arnold_pipelines/megaplan/pipelines/select-tournament": {
-        "status": "migrate",
-        "registry_id": None,
-        "migrated": False,
-    },
-    "arnold_pipelines/megaplan/pipelines/select_tournament.py": {
+    "arnold_pipelines/megaplan/pipelines/select_tournament": {
         "status": "migrate",
         "registry_id": "megaplan.select_tournament",
         "migrated": True,
     },
-    "arnold_pipelines/megaplan/pipelines/writing-panel-strict": {
-        "status": "migrate",
-        "registry_id": None,
-        "migrated": False,
-    },
-    "arnold_pipelines/megaplan/pipelines/writing_panel_strict.py": {
+    "arnold_pipelines/megaplan/pipelines/writing_panel_strict": {
         "status": "migrate",
         "registry_id": "megaplan.writing_panel_strict",
         "migrated": True,
@@ -219,9 +209,8 @@ ARCHIVAL_ALLOWLIST: tuple[str, ...] = (
     "arnold_pipelines/megaplan/pipelines/live_supervisor/rules.py",
     "arnold_pipelines/megaplan/pipelines/live_supervisor/repair_agent.py",
     "arnold_pipelines/megaplan/pipelines/live_supervisor/model.py",
-    "arnold_pipelines/megaplan/pipelines/select-tournament/steps.py",
-    "arnold_pipelines/megaplan/pipelines/select-tournament/prompts/__init__.py",
-    "arnold_pipelines/megaplan/pipelines/writing-panel-strict",
+    "arnold_pipelines/megaplan/pipelines/select_tournament/steps.py",
+    "arnold_pipelines/megaplan/pipelines/select_tournament/prompts/__init__.py",
     "docs/arnold/workflow-migration.md",
     "docs/arnold/legacy-surface-inventory.md",
     "docs/arnold/authoring-guide.md",

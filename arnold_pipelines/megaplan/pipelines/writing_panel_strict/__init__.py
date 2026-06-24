@@ -1,10 +1,8 @@
 """Python composition of the ``writing-panel-strict`` pipeline.
 
-Sibling-file replacement for the legacy
-``megaplan/pipelines/writing-panel-strict/pipeline.yaml``. The hyphenated
-directory (``megaplan/pipelines/writing-panel-strict/``) stays on disk —
-prompts / profiles / ``SKILL.md`` are referenced from it; only the YAML
-manifest is replaced by this explicit-node workflow.
+Normalized package replacement for the legacy
+``megaplan/pipelines/writing-panel-strict/pipeline.yaml``. The implementation,
+prompts, profiles, and ``SKILL.md`` now live together in this importable package.
 
 Topology:
 
@@ -22,7 +20,7 @@ from arnold.manifest import ControlTransitionSlot, FanoutPolicy, LoopPolicy, Sus
 from arnold.workflow.dsl import Capability, Input, Output, Pipeline, Route, Step
 
 
-_PIPELINE_DIR: Path = Path(__file__).parent / "writing-panel-strict"
+_PIPELINE_DIR: Path = Path(__file__).parent
 _PROMPTS: Path = _PIPELINE_DIR / "prompts"
 
 
@@ -32,7 +30,7 @@ description: str = (
     "Not for code."
 )
 default_profile: str = "@writing-panel-strict:standard"
-supported_modes: tuple[str, ...] = ("polish", "restructure", "provoke")
+supported_modes: tuple[str, ...] = ("graph", "polish", "restructure", "provoke")
 recommended_profiles: tuple[str, ...] = (
     "@writing-panel-strict:premium",
     "@writing-panel-strict:standard",

@@ -1,9 +1,12 @@
-"""Canonical importable module for the ``select-tournament`` pipeline.
+"""First-class ``select-tournament`` pipeline.
 
-The hyphenated sibling directory ``select-tournament/`` holds prompts,
-profiles, and ``SKILL.md``. This module is the importable surface so the
-workflow CLI and registry discovery can address it as
-``arnold_pipelines.megaplan.pipelines.select_tournament:build_pipeline``.
+Explicit-node workflow:
+
+    score_candidates (fanout) -> pairwise_bracket -> winner
+
+Per-candidate scoring steps fan out in parallel; a reducer joins the scores into
+a ``candidate_scores`` artifact. The bracket step deterministically selects a
+winner, and the terminal ``winner`` step emits the final result.
 """
 
 from __future__ import annotations
@@ -21,9 +24,9 @@ description: str = (
     "scores through a pairwise bracket, then emit a winner artifact."
 )
 default_profile: str | None = None
-supported_modes: tuple[str, ...] = ()
+supported_modes: tuple[str, ...] = ("graph",)
 recommended_profiles: tuple[str, ...] = ()
-driver: tuple[str, str] = ("subprocess_isolated", "fanout+pairwise-reduce")
+driver: tuple[str, str] = ("graph", "fanout+pairwise-reduce")
 entrypoint: str = "build_pipeline"
 arnold_api_version: str = "1.0"
 capabilities: tuple[str, ...] = ("review",)
@@ -36,7 +39,7 @@ DEFAULT_CANDIDATES: tuple[str, ...] = (
     "delta",
 )
 
-_PIPELINE_DIR: Path = Path(__file__).parent / "select-tournament"
+_PIPELINE_DIR: Path = Path(__file__).parent
 _PROMPTS: Path = _PIPELINE_DIR / "prompts"
 
 

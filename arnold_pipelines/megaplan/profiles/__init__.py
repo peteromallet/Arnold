@@ -600,10 +600,18 @@ def _flatten_profile_keys(
 def _pipeline_local_profiles_dir(pipeline_name: str, *, builtin: bool = True) -> Path | None:
     """Return the pipeline-local profiles directory if it exists."""
     if builtin:
-        base = Path(__file__).resolve().parent.parent / "pipelines" / pipeline_name / "profiles"
+        pipelines_root = Path(__file__).resolve().parent.parent / "pipelines"
+        candidates = (
+            pipelines_root / pipeline_name / "profiles",
+            pipelines_root / pipeline_name.replace("-", "_") / "profiles",
+        )
     else:
-        base = Path.home() / ".megaplan" / "pipelines" / pipeline_name / "profiles"
-    return base if base.is_dir() else None
+        pipelines_root = Path.home() / ".megaplan" / "pipelines"
+        candidates = (pipelines_root / pipeline_name / "profiles",)
+    for candidate in candidates:
+        if candidate.is_dir():
+            return candidate
+    return None
 
 
 def _load_pipeline_local_profiles(

@@ -328,14 +328,11 @@ def _enable_native_runtime(monkeypatch: pytest.MonkeyPatch) -> None:
 class TestDocNativeParity:
     def test_topology_hash_and_native_bundle(self) -> None:
         pipeline = build_pipeline()
-        native_programs = [
-            bundle for bundle in pipeline.resource_bundles
-            if isinstance(bundle, NativeProgram)
-        ]
+        native_program = pipeline.native_program
 
         assert compute_topology_hash(pipeline) == EXPECTED_DOC_TOPOLOGY_HASH
-        assert len(native_programs) == 1
-        assert [phase.name for phase in native_programs[0].phases] == list(
+        assert isinstance(native_program, NativeProgram)
+        assert [phase.name for phase in native_program.phases] == list(
             EXPECTED_STAGE_SEQUENCE
         )
 
