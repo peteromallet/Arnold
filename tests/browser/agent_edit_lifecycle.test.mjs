@@ -2363,8 +2363,9 @@ test("CHAT_REHYDRATE_SUCCESS stores normalized chat payload and persists confirm
     dirtySections: META_AND_THREAD_DIRTY_SECTIONS,
     persistSession: "sess-123",
   });
-  assert.deepEqual(panel.state.chatMessages, messages);
-  assert.deepEqual(panel.state.transcriptMessages, messages);
+  const expectedMessages = [{ role: "agent", text: "restored", session_id: "sess-123" }];
+  assert.deepEqual(panel.state.chatMessages, expectedMessages);
+  assert.deepEqual(panel.state.transcriptMessages, expectedMessages);
   assert.equal(panel.state.chatLoaded, true);
   assert.equal(panel.state.chatError, null);
   assert.equal(panel.state.chatSessionPath, "out/editor_sessions/sess-123/");

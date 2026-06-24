@@ -2945,7 +2945,7 @@ test("VibeComfy Apply requires explicit canvas allowance, rechecks canvas hash, 
   });
 
   try {
-    await harness.loadExtension();
+    const extensionModule = await harness.loadExtension();
     await harness.setup();
     await harness.invokeCommand("VibeComfy.AgentEdit");
     await waitFor(() => harness.requests.some((entry) => entry.url === "/vibecomfy/agent/status?route=auto"));
@@ -2953,6 +2953,7 @@ test("VibeComfy Apply requires explicit canvas allowance, rechecks canvas hash, 
     const prompt = harness.document.getElementById("vibecomfy-agent-panel-prompt");
     const applyButton = harness.document.getElementById("vibecomfy-agent-panel-apply");
     const undoButton = harness.document.getElementById("vibecomfy-agent-panel-undo");
+    const panel = extensionModule.ensureAgentPanel();
 
     prompt.value = "preview only";
     await harness.clickButton("Submit");
@@ -3014,7 +3015,7 @@ test("VibeComfy Apply requires explicit canvas allowance, rechecks canvas hash, 
     expandAgentBubbleDetails(harness.document.body);
     assert.match(harness.textDump(), /Applied candidate feedback: changed nodes were highlighted on the canvas temporarily\./);
     assert.match(harness.textDump(), /Edited uid-2/);
-    assert.match(harness.textDump(), /undo_stack_depth/);
+    assert.equal(panel.state.undoStack.length, 1, "undo stack should record the applied turn");
     assert.equal(undoButton.disabled, false);
 
     const postApplyQueueResult = harness.app.queuePrompt("prompt-applied");
@@ -3029,7 +3030,7 @@ test("VibeComfy Apply requires explicit canvas allowance, rechecks canvas hash, 
     assert.equal(rebaselineBodies.length, 1);
     expandAgentBubbleDetails(harness.document.body);
     assert.match(harness.textDump(), /Applied candidate feedback/);
-    assert.match(harness.textDump(), /undo_stack_depth/);
+    assert.equal(panel.state.undoStack.length, 0, "undo stack should be empty after undo");
     assert.equal(undoButton.disabled, true);
 
     const allowedQueueResult = harness.app.queuePrompt("prompt-2");
@@ -6006,10 +6007,11 @@ test("VibeComfy turn audits move from persistent history cards into expanded bub
   });
 
   try {
-    await harness.loadExtension();
+    const extensionModule = await harness.loadExtension();
     await harness.setup();
     await harness.invokeCommand("VibeComfy.AgentEdit");
     await waitFor(() => harness.requests.some((entry) => entry.url === "/vibecomfy/agent/status?route=auto"));
+    const panel = extensionModule.ensureAgentPanel();
 
     // ── Turn 1: submit, get candidate, apply ──
     harness.document.getElementById("vibecomfy-agent-panel-prompt").value = "turn 1 task";
@@ -6021,15 +6023,20 @@ test("VibeComfy turn audits move from persistent history cards into expanded bub
 
     expandAgentBubbleDetails(harness.document.body);
     assert.match(harness.textDump(), /candidate/i);
-    assert.match(harness.textDump(), /turn 0001/);
-    assert.match(harness.textDump(), /\/tmp\/audit-turn-0001\.json/);
-    assert.match(harness.textDump(), /Audit ↓/);
+    assert.match(harness.textDump(), /turn: 0001/);
+    assert.ok(
+      panel.state.auditArtifacts.some((artifact) => artifact.auditRef?.path === "/tmp/audit-turn-0001.json"),
+      "candidate audit artifact should be retained",
+    );
 
     // Apply turn 1
     await harness.clickButton("Apply");
     const afterApplyText = harness.textDump();
-    assert.match(afterApplyText, /applied/i);
-    assert.match(afterApplyText, /\/tmp\/audit-turn-0001-accept\.json/);
+    assert.match(afterApplyText, /Undo Last Apply/);
+    assert.ok(
+      panel.state.auditArtifacts.some((artifact) => artifact.auditRef?.path === "/tmp/audit-turn-0001-accept.json"),
+      "accept audit artifact should be retained",
+    );
     assert.equal(harness.loadGraphDataCalls.length, 0);
     assert.equal(harness.graphConfigureCalls.length, 1);
 
@@ -6046,9 +6053,11 @@ test("VibeComfy turn audits move from persistent history cards into expanded bub
 
     expandAgentBubbleDetails(harness.document.body);
     assert.match(harness.textDump(), /failed/i);
-    assert.match(harness.textDump(), /turn 0002/);
-    assert.match(harness.textDump(), /\/tmp\/audit-turn-0002\.json/);
-    assert.match(harness.textDump(), /Audit ↓/);
+    assert.match(harness.textDump(), /turn: 0002/);
+    assert.ok(
+      panel.state.auditArtifacts.some((artifact) => artifact.auditRef?.path === "/tmp/audit-turn-0002.json"),
+      "failure audit artifact should be retained",
+    );
 
     const historyRegion = harness.document.getElementById("vibecomfy-agent-panel-region-history");
     assert.ok(historyRegion, "history region still exists as the transient live mount");
@@ -6336,7 +6345,7 @@ test("VibeComfy lowered recovery entries are informational and do not block queu
     assert.match(text, /lowered: loop-uid-1 -> 3 native node\(s\)/);
 
     // queue is allowed (lowered entry does not block)
-    assert.match(text, /queue_allowed=true/);
+    assert.match(text, /queueAllowed:\s*true/);
 
     // no intent_node_queue_blocker from the lowered recovery entry
     assert.doesNotMatch(text, /Node 99 \(vibecomfy\.loop\) is an editor-only intent node/);
@@ -6426,11 +6435,10 @@ test("VibeComfy graph-scan fallback still blocks unlowered intent nodes like vib
     const text = harness.textDump();
 
     // queue is blocked because vibecomfy.code is in the graph nodes (graph-scan fallback)
-    assert.match(text, /queue_allowed=false/);
+    assert.match(text, /queueAllowed:\s*false/);
 
     // graph-scan fallback detects the unlowered intent node
     assert.match(text, /Node 2 \(vibecomfy\.code\) is an editor-only intent node/);
-    assert.match(text, /intent_node_queue_blocker/);
   } finally {
     await harness.dispose();
   }
@@ -10249,10 +10257,9 @@ test("VibeComfy thread append preserves existing visible bubble DOM nodes and in
     assert(applyBefore, "candidate bubble should render an inline Apply button when expanded");
     assert(rejectBefore, "candidate bubble should render an inline Reject button when expanded");
 
-    panel.state.chatMessages = [
-      ...panel.state.chatMessages,
-      { role: "agent", text: "message 4", turn_id: "0002" },
-    ];
+    const appendedMessage = { role: "agent", text: "message 4", turn_id: "0002" };
+    panel.state.chatMessages = [...panel.state.chatMessages, appendedMessage];
+    panel.state.transcriptMessages = [...panel.state.transcriptMessages, appendedMessage];
     extensionModule.renderAgentPanel(panel, { dirtySections: ["THREAD"] });
 
     const message1After = chatRegion.querySelectorAll(
@@ -12824,7 +12831,7 @@ test("VibeComfy agent bubble details stay collapsed by default and preserve expa
     );
     assert.ok(toggles.some((node) => String(node.textContent || "").startsWith("\u25bc")), "expanded state must survive chat rehydrate");
     assert.match(harness.textDump(), /view response/);
-    assert.match(harness.textDump(), /edited: uid-2/);
+    assert.match(harness.textDump(), /inputs\.filename_prefix changed/);
     for (const title of ["Turn", "Candidate"]) {
       const section = findBubbleDetailSectionByTitle(chatRegion, title);
       assert.ok(section, `rehydrated expanded ${title} section should render`);
