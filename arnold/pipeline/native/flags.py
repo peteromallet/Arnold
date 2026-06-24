@@ -23,3 +23,9 @@ def native_runtime_enabled() -> bool:
     if value == "0":
         return False
     return True
+
+
+def force_legacy_runtime() -> bool:
+    """Return whether canonical graph execution is explicitly forced."""
+
+    return os.getenv("ARNOLD_FORCE_LEGACY", "").strip().lower() == "true"
