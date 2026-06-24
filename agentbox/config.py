@@ -13,6 +13,7 @@ import yaml
 AGENTBOX_CONFIG_ENV = "AGENTBOX_CONFIG"
 DEFAULT_CONFIG_PATH = Path("/workspace/agentbox.yaml")
 DEFAULT_WORKSPACE_ROOT = Path("/workspace")
+DEFAULT_CREDENTIALS_ROOT = Path("/workspace/credentials")
 OPERATION_RUNS_FILENAME = "operation_runs.json"
 
 
@@ -29,6 +30,7 @@ class AgentBoxConfig:
     runs_root: Path | str | None = None
     locks_root: Path | str | None = None
     ops_store_root: Path | str | None = None
+    credentials_root: Path | str | None = None
 
     def __post_init__(self) -> None:
         workspace_root = _absolute_path("workspace_root", self.workspace_root)
@@ -53,6 +55,14 @@ class AgentBoxConfig:
             "ops_store_root",
             _absolute_path("ops_store_root", self.ops_store_root or workspace_root / "ops"),
         )
+        object.__setattr__(
+            self,
+            "credentials_root",
+            _absolute_path(
+                "credentials_root",
+                self.credentials_root or workspace_root / "credentials",
+            ),
+        )
 
     @property
     def operation_runs_path(self) -> Path:
@@ -67,7 +77,14 @@ class AgentBoxConfig:
         if not isinstance(values, Mapping):
             raise AgentBoxConfigError("AgentBox config must be a YAML mapping.")
 
-        allowed = {"workspace_root", "repos_root", "runs_root", "locks_root", "ops_store_root"}
+        allowed = {
+            "workspace_root",
+            "repos_root",
+            "runs_root",
+            "locks_root",
+            "ops_store_root",
+            "credentials_root",
+        }
         unknown = sorted(set(values) - allowed)
         if unknown:
             names = ", ".join(unknown)
@@ -115,6 +132,7 @@ def _absolute_path(name: str, value: Path | str) -> Path:
 __all__ = [
     "AGENTBOX_CONFIG_ENV",
     "DEFAULT_CONFIG_PATH",
+    "DEFAULT_CREDENTIALS_ROOT",
     "DEFAULT_WORKSPACE_ROOT",
     "OPERATION_RUNS_FILENAME",
     "AgentBoxConfig",
