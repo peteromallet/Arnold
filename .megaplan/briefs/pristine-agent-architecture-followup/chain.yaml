@@ -1,5 +1,8 @@
 base_branch: main
 
+anchors:
+  north_star: NORTHSTAR.md
+
 milestones:
   - label: m1-main-preservation-audit
     idea: .megaplan/briefs/pristine-agent-architecture-followup/m1-main-preservation-audit.md
@@ -52,4 +55,3 @@ driver:
   auto_approve: true
   max_iterations: 80
   poll_sleep: 8.0
-
