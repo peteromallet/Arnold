@@ -1008,6 +1008,7 @@ function projectTranscriptMessageObject(raw) {
     submit_epoch: Number.isFinite(raw.submit_epoch) ? raw.submit_epoch : undefined,
     progress: projectProgress(raw),
     progress_label: asString(raw.progress_label) || asString(raw.progressLabel),
+    canonical_activity: isObject(raw.canonical_activity) ? frozenPlainClone(raw.canonical_activity) : undefined,
   });
 }
 
@@ -1176,6 +1177,35 @@ function safeQueueIssuesFromReport(report) {
   return queueIssueCandidates(report).map(safeQueueIssue).filter(Boolean);
 }
 
+const INTENT_CLASS_TYPES = new Set(["vibecomfy.code", "vibecomfy.exec", "vibecomfy.loop"]);
+
+function isIntentClassType(value) {
+  return typeof value === "string" && INTENT_CLASS_TYPES.has(value);
+}
+
+function safeQueueIssuesFromGraphScan(report) {
+  if (!isObject(report)) {
+    return [];
+  }
+  const graphNodes = Array.isArray(report.graph?.nodes)
+    ? report.graph.nodes
+    : Array.isArray(report.nodes)
+      ? report.nodes
+      : [];
+  const issues = [];
+  for (const node of graphNodes) {
+    const classType = node?.type || node?.class_type;
+    if (isIntentClassType(classType)) {
+      issues.push(safeQueueIssue({
+        code: "intent_node_queue_blocker",
+        message: `Node ${node?.id ?? "unknown"} (${classType}) is an editor-only intent node and cannot be queued until it is lowered.`,
+        severity: "error",
+      }));
+    }
+  }
+  return issues.filter(Boolean);
+}
+
 function safeQueueDisplay(raw, projectedCandidateReport) {
   if (isObject(raw?.queueDisplay)) {
     const projectedIssues = Array.isArray(raw.queueDisplay.issues)
@@ -1189,7 +1219,10 @@ function safeQueueDisplay(raw, projectedCandidateReport) {
     });
   }
 
-  const issues = safeQueueIssuesFromReport(raw.report);
+  let issues = safeQueueIssuesFromReport(raw.report);
+  if (!issues.some((issue) => issue.code === "intent_node_queue_blocker")) {
+    issues = issues.concat(safeQueueIssuesFromGraphScan(raw.report));
+  }
   const queueState =
     asBooleanOrNull(raw.queueAllowed) ?? asBooleanOrNull(raw.queue_allowed);
   const eligibility = isObject(raw.eligibility)
