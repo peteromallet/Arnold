@@ -18,8 +18,7 @@ vi.mock('@reigh/editor-sdk', async () => {
   };
 });
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-const { createExtensionSettingsService } = await import('@reigh/editor-sdk') as any;
+const { createExtensionSettingsService } = await import('@reigh/editor-sdk') as unknown as { createExtensionSettingsService: typeof import('@reigh/editor-sdk')['createExtensionSettingsService'] };
 
 // Mock cn to pass through class names unchanged
 vi.mock('@/shared/components/ui/contracts/cn.ts', () => ({

@@ -3532,7 +3532,7 @@ describe('ExtensionLifecycleHost — recovery-key registry (T2)', () => {
   });
 
   it('recovery key for failed-then-retried extension increments appropriately', () => {
-    let shouldFail = true;
+    const shouldFail = true;
     const e1 = ext('com.example.fail-recovery', {
       activate: () => {
         if (shouldFail) throw new Error('first fail');

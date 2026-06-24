@@ -173,9 +173,6 @@ export function ExtensionSettingsPanel({
     useState<ReconciliationResult | null>(null);
   const [reconciliationExpanded, setReconciliationExpanded] = useState(false);
 
-  const reconciliationState: ReconciliationState | null =
-    reconciliationResult?.state ?? null;
-
   // Baseline values for dirty detection (reconciled values at load time).
   // For unsupported schemas, this holds the raw snapshot values for read-only
   // display (reconciliation returns empty values when blocked).

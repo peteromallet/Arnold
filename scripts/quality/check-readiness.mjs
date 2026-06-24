@@ -15,6 +15,7 @@
  *
  * Usage:
  *   node scripts/quality/check-readiness.mjs
+ *   node scripts/quality/check-readiness.mjs --strict
  */
 
 import { readFileSync, existsSync } from 'node:fs';
@@ -34,6 +35,13 @@ const READINESS_DOC_PATH = resolve(
 );
 
 const LABEL = '[readiness]';
+
+// ---------------------------------------------------------------------------
+// CLI flags
+// ---------------------------------------------------------------------------
+
+const args = process.argv.slice(2);
+const strictMode = args.includes('--strict');
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -393,15 +401,99 @@ function escapeRegex(s) {
 }
 
 // ---------------------------------------------------------------------------
+// Evidence validation (strict mode)
+// ---------------------------------------------------------------------------
+
+/**
+ * Extract the test file paths that are arguments to `vitest run` inside the
+ * `test:readiness` npm script. Flags such as `--config` and their values are
+ * skipped.
+ *
+ * @param {string} script
+ * @returns {string[]}
+ */
+function extractTestReadinessFiles(script) {
+  if (!script) return [];
+
+  const tokens = script.split(/\s+/);
+  const files = [];
+  for (let i = 0; i < tokens.length; i++) {
+    const token = tokens[i];
+    if (token === '--config') {
+      i++; // skip the config path
+      continue;
+    }
+    if (token.startsWith('--')) continue;
+    if (/\.(?:test|spec)\.(?:ts|tsx|mjs)$/.test(token)) {
+      files.push(token);
+    }
+  }
+  return files;
+}
+
+/**
+ * Validate that a cleared row has runnable evidence.
+ *
+ * - Doc-only or missing anchors are rejected.
+ * - Playwright/spec files under `tests/e2e/` require a `(slow gate)` note and
+ *   a `Command: npx playwright test ...` line.
+ * - All other cleared rows require the referenced test file to be listed as
+ *   a vitest argument in `npm run test:readiness`.
+ *
+ * @param {ReadinessRow} row
+ * @param {string[]} testReadinessFiles
+ * @returns {{ valid: boolean, reason?: string }}
+ */
+function validateEvidence(row, testReadinessFiles) {
+  const anchor = (row.testAnchor || '').trim();
+
+  if (!anchor) {
+    return { valid: false, reason: 'cleared row missing Test Anchor' };
+  }
+  if (anchor.startsWith('(doc-only')) {
+    return { valid: false, reason: 'cleared row has doc-only Test Anchor; doc-only rows must remain pending/blocked or gain an executable anchor' };
+  }
+
+  // Extract file path from anchor (everything before the first ':' or the whole anchor if no ':')
+  const colonIdx = anchor.indexOf(':');
+  const filePath = colonIdx >= 0 ? anchor.substring(0, colonIdx).trim() : anchor;
+
+  if (!filePath) {
+    return { valid: false, reason: 'Test Anchor does not reference a file' };
+  }
+
+  // Playwright / e2e spec files are classified as slow gates.
+  if (filePath.startsWith('tests/e2e/')) {
+    const notes = (row.notes || '').trim();
+    if (!notes.startsWith('(slow gate)')) {
+      return { valid: false, reason: `e2e Test Anchor ${filePath} must be classified with a Notes column starting with "(slow gate)"` };
+    }
+    if (!/Command:\s*npx playwright test/.test(notes)) {
+      return { valid: false, reason: `e2e Test Anchor ${filePath} Notes must contain a "Command: npx playwright test ..." line` };
+    }
+    return { valid: true };
+  }
+
+  // Non-e2e cleared rows must be wired into the fast `test:readiness` command.
+  if (!testReadinessFiles.includes(filePath)) {
+    return { valid: false, reason: `Test Anchor ${filePath} is not included in the "test:readiness" script; add it to the vitest arguments so the release gate exercises it` };
+  }
+
+  return { valid: true };
+}
+
+// ---------------------------------------------------------------------------
 // Row validation
 // ---------------------------------------------------------------------------
 
 /**
  * Validate a single readiness row.
  * @param {ReadinessRow} row
+ * @param {boolean} strictMode
+ * @param {string[]} testReadinessFiles
  * @returns {{ valid: boolean, errors: string[], warnings: string[] }}
  */
-function validateRow(row) {
+function validateRow(row, strictMode, testReadinessFiles) {
   const errors = [];
   const warnings = [];
 
@@ -425,6 +517,16 @@ function validateRow(row) {
 
   // Only validate anchors for cleared rows
   if (row.status === 'cleared') {
+    // Strict mode: doc-only or missing anchors are not acceptable for cleared rows.
+    if (strictMode) {
+      const anchor = (row.testAnchor || '').trim();
+      if (!anchor) {
+        errors.push(`${row.id}: cleared row missing Test Anchor (strict mode)`);
+      } else if (anchor.startsWith('(doc-only')) {
+        errors.push(`${row.id}: cleared row has doc-only Test Anchor; doc-only rows must remain pending/blocked or gain an executable anchor (strict mode)`);
+      }
+    }
+
     // Validate test anchor
     const testResult = resolveTestAnchor(row.testAnchor);
     if (!testResult.valid) {
@@ -436,6 +538,14 @@ function validateRow(row) {
     if (!codeResult.valid) {
       errors.push(`${row.id}: Code anchor invalid — ${codeResult.reason}`);
     }
+
+    // Strict mode: cleared rows must have runnable evidence.
+    if (strictMode && testResult.valid) {
+      const evidenceResult = validateEvidence(row, testReadinessFiles);
+      if (!evidenceResult.valid) {
+        errors.push(`${row.id}: Evidence validation failed — ${evidenceResult.reason}`);
+      }
+    }
   }
 
   return { valid: errors.length === 0, errors, warnings };
@@ -445,7 +555,7 @@ function validateRow(row) {
 // Main
 // ---------------------------------------------------------------------------
 
-console.log(`${LABEL} M5 Readiness Row Validator\n`);
+console.log(`${LABEL} M5 Readiness Row Validator${strictMode ? ' (strict mode)' : ''}\n`);
 
 let rows;
 try {
@@ -460,7 +570,23 @@ if (rows.length === 0) {
   process.exit(1);
 }
 
-console.log(`${LABEL} Found ${rows.length} M5 readiness rows.\n`);
+// Load the test:readiness script so strict mode can enforce that every cleared
+// unit-test row is wired into the fast release gate.
+let testReadinessFiles = [];
+try {
+  const packageJsonPath = resolve(repoRoot, 'package.json');
+  const packageJson = JSON.parse(readFileSync(packageJsonPath, 'utf8'));
+  testReadinessFiles = extractTestReadinessFiles(packageJson.scripts?.['test:readiness']);
+} catch (err) {
+  console.warn(`${LABEL} Could not read test:readiness script: ${err.message}`);
+}
+
+console.log(`${LABEL} Found ${rows.length} M5 readiness rows.`);
+if (strictMode) {
+  console.log(`${LABEL} test:readiness vitest arguments: ${testReadinessFiles.length > 0 ? testReadinessFiles.join(', ') : '(none found)'}\n`);
+} else {
+  console.log(`${LABEL} Running in backwards-compatible anchor-only mode. Pass --strict to enforce evidence wiring.\n`);
+}
 
 /** @type {string[]} */
 const failures = [];
@@ -472,7 +598,7 @@ for (const row of rows) {
 
   if (row.status === 'cleared') {
     clearedCount++;
-    const { valid, errors, warnings } = validateRow(row);
+    const { valid, errors, warnings } = validateRow(row, strictMode, testReadinessFiles);
 
     if (valid) {
       clearedValidCount++;
@@ -499,12 +625,15 @@ for (const row of rows) {
 console.log(`\n${LABEL} === Summary ===`);
 console.log(`${LABEL} Total M5 rows: ${rows.length}`);
 console.log(`${LABEL} Cleared rows: ${clearedCount}`);
-console.log(`${LABEL} Cleared rows with valid anchors: ${clearedValidCount}`);
+console.log(`${LABEL} Cleared rows with valid anchors${strictMode ? ' and evidence' : ''}: ${clearedValidCount}`);
 console.log(`${LABEL} Failures: ${failures.length}`);
 
 if (failures.length > 0) {
-  console.error(`\n${LABEL} FAILED: ${failures.length} anchor validation failure(s).`);
+  console.error(`\n${LABEL} FAILED: ${failures.length} validation failure(s).`);
   process.exitCode = 1;
 } else {
-  console.log(`\n${LABEL} PASSED: All cleared rows have valid anchors.`);
+  const passMessage = strictMode
+    ? 'PASSED: All cleared rows have valid anchors and runnable evidence.'
+    : 'PASSED: All cleared rows have valid anchors.';
+  console.log(`\n${LABEL} ${passMessage}`);
 }

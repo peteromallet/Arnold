@@ -37,7 +37,7 @@ import {
 } from 'lucide-react';
 import { useVideoEditorRuntime } from '@/tools/video-editor/contexts/DataProviderContext';
 import type { PackageState } from '@/tools/video-editor/runtime/extensionLoader';
-import type { PackageStateInventoryEntry, PackageContributionSummary } from '@/tools/video-editor/runtime/extensionSurface';
+import type { PackageStateInventoryEntry } from '@/tools/video-editor/runtime/extensionSurface';
 import type { ContributionKind, Diagnostic, DiagnosticSeverity, ExtensionManifest } from '@reigh/editor-sdk';
 import type {
   ExtensionEnablementState,
@@ -613,9 +613,6 @@ function PackageSettingsSection({
   const settingsKeys = Object.keys(editValues).sort();
 
   // ---- Reconciliation diagnostic helpers (T4) ---------------------------
-
-  const isRepaired = reconciliationState === 'repaired';
-  const isNeedsReview = reconciliationState === 'needs-review';
 
   /** Count of reconciliation diagnostics that are not schema-adapter noise. */
   const reconciliationDiagCount =

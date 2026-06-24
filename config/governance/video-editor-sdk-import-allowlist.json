@@ -9,7 +9,8 @@
   ],
   "allowlist": {
     "src/app/routes.tsx": [
-      "src/tools/video-editor/pages/VideoEditorPage.tsx"
+      "src/tools/video-editor/pages/VideoEditorPage.tsx",
+      "src/tools/video-editor/pages/ExtensionHarnessPage.tsx"
     ],
     "src/domains/media-lightbox/hooks/useAddToVideoEditor.ts": [
       "src/tools/video-editor/hooks/timelineStore.ts",

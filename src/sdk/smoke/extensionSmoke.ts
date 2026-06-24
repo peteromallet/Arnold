@@ -15,7 +15,7 @@
  */
 
 import { defineExtension } from '@reigh/editor-sdk';
-import type { ReighExtension } from '@reigh/editor-sdk';
+import type { ContributionId, ExtensionId, ReighExtension } from '@reigh/editor-sdk';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -39,7 +39,7 @@ let _smokeExtension: ReighExtension | undefined;
 function createSmokeExtension(): ReighExtension {
   return defineExtension({
     manifest: {
-      id: 'com.reigh.smoke.extension-smoke' as any,
+      id: 'com.reigh.smoke.extension-smoke' as ExtensionId,
       version: '1.0.0',
       label: 'Production Smoke Extension',
       description:
@@ -48,7 +48,7 @@ function createSmokeExtension(): ReighExtension {
       apiVersion: 1,
       contributions: [
         {
-          id: EXTENSION_SMOKE_CONTRIBUTION_ID as any,
+          id: EXTENSION_SMOKE_CONTRIBUTION_ID as ContributionId,
           kind: 'slot',
           slot: 'statusBar',
           order: 9999, // Sort last so it never collides visually

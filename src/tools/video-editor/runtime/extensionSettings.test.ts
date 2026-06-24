@@ -706,7 +706,7 @@ describe('detectUnsupportedShape', () => {
   });
 
   // Edge cases
-  it('detects nested-object for property with type:\"object\" and no nested properties', () => {
+  it('detects nested-object for property with type:"object" and no nested properties', () => {
     expect(detectUnsupportedShape(prop({ type: 'object' }))).toBe('nested-object');
   });
 

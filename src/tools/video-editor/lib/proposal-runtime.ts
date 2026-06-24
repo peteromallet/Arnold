@@ -60,7 +60,15 @@ export interface ProposalPersistenceProvider {
     detail?: Record<string, unknown>,
   ): Promise<void>;
 
-  /** Load all proposal records for the current scope. */
+  /**
+   * Load all proposal records for the current scope.
+   *
+   * Pending-only reload contract: implementations must query only proposals
+   * whose state is `'pending'`. Terminal history (accepted, rejected, stale,
+   * expired) is intentionally not reloaded; the runtime treats those states
+   * as immutable history and re-creates pending proposals from the provider
+   * on construction.
+   */
   loadAllProposals(): Promise<ProposalPersistenceRecord[]>;
 }
 
@@ -624,8 +632,13 @@ export function createProposalRuntime(
 
   /**
    * Hydrate proposals from the configured persistence provider.
-   * Called once during construction.  Pending proposals are loaded;
-   * non-pending and expired proposals are skipped.
+   * Called once during construction.
+   *
+   * Pending-only reload contract: only records whose `state` is `'pending'`
+   * are hydrated. Terminal history (accepted, rejected, stale, expired) is
+   * intentionally not reloaded. This is the accepted reload semantics
+   * contract; the runtime does not preserve or reconstruct terminal
+   * proposal history across instances.
    */
   async function hydrateFromProvider(): Promise<void> {
     if (!persistenceProvider) return;

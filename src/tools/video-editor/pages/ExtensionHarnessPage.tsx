@@ -10,12 +10,12 @@
  * Only mounted when import.meta.env.DEV is true.
  */
 
-import { useMemo, type FC, type ReactNode } from 'react';
+import { useMemo, type FC } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { DataProviderWrapper, type VideoEditorRuntimeContextValue } from '@/tools/video-editor/contexts/DataProviderContext';
 import { ExtensionManager } from '@/tools/video-editor/components/ExtensionManager/ExtensionManager';
 import { ExtensionActivityRegion, type ExtensionStatusEvent } from '@/tools/video-editor/components/ExtensionActivityRegion';
-import type { Diagnostic, DiagnosticCollection, DisposeHandle } from '@reigh/editor-sdk';
+import type { DataProvider, Diagnostic, DiagnosticCollection, DisposeHandle } from '@reigh/editor-sdk';
 import type { PackageStateInventoryEntry, ExtensionRuntime } from '@/tools/video-editor/runtime/extensionSurface';
 import type { ExtensionStateRepository } from '@/tools/video-editor/runtime/extensionStateRepository';
 
@@ -142,8 +142,6 @@ function makeEntry(overrides: Partial<PackageStateInventoryEntry> & { extensionI
     ...overrides,
   };
 }
-
-type PackageState = PackageStateInventoryEntry['packageState'];
 
 interface ScenarioData {
   packageStateInventory: PackageStateInventoryEntry[];
@@ -314,12 +312,12 @@ const ScenarioCard: FC<{
   }, [data.packageStateInventory]);
 
   const mockContextValue = useMemo<VideoEditorRuntimeContextValue>(() => ({
-    provider: {} as any,
+    provider: {} as unknown as DataProvider,
     assetResolver: { resolveAssetUrl: async (f: string) => f },
     auth: { userId: 'harness' },
     project: { projectId: null },
     shots: { shots: undefined, isLoading: false, error: null, refetchShots: () => {}, finalVideoMap: new Map(), dismissFinalVideo: () => {} },
-    mediaLightbox: { Lightbox: (() => null) as any, loadGenerationForLightbox: async () => null },
+    mediaLightbox: { Lightbox: (() => null) as unknown as VideoEditorRuntimeContextValue['mediaLightbox']['Lightbox'], loadGenerationForLightbox: async () => null },
     agentChat: { registerTimeline: () => {}, unregisterTimeline: () => {} },
     toast: { error: () => '', success: () => '', warning: () => '', info: () => '' },
     telemetry: { log: () => {}, warn: () => {}, error: () => {} },

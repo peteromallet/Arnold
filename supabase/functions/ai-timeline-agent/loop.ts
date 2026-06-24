@@ -441,38 +441,6 @@ function timeSince(iso: string): string {
   return `${Math.round(ms / 3_600_000)}h ago`;
 }
 
-// ---------------------------------------------------------------------------
-// M3: Tool classification metadata for proposal-mode gating
-// ---------------------------------------------------------------------------
-
-/** Broad classification of an agent tool's side-effect profile. */
-const enum ToolClassification {
-  /** Mutates the timeline config (clips, tracks, effects). */
-  TimelineConfigMutation = 'timeline-config-mutation',
-  /** Side effect on the database that is NOT a timeline config mutation. */
-  TimelineDbSideEffect = 'timeline-db-side-effect',
-  /** Side effect outside the timeline (generation tasks, image transforms, etc.). */
-  NonTimelineSideEffect = 'non-timeline-side-effect',
-  /** Pure read — no mutations of any kind. */
-  ReadOnly = 'read-only',
-}
-
-/** Mapping of tool name → classification. */
-const TOOL_CLASSIFICATION: Record<string, ToolClassification> = {
-  run: ToolClassification.TimelineConfigMutation,
-  set_params: ToolClassification.TimelineConfigMutation,
-  set_theme: ToolClassification.TimelineConfigMutation,
-  set_theme_overrides: ToolClassification.TimelineConfigMutation,
-  create_task: ToolClassification.NonTimelineSideEffect,
-  transform_image: ToolClassification.NonTimelineSideEffect,
-  set_lora: ToolClassification.NonTimelineSideEffect,
-  duplicate_generation: ToolClassification.NonTimelineSideEffect,
-  delegateToBanodocoAgent: ToolClassification.NonTimelineSideEffect,
-  create_shot: ToolClassification.TimelineDbSideEffect,
-  search_loras: ToolClassification.ReadOnly,
-  get_tasks: ToolClassification.ReadOnly,
-};
-
 export async function executeToolCall(
   toolCall: ExtractedToolCall,
   timelineState: TimelineState,
