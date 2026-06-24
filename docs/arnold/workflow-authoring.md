@@ -110,6 +110,7 @@ arnold workflow check workflow.py
 arnold workflow compile workflow.py --out manifest.json
 arnold workflow inspect workflow.py
 arnold workflow explain workflow.py
+arnold workflow graph workflow.py --format mermaid
 ```
 
 - `check` prints human diagnostics by default and exits non-zero when the source
@@ -149,3 +150,39 @@ fabricate locations.
 
 `--module ...` remains available for legacy builder-target workflows and is
 unchanged.
+
+## Graph Rendering
+
+Render the authored topology without editing generated files:
+
+```bash
+arnold workflow graph workflow.py --format dot
+arnold workflow graph workflow.py --format mermaid
+arnold workflow graph workflow.py --format json
+```
+
+`dot` produces a Graphviz diagram, `mermaid` produces a `flowchart TD` diagram,
+and `json` emits a stable node/edge/source-span payload. All three are derived
+from the compiled manifest but annotated with authored source spans where
+available.
+
+## Shipped Example
+
+A minimal shipped pipeline lives at `examples/workflow_authoring/hello/`. It
+shows a V1-authored `workflow.py`, typed `components.py`, and `SKILL.md`:
+
+```bash
+arnold workflow check examples/workflow_authoring/hello/workflow.py
+arnold workflow compile examples/workflow_authoring/hello/workflow.py --out /tmp/hello.json
+arnold workflow explain examples/workflow_authoring/hello/workflow.py
+```
+
+## Negative Examples
+
+V1 intentionally rejects far-out control flow. A `for` loop inside a workflow
+function produces an `AWF002_UNSUPPORTED_SYNTAX` diagnostic with a source
+location and a fix pointer, not a silently broken manifest:
+
+```bash
+arnold workflow check tests/fixtures/workflow_authoring/invalid_unsupported_control_flow.py
+```
