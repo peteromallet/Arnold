@@ -18,6 +18,7 @@ from uuid import uuid4
 from arnold.runtime.durable_ops import TypedResource
 
 from agentbox.adapters import get_operation_adapter, list_operation_adapters
+from agentbox.bootstrap import bootstrap as bootstrap_agentbox
 from agentbox.config import AgentBoxConfigError, load_agentbox_config
 from agentbox.credentials.backend import (
     CredentialBackendError,
@@ -26,6 +27,8 @@ from agentbox.credentials.backend import (
     push_guide,
     run_credential_tests,
 )
+from agentbox.doctor import checkup
+from agentbox.notify import notify_test
 from agentbox.operations import (
     AgentBoxOperationError,
     load_agentbox_operation,
@@ -42,7 +45,9 @@ from agentbox.guardian.service import GuardianService
 from agentbox.cleanup import apply_cleanup, survey_cleanup
 from agentbox.reconcile import reconcile
 from agentbox.run_dirs import run_dir_paths
+from agentbox.services import list_services, restart_service, service_logs
 from agentbox.tmux import attach_argv, inspect_session
+from agentbox.version import agentbox_version
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -159,6 +164,56 @@ def build_parser() -> argparse.ArgumentParser:
     creds_push.add_argument("name", help="Credential name or 'guide'.")
     creds_push.add_argument("--json", action="store_true", help="Write stable JSON output.")
 
+    bootstrap_parser = subparsers.add_parser(
+        "bootstrap",
+        help="Ensure the AgentBox workspace layout and systemd units exist.",
+    )
+    bootstrap_parser.add_argument("--json", action="store_true", help="Write stable JSON output.")
+
+    doctor_parser = subparsers.add_parser(
+        "doctor",
+        help="Run read-only health checks for the AgentBox host.",
+    )
+    doctor_parser.add_argument("--json", action="store_true", help="Write stable JSON output.")
+
+    services_parser = subparsers.add_parser(
+        "services",
+        help="List, inspect, or restart AgentBox systemd services.",
+    )
+    services_subparsers = services_parser.add_subparsers(dest="services_command")
+
+    services_list = services_subparsers.add_parser("list", help="List known services.")
+    services_list.add_argument("--json", action="store_true", help="Write stable JSON output.")
+
+    services_logs = services_subparsers.add_parser("logs", help="Show service logs.")
+    services_logs.add_argument("service", help="Service name.")
+    services_logs.add_argument("--lines", type=_positive_int, default=50)
+    services_logs.add_argument("--json", action="store_true", help="Write stable JSON output.")
+
+    services_restart = services_subparsers.add_parser(
+        "restart",
+        help="Restart a service (requires systemctl and privileges).",
+    )
+    services_restart.add_argument("service", help="Service name.")
+    services_restart.add_argument("--json", action="store_true", help="Write stable JSON output.")
+
+    notify_parser = subparsers.add_parser(
+        "notify",
+        help="Test AgentBox resident notifications.",
+    )
+    notify_subparsers = notify_parser.add_subparsers(dest="notify_command")
+
+    notify_test_parser = notify_subparsers.add_parser(
+        "test",
+        help="Send a test notification through Discord.",
+    )
+    notify_test_parser.add_argument("--conversation-key", help="Target conversation key.")
+    notify_test_parser.add_argument("--dm-user-id", help="Target DM user id.")
+    notify_test_parser.add_argument("--json", action="store_true", help="Write stable JSON output.")
+
+    version_parser = subparsers.add_parser("version", help="Show AgentBox version.")
+    version_parser.add_argument("--json", action="store_true", help="Write stable JSON output.")
+
     return parser
 
 
@@ -203,6 +258,16 @@ def main(argv: Sequence[str] | None = None) -> int:
             return _guardian(config, args, json_output=json_output)
         if args.command == "creds":
             return _creds(config, args, json_output=json_output)
+        if args.command == "bootstrap":
+            return _bootstrap(config, json_output=json_output)
+        if args.command == "doctor":
+            return _doctor(config, json_output=json_output)
+        if args.command == "services":
+            return _services(config, args, json_output=json_output)
+        if args.command == "notify":
+            return _notify(config, args, json_output=json_output)
+        if args.command == "version":
+            return _version(json_output=json_output)
     except (AgentBoxConfigError, AgentBoxOperationError, CredentialBackendError, FileNotFoundError, ValueError) as exc:
         return _diagnostic(str(exc), json_output=json_output)
     return _diagnostic(f"unknown command: {args.command}", json_output=json_output)
@@ -392,6 +457,54 @@ def _creds(config: Any, args: argparse.Namespace, *, json_output: bool) -> int:
         )
         return 0
     return _diagnostic(f"unknown creds command: {command}", json_output=json_output)
+
+
+def _bootstrap(config: Any, *, json_output: bool) -> int:
+    result = bootstrap_agentbox(config)
+    _emit(result, json_output=json_output)
+    return 0
+
+
+def _doctor(config: Any, *, json_output: bool) -> int:
+    report = checkup(config)
+    _emit(report.to_dict(), json_output=json_output)
+    return 0 if report.ok else 1
+
+
+def _services(config: Any, args: argparse.Namespace, *, json_output: bool) -> int:
+    command = getattr(args, "services_command", None)
+    if command is None:
+        return _diagnostic("services subcommand required", json_output=json_output)
+    if command == "list":
+        _emit(list_services(), json_output=json_output)
+        return 0
+    if command == "logs":
+        _emit(service_logs(args.service, lines=args.lines), json_output=json_output)
+        return 0
+    if command == "restart":
+        _emit(restart_service(args.service), json_output=json_output)
+        return 0
+    return _diagnostic(f"unknown services command: {command}", json_output=json_output)
+
+
+def _notify(config: Any, args: argparse.Namespace, *, json_output: bool) -> int:
+    command = getattr(args, "notify_command", None)
+    if command is None:
+        return _diagnostic("notify subcommand required", json_output=json_output)
+    if command == "test":
+        result = notify_test(
+            config,
+            conversation_key=args.conversation_key,
+            dm_user_id=args.dm_user_id,
+        )
+        _emit(result, json_output=json_output)
+        return 0 if result.get("ok") else 1
+    return _diagnostic(f"unknown notify command: {command}", json_output=json_output)
+
+
+def _version(*, json_output: bool) -> int:
+    _emit(agentbox_version(), json_output=json_output)
+    return 0
 
 
 def _guardian(config: Any, args: argparse.Namespace, *, json_output: bool) -> int:
