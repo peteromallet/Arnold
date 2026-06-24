@@ -45,10 +45,18 @@ from __future__ import annotations
 import concurrent.futures
 import dataclasses
 import json
+import os
 from pathlib import Path
 from typing import Any, Callable, Mapping
 
 from arnold.pipeline.hooks import ExecutorHooks, NullExecutorHooks
+from arnold.pipeline.native.flags import force_legacy_runtime
+from arnold.pipeline.native.routing import (
+    RUNTIME_GRAPH,
+    RUNTIME_NATIVE,
+    RuntimeOwner,
+    normalize_runtime_owner,
+)
 from arnold.pipeline.resume import read_resume_cursor
 from arnold.pipeline.resume_validation import reverify_resume_produces
 from arnold.pipeline.routing import RoutingError, resolve_edge
@@ -66,6 +74,189 @@ from arnold.pipeline.types import (
 )
 from arnold.runtime.envelope import RuntimeEnvelope
 from arnold.runtime.operations import NullOperationRegistry, OperationRegistry
+
+
+def _global_runtime_kill_switch() -> RuntimeOwner | None:
+    """Return an explicit runtime owner from the global kill-switch env var.
+
+    ``ARNOLD_FORCE_LEGACY=true`` forces graph execution;
+    ``ARNOLD_PIPELINE_RUNTIME=graph`` is a deprecated graph alias; and
+    ``ARNOLD_PIPELINE_RUNTIME=native`` forces native execution when capable.
+    Returns ``None`` when the switch is unset or unrecognised.
+    """
+
+    if force_legacy_runtime():
+        return RUNTIME_GRAPH
+
+    value = os.environ.get("ARNOLD_PIPELINE_RUNTIME", "").strip().lower()
+    if value == RUNTIME_GRAPH:
+        return RUNTIME_GRAPH
+    if value == RUNTIME_NATIVE:
+        return RUNTIME_NATIVE
+    return None
+
+
+def _should_dispatch_native(
+    pipeline: Pipeline,
+    marker: RuntimeOwner | None,
+) -> bool:
+    """Decide whether a native-capable pipeline should run natively.
+
+    Native is canonical by default: explicit legacy graph controls win, then
+    explicit native markers, then native capability.
+
+    ``ARNOLD_NATIVE_RUNTIME`` is not consulted here; native execution is not
+    enabled by an opt-in flag.
+    """
+
+    if force_legacy_runtime():
+        return False
+
+    kill = _global_runtime_kill_switch()
+    if kill == RUNTIME_GRAPH:
+        return False
+    if kill == RUNTIME_NATIVE:
+        return True
+
+    if marker == RUNTIME_GRAPH:
+        return False
+
+    if marker == RUNTIME_NATIVE:
+        return True
+
+    return _resolve_native_program(pipeline) is not None
+
+
+def _run_native_dispatched(
+    pipeline: Pipeline,
+    native_program: Any,
+    *,
+    initial_state: Mapping[str, Any],
+    envelope: RuntimeEnvelope,
+    initial_context: StepContext | None,
+    resume: bool,
+) -> Any:
+    """Delegate execution to the native runtime or a runner adapter."""
+    from arnold.pipeline.native.ir import NativeProgram
+    from arnold.pipeline.native.runtime import run_native_pipeline
+
+    program: NativeProgram | None = (
+        native_program if isinstance(native_program, NativeProgram) else None
+    )
+
+    kwargs: dict[str, Any] = {
+        "artifact_root": envelope.artifact_root,
+        "initial_state": dict(initial_state),
+        "resume": resume,
+        "initial_envelope": envelope,
+    }
+    if isinstance(native_program, NativeProgram):
+        return run_native_pipeline(native_program, **kwargs)
+
+    # Runner adapter path (e.g. NativeMegaplanRunner) — forward the full
+    # caller context so adapters can reconstruct pipeline-specific context.
+    kwargs["program"] = program
+    kwargs["schema_registry"] = None
+    kwargs["initial_context"] = initial_context
+    return native_program.run_native_pipeline(**kwargs)
+
+
+def _resolve_executor_marker(
+    initial_state: Mapping[str, Any],
+    artifact_root: str | Path,
+) -> RuntimeOwner | None:
+    """Return runtime owner using the neutral executor marker precedence."""
+    persisted_state = _read_persisted_state(artifact_root)
+
+    persisted = _modern_runtime_owner_from_state(persisted_state)
+    if persisted is not None:
+        return persisted
+
+    in_memory = _modern_runtime_owner_from_state(initial_state)
+    if in_memory is not None:
+        return in_memory
+
+    legacy_persisted = _legacy_runtime_owner_from_state(persisted_state)
+    if legacy_persisted is not None:
+        return legacy_persisted
+
+    return _legacy_runtime_owner_from_state(initial_state)
+
+
+def _read_persisted_state(artifact_root: str | Path) -> Mapping[str, Any] | None:
+    """Read ``<artifact_root>/state.json`` when it contains a JSON object."""
+    state_path = Path(artifact_root) / "state.json"
+    if not state_path.is_file():
+        return None
+    try:
+        payload = json.loads(state_path.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+    if isinstance(payload, Mapping):
+        return payload
+    return None
+
+
+def _modern_runtime_owner_from_state(
+    state: Mapping[str, Any] | None,
+) -> RuntimeOwner | None:
+    """Resolve modern runtime markers from one state object."""
+    if not isinstance(state, Mapping):
+        return None
+
+    runtime_envelope = state.get("runtime_envelope")
+    if isinstance(runtime_envelope, Mapping):
+        owner = normalize_runtime_owner(runtime_envelope.get("runtime"))
+        if owner is not None:
+            return owner
+
+    meta = state.get("meta")
+    if isinstance(meta, Mapping):
+        owner = normalize_runtime_owner(meta.get("executor"))
+        if owner is not None:
+            return owner
+
+    return None
+
+
+def _legacy_runtime_owner_from_state(
+    state: Mapping[str, Any] | None,
+) -> RuntimeOwner | None:
+    """Resolve deprecated ``_native_execution`` compatibility aliases."""
+    if not isinstance(state, Mapping):
+        return None
+
+    native_alias = state.get("_native_execution")
+    if native_alias is True:
+        return RUNTIME_NATIVE
+    if native_alias is False:
+        return RUNTIME_GRAPH
+    return None
+
+
+def _resolve_native_program(pipeline: Pipeline) -> Any | None:
+    """Resolve the native dispatch target for *pipeline*.
+
+    ``Pipeline.native_program`` is canonical.  ``resource_bundles`` remains as
+    a temporary compatibility fallback for older callers and runner adapters.
+    """
+    from arnold.pipeline.native.ir import NativeProgram
+
+    native_program = getattr(pipeline, "native_program", None)
+    if native_program is not None:
+        return native_program
+
+    for bundle in getattr(pipeline, "resource_bundles", ()) or ():
+        if isinstance(bundle, NativeProgram):
+            return bundle
+
+    for bundle in getattr(pipeline, "resource_bundles", ()) or ():
+        if hasattr(bundle, "run_native_pipeline"):
+            return bundle
+
+    return None
+
+
 from arnold.runtime.wal_fold import (
     fold_journal,
     last_state_snapshot_projector,
@@ -264,6 +455,19 @@ def run_pipeline(
 
     _hooks: ExecutorHooks = hooks if hooks is not None else NullExecutorHooks()
 
+    marker = _resolve_executor_marker(initial_state, envelope.artifact_root)
+    if _should_dispatch_native(pipeline, marker):
+        native_program = _resolve_native_program(pipeline)
+        if native_program is not None:
+            return _run_native_dispatched(
+                pipeline,
+                native_program,
+                initial_state=initial_state,
+                envelope=envelope,
+                initial_context=initial_context,
+                resume=False,
+            )
+
     # When custom hooks are active, delegate parallel-safety to the hooks
     # instance; otherwise honour the caller's parallel_safe predicate.
     _eff_parallel_safe: ParallelSafePredicate = (
@@ -368,6 +572,19 @@ def run_pipeline_resume(
     _eff_parallel_safe: ParallelSafePredicate = (
         _hooks.is_parallel_safe if hooks is not None else DEFAULT_PARALLEL_SAFE  # type: ignore[assignment]
     )
+
+    marker = _resolve_executor_marker(merged, envelope.artifact_root)
+    if _should_dispatch_native(pipeline, marker):
+        native_program = _resolve_native_program(pipeline)
+        if native_program is not None:
+            return _run_native_dispatched(
+                pipeline,
+                native_program,
+                initial_state=merged,
+                envelope=envelope,
+                initial_context=initial_context,
+                resume=True,
+            )
 
     wrapped_hooks = _wrap_resume_reverify_hooks(
         hooks=_hooks,

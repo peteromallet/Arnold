@@ -29,22 +29,23 @@ pipeline to be built.
 
 ## Scaffold and Check
 
-Create new graph-backed modules with:
+Create new native-first modules with:
 
 ```bash
-arnold pipelines new my-module --driver graph
+arnold pipelines new my-module
 ```
 
-Validate with both namespaces when documenting a public flow:
+The `--driver graph` switch is deprecated and should only be used for temporary
+compatibility baselines.
+
+Validate with the canonical Arnold namespace when documenting a public flow:
 
 ```bash
 arnold pipelines check my-module
-megaplan pipelines check my-module
 ```
 
-The Arnold command is the user-facing module namespace. The Megaplan command is
-the underlying implementation surface. Today they should agree for scaffolded
-graph modules.
+The Megaplan namespace remains a legacy compatibility path during the migration
+but new packages target the Arnold namespace and the native-first contract.
 
 ## Run and Describe
 

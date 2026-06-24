@@ -1,12 +1,5 @@
 # Arnold Authoring Guide
 
-> **M2 canonical note:** This guide documents the legacy `arnold.pipeline`
-> graph-builder surface (`PipelineBuilder`, `Stage`, public `Edge`, fluent
-> chaining, decorators).  Existing runtime packages continue to work, but new
-> M2 authoring should follow the explicit-node contract in
-> [`workflow-authoring.md`](workflow-authoring.md).  `build_pipeline()` for M2
-> returns `arnold.workflow.Pipeline`; `WorkflowManifest` is compiler output.
-
 Arnold is the module-oriented face of Megaplan pipelines. Use it when a workflow
 should be discoverable as a named module, runnable from the CLI, inspectable by
 the pipeline checker, and documented for agents through a sibling `SKILL.md`.
@@ -41,56 +34,112 @@ contracts:
 Start with the documented Arnold command:
 
 ```bash
-arnold pipelines new my-module --driver graph
+arnold pipelines new my-module
 ```
 
 The command creates a Python module under `megaplan/pipelines/` and a sibling
-`SKILL.md` directory. `--driver graph` is the accepted driver today; the command
-is intentionally explicit so later driver shapes have room to appear without
-changing the current scaffold.
+`SKILL.md` directory. The default scaffold is native-authored: it uses
+`@pipeline`, `@phase`, `@decision`, `parallel(...)`, and a derived graph
+projection. Pass `--driver graph` only when intentionally creating a deprecated
+hand-built graph fallback for an old plan or parity baseline.
 
-The generated module is a small graph builder. Replace the placeholder
-description, prompt path, and pipeline stages, then keep the module-level
-metadata accurate enough for no-import discovery. The canonical package and
-manifest facts are generated in the Arnold projection reference rather than
-copied here by hand.
+The generated module should keep module-level metadata accurate enough for
+no-import discovery, then implement workflow behavior in native declarations.
+The canonical package and manifest facts are generated in the Arnold projection
+reference rather than copied here by hand.
 
-## Build the Graph
+## Author the Native Workflow
 
 Start from the [contract surface](package-authoring-contract.md). Every Arnold
 pipeline package must expose the required fields at module level and a nullary
-`build_pipeline()` entrypoint. The fastest path to a valid graph is
-:func:`~arnold.pipelines._authoring.build_skeleton_pipeline`:
+`build_pipeline()` entrypoint. For M7, the primary authoring path is native
+declarations plus a derived validation graph:
 
 ```python
+from typing import Any
+
+from arnold.pipeline.native import (
+    compile_pipeline,
+    decision,
+    native_panel,
+    parallel,
+    phase,
+    pipeline,
+    project_graph,
+)
+from arnold.pipeline.subpipeline import run_subpipeline
 from arnold.pipeline.types import Pipeline
-from arnold.pipelines._authoring import build_skeleton_pipeline
 
 name = "my-module"
 description = "Review a draft and emit a revised Markdown artifact."
-driver = "in_process"                      # str or tuple[str, ...]
-entrypoint = "build_pipeline"              # bare name or "module:name"
+driver = ("native", "project+validate")
+entrypoint = "build_pipeline"
 arnold_api_version = "1.0"
 capabilities = ("document-review",)
-
-# Recommended (declare even as None / empty tuple):
 default_profile: str | None = None
 supported_modes: tuple[str, ...] = ()
 
 
+@phase(name="draft")
+def draft(ctx: Any) -> dict[str, Any]:
+    return {"draft": "TODO"}
+
+
+@phase(name="review_fast")
+def review_fast(ctx: Any) -> dict[str, Any]:
+    return {"review": "fast"}
+
+
+@phase(name="review_deep")
+def review_deep(ctx: Any) -> dict[str, Any]:
+    return {"review": "deep"}
+
+
+@decision(name="approval", vocabulary=frozenset({"ship", "revise"}))
+def approval(ctx: Any) -> str:
+    return "ship"
+
+
+@phase(name="publish")
+def publish(ctx: Any) -> dict[str, Any]:
+    return {"status": "ready"}
+
+
+@pipeline("my-module", description=description)
+def my_module(ctx: Any) -> Any:
+    yield draft(ctx)
+    for branch in parallel([review_fast, review_deep], name="review_panel"):
+        yield branch(ctx)
+    for branch in native_panel(
+        "editorial_panel",
+        (("fast", review_fast), ("deep", review_deep)),
+    ):
+        yield branch(ctx)
+    if approval(ctx) == "revise":
+        # A phase can call run_subpipeline(...) when child workflow ownership
+        # and resume behavior need to stay explicit.
+        pass
+    yield publish(ctx)
+
+
 def build_pipeline() -> Pipeline:
-    return build_skeleton_pipeline(name, description)
+    program = compile_pipeline(my_module)
+    return project_graph(program, key_mode="phase")
 ```
 
-This produces a minimal, instantly-terminating pipeline with a single no-op
-step. Replace the skeleton body with real stage construction using
-:class:`~arnold.pipeline.builder.PipelineBuilder` once you are ready to wire
-up logic. Copy the `_template` package (at `arnold/pipelines/_template/`) as a
-starting point — it comes pre-wired with the full contract surface and a
-`SKILL.md` quickstart.
+Use `parallel(...)` for fixed branch sets. Use `native_panel(...)` for fixed
+reviewer panels whose outputs should be prefixed by reviewer id. Use
+`run_subpipeline(...)` inside a phase when a child pipeline owns a distinct
+workflow and resume boundary.
 
-For custom graph wiring, start from `Pipeline.builder("my-module")`, add typed
-stages and edges through the builder, then call `.build()` from `build_pipeline()`.
+`build_pipeline()` should return the derived graph projection so discovery,
+`arnold pipelines check`, and graph fallback validate the public topology that
+the native runtime will execute. Fresh converted/native-capable runs default to
+native; `--runtime graph` remains the compatibility fallback.
+
+Hand-built graph builders are still supported for old plans and parity
+baselines, but they are no longer the default authoring style for new converted
+pipelines.
 
 ### Typed Ports
 
@@ -123,7 +172,7 @@ fan-out dispatch when multiple downstream stages consume the same port.
 
 ### Hooks and Resume (Recommended)
 
-Once the graph is stable, add the optional extension surface:
+Once the native workflow is stable, add the optional extension surface:
 
 - **``hooks``** — a module-level :class:`~arnold.pipeline.hooks.ExecutorHooks`
   subclass or instance for lifecycle callbacks (``on_step_start``,
@@ -138,6 +187,17 @@ All three are **recommended**, not required. The runtime validator reports
 their absence as informational (``info:`` prefix) rather than errors. See the
 [contract field table](package-authoring-contract.md) for the full list and
 the evidence-pack / megaplan reference comparison.
+
+Existing graph-born plans resume on graph. Upgrade them only with the explicit
+dry-run-first command:
+
+```bash
+arnold pipelines upgrade-cursor <plan-dir>
+arnold pipelines upgrade-cursor <plan-dir> --write
+```
+
+The write form preserves the graph cursor backup and fails without mutation if
+the graph stage maps ambiguously to native reentry.
 
 ### What NOT to Use
 

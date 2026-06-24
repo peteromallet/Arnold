@@ -22,9 +22,9 @@ _PIPELINES_DIR = (
 
 
 def _run_pipelines(*args: str) -> subprocess.CompletedProcess[str]:
-    """Run ``python -m arnold_pipelines.megaplan pipelines ...`` and return the result."""
+    """Run ``python -m arnold.pipelines.megaplan pipelines ...`` and return the result."""
     return subprocess.run(
-        [sys.executable, "-m", "arnold_pipelines.megaplan", "pipelines", *args],
+        [sys.executable, "-m", "arnold.pipelines.megaplan", "pipelines", *args],
         capture_output=True,
         text=True,
         env={**__import__("os").environ, "MEGAPLAN_MOCK_WORKERS": "1"},
@@ -32,9 +32,9 @@ def _run_pipelines(*args: str) -> subprocess.CompletedProcess[str]:
 
 
 def _run_arnold_pipelines(*args: str) -> subprocess.CompletedProcess[str]:
-    """Run ``python -m arnold_pipelines.megaplan.cli.arnold pipelines ...``."""
+    """Run ``python -m arnold.pipelines.megaplan.cli.arnold pipelines ...``."""
     return subprocess.run(
-        [sys.executable, "-m", "arnold_pipelines.megaplan.cli.arnold", "pipelines", *args],
+        [sys.executable, "-m", "arnold.pipelines.megaplan.cli.arnold", "pipelines", *args],
         capture_output=True,
         text=True,
         env={**__import__("os").environ, "MEGAPLAN_MOCK_WORKERS": "1"},
@@ -78,6 +78,12 @@ def test_pipelines_new_creates_module_and_skill(clean_scaffold: list[Path]):
     content = module_path.read_text()
     assert "def build_pipeline" in content
     assert name in content
+    assert "@pipeline" in content
+    assert "@phase" in content
+    assert "@decision" in content
+    assert "parallel(" in content
+    assert "project_graph(" in content
+    assert 'driver: tuple[str, str] = ("native", "project+validate")' in content
 
     skill_content = skill_path.read_text()
     assert f"name: {name}" in skill_content
@@ -130,9 +136,9 @@ def test_arnold_pipelines_new_driver_graph_emits_checkable_module(
     result = _run_arnold_pipelines("new", name, "--driver", "graph")
     assert result.returncode == 0, f"new failed: {result.stderr}"
     assert module_path.exists(), f"module not created at {module_path}"
-    assert 'driver: tuple[str, str] = (\'graph\', "dispatch+emit")' in module_path.read_text(
-        encoding="utf-8"
-    )
+    content = module_path.read_text(encoding="utf-8")
+    assert 'driver: tuple[str, str] = ("graph", "legacy")' in content
+    assert "Deprecated hand-built graph scaffold" in content
 
     check_result = _run_pipelines("check", name)
     assert check_result.returncode == 0, (

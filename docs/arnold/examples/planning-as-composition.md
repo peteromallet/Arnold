@@ -61,7 +61,7 @@ def build_pipeline(**kwargs) -> Pipeline:  # type: ignore[no-untyped-def]
     from arnold.pipelines.megaplan.stages.finalize import FinalizeStep
     from arnold.pipelines.megaplan.stages.execute import ExecuteStep
     from arnold.pipelines.megaplan.stages.review import ReviewStep
-    from arnold.pipelines.megaplan.stages.tiebreaker import TiebreakerStep
+    from arnold.pipelines.megaplan._pipeline.steps.tiebreaker import TiebreakerStep
 
     # Phase 0: prep gate via patterns.phase_zero_gate.
     prep_stage = phase_zero_gate(
