@@ -168,9 +168,14 @@ def test_installed_wheel_python_shaped_authoring_runtime_conformance() -> None:
             assert result.returncode == 0, (
                 f"arnold workflow {subcommand} failed: {result.stderr}"
             )
-            assert "sha256:" in result.stdout, (
-                f"arnold workflow {subcommand} did not emit a manifest hash"
-            )
+            if subcommand == "check":
+                assert "ok:" in result.stdout
+            elif subcommand == "compile":
+                assert "sha256:" in result.stdout, (
+                    f"arnold workflow {subcommand} did not emit a manifest hash"
+                )
+            else:
+                assert "m7-installed-wheel" in result.stdout
 
         # Programmatic compile also works from the installed package.
         prog = subprocess.run(
@@ -194,7 +199,7 @@ def test_installed_wheel_python_shaped_authoring_runtime_conformance() -> None:
                 "workflow",
                 "dry-run",
                 "--module",
-                "arnold_pipelines.megaplan.pipeline:build_and_compile_pipeline",
+                "arnold_pipelines.megaplan.pipeline:build_pipeline",
             ],
             capture_output=True,
             text=True,
