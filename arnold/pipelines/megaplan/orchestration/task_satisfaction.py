@@ -21,8 +21,11 @@ fields: ``files_changed``, ``commands_run``, ``evidence_files``, and
 
 from __future__ import annotations
 
+import os
+import subprocess
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 from arnold.pipelines.megaplan.orchestration.evidence_contract import (
@@ -255,7 +258,11 @@ def _stale_evidence(
             observed_head = _first_string(ref.details, ("head_sha", "current_head", "head"))
             if observed_head is None:
                 stale.append(f"missing_head:{ref.kind}")
-            elif observed_head != current_head and observed_head not in (allowed_heads or set()):
+            elif (
+                observed_head != current_head
+                and observed_head not in (allowed_heads or set())
+                and not _head_is_ancestor(observed_head, current_head)
+            ):
                 stale.append(f"head_mismatch:{ref.kind}")
         if current_code_hash:
             observed_code_hash = ref.code_hash or _first_string(ref.details, ("code_hash",))
@@ -264,6 +271,31 @@ def _stale_evidence(
             elif observed_code_hash != current_code_hash:
                 stale.append(f"code_hash_mismatch:{ref.kind}")
     return tuple(stale)
+
+
+def _head_is_ancestor(ancestor: str, descendant: str) -> bool:
+    """Return True if ``ancestor`` is an ancestor of (or equal to) ``descendant``.
+
+    When the harness commits plan state between batches, task evidence is
+    recorded at the pre-commit HEAD. Treating such evidence as stale causes
+    infinite re-execution loops, so we accept any evidence whose HEAD is in
+    the current branch history.
+    """
+    if ancestor == descendant:
+        return True
+    root = os.environ.get("MEGAPLAN_TARGET_ROOT") or os.environ.get("MEGAPLAN_PROJECT_DIR")
+    cwd = Path(root) if root else Path.cwd()
+    try:
+        result = subprocess.run(
+            ["git", "merge-base", "--is-ancestor", ancestor, descendant],
+            cwd=str(cwd),
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return result.returncode == 0
 
 
 def _explicit_terminal_status(refs: tuple[EvidenceRef, ...]) -> EvidenceStatus | None:
