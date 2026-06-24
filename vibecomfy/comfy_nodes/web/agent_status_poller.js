@@ -573,7 +573,10 @@ export async function refreshAgentStatus(panel, { quiet = false } = {}, deps = {
   if (typeof panel?.state?.chooseEngineRefresh === "function") {
     panel.state.chooseEngineRefresh();
   }
-  const statusDirtySections = Array.isArray(panel?.state?.chatMessages) && panel.state.chatMessages.length
+  const transcriptMessages = Array.isArray(panel?.state?.transcriptMessages)
+    ? panel.state.transcriptMessages
+    : (Array.isArray(panel?.state?.chatMessages) ? panel.state.chatMessages : []);
+  const statusDirtySections = transcriptMessages.length
     ? [...SETTINGS_STATUS_RENDER_SECTIONS, RENDER_SECTIONS.META, RENDER_SECTIONS.THREAD]
     : SETTINGS_STATUS_RENDER_SECTIONS;
   if (typeof markAgentPanelDirtyAfterCommit === "function") {

@@ -460,7 +460,7 @@ test("DOM: phase strip present while pending and legacy activity rows stay hidde
     assert.match(text, /Review/);
 
     const phaseStrip = harness.document.body.querySelectorAll(
-      (node) => node.dataset?.vibecomfyPhaseSource === "canonical",
+      (node) => node.dataset?.vibecomfyPhaseSource === "transcript",
     );
     assert.ok(phaseStrip.length >= 1);
     const stages = phaseStrip[0].querySelectorAll((node) => node.dataset?.vibecomfyExecutorStage);

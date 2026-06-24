@@ -17,6 +17,14 @@ import {
   readOutcome,
   readRebaselineRecovery,
   readTurnIdentity,
+  projectAuditArtifact,
+  projectExecutionEvent,
+  projectResponseDetail,
+  projectTranscriptMessage,
+  selectAuditArtifacts,
+  selectExecutionEvents,
+  selectResponseDetails,
+  splitRehydrateProjectionInput,
 } from "../../vibecomfy/comfy_nodes/web/agent_edit_response_contract.js";
 
 import {
@@ -53,41 +61,12 @@ import {
   routeOptionsFromStatus,
   ROUTE_STATUS_KIND,
 } from "../../vibecomfy/comfy_nodes/web/agent_status_poller.js";
-
-const FORBIDDEN_NORMAL_PATH_KEYS = new Set([
-  "executor_pending",
-  "apply_allowed",
-  "canvas_apply_allowed",
-  "applyAllowed",
-  "canvasApplyAllowed",
-]);
-
-function assertCanonicalNormalPathHasNoLegacyAliases(value, path = "$") {
-  if (!value || typeof value !== "object") {
-    return;
-  }
-  if (Array.isArray(value)) {
-    value.forEach((entry, index) => {
-      assertCanonicalNormalPathHasNoLegacyAliases(entry, `${path}[${index}]`);
-    });
-    return;
-  }
-
-  for (const [key, entry] of Object.entries(value)) {
-    const keyPath = `${path}.${key}`;
-    assert.equal(
-      FORBIDDEN_NORMAL_PATH_KEYS.has(key),
-      false,
-      `canonical normal-path payload must not carry legacy alias ${keyPath}`,
-    );
-    assert.equal(
-      key === "field_changes" && !/\.change_details\.batch_turns\[\d+\]\.field_changes$/.test(keyPath),
-      false,
-      `canonical normal-path payload must not carry old field-change dictionary ${keyPath}`,
-    );
-    assertCanonicalNormalPathHasNoLegacyAliases(entry, keyPath);
-  }
-}
+import {
+  PROJECTION_SURFACES,
+  assertCanonicalNormalPathHasNoLegacyAliases,
+  assertNormalProjectionHasNoForbiddenFieldOrValue,
+  assertRehydratePayloadIsProjectionInputOnly,
+} from "./projection_boundary_helpers.mjs";
 
 // ── Fixture loader ────────────────────────────────────────────────────────
 
@@ -99,6 +78,33 @@ function loadFixture(name) {
   const filePath = path.join(FIXTURES_DIR, name);
   const raw = readFileSync(filePath, "utf-8");
   return JSON.parse(raw);
+}
+
+function contaminatedTranscriptMessageProjection(raw) {
+  return projectTranscriptMessage(raw);
+}
+
+function contaminatedResponseDetailProjection(raw) {
+  return projectResponseDetail(raw);
+}
+
+function contaminatedExecutionEventProjection(raw) {
+  return projectExecutionEvent(raw);
+}
+
+function contaminatedAuditArtifactProjection(raw) {
+  return projectAuditArtifact(raw);
+}
+
+function splitContaminatedRehydrateProjectionInput(raw) {
+  return splitRehydrateProjectionInput(raw);
+}
+
+function assertNotSameNestedReference(actual, expected, message) {
+  assert.ok(actual);
+  assert.ok(expected);
+  assert.notEqual(actual, expected, message);
+  assert.deepEqual(actual, expected, message);
 }
 
 // ── Agent edit response fixtures (routed through normalizeAgentEditResponse) ─
@@ -397,6 +403,447 @@ test("old session latest_candidate fixture requires the legacy adapter boundary"
   });
   assert.equal(adapted.outcome.kind, "candidate");
   assert.equal(readApplyCandidate(adapted, { allowLegacy: false }).graphHash, "candidate-hash-new");
+});
+
+test("projection fixtures reject contaminated TranscriptMessage fields but preserve pending and synthetic safe fields", () => {
+  const rawPendingTranscriptMessage = {
+    role: "agent",
+    text: "Working on the request.",
+    turn_id: "turn-pending-safe",
+    session_id: "sess-projection-boundary",
+    local_id: "pending:turn-pending-safe",
+    pending_response: true,
+    executor_pending: true,
+    synthetic: true,
+    progress: {
+      phase: "research",
+      headline: "Checking graph state",
+      details: { step: "safe compact progress" },
+    },
+    progress_label: "Research",
+    debugPayload: { provider_diagnostics: [{ code: "PROVIDER_TRACE", message: "ProviderError stack trace" }] },
+    auditRef: { path: "/real/ComfyUI/out/editor_sessions/sess/turns/0002/audit.json" },
+    raw_payload: { provider_payload: { prompt_messages: ["raw model prompt"] } },
+    change_details: {
+      batch_turns: [{ message: "raw diagnostic reasoning", diagnostics: [{ code: "ENGINE" }] }],
+    },
+  };
+
+  assert.throws(
+    () => assertNormalProjectionHasNoForbiddenFieldOrValue(rawPendingTranscriptMessage, {
+      projectionName: PROJECTION_SURFACES.NORMAL_TRANSCRIPT_MESSAGE,
+    }),
+    /forbidden internal key/,
+  );
+
+  const normalTranscriptMessage = contaminatedTranscriptMessageProjection(rawPendingTranscriptMessage);
+  assert.deepEqual(normalTranscriptMessage, {
+    role: "agent",
+    text: "Working on the request.",
+    turn_id: "turn-pending-safe",
+    session_id: "sess-projection-boundary",
+    local_id: "pending:turn-pending-safe",
+    pending_response: true,
+    synthetic: true,
+    progress: {
+      phase: "research",
+      headline: "Checking graph state",
+      details: { step: "safe compact progress" },
+    },
+    progress_label: "Research",
+  });
+  assertNormalProjectionHasNoForbiddenFieldOrValue(normalTranscriptMessage, {
+    projectionName: PROJECTION_SURFACES.NORMAL_TRANSCRIPT_MESSAGE,
+  });
+  assert.equal(Object.isFrozen(normalTranscriptMessage), true);
+  assert.equal(Object.isFrozen(normalTranscriptMessage.progress), true);
+  assertNotSameNestedReference(
+    normalTranscriptMessage.progress,
+    rawPendingTranscriptMessage.progress,
+    "TranscriptMessage progress projection must be cloned",
+  );
+
+  rawPendingTranscriptMessage.progress.details.step = "mutated after projection";
+  assert.equal(normalTranscriptMessage.progress.details.step, "safe compact progress");
+  assert.equal("executor_pending" in normalTranscriptMessage, false);
+  assert.equal("debugPayload" in normalTranscriptMessage, false);
+  assert.equal("auditRef" in normalTranscriptMessage, false);
+  assert.equal("raw_payload" in normalTranscriptMessage, false);
+});
+
+test("projection fixtures reject contaminated ResponseDetail fields and clone safe summaries", () => {
+  const rawResponseDetail = {
+    role: "agent",
+    text: "Candidate ready.",
+    message: "Candidate ready.",
+    session_id: "sess-response-detail",
+    turn_id: "turn-response-detail",
+    status: "candidate",
+    outcome: {
+      kind: "candidate",
+      summary: "Updated sampler steps.",
+      changes: [{ uid: "ksampler", field_path: "widgets.steps", old: 20, new: 24 }],
+    },
+    candidate: {
+      graph_hash: "candidate-hash-safe",
+      graph: { nodes: [{ id: 1, type: "KSampler" }], links: [] },
+    },
+    progress: { headline: "Ready", completed: 1, total: 1 },
+    provider_payload: { prompt_messages: ["system prompt with private context"] },
+    provider_diagnostics: [{ code: "PROVIDER_TRACE", message: "ProviderError stack trace" }],
+    debugPayload: { response: { raw: true } },
+    audit_ref: { path: "/real/ComfyUI/out/editor_sessions/sess/turns/0003/audit.json" },
+    change_details: {
+      batch_turns: [{ message: "raw diagnostic reasoning", field_changes: [] }],
+    },
+  };
+
+  assert.throws(
+    () => assertNormalProjectionHasNoForbiddenFieldOrValue(rawResponseDetail, {
+      projectionName: PROJECTION_SURFACES.NORMAL_RESPONSE_DETAIL,
+    }),
+    /forbidden internal key/,
+  );
+
+  const normalResponseDetail = contaminatedResponseDetailProjection(rawResponseDetail);
+  assert.deepEqual(normalResponseDetail, {
+    turn: {
+      turnId: "turn-response-detail",
+      sessionId: "sess-response-detail",
+      status: "candidate",
+    },
+    outcome: {
+      kind: "candidate",
+      summary: "Updated sampler steps.",
+    },
+    changes: [{ uid: "ksampler", field_path: "widgets.steps", old: 20, new: 24 }],
+    progress: { headline: "Ready", completed: 1, total: 1 },
+    candidate: { graphHash: "candidate-hash-safe" },
+  });
+  assertNormalProjectionHasNoForbiddenFieldOrValue(normalResponseDetail, {
+    projectionName: PROJECTION_SURFACES.NORMAL_RESPONSE_DETAIL,
+  });
+  assert.equal(Object.isFrozen(normalResponseDetail), true);
+  assert.equal(Object.isFrozen(normalResponseDetail.changes), true);
+  assertNotSameNestedReference(
+    normalResponseDetail.changes,
+    rawResponseDetail.outcome.changes,
+    "ResponseDetail changes projection must be cloned",
+  );
+  assertNotSameNestedReference(
+    normalResponseDetail.progress,
+    rawResponseDetail.progress,
+    "ResponseDetail progress projection must be cloned",
+  );
+
+  rawResponseDetail.outcome.changes[0].new = 99;
+  rawResponseDetail.progress.headline = "mutated after projection";
+  assert.equal(normalResponseDetail.changes[0].new, 24);
+  assert.equal(normalResponseDetail.progress.headline, "Ready");
+  assert.equal("provider_payload" in normalResponseDetail, false);
+  assert.equal("debugPayload" in normalResponseDetail, false);
+  assert.equal("audit_ref" in normalResponseDetail, false);
+});
+
+test("projection fixtures keep ExecutionEvent diagnostics explicit and cloned", () => {
+  const rawExecutionEvent = {
+    session_id: "sess-exec-event",
+    turn_id: "turn-exec-event",
+    status: "done",
+    message: "Candidate ready.",
+    report: {
+      executor: {
+        reasoning: [
+          { kind: "plan", text: "Inspect current graph before editing." },
+          { kind: "apply", text: "Changed sampler steps." },
+        ],
+      },
+      provider_diagnostics: [
+        { code: "PROVIDER_RETRY", message: "ProviderError stack trace from retry" },
+      ],
+    },
+    debugPayload: {
+      provider_payload: { model: "internal-model", prompt_messages: ["raw model prompt"] },
+    },
+    change_details: {
+      batch_turns: [
+        {
+          turn_number: 0,
+          message: "raw diagnostic reasoning for turn 0",
+          diagnostics: [{ code: "ENGINE_DIAG", message: "raw diagnostic" }],
+        },
+      ],
+    },
+  };
+
+  const explicitDiagnosticEvent = contaminatedExecutionEventProjection(rawExecutionEvent);
+  assert.deepEqual(explicitDiagnosticEvent.reasoning, rawExecutionEvent.report.executor.reasoning);
+  assert.deepEqual(
+    explicitDiagnosticEvent.providerDiagnostics,
+    rawExecutionEvent.report.provider_diagnostics,
+  );
+  assert.deepEqual(
+    explicitDiagnosticEvent.batchTurns,
+    rawExecutionEvent.change_details.batch_turns,
+  );
+  assert.deepEqual(explicitDiagnosticEvent.debugPayload, rawExecutionEvent.debugPayload);
+  assertNotSameNestedReference(
+    explicitDiagnosticEvent.reasoning,
+    rawExecutionEvent.report.executor.reasoning,
+    "ExecutionEvent reasoning must be cloned",
+  );
+  assertNotSameNestedReference(
+    explicitDiagnosticEvent.providerDiagnostics,
+    rawExecutionEvent.report.provider_diagnostics,
+    "ExecutionEvent provider diagnostics must be cloned",
+  );
+  assertNotSameNestedReference(
+    explicitDiagnosticEvent.batchTurns,
+    rawExecutionEvent.change_details.batch_turns,
+    "ExecutionEvent batch_turns must be cloned",
+  );
+  assertNotSameNestedReference(
+    explicitDiagnosticEvent.debugPayload,
+    rawExecutionEvent.debugPayload,
+    "ExecutionEvent debug payload must be cloned",
+  );
+
+  rawExecutionEvent.report.executor.reasoning[0].text = "mutated reasoning";
+  rawExecutionEvent.report.provider_diagnostics[0].message = "mutated provider diagnostic";
+  rawExecutionEvent.change_details.batch_turns[0].message = "mutated batch turn";
+  rawExecutionEvent.debugPayload.provider_payload.model = "mutated-model";
+  assert.equal(explicitDiagnosticEvent.reasoning[0].text, "Inspect current graph before editing.");
+  assert.equal(explicitDiagnosticEvent.providerDiagnostics[0].message, "ProviderError stack trace from retry");
+  assert.equal(explicitDiagnosticEvent.batchTurns[0].message, "raw diagnostic reasoning for turn 0");
+  assert.equal(explicitDiagnosticEvent.debugPayload.provider_payload.model, "internal-model");
+
+  assert.throws(
+    () => assertNormalProjectionHasNoForbiddenFieldOrValue(explicitDiagnosticEvent, {
+      projectionName: PROJECTION_SURFACES.NORMAL_RESPONSE_DETAIL,
+    }),
+    /forbidden internal key/,
+  );
+});
+
+test("projection fixtures keep AuditArtifact refs explicit and cloned", () => {
+  const rawAuditArtifact = {
+    session_id: "sess-audit-artifact",
+    turn_id: "turn-audit-artifact",
+    text: "Candidate ready.",
+    audit_ref: {
+      path: "/real/ComfyUI/out/editor_sessions/sess-audit-artifact/turns/0004/audit.json",
+      bundle_path: "/real/ComfyUI/out/editor_sessions/sess-audit-artifact/bundle.zip",
+    },
+    artifacts: [
+      { kind: "response", path: "turns/0004/response.json" },
+      { kind: "debug", path: "turns/0004/debug.json" },
+    ],
+    debugPayload: { raw: { stack: "Traceback with internal frame" } },
+  };
+
+  assert.throws(
+    () => assertNormalProjectionHasNoForbiddenFieldOrValue(rawAuditArtifact, {
+      projectionName: PROJECTION_SURFACES.NORMAL_RESPONSE_DETAIL,
+    }),
+    /forbidden internal key|forbidden diagnostic value/,
+  );
+
+  const explicitAuditArtifact = contaminatedAuditArtifactProjection(rawAuditArtifact);
+  assert.deepEqual(explicitAuditArtifact, {
+    session_id: "sess-audit-artifact",
+    turn_id: "turn-audit-artifact",
+    auditRef: {
+      path: "/real/ComfyUI/out/editor_sessions/sess-audit-artifact/turns/0004/audit.json",
+      bundle_path: "/real/ComfyUI/out/editor_sessions/sess-audit-artifact/bundle.zip",
+    },
+    artifactRefs: [
+      { kind: "response", path: "turns/0004/response.json" },
+      { kind: "debug", path: "turns/0004/debug.json" },
+    ],
+  });
+  assertNotSameNestedReference(
+    explicitAuditArtifact.auditRef,
+    rawAuditArtifact.audit_ref,
+    "AuditArtifact audit_ref must be cloned",
+  );
+  assertNotSameNestedReference(
+    explicitAuditArtifact.artifactRefs,
+    rawAuditArtifact.artifacts,
+    "AuditArtifact artifact refs must be cloned",
+  );
+
+  rawAuditArtifact.audit_ref.path = "mutated-audit.json";
+  rawAuditArtifact.artifacts[0].path = "mutated-response.json";
+  assert.equal(
+    explicitAuditArtifact.auditRef.path,
+    "/real/ComfyUI/out/editor_sessions/sess-audit-artifact/turns/0004/audit.json",
+  );
+  assert.equal(explicitAuditArtifact.artifactRefs[0].path, "turns/0004/response.json");
+});
+
+test("rehydrate projection input feeds chatMessages safe mirror plus explicit diagnostics/audit compartments", () => {
+  const rehydrateProjectionInput = {
+    ok: true,
+    exists: true,
+    session_id: "sess-rehydrate-contaminated",
+    session_path: "/real/ComfyUI/out/editor_sessions/sess-rehydrate-contaminated",
+    messages: [
+      {
+        role: "user",
+        text: "Set sampler steps.",
+        session_id: "sess-rehydrate-contaminated",
+        turn_id: "0001",
+      },
+      {
+        role: "agent",
+        text: "Candidate ready.",
+        session_id: "sess-rehydrate-contaminated",
+        turn_id: "0001",
+        outcome: {
+          kind: "candidate",
+          summary: "Updated sampler steps.",
+          changes: [{ uid: "ksampler", field_path: "widgets.steps", old: 20, new: 24 }],
+        },
+        progress: { headline: "Ready" },
+        report: {
+          executor: {
+            reasoning: [{ kind: "inspect", text: "Inspected graph before editing." }],
+          },
+          provider_diagnostics: [
+            { code: "PROVIDER_RETRY", message: "ProviderError stack trace from retry" },
+          ],
+        },
+        audit_ref: {
+          path: "/real/ComfyUI/out/editor_sessions/sess-rehydrate-contaminated/turns/0001/audit.json",
+        },
+        debugPayload: {
+          provider_payload: { prompt_messages: ["system prompt"], raw_response: "debug payload" },
+        },
+        change_details: {
+          batch_turns: [
+            {
+              turn_number: 0,
+              message: "raw diagnostic reasoning",
+              diagnostics: [{ code: "ENGINE_DIAG", message: "raw diagnostic" }],
+            },
+          ],
+        },
+      },
+    ],
+  };
+
+  const split = splitContaminatedRehydrateProjectionInput(rehydrateProjectionInput);
+
+  assertRehydratePayloadIsProjectionInputOnly(rehydrateProjectionInput, split);
+  assert.equal(split.normalTranscriptMessage.length, 2);
+  assert.equal(split.normalResponseDetail.length, 2);
+  assert.equal(split.explicitDiagnosticEvent.length, 1);
+  assert.equal(split.explicitAuditArtifact.length, 1);
+
+  assert.deepEqual(split.normalTranscriptMessage[1], {
+    role: "agent",
+    text: "Candidate ready.",
+    turn_id: "0001",
+    session_id: "sess-rehydrate-contaminated",
+    progress: { headline: "Ready" },
+  });
+  assertNormalProjectionHasNoForbiddenFieldOrValue(split.normalTranscriptMessage, {
+    projectionName: PROJECTION_SURFACES.NORMAL_TRANSCRIPT_MESSAGE,
+  });
+  assertNormalProjectionHasNoForbiddenFieldOrValue(split.normalResponseDetail, {
+    projectionName: PROJECTION_SURFACES.NORMAL_RESPONSE_DETAIL,
+  });
+
+  const explicitDiagnosticEvent = split.explicitDiagnosticEvent[0];
+  assert.deepEqual(explicitDiagnosticEvent.reasoning, [
+    { kind: "inspect", text: "Inspected graph before editing." },
+  ]);
+  assert.deepEqual(explicitDiagnosticEvent.providerDiagnostics, [
+    { code: "PROVIDER_RETRY", message: "ProviderError stack trace from retry" },
+  ]);
+  assert.deepEqual(explicitDiagnosticEvent.debugPayload, {
+    provider_payload: { prompt_messages: ["system prompt"], raw_response: "debug payload" },
+  });
+  assert.deepEqual(explicitDiagnosticEvent.batchTurns, [
+    {
+      turn_number: 0,
+      message: "raw diagnostic reasoning",
+      diagnostics: [{ code: "ENGINE_DIAG", message: "raw diagnostic" }],
+    },
+  ]);
+  assert.deepEqual(split.explicitAuditArtifact[0].auditRef, {
+    path: "/real/ComfyUI/out/editor_sessions/sess-rehydrate-contaminated/turns/0001/audit.json",
+  });
+
+  rehydrateProjectionInput.messages[1].report.executor.reasoning[0].text = "mutated reasoning";
+  rehydrateProjectionInput.messages[1].debugPayload.provider_payload.raw_response = "mutated debug";
+  rehydrateProjectionInput.messages[1].change_details.batch_turns[0].message = "mutated batch";
+  rehydrateProjectionInput.messages[1].audit_ref.path = "mutated-audit.json";
+  assert.equal(explicitDiagnosticEvent.reasoning[0].text, "Inspected graph before editing.");
+  assert.equal(explicitDiagnosticEvent.debugPayload.provider_payload.raw_response, "debug payload");
+  assert.equal(explicitDiagnosticEvent.batchTurns[0].message, "raw diagnostic reasoning");
+  assert.equal(
+    split.explicitAuditArtifact[0].auditRef.path,
+    "/real/ComfyUI/out/editor_sessions/sess-rehydrate-contaminated/turns/0001/audit.json",
+  );
+});
+
+test("ResponseDetail excludes AuditArtifact and ExecutionEvent data retained for explicit compatibility surfaces", () => {
+  const panel = {
+    state: {
+      responseDetails: {
+        "0001": {
+          turn: { turnId: "0001", sessionId: "sess-explicit", status: "candidate" },
+          outcome: { kind: "candidate", summary: "Candidate ready." },
+          changes: [{ uid: "ksampler", fieldPath: "widgets.steps", old: 20, new: 24 }],
+          debugPayload: { provider_payload: { prompt_messages: ["hidden prompt"] } },
+          audit_ref: { path: "/tmp/should-not-be-normal.json" },
+          provider_diagnostics: [{ message: "ProviderError stack trace" }],
+        },
+      },
+      executionEvents: [
+        {
+          session_id: "sess-explicit",
+          turn_id: "0001",
+          status: "candidate",
+          message: "Candidate ready.",
+          providerDiagnostics: [{ message: "ProviderError stack trace" }],
+          debugPayload: { provider_payload: { prompt_messages: ["hidden prompt"] } },
+          batchTurns: [
+            {
+              message: "raw diagnostic reasoning",
+              diagnostics: [{ code: "ENGINE_DIAG", message: "raw diagnostic" }],
+            },
+          ],
+        },
+      ],
+      auditArtifacts: [
+        {
+          session_id: "sess-explicit",
+          turn_id: "0001",
+          auditRef: { path: "/tmp/audit-explicit.json", sha256: "abc123" },
+          artifactRefs: [{ path: "turns/0001/response.json" }],
+        },
+      ],
+    },
+  };
+
+  const normalDetails = selectResponseDetails(panel);
+  assertNormalProjectionHasNoForbiddenFieldOrValue(normalDetails, {
+    projectionName: PROJECTION_SURFACES.NORMAL_RESPONSE_DETAIL,
+  });
+  assert.equal("debugPayload" in normalDetails["0001"], false);
+  assert.equal("audit_ref" in normalDetails["0001"], false);
+  assert.equal("provider_diagnostics" in normalDetails["0001"], false);
+
+  const explicitEvents = selectExecutionEvents(panel);
+  assert.equal(explicitEvents[0].debugPayload.provider_payload.prompt_messages[0], "hidden prompt");
+  assert.equal(explicitEvents[0].providerDiagnostics[0].message, "ProviderError stack trace");
+  assert.equal(explicitEvents[0].batchTurns[0].message, "raw diagnostic reasoning");
+
+  const explicitArtifacts = selectAuditArtifacts(panel);
+  assert.equal(explicitArtifacts[0].auditRef.path, "/tmp/audit-explicit.json");
+  assert.equal(explicitArtifacts[0].artifactRefs[0].path, "turns/0001/response.json");
 });
 
 test("session_bundle_response.json — structural contract", () => {

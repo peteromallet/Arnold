@@ -75,6 +75,26 @@ function clonePlainData(value) {
   return value;
 }
 
+function freezePlainData(value) {
+  if (Array.isArray(value)) {
+    for (const entry of value) {
+      freezePlainData(entry);
+    }
+    return Object.freeze(value);
+  }
+  if (isObject(value)) {
+    for (const entry of Object.values(value)) {
+      freezePlainData(entry);
+    }
+    return Object.freeze(value);
+  }
+  return value;
+}
+
+function frozenPlainClone(value) {
+  return freezePlainData(clonePlainData(value));
+}
+
 function compactObject(value) {
   const compact = {};
   for (const [key, entry] of Object.entries(value)) {
@@ -83,6 +103,10 @@ function compactObject(value) {
     }
   }
   return compact;
+}
+
+function compactFrozenObject(value) {
+  return freezePlainData(compactObject(value));
 }
 
 function asStringOrNumber(value) {
@@ -940,6 +964,449 @@ export function readFieldChanges(value, options) {
     }
   }
   return normalizeIfNeeded(value, options).fieldChanges;
+}
+
+function projectionSource(value) {
+  return value?.[NORMALIZED_RESPONSE_MARKER] === true ? value.raw || value : value;
+}
+
+function asSafeOutcomeSummary(raw, outcome = null) {
+  return asString(outcome?.summary)
+    || asString(outcome?.message)
+    || asString(outcome?.reason)
+    || asString(raw?.changeDetails?.done_summary)
+    || asString(raw?.change_details?.done_summary)
+    || asString(raw?.message)
+    || asString(raw?.reply)
+    || asString(raw?.text);
+}
+
+function projectProgress(raw) {
+  return isObject(raw?.progress) ? frozenPlainClone(raw.progress) : null;
+}
+
+function projectTranscriptMessageObject(raw) {
+  if (!isObject(raw)) {
+    return null;
+  }
+  const turnIdentity = isObject(raw.turnIdentity)
+    ? raw.turnIdentity
+    : isObject(raw.turn_identity) ? raw.turn_identity : null;
+  return compactFrozenObject({
+    role: asString(raw.role) || asString(turnIdentity?.role),
+    text: asString(raw.text) || asString(raw.message) || asString(raw.reply),
+    turn_id: asString(raw.turn_id) || asString(raw.turnId)
+      || asString(turnIdentity?.turn_id) || asString(turnIdentity?.turnId),
+    session_id: asString(raw.session_id) || asString(raw.sessionId)
+      || asString(turnIdentity?.session_id) || asString(turnIdentity?.sessionId),
+    local_id: asString(raw.local_id) || asString(raw.localId),
+    timestamp: asString(raw.timestamp),
+    source: asString(raw.source),
+    pending_response: raw.pending_response === true ? true : undefined,
+    optimistic: raw.optimistic === true ? true : undefined,
+    synthetic: raw.synthetic === true ? true : undefined,
+    submit_epoch: Number.isFinite(raw.submit_epoch) ? raw.submit_epoch : undefined,
+    progress: projectProgress(raw),
+    progress_label: asString(raw.progress_label) || asString(raw.progressLabel),
+  });
+}
+
+/**
+ * Project raw or rehydrated message data into normal renderer-safe transcript
+ * state. This deliberately excludes debug, audit, raw payload, provider, and
+ * batch diagnostics; those belong to explicit affordance selectors below.
+ */
+export function projectTranscriptMessage(value) {
+  return projectTranscriptMessageObject(projectionSource(value));
+}
+
+function responseDetailChanges(raw) {
+  if (Array.isArray(raw?.outcome?.changes)) {
+    return frozenPlainClone(raw.outcome.changes);
+  }
+  if (Array.isArray(raw?.changes)) {
+    return frozenPlainClone(raw.changes);
+  }
+  if (isObject(raw?.changes)) {
+    const fieldChanges = raw.changes;
+    const all = Array.isArray(fieldChanges.all)
+      ? fieldChanges.all
+      : [
+          ...(Array.isArray(fieldChanges.directChanges) ? fieldChanges.directChanges : []),
+          ...(Array.isArray(fieldChanges.outcomeChanges) ? fieldChanges.outcomeChanges : []),
+          ...(Array.isArray(fieldChanges.legacyChanges) ? fieldChanges.legacyChanges : []),
+          ...(Array.isArray(fieldChanges.batchTurnChanges)
+            ? fieldChanges.batchTurnChanges.flatMap((turn) => Array.isArray(turn?.changes) ? turn.changes : [])
+            : []),
+        ];
+    return frozenPlainClone(all);
+  }
+  const fieldChanges = readRawFieldChanges(raw);
+  return frozenPlainClone(fieldChanges.all);
+}
+
+function safeCandidateReport(rawReport) {
+  if (!isObject(rawReport)) {
+    return null;
+  }
+  const contentEdits = rawReport.change?.content_edits;
+  const safeContentEdits = {};
+  if (isObject(contentEdits)) {
+    for (const key of ["preserved", "edited", "new_auto_placed", "removed", "stripped_helpers"]) {
+      if (Array.isArray(contentEdits[key])) {
+        safeContentEdits[key] = contentEdits[key].map(asStringOrNumber).filter(Boolean);
+      }
+    }
+    if (Array.isArray(contentEdits.removed_named)) {
+      safeContentEdits.removed_named = contentEdits.removed_named
+        .map((item) => isObject(item) ? compactObject({
+          uid: asStringOrNumber(item.uid),
+          class_type: asString(item.class_type) || asString(item.classType),
+        }) : null)
+        .filter(Boolean);
+    }
+    if (Array.isArray(contentEdits.virtual_wires_degraded)) {
+      safeContentEdits.virtual_wires_degraded = contentEdits.virtual_wires_degraded
+        .map((item) => isObject(item) ? compactObject({
+          uid: asStringOrNumber(item.uid),
+          node_id: asStringOrNumber(item.node_id) || asStringOrNumber(item.nodeId),
+        }) : null)
+        .filter(Boolean);
+    }
+  }
+  const change = {};
+  if (Object.keys(safeContentEdits).length) {
+    change.content_edits = safeContentEdits;
+  }
+  if (Array.isArray(rawReport.change?.lowered)) {
+    change.lowered = rawReport.change.lowered
+      .map((item) => isObject(item) ? compactObject({
+        uid: asStringOrNumber(item.uid) || asStringOrNumber(item.source_node_uid),
+        lowered_native_count:
+          Number.isFinite(item.lowered_native_count) ? item.lowered_native_count : undefined,
+      }) : null)
+      .filter(Boolean);
+  }
+  return Object.keys(change).length ? { change } : null;
+}
+
+/**
+ * Project raw response/message data into normal expanded-bubble detail state.
+ * The projection keeps user-facing summaries, safe progress, candidate hashes,
+ * and field-change summaries only; explicit debug/audit/report payloads are not
+ * part of this normal surface.
+ */
+export function projectResponseDetail(value) {
+  const source = projectionSource(value);
+  if (!isObject(source)) {
+    return null;
+  }
+  const outcome = isObject(source.outcome) ? source.outcome : null;
+  const candidate = isObject(source.candidate) ? source.candidate : null;
+  const candidateGraphHash =
+    asString(candidate?.graphHash)
+    || asString(candidate?.graph_hash)
+    || asString(source.candidateGraphHash)
+    || asString(source.candidate_graph_hash)
+    || (isObject(candidate?.graph) || isObject(source.candidateGraph) || isObject(source.candidate_graph) || isObject(source.graph)
+      ? "present"
+      : null);
+  return compactFrozenObject({
+    turn: compactObject({
+      turnId: asString(source.turnId) || asString(source.turn_id),
+      sessionId: asString(source.sessionId) || asString(source.session_id),
+      status: asString(source.status) || asString(outcome?.kind),
+    }),
+    outcome: compactObject({
+      kind: asString(outcome?.kind),
+      summary: asSafeOutcomeSummary(source, outcome),
+      question: asString(outcome?.question),
+    }),
+    changes: responseDetailChanges(source),
+    progress: projectProgress(source),
+    eligibility: isObject(source.eligibility) ? frozenPlainClone(source.eligibility)
+      : isObject(source.applyEligibility) ? frozenPlainClone(source.applyEligibility)
+        : isObject(source.apply_eligibility) ? frozenPlainClone(source.apply_eligibility)
+          : null,
+    candidate: candidateGraphHash ? compactObject({
+      graphHash: candidateGraphHash,
+      structuralGraphHash:
+        asString(candidate?.structuralGraphHash) || asString(candidate?.structural_graph_hash),
+      baselineGraphHash:
+        asString(candidate?.baselineGraphHash) || asString(candidate?.baseline_graph_hash),
+      report: safeCandidateReport(source.report),
+    }) : null,
+  });
+}
+
+function diagnosticReasoning(raw) {
+  if (Array.isArray(raw?.report?.executor?.reasoning)) {
+    return raw.report.executor.reasoning;
+  }
+  if (Array.isArray(raw?.reasoning)) {
+    return raw.reasoning;
+  }
+  return [];
+}
+
+function providerDiagnostics(raw) {
+  if (raw?.providerDiagnostics !== undefined) {
+    return raw.providerDiagnostics;
+  }
+  if (raw?.provider_diagnostics !== undefined) {
+    return raw.provider_diagnostics;
+  }
+  if (raw?.report?.providerDiagnostics !== undefined) {
+    return raw.report.providerDiagnostics;
+  }
+  if (raw?.report?.provider_diagnostics !== undefined) {
+    return raw.report.provider_diagnostics;
+  }
+  return [];
+}
+
+function debugPayload(raw) {
+  return raw?.debugPayload || raw?.debug_payload || raw?.debug || null;
+}
+
+function batchTurns(raw) {
+  return raw?.change_details?.batch_turns
+    || raw?.changeDetails?.batchTurns
+    || raw?.batch_turns
+    || raw?.batchTurns
+    || [];
+}
+
+/**
+ * Project explicit diagnostic execution data. This surface may include
+ * reasoning, provider diagnostics, debug payloads, and batch_turns because it is
+ * consumed only by opt-in debug/report affordances.
+ */
+export function projectExecutionEvent(value) {
+  const source = projectionSource(value);
+  if (!isObject(source)) {
+    return null;
+  }
+  const outcome = isObject(source.outcome) ? source.outcome : null;
+  return compactFrozenObject({
+    session_id: asString(source.session_id) || asString(source.sessionId),
+    turn_id: asString(source.turn_id) || asString(source.turnId),
+    status: asString(source.status) || asString(source.outcome?.kind),
+    task: asString(source.task) || asString(source.prompt) || asString(source.query),
+    message: asString(source.message) || asString(source.text) || asString(source.reply),
+    outcome: outcome ? frozenPlainClone(outcome) : null,
+    failure_kind: asString(source.failure_kind) || asString(source.failureKind) || asString(outcome?.failure_kind),
+    failure_stage: asString(source.failure_stage) || asString(source.failureStage) || asString(outcome?.stage),
+    done_summary: asString(source.done_summary) || asString(source.doneSummary),
+    change_details: isObject(source.change_details) ? frozenPlainClone(source.change_details)
+      : isObject(source.changeDetails) ? frozenPlainClone(source.changeDetails)
+        : null,
+    field_changes: Array.isArray(source.field_changes) ? frozenPlainClone(source.field_changes)
+      : Array.isArray(source.fieldChanges) ? frozenPlainClone(source.fieldChanges)
+        : null,
+    reasoning: frozenPlainClone(diagnosticReasoning(source)),
+    providerDiagnostics: frozenPlainClone(providerDiagnostics(source)),
+    debugPayload: debugPayload(source) ? frozenPlainClone(debugPayload(source)) : null,
+    batchTurns: frozenPlainClone(batchTurns(source)),
+  });
+}
+
+/**
+ * Project explicit audit artifact references. Audit paths and artifact paths
+ * are intentionally excluded from normal transcript/detail projections.
+ */
+export function projectAuditArtifact(value) {
+  const source = projectionSource(value);
+  if (!isObject(source)) {
+    return null;
+  }
+  const auditRef = source.auditRef || source.audit_ref || null;
+  const artifactRefs = source.artifactRefs || source.artifact_refs || source.artifacts || [];
+  return compactFrozenObject({
+    session_id: asString(source.session_id) || asString(source.sessionId),
+    turn_id: asString(source.turn_id) || asString(source.turnId),
+    auditRef: auditRef ? frozenPlainClone(auditRef) : null,
+    artifactRefs: frozenPlainClone(Array.isArray(artifactRefs) ? artifactRefs : []),
+  });
+}
+
+function sourceHasDiagnosticEvent(source) {
+  return Boolean(
+    source?.change_details?.batch_turns
+    || source?.changeDetails?.batchTurns
+    || source?.batch_turns
+    || source?.batchTurns
+    || source?.debugPayload
+    || source?.debug_payload
+    || source?.debug
+    || source?.providerDiagnostics
+    || source?.provider_diagnostics
+    || source?.report?.providerDiagnostics
+    || source?.report?.provider_diagnostics
+    || source?.report?.executor?.reasoning
+    || source?.reasoning,
+  );
+}
+
+function sourceHasAuditArtifact(source) {
+  return Boolean(
+    source?.auditRef
+    || source?.audit_ref
+    || source?.artifactRefs
+    || source?.artifact_refs
+    || source?.artifacts,
+  );
+}
+
+export function splitRehydrateProjectionInput(raw) {
+  const messages = Array.isArray(raw?.messages) ? raw.messages : [];
+  return freezePlainData({
+    normalTranscriptMessage: messages.map(projectTranscriptMessage).filter(Boolean),
+    normalResponseDetail: messages.map(projectResponseDetail).filter(Boolean),
+    explicitDiagnosticEvent: messages
+      .filter(sourceHasDiagnosticEvent)
+      .map(projectExecutionEvent)
+      .filter(Boolean),
+    explicitAuditArtifact: messages
+      .filter(sourceHasAuditArtifact)
+      .map(projectAuditArtifact)
+      .filter(Boolean),
+  });
+}
+
+function transcriptMessageAlreadyPresent(messages, synthetic) {
+  if (!synthetic || !Array.isArray(messages)) {
+    return false;
+  }
+  return messages.some((message) => (
+    message?.role === synthetic.role
+    && typeof message?.text === "string"
+    && message.text === synthetic.text
+    && (!synthetic.turn_id || message.turn_id === synthetic.turn_id)
+  ));
+}
+
+function stateFromSource(source) {
+  return source?.state && isObject(source.state) ? source.state : source;
+}
+
+export function selectSyntheticTranscriptMessage(source) {
+  const state = stateFromSource(source);
+  if (!isObject(state?.syntheticAgentMessage)) {
+    return null;
+  }
+  const synthetic = projectTranscriptMessage(state.syntheticAgentMessage);
+  const existing = Array.isArray(state.transcriptMessages) && state.transcriptMessages.length > 0
+    ? state.transcriptMessages
+    : Array.isArray(state.chatMessages) ? state.chatMessages : [];
+  return transcriptMessageAlreadyPresent(existing, synthetic) ? null : synthetic;
+}
+
+export function selectTranscriptMessages(source) {
+  const state = stateFromSource(source);
+  const base = Array.isArray(state?.transcriptMessages) && state.transcriptMessages.length > 0
+    ? state.transcriptMessages
+    : Array.isArray(state?.chatMessages) ? state.chatMessages : Array.isArray(source) ? source : [];
+  const projected = base.map(projectTranscriptMessage).filter(Boolean);
+  const synthetic = selectSyntheticTranscriptMessage(state);
+  if (synthetic) {
+    projected.push(synthetic);
+  }
+  return freezePlainData(projected);
+}
+
+export function selectResponseDetails(source) {
+  const state = stateFromSource(source);
+  const details = state?.responseDetails;
+  if (Array.isArray(details)) {
+    return freezePlainData(details.map(projectResponseDetail).filter(Boolean));
+  }
+  if (isObject(details)) {
+    const projected = {};
+    for (const [key, detail] of Object.entries(details)) {
+      const projection = projectResponseDetail(detail);
+      if (projection) {
+        projected[key] = projection;
+      }
+    }
+    return freezePlainData(projected);
+  }
+  return freezePlainData({});
+}
+
+export function selectExecutionEvents(source) {
+  const state = stateFromSource(source);
+  const events = Array.isArray(state?.executionEvents) ? state.executionEvents : Array.isArray(source) ? source : [];
+  return freezePlainData(events.map(projectExecutionEvent).filter(Boolean));
+}
+
+export function selectAuditArtifacts(source) {
+  const state = stateFromSource(source);
+  const artifacts = Array.isArray(state?.auditArtifacts) ? state.auditArtifacts : Array.isArray(source) ? source : [];
+  return freezePlainData(artifacts.map(projectAuditArtifact).filter(Boolean));
+}
+
+function compactReportText(text, maxLen = 240) {
+  if (typeof text !== "string") {
+    return null;
+  }
+  const compact = text.replace(/\s+/g, " ").trim();
+  if (!compact) {
+    return null;
+  }
+  return compact.length > maxLen ? `${compact.slice(0, maxLen - 3)}...` : compact;
+}
+
+function statusFromOutcome(outcome) {
+  const kind = isObject(outcome) ? asString(outcome.kind) : null;
+  if (kind === "clarification" || kind === "clarify") {
+    return "clarify";
+  }
+  if (kind === "noop" || kind === "candidate" || kind === "error") {
+    return kind;
+  }
+  return kind || "done";
+}
+
+export function projectDiagnosticTurnSummary(entry, index = 0) {
+  if (!isObject(entry)) {
+    return null;
+  }
+  const outcome = isObject(entry.outcome) ? entry.outcome : null;
+  return compactFrozenObject({
+    label:
+      asString(entry.turn_id)
+      || (Number.isFinite(entry.turn_number) ? `turn ${entry.turn_number}` : `entry ${index + 1}`),
+    status: compactReportText(asString(entry.status) || asString(entry.phase) || statusFromOutcome(outcome) || "unknown", 80),
+    task: compactReportText(asString(entry.task) || asString(entry.prompt) || asString(entry.query)),
+    outcome: compactReportText(
+      asString(entry.done_summary)
+      || asString(outcome?.reason)
+      || asString(outcome?.clarification?.message)
+      || asString(entry.message)
+      || asString(outcome?.kind)
+      || asString(entry.exit_mode),
+    ),
+    failure: compactReportText(
+      asString(entry.failure_kind)
+      || asString(entry.failure?.message)
+      || asString(entry.failure?.error),
+    ),
+    changes: Array.isArray(entry.field_changes) ? frozenPlainClone(entry.field_changes)
+      : Array.isArray(entry.changes) ? frozenPlainClone(entry.changes)
+        : null,
+    reasoning: Array.isArray(entry.reasoning) ? frozenPlainClone(entry.reasoning) : null,
+  });
+}
+
+export function selectDiagnosticTurnSummaries(source, limit = 5) {
+  const state = stateFromSource(source);
+  let turns = Array.isArray(state?.executionEvents) && state.executionEvents.length
+    ? state.executionEvents
+    : Array.isArray(state?.turns) ? state.turns : [];
+  return freezePlainData(
+    turns.slice(0, limit).map(projectDiagnosticTurnSummary).filter(Boolean),
+  );
 }
 
 export function readUserFailure(value, options) {

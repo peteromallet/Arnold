@@ -6,6 +6,10 @@ import {
   createAgentEditState,
   transition,
 } from "../../vibecomfy/comfy_nodes/web/agent_edit_lifecycle.js";
+import {
+  assertNormalProjectionHasNoForbiddenFieldOrValue,
+  assertRehydratePayloadIsProjectionInputOnly,
+} from "./projection_boundary_helpers.mjs";
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -254,11 +258,249 @@ test("Canonical rehydrate reconciles snake_case messages against camelCase optim
     persistSession: "sess-canonical-reconcile",
   });
   assert.equal(panel.state.chatMessages.length, 2);
-  assert.deepEqual(panel.state.chatMessages, canonicalMessages);
+  assert.deepEqual(panel.state.chatMessages, [
+    {
+      role: "user",
+      text: "make the prompt brighter",
+      turn_id: "turn-canonical-reconcile",
+      session_id: "sess-canonical-reconcile",
+    },
+    {
+      role: "agent",
+      text: "Candidate ready for review.",
+      turn_id: "turn-canonical-reconcile",
+      session_id: "sess-canonical-reconcile",
+    },
+  ]);
   assert.equal(
     panel.state.chatMessages.some((message) => message.optimistic || message.pending_response),
     false,
     "canonical durable messages must replace optimistic entries with matching TurnIdentity",
+  );
+});
+
+test("CHAT_REHYDRATE_SUCCESS keeps chatMessages as a safe transcript compatibility mirror and splits raw diagnostics", () => {
+  const panel = makePanel({
+    sessionId: "sess-contaminated-rehydrate",
+    chatRehydrateEpoch: 4,
+    turns: [],
+  });
+  const rawMessages = [
+    {
+      role: "user",
+      text: "show me the current workflow",
+      turn_id: "turn-contaminated",
+    },
+    {
+      role: "agent",
+      text: "The workflow already matches the request.",
+      turn_id: "turn-contaminated",
+      outcome: { kind: "noop", reason: "No edits applied." },
+      report: {
+        provider_diagnostics: {
+          message: "ProviderError raw diagnostic must stay explicit",
+          artifact_path: "/real/ComfyUI/out/editor_sessions/sess-contaminated-rehydrate/turns/0001/debug.json",
+        },
+      },
+      debug_payload: {
+        model_prompt: "model prompt with token budget and remaining batches",
+        raw_path: "/real/ComfyUI/out/editor_sessions/sess-contaminated-rehydrate/turns/0001/response.json",
+      },
+      audit_ref: {
+        path: "/real/ComfyUI/out/editor_sessions/sess-contaminated-rehydrate/turns/0001/audit.json",
+      },
+      change_details: {
+        batch_turns: [
+          {
+            turn_number: 0,
+            message: "ProviderError: engine diagnostics remain explicit",
+            diagnostics: [
+              { code: "ProviderError", message: "raw diagnostic", detail: { prompt_messages: ["hidden"] } },
+            ],
+          },
+        ],
+      },
+      batch_turns: [
+        {
+          turn_number: 0,
+          message: "raw diagnostic from batch_turns",
+          exit_mode: "done",
+        },
+      ],
+    },
+  ];
+
+  transition(panel, "CHAT_REHYDRATE_SUCCESS", {
+    requestEpoch: 4,
+    messages: rawMessages,
+    sessionId: "sess-contaminated-rehydrate",
+  });
+
+  assert.equal(panel.state.turns.length, 1, "rehydrating chat must derive the turns compatibility mirror from execution events");
+  assert.equal(panel.state.turns[0].entry_type, "batch");
+  assert.equal(panel.state.turns[0].session_id, "sess-contaminated-rehydrate");
+  assert.equal(panel.state.turns[0].message, "ProviderError: engine diagnostics remain explicit");
+  assert.equal(panel.state.transcriptMessages.length, 2);
+  assert.deepEqual(panel.state.transcriptMessages, panel.state.chatMessages);
+  assert.deepEqual(Object.keys(panel.state.responseDetails), ["turn-contaminated"]);
+  assert.equal(panel.state.responseDetails["turn-contaminated"].outcome.kind, "noop");
+  assert.equal(panel.state.executionEvents.length, 1);
+  assert.equal(
+    panel.state.executionEvents[0].providerDiagnostics.message,
+    "ProviderError raw diagnostic must stay explicit",
+  );
+  assert.equal(
+    panel.state.executionEvents[0].debugPayload.model_prompt,
+    "model prompt with token budget and remaining batches",
+  );
+  assert.equal(panel.state.executionEvents[0].batchTurns.length, 1);
+  assert.equal(panel.state.auditArtifacts.length, 1);
+  assert.equal(
+    panel.state.auditArtifacts[0].auditRef.path,
+    "/real/ComfyUI/out/editor_sessions/sess-contaminated-rehydrate/turns/0001/audit.json",
+  );
+  assert.equal(panel.state.debugDiagnostics.rehydrate.length, 1);
+  assert.equal(
+    panel.state.debugDiagnostics.rehydrate[0].debugPayload.model_prompt,
+    "model prompt with token budget and remaining batches",
+  );
+  assert.equal(
+    panel.state.compartmentIndexes.responseDetailsByTurnId["turn-contaminated"],
+    "turn-contaminated",
+  );
+  assertRehydratePayloadIsProjectionInputOnly(rawMessages[1], {
+    normalTranscriptMessage: panel.state.chatMessages[1],
+  });
+  for (const message of panel.state.chatMessages) {
+    assertNormalProjectionHasNoForbiddenFieldOrValue(message, {
+      projectionName: "normalTranscriptMessage",
+      path: "$.chatMessages[]",
+    });
+  }
+});
+
+test("CHAT_REHYDRATE_FAILURE preserves only safe optimistic transcript fields", () => {
+  const panel = makePanel({
+    sessionId: "sess-local-safe",
+    chatRehydrateEpoch: 5,
+    chatMessages: [
+      {
+        role: "user",
+        text: "local request",
+        optimistic: true,
+        submit_epoch: 15,
+        local_id: "submit-user:15:abc",
+        debugPayload: { model_prompt: "raw model prompt must stay explicit" },
+        audit_ref: { path: "/real/ComfyUI/out/editor_sessions/sess-local-safe/turns/0001/audit.json" },
+      },
+      {
+        role: "agent",
+        text: "",
+        optimistic: true,
+        pending_response: true,
+        executor_pending: true,
+        submit_epoch: 15,
+        local_id: "executor-pending:15",
+        progress: { decide: "active", detail: "safe progress" },
+        change_details: {
+          batch_turns: [{ message: "ProviderError raw diagnostic" }],
+        },
+      },
+      { role: "agent", text: "durable old message", turn_id: "old-turn" },
+    ],
+  });
+
+  transition(panel, "CHAT_REHYDRATE_FAILURE", {
+    requestEpoch: 5,
+    chatError: "network down",
+  });
+
+  assert.equal(panel.state.chatMessages.length, 2);
+  assert.deepEqual(panel.state.transcriptMessages, panel.state.chatMessages);
+  assert.equal(panel.state.chatMessages[0].submit_epoch, 15);
+  assert.equal(panel.state.chatMessages[1].pending_response, true);
+  assert.equal("executor_pending" in panel.state.chatMessages[1], false);
+  for (const message of panel.state.chatMessages) {
+    assertNormalProjectionHasNoForbiddenFieldOrValue(message, {
+      projectionName: "normalTranscriptMessage",
+      path: "$.chatMessages[]",
+    });
+  }
+});
+
+test("synthetic cancel and failure messages use safe transcript fields with raw details in explicit compartments", () => {
+  const cancelPanel = makePanel({
+    sessionId: "sess-cancel-safe",
+    lastSubmit: { task: "cancel me", model: "debug-model" },
+  });
+
+  transition(cancelPanel, "SUBMIT_ABORT", {
+    message: "Request cancelled by the user.",
+  });
+
+  assert.deepEqual(cancelPanel.state.syntheticAgentMessage, {
+    role: "agent",
+    text: "Request cancelled by the user.",
+    session_id: "sess-cancel-safe",
+    local_id: cancelPanel.state.syntheticAgentMessage.local_id,
+    synthetic: true,
+  });
+  assert.match(cancelPanel.state.syntheticAgentMessage.local_id, /^cancelled:/);
+  assertNormalProjectionHasNoForbiddenFieldOrValue(cancelPanel.state.syntheticAgentMessage, {
+    projectionName: "normalTranscriptMessage",
+    path: "$.syntheticAgentMessage",
+  });
+  assert.equal(cancelPanel.state.executionEvents.length, 1);
+  assert.equal(cancelPanel.state.debugDiagnostics.local.length, 1);
+  assert.equal(cancelPanel.state.executionEvents[0].debugPayload.cancelled, true);
+  assert.equal(cancelPanel.state.executionEvents[0].debugPayload.last_submit.task, "cancel me");
+
+  const failurePanel = makePanel({ sessionId: "sess-failure-safe" });
+  const failure = {
+    kind: "ProviderError",
+    message: "ProviderError raw diagnostic should stay explicit",
+    user_facing_message: "The provider failed. Try again.",
+    session_id: "sess-failure-safe",
+    turn_id: "turn-failure-safe",
+    audit_ref: {
+      path: "/real/ComfyUI/out/editor_sessions/sess-failure-safe/turns/0002/audit.json",
+    },
+    agent_failure_context: {
+      issues: [{ detail: "model prompt and provider stack trace" }],
+    },
+  };
+
+  transition(failurePanel, "SUBMIT_NETWORK_FAILURE", {
+    failure,
+    syntheticAgentMessage: {
+      role: "agent",
+      text: failure.user_facing_message,
+      session_id: failure.session_id,
+      turn_id: failure.turn_id,
+      synthetic: true,
+      failure_kind: failure.kind,
+      audit_ref: failure.audit_ref,
+      debugPayload: failure,
+    },
+  });
+
+  assert.deepEqual(failurePanel.state.syntheticAgentMessage, {
+    role: "agent",
+    text: "The provider failed. Try again.",
+    turn_id: "turn-failure-safe",
+    session_id: "sess-failure-safe",
+    synthetic: true,
+  });
+  assertNormalProjectionHasNoForbiddenFieldOrValue(failurePanel.state.syntheticAgentMessage, {
+    projectionName: "normalTranscriptMessage",
+    path: "$.syntheticAgentMessage",
+  });
+  assert.equal(failurePanel.state.executionEvents.length, 1);
+  assert.equal(failurePanel.state.executionEvents[0].debugPayload.agent_failure_context.issues[0].detail, "model prompt and provider stack trace");
+  assert.equal(failurePanel.state.auditArtifacts.length, 1);
+  assert.equal(
+    failurePanel.state.auditArtifacts[0].auditRef.path,
+    "/real/ComfyUI/out/editor_sessions/sess-failure-safe/turns/0002/audit.json",
   );
 });
 

@@ -11,41 +11,10 @@ import {
   readLatestCandidate,
   readTurnIdentity,
 } from "../../vibecomfy/comfy_nodes/web/agent_edit_response_contract.js";
-
-const FORBIDDEN_NORMAL_PATH_KEYS = new Set([
-  "executor_pending",
-  "apply_allowed",
-  "canvas_apply_allowed",
-  "applyAllowed",
-  "canvasApplyAllowed",
-]);
-
-function assertCanonicalNormalPathHasNoLegacyAliases(value, path = "$") {
-  if (!value || typeof value !== "object") {
-    return;
-  }
-  if (Array.isArray(value)) {
-    value.forEach((entry, index) => {
-      assertCanonicalNormalPathHasNoLegacyAliases(entry, `${path}[${index}]`);
-    });
-    return;
-  }
-
-  for (const [key, entry] of Object.entries(value)) {
-    const keyPath = `${path}.${key}`;
-    assert.equal(
-      FORBIDDEN_NORMAL_PATH_KEYS.has(key),
-      false,
-      `canonical normal-path payload must not carry legacy alias ${keyPath}`,
-    );
-    assert.equal(
-      key === "field_changes" && !/\.change_details\.batch_turns\[\d+\]\.field_changes$/.test(keyPath),
-      false,
-      `canonical normal-path payload must not carry old field-change dictionary ${keyPath}`,
-    );
-    assertCanonicalNormalPathHasNoLegacyAliases(entry, keyPath);
-  }
-}
+import {
+  assertCanonicalNormalPathHasNoLegacyAliases,
+  assertNormalDomTextHasNoForbiddenFieldOrValue,
+} from "./projection_boundary_helpers.mjs";
 
 function canonicalizeJsonValue(value) {
   if (Array.isArray(value)) {
@@ -172,6 +141,12 @@ function makeElementRejectFunctionSelectors(node) {
   return () => {
     node.querySelectorAll = originalQuerySelectorAll;
   };
+}
+
+function findBubbleDetailSectionByTitle(root, title) {
+  return root.querySelectorAll(
+    (node) => node.children?.length >= 2 && String(node.children[0]?.textContent || "") === title,
+  )[0] || null;
 }
 
 test("VibeComfy browser canonical hash helper sorts object keys while preserving array order", () => {
@@ -12511,16 +12486,31 @@ test("VibeComfy agent bubble details stay collapsed by default and preserve expa
           report: {
             change: { content_edits: { preserved: ["uid-1"], edited: ["uid-2"], removed_named: [] } },
             recovery: [],
+            provider_diagnostics: {
+              message: "ProviderError: raw diagnostic must stay explicit",
+              artifact_path: "/real/ComfyUI/out/editor_sessions/session-bubble-refresh/turns/0007/debug.json",
+            },
           },
           audit_ref: { path: "/tmp/audit-turn-0007.json", sha256: "def777" },
+          debug_payload: {
+            model_prompt: "model prompt with token budget and remaining batches",
+            raw_path: "/real/ComfyUI/out/editor_sessions/session-bubble-refresh/turns/0007/response.json",
+          },
           batch_turns: [
             {
               session_id: SESSION_ID,
               turn_number: 0,
-              message: "planning edits",
+              message: "planning edits with ProviderError raw diagnostic",
               statement_count: 1,
               batch_ok: true,
               exit_mode: "done",
+              diagnostics: [
+                {
+                  code: "ProviderError",
+                  message: "engine diagnostics stay explicit",
+                  detail: { prompt_messages: ["hidden prompt"] },
+                },
+              ],
             },
           ],
         },
@@ -12544,6 +12534,13 @@ test("VibeComfy agent bubble details stay collapsed by default and preserve expa
                   { uid: "uid-2", field_path: "inputs.filename_prefix", old: "old", new: "new" },
                 ],
               },
+              report: {
+                change: { content_edits: { preserved: ["uid-1"], edited: ["uid-2"], removed_named: [] } },
+                provider_diagnostics: { message: "ProviderError from rehydrate projection input" },
+              },
+              debug_payload: {
+                raw_path: "/real/ComfyUI/out/editor_sessions/session-bubble-refresh/turns/0007/debug.json",
+              },
             },
           ],
         },
@@ -12552,7 +12549,7 @@ test("VibeComfy agent bubble details stay collapsed by default and preserve expa
   });
 
   try {
-    await harness.loadExtension();
+    const extensionModule = await harness.loadExtension();
     await harness.setup();
     await harness.invokeCommand("VibeComfy.AgentEdit");
     await waitFor(() => harness.requests.some((entry) => entry.url === "/vibecomfy/agent/status?route=auto"));
@@ -12562,6 +12559,9 @@ test("VibeComfy agent bubble details stay collapsed by default and preserve expa
 
     const chatRegion = harness.document.getElementById("vibecomfy-agent-panel-region-chat");
     assert.ok(chatRegion, "chat region must exist");
+    assertNormalDomTextHasNoForbiddenFieldOrValue(chatRegion.textContent, {
+      path: "$.collapsedChatRegion",
+    });
 
     let toggles = chatRegion.querySelectorAll(
       (node) => node.dataset?.vibecomfyBubbleDetailToggle === "1"
@@ -12569,6 +12569,29 @@ test("VibeComfy agent bubble details stay collapsed by default and preserve expa
     );
     assert.ok(toggles.length >= 1, "agent bubble must expose a details toggle");
     assert.ok(String(toggles[0].textContent).startsWith("\u25b6"), "details start collapsed");
+    const panel = extensionModule.ensureAgentPanel();
+    panel.state.turns = [
+      {
+        entry_type: "durable",
+        turn_id: "0007",
+        status: "done",
+        message: "ProviderError contaminated compatibility mirror entry",
+        audit_ref: {
+          path: "/real/ComfyUI/out/editor_sessions/session-bubble-refresh/turns/0007/audit.json",
+        },
+        raw_payload: {
+          model_prompt: "system prompt and prompt messages must not reach normal UI",
+        },
+      },
+    ];
+    extensionModule.renderAgentPanel(panel, { dirtySections: ["THREAD"] });
+    assertNormalDomTextHasNoForbiddenFieldOrValue(chatRegion.textContent, {
+      path: "$.collapsedChatRegionAfterContaminatedTurns",
+    });
+    toggles = chatRegion.querySelectorAll(
+      (node) => node.dataset?.vibecomfyBubbleDetailToggle === "1"
+        || (typeof node.onclick === "function" && String(node.textContent || "").startsWith("\u25b6")),
+    );
 
     toggles[0].click();
     assert.ok(String(toggles[0].textContent).startsWith("\u25bc"), "details expand on click");
@@ -12586,6 +12609,17 @@ test("VibeComfy agent bubble details stay collapsed by default and preserve expa
     assert.equal(inlineReject.length, 1, "latest candidate bubble should render one inline Reject control");
     assert.equal(inlineApply[0].disabled, false, "latest candidate bubble Apply should stay enabled");
     assert.equal(inlineReject[0].disabled, false, "latest candidate bubble Reject should stay enabled");
+    for (const title of ["Changes", "Candidate"]) {
+      const section = findBubbleDetailSectionByTitle(chatRegion, title);
+      assert.ok(section, `expanded ${title} section should render`);
+      assertNormalDomTextHasNoForbiddenFieldOrValue(section.textContent, {
+        path: `$.expandedOrdinarySection.${title}`,
+      });
+    }
+    assert.ok(findBubbleDetailSectionByTitle(chatRegion, "Audit"), "expanded Audit affordance remains explicit");
+    assert.ok(findBubbleDetailSectionByTitle(chatRegion, "Debug"), "expanded Debug affordance remains explicit");
+    assert.match(harness.textDump(), /Download Audit Envelope/);
+    assert.match(harness.textDump(), /Report issue/);
 
     await waitFor(() => harness.requests.some((entry) => entry.url === CHAT_URL));
     await waitFor(() => /make the save node cleaner/.test(harness.textDump()));
@@ -12597,6 +12631,13 @@ test("VibeComfy agent bubble details stay collapsed by default and preserve expa
     assert.ok(toggles.some((node) => String(node.textContent || "").startsWith("\u25bc")), "expanded state must survive chat rehydrate");
     assert.match(harness.textDump(), /view response/);
     assert.match(harness.textDump(), /edited: uid-2/);
+    for (const title of ["Turn", "Candidate"]) {
+      const section = findBubbleDetailSectionByTitle(chatRegion, title);
+      assert.ok(section, `rehydrated expanded ${title} section should render`);
+      assertNormalDomTextHasNoForbiddenFieldOrValue(section.textContent, {
+        path: `$.rehydratedExpandedOrdinarySection.${title}`,
+      });
+    }
   } finally {
     await harness.dispose();
   }
@@ -14200,11 +14241,10 @@ test("VibeComfy detail row has overflowWrap containment (T18)", async () => {
   }
 });
 
-test("diagnostic report rebuilds turn history from rehydrated chat and surfaces agent reasoning + engine diagnostics", async () => {
-  // Regression: after a page reload `state.turns` is empty (only `chatMessages`
-  // is rehydrated), so the issue report / coding-agent prompt used to say
-  // "No recent turn records were captured" and dropped the agent's actual
-  // step-by-step reasoning — exactly the data needed to diagnose a failure.
+test("diagnostic report rebuilds turn history from explicit rehydrate diagnostics and surfaces agent reasoning + engine diagnostics", async () => {
+  // Regression: after a page reload `state.turns` can be empty. The issue report
+  // must recover from explicit execution/diagnostic compartments, not from the
+  // normal safe transcript mirror.
   const harness = await createBrowserHarness({
     responses: {
       "/system_stats": { status: 200, body: { system: { comfyui_frontend_package: "1.39.19" } } },
@@ -14219,32 +14259,70 @@ test("diagnostic report rebuilds turn history from rehydrated chat and surfaces 
         phase: "IDLE",
         turnId: null,
         chatSessionPathResolved: "/real/ComfyUI/out/editor_sessions/sess123",
-        // Reloaded panel: turns array never refilled, but chat was rehydrated.
+        // Reloaded panel: turns array has not been synced yet, but explicit
+        // rehydrate diagnostics have already been split out of the raw payload.
         turns: [],
+        executionEvents: [
+          {
+            session_id: "sess123",
+            turn_id: "0003",
+            status: "noop",
+            task: "Make one up",
+            message: "Nothing needed changing; the workflow already matches that.",
+            outcome: { kind: "noop", reason: "No edits applied — identity verified." },
+            batchTurns: [
+              {
+                turn_number: 0,
+                batch_ok: false,
+                message: "I'll load the standard Flux VAE (ae.safetensors) and wire it into a VAEDecode.",
+                batch: "vae_loader = VAELoader(vae_name=\"ae.safetensors\")",
+                diagnostics: [
+                  {
+                    code: "value_not_in_enum",
+                    message: "add_node rejected VAELoader.vae_name: value 'ae.safetensors' is not in the declared enum.",
+                    detail: { input: "vae_name", value: "ae.safetensors", choices: ["pixel_space"] },
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+        turnDetailSnapshots: {
+          "0003": {
+            explicitDiagnosticEvent: {
+              task: "Make one up",
+              status: "noop",
+              reasoning: [
+                { kind: "inspect", text: "Recovered explicit compartment reasoning after reload." },
+              ],
+              providerDiagnostics: [
+                {
+                  code: "EXPLICIT_PROVIDER_DIAG",
+                  message: "explicit compartment diagnostic with retry context",
+                },
+              ],
+              batchTurns: [
+                {
+                  turn_number: 1,
+                  batch_ok: false,
+                  message: "Explicit compartment batch reasoning survives empty turns.",
+                  diagnostics: [
+                    {
+                      code: "explicit_compartment_diag",
+                      message: "diagnostic recovered from explicit compartment",
+                    },
+                  ],
+                },
+              ],
+            },
+          },
+        },
         chatMessages: [
           { role: "user", turn_id: "0003", text: "Make one up" },
           {
             role: "agent",
             turn_id: "0003",
             text: "Nothing needed changing; the workflow already matches that.",
-            outcome: { kind: "noop", reason: "No edits applied — identity verified." },
-            change_details: {
-              batch_turns: [
-                {
-                  turn_number: 0,
-                  batch_ok: false,
-                  message: "I'll load the standard Flux VAE (ae.safetensors) and wire it into a VAEDecode.",
-                  batch: "vae_loader = VAELoader(vae_name=\"ae.safetensors\")",
-                  diagnostics: [
-                    {
-                      code: "value_not_in_enum",
-                      message: "add_node rejected VAELoader.vae_name: value 'ae.safetensors' is not in the declared enum.",
-                      detail: { input: "vae_name", value: "ae.safetensors", choices: ["pixel_space"] },
-                    },
-                  ],
-                },
-              ],
-            },
           },
         ],
       },
@@ -14256,7 +14334,7 @@ test("diagnostic report rebuilds turn history from rehydrated chat and surfaces 
     for (const [name, text] of [["solve prompt", prompt], ["issue report", report]]) {
       assert.ok(
         !text.includes("No recent turn records"),
-        `${name} must rebuild turn history from chat (not report it empty)`,
+        `${name} must rebuild turn history from explicit diagnostics (not report it empty)`,
       );
       assert.ok(text.includes("Make one up"), `${name} must include the user task`);
       assert.ok(
@@ -14266,6 +14344,12 @@ test("diagnostic report rebuilds turn history from rehydrated chat and surfaces 
       assert.ok(
         text.includes("value_not_in_enum") && text.includes("pixel_space"),
         `${name} must surface the engine diagnostic and the valid enum choices`,
+      );
+      assert.ok(
+        text.includes("Recovered explicit compartment reasoning after reload.")
+          && text.includes("EXPLICIT_PROVIDER_DIAG")
+          && text.includes("explicit_compartment_diag"),
+        `${name} must recover reload diagnostics from explicit compartments when turns is empty`,
       );
     }
 
@@ -14387,7 +14471,35 @@ test("issue-report zip bundles the actual session artifacts (self-contained)", a
   });
   try {
     const mod = await harness.loadExtension();
-    const panel = { state: { sessionId, phase: "IDLE", turns: [] } };
+    const panel = {
+      state: {
+        sessionId,
+        phase: "IDLE",
+        turnId: "0001",
+        turns: [],
+        executionEvents: [
+          {
+            session_id: sessionId,
+            turn_id: "0001",
+            status: "error",
+            message: "explicit execution event for issue report",
+            batchTurns: [
+              {
+                message: "explicit diagnostic batch reasoning",
+                diagnostics: [{ code: "EXPLICIT_ENGINE", message: "explicit engine diagnostic" }],
+              },
+            ],
+          },
+        ],
+        auditArtifacts: [
+          {
+            session_id: sessionId,
+            turn_id: "0001",
+            auditRef: { path: "/tmp/explicit-audit-0001.json", sha256: "abc123" },
+          },
+        ],
+      },
+    };
 
     const files = await mod.collectIssueReportFiles(panel);
     const byName = new Map(files.map((f) => [f.name, f]));
@@ -14400,6 +14512,8 @@ test("issue-report zip bundles the actual session artifacts (self-contained)", a
     const auditText = byName.get("audit.json").text;
     assert.ok(auditText.includes("generated_at"), "audit.json carries generation timestamp");
     assert.ok(auditText.includes("frontend_source"), "audit.json carries frontend source marker");
+    assert.ok(auditText.includes("/tmp/explicit-audit-0001.json"),
+      "audit.json uses explicit audit artifact selector when turns is empty");
 
     // debug-snapshot.json is produced when buildAgentPanelDebugSnapshot is wired via deps.
     if (byName.has("debug-snapshot.json")) {
@@ -14412,6 +14526,8 @@ test("issue-report zip bundles the actual session artifacts (self-contained)", a
     const reportText = byName.get("report.txt").text;
     assert.ok(reportText.includes("Panel session id: sess-bundle"), "report.txt includes session id");
     assert.ok(reportText.includes("Panel phase: IDLE"), "report.txt includes phase status diagnostic");
+    assert.ok(reportText.includes("explicit diagnostic batch reasoning"),
+      "report.txt uses explicit execution event selector when turns is empty");
     // ...and now the actual turn artifacts are bundled under session/.
     assert.ok(byName.has("session/turns/0001/messages.jsonl"), "messages.jsonl bundled");
     assert.equal(byName.get("session/turns/0001/messages.jsonl").text, "{\"message\":\"hi\"}\n");
