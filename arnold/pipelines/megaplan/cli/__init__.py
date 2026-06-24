@@ -1522,9 +1522,13 @@ def _handle_record_tag(root: Path, args: argparse.Namespace) -> int:
 def _handle_pipelines(root: Path, args: argparse.Namespace) -> int:
     """W7 — pipelines command group: check + doctor subcommands."""
 
-    def _emit_validator_defects(diag: object) -> None:
+    def _emit_validator_defects(diag: object, issues_override: tuple[Any, ...] | None = None) -> None:
         defects = list(getattr(diag, "defects", ()) or ())
-        issues = list(getattr(diag, "issues", ()) or ())
+        issues = list(issues_override if issues_override is not None else getattr(diag, "issues", ()) or ())
+        if issues_override is not None:
+            for issue in issues:
+                print(f"  - [{issue.code}] {issue.message}", file=sys.stderr)
+            return
         if issues and len(issues) == len(defects):
             for issue in issues:
                 print(f"  - [{issue.code}] {issue.message}", file=sys.stderr)
@@ -1570,42 +1574,73 @@ def _handle_pipelines(root: Path, args: argparse.Namespace) -> int:
         from arnold.pipelines.megaplan._pipeline.registry import (
             canonical_pipeline_name,
             get_pipeline,
+            _contextual_validation_issues,
+            _load_module_from_path,
+            _manifest_validation_context,
+            _package_prefix_for_module_file,
             scan_python_pipelines,
         )
         from arnold.pipelines.megaplan._pipeline.validator import validate
 
         canonical_name = canonical_pipeline_name(name)
-        original_manifest_discovery = os.environ.get("MEGAPLAN_M6_MANIFEST_DISCOVERY")
-        os.environ["MEGAPLAN_M6_MANIFEST_DISCOVERY"] = "1"
-        try:
-            dispositions = scan_python_pipelines()
-        finally:
-            if original_manifest_discovery is None:
-                os.environ.pop("MEGAPLAN_M6_MANIFEST_DISCOVERY", None)
-            else:
-                os.environ["MEGAPLAN_M6_MANIFEST_DISCOVERY"] = original_manifest_discovery
+        dispositions = scan_python_pipelines()
+        matched_disposition = None
         for disposition in dispositions:
-            if disposition.cli_name == canonical_name and disposition.status == "rejected":
+            if disposition.cli_name != canonical_name:
+                continue
+            if disposition.status == "rejected":
                 print(
                     f"pipelines check: {canonical_name!r} rejected: {disposition.reason}",
                     file=sys.stderr,
                 )
                 return 1
+            if disposition.status == "discovered":
+                matched_disposition = disposition
+                break
+            if matched_disposition is None:
+                matched_disposition = disposition
         try:
             pipeline = get_pipeline(canonical_name)
         except Exception as exc:  # discovery / build failure
             print(f"pipelines check: failed to load {name!r}: {exc}", file=sys.stderr)
             return 1
+        if pipeline is None and matched_disposition is not None:
+            module = _load_module_from_path(
+                matched_disposition.path,
+                package_prefix=_package_prefix_for_module_file(matched_disposition.path),
+            )
+            build = getattr(module, "build_pipeline", None) if module is not None else None
+            if callable(build):
+                pipeline = build()
         if pipeline is None:
             print(f"pipelines check: {canonical_name!r} is not executable", file=sys.stderr)
             return 1
-        diag = validate(pipeline)
-        if diag.ok:
+        context = (
+            _manifest_validation_context(matched_disposition)
+            if matched_disposition is not None
+            else None
+        )
+        diag = validate(pipeline, context=context)
+        contextual_issues = _contextual_validation_issues(diag, matched_disposition)
+        if not contextual_issues:
             print(name)
             return 0
-        print(f"pipelines check: {name!r} has {len(diag.defects)} defect(s):", file=sys.stderr)
-        _emit_validator_defects(diag)
+        print(
+            f"pipelines check: {name!r} has {len(contextual_issues)} defect(s):",
+            file=sys.stderr,
+        )
+        _emit_validator_defects(diag, issues_override=contextual_issues)
         return 1
+    if action == "describe":
+        name = getattr(args, "pipeline_name", None)
+        if not name:
+            print("pipelines describe: missing pipeline name", file=sys.stderr)
+            return 1
+        response = handle_describe(argparse.Namespace(pipeline_name=name))
+        if response.get("success"):
+            return 0
+        print(str(response.get("error") or "describe failed"), file=sys.stderr)
+        return 2
     if action == "doctor":
         from arnold.pipelines.megaplan._pipeline.registry import scan_python_pipelines
 
@@ -2309,13 +2344,29 @@ def _handle_list_pipelines(args: argparse.Namespace) -> StepResponse:
 def handle_describe(args: argparse.Namespace) -> StepResponse:
     """Handle ``megaplan describe <pipeline>`` command."""
     from arnold.pipelines.megaplan._pipeline.registry import (
+        canonical_pipeline_name,
         describe_pipeline,
+        pipeline_disposition,
         pipeline_metadata,
         registered_pipelines,
         read_pipeline_skill_md,
     )
 
-    name = args.pipeline_name
+    name = canonical_pipeline_name(args.pipeline_name)
+    disposition = pipeline_disposition(name)
+    if disposition is not None and disposition.status == "rejected":
+        error = f"Pipeline {name!r} rejected: {disposition.reason}"
+        if disposition.rejection_code:
+            error = f"{error} [{disposition.rejection_code}]"
+        return {
+            "success": False,
+            "step": "describe",
+            "pipeline": name,
+            "error": error,
+            "disposition": disposition.status,
+            "rejection_code": disposition.rejection_code,
+            "reason": disposition.reason,
+        }
     if name not in set(registered_pipelines()):
         return {
             "success": False,
@@ -2332,6 +2383,34 @@ def handle_describe(args: argparse.Namespace) -> StepResponse:
     default_profile = meta.get("default_profile")
     if default_profile:
         lines.append(f"Default profile: {default_profile}")
+    manifest_hash = meta.get("manifest_hash")
+    if manifest_hash:
+        lines.append(f"Manifest: {manifest_hash}")
+    driver = meta.get("driver")
+    if driver:
+        if isinstance(driver, (list, tuple)):
+            driver_text = " / ".join(str(part) for part in driver)
+        else:
+            driver_text = str(driver)
+        lines.append(f"Driver: {driver_text}")
+    registration_kind = meta.get("registration_kind")
+    if registration_kind:
+        lines.append(f"Registration: {registration_kind}")
+    source_path = meta.get("source_path")
+    if source_path:
+        lines.append(f"Source: {source_path}")
+    disposition_state = getattr(disposition, "status", None) if disposition else None
+    if disposition_state:
+        lines.append(f"Disposition: {disposition_state}")
+    validation_code = meta.get("validation_rejection_code")
+    if validation_code:
+        lines.append(f"Validation: {validation_code}")
+    validation_issues = meta.get("validation_issues") or ()
+    for issue in validation_issues:
+        if isinstance(issue, dict):
+            code = issue.get("code") or "validation"
+            message = issue.get("message") or issue
+            lines.append(f"  - [{code}] {message}")
     recommended = meta.get("recommended_profiles") or ()
     if recommended:
         lines.append("Recommended profiles: " + ", ".join(recommended))

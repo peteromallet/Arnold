@@ -50,15 +50,22 @@ from arnold.pipelines.megaplan._pipeline.registry import (
 # ── (a) Built-ins + writing-panel-strict are all visible ────────────────
 
 
-def test_registered_pipelines_lists_builtins_plus_writing_panel_strict_and_epic_blitz() -> None:
-    from arnold.pipelines.megaplan._pipeline.registry import registered_pipelines
+def test_registered_pipelines_lists_manifest_valid_builtins_and_rejects_epic_blitz() -> None:
+    from arnold.pipelines.megaplan._pipeline.registry import (
+        registered_pipelines,
+        rejected_pipeline_dispositions,
+    )
 
     names = registered_pipelines()
-    for required in ("megaplan", "writing-panel-strict", "epic-blitz"):
+    for required in ("megaplan", "writing-panel-strict"):
         assert required in names, (
             f"missing {required!r} in registry; got {names!r}"
         )
+    assert "epic-blitz" not in names
     assert "planning" not in names
+    rejected = {d.cli_name: d for d in rejected_pipeline_dispositions()}
+    assert rejected["epic-blitz"].rejection_code is None
+    assert "supported_modes" in rejected["epic-blitz"].reason
     # Demo pipelines (doc-critique, judges) are not built-ins.
     for demo_name in ("doc-critique", "judges"):
         assert demo_name not in names, (
@@ -78,30 +85,28 @@ def test_writing_panel_strict_metadata_exposes_module_constants() -> None:
         f"writing-panel-strict description missing; meta={meta!r}"
     )
     assert meta.get("default_profile") == "@writing-panel-strict:standard"
-    assert meta.get("supported_modes") == ("polish", "restructure", "provoke")
+    assert meta.get("supported_modes") == ("native",)
 
 
 # ── (b) epic-blitz metadata exposes module constants ────────────────────
 
-def test_epic_blitz_metadata_exposes_module_constants() -> None:
-    from arnold.pipelines.megaplan._pipeline.registry import pipeline_metadata
+def test_epic_blitz_is_reported_as_rejected_manifest_inventory() -> None:
+    from arnold.pipelines.megaplan._pipeline.registry import rejected_pipeline_dispositions
 
-    meta = pipeline_metadata("epic-blitz")
-    assert meta.get("description"), (
-        f"epic-blitz description missing; meta={meta!r}"
-    )
-    assert meta.get("default_profile") == "@epic-blitz:standard"
-    assert meta.get("supported_modes") == ()
+    rejected = {d.cli_name: d for d in rejected_pipeline_dispositions()}
+    disposition = rejected["epic-blitz"]
+    assert disposition.status == "rejected"
+    assert "supported_modes" in disposition.reason
 
 
 # ── (c) read_skill_md returns epic-blitz SKILL.md contents ───────────────
 
-def test_read_skill_md_returns_epic_blitz_contents() -> None:
+def test_read_skill_md_returns_none_for_rejected_epic_blitz() -> None:
     from arnold.pipelines.megaplan._pipeline.registry import read_pipeline_skill_md
 
     contents = read_pipeline_skill_md("epic-blitz")
     on_disk = (
-        Path(__file__).resolve().parents[2]
+        Path(__file__).resolve().parents[4]
         / "arnold"
         / "pipelines"
         / "megaplan"
@@ -110,8 +115,7 @@ def test_read_skill_md_returns_epic_blitz_contents() -> None:
         / "SKILL.md"
     )
     assert on_disk.exists(), "epic-blitz/SKILL.md vanished from disk"
-    expected = on_disk.read_text(encoding="utf-8")
-    assert contents == expected
+    assert contents is None
 
 
 # ── (d) read_skill_md returns the on-disk SKILL.md text ─────────────────
@@ -121,12 +125,12 @@ def test_read_skill_md_returns_writing_panel_strict_contents() -> None:
 
     contents = read_pipeline_skill_md("writing-panel-strict")
     on_disk = (
-        Path(__file__).resolve().parents[2]
+        Path(__file__).resolve().parents[4]
         / "arnold"
         / "pipelines"
         / "megaplan"
         / "pipelines"
-        / "writing-panel-strict"
+        / "writing_panel_strict"
         / "SKILL.md"
     )
     assert on_disk.exists(), "writing-panel-strict/SKILL.md vanished from disk"
@@ -165,7 +169,14 @@ def test_user_pipeline_is_discovered_and_runnable(
         "StepContext, StepResult, Step\n"
         "from dataclasses import dataclass\n"
         "\n"
+        "name = 'foo'\n"
         "description = 'Tiny foo pipeline used by registry discovery tests.'\n"
+        "default_profile = None\n"
+        "supported_modes = ('graph',)\n"
+        "driver = ('graph', 'compat')\n"
+        "entrypoint = 'build_pipeline'\n"
+        "arnold_api_version = '1.0'\n"
+        "capabilities = ('plan',)\n"
         "\n"
         "@dataclass\n"
         "class _NoopStep(Step):\n"
@@ -181,8 +192,13 @@ def test_user_pipeline_is_discovered_and_runnable(
         "    )\n",
         encoding="utf-8",
     )
+    (user_dir / "SKILL.md").write_text("# foo\n", encoding="utf-8")
 
     monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setattr(
+        "arnold.pipelines.megaplan._pipeline.registry.classify",
+        lambda *args, **kwargs: TrustGrade.BLESSED,
+    )
     # Drop any prior user-module import so the fresh discovery re-execs.
     sys.modules.pop("arnold.pipelines.megaplan._user_pipelines.foo", None)
 
@@ -230,7 +246,14 @@ def test_discover_python_pipelines_skips_user_duplicate_of_planning(
         "StepContext, StepResult, Step\n"
         "from dataclasses import dataclass\n"
         "\n"
+        "name = 'planning'\n"
         "description = 'BOGUS override of the in-tree planning pipeline.'\n"
+        "default_profile = None\n"
+        "supported_modes = ('graph',)\n"
+        "driver = ('graph', 'compat')\n"
+        "entrypoint = 'build_pipeline'\n"
+        "arnold_api_version = '1.0'\n"
+        "capabilities = ('plan',)\n"
         "\n"
         "@dataclass\n"
         "class _BogusStep(Step):\n"
@@ -246,6 +269,7 @@ def test_discover_python_pipelines_skips_user_duplicate_of_planning(
         "    )\n",
         encoding="utf-8",
     )
+    (user_dir / "SKILL.md").write_text("# planning\n", encoding="utf-8")
 
     monkeypatch.setenv("HOME", str(tmp_path))
     sys.modules.pop("arnold.pipelines.megaplan._user_pipelines.planning", None)
@@ -303,12 +327,17 @@ def test_operation_helpers_discover_factories_and_metadata(
         "    OperationResult,\n"
         ")\n"
         "from arnold.pipelines.megaplan._pipeline.types import Edge, Pipeline, Stage, StepContext, StepResult\n"
-        "from dataclasses import dataclass\n"
-        "\n"
-        "description = 'ops demo'\n"
-        "default_profile = None\n"
-        "supported_modes = ('plan',)\n"
-        "\n"
+            "from dataclasses import dataclass\n"
+            "\n"
+            "name = 'ops-demo'\n"
+            "description = 'ops demo'\n"
+            "default_profile = None\n"
+            "supported_modes = ('graph',)\n"
+            "driver = ('graph', 'compat')\n"
+            "entrypoint = 'build_pipeline'\n"
+            "arnold_api_version = '1.0'\n"
+            "capabilities = ('plan',)\n"
+            "\n"
         "@dataclass\n"
         "class _Step:\n"
         "    name: str = 'noop'\n"
@@ -343,11 +372,11 @@ def test_operation_helpers_discover_factories_and_metadata(
     )
     reg = PipelineRegistry()
 
+    discovered = reg.operation_registry_for("ops-demo")
     assert reg.metadata_for("ops-demo")["supported_operations"] == (
         "override_apply",
         "run_phase",
     )
-    discovered = reg.operation_registry_for("ops-demo")
     assert isinstance(discovered, OperationRegistry)
     assert reg.supported_operations_for("ops-demo") == frozenset(
         {OperationKind.EXECUTE, OperationKind.OVERRIDE_APPLY}
@@ -369,9 +398,14 @@ def test_operation_helpers_fail_closed_for_absent_and_untrusted_factories(
         "from arnold.pipelines.megaplan._pipeline.types import Edge, Pipeline, Stage, StepContext, StepResult\n"
         "from dataclasses import dataclass\n"
         "\n"
+        "name = 'user-ops'\n"
         "description = 'user ops'\n"
         "default_profile = None\n"
-        "supported_modes = ('plan',)\n"
+        "supported_modes = ('graph',)\n"
+        "driver = ('graph', 'compat')\n"
+        "entrypoint = 'build_pipeline'\n"
+        "arnold_api_version = '1.0'\n"
+        "capabilities = ('plan',)\n"
         "\n"
         "@dataclass\n"
         "class _Step:\n"

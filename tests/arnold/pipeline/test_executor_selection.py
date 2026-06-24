@@ -1,4 +1,4 @@
-"""Executor selection tests for graph-default vs native opt-in."""
+"""Executor selection tests for native-default and graph fallback routing."""
 
 from __future__ import annotations
 
@@ -38,13 +38,11 @@ class _TrackingStep:
 
 
 def _pipeline(step: _HaltStep, *, native_program: bool = True) -> Pipeline:
-    bundles: tuple[Any, ...] = ()
-    if native_program:
-        bundles = (NativeProgram(name="selection_test"),)
+    program = NativeProgram(name="selection_test") if native_program else None
     return Pipeline(
         stages={"only": Stage(name="only", step=step, edges=())},
         entry="only",
-        resource_bundles=bundles,
+        native_program=program,
     )
 
 
@@ -61,7 +59,16 @@ def _pipeline_with_runner(step: _HaltStep, runner: _CaptureNativeRunner) -> Pipe
     return Pipeline(
         stages={"only": Stage(name="only", step=step, edges=())},
         entry="only",
-        resource_bundles=(NativeProgram(name="selection_test"), runner),
+        resource_bundles=(runner,),
+        native_program=NativeProgram(name="selection_test"),
+    )
+
+
+def _pipeline_with_bare_bundle(step: _HaltStep) -> Pipeline:
+    return Pipeline(
+        stages={"only": Stage(name="only", step=step, edges=())},
+        entry="only",
+        resource_bundles=(NativeProgram(name="legacy_bundle"),),
     )
 
 
@@ -84,21 +91,36 @@ def _write_state_payload(tmp_path: Path, payload: dict[str, Any]) -> None:
     )
 
 
-def test_unmarked_runs_use_graph_executor_when_opted_out(
+def test_unmarked_native_capable_pipeline_ignores_deprecated_flag_zero(
     tmp_path: Path, monkeypatch
 ) -> None:
     monkeypatch.setenv("ARNOLD_NATIVE_RUNTIME", "0")
     step = _HaltStep()
+    calls: list[Any] = []
+
+    def fake_native(*args: Any, **kwargs: Any) -> str:
+        calls.append((args, kwargs))
+        return "native-result"
+
+    monkeypatch.setattr("arnold.pipeline.native.runtime.run_native_pipeline", fake_native)
 
     result = run_pipeline(_pipeline(step), {}, _envelope(tmp_path))
 
-    assert result is not None
-    assert step.called is True
+    assert result == "native-result"
+    assert step.called is False
+    assert calls
 
 
-def test_native_marker_runs_graph_when_opted_out(tmp_path: Path, monkeypatch) -> None:
+def test_native_marker_ignores_deprecated_flag_zero(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setenv("ARNOLD_NATIVE_RUNTIME", "0")
     step = _HaltStep()
+    calls: list[Any] = []
+
+    def fake_native(*args: Any, **kwargs: Any) -> str:
+        calls.append((args, kwargs))
+        return "native-result"
+
+    monkeypatch.setattr("arnold.pipeline.native.runtime.run_native_pipeline", fake_native)
 
     result = run_pipeline(
         _pipeline(step),
@@ -106,8 +128,29 @@ def test_native_marker_runs_graph_when_opted_out(tmp_path: Path, monkeypatch) ->
         _envelope(tmp_path),
     )
 
-    assert result is not None
-    assert step.called is True
+    assert result == "native-result"
+    assert step.called is False
+    assert calls
+
+
+def test_unmarked_native_capable_pipeline_runs_with_deprecated_flag_unset(
+    tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.delenv("ARNOLD_NATIVE_RUNTIME", raising=False)
+    step = _HaltStep()
+    calls: list[Any] = []
+
+    def fake_native(*args: Any, **kwargs: Any) -> str:
+        calls.append((args, kwargs))
+        return "native-result"
+
+    monkeypatch.setattr("arnold.pipeline.native.runtime.run_native_pipeline", fake_native)
+
+    result = run_pipeline(_pipeline(step), {}, _envelope(tmp_path))
+
+    assert result == "native-result"
+    assert step.called is False
+    assert calls
 
 
 def test_native_marker_is_normalized_by_shared_helper(tmp_path: Path, monkeypatch) -> None:
@@ -385,6 +428,85 @@ def test_native_marker_dispatches_through_runner_adapter_with_executor_inputs(
     assert call["initial_context"] is initial_context
 
 
+def test_bare_native_program_resource_bundle_still_dispatches_native(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("ARNOLD_NATIVE_RUNTIME", "1")
+    step = _HaltStep()
+    calls: list[dict[str, Any]] = []
+
+    def fake_native(*args: Any, **kwargs: Any) -> str:
+        calls.append({"args": args, "kwargs": kwargs})
+        return "native-result"
+
+    monkeypatch.setattr("arnold.pipeline.native.runtime.run_native_pipeline", fake_native)
+
+    result = run_pipeline(
+        _pipeline_with_bare_bundle(step),
+        {"meta": {"executor": "native"}},
+        _envelope(tmp_path),
+    )
+
+    assert result == "native-result"
+    assert step.called is False
+    assert calls
+    assert calls[0]["args"][0].name == "legacy_bundle"
+
+
+def test_pipeline_native_program_is_passed_to_runner_adapter_before_bundle_program(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("ARNOLD_NATIVE_RUNTIME", "1")
+    step = _HaltStep()
+    runner = _CaptureNativeRunner()
+    preferred = NativeProgram(name="preferred_field")
+    legacy = NativeProgram(name="legacy_bundle")
+    pipeline = Pipeline(
+        stages={"only": Stage(name="only", step=step, edges=())},
+        entry="only",
+        resource_bundles=(legacy, runner),
+        native_program=preferred,
+    )
+
+    result = run_pipeline(
+        pipeline,
+        {"meta": {"executor": "native"}},
+        _envelope(tmp_path),
+    )
+
+    assert result == "runner-result"
+    assert step.called is False
+    assert runner.calls[0]["program"] is preferred
+
+
+def test_global_graph_runtime_override_wins_over_native_program(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("ARNOLD_NATIVE_RUNTIME", "1")
+    monkeypatch.setenv("ARNOLD_PIPELINE_RUNTIME", "graph")
+    step = _HaltStep()
+    calls: list[Any] = []
+
+    def fake_native(*args: Any, **kwargs: Any) -> str:
+        calls.append((args, kwargs))
+        return "native-result"
+
+    monkeypatch.setattr("arnold.pipeline.native.runtime.run_native_pipeline", fake_native)
+
+    result = run_pipeline(
+        _pipeline(step),
+        {"meta": {"executor": "native"}},
+        _envelope(tmp_path),
+    )
+
+    assert result is not None
+    assert step.called is True
+    assert calls == []
+
+
 def test_graph_resume_ignores_additive_native_cursor_fields(
     tmp_path: Path,
     monkeypatch,
@@ -398,7 +520,7 @@ def test_graph_resume_ignores_additive_native_cursor_fields(
             "second": Stage(name="second", step=second, edges=()),
         },
         entry="first",
-        resource_bundles=(NativeProgram(name="selection_test"),),
+        native_program=NativeProgram(name="selection_test"),
     )
     _write_state(tmp_path, "graph")
     persist_native_cursor(
@@ -435,7 +557,8 @@ def test_resume_uses_persisted_graph_marker_over_new_native_choice(
             "second": Stage(name="second", step=second, edges=()),
         },
         entry="first",
-        resource_bundles=(NativeProgram(name="selection_test"), runner),
+        resource_bundles=(runner,),
+        native_program=NativeProgram(name="selection_test"),
     )
     persist_native_cursor(
         tmp_path,
@@ -450,6 +573,40 @@ def test_resume_uses_persisted_graph_marker_over_new_native_choice(
         {"meta": {"executor": "native"}},
         _envelope(tmp_path),
         resume_cursor={"stage": "second"},
+    )
+
+    assert result is not None
+    assert runner.calls == []
+    assert first.calls == []
+    assert len(second.calls) == 1
+
+
+def test_graph_resume_cursor_without_runtime_marker_uses_graph(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("ARNOLD_NATIVE_RUNTIME", "1")
+    first = _TrackingStep(next_label="second")
+    second = _TrackingStep()
+    runner = _CaptureNativeRunner()
+    pipeline = Pipeline(
+        stages={
+            "first": Stage(name="first", step=first, edges=()),
+            "second": Stage(name="second", step=second, edges=()),
+        },
+        entry="first",
+        resource_bundles=(runner,),
+        native_program=NativeProgram(name="selection_test"),
+    )
+    (tmp_path / "resume_cursor.json").write_text(
+        json.dumps({"stage": "second", "resume_cursor": "legacy-cursor"}),
+        encoding="utf-8",
+    )
+
+    result = run_pipeline_resume(
+        pipeline,
+        {},
+        _envelope(tmp_path),
     )
 
     assert result is not None
@@ -479,6 +636,43 @@ def test_resume_uses_persisted_native_marker_over_new_graph_choice(
     assert len(runner.calls) == 1
     assert runner.calls[0]["resume"] is True
     assert runner.calls[0]["initial_state"] == {"meta": {"executor": "graph"}}
+
+
+def test_native_resume_forwards_runtime_contract_inputs(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("ARNOLD_NATIVE_RUNTIME", "1")
+    step = _HaltStep()
+    runner = _CaptureNativeRunner()
+    registry = ContractSchemaRegistry(tmp_path)
+    envelope = _envelope(tmp_path)
+    persist_native_cursor(
+        tmp_path,
+        stage="selection_test__only__pc0",
+        pc=0,
+        stages=[],
+        reentry_stage="selection_test__only__pc0",
+    )
+
+    result = run_pipeline_resume(
+        _pipeline_with_runner(step, runner),
+        {"seed": "value"},
+        envelope,
+        human_input={"choice": "continue"},
+        schema_registry=registry,
+    )
+
+    assert result == "runner-result"
+    assert step.called is False
+    assert len(runner.calls) == 1
+    call = runner.calls[0]
+    assert call["artifact_root"] == str(tmp_path)
+    assert call["initial_state"]["seed"] == "value"
+    assert call["initial_envelope"] is envelope
+    assert call["resume"] is True
+    assert call["schema_registry"] is registry
+    assert call["human_input"] == {"choice": "continue"}
 
 
 def test_native_born_max_phases_suspension_resumes_to_completion(
@@ -573,8 +767,9 @@ def test_native_megaplan_runner_wires_runtime_hooks_and_policy_inputs(
         },
     )
 
+    projected = NativeProgram(name="projected-program")
     result = NativeMegaplanRunner().run_native_pipeline(
-        program=NativeProgram(name="ignored-projected-program"),
+        program=projected,
         artifact_root=tmp_path,
         initial_state={"meta": {"executor": "native"}},
         initial_envelope=envelope,
@@ -585,7 +780,7 @@ def test_native_megaplan_runner_wires_runtime_hooks_and_policy_inputs(
     assert result == "native-result"
     assert len(calls) == 1
     kwargs = calls[0]["kwargs"]
-    assert calls[0]["program"] is compiled
+    assert calls[0]["program"] is projected
     assert kwargs["artifact_root"] == tmp_path
     assert kwargs["initial_state"] == {"meta": {"executor": "native"}}
     assert kwargs["resume"] is False

@@ -40,6 +40,7 @@ PLANNING_OVERRIDE_ACTIONS: tuple[str, ...] = (
 MODULE_VERBS: tuple[str, ...] = ("run", "check", "doctor", "describe", "auto")
 PIPELINES_ACTIONS: tuple[str, ...] = (
     "check",
+    "describe",
     "doctor",
     "list",
     "new",
@@ -164,6 +165,8 @@ def _handle_pipelines(argv: list[str]) -> int:
     list_parser.add_argument("--json", action="store_true", dest="as_json")
     check_parser = sub.add_parser("check", help="Validate a discovered module")
     check_parser.add_argument("module")
+    describe_parser = sub.add_parser("describe", help="Describe a discovered module")
+    describe_parser.add_argument("module")
     sub.add_parser("doctor", help="Print discovery dispositions")
     run_parser = sub.add_parser("run", help="Run a discovered module")
     run_parser.add_argument("module")
@@ -219,6 +222,8 @@ def _handle_pipelines(argv: list[str]) -> int:
         return 0
     if ns.action == "check":
         return _megaplan_main(["pipelines", "check", canonical_pipeline_name(ns.module)])
+    if ns.action == "describe":
+        return _megaplan_main(["describe", canonical_pipeline_name(ns.module)])
     if ns.action == "doctor":
         return _megaplan_main(["pipelines", "doctor"])
     if ns.action == "run":

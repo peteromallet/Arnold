@@ -7,10 +7,12 @@ import os
 import signal
 import subprocess
 import sys
+from pathlib import Path
 from typing import Any
 
 import pytest
 
+from arnold_pipelines.megaplan.runtime import process as megaplan_process
 from arnold.runtime.process import kill_group, spawn, spawn_async
 
 
@@ -56,6 +58,41 @@ def test_spawn_async_rejects_shell_true() -> None:
             await spawn_async("echo hi", shell=True)
 
     asyncio.run(run())
+
+
+def test_megaplan_engine_root_infers_arnold_pipelines_repo(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "repo"
+    module_path = repo / "arnold_pipelines" / "megaplan" / "runtime" / "process.py"
+    module_path.parent.mkdir(parents=True)
+    module_path.touch()
+    (repo / "pyproject.toml").write_text("[project]\nname = 'test'\n")
+
+    monkeypatch.delenv("MEGAPLAN_ENGINE_ROOT", raising=False)
+    monkeypatch.setattr(megaplan_process, "__file__", str(module_path))
+
+    assert megaplan_process.megaplan_engine_root() == repo.resolve()
+
+
+def test_megaplan_engine_env_propagates_engine_root(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "repo"
+    module_path = repo / "arnold_pipelines" / "megaplan" / "runtime" / "process.py"
+    module_path.parent.mkdir(parents=True)
+    module_path.touch()
+    (repo / "pyproject.toml").write_text("[project]\nname = 'test'\n")
+
+    monkeypatch.delenv("MEGAPLAN_ENGINE_ROOT", raising=False)
+    monkeypatch.setattr(megaplan_process, "__file__", str(module_path))
+
+    env = megaplan_process.megaplan_engine_env({"PYTHONPATH": "target-path"})
+
+    assert env["MEGAPLAN_ENGINE_ROOT"] == str(repo.resolve())
+    assert env["PYTHONPATH"] == os.pathsep.join([str(repo.resolve()), "target-path"])
 
 
 def test_kill_group_uses_term_only_when_escalation_disabled(monkeypatch) -> None:

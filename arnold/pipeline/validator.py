@@ -27,7 +27,9 @@ so both Arnold and Megaplan shapes are accepted.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass, field, replace
+from pathlib import Path
 from typing import Any, Mapping
 
 from arnold.pipeline.contracts import BindResult, RepairGradient, bind
@@ -48,6 +50,11 @@ DECLARATION_DRIFT_CODE = "contract.declaration_drift"
 MISSING_BINDING_CODE = "dataflow.missing_binding"
 UNKNOWN_ADAPTER_CODE = "invocation.unknown_adapter"
 UNSATISFIED_CAPABILITY_CODE = "capability.unsatisfied"
+MALFORMED_NATIVE_BUNDLE_CODE = "execution.native_bundle_malformed"
+PLACEHOLDER_EXECUTION_RESOURCE_CODE = "execution.placeholder_resource"
+NATIVE_MANIFEST_MISSING_EXECUTION_CODE = "manifest.native_execution_missing"
+NATIVE_MANIFEST_GRAPH_COMPAT_CODE = "manifest.native_graph_compatibility"
+DIRECT_NATIVE_DRIVER_CLAIM_CODE = "manifest.direct_native_driver_claim"
 
 
 def contract_diagnostic_code(error_kind: str) -> str:
@@ -148,6 +155,40 @@ class ValidationOptions:
     decision_vocabulary_fallback: frozenset[str] | None = None
     override_vocabulary_fallback: frozenset[str] | None = None
     detect_cycles: bool = True
+
+
+@dataclass(frozen=True)
+class ManifestValidationContext:
+    """Manifest-owned validation context for non-local policy checks.
+
+    Bare :func:`validate` calls remain pipeline-local.  Discovery, registry,
+    and CLI surfaces that have manifest metadata pass this context to enforce
+    manifest driver claims and graph-compatibility policy.
+    """
+
+    manifest_driver: tuple[str, ...]
+    package: str
+    name: str
+    manifest_path: Path | str
+    compatibility_classification: str = "native"
+    source_entrypoint: str | None = None
+    source_entrypoint_metadata: Mapping[str, Any] = field(default_factory=dict)
+
+    @property
+    def driver_family(self) -> str | None:
+        if not self.manifest_driver:
+            return None
+        return self.manifest_driver[0]
+
+    @property
+    def is_graph_compatible(self) -> bool:
+        return self.compatibility_classification in {
+            "graph",
+            "graph_compat",
+            "graph-compatible",
+            "legacy_graph",
+            "legacy-graph",
+        }
 
 
 # ── Duck-typed accessors ──────────────────────────────────────────────────
@@ -540,11 +581,13 @@ def validate(
     options: ValidationOptions | None = None,
     *,
     adapter_registry: StepInvocationAdapterRegistry | None = None,
+    context: ManifestValidationContext | None = None,
 ) -> Diagnostics:
     """Run the full graph-shape validation over *pipeline*.
 
     Delegates to :func:`validate_control_flow`, :func:`validate_dataflow_paths`,
-    and :func:`validate_resource_dependencies`.
+    and :func:`validate_resource_dependencies`.  When *context* is provided,
+    manifest-owned policy is checked after pipeline-local validation.
 
     When *adapter_registry* is ``None`` a fresh fail-closed default registry
     is constructed so existing callers get the same reserved-``model``-only
@@ -565,6 +608,126 @@ def validate(
     # Merge prompt/resource defects
     res_diag = validate_resource_dependencies(pipeline, options)
     diag.extend(res_diag)
+    exec_diag = validate_execution_resources(pipeline)
+    diag.extend(exec_diag)
+    if context is not None:
+        manifest_diag = validate_manifest_context(pipeline, context=context)
+        diag.extend(manifest_diag)
+    return diag
+
+
+def _is_native_program_instance(value: Any) -> bool:
+    from arnold.pipeline.native.ir import NativeProgram
+
+    return isinstance(value, NativeProgram)
+
+
+def _native_dispatch_evidence(pipeline: Any) -> bool:
+    if _is_native_program_instance(getattr(pipeline, "native_program", None)):
+        return True
+    for bundle in _pipeline_resource_bundles(pipeline):
+        if _is_native_program_instance(bundle):
+            return True
+        runner = getattr(bundle, "run_native_pipeline", None)
+        if callable(runner):
+            return True
+    return False
+
+
+def _looks_like_placeholder_execution_resource(bundle: Any) -> bool:
+    if not hasattr(bundle, "run_native_pipeline"):
+        return False
+    runner = getattr(bundle, "run_native_pipeline", None)
+    return not callable(runner)
+
+
+def validate_execution_resources(pipeline: Any) -> Diagnostics:
+    """Validate pipeline-local execution resource shapes.
+
+    This pass rejects local malformed native-program claims and placeholder
+    runner resources.  It does not enforce manifest driver policy.
+    """
+
+    diag = Diagnostics()
+    native_program = getattr(pipeline, "native_program", None)
+    if native_program is not None and not _is_native_program_instance(native_program):
+        diag.add_defect(
+            "pipeline.native_program must be a NativeProgram when present",
+            code=MALFORMED_NATIVE_BUNDLE_CODE,
+            details={"field": "native_program", "type": type(native_program).__name__},
+        )
+
+    direct_driver = getattr(pipeline, "driver", None)
+    if direct_driver is not None:
+        direct_driver_tuple = (
+            tuple(direct_driver)
+            if isinstance(direct_driver, Sequence)
+            and not isinstance(direct_driver, (str, bytes))
+            else (str(direct_driver),)
+        )
+        if direct_driver_tuple and direct_driver_tuple[0] == "native":
+            diag.add_defect(
+                "pipeline-local driver='native' claims must be expressed through a manifest context",
+                code=DIRECT_NATIVE_DRIVER_CLAIM_CODE,
+                details={"pipeline_driver": list(direct_driver_tuple)},
+            )
+
+    for index, bundle in enumerate(_pipeline_resource_bundles(pipeline)):
+        if _looks_like_placeholder_execution_resource(bundle):
+            diag.add_defect(
+                f"resource_bundles[{index}] exposes non-callable run_native_pipeline",
+                code=PLACEHOLDER_EXECUTION_RESOURCE_CODE,
+                details={
+                    "bundle_index": index,
+                    "bundle_type": type(bundle).__name__,
+                    "attribute": "run_native_pipeline",
+                },
+            )
+        if _looks_like_native_program(bundle) and not _is_native_program_instance(bundle):
+            diag.add_defect(
+                f"resource_bundles[{index}] looks like a native program but is malformed",
+                code=MALFORMED_NATIVE_BUNDLE_CODE,
+                details={
+                    "bundle_index": index,
+                    "bundle_type": type(bundle).__name__,
+                },
+            )
+    return diag
+
+
+def validate_manifest_context(
+    pipeline: Any,
+    *,
+    context: ManifestValidationContext,
+) -> Diagnostics:
+    """Validate manifest-owned policy that cannot be inferred from a pipeline."""
+
+    diag = Diagnostics()
+    details = {
+        "manifest_driver": list(context.manifest_driver),
+        "package": context.package,
+        "name": context.name,
+        "manifest_path": str(context.manifest_path),
+        "compatibility_classification": context.compatibility_classification,
+        "source_entrypoint": context.source_entrypoint,
+        "source_entrypoint_metadata": dict(context.source_entrypoint_metadata),
+    }
+    if context.driver_family == "native":
+        if context.is_graph_compatible:
+            diag.add_defect(
+                f"manifest for {context.package}/{context.name} declares native driver "
+                "but is classified graph-compatible",
+                code=NATIVE_MANIFEST_GRAPH_COMPAT_CODE,
+                details=details,
+            )
+        if not _native_dispatch_evidence(pipeline):
+            diag.add_defect(
+                f"manifest for {context.package}/{context.name} declares native driver "
+                "but built pipeline has no native execution resource",
+                code=NATIVE_MANIFEST_MISSING_EXECUTION_CODE,
+                details=details,
+            )
+
     return diag
 
 

@@ -73,8 +73,16 @@ def _persist_critique_raw_output(output_path: Path, raw_output: object) -> None:
         pass
 
 
-def _unverifiable_check_payload(check_id: str, question: str, reason: str) -> dict[str, Any]:
-    return {
+def _unverifiable_check_payload(
+    check_id: str,
+    question: str,
+    reason: str,
+    *,
+    cause: str | None = None,
+    retryable: bool | None = None,
+    error_kind: str | None = None,
+) -> dict[str, Any]:
+    payload: dict[str, Any] = {
         "id": check_id,
         "question": question,
         "status": UNVERIFIABLE_STATUS,
@@ -83,6 +91,13 @@ def _unverifiable_check_payload(check_id: str, question: str, reason: str) -> di
             {"detail": unverifiable_detail(reason), "flagged": False},
         ],
     }
+    if cause:
+        payload["unverifiable_cause"] = cause
+    if retryable is not None:
+        payload["unverifiable_retryable"] = retryable
+    if error_kind:
+        payload["unverifiable_error_kind"] = error_kind
+    return payload
 
 
 def _sanitize_critique_check_payload(payload: dict[str, Any]) -> dict[str, Any]:
@@ -484,11 +499,18 @@ def run_parallel_critique(
         def _on_unit_error(_index: int, exc: Exception) -> tuple[Any, float, int, int, int]:
             unit = current_units[_index]
             check_id = str(unit.extra.get("check_id", "?"))
+            cause = None
+            retryable = None
+            error_kind = None
             if isinstance(exc, CliError):
                 _persist_critique_raw_output(
                     unit.output_path,
                     exc.extra.get("raw_output") or exc.message,
                 )
+                cause = str(exc.extra.get("source") or "") or None
+                retryable_raw = exc.extra.get("retryable")
+                retryable = retryable_raw if isinstance(retryable_raw, bool) else None
+                error_kind = str(exc.code or "") or None
             else:
                 _persist_critique_raw_output(unit.output_path, str(exc))
             reason = f"parallel critique worker failed for check '{check_id}': {exc}"
@@ -499,6 +521,9 @@ def run_parallel_critique(
                             check_id,
                             str(unit.extra.get("question", "")),
                             reason,
+                            cause=cause,
+                            retryable=retryable,
+                            error_kind=error_kind,
                         )
                     ],
                     "flags": [],

@@ -1,8 +1,8 @@
-"""Tests for native runtime feature flags and guard plumbing.
+"""Tests for deprecated native runtime flag compatibility plumbing.
 
 Covers:
-- ``native_runtime_enabled()`` correctness for on/off/unset states
-- ``require_native_runtime()`` gating behavior
+- ``native_runtime_enabled()`` compatibility behavior for historical states
+- ``require_native_runtime()`` no-op compatibility behavior
 - ``NativeRuntimeDisabledError`` error shape
 - Compiler/graph-helper imports remain usable without the flag
 """
@@ -24,7 +24,7 @@ from arnold.pipeline.native import (
 
 
 class TestNativeRuntimeEnabled:
-    """``native_runtime_enabled()`` returns the correct boolean for each state."""
+    """``native_runtime_enabled()`` is an inert compatibility helper."""
 
     def test_unset_returns_true(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.delenv("ARNOLD_NATIVE_RUNTIME", raising=False)
@@ -34,9 +34,9 @@ class TestNativeRuntimeEnabled:
         monkeypatch.setenv("ARNOLD_NATIVE_RUNTIME", "1")
         assert native_runtime_enabled() is True
 
-    def test_set_to_zero_returns_false(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_set_to_zero_returns_true(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("ARNOLD_NATIVE_RUNTIME", "0")
-        assert native_runtime_enabled() is False
+        assert native_runtime_enabled() is True
 
     def test_set_to_empty_string_returns_true(
         self, monkeypatch: pytest.MonkeyPatch
@@ -55,14 +55,13 @@ class TestNativeRuntimeEnabled:
 
 
 class TestRequireNativeRuntime:
-    """``require_native_runtime()`` gates high-level execution."""
+    """``require_native_runtime()`` remains importable as a no-op."""
 
-    def test_raises_when_flag_zero(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_does_not_raise_when_flag_zero(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         monkeypatch.setenv("ARNOLD_NATIVE_RUNTIME", "0")
-        with pytest.raises(NativeRuntimeDisabledError) as exc_info:
-            require_native_runtime()
-        assert "ARNOLD_NATIVE_RUNTIME" in str(exc_info.value)
-        assert "0" in str(exc_info.value)
+        require_native_runtime()
 
     def test_does_not_raise_when_unset(
         self, monkeypatch: pytest.MonkeyPatch
@@ -78,12 +77,11 @@ class TestRequireNativeRuntime:
         # Should not raise
         require_native_runtime()
 
-    def test_raises_when_flag_is_zero(
+    def test_does_not_raise_when_flag_is_zero(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         monkeypatch.setenv("ARNOLD_NATIVE_RUNTIME", "0")
-        with pytest.raises(NativeRuntimeDisabledError):
-            require_native_runtime()
+        require_native_runtime()
 
     def test_error_is_runtime_error(self) -> None:
         assert issubclass(NativeRuntimeDisabledError, RuntimeError)
@@ -141,8 +139,7 @@ class TestImportabilityWithoutFlag:
         assert nre is not None
         assert rnr is not None
         assert NRDE is not None
-        # The guard does not raise when the flag is unset (native is now
-        # enabled by default).
+        # The deprecated guard no longer gates native execution.
         rnr()
 
     def test_megaplan_native_hooks_importable_without_flag(

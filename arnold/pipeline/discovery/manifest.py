@@ -61,6 +61,29 @@ class Manifest:
     manifest_hash: str
     extras: dict[str, object] = field(default_factory=dict)
 
+    def validation_context(
+        self,
+        *,
+        package: str,
+        compatibility_classification: str = "native",
+    ):
+        """Return a manifest-aware validator context for a built pipeline."""
+        from arnold.pipeline.validator import ManifestValidationContext
+
+        return ManifestValidationContext(
+            manifest_driver=self.driver,
+            package=package,
+            name=self.name,
+            manifest_path=self.path,
+            compatibility_classification=compatibility_classification,
+            source_entrypoint=self.entrypoint,
+            source_entrypoint_metadata={
+                "arnold_api_version": self.arnold_api_version,
+                "capabilities": self.capabilities,
+                "manifest_hash": self.manifest_hash,
+            },
+        )
+
 
 @dataclass(frozen=True)
 class ManifestError:
@@ -123,6 +146,11 @@ def _extract_top_level_constants(
             value = node.value
         elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
             top_level_symbols.add(node.name)
+            continue
+        elif isinstance(node, (ast.Import, ast.ImportFrom)):
+            for alias in node.names:
+                symbol = alias.asname or alias.name.split(".", 1)[0]
+                top_level_symbols.add(symbol)
             continue
         else:
             continue

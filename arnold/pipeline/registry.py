@@ -23,12 +23,15 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable, Mapping, Protocol, runtime_checkable
+from typing import Any, Callable, Literal, Mapping, Protocol, runtime_checkable
 
 from arnold.pipeline.types import Pipeline
 
 #: Signature for builder callables stored in the registry.
 PipelineBuilder = Callable[[], Pipeline]
+
+RegistrationKind = Literal["native", "graph_compatibility", "unknown"]
+"""Classification for a registered pipeline's execution contract."""
 
 
 # ---------------------------------------------------------------------------
@@ -118,6 +121,9 @@ class PipelineRegistry:
     metadata: dict[str, dict[str, Any]] = field(default_factory=dict)
     """Name → opaque metadata dict (description, profile, modes, …)."""
 
+    registration_kinds: dict[str, RegistrationKind] = field(default_factory=dict)
+    """Name → execution-contract classification for registered pipelines."""
+
     _module_files: dict[str, Path] = field(default_factory=dict, init=False)
     """Name → source module file path (set by discovery hook)."""
 
@@ -156,6 +162,7 @@ class PipelineRegistry:
         description: str = "",
         metadata: Mapping[str, Any] | None = None,
         module_file: Path | None = None,
+        registration_kind: RegistrationKind = "unknown",
     ) -> None:
         """Register a pipeline by *name*.
 
@@ -165,6 +172,7 @@ class PipelineRegistry:
         if name in self.builders:
             raise ValueError(f"pipeline {name!r} already registered")
         self.builders[name] = builder
+        self.registration_kinds[name] = registration_kind
         if description:
             self.descriptions[name] = description
         meta: dict[str, Any] = {}
@@ -220,6 +228,12 @@ class PipelineRegistry:
         name = self._canonical_name(name)
         self._ensure_discovered()
         return dict(self.metadata.get(name, {}))
+
+    def registration_kind_for(self, name: str) -> RegistrationKind | None:
+        """Return the execution-contract classification for *name*, if known."""
+        name = self._canonical_name(name)
+        self._ensure_discovered()
+        return self.registration_kinds.get(name)
 
     def module_file_for(self, name: str) -> Path | None:
         """Return the source module file path for *name*, or ``None``."""

@@ -1,9 +1,13 @@
 from __future__ import annotations
 
+import importlib
 import json
 import subprocess
 from pathlib import Path
 
+import pytest
+
+from arnold.pipelines.megaplan.review import mechanical
 from arnold.pipelines.megaplan.review.mechanical import run_pre_checks
 
 
@@ -129,3 +133,114 @@ def test_run_pre_checks_dead_guard_static_gracefully_reports_parse_failures(tmp_
         and "could not be parsed as Python" in flag["detail"]
         for flag in flags
     )
+
+
+def test_dead_guard_static_skips_oversized_callsite_files(tmp_path: Path, monkeypatch) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    small_caller = repo / "caller.py"
+    large_caller = repo / "large_generated.py"
+    small_caller.write_text("target(True)\n", encoding="utf-8")
+    large_caller.write_text("target(True)\n" + ("# generated\n" * 30_000), encoding="utf-8")
+
+    func_source = "def target(flag=True):\n    if flag:\n        return 1\n"
+    func = mechanical.ast.parse(func_source, filename="changed.py").body[0]
+
+    parsed_filenames: list[str] = []
+    real_parse = mechanical.ast.parse
+
+    def spy_parse(source: str, filename: str = "<unknown>", *args, **kwargs):
+        parsed_filenames.append(filename)
+        return real_parse(source, filename=filename, *args, **kwargs)
+
+    monkeypatch.setattr(mechanical.ast, "parse", spy_parse)
+
+    assert mechanical._candidate_call_truthiness(repo, "target", "flag", func) == [True]
+    assert str(small_caller) in parsed_filenames
+    assert str(large_caller) not in parsed_filenames
+
+
+def test_dead_guard_static_does_not_parse_files_without_target_name(tmp_path: Path, monkeypatch) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    target_caller = repo / "caller.py"
+    unrelated = repo / "unrelated.py"
+    target_caller.write_text("target(True)\n", encoding="utf-8")
+    unrelated.write_text("other(True)\n", encoding="utf-8")
+
+    func_source = "def target(flag=True):\n    if flag:\n        return 1\n"
+    func = mechanical.ast.parse(func_source, filename="changed.py").body[0]
+
+    parsed_filenames: list[str] = []
+    real_parse = mechanical.ast.parse
+
+    def spy_parse(source: str, filename: str = "<unknown>", *args, **kwargs):
+        parsed_filenames.append(filename)
+        return real_parse(source, filename=filename, *args, **kwargs)
+
+    monkeypatch.setattr(mechanical.ast, "parse", spy_parse)
+
+    assert mechanical._candidate_call_truthiness(repo, "target", "flag", func) == [True]
+    assert str(target_caller) in parsed_filenames
+    assert str(unrelated) not in parsed_filenames
+
+
+def test_dead_guard_static_skips_migration_sized_diffs(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    metadata = mechanical._DiffMetadata(
+        patch="",
+        files=[f"pkg/module_{index}.py" for index in range(101)],
+        hunks=101,
+        changed_lines=101,
+        added_lines={f"pkg/module_{index}.py": {1} for index in range(101)},
+    )
+
+    flags = mechanical._dead_guard_static_flags(repo, metadata)
+
+    assert len(flags) == 1
+    assert flags[0]["id"] == "PRECHECK-DEAD_GUARD_STATIC-SKIPPED_LARGE_DIFF"
+    assert flags[0]["severity"] == "minor"
+    assert "too large for bounded advisory AST scanning" in flags[0]["detail"]
+
+
+def test_dead_guard_static_skips_added_line_heavy_diffs(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    metadata = mechanical._DiffMetadata(
+        patch="",
+        files=["pkg/module.py"],
+        hunks=1,
+        changed_lines=5_001,
+        added_lines={"pkg/module.py": set(range(1, 5_002))},
+    )
+
+    flags = mechanical._dead_guard_static_flags(repo, metadata)
+
+    assert len(flags) == 1
+    assert flags[0]["id"] == "PRECHECK-DEAD_GUARD_STATIC-SKIPPED_LARGE_DIFF"
+    assert "added_python_lines=5001" in flags[0]["detail"]
+
+
+@pytest.mark.parametrize(
+    "module_name",
+    [
+        "arnold.pipelines.megaplan.review.mechanical",
+        "arnold_pipelines.megaplan.review.mechanical",
+    ],
+)
+def test_static_scan_prunes_excluded_directories_for_both_import_paths(
+    tmp_path: Path,
+    module_name: str,
+) -> None:
+    module = importlib.import_module(module_name)
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "src").mkdir()
+    (repo / "src" / "ok.py").write_text("target(True)\n", encoding="utf-8")
+    (repo / ".megaplan").mkdir()
+    (repo / ".megaplan" / "skip.py").write_text("target(True)\n", encoding="utf-8")
+
+    scanned = {path.relative_to(repo).as_posix() for path in module._iter_python_files(repo)}
+
+    assert scanned == {"src/ok.py"}

@@ -135,12 +135,10 @@ class Disposition:
 
 
 def _manifest_discovery_enabled() -> bool:
-    """Is manifest-first discovery turned on?
+    """Return True; the M6 env var remains as an inert compatibility alias."""
 
-    Default OFF (M6 strangler). Mirrors the inline-env-read pattern
-    used at ``_pipeline/runtime.py:191`` for ``MEGAPLAN_PIPELINE_AUTO``.
-    """
-    return os.environ.get("MEGAPLAN_M6_MANIFEST_DISCOVERY", "0") == "1"
+    os.environ.get("MEGAPLAN_M6_MANIFEST_DISCOVERY")
+    return True
 
 
 def _package_prefix_for_module_file(module_file: Path) -> str | None:

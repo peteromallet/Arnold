@@ -19,19 +19,6 @@ RuntimeOwner = Literal["native", "graph"]
 RUNTIME_NATIVE: RuntimeOwner = "native"
 RUNTIME_GRAPH: RuntimeOwner = "graph"
 
-_MEGAPLAN_NATIVE_STAGE_ORDER: tuple[str, ...] = (
-    "prep",
-    "plan",
-    "critique",
-    "gate",
-    "revise",
-    "finalize",
-    "execute",
-    "review",
-    "tiebreaker",
-)
-
-
 @dataclass(frozen=True)
 class RuntimeDispatchDecision:
     """Resolved runtime for a pipeline dispatch call."""
@@ -117,29 +104,24 @@ def has_native_dispatch_capability(
 ) -> bool:
     """Return whether *pipeline* can be executed by the native runtime.
 
-    A pipeline is native-capable if it carries a :class:`NativeProgram` bundle,
-    a bundle exposing ``run_native_pipeline`` (e.g. the Megaplan runner
-    adapter), or if it is the canonical Megaplan native-derived graph that the
-    bridge wraps with such an adapter at dispatch time.
+    A pipeline is native-capable if it carries a first-class
+    :class:`NativeProgram` on ``pipeline.native_program``, a legacy bare
+    ``NativeProgram`` resource bundle, or a bundle exposing
+    ``run_native_pipeline`` (e.g. a runner adapter).
     """
 
     from arnold.pipeline.native.ir import NativeProgram
+
+    del pipeline_key
+
+    if isinstance(getattr(pipeline, "native_program", None), NativeProgram):
+        return True
 
     resource_bundles = tuple(getattr(pipeline, "resource_bundles", ()) or ())
     for bundle in resource_bundles:
         if isinstance(bundle, NativeProgram):
             return True
         if hasattr(bundle, "run_native_pipeline"):
-            return True
-
-    # The Megaplan bridge constructs a NativeMegaplanRunner adapter at dispatch
-    # time; recognise the canonical native-derived graph by key/stage layout.
-    canonical_key = str(pipeline_key or "").replace("_", "-")
-    if canonical_key == "megaplan":
-        stages = getattr(pipeline, "stages", None)
-        if isinstance(stages, Mapping) and set(_MEGAPLAN_NATIVE_STAGE_ORDER).issubset(
-            set(stages.keys())
-        ):
             return True
 
     return False

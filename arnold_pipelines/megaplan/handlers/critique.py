@@ -921,6 +921,9 @@ def _normalize_critique_payload_for_recovery(payload: dict[str, Any]) -> dict[st
             "findings",
             "status",
             "unverifiable_reason",
+            "unverifiable_cause",
+            "unverifiable_retryable",
+            "unverifiable_error_kind",
         }
         check_extra_keys = set(check) - allowed_check_keys
         if check_extra_keys:

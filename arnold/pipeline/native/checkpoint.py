@@ -76,6 +76,7 @@ from uuid import uuid4
 from arnold.pipeline.native.ir import NativeProgram
 from arnold.pipeline.resume import (
     RESUME_CURSOR_FILENAME,
+    classify_resume_cursor_payload,
     persist_resume_cursor,
     read_resume_cursor,
 )
@@ -196,16 +197,15 @@ def classify_resume_cursor(artifact_root: str | Path) -> str:
         # whether a native key was intended.
         return "none"
 
-    if not isinstance(raw, dict):
+    cursor_kind = classify_resume_cursor_payload(raw)
+    if cursor_kind == "none":
         return "none"
-
-    native = raw.get("native")
-
-    # No native key at all → graph-born cursor.
-    if native is None:
+    if cursor_kind == "graph":
         return "graph"
+    if cursor_kind == "native":
+        return "native"
 
-    # native key present but not a dict → corrupt.
+    native = raw.get("native") if isinstance(raw, dict) else None
     if not isinstance(native, dict):
         raise NativeCursorCorruptError(
             f"Resume cursor at {cursor_path} has a 'native' key "

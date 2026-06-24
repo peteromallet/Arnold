@@ -6,8 +6,8 @@ merges state like the graph executor, and persists resume cursors
 when execution is interrupted by a ``max_phases`` limit.
 
 The runtime does NOT import megaplan or register production pipelines.
-It is gated behind ``require_native_runtime()`` at the entrypoint level
-and is otherwise a pure library module.
+It is a pure library module; runtime selection happens in executor and
+pipeline-specific routing code.
 
 Parity with graph executor
 --------------------------

@@ -11,6 +11,7 @@ from arnold.pipeline.registry import (
     ResourcePathPolicy,
     TrustPolicy,
 )
+from arnold.pipeline.native.ir import NativeProgram
 from arnold.pipeline.types import (
     Pipeline,
     Stage,
@@ -107,6 +108,51 @@ class TestRegister:
         reg.register("mod", _builder("mod"), module_file=Path("/some/mod.py"))
         assert reg.module_file_for("mod") == Path("/some/mod.py")
         assert reg.module_file_for("nope") is None
+
+    def test_registration_kind_defaults_to_unknown(self) -> None:
+        reg = PipelineRegistry()
+        reg.register("plain", _builder("plain"))
+
+        assert reg.registration_kind_for("plain") == "unknown"
+        assert reg.registration_kind_for("missing") is None
+
+    def test_registration_kind_preserves_native_classification(self) -> None:
+        program = NativeProgram(name="registry-native")
+        reg = PipelineRegistry()
+        reg.register(
+            "native",
+            lambda: Pipeline(
+                stages=_make_pipeline("native").stages,
+                entry="native",
+                native_program=program,
+            ),
+            registration_kind="native",
+            metadata={"driver": ("native", "test")},
+        )
+
+        pipeline = reg.get("native")
+        assert pipeline is not None
+        assert pipeline.native_program is program
+        assert reg.registration_kind_for("native") == "native"
+        assert reg.metadata_for("native")["driver"] == ("native", "test")
+
+    def test_registration_kind_preserves_graph_compatibility_classification(self) -> None:
+        class _Runner:
+            def run_native_pipeline(self, **kwargs):
+                return {"ok": True, "kwargs": kwargs}
+
+        reg = PipelineRegistry()
+        reg.register(
+            "compat",
+            lambda: Pipeline(stages={}, entry="", resource_bundles=(_Runner(),)),
+            registration_kind="graph_compatibility",
+            metadata={"driver": ("graph", "compat")},
+        )
+
+        pipeline = reg.get("compat")
+        assert pipeline is not None
+        assert callable(pipeline.resource_bundles[0].run_native_pipeline)
+        assert reg.registration_kind_for("compat") == "graph_compatibility"
 
 
 # ---------------------------------------------------------------------------
@@ -343,8 +389,8 @@ class TestDiscoveryManifest:
             'name = "my-pipeline"\n'
             'description = "A test pipeline"\n'
             "default_profile = None\n"
-            'supported_modes = ["code"]\n'
-            'driver = "inline"\n'
+            'supported_modes = ["native"]\n'
+            'driver = ["native"]\n'
             'entrypoint = "build_pipeline"\n'
             'arnold_api_version = "1.0"\n'
             'capabilities = ["plan"]\n'
@@ -372,8 +418,8 @@ class TestDiscoveryManifest:
             'name = "p"\n'
             'description = "d"\n'
             "default_profile = None\n"
-            'supported_modes = ["code"]\n'
-            'driver = "inline"\n'
+            'supported_modes = ["native"]\n'
+            'driver = ["native"]\n'
             'entrypoint = "build_pipeline"\n'
             'arnold_api_version = "1.0"\n'
             'capabilities = ["plan"]\n'
@@ -394,8 +440,8 @@ class TestDiscoveryManifest:
             'name = "p"\n'
             'description = "d"\n'
             "default_profile = None\n"
-            'supported_modes = ["code"]\n'
-            'driver = "inline"\n'
+            'supported_modes = ["native"]\n'
+            'driver = ["native"]\n'
             'entrypoint = "build_pipeline"\n'
             'arnold_api_version = "1.0"\n'
             'capabilities = ["plan"]\n'
@@ -416,8 +462,8 @@ class TestDiscoveryManifest:
             'name = "p"\n'
             'description = "d"\n'
             "default_profile = None\n"
-            'supported_modes = ["code"]\n'
-            'driver = "inline"\n'
+            'supported_modes = ["native"]\n'
+            'driver = ["native"]\n'
             'entrypoint = "build_pipeline"\n'
             'arnold_api_version = "1.0"\n'
             'capabilities = ["plan"]\n'
@@ -447,8 +493,8 @@ class TestDiscoveryManifest:
             'name = "writing-panel-strict"\n'
             'description = "A panel"\n'
             "default_profile = None\n"
-            'supported_modes = ["code"]\n'
-            'driver = "inline"\n'
+            'supported_modes = ["native"]\n'
+            'driver = ["native"]\n'
             'entrypoint = "build_pipeline"\n'
             'arnold_api_version = "1.0"\n'
             'capabilities = ["plan"]\n'
@@ -473,8 +519,8 @@ class TestDiscoveryManifest:
             'name = "my-pkg"\n'
             'description = "A package"\n'
             "default_profile = None\n"
-            'supported_modes = ["code"]\n'
-            'driver = "inline"\n'
+            'supported_modes = ["native"]\n'
+            'driver = ["native"]\n'
             'entrypoint = "build_pipeline"\n'
             'arnold_api_version = "1.0"\n'
             'capabilities = ["plan"]\n'
@@ -781,8 +827,8 @@ class TestDiscoverySkillMdLookup:
             'name = "custom-pipeline"\n'
             'description = "A non-Megaplan pipeline"\n'
             "default_profile = None\n"
-            'supported_modes = ["code", "review"]\n'
-            'driver = "inline"\n'
+            'supported_modes = ["native", "graph"]\n'
+            'driver = ["native"]\n'
             'entrypoint = "build_pipeline"\n'
             'arnold_api_version = "1.0"\n'
             'capabilities = ["plan", "review"]\n'
@@ -793,7 +839,7 @@ class TestDiscoverySkillMdLookup:
         result = read_manifest(init)
         assert isinstance(result, Manifest)
         assert result.name == "custom-pipeline"
-        assert result.supported_modes == ("code", "review")
+        assert result.supported_modes == ("native", "graph")
         assert result.capabilities == ("plan", "review")
 
     def test_skill_md_missing_is_error(self, tmp_path: Path) -> None:
@@ -804,8 +850,8 @@ class TestDiscoverySkillMdLookup:
             'name = "nop"\n'
             'description = "no skill file"\n'
             "default_profile = None\n"
-            'supported_modes = ["code"]\n'
-            'driver = "inline"\n'
+            'supported_modes = ["native"]\n'
+            'driver = ["native"]\n'
             'entrypoint = "build_pipeline"\n'
             'arnold_api_version = "1.0"\n'
             'capabilities = ["plan"]\n'
@@ -823,8 +869,8 @@ class TestDiscoverySkillMdLookup:
             'name = "p"\n'
             'description = "d"\n'
             "default_profile = None\n"
-            'supported_modes = ["code"]\n'
-            'driver = "inline"\n'
+            'supported_modes = ["native"]\n'
+            'driver = ["native"]\n'
             'entrypoint = "build_pipeline"\n'
             'arnold_api_version = "1.0"\n'
             'capabilities = ["plan"]\n'
@@ -847,8 +893,8 @@ class TestDiscoverySkillMdLookup:
             'name = "p"\n'
             'description = "first"\n'
             "default_profile = None\n"
-            'supported_modes = ["code"]\n'
-            'driver = "inline"\n'
+            'supported_modes = ["native"]\n'
+            'driver = ["native"]\n'
             'entrypoint = "build_pipeline"\n'
             'arnold_api_version = "1.0"\n'
             'capabilities = ["plan"]\n'
@@ -862,8 +908,8 @@ class TestDiscoverySkillMdLookup:
             'name = "p"\n'
             'description = "second different"\n'
             "default_profile = None\n"
-            'supported_modes = ["code"]\n'
-            'driver = "inline"\n'
+            'supported_modes = ["native"]\n'
+            'driver = ["native"]\n'
             'entrypoint = "build_pipeline"\n'
             'arnold_api_version = "1.0"\n'
             'capabilities = ["plan"]\n'
@@ -890,8 +936,8 @@ class TestDiscoverySkillMdLookup:
             'name = "p"\n'
             'description = "d"\n'
             "default_profile = None\n"
-            'supported_modes = ["code"]\n'
-            'driver = "inline"\n'
+            'supported_modes = ["native"]\n'
+            'driver = ["native"]\n'
             'entrypoint = "build_pipeline"\n'
             'arnold_api_version = "99.0"\n'
             'capabilities = ["plan"]\n'
@@ -911,8 +957,8 @@ class TestDiscoverySkillMdLookup:
             'name = "p"\n'
             'description = "d"\n'
             "default_profile = None\n"
-            'supported_modes = ["code"]\n'
-            'driver = "inline"\n'
+            'supported_modes = ["native"]\n'
+            'driver = ["native"]\n'
             'entrypoint = "build_pipeline"\n'
             'arnold_api_version = "1.0"\n'
             'capabilities = ["plan"]\n'
@@ -940,8 +986,8 @@ class TestDiscoverySkillMdLookup:
             'name = "p"\n'
             'description = "d"\n'
             'default_profile = "production"\n'
-            'supported_modes = ["code"]\n'
-            'driver = "inline"\n'
+            'supported_modes = ["native"]\n'
+            'driver = ["native"]\n'
             'entrypoint = "build_pipeline"\n'
             'arnold_api_version = "1.0"\n'
             'capabilities = ["plan"]\n'
@@ -961,8 +1007,8 @@ class TestDiscoverySkillMdLookup:
             'name = "p"\n'
             'description = "d"\n'
             "default_profile = None\n"
-            'supported_modes = ["code"]\n'
-            'driver = "inline"\n'
+            'supported_modes = ["native"]\n'
+            'driver = ["native"]\n'
             'entrypoint = "build_pipeline"\n'
             'arnold_api_version = "1.0"\n'
             'capabilities = ["plan"]\n'

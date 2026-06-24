@@ -1413,6 +1413,13 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Pipeline name to resolve (e.g. planning)",
     )
+    pipelines_describe_parser = pipelines_sub.add_parser(
+        "describe", help="Show manifest metadata and validation disposition"
+    )
+    pipelines_describe_parser.add_argument(
+        "pipeline_name",
+        help="Pipeline name to describe (e.g. planning)",
+    )
     pipelines_sub.add_parser(
         "doctor",
         help="Per-path discovery report (discovered / rejected+tb / skipped)",
