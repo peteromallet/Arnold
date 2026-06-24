@@ -99,3 +99,53 @@ arnold workflow check --module arnold_pipelines.megaplan.pipelines.jokes:build_p
 arnold workflow dry-run --module arnold_pipelines.megaplan.pipelines.jokes:build_pipeline
 arnold workflow run --module arnold_pipelines.megaplan.pipelines.jokes:build_pipeline --backend fake
 ```
+
+## Source-File CLI
+
+For Python-shaped V1 source files, use file-first commands. The authored `.py`
+file remains the source; generated manifests are backend outputs.
+
+```bash
+arnold workflow check workflow.py
+arnold workflow compile workflow.py --out manifest.json
+arnold workflow inspect workflow.py
+arnold workflow explain workflow.py
+```
+
+- `check` prints human diagnostics by default and exits non-zero when the source
+  is invalid. Use `--format json` for a machine-readable envelope.
+- `compile` writes canonical manifest JSON to `--out` on success. On failure it
+  exits non-zero and, with `--diagnostics-json PATH|-`, writes structured
+  diagnostics without creating or truncating the requested output file.
+- `inspect` emits a source-oriented summary: workflow identity, components,
+  routes, policies, and source spans. JSON output is available with
+  `--format json`.
+- `explain` prints an ordered narrative of the authored control flow with line
+  numbers and component references.
+
+### JSON diagnostics envelope
+
+```json
+{
+  "ok": false,
+  "source": {"kind": "python", "path": "workflow.py"},
+  "diagnostics": [
+    {
+      "file": "workflow.py",
+      "line": 9,
+      "col": 35,
+      "severity": "error",
+      "code": "AWF010_RESERVED_CALL_KEYWORD",
+      "message": "...",
+      "suggestion": "..."
+    }
+  ]
+}
+```
+
+The envelope is stable for agent consumption. Fields `line` and `col` are
+omitted (or `null`) when a diagnostic has no source span; callers must not
+fabricate locations.
+
+`--module ...` remains available for legacy builder-target workflows and is
+unchanged.
