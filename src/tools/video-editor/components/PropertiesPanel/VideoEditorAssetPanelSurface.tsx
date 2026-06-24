@@ -8,8 +8,9 @@ import {
   useVideoEditorAssetPanels,
   useVideoEditorRenderContext,
 } from '@/tools/video-editor/runtime/useVideoEditorRenderContext.ts';
+import { useOptionalVideoEditorRuntime } from '@/tools/video-editor/contexts/DataProviderContext.tsx';
 import {
-  ContributionErrorBoundary,
+  HostContributionErrorBoundary,
   type ContributionErrorInfo,
 } from '@/tools/video-editor/runtime/ContributionErrorBoundary.tsx';
 
@@ -21,6 +22,8 @@ function VideoEditorAssetPanelSurfaceComponent({
   includeBuiltIn = true,
 }: VideoEditorAssetPanelSurfaceProps) {
   const renderContext = useVideoEditorRenderContext();
+  const runtime = useOptionalVideoEditorRuntime();
+  const ownerMap = runtime?.extensionRuntime?.contributionOwnerMap;
   const assetPanels = useVideoEditorAssetPanels();
   const { data, preferences } = useTimelineEditorData();
   const { setAssetPanelState, uploadFiles } = useTimelineEditorOps();
@@ -59,16 +62,17 @@ function VideoEditorAssetPanelSurfaceComponent({
     <div className="flex flex-col gap-3">
       {builtInPanel}
       {assetPanels.map((panel) => (
-        <ContributionErrorBoundary
+        <HostContributionErrorBoundary
           key={panel.id}
           contributionId={panel.id}
+          extensionId={ownerMap?.get(panel.id)}
           kind="panel"
           onError={handleContributionError}
         >
           <div data-video-editor-panel-id={panel.id}>
             {panel.render(renderContext)}
           </div>
-        </ContributionErrorBoundary>
+        </HostContributionErrorBoundary>
       ))}
     </div>
   );

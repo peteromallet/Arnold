@@ -20,12 +20,13 @@ import {
   useVideoEditorPanelRegistry,
   useVideoEditorRenderContext,
 } from '@/tools/video-editor/runtime/useVideoEditorRenderContext.ts';
+import { useOptionalVideoEditorRuntime } from '@/tools/video-editor/contexts/DataProviderContext.tsx';
 import {
   getInspectorContributions,
   type InspectorSelectionSnapshot,
 } from '@/tools/video-editor/runtime/extensionSurface.ts';
 import {
-  ContributionErrorBoundary,
+  HostContributionErrorBoundary,
   type ContributionErrorInfo,
 } from '@/tools/video-editor/runtime/ContributionErrorBoundary.tsx';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/shared/components/ui/tabs.tsx';
@@ -44,6 +45,8 @@ function InspectorRegistrySections({
 }) {
   const renderContext = useVideoEditorRenderContext();
   const registry = useVideoEditorPanelRegistry();
+  const runtime = useOptionalVideoEditorRuntime();
+  const ownerMap = runtime?.extensionRuntime?.contributionOwnerMap;
   const contributions = useMemo(
     () => getInspectorContributions(registry, renderContext, selection),
     [registry, renderContext, selection],
@@ -70,16 +73,17 @@ function InspectorRegistrySections({
   return (
     <div className="flex flex-col gap-3">
       {sections.map((section) => (
-        <ContributionErrorBoundary
+        <HostContributionErrorBoundary
           key={section.id}
           contributionId={section.id}
+          extensionId={ownerMap?.get(section.id)}
           kind="inspectorSection"
           onError={handleContributionError}
         >
           <div data-video-editor-inspector-section-id={section.id}>
             {section.render(renderContext, selection)}
           </div>
-        </ContributionErrorBoundary>
+        </HostContributionErrorBoundary>
       ))}
     </div>
   );

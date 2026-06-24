@@ -1559,6 +1559,208 @@ describe('VideoEditorProvider', () => {
     expect(result.current.isResolving).toBe(false);
   });
 
+  // T9: No-repository fast path synthesizes truthful loaded package inventory entries
+  it('synthesizes loaded packageStateEntries for direct host-supplied extensions', () => {
+    const extensionId = 'com.t9.direct-inventory';
+    const extension: ReighExtension = defineExtension({
+      manifest: {
+        id: extensionId as never,
+        version: '2.0.0',
+        label: 'T9 Direct Inventory Ext',
+        publisher: 'T9 Publisher',
+        description: 'A direct host-supplied extension for inventory testing',
+        contributions: [
+          {
+            id: 't9.slot.header' as never,
+            kind: 'slot',
+            slot: 'header' as never,
+            label: 'T9 Header Slot',
+          },
+          {
+            id: 't9.dialog.about' as never,
+            kind: 'dialog',
+            label: 'T9 About Dialog',
+          },
+        ],
+      },
+    });
+
+    const { result } = renderHook(() => useExtensionLoaderWiring({
+      directExtensions: [extension],
+      repository: null,
+    }));
+
+    expect(result.current.resolvedExtensions).toEqual([extension]);
+    expect(result.current.diagnostics).toEqual([]);
+    expect(result.current.loaderResult).toBeNull();
+    expect(result.current.isResolving).toBe(false);
+    expect(result.current.error).toBeNull();
+
+    // Verify synthesized packageStateEntries
+    expect(result.current.packageStateEntries).toHaveLength(1);
+    const entry = result.current.packageStateEntries[0];
+    expect(entry.extensionId).toBe(extensionId);
+    expect(entry.packageState).toBe('loaded');
+    expect(entry.stateReason).toBe('Direct host-supplied extension');
+    expect(entry.packageMetadata).toEqual({
+      label: 'T9 Direct Inventory Ext',
+      version: '2.0.0',
+      publisher: 'T9 Publisher',
+      description: 'A direct host-supplied extension for inventory testing',
+    });
+
+    // Verify manifest contributions are preserved
+    expect(entry.manifestContributions).toHaveLength(2);
+    expect(entry.manifestContributions![0]).toEqual(
+      expect.objectContaining({ id: 't9.slot.header', kind: 'slot' }),
+    );
+    expect(entry.manifestContributions![1]).toEqual(
+      expect.objectContaining({ id: 't9.dialog.about', kind: 'dialog' }),
+    );
+
+    // Verify contribution summary is computed
+    expect(entry.contributionSummary).not.toBeNull();
+    expect(entry.contributionSummary!.declared).toBe(2);
+    expect(entry.contributionSummary!.active).toBe(-1); // Unknown without activeIds
+    expect(entry.contributionSummary!.inactive).toBe(-1); // Unknown without inactiveCount
+    expect(entry.contributionSummary!.kinds).toEqual(['Dialog', 'Slot']);
+  });
+
+  it('synthesizes packageStateEntries with null contributionSummary when no contributions declared', () => {
+    const extensionId = 'com.t9.no-contribs';
+    const extension: ReighExtension = defineExtension({
+      manifest: {
+        id: extensionId as never,
+        version: '1.0.0',
+        label: 'T9 No Contribs',
+      },
+    });
+
+    const { result } = renderHook(() => useExtensionLoaderWiring({
+      directExtensions: [extension],
+      repository: null,
+    }));
+
+    expect(result.current.packageStateEntries).toHaveLength(1);
+    const entry = result.current.packageStateEntries[0];
+    expect(entry.extensionId).toBe(extensionId);
+    expect(entry.packageState).toBe('loaded');
+    expect(entry.packageMetadata).toEqual({
+      label: 'T9 No Contribs',
+      version: '1.0.0',
+    });
+    // No contributions means null manifestContributions
+    expect(entry.manifestContributions).toBeNull();
+    // No contributions means null contributionSummary
+    expect(entry.contributionSummary).toBeNull();
+  });
+
+  it('handles extension with non-string manifest id gracefully', () => {
+    // Use a manually constructed extension to bypass defineExtension validation
+    const extension: ReighExtension = {
+      manifest: {
+        id: 12345 as unknown as string,
+        version: '1.0.0',
+        label: 'T9 Missing Id',
+      },
+      activate: vi.fn(),
+    } as unknown as ReighExtension;
+
+    const { result } = renderHook(() => useExtensionLoaderWiring({
+      directExtensions: [extension],
+      repository: null,
+    }));
+
+    expect(result.current.packageStateEntries).toHaveLength(1);
+    const entry = result.current.packageStateEntries[0];
+    // metadataFromManifest requires a string id; non-string id causes fallback
+    expect(entry.extensionId).toBe('(unknown)');
+    expect(entry.packageState).toBe('loaded');
+    expect(entry.packageMetadata).toEqual({
+      label: 'T9 Missing Id',
+      version: '1.0.0',
+    });
+  });
+
+  it('synthesizes entries for multiple direct extensions in input order', () => {
+    const extA: ReighExtension = defineExtension({
+      manifest: {
+        id: 'com.t9.multi-a' as never,
+        version: '1.0.0',
+        label: 'T9 Multi A',
+        contributions: [
+          { id: 't9.ma.slot' as never, kind: 'slot', slot: 'header' as never, label: 'A Slot' as never },
+        ],
+      },
+    });
+    const extB: ReighExtension = defineExtension({
+      manifest: {
+        id: 'com.t9.multi-b' as never,
+        version: '2.0.0',
+        label: 'T9 Multi B',
+        publisher: 'T9 Publisher B',
+        contributions: [
+          { id: 't9.mb.dialog' as never, kind: 'dialog', label: 'B Dialog' as never },
+          { id: 't9.mb.panel' as never, kind: 'panel', label: 'B Panel' as never },
+        ],
+      },
+    });
+
+    const { result } = renderHook(() => useExtensionLoaderWiring({
+      directExtensions: [extA, extB],
+      repository: null,
+    }));
+
+    expect(result.current.packageStateEntries).toHaveLength(2);
+    expect(result.current.packageStateEntries[0].extensionId).toBe('com.t9.multi-a');
+    expect(result.current.packageStateEntries[0].packageState).toBe('loaded');
+    expect(result.current.packageStateEntries[0].contributionSummary!.declared).toBe(1);
+
+    expect(result.current.packageStateEntries[1].extensionId).toBe('com.t9.multi-b');
+    expect(result.current.packageStateEntries[1].packageState).toBe('loaded');
+    expect(result.current.packageStateEntries[1].packageMetadata!.publisher).toBe('T9 Publisher B');
+    expect(result.current.packageStateEntries[1].contributionSummary!.declared).toBe(2);
+    expect(result.current.packageStateEntries[1].contributionSummary!.kinds).toEqual(['Dialog', 'Panel']); // 'panel' maps to 'Slot' kind label? No, let's check...
+  });
+
+  it('returns empty packageStateEntries when no direct extensions are provided', () => {
+    const { result } = renderHook(() => useExtensionLoaderWiring({
+      directExtensions: undefined,
+      repository: null,
+    }));
+
+    expect(result.current.packageStateEntries).toEqual([]);
+    expect(result.current.resolvedExtensions).toEqual([]);
+    expect(result.current.isResolving).toBe(false);
+  });
+
+  it('packageStateEntries are frozen (immutable)', () => {
+    const extension: ReighExtension = defineExtension({
+      manifest: {
+        id: 'com.t9.frozen' as never,
+        version: '1.0.0',
+        label: 'T9 Frozen',
+      },
+    });
+
+    const { result } = renderHook(() => useExtensionLoaderWiring({
+      directExtensions: [extension],
+      repository: null,
+    }));
+
+    const entries = result.current.packageStateEntries;
+    expect(Object.isFrozen(entries)).toBe(true);
+
+    const entry = entries[0];
+    // The contributionSummary should also be frozen when non-null
+    // (from computePackageContributionSummary which returns Object.freeze)
+    // But entry itself is not frozen by our code — it's created fresh in the map
+    // Let's verify the array is frozen at least
+    expect(() => {
+      (entries as any).push({ extensionId: 'test', packageState: 'loaded', stateReason: '', packageMetadata: null });
+    }).toThrow();
+  });
+
   it('surfaces invalid validation failures in packageStateEntries', async () => {
     const invalidExtension = {
       manifest: {

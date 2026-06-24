@@ -470,11 +470,124 @@ export interface ExtensionRuntime {
  * Mirrors the state/metadata fields of {@link ExtensionLoadEntry} but is
  * owned by the runtime normalization layer.
  */
+// ---------------------------------------------------------------------------
+// Package contribution summary (M5: manifest-derived, survives without active
+// runtime descriptors)
+// ---------------------------------------------------------------------------
+
+/** Short human-readable label for each contribution kind. */
+const CONTRIBUTION_KIND_LABEL: Partial<Record<ContributionKind, string>> = {
+  slot: 'Slot',
+  dialog: 'Dialog',
+  panel: 'Panel',
+  inspectorSection: 'Inspector section',
+  overlay: 'Overlay',
+  parser: 'Parser',
+  outputFormat: 'Output format',
+  searchProvider: 'Search provider',
+  metadataFacet: 'Metadata facet',
+  assetDetailSection: 'Asset detail',
+  effect: 'Effect',
+  transition: 'Transition',
+  shader: 'Shader',
+  agentTool: 'Agent tool',
+  process: 'Process',
+};
+
+/**
+ * Manifest-derived contribution summary that survives without active runtime
+ * descriptors. Computed from manifest contributions plus optional runtime
+ * data for active/inactive counts.
+ */
+export interface PackageContributionSummary {
+  /** Total contributions declared in the extension manifest. */
+  readonly declared: number;
+  /** Number of contributions currently active (bridged) in the runtime.
+   *  -1 when unknown (no active runtime descriptor available). */
+  readonly active: number;
+  /** Number of contributions reserved but not yet bridged.
+   *  -1 when unknown. */
+  readonly inactive: number;
+  /** Sorted, deduplicated list of contribution kind labels for the summary. */
+  readonly kinds: readonly string[];
+  /** Per-kind contribution IDs for detailed error/reason display. */
+  readonly contributionIds: Readonly<Record<string, readonly string[]>>;
+}
+
+/**
+ * Compute a {@link PackageContributionSummary} from manifest contributions.
+ *
+ * When `activeIds` is provided, contributions whose ID appears in the set are
+ * counted as active.  When `inactiveCount` is provided, it is used as the
+ * inactive count.  Both are optional and default to -1 (unknown) when absent.
+ */
+export function computePackageContributionSummary(
+  manifestContributions: readonly ExtensionContribution[] | undefined | null,
+  activeIds?: ReadonlySet<string>,
+  inactiveCount?: number,
+): PackageContributionSummary | null {
+  const contribs = manifestContributions ?? [];
+  const declared = contribs.length;
+  if (declared === 0) return null;
+
+  const kinds = new Set<string>();
+  const contributionIds: Record<string, string[]> = {};
+
+  for (const contrib of contribs) {
+    const kindLabel = CONTRIBUTION_KIND_LABEL[contrib.kind] ?? contrib.kind;
+    kinds.add(kindLabel);
+
+    const cid = contrib.id as string;
+    if (!contributionIds[kindLabel]) {
+      contributionIds[kindLabel] = [];
+    }
+    contributionIds[kindLabel].push(cid);
+  }
+
+  // Freeze contribution IDs per kind
+  const frozenIds: Record<string, readonly string[]> = {};
+  for (const kind of Object.keys(contributionIds)) {
+    frozenIds[kind] = Object.freeze([...contributionIds[kind]]);
+  }
+
+  let active = -1;
+  if (activeIds) {
+    active = 0;
+    for (const contrib of contribs) {
+      if (activeIds.has(contrib.id as string)) {
+        active++;
+      }
+    }
+  }
+
+  return Object.freeze({
+    declared,
+    active: active,
+    inactive: inactiveCount ?? -1,
+    kinds: Object.freeze([...kinds].sort()),
+    contributionIds: Object.freeze(frozenIds),
+  });
+}
+
+
 export interface PackageStateInventoryEntry {
   readonly extensionId: string;
   readonly packageState: PackageState;
   readonly stateReason: string;
   readonly packageMetadata: PackageMetadata | null;
+  /**
+   * Manifest contributions preserved from the loader so contribution
+   * summaries can be derived for disabled/error packages without
+   * active runtime descriptors.
+   */
+  readonly manifestContributions?: readonly ExtensionContribution[] | null;
+  /**
+   * Precomputed contribution summary for UI rendering.
+   * Populated by {@link normalizeExtensionRuntime} so the ExtensionManager
+   * can render contribution counts, kind labels, and contribution IDs
+   * for every package regardless of activation state.
+   */
+  readonly contributionSummary?: PackageContributionSummary | null;
 }
 
 /** Signature for host-owned runtime normalization. */
@@ -1153,6 +1266,58 @@ export function normalizeExtensionRuntime(
       })
     : DEFAULT_VIDEO_EDITOR_EXTENSION_RUNTIME;
 
+  // ---- Compute contribution summaries for package state inventory ---------
+  const activeContributionIds = new Set<string>();
+  for (const key of Object.keys(slots)) activeContributionIds.add(key);
+  for (const d of dialogDescriptors) activeContributionIds.add(d.id);
+  for (const p of panelDescriptors) activeContributionIds.add(p.id);
+  for (const s of inspectorSectionDescriptors) activeContributionIds.add(s.id);
+  for (const o of overlayDescriptors) activeContributionIds.add(o.id);
+  for (const ap of assetParserDescriptors) activeContributionIds.add(ap.id);
+  for (const of_ of outputFormatDescriptors) activeContributionIds.add(of_.id);
+  for (const sp of searchProviderDescriptors) activeContributionIds.add(sp.id);
+  for (const mf of metadataFacetDescriptors) activeContributionIds.add(mf.id);
+  for (const ads of assetDetailSectionDescriptors) activeContributionIds.add(ads.id);
+  for (const eff of effectDescriptors) activeContributionIds.add(eff.id);
+  for (const tr of transitionDescriptors) activeContributionIds.add(tr.id);
+  for (const sh of shaderDescriptors) activeContributionIds.add(sh.id);
+  for (const at of agentToolDescriptors) activeContributionIds.add(at.id);
+  for (const pr of processDescriptors) activeContributionIds.add(pr.id);
+
+  const enrichedPackageStateEntries = (packageStateEntries ?? []).map((entry) => {
+    // Try to find the matching active extension for this package
+    const ext = uniqueExtensions.find(
+      (e) => (e.manifest.id as string) === entry.extensionId,
+    );
+    
+    let contributionSummary: PackageContributionSummary | null = null;
+    
+    if (ext) {
+      // Active extension: derive full summary from manifest + runtime
+      const inactiveForExt = inactiveReserved.filter(
+        (r) => r.extensionId === entry.extensionId,
+      ).length;
+      contributionSummary = computePackageContributionSummary(
+        ext.manifest.contributions,
+        activeContributionIds,
+        inactiveForExt,
+      );
+    } else if (entry.manifestContributions) {
+      // Non-active package: derive from preserved manifest contributions
+      contributionSummary = computePackageContributionSummary(
+        entry.manifestContributions,
+      );
+    }
+    
+    // Keep any preexisting contributionSummary if already set by caller
+    const summary = entry.contributionSummary ?? contributionSummary;
+    
+    return Object.freeze({
+      ...entry,
+      contributionSummary: summary ? Object.freeze({ ...summary }) : null,
+    });
+  });
+
   const runtime: ExtensionRuntime = Object.freeze({
     config,
     extensions: Object.freeze([...uniqueExtensions]),
@@ -1175,9 +1340,7 @@ export function normalizeExtensionRuntime(
     shaders: Object.freeze(shaderDescriptors),
     agentTools: Object.freeze(agentToolDescriptors),
     requirements: Object.freeze([]),
-    packageStateInventory: Object.freeze(
-      (packageStateEntries ?? []).map((entry) => Object.freeze({ ...entry })),
-    ),
+    packageStateInventory: Object.freeze(enrichedPackageStateEntries),
   });
 
   return runtime;

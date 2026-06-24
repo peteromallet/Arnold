@@ -1,0 +1,77 @@
+{
+  "schema_version": 0,
+  "current_milestone_index": 5,
+  "current_plan_name": "m5-lifecycle-diagnostics-20260624-0037",
+  "last_state": "done",
+  "pr_number": 64,
+  "pr_state": "merged",
+  "completed": [
+    {
+      "label": "m1-contracts-proposal-spine",
+      "plan": "m1-contracts-and-proposal-20260623-1813",
+      "status": "done",
+      "pr_number": 59,
+      "pr_state": "merged"
+    },
+    {
+      "label": "m2-agent-proposal-vertical",
+      "plan": "m2-agent-proposal-vertical-20260623-1946",
+      "status": "done",
+      "pr_number": 60,
+      "pr_state": "merged"
+    },
+    {
+      "label": "m3-repository-first-settings-runtime",
+      "plan": "m3-repository-first-settings-20260623-2112",
+      "status": "done",
+      "pr_number": 62,
+      "pr_state": "merged"
+    },
+    {
+      "label": "m4-manager-schemaform-settings",
+      "plan": "m4-manager-schemaform-20260623-2252",
+      "status": "done",
+      "pr_number": 63,
+      "pr_state": "merged"
+    },
+    {
+      "label": "m5-lifecycle-diagnostics-readiness",
+      "plan": "m5-lifecycle-diagnostics-20260624-0037",
+      "status": "done",
+      "pr_number": 64,
+      "pr_state": "merged"
+    }
+  ],
+  "branch_head": null,
+  "pr_head": null,
+  "last_pushed_commit": null,
+  "dirty_flag": false,
+  "sync_state": null,
+  "extra_repos": [],
+  "chain_session": null,
+  "resolved_workspace": null,
+  "extra_repo_sync": [],
+  "completion_contract_mode": "shadow",
+  "full_suite_backstop_mode": "shadow",
+  "retry_counts": {},
+  "ladder_stage": {},
+  "profile_bumps": {},
+  "robustness_bumps": {},
+  "depth_bumps": {},
+  "enforce_revise_counts": {},
+  "metadata": {
+    "execution_environment": {
+      "schema_version": 1,
+      "created_phase": "chain_start",
+      "last_observed_phase": "chain_start",
+      "project_root": "/Users/peteromalley/Documents/.megaplan-worktrees/reigh-pristine-extension-foundation",
+      "target_root": "/Users/peteromalley/Documents/.megaplan-worktrees/reigh-pristine-extension-foundation",
+      "work_dir": "/Users/peteromalley/Documents/.megaplan-worktrees/reigh-pristine-extension-foundation",
+      "engine_root": "/Users/peteromalley/Documents/megaplan-engine",
+      "target_head": "5aa21c06a49f522569d29ebd032c7d2f734081ed",
+      "target_base": "5aa21c06a49f522569d29ebd032c7d2f734081ed",
+      "target_base_ref": "main",
+      "target_fallback_reason": null
+    }
+  }
+}

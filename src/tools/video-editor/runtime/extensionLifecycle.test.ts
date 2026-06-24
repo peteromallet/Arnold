@@ -142,6 +142,50 @@ describe('createExtensionDiagnosticsService', () => {
     svc.report({ severity: 'info', code: 'x', message: 'y' });
     expect(Object.isFrozen(svc.diagnostics[0])).toBe(true);
   });
+
+  it('overwrites spoofed extensionId with the service-owned extensionId', () => {
+    const svc = createExtensionDiagnosticsService('com.example.spoofed');
+    // Use 'as any' to bypass TS type check and test runtime spoofing protection
+    (svc as any).report({ severity: 'error', code: 'spoof/test', message: 'spoofed', extensionId: 'com.evil.spoofer' });
+    expect(svc.diagnostics).toHaveLength(1);
+    expect(svc.diagnostics[0].extensionId).toBe('com.example.spoofed');
+    expect(svc.diagnostics[0].extensionId).not.toBe('com.evil.spoofer');
+  });
+
+  it('pins source to DIAGNOSTIC_SOURCE_EXTENSION on every reported diagnostic', () => {
+    const svc = createExtensionDiagnosticsService('com.example.sourcepin');
+    svc.report({ severity: 'info', code: 'test/source', message: 'has source' });
+    expect(svc.diagnostics).toHaveLength(1);
+    expect(svc.diagnostics[0].source).toBe('extension');
+  });
+
+  it('overwrites spoofed source with DIAGNOSTIC_SOURCE_EXTENSION', () => {
+    const svc = createExtensionDiagnosticsService('com.example.sourcespoof');
+    // Use 'as any' to bypass TS type check and test runtime spoofing protection
+    (svc as any).report({ severity: 'warning', code: 'spoof/source', message: 'bad source', source: 'provider' });
+    expect(svc.diagnostics).toHaveLength(1);
+    expect(svc.diagnostics[0].source).toBe('extension');
+  });
+
+  it('lifecycle disposal removes extension diagnostics without affecting host/provider diagnostics', () => {
+    const host = createExtensionLifecycleHost();
+    const e1 = ext('com.example.disposal', {
+      activate: () => ({ dispose: () => {} }),
+    });
+    host.synchronize([e1], (ext) =>
+      makeCtx({ extension: { id: ext.manifest.id as any, version: '1.0.0', label: ext.manifest.label, manifest: ext.manifest } }),
+    );
+    // Verify diagnostics exist while active
+    const beforeDiags = host.diagnostics.filter((d) => d.extensionId === 'com.example.disposal');
+    expect(beforeDiags.length).toBeGreaterThanOrEqual(2); // activating + activated
+
+    // Remove extension
+    host.synchronize([], () => makeCtx());
+    // After removal, the lifecycle is gone so its diagnostics are no longer aggregated
+    const afterDiags = host.diagnostics.filter((d) => d.extensionId === 'com.example.disposal');
+    expect(afterDiags).toHaveLength(0);
+  });
+
 });
 
 // ---------------------------------------------------------------------------
@@ -3232,5 +3276,317 @@ describe('ExtensionLifecycleHost — onLifecycleDisposed callback (T16)', () => 
     // Remove — first callback throws, second should still fire
     host.synchronize([], () => makeCtx());
     expect(errorSpy).toHaveBeenCalledWith('com.example.cb-error');
+  });
+});
+
+
+// ---------------------------------------------------------------------------
+// T2: ExtensionLifecycleHost — monotonic recovery-key registry
+// ---------------------------------------------------------------------------
+
+describe('ExtensionLifecycleHost — recovery-key registry (T2)', () => {
+  it('getRecoveryKey returns "0" for unknown extension IDs', () => {
+    const host = createExtensionLifecycleHost();
+    expect(host.getRecoveryKey('com.example.unknown')).toBe('0');
+    expect(host.getRecoveryKey('never.seen')).toBe('0');
+  });
+
+  it('recovery key is set to "1" on first activation via synchronize', () => {
+    const host = createExtensionLifecycleHost();
+    const e1 = ext('com.example.first');
+
+    host.synchronize([e1], (ext) =>
+      makeCtx({ extension: { id: ext.manifest.id as any, version: '1.0.0', label: ext.manifest.label, manifest: ext.manifest } }),
+    );
+
+    expect(host.getRecoveryKey('com.example.first')).toBe('1');
+  });
+
+  it('recovery key stays stable across unchanged synchronize calls', () => {
+    const host = createExtensionLifecycleHost();
+    const e1 = ext('com.example.stable');
+
+    host.synchronize([e1], (ext) =>
+      makeCtx({ extension: { id: ext.manifest.id as any, version: '1.0.0', label: ext.manifest.label, manifest: ext.manifest } }),
+    );
+    expect(host.getRecoveryKey('com.example.stable')).toBe('1');
+
+    // Same extension list — recovery key must NOT change
+    host.synchronize([e1], (ext) =>
+      makeCtx({ extension: { id: ext.manifest.id as any, version: '1.0.0', label: ext.manifest.label, manifest: ext.manifest } }),
+    );
+    expect(host.getRecoveryKey('com.example.stable')).toBe('1');
+
+    // Third sync with same extension — still stable
+    host.synchronize([e1], (ext) =>
+      makeCtx({ extension: { id: ext.manifest.id as any, version: '1.0.0', label: ext.manifest.label, manifest: ext.manifest } }),
+    );
+    expect(host.getRecoveryKey('com.example.stable')).toBe('1');
+  });
+
+  it('recovery key does not change when an unrelated extension is added or removed', () => {
+    const host = createExtensionLifecycleHost();
+    const e1 = ext('com.example.stable-ek');
+    const e2 = ext('com.example.other');
+
+    // Activate e1
+    host.synchronize([e1], (ext) =>
+      makeCtx({ extension: { id: ext.manifest.id as any, version: '1.0.0', label: ext.manifest.label, manifest: ext.manifest } }),
+    );
+    expect(host.getRecoveryKey('com.example.stable-ek')).toBe('1');
+
+    // Add e2 — e1's key must stay stable
+    host.synchronize([e1, e2], (ext) =>
+      makeCtx({ extension: { id: ext.manifest.id as any, version: '1.0.0', label: ext.manifest.label, manifest: ext.manifest } }),
+    );
+    expect(host.getRecoveryKey('com.example.stable-ek')).toBe('1');
+    expect(host.getRecoveryKey('com.example.other')).toBe('1');
+
+    // Remove e2 — e1's key still stable
+    host.synchronize([e1], (ext) =>
+      makeCtx({ extension: { id: ext.manifest.id as any, version: '1.0.0', label: ext.manifest.label, manifest: ext.manifest } }),
+    );
+    expect(host.getRecoveryKey('com.example.stable-ek')).toBe('1');
+  });
+
+  it('recovery key increments on manifest replacement', () => {
+    const host = createExtensionLifecycleHost();
+    const extV1 = ext('com.example.manifest-change', {
+      contributions: [{ id: 'v1-contrib', kind: 'slot', slot: 'toolbar' }],
+    });
+    const extV2 = ext('com.example.manifest-change', {
+      contributions: [{ id: 'v2-contrib', kind: 'slot', slot: 'toolbar' }],
+    });
+
+    // Activate v1
+    host.synchronize([extV1], (ext) =>
+      makeCtx({ extension: { id: ext.manifest.id as any, version: '1.0.0', label: ext.manifest.label, manifest: ext.manifest } }),
+    );
+    expect(host.getRecoveryKey('com.example.manifest-change')).toBe('1');
+
+    // Replace with v2 (manifest change)
+    host.synchronize([extV2], (ext) =>
+      makeCtx({ extension: { id: ext.manifest.id as any, version: '1.0.0', label: ext.manifest.label, manifest: ext.manifest } }),
+    );
+    expect(host.getRecoveryKey('com.example.manifest-change')).toBe('2');
+  });
+
+  it('recovery key increments on re-add after removal', () => {
+    const host = createExtensionLifecycleHost();
+    const e1 = ext('com.example.readd');
+
+    // First activation
+    host.synchronize([e1], (ext) =>
+      makeCtx({ extension: { id: ext.manifest.id as any, version: '1.0.0', label: ext.manifest.label, manifest: ext.manifest } }),
+    );
+    expect(host.getRecoveryKey('com.example.readd')).toBe('1');
+
+    // Remove it
+    host.synchronize([], () => makeCtx());
+    // After removal, key is still stored (monotonic, never decrements)
+    expect(host.getRecoveryKey('com.example.readd')).toBe('1');
+
+    // Re-add — key should increment
+    host.synchronize([e1], (ext) =>
+      makeCtx({ extension: { id: ext.manifest.id as any, version: '1.0.0', label: ext.manifest.label, manifest: ext.manifest } }),
+    );
+    expect(host.getRecoveryKey('com.example.readd')).toBe('2');
+  });
+
+  it('recovery key increments on multiple re-add cycles', () => {
+    const host = createExtensionLifecycleHost();
+    const e1 = ext('com.example.multireadd');
+
+    // Add, remove, re-add, remove, re-add
+    for (let i = 1; i <= 5; i++) {
+      host.synchronize([e1], (ext) =>
+        makeCtx({ extension: { id: ext.manifest.id as any, version: '1.0.0', label: ext.manifest.label, manifest: ext.manifest } }),
+      );
+      expect(host.getRecoveryKey('com.example.multireadd')).toBe(String(i));
+      host.synchronize([], () => makeCtx());
+    }
+  });
+
+  it('incrementRecoveryKey bumps the key for a managed extension', () => {
+    const host = createExtensionLifecycleHost();
+    const e1 = ext('com.example.increment');
+
+    host.synchronize([e1], (ext) =>
+      makeCtx({ extension: { id: ext.manifest.id as any, version: '1.0.0', label: ext.manifest.label, manifest: ext.manifest } }),
+    );
+    expect(host.getRecoveryKey('com.example.increment')).toBe('1');
+
+    const newKey = host.incrementRecoveryKey('com.example.increment');
+    expect(newKey).toBe('2');
+    expect(host.getRecoveryKey('com.example.increment')).toBe('2');
+
+    // Increment again
+    const newKey2 = host.incrementRecoveryKey('com.example.increment');
+    expect(newKey2).toBe('3');
+    expect(host.getRecoveryKey('com.example.increment')).toBe('3');
+  });
+
+  it('incrementRecoveryKey returns "0" for unknown extension IDs', () => {
+    const host = createExtensionLifecycleHost();
+    expect(host.incrementRecoveryKey('com.example.ghost')).toBe('0');
+    expect(host.getRecoveryKey('com.example.ghost')).toBe('0');
+  });
+
+  it('incrementRecoveryKey returns "0" for removed extensions', () => {
+    const host = createExtensionLifecycleHost();
+    const e1 = ext('com.example.removed-incr');
+
+    host.synchronize([e1], (ext) =>
+      makeCtx({ extension: { id: ext.manifest.id as any, version: '1.0.0', label: ext.manifest.label, manifest: ext.manifest } }),
+    );
+    expect(host.getRecoveryKey('com.example.removed-incr')).toBe('1');
+
+    // Remove the extension
+    host.synchronize([], () => makeCtx());
+    // incrementRecoveryKey on a removed (non-lifecycle) extension is a no-op
+    expect(host.incrementRecoveryKey('com.example.removed-incr')).toBe('0');
+    // The stored monotonic key is unchanged by failed increment
+    expect(host.getRecoveryKey('com.example.removed-incr')).toBe('1');
+  });
+
+  it('incrementRecoveryKey returns "0" when host is disposed', () => {
+    const host = createExtensionLifecycleHost();
+    const e1 = ext('com.example.disp-incr');
+
+    host.synchronize([e1], (ext) =>
+      makeCtx({ extension: { id: ext.manifest.id as any, version: '1.0.0', label: ext.manifest.label, manifest: ext.manifest } }),
+    );
+
+    host.disposeAll();
+    expect(host.incrementRecoveryKey('com.example.disp-incr')).toBe('0');
+  });
+
+  it('recovery keys are independent across extensions', () => {
+    const host = createExtensionLifecycleHost();
+    const e1 = ext('com.example.indep-a');
+    const e2 = ext('com.example.indep-b');
+    const e3 = ext('com.example.indep-c');
+
+    host.synchronize([e1, e2, e3], (ext) =>
+      makeCtx({ extension: { id: ext.manifest.id as any, version: '1.0.0', label: ext.manifest.label, manifest: ext.manifest } }),
+    );
+
+    // All start at 1
+    expect(host.getRecoveryKey('com.example.indep-a')).toBe('1');
+    expect(host.getRecoveryKey('com.example.indep-b')).toBe('1');
+    expect(host.getRecoveryKey('com.example.indep-c')).toBe('1');
+
+    // Increment only b
+    host.incrementRecoveryKey('com.example.indep-b');
+    expect(host.getRecoveryKey('com.example.indep-a')).toBe('1');
+    expect(host.getRecoveryKey('com.example.indep-b')).toBe('2');
+    expect(host.getRecoveryKey('com.example.indep-c')).toBe('1');
+
+    // Remove and re-add c
+    host.synchronize([e1, e2], (ext) =>
+      makeCtx({ extension: { id: ext.manifest.id as any, version: '1.0.0', label: ext.manifest.label, manifest: ext.manifest } }),
+    );
+    host.synchronize([e1, e2, e3], (ext) =>
+      makeCtx({ extension: { id: ext.manifest.id as any, version: '1.0.0', label: ext.manifest.label, manifest: ext.manifest } }),
+    );
+
+    // a and b unchanged, c incremented to 2 (re-add)
+    expect(host.getRecoveryKey('com.example.indep-a')).toBe('1');
+    expect(host.getRecoveryKey('com.example.indep-b')).toBe('2');
+    expect(host.getRecoveryKey('com.example.indep-c')).toBe('2');
+  });
+
+  it('recovery keys are monotonic and never decrement', () => {
+    const host = createExtensionLifecycleHost();
+    const e1 = ext('com.example.monotonic');
+
+    // Activate
+    host.synchronize([e1], (ext) =>
+      makeCtx({ extension: { id: ext.manifest.id as any, version: '1.0.0', label: ext.manifest.label, manifest: ext.manifest } }),
+    );
+    expect(Number(host.getRecoveryKey('com.example.monotonic'))).toBeGreaterThanOrEqual(1);
+
+    // Remove — key stays (monotonic)
+    host.synchronize([], () => makeCtx());
+    const keyAfterRemove = Number(host.getRecoveryKey('com.example.monotonic'));
+    expect(keyAfterRemove).toBeGreaterThanOrEqual(1);
+
+    // Re-add — key increments (never goes down)
+    host.synchronize([e1], (ext) =>
+      makeCtx({ extension: { id: ext.manifest.id as any, version: '1.0.0', label: ext.manifest.label, manifest: ext.manifest } }),
+    );
+    expect(Number(host.getRecoveryKey('com.example.monotonic'))).toBe(keyAfterRemove + 1);
+
+    // Increment
+    const afterIncr = Number(host.incrementRecoveryKey('com.example.monotonic'));
+    expect(afterIncr).toBe(keyAfterRemove + 2);
+
+    // Manifest change
+    const extV2 = ext('com.example.monotonic', {
+      contributions: [{ id: 'fresh', kind: 'slot', slot: 'toolbar' }],
+    });
+    host.synchronize([extV2], (ext) =>
+      makeCtx({ extension: { id: ext.manifest.id as any, version: '1.0.0', label: ext.manifest.label, manifest: ext.manifest } }),
+    );
+    expect(Number(host.getRecoveryKey('com.example.monotonic'))).toBe(afterIncr + 1);
+  });
+
+  it('recovery key for failed-then-retried extension increments appropriately', () => {
+    let shouldFail = true;
+    const e1 = ext('com.example.fail-recovery', {
+      activate: () => {
+        if (shouldFail) throw new Error('first fail');
+      },
+    });
+
+    const host = createExtensionLifecycleHost();
+
+    // First activation fails — key still set to 1
+    host.synchronize([e1], (ext) =>
+      makeCtx({ extension: { id: ext.manifest.id as any, version: '1.0.0', label: ext.manifest.label, manifest: ext.manifest } }),
+    );
+    expect(host.lifecycles.get('com.example.fail-recovery')?.state).toBe('failed');
+    expect(host.getRecoveryKey('com.example.fail-recovery')).toBe('1');
+
+    // Explicit retry via incrementRecoveryKey — live extension, key bumps to 2
+    const newKey = host.incrementRecoveryKey('com.example.fail-recovery');
+    expect(newKey).toBe('2');
+  });
+
+  it('recovery key after disposeAll still returns "0" for queries on a disposed host', () => {
+    // Note: getRecoveryKey still works after disposeAll (it just looks up the map).
+    // However, incrementRecoveryKey is guarded.
+    const host = createExtensionLifecycleHost();
+    const e1 = ext('com.example.postdisp-key');
+
+    host.synchronize([e1], (ext) =>
+      makeCtx({ extension: { id: ext.manifest.id as any, version: '1.0.0', label: ext.manifest.label, manifest: ext.manifest } }),
+    );
+
+    host.disposeAll();
+
+    // getRecoveryKey still returns the stored key
+    expect(host.getRecoveryKey('com.example.postdisp-key')).toBe('1');
+    // incrementRecoveryKey is blocked on disposed host
+    expect(host.incrementRecoveryKey('com.example.postdisp-key')).toBe('0');
+  });
+
+  it('recovery key can be used as string in comparison without parsing', () => {
+    const host = createExtensionLifecycleHost();
+    const e1 = ext('com.example.stringkey');
+
+    host.synchronize([e1], (ext) =>
+      makeCtx({ extension: { id: ext.manifest.id as any, version: '1.0.0', label: ext.manifest.label, manifest: ext.manifest } }),
+    );
+
+    const key1 = host.getRecoveryKey('com.example.stringkey');
+    expect(typeof key1).toBe('string');
+    expect(key1).toBe('1');
+
+    host.incrementRecoveryKey('com.example.stringkey');
+    const key2 = host.getRecoveryKey('com.example.stringkey');
+    expect(key2).toBe('2');
+    // String comparison works for recovery-key change detection
+    expect(key1 !== key2).toBe(true);
   });
 });

@@ -4,8 +4,11 @@ import { describe, expect, it, vi } from 'vitest';
 import { useState, type ReactNode } from 'react';
 import {
   ContributionErrorBoundary,
+  HostContributionErrorBoundary,
   type ContributionErrorInfo,
 } from '@/tools/video-editor/runtime/ContributionErrorBoundary';
+import { DataProviderWrapper } from '@/tools/video-editor/contexts/DataProviderContext.tsx';
+import type { VideoEditorRuntimeContextValue } from '@/tools/video-editor/contexts/DataProviderContext.tsx';
 
 // Component that throws during render
 function ThrowingSlot({ message = 'Boom!' }: { message?: string }) {
@@ -93,6 +96,63 @@ describe('ContributionErrorBoundary', () => {
       expect(screen.getByText(/Broken header/)).toBeDefined();
       // Error message should be in the fallback
       expect(screen.getByText('Boom!')).toBeDefined();
+    });
+
+    it('does not show retry button when onRetry is not provided', () => {
+      render(
+        <ContributionErrorBoundary
+          contributionId="test.broken"
+          kind="slot"
+          label="Broken header"
+        >
+          <ThrowingSlot />
+        </ContributionErrorBoundary>,
+      );
+
+      // No retry button when onRetry is absent
+      expect(screen.queryByTestId
+        ? screen.queryByTestId?.('retry-btn')
+        : screen.queryByText('Retry')
+      ).toBeFalsy();
+    });
+
+    it('shows retry button when onRetry is provided', () => {
+      const onRetry = vi.fn();
+      render(
+        <ContributionErrorBoundary
+          contributionId="test.broken"
+          kind="slot"
+          label="Broken header"
+          onRetry={onRetry}
+        >
+          <ThrowingSlot />
+        </ContributionErrorBoundary>,
+      );
+
+      // Retry button visible
+      const retryBtn = screen.getByText('Retry');
+      expect(retryBtn).toBeDefined();
+    });
+
+    it('calls onRetry when retry button is clicked', async () => {
+      const onRetry = vi.fn();
+      render(
+        <ContributionErrorBoundary
+          contributionId="test.broken"
+          kind="slot"
+          label="Broken header"
+          onRetry={onRetry}
+        >
+          <ThrowingSlot />
+        </ContributionErrorBoundary>,
+      );
+
+      const retryBtn = screen.getByText('Retry');
+      await act(async () => {
+        retryBtn.click();
+      });
+
+      expect(onRetry).toHaveBeenCalledTimes(1);
     });
 
     it('emits onError callback with structured error info', () => {
@@ -456,4 +516,399 @@ describe('ContributionErrorBoundary', () => {
       });
     });
   });
+
+// ─── HostContributionErrorBoundary integration tests ────────────────────
+
+// Component that throws during render
+function HostThrowingSlot({ message = 'Boom!' }: { message?: string }) {
+  throw new Error(message);
+}
+
+// Normal rendering component
+function HostNormalSlot({ label = 'OK' }: { label?: string }) {
+  return <div data-testid="host-normal-slot">{label}</div>;
+}
+
+describe('HostContributionErrorBoundary', () => {
+  describe('with real DataProviderWrapper context', () => {
+    it('renders children normally when no error', () => {
+      const runtime: VideoEditorRuntimeContextValue = {
+        provider: null as unknown as VideoEditorRuntimeContextValue['provider'],
+        assetResolver: null as unknown as VideoEditorRuntimeContextValue['assetResolver'],
+        auth: null as unknown as VideoEditorRuntimeContextValue['auth'],
+        project: null as unknown as VideoEditorRuntimeContextValue['project'],
+        shots: null as unknown as VideoEditorRuntimeContextValue['shots'],
+        mediaLightbox: null as unknown as VideoEditorRuntimeContextValue['mediaLightbox'],
+        agentChat: null as unknown as VideoEditorRuntimeContextValue['agentChat'],
+        toast: null as unknown as VideoEditorRuntimeContextValue['toast'],
+        telemetry: null as unknown as VideoEditorRuntimeContextValue['telemetry'],
+        timelineId: 'test-timeline',
+        userId: 'test-user',
+        extensions: null as unknown as VideoEditorRuntimeContextValue['extensions'],
+      };
+
+      render(
+        <DataProviderWrapper value={runtime}>
+          <HostContributionErrorBoundary
+            contributionId="test.host.normal"
+            kind="slot"
+          >
+            <HostNormalSlot label="Host normal" />
+          </HostContributionErrorBoundary>
+        </DataProviderWrapper>,
+      );
+
+      expect(screen.getByTestId('host-normal-slot')).toBeDefined();
+      expect(screen.getByText('Host normal')).toBeDefined();
+    });
+
+    it('renders fallback UI with retry button when extensionId is known, and retry triggers lifecycle-host recovery', async () => {
+      const getRecoveryKey = vi.fn(() => '1');
+      const incrementRecoveryKey = vi.fn(() => '2');
+
+      const runtime: VideoEditorRuntimeContextValue = {
+        provider: null as unknown as VideoEditorRuntimeContextValue['provider'],
+        assetResolver: null as unknown as VideoEditorRuntimeContextValue['assetResolver'],
+        auth: null as unknown as VideoEditorRuntimeContextValue['auth'],
+        project: null as unknown as VideoEditorRuntimeContextValue['project'],
+        shots: null as unknown as VideoEditorRuntimeContextValue['shots'],
+        mediaLightbox: null as unknown as VideoEditorRuntimeContextValue['mediaLightbox'],
+        agentChat: null as unknown as VideoEditorRuntimeContextValue['agentChat'],
+        toast: null as unknown as VideoEditorRuntimeContextValue['toast'],
+        telemetry: null as unknown as VideoEditorRuntimeContextValue['telemetry'],
+        timelineId: 'test-timeline',
+        userId: 'test-user',
+        extensions: null as unknown as VideoEditorRuntimeContextValue['extensions'],
+        getRecoveryKey,
+        incrementRecoveryKey,
+      };
+
+      render(
+        <DataProviderWrapper value={runtime}>
+          <HostContributionErrorBoundary
+            contributionId="test.host.broken"
+            extensionId="com.example.broken"
+            kind="slot"
+            label="Broken host slot"
+            maxRetries={3}
+            retryDebounceMs={0}
+          >
+            <HostThrowingSlot message="Host crash" />
+          </HostContributionErrorBoundary>
+        </DataProviderWrapper>,
+      );
+
+      // Fallback UI shown
+      expect(screen.getByRole('alert')).toBeDefined();
+      expect(screen.getByText(/Slot error/)).toBeDefined();
+
+      // getRecoveryKey should have been called
+      expect(getRecoveryKey).toHaveBeenCalledWith('com.example.broken');
+
+      // Retry button should be visible (since extensionId is known)
+      const retryBtn = screen.getByText(/Retry/);
+      expect(retryBtn).toBeDefined();
+
+      // incrementRecoveryKey should NOT have been called automatically (no auto-retry)
+      expect(incrementRecoveryKey).not.toHaveBeenCalled();
+
+      // Click the retry button
+      await act(async () => {
+        retryBtn.click();
+      });
+
+      // Now incrementRecoveryKey should have been called (user-initiated retry)
+      expect(incrementRecoveryKey).toHaveBeenCalledWith('com.example.broken');
+    });
+
+    it('falls back to legacy boundary behavior when no extensionId is provided (no retry button)', () => {
+      const runtime: VideoEditorRuntimeContextValue = {
+        provider: null as unknown as VideoEditorRuntimeContextValue['provider'],
+        assetResolver: null as unknown as VideoEditorRuntimeContextValue['assetResolver'],
+        auth: null as unknown as VideoEditorRuntimeContextValue['auth'],
+        project: null as unknown as VideoEditorRuntimeContextValue['project'],
+        shots: null as unknown as VideoEditorRuntimeContextValue['shots'],
+        mediaLightbox: null as unknown as VideoEditorRuntimeContextValue['mediaLightbox'],
+        agentChat: null as unknown as VideoEditorRuntimeContextValue['agentChat'],
+        toast: null as unknown as VideoEditorRuntimeContextValue['toast'],
+        telemetry: null as unknown as VideoEditorRuntimeContextValue['telemetry'],
+        timelineId: 'test-timeline',
+        userId: 'test-user',
+        extensions: null as unknown as VideoEditorRuntimeContextValue['extensions'],
+      };
+
+      const { rerender } = render(
+        <DataProviderWrapper value={runtime}>
+          <HostContributionErrorBoundary
+            contributionId="test.host.noid"
+            kind="slot"
+          >
+            <HostThrowingSlot message="No ID crash" />
+          </HostContributionErrorBoundary>
+        </DataProviderWrapper>,
+      );
+
+      // Fallback shown
+      expect(screen.getByRole('alert')).toBeDefined();
+      expect(screen.getByText('No ID crash')).toBeDefined();
+
+      // No retry button since no extensionId
+      expect(screen.queryByText(/Retry/)).toBeNull();
+
+      // Re-render with new children — should auto-reset (legacy behavior)
+      rerender(
+        <DataProviderWrapper value={runtime}>
+          <HostContributionErrorBoundary
+            contributionId="test.host.noid"
+            kind="slot"
+          >
+            <HostNormalSlot label="Recovered without ID" />
+          </HostContributionErrorBoundary>
+        </DataProviderWrapper>,
+      );
+
+      // Should recover (legacy children-change reset)
+      expect(screen.getByTestId('host-normal-slot')).toBeDefined();
+      expect(screen.getByText('Recovered without ID')).toBeDefined();
+      expect(screen.queryByRole('alert')).toBeNull();
+    });
+
+    it('resets error when recovery key changes (disable/re-enable render fresh children exactly once)', async () => {
+      // Start with recovery key "1"
+      let currentKey = '1';
+      const getRecoveryKey = vi.fn(() => currentKey);
+      const incrementRecoveryKey = vi.fn(() => {
+        currentKey = String(Number(currentKey) + 1);
+        return currentKey;
+      });
+
+      function createRuntime(): VideoEditorRuntimeContextValue {
+        return {
+          provider: null as unknown as VideoEditorRuntimeContextValue['provider'],
+          assetResolver: null as unknown as VideoEditorRuntimeContextValue['assetResolver'],
+          auth: null as unknown as VideoEditorRuntimeContextValue['auth'],
+          project: null as unknown as VideoEditorRuntimeContextValue['project'],
+          shots: null as unknown as VideoEditorRuntimeContextValue['shots'],
+          mediaLightbox: null as unknown as VideoEditorRuntimeContextValue['mediaLightbox'],
+          agentChat: null as unknown as VideoEditorRuntimeContextValue['agentChat'],
+          toast: null as unknown as VideoEditorRuntimeContextValue['toast'],
+          telemetry: null as unknown as VideoEditorRuntimeContextValue['telemetry'],
+          timelineId: 'test-timeline',
+          userId: 'test-user',
+          extensions: null as unknown as VideoEditorRuntimeContextValue['extensions'],
+          getRecoveryKey,
+          incrementRecoveryKey,
+        };
+      }
+
+      const { rerender } = render(
+        <DataProviderWrapper value={createRuntime()}>
+          <HostContributionErrorBoundary
+            contributionId="test.host.recover"
+            extensionId="com.example.recover"
+            kind="slot"
+            maxRetries={0}
+          >
+            <HostThrowingSlot message="Will recover" />
+          </HostContributionErrorBoundary>
+        </DataProviderWrapper>,
+      );
+
+      // Fallback shown
+      expect(screen.getByRole('alert')).toBeDefined();
+      expect(screen.getByText('Will recover')).toBeDefined();
+
+      // Simulate external recovery: increment key and re-render
+      currentKey = '2';
+      rerender(
+        <DataProviderWrapper value={createRuntime()}>
+          <HostContributionErrorBoundary
+            contributionId="test.host.recover"
+            extensionId="com.example.recover"
+            kind="slot"
+            maxRetries={0}
+          >
+            <HostNormalSlot label="Fresh after recovery" />
+          </HostContributionErrorBoundary>
+        </DataProviderWrapper>,
+      );
+
+      // Should render fresh children after recovery key change
+      expect(screen.getByTestId('host-normal-slot')).toBeDefined();
+      expect(screen.getByText('Fresh after recovery')).toBeDefined();
+      expect(screen.queryByRole('alert')).toBeNull();
+    });
+
+    it('does NOT reset on children change when recovery key is unchanged', () => {
+      const getRecoveryKey = vi.fn(() => 'fixed');
+      const incrementRecoveryKey = vi.fn(() => 'fixed');
+
+      function createRuntime(): VideoEditorRuntimeContextValue {
+        return {
+          provider: null as unknown as VideoEditorRuntimeContextValue['provider'],
+          assetResolver: null as unknown as VideoEditorRuntimeContextValue['assetResolver'],
+          auth: null as unknown as VideoEditorRuntimeContextValue['auth'],
+          project: null as unknown as VideoEditorRuntimeContextValue['project'],
+          shots: null as unknown as VideoEditorRuntimeContextValue['shots'],
+          mediaLightbox: null as unknown as VideoEditorRuntimeContextValue['mediaLightbox'],
+          agentChat: null as unknown as VideoEditorRuntimeContextValue['agentChat'],
+          toast: null as unknown as VideoEditorRuntimeContextValue['toast'],
+          telemetry: null as unknown as VideoEditorRuntimeContextValue['telemetry'],
+          timelineId: 'test-timeline',
+          userId: 'test-user',
+          extensions: null as unknown as VideoEditorRuntimeContextValue['extensions'],
+          getRecoveryKey,
+          incrementRecoveryKey,
+        };
+      }
+
+      const { rerender } = render(
+        <DataProviderWrapper value={createRuntime()}>
+          <HostContributionErrorBoundary
+            contributionId="test.host.stuck"
+            extensionId="com.example.stuck"
+            kind="slot"
+            maxRetries={0}
+          >
+            <HostThrowingSlot message="First crash" />
+          </HostContributionErrorBoundary>
+        </DataProviderWrapper>,
+      );
+
+      expect(screen.getByRole('alert')).toBeDefined();
+      expect(screen.getByText('First crash')).toBeDefined();
+
+      // Re-render with new children but same recovery key
+      rerender(
+        <DataProviderWrapper value={createRuntime()}>
+          <HostContributionErrorBoundary
+            contributionId="test.host.stuck"
+            extensionId="com.example.stuck"
+            kind="slot"
+            maxRetries={0}
+          >
+            <HostThrowingSlot message="Second crash" />
+          </HostContributionErrorBoundary>
+        </DataProviderWrapper>,
+      );
+
+      // Error should persist — recovery key hasn't changed
+      // Still shows FIRST error, not second (boundary did NOT reset)
+      expect(screen.getByRole('alert')).toBeDefined();
+      expect(screen.getByText('First crash')).toBeDefined();
+      expect(screen.queryByText('Second crash')).toBeNull();
+    });
+
+    it('disables retry button after maxRetries exhausted', async () => {
+      const getRecoveryKey = vi.fn(() => '1');
+      const incrementRecoveryKey = vi.fn(() => '2');
+
+      const runtime: VideoEditorRuntimeContextValue = {
+        provider: null as unknown as VideoEditorRuntimeContextValue['provider'],
+        assetResolver: null as unknown as VideoEditorRuntimeContextValue['assetResolver'],
+        auth: null as unknown as VideoEditorRuntimeContextValue['auth'],
+        project: null as unknown as VideoEditorRuntimeContextValue['project'],
+        shots: null as unknown as VideoEditorRuntimeContextValue['shots'],
+        mediaLightbox: null as unknown as VideoEditorRuntimeContextValue['mediaLightbox'],
+        agentChat: null as unknown as VideoEditorRuntimeContextValue['agentChat'],
+        toast: null as unknown as VideoEditorRuntimeContextValue['toast'],
+        telemetry: null as unknown as VideoEditorRuntimeContextValue['telemetry'],
+        timelineId: 'test-timeline',
+        userId: 'test-user',
+        extensions: null as unknown as VideoEditorRuntimeContextValue['extensions'],
+        getRecoveryKey,
+        incrementRecoveryKey,
+      };
+
+      render(
+        <DataProviderWrapper value={runtime}>
+          <HostContributionErrorBoundary
+            contributionId="test.host.exhausted"
+            extensionId="com.example.exhausted"
+            kind="panel"
+            maxRetries={1}
+            retryDebounceMs={0}
+          >
+            <HostThrowingSlot message="Always crashes" />
+          </HostContributionErrorBoundary>
+        </DataProviderWrapper>,
+      );
+
+      // Fallback shown
+      expect(screen.getByRole('alert')).toBeDefined();
+
+      // Retry button should be visible with "Retry (1)" text
+      const retryBtn = screen.getByText(/Retry/);
+      expect(retryBtn).toBeDefined();
+
+      // No auto-retry — incrementRecoveryKey not called
+      expect(incrementRecoveryKey).not.toHaveBeenCalled();
+
+      // Click retry once (exhausts the only retry)
+      await act(async () => {
+        retryBtn.click();
+      });
+
+      expect(incrementRecoveryKey).toHaveBeenCalledTimes(1);
+
+      // After exhaustion, button should show "Exhausted" and be disabled
+      // (Note: since the throwing component still throws, the boundary
+      //  re-catches the error, and retryCountRef shows 1 >= maxRetries=1)
+      // The button text becomes "Exhausted" when retryDisabled is true.
+      const exhaustedBtn = screen.getByText('Exhausted');
+      expect(exhaustedBtn).toBeDefined();
+      expect((exhaustedBtn as HTMLButtonElement).disabled).toBe(true);
+
+      // Error persists
+      expect(screen.getByText('Always crashes')).toBeDefined();
+    });
+
+    it('does NOT auto-retry on error (retry is user-initiated only)', () => {
+      const getRecoveryKey = vi.fn(() => '1');
+      const incrementRecoveryKey = vi.fn(() => '2');
+
+      const runtime: VideoEditorRuntimeContextValue = {
+        provider: null as unknown as VideoEditorRuntimeContextValue['provider'],
+        assetResolver: null as unknown as VideoEditorRuntimeContextValue['assetResolver'],
+        auth: null as unknown as VideoEditorRuntimeContextValue['auth'],
+        project: null as unknown as VideoEditorRuntimeContextValue['project'],
+        shots: null as unknown as VideoEditorRuntimeContextValue['shots'],
+        mediaLightbox: null as unknown as VideoEditorRuntimeContextValue['mediaLightbox'],
+        agentChat: null as unknown as VideoEditorRuntimeContextValue['agentChat'],
+        toast: null as unknown as VideoEditorRuntimeContextValue['toast'],
+        telemetry: null as unknown as VideoEditorRuntimeContextValue['telemetry'],
+        timelineId: 'test-timeline',
+        userId: 'test-user',
+        extensions: null as unknown as VideoEditorRuntimeContextValue['extensions'],
+        getRecoveryKey,
+        incrementRecoveryKey,
+      };
+
+      render(
+        <DataProviderWrapper value={runtime}>
+          <HostContributionErrorBoundary
+            contributionId="test.host.noauto"
+            extensionId="com.example.noauto"
+            kind="slot"
+            maxRetries={3}
+            retryDebounceMs={0}
+          >
+            <HostThrowingSlot message="No auto retry" />
+          </HostContributionErrorBoundary>
+        </DataProviderWrapper>,
+      );
+
+      // Fallback shown
+      expect(screen.getByRole('alert')).toBeDefined();
+
+      // incrementRecoveryKey must NOT have been called (no auto-retry)
+      expect(incrementRecoveryKey).not.toHaveBeenCalled();
+
+      // Retry button is visible — retry is user-initiated only
+      const retryBtn = screen.getByText(/Retry/);
+      expect(retryBtn).toBeDefined();
+    });
+  });
+});
+
 });

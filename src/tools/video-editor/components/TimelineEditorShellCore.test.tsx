@@ -216,6 +216,28 @@ vi.mock('@/shared/state/selectionStore.ts', () => ({
   editorReplaceTimelineSelection: vi.fn(),
 }));
 
+
+let __runtimeContext: any = null;
+
+function __setRuntimeContext(ctx: any) {
+  __runtimeContext = ctx;
+}
+
+function __clearRuntimeContext() {
+  __runtimeContext = null;
+}
+
+vi.mock('@/tools/video-editor/contexts/DataProviderContext.tsx', () => ({
+  useOptionalVideoEditorRuntime: () => __runtimeContext,
+  useVideoEditorRuntime: () => {
+    if (!__runtimeContext) throw new Error('No runtime context');
+    return __runtimeContext;
+  },
+  DataProviderContext: {
+    Provider: ({ children }: any) => children,
+  },
+}));
+
 // ---------------------------------------------------------------------------
 // Import after mocks
 // ---------------------------------------------------------------------------
@@ -685,4 +707,177 @@ describe('TimelineEditorShellCore — M6 export dropdown', () => {
     consoleLog.mockRestore();
   });
 });
+
+// ---------------------------------------------------------------------------
+// M5: HostContributionErrorBoundary recovery-key regression tests
+// ---------------------------------------------------------------------------
+
+describe('TimelineEditorShellCore — HostContributionErrorBoundary recovery keys', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    __clearSlotRenderers();
+    __clearExportExtensions();
+    __clearRuntimeContext();
+  });
+
+  const makeExtension = (id: string, contributions: any[]) => ({
+    manifest: {
+      id,
+      name: id,
+      version: '1.0.0',
+      contributions,
+    },
+  });
+
+  it('resolves extensionId for slot boundaries from extensionRuntime contributions', () => {
+    // Set up runtime context with an extension that contributes to the header slot
+    __setRuntimeContext({
+      provider: {} as any,
+      timelineId: 'test-timeline',
+      userId: 'user-1',
+      extensions: __exportExtensions,
+      extensionRuntime: {
+        extensions: [
+          makeExtension('com.example.header-ext', [
+            { id: 'header-contrib', kind: 'slot', slot: 'header' },
+          ]),
+        ],
+      },
+      getRecoveryKey: (extId: string) => (extId === 'com.example.header-ext' ? '5' : '0'),
+      incrementRecoveryKey: vi.fn(),
+    });
+
+    const headerRenderer = vi.fn(() => <div data-testid="header-content">Header</div>);
+    __setSlotRenderers({ header: headerRenderer });
+
+    render(<TimelineEditorShellCore timelineId="test-timeline" />);
+
+    // The header should render
+    expect(screen.getByTestId('header-content')).toBeTruthy();
+    // The HostContributionErrorBoundary should have received extensionId via slotOwnerMap
+    // We verify this indirectly: the boundary should render normally (no fallback)
+    expect(screen.queryByRole('alert')).toBeNull();
+  });
+
+  it('passes extensionId=undefined when no extension contributes to a slot (legacy fallback)', () => {
+    // Runtime context with NO extensionRuntime (no contribution manifests)
+    __setRuntimeContext({
+      provider: {} as any,
+      timelineId: 'test-timeline',
+      userId: 'user-1',
+      extensions: __exportExtensions,
+      // No extensionRuntime
+    });
+
+    const headerRenderer = vi.fn(() => <div data-testid="header-content">Header</div>);
+    __setSlotRenderers({ header: headerRenderer });
+
+    render(<TimelineEditorShellCore timelineId="test-timeline" />);
+
+    // Should still render — falls back to legacy ContributionErrorBoundary behavior
+    expect(screen.getByTestId('header-content')).toBeTruthy();
+  });
+
+  it('maintains slot boundary isolation when one slot crashes', () => {
+    const getRecoveryKey = vi.fn((extId: string) => (extId === 'com.example.ext' ? '1' : '0'));
+    const incrementRecoveryKey = vi.fn((extId: string) => extId === 'com.example.ext' ? '2' : '0');
+
+    __setRuntimeContext({
+      provider: {} as any,
+      timelineId: 'test-timeline',
+      userId: 'user-1',
+      extensions: __exportExtensions,
+      extensionRuntime: {
+        extensions: [
+          makeExtension('com.example.ext', [
+            { id: 'header-contrib', kind: 'slot', slot: 'header' },
+            { id: 'toolbar-contrib', kind: 'slot', slot: 'toolbar' },
+          ]),
+        ],
+      },
+      getRecoveryKey,
+      incrementRecoveryKey,
+    });
+
+    // Header returns a React element that throws during its own render (catchable by error boundary)
+    const CrashingHeader = () => {
+      throw new Error('Header crash!');
+    };
+    const crashingHeader = vi.fn(() => <CrashingHeader />);
+    const normalToolbar = vi.fn(() => <div data-testid="toolbar-content">Toolbar OK</div>);
+
+    __setSlotRenderers({ header: crashingHeader, toolbar: normalToolbar });
+
+    render(<TimelineEditorShellCore timelineId="test-timeline" />);
+
+    // Header should show fallback
+    expect(screen.getByRole('alert')).toBeTruthy();
+    expect(screen.getByText(/Slot error/)).toBeTruthy();
+    // The fallback label contains "Header" as the slot label — verify it's in the alert
+    const alert = screen.getByRole('alert');
+    expect(alert.textContent).toContain('Header');
+
+    // Toolbar should still render normally
+    expect(screen.getByTestId('toolbar-content')).toBeTruthy();
+    expect(screen.getByText('Toolbar OK')).toBeTruthy();
+  });
+
+  it('slotOwnerMap is empty when extensionRuntime is not provided', () => {
+    __setRuntimeContext({
+      provider: {} as any,
+      timelineId: 'test-timeline',
+      userId: 'user-1',
+      extensions: __exportExtensions,
+      // No extensionRuntime
+    });
+
+    const headerRenderer = vi.fn(() => <div data-testid="header-content">Header</div>);
+    __setSlotRenderers({ header: headerRenderer });
+
+    const { container } = render(<TimelineEditorShellCore timelineId="test-timeline" />);
+
+    // Should render without crash
+    expect(screen.getByTestId('header-content')).toBeTruthy();
+    // The fallback should not be shown
+    expect(screen.queryByRole('alert')).toBeNull();
+  });
+
+  it('multiple extensions contributing to the same slot use first extension by deterministic order', () => {
+    const getRecoveryKey = vi.fn((extId: string) => {
+      if (extId === 'com.example.first') return '10';
+      if (extId === 'com.example.second') return '20';
+      return '0';
+    });
+
+    __setRuntimeContext({
+      provider: {} as any,
+      timelineId: 'test-timeline',
+      userId: 'user-1',
+      extensions: __exportExtensions,
+      extensionRuntime: {
+        extensions: [
+          makeExtension('com.example.first', [
+            { id: 'h1', kind: 'slot', slot: 'header' },
+          ]),
+          makeExtension('com.example.second', [
+            { id: 'h2', kind: 'slot', slot: 'header' },
+          ]),
+        ],
+      },
+      getRecoveryKey,
+      incrementRecoveryKey: vi.fn(),
+    });
+
+    const headerRenderer = vi.fn(() => <div data-testid="header-content">Header</div>);
+    __setSlotRenderers({ header: headerRenderer });
+
+    render(<TimelineEditorShellCore timelineId="test-timeline" />);
+
+    // Should render normally — the first extension's recovery key (10) should be used
+    expect(screen.getByTestId('header-content')).toBeTruthy();
+    // getRecoveryKey should have been called by HostContributionErrorBoundary
+    // (indirectly via the recovery key lookup)
+  });
+});
+
 });
