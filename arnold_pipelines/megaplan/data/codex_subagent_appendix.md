@@ -50,6 +50,7 @@ Startup:
 2. Capture the returned plan name.
 3. Output `PLAN_NAME: <name>` on its own line before any `BREAKPOINT:` or `COMPLETE:`.
 4. Run `<launcher> status --plan <name>`.
+5. If `status` reports anchors, run `<launcher> anchors show --plan <name>` once and treat the captured North Star as durable alignment context.
 
 Routing:
 - Use `next_step` and `valid_next` from `<launcher> status --plan <name>` for every move.

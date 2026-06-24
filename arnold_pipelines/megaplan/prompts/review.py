@@ -9,6 +9,7 @@ import textwrap
 from pathlib import Path
 from typing import Any
 
+from arnold_pipelines.megaplan.anchors import render_anchor_block
 from arnold_pipelines.megaplan._core import (
     collect_git_diff_patch,
     collect_git_diff_summary,
@@ -38,6 +39,13 @@ LARGE_REVIEW_DIFF_MAX_BYTES = 120 * 1024
 LARGE_REVIEW_DIFF_MAX_FILES = 40
 COMPACT_REVIEW_PLAN_MAX_CHARS = 20_000
 COMPACT_REVIEW_CONTEXT_MAX_CHARS = 60_000
+
+
+def _with_anchor_block(prompt: str, state: PlanState, plan_dir: Path, *, audience: str) -> str:
+    anchor_block = render_anchor_block(state, plan_dir, audience=audience)
+    if not anchor_block:
+        return prompt
+    return f"{anchor_block}\n\n{prompt}"
 COMPACT_REVIEW_MAX_CHANGED_FILES = 200
 
 
@@ -431,7 +439,7 @@ def compact_review_prompt(
             {json_dump(pre_check_flags).strip()}
             """
         ).strip()
-    return textwrap.dedent(
+    prompt = textwrap.dedent(
         f"""
         Review the execution against the original issue text and finalized criteria.
 
@@ -467,6 +475,7 @@ def compact_review_prompt(
         - If uncertainty remains because the compact prompt omitted detail, record that as an advisory issue unless a deterministic check demonstrates a blocker.
         """
     ).strip()
+    return _with_anchor_block(prompt, state, plan_dir, audience="compact_review")
 
 
 def _projected_review_blocks(
@@ -704,6 +713,10 @@ def single_check_review_prompt(
             "\n\nThis is review iteration {iteration}. The template may include prior findings with their current "
             "flag status. Verify whether previously raised concerns were actually fixed before you carry them forward."
         ).format(iteration=iteration)
+
+    def _done(prompt: str) -> str:
+        return _with_anchor_block(prompt, state, plan_dir, audience="parallel_review")
+
     if context["large_diff"]:
         diff_context = _large_diff_context_block(
             project_dir=context["project_dir"],
@@ -711,7 +724,7 @@ def single_check_review_prompt(
             changed_files=context["changed_files"],
             prior_unmet_block=context["prior_unmet_block"],
         )
-        return textwrap.dedent(
+        return _done(textwrap.dedent(
             f"""
             You are an independent parallel-review checker. Review one focused dimension of the executed patch against the original issue text.
 
@@ -766,8 +779,8 @@ def single_check_review_prompt(
             - Populate `checks[0].concerned_task_ids` with the real finalize task IDs affected by any blocking finding. Leave it empty when no specific task is implicated.
             - Preserve the `pre_check_flags` list verbatim in the output file.{iteration_context}
             """
-        ).strip()
-    return textwrap.dedent(
+        ).strip())
+    return _done(textwrap.dedent(
         f"""
         You are an independent parallel-review checker. Review one focused dimension of the executed patch against the original issue text.
 
@@ -821,7 +834,7 @@ def single_check_review_prompt(
         - Populate `checks[0].concerned_task_ids` with the real finalize task IDs affected by any blocking finding. Leave it empty when no specific task is implicated.
         - Preserve the `pre_check_flags` list verbatim in the output file.{iteration_context}
         """
-    ).strip()
+    ).strip())
 
 
 def parallel_criteria_review_prompt(
@@ -849,6 +862,10 @@ def parallel_criteria_review_prompt(
         context["execution_audit_data"],
         capabilities=projection_capabilities,
     )
+
+    def _done(prompt: str) -> str:
+        return _with_anchor_block(prompt, state, plan_dir, audience="parallel_review")
+
     if context["large_diff"]:
         diff_context = _large_diff_context_block(
             project_dir=context["project_dir"],
@@ -856,7 +873,7 @@ def parallel_criteria_review_prompt(
             changed_files=context["changed_files"],
             prior_unmet_block=context["prior_unmet_block"],
         )
-        return textwrap.dedent(
+        return _done(textwrap.dedent(
             f"""
             Review the execution against the original issue text and the finalized execution criteria.
 
@@ -900,8 +917,8 @@ def parallel_criteria_review_prompt(
             - `rework_items` must be structured and directly actionable. Populate `evidence_file` for every rework item with the file where the issue was observed. Populate `issues` as one-line summaries derived from `rework_items`.
             - When approved, keep both `issues` and `rework_items` empty arrays.
             """
-        ).strip()
-    return textwrap.dedent(
+        ).strip())
+    return _done(textwrap.dedent(
         f"""
         Review the execution against the original issue text and the finalized execution criteria.
 
@@ -946,7 +963,7 @@ def parallel_criteria_review_prompt(
         - `rework_items` must be structured and directly actionable. Blocking items must include the `deterministic_check` object described above. Populate `issues` as one-line summaries derived from `rework_items`.
         - When approved, keep both `issues` and `rework_items` empty arrays.
         """
-    ).strip()
+    ).strip())
 
 
 def _settled_decisions_block(gate: dict[str, object]) -> str:

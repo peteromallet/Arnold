@@ -120,7 +120,11 @@ def run_chain(
     spec_path = Path(spec_path).expanduser().resolve()
     root = Path(root).resolve()
     spec = chain_spec.load_spec(spec_path)
-    chain_spec.validate_paths(spec, root)
+    if spec.require_anchor:
+        chain_spec.validate_required_anchor(spec)
+    if warning := chain_spec.warn_undeclared_north_star(spec, spec_path):
+        writer(f"[supervisor-chain] WARNING: {warning}\n")
+    chain_spec.validate_paths(spec, root, spec_path=spec_path)
     chain_state = chain_spec.load_chain_state(spec_path)
     env = resolve_execution_environment(
         root=root,
@@ -172,6 +176,9 @@ def run_chain(
             plan_name = chain_state.current_plan_name
             if not plan_name:
                 plan_name = pack_runner.prepare_plan(root=root, node=node)
+                from arnold_pipelines.megaplan.chain import _attach_chain_anchors_to_plan
+
+                _attach_chain_anchors_to_plan(root, spec_path, plan_name, spec, milestone)
                 chain_state.current_plan_name = plan_name
                 chain_spec.save_chain_state(spec_path, chain_state)
                 event("plan_prepared", label=milestone.label, plan=plan_name)

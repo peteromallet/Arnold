@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from arnold_pipelines.megaplan.artifacts import markdown_body
+from arnold_pipelines.megaplan.anchors import AnchorCaptureRequest, attach_anchor_documents, validate_anchor_source
 from arnold_pipelines.megaplan.runtime.doc_assembly import extract_settled_decisions
 from arnold_pipelines.megaplan.runtime.execution_environment import (
     persist_plan_isolation_evidence,
@@ -403,6 +404,13 @@ def handle_init(root: Path, args: argparse.Namespace) -> StepResponse:
         imported_decisions, parse_warnings = extract_settled_decisions(
             from_doc_abs.read_text(encoding="utf-8")
         )
+    north_star_path: Path | None = None
+    raw_north_star = getattr(args, "north_star", None)
+    if raw_north_star:
+        north_star_path = validate_anchor_source(
+            _resolve_idea_path(raw_north_star, project_dir=project_dir),
+            label="--north-star",
+        )
 
     # T10 step (2)+(7): pipeline routing seed.
     # --mode code → pipeline=None (no key written) and no warning.
@@ -513,6 +521,20 @@ def handle_init(root: Path, args: argparse.Namespace) -> StepResponse:
     worktree_meta = getattr(args, "_worktree_meta", None)
     if worktree_meta:
         state["meta"]["worktree"] = dict(worktree_meta)
+    if north_star_path is not None:
+        attach_anchor_documents(
+            plan_dir=plan_dir,
+            state=state,
+            documents=[
+                AnchorCaptureRequest(
+                    anchor_type="north_star",
+                    scope="plan",
+                    source_path=north_star_path,
+                    source_kind="cli",
+                )
+            ],
+            project_root=project_dir,
+        )
     if from_doc_rel is not None:
         state["meta"]["imported_decisions"] = imported_decisions
     if strict_notes and mode == "doc" and not strict_notes_explicit:
@@ -560,7 +582,12 @@ def handle_init(root: Path, args: argparse.Namespace) -> StepResponse:
         "plan": plan_name,
         "state": STATE_INITIALIZED,
         "summary": summary,
-        "artifacts": ["state.json"],
+        "artifacts": ["state.json"]
+        + (
+            ["anchors/north_star/plan.md", "anchors/north_star/combined.md"]
+            if north_star_path is not None
+            else []
+        ),
         "next_step": next_steps[0] if next_steps else None,
         "auto_approve": auto_approve,
         "robustness": robustness,
