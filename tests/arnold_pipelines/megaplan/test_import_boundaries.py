@@ -18,6 +18,8 @@ M4_PARITY_ADAPTER_PATHS = {
     "arnold_pipelines/megaplan/workers/hermes.py",
 }
 
+REPO_ROOT = Path(__file__).parents[3]
+
 
 def _collect_runtime_imports_of_legacy() -> set[str]:
     """Import arnold_pipelines.megaplan and record which legacy modules load."""
@@ -37,7 +39,7 @@ def test_importing_new_package_only_loads_allowed_legacy_adapters() -> None:
 
 
 def test_new_package_source_does_not_import_legacy_except_adapters() -> None:
-    root = Path(__file__).parents[3] / "arnold_pipelines" / "megaplan"
+    root = REPO_ROOT / "arnold_pipelines" / "megaplan"
     violations: dict[str, list[str]] = {}
 
     for source in sorted(root.rglob("*.py")):
@@ -69,7 +71,7 @@ def test_new_package_source_does_not_import_legacy_except_adapters() -> None:
 
 
 def test_new_package_has_no_unlisted_parity_adapters() -> None:
-    root = Path(__file__).parents[3] / "arnold_pipelines" / "megaplan"
+    root = REPO_ROOT / "arnold_pipelines" / "megaplan"
     importers: set[str] = set()
 
     for source in sorted(root.rglob("*.py")):
@@ -94,3 +96,33 @@ def test_new_package_has_no_unlisted_parity_adapters() -> None:
     assert importers.issubset(M4_PARITY_ADAPTER_PATHS), (
         f"unlisted legacy importers: {importers - M4_PARITY_ADAPTER_PATHS}"
     )
+
+
+def test_agentbox_resident_boundary_note_covers_ownership_categories() -> None:
+    note = REPO_ROOT / "docs" / "agentbox-resident-boundary.md"
+    text = note.read_text(encoding="utf-8").lower()
+
+    required_categories = {
+        "arnold-facing neutral seams": (
+            "inboundevent",
+            "outboundmessage",
+            "emitprotocol",
+        ),
+        "megaplan-owned resident runtime details": (
+            "residentruntime",
+            "megaplanresidentprofile",
+            "store",
+        ),
+        "agentbox-owned operator/profile/helper integration": (
+            "operator",
+            "profile",
+            "helper",
+        ),
+    }
+
+    missing = {
+        category: tuple(term for term in terms if term not in text)
+        for category, terms in required_categories.items()
+        if category not in text or any(term not in text for term in terms)
+    }
+    assert missing == {}

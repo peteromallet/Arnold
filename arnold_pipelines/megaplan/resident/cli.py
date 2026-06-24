@@ -28,6 +28,11 @@ def _register_resident_subcommands(parser: argparse.ArgumentParser) -> None:
 
     discord_parser = sub.add_parser("discord", parents=[shared], help="Start the resident Discord service")
     discord_parser.add_argument("--dry-run", action="store_true", help="Validate configuration without connecting to Discord")
+    discord_parser.add_argument(
+        "--profile",
+        choices=["megaplan", "agentbox_operator"],
+        help="Resident profile to run for Discord.",
+    )
 
     scheduler_parser = sub.add_parser("scheduler-once", parents=[shared], help="Claim and process due resident jobs once")
     scheduler_parser.add_argument("--worker-id", default="resident-cli-scheduler")
@@ -57,7 +62,13 @@ def run_resident_cli(root: Path, args: argparse.Namespace) -> dict[str, Any]:
 def _resident_config(args: argparse.Namespace) -> ResidentConfig:
     config = ResidentConfig.from_env()
     mode = getattr(args, "mode", None)
-    return config.model_copy(update={"mode": mode}) if mode else config
+    profile = getattr(args, "profile", None)
+    updates = {}
+    if mode:
+        updates["mode"] = mode
+    if profile:
+        updates["profile"] = profile
+    return config.model_copy(update=updates) if updates else config
 
 
 def _resident_store(root: Path, args: argparse.Namespace) -> Store:
@@ -134,6 +145,7 @@ def _resident_discord(root: Path, store: Store, config: ResidentConfig, *, dry_r
             "action": "discord",
             "dry_run": True,
             "token_configured": bool(token),
+            "profile": config.profile,
             "conversation_count": len(store.list_resident_conversations(transport="discord", limit=100)),
         }
     if token is None:
@@ -144,19 +156,33 @@ def _resident_discord(root: Path, store: Store, config: ResidentConfig, *, dry_r
         config=config,
         authorizer=authorizer,
         store=store,
-        profile=MegaplanResidentProfile(
-            store=store,
-            authorizer=authorizer,
-            config=config,
-            confirmation_manager=StoreBackedConfirmationManager(config, store),
-            cloud_backend=CloudCliBackend(),
-        ),
+        profile=_resident_profile(store=store, authorizer=authorizer, config=config),
         runner=OpenAICompatibleAgentRunner(config),
         outbound=outbound,
     )
     service = ResidentDiscordService(runtime=runtime, token=token)
     service.run()
     return {"success": True, "step": "resident", "action": "discord", "stopped": True, "project_root": str(root)}
+
+
+def _resident_profile(*, store: Store, authorizer: ResidentAuthorizer, config: ResidentConfig):
+    confirmation_manager = StoreBackedConfirmationManager(config, store)
+    if config.profile == "agentbox_operator":
+        from agentbox.resident_profile import AgentBoxOperatorProfile
+
+        return AgentBoxOperatorProfile(
+            store=store,
+            authorizer=authorizer,
+            config=config,
+            confirmation_manager=confirmation_manager,
+        )
+    return MegaplanResidentProfile(
+        store=store,
+        authorizer=authorizer,
+        config=config,
+        confirmation_manager=confirmation_manager,
+        cloud_backend=CloudCliBackend(),
+    )
 
 
 def _model(row: Any) -> dict[str, Any]:

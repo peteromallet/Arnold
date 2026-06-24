@@ -185,7 +185,7 @@ def test_status_json_reports_local_operation_and_session_state(
         state=OperationState.RUNNING,
     )
     monkeypatch.setattr(
-        "agentbox.cli.inspect_session",
+        "agentbox.operation_views.inspect_session",
         lambda name: SessionStatus(name, "running", True),
     )
 
@@ -225,6 +225,10 @@ def test_logs_are_bounded_and_json_capable(
             "path": str(paths.stdout_path),
             "exists": True,
             "text": "two\nthree\n",
+            "requested_lines": 2,
+            "returned_lines": 2,
+            "truncated": True,
+            "source": "file",
         }
     ]
 
@@ -252,11 +256,11 @@ def test_logs_tmux_capture_fallback_requires_recorded_live_session(
     )
     open_operation_store(config).create_typed_resource(resource)
     monkeypatch.setattr(
-        "agentbox.cli.inspect_session",
+        "agentbox.operation_views.inspect_session",
         lambda name: SessionStatus(name, "running", True),
     )
     monkeypatch.setattr(
-        "agentbox.cli.capture_pane",
+        "agentbox.operation_views.capture_pane",
         lambda name, *, lines: f"captured {name} {lines}\n",
     )
 
@@ -264,6 +268,8 @@ def test_logs_tmux_capture_fallback_requires_recorded_live_session(
     payload = json.loads(capsys.readouterr().out)
     assert payload["logs"][0]["stream"] == "tmux"
     assert payload["logs"][0]["text"] == f"captured {session_name('op-1')} 5\n"
+    assert payload["logs"][0]["requested_lines"] == 5
+    assert payload["logs"][0]["returned_lines"] == 1
 
 
 def test_attach_reports_missing_and_stale_process_session_resources(
@@ -576,6 +582,10 @@ def test_logs_json_uses_mocked_tmux_capture_only_for_live_recorded_session(
             "text": "live tail",
             "session_name": session,
             "operation_id": "op-1",
+            "requested_lines": 7,
+            "returned_lines": 1,
+            "truncated": False,
+            "source": "tmux",
         }
     ]
 
@@ -711,6 +721,7 @@ def _install_fake_run_adapter(monkeypatch, handler: _FakeRunHandler) -> None:
     )
     monkeypatch.setattr("agentbox.cli.list_operation_adapters", lambda: (adapter,))
     monkeypatch.setattr("agentbox.cli.get_operation_adapter", lambda kind: adapter)
+    monkeypatch.setattr("agentbox.operation_views.list_operation_adapters", lambda: (adapter,))
 
 
 def _config_file(tmp_path: Path) -> tuple[Path, AgentBoxConfig]:
