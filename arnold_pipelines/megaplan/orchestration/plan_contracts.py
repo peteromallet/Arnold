@@ -64,7 +64,7 @@ def normalize_contract_payload(
     payload: Any,
     *,
     root: Path | str | None = None,
-) -> dict[str, list[dict[str, Any]]]:
+) -> dict[str, list[Any]]:
     """Normalize the narrow Provides/Assumes schema for plan contracts."""
 
     root_path = Path(root).resolve() if root is not None else Path.cwd().resolve()
@@ -94,7 +94,12 @@ def normalize_contract_payload(
             }
         )
 
-    return {"provides": provides, "assumes": assumes}
+    pre_existing: list[str] = []
+    for item in raw.get("pre_existing", []):
+        if isinstance(item, str) and item.strip():
+            pre_existing.append(item.strip())
+
+    return {"provides": provides, "assumes": assumes, "pre_existing": pre_existing}
 
 
 def render_contract_markdown(contract: Any) -> str:
@@ -297,3 +302,14 @@ def contract_diff_fingerprint(diff_rows: Iterable[Mapping[str, Any]]) -> str:
         )
     )
     return json.dumps(canonical_rows, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+
+
+def pre_existing_task_ids_from_contract(contract: Any) -> set[str]:
+    """Return task IDs declared as pre-existing in a contract payload."""
+
+    normalized = normalize_contract_payload(contract)
+    return {
+        task_id
+        for task_id in normalized.get("pre_existing", [])
+        if isinstance(task_id, str) and task_id
+    }

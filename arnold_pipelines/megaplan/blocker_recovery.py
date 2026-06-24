@@ -3,7 +3,11 @@
 from __future__ import annotations
 
 import hashlib
+import re
+import shlex
+import subprocess
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Iterable
 
 from arnold_pipelines.megaplan.orchestration.phase_result import BlockedTask, Deviation
@@ -128,9 +132,9 @@ class BlockerRecoveryEvaluation:
 
     @property
     def can_continue(self) -> bool:
-        return bool(self.blockers) and all(
-            blocker.is_non_terminal for blocker in self.blockers
-        )
+        # Empty means the original failure source disappeared, for example a
+        # stale recorded test failure now passes. Let recovery advance.
+        return all(blocker.is_non_terminal for blocker in self.blockers)
 
     @property
     def has_terminal_blockers(self) -> bool:
@@ -182,6 +186,50 @@ def _stable_quality_blocker_kind(message: str) -> str | None:
     ):
         return "claimed-files-missing-from-status"
     return None
+
+
+_TEST_NODEID_RE = re.compile(
+    r"(?:\b|^)([\w/.\-]+\.py(?:::/?[\w\[\]<>\-]+)+)(?:\b|$)"
+)
+
+
+def _extract_nodeids(message: str) -> tuple[str, ...]:
+    """Return pytest nodeids cited in a deviation message."""
+
+    return tuple(match.group(1) for match in _TEST_NODEID_RE.finditer(message))
+
+
+def _test_command_from_state(state: dict[str, Any]) -> str | None:
+    config = state.get("config") if isinstance(state.get("config"), dict) else {}
+    command = config.get("test_command") if isinstance(config, dict) else None
+    return str(command).strip() if isinstance(command, str) and command.strip() else None
+
+
+def _run_test_now_passes(
+    nodeid: str,
+    project_dir: Path,
+    test_command: str | None,
+    *,
+    timeout_seconds: int = 60,
+) -> bool:
+    """Re-run one pytest nodeid and return True iff it now passes."""
+
+    base = (test_command or "pytest").strip()
+    for flag in ("-q", "--no-header", "-rA", "-rN", "--tb=no"):
+        base = base.replace(flag, "")
+    full_command = f"{base.strip()} {shlex.quote(nodeid)}"
+    try:
+        proc = subprocess.run(
+            full_command,
+            shell=True,
+            cwd=str(project_dir),
+            capture_output=True,
+            text=True,
+            timeout=timeout_seconds,
+        )
+        return proc.returncode == 0
+    except (subprocess.TimeoutExpired, Exception):
+        return False
 
 
 def _task_id(task: Any) -> str | None:
@@ -510,10 +558,36 @@ def evaluate_quality_blockers(
         _state_meta_list(state, "quality_gate_resolutions")
     )
     details: list[BlockerDetail] = []
+    project_dir: Path | None = None
+    test_command: str | None = None
+    rerun_cache: dict[str, bool] = {}
+
+    config = state.get("config") if isinstance(state.get("config"), dict) else {}
+    raw_project_dir = config.get("project_dir") if isinstance(config, dict) else None
+    if isinstance(raw_project_dir, (str, Path)):
+        project_dir = Path(raw_project_dir)
+
     for raw_deviation in deviations:
         deviation = _coerce_deviation(raw_deviation)
         if deviation is None:
             continue
+
+        nodeids = _extract_nodeids(deviation.message)
+        if nodeids and project_dir is not None:
+            if test_command is None:
+                test_command = _test_command_from_state(state)
+            all_pass = True
+            for nodeid in nodeids:
+                if nodeid not in rerun_cache:
+                    rerun_cache[nodeid] = _run_test_now_passes(
+                        nodeid, project_dir, test_command
+                    )
+                if not rerun_cache[nodeid]:
+                    all_pass = False
+                    break
+            if all_pass:
+                continue
+
         blocker_id = quality_blocker_id(deviation)
         event = latest.get(blocker_id)
         malformed_reason = None

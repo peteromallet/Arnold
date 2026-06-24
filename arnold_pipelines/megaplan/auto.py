@@ -1989,6 +1989,11 @@ def _execute_completion_authority(plan_dir: Path | None) -> tuple[bool, list[str
         task_id = str(task.get("id") or task.get("task_id") or "")
         raw_status = task.get("status")
         if raw_status in {"done", "completed", "skipped", "waived", "not_applicable"} and task_id not in completed:
+            if (
+                raw_status == "skipped"
+                and task.get("reviewer_verdict") == "deferred_baseline_unavailable"
+            ):
+                continue
             decision = decisions.get(task_id)
             reason = "unknown"
             if decision is not None:

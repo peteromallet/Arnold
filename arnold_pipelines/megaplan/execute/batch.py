@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import logging
 import os
 import re
@@ -58,6 +59,7 @@ from arnold_pipelines.megaplan.execute.quality import (
     _check_done_task_evidence,
     _check_done_task_evidence_by_kind,
     _collect_quality_deviations,
+    _is_harness_generated_path,
     _observe_git_changes,
     project_advisory_path_sets,
 )
@@ -76,6 +78,9 @@ from arnold_pipelines.megaplan.orchestration.execution_evidence import (
 from arnold_pipelines.megaplan.orchestration.phase_result import Deviation
 from arnold_pipelines.megaplan.orchestration.authority_readers import (
     scheduler_completed_ids,
+)
+from arnold_pipelines.megaplan.orchestration.plan_contracts import (
+    pre_existing_task_ids_from_contract,
 )
 from arnold_pipelines.megaplan.orchestration.task_satisfaction import (
     EvidenceExecutionWindow,
@@ -142,6 +147,58 @@ _MODEL_SEAM_PROVIDER_PREFIXES = frozenset(
         "zhipu",
     }
 )
+
+
+def _pre_existing_task_ids(plan_dir: Path) -> set[str]:
+    """Read pre-existing task IDs persisted in ``contract.json``."""
+
+    contract_path = plan_dir / "contract.json"
+    if not contract_path.is_file():
+        return set()
+    try:
+        return pre_existing_task_ids_from_contract(
+            json.loads(contract_path.read_text(encoding="utf-8"))
+        )
+    except (OSError, ValueError):
+        return set()
+
+
+def _filter_harness_artifacts_from_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    """Remove harness metadata paths from file claims and evidence."""
+
+    def _clean_path_list(values: Any) -> Any:
+        if isinstance(values, dict):
+            return values
+        if not isinstance(values, list):
+            return []
+        return [
+            str(path)
+            for path in values
+            if isinstance(path, str)
+            and path.strip()
+            and not _is_harness_generated_path(path)
+        ]
+
+    filtered = dict(payload)
+    for key in ("files_changed", "evidence_files"):
+        if key in filtered:
+            filtered[key] = _clean_path_list(filtered[key])
+
+    task_updates = filtered.get("task_updates")
+    if isinstance(task_updates, list):
+        cleaned_updates: list[dict[str, Any]] = []
+        for item in task_updates:
+            if not isinstance(item, dict):
+                cleaned_updates.append(item)
+                continue
+            update = dict(item)
+            for key in ("files_changed", "evidence_files"):
+                if key in update:
+                    update[key] = _clean_path_list(update[key])
+            cleaned_updates.append(update)
+        filtered["task_updates"] = cleaned_updates
+
+    return filtered
 
 
 def _scheduler_completed_ids_for_tasks(
@@ -663,6 +720,7 @@ def _normalize_execute_capture_payload(payload: dict[str, Any]) -> dict[str, Any
                 "executor_notes",
                 "files_changed",
                 "commands_run",
+                "evidence_files",
                 "auto_attributed_files",
             )
             if key in item
@@ -703,7 +761,7 @@ def _normalize_execute_capture_payload(payload: dict[str, Any]) -> dict[str, Any
             acknowledgment["sense_check_id"] = item["id"]
         acknowledgments.append(acknowledgment)
     normalized["sense_check_acknowledgments"] = acknowledgments
-    return normalized
+    return _filter_harness_artifacts_from_payload(normalized)
 
 
 def _default_max_tasks_per_batch() -> int:
@@ -1044,6 +1102,7 @@ def _run_and_merge_batch(
                 state=state,
             )
         )
+    pre_existing_ids = _pre_existing_task_ids(plan_dir)
     if is_prose_mode(state):
         missing_task_evidence = _check_done_task_evidence(
             finalize_data.get("tasks", []),
@@ -1053,12 +1112,14 @@ def _run_and_merge_batch(
             has_advisory_evidence=lambda task: True,
             missing_message="Done tasks missing sections_written: ",
             advisory_message="",
+            pre_existing=pre_existing_ids,
         )
     else:
         missing_task_evidence = _check_done_task_evidence_by_kind(
             finalize_data.get("tasks", []),
             issues=deviations,
             should_classify=lambda task: task.get("id") in batch_task_id_set,
+            pre_existing=pre_existing_ids,
         )
     execution_audit = validate_execution_evidence(
         finalize_data,
@@ -1416,6 +1477,15 @@ def handle_execute_one_batch(
     batch_payloads: list[dict[str, Any]] = []
     drift = None
     if is_final_batch and all_tracked:
+        deferred_checkpoint_ids, deferred_acks = _defer_baseline_unavailable_checkpoints(
+            finalize_data
+        )
+        if deferred_checkpoint_ids:
+            atomic_write_json(plan_dir / "finalize.json", finalize_data)
+            log.info(
+                "deferred baseline-unavailable verification checkpoint(s): %s",
+                ", ".join(deferred_checkpoint_ids),
+            )
         plan_mode = state["config"].get("mode", "code")
         batch_payloads = [read_json(path) for path in list_batch_artifacts(plan_dir)]
         aggregate_payload = _build_aggregate_execution_payload(
@@ -1426,6 +1496,10 @@ def handle_execute_one_batch(
             plan_dir=plan_dir,
             state=state,
         )
+        if deferred_acks:
+            aggregate_payload.setdefault("sense_check_acknowledgments", []).extend(
+                deferred_acks
+            )
         # _run_and_merge_batch already wrote execution_audit.json; this handler
         # only writes the aggregate execution.json after the batch returns.
         write_plan_artifact_json(plan_dir, "execution.json", aggregate_payload, contract_context=None)
@@ -1772,7 +1846,7 @@ def _deviation_dicts(deviations: Iterable[Deviation]) -> list[dict[str, Any]]:
 
 def _defer_baseline_unavailable_checkpoints(
     finalize_data: dict[str, Any],
-) -> list[str]:
+) -> tuple[list[str], list[dict[str, Any]]]:
     """Skip baseline-dependent checkpoints when no baseline exists.
 
     A task whose contract is "introduce no new failures vs the recorded
@@ -1783,13 +1857,24 @@ def _defer_baseline_unavailable_checkpoints(
     they cannot remain as permanently pending executable work.
     """
     if finalize_data.get("baseline_test_failures") is not None:
-        return []
+        return [], []
     tasks = finalize_data.get("tasks")
     if not isinstance(tasks, list):
-        return []
+        return [], []
 
+    defer_note = (
+        "Deferred by harness: baseline_test_failures is null, so this "
+        "no-new-failures checkpoint cannot compare against a recorded "
+        "baseline. The harness-owned final verification/review phase "
+        "remains authoritative."
+    )
     deferred_ids: list[str] = []
-    for index, task in enumerate(tasks):
+    acknowledgments: list[dict[str, Any]] = []
+    sense_checks = finalize_data.get("sense_checks") or []
+    if not isinstance(sense_checks, list):
+        sense_checks = []
+
+    for task in tasks:
         if not isinstance(task, dict):
             continue
         task_id = task.get("id")
@@ -1803,12 +1888,6 @@ def _defer_baseline_unavailable_checkpoints(
             continue
 
         prior_notes = str(task.get("executor_notes") or "").strip()
-        defer_note = (
-            "Deferred by harness: baseline_test_failures is null, so this "
-            "no-new-failures checkpoint cannot compare against a recorded "
-            "baseline. The harness-owned final verification/review phase "
-            "remains authoritative."
-        )
         task["status"] = "skipped"
         task["executor_notes"] = (
             f"{prior_notes}\n{defer_note}" if prior_notes else defer_note
@@ -1819,7 +1898,28 @@ def _defer_baseline_unavailable_checkpoints(
         task["reviewer_verdict"] = "deferred_baseline_unavailable"
         task.pop("recorded_invocation_id", None)
         deferred_ids.append(task_id)
-    return deferred_ids
+
+        matched = False
+        for sense_check in sense_checks:
+            if not isinstance(sense_check, dict):
+                continue
+            if sense_check.get("task_id") != task_id:
+                continue
+            sense_check["executor_note"] = defer_note
+            sc_id = sense_check.get("id")
+            if isinstance(sc_id, str) and sc_id:
+                acknowledgments.append(
+                    {"sense_check_id": sc_id, "executor_note": defer_note}
+                )
+                matched = True
+        if not matched:
+            acknowledgments.append(
+                {
+                    "sense_check_id": f"baseline-unavailable-{task_id}",
+                    "executor_note": defer_note,
+                }
+            )
+    return deferred_ids, acknowledgments
 
 
 def _review_requests_rework(review_data: dict[str, Any]) -> bool:
@@ -2181,6 +2281,7 @@ def handle_execute_auto_loop(
     quality_config = global_config.get("quality_checks", {})
     project_dir = Path(state["config"]["project_dir"])
     tasks = finalize_data.get("tasks", [])
+    baseline_unavailable_acks: list[dict[str, Any]] = []
 
     # Cross-session blocked-task reset: when the caller (typically `megaplan auto`)
     # opts in via --retry-blocked-tasks, any task persisted at status="blocked"
@@ -2220,8 +2321,11 @@ def handle_execute_auto_loop(
                 ", ".join(sorted(baseline_unavailable_ids)),
             )
 
-    deferred_checkpoint_ids = _defer_baseline_unavailable_checkpoints(finalize_data)
+    deferred_checkpoint_ids, deferred_acks = _defer_baseline_unavailable_checkpoints(
+        finalize_data
+    )
     if deferred_checkpoint_ids:
+        baseline_unavailable_acks.extend(deferred_acks)
         atomic_write_json(plan_dir / "finalize.json", finalize_data)
         log.info(
             "deferred baseline-unavailable interim verification checkpoint(s): %s",
@@ -2846,11 +2950,18 @@ def handle_execute_auto_loop(
         atomic_write_text(plan_dir / "execution_trace.jsonl", "".join(trace_chunks))
 
     finalize_data = read_json(plan_dir / "finalize.json")
-    deferred_checkpoint_ids = _defer_baseline_unavailable_checkpoints(finalize_data)
+    deferred_checkpoint_ids, deferred_acks = _defer_baseline_unavailable_checkpoints(
+        finalize_data
+    )
     if deferred_checkpoint_ids:
+        baseline_unavailable_acks.extend(deferred_acks)
         log.info(
             "deferred baseline-unavailable verification checkpoint(s): %s",
             ", ".join(deferred_checkpoint_ids),
+        )
+    if baseline_unavailable_acks:
+        aggregate_payload.setdefault("sense_check_acknowledgments", []).extend(
+            baseline_unavailable_acks
         )
     _chain_policy = (state.get("meta") or {}).get("chain_policy")
     _milestone_base_sha = (
@@ -2916,6 +3027,7 @@ def handle_execute_auto_loop(
             active_sense_check_ids=active_sense_check_ids,
         )
     )
+    aggregate_pre_existing_ids = _pre_existing_task_ids(plan_dir)
     if is_prose_mode(state):
         missing_task_evidence = _check_done_task_evidence(
             finalize_data.get("tasks", []),
@@ -2925,12 +3037,14 @@ def handle_execute_auto_loop(
             has_advisory_evidence=lambda task: True,
             missing_message="Done tasks missing sections_written: ",
             advisory_message="",
+            pre_existing=aggregate_pre_existing_ids,
         )
     else:
         missing_task_evidence = _check_done_task_evidence_by_kind(
             finalize_data.get("tasks", []),
             issues=deviations,
             should_classify=lambda task: task.get("id") in active_task_ids,
+            pre_existing=aggregate_pre_existing_ids,
         )
     blocking_reasons = build_blocking_reasons(
         tracked_tasks=tracked_tasks,

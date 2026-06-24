@@ -762,6 +762,138 @@ def _normalize_critique_evaluator_capture_payload(payload: dict[str, Any]) -> di
     return normalized
 
 
+def _normalize_plan_capture_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    """Normalize structured provider plan output to the canonical plan schema."""
+
+    normalized: dict[str, Any] = {}
+    if isinstance(payload.get("plan"), str):
+        normalized["plan"] = payload["plan"]
+        normalized["questions"] = _normalize_plan_questions(payload.get("questions"))
+        normalized["success_criteria"] = _normalize_plan_success_criteria(
+            payload.get("success_criteria")
+        )
+        normalized["assumptions"] = _normalize_plan_assumptions(payload.get("assumptions"))
+        return normalized
+
+    parts: list[str] = []
+    title = _optional_str(payload.get("title"))
+    if title:
+        parts.append(f"# {title}")
+    overview = _optional_str(payload.get("overview"))
+    if overview:
+        parts.append("## Overview")
+        parts.append(overview)
+    steps = payload.get("steps")
+    if isinstance(steps, list):
+        for step in steps:
+            if isinstance(step, Mapping):
+                step_title = _optional_str(step.get("title") or step.get("name"))
+                step_desc = _optional_str(step.get("description") or step.get("details"))
+                if step_title:
+                    parts.append(f"### {step_title}")
+                if step_desc:
+                    parts.append(step_desc)
+                substeps = step.get("substeps") or step.get("instructions")
+                if isinstance(substeps, list):
+                    for sub in substeps:
+                        if isinstance(sub, Mapping):
+                            sub_text = _optional_str(
+                                sub.get("instruction") or sub.get("text")
+                            )
+                            if sub_text:
+                                parts.append(f"- {sub_text}")
+                        elif isinstance(sub, str):
+                            parts.append(f"- {sub}")
+            elif isinstance(step, str):
+                parts.append(f"- {step}")
+    plan_text = payload.get("plan_text") or payload.get("markdown") or "\n\n".join(parts)
+    if not isinstance(plan_text, str):
+        plan_text = "\n\n".join(parts)
+    normalized["plan"] = plan_text
+    normalized["questions"] = _normalize_plan_questions(payload.get("questions"))
+    normalized["success_criteria"] = _normalize_plan_success_criteria(
+        payload.get("success_criteria")
+    )
+    normalized["assumptions"] = _normalize_plan_assumptions(payload.get("assumptions"))
+    return normalized
+
+
+def _normalize_plan_questions(value: Any) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, list):
+        result: list[str] = []
+        for item in value:
+            if isinstance(item, str):
+                result.append(item)
+            elif isinstance(item, Mapping):
+                for key in ("question", "text", "q", "value"):
+                    q = _optional_str(item.get(key))
+                    if q:
+                        result.append(q)
+                        break
+                else:
+                    result.append(str(item))
+            else:
+                result.append(str(item))
+        return result
+    return []
+
+
+def _normalize_plan_success_criteria(value: Any) -> list[dict[str, Any]]:
+    if value is None:
+        return []
+    if isinstance(value, list):
+        result: list[dict[str, Any]] = []
+        for item in value:
+            if isinstance(item, Mapping):
+                criterion = _optional_str(
+                    item.get("criterion") or item.get("name") or item.get("description")
+                )
+                priority = _optional_str(item.get("priority")) or "should"
+                if priority not in ("must", "should", "info"):
+                    priority = "should"
+                requires = item.get("requires")
+                if not isinstance(requires, list):
+                    requires = []
+                if priority == "must" and not requires:
+                    requires = ["run_tests"]
+                if criterion:
+                    result.append(
+                        {
+                            "criterion": criterion,
+                            "priority": priority,
+                            "requires": requires,
+                        }
+                    )
+            elif isinstance(item, str):
+                result.append({"criterion": item, "priority": "should", "requires": []})
+        return result
+    return []
+
+
+def _normalize_plan_assumptions(value: Any) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, list):
+        result: list[str] = []
+        for item in value:
+            if isinstance(item, str):
+                result.append(item)
+            elif isinstance(item, Mapping):
+                for key in ("assumption", "text", "value"):
+                    assumption = _optional_str(item.get(key))
+                    if assumption:
+                        result.append(assumption)
+                        break
+                else:
+                    result.append(str(item))
+            else:
+                result.append(str(item))
+        return result
+    return []
+
+
 def _normalize_optional_list_marker(value: Any) -> Any:
     """Normalize common empty markers for optional array fields.
 
@@ -1052,6 +1184,7 @@ def assert_all_compatibility_modes_native() -> None:
 
 
 def _register_hooks() -> None:
+    register_native_normalizer("plan", _normalize_plan_capture_payload)
     register_native_normalizer("review", _normalize_review_capture_payload)
     register_native_normalizer("execute", _normalize_execute_capture_payload)
     register_native_normalizer("gate", _normalize_gate_capture_payload)

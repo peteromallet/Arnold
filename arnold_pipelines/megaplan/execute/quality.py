@@ -98,11 +98,15 @@ def _check_done_task_evidence(
     has_advisory_evidence: Callable[[dict[str, Any]], bool],
     missing_message: str,
     advisory_message: str,
+    pre_existing: set[str] | None = None,
 ) -> list[str]:
     missing_task_ids: list[str] = []
     advisory_task_ids: list[str] = []
+    pre_existing_ids = pre_existing or set()
     for task in tasks:
         if task.get("status") != "done" or not should_classify(task):
+            continue
+        if task.get("id") in pre_existing_ids:
             continue
         if has_evidence(task):
             continue
@@ -223,6 +227,7 @@ def _check_done_task_evidence_by_kind(
     code_has_advisory: Callable[[dict[str, Any]], bool] | None = None,
     code_missing_message: str | None = None,
     code_advisory_message: str | None = None,
+    pre_existing: set[str] | None = None,
 ) -> list[str]:
     """Per-kind dispatch over ``_check_done_task_evidence``.
 
@@ -234,10 +239,16 @@ def _check_done_task_evidence_by_kind(
     bespoke messages) to override the evidence shape for the ``code`` bucket
     only — ``audit``/``research``/``test``/``docs`` always use the
     kind-specific defaults.
+
+    Tasks declared ``pre_existing`` in ``contract.json`` are skipped: their
+    evidence is the pre-existing repository state, not new file changes.
     """
+    pre_existing_ids = pre_existing or set()
     groups: dict[str, list[dict[str, Any]]] = {}
     for task in tasks:
         if task.get("status") != "done" or not should_classify(task):
+            continue
+        if task.get("id") in pre_existing_ids:
             continue
         groups.setdefault(_task_kind(task), []).append(task)
 
@@ -264,6 +275,7 @@ def _check_done_task_evidence_by_kind(
                 has_advisory_evidence=has_advisory,
                 missing_message=missing_msg,
                 advisory_message=advisory_msg,
+                pre_existing=pre_existing_ids,
             )
         )
     return missing
@@ -277,12 +289,12 @@ def _format_auto_attributed_paths(paths: list[str]) -> str:
 
 
 def _is_harness_generated_path(path: str) -> bool:
+    """Return True for harness metadata that should not count as source work."""
+
     normalized = path.replace("\\", "/")
-    if normalized.startswith("./"):
+    while normalized.startswith("./"):
         normalized = normalized[2:]
-    return normalized.startswith(".megaplan/run-logs/") or normalized.startswith(
-        ".megaplan/system_logs/"
-    )
+    return normalized == ".megaplan" or normalized.startswith(".megaplan/")
 
 
 def _auto_attribute_unclaimed_paths(
@@ -386,7 +398,9 @@ def _auto_attribute_unclaimed_paths(
         _normalize_execute_claimed_path(path, project_dir)
         for task in tasks
         for path in (task.get("files_changed") or [])
-        if isinstance(path, str) and path.strip()
+        if isinstance(path, str)
+        and path.strip()
+        and not _is_harness_generated_path(path)
     }
     unclaimed_paths = sorted(
         git_paths - claimed - unchanged_baseline_uncommitted_paths(project_dir, state or {})
@@ -402,7 +416,9 @@ def _auto_attribute_unclaimed_paths(
         return AttributionResult(records=[], recursive_snapshot=snapshot)
 
     existing_payload_files = [
-        path for path in (payload.get("files_changed") or []) if isinstance(path, str)
+        path
+        for path in (payload.get("files_changed") or [])
+        if isinstance(path, str) and not _is_harness_generated_path(path)
     ]
     seen_payload_files = {
         _normalize_execute_claimed_path(path, project_dir)
@@ -632,7 +648,9 @@ def _collect_execute_claimed_paths(
     return {
         _normalize_execute_claimed_path(path, project_dir)
         for path in raw_files
-        if isinstance(path, str) and path.strip()
+        if isinstance(path, str)
+        and path.strip()
+        and not _is_harness_generated_path(path)
     }
 
 
@@ -664,23 +682,25 @@ def _observe_git_changes(
         issues.append(
             f"Advisory observation skip after batch {batch_number}/{batches_total}: {after_error}"
         )
-    elif before_error is None:
-        observed_paths = _observed_batch_paths(
-            project_dir=project_dir,
-            before_snapshot=before_snapshot,
-            after_snapshot=after_snapshot,
-        )
-        observed_paths = {
-            path for path in observed_paths if not _is_harness_generated_path(path)
-        }
+        return issues
+    if before_error is None:
         if _base_ref is not None:
             from arnold_pipelines.megaplan.loop.git import _collect_committed_range_paths
             try:
-                window_paths = _collect_committed_range_paths(project_dir, base_ref=_base_ref)
+                observed_paths = _collect_committed_range_paths(
+                    project_dir, base_ref=_base_ref
+                )
             except Exception:
-                window_paths = None
-            if window_paths is not None:
-                observed_paths = {p for p in observed_paths if p in window_paths}
+                observed_paths = set()
+        else:
+            observed_paths = _observed_batch_paths(
+                project_dir=project_dir,
+                before_snapshot=before_snapshot,
+                after_snapshot=after_snapshot,
+            )
+        observed_paths = {
+            path for path in observed_paths if not _is_harness_generated_path(path)
+        }
         claimed_paths = _collect_execute_claimed_paths(payload, project_dir)
         phantom_claims = sorted(claimed_paths - observed_paths)
         if phantom_claims:
