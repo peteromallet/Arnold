@@ -1054,6 +1054,14 @@ export function populateAgentBubbleDetail(target, panel, message, snapshot = nul
     }
   }
 
+  // Legacy fallback: pending websocket progress messages may carry a
+  // canonical_activity snapshot. Render its safe details (per-action rows,
+  // counts, diagnostics) when the normalized response detail has no equivalent
+  // statement-level progress to display.
+  if (isPendingAgentMessage(message) && message?.canonical_activity && !ordinarySnapshot?.progress) {
+    _renderCanonicalDetails(target, message.canonical_activity, deps);
+  }
+
   // Candidate section: only for applyable routes (revise/adapt/legacy-aliases)
   if (allowsApply) {
     const candidateSection = createBubbleDetailSection("Candidate");
@@ -1064,8 +1072,9 @@ export function populateAgentBubbleDetail(target, panel, message, snapshot = nul
   }
 
   // Applied-node feedback is shown on the applied turn bubble even when the
-  // route is no longer applyable.
-  const appliedFeedback = ordinarySnapshot?.lastAppliedChanges || null;
+  // route is no longer applyable. Fallback to panel state when the bubble's
+  // own snapshot does not carry the applied feedback (e.g. after rehydrate).
+  const appliedFeedback = ordinarySnapshot?.lastAppliedChanges || panel.state.lastAppliedChanges || null;
   if (appliedFeedback?.items?.length) {
     const feedbackSection = createBubbleDetailSection("Feedback");
     appendCandidateDetail(feedbackSection.body, panel, message, ordinarySnapshot);
