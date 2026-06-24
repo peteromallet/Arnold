@@ -111,7 +111,7 @@ def test_discover_python_pipelines_flag_on_planning_builder_is_callable_and_yiel
 
     _cli_name, builder, _meta, _source_path = by_name["megaplan"]
 
-    from arnold.pipelines.megaplan._pipeline.types import Pipeline as PipelineCls
+    from arnold.pipeline.types import Pipeline as PipelineCls
 
     pipeline = builder()
     assert isinstance(pipeline, PipelineCls), (

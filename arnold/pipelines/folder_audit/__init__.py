@@ -14,10 +14,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Mapping
 
-from dataclasses import replace
-
-from arnold.pipeline import Edge, Pipeline, PipelineBuilder, Stage, StepContext, StepResult
-from arnold.pipeline.native import compile_pipeline
+from arnold.pipeline import Pipeline, PipelineBuilder, Stage, Edge
+from arnold.pipelines.megaplan._pipeline.types import StepContext, StepResult
 
 # ── Package metadata ────────────────────────────────────────────────────
 
@@ -27,23 +25,16 @@ name: str = "folder-audit"
 description: str = "Audit a directory tree, classify files, and emit a structured report."
 """Short description surfaced in the pipeline registry."""
 
-default_profile: str | None = None
-"""No default profile; callers supply a worker or use the stub."""
-
-supported_modes: tuple[str, ...] = ("audit", "native")
-"""Supported execution modes."""
-
-driver: tuple[str, ...] = ("native", "folder-audit")
-"""Execution driver spec — native-backed graph projection."""
+driver: tuple[str, ...] = ("graph", "dispatch+emit")
+"""Execution driver spec — graph execution by default."""
 
 entrypoint: str = "build_pipeline"
 """Default entrypoint callable name."""
 
-arnold_api_version: str = "1.0"
-"""Arnold API version."""
-
 capabilities: tuple[str, ...] = ("audit", "folder-audit", "tree-walk")
 """Declared pipeline capabilities."""
+
+build_pipeline_ref = None  # will be set below
 
 
 # ── Default worker ──────────────────────────────────────────────────────
@@ -392,13 +383,6 @@ class EmitStep:
 # ── Pipeline construction ───────────────────────────────────────────────
 
 
-def _native_bundle():
-    """Return the compiled native program for folder-audit."""
-    from arnold.pipelines.folder_audit.native import folder_audit_native
-
-    return compile_pipeline(folder_audit_native)
-
-
 def build_pipeline(worker: Callable[..., Any] | None = None) -> Pipeline:
     """Build the linear ``folder_audit`` pipeline: ingest → audit → emit.
 
@@ -431,16 +415,11 @@ def build_pipeline(worker: Callable[..., Any] | None = None) -> Pipeline:
         edges=(Edge(label="halt", target="halt"),),
     )
 
-    graph = Pipeline(
+    return Pipeline(
         stages={
             "ingest": ingest_stage,
             "audit": audit_stage,
             "emit": emit_stage,
         },
         entry="ingest",
-    )
-    return replace(
-        graph,
-        native_program=_native_bundle(),
-        resource_bundles=(),
     )

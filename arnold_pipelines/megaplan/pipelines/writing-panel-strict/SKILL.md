@@ -11,6 +11,19 @@ a synthesis editor reconciles their feedback into a revision brief, and a
 revision editor produces the updated draft. A human gate lets you review
 the result and loop back for another round or stop.
 
+## Runtime
+
+`writing-panel-strict` is a native-default converted pipeline. Fresh runs
+through `megaplan run writing-panel-strict ...` or
+`arnold pipelines run writing-panel-strict ...` persist runtime ownership in
+`state.json.runtime_envelope.runtime` and `state.json.meta.executor`. During
+the M7 deprecation window, the derived graph remains available as a
+compatibility fallback: pass `--runtime graph` (or the deprecated
+`--executor graph`) for a fresh run that must use the graph executor. Existing
+graph-born plan directories keep resuming on graph. Native-born runs resume on
+native, and corrupt native cursors fail closed rather than silently falling
+back to graph.
+
 ## Modes
 
 | Mode | Description |

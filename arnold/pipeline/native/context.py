@@ -1,21 +1,45 @@
-"""Native runtime compatibility context.
+"""Native runtime context and guard plumbing.
 
-Native execution is the canonical default.  This module is kept only for
-backwards-compatible imports from older call sites that still invoke a runtime
-guard; the guard is now a no-op.
+Provides the guard that gates high-level native execution behind the
+``ARNOLD_NATIVE_RUNTIME`` feature flag.  Compiler, graph-projection,
+and IR imports remain usable in unit tests without the flag — only
+the runtime entrypoints call the guard.
 """
 
 from __future__ import annotations
 
+import os
+
+from arnold.pipeline.native.flags import native_runtime_enabled
+
 
 class NativeRuntimeDisabledError(RuntimeError):
-    """Deprecated compatibility error export.
+    """Raised when native runtime execution is attempted without the flag.
 
-    Native runtime execution is no longer gated by ``ARNOLD_NATIVE_RUNTIME``,
-    and :func:`require_native_runtime` no longer raises this exception.
+    Set ``ARNOLD_NATIVE_RUNTIME=1`` to enable high-level native runtime
+    execution.  Compiler and graph helpers are not affected.
     """
 
 
 def require_native_runtime() -> None:
-    """Deprecated compatibility no-op for older native entrypoints."""
-    return
+    """Raise :class:`NativeRuntimeDisabledError` if the feature flag is off.
+
+    Call this at the top of high-level native runtime entrypoints.
+    Do **not** call it in compiler, graph-projection, or IR modules —
+    those must remain usable in unit tests without the flag.
+
+    Raises:
+        NativeRuntimeDisabledError: When ``ARNOLD_NATIVE_RUNTIME`` is
+            not set to ``'1'``.
+    """
+    if not native_runtime_enabled():
+        value = os.environ.get("ARNOLD_NATIVE_RUNTIME", "")
+        if value == "0":
+            raise NativeRuntimeDisabledError(
+                "ARNOLD_NATIVE_RUNTIME is set to 0. "
+                "Omit the variable or set ARNOLD_NATIVE_RUNTIME=1 to enable native runtime execution."
+            )
+        raise NativeRuntimeDisabledError(
+            "ARNOLD_NATIVE_RUNTIME is not set. "
+            "Set ARNOLD_NATIVE_RUNTIME=1 to enable native runtime execution."
+        )

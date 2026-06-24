@@ -277,12 +277,10 @@ class TestDispatchResumeRouting:
         )
 
     def _make_native_capable_megaplan_pipeline(self) -> object:
-        from arnold.pipelines.megaplan.native_runner import NativeMegaplanRunner
-
         return SimpleNamespace(
             entry="prep",
             stages={name: object() for name in self._NATIVE_STAGE_ORDER},
-            resource_bundles=(NativeMegaplanRunner(),),
+            resource_bundles=self._NATIVE_STAGE_ORDER,
         )
 
     def test_native_born_cursor_routes_to_native(self, tmp_path: Path) -> None:

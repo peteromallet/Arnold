@@ -137,7 +137,7 @@ def test_arnold_pipelines_new_driver_graph_emits_checkable_module(
     assert result.returncode == 0, f"new failed: {result.stderr}"
     assert module_path.exists(), f"module not created at {module_path}"
     content = module_path.read_text(encoding="utf-8")
-    assert 'driver: tuple[str, str] = ("graph", "legacy")' in content
+    assert 'driver: tuple[str, str] = (\'graph\', "dispatch+emit")' in content
     assert "Deprecated hand-built graph scaffold" in content
 
     check_result = _run_pipelines("check", name)

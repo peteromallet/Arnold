@@ -60,3 +60,457 @@ def test_read_composite_resume_cursor_absorbs_missing_and_malformed(tmp_path: Pa
         encoding="utf-8",
     )
     assert read_composite_resume_cursor(tmp_path) is None
+
+
+# ──────────────────────────────────────────────────────────────────────
+# T1: Graph human-gate suspension contract — canonical shape freeze
+# ──────────────────────────────────────────────────────────────────────
+
+
+class TestGraphHumanGateSuspensionContract:
+    """Freeze the canonical graph human-gate suspension contract shapes.
+
+    These tests document the EXISTING shapes for:
+
+    * ``awaiting_user.json`` — produced by
+      :func:`arnold.pipeline.steps.human_gate.write_human_gate_checkpoint`
+    * ``HumanSuspension`` from checkpoint — produced by
+      :func:`arnold.pipeline.steps.human_gate.make_human_suspension`
+    * ``ContractResult(status=SUSPENDED)`` — the typed suspension envelope
+    * ``resume_cursor.json`` for a single-choice graph gate — produced by
+      :func:`arnold.pipeline.resume.persist_resume_cursor`
+
+    Volatile fields (``artifact_path``, ``message``, ``prompt`` text,
+    pipeline/version identity) are normalised to canonical test values;
+    the tests are STRICT about key presence, key count, value types, and
+    every field in the 11-field ``HumanSuspension`` envelope.
+    """
+
+    # ── awaiting_user.json canonical shape ───────────────────────────
+
+    def test_canonical_awaiting_user_top_level_keys(self, tmp_path: Path) -> None:
+        """awaiting_user.json contains exactly the expected top-level keys.
+
+        The canonical set is: pipeline, version, artifact_stage, prompt,
+        display_refs, stage, choices, message, artifact_path.
+        resume_input_schema is absent when no re-verify declaration is
+        configured (no-declaration parity).
+        """
+        from arnold.pipeline.steps.human_gate import write_human_gate_checkpoint
+
+        checkpoint_path = tmp_path / "awaiting_user.json"
+        checkpoint = write_human_gate_checkpoint(
+            checkpoint_path,
+            pipeline="writing-panel-strict",
+            version=1,
+            artifact_stage="revise",
+            stage="human_decide",
+            choices=["continue", "stop"],
+            artifact_path="/tmp/plan_dir/revise/v1/output.json",
+            message="Pipeline 'writing-panel-strict' paused at stage 'human_decide'.",
+        )
+
+        # Top-level key set is frozen (resume_input_schema absent by default).
+        expected_keys = {
+            "pipeline",
+            "version",
+            "artifact_stage",
+            "prompt",
+            "display_refs",
+            "stage",
+            "choices",
+            "message",
+            "artifact_path",
+        }
+        actual_keys = set(checkpoint.keys())
+        assert actual_keys == expected_keys, (
+            f"Unexpected awaiting_user.json keys: {actual_keys ^ expected_keys}"
+        )
+
+    def test_canonical_awaiting_user_value_types(self, tmp_path: Path) -> None:
+        """awaiting_user.json value types are frozen.
+
+        pipeline, artifact_stage, prompt, stage, message, artifact_path
+        are str; version is int; choices and display_refs are list.
+        """
+        from arnold.pipeline.steps.human_gate import write_human_gate_checkpoint
+
+        checkpoint_path = tmp_path / "awaiting_user.json"
+        checkpoint = write_human_gate_checkpoint(
+            checkpoint_path,
+            pipeline="writing-panel-strict",
+            version=1,
+            artifact_stage="revise",
+            stage="human_decide",
+            choices=["continue", "stop"],
+            artifact_path="/tmp/plan_dir/revise/v1/output.json",
+            message="Paused.",
+        )
+
+        assert isinstance(checkpoint["pipeline"], str)
+        assert isinstance(checkpoint["version"], int)
+        assert isinstance(checkpoint["artifact_stage"], str)
+        assert isinstance(checkpoint["prompt"], str)
+        assert isinstance(checkpoint["display_refs"], list)
+        assert isinstance(checkpoint["stage"], str)
+        assert isinstance(checkpoint["choices"], list)
+        assert isinstance(checkpoint["message"], str)
+        assert isinstance(checkpoint["artifact_path"], str)
+
+    def test_canonical_awaiting_user_read_round_trip(self, tmp_path: Path) -> None:
+        """awaiting_user.json round-trips through write → read helpers."""
+        from arnold.pipeline.steps.human_gate import (
+            read_human_gate_checkpoint,
+            write_human_gate_checkpoint,
+        )
+
+        checkpoint_path = tmp_path / "awaiting_user.json"
+        written = write_human_gate_checkpoint(
+            checkpoint_path,
+            pipeline="writing-panel-strict",
+            version=1,
+            artifact_stage="revise",
+            stage="human_decide",
+            choices=["continue", "stop"],
+            artifact_path="/tmp/plan_dir/revise/v1/output.json",
+            message="Paused.",
+        )
+
+        read_back = read_human_gate_checkpoint(checkpoint_path)
+        assert read_back == written
+
+    def test_awaiting_user_with_resume_reverify_schema(self, tmp_path: Path) -> None:
+        """When resume_input_schema is supplied, it appears as a top-level key.
+
+        The schema key is only present when a re-verification declaration
+        is configured (non-empty dict).
+        """
+        from arnold.pipeline.steps.human_gate import write_human_gate_checkpoint
+
+        checkpoint_path = tmp_path / "awaiting_user.json"
+        checkpoint = write_human_gate_checkpoint(
+            checkpoint_path,
+            pipeline="writing-panel-strict",
+            version=1,
+            artifact_stage="revise",
+            resume_input_schema={"x-arnold-resume": {"port": "scan_output"}},
+            stage="human_decide",
+            choices=["continue", "stop"],
+            artifact_path="/tmp/plan_dir/revise/v1/output.json",
+            message="Paused.",
+        )
+
+        assert "resume_input_schema" in checkpoint
+        assert checkpoint["resume_input_schema"] == {
+            "x-arnold-resume": {"port": "scan_output"}
+        }
+
+    # ── HumanSuspension canonical shape ───────────────────────────────
+
+    def test_canonical_human_suspension_from_checkpoint(self) -> None:
+        """make_human_suspension produces a HumanSuspension with all 11 fields.
+
+        The 11-field envelope (kind, awaitable, prompt, display_refs,
+        resume_input_schema, resume_cursor, thread_ref, actor, deadline,
+        on_timeout, default_action) is frozen by the type definition.
+        kind is always "human" for graph human-gate suspensions.
+        """
+        from arnold.pipeline.steps.human_gate import make_human_suspension
+        from arnold.pipeline.types import HumanSuspension
+
+        checkpoint: dict = {
+            "pipeline": "writing-panel-strict",
+            "version": 1,
+            "artifact_stage": "revise",
+            "prompt": "Review the revised draft.",
+            "display_refs": [],
+            "stage": "human_decide",
+            "choices": ["continue", "stop"],
+            "message": "Paused at human_decide.",
+            "artifact_path": "/tmp/plan_dir/revise/v1/output.json",
+        }
+        suspension = make_human_suspension(checkpoint, resume_cursor="cursor-1")
+
+        assert isinstance(suspension, HumanSuspension)
+        assert suspension.kind == "human"
+        assert suspension.awaitable is None  # not populated by make_human_suspension
+        assert suspension.prompt == "Review the revised draft."
+        assert suspension.display_refs == ()
+        assert suspension.resume_input_schema == {}
+        assert suspension.resume_cursor == "cursor-1"
+        assert suspension.thread_ref is None
+        assert suspension.actor is None
+        assert suspension.deadline is None
+        assert suspension.on_timeout is None
+        assert suspension.default_action is None
+
+    def test_human_suspension_field_count_is_11(self) -> None:
+        """HumanSuspension has exactly 11 fields (the frozen envelope)."""
+        from dataclasses import fields as _fields
+        from arnold.pipeline.types import HumanSuspension
+
+        field_names = tuple(f.name for f in _fields(HumanSuspension))
+        assert len(field_names) == 11, (
+            f"Expected 11 fields, got {len(field_names)}: {field_names}"
+        )
+
+    def test_human_suspension_resume_input_schema_round_trip(self) -> None:
+        """resume_input_schema survives HumanSuspension.to_json() → from_json().
+
+        The schema is stored as a plain dict inside the frozen dataclass.
+        """
+        from arnold.pipeline.types import HumanSuspension
+
+        schema = {"choice": {"type": "string", "enum": ["continue", "stop"]}}
+        sus = HumanSuspension(
+            kind="human",
+            prompt="Continue?",
+            resume_input_schema=schema,
+            resume_cursor="cursor-1",
+        )
+        rt = HumanSuspension.from_json(sus.to_json())
+        assert rt.resume_input_schema == schema
+
+    def test_human_suspension_to_json_keys(self) -> None:
+        """HumanSuspension.to_json() emits exactly the 11 frozen keys."""
+        from arnold.pipeline.types import HumanSuspension
+
+        sus = HumanSuspension(kind="human")
+        json_dict = sus.to_json()
+        expected_keys = {
+            "kind",
+            "awaitable",
+            "prompt",
+            "display_refs",
+            "resume_input_schema",
+            "resume_cursor",
+            "thread_ref",
+            "actor",
+            "deadline",
+            "on_timeout",
+            "default_action",
+        }
+        assert set(json_dict.keys()) == expected_keys, (
+            f"Unexpected to_json() keys: {set(json_dict.keys()) ^ expected_keys}"
+        )
+
+    # ── ContractResult(status=SUSPENDED) canonical shape ──────────────
+
+    def test_canonical_contract_result_suspended_keys(self) -> None:
+        """ContractResult(status=SUSPENDED) has the 8 frozen fields.
+
+        The suspension field carries the HumanSuspension envelope.
+        """
+        from arnold.pipeline.types import (
+            ContractResult,
+            ContractStatus,
+            HumanSuspension,
+        )
+
+        suspension = HumanSuspension(
+            kind="human",
+            prompt="Review the draft.",
+            resume_cursor="cursor-1",
+        )
+        cr = ContractResult(
+            status=ContractStatus.SUSPENDED,
+            suspension=suspension,
+        )
+
+        json_dict = cr.to_json()
+        expected_keys = {
+            "schema_version",
+            "status",
+            "payload",
+            "suspension",
+            "evidence_refs",
+            "authority_level",
+            "provenance",
+            "freshness",
+        }
+        assert set(json_dict.keys()) == expected_keys, (
+            f"Unexpected ContractResult keys: {set(json_dict.keys()) ^ expected_keys}"
+        )
+        assert json_dict["status"] == "suspended"
+        assert json_dict["suspension"] is not None
+        assert json_dict["suspension"]["kind"] == "human"
+
+    def test_contract_result_suspended_round_trip(self) -> None:
+        """ContractResult(status=SUSPENDED) survives to_json → from_json."""
+        from arnold.pipeline.types import (
+            ContractResult,
+            ContractStatus,
+            HumanSuspension,
+        )
+
+        suspension = HumanSuspension(
+            kind="human",
+            prompt="Review the draft.",
+            resume_cursor="cursor-1",
+            resume_input_schema={"choice": {"type": "string"}},
+        )
+        original = ContractResult(
+            status=ContractStatus.SUSPENDED,
+            suspension=suspension,
+            payload={"phase": "human_decide"},
+        )
+        restored = ContractResult.from_json(original.to_json())
+
+        assert restored.status == ContractStatus.SUSPENDED
+        assert restored.suspension is not None
+        assert restored.suspension.kind == "human"
+        assert restored.suspension.prompt == "Review the draft."
+        assert restored.suspension.resume_cursor == "cursor-1"
+        assert restored.suspension.resume_input_schema == {"choice": {"type": "string"}}
+        assert restored.payload == {"phase": "human_decide"}
+
+    def test_contract_result_suspended_requires_suspension(self) -> None:
+        """A ContractResult with status=SUSPENDED conventionally carries a suspension.
+
+        The type system does not ENFORCE this pairing (it is the caller's
+        responsibility), but the canonical graph human-gate contract always
+        pairs them.
+        """
+        from arnold.pipeline.types import (
+            ContractResult,
+            ContractStatus,
+            HumanSuspension,
+        )
+
+        # Canonical: SUSPENDED always has a suspension.
+        cr = ContractResult(
+            status=ContractStatus.SUSPENDED,
+            suspension=HumanSuspension(kind="human"),
+        )
+        assert cr.status == ContractStatus.SUSPENDED
+        assert cr.suspension is not None
+        assert cr.suspension.kind == "human"
+
+    # ── resume_cursor.json canonical shape ────────────────────────────
+
+    def test_canonical_resume_cursor_top_level_keys(self, tmp_path: Path) -> None:
+        """resume_cursor.json for a graph gate has stage + resume_cursor.
+
+        Additional keys passed via **extra are merged into the payload.
+        """
+        from arnold.pipeline.resume import RESUME_CURSOR_FILENAME
+
+        persist_resume_cursor(
+            tmp_path,
+            stage="human_decide",
+            resume_cursor="cursor-1",
+            reason="awaiting_human",
+        )
+
+        cursor_path = tmp_path / RESUME_CURSOR_FILENAME
+        assert cursor_path.exists()
+
+        data = json.loads(cursor_path.read_text(encoding="utf-8"))
+        assert "stage" in data
+        assert "resume_cursor" in data
+        assert data["stage"] == "human_decide"
+        assert data["resume_cursor"] == "cursor-1"
+
+    def test_resume_cursor_extra_keys_merge_additively(self, tmp_path: Path) -> None:
+        """Extra kwargs in persist_resume_cursor merge into the payload.
+
+        This is the additive compatibility strategy: graph readers only
+        access the keys they know about; native readers access additional
+        keys like 'native', 'stages', 'loops', 'frames'.
+        """
+        from arnold.pipeline.resume import RESUME_CURSOR_FILENAME
+
+        persist_resume_cursor(
+            tmp_path,
+            stage="human_decide",
+            resume_cursor="cursor-1",
+            reason="awaiting_human",
+            choices=["continue", "stop"],
+        )
+
+        data = json.loads(
+            (tmp_path / RESUME_CURSOR_FILENAME).read_text(encoding="utf-8")
+        )
+        assert data["stage"] == "human_decide"
+        assert data["resume_cursor"] == "cursor-1"
+        assert data["reason"] == "awaiting_human"
+        assert data["choices"] == ["continue", "stop"]
+
+    def test_resume_cursor_for_writing_panel_strict_shape(self, tmp_path: Path) -> None:
+        """resume_cursor.json shape that writing-panel-strict would produce.
+
+        A single-choice graph gate with options ['continue', 'stop'] and
+        edges {continue: panel_review, stop: halt} pauses at human_decide.
+        The resume cursor records the stage and an opaque cursor string.
+        """
+        from arnold.pipeline.resume import RESUME_CURSOR_FILENAME
+
+        # Simulate what the graph executor would persist for a
+        # writing-panel-strict human gate at stage "human_decide".
+        persist_resume_cursor(
+            tmp_path,
+            stage="human_decide",
+            resume_cursor="cursor-wp-1",
+            reason="awaiting_human",
+            pipeline="writing-panel-strict",
+            choices=["continue", "stop"],
+            artifact_stage="revise",
+        )
+
+        data = json.loads(
+            (tmp_path / RESUME_CURSOR_FILENAME).read_text(encoding="utf-8")
+        )
+
+        # Top-level contract fields
+        assert data["stage"] == "human_decide"
+        assert data["resume_cursor"] == "cursor-wp-1"
+
+        # Volatile fields normalised for the canonical test shape
+        assert data["reason"] == "awaiting_human"
+        assert data["pipeline"] == "writing-panel-strict"
+        assert data["choices"] == ["continue", "stop"]
+        assert data["artifact_stage"] == "revise"
+
+        # Verify that no native key leaked in (this is a graph-born cursor)
+        assert "native" not in data, (
+            "Graph-born cursor must not carry a 'native' key"
+        )
+
+    def test_resume_cursor_absent_native_key_is_graph_born(self, tmp_path: Path) -> None:
+        """A resume_cursor.json without a 'native' key is graph-born.
+
+        This is the contract that classify_resume_cursor relies on.
+        """
+        from arnold.pipeline.resume import RESUME_CURSOR_FILENAME
+
+        persist_resume_cursor(
+            tmp_path,
+            stage="human_decide",
+            resume_cursor="cursor-1",
+            reason="awaiting_human",
+        )
+
+        data = json.loads(
+            (tmp_path / RESUME_CURSOR_FILENAME).read_text(encoding="utf-8")
+        )
+        assert "native" not in data, (
+            "persist_resume_cursor must not emit a 'native' key — "
+            "native cursors are produced by persist_native_cursor only"
+        )
+
+    def test_read_resume_cursor_returns_full_payload(self, tmp_path: Path) -> None:
+        """read_resume_cursor returns the complete dict including extra keys."""
+        persist_resume_cursor(
+            tmp_path,
+            stage="human_decide",
+            resume_cursor="cursor-1",
+            reason="awaiting_human",
+            choices=["continue", "stop"],
+        )
+
+        data = read_resume_cursor(tmp_path)
+        assert data is not None
+        assert data["stage"] == "human_decide"
+        assert data["resume_cursor"] == "cursor-1"
+        assert data["reason"] == "awaiting_human"
+        assert data["choices"] == ["continue", "stop"]

@@ -747,7 +747,7 @@ def _parse_json_object_arg(value: str | None, *, arg_name: str) -> dict[str, Any
 
 
 def _handle_epic_capsule(root: Path, args: argparse.Namespace) -> StepResponse:
-    from arnold_pipelines.megaplan.feature_flags import m7_sinks_on
+    from arnold.pipelines.megaplan._pipeline.flags import m7_sinks_on
     from arnold.pipelines.megaplan.store.capsule import (
         CapsuleStorageError,
         build_capsule,
@@ -1568,24 +1568,11 @@ def _handle_pipelines(root: Path, args: argparse.Namespace) -> int:
             return 1
 
         from arnold.pipelines.megaplan._pipeline.registry import (
-            _record_native_program_advisory,
             canonical_pipeline_name,
             get_pipeline,
             scan_python_pipelines,
         )
-        from arnold.pipelines.megaplan._pipeline.validator import (
-            validate,
-            validate_control_flow,
-        )
-        from arnold.pipeline.step_invocation import StepInvocationAdapterRegistry
-
-        class _CheckToolAdapter:
-            def invoke(self, invocation: Any) -> Any:
-                del invocation
-                raise NotImplementedError("check-time tool adapter placeholder")
-
-        _check_adapter_registry = StepInvocationAdapterRegistry()
-        _check_adapter_registry.register("tool", _CheckToolAdapter())
+        from arnold.pipelines.megaplan._pipeline.validator import validate
 
         canonical_name = canonical_pipeline_name(name)
         original_manifest_discovery = os.environ.get("MEGAPLAN_M6_MANIFEST_DISCOVERY")
@@ -1597,7 +1584,6 @@ def _handle_pipelines(root: Path, args: argparse.Namespace) -> int:
                 os.environ.pop("MEGAPLAN_M6_MANIFEST_DISCOVERY", None)
             else:
                 os.environ["MEGAPLAN_M6_MANIFEST_DISCOVERY"] = original_manifest_discovery
-        matching_disposition = None
         for disposition in dispositions:
             if disposition.cli_name == canonical_name and disposition.status == "rejected":
                 print(
@@ -1605,8 +1591,6 @@ def _handle_pipelines(root: Path, args: argparse.Namespace) -> int:
                     file=sys.stderr,
                 )
                 return 1
-            if disposition.cli_name == canonical_name and disposition.status == "discovered":
-                matching_disposition = disposition
         try:
             pipeline = get_pipeline(canonical_name)
         except Exception as exc:  # discovery / build failure
@@ -1615,23 +1599,7 @@ def _handle_pipelines(root: Path, args: argparse.Namespace) -> int:
         if pipeline is None:
             print(f"pipelines check: {canonical_name!r} is not executable", file=sys.stderr)
             return 1
-        if matching_disposition is not None:
-            previous_reason = matching_disposition.reason
-            _record_native_program_advisory(matching_disposition, pipeline)
-            if matching_disposition.reason != previous_reason:
-                print(
-                    f"pipelines check: {canonical_name!r} manifest advisory: "
-                    f"{matching_disposition.reason}",
-                    file=sys.stderr,
-                )
-                return 1
-        if canonical_name == "megaplan":
-            # Megaplan uses dynamic state rather than typed-port bindings,
-            # so the full dataflow validator flags false-positive missing
-            # bindings.  Validate control flow only.
-            diag = validate_control_flow(pipeline)
-        else:
-            diag = validate(pipeline, adapter_registry=_check_adapter_registry)
+        diag = validate(pipeline)
         if diag.ok:
             print(name)
             return 0
@@ -1767,7 +1735,7 @@ def _native_scaffold_module_content(*, cli_name: str, module_stem: str) -> str:
         f'name: str = "{cli_name}"\n'
         f'description: str = "TODO: add a description"\n'
         f"default_profile: str | None = None\n"
-        f'supported_modes: tuple[str, ...] = ("native",)\n'
+        f"supported_modes: tuple[str, ...] = ()\n"
         f'driver: tuple[str, str] = ("native", "project+validate")\n'
         f'entrypoint: str = "build_pipeline"\n'
         f'arnold_api_version: str = "1.0"\n'
@@ -1884,8 +1852,8 @@ def _deprecated_graph_scaffold_module_content(*, cli_name: str) -> str:
         f'name: str = "{cli_name}"\n'
         f'description: str = "TODO: add a description"\n'
         f"default_profile: str | None = None\n"
-        f'supported_modes: tuple[str, ...] = ("graph",)\n'
-        f'driver: tuple[str, str] = ("graph", "legacy")\n'
+        f"supported_modes: tuple[str, ...] = ()\n"
+        f'driver: tuple[str, str] = (\'graph\', "dispatch+emit")\n'
         f'entrypoint: str = "build_pipeline"\n'
         f'arnold_api_version: str = "1.0"\n'
         f"capabilities: tuple[str, ...] = ()\n"
@@ -2250,34 +2218,16 @@ def _setup_chain_worktree(args: argparse.Namespace) -> None:
             name,
             worktree_registered=worktree_registered,
         )
-
-    # Resume in an existing chain worktree instead of demanding a fresh one.
-    # The same shared worktree is reused across milestones; only the git branch
-    # inside it changes.
-    if worktree_registered(invoking_repo, target):
-        if not target.exists():
-            raise CliError(
-                "worktree_registered_but_missing",
-                f"chain worktree {target} is registered but its on-disk directory "
-                "is missing; run with --fresh to recreate it.",
-            )
-        args.project_dir = str(target)
-        from arnold.pipelines.megaplan.workers import set_work_dir_override
-
-        set_work_dir_override(target)
-        os.environ["MEGAPLAN_ENGINE_ROOT"] = str(invoking_repo)
-        if not os.environ.get("MEGAPLAN_ENGINE_ISOLATION_PROVIDER"):
-            os.environ["MEGAPLAN_ENGINE_ISOLATION_PROVIDER"] = "logical_local_dev"
-        print(
-            f"Reusing existing chain worktree at {target}; running chain inside it...",
-            file=sys.stderr,
-        )
-        return
-
     if target.exists():
         raise CliError(
             "worktree_target_exists",
             f"refusing to create worktree: target path already exists: {target}",
+        )
+    if worktree_registered(invoking_repo, target):
+        raise CliError(
+            "worktree_already_registered",
+            f"git already has a worktree registered at {target} "
+            "(run `git worktree prune` manually if it's stale)",
         )
     if branch_exists(invoking_repo, name):
         raise CliError(
@@ -2303,16 +2253,6 @@ def _setup_chain_worktree(args: argparse.Namespace) -> None:
     from arnold.pipelines.megaplan.workers import set_work_dir_override
 
     set_work_dir_override(target)
-
-    # Anchor the isolation machinery to the invoking (engine) checkout.  The
-    # target worktree shadows the editable install when Python resolves
-    # ``arnold`` from cwd, so ``megaplan_engine_root()`` needs an explicit
-    # anchor.  Single-user local worktree runs use disjoint engine/target roots
-    # instead of a trusted container, so opt into the logical-local-dev provider
-    # when the operator has not already chosen one.
-    os.environ["MEGAPLAN_ENGINE_ROOT"] = str(invoking_repo)
-    if not os.environ.get("MEGAPLAN_ENGINE_ISOLATION_PROVIDER"):
-        os.environ["MEGAPLAN_ENGINE_ISOLATION_PROVIDER"] = "logical_local_dev"
 
     print(
         f"Created chain worktree at {target} on branch {name} "

@@ -50,7 +50,7 @@ from pathlib import Path
 from typing import Any, Callable, Mapping
 
 from arnold.pipeline.hooks import ExecutorHooks, NullExecutorHooks
-from arnold.pipeline.native.flags import force_legacy_runtime
+from arnold.pipeline.native.flags import native_runtime_enabled
 from arnold.pipeline.native.routing import (
     RUNTIME_GRAPH,
     RUNTIME_NATIVE,
@@ -79,20 +79,14 @@ from arnold.runtime.operations import NullOperationRegistry, OperationRegistry
 def _global_runtime_kill_switch() -> RuntimeOwner | None:
     """Return an explicit runtime owner from the global kill-switch env var.
 
-    ``ARNOLD_FORCE_LEGACY=true`` forces graph execution;
-    ``ARNOLD_PIPELINE_RUNTIME=graph`` is a deprecated graph alias; and
+    ``ARNOLD_PIPELINE_RUNTIME=graph`` forces graph execution;
     ``ARNOLD_PIPELINE_RUNTIME=native`` forces native execution when capable.
     Returns ``None`` when the switch is unset or unrecognised.
     """
 
-    if force_legacy_runtime():
-        return RUNTIME_GRAPH
-
     value = os.environ.get("ARNOLD_PIPELINE_RUNTIME", "").strip().lower()
-    if value == RUNTIME_GRAPH:
-        return RUNTIME_GRAPH
-    if value == RUNTIME_NATIVE:
-        return RUNTIME_NATIVE
+    if value in {RUNTIME_GRAPH, RUNTIME_NATIVE}:
+        return value  # type: ignore[return-value]
     return None
 
 
@@ -102,34 +96,35 @@ def _should_dispatch_native(
 ) -> bool:
     """Decide whether a native-capable pipeline should run natively.
 
-    Native is canonical by default: explicit legacy graph controls win, then
-    explicit native markers, then native capability.
-
-    ``ARNOLD_NATIVE_RUNTIME`` is not consulted here; native execution is not
-    enabled by an opt-in flag.
+    M7 default-flip semantics: explicit markers win, then native capability
+    defaults to native.  The deprecated ``ARNOLD_NATIVE_RUNTIME`` env var is
+    no longer required.
     """
-
-    if force_legacy_runtime():
-        return False
 
     kill = _global_runtime_kill_switch()
     if kill == RUNTIME_GRAPH:
         return False
     if kill == RUNTIME_NATIVE:
-        return True
+        marker = RUNTIME_NATIVE
 
     if marker == RUNTIME_GRAPH:
         return False
 
-    if marker == RUNTIME_NATIVE:
-        return True
+    native_bundle = _find_native_bundle(pipeline)
+    if native_bundle is None:
+        return False
 
-    return _resolve_native_program(pipeline) is not None
+    if marker == RUNTIME_NATIVE:
+        return native_runtime_enabled()
+
+    # No explicit marker: native-capable pipelines default to native unless the
+    # legacy runtime feature flag is explicitly disabled (ARNOLD_NATIVE_RUNTIME=0).
+    return native_runtime_enabled()
 
 
 def _run_native_dispatched(
     pipeline: Pipeline,
-    native_program: Any,
+    native_bundle: Any,
     *,
     initial_state: Mapping[str, Any],
     envelope: RuntimeEnvelope,
@@ -140,9 +135,17 @@ def _run_native_dispatched(
     from arnold.pipeline.native.ir import NativeProgram
     from arnold.pipeline.native.runtime import run_native_pipeline
 
-    program: NativeProgram | None = (
-        native_program if isinstance(native_program, NativeProgram) else None
-    )
+    # Resolve the NativeProgram when an adapter is used; adapters may ignore
+    # it (Megaplan compiles its own canonically-named program), but callers
+    # and probes expect it to be supplied.
+    program: NativeProgram | None = None
+    if isinstance(native_bundle, NativeProgram):
+        program = native_bundle
+    else:
+        for bundle in getattr(pipeline, "resource_bundles", ()) or ():
+            if isinstance(bundle, NativeProgram):
+                program = bundle
+                break
 
     kwargs: dict[str, Any] = {
         "artifact_root": envelope.artifact_root,
@@ -150,15 +153,15 @@ def _run_native_dispatched(
         "resume": resume,
         "initial_envelope": envelope,
     }
-    if isinstance(native_program, NativeProgram):
-        return run_native_pipeline(native_program, **kwargs)
+    if isinstance(native_bundle, NativeProgram):
+        return run_native_pipeline(native_bundle, **kwargs)
 
     # Runner adapter path (e.g. NativeMegaplanRunner) — forward the full
     # caller context so adapters can reconstruct pipeline-specific context.
     kwargs["program"] = program
     kwargs["schema_registry"] = None
     kwargs["initial_context"] = initial_context
-    return native_program.run_native_pipeline(**kwargs)
+    return native_bundle.run_native_pipeline(**kwargs)
 
 
 def _resolve_executor_marker(
@@ -234,29 +237,22 @@ def _legacy_runtime_owner_from_state(
     return None
 
 
-def _resolve_native_program(pipeline: Pipeline) -> Any | None:
-    """Resolve the native dispatch target for *pipeline*.
+def _find_native_bundle(pipeline: Pipeline) -> Any | None:
+    """Locate a native execution bundle in *pipeline.resource_bundles*.
 
-    ``Pipeline.native_program`` is canonical.  ``resource_bundles`` remains as
-    a temporary compatibility fallback for older callers and runner adapters.
+    Runner-like adapters are preferred over bare
+    :class:`~arnold.pipeline.native.ir.NativeProgram` so callers can supply
+    a custom dispatch wrapper (e.g. ``NativeMegaplanRunner``).
     """
     from arnold.pipeline.native.ir import NativeProgram
 
-    native_program = getattr(pipeline, "native_program", None)
-    if native_program is not None:
-        return native_program
-
-    for bundle in getattr(pipeline, "resource_bundles", ()) or ():
-        if isinstance(bundle, NativeProgram):
-            return bundle
-
+    program: NativeProgram | None = None
     for bundle in getattr(pipeline, "resource_bundles", ()) or ():
         if hasattr(bundle, "run_native_pipeline"):
             return bundle
-
-    return None
-
-
+        if program is None and isinstance(bundle, NativeProgram):
+            program = bundle
+    return program
 from arnold.runtime.wal_fold import (
     fold_journal,
     last_state_snapshot_projector,
@@ -457,11 +453,11 @@ def run_pipeline(
 
     marker = _resolve_executor_marker(initial_state, envelope.artifact_root)
     if _should_dispatch_native(pipeline, marker):
-        native_program = _resolve_native_program(pipeline)
-        if native_program is not None:
+        native_bundle = _find_native_bundle(pipeline)
+        if native_bundle is not None:
             return _run_native_dispatched(
                 pipeline,
-                native_program,
+                native_bundle,
                 initial_state=initial_state,
                 envelope=envelope,
                 initial_context=initial_context,
@@ -575,11 +571,11 @@ def run_pipeline_resume(
 
     marker = _resolve_executor_marker(merged, envelope.artifact_root)
     if _should_dispatch_native(pipeline, marker):
-        native_program = _resolve_native_program(pipeline)
-        if native_program is not None:
+        native_bundle = _find_native_bundle(pipeline)
+        if native_bundle is not None:
             return _run_native_dispatched(
                 pipeline,
-                native_program,
+                native_bundle,
                 initial_state=merged,
                 envelope=envelope,
                 initial_context=initial_context,
