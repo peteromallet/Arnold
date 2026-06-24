@@ -20,7 +20,7 @@ EXPECTED_SURFACE = {
         "select-tournament",
         "writing-panel-strict",
     ],
-    "pipelines_actions": ["check", "doctor", "list", "new", "run", "upgrade-cursor"],
+    "pipelines_actions": ["check", "describe", "doctor", "list", "new", "run", "upgrade-cursor"],
     "module_verbs": ["run", "check", "doctor", "describe", "auto"],
     "planning_module_verbs": ["run", "check", "doctor", "describe", "auto", "override"],
     "umbrella_override_actions": [

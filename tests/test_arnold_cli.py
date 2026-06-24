@@ -62,6 +62,19 @@ def test_arnold_pipelines_run_forwards_runtime_flags(monkeypatch) -> None:
     ]
 
 
+def test_arnold_pipelines_describe_uses_megaplan_describe(monkeypatch) -> None:
+    calls: list[list[str]] = []
+
+    monkeypatch.setattr(
+        arnold,
+        "_megaplan_main",
+        lambda argv: calls.append(list(argv)) or 0,
+    )
+
+    assert arnold.main(["pipelines", "describe", "planning"]) == 0
+    assert calls == [["describe", "megaplan"]]
+
+
 def test_arnold_pipelines_upgrade_cursor_defaults_to_dry_run(
     tmp_path: Path,
     capsys,

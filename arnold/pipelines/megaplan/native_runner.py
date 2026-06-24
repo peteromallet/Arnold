@@ -80,7 +80,7 @@ class NativeMegaplanRunner:
         )
 
         return run_native_pipeline(
-            compile_pipeline(megaplan),
+            program,
             artifact_root=root,
             initial_state=dict(initial_state),
             resume=resume,

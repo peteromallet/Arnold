@@ -39,13 +39,23 @@ def megaplan_engine_root() -> Path:
     explicit = os.environ.get("MEGAPLAN_ENGINE_ROOT", "").strip()
     if explicit:
         return Path(explicit).expanduser().resolve()
-    return Path(__file__).resolve().parents[4]
+
+    for candidate in Path(__file__).resolve().parents:
+        if (candidate / "pyproject.toml").is_file() and (
+            candidate / "arnold_pipelines"
+        ).is_dir():
+            return candidate
+
+    raise RuntimeError(
+        "Could not infer MEGAPLAN_ENGINE_ROOT from arnold_pipelines package path"
+    )
 
 
 def megaplan_engine_env(base: dict[str, str] | None = None) -> dict[str, str]:
     """Return an env that resolves this engine before the target project."""
     env = dict(base or os.environ)
     engine_root = str(megaplan_engine_root())
+    env["MEGAPLAN_ENGINE_ROOT"] = engine_root
     existing = env.get("PYTHONPATH")
     env["PYTHONPATH"] = (
         engine_root if not existing else os.pathsep.join([engine_root, existing])

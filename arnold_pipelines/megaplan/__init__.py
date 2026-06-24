@@ -27,9 +27,9 @@ description: str = (
     "revise, finalize, execute, review, and tiebreaker."
 )
 default_profile: str | None = None
-supported_modes: tuple[str, ...] = ("code", "doc", "creative", "joke", "plan")
+supported_modes: tuple[str, ...] = ("code", "doc", "creative", "joke", "plan", "native")
 recommended_profiles: tuple[str, ...] = ()
-driver: tuple[str, str] = ("megaplan", "planning")
+driver: tuple[str, str] = ("native", "megaplan")
 entrypoint: str = "build_pipeline"
 arnold_api_version: str = "1.0"
 capabilities: tuple[str, ...] = ("planning", "execution", "review")

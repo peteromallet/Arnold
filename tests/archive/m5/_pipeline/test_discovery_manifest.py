@@ -29,8 +29,8 @@ WELL_FORMED_SOURCE = '''\
 name: str = "demo-pipeline"
 description: str = "A toy pipeline used in discovery tests."
 default_profile: str | None = None
-supported_modes: tuple[str, ...] = ("plan",)
-driver: tuple[str, str] = ("subprocess_isolated", "graph+loop-node")
+supported_modes: tuple[str, ...] = ("native",)
+driver: tuple[str, str] = ("native", "graph+loop-node")
 entrypoint: str = "build_pipeline"
 arnold_api_version: str = "1.0"
 capabilities: tuple[str, ...] = ("plan",)
@@ -69,11 +69,33 @@ def test_well_formed_manifest(tmp_path: Path) -> None:
     assert result.name == "demo-pipeline"
     assert result.description.startswith("A toy")
     assert result.default_profile is None
-    assert result.supported_modes == ("plan",)
-    assert result.driver == ("subprocess_isolated", "graph+loop-node")
+    assert result.supported_modes == ("native",)
+    assert result.driver == ("native", "graph+loop-node")
     assert result.arnold_api_version == "1.0"
     assert result.capabilities == ("plan",)
     assert result.manifest_hash.startswith("sha256:")
+
+
+def test_manifest_builds_contextual_validation_context(tmp_path: Path) -> None:
+    source = WELL_FORMED_SOURCE.replace(
+        'driver: tuple[str, str] = ("native", "graph+loop-node")',
+        'driver: tuple[str, str] = ("native", "project+validate")',
+    )
+    module = _write_package(tmp_path, source=source)
+    result = read_manifest(module)
+
+    assert isinstance(result, Manifest), result
+    context = result.validation_context(
+        package="demo.pkg",
+        compatibility_classification="graph-compatible",
+    )
+    assert context.manifest_driver == ("native", "project+validate")
+    assert context.package == "demo.pkg"
+    assert context.name == "demo-pipeline"
+    assert context.manifest_path == module
+    assert context.compatibility_classification == "graph-compatible"
+    assert context.source_entrypoint == "build_pipeline"
+    assert context.source_entrypoint_metadata["manifest_hash"] == result.manifest_hash
 
 
 def test_well_formed_module_file_uses_static_name(tmp_path: Path) -> None:

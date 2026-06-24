@@ -596,13 +596,15 @@ def _find_pipeline_native_bundle(pipeline: Any) -> tuple[Any, Any]:
     """Locate the native execution bundle and any bare NativeProgram.
 
     Returns ``(adapter, program)`` where *adapter* is an object exposing
-    ``run_native_pipeline`` (preferred) and *program* is a bare
-    :class:`~arnold.pipeline.native.ir.NativeProgram` when present.
+    ``run_native_pipeline`` and *program* is the first-class
+    ``pipeline.native_program`` or a legacy bare
+    :class:`~arnold.pipeline.native.ir.NativeProgram` resource bundle.
     """
     from arnold.pipeline.native.ir import NativeProgram
 
     adapter: Any = None
-    program: Any = None
+    native_program = getattr(pipeline, "native_program", None)
+    program: Any = native_program if isinstance(native_program, NativeProgram) else None
     for bundle in getattr(pipeline, "resource_bundles", ()) or ():
         if hasattr(bundle, "run_native_pipeline") and adapter is None:
             adapter = bundle
@@ -639,7 +641,10 @@ def _run_native_dispatched(
 
     # Generic neutral native path: used by converted pipelines (doc, creative,
     # jokes, ...) that attach a NativeProgram or custom adapter.
-    if program is not None or (adapter is not None and not isinstance(adapter, NativeProgram)):
+    if (
+        pipeline_key != "megaplan"
+        and (program is not None or (adapter is not None and not isinstance(adapter, NativeProgram)))
+    ) or adapter is not None:
         initial_envelope = RuntimeEnvelope(artifact_root=str(artifact_root))
         if hasattr(ctx, "envelope") and ctx.envelope is not None:
             initial_envelope = ctx.envelope
@@ -674,6 +679,7 @@ def _run_native_dispatched(
     _dispatch_state: dict = getattr(ctx, "state", None) or {}
     runner = NativeMegaplanRunner()
     native_result = runner.run_native_pipeline(
+        program=program,
         artifact_root=artifact_root,
         initial_state=dict(_dispatch_state),
         resume=resume,

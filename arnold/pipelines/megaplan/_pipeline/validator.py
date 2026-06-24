@@ -35,10 +35,16 @@ _FALLBACK_DECISION_VOCABULARY: frozenset[str] = frozenset(
 from arnold.pipeline.validator import (  # noqa: F401  # re-export
     CONTRACT_ERROR_CODE_MAP,
     DECLARATION_DRIFT_CODE,
+    DIRECT_NATIVE_DRIVER_CLAIM_CODE,
     Diagnostics,
+    MALFORMED_NATIVE_BUNDLE_CODE,
     MISSING_BINDING_CODE,
+    NATIVE_MANIFEST_GRAPH_COMPAT_CODE,
+    NATIVE_MANIFEST_MISSING_EXECUTION_CODE,
+    PLACEHOLDER_EXECUTION_RESOURCE_CODE,
     UNKNOWN_ADAPTER_CODE,
     UNSATISFIED_CAPABILITY_CODE,
+    ManifestValidationContext,
     ValidationIssue,
     ValidationOptions,
     contract_diagnostic_code,
@@ -52,6 +58,7 @@ def validate(
     options: ValidationOptions | None = None,
     *,
     adapter_registry: Any = None,
+    context: ManifestValidationContext | None = None,
 ) -> Diagnostics:
     """Run the full graph-shape validation over *pipeline*.
 
@@ -69,7 +76,12 @@ def validate(
         options = VO(
             decision_vocabulary_fallback=_FALLBACK_DECISION_VOCABULARY,
         )
-    return _arnold_validate(pipeline, options, adapter_registry=adapter_registry)
+    return _arnold_validate(
+        pipeline,
+        options,
+        adapter_registry=adapter_registry,
+        context=context,
+    )
 
 
 def validate_control_flow(
@@ -94,8 +106,14 @@ def validate_control_flow(
 __all__ = [
     "CONTRACT_ERROR_CODE_MAP",
     "DECLARATION_DRIFT_CODE",
+    "DIRECT_NATIVE_DRIVER_CLAIM_CODE",
     "Diagnostics",
+    "MALFORMED_NATIVE_BUNDLE_CODE",
+    "ManifestValidationContext",
     "MISSING_BINDING_CODE",
+    "NATIVE_MANIFEST_GRAPH_COMPAT_CODE",
+    "NATIVE_MANIFEST_MISSING_EXECUTION_CODE",
+    "PLACEHOLDER_EXECUTION_RESOURCE_CODE",
     "UNKNOWN_ADAPTER_CODE",
     "UNSATISFIED_CAPABILITY_CODE",
     "ValidationIssue",

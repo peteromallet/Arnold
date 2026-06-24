@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ast
+import os
 import re
 from dataclasses import dataclass
 from pathlib import Path
@@ -10,6 +11,26 @@ from typing import Any
 
 from arnold.pipelines.megaplan._core import collect_git_diff_patch, intent_and_notes_block
 from arnold.pipelines.megaplan.types import PlanState
+
+
+_STATIC_SCAN_EXCLUDED_PARTS: frozenset[str] = frozenset(
+    {
+        ".git",
+        ".megaplan",
+        "__pycache__",
+        ".pytest_cache",
+        ".mypy_cache",
+        ".ruff_cache",
+        ".tox",
+        "node_modules",
+        ".venv",
+        "venv",
+        ".hermes",
+    }
+)
+_STATIC_SCAN_MAX_FILE_BYTES = 250_000
+_DEAD_GUARD_MAX_PYTHON_FILES = 100
+_DEAD_GUARD_MAX_ADDED_LINES = 5_000
 
 
 @dataclass
@@ -231,12 +252,28 @@ def _diff_size_sanity_flags(metadata: _DiffMetadata, state: PlanState, *, finali
     return []
 
 
+def _is_static_scan_candidate(path: Path) -> bool:
+    if any(part in _STATIC_SCAN_EXCLUDED_PARTS for part in path.parts):
+        return False
+    try:
+        return path.stat().st_size <= _STATIC_SCAN_MAX_FILE_BYTES
+    except OSError:
+        return False
+
+
 def _iter_python_files(project_dir: Path) -> list[Path]:
-    return [
-        path
-        for path in project_dir.rglob("*.py")
-        if ".git" not in path.parts and "__pycache__" not in path.parts
-    ]
+    files: list[Path] = []
+    for dirpath, dirnames, filenames in os.walk(project_dir):
+        dirnames[:] = [
+            dirname for dirname in dirnames if dirname not in _STATIC_SCAN_EXCLUDED_PARTS
+        ]
+        for filename in filenames:
+            if not filename.endswith(".py"):
+                continue
+            path = Path(dirpath) / filename
+            if _is_static_scan_candidate(path):
+                files.append(path)
+    return files
 
 
 def _parent_map(tree: ast.AST) -> dict[ast.AST, ast.AST]:
@@ -303,8 +340,14 @@ def _candidate_call_truthiness(project_dir: Path, function_name: str, param_name
     truthiness: list[bool | None] = []
     for path in _iter_python_files(project_dir):
         try:
-            tree = ast.parse(path.read_text(encoding="utf-8"))
+            source = path.read_text(encoding="utf-8")
         except (OSError, SyntaxError, UnicodeDecodeError):
+            continue
+        if function_name not in source:
+            continue
+        try:
+            tree = ast.parse(source, filename=str(path))
+        except SyntaxError:
             continue
         for node in ast.walk(tree):
             if not isinstance(node, ast.Call):
@@ -322,6 +365,23 @@ def _candidate_call_truthiness(project_dir: Path, function_name: str, param_name
 def _dead_guard_static_flags(project_dir: Path, metadata: _DiffMetadata) -> list[dict[str, str]]:
     flags: list[dict[str, str]] = []
     python_files = [path for path in metadata.files if path.endswith(".py") and metadata.added_lines.get(path)]
+    added_python_lines = sum(len(metadata.added_lines.get(path, set())) for path in python_files)
+    if (
+        len(python_files) > _DEAD_GUARD_MAX_PYTHON_FILES
+        or added_python_lines > _DEAD_GUARD_MAX_ADDED_LINES
+    ):
+        return [
+            _pre_check_flag(
+                "dead_guard_static",
+                (
+                    "Skipped dead-guard static analysis because the Python diff is too large for "
+                    "bounded advisory AST scanning: "
+                    f"python_files={len(python_files)}, added_python_lines={added_python_lines}."
+                ),
+                severity="minor",
+                suffix="SKIPPED_LARGE_DIFF",
+            )
+        ]
     for rel_path in python_files:
         path = project_dir / rel_path
         try:

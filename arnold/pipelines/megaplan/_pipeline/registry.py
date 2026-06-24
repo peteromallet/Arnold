@@ -35,7 +35,6 @@ import importlib
 import importlib.util
 import os
 import sys
-import traceback
 import warnings
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -99,12 +98,19 @@ def make_megaplan_registry() -> ArnoldPipelineRegistry:
             name = canonical_pipeline_name(name)
             if name in reg:
                 continue
+            disposition = meta.get("_disposition")
+            registration_kind = (
+                _registration_kind_for_disposition(disposition)
+                if isinstance(disposition, Disposition)
+                else "unknown"
+            )
             reg.register(
                 name,
                 builder,
                 description=str(meta.get("description", "") or ""),
                 metadata=meta,
                 module_file=source_path,
+                registration_kind=registration_kind,
             )
 
     return ArnoldPipelineRegistry(
@@ -145,16 +151,17 @@ class Disposition:
     traceback: Optional[str] = None
     cli_name: Optional[str] = None
     manifest: Optional[Manifest] = None
+    rejection_code: Optional[str] = None
+    validation_issues: tuple[Mapping[str, Any], ...] = ()
 
 
 def _manifest_discovery_enabled() -> bool:
-    """Is manifest-first discovery turned on?
+    """Return True; the M6 env var remains as an inert compatibility alias."""
 
-    Default OFF (M6 strangler). Mirrors the inline-env-read pattern
-    used at ``_pipeline/runtime.py:191`` for ``MEGAPLAN_PIPELINE_AUTO``.
-    """
-
-    return os.environ.get("MEGAPLAN_M6_MANIFEST_DISCOVERY", "0") == "1"
+    # Read the variable so callers that still set it keep working until M7,
+    # but do not let it enable or disable manifest-first discovery.
+    os.environ.get("MEGAPLAN_M6_MANIFEST_DISCOVERY")
+    return True
 
 
 CANONICAL_BUILTIN_PIPELINE = "megaplan"
@@ -261,6 +268,10 @@ def _manifest_metadata(name: str, disposition: Disposition) -> dict[str, Any]:
         meta["manifest_hash"] = manifest_hash
     meta["source_path"] = str(disposition.path)
     meta["manifest_origin"] = disposition.origin
+    if disposition.rejection_code:
+        meta["validation_rejection_code"] = disposition.rejection_code
+    if disposition.validation_issues:
+        meta["validation_issues"] = tuple(disposition.validation_issues)
     tier = classify(disposition.path, blessed_allowlist=BLESSED_ALLOWLIST)
     meta["trust_tier"] = tier.value
     if disposition.origin == "user":
@@ -281,7 +292,17 @@ def _is_legacy_only_manifest(disposition: Disposition) -> bool:
     return isinstance(driver, (list, tuple)) and bool(driver) and driver[0] == "graph"
 
 
-_NATIVE_PROGRAM_MISSING_REASON = "native_program missing from built pipeline"
+def _registration_kind_for_disposition(
+    disposition: Disposition | object,
+) -> str:
+    if not isinstance(disposition, Disposition) or disposition.manifest is None:
+        return "unknown"
+    if _is_legacy_only_manifest(disposition):
+        return "graph_compatibility"
+    driver = disposition.manifest.driver
+    if isinstance(driver, (list, tuple)) and driver and driver[0] == "native":
+        return "native"
+    return "unknown"
 
 
 def _append_disposition_reason(disposition: Disposition, note: str) -> None:
@@ -290,25 +311,119 @@ def _append_disposition_reason(disposition: Disposition, note: str) -> None:
     disposition.reason = f"{disposition.reason}; {note}" if disposition.reason else note
 
 
-def _record_native_program_advisory(
+def _issue_payload(issue: Any) -> dict[str, Any]:
+    payload = {
+        "code": str(getattr(issue, "code", "") or ""),
+        "message": str(getattr(issue, "message", "") or ""),
+        "severity": str(getattr(issue, "severity", "error") or "error"),
+    }
+    stage = getattr(issue, "stage", None)
+    if stage is not None:
+        payload["stage"] = stage
+    details = getattr(issue, "details", None)
+    if isinstance(details, Mapping) and details:
+        payload["details"] = dict(details)
+    edge = getattr(issue, "edge", None)
+    if isinstance(edge, Mapping) and edge:
+        payload["edge"] = dict(edge)
+    return payload
+
+
+def _format_validation_issue(issue: Any) -> str:
+    code = str(getattr(issue, "code", "") or "validation.error")
+    message = str(getattr(issue, "message", "") or "validation failed")
+    return f"[{code}] {message}"
+
+
+def _contextual_validation_issues(
+    diag: Any,
+    disposition: Disposition | None,
+) -> tuple[Any, ...]:
+    """Return issues that are authoritative for a manifest disposition."""
+
+    issues = tuple(getattr(diag, "issues", ()) or ())
+    if disposition is None:
+        return issues
+    context = _manifest_validation_context(disposition)
+    if context is not None and context.driver_family == "native":
+        return tuple(
+            issue
+            for issue in issues
+            if str(getattr(issue, "code", "")).startswith(("manifest.", "execution."))
+        )
+    return issues
+
+
+def _manifest_validation_context(disposition: Disposition):
+    manifest = disposition.manifest
+    if manifest is None:
+        return None
+    compatibility_extra = manifest.extras.get("compatibility_classification")
+    compatibility = (
+        compatibility_extra
+        if isinstance(compatibility_extra, str) and compatibility_extra
+        else "graph" if _is_legacy_only_manifest(disposition) else "native"
+    )
+    return manifest.validation_context(
+        package=disposition.cli_name or manifest.name,
+        compatibility_classification=compatibility,
+    )
+
+
+def _record_contextual_validation(
     disposition: Disposition,
     pipeline: object,
+    *,
+    reject: bool = False,
 ) -> None:
-    """Annotate native-backed discoveries whose built graph lacks native metadata."""
+    """Annotate a disposition from the shared manifest-aware validator."""
 
     if disposition.status != "discovered" or _is_legacy_only_manifest(disposition):
         return
-    manifest = disposition.manifest
-    if manifest is None:
+    context = _manifest_validation_context(disposition)
+    if context is None:
         return
-    if not (
-        isinstance(manifest.driver, (list, tuple))
-        and bool(manifest.driver)
-        and manifest.driver[0] == "native"
-    ):
+    from arnold.pipelines.megaplan._pipeline.validator import validate
+
+    diag = validate(pipeline, context=context)
+    issues = _contextual_validation_issues(diag, disposition)
+    if not issues:
         return
-    if getattr(pipeline, "native_program", None) is None:
-        _append_disposition_reason(disposition, _NATIVE_PROGRAM_MISSING_REASON)
+    if reject:
+        disposition.status = "rejected"
+    disposition.validation_issues = tuple(_issue_payload(issue) for issue in issues)
+    first_issue = issues[0]
+    if first_issue is not None:
+        disposition.rejection_code = str(
+            getattr(first_issue, "code", "") or "validation.error"
+        )
+        for issue in issues:
+            _append_disposition_reason(disposition, _format_validation_issue(issue))
+    else:
+        disposition.rejection_code = "validation.error"
+        for defect in diag.defects:
+            _append_disposition_reason(disposition, str(defect))
+
+
+def _validate_manifest_disposition_if_trusted(disposition: Disposition) -> None:
+    """Best-effort contextual validation for manifest-discovered trusted modules."""
+
+    if disposition.status != "discovered" or disposition.manifest is None:
+        return
+    tier = classify(disposition.path, blessed_allowlist=BLESSED_ALLOWLIST)
+    if tier not in (TrustGrade.AUTO_EXEC, TrustGrade.BLESSED):
+        return
+    module = _load_trusted_pipeline_module(disposition.path)
+    if module is None:
+        return
+    build = getattr(module, "build_pipeline", None)
+    if not callable(build):
+        return
+    try:
+        pipeline = build()
+    except Exception:  # noqa: BLE001 - scan remains non-raising
+        return
+    _record_contextual_validation(disposition, pipeline, reject=True)
 
 
 def _reserve_out_of_tree_quota(name: str, module_file: Path, meta: dict[str, Any]) -> None:
@@ -352,6 +467,8 @@ class PipelineRegistry:
     _operation_registries: dict[str, OperationRegistry] = field(default_factory=dict, init=False)
     _override_catalogs: dict[str, dict[str, Any]] = field(default_factory=dict, init=False)
     _dispositions: dict[str, Disposition] = field(default_factory=dict, init=False)
+    _rejected_dispositions: dict[str, Disposition] = field(default_factory=dict, init=False)
+    _registration_kinds: dict[str, str] = field(default_factory=dict, init=False)
 
     def register(
         self,
@@ -374,6 +491,8 @@ class PipelineRegistry:
             meta.update(metadata)
         if meta:
             self.metadata[name] = meta
+        registration_kind = str(meta.get("registration_kind", "") or "unknown")
+        self._registration_kinds[name] = registration_kind
 
     def _ensure_discovered(self) -> None:
         if self._discovered:
@@ -382,52 +501,58 @@ class PipelineRegistry:
         # callable transitively imports the registry.
         self._discovered = True
 
-        if _manifest_discovery_enabled():
-            # Manifest-first path: consume Dispositions WITHOUT re-importing.
-            # Register deferred-import builders so exec_module is gated to
-            # PipelineRegistry.get(name) and to the trust-tier check there.
-            for d in scan_python_pipelines():
-                if d.status != "discovered" or d.cli_name is None or d.manifest is None:
-                    continue
-                name = canonical_pipeline_name(d.cli_name)
-                if name in self.builders:
-                    continue
-                # Resolve package_prefix for deferred import (same logic as
-                # _get_scan_roots): in_tree → derived from path, else None.
-                package_prefix = _package_prefix_for_module_file(d.path)
-                self.builders[name] = _make_deferred_builder(
-                    d.path, package_prefix=package_prefix, cli_name=name,
+        # Manifest-first path: consume Dispositions WITHOUT re-importing.
+        # Register deferred-import builders so exec_module is gated to
+        # PipelineRegistry.get(name) and to the trust-tier check there.
+        dispositions = scan_python_pipelines()
+        for disposition in dispositions:
+            if disposition.cli_name is not None:
+                disposition.cli_name = canonical_pipeline_name(disposition.cli_name)
+            if disposition.status == "rejected":
+                if disposition.cli_name:
+                    self._rejected_dispositions[disposition.cli_name] = disposition
+                warnings.warn(
+                    f"{disposition.origin} pipeline {disposition.path!s} could not be loaded: {disposition.reason}",
+                    UserWarning,
+                    stacklevel=2,
                 )
-                meta = _manifest_metadata(name, d)
-                if d.origin == "user":
-                    _reserve_out_of_tree_quota(name, d.path, meta)
-                description = str(meta.get("description", "") or "")
-                if description:
-                    self.descriptions[name] = description
-                self.metadata[name] = meta
-                self._module_files[name] = d.path
-                self._dispositions[name] = d
-            return
-
-        # Flag-OFF: legacy quad-list path (re-imports modules eagerly).
-        for name, builder, meta, source_path in discover_python_pipelines():
-            name = canonical_pipeline_name(name)
-            if name in self.builders:
-                # Either a duplicate discovered earlier or a programmatic
-                # re-register.
                 continue
+            if disposition.status == "skipped":
+                if disposition.cli_name:
+                    self._rejected_dispositions[disposition.cli_name] = disposition
+                warnings.warn(
+                    f"{disposition.origin} pipeline {disposition.path!s} skipped: {disposition.reason}",
+                    UserWarning,
+                    stacklevel=2,
+                )
+                continue
+            if disposition.cli_name is None or disposition.manifest is None:
+                continue
+            name = disposition.cli_name
+            if name in self.builders:
+                continue
+            package_prefix = _package_prefix_for_module_file(disposition.path)
+            builder = _make_deferred_builder(
+                disposition.path,
+                package_prefix=package_prefix,
+                cli_name=name,
+            )
+            meta = _manifest_metadata(name, disposition)
             self.builders[name] = builder
             description = str(meta.get("description", "") or "")
             if description:
                 self.descriptions[name] = description
+            meta["registration_kind"] = _registration_kind_for_disposition(disposition)
             self.metadata[name] = dict(meta)
-            self.metadata[name].setdefault("source_path", str(source_path))
-            self._module_files[name] = source_path
+            self.metadata[name].setdefault("source_path", str(disposition.path))
+            self._module_files[name] = disposition.path
+            self._dispositions[name] = disposition
+            self._registration_kinds[name] = str(meta["registration_kind"])
 
     def get(self, name: str) -> Pipeline | None:
         """Return a built Pipeline for *name*.
 
-        Under manifest-first discovery (M6 flag-ON), exec_module is gated
+        Under manifest-first discovery, exec_module is gated
         on the path-derived trust tier: AUTO_EXEC or BLESSED proceed;
         QUARANTINED returns ``None`` and emits a UserWarning rather than
         executing arbitrary out-of-tree code. Built-ins and programmatically
@@ -447,10 +572,9 @@ class PipelineRegistry:
                 f"no pipeline named {name!r}; available: {sorted(self.builders)}"
             )
         builder = self.builders[builder_name]
-        # Trust-gate only when manifest discovery is on AND this builder
-        # came from manifest-first discovery (deferred). Built-ins and
-        # programmatic registrations bypass.
-        if _manifest_discovery_enabled() and getattr(builder, "_m6_deferred", False):
+        # Trust-gate only when this builder came from manifest-first discovery
+        # (deferred). Built-ins and programmatic registrations bypass.
+        if getattr(builder, "_m6_deferred", False):
             module_file = self._module_files.get(builder_name)
             if module_file is not None:
                 tier = classify(module_file, blessed_allowlist=BLESSED_ALLOWLIST)
@@ -472,10 +596,18 @@ class PipelineRegistry:
             name
         )
         if disposition is not None:
-            _record_native_program_advisory(disposition, pipeline)
+            _record_contextual_validation(disposition, pipeline)
             self.metadata.setdefault(builder_name, {})["discovery_reason"] = (
                 disposition.reason
             )
+            if disposition.rejection_code:
+                self.metadata.setdefault(builder_name, {})[
+                    "validation_rejection_code"
+                ] = disposition.rejection_code
+            if disposition.validation_issues:
+                self.metadata.setdefault(builder_name, {})["validation_issues"] = (
+                    disposition.validation_issues
+                )
         return pipeline
 
     def names(self) -> tuple[str, ...]:
@@ -492,6 +624,20 @@ class PipelineRegistry:
         name = canonical_pipeline_name(name)
         self._ensure_discovered()
         return dict(self.metadata.get(name, {}))
+
+    def registration_kind_for(self, name: str) -> str | None:
+        name = canonical_pipeline_name(name)
+        self._ensure_discovered()
+        return self._registration_kinds.get(name)
+
+    def disposition_for(self, name: str) -> Disposition | None:
+        name = canonical_pipeline_name(name)
+        self._ensure_discovered()
+        return self._dispositions.get(name) or self._rejected_dispositions.get(name)
+
+    def rejected_dispositions(self) -> tuple[Disposition, ...]:
+        self._ensure_discovered()
+        return tuple(self._rejected_dispositions[name] for name in sorted(self._rejected_dispositions))
 
     def operation_registry_for(self, name: str) -> OperationRegistry:
         name = canonical_pipeline_name(name)
@@ -579,37 +725,39 @@ def _ensure_builtin_pipelines_registered() -> None:
     if CANONICAL_BUILTIN_PIPELINE in _GLOBAL_REGISTRY.builders:
         return
 
-    from arnold.pipelines.megaplan.pipelines import planning
+    import arnold.pipelines.megaplan as megaplan_pkg
 
-    module_file = Path(planning.__file__).resolve()
-    description = str(getattr(planning, "description", "") or "")
+    module_file = Path(megaplan_pkg.__file__).resolve()
+    description = str(getattr(megaplan_pkg, "description", "") or "")
     metadata = {
         "description": description,
         "name": CANONICAL_BUILTIN_PIPELINE,
         "source_path": str(module_file),
-        "supported_modes": tuple(getattr(planning, "supported_modes", ()) or ()),
-        "capabilities": tuple(getattr(planning, "capabilities", ()) or ()),
-        "arnold_api_version": str(getattr(planning, "arnold_api_version", "") or ""),
+        "supported_modes": tuple(getattr(megaplan_pkg, "supported_modes", ()) or ()),
+        "capabilities": tuple(getattr(megaplan_pkg, "capabilities", ()) or ()),
+        "arnold_api_version": str(getattr(megaplan_pkg, "arnold_api_version", "") or ""),
     }
-    default_profile = getattr(planning, "default_profile", None)
+    default_profile = getattr(megaplan_pkg, "default_profile", None)
     if default_profile:
         metadata["default_profile"] = default_profile
-    if _manifest_discovery_enabled():
-        manifest_result = read_manifest(module_file)
-        if isinstance(manifest_result, Manifest):
-            metadata.update(
-                _manifest_metadata(
-                    CANONICAL_BUILTIN_PIPELINE,
-                    Disposition(
-                        path=module_file,
-                        origin="in_tree",
-                        status="discovered",
-                        reason="ok (manifest)",
-                        cli_name=CANONICAL_BUILTIN_PIPELINE,
-                        manifest=manifest_result,
-                    ),
-                )
+    manifest_result = read_manifest(module_file)
+    if isinstance(manifest_result, Manifest):
+        disposition = Disposition(
+            path=module_file,
+            origin="in_tree",
+            status="discovered",
+            reason="ok (manifest)",
+            cli_name=CANONICAL_BUILTIN_PIPELINE,
+            manifest=manifest_result,
+        )
+        metadata.update(
+            _manifest_metadata(
+                CANONICAL_BUILTIN_PIPELINE,
+                disposition,
             )
+        )
+        metadata["registration_kind"] = _registration_kind_for_disposition(disposition)
+        _GLOBAL_REGISTRY._dispositions[CANONICAL_BUILTIN_PIPELINE] = disposition
 
     _GLOBAL_REGISTRY.register(
         CANONICAL_BUILTIN_PIPELINE,
@@ -650,6 +798,21 @@ def describe_pipeline(name: str) -> str:
 def pipeline_metadata(name: str) -> dict[str, Any]:
     _ensure_builtin_pipelines_registered()
     return _GLOBAL_REGISTRY.metadata_for(name)
+
+
+def pipeline_registration_kind(name: str) -> str | None:
+    _ensure_builtin_pipelines_registered()
+    return _GLOBAL_REGISTRY.registration_kind_for(name)
+
+
+def pipeline_disposition(name: str) -> Disposition | None:
+    _ensure_builtin_pipelines_registered()
+    return _GLOBAL_REGISTRY.disposition_for(name)
+
+
+def rejected_pipeline_dispositions() -> tuple[Disposition, ...]:
+    _ensure_builtin_pipelines_registered()
+    return _GLOBAL_REGISTRY.rejected_dispositions()
 
 
 def operation_registry_for(name: str) -> OperationRegistry:
@@ -1151,71 +1314,30 @@ def scan_python_pipelines() -> list[Disposition]:
                 ))
                 continue
 
-            # --- manifest-first discovery (flag-gated, default OFF) ---
-            if _manifest_discovery_enabled():
-                manifest_result = read_manifest(module_file)
-                if isinstance(manifest_result, ManifestError):
-                    dispositions.append(Disposition(
-                        path=module_file,
-                        origin=origin,
-                        status="rejected",
-                        reason=f"manifest rejected: {manifest_result.reason}",
-                        traceback=manifest_result.traceback,
-                        cli_name=cli_name,
-                        manifest=None,
-                    ))
-                    continue
-                seen.add(cli_name)
-                dispositions.append(Disposition(
-                    path=module_file,
-                    origin=origin,
-                    status="discovered",
-                    reason="ok (manifest)",
-                    cli_name=cli_name,
-                    manifest=manifest_result,
-                ))
-                continue
-
-            # --- attempt to load ---
-            tb_str: Optional[str] = None
-            module: Any = None
-            try:
-                module = _load_module_from_path(module_file, package_prefix=package_prefix)
-            except Exception:
-                tb_str = traceback.format_exc()
-
-            if module is None:
-                if tb_str is None:
-                    tb_str = "(module returned None — no callable build_pipeline or import failed silently)"
+            # --- manifest-first discovery (default; no env gate) ---
+            manifest_result = read_manifest(module_file)
+            if isinstance(manifest_result, ManifestError):
                 dispositions.append(Disposition(
                     path=module_file,
                     origin=origin,
                     status="rejected",
-                    reason="module could not be imported",
-                    traceback=tb_str,
+                    reason=f"manifest rejected: {manifest_result.reason}",
+                    traceback=manifest_result.traceback,
                     cli_name=cli_name,
+                    manifest=None,
                 ))
                 continue
-
-            build = getattr(module, "build_pipeline", None)
-            if not callable(build):
-                dispositions.append(Disposition(
-                    path=module_file,
-                    origin=origin,
-                    status="rejected",
-                    reason=f"module loaded but build_pipeline is {type(build).__name__!r}, not callable",
-                    cli_name=cli_name,
-                ))
-                continue
-
             seen.add(cli_name)
-            dispositions.append(Disposition(
+            disposition = Disposition(
                 path=module_file,
                 origin=origin,
                 status="discovered",
-                reason="ok",
+                reason="ok (manifest)",
                 cli_name=cli_name,
-            ))
+                manifest=manifest_result,
+            )
+            _validate_manifest_disposition_if_trusted(disposition)
+            dispositions.append(disposition)
 
     return dispositions
 
@@ -1229,80 +1351,43 @@ def discover_python_pipelines() -> list[tuple[str, PipelineBuilder, dict[str, An
     silently.
 
     Implementation delegates to :func:`scan_python_pipelines` for the full
-    scan, then raises an aggregate error if any **in-tree** module was
-    rejected (collect-then-raise, NOT fail-on-first).  Rejected **user**
-    modules emit a :class:`UserWarning` and do NOT raise.
+    scan, then returns discovered dispositions as deferred builders. Rejected
+    modules emit a :class:`UserWarning` and do NOT abort unrelated packages.
 
     The return shape is back-compat: list of
     ``(cli_name, build_callable, metadata, source_path)`` quads.
     """
     dispositions = scan_python_pipelines()
 
-    # Collect rejected in-tree modules for aggregate error.
-    rejected_in_tree = [d for d in dispositions if d.status == "rejected" and d.origin == "in_tree"]
-
-    # Warn (but do not raise) for rejected user modules.
+    # Warn (but do not raise) for rejected/skipped modules. The authoritative
+    # per-package state remains available through scan_python_pipelines().
     for d in dispositions:
-        if d.status == "rejected" and d.origin == "user":
+        if d.status == "rejected":
             warnings.warn(
-                f"user pipeline {d.path!s} could not be loaded: {d.reason}",
+                f"{d.origin} pipeline {d.path!s} could not be loaded: {d.reason}",
                 UserWarning,
                 stacklevel=2,
             )
-        if d.status == "skipped" and d.origin == "user":
+        if d.status == "skipped":
             warnings.warn(
-                f"user pipeline {d.path!s} skipped: {d.reason}",
+                f"{d.origin} pipeline {d.path!s} skipped: {d.reason}",
                 UserWarning,
                 stacklevel=2,
             )
-
-    # Aggregate raise for rejected in-tree modules (after full scan).
-    if rejected_in_tree:
-        lines = [f"  {d.path}: {d.reason}" for d in rejected_in_tree]
-        raise RuntimeError(
-            "In-tree pipeline discovery failed for the following modules "
-            "(aggregate, collect-then-raise):\n" + "\n".join(lines)
-        )
 
     # Build back-compat quad list from discovered dispositions only.
     out: list[tuple[str, PipelineBuilder, dict[str, Any], Path]] = []
 
-    # Flag-ON: honour manifest-first discipline — return deferred-import
-    # builders sourced from Disposition.manifest rather than re-importing.
-    # The :568 secondary loop is REPLACED under flag-ON so exec_module is
-    # never invoked from this path.
-    if _manifest_discovery_enabled():
-        for d in dispositions:
-            if d.status != "discovered" or d.cli_name is None or d.manifest is None:
-                continue
-            package_prefix = _package_prefix_for_module_file(d.path)
-            builder = _make_deferred_builder(
-                d.path, package_prefix=package_prefix, cli_name=d.cli_name,
-            )
-            meta = _manifest_metadata(d.cli_name, d)
-            out.append((d.cli_name, builder, meta, d.path))
-        return out
-
-    # Flag-OFF: legacy re-import loop (preserves prior behaviour).
-    # Re-derive builders and metadata from discovered paths.
-    # We need the actual module objects — re-import the discovered ones.
-    # To avoid double-importing, we track the scan_roots mapping.
-    seen: set[str] = set()
-    for pipelines_dir, package_prefix in _get_scan_roots():
-        for cli_name, module_file in _scan_dir_for_pipeline_modules(
-            pipelines_dir, package_prefix=package_prefix,
-        ):
-            cli_name = canonical_pipeline_name(cli_name)
-            if cli_name in seen:
-                continue
-            module = _load_module_from_path(module_file, package_prefix=package_prefix)
-            if module is None:
-                continue
-            build = getattr(module, "build_pipeline", None)
-            if not callable(build):
-                continue
-            seen.add(cli_name)
-            metadata = _module_metadata(module, source_path=module_file)
-            out.append((cli_name, build, metadata, module_file))
+    for d in dispositions:
+        if d.status != "discovered" or d.cli_name is None or d.manifest is None:
+            continue
+        package_prefix = _package_prefix_for_module_file(d.path)
+        builder = _make_deferred_builder(
+            d.path, package_prefix=package_prefix, cli_name=d.cli_name,
+        )
+        meta = _manifest_metadata(d.cli_name, d)
+        meta["registration_kind"] = _registration_kind_for_disposition(d)
+        meta["_disposition"] = d
+        out.append((d.cli_name, builder, meta, d.path))
 
     return out

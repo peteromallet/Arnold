@@ -785,10 +785,26 @@ def _describe_pipeline(name: str) -> int:
     """
 
     from arnold.pipelines.megaplan._pipeline.registry import (
+        canonical_pipeline_name,
+        pipeline_disposition,
         pipeline_metadata,
         read_pipeline_skill_md,
         registered_pipelines,
     )
+
+    name = canonical_pipeline_name(name)
+    disposition = pipeline_disposition(name)
+    if disposition is not None and disposition.status == "rejected":
+        suffix = (
+            f" [{disposition.rejection_code}]"
+            if disposition.rejection_code
+            else ""
+        )
+        print(
+            f"Error: Pipeline {name!r} rejected: {disposition.reason}{suffix}",
+            file=sys.stderr,
+        )
+        return 2
 
     if name not in registered_pipelines():
         print(f"Error: Unknown pipeline {name!r}", file=sys.stderr)
@@ -803,6 +819,31 @@ def _describe_pipeline(name: str) -> int:
     if description:
         lines.append("")
         lines.append(str(description))
+    manifest_hash = metadata.get("manifest_hash")
+    if manifest_hash:
+        lines.append(f"Manifest: {manifest_hash}")
+    driver = metadata.get("driver")
+    if driver:
+        if isinstance(driver, (list, tuple)):
+            driver_text = " / ".join(str(part) for part in driver)
+        else:
+            driver_text = str(driver)
+        lines.append(f"Driver:   {driver_text}")
+    registration_kind = metadata.get("registration_kind")
+    if registration_kind:
+        lines.append(f"Registration: {registration_kind}")
+    disposition_state = getattr(disposition, "status", None) if disposition else None
+    if disposition_state:
+        lines.append(f"Disposition:  {disposition_state}")
+    validation_code = metadata.get("validation_rejection_code")
+    if validation_code:
+        lines.append(f"Validation:   {validation_code}")
+    validation_issues = metadata.get("validation_issues") or ()
+    for issue in validation_issues:
+        if isinstance(issue, dict):
+            code = issue.get("code") or "validation"
+            message = issue.get("message") or issue
+            lines.append(f"  - [{code}] {message}")
     default_profile = metadata.get("default_profile")
     if default_profile:
         lines.append("")

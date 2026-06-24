@@ -30,8 +30,14 @@ from arnold.pipeline.step_invocation import (
 from arnold.pipeline.validator import (
     CONTRACT_ERROR_CODE_MAP,
     DECLARATION_DRIFT_CODE,
+    DIRECT_NATIVE_DRIVER_CLAIM_CODE,
     Diagnostics,
+    MALFORMED_NATIVE_BUNDLE_CODE,
+    ManifestValidationContext,
     MISSING_BINDING_CODE,
+    NATIVE_MANIFEST_GRAPH_COMPAT_CODE,
+    NATIVE_MANIFEST_MISSING_EXECUTION_CODE,
+    PLACEHOLDER_EXECUTION_RESOURCE_CODE,
     UNKNOWN_ADAPTER_CODE,
     UNSATISFIED_CAPABILITY_CODE,
     _decision_enum_from_suspension_schema,
@@ -40,6 +46,7 @@ from arnold.pipeline.validator import (
     validate,
     validate_dataflow_paths,
 )
+from arnold.pipeline.native.ir import NativeProgram
 
 
 # ── Minimal stub step with prompt_key ─────────────────────────────────────
@@ -110,6 +117,20 @@ def _assert_issue(
             assert actual == value, f"issue.details[{key!r}] mismatch: {actual!r} != {value!r}"
 
 
+def _simple_pipeline(*, native_program: NativeProgram | None = None) -> Pipeline:
+    return Pipeline(
+        stages={
+            "start": Stage(
+                name="start",
+                step=_PromptStep(name="start"),
+                edges=(Edge(label="halt", target="halt"),),
+            )
+        },
+        entry="start",
+        native_program=native_program,
+    )
+
+
 # ── Prompt key validation ──────────────────────────────────────────────────
 
 
@@ -154,6 +175,143 @@ class TestBundleScopedSuccess:
         stage = _StageBuilder("start").with_prompt_key("").build()
         diag = validate(_pipeline(stages={"start": stage}))
         assert diag.ok, diag.defects
+
+
+class TestManifestValidationContext:
+    def test_bare_validate_stays_pipeline_local_for_native_manifest_policy(self) -> None:
+        diag = validate(_simple_pipeline())
+
+        assert diag.ok, diag.defects
+        assert NATIVE_MANIFEST_MISSING_EXECUTION_CODE not in {
+            issue.code for issue in diag.issues
+        }
+
+    def test_manifest_context_rejects_native_driver_without_execution_evidence(self) -> None:
+        context = ManifestValidationContext(
+            manifest_driver=("native", "project+validate"),
+            package="demo.pkg",
+            name="demo",
+            manifest_path="/tmp/demo/__init__.py",
+            compatibility_classification="native",
+            source_entrypoint="build_pipeline",
+            source_entrypoint_metadata={"symbol": "build_pipeline"},
+        )
+
+        diag = validate(_simple_pipeline(), context=context)
+
+        _assert_issue(
+            diag,
+            code=NATIVE_MANIFEST_MISSING_EXECUTION_CODE,
+            stage=None,
+            detail_items={
+                "manifest_driver": ["native", "project+validate"],
+                "package": "demo.pkg",
+                "name": "demo",
+                "manifest_path": "/tmp/demo/__init__.py",
+                "compatibility_classification": "native",
+                "source_entrypoint": "build_pipeline",
+                "source_entrypoint_metadata": {"symbol": "build_pipeline"},
+            },
+            message_contains="declares native driver",
+        )
+
+    def test_manifest_context_accepts_native_program_evidence(self) -> None:
+        context = ManifestValidationContext(
+            manifest_driver=("native", "project+validate"),
+            package="demo.pkg",
+            name="demo",
+            manifest_path="/tmp/demo/__init__.py",
+        )
+
+        diag = validate(
+            _simple_pipeline(native_program=NativeProgram(name="demo")),
+            context=context,
+        )
+
+        assert diag.ok, diag.defects
+
+    def test_manifest_context_rejects_explicit_graph_compat_native_claim(self) -> None:
+        context = ManifestValidationContext(
+            manifest_driver=("native", "project+validate"),
+            package="demo.pkg",
+            name="demo",
+            manifest_path="/tmp/demo/__init__.py",
+            compatibility_classification="graph-compatible",
+        )
+
+        diag = validate(
+            _simple_pipeline(native_program=NativeProgram(name="demo")),
+            context=context,
+        )
+
+        _assert_issue(
+            diag,
+            code=NATIVE_MANIFEST_GRAPH_COMPAT_CODE,
+            stage=None,
+            message_contains="classified graph-compatible",
+        )
+
+    def test_placeholder_execution_resource_is_rejected_with_stable_code(self) -> None:
+        class _PlaceholderRunner:
+            name = "runner"
+            run_native_pipeline = None
+
+        diag = validate(
+            Pipeline(
+                stages=_simple_pipeline().stages,
+                entry="start",
+                resource_bundles=(_PlaceholderRunner(),),
+            )
+        )
+
+        _assert_issue(
+            diag,
+            code=PLACEHOLDER_EXECUTION_RESOURCE_CODE,
+            stage=None,
+            detail_items={
+                "bundle_index": 0,
+                "bundle_type": "_PlaceholderRunner",
+                "attribute": "run_native_pipeline",
+            },
+        )
+
+    def test_malformed_native_bundle_is_rejected_with_stable_code(self) -> None:
+        class _MalformedNativeBundle:
+            name = "bad"
+            instructions = ()
+            phases = ()
+            decisions = ()
+
+        diag = validate(
+            Pipeline(
+                stages=_simple_pipeline().stages,
+                entry="start",
+                resource_bundles=(_MalformedNativeBundle(),),
+            )
+        )
+
+        _assert_issue(
+            diag,
+            code=MALFORMED_NATIVE_BUNDLE_CODE,
+            stage=None,
+            detail_items={
+                "bundle_index": 0,
+                "bundle_type": "_MalformedNativeBundle",
+            },
+        )
+
+    def test_pipeline_local_native_driver_claim_is_rejected_intrinsically(self) -> None:
+        pipeline = _simple_pipeline()
+        object.__setattr__(pipeline, "driver", ("native", "direct"))
+
+        diag = validate(pipeline)
+
+        _assert_issue(
+            diag,
+            code=DIRECT_NATIVE_DRIVER_CLAIM_CODE,
+            stage=None,
+            detail_items={"pipeline_driver": ["native", "direct"]},
+        )
 
 
 class TestDeterministicOrdering:

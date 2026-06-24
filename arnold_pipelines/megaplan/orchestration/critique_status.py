@@ -84,6 +84,15 @@ def annotate_unverifiable_checks(
             "question": check.get("question", ""),
             "reason": reason,
         }
+        cause = check.get("unverifiable_cause")
+        if isinstance(cause, str) and cause.strip():
+            record["cause"] = cause.strip()
+        retryable = check.get("unverifiable_retryable")
+        if isinstance(retryable, bool):
+            record["retryable"] = retryable
+        error_kind = check.get("unverifiable_error_kind")
+        if isinstance(error_kind, str) and error_kind.strip():
+            record["error_kind"] = error_kind.strip()
         if isinstance(complexity, int):
             record["complexity"] = complexity
             if complexity >= 4:

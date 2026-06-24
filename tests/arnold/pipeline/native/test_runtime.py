@@ -33,7 +33,6 @@ from arnold.pipeline.native import (
     run_native_pipeline,
 )
 from arnold.pipeline.native.checkpoint import read_native_cursor
-from arnold.pipeline.native.context import NativeRuntimeDisabledError
 from arnold.pipeline.native.hooks import NullNativeRuntimeHooks
 
 
@@ -42,7 +41,7 @@ from arnold.pipeline.native.hooks import NullNativeRuntimeHooks
 
 @pytest.fixture(autouse=True)
 def _enable_native_runtime(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Set ARNOLD_NATIVE_RUNTIME=1 for all runtime tests."""
+    """Keep the historical env var present for compatibility coverage."""
     monkeypatch.setenv("ARNOLD_NATIVE_RUNTIME", "1")
 
 
@@ -731,11 +730,10 @@ class TestNativeExecutionResult:
         assert NativeExecutionResult is not None
         assert callable(run_native_pipeline)
 
-    def test_run_refuses_without_flag(
+    def test_run_ignores_deprecated_flag_zero(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """run_native_pipeline raises NativeRuntimeDisabledError when opted out."""
-        # Override the autouse fixture by disabling the runtime explicitly
+        """run_native_pipeline still executes when the old flag is ``0``."""
         monkeypatch.setenv("ARNOLD_NATIVE_RUNTIME", "0")
 
         @phase
@@ -748,8 +746,9 @@ class TestNativeExecutionResult:
             return s
 
         prog = compile_pipeline(my_pipe)
-        with pytest.raises(NativeRuntimeDisabledError, match="ARNOLD_NATIVE_RUNTIME"):
-            run_native_pipeline(prog)
+        result = run_native_pipeline(prog)
+
+        assert result.state == {"x": 1}
 
 
 # ── on_checkpoint hook ─────────────────────────────────────────────────

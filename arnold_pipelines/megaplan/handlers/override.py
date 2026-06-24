@@ -65,6 +65,8 @@ from arnold_pipelines.megaplan.blocker_recovery import command_blocker_details, 
 from arnold_pipelines.megaplan.orchestration.gate_checks import (
     build_gate_artifact,
     failed_preflight_checks,
+    has_high_complexity_unverifiable_checks,
+    is_operational_unverifiable_check,
     only_agent_availability_preflight_failed,
     run_gate_checks,
 )
@@ -926,10 +928,13 @@ def _override_force_proceed(
             "state": STATE_DONE,
         }
     if state["current_state"] == STATE_BLOCKED:
-        if not _last_gate_is_agent_availability_preflight_block(state):
+        if not (
+            _last_gate_is_agent_availability_preflight_block(state)
+            or _last_gate_is_operational_unverifiable_block(state)
+        ):
             raise CliError(
                 "invalid_transition",
-                "force-proceed from blocked is only supported for PROCEED gates blocked by agent availability preflight",
+                "force-proceed from blocked is only supported for recoverable gate blocks",
                 valid_next=infer_next_steps(state),
             )
     elif state["current_state"] != STATE_CRITIQUED:
@@ -1083,6 +1088,38 @@ def _external_error_requires_resume(
     if getattr(phase_result, "exit_kind", None) == "external_error":
         return True
     return resume_cursor.get("retry_strategy") in _EXTERNAL_ERROR_RETRY_STRATEGIES
+
+
+def _last_gate_is_operational_unverifiable_block(state: PlanState) -> bool:
+    last_gate = state.get("last_gate")
+    if not isinstance(last_gate, dict):
+        return False
+    if last_gate.get("recommendation") != "ITERATE" or last_gate.get("passed") is not False:
+        return False
+
+    signals = last_gate.get("signals")
+    if not isinstance(signals, dict):
+        history = state.get("meta", {}).get("critique_unverifiable_checks", [])
+        if isinstance(history, list) and history:
+            latest = history[-1]
+            if isinstance(latest, dict):
+                signals = {"unverifiable_checks": latest.get("checks", [])}
+    if not isinstance(signals, dict):
+        return False
+
+    checks = signals.get("unverifiable_checks", [])
+    if not isinstance(checks, list):
+        return False
+    high_complexity = [
+        check
+        for check in checks
+        if isinstance(check, dict)
+        and check.get("attention") == "high_complexity_unverifiable"
+    ]
+    return bool(high_complexity) and (
+        not has_high_complexity_unverifiable_checks(signals)
+        and all(is_operational_unverifiable_check(check) for check in high_complexity)
+    )
 
 
 def _override_recover_blocked(

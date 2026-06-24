@@ -448,7 +448,7 @@ def build_pipeline():
     )
 
 
-def test_cli_pipelines_check_reports_missing_native_program_advisory(
+def test_cli_pipelines_check_reports_missing_native_program_contextual_rejection(
     tmp_path: Path,
 ) -> None:
     name = "native-without-program"
@@ -478,7 +478,123 @@ def build_pipeline():
     result = _run_cli("pipelines", "check", name, env=env)
 
     assert result.returncode == 1
-    assert "native_program missing from built pipeline" in result.stderr
+    assert "[manifest.native_execution_missing]" in result.stderr
+    assert "declares native driver but built pipeline has no native execution resource" in result.stderr
+
+
+def test_cli_pipelines_check_accepts_explicit_graph_compatibility_manifest(
+    tmp_path: Path,
+) -> None:
+    name = "graph-compatibility"
+    _write_user_pipeline(
+        tmp_path,
+        name,
+        f'''\
+from arnold.pipelines.megaplan._pipeline.types import Edge, Pipeline, Stage
+
+name = "{name}"
+description = "explicit graph compatibility manifest"
+default_profile = None
+supported_modes = ("graph",)
+driver = ("graph", "compat")
+entrypoint = "build_pipeline"
+arnold_api_version = "1.0"
+capabilities = ("plan",)
+
+
+class _Step:
+    name = "noop"
+    kind = "produce"
+    prompt_key = None
+    slot = None
+    produces = ()
+    consumes = ()
+
+
+def build_pipeline():
+    return Pipeline(
+        stages={{"start": Stage(name="start", step=_Step(), edges=(Edge(label="halt", target="halt"),))}},
+        entry="start",
+    )
+''',
+    )
+    env = os.environ.copy()
+    env["HOME"] = str(tmp_path)
+
+    result = _run_cli("pipelines", "check", name, env=env)
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == name
+    assert "manifest.native_execution_missing" not in result.stderr
+
+
+def test_manifest_scan_and_registry_metadata_report_contextual_rejection(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    from arnold.pipelines.megaplan._pipeline import registry as registry_mod
+
+    name = "trusted-native-without-program"
+    _write_user_pipeline(
+        tmp_path,
+        name,
+        f'''\
+from arnold.pipelines.megaplan._pipeline.types import Edge, Pipeline, Stage
+
+name = "{name}"
+description = "native manifest but graph-only build result"
+default_profile = None
+supported_modes = ("native",)
+driver = ("native", "x")
+entrypoint = "build_pipeline"
+arnold_api_version = "1.0"
+capabilities = ("plan",)
+
+
+class _Step:
+    name = "noop"
+    kind = "produce"
+    prompt_key = None
+    slot = None
+    produces = ()
+    consumes = ()
+
+
+def build_pipeline():
+    return Pipeline(
+        stages={{"start": Stage(name="start", step=_Step(), edges=(Edge(label="halt", target="halt"),))}},
+        entry="start",
+    )
+''',
+    )
+    module_path = tmp_path / ".megaplan" / "pipelines" / f"{name.replace('-', '_')}.py"
+    monkeypatch.setattr(registry_mod, "BLESSED_ALLOWLIST", (str(module_path.resolve()),))
+    monkeypatch.setattr(
+        registry_mod,
+        "_get_scan_roots",
+        lambda: [(module_path.parent, None)],
+    )
+    monkeypatch.setenv("MEGAPLAN_M6_MANIFEST_DISCOVERY", "1")
+    monkeypatch.setenv("MEGAPLAN_BUDGET_AUTHORITY_DIR", str(tmp_path / "leases"))
+
+    dispositions = registry_mod.scan_python_pipelines()
+    disposition = next(d for d in dispositions if d.cli_name == name)
+
+    assert disposition.status == "rejected"
+    assert disposition.rejection_code == "manifest.native_execution_missing"
+    assert "[manifest.native_execution_missing]" in disposition.reason
+
+    monkeypatch.setattr(
+        registry_mod,
+        "_validate_manifest_disposition_if_trusted",
+        lambda disposition: None,
+    )
+    registry = registry_mod.PipelineRegistry()
+    assert registry.names() == (name,)
+    assert registry.get(name) is not None
+    metadata = registry.metadata_for(name)
+    assert metadata["validation_rejection_code"] == "manifest.native_execution_missing"
+    assert metadata["validation_issues"][0]["code"] == "manifest.native_execution_missing"
 
 
 def test_cli_pipelines_check_judge_manifest_does_not_import_implementation(

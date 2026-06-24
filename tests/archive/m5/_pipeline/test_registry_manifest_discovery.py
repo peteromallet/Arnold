@@ -1,4 +1,4 @@
-"""T7 — flag-gated manifest-first discovery in scan_python_pipelines."""
+"""T7 — default manifest-first discovery in scan_python_pipelines."""
 
 from __future__ import annotations
 
@@ -20,8 +20,8 @@ WELL_FORMED = '''\
 name = "demo-on"
 description = "demo"
 default_profile = None
-supported_modes = ("plan",)
-driver = ("subprocess_isolated", "graph+loop-node")
+supported_modes = ("native",)
+driver = ("native", "graph+loop-node")
 entrypoint = "build_pipeline"
 arnold_api_version = "1.0"
 capabilities = ("plan",)
@@ -50,7 +50,7 @@ def _patch_scan_roots(tmp_path: Path):
     )
 
 
-def test_flag_off_uses_exec_module(tmp_path):
+def test_manifest_discovery_default_ignores_legacy_flag_zero(tmp_path):
     _make_pkg(tmp_path, "demo_off")
 
     with _patch_scan_roots(tmp_path), patch.dict(
@@ -60,14 +60,17 @@ def test_flag_off_uses_exec_module(tmp_path):
     ) as load_spy:
         dispositions = registry.scan_python_pipelines()
 
-    assert load_spy.called, "flag-OFF must use the exec_module path"
+    assert load_spy.call_count == 0, "legacy flag must not disable manifest discovery"
     cli_names = [d.cli_name for d in dispositions]
     assert "demo-off" in cli_names
-    for d in dispositions:
-        assert d.manifest is None
+    by_name = {d.cli_name: d for d in dispositions}
+    d = by_name["demo-off"]
+    assert d.status == "discovered"
+    assert isinstance(d.manifest, Manifest)
+    assert d.manifest.manifest_hash.startswith("sha256:")
 
 
-def test_flag_on_skips_exec_module_and_populates_manifest(tmp_path):
+def test_legacy_flag_one_skips_exec_module_and_populates_manifest(tmp_path):
     _make_pkg(tmp_path, "demo_on")
 
     with _patch_scan_roots(tmp_path), patch.dict(
@@ -75,7 +78,7 @@ def test_flag_on_skips_exec_module_and_populates_manifest(tmp_path):
     ), patch.object(registry, "_load_module_from_path") as load_spy:
         dispositions = registry.scan_python_pipelines()
 
-    assert load_spy.call_count == 0, "flag-ON must NOT invoke exec_module"
+    assert load_spy.call_count == 0, "manifest discovery must NOT invoke exec_module"
     by_name = {d.cli_name: d for d in dispositions}
     assert "demo-on" in by_name
     d = by_name["demo-on"]
@@ -85,7 +88,7 @@ def test_flag_on_skips_exec_module_and_populates_manifest(tmp_path):
     assert d.manifest.manifest_hash.startswith("sha256:")
 
 
-def test_flag_on_rejects_when_manifest_invalid(tmp_path):
+def test_manifest_discovery_rejects_when_manifest_invalid(tmp_path):
     _make_pkg(tmp_path, "demo_bad", body='description = "x"\n')  # missing fields, no build_pipeline
 
     with _patch_scan_roots(tmp_path), patch.dict(
@@ -100,6 +103,29 @@ def test_flag_on_rejects_when_manifest_invalid(tmp_path):
     assert "manifest rejected" in by_name["demo-bad"].reason
 
 
+def test_graph_driver_manifest_is_discovered_without_native_program_rejection(tmp_path):
+    body = WELL_FORMED.replace(
+        'supported_modes = ("native",)',
+        'supported_modes = ("graph",)',
+    ).replace(
+        'driver = ("native", "graph+loop-node")',
+        'driver = ("graph", "compat")',
+    )
+    _make_pkg(tmp_path, "graph_compat", body=body)
+
+    with _patch_scan_roots(tmp_path), patch.object(registry, "_load_module_from_path") as load_spy:
+        dispositions = registry.scan_python_pipelines()
+
+    assert load_spy.call_count == 0
+    by_name = {d.cli_name: d for d in dispositions}
+    d = by_name["graph-compat"]
+    assert d.status == "discovered"
+    assert d.rejection_code is None
+    assert d.manifest is not None
+    assert d.manifest.driver == ("graph", "compat")
+    assert registry._registration_kind_for_disposition(d) == "graph_compatibility"
+
+
 BEHAVIORAL_SOURCE = '''\
 """Static behavioral manifest fixture."""
 from pathlib import Path
@@ -112,8 +138,8 @@ _PROMPTS = _PIPELINE_DIR / "prompts"
 name = "behavioral-demo"
 description = "demo"
 default_profile = None
-supported_modes = ("plan",)
-driver = ("subprocess_isolated", "graph+loop-node")
+supported_modes = ("native",)
+driver = ("native", "graph+loop-node")
 entrypoint = "build_pipeline"
 arnold_api_version = "1.0"
 capabilities = ("plan",)

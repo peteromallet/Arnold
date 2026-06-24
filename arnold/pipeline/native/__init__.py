@@ -11,6 +11,7 @@ from arnold.pipeline.native.checkpoint import (
     CursorUpgradeError,
     CursorUpgradeResult,
     NATIVE_CURSOR_VERSION,
+    NativeCursorCorruptError,
     persist_native_cursor,
     read_native_cursor,
     upgrade_graph_cursor_to_native,
@@ -61,6 +62,7 @@ from arnold.pipeline.native.trace import NativeTraceHooks
 __all__ = [
     "NATIVE_CURSOR_VERSION",
     "NativeCompileError",
+    "NativeCursorCorruptError",
     "CursorUpgradeError",
     "CursorUpgradeResult",
     "NativeDecision",

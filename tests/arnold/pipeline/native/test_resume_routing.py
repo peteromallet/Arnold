@@ -26,6 +26,7 @@ from arnold.pipeline.native.checkpoint import (
     persist_native_cursor,
     read_native_cursor,
 )
+from arnold.pipeline.native.ir import NativeProgram
 from arnold.pipeline.resume import (
     RESUME_CURSOR_FILENAME,
     persist_resume_cursor,
@@ -280,7 +281,16 @@ class TestDispatchResumeRouting:
         return SimpleNamespace(
             entry="prep",
             stages={name: object() for name in self._NATIVE_STAGE_ORDER},
-            resource_bundles=self._NATIVE_STAGE_ORDER,
+            resource_bundles=(),
+            native_program=NativeProgram(name="megaplan"),
+        )
+
+    def _make_graph_shaped_megaplan_shell(self) -> object:
+        return SimpleNamespace(
+            entry="prep",
+            stages={name: object() for name in self._NATIVE_STAGE_ORDER},
+            resource_bundles=(),
+            native_program=None,
         )
 
     def test_native_born_cursor_routes_to_native(self, tmp_path: Path) -> None:
@@ -508,6 +518,41 @@ class TestDispatchResumeRouting:
 
         mock_run.assert_called_once()
         assert mock_run.call_args.kwargs.get("resume") is False
+        assert mock_run.call_args.kwargs.get("program").name == "megaplan"
+
+    def test_no_cursor_graph_shaped_shell_without_native_evidence_uses_graph(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        """Canonical-looking Megaplan stages are not native evidence."""
+        from arnold.pipelines.megaplan._pipeline._bridge import run_pipeline_dispatch
+
+        ctx = self._make_ctx({}, artifact_root=str(tmp_path))
+        legacy_called = []
+
+        def fake_legacy_run(pipeline_arg, ctx_arg, *, artifact_root):
+            legacy_called.append(True)
+            return {
+                "state": dict(ctx_arg.state),
+                "final_stage": None,
+                "halt_reason": None,
+                "envelope": None,
+                "status": "completed",
+                "contract_result": None,
+            }
+
+        with patch(
+            "arnold.pipelines.megaplan._pipeline.executor.run_pipeline",
+            fake_legacy_run,
+        ):
+            run_pipeline_dispatch(
+                pipeline=self._make_graph_shaped_megaplan_shell(),
+                ctx=ctx,
+                artifact_root=tmp_path,
+                pipeline_key="megaplan",
+            )
+
+        assert len(legacy_called) == 1
 
     def test_no_cursor_explicit_graph_overrides_native_default(self, tmp_path: Path) -> None:
         """A fresh explicit graph marker keeps a converted pipeline on graph."""
