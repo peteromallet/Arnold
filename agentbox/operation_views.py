@@ -17,6 +17,7 @@ from agentbox.operations import (
     load_agentbox_operation,
     open_operation_store,
 )
+from agentbox.redaction import redact_payload, redact_text
 from agentbox.run_dirs import run_dir_paths
 from agentbox.tmux import capture_pane, inspect_session
 
@@ -29,10 +30,10 @@ def status_view(config: Any, operation_id: str | None = None) -> dict[str, Any] 
 
     if operation_id:
         run = load_agentbox_operation(config, operation_id)
-        return operation_status(config, _tick_operation_for_status(config, run))
+        return redact_payload(operation_status(config, _tick_operation_for_status(config, run)))
 
     return [
-        operation_status(config, _tick_operation_for_status(config, run))
+        redact_payload(operation_status(config, _tick_operation_for_status(config, run)))
         for run in list_agentbox_operations(config)
     ]
 
@@ -129,7 +130,7 @@ def log_entry(
         "stream": stream,
         "path": str(path) if path is not None else None,
         "exists": bool(path is not None and path.exists()),
-        "text": tail["text"],
+        "text": redact_text(tail["text"]),
         "requested_lines": lines,
         "returned_lines": tail["returned_lines"],
         "truncated": tail["truncated"],
@@ -157,7 +158,7 @@ def tmux_capture_fallback(
         "stream": "tmux",
         "path": None,
         "exists": True,
-        "text": text,
+        "text": redact_text(text),
         "session_name": session_name,
         "operation_id": run.id,
         "requested_lines": lines,

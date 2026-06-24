@@ -19,6 +19,13 @@ from arnold.runtime.durable_ops import TypedResource
 
 from agentbox.adapters import get_operation_adapter, list_operation_adapters
 from agentbox.config import AgentBoxConfigError, load_agentbox_config
+from agentbox.credentials.backend import (
+    CredentialBackendError,
+    list_credentials,
+    push_credential,
+    push_guide,
+    run_credential_tests,
+)
 from agentbox.operations import (
     AgentBoxOperationError,
     load_agentbox_operation,
@@ -112,6 +119,20 @@ def build_parser() -> argparse.ArgumentParser:
     )
     status_parser.add_argument("--json", action="store_true", help="Write stable JSON output.")
 
+    creds_parser = subparsers.add_parser("creds", help="Manage AgentBox host credentials.")
+    creds_subparsers = creds_parser.add_subparsers(dest="creds_command")
+
+    creds_list = creds_subparsers.add_parser("list", help="List credential names and status.")
+    creds_list.add_argument("--json", action="store_true", help="Write stable JSON output.")
+
+    creds_test = creds_subparsers.add_parser("test", help="Run health checks on credentials.")
+    creds_test.add_argument("name", nargs="?", help="Credential name to test (default: all).")
+    creds_test.add_argument("--json", action="store_true", help="Write stable JSON output.")
+
+    creds_push = creds_subparsers.add_parser("push", help="Push a credential to the host.")
+    creds_push.add_argument("name", help="Credential name or 'guide'.")
+    creds_push.add_argument("--json", action="store_true", help="Write stable JSON output.")
+
     return parser
 
 
@@ -152,7 +173,9 @@ def main(argv: Sequence[str] | None = None) -> int:
             return _reconcile(config, json_output=json_output)
         if args.command == "guardian":
             return _guardian(config, args, json_output=json_output)
-    except (AgentBoxConfigError, AgentBoxOperationError, FileNotFoundError, ValueError) as exc:
+        if args.command == "creds":
+            return _creds(config, args, json_output=json_output)
+    except (AgentBoxConfigError, AgentBoxOperationError, CredentialBackendError, FileNotFoundError, ValueError) as exc:
         return _diagnostic(str(exc), json_output=json_output)
     return _diagnostic(f"unknown command: {args.command}", json_output=json_output)
 
@@ -255,6 +278,50 @@ def _reconcile(config: Any, *, json_output: bool) -> int:
     report = reconcile(config).to_dict()
     _emit(report, json_output=json_output)
     return 0
+
+
+def _creds(config: Any, args: argparse.Namespace, *, json_output: bool) -> int:
+    command = getattr(args, "creds_command", None)
+    if command is None:
+        return _diagnostic("creds subcommand required", json_output=json_output)
+    if command == "list":
+        records = list_credentials(config)
+        payload = [
+            {
+                "name": record.name,
+                "provider": record.provider,
+                "present": record.present,
+                "pushed": record.pushed,
+                "test_status": record.test_status,
+                "last_tested": record.last_tested,
+            }
+            for record in records
+        ]
+        _emit(payload, json_output=json_output)
+        return 0
+    if command == "test":
+        names = [args.name] if args.name else None
+        results = run_credential_tests(config, names=names)
+        _emit(results, json_output=json_output)
+        return 0
+    if command == "push":
+        if args.name == "guide":
+            guide = push_guide(config)
+            _emit(guide, json_output=json_output)
+            return 0
+        record = push_credential(config, args.name)
+        _emit(
+            {
+                "name": record.name,
+                "provider": record.provider,
+                "pushed": record.pushed,
+                "destination": record.destination,
+                "status": "pushed",
+            },
+            json_output=json_output,
+        )
+        return 0
+    return _diagnostic(f"unknown creds command: {command}", json_output=json_output)
 
 
 def _guardian(config: Any, args: argparse.Namespace, *, json_output: bool) -> int:

@@ -13,6 +13,8 @@ from arnold_pipelines.megaplan.model_seam import render_step_message
 from arnold_pipelines.megaplan.runtime.key_pool import resolve_model
 from arnold.pipeline import StepInvocation
 
+from agentbox.redaction import redact_text
+
 from .agent_loop import AgentRequest, AgentResponse, AgentRunner
 from .auth import AuthorizationSubject, ResidentAuthorizer
 from .coalescing import AsyncBurstCoalescer, BurstBatch
@@ -225,11 +227,12 @@ class ResidentRuntime:
         self._record_tool_calls(turn.id, response)
         final_message_id = None
         if response.final_text:
+            safe_text = redact_text(response.final_text)
             outbound = self.store.create_message(
                 epic_id=active_epic_id,
                 conversation_id=conversation.id,
                 direction="outbound",
-                content=response.final_text,
+                content=safe_text,
                 bot_turn_id=turn.id,
                 idempotency_key=deterministic_idempotency_key("resident-outbound", turn.id, "final"),
             )
@@ -237,7 +240,7 @@ class ResidentRuntime:
             await self.outbound.send(
                 OutboundMessage(
                     conversation_key=conversation.conversation_key,
-                    content=response.final_text,
+                    content=safe_text,
                     idempotency_key=outbound.idempotency_key,
                     metadata={"conversation_id": conversation.id, "message_id": outbound.id, "turn_id": turn.id},
                 )
