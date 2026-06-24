@@ -14,19 +14,25 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
-from arnold.runtime.durable_ops import ResourceType, TypedResource
+from arnold.runtime.durable_ops import TypedResource
 
 from agentbox.adapters import get_operation_adapter, list_operation_adapters
 from agentbox.config import AgentBoxConfigError, load_agentbox_config
 from agentbox.operations import (
     AgentBoxOperationError,
-    list_agentbox_operations,
     load_agentbox_operation,
     open_operation_store,
 )
+from agentbox.operation_views import (
+    logs_view,
+    print_log_entries,
+    resource_session_name,
+    single_process_session_resource,
+    status_view,
+)
 from agentbox.reconcile import reconcile
 from agentbox.run_dirs import run_dir_paths
-from agentbox.tmux import attach_argv, capture_pane, inspect_session
+from agentbox.tmux import attach_argv, inspect_session
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -161,16 +167,7 @@ def _run(
 
 
 def _status(config: Any, operation_id: str | None, *, json_output: bool) -> int:
-    if operation_id:
-        run = load_agentbox_operation(config, operation_id)
-        run = _tick_operation_for_status(config, run)
-        payload: Any = _operation_status(config, run)
-    else:
-        payload = [
-            _operation_status(config, _tick_operation_for_status(config, run))
-            for run in list_agentbox_operations(config)
-        ]
-    _emit(payload, json_output=json_output)
+    _emit(status_view(config, operation_id), json_output=json_output)
     return 0
 
 
@@ -182,34 +179,24 @@ def _logs(
     stream: str,
     json_output: bool,
 ) -> int:
-    run = load_agentbox_operation(config, operation_id)
-    resources = open_operation_store(config).list_typed_resources(operation_id)
-    selected = ("stdout", "stderr") if stream == "all" else (stream,)
-    entries = [_log_entry(config, operation_id, resources, name, lines=lines) for name in selected]
-
-    if not any(entry["text"] for entry in entries):
-        fallback = _tmux_capture_fallback(run, resources, lines=lines)
-        if fallback is not None:
-            entries = [fallback]
-
-    payload = {"operation_id": operation_id, "lines": lines, "logs": entries}
+    payload = logs_view(config, operation_id, lines=lines, stream=stream)
     if json_output:
         _emit(payload, json_output=True)
     else:
-        _print_log_entries(entries)
+        print_log_entries(payload["logs"])
     return 0
 
 
 def _attach(config: Any, operation_id: str) -> int:
     load_agentbox_operation(config, operation_id)
-    session_resource = _single_process_session_resource(config, operation_id)
+    session_resource = single_process_session_resource(config, operation_id)
     if session_resource is None:
         return _diagnostic(
             f"operation {operation_id!r} has no recorded process-session resource; run `agentbox reconcile`",
             json_output=False,
         )
 
-    session_name = _resource_session_name(session_resource)
+    session_name = resource_session_name(session_resource)
     if not session_name:
         return _diagnostic(
             f"operation {operation_id!r} has a process-session resource without a session name",
@@ -231,58 +218,6 @@ def _reconcile(config: Any, *, json_output: bool) -> int:
     report = reconcile(config).to_dict()
     _emit(report, json_output=json_output)
     return 0
-
-
-def _operation_status(config: Any, run: Any) -> dict[str, Any]:
-    resources = open_operation_store(config).list_typed_resources(run.id)
-    session_resource = _process_session_resource(resources)
-    session_status = None
-    session_name = _resource_session_name(session_resource) if session_resource else run.metadata.get("session_name")
-    if session_name:
-        try:
-            session_status = inspect_session(str(session_name))
-        except FileNotFoundError as exc:
-            session_status = {"session_name": str(session_name), "state": "tmux_unavailable", "exists": False, "detail": str(exc)}
-        except Exception as exc:
-            session_status = {"session_name": str(session_name), "state": "inspect_failed", "exists": False, "detail": str(exc)}
-    paths = run_dir_paths(config, run.id)
-    return {
-        "operation_id": run.id,
-        "operation_type": run.operation_type,
-        "operation_state": run.state.value,
-        "launch_state": run.metadata.get("launch_state"),
-        "command": run.metadata.get("command"),
-        "repo_names": run.metadata.get("repo_names", []),
-        "run_dir": str(paths.root),
-        "run_dir_exists": paths.root.exists(),
-        "resource_count": len(resources),
-        "session": _jsonable(session_status),
-    }
-
-
-def _tick_operation_for_status(config: Any, run: Any) -> Any:
-    registration = _operation_adapter_for_type(run.operation_type)
-    if registration is None:
-        return run
-
-    handler = registration.load()
-    tick = getattr(handler, "tick", None)
-    if not callable(tick):
-        return run
-
-    updated = tick(config, run.id)
-    return updated if getattr(updated, "id", None) == run.id else load_agentbox_operation(
-        config,
-        run.id,
-        operation_types=(registration.operation_type,),
-    )
-
-
-def _operation_adapter_for_type(operation_type: str) -> Any | None:
-    for registration in list_operation_adapters():
-        if registration.operation_type == operation_type:
-            return registration
-    return None
 
 
 def _run_result_payload(
@@ -405,96 +340,6 @@ def _resource_payloads(resources: Sequence[TypedResource]) -> list[dict[str, Any
         }
         for resource in resources
     ]
-
-
-def _log_entry(
-    config: Any,
-    operation_id: str,
-    resources: tuple[TypedResource, ...],
-    stream: str,
-    *,
-    lines: int,
-) -> dict[str, Any]:
-    path = _log_path(config, operation_id, resources, stream)
-    text = _tail_text(path, lines) if path is not None and path.exists() else ""
-    return {
-        "stream": stream,
-        "path": str(path) if path is not None else None,
-        "exists": bool(path is not None and path.exists()),
-        "text": text,
-    }
-
-
-def _tmux_capture_fallback(
-    run: Any,
-    resources: tuple[TypedResource, ...],
-    *,
-    lines: int,
-) -> dict[str, Any] | None:
-    session_resource = _process_session_resource(resources)
-    session_name = _resource_session_name(session_resource) if session_resource else None
-    if not session_name:
-        return None
-    status = inspect_session(session_name)
-    if not status.exists:
-        return None
-    return {
-        "stream": "tmux",
-        "path": None,
-        "exists": True,
-        "text": capture_pane(session_name, lines=lines),
-        "session_name": session_name,
-        "operation_id": run.id,
-    }
-
-
-def _log_path(
-    config: Any,
-    operation_id: str,
-    resources: tuple[TypedResource, ...],
-    stream: str,
-) -> Path:
-    for resource in resources:
-        if resource.resource_type is ResourceType.LOG and resource.details.get("stream") == stream:
-            path = resource.details.get("path")
-            if path:
-                return Path(str(path))
-    paths = run_dir_paths(config, operation_id)
-    return paths.stdout_path if stream == "stdout" else paths.stderr_path
-
-
-def _single_process_session_resource(config: Any, operation_id: str) -> TypedResource | None:
-    return _process_session_resource(open_operation_store(config).list_typed_resources(operation_id))
-
-
-def _process_session_resource(resources: tuple[TypedResource, ...]) -> TypedResource | None:
-    for resource in resources:
-        if resource.resource_type is ResourceType.PROCESS_SESSION:
-            return resource
-    return None
-
-
-def _resource_session_name(resource: TypedResource | None) -> str | None:
-    if resource is None:
-        return None
-    value = resource.details.get("session_name") or resource.name
-    return str(value) if value else None
-
-
-def _tail_text(path: Path, lines: int) -> str:
-    if lines <= 0:
-        return ""
-    with path.open("r", encoding="utf-8", errors="replace") as handle:
-        return "".join(handle.readlines()[-lines:])
-
-
-def _print_log_entries(entries: list[dict[str, Any]]) -> None:
-    for index, entry in enumerate(entries):
-        if len(entries) > 1:
-            if index:
-                print()
-            print(f"==> {entry['stream']} <==")
-        print(entry["text"], end="" if str(entry["text"]).endswith("\n") else "\n")
 
 
 def _emit(payload: Any, *, json_output: bool) -> None:

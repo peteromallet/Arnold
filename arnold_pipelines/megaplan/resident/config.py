@@ -9,6 +9,7 @@ from typing import Literal
 from pydantic import BaseModel, Field, field_validator
 
 ResidentMode = Literal["dev", "production"]
+ResidentProfileName = Literal["megaplan", "agentbox_operator"]
 
 
 def _split_csv(value: str | None) -> tuple[str, ...]:
@@ -21,6 +22,7 @@ class ResidentConfig(BaseModel):
     """Runtime configuration shared by Discord, scheduling, and tools."""
 
     mode: ResidentMode = "dev"
+    profile: ResidentProfileName = "megaplan"
     discord_bot_token_env: str = "DISCORD_BOT_TOKEN"
     allowed_guild_ids: tuple[str, ...] = Field(default_factory=tuple)
     allowed_channel_ids: tuple[str, ...] = Field(default_factory=tuple)
@@ -67,6 +69,7 @@ class ResidentConfig(BaseModel):
         arnold_user_whitelist = env.get("DISCORD_USER_WHITELIST")
         return cls(
             mode=env.get("MEGAPLAN_RESIDENT_MODE", "dev"),
+            profile=env.get("MEGAPLAN_RESIDENT_PROFILE", "megaplan"),
             allowed_guild_ids=_split_csv(env.get("MEGAPLAN_RESIDENT_ALLOWED_GUILDS")),
             allowed_channel_ids=_split_csv(env.get("MEGAPLAN_RESIDENT_ALLOWED_CHANNELS")),
             allowed_user_ids=_split_csv(env.get("MEGAPLAN_RESIDENT_ALLOWED_USERS") or arnold_user_whitelist),
