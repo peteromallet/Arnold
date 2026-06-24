@@ -54,4 +54,3 @@ Out:
 .venv/bin/python -m pytest -q tests/test_comfy_nodes_agent_contracts.py tests/test_comfy_nodes_agent_backend_spine.py
 node --test tests/browser/payload_contracts.test.mjs tests/browser/agent_edit_lifecycle_transcript.test.mjs
 ```
-
