@@ -16,6 +16,7 @@ EXPECTED_WORKFLOW_SUBCOMMANDS = [
     "dot",
     "dry-run",
     "explain",
+    "graph",
     "inspect",
     "manifest",
     "resume",

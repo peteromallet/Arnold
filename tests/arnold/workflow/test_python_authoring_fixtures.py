@@ -26,6 +26,7 @@ EXPECTED_CASES = {
     "invalid_unknown_component": "invalid",
     "invalid_unknown_reference": "invalid",
     "invalid_unsupported_syntax": "invalid",
+    "invalid_unsupported_control_flow": "invalid",
     "invalid_wrong_component_kind": "invalid",
 }
 SUPPORT_MODULES = {"components"}
