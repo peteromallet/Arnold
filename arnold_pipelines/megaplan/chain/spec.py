@@ -30,6 +30,7 @@ from arnold_pipelines.megaplan.profiles import (
     VALID_DEPTH_CHOICES,
 )
 from arnold_pipelines.megaplan.types import CliError
+from arnold_pipelines.megaplan.anchors import resolve_anchor_path, validate_anchor_source
 
 log = logging.getLogger("megaplan")
 
@@ -146,6 +147,27 @@ VALID_CLEAN_MILESTONE_PR_POLICIES = ("auto", "manual")
 BLOCKED_EXECUTE_OUTCOME_STATUSES = {"blocked", "worker_blocked"}
 
 
+@dataclass(frozen=True)
+class AnchorSpec:
+    north_star: str | None = None
+
+    @classmethod
+    def from_yaml(cls, value: Any, section: str) -> "AnchorSpec":
+        if value is None:
+            return cls()
+        if not isinstance(value, dict):
+            raise CliError("invalid_spec", f"`{section}` must be a mapping")
+        unknown = sorted(set(value) - {"north_star"})
+        if unknown:
+            raise CliError("invalid_spec", f"`{section}` only supports `north_star`; unknown anchor type `{unknown[0]}`")
+        north_star = value.get("north_star")
+        if north_star is None:
+            return cls()
+        if not isinstance(north_star, str) or not north_star.strip():
+            raise CliError("invalid_spec", f"`{section}.north_star` must be a non-empty string")
+        return cls(north_star=north_star.strip())
+
+
 def _warn_chain_fallback(
     token: str,
     *,
@@ -207,6 +229,7 @@ class MilestoneSpec:
     phase_model: list[str] = field(default_factory=list)
     bakeoff: dict[str, Any] | None = None
     notes: str | None = None
+    anchors: AnchorSpec = field(default_factory=AnchorSpec)
     # Validation-only dependency edges (labels of milestones that MUST appear
     # earlier in the list). The chain runs strictly serial-in-listed-order — a
     # single cursor — so ``depends_on`` does NOT reorder or parallelize
@@ -285,6 +308,7 @@ class MilestoneSpec:
         notes = raw.get("notes")
         if notes is not None and not isinstance(notes, str):
             raise CliError("invalid_spec", f"milestones[{index}].notes must be a string")
+        anchors = AnchorSpec.from_yaml(raw.get("anchors"), f"milestones[{index}].anchors")
         depends_on_raw = raw.get("depends_on") or []
         if isinstance(depends_on_raw, str):
             depends_on = [depends_on_raw]
@@ -314,6 +338,7 @@ class MilestoneSpec:
             phase_model=phase_model,
             bakeoff=bakeoff,
             notes=notes,
+            anchors=anchors,
             depends_on=depends_on,
         )
 
@@ -321,6 +346,7 @@ class MilestoneSpec:
 @dataclass
 class ChainSpec:
     milestones: list[MilestoneSpec]
+    anchors: AnchorSpec = field(default_factory=AnchorSpec)
     seed_plan: str | None = None
     base_branch: str = "main"
     on_failure: str = "stop_chain"
@@ -342,12 +368,14 @@ class ChainSpec:
     escalate_action: str = "force-proceed"
     robustness: str = "standard"
     auto_approve: bool = True
+    require_anchor: bool = False
 
     @classmethod
     def from_dict(cls, raw: dict[str, Any]) -> "ChainSpec":
         if not isinstance(raw, dict):
             raise CliError("invalid_spec", "chain spec must be a YAML mapping")
         allowed_keys = {
+            "anchors",
             "base_branch",
             "driver",
             "merge_policy",
@@ -368,6 +396,7 @@ class ChainSpec:
         if not isinstance(base_branch, str) or not base_branch.strip():
             raise CliError("invalid_spec", "`base_branch` must be a non-empty string")
         base_branch = base_branch.strip()
+        anchors = AnchorSpec.from_yaml(raw.get("anchors"), "anchors")
         milestones_raw = raw.get("milestones") or []
         if not isinstance(milestones_raw, list):
             raise CliError("invalid_spec", "`milestones` must be a list")
@@ -475,9 +504,13 @@ class ChainSpec:
             raise CliError(
                 "invalid_spec", "driver.require_clean_base must be a boolean"
             )
+        require_anchor = driver_raw.get("require_anchor", False)
+        if not isinstance(require_anchor, bool):
+            raise CliError("invalid_spec", "driver.require_anchor must be a boolean")
 
         return cls(
             milestones=milestones,
+            anchors=anchors,
             seed_plan=seed_plan,
             base_branch=base_branch,
             on_failure=on_failure,
@@ -497,6 +530,7 @@ class ChainSpec:
             escalate_action=escalate_action,
             robustness=robustness,
             auto_approve=auto_approve,
+            require_anchor=require_anchor,
         )
 
 
@@ -760,7 +794,40 @@ def effective_chain_policy(
     }
 
 
-def validate_paths(spec: ChainSpec, root: Path) -> None:
+def validate_anchor_paths(spec: ChainSpec, spec_path: Path) -> None:
+    if spec.anchors.north_star:
+        validate_anchor_source(resolve_anchor_path(spec_path, spec.anchors.north_star), label="chain anchors.north_star")
+    for milestone in spec.milestones:
+        if milestone.anchors.north_star:
+            validate_anchor_source(resolve_anchor_path(spec_path, milestone.anchors.north_star), label=f"milestone {milestone.label!r} anchors.north_star")
+
+
+def validate_required_anchor(spec: ChainSpec) -> None:
+    if not spec.anchors.north_star:
+        raise CliError(
+            "invalid_spec",
+            "this chain requires a North Star anchor. Add:\n\nanchors:\n  north_star: NORTHSTAR.md\n\nPaths resolve relative to the chain.yaml directory.",
+        )
+
+
+def warn_undeclared_north_star(spec: ChainSpec, spec_path: Path) -> str | None:
+    if spec.anchors.north_star:
+        return None
+    candidate = spec_path.parent / "NORTHSTAR.md"
+    if candidate.is_file():
+        message = (
+            f"NORTHSTAR.md exists next to {spec_path} but is not declared. "
+            "Add `anchors.north_star: NORTHSTAR.md`; anchors are not auto-discovered."
+        )
+        log.warning(
+            "NORTHSTAR.md exists next to %s but is not declared. Add `anchors: {north_star: NORTHSTAR.md}`; anchors are not auto-discovered.",
+            spec_path,
+        )
+        return message
+    return None
+
+
+def validate_paths(spec: ChainSpec, root: Path, spec_path: Path | None = None) -> None:
     root = Path(root).expanduser().resolve()
     for milestone in spec.milestones:
         idea_path = Path(milestone.idea).expanduser()
@@ -780,3 +847,5 @@ def validate_paths(spec: ChainSpec, root: Path) -> None:
                 "missing_seed_plan",
                 f"seed plan {spec.seed_plan!r} not found under {root}: {exc.message}",
             ) from exc
+    if spec_path is not None:
+        validate_anchor_paths(spec, spec_path)

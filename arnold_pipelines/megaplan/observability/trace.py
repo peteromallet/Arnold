@@ -83,6 +83,8 @@ def _kind_label(kind: str) -> str:
         "llm_call_error": "✗ LLM",
         "artifact_written": "📄 ART",
         "artifact_invalidated": "🗑 ART",
+        "anchor_captured": "⚓ ANCHOR",
+        "anchor_missing_artifact": "⚓ MISSING",
         "override_applied": "⚡ OVERRIDE",
         "flag_raised": "🚩 FLAG+",
         "flag_resolved": "✅ FLAG-",
@@ -248,10 +250,23 @@ def format_narrative(events: Sequence[dict], *, now: datetime | None = None) -> 
             lines.append(f"{ts[:19].replace('T', ' ')} ({rel}) → LLM call error: {err}, retry after {retry}s.")
         elif kind == "artifact_written":
             path = payload.get("path", "?")
-            lines.append(f"{ts[:19].replace('T', ' ')} ({rel}) → Artifact written: {path}.")
+            if isinstance(path, str) and path.startswith("anchors/"):
+                lines.append(f"{ts[:19].replace('T', ' ')} ({rel}) → Anchor artifact written: {path}.")
+            else:
+                lines.append(f"{ts[:19].replace('T', ' ')} ({rel}) → Artifact written: {path}.")
         elif kind == "artifact_invalidated":
             path = payload.get("path", "?")
             lines.append(f"{ts[:19].replace('T', ' ')} ({rel}) → Artifact invalidated: {path}.")
+        elif kind == "anchor_captured":
+            lines.append(
+                f"{ts[:19].replace('T', ' ')} ({rel}) → Anchor captured: "
+                f"{payload.get('anchor_type', 'anchor')}/{payload.get('scope', 'unknown')} at {payload.get('artifact_path', '?')}."
+            )
+        elif kind == "anchor_missing_artifact":
+            lines.append(
+                f"{ts[:19].replace('T', ' ')} ({rel}) → Anchor artifact missing: "
+                f"{payload.get('anchor_type', 'anchor')} {payload.get('artifact_path', '?')}."
+            )
         elif kind == "override_applied":
             action = payload.get("action", "?")
             reason = payload.get("reason", "")

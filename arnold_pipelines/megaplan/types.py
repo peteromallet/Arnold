@@ -83,6 +83,31 @@ class PlanMeta(TypedDict, total=False):
     notes: list[dict[str, Any]]
     imported_decisions: list["SettledDecisionFromDoc"]
     user_approved_gate: bool
+    anchors: NotRequired["AnchorsMeta"]
+
+
+class AnchorDocumentMeta(TypedDict, total=False):
+    scope: str
+    source_kind: str
+    source_path: str
+    source_spec_path: str
+    artifact_path: str
+    title: str
+    sha256: str
+    size_bytes: int
+    captured_at: str
+    label: str
+
+
+class AnchorTypeMeta(TypedDict, total=False):
+    anchor_type: str
+    documents: list[AnchorDocumentMeta]
+    combined_artifact_path: str
+
+
+class AnchorsMeta(TypedDict, total=False):
+    schema_version: int
+    by_type: dict[str, AnchorTypeMeta]
 
 
 class SessionInfo(TypedDict, total=False):

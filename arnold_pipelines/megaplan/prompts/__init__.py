@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any, Callable, Mapping
 
 from arnold_pipelines.megaplan._core import creative_form_id, is_creative_mode
+from arnold_pipelines.megaplan.anchors import render_anchor_block
 from arnold_pipelines.megaplan.forms import get_form
 from arnold_pipelines.megaplan.types import CliError, PlanState
 
@@ -158,6 +159,13 @@ def _prepend_harness_guard(prompt: str) -> str:
     return f"{_NESTED_HARNESS_GUARD}\n\n{prompt}"
 
 
+def _with_anchor_block(prompt: str, state: PlanState, plan_dir: Path, *, audience: str) -> str:
+    anchor_block = render_anchor_block(state, plan_dir, audience=audience)
+    if not anchor_block:
+        return prompt
+    return f"{anchor_block}\n\n{prompt}"
+
+
 def _builder_kwargs(builder: _PromptBuilder, prompt_kwargs: dict[str, object]) -> dict[str, object]:
     """Forward only kwargs accepted by the target builder."""
     if not prompt_kwargs:
@@ -185,7 +193,7 @@ def _execute_batch_prompt(
 ) -> str:
     mode = state.get("config", {}).get("mode", "code")
     if mode == "doc":
-        return _execute_doc_batch_prompt(
+        prompt = _execute_doc_batch_prompt(
             state,
             plan_dir,
             batch_task_ids,
@@ -193,8 +201,9 @@ def _execute_batch_prompt(
             root=root,
             projection_capabilities=projection_capabilities,
         )
+        return _with_anchor_block(prompt, state, plan_dir, audience="execute-batch")
     if is_creative_mode(state):
-        return _execute_creative_batch_prompt(
+        prompt = _execute_creative_batch_prompt(
             state,
             plan_dir,
             batch_task_ids,
@@ -202,7 +211,8 @@ def _execute_batch_prompt(
             root=root,
             projection_capabilities=projection_capabilities,
         )
-    return _execute_code_batch_prompt(
+        return _with_anchor_block(prompt, state, plan_dir, audience="execute-batch")
+    prompt = _execute_code_batch_prompt(
         state,
         plan_dir,
         batch_task_ids,
@@ -212,6 +222,7 @@ def _execute_batch_prompt(
         projection_capabilities=projection_capabilities,
         batch_template_path=batch_template_path,
     )
+    return _with_anchor_block(prompt, state, plan_dir, audience="execute-batch")
 
 
 def _resolve_builder(
@@ -319,21 +330,24 @@ def create_prompt(
     contract_context = prompt_kwargs.pop("contract_context", None)
     if step == "review":
         ensure_review_evidence_for_prompt(state, plan_dir, root=root)
-        return _prepend_harness_guard(builder(state, plan_dir, **_builder_kwargs(builder, prompt_kwargs)))
+        prompt = builder(state, plan_dir, **_builder_kwargs(builder, prompt_kwargs))
+        return _prepend_harness_guard(_with_anchor_block(prompt, state, plan_dir, audience="review"))
     if step == "plan":
-        return _prepend_harness_guard(builder(state, plan_dir, contract_context=contract_context))
+        prompt = builder(state, plan_dir, contract_context=contract_context)
+        return _prepend_harness_guard(_with_anchor_block(prompt, state, plan_dir, audience="plan"))
     if step == "prep":
-        return _prepend_harness_guard(builder(state, plan_dir, root=root, contract_context=contract_context))
+        prompt = builder(state, plan_dir, root=root, contract_context=contract_context)
+        return _prepend_harness_guard(_with_anchor_block(prompt, state, plan_dir, audience="prep"))
     if step == "prep-triage":
-        return _prepend_harness_guard(builder(state, plan_dir, root=root, contract_context=contract_context))
+        prompt = builder(state, plan_dir, root=root, contract_context=contract_context)
+        return _prepend_harness_guard(_with_anchor_block(prompt, state, plan_dir, audience="prep-triage"))
     if step == "prep-distill":
         allowed = {}
         for key in ("triage", "findings", "output_path", "dossier_path", "metrics_path"):
             if key in prompt_kwargs:
                 allowed[key] = prompt_kwargs.pop(key)
-        return _prepend_harness_guard(
-            builder(state, plan_dir, root=root, contract_context=contract_context, **allowed)
-        )
+        prompt = builder(state, plan_dir, root=root, contract_context=contract_context, **allowed)
+        return _prepend_harness_guard(_with_anchor_block(prompt, state, plan_dir, audience="prep-distill"))
     if step in ("critique", "critique_evaluator"):
         critique_kwargs = _builder_kwargs(
             builder,
@@ -342,9 +356,8 @@ def create_prompt(
                 "contract_context": contract_context,
             },
         )
-        return _prepend_harness_guard(
-            builder(state, plan_dir, root=root, **critique_kwargs)
-        )
+        prompt = builder(state, plan_dir, root=root, **critique_kwargs)
+        return _prepend_harness_guard(_with_anchor_block(prompt, state, plan_dir, audience=step))
     if step == "gate":
         gate_kwargs = _builder_kwargs(
             builder,
@@ -353,12 +366,13 @@ def create_prompt(
                 "contract_context": contract_context,
             },
         )
-        return _prepend_harness_guard(builder(state, plan_dir, root=root, **gate_kwargs))
+        prompt = builder(state, plan_dir, root=root, **gate_kwargs)
+        return _prepend_harness_guard(_with_anchor_block(prompt, state, plan_dir, audience="gate"))
     if step in _ROOT_BEARING_STEPS:
-        return _prepend_harness_guard(
-            builder(state, plan_dir, root=root, **_builder_kwargs(builder, prompt_kwargs))
-        )
-    return _prepend_harness_guard(builder(state, plan_dir))
+        prompt = builder(state, plan_dir, root=root, **_builder_kwargs(builder, prompt_kwargs))
+        return _prepend_harness_guard(_with_anchor_block(prompt, state, plan_dir, audience=step))
+    prompt = builder(state, plan_dir)
+    return _prepend_harness_guard(_with_anchor_block(prompt, state, plan_dir, audience=step))
 
 
 def create_prompt_components(

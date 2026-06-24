@@ -35,6 +35,8 @@ A megaplan should fit roughly **two weeks of human work** — the time a skilled
 
 If the work is bigger, **split it into an epic** — a chain of sprint-sized megaplans driven sequentially by `python -m arnold.pipelines.megaplan chain`. Each sprint in the chain gets its own brief, its own overall plan difficulty score, its own profile, and its own retrospective. See the **megaplan-epic** skill for spec format, per-milestone rubric, and end-to-end usage. Cramming a month of work into one plan means the brief drifts, the critique loses focus, and the review can't hold the whole shape in one pass.
 
+For epics, migrations, public contract changes, or cross-cutting refactors, write a North Star before kickoff. The North Star is the durable end-state intent that every milestone should preserve; milestone briefs should narrow local scope without redefining that destination.
+
 Signs you should split:
 
 - Multiple major architectural decisions — each deserves its own sprint.
@@ -52,6 +54,8 @@ When you split, structure the dependency graph explicitly. Each handoff is a wri
 **The brief must be locked in before init** — fully self-contained so the model can run end-to-end without coming back for clarification. The harness snapshots the brief at `init`; later edits to the idea-file are not re-read. If you find yourself wanting to "ask the model" what to do, write that decision down first.
 
 **Store durable briefs in `.megaplan/briefs/`.** Single-plan ideas live at `.megaplan/briefs/<slug>.md`. Epics live at `.megaplan/briefs/<epic-slug>/chain.yaml` with their milestone briefs in the same directory. `.megaplan/plans/` is generated run state; `.megaplan/briefs/` is the committed input material you hand to `python -m arnold.pipelines.megaplan init` or `python -m arnold.pipelines.megaplan chain start`. Use `python -m arnold.pipelines.megaplan brief new` or `python -m arnold.pipelines.megaplan brief epic` to create the canonical files.
+
+For single plans, pass `--north-star path/to/NORTHSTAR.md` at `init` when the local brief needs durable alignment context. For epics, keep `NORTHSTAR.md` beside `chain.yaml` and declare it as `anchors.north_star`; `brief epic` scaffolds this by default. Anchor files are snapshotted into plan state at initialization, so edit the source before starting the run.
 
 A good brief covers:
 
