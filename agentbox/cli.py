@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import asyncio
 from dataclasses import asdict, is_dataclass
 from datetime import datetime
 import json
@@ -30,6 +31,7 @@ from agentbox.operation_views import (
     single_process_session_resource,
     status_view,
 )
+from agentbox.guardian.service import GuardianService
 from agentbox.reconcile import reconcile
 from agentbox.run_dirs import run_dir_paths
 from agentbox.tmux import attach_argv, inspect_session
@@ -77,6 +79,39 @@ def build_parser() -> argparse.ArgumentParser:
         help="Report AgentBox host-local state without mutating it.",
     )
     reconcile_parser.add_argument("--json", action="store_true", help="Write stable JSON output.")
+
+    guardian_parser = subparsers.add_parser(
+        "guardian",
+        help="Run or control the AgentBox Guardian worker.",
+    )
+    guardian_subparsers = guardian_parser.add_subparsers(dest="guardian_command")
+
+    for name, help_text in (
+        ("run-once", "Run a single Guardian tick and exit."),
+        ("pause", "Pause the Guardian without touching operations or leases."),
+        ("resume", "Resume the Guardian worker."),
+    ):
+        sub = guardian_subparsers.add_parser(name, help=help_text)
+        sub.add_argument("--json", action="store_true", help="Write stable JSON output.")
+
+    run_parser = guardian_subparsers.add_parser(
+        "run",
+        help="Run the Guardian worker loop until interrupted.",
+    )
+    run_parser.add_argument(
+        "--poll-interval",
+        type=float,
+        default=60.0,
+        help="Seconds between ticks.",
+    )
+    run_parser.add_argument("--json", action="store_true", help="Write stable JSON output.")
+
+    status_parser = guardian_subparsers.add_parser(
+        "status",
+        help="Show Guardian status.",
+    )
+    status_parser.add_argument("--json", action="store_true", help="Write stable JSON output.")
+
     return parser
 
 
@@ -115,6 +150,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             return _attach(config, args.operation_id)
         if args.command == "reconcile":
             return _reconcile(config, json_output=json_output)
+        if args.command == "guardian":
+            return _guardian(config, args, json_output=json_output)
     except (AgentBoxConfigError, AgentBoxOperationError, FileNotFoundError, ValueError) as exc:
         return _diagnostic(str(exc), json_output=json_output)
     return _diagnostic(f"unknown command: {args.command}", json_output=json_output)
@@ -218,6 +255,37 @@ def _reconcile(config: Any, *, json_output: bool) -> int:
     report = reconcile(config).to_dict()
     _emit(report, json_output=json_output)
     return 0
+
+
+def _guardian(config: Any, args: argparse.Namespace, *, json_output: bool) -> int:
+    service = GuardianService.default(config)
+    command = getattr(args, "guardian_command", None)
+    if command is None:
+        return _diagnostic("guardian subcommand required", json_output=json_output)
+    if command == "run-once":
+        result = asyncio.run(service.run_once())
+        _emit(result, json_output=json_output)
+        return 0
+    if command == "run":
+        service.poll_interval_seconds = getattr(args, "poll_interval", 60.0)
+        try:
+            asyncio.run(service.run_forever())
+        except KeyboardInterrupt:
+            pass
+        return 0
+    if command == "pause":
+        result = service.pause()
+        _emit(result, json_output=json_output)
+        return 0
+    if command == "resume":
+        result = service.resume()
+        _emit(result, json_output=json_output)
+        return 0
+    if command == "status":
+        result = service.status()
+        _emit(result, json_output=json_output)
+        return 0
+    return _diagnostic(f"unknown guardian command: {command}", json_output=json_output)
 
 
 def _run_result_payload(
