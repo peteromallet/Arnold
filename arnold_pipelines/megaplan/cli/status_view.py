@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from arnold_pipelines.megaplan.anchors import anchor_summary
 from arnold_pipelines.megaplan.types import StepResponse
 from arnold_pipelines.megaplan.planning.state import STATE_BLOCKED
 from arnold_pipelines.megaplan.user_actions import FALLBACK, OMIT
@@ -839,6 +840,7 @@ def _build_status_payload(plan_dir: Path, state: dict[str, Any]) -> StepResponse
     last_step = _build_last_step(state)
     plan_mode = state.get("config", {}).get("mode", "code")
     plan_output_path = state.get("config", {}).get("output_path")
+    anchors = anchor_summary(state, plan_dir)
     summary = (
         f"Plan '{state['name']}' is currently in state '{state['current_state']}'."
     )
@@ -861,6 +863,13 @@ def _build_status_payload(plan_dir: Path, state: dict[str, Any]) -> StepResponse
             routing_degradations
         )
         summary = summary + f" WARNING routing degraded: {routing_degradation_summary}."
+    if anchors.get("present"):
+        anchor_bits = []
+        for anchor_type in anchors.get("types", []):
+            detail = anchors.get(anchor_type, {})
+            scopes = ",".join(detail.get("scopes", [])) if isinstance(detail, dict) else ""
+            anchor_bits.append(f"{anchor_type}({scopes})")
+        summary = summary + f" Anchors: {', '.join(anchor_bits)}."
     response: StepResponse = {
         "success": True,
         "step": "status",
@@ -882,6 +891,7 @@ def _build_status_payload(plan_dir: Path, state: dict[str, Any]) -> StepResponse
         "total_cost_usd": state.get("meta", {}).get("total_cost_usd", 0.0),
         "mode": plan_mode,
         "output_path": plan_output_path,
+        "anchors": anchors,
         "notes_count": len(notes) if isinstance(notes, list) else 0,
         "notes": notes if isinstance(notes, list) else [],
         "session_summaries": [
@@ -1015,11 +1025,13 @@ def handle_audit(root: Path, args: argparse.Namespace) -> StepResponse:
 
         return handle_audit_report(root, args)
     plan_dir, state = cli_mod.load_plan(root, args.plan)
+    anchors = anchor_summary(state, plan_dir)
     return {
         "success": True,
         "step": "audit",
         "plan": state["name"],
         "plan_dir": str(plan_dir),
+        "anchors": anchors,
         "state": state,
     }
 

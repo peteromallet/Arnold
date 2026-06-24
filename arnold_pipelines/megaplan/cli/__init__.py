@@ -1094,6 +1094,7 @@ def handle_brief(root: Path, args: argparse.Namespace) -> StepResponse:
             "step": "brief",
             "action": "epic",
             "chain": str(chain_path),
+            "north_star": str(chain_path.with_name("NORTHSTAR.md")),
             "milestones": [str(path) for path in milestone_paths],
         }
     if action == "show":
@@ -1747,7 +1748,14 @@ def _handle_pipelines(root: Path, args: argparse.Namespace) -> int:
     return 1
 
 
+def handle_anchors(root: Path, args: argparse.Namespace) -> StepResponse:
+    from arnold_pipelines.megaplan.handlers.anchors import handle_anchors as _handle
+
+    return _handle(root, args)
+
+
 COMMAND_HANDLERS: dict[str, Callable[..., StepResponse]] = {
+    "anchors": handle_anchors,
     "init": handle_init,
     "plan": handle_plan,
     "prep": handle_prep,

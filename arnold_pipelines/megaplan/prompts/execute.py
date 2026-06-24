@@ -8,6 +8,7 @@ import json
 from pathlib import Path
 from typing import Any
 
+from arnold_pipelines.megaplan.anchors import render_anchor_block
 from arnold_pipelines.megaplan._core import (
     batch_artifact_path,
     compute_task_batches,
@@ -81,6 +82,13 @@ _EXECUTE_OUTPUT_SHAPE_EXAMPLE = textwrap.dedent(
     ```
     """
 ).strip()
+
+
+def _with_anchor_block(prompt: str, state: PlanState, plan_dir: Path, *, audience: str) -> str:
+    anchor_block = render_anchor_block(state, plan_dir, audience=audience)
+    if not anchor_block:
+        return prompt
+    return f"{anchor_block}\n\n{prompt}"
 
 _EXECUTE_REQUIREMENTS_TEMPLATE = textwrap.dedent(
     """
@@ -502,7 +510,7 @@ def _execute_prompt(
         finalize_data, resolutions, all_task_ids
     )
 
-    return textwrap.dedent(
+    prompt = textwrap.dedent(
         f"""
         Execute the approved plan in the repository.
 
@@ -543,6 +551,7 @@ def _execute_prompt(
         {execution_nudges}
         """
     ).strip()
+    return _with_anchor_block(prompt, state, plan_dir, audience="execute")
 
 
 def _execute_batch_prompt(
@@ -676,7 +685,7 @@ def _execute_batch_prompt(
         if projection_capabilities is None or projection_capabilities.can_read_plan_dir
         else "Template contents are embedded below for workers without plan-directory file access."
     )
-    return textwrap.dedent(
+    prompt = textwrap.dedent(
         f"""
         Execute the approved plan in the repository.
 
@@ -736,6 +745,7 @@ def _execute_batch_prompt(
         ```
         """
     ).strip()
+    return _with_anchor_block(prompt, state, plan_dir, audience="execute-batch")
 
 
 def _execute_batch_template_payload(

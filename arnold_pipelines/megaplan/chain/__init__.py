@@ -87,6 +87,7 @@ from arnold_pipelines.megaplan.runtime.process import (
     megaplan_engine_env,
     megaplan_engine_root,
 )
+from arnold_pipelines.megaplan.anchors import AnchorCaptureRequest, attach_anchor_documents, resolve_anchor_path
 from arnold_pipelines.megaplan.types import CliError
 from arnold_pipelines.megaplan.planning.state import (
     STATE_AWAITING_PR_MERGE,
@@ -233,6 +234,46 @@ def _write_chain_policy_into_plan_meta(
     write_plan_state(
         plan_dir, mode="patch-many", patch={}, mutation=_patch_chain_policy
     )
+
+
+def _attach_chain_anchors_to_plan(root: Path, spec_path: Path, plan_name: str, spec: ChainSpec, milestone: MilestoneSpec) -> None:
+    from arnold_pipelines.megaplan._core import read_json
+    from arnold_pipelines.megaplan._core.state import write_plan_state
+
+    requests: list[AnchorCaptureRequest] = []
+    if spec.anchors.north_star:
+        requests.append(
+            AnchorCaptureRequest(
+                anchor_type="north_star",
+                scope="epic",
+                source_path=resolve_anchor_path(spec_path, spec.anchors.north_star),
+                source_kind="chain",
+                source_spec_path=spec_path,
+            )
+        )
+    if milestone.anchors.north_star:
+        requests.append(
+            AnchorCaptureRequest(
+                anchor_type="north_star",
+                scope="plan",
+                source_path=resolve_anchor_path(spec_path, milestone.anchors.north_star),
+                source_kind="milestone",
+                label=milestone.label,
+                source_spec_path=spec_path,
+            )
+        )
+    if not requests:
+        return
+    plan_dir = resolve_plan_dir(root, plan_name)
+    state = read_json(plan_dir / "state.json")
+    if not isinstance(state, dict):
+        return
+
+    def _patch_anchors(current: dict[str, Any]) -> bool:
+        attach_anchor_documents(plan_dir=plan_dir, state=current, documents=requests, project_root=root)
+        return True
+
+    write_plan_state(plan_dir, mode="patch-many", patch={}, mutation=_patch_anchors)
 
 
 # ---------------------------------------------------------------------------
@@ -2025,7 +2066,11 @@ def run_chain(
     root = root.resolve(strict=False)
     spec_path = spec_path.resolve(strict=False)
     spec = chain_spec.load_spec(spec_path)
-    chain_spec.validate_paths(spec, root)
+    if spec.require_anchor:
+        chain_spec.validate_required_anchor(spec)
+    if warning := chain_spec.warn_undeclared_north_star(spec, spec_path):
+        writer(f"[chain] WARNING: {warning}\n")
+    chain_spec.validate_paths(spec, root, spec_path=spec_path)
     _preflight_agent_backends(spec, writer=writer)
     state = chain_spec.load_chain_state(spec_path)
     env = resolve_execution_environment(
@@ -2335,6 +2380,7 @@ def run_chain(
             _write_chain_policy_into_plan_meta(
                 root, plan_name, spec, spec_path, milestone.label
             )
+            _attach_chain_anchors_to_plan(root, spec_path, plan_name, spec, milestone)
             state.current_milestone_index = idx
             state.current_plan_name = plan_name
             chain_spec.save_chain_state(spec_path, state)
@@ -2867,6 +2913,7 @@ def build_chain_parser(subparsers: Any) -> None:
         action="store_true",
         help="Drive at most one pending milestone, persist progress, then stop cleanly.",
     )
+    chain_parser.add_argument("--require-anchor", action="store_true", default=False, help="Reject chain specs that do not declare top-level anchors.north_star.")
 
     start_parser = chain_sub.add_parser("start", help="Drive a chain spec")
     start_parser.add_argument(
@@ -2896,6 +2943,7 @@ def build_chain_parser(subparsers: Any) -> None:
         action="store_true",
         help="Drive at most one pending milestone, persist progress, then stop cleanly.",
     )
+    start_parser.add_argument("--require-anchor", action="store_true", default=False, help="Reject chain specs that do not declare top-level anchors.north_star.")
 
     status_parser = chain_sub.add_parser(
         "status", help="Show persisted chain progress without driving"
@@ -3099,6 +3147,9 @@ def run_chain_cli(
     one = bool(getattr(args, "one", False))
     fresh = bool(getattr(args, "fresh", False))
     try:
+        spec_for_anchor_check = chain_spec.load_spec(spec_path)
+        if bool(getattr(args, "require_anchor", False)) or spec_for_anchor_check.require_anchor:
+            chain_spec.validate_required_anchor(spec_for_anchor_check)
         if supervisor_tier_routing_on():
             from arnold_pipelines.megaplan.supervisor.chain_runner import (
                 run_chain as supervisor_run_chain,

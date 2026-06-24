@@ -100,6 +100,21 @@ def scaffold_epic(
 
     parsed = [_parse_milestone(item) for item in milestones]
     written: list[Path] = []
+    north_star_path = directory / "NORTHSTAR.md"
+    if north_star_path.exists() and not force:
+        raise FileExistsError(north_star_path)
+    write_markdown_artifact(
+        north_star_path,
+        _default_north_star_template(slug),
+        metadata={
+            "type": "anchor",
+            "anchor_type": "north_star",
+            "slug": slug,
+            "title": f"North Star: {slug.replace('-', ' ').title()}",
+            "created_at": datetime.now(timezone.utc),
+        },
+    )
+    written.append(north_star_path)
     chain_milestones: list[dict[str, str]] = []
     for label, title in parsed:
         path = directory / f"{label}.md"
@@ -139,6 +154,7 @@ def scaffold_epic(
         yaml.safe_dump(
             {
                 "base_branch": base_branch,
+                "anchors": {"north_star": "NORTHSTAR.md"},
                 "milestones": chain_milestones,
                 "on_failure": {"abort": "stop_chain"},
                 "on_escalate": {"abort": "stop_chain"},
@@ -150,6 +166,26 @@ def scaffold_epic(
         encoding="utf-8",
     )
     return chain_path, written
+
+
+def _default_north_star_template(slug: str) -> str:
+    title = slug.replace("-", " ").title()
+    return "\n".join(
+        [
+            f"# North Star: {title}",
+            "",
+            "## End State",
+            "",
+            "## Non-Negotiables",
+            "",
+            "## Explicit Non-Goals",
+            "",
+            "## Allowed Temporary Bridges",
+            "",
+            "## Drift Signals",
+            "",
+        ]
+    )
 
 
 def list_briefs(repo_root: str | Path) -> list[dict[str, Any]]:

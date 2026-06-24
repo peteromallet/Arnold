@@ -55,6 +55,11 @@ When something seems wrong, investigate in this order:
 
 The hierarchy is deliberate: each step is a thin reader over the same `events.ndjson` journal. Jumping to the filesystem before trying the surfaces misses the structured analysis those surfaces provide (liveness computation, drift detection, recoverable_via enumeration).
 
+When a run has a North Star, `introspect` includes an `anchors` summary. Use
+`megaplan anchors show --plan X` to inspect the captured anchor text and metadata
+before diagnosing drift; prompts use the snapshotted copy, not later edits to the
+source `NORTHSTAR.md`.
+
 ---
 
 ## 3. Failure-mode catalog

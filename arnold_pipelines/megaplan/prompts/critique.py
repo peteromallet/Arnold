@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any, Mapping
 
 from arnold_pipelines.megaplan.forms.provocations import select_active_checks
+from arnold_pipelines.megaplan.anchors import render_anchor_block
 from arnold_pipelines.megaplan._core import (
     configured_robustness,
     intent_brief_reference,
@@ -24,6 +25,13 @@ from arnold_pipelines.megaplan.types import PlanState
 _CRITIQUE_UNVERIFIABLE_ESCAPE_HATCH = """
 Self-monitor for non-convergence before spending more tool calls. This is NOT about duration or difficulty: hard checks that are still making new progress should continue. But if you are spinning — re-reading the same file 3+ times, searching for a file the plan says to CREATE, needing a sibling/external repo or path outside the project root, or making many tool calls without getting closer to a verdict — STOP investigating. Not finding what you need is a finding; emit exactly one non-flagged finding whose detail starts `unverifiable: ` and explains what you could not resolve and exactly why. An unverifiable check is a complete, valid result for this worker; normal code ambiguity that you can inspect should still be flagged per the usual "when in doubt, flag it" rule.
 """.strip()
+
+
+def _with_anchor_block(prompt: str, state: PlanState, plan_dir: Path, *, audience: str) -> str:
+    anchor_block = render_anchor_block(state, plan_dir, audience=audience)
+    if not anchor_block:
+        return prompt
+    return f"{anchor_block}\n\n{prompt}"
 
 
 def _settled_decisions_block(decisions: list[dict[str, Any]]) -> str:
@@ -610,4 +618,9 @@ def single_check_critique_prompt(
         Workflow: read the file → investigate → read file again → add finding → write file back. Repeat for this check.{iteration_context}
     """
     ).strip()
-    return _build_critique_prompt(state, context, critique_review_block)
+    return _with_anchor_block(
+        _build_critique_prompt(state, context, critique_review_block),
+        state,
+        plan_dir,
+        audience="parallel_critique",
+    )

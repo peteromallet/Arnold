@@ -276,6 +276,12 @@ def build_parser() -> argparse.ArgumentParser:
         "code, --mode doc, --mode joke, or --mode creative.",
     )
     init_parser.add_argument(
+        "--north-star",
+        default=None,
+        metavar="PATH",
+        help="Snapshot a UTF-8 North Star anchor file into the new plan.",
+    )
+    init_parser.add_argument(
         "--idea-file",
         default=None,
         help="Read the idea text from a UTF-8 file instead of the positional CLI argument.",
@@ -368,6 +374,13 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Show verbose pipeline listing (description, version, profile)",
     )
+
+    anchors_parser = subparsers.add_parser("anchors", help="Inspect captured plan anchors")
+    anchors_sub = anchors_parser.add_subparsers(dest="anchors_action", required=True)
+    anchors_show = anchors_sub.add_parser("show", help="Show captured anchor metadata and content")
+    anchors_show.add_argument("--plan", required=True)
+    anchors_show.add_argument("--json", action="store_true", dest="as_json")
+    anchors_show.add_argument("--type", dest="anchor_type", default="north_star", choices=["north_star"])
 
     describe_parser = subparsers.add_parser(
         "describe", help="Show metadata and SKILL.md for a YAML pipeline"
