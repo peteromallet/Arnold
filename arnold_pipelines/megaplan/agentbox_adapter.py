@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Mapping
 
+from arnold.credentials.manifest import CredentialManifest
 from arnold.runtime.durable_ops import (
     OperationNotFound,
     OperationState,
@@ -18,6 +19,7 @@ from arnold_pipelines.megaplan.chain.status import ChainStatusSnapshot, build_ch
 from arnold_pipelines.megaplan.types import CliError
 
 from agentbox.config import AgentBoxConfig
+from agentbox.credentials.backend import list_credentials, run_credential_tests
 from agentbox.host import (
     HostLaunchError,
     HostLaunchResult,
@@ -139,6 +141,26 @@ class MegaplanChainHandler:
         )
         project_root = _primary_worktree(prepared)
         resolved_spec_path = _resolve_spec_path(spec_path, project_root)
+
+        manifest = _load_credential_manifest(resolved_spec_path)
+        if manifest is not None:
+            ok, message, fix_commands = _check_required_credentials(
+                config, manifest
+            )
+            if not ok:
+                diagnostics = _credential_diagnostics(
+                    message=message,
+                    fix_commands=fix_commands,
+                    manifest=manifest,
+                )
+                _record_credential_failure(
+                    config, operation_id, prepared.run_paths, diagnostics
+                )
+                raise MegaplanChainLaunchError(
+                    "credential_preflight_failed",
+                    message,
+                    diagnostics=diagnostics,
+                ) from None
 
         try:
             spec = load_spec(resolved_spec_path)
@@ -684,6 +706,94 @@ def _merge_run_metadata(paths: RunDirPaths, values: Mapping[str, Any]) -> None:
     current = read_metadata(paths)
     current.update(values)
     write_metadata(paths, current)
+
+
+def _load_credential_manifest(spec_path: Path) -> CredentialManifest | None:
+    path = spec_path.parent / "credentials.yaml"
+    if not path.exists():
+        return None
+    return CredentialManifest.from_path(path)
+
+
+def _check_required_credentials(
+    config: AgentBoxConfig,
+    manifest: CredentialManifest,
+    environ: Mapping[str, str] | None = None,
+) -> tuple[bool, str, list[str]]:
+    records = {record.name: record for record in list_credentials(config, environ=environ)}
+    missing: list[str] = []
+    stale: list[str] = []
+
+    for requirement in manifest.credentials:
+        if not requirement.required:
+            continue
+        record = records.get(requirement.name)
+        if record is None or not record.present:
+            missing.append(requirement.name)
+            continue
+        if record.test_status != "passed":
+            stale.append(requirement.name)
+
+    if not missing and not stale:
+        return True, "", []
+
+    fix_commands: list[str] = []
+    for name in missing:
+        fix_commands.append(f"agentbox creds push {name}")
+    for name in stale:
+        fix_commands.append(f"agentbox creds test {name}")
+
+    parts: list[str] = []
+    if missing:
+        parts.append(f"missing: {', '.join(missing)}")
+    if stale:
+        parts.append(f"stale: {', '.join(stale)}")
+    message = f"Required credentials are {', '.join(parts)}. Fix with: {'; '.join(fix_commands)}"
+    return False, message, fix_commands
+
+
+def _credential_diagnostics(
+    *,
+    message: str,
+    fix_commands: list[str],
+    manifest: CredentialManifest,
+) -> dict[str, Any]:
+    return {
+        "phase": "credential_preflight",
+        "kind": "credential_preflight_failed",
+        "message": message,
+        "fix_commands": fix_commands,
+        "required_credentials": [
+            {"name": req.name, "provider": req.provider, "required": req.required}
+            for req in manifest.credentials
+        ],
+    }
+
+
+def _record_credential_failure(
+    config: AgentBoxConfig,
+    operation_id: str,
+    run_paths: RunDirPaths,
+    diagnostics: Mapping[str, Any],
+) -> None:
+    update_agentbox_operation(
+        config,
+        operation_id,
+        metadata={
+            "launch_diagnostics": dict(diagnostics),
+            "validation": {"status": "failed", "phase": "credential_preflight"},
+        },
+        launch_state="failed_before_running",
+    )
+    _merge_run_metadata(
+        run_paths,
+        {
+            "launch_state": "failed_before_running",
+            "launch_diagnostics": dict(diagnostics),
+            "validation": {"status": "failed", "phase": "credential_preflight"},
+        },
+    )
+    append_event(run_paths, "megaplan_chain.credential_preflight_failed", payload=dict(diagnostics))
 
 
 __all__ = [
