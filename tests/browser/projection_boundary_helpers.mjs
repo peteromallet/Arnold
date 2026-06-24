@@ -29,6 +29,8 @@ export const FORBIDDEN_NORMAL_LEGACY_ALIAS_KEYS = Object.freeze(new Set([
   "canvas_apply_allowed",
   "applyAllowed",
   "canvasApplyAllowed",
+  "queue_allowed",
+  "queueAllowed",
 ]));
 
 export const FORBIDDEN_NORMAL_PROJECTION_KEYS = Object.freeze(new Set([

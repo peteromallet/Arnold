@@ -6111,9 +6111,7 @@ function collectThreadMessageEntries(panel) {
 
 function renderChatBubbleNode(bubble, panel, msg, messageKey, messageIndex) {
   return renderChatBubbleNodeImpl(bubble, panel, msg, messageKey, messageIndex, {
-    appendAuditDetail,
     appendCandidateDetail,
-    appendDebugDetail,
     appendFailureDetail,
     appendQueueDetail,
     appendTextLine,
@@ -6122,7 +6120,6 @@ function renderChatBubbleNode(bubble, panel, msg, messageKey, messageIndex) {
     clearNode,
     createBubbleDetailSection,
     createDetails,
-    detailSnapshotForMessage,
     el,
     ensureThreadRenderState,
     showIssueModal,
@@ -6132,10 +6129,8 @@ function renderChatBubbleNode(bubble, panel, msg, messageKey, messageIndex) {
 
 function reconcileChatBubbles(panel, messagesMount, displayEntries) {
   return reconcileChatBubblesImpl(panel, messagesMount, displayEntries, {
-    appendAuditDetail,
     appendCandidateDetail,
     appendChildOnce,
-    appendDebugDetail,
     appendFailureDetail,
     appendQueueDetail,
     appendTextLine,
@@ -6144,7 +6139,6 @@ function reconcileChatBubbles(panel, messagesMount, displayEntries) {
     clearNode,
     createBubbleDetailSection,
     createDetails,
-    detailSnapshotForMessage,
     el,
     ensureThreadRenderState,
     messageSignature,
@@ -6253,9 +6247,7 @@ function installAgentPanelDebugHook() {
 
 function populateAgentBubbleDetail(target, panel, message, snapshot = null) {
   return populateAgentBubbleDetailImpl(target, panel, message, snapshot, {
-    appendAuditDetail,
     appendCandidateDetail,
-    appendDebugDetail,
     appendFailureDetail,
     appendQueueDetail,
     appendTextLine,
@@ -7004,7 +6996,7 @@ function _computeGhostDimensions(cn, ctx) {
   var PAD_Y = 12;
   var MIN_W = 140;
 
-  var title = (typeof cn.title === "string" && cn.title) || (typeof cn.type === "string" && cn.type) || "Node";
+  var title = safePreviewOverlayText((typeof cn.title === "string" && cn.title) || (typeof cn.type === "string" && cn.type) || "Node", "Node");
   var inputs = Array.isArray(cn.inputs) ? cn.inputs : [];
   var outputs = Array.isArray(cn.outputs) ? cn.outputs : [];
   var widgetValues = readWidgetValues(cn);
@@ -7025,11 +7017,11 @@ function _computeGhostDimensions(cn, ctx) {
 
     var maxSlotW = 0;
     for (var s = 0; s < inputs.length; s += 1) {
-      var lbl = inputs[s] && inputs[s].name;
+      var lbl = safePreviewOverlayText(inputs[s] && inputs[s].name, "");
       if (lbl) maxSlotW = Math.max(maxSlotW, ctx.measureText(_trunc(lbl, 30)).width);
     }
     for (var t = 0; t < outputs.length; t += 1) {
-      var olbl = outputs[t] && outputs[t].name;
+      var olbl = safePreviewOverlayText(outputs[t] && outputs[t].name, "");
       if (olbl) maxSlotW = Math.max(maxSlotW, ctx.measureText(_trunc(olbl, 30)).width);
     }
 
@@ -7054,10 +7046,28 @@ function _computeGhostDimensions(cn, ctx) {
   }
 }
 
+const FORBIDDEN_PREVIEW_OVERLAY_TEXT_PATTERNS = [
+  /\b(?:canvas_apply_allowed|canvasApplyAllowed|queue_allowed|queueAllowed)\b/i,
+  /\b(?:debug_payload|debugPayload|audit_ref|auditRef|raw_path|rawPath|artifact_path|artifactPath)\b/i,
+  /\/(?:real\/)?ComfyUI\/out\/editor_sessions\//i,
+  /\bturns\/\d+\/(?:response|messages|candidate|debug)\.[a-z0-9]+/i,
+  /\b(?:ProviderError|Traceback|stack trace|engine diagnostics|raw diagnostic)\b/i,
+  /\b(?:model prompt|system prompt|prompt messages)\b/i,
+  /\b(?:token budget|exit mode|remaining batches)\b/i,
+];
+
+function safePreviewOverlayText(text, fallback = "") {
+  const value = String(text == null ? "" : text).trim();
+  if (!value) return "";
+  return FORBIDDEN_PREVIEW_OVERLAY_TEXT_PATTERNS.some((pattern) => pattern.test(value))
+    ? fallback
+    : value;
+}
+
 // ── Widget-value preview text (T3) ────────────────────────────────────────
 function widgetValuePreviewText(value) {
   if (value == null) return "";
-  if (typeof value === "string") return value;
+  if (typeof value === "string") return safePreviewOverlayText(value, "");
   if (typeof value === "number" || typeof value === "boolean") return String(value);
   if (Array.isArray(value)) return "[…]";
   return "{…}";
@@ -7215,14 +7225,14 @@ export function drawPreviewOverlay(ctx, diff) {
       if (field && field.new_value !== null && field.new_value !== undefined) {
         label += ": " + field.new_value;
       }
-      return _trunc(label, 48);
+      return _trunc(safePreviewOverlayText(label, "field"), 48);
     };
 
     var _fieldNewValueLabel = function (field) {
       if (!field || field.new_value === null || field.new_value === undefined) {
         return "";
       }
-      return String(field.new_value);
+      return safePreviewOverlayText(field.new_value, "");
     };
 
     var editedFieldsByUid = new Map();
@@ -7460,7 +7470,7 @@ export function drawPreviewOverlay(ctx, diff) {
           ctx.textBaseline = "top";
 
           // Title
-          var titleText = (typeof cn.title === "string" && cn.title) || (typeof cn.type === "string" && cn.type) || "Node";
+          var titleText = safePreviewOverlayText((typeof cn.title === "string" && cn.title) || (typeof cn.type === "string" && cn.type) || "Node", "Node");
           var displayTitle = _trunc(titleText, 40);
           ctx.fillStyle = addedTextColor;
           ctx.fillText(displayTitle, cx + 10, cy + (TITLE_H - 14) / 2);
@@ -7477,13 +7487,13 @@ export function drawPreviewOverlay(ctx, diff) {
             if (si < inputs.length && inputs[si] && inputs[si].name) {
               ctx.fillStyle = addedTextColor;
               ctx.textAlign = "left";
-              ctx.fillText(_trunc(inputs[si].name, 30), cx + 16, slotY);
+              ctx.fillText(_trunc(safePreviewOverlayText(inputs[si].name, ""), 30), cx + 16, slotY);
             }
             // Output label (right side)
             if (si < outputs.length && outputs[si] && outputs[si].name) {
               ctx.fillStyle = addedTextColor;
               ctx.textAlign = "right";
-              ctx.fillText(_trunc(outputs[si].name, 30), cx + cw - 16, slotY);
+              ctx.fillText(_trunc(safePreviewOverlayText(outputs[si].name, ""), 30), cx + cw - 16, slotY);
             }
           }
 
@@ -7942,11 +7952,13 @@ function appendCandidateDetail(body, panel, message = null, snapshot = null) {
   }
   const actionState = candidateActionState(panel, message, snapshot);
   const eligibility = actionState.eligibility;
-  const canvasApplyAllowed = snapshot?.canvasApplyAllowed ?? panel.state.canvasApplyAllowed;
-  const queueAllowed = snapshot?.queueAllowed ?? panel.state.queueAllowed;
-  appendTextLine(body, `canvas_apply_allowed=${String(canvasApplyAllowed)}`, canvasApplyAllowed ? "#4caf50" : "#ffb86c");
+  if (!normalDetailMode) {
+    const canvasApplyAllowed = snapshot?.canvasApplyAllowed ?? panel.state.canvasApplyAllowed;
+    const queueAllowed = snapshot?.queueAllowed ?? panel.state.queueAllowed;
+    appendTextLine(body, `canvas_apply_allowed=${String(canvasApplyAllowed)}`, canvasApplyAllowed ? "#4caf50" : "#ffb86c");
+    appendTextLine(body, `queue_allowed=${String(queueAllowed)}`, queueAllowed ? "#4caf50" : "#ffb86c");
+  }
   appendTextLine(body, `apply_eligibility=${eligibility.reason}`, eligibility.applyable ? "#4caf50" : "#ffb86c");
-  appendTextLine(body, `queue_allowed=${String(queueAllowed)}`, queueAllowed ? "#4caf50" : "#ffb86c");
   if (eligibility.message) {
     appendTextLine(body, eligibility.message, "#9ed0ff");
   }
@@ -8002,7 +8014,7 @@ function appendCandidateDetail(body, panel, message = null, snapshot = null) {
     }
   }
   const report = snapshot?.candidateReport || (!normalDetailMode ? (message?.report || panel.state.candidateReport) : null);
-  const queueIssueReport = report || (normalDetailMode ? panel.state.candidateReport : null);
+  const queueIssueReport = report;
   const rows = collectDiffRows(report);
   if (!rows.length) {
     body.appendChild(muted("Candidate returned without report rows."));
@@ -8131,6 +8143,24 @@ function renderFailure(panel) {
 
 function appendQueueDetail(body, panel, snapshot = null) {
   const normalDetailMode = Boolean(snapshot);
+  if (normalDetailMode) {
+    const queueDisplay = snapshot?.queueDisplay;
+    if (!queueDisplay || typeof queueDisplay !== "object") {
+      return;
+    }
+    if (queueDisplay.message) {
+      appendTextLine(body, queueDisplay.message, queueDisplay.state === "blocked" ? "#ffb86c" : "#4caf50");
+    }
+    if (Array.isArray(queueDisplay.issues) && queueDisplay.issues.length) {
+      for (const issue of queueDisplay.issues) {
+        appendTextLine(body, issue.message || issue.code || "Queue issue", issue.severity === "error" ? "#ffb86c" : "#9ed0ff");
+      }
+    }
+    if (!queueDisplay.message && !queueDisplay.issues?.length && queueDisplay.reason) {
+      appendTextLine(body, queueDisplay.reason, queueDisplay.state === "blocked" ? "#ffb86c" : "#8d93a1");
+    }
+    return;
+  }
   const queueGuard = snapshot?.queueGuard || panel.state.queueGuard || getQueueGuardStateForPanel();
   const issues = collectQueueIssues(snapshot?.candidateReport || panel.state.candidateReport);
   if (queueGuard.fallbackWarning) {
@@ -8854,11 +8884,9 @@ function renderThreadSection(panel) {
 
 function agentPanelThreadRenderDeps() {
   return {
-    appendAuditDetail,
     appendChildOnce,
     appendCodeLine,
     appendCandidateDetail,
-    appendDebugDetail,
     appendFailureDetail,
     appendQueueDetail,
     appendTextLine,
@@ -8871,7 +8899,6 @@ function agentPanelThreadRenderDeps() {
     createBubbleDetailSection,
     createDetails,
     currentAgentPanel,
-    detailSnapshotForMessage,
     downloadTurnAudit,
     el,
     ensureThreadRenderState,

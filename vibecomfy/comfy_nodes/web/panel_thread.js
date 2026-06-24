@@ -233,7 +233,7 @@ function responseDetailForMessage(panel, message = null, snapshot = null) {
     || null;
 }
 
-function normalDetailSnapshotForRender(detail) {
+export function normalDetailSnapshotForRender(detail) {
   if (!detail || typeof detail !== "object") {
     return null;
   }
@@ -251,6 +251,8 @@ function normalDetailSnapshotForRender(detail) {
     changes: Array.isArray(detail.changes) ? detail.changes : [],
     changeDetails: changeDetailsFromResponseDetail(detail),
     progress: detail.progress || null,
+    lastAppliedChanges: detail.lastAppliedChanges || null,
+    queueDisplay: detail.queueDisplay || null,
     failure: detail.outcome?.kind === "error"
       ? {
           kind: "Error",
@@ -319,12 +321,9 @@ function bubbleDetailSignature(panel, msg, detailSnapshot) {
 }
 
 function bubbleRenderSignature(panel, msg, deps = {}) {
-  const { candidateActionState, detailSnapshotForMessage, latestAgentMessageKey, messageKey, messageSignature } = deps;
-  const snapshot = typeof detailSnapshotForMessage === "function"
-    ? detailSnapshotForMessage(panel, msg)
-    : null;
-  const responseDetail = responseDetailForMessage(panel, msg, snapshot);
-  const normalDetail = normalDetailSnapshotForRender(responseDetail) || snapshot;
+  const { candidateActionState, latestAgentMessageKey, messageKey, messageSignature } = deps;
+  const responseDetail = responseDetailForMessage(panel, msg, null);
+  const normalDetail = normalDetailSnapshotForRender(responseDetail) || null;
   const actionState = typeof candidateActionState === "function"
     ? candidateActionState(panel, msg, normalDetail)
     : {};
@@ -979,9 +978,7 @@ function appendTurnMeta(target, panel, message, snapshot = null, deps = {}) {
 
 export function populateAgentBubbleDetail(target, panel, message, snapshot = null, deps = {}) {
   const {
-    appendAuditDetail,
     appendCandidateDetail,
-    appendDebugDetail,
     appendFailureDetail,
     appendQueueDetail,
     appendTextLine,
@@ -1068,10 +1065,10 @@ export function populateAgentBubbleDetail(target, panel, message, snapshot = nul
 
   // Applied-node feedback is shown on the applied turn bubble even when the
   // route is no longer applyable.
-  const appliedFeedback = snapshot?.lastAppliedChanges || panel?.state?.lastAppliedChanges || null;
+  const appliedFeedback = ordinarySnapshot?.lastAppliedChanges || null;
   if (appliedFeedback?.items?.length) {
     const feedbackSection = createBubbleDetailSection("Feedback");
-    appendCandidateDetail(feedbackSection.body, panel, message, snapshot);
+    appendCandidateDetail(feedbackSection.body, panel, message, ordinarySnapshot);
     if (feedbackSection.body.children.length) {
       target.appendChild(feedbackSection.section);
     }
@@ -1088,25 +1085,12 @@ export function populateAgentBubbleDetail(target, panel, message, snapshot = nul
   if (queueSection.body.children.length) {
     target.appendChild(queueSection.section);
   }
-
-  const auditSection = createBubbleDetailSection("Audit");
-  appendAuditDetail(auditSection.body, panel, message, snapshot);
-  if (auditSection.body.children.length) {
-    target.appendChild(auditSection.section);
-  }
-
-  const debugSection = createBubbleDetailSection("Debug");
-  appendDebugDetail(debugSection.body, panel, snapshot);
-  if (debugSection.body.children.length) {
-    target.appendChild(debugSection.section);
-  }
 }
 
 export function renderChatBubbleNode(bubble, panel, msg, messageKey, messageIndex, deps = {}) {
   const {
     candidateActionState,
     clearNode,
-    detailSnapshotForMessage,
     el,
     ensureThreadRenderState,
   } = deps;
@@ -1187,9 +1171,8 @@ export function renderChatBubbleNode(bubble, panel, msg, messageKey, messageInde
       : (typeof msg.detail_turn_id === "string" && msg.detail_turn_id
         ? `turn:${msg.detail_turn_id}:failure:${messageKey || messageIndex}`
         : `agent:${messageKey || messageIndex}:${String(msg.text || "").slice(0, 24)}`);
-  const detailSnapshot = typeof detailSnapshotForMessage === "function"
-    ? detailSnapshotForMessage(panel, msg)
-    : null;
+  const responseDetail = responseDetailForMessage(panel, msg, null);
+  const detailSnapshot = normalDetailSnapshotForRender(responseDetail);
   const detailSignature = bubbleDetailSignature(panel, msg, detailSnapshot);
   const detailRow = el("div");
   Object.assign(detailRow.style, {
@@ -2022,7 +2005,7 @@ function _renderDiagnostics(container, diagnostics, deps = {}) {
 }
 
 function _renderDurableTurnRow(body, panel, entry, index, deps = {}) {
-  const { appendCodeLine, appendTextLine, button, el, downloadTurnAudit } = deps;
+  const { appendTextLine, button, el, downloadTurnAudit } = deps;
   const turnCard = el("div");
   turnCard.style.borderLeft = "3px solid #f47f18";
   turnCard.style.paddingLeft = "8px";
@@ -2089,9 +2072,6 @@ function _renderDurableTurnRow(body, panel, entry, index, deps = {}) {
     && /^\s*submitting:/i.test(entry.message);
   if (entry.message && !isSubmittingEcho) {
     appendTextLine(turnCard, entry.message, "#9da1ac");
-  }
-  if (entry.audit_ref?.path) {
-    appendCodeLine(turnCard, `audit: ${entry.audit_ref.path}`, "#9ed0ff");
   }
   const relTime = _formatRelativeTime(entry.timestamp);
   if (relTime) {

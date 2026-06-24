@@ -1090,6 +1090,129 @@ function safeCandidateReport(rawReport) {
   return Object.keys(change).length ? { change } : null;
 }
 
+function safeProjectedCandidateReport(source, candidate) {
+  return safeCandidateReport(source.report)
+    || safeCandidateReport(candidate?.report)
+    || (isObject(source.turn) && isObject(candidate?.report) ? frozenPlainClone(candidate.report) : null);
+}
+
+function safeAppliedFeedbackItem(item) {
+  if (!isObject(item)) {
+    return null;
+  }
+  const projected = compactObject({
+    uid: asStringOrNumber(item.uid),
+    label: asString(item.label),
+    color: asString(item.color),
+    kind: asString(item.kind),
+  });
+  return Object.keys(projected).length ? projected : null;
+}
+
+function safeAppliedFeedbackUnresolvedItem(item) {
+  if (typeof item === "string") {
+    return item;
+  }
+  if (!isObject(item)) {
+    return null;
+  }
+  const projected = compactObject({
+    uid: asStringOrNumber(item.uid),
+    label: asString(item.label),
+    reason: asString(item.reason),
+  });
+  return Object.keys(projected).length ? projected : null;
+}
+
+function safeLastAppliedChanges(raw) {
+  const source = isObject(raw?.lastAppliedChanges)
+    ? raw.lastAppliedChanges
+    : isObject(raw?.last_applied_changes) ? raw.last_applied_changes : null;
+  if (!source) {
+    return null;
+  }
+  const items = Array.isArray(source.items)
+    ? source.items.map(safeAppliedFeedbackItem).filter(Boolean)
+    : [];
+  const unresolved = Array.isArray(source.unresolved)
+    ? source.unresolved.map(safeAppliedFeedbackUnresolvedItem).filter(Boolean)
+    : [];
+  if (!items.length && !unresolved.length) {
+    return null;
+  }
+  return compactFrozenObject({
+    mode: asString(source.mode),
+    items,
+    unresolved,
+  });
+}
+
+function safeQueueIssue(issue) {
+  if (!isObject(issue)) {
+    return null;
+  }
+  const projected = compactObject({
+    code: asString(issue.code),
+    message: asString(issue.message) || asString(issue.user_facing_message),
+    severity: asString(issue.severity),
+  });
+  return Object.keys(projected).length ? projected : null;
+}
+
+function queueIssueCandidates(report) {
+  if (!isObject(report)) {
+    return [];
+  }
+  const queueValidateEvidence = report.gates?.queue_validate_ok?.evidence;
+  return [
+    ...(Array.isArray(report.queue_blockers) ? report.queue_blockers : []),
+    ...(Array.isArray(report.diagnostics?.issues) ? report.diagnostics.issues : []),
+    ...(Array.isArray(queueValidateEvidence?.blockers) ? queueValidateEvidence.blockers : []),
+    ...(Array.isArray(queueValidateEvidence?.queue_blockers) ? queueValidateEvidence.queue_blockers : []),
+  ];
+}
+
+function safeQueueIssuesFromReport(report) {
+  return queueIssueCandidates(report).map(safeQueueIssue).filter(Boolean);
+}
+
+function safeQueueDisplay(raw, projectedCandidateReport) {
+  if (isObject(raw?.queueDisplay)) {
+    const projectedIssues = Array.isArray(raw.queueDisplay.issues)
+      ? raw.queueDisplay.issues.map(safeQueueIssue).filter(Boolean)
+      : [];
+    return compactFrozenObject({
+      state: asString(raw.queueDisplay.state),
+      reason: asString(raw.queueDisplay.reason),
+      message: asString(raw.queueDisplay.message),
+      issues: projectedIssues.length ? projectedIssues : undefined,
+    });
+  }
+
+  const issues = safeQueueIssuesFromReport(raw.report);
+  const queueState =
+    asBooleanOrNull(raw.queueAllowed) ?? asBooleanOrNull(raw.queue_allowed);
+  const eligibility = isObject(raw.eligibility)
+    ? raw.eligibility
+    : isObject(raw.applyEligibility) ? raw.applyEligibility
+      : isObject(raw.apply_eligibility) ? raw.apply_eligibility : null;
+  const state =
+    queueState === true
+      ? "eligible"
+      : queueState === false || issues.length
+        ? "blocked"
+        : null;
+  if (!state && !issues.length) {
+    return null;
+  }
+  return compactFrozenObject({
+    state,
+    reason: asString(eligibility?.reason),
+    message: asString(eligibility?.message),
+    issues: issues.length ? issues : safeQueueIssuesFromReport(projectedCandidateReport),
+  });
+}
+
 /**
  * Project raw response/message data into normal expanded-bubble detail state.
  * The projection keeps user-facing summaries, safe progress, candidate hashes,
@@ -1103,6 +1226,7 @@ export function projectResponseDetail(value) {
   }
   const outcome = isObject(source.outcome) ? source.outcome : null;
   const candidate = isObject(source.candidate) ? source.candidate : null;
+  const projectedCandidateReport = safeProjectedCandidateReport(source, candidate);
   const candidateGraphHash =
     asString(candidate?.graphHash)
     || asString(candidate?.graph_hash)
@@ -1113,9 +1237,9 @@ export function projectResponseDetail(value) {
       : null);
   return compactFrozenObject({
     turn: compactObject({
-      turnId: asString(source.turnId) || asString(source.turn_id),
-      sessionId: asString(source.sessionId) || asString(source.session_id),
-      status: asString(source.status) || asString(outcome?.kind),
+      turnId: asString(source.turn?.turnId) || asString(source.turnId) || asString(source.turn_id),
+      sessionId: asString(source.turn?.sessionId) || asString(source.sessionId) || asString(source.session_id),
+      status: asString(source.turn?.status) || asString(source.status) || asString(outcome?.kind),
     }),
     outcome: compactObject({
       kind: asString(outcome?.kind),
@@ -1134,8 +1258,10 @@ export function projectResponseDetail(value) {
         asString(candidate?.structuralGraphHash) || asString(candidate?.structural_graph_hash),
       baselineGraphHash:
         asString(candidate?.baselineGraphHash) || asString(candidate?.baseline_graph_hash),
-      report: safeCandidateReport(source.report),
+      report: projectedCandidateReport,
     }) : null,
+    lastAppliedChanges: safeLastAppliedChanges(source),
+    queueDisplay: safeQueueDisplay(source, projectedCandidateReport),
   });
 }
 

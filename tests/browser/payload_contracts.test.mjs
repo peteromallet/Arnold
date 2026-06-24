@@ -62,6 +62,9 @@ import {
   ROUTE_STATUS_KIND,
 } from "../../vibecomfy/comfy_nodes/web/agent_status_poller.js";
 import {
+  normalDetailSnapshotForRender,
+} from "../../vibecomfy/comfy_nodes/web/panel_thread.js";
+import {
   PROJECTION_SURFACES,
   assertCanonicalNormalPathHasNoLegacyAliases,
   assertNormalProjectionHasNoForbiddenFieldOrValue,
@@ -543,6 +546,96 @@ test("projection fixtures reject contaminated ResponseDetail fields and clone sa
   assert.equal("provider_payload" in normalResponseDetail, false);
   assert.equal("debugPayload" in normalResponseDetail, false);
   assert.equal("audit_ref" in normalResponseDetail, false);
+});
+
+test("ResponseDetail projection exposes safe feedback and queue display only", () => {
+  const rawResponseDetail = {
+    session_id: "sess-safe-detail",
+    turn_id: "turn-safe-detail",
+    status: "candidate",
+    outcome: { kind: "candidate", summary: "Candidate ready." },
+    candidate: { graph_hash: "candidate-hash-safe" },
+    queue_allowed: false,
+    queueGuard: {
+      hookPath: "/real/ComfyUI/out/editor_sessions/sess-safe/guard.js",
+      activeContext: { queueAllowed: false, rawPath: "turns/0007/debug.json" },
+      lastBlockNotice: { message: "Queue blocked because queue_allowed=false." },
+    },
+    apply_eligibility: {
+      applyable: true,
+      reason: "queue_blocked_warning",
+      message: "Apply is allowed, but Queue remains blocked for this candidate.",
+      warnings: ["queue_blocked"],
+    },
+    report: {
+      queue_blockers: [
+        {
+          code: "intent_node_queue_blocker",
+          message: "Node 17 is editor-only and cannot be queued until it is lowered.",
+          severity: "error",
+          detail: {
+            raw_path: "/real/ComfyUI/out/editor_sessions/sess-safe/turns/0007/debug.json",
+          },
+        },
+      ],
+      provider_diagnostics: [{ message: "ProviderError stack trace" }],
+    },
+    lastAppliedChanges: {
+      mode: "visual",
+      items: [
+        {
+          uid: "node-17",
+          label: "KSampler",
+          color: "#9ed0ff",
+          rawPath: "/real/ComfyUI/out/editor_sessions/sess-safe/turns/0007/response.json",
+        },
+      ],
+      unresolved: [
+        {
+          uid: "missing-1",
+          label: "Missing node",
+          reason: "not found",
+          debugPayload: { raw: true },
+        },
+      ],
+      auditRef: { path: "/real/ComfyUI/out/editor_sessions/sess-safe/audit.json" },
+    },
+    audit_ref: { path: "/real/ComfyUI/out/editor_sessions/sess-safe/audit.json" },
+    debugPayload: { provider_payload: { prompt_messages: ["system prompt"] } },
+  };
+
+  const normalResponseDetail = projectResponseDetail(rawResponseDetail);
+  assert.deepEqual(normalResponseDetail.lastAppliedChanges, {
+    mode: "visual",
+    items: [{ uid: "node-17", label: "KSampler", color: "#9ed0ff" }],
+    unresolved: [{ uid: "missing-1", label: "Missing node", reason: "not found" }],
+  });
+  assert.deepEqual(normalResponseDetail.queueDisplay, {
+    state: "blocked",
+    reason: "queue_blocked_warning",
+    message: "Apply is allowed, but Queue remains blocked for this candidate.",
+    issues: [
+      {
+        code: "intent_node_queue_blocker",
+        message: "Node 17 is editor-only and cannot be queued until it is lowered.",
+        severity: "error",
+      },
+    ],
+  });
+
+  const normalSnapshot = normalDetailSnapshotForRender(normalResponseDetail);
+  assert.deepEqual(normalSnapshot.lastAppliedChanges, normalResponseDetail.lastAppliedChanges);
+  assert.deepEqual(normalSnapshot.queueDisplay, normalResponseDetail.queueDisplay);
+  assertNormalProjectionHasNoForbiddenFieldOrValue(normalResponseDetail, {
+    projectionName: PROJECTION_SURFACES.NORMAL_RESPONSE_DETAIL,
+  });
+  assertNormalProjectionHasNoForbiddenFieldOrValue(normalSnapshot, {
+    projectionName: PROJECTION_SURFACES.NORMAL_RESPONSE_DETAIL,
+  });
+
+  const reprojected = projectResponseDetail(normalResponseDetail);
+  assert.deepEqual(reprojected.lastAppliedChanges, normalResponseDetail.lastAppliedChanges);
+  assert.deepEqual(reprojected.queueDisplay, normalResponseDetail.queueDisplay);
 });
 
 test("projection fixtures keep ExecutionEvent diagnostics explicit and cloned", () => {

@@ -2,7 +2,8 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import crypto from "node:crypto";
 
-import { createBrowserHarness } from "./harness.mjs";
+import { createBrowserHarness, createMockCanvasContext } from "./harness.mjs";
+import { drawPreviewOverlay as drawPanelOverlayPreviewOverlay } from "../../vibecomfy/comfy_nodes/web/panel_overlay.js";
 import {
   adaptLegacyAgentEditResponse,
   normalizeCanonicalAgentEditResponse,
@@ -32,6 +33,75 @@ function canonicalizeJsonValue(value) {
 
 function sha256HexUtf8(value) {
   return crypto.createHash("sha256").update(JSON.stringify(canonicalizeJsonValue(value)), "utf8").digest("hex");
+}
+
+const OVERLAY_FORBIDDEN_TEXT_PATTERNS = [
+  /\b(?:canvas_apply_allowed|canvasApplyAllowed|queue_allowed|queueAllowed)\b/i,
+  /\b(?:debug_payload|debugPayload|audit_ref|auditRef|raw_path|rawPath|artifact_path|artifactPath)\b/i,
+  /\/(?:real\/)?ComfyUI\/out\/editor_sessions\//i,
+  /\bturns\/\d+\/(?:response|messages|candidate|debug)\.[a-z0-9]+/i,
+  /\b(?:ProviderError|Traceback|stack trace|engine diagnostics|raw diagnostic)\b/i,
+  /\b(?:model prompt|system prompt|prompt messages)\b/i,
+  /\b(?:token budget|exit mode|remaining batches)\b/i,
+];
+
+function assertCanvasTextOpsHaveNoForbiddenText(drawOps, path) {
+  const textOps = drawOps.filter((op) => op.kind === "fillText" || op.kind === "strokeText");
+  assert.ok(textOps.length > 0, `${path} should record canvas text operations`);
+  for (const op of textOps) {
+    const text = String(op.args[0] ?? "");
+    for (const pattern of OVERLAY_FORBIDDEN_TEXT_PATTERNS) {
+      assert.equal(pattern.test(text), false, `${path} leaked forbidden canvas text: ${text}`);
+    }
+  }
+}
+
+function makePanelOverlayDeps(liveGraph) {
+  const vecNumber = (vec, index, fallback) => {
+    const value = vec != null ? Number(vec[index]) : NaN;
+    return Number.isFinite(value) ? value : fallback;
+  };
+  const readNodeSize = (node, fallbackW = 200, fallbackH = 100) => ({
+    w: vecNumber(node?.size, 0, fallbackW),
+    h: vecNumber(node?.size, 1, fallbackH),
+  });
+  const readNodePos = (node, fallbackX = 0, fallbackY = 0) => ({
+    x: vecNumber(node?.pos, 0, fallbackX),
+    y: vecNumber(node?.pos, 1, fallbackY),
+  });
+  const readNodeBounding = (node, titleHeight) => {
+    const pos = readNodePos(node);
+    const size = readNodeSize(node);
+    return { x: pos.x, y: pos.y - titleHeight, w: size.w, h: size.h + titleHeight };
+  };
+  return {
+    VC_COLORS: { edited: "#ffc107", added: "#4caf50", removed: "#f44336" },
+    currentAgentPanel: () => null,
+    getLiveGraph: () => liveGraph,
+    getLiveGraphNodes: (graph) => Array.isArray(graph?.nodes) ? graph.nodes : [],
+    getUid: (node) => node?.properties?.vibecomfy_uid || null,
+    hexToRgba: (hex, alpha) => {
+      const value = String(hex || "#000000").replace("#", "");
+      const r = Number.parseInt(value.slice(0, 2), 16) || 0;
+      const g = Number.parseInt(value.slice(2, 4), 16) || 0;
+      const b = Number.parseInt(value.slice(4, 6), 16) || 0;
+      return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+    },
+    readNodeBounding,
+    readNodePos,
+    readNodeSize,
+    readWidgetValues: (node) => Array.isArray(node?.widgets_values) ? node.widgets_values : [],
+    vecNumber,
+    widgetValuePreviewText: (value) => {
+      if (value == null) return "";
+      if (typeof value === "string") return value;
+      if (typeof value === "number" || typeof value === "boolean") return String(value);
+      if (Array.isArray(value)) return "[...]";
+      return "{...}";
+    },
+    captureLiveCanvasRevision: () => 1,
+    graphNodeCount: (graph) => Array.isArray(graph?.nodes) ? graph.nodes.length : 0,
+  };
 }
 
 const CANONICAL_HASH_PAYLOADS = [
@@ -2572,7 +2642,6 @@ test("VibeComfy agent panel renders rich candidate and failure states without mu
     assert.match(failureText, /backend stage: emit \(0.75\)/);
     assert.match(failureText, /Fix the emitted graph\./);
     assert.match(failureText, /agent failure context/);
-    assert.match(failureText, /failure-audit\.json/);
     assert.equal(harness.loadGraphDataCalls.length, 0);
 
     harness.document.getElementById("vibecomfy-agent-panel-prompt").value = "malformed response";
@@ -2959,11 +3028,8 @@ test("VibeComfy Apply requires explicit canvas allowance, rechecks canvas hash, 
     assert.equal(harness.requests.filter((entry) => entry.url === "/vibecomfy/agent-edit/rebaseline").length, 1);
     assert.equal(rebaselineBodies.length, 1);
     expandAgentBubbleDetails(harness.document.body);
-    assert.match(harness.textDump(), /undone/);
-    assert.match(harness.textDump(), /restored pre-apply graph for turn 0002/);
-    assert.match(harness.textDump(), /\/tmp\/rebaseline-undo-audit\.json/);
+    assert.match(harness.textDump(), /Applied candidate feedback/);
     assert.match(harness.textDump(), /undo_stack_depth/);
-    assert.match(harness.textDump(), /rebaseline_response/);
     assert.equal(undoButton.disabled, true);
 
     const allowedQueueResult = harness.app.queuePrompt("prompt-2");
@@ -4398,7 +4464,6 @@ test("VibeComfy falls back to panel-only changed-node and queue warnings when li
     assert.match(harness.textDump(), /Applied candidate feedback: changed nodes listed here because live node lookup was unavailable\./);
     assert.match(harness.textDump(), /Edited uid-missing/);
     assert.match(harness.textDump(), /Native queue hook unavailable: `app\.queuePrompt` was not found\./);
-    assert.match(harness.textDump(), /native queue guard: panel warning fallback only/);
     assert.equal(harness.consoleCapture.warn.filter((line) => line.includes("queue guard fallback active")).length, 1);
     assert.equal(harness.loadGraphDataCalls.length, 0);
     assert.deepEqual(harness.graphConfigureCalls[0], candidateGraph);
@@ -6814,6 +6879,120 @@ test("VibeComfy preview diff computes named-port link deltas and drawPreviewOver
   }
 });
 
+test("VibeComfy preview overlays omit forbidden audit/debug keys and values from canvas text", async () => {
+  const liveGraph = {
+    nodes: [
+      {
+        id: 1,
+        type: "Input",
+        pos: [100, 200],
+        size: [240, 100],
+        properties: { vibecomfy_uid: "uid-live" },
+        inputs: [],
+        outputs: [{ name: "TEXT" }],
+        widgets: [{ name: "prompt", value: "old value", last_y: 40 }],
+        widgets_values: ["old value"],
+      },
+    ],
+    links: [],
+  };
+  const candidateGraph = {
+    nodes: [
+      {
+        id: 1,
+        type: "Input",
+        pos: [100, 200],
+        size: [240, 100],
+        properties: {
+          vibecomfy_uid: "uid-live",
+          debug_payload: { raw_path: "/real/ComfyUI/out/editor_sessions/session/turns/0001/debug.json" },
+        },
+        inputs: [],
+        outputs: [{ name: "TEXT" }],
+        widgets_values: ["new safe value"],
+      },
+      {
+        id: 2,
+        type: "SafePreviewNode",
+        title: "SafePreviewNode",
+        pos: [420, 200],
+        size: [240, 120],
+        properties: {
+          vibecomfy_uid: "uid-new",
+          audit_ref: { path: "/real/ComfyUI/out/editor_sessions/session/turns/0001/audit.json" },
+          canvasApplyAllowed: true,
+          queueAllowed: false,
+        },
+        inputs: [{ name: "queue_allowed" }, { name: "images" }],
+        outputs: [{ name: "debug_payload" }],
+        widgets_values: [
+          "ProviderError raw diagnostic from /real/ComfyUI/out/editor_sessions/session/turns/0001/response.json",
+          { model_prompt: "hidden prompt messages" },
+        ],
+      },
+    ],
+    links: [],
+  };
+  const contaminatedDiff = {
+    _candidateGraph: candidateGraph,
+    _candidateGraphHash: "candidate-overlay-forbidden-sentinel",
+    edited: [{ uid: "uid-live", changedWidgetIndices: [0] }],
+    edited_fields: [
+      {
+        uid: "uid-live",
+        field_path: "debug_payload.raw_path",
+        new_value: "/real/ComfyUI/out/editor_sessions/session/turns/0001/debug.json",
+      },
+      { uid: "uid-live", field_path: "widgets_values.0", new_value: "new safe value" },
+    ],
+    added: [
+      {
+        uid: "uid-new",
+        class_type: "SafePreviewNode",
+        debug_payload: { raw_path: "/real/ComfyUI/out/editor_sessions/session/turns/0001/debug.json" },
+      },
+    ],
+    removed: [],
+    removed_named: [],
+    added_links: [],
+    removed_links: [],
+    unresolved: [
+      {
+        uid: "uid-missing",
+        kind: "ProviderError",
+        reason: "engine diagnostics must stay out of canvas text",
+      },
+    ],
+  };
+
+  const harness = await createBrowserHarness({
+    graph: liveGraph,
+    responses: {
+      "/system_stats": {
+        status: 200,
+        body: { system: { comfyui_frontend_package: "1.39.19" } },
+      },
+    },
+  });
+
+  try {
+    await harness.loadExtension();
+    await harness.setup();
+    const roundtripDrawOps = await harness.drawPreviewOverlay(contaminatedDiff);
+    assertCanvasTextOpsHaveNoForbiddenText(roundtripDrawOps, "$.roundtripOverlay");
+
+    const directCtx = createMockCanvasContext();
+    drawPanelOverlayPreviewOverlay(
+      directCtx,
+      { ...contaminatedDiff, _candidateGraphHash: "panel-overlay-forbidden-sentinel" },
+      makePanelOverlayDeps(liveGraph),
+    );
+    assertCanvasTextOpsHaveNoForbiddenText(directCtx._getOperations(), "$.panelOverlay");
+  } finally {
+    await harness.dispose();
+  }
+});
+
 test("VibeComfy preview diff does not mark unchanged links as added when live nodes are missing vibecomfy_uid", async () => {
   const liveGraph = {
     nodes: [
@@ -9207,7 +9386,7 @@ test("Lifecycle E2 page reload rehydrate restores the latest open candidate and 
     assert.equal(harness.document.getElementById("vibecomfy-agent-panel-apply")?.disabled, false);
     assert.match(harness.textDump(), /Candidate restored/);
     expandAgentBubbleDetails(harness.document.body);
-    assert.match(harness.textDump(), /queue_allowed=false/);
+    assert.match(harness.textDump(), /Apply is allowed, but Queue remains blocked for this candidate\./);
   } finally {
     await harness.dispose();
   }
@@ -12481,6 +12660,12 @@ test("VibeComfy agent bubble details stay collapsed by default and preserve expa
           canvas_apply_allowed: true,
           apply_allowed: true,
           queue_allowed: true,
+          eligibility: {
+            applyable: true,
+            reason: "applyable",
+            message: "Queue ready for this historical turn.",
+            warnings: [],
+          },
           message: "Candidate ready for review.",
           graph: candidateGraph,
           report: {
@@ -12584,6 +12769,14 @@ test("VibeComfy agent bubble details stay collapsed by default and preserve expa
         },
       },
     ];
+    panel.state.queueAllowed = false;
+    panel.state.queueGuard = {
+      available: true,
+      hookInstalled: true,
+      lastBlockNotice: {
+        message: "Stale current queue guard should not render in expanded historical details.",
+      },
+    };
     extensionModule.renderAgentPanel(panel, { dirtySections: ["THREAD"] });
     assertNormalDomTextHasNoForbiddenFieldOrValue(chatRegion.textContent, {
       path: "$.collapsedChatRegionAfterContaminatedTurns",
@@ -12596,9 +12789,10 @@ test("VibeComfy agent bubble details stay collapsed by default and preserve expa
     toggles[0].click();
     assert.ok(String(toggles[0].textContent).startsWith("\u25bc"), "details expand on click");
     assert.doesNotMatch(harness.textDump(), /planning edits/);
-    assert.match(harness.textDump(), /queue_allowed=true/);
-    assert.match(harness.textDump(), /\/tmp\/audit-turn-0007\.json/);
-    assert.match(harness.textDump(), /Audit ↓/);
+    assertNormalDomTextHasNoForbiddenFieldOrValue(chatRegion.textContent, {
+      path: "$.expandedChatRegion",
+    });
+    assert.doesNotMatch(harness.textDump(), /Stale current queue guard/);
     const inlineApply = chatRegion.querySelectorAll(
       (node) => node.tagName === "BUTTON" && node.dataset?.vibecomfyCandidateAction === "apply",
     );
@@ -12609,16 +12803,16 @@ test("VibeComfy agent bubble details stay collapsed by default and preserve expa
     assert.equal(inlineReject.length, 1, "latest candidate bubble should render one inline Reject control");
     assert.equal(inlineApply[0].disabled, false, "latest candidate bubble Apply should stay enabled");
     assert.equal(inlineReject[0].disabled, false, "latest candidate bubble Reject should stay enabled");
-    for (const title of ["Changes", "Candidate"]) {
+    for (const title of ["Candidate", "Queue"]) {
       const section = findBubbleDetailSectionByTitle(chatRegion, title);
       assert.ok(section, `expanded ${title} section should render`);
       assertNormalDomTextHasNoForbiddenFieldOrValue(section.textContent, {
         path: `$.expandedOrdinarySection.${title}`,
       });
     }
-    assert.ok(findBubbleDetailSectionByTitle(chatRegion, "Audit"), "expanded Audit affordance remains explicit");
-    assert.ok(findBubbleDetailSectionByTitle(chatRegion, "Debug"), "expanded Debug affordance remains explicit");
-    assert.match(harness.textDump(), /Download Audit Envelope/);
+    assert.match(findBubbleDetailSectionByTitle(chatRegion, "Queue").textContent, /Queue ready for this historical turn\./);
+    assert.equal(findBubbleDetailSectionByTitle(chatRegion, "Audit"), null, "expanded Audit section stays off the normal bubble detail surface");
+    assert.equal(findBubbleDetailSectionByTitle(chatRegion, "Debug"), null, "expanded Debug section stays off the normal bubble detail surface");
     assert.match(harness.textDump(), /Report issue/);
 
     await waitFor(() => harness.requests.some((entry) => entry.url === CHAT_URL));
@@ -13797,9 +13991,10 @@ test("VibeComfy collapsed agent bubble does not prebuild detail pane (T13 lazy d
     // Expand the first toggle
     toggles[0].click();
 
-    // After expansion, detail content like the Audit section should appear
+    // After expansion, normal detail content should appear without Audit/Debug payloads.
     const expandedDump = harness.textDump();
-    assert.match(expandedDump, /Download Audit Envelope/, "expanded detail should show audit section");
+    assert.match(expandedDump, /Candidate/, "expanded detail should show normal candidate detail");
+    assert.doesNotMatch(expandedDump, /Download Audit Envelope/, "expanded detail should not show audit section");
   } finally {
     await harness.dispose();
   }
