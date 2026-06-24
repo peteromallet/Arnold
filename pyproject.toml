@@ -52,6 +52,7 @@ dependencies = [
 
 [project.scripts]
 arnold = "arnold.cli:main"
+agentbox = "agentbox.cli:main"
 
 [project.optional-dependencies]
 db = [
@@ -77,7 +78,7 @@ exclude = [
 ]
 
 [tool.hatch.build.targets.wheel]
-packages = ["arnold", "arnold_pipelines"]
+packages = ["arnold", "arnold_pipelines", "agentbox"]
 artifacts = [
     "py.typed",
     "**/pipeline_ids.json",
