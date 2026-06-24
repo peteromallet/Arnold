@@ -76,9 +76,13 @@ This page is generated from the ``arnold.workflow`` manifest contract, the shipp
 | subcommand | description |
 | --- | --- |
 | check | |
+| compile | |
 | describe | |
 | dot | |
 | dry-run | |
+| explain | |
+| graph | |
+| inspect | |
 | manifest | |
 | resume | |
 | run | |
