@@ -6,7 +6,9 @@ import ast
 import json
 import math
 import re
+from dataclasses import dataclass, field as dataclass_field
 from pathlib import Path
+from types import MappingProxyType
 from typing import Any, Iterable, Mapping
 
 from arnold.manifest.manifests import (
@@ -47,23 +49,71 @@ _RESERVED_METADATA_KEYS = frozenset(
 )
 
 
+@dataclass(frozen=True, slots=True)
+class ManifestValidationIssue:
+    """Structured validation issue for neutral workflow manifests."""
+
+    code: str
+    message: str
+    field: str | None = None
+    node_id: str | None = None
+    edge_id: str | None = None
+    severity: str = "error"
+    details: Mapping[str, Any] = dataclass_field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "details", MappingProxyType(dict(self.details)))
+
+
 class ManifestValidationError(ValueError):
     """Raised when a workflow manifest violates the v1 contract."""
+
+    def __init__(
+        self,
+        message: str | None = None,
+        *,
+        issues: Iterable[ManifestValidationIssue] = (),
+    ) -> None:
+        issue_tuple = tuple(issues)
+        if message is None:
+            message = "; ".join(issue.message for issue in issue_tuple)
+        super().__init__(message)
+        self.issues = issue_tuple
 
 
 def validate_manifest(manifest: WorkflowManifest) -> None:
     """Validate v1 manifest integrity and deterministic coordinates."""
 
-    errors: list[str] = []
+    errors: list[ManifestValidationIssue] = []
     if manifest.schema_version != WorkflowManifest.SCHEMA_VERSION:
-        errors.append(f"unsupported schema_version {manifest.schema_version!r}")
+        _add_issue(
+            errors,
+            f"unsupported schema_version {manifest.schema_version!r}",
+            code="unsupported_schema_version",
+            field="schema_version",
+            details={"expected": WorkflowManifest.SCHEMA_VERSION, "actual": manifest.schema_version},
+        )
     _validate_id("manifest id", manifest.id, errors)
     node_ids = [node.id for node in manifest.nodes]
     edge_ids = [edge.id for edge in manifest.edges]
     if len(node_ids) != len(set(node_ids)):
-        errors.append("node ids must be unique")
+        for node_id in _duplicates(node_ids):
+            _add_issue(
+                errors,
+                "node ids must be unique",
+                code="duplicate_node_id",
+                field="nodes[].id",
+                node_id=node_id,
+            )
     if len(edge_ids) != len(set(edge_ids)):
-        errors.append("edge ids must be unique")
+        for edge_id in _duplicates(edge_ids):
+            _add_issue(
+                errors,
+                "edge ids must be unique",
+                code="duplicate_edge_id",
+                field="edges[].id",
+                edge_id=edge_id,
+            )
     known_nodes = set(node_ids)
     _validate_metadata(f"manifest {manifest.id!r} metadata", manifest.metadata, errors)
     _validate_policy(f"manifest {manifest.id!r} policy", manifest.policy, errors)
@@ -75,9 +125,23 @@ def validate_manifest(manifest: WorkflowManifest) -> None:
         _validate_optional_ref(f"edge {edge.id!r} condition_ref", edge.condition_ref, errors)
         _validate_metadata(f"edge {edge.id!r} metadata", edge.metadata, errors)
         if edge.source not in known_nodes:
-            errors.append(f"edge {edge.id!r} source {edge.source!r} is dangling")
+            _add_issue(
+                errors,
+                f"edge {edge.id!r} source {edge.source!r} is dangling",
+                code="dangling_edge_source",
+                field="edges[].source",
+                edge_id=edge.id,
+                details={"source": edge.source},
+            )
         if edge.target not in known_nodes:
-            errors.append(f"edge {edge.id!r} target {edge.target!r} is dangling")
+            _add_issue(
+                errors,
+                f"edge {edge.id!r} target {edge.target!r} is dangling",
+                code="dangling_edge_target",
+                field="edges[].target",
+                edge_id=edge.id,
+                details={"target": edge.target},
+            )
     for node in manifest.nodes:
         _validate_id("node id", node.id, errors)
         _validate_ref(f"node {node.id!r} kind", node.kind, errors)
@@ -101,46 +165,235 @@ def validate_manifest(manifest: WorkflowManifest) -> None:
     _validate_hash("topology_hash", manifest.topology_hash, errors)
     _validate_hash("manifest_hash", manifest.manifest_hash, errors)
     if manifest.topology_hash != compute_topology_hash(manifest):
-        errors.append("topology_hash does not match canonical topology")
+        _add_issue(
+            errors,
+            "topology_hash does not match canonical topology",
+            code="topology_hash_mismatch",
+            field="topology_hash",
+        )
     if manifest.manifest_hash != compute_manifest_hash(manifest):
-        errors.append("manifest_hash does not match canonical manifest")
+        _add_issue(
+            errors,
+            "manifest_hash does not match canonical manifest",
+            code="manifest_hash_mismatch",
+            field="manifest_hash",
+        )
     try:
         if canonical_json(manifest.to_dict()) != manifest.to_json():
-            errors.append("manifest JSON is not canonical")
+            _add_issue(
+                errors,
+                "manifest JSON is not canonical",
+                code="manifest_json_not_canonical",
+                field="manifest",
+            )
     except (TypeError, ValueError) as exc:
-        errors.append(f"manifest is not JSON serializable: {exc}")
+        _add_issue(
+            errors,
+            f"manifest is not JSON serializable: {exc}",
+            code="manifest_json_not_serializable",
+            field="manifest",
+            details={"error": str(exc)},
+        )
     try:
         json.loads(manifest.to_json())
     except (TypeError, ValueError) as exc:
-        errors.append("manifest JSON is not canonical")
-        errors.append(f"manifest JSON cannot be decoded: {exc}")
+        _add_issue(
+            errors,
+            "manifest JSON is not canonical",
+            code="manifest_json_not_canonical",
+            field="manifest",
+        )
+        _add_issue(
+            errors,
+            f"manifest JSON cannot be decoded: {exc}",
+            code="manifest_json_decode_error",
+            field="manifest",
+            details={"error": str(exc)},
+        )
     if errors:
-        raise ManifestValidationError("; ".join(errors))
+        raise ManifestValidationError(issues=errors)
 
 
-def _validate_id(name: str, value: str, errors: list[str]) -> None:
+def _duplicates(values: Iterable[str]) -> tuple[str, ...]:
+    seen: set[str] = set()
+    duplicates: list[str] = []
+    for value in values:
+        if value in seen and value not in duplicates:
+            duplicates.append(value)
+        seen.add(value)
+    return tuple(duplicates)
+
+
+def _add_issue(
+    errors: list[ManifestValidationIssue],
+    message: str,
+    *,
+    code: str,
+    field: str | None = None,
+    node_id: str | None = None,
+    edge_id: str | None = None,
+    details: Mapping[str, Any] | None = None,
+) -> None:
+    errors.append(
+        ManifestValidationIssue(
+            code=code,
+            message=message,
+            field=field,
+            node_id=node_id,
+            edge_id=edge_id,
+            details=dict(details or {}),
+        )
+    )
+
+
+def _add_generic_issue(
+    errors: list[ManifestValidationIssue],
+    message: str,
+    *,
+    name: str,
+    code: str | None = None,
+    details: Mapping[str, Any] | None = None,
+) -> None:
+    context = _issue_context(name)
+    issue_code = code or f"invalid_{str(context.get('field') or name).replace('.', '_').replace('[]', '')}"
+    _add_issue(
+        errors,
+        message,
+        code=issue_code,
+        field=context.get("field"),
+        node_id=context.get("node_id"),
+        edge_id=context.get("edge_id"),
+        details=details,
+    )
+
+
+def _issue_context(name: str, value: Any | None = None) -> dict[str, Any]:
+    match = re.match(r"^node '([^']+)'(?: |\.)(.+)$", name)
+    if match:
+        node_id, suffix = match.groups()
+        return {
+            "node_id": node_id,
+            "field": _field_for_suffix("nodes[]", suffix),
+            "prefix": "node",
+        }
+    match = re.match(r"^edge '([^']+)'(?: |\.)(.+)$", name)
+    if match:
+        edge_id, suffix = match.groups()
+        return {
+            "edge_id": edge_id,
+            "field": _field_for_suffix("edges[]", suffix),
+            "prefix": "edge",
+        }
+    if name == "node id":
+        return {"node_id": value if isinstance(value, str) else None, "field": "nodes[].id", "prefix": "node"}
+    if name == "edge id":
+        return {"edge_id": value if isinstance(value, str) else None, "field": "edges[].id", "prefix": "edge"}
+    match = re.match(r"^manifest '([^']+)'(?: |\.)(.+)$", name)
+    if match:
+        _, suffix = match.groups()
+        return {"field": _field_for_suffix("manifest", suffix), "prefix": "manifest"}
+    if name.startswith("manifest "):
+        suffix = name.removeprefix("manifest ")
+        if suffix.endswith(" metadata"):
+            suffix = "metadata"
+        elif suffix.endswith(" policy"):
+            suffix = "policy"
+        return {"field": _field_for_suffix("manifest", suffix), "prefix": "manifest"}
+    if name in {"manifest id", "manifest_hash", "topology_hash"}:
+        return {"field": {"manifest id": "id"}.get(name, name), "prefix": "manifest"}
+    return {"field": _field_for_suffix(None, name), "prefix": "manifest"}
+
+
+def _field_for_suffix(base: str | None, suffix: str) -> str:
+    suffix = suffix.replace(" ", ".")
+    if suffix == "input":
+        suffix = "inputs[]"
+    if suffix == "output":
+        suffix = "outputs[]"
+    suffix = suffix.replace(".input", ".inputs[]")
+    suffix = suffix.replace(".output", ".outputs[]")
+    suffix = suffix.replace(".capability_id", ".capabilities[].capability_id")
+    suffix = suffix.replace(".capability.route", ".capabilities[].route")
+    suffix = suffix.replace(".subpipeline.", ".subpipeline.")
+    if suffix == "kind":
+        leaf = "kind"
+    else:
+        leaf = suffix
+    if base is None:
+        return leaf
+    if base == "manifest":
+        return leaf
+    return f"{base}.{leaf}"
+
+
+def _code_for_invalid_ref(name: str, value: Any) -> str:
+    context = _issue_context(name, value)
+    prefix = context.get("prefix", "manifest")
+    field = str(context.get("field") or name)
+    leaf = field.rsplit(".", 1)[-1].replace("[]", "")
+    leaf = {"inputs": "input", "outputs": "output", "capabilities": "capability"}.get(leaf, leaf)
+    if not isinstance(value, str) or not value:
+        return f"missing_{prefix}_{leaf}"
+    return f"invalid_{prefix}_{leaf}"
+
+
+def _validate_id(name: str, value: str, errors: list[ManifestValidationIssue]) -> None:
     _validate_ref(name, value, errors)
 
 
-def _validate_ref(name: str, value: str, errors: list[str]) -> None:
+def _validate_ref(name: str, value: str, errors: list[ManifestValidationIssue]) -> None:
+    context = _issue_context(name, value)
     if not isinstance(value, str) or not value:
-        errors.append(f"{name} must be a non-empty string")
+        _add_issue(
+            errors,
+            f"{name} must be a non-empty string",
+            code=_code_for_invalid_ref(name, value),
+            field=context.get("field"),
+            node_id=context.get("node_id"),
+            edge_id=context.get("edge_id"),
+            details={"value": value},
+        )
         return
     if not _REF_RE.fullmatch(value):
-        errors.append(f"{name} has invalid ref format: {value!r}")
+        _add_issue(
+            errors,
+            f"{name} has invalid ref format: {value!r}",
+            code=_code_for_invalid_ref(name, value),
+            field=context.get("field"),
+            node_id=context.get("node_id"),
+            edge_id=context.get("edge_id"),
+            details={"value": value},
+        )
 
 
-def _validate_optional_ref(name: str, value: str | None, errors: list[str]) -> None:
+def _validate_optional_ref(
+    name: str,
+    value: str | None,
+    errors: list[ManifestValidationIssue],
+) -> None:
     if value is not None:
         _validate_ref(name, value, errors)
 
 
-def _validate_hash(name: str, value: str | None, errors: list[str]) -> None:
+def _validate_hash(name: str, value: str | None, errors: list[ManifestValidationIssue]) -> None:
     if not isinstance(value, str) or not _HASH_RE.fullmatch(value):
-        errors.append(f"{name} must be 'sha256:' followed by 64 lowercase hex characters")
+        context = _issue_context(name, value)
+        _add_issue(
+            errors,
+            f"{name} must be 'sha256:' followed by 64 lowercase hex characters",
+            code=f"invalid_{str(context.get('field') or name).replace('.', '_')}",
+            field=context.get("field"),
+            node_id=context.get("node_id"),
+            edge_id=context.get("edge_id"),
+            details={"value": value},
+        )
 
 
-def _validate_policy(name: str, policy: WorkflowPolicy | None, errors: list[str]) -> None:
+def _validate_policy(
+    name: str,
+    policy: WorkflowPolicy | None,
+    errors: list[ManifestValidationIssue],
+) -> None:
     if policy is None:
         return
     if policy.budget is not None:
@@ -150,7 +403,7 @@ def _validate_policy(name: str, policy: WorkflowPolicy | None, errors: list[str]
         _validate_optional_positive_int(f"{name}.budget.token_budget", policy.budget.token_budget, errors)
     if policy.retry is not None:
         if policy.retry.max_attempts < 1:
-            errors.append(f"{name}.retry.max_attempts must be >= 1")
+            _add_generic_issue(errors, f"{name}.retry.max_attempts must be >= 1", name=f"{name}.retry.max_attempts")
         _validate_ref(f"{name}.retry.backoff", policy.retry.backoff, errors)
         for retry_ref in policy.retry.retry_on:
             _validate_ref(f"{name}.retry.retry_on", retry_ref, errors)
@@ -183,11 +436,17 @@ def _validate_suspension_route(
     name: str,
     route: SuspensionRoute,
     route_ids: set[str],
-    errors: list[str],
+    errors: list[ManifestValidationIssue],
 ) -> None:
     _validate_ref(f"{name}.route_id", route.route_id, errors)
     if route.route_id in route_ids:
-        errors.append(f"{name} route_id {route.route_id!r} is duplicated")
+        _add_generic_issue(
+            errors,
+            f"{name} route_id {route.route_id!r} is duplicated",
+            name=f"{name}.route_id",
+            code="duplicate_suspension_route_id",
+            details={"route_id": route.route_id},
+        )
     route_ids.add(route.route_id)
     _validate_optional_ref(f"{name}.capability_id", route.capability_id, errors)
     _validate_optional_ref(f"{name}.reentry_id", route.reentry_id, errors)
@@ -201,7 +460,11 @@ def _validate_suspension_route(
     _validate_optional_ref(f"{name}.resume_payload_ref", route.resume_payload_ref, errors)
 
 
-def _validate_timing_policy(name: str, timing: TimingPolicy | None, errors: list[str]) -> None:
+def _validate_timing_policy(
+    name: str,
+    timing: TimingPolicy | None,
+    errors: list[ManifestValidationIssue],
+) -> None:
     if timing is None:
         return
     _validate_optional_positive_number(f"{name}.timeout_seconds", timing.timeout_seconds, errors)
@@ -212,17 +475,21 @@ def _validate_timing_policy(name: str, timing: TimingPolicy | None, errors: list
 def _validate_idempotency_policy(
     name: str,
     idempotency: IdempotencyPolicy | None,
-    errors: list[str],
+    errors: list[ManifestValidationIssue],
 ) -> None:
     if idempotency is None:
         return
     _validate_optional_ref(f"{name}.key_ref", idempotency.key_ref, errors)
     _validate_optional_ref(f"{name}.key_template", idempotency.key_template, errors)
     if not isinstance(idempotency.required, bool):
-        errors.append(f"{name}.required must be a boolean")
+        _add_generic_issue(errors, f"{name}.required must be a boolean", name=f"{name}.required")
 
 
-def _validate_effects(name: str, effects: Iterable[EffectRef], errors: list[str]) -> None:
+def _validate_effects(
+    name: str,
+    effects: Iterable[EffectRef],
+    errors: list[ManifestValidationIssue],
+) -> None:
     effect_ids: set[str] = set()
     for effect in effects:
         _validate_effect_ref(name, effect, effect_ids, errors)
@@ -232,12 +499,18 @@ def _validate_effect_ref(
     name: str,
     effect: EffectRef,
     effect_ids: set[str] | None,
-    errors: list[str],
+    errors: list[ManifestValidationIssue],
 ) -> None:
     _validate_ref(f"{name}.effect_id", effect.effect_id, errors)
     if effect_ids is not None:
         if effect.effect_id in effect_ids:
-            errors.append(f"{name} effect_id {effect.effect_id!r} is duplicated")
+            _add_generic_issue(
+                errors,
+                f"{name} effect_id {effect.effect_id!r} is duplicated",
+                name=f"{name}.effect_id",
+                code="duplicate_effect_id",
+                details={"effect_id": effect.effect_id},
+            )
         effect_ids.add(effect.effect_id)
     _validate_ref(f"{name}.route", effect.route, errors)
     _validate_optional_ref(f"{name}.payload_ref", effect.payload_ref, errors)
@@ -245,12 +518,22 @@ def _validate_effect_ref(
     _validate_idempotency_policy(f"{name}.idempotency", effect.idempotency, errors)
 
 
-def _validate_reducers(name: str, reducers: Iterable[ReducerRef], errors: list[str]) -> None:
+def _validate_reducers(
+    name: str,
+    reducers: Iterable[ReducerRef],
+    errors: list[ManifestValidationIssue],
+) -> None:
     reducer_ids: set[str] = set()
     for reducer in reducers:
         _validate_ref(f"{name}.reducer_id", reducer.reducer_id, errors)
         if reducer.reducer_id in reducer_ids:
-            errors.append(f"{name} reducer_id {reducer.reducer_id!r} is duplicated")
+            _add_generic_issue(
+                errors,
+                f"{name} reducer_id {reducer.reducer_id!r} is duplicated",
+                name=f"{name}.reducer_id",
+                code="duplicate_reducer_id",
+                details={"reducer_id": reducer.reducer_id},
+            )
         reducer_ids.add(reducer.reducer_id)
         _validate_optional_ref(f"{name}.input_ref", reducer.input_ref, errors)
         _validate_optional_ref(f"{name}.output_ref", reducer.output_ref, errors)
@@ -259,7 +542,7 @@ def _validate_reducers(name: str, reducers: Iterable[ReducerRef], errors: list[s
 def _validate_compensation_policy(
     name: str,
     compensation: CompensationPolicy | None,
-    errors: list[str],
+    errors: list[ManifestValidationIssue],
 ) -> None:
     if compensation is None:
         return
@@ -276,11 +559,17 @@ def _validate_compensation_target(
     name: str,
     target: CompensationTarget,
     target_ids: set[str],
-    errors: list[str],
+    errors: list[ManifestValidationIssue],
 ) -> None:
     _validate_ref(f"{name}.target_id", target.target_id, errors)
     if target.target_id in target_ids:
-        errors.append(f"{name} target_id {target.target_id!r} is duplicated")
+        _add_generic_issue(
+            errors,
+            f"{name} target_id {target.target_id!r} is duplicated",
+            name=f"{name}.target_id",
+            code="duplicate_compensation_target_id",
+            details={"target_id": target.target_id},
+        )
     target_ids.add(target.target_id)
     _validate_effect_ref(f"{name}.effect", target.effect, None, errors)
     _validate_optional_ref(f"{name}.condition_ref", target.condition_ref, errors)
@@ -290,12 +579,12 @@ def _validate_compensation_target(
 def _validate_escalation_policy(
     name: str,
     escalation: EscalationPolicy | None,
-    errors: list[str],
+    errors: list[ManifestValidationIssue],
 ) -> None:
     if escalation is None:
         return
     if not escalation.targets:
-        errors.append(f"{name}.targets must include at least one target")
+        _add_generic_issue(errors, f"{name}.targets must include at least one target", name=f"{name}.targets")
     for target_ref in escalation.targets:
         _validate_ref(f"{name}.targets", target_ref, errors)
     _validate_optional_positive_int(
@@ -310,13 +599,19 @@ def _validate_escalation_policy(
 def _validate_control_transitions(
     name: str,
     transitions: Iterable[ControlTransitionSlot],
-    errors: list[str],
+    errors: list[ManifestValidationIssue],
 ) -> None:
     transition_ids: set[str] = set()
     for transition in transitions:
         _validate_ref(f"{name}.transition_id", transition.transition_id, errors)
         if transition.transition_id in transition_ids:
-            errors.append(f"{name} transition_id {transition.transition_id!r} is duplicated")
+            _add_generic_issue(
+                errors,
+                f"{name} transition_id {transition.transition_id!r} is duplicated",
+                name=f"{name}.transition_id",
+                code="duplicate_control_transition_id",
+                details={"transition_id": transition.transition_id},
+            )
         transition_ids.add(transition.transition_id)
         _validate_ref(f"{name}.transition_type", transition.transition_type, errors)
         _validate_optional_ref(f"{name}.trigger_ref", transition.trigger_ref, errors)
@@ -329,13 +624,19 @@ def _validate_control_transitions(
 def _validate_topology_overlays(
     name: str,
     overlays: Iterable[TopologyOverlaySlot],
-    errors: list[str],
+    errors: list[ManifestValidationIssue],
 ) -> None:
     overlay_ids: set[str] = set()
     for overlay in overlays:
         _validate_ref(f"{name}.overlay_id", overlay.overlay_id, errors)
         if overlay.overlay_id in overlay_ids:
-            errors.append(f"{name} overlay_id {overlay.overlay_id!r} is duplicated")
+            _add_generic_issue(
+                errors,
+                f"{name} overlay_id {overlay.overlay_id!r} is duplicated",
+                name=f"{name}.overlay_id",
+                code="duplicate_topology_overlay_id",
+                details={"overlay_id": overlay.overlay_id},
+            )
         overlay_ids.add(overlay.overlay_id)
         _validate_ref(f"{name}.overlay_type", overlay.overlay_type, errors)
         _validate_optional_ref(f"{name}.source_ref", overlay.source_ref, errors)
@@ -348,7 +649,7 @@ def _validate_topology_overlays(
 def _validate_authority_requirements(
     name: str,
     requirements: Iterable[AuthorityRequirement],
-    errors: list[str],
+    errors: list[ManifestValidationIssue],
 ) -> None:
     requirement_ids: set[tuple[str, str]] = set()
     for requirement in requirements:
@@ -356,27 +657,43 @@ def _validate_authority_requirements(
         _validate_ref(f"{name}.action", requirement.action, errors)
         key = (requirement.authority_id, requirement.action)
         if key in requirement_ids:
-            errors.append(
-                f"{name} authority/action pair {requirement.authority_id!r}/{requirement.action!r} is duplicated"
+            _add_generic_issue(
+                errors,
+                f"{name} authority/action pair {requirement.authority_id!r}/{requirement.action!r} is duplicated",
+                name=f"{name}.authority_id",
+                code="duplicate_authority_requirement",
+                details={"authority_id": requirement.authority_id, "action": requirement.action},
             )
         requirement_ids.add(key)
         _validate_optional_hash(f"{name}.evidence_schema_hash", requirement.evidence_schema_hash, errors)
         _validate_optional_ref(f"{name}.capability_id", requirement.capability_id, errors)
 
 
-def _validate_optional_hash(name: str, value: str | None, errors: list[str]) -> None:
+def _validate_optional_hash(
+    name: str,
+    value: str | None,
+    errors: list[ManifestValidationIssue],
+) -> None:
     if value is not None:
         _validate_hash(name, value, errors)
 
 
-def _validate_optional_positive_int(name: str, value: int | None, errors: list[str]) -> None:
+def _validate_optional_positive_int(
+    name: str,
+    value: int | None,
+    errors: list[ManifestValidationIssue],
+) -> None:
     if value is None:
         return
     if not isinstance(value, int) or isinstance(value, bool) or value < 1:
-        errors.append(f"{name} must be a positive integer")
+        _add_generic_issue(errors, f"{name} must be a positive integer", name=name, details={"value": value})
 
 
-def _validate_optional_positive_number(name: str, value: float | None, errors: list[str]) -> None:
+def _validate_optional_positive_number(
+    name: str,
+    value: float | None,
+    errors: list[ManifestValidationIssue],
+) -> None:
     if value is None:
         return
     if (
@@ -385,24 +702,40 @@ def _validate_optional_positive_number(name: str, value: float | None, errors: l
         or not math.isfinite(value)
         or value <= 0
     ):
-        errors.append(f"{name} must be a positive finite number")
+        _add_generic_issue(errors, f"{name} must be a positive finite number", name=name, details={"value": value})
 
 
-def _validate_metadata(name: str, metadata: Mapping[str, Any], errors: list[str]) -> None:
+def _validate_metadata(
+    name: str,
+    metadata: Mapping[str, Any],
+    errors: list[ManifestValidationIssue],
+) -> None:
     if not isinstance(metadata, Mapping):
-        errors.append(f"{name} must be a mapping")
+        _add_generic_issue(errors, f"{name} must be a mapping", name=name, code="invalid_metadata")
         return
     _validate_json_value(name, metadata, errors)
 
 
-def _validate_json_value(name: str, value: Any, errors: list[str]) -> None:
+def _validate_json_value(name: str, value: Any, errors: list[ManifestValidationIssue]) -> None:
     if isinstance(value, Mapping):
         for key, subvalue in value.items():
             if not isinstance(key, str) or not key:
-                errors.append(f"{name} metadata keys must be non-empty strings")
+                _add_generic_issue(
+                    errors,
+                    f"{name} metadata keys must be non-empty strings",
+                    name=name,
+                    code="invalid_metadata_key",
+                    details={"key": key},
+                )
                 continue
             if key in _RESERVED_METADATA_KEYS:
-                errors.append(f"{name} uses reserved metadata key: {key!r}")
+                _add_generic_issue(
+                    errors,
+                    f"{name} uses reserved metadata key: {key!r}",
+                    name=f"{name}.{key}",
+                    code="reserved_metadata_key",
+                    details={"key": key},
+                )
             _validate_json_value(f"{name}.{key}", subvalue, errors)
         return
     if isinstance(value, list):
@@ -413,14 +746,20 @@ def _validate_json_value(name: str, value: Any, errors: list[str]) -> None:
         return
     if isinstance(value, float) and math.isfinite(value):
         return
-    errors.append(f"{name} contains non-JSON-serializable value {value!r}")
+    _add_generic_issue(
+        errors,
+        f"{name} contains non-JSON-serializable value {value!r}",
+        name=name,
+        code="metadata_not_json_serializable",
+        details={"value_repr": repr(value)},
+    )
 
 
 def _validate_cycles(
     nodes: Iterable[WorkflowNode],
     edges: Iterable[WorkflowEdge],
     manifest_policy: WorkflowPolicy | None,
-    errors: list[str],
+    errors: list[ManifestValidationIssue],
 ) -> None:
     nodes_by_id = {node.id: node for node in nodes}
     edge_list = list(edges)
@@ -444,10 +783,15 @@ def _validate_cycles(
                 if not _cycle_has_bounded_reentry(
                     cycle_nodes, nodes_by_id, manifest_policy, edge_list
                 ):
-                    errors.append(
+                    _add_issue(
+                        errors,
                         "arbitrary graph cycles are invalid; edge "
                         f"{edge.id!r} closes cycle {' -> '.join(cycle_nodes)} "
-                        "without an explicit bounded reentry route"
+                        "without an explicit bounded reentry route",
+                        code="arbitrary_cycle",
+                        field="edges[]",
+                        edge_id=edge.id,
+                        details={"cycle": cycle_nodes},
                     )
             elif edge.target not in visited:
                 visit(edge.target)

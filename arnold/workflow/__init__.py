@@ -70,6 +70,7 @@ from arnold.manifest.manifests import (
 )
 from arnold.workflow.validation import (
     ManifestValidationError,
+    ManifestValidationIssue,
     check_neutral_import_boundary,
     validate_manifest,
 )
@@ -121,6 +122,7 @@ __all__ = [
     "WorkflowNode",
     "WorkflowPolicy",
     "ManifestValidationError",
+    "ManifestValidationIssue",
     "canonical_json",
     "canonical_alias",
     "check_neutral_import_boundary",
