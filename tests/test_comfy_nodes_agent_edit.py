@@ -9019,6 +9019,61 @@ def test_session_json_public_route_projects_artifact_paths_to_boolean_state(
     )
 
 
+def test_chat_route_honors_max_messages_query_parameter(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """GET /vibecomfy/agent-edit/chat passes max_messages to read_session_chat."""
+    monkeypatch.setenv("VIBECOMFY_HEADLESS", "1")
+    routes = importlib.import_module("vibecomfy.comfy_nodes.agent.routes")
+    edit_module = importlib.import_module("vibecomfy.comfy_nodes.agent.edit")
+    monkeypatch.setattr(edit_module, "_SESSION_ROOT", tmp_path)
+
+    registered: dict[tuple[str, str], Any] = {}
+
+    class _Routes:
+        def post(self, path):
+            def _decorator(fn):
+                registered[("POST", path)] = fn
+                return fn
+            return _decorator
+
+        def get(self, path):
+            def _decorator(fn):
+                registered[("GET", path)] = fn
+                return fn
+            return _decorator
+
+    aiohttp_module = types.ModuleType("aiohttp")
+    aiohttp_module.web = types.SimpleNamespace(
+        json_response=lambda body, status=200: {"status": status, "body": body},
+    )
+    monkeypatch.setitem(sys.modules, "aiohttp", aiohttp_module)
+
+    session_id = "chat-route-max-messages"
+    for tid in ("0000", "0001"):
+        _write_chat_artifact(
+            session_dir_for(tmp_path, session_id) / "turns" / tid,
+            session_id,
+            tid,
+            f"user-{tid}",
+            f"agent-{tid}",
+        )
+
+    routes.register_agent_edit_routes(types.SimpleNamespace(routes=_Routes()))
+    chat_route = registered[("GET", "/vibecomfy/agent-edit/chat")]
+
+    class _Request:
+        query = {"session_id": session_id, "max_messages": "1"}
+
+    response = asyncio.run(chat_route(_Request()))
+    assert response["status"] == 200
+    body = response["body"]
+    assert body["ok"] is True
+    assert len(body["messages"]) == 1
+    assert body["messages"][0]["text"] == "agent-0001"
+
+
 def test_read_session_json_empty_session(tmp_path: Path) -> None:
     """Empty session (no turns) returns empty lists with ok=True."""
     session_id = "empty-session"
@@ -9579,6 +9634,83 @@ def test_read_session_bundle_records_oversize_skips(tmp_path: Path) -> None:
     assert "turns/0001/small.json" in by_name
     skipped = {s["name"]: s for s in result["skipped"]}
     assert skipped.get("turns/0001/big.json", {}).get("reason") == "too_large"
+
+
+def test_session_bundle_route_retains_raw_sentinels(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """HTTP /vibecomfy/agent-edit/session-bundle remains a raw debug/report surface.
+
+    This route-level regression test proves raw sentinel fields survive HTTP
+    serialization, documenting the intentional exemption from normal public-payload
+    projection assertions.
+    """
+    monkeypatch.setenv("VIBECOMFY_HEADLESS", "1")
+    routes = importlib.import_module("vibecomfy.comfy_nodes.agent.routes")
+    edit_module = importlib.import_module("vibecomfy.comfy_nodes.agent.edit")
+    monkeypatch.setattr(edit_module, "_SESSION_ROOT", tmp_path)
+
+    registered: dict[tuple[str, str], Any] = {}
+
+    class _Routes:
+        def post(self, path):
+            def _decorator(fn):
+                registered[("POST", path)] = fn
+                return fn
+            return _decorator
+
+        def get(self, path):
+            def _decorator(fn):
+                registered[("GET", path)] = fn
+                return fn
+            return _decorator
+
+    aiohttp_module = types.ModuleType("aiohttp")
+    aiohttp_module.web = types.SimpleNamespace(
+        json_response=lambda body, status=200: {"status": status, "body": body},
+    )
+    monkeypatch.setitem(sys.modules, "aiohttp", aiohttp_module)
+
+    session_id = "bundle-route-raw"
+    turn_dir = tmp_path / session_id / "turns" / "0000"
+    turn_dir.mkdir(parents=True)
+    (turn_dir / "request.json").write_text(
+        json.dumps({"task": "user-0", "raw_prompt": "INTERNAL_RAW_PROMPT_SENTINEL"})
+        + "\n",
+        encoding="utf-8",
+    )
+    (turn_dir / "response.json").write_text(
+        json.dumps(
+            {
+                "message": "agent-0",
+                "ok": True,
+                "provider_diagnostics": ["PROVIDER_DIAGNOSTIC_SENTINEL"],
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    class _Request:
+        query = {"session_id": session_id}
+
+    routes.register_agent_edit_routes(types.SimpleNamespace(routes=_Routes()))
+    bundle_route = registered[("GET", "/vibecomfy/agent-edit/session-bundle")]
+    response = asyncio.run(bundle_route(_Request()))
+
+    assert response["status"] == 200
+    body = response["body"]
+    assert body["ok"] is True
+    by_name = {f["name"]: f for f in body["files"]}
+    assert "turns/0000/request.json" in by_name
+    assert "turns/0000/response.json" in by_name
+    request_file = by_name["turns/0000/request.json"]
+    response_file = by_name["turns/0000/response.json"]
+    assert "text" in request_file
+    assert "text" in response_file
+    assert "INTERNAL_RAW_PROMPT_SENTINEL" in request_file["text"]
+    assert "PROVIDER_DIAGNOSTIC_SENTINEL" in response_file["text"]
 
 
 # ── batch lint wiring tests ───────────────────────────────────────────────────

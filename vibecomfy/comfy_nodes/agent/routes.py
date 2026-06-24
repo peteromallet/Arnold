@@ -1446,11 +1446,13 @@ def register_agent_edit_routes(app) -> None:
     @app.routes.get("/vibecomfy/agent-edit/chat")
     async def _agent_edit_chat_route(request):  # type: ignore[no-untyped-def]
         session_id = _session_id_from_query(request)
+        max_messages = _coerce_chat_max_messages(request.query.get("max_messages"))
         try:
             result = await asyncio.to_thread(
                 read_session_chat,
                 _SESSION_ROOT,
                 session_id,
+                max_messages=max_messages,
             )
         except Exception as exc:
             failure = _classify_failure("chat", exc)
