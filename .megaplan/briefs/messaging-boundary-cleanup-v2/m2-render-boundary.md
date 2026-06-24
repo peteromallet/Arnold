@@ -58,4 +58,3 @@ node --test tests/browser/roundtrip_smoke.test.mjs
 node --test tests/browser/panel_thread_rating.test.mjs
 node --test tests/browser/*.mjs
 ```
-

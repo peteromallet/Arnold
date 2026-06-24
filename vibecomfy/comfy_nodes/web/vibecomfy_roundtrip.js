@@ -2930,7 +2930,10 @@ function scheduleAgentStatusRetry(panel, route, model, { quiet = true } = {}) {
       return;
     }
     panel.state.statusRetry.timerId = null;
-    refreshAgentStatus(panel, { quiet });
+    refreshAgentStatus(panel, { quiet }).catch(() => {
+      // Swallow retry errors: the next scheduled retry or user action will
+      // surface them through the panel state.
+    });
   }, delayMs);
   panel.state.statusRetry = { route, model, attempts, exhausted: false, timerId };
 }
