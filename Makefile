@@ -76,7 +76,7 @@ ROOT_BANNED := \
 	version_matrix.json \
 	workflow_corpus
 
-.PHONY: all check ci install-dev install-ci prune-empty-runtime-root root-clean post-root-clean docs template-index templates strict-ready fast snapshots oracle browser-smoke parity e2e-browser clean
+.PHONY: all check ci install-dev install-ci prune-empty-runtime-root root-clean post-root-clean docs template-index templates strict-ready fast snapshots oracle browser-smoke parity e2e-browser clean clean-artifacts
 
 all: check
 
@@ -155,6 +155,8 @@ e2e-browser:
 	cd tests/e2e && npm install
 	$(NODE) tests/e2e/run.mjs
 
-clean:
+clean-artifacts:
 	rm -rf .coverage coverage.xml .pytest_cache .hypothesis out temp test-results
 	find . -path '*/__pycache__' -type d -prune -exec rm -rf {} +
+
+clean: clean-artifacts
