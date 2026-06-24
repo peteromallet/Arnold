@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import json
 import os
 from dataclasses import dataclass, field
@@ -20,12 +21,29 @@ from .tool_registry import ToolRegistry
 
 
 @dataclass(frozen=True)
+class ToolRuntimeContext:
+    conversation_id: str
+    subject: Any | None = None
+
+
+_TOOL_RUNTIME_CONTEXT: contextvars.ContextVar[ToolRuntimeContext | None] = contextvars.ContextVar(
+    "resident_tool_runtime_context",
+    default=None,
+)
+
+
+def current_tool_runtime_context() -> ToolRuntimeContext | None:
+    return _TOOL_RUNTIME_CONTEXT.get()
+
+
+@dataclass(frozen=True)
 class AgentRequest:
     conversation_id: str
     messages: tuple[dict[str, Any], ...]
     system_prompt: str
     hot_context: dict[str, Any] = field(default_factory=dict)
     model_seam_metadata: Mapping[str, Any] = field(default_factory=dict)
+    subject: Any | None = None
 
 
 @dataclass(frozen=True)
@@ -91,9 +109,12 @@ class FakeAgentRunner:
         self.tool_timeout_s = tool_timeout_s
 
     async def run(self, request: AgentRequest, tools: ToolRegistry) -> AgentResponse:
-        del request
         audit_records: list[ToolCallAuditRecord] = []
         tool_call_count = 0
+        runtime_context = ToolRuntimeContext(
+            conversation_id=request.conversation_id,
+            subject=request.subject,
+        )
 
         for step_index, step in enumerate(self.steps, start=1):
             if step.final_text is not None:
@@ -108,7 +129,9 @@ class FakeAgentRunner:
             if tool_call_count >= self.max_tool_calls:
                 raise AgentLoopError(f"resident tool-call limit exceeded: {self.max_tool_calls}")
             tool_call_count += 1
-            audit_records.append(await self._execute_tool_call(step.tool_call, tools, tool_call_count))
+            audit_records.append(
+                await self._execute_tool_call(step.tool_call, tools, tool_call_count, runtime_context)
+            )
 
         raise AgentLoopError("fake agent script ended without final_text")
 
@@ -117,6 +140,7 @@ class FakeAgentRunner:
         call: FakeToolCall,
         tools: ToolRegistry,
         sequence: int,
+        runtime_context: ToolRuntimeContext,
     ) -> ToolCallAuditRecord:
         start = perf_counter()
         arguments = dict(call.arguments)
@@ -128,7 +152,7 @@ class FakeAgentRunner:
             operation_kind = registration.operation_kind
             tool_input = registration.input_model.model_validate(arguments)
             raw_result = await asyncio.wait_for(
-                _await_maybe(registration.handler(tool_input)),
+                _run_tool_handler(registration.handler, tool_input, runtime_context),
                 timeout=self.tool_timeout_s,
             )
             result_model = _coerce_tool_result(registration.output_model, raw_result)
@@ -224,6 +248,10 @@ class OpenAICompatibleAgentRunner(DispatchProtocol):
                     arguments=arguments,
                     audit_id=tool_call.id,
                     timeout_s=self.tool_timeout_s,
+                    runtime_context=ToolRuntimeContext(
+                        conversation_id=request.conversation_id,
+                        subject=request.subject,
+                    ),
                 )
                 audit_records.append(audit)
                 messages.append(
@@ -258,6 +286,14 @@ async def _await_maybe(value: Any) -> Any:
     return value
 
 
+async def _run_tool_handler(handler: Any, tool_input: Any, runtime_context: ToolRuntimeContext) -> Any:
+    token = _TOOL_RUNTIME_CONTEXT.set(runtime_context)
+    try:
+        return await _await_maybe(handler(tool_input))
+    finally:
+        _TOOL_RUNTIME_CONTEXT.reset(token)
+
+
 def _coerce_tool_result(output_model: type[BaseModel], value: Any) -> BaseModel:
     if isinstance(value, output_model):
         return value
@@ -280,6 +316,7 @@ async def _execute_registered_tool(
     arguments: dict[str, Any],
     audit_id: str,
     timeout_s: float,
+    runtime_context: ToolRuntimeContext,
 ) -> ToolCallAuditRecord:
     start = perf_counter()
     operation_kind = "read"
@@ -289,7 +326,7 @@ async def _execute_registered_tool(
         operation_kind = registration.operation_kind
         tool_input = registration.input_model.model_validate(arguments)
         raw_result = await asyncio.wait_for(
-            _await_maybe(registration.handler(tool_input)),
+            _run_tool_handler(registration.handler, tool_input, runtime_context),
             timeout=timeout_s,
         )
         result_model = _coerce_tool_result(registration.output_model, raw_result)

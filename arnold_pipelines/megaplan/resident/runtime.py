@@ -210,6 +210,7 @@ class ResidentRuntime:
             system_prompt=system_prompt,
             hot_context=hot_context,
             model_seam_metadata=model_seam_metadata,
+            subject=items[-1].event.subject,
         )
         try:
             response = await self.runner.run(request, self.profile.tools())
