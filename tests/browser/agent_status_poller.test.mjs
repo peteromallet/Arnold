@@ -2,12 +2,26 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
+  RENDER_SECTIONS,
+} from "../../vibecomfy/comfy_nodes/web/agent_edit_lifecycle.js";
+
+import {
+  SETTINGS_STATUS_RENDER_SECTIONS,
+} from "../../vibecomfy/comfy_nodes/web/panel_scheduler.js";
+
+import {
+  ROUTE_ALIASES,
+  ROUTE_LABELS,
+  CANONICAL_AGENT_PROVIDERS,
   ROUTE_STATUS_KIND,
   getPersistedAgentProvider,
   setPersistedAgentProvider,
   buildStatusUrl,
   routeStatusState,
   routeOptionsFromStatus,
+  getRouteOptions,
+  getRouteDescriptor,
+  normalizeRoutePreference,
   projectRouteStatus,
   clearAgentStatusRetry,
   scheduleAgentStatusRetry,
@@ -222,8 +236,8 @@ function makeDeps(overrides = {}) {
     renderAgentPanel: () => {},
     nextMacrotask: () => Promise.resolve(),
     markAgentPanelDirtyAfterCommit: () => {},
-    SETTINGS_STATUS_RENDER_SECTIONS: ["meta", "composer", "notice"],
-    RENDER_SECTIONS: { META: "meta", COMPOSER: "composer", NOTICE: "notice", THREAD: "thread", DEVELOPER: "developer" },
+    SETTINGS_STATUS_RENDER_SECTIONS,
+    RENDER_SECTIONS,
     syncChooseEngineGate: () => {},
     closeChooseEngineOverlay: () => {},
     openChooseEngineOverlay: () => {},
@@ -268,6 +282,16 @@ test("routeOptionsFromStatus — extracts route_options safely", () => {
 
   const opts = { auto: { normalized_route: "arnold" } };
   assert.deepEqual(routeOptionsFromStatus({ ok: true, route_options: opts }), opts);
+});
+
+test("SETTINGS_STATUS_RENDER_SECTIONS preserves status rerender sections", () => {
+  assert.deepEqual(SETTINGS_STATUS_RENDER_SECTIONS, [
+    RENDER_SECTIONS.THREAD,
+    RENDER_SECTIONS.SETTINGS,
+    RENDER_SECTIONS.COMPOSER,
+    RENDER_SECTIONS.NOTICE,
+  ]);
+  assert.equal(SETTINGS_STATUS_RENDER_SECTIONS.includes(RENDER_SECTIONS.DEVELOPER), false);
 });
 
 test("projectRouteStatus — projects ProviderStatus payloads to frontend RouteStatus", () => {
@@ -576,10 +600,10 @@ test("getPersistedAgentProvider / setPersistedAgentProvider — localStorage rou
 
   assert.equal(getPersistedAgentProvider(), null);
 
-  setPersistedAgentProvider("openrouter");
-  assert.equal(getPersistedAgentProvider(), "openrouter");
+  setPersistedAgentProvider("deepseek");
+  assert.equal(getPersistedAgentProvider(), "deepseek");
 
-  setPersistedAgentProvider("deepseek"); // aliased
+  setPersistedAgentProvider("openrouter");
   assert.equal(getPersistedAgentProvider(), "openrouter");
 
   setPersistedAgentProvider("anthropic");
@@ -637,15 +661,23 @@ test("populateRouteSelect — populates with route options", () => {
   const selectNode = makeSelectElement("auto");
   const routeOptions = {
     auto: { normalized_route: "arnold" },
+    deepseek: { browser_api_key_allowed: true },
     openrouter: { browser_api_key_allowed: true },
     anthropic: { available: true },
     "openai-codex": { available: true },
   };
 
-  populateRouteSelect(selectNode, routeOptions, { selectedRoute: "openrouter" }, makeDeps());
+  populateRouteSelect(selectNode, routeOptions, { selectedRoute: "deepseek" }, makeDeps());
 
-  assert.ok(selectNode.children.length >= 3, `got ${selectNode.children.length} children`);
-  assert.equal(selectNode.value, "openrouter");
+  assert.deepEqual(selectNode.children.map((entry) => entry.value), [
+    "auto",
+    "deepseek",
+    "openrouter",
+    "anthropic",
+    "openai-codex",
+  ]);
+  assert.equal(selectNode.value, "deepseek");
+  assert.equal(selectNode.children[1].textContent, "deepseek");
 
   const emptySelect = makeSelectElement("auto");
   populateRouteSelect(emptySelect, null, { placeholderLabel: "No routes", selectedRoute: "auto" }, makeDeps());
@@ -1167,7 +1199,7 @@ test("syncChooseEngineGate — closes overlay when ready provider found via stat
       routeStatus: { kind: ROUTE_STATUS_KIND.READY },
       statusSnapshot: {
         ok: true, route: "openrouter", provider_available: true,
-        credential_presence: { openrouter_api_key: true },
+        credential_presence: { deepseek_api_key: true },
         route_options: { openrouter: { normalized_route: "openrouter" } },
       },
     },
@@ -1177,6 +1209,53 @@ test("syncChooseEngineGate — closes overlay when ready provider found via stat
 
   assert.equal(closeCalled, true);
   assert.equal(getPersistedAgentProvider(), "openrouter");
+  assert.equal(panel.fields.route.value, "openrouter");
+  assert.deepEqual(panel.state.routeStatus, {
+    kind: ROUTE_STATUS_KIND.READY,
+    requestedRoute: "openrouter",
+    model: null,
+  });
+  assert.equal(panel.state.settingsMessage, "openrouter → openrouter (provider ready)");
+  assert.equal(panel.state.settingsMessageKind, "success");
+});
+
+test("syncChooseEngineGate — auto-selects DeepSeek provider when status has DeepSeek credential", () => {
+  globalThis.localStorage._clear();
+
+  let closeCalled = false;
+  const panel = makePanel({
+    shell: {},
+    fields: { route: makeSelectElement("auto") },
+    state: {
+      routeStatus: { kind: ROUTE_STATUS_KIND.READY },
+      statusSnapshot: {
+        ok: true,
+        route: "deepseek",
+        requested_route: "deepseek",
+        provider_available: true,
+        credential_presence: { deepseek_api_key: true },
+        route_options: {
+          deepseek: { normalized_route: "deepseek", available: true },
+          openrouter: { normalized_route: "openrouter", available: true },
+        },
+      },
+    },
+  });
+
+  syncChooseEngineGate(panel, makeDeps({
+    closeChooseEngineOverlay: () => { closeCalled = true; },
+  }));
+
+  assert.equal(closeCalled, true);
+  assert.equal(getPersistedAgentProvider(), "deepseek");
+  assert.equal(panel.fields.route.value, "deepseek");
+  assert.deepEqual(panel.state.routeStatus, {
+    kind: ROUTE_STATUS_KIND.READY,
+    requestedRoute: "deepseek",
+    model: null,
+  });
+  assert.equal(panel.state.settingsMessage, "deepseek → deepseek (provider ready)");
+  assert.equal(panel.state.settingsMessageKind, "success");
 });
 
 test("syncChooseEngineGate — opens overlay when status not loading and no provider", () => {
@@ -1219,7 +1298,7 @@ test("configureAgentStatusDeps — returns all expected keys", () => {
     "refreshAgentStatus", "routeStatusState", "populateRouteSelect",
     "persistAgentSettings", "storeOpenRouterCredential", "testAgentSettings",
     "syncChooseEngineGate", "scheduleAgentStatusRetry", "clearAgentStatusRetry",
-    "buildStatusUrl", "routeOptionsFromStatus", "ROUTE_STATUS_KIND",
+    "buildStatusUrl", "routeOptionsFromStatus", "getRouteOptions", "getRouteDescriptor", "ROUTE_STATUS_KIND",
     "getPersistedAgentProvider", "setPersistedAgentProvider",
   ];
 
@@ -1357,10 +1436,43 @@ test("refreshAgentStatus — route_options is an array (not an object)", async (
 // Pre-migration parity: route/provider normalization (T2)
 // ═══════════════════════════════════════════════════════════════════════════
 
-test("getPersistedAgentProvider — normalizes known aliases to canonical providers", () => {
+test("route/provider owner exports preserve DeepSeek as a distinct route", () => {
   globalThis.localStorage._clear();
 
-  // Canonical providers stay as-is
+  assert.equal(ROUTE_ALIASES.deepseek, "deepseek");
+  assert.equal(ROUTE_LABELS.deepseek, "deepseek");
+  assert.equal(CANONICAL_AGENT_PROVIDERS.has("deepseek"), true);
+  assert.equal(normalizeRoutePreference("deepseek"), "deepseek");
+  assert.equal(normalizeRoutePreference("unknown-route"), "deepseek");
+
+  assert.equal(getRouteOptions(makePanel()), null);
+  const panel = makePanel({
+    fields: { route: makeSelectElement("deepseek") },
+    state: {
+      statusSnapshot: {
+        ok: true,
+        route_options: {
+          deepseek: {
+            requested_route: "deepseek",
+            normalized_route: "deepseek",
+            browser_api_key_allowed: true,
+            guidance: "Paste a DeepSeek key.",
+          },
+          openrouter: {
+            requested_route: "openrouter",
+            normalized_route: "openrouter",
+            browser_api_key_allowed: true,
+          },
+        },
+      },
+    },
+  });
+  assert.equal(getRouteOptions(panel), panel.state.statusSnapshot.route_options);
+  assert.deepEqual(getRouteDescriptor(panel, "deepseek"), panel.state.statusSnapshot.route_options.deepseek);
+
+  // Canonical providers stay as-is; DeepSeek remains a valid persisted provider.
+  setPersistedAgentProvider("deepseek");
+  assert.equal(getPersistedAgentProvider(), "deepseek");
   setPersistedAgentProvider("openrouter");
   assert.equal(getPersistedAgentProvider(), "openrouter");
   setPersistedAgentProvider("anthropic");
@@ -1368,13 +1480,8 @@ test("getPersistedAgentProvider — normalizes known aliases to canonical provid
   setPersistedAgentProvider("openai-codex");
   assert.equal(getPersistedAgentProvider(), "openai-codex");
 
-  // deepseek alias normalizes to openrouter (the only alias remapped by the persistence getter)
-  setPersistedAgentProvider("deepseek");
-  assert.equal(getPersistedAgentProvider(), "openrouter", "deepseek → openrouter");
-
   // claude and codex are NOT remapped by the persistence getter — they are not
-  // in CANONICAL_AGENT_PROVIDERS and getPersistedAgentProvider only handles
-  // deepseek→openrouter. These aliases are handled by normalizeRoutePreference()
+  // persisted provider names. These aliases are handled by normalizeRoutePreference()
   // during polling, not during persistence read-back.
   setPersistedAgentProvider("claude");
   assert.equal(getPersistedAgentProvider(), null, "claude is not a canonical provider");
@@ -1402,7 +1509,7 @@ test("refreshAgentStatus — single fetch path: exactly one /vibecomfy/agent/sta
         model: "gpt-4o",
         route_options: {
           openrouter: { normalized_route: "openrouter", available: true, browser_api_key_allowed: true },
-          deepseek: { normalized_route: "openrouter", available: true },
+          deepseek: { normalized_route: "deepseek", available: true },
         },
       });
     }
@@ -1418,6 +1525,97 @@ test("refreshAgentStatus — single fetch path: exactly one /vibecomfy/agent/sta
   assert.equal(panel.state.routeStatus.kind, ROUTE_STATUS_KIND.READY);
   assert.equal(panel.state.routeStatus.requestedRoute, "openrouter");
   assert.ok(panel.state.statusSnapshot, "should have statusSnapshot after single fetch");
+});
+
+test("refreshAgentStatus — disables route/model controls synchronously before status fetch", async () => {
+  let fetchCalled = false;
+  let releaseMacrotask;
+  const macrotask = new Promise((resolve) => { releaseMacrotask = resolve; });
+  const renderCalls = [];
+
+  mockFetch((url) => {
+    fetchCalled = true;
+    if (url.startsWith("/vibecomfy/agent/status")) {
+      return makeFetchResponse({
+        ok: true,
+        ready: true,
+        provider_available: true,
+        route: "openrouter",
+        requested_route: "openrouter",
+        route_options: {
+          openrouter: { normalized_route: "openrouter", available: true },
+        },
+      });
+    }
+    return makeFetchResponse({ error: "unexpected" }, { status: 404 });
+  });
+
+  const panel = makePanel({
+    fields: {
+      route: makeSelectElement("openrouter"),
+      model: { value: "gpt-4o", disabled: false },
+    },
+  });
+  panel.fields.route.disabled = false;
+  const deps = makeDeps({
+    nextMacrotask: () => macrotask,
+    renderAgentPanel: (_panel, opts) => {
+      renderCalls.push({
+        routeDisabled: _panel.fields.route.disabled,
+        modelDisabled: _panel.fields.model.disabled,
+        dirtySections: opts?.dirtySections,
+      });
+    },
+  });
+
+  const refreshPromise = refreshAgentStatus(panel, { quiet: true }, deps);
+
+  assert.equal(panel.fields.route.disabled, true);
+  assert.equal(panel.fields.model.disabled, true);
+  assert.equal(fetchCalled, false, "fetch should wait until after the initial loading render yields");
+  assert.deepEqual(renderCalls, [{
+    routeDisabled: true,
+    modelDisabled: true,
+    dirtySections: SETTINGS_STATUS_RENDER_SECTIONS,
+  }]);
+
+  releaseMacrotask();
+  await refreshPromise;
+  assert.equal(fetchCalled, true);
+});
+
+test("refreshAgentStatus — invalidates only scheduler-owned status sections after fetch", async () => {
+  const markCalls = [];
+  mockFetch((url) => {
+    if (url.startsWith("/vibecomfy/agent/status")) {
+      return makeFetchResponse({
+        ok: true,
+        ready: true,
+        provider_available: true,
+        route: "openrouter",
+        requested_route: "openrouter",
+        route_options: {
+          openrouter: { normalized_route: "openrouter", available: true },
+        },
+      });
+    }
+    return makeFetchResponse({ error: "unexpected" }, { status: 404 });
+  });
+
+  const panel = makePanel({
+    fields: { route: makeSelectElement("openrouter") },
+    state: { chatMessages: [{ role: "assistant", content: "prior message" }] },
+  });
+  await refreshAgentStatus(panel, { quiet: true }, makeDeps({
+    markAgentPanelDirtyAfterCommit: (_panel, sections, commitKind) => {
+      markCalls.push({ sections, commitKind });
+    },
+  }));
+
+  assert.deepEqual(markCalls, [{
+    sections: SETTINGS_STATUS_RENDER_SECTIONS,
+    commitKind: "status",
+  }]);
 });
 
 test("refreshAgentStatus — status readiness coupled to panel UI state (routeStatus, settingsMessage, statusSnapshot)", async () => {

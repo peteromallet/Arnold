@@ -9,12 +9,12 @@ which module is allowed to import it, and which modules are consumers only.
 | Boundary | Canonical owner | What it owns | Consumers (read-only) |
 |---|---|---|---|
 | Response envelope | `contracts.py` | `turn_envelope`, `success_envelope`, `failure_envelope`, `build_legacy_agent_edit_v1`, `ensure_agent_edit_response_contract` | `edit.py`, `routes.py` |
-| Chat artifacts | `edit.py` | `_write_turn_chat_artifact` (line ~1466) | `routes.py` reads via `read_session_chat` |
-| Session artifact iteration | `session.py` | `iter_turn_records` | `edit.py:read_session_chat`, CLI `_agent_edit_debug.py` |
-| Accept / reject / idempotency | `session.py` | `accept_turn`, `reject_turn`, `_mutate_turn_state` | `routes.py` thin wrappers |
+| Chat artifacts | `edit.py` | `_write_turn_chat_artifact` | `routes.py` reads via `read_session_chat` |
+| Session artifact iteration | `session.py` | `iter_turn_records` and raw turn-directory walking | `edit.py:read_session_chat`, CLI `_agent_edit_debug.py` |
+| Accept / reject / idempotency | `session.py` | `accept_turn`, `reject_turn`, `_mutate_turn_state` | `routes.py` thin `*args` / `**kwargs` wrappers |
 | Field-change type | `porting/edit/types.py` | `FieldChange` frozen dataclass | `contracts.py`, `edit.py` |
 | Field-change repair | `contracts.py` | `repair_field_changes` | `edit.py` |
-| Diagnostics contract | `contracts.py` | `DiagnosticRecord` | `audit.py` (writer), CLI `_agent_edit_debug.py` (reader) |
+| Diagnostics contract | `contracts.py` | `DiagnosticRecord` | `audit.py` (writer), `session.py:iter_turn_records` (reader/adapter) |
 | Diagnostics persistence | `audit.py` | `write_audit` | `edit.py`, `routes.py` |
 
 ## 2. Principles
@@ -34,9 +34,19 @@ which module is allowed to import it, and which modules are consumers only.
    logic but should reuse `iter_turn_records` for the raw walk when practical.
 
 4. **CLI debug is a consumer, not an owner.**
-   `_agent_edit_debug.py` imports `iter_turn_records` from `session.py` and
-   `DiagnosticRecord` from `contracts.py`, then applies its own text formatting.
-   It must not re-implement the turn walk.
+   `contracts.py` owns `DiagnosticRecord`.  `session.py` imports that contract
+   and exposes `iter_turn_records()` as the canonical iterator that returns
+   typed diagnostic records.  `_agent_edit_debug.py` imports
+   `iter_turn_records()` from `session.py`, converts those records to its legacy
+   CLI row shape, and applies its own text formatting.  It must not directly
+   import `DiagnosticRecord`, redefine a diagnostic record shape, or
+   re-implement the turn walk.
+
+5. **Routes are HTTP adapters, not session owners.**
+   `routes.py` may expose API functions for accept/reject, but those wrappers
+   must delegate directly to the `session.py` implementations.  It must not
+   define independent idempotency, state mutation, or turn-state persistence
+   logic.
 
 ## 3. Exceptions / compatibility notes
 
