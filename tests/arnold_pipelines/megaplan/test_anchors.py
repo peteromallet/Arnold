@@ -12,10 +12,12 @@ from arnold_pipelines.megaplan.anchors import (
     attach_anchor_documents,
     format_anchor_show_text,
     render_anchor_block,
+    render_anchor_context,
 )
 from arnold_pipelines.megaplan.chain.spec import (
     ChainSpec,
     validate_anchor_paths,
+    validate_anchor_requirement,
     validate_required_anchor,
     warn_undeclared_north_star,
 )
@@ -60,7 +62,7 @@ def test_chain_schema_accepts_and_rejects_anchor_shapes(tmp_path: Path) -> None:
     spec = ChainSpec.from_dict(
         {
             "anchors": {"north_star": "NORTHSTAR.md"},
-            "driver": {"require_anchor": True},
+            "driver": {"require_anchor": True, "missing_anchor_ack": "not used because anchor is present"},
             "milestones": [
                 {
                     "label": "m1",
@@ -73,6 +75,7 @@ def test_chain_schema_accepts_and_rejects_anchor_shapes(tmp_path: Path) -> None:
 
     assert spec.anchors.north_star == "NORTHSTAR.md"
     assert spec.require_anchor is True
+    assert spec.missing_anchor_ack == "not used because anchor is present"
     assert spec.milestones[0].anchors.north_star == "m1-northstar.md"
 
     with pytest.raises(CliError, match="only supports `north_star`"):
@@ -92,10 +95,41 @@ def test_anchor_path_validation_and_required_warning(tmp_path: Path) -> None:
     validate_required_anchor(spec)
 
     missing = ChainSpec.from_dict({"milestones": []})
+    assert missing.require_anchor is True
     with pytest.raises(CliError, match="requires a North Star"):
         validate_required_anchor(missing)
 
     assert warn_undeclared_north_star(missing, chain_path)
+
+
+def test_chain_anchor_requirement_defaults_and_opt_out_ack(tmp_path: Path) -> None:
+    chain_path = tmp_path / "chain.yaml"
+    chain_path.write_text("milestones: []\n", encoding="utf-8")
+    spec = ChainSpec.from_dict({"milestones": []})
+
+    with pytest.raises(CliError, match="requires a North Star"):
+        validate_anchor_requirement(spec, chain_path)
+
+    with pytest.raises(CliError, match="missing_anchor_ack"):
+        validate_anchor_requirement(spec, chain_path, require_anchor_override=False)
+
+    resolved = validate_anchor_requirement(
+        spec,
+        chain_path,
+        require_anchor_override=False,
+        missing_anchor_ack_override="Mechanical cleanup chain.",
+    )
+    assert resolved.require_anchor is False
+    assert "Mechanical cleanup chain." in (resolved.warning or "")
+
+    (tmp_path / "NORTHSTAR.md").write_text("# Undeclared\n", encoding="utf-8")
+    resolved_with_warning = validate_anchor_requirement(
+        spec,
+        chain_path,
+        require_anchor_override=False,
+        missing_anchor_ack_override="No durable destination.",
+    )
+    assert "NORTHSTAR.md exists next to" in (resolved_with_warning.warning or "")
 
 
 def test_capture_load_show_and_truncation(tmp_path: Path) -> None:
@@ -137,6 +171,23 @@ def test_capture_load_show_and_truncation(tmp_path: Path) -> None:
     assert "North Star" in handler_output
 
 
+def test_anchor_context_render_modes(tmp_path: Path) -> None:
+    plan_dir = tmp_path / ".megaplan" / "plans" / "anchor-plan"
+    plan_dir.mkdir(parents=True)
+    state = _attach_anchor(plan_dir, tmp_path)
+
+    full = render_anchor_context(state, plan_dir, audience="plan")
+    check = render_anchor_context(state, plan_dir, audience="review")
+
+    assert "## Anchor Context: North Star" in full
+    assert "## Anchor Check: North Star" in check
+    assert "Do not restate the North Star" in check
+    assert "Keep the final contract stable" not in check
+    assert render_anchor_context(state, plan_dir, audience="execute") == ""
+    assert render_anchor_context(state, plan_dir, audience="execute-batch") == ""
+    assert render_anchor_context(state, plan_dir, audience="feedback") == ""
+
+
 def test_epic_and_milestone_anchor_composition(tmp_path: Path) -> None:
     plan_dir = tmp_path / ".megaplan" / "plans" / "milestone"
     plan_dir.mkdir(parents=True)
@@ -161,7 +212,17 @@ def test_epic_and_milestone_anchor_composition(tmp_path: Path) -> None:
     block = render_anchor_block(state, plan_dir, audience="review")
     assert "Epic North Star" in block
     assert "Milestone North Star" in block
+    assert "Scope map:" in block
+    assert "overall chain/epic objective" in block
+    assert "Plan North Star (current milestone m1): Milestone North Star" in block
+    assert "Current milestone: `m1`" in block
     assert "Review against the issue" in block
+
+    check_block = render_anchor_context(state, plan_dir, audience="review")
+    assert "## Anchor Check: North Star" in check_block
+    assert "Epic North Star (overall chain/epic objective): `anchors/north_star/epic.md`" in check_block
+    assert "Sprint/Milestone North Star (current milestone m1): `anchors/north_star/plan.md`" in check_block
+    assert "Do not restate the North Star" in check_block
 
 
 def test_prompt_injection_standard_path(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -183,7 +244,74 @@ def test_prompt_injection_standard_path(monkeypatch: pytest.MonkeyPatch, tmp_pat
     assert prompt.index("## Anchor Context: North Star") < prompt.index("PLAN BODY")
 
 
-def test_execute_batch_bypass_prompt_includes_anchor(tmp_path: Path) -> None:
+def test_feedback_gets_no_anchor_context(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    from arnold_pipelines.megaplan import prompts
+
+    plan_dir = tmp_path / ".megaplan" / "plans" / "anchor-plan"
+    plan_dir.mkdir(parents=True)
+    state = _attach_anchor(plan_dir, tmp_path)
+
+    monkeypatch.setitem(
+        prompts._AGENT_REGISTRY,
+        "codex",
+        ({"feedback": lambda state, plan_dir: "FEEDBACK BODY"}, "Codex"),
+    )
+
+    prompt = prompts.create_prompt("codex", "feedback", state, plan_dir)
+    assert "FEEDBACK BODY" in prompt
+    assert "Anchor Context" not in prompt
+    assert "Anchor Check" not in prompt
+
+
+def test_execute_prompt_gets_no_anchor_context(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    from arnold_pipelines.megaplan import prompts
+
+    plan_dir = tmp_path / ".megaplan" / "plans" / "anchor-plan"
+    plan_dir.mkdir(parents=True)
+    state = _attach_anchor(plan_dir, tmp_path)
+
+    monkeypatch.setitem(
+        prompts._AGENT_REGISTRY,
+        "codex",
+        ({"execute": lambda state, plan_dir, root=None: "EXECUTE BODY"}, "Codex"),
+    )
+
+    prompt = prompts.create_prompt("codex", "execute", state, plan_dir, root=tmp_path)
+    assert "EXECUTE BODY" in prompt
+    assert "## Anchor Check: North Star" not in prompt
+    assert "## Anchor Context: North Star" not in prompt
+
+
+def test_execute_batch_prompt_gets_no_anchor_context(tmp_path: Path) -> None:
+    from arnold_pipelines.megaplan import prompts
+
+    plan_dir = tmp_path / ".megaplan" / "plans" / "anchor-plan"
+    plan_dir.mkdir(parents=True)
+    state = _attach_anchor(plan_dir, tmp_path)
+    (plan_dir / "finalize.json").write_text(
+        json.dumps(
+            {
+                "tasks": [
+                    {
+                        "id": "T1",
+                        "description": "Make the smallest possible change.",
+                        "files": [],
+                        "commands": [],
+                    }
+                ],
+                "sense_checks": [{"id": "SC1", "task_id": "T1", "check": "Verify it."}],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    prompt = prompts._execute_batch_prompt(state, plan_dir, ["T1"], root=tmp_path)
+    assert "## Anchor Check: North Star" not in prompt
+    assert "## Anchor Context: North Star" not in prompt
+    assert "Execute only the actionable tasks in this batch" in prompt
+
+
+def test_execute_batch_inner_builder_does_not_inject_anchor(tmp_path: Path) -> None:
     from arnold_pipelines.megaplan.prompts.execute import _execute_batch_prompt
 
     plan_dir = tmp_path / ".megaplan" / "plans" / "anchor-plan"
@@ -207,15 +335,16 @@ def test_execute_batch_bypass_prompt_includes_anchor(tmp_path: Path) -> None:
     )
 
     prompt = _execute_batch_prompt(state, plan_dir, ["T1"], root=tmp_path)
-    assert "## Anchor Context: North Star" in prompt
-    assert prompt.index("## Anchor Context: North Star") < prompt.index("Execute the approved plan")
-    assert "Execute only this batch" in prompt
+    assert "Anchor Context" not in prompt
+    assert "Anchor Check" not in prompt
 
 
 def test_parser_exposes_north_star_and_anchor_show() -> None:
     parser = build_parser()
     init_args = parser.parse_args(["init", "--north-star", "NORTHSTAR.md", "idea"])
     assert init_args.north_star == "NORTHSTAR.md"
+    init_without_anchor = parser.parse_args(["init", "idea"])
+    assert init_without_anchor.north_star is None
 
     show_args = parser.parse_args(["anchors", "show", "--plan", "anchor-plan", "--json"])
     assert show_args.command == "anchors"
@@ -225,6 +354,11 @@ def test_parser_exposes_north_star_and_anchor_show() -> None:
 
     chain_args = parser.parse_args(["chain", "start", "--spec", "chain.yaml", "--require-anchor"])
     assert chain_args.require_anchor is True
+    no_anchor_args = parser.parse_args(
+        ["chain", "start", "--spec", "chain.yaml", "--no-require-anchor", "--missing-anchor-ack", "Mechanical chain"]
+    )
+    assert no_anchor_args.require_anchor is False
+    assert no_anchor_args.missing_anchor_ack == "Mechanical chain"
 
 
 def test_anchor_docs_and_templates_stay_discoverable() -> None:
@@ -243,6 +377,7 @@ def test_anchor_docs_and_templates_stay_discoverable() -> None:
         "anchors.north_star",
         "NORTHSTAR.md",
         "megaplan anchors show",
-        "--require-anchor",
+        "--no-require-anchor",
+        "--missing-anchor-ack",
     ]:
         assert needle in joined

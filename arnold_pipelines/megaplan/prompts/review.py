@@ -9,7 +9,7 @@ import textwrap
 from pathlib import Path
 from typing import Any
 
-from arnold_pipelines.megaplan.anchors import render_anchor_block
+from arnold_pipelines.megaplan.anchors import render_anchor_context
 from arnold_pipelines.megaplan._core import (
     collect_git_diff_patch,
     collect_git_diff_summary,
@@ -42,7 +42,7 @@ COMPACT_REVIEW_CONTEXT_MAX_CHARS = 60_000
 
 
 def _with_anchor_block(prompt: str, state: PlanState, plan_dir: Path, *, audience: str) -> str:
-    anchor_block = render_anchor_block(state, plan_dir, audience=audience)
+    anchor_block = render_anchor_context(state, plan_dir, audience=audience)
     if not anchor_block:
         return prompt
     return f"{anchor_block}\n\n{prompt}"

@@ -43,7 +43,7 @@ Legacy robustness names (`tiny|standard|robust|superrobust`) are still accepted 
 For metaplan-mode runs, pass `--mode metaplan --output <relative/path>` (the path is where the final document artifact is written, relative to the project dir). Everything else is identical to code mode.
 Pass `--from-doc <relative/path>` when the new run should inherit decisions from a prior doc artifact. The path must be relative to the project dir, must exist as a file, and can be used with either `--mode code` or `--mode metaplan`. When the source doc contains a `## Settled Decisions` section, megaplan imports those decisions and automatically promotes them into success criteria for the new plan: `load_bearing: true` decisions become `must` criteria and `load_bearing: false` decisions become `info` criteria.
 
-Pass `--north-star <path>` when the plan needs durable end-state intent beyond the local brief. `init` snapshots the UTF-8 markdown/text file into the plan under `anchors/north_star/plan.md`; later source edits do not affect the active plan. First iteration supports only the `north_star` anchor type. When anchors exist, relevant prompts begin with `## Anchor Context: North Star` after the nested-harness guard.
+Pass `--north-star <path>` when the plan needs durable end-state intent beyond the local brief. `init` snapshots the UTF-8 markdown/text file into the plan under `anchors/north_star/plan.md`; later source edits do not affect the active plan. First iteration supports only the `north_star` anchor type. Decision-heavy prompts get full `## Anchor Context: North Star` blocks; review-family prompts get short `## Anchor Check: North Star` reminders; execution and feedback prompts get no anchor context.
 ## Settled Decisions Section Format
 When authoring a doc artifact that makes design decisions, use either of these canonical markdown shapes (the parser accepts both):
 
@@ -217,8 +217,10 @@ filtering, and snippets. Use `<launcher> brief list`, `<launcher> brief show`, a
 
 For epics, `<launcher> brief epic` also scaffolds `NORTHSTAR.md` beside
 `chain.yaml` and declares it through `anchors.north_star`. Edit it before
-`chain start`. Use the North Star for the durable destination and milestone
-briefs for local scope.
+`chain start`. Chain runs require this top-level North Star by default. Use it
+for the durable destination and milestone briefs for local scope. Opt out only
+with `--no-require-anchor --missing-anchor-ack "<reason>"` or matching
+`driver.require_anchor: false` plus `driver.missing_anchor_ack` in the spec.
 
 `<launcher> init --idea-file <path>` reads the file and snapshots its text; it does
 not move arbitrary files into `.megaplan/briefs/`. If the idea file is a markdown

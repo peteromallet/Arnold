@@ -4,7 +4,7 @@ Anchors are durable alignment artifacts that Megaplan snapshots into a plan and 
 
 ## `north_star`
 
-A North Star captures the end state that should remain true across planning, execution, critique, gate, and review. Use it for epics, architecture migrations, public contract changes, and cross-cutting refactors where local milestone briefs are not enough to prevent drift.
+A North Star captures the end state that should remain true across planning, critique, gate, finalize, and review. Use it for epics, architecture migrations, public contract changes, and cross-cutting refactors where local milestone briefs are not enough to prevent drift.
 
 ## Standalone Plans
 
@@ -29,7 +29,23 @@ milestones:
 
 Chain anchor paths resolve relative to the `chain.yaml` directory. Milestone anchors extend the epic anchor; they do not silently override it.
 
-Use `megaplan chain start --require-anchor --spec path/to/chain.yaml` to reject a chain that lacks a top-level `anchors.north_star`.
+Chain runs require a top-level `anchors.north_star` by default. Milestone anchors do not satisfy that epic-level requirement; they only extend the top-level North Star for a local milestone.
+
+Opt out only when the chain has no durable destination beyond its milestone briefs:
+
+```bash
+megaplan chain start --spec path/to/chain.yaml \
+  --no-require-anchor \
+  --missing-anchor-ack "Mechanical cleanup chain; no cross-milestone destination."
+```
+
+The same decision can live in the spec:
+
+```yaml
+driver:
+  require_anchor: false
+  missing_anchor_ack: "Mechanical cleanup chain; no cross-milestone destination."
+```
 
 ## Captured Files
 
@@ -45,13 +61,27 @@ anchors/north_star/combined.md
 
 ## Prompt Behavior
 
-When a plan has a North Star, prompts include a block titled:
+When a plan has a North Star, prompt assembly chooses one of three render modes by stage:
+
+- `full` includes the complete bounded anchor context. It is used for decision-heavy stages: plan, prep, prep triage/distill, critique, critique evaluator, revise, gate, and finalize.
+- `check` includes only a terse conflict-check reminder with captured artifact paths and scope labels. It is used for review, compact review, parallel review, and parallel critique.
+- `none` injects no anchor context. Execute, execute-batch, and feedback use this mode because execution acts on an already-approved plan.
+
+Full mode prompts include a block titled:
 
 ```text
 ## Anchor Context: North Star
 ```
 
-The block appears in standard plan, prep, critique, gate, finalize, execute, and review prompts, plus bypass prompts for execute batches, parallel critique, parallel review, and compact review.
+Check mode prompts include a block titled:
+
+```text
+## Anchor Check: North Star
+```
+
+The check block tells the agent not to restate the North Star and to raise an explicit anchor conflict or deviation only if the current step would visibly violate it.
+
+Execution prompts intentionally receive no anchor context. Executors should follow the approved `finalize.json` boundary and report normal execution deviations; they should not reinterpret the epic or sprint destination from anchor prose.
 
 ## Inspection
 
@@ -65,5 +95,6 @@ megaplan anchors show --plan <name> --json
 ## Common Mistakes
 
 - Creating `NORTHSTAR.md` next to `chain.yaml` without declaring `anchors.north_star`. It is not auto-discovered.
+- Opting out of the epic North Star requirement without a written acknowledgement. Use `--missing-anchor-ack` or `driver.missing_anchor_ack`.
 - Editing source `NORTHSTAR.md` after plan initialization and expecting active plans to change. Plans use captured snapshots.
 - Treating a milestone anchor as a replacement for the epic anchor. It is additional context.
