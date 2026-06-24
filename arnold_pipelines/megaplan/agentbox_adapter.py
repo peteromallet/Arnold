@@ -18,8 +18,10 @@ from arnold_pipelines.megaplan.chain.spec import load_spec, validate_paths
 from arnold_pipelines.megaplan.chain.status import ChainStatusSnapshot, build_chain_status_snapshot
 from arnold_pipelines.megaplan.types import CliError
 
+from agentbox.completion import format_completion_dm
 from agentbox.config import AgentBoxConfig
-from agentbox.credentials.backend import list_credentials, run_credential_tests
+from agentbox.credentials.backend import list_credentials
+from agentbox.github import ci_status_for_branch as github_ci_status_for_branch
 from agentbox.host import (
     HostLaunchError,
     HostLaunchResult,
@@ -27,11 +29,17 @@ from agentbox.host import (
     prepare_host_resources,
     start_host_session,
 )
-from agentbox.operations import load_agentbox_operation, open_operation_store, update_agentbox_operation
+from agentbox.operations import (
+    load_agentbox_operation,
+    open_operation_store,
+    record_operation_ci_status,
+    record_operation_pr,
+    update_agentbox_operation,
+)
 from agentbox.repos import get_repo
 from agentbox.run_dirs import RunDirPaths, append_event, read_metadata, run_dir_paths, write_metadata
 from agentbox.tmux import inspect_session
-from agentbox.worktrees import WorktreeAllocation
+from agentbox.worktrees import WorktreeAllocation, branch_name
 
 
 MEGAPLAN_CHAIN_OPERATION_TYPE = "megaplan_chain"
@@ -292,6 +300,9 @@ class MegaplanChainHandler:
                     "persisted_operation_state": updated.state.value,
                 },
             )
+        if is_terminal_operation_state(updated.state) and "completion_dm" not in updated.metadata:
+            _record_completion_dm(config, operation_id, updated)
+        _record_pr_and_ci(config, operation_id, updated, snapshot)
         return updated
 
     def resume(self, config: AgentBoxConfig, operation_id: str) -> Any:
@@ -768,6 +779,85 @@ def _credential_diagnostics(
             for req in manifest.credentials
         ],
     }
+
+
+def _record_completion_dm(config: AgentBoxConfig, operation_id: str, run: Any) -> None:
+    paths = run_dir_paths(config, operation_id)
+    dm = _build_completion_dm(run)
+    update_agentbox_operation(config, operation_id, metadata={"completion_dm": dm})
+    append_event(paths, "megaplan_chain.completion_dm_ready", payload={"completion_dm": dm})
+
+
+def _build_completion_dm(run: Any) -> str:
+    repo_names = run.metadata.get("repo_names") or []
+    first_repo = repo_names[0] if repo_names else None
+    branch = branch_name(run.id, first_repo) if first_repo else None
+    pr_info = (run.metadata.get("pr_info") or {}).get(first_repo) or {}
+    ci_status = (run.metadata.get("ci_status") or {}).get(first_repo)
+    operation_status = {
+        "operation_id": run.id,
+        "operation_state": run.state.value,
+        "branch": branch,
+        "pr_number": pr_info.get("number"),
+        "pr_url": pr_info.get("url"),
+        "ci_status": ci_status,
+    }
+    branch_status = {
+        "branch": branch,
+        "pr_number": pr_info.get("number"),
+        "pr_url": pr_info.get("url"),
+        "ci_status": ci_status,
+    }
+    return format_completion_dm(
+        operation_status,
+        validation=run.metadata.get("validation"),
+        branch_status=branch_status,
+        next_action="Run `agentbox cleanup survey` to review branch/PR cleanup options.",
+    )
+
+
+def _record_pr_and_ci(
+    config: AgentBoxConfig,
+    operation_id: str,
+    run: Any,
+    snapshot: Any,
+) -> None:
+    repo_names = run.metadata.get("repo_names") or []
+    if not repo_names:
+        return
+    repo_name = repo_names[0]
+    try:
+        repo = get_repo(config, repo_name)
+    except Exception:
+        return
+    branch = branch_name(operation_id, repo_name)
+    pr_number = snapshot.pr.get("pr_number")
+    if pr_number is not None:
+        stored_pr = (run.metadata.get("pr_info") or {}).get(repo_name) or {}
+        if stored_pr.get("number") != pr_number:
+            record_operation_pr(
+                config,
+                operation_id,
+                repo_name=repo_name,
+                branch=branch,
+                pr_number=pr_number,
+                pr_url=None,
+            )
+    stored_pr_number = ((run.metadata.get("pr_info") or {}).get(repo_name) or {}).get("number")
+    if stored_pr_number is None and pr_number is None:
+        return
+    try:
+        status_result = github_ci_status_for_branch(repo.path, branch)
+    except Exception:
+        return
+    ci_status = status_result.get("status")
+    if ci_status and ci_status != "unknown":
+        record_operation_ci_status(
+            config,
+            operation_id,
+            repo_name=repo_name,
+            ci_status=ci_status,
+        )
 
 
 def _record_credential_failure(

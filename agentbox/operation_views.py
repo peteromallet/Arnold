@@ -20,6 +20,7 @@ from agentbox.operations import (
 from agentbox.redaction import redact_payload, redact_text
 from agentbox.run_dirs import run_dir_paths
 from agentbox.tmux import capture_pane, inspect_session
+from agentbox.worktrees import branch_name
 
 
 LogStream = Literal["stdout", "stderr", "all"]
@@ -67,17 +68,28 @@ def operation_status(config: Any, run: Any) -> dict[str, Any]:
                 "detail": str(exc),
             }
     paths = run_dir_paths(config, run.id)
+    repo_names = run.metadata.get("repo_names", []) or []
+    first_repo = repo_names[0] if repo_names else None
+    first_branch = branch_name(run.id, first_repo) if first_repo else None
+    pr_info = (run.metadata.get("pr_info") or {}).get(first_repo) or {}
+    ci_status = (run.metadata.get("ci_status") or {}).get(first_repo)
+    cleanup_state = (run.metadata.get("cleanup_state") or {}).get(first_repo)
     return {
         "operation_id": run.id,
         "operation_type": run.operation_type,
         "operation_state": run.state.value,
         "launch_state": run.metadata.get("launch_state"),
         "command": run.metadata.get("command"),
-        "repo_names": run.metadata.get("repo_names", []),
+        "repo_names": repo_names,
         "run_dir": str(paths.root),
         "run_dir_exists": paths.root.exists(),
         "resource_count": len(resources),
         "session": jsonable(session_status),
+        "branch": first_branch,
+        "pr_number": pr_info.get("number"),
+        "pr_url": pr_info.get("url"),
+        "ci_status": ci_status,
+        "cleanup_state": cleanup_state.get("state") if isinstance(cleanup_state, dict) else cleanup_state,
     }
 
 

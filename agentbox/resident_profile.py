@@ -27,6 +27,8 @@ AGENTBOX_OPERATOR_TOOL_NAMES = (
     "logs",
     "help",
     "resolve",
+    "cleanup_survey",
+    "cleanup_apply",
 )
 
 
@@ -64,6 +66,17 @@ class ResolveInput(BaseModel):
 
 class HelpInput(BaseModel):
     pass
+
+
+class CleanupSurveyInput(BaseModel):
+    operation: str | None = None
+
+
+class CleanupApplyInput(BaseModel):
+    finding_id: str
+    action: Literal["land", "delete", "park", "reset"]
+    confirmation_request_id: str | None = None
+    confirmation_phrase: str | None = None
 
 
 @dataclass
@@ -142,6 +155,8 @@ class AgentBoxOperatorProfile:
             ToolRegistration("logs", "Read bounded AgentBox operation logs.", "read", LogsInput, ToolResult, self._logs),
             ToolRegistration("help", "List AgentBox Operator v0 capabilities.", "read", HelpInput, ToolResult, self._help),
             ToolRegistration("resolve", "Resolve an AgentBox operation reference.", "read", ResolveInput, ToolResult, self._resolve),
+            ToolRegistration("cleanup_survey", "Survey AgentBox resources and classify cleanup recommendations.", "read", CleanupSurveyInput, ToolResult, self._cleanup_survey),
+            ToolRegistration("cleanup_apply", "Apply a cleanup action to a surveyed finding.", "reconcile_apply", CleanupApplyInput, ToolResult, self._cleanup_apply),
         )
         for registration in registrations:
             self.tool_registry.register(registration)
@@ -406,6 +421,70 @@ class AgentBoxOperatorProfile:
                 ),
             ),
             )
+
+    def _cleanup_survey(self, payload: CleanupSurveyInput) -> Any:
+        ToolResult = _resident_symbol("tool_schemas", "ToolResult")
+        agentbox_config = self.agentbox_config_factory()
+        from agentbox.cleanup import survey_cleanup
+
+        report = survey_cleanup(agentbox_config)
+        return ToolResult(
+            ok=True,
+            message="cleanup survey complete",
+            data=_tool_payload(
+                action="cleanup_survey",
+                next_state="cleanup_surveyed",
+                findings=report.to_dict()["findings"],
+            ),
+        )
+
+    def _cleanup_apply(self, payload: CleanupApplyInput) -> Any:
+        ToolResult = _resident_symbol("tool_schemas", "ToolResult")
+        subject = _runtime_subject()
+        if subject is None:
+            return ToolResult(
+                ok=False,
+                message="cleanup_apply requires an authorized runtime subject.",
+                data={"profile": "agentbox_operator", "error": "runtime_subject_required"},
+            )
+        if denied := self._authorization_denied(subject, "reconcile_apply"):
+            return denied
+
+        target_summary = f"{payload.action} {payload.finding_id}"
+        destructive_actions = {"delete", "reset", "merge"}
+        if payload.action in destructive_actions:
+            if confirm := self._require_confirmation(
+                subject=subject,
+                action="reconcile_apply",
+                tool_name="cleanup_apply",
+                target_summary=target_summary,
+                request_id=payload.confirmation_request_id,
+                phrase=payload.confirmation_phrase,
+            ):
+                return confirm
+
+        agentbox_config = self.agentbox_config_factory()
+        from agentbox.cleanup import apply_cleanup
+
+        result = apply_cleanup(
+            agentbox_config,
+            payload.finding_id,
+            payload.action,
+            confirmation_request_id=payload.confirmation_request_id,
+            confirmation_phrase=payload.confirmation_phrase,
+            confirmation_manager=None,
+            subject=subject,
+        )
+        return ToolResult(
+            ok=result.get("ok", False),
+            message=result.get("error") or f"cleanup {payload.action}: {payload.finding_id}",
+            data=_tool_payload(
+                action="cleanup_apply",
+                finding_id=payload.finding_id,
+                next_state="cleanup_applied" if result.get("ok") else "cleanup_failed",
+                result=result,
+            ),
+        )
 
     def _guardian_notification_metadata(self) -> dict[str, Any]:
         runtime_context = _runtime_context()
@@ -895,6 +974,8 @@ __all__ = [
     "AGENTBOX_OPERATOR_TOOL_NAMES",
     "AgentBoxOperatorProfile",
     "ChainLaunchInput",
+    "CleanupApplyInput",
+    "CleanupSurveyInput",
     "HelpInput",
     "LogsInput",
     "ResolveInput",

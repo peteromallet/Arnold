@@ -6,13 +6,20 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Mapping
 
-from arnold.runtime.durable_ops import OperationRun, ResourceType, TypedResource
+from arnold.runtime.durable_ops import (
+    OperationRun,
+    ResourceType,
+    TypedResource,
+    is_terminal_operation_state,
+)
 
+from agentbox.cleanup import _classify_cleanup_recommendation
 from agentbox.config import AgentBoxConfig
 from agentbox.git_worktree import (
     GitWorktreeError,
     WorktreeInfo,
-    checked_out_branch_worktree,
+    git,
+    git_operation_status,
     has_local_branch,
     has_remote_tracking_ref,
     list_worktrees,
@@ -59,6 +66,10 @@ class WorktreeReconciliation:
     durable_resource_id: str | None = None
     prunable_reason: str | None = None
     detail: str | None = None
+    pr_number: int | None = None
+    pr_url: str | None = None
+    ci_status: str | None = None
+    cleanup_recommendation: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return _asdict(self)
@@ -215,6 +226,16 @@ def _reconcile_worktree(
         remote_only=remote_only,
         resource=resource,
     )
+    pr_info = _pr_info_for_branch(repo.path, branch)
+    ci_status = _ci_status_for_branch(repo.path, branch, pr_info)
+    cleanup_recommendation = _cleanup_recommendation_for_worktree(
+        repo=repo,
+        branch=branch,
+        target=target,
+        checked_out_elsewhere=checked_out_elsewhere,
+        operation=operation,
+        pr_info=pr_info,
+    )
     return WorktreeReconciliation(
         operation_id=operation.id,
         repo_name=repo_name,
@@ -233,6 +254,10 @@ def _reconcile_worktree(
         durable_resource_id=resource.id if resource else None,
         prunable_reason=registered_at_target.prunable_reason if registered_at_target else None,
         detail=detail,
+        pr_number=pr_info.get("number"),
+        pr_url=pr_info.get("url"),
+        ci_status=ci_status,
+        cleanup_recommendation=cleanup_recommendation,
     )
 
 
@@ -419,6 +444,90 @@ def _orphan_run_dirs(
         for path in sorted(config.runs_root.iterdir())
         if path.is_dir() and path.name not in known_operation_ids
     )
+
+
+def _pr_info_for_branch(repo_path: Path, branch: str) -> dict[str, Any]:
+    from agentbox import github
+
+    if not github.gh_installed():
+        return {"number": None, "url": None, "state": None, "title": None}
+    result = github.pr_for_branch(repo_path, branch)
+    if not result.get("auth_ok"):
+        return {"number": None, "url": None, "state": None, "title": None}
+    return {
+        "number": result.get("number"),
+        "url": result.get("url"),
+        "state": result.get("state"),
+        "title": result.get("title"),
+    }
+
+
+def _ci_status_for_branch(repo_path: Path, branch: str, pr_info: dict[str, Any]) -> str | None:
+    from agentbox import github
+
+    if pr_info.get("number") is None or not github.gh_installed():
+        return None
+    result = github.ci_status_for_branch(repo_path, branch)
+    return result.get("status")
+
+
+def _cleanup_recommendation_for_worktree(
+    *,
+    repo: RegisteredRepo,
+    branch: str,
+    target: Path,
+    checked_out_elsewhere: bool,
+    operation: OperationRun,
+    pr_info: dict[str, Any],
+) -> str:
+    evidence: dict[str, Any] = {
+        "terminal": is_terminal_operation_state(operation.state),
+        "checked_out_elsewhere": checked_out_elsewhere,
+        "open_pr": pr_info.get("state") == "OPEN",
+    }
+    status_path = target if target.exists() else repo.path
+    try:
+        evidence["dirty"] = bool(
+            git(status_path, "status", "--porcelain", check=False).stdout.strip()
+        )
+    except Exception:
+        evidence["dirty"] = False
+    try:
+        op_status = git_operation_status(status_path)
+        evidence["git_operation_in_progress"] = op_status.in_progress
+    except Exception:
+        evidence["git_operation_in_progress"] = False
+    try:
+        evidence["merged"] = _is_ancestor(repo.path, branch, repo.default_ref)
+        evidence["unique_commits"] = (
+            not evidence["merged"]
+            and has_local_branch(repo.path, branch)
+            and _has_unique_commits(repo.path, branch, repo.default_ref)
+        )
+    except Exception:
+        evidence["merged"] = False
+        evidence["unique_commits"] = False
+    return _classify_cleanup_recommendation(evidence)
+
+
+def _is_ancestor(repo_path: Path, descendant: str, ancestor: str) -> bool:
+    import subprocess
+
+    result = subprocess.run(
+        ("git", "merge-base", "--is-ancestor", descendant, ancestor),
+        cwd=repo_path,
+        check=False,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    return result.returncode == 0
+
+
+def _has_unique_commits(repo_path: Path, branch: str, base: str) -> bool:
+    from agentbox.git_worktree import git
+
+    result = git(repo_path, "log", f"{base}..{branch}", "--oneline", check=False)
+    return bool(result.stdout.strip())
 
 
 def _checked_out_from(

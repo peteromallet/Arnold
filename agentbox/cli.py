@@ -39,6 +39,7 @@ from agentbox.operation_views import (
     status_view,
 )
 from agentbox.guardian.service import GuardianService
+from agentbox.cleanup import apply_cleanup, survey_cleanup
 from agentbox.reconcile import reconcile
 from agentbox.run_dirs import run_dir_paths
 from agentbox.tmux import attach_argv, inspect_session
@@ -86,6 +87,31 @@ def build_parser() -> argparse.ArgumentParser:
         help="Report AgentBox host-local state without mutating it.",
     )
     reconcile_parser.add_argument("--json", action="store_true", help="Write stable JSON output.")
+
+    cleanup_parser = subparsers.add_parser(
+        "cleanup",
+        help="Survey and apply AgentBox cleanup recommendations.",
+    )
+    cleanup_subparsers = cleanup_parser.add_subparsers(dest="cleanup_command")
+    cleanup_survey = cleanup_subparsers.add_parser(
+        "survey",
+        help="Report cleanup findings without mutating state.",
+    )
+    cleanup_survey.add_argument("--json", action="store_true", help="Write stable JSON output.")
+    cleanup_apply = cleanup_subparsers.add_parser(
+        "apply",
+        help="Apply a cleanup action to a surveyed finding.",
+    )
+    cleanup_apply.add_argument("--finding", required=True, help="Finding ID from survey.")
+    cleanup_apply.add_argument(
+        "--action",
+        required=True,
+        choices=("land", "delete", "park", "reset"),
+        help="Cleanup action to apply.",
+    )
+    cleanup_apply.add_argument("--confirm-request-id", help="Pending confirmation request ID.")
+    cleanup_apply.add_argument("--confirm-phrase", help="Exact confirmation phrase.")
+    cleanup_apply.add_argument("--json", action="store_true", help="Write stable JSON output.")
 
     guardian_parser = subparsers.add_parser(
         "guardian",
@@ -171,6 +197,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             return _attach(config, args.operation_id)
         if args.command == "reconcile":
             return _reconcile(config, json_output=json_output)
+        if args.command == "cleanup":
+            return _cleanup(config, args, json_output=json_output)
         if args.command == "guardian":
             return _guardian(config, args, json_output=json_output)
         if args.command == "creds":
@@ -278,6 +306,48 @@ def _reconcile(config: Any, *, json_output: bool) -> int:
     report = reconcile(config).to_dict()
     _emit(report, json_output=json_output)
     return 0
+
+
+def _cleanup(config: Any, args: argparse.Namespace, *, json_output: bool) -> int:
+    command = getattr(args, "cleanup_command", None)
+    if command is None:
+        return _diagnostic("cleanup subcommand required", json_output=json_output)
+    if command == "survey":
+        report = survey_cleanup(config)
+        _emit(report.to_dict(), json_output=json_output)
+        return 0
+    if command == "apply":
+        import importlib
+
+        auth_module = importlib.import_module("arnold_pipelines.megaplan.resident.auth")
+        config_module = importlib.import_module("arnold_pipelines.megaplan.resident.config")
+        ConfirmationManager = auth_module.ConfirmationManager
+        AuthorizationSubject = auth_module.AuthorizationSubject
+        ResidentConfig = config_module.ResidentConfig
+
+        manager = ConfirmationManager(ResidentConfig())
+        subject = AuthorizationSubject(user_id="agentbox-cli")
+        result = apply_cleanup(
+            config,
+            args.finding,
+            args.action,
+            confirmation_request_id=args.confirm_request_id,
+            confirmation_phrase=args.confirm_phrase,
+            confirmation_manager=manager,
+            subject=subject,
+        )
+        if result.get("confirmation_required") and not args.confirm_request_id:
+            if json_output:
+                _emit(result, json_output=True)
+            else:
+                print(
+                    f"Confirmation required. Run again with --confirm-request-id "
+                    f"{result['request_id']} --confirm-phrase {result['exact_phrase']!r}"
+                )
+            return 0
+        _emit(result, json_output=json_output)
+        return 0 if result.get("ok") else 1
+    return _diagnostic(f"unknown cleanup command: {command}", json_output=json_output)
 
 
 def _creds(config: Any, args: argparse.Namespace, *, json_output: bool) -> int:
