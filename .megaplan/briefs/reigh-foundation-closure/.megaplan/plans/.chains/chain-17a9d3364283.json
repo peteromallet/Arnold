@@ -1,0 +1,50 @@
+{
+  "schema_version": 0,
+  "current_milestone_index": 1,
+  "current_plan_name": "m2-agent-proposal-vertical-20260624-1828",
+  "current_milestone_base_sha": null,
+  "last_state": "done",
+  "pr_number": 66,
+  "pr_state": "open",
+  "completed": [
+    {
+      "label": "m1-public-proposal-contract",
+      "plan": "m1-public-proposal-contract-20260624-1529",
+      "status": "done",
+      "pr_number": 65,
+      "pr_state": "open"
+    }
+  ],
+  "branch_head": "62e56ca7ed8ed21831bcdfeb3c2b14f8647076d2",
+  "pr_head": "62e56ca7ed8ed21831bcdfeb3c2b14f8647076d2",
+  "last_pushed_commit": "62e56ca7ed8ed21831bcdfeb3c2b14f8647076d2",
+  "dirty_flag": false,
+  "sync_state": "clean",
+  "extra_repos": [],
+  "chain_session": null,
+  "resolved_workspace": null,
+  "extra_repo_sync": [],
+  "completion_contract_mode": "shadow",
+  "full_suite_backstop_mode": "shadow",
+  "retry_counts": {},
+  "ladder_stage": {},
+  "profile_bumps": {},
+  "robustness_bumps": {},
+  "depth_bumps": {},
+  "enforce_revise_counts": {},
+  "metadata": {
+    "execution_environment": {
+      "schema_version": 1,
+      "created_phase": "chain_start",
+      "last_observed_phase": "chain_start",
+      "project_root": "/Users/peteromalley/Documents/.codex-worktrees/reigh-foundation-closure-epic",
+      "target_root": "/Users/peteromalley/Documents/.codex-worktrees/reigh-foundation-closure-epic",
+      "work_dir": "/Users/peteromalley/Documents/.codex-worktrees/reigh-foundation-closure-epic",
+      "engine_root": "/Users/peteromalley/Documents/.megaplan-worktrees/native-python-pipelines-completion-thread2",
+      "target_head": "62e56ca7ed8ed21831bcdfeb3c2b14f8647076d2",
+      "target_base": "2a31bb073299a158077df139d56448804b6054fd",
+      "target_base_ref": "main",
+      "target_fallback_reason": null
+    }
+  }
+}

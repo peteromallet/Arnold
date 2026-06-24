@@ -55,6 +55,7 @@ temp/
 !docs/state_management_refactor_baselines.md
 !docs/state_management_context_audit.md
 !docs/design/*.md
+!docs/extensions/foundation-contract-ledger.md
 !docs/video-editor/*.md
 !tasks/*.md
 !CLAUDE.md

@@ -708,25 +708,52 @@ export function createProposalRuntime(
     if (!proposal.id || !proposal.source || !proposal.patch) {
       runtimeDiagnostics.push({
         severity: 'error',
-        code: 'proposal/import-invalid-shape',
+        code: 'proposal-import/invalid-shape',
         message: `importProposal: proposal is missing required fields (id, source, or patch). Proposal not imported.`,
         proposalId: proposal.id || undefined,
       });
       return 'rejected';
     }
 
+    // ── Validate patch is an object ────────────────────────────────────
+    if (
+      typeof proposal.patch !== 'object' ||
+      proposal.patch === null ||
+      Array.isArray(proposal.patch)
+    ) {
+      runtimeDiagnostics.push({
+        severity: 'error',
+        code: 'proposal-import/invalid-shape',
+        message: `importProposal: patch must be a plain object. Proposal not imported.`,
+        proposalId: proposal.id,
+      });
+      return 'rejected';
+    }
+
     // ── Validate patch structure through validateTimelinePatch ─────────
     // Reuse the canonical validator so we don't duplicate schema checks.
-    // Only error-level diagnostics cause rejection; warnings (e.g. reserved
-    // ops) are preserved as non-blocking diagnostics on the stored proposal.
+    // Error-level patch diagnostics are surfaced as proposal-import/invalid-patch
+    // with the original timeline-patch code preserved in detail.timelinePatchCode.
+    // Warnings (e.g. reserved ops) are preserved as non-blocking diagnostics on
+    // the stored proposal.
     const patchValidation = validateTimelinePatch(proposal.patch);
     if (!patchValidation.valid) {
       for (const diag of patchValidation.diagnostics) {
+        if (diag.severity !== 'error') continue;
         runtimeDiagnostics.push({
-          severity: diag.severity,
-          code: diag.code,
+          severity: 'error',
+          code: 'proposal-import/invalid-patch',
           message: diag.message,
           proposalId: proposal.id,
+          detail: {
+            timelinePatchCode: diag.code,
+            operationIndex: (diag as { operationIndex?: number }).operationIndex,
+            op: (diag as { op?: string }).op,
+            target: (diag as { target?: string }).target,
+            ...(diag.detail && typeof diag.detail === 'object'
+              ? { timelinePatchDetail: diag.detail }
+              : {}),
+          },
         });
       }
       return 'rejected';
@@ -739,7 +766,7 @@ export function createProposalRuntime(
     if (proposals.has(proposal.id)) {
       runtimeDiagnostics.push({
         severity: 'warning',
-        code: 'proposal/import-duplicate-id',
+        code: 'proposal-import/duplicate-id',
         message: `importProposal: proposal with ID "${proposal.id}" already exists. Skipping duplicate.`,
         proposalId: proposal.id,
       });
@@ -855,6 +882,14 @@ export function importEdgeProposals(
   envelope: ProposalEnvelope,
   runtime: ProposalRuntime & {
     importProposal?(proposal: TimelineProposal): 'imported' | 'duplicate' | 'rejected';
+    diagnostics?: readonly {
+      severity: string;
+      code: string;
+      message: string;
+      proposalId?: string;
+      proposalIndex?: number;
+      detail?: Record<string, unknown>;
+    }[];
   },
 ): ProposalImportResult {
   // ── Envelope-level validation ────────────────────────────────────────
@@ -925,7 +960,20 @@ export function importEdgeProposals(
     // Delegate to importProposal which now validates via
     // validateTimelinePatch, rejects malformed proposals before
     // persistence/notification, and returns a status indicator.
+    const diagnosticsStart = runtime.diagnostics?.length ?? 0;
     const result = runtime.importProposal(proposal);
+    const emittedDiagnostics = runtime.diagnostics?.slice(diagnosticsStart) ?? [];
+
+    for (const diagnostic of emittedDiagnostics) {
+      diagnostics.push({
+        severity: diagnostic.severity === 'error' ? 'error' : 'warning',
+        code: diagnostic.code,
+        message: diagnostic.message,
+        proposalIndex: diagnostic.proposalIndex ?? i,
+        proposalId: diagnostic.proposalId ?? proposal.id,
+        ...(diagnostic.detail ? { detail: diagnostic.detail } : {}),
+      });
+    }
 
     switch (result) {
       case 'imported':

@@ -1,0 +1,61 @@
+base_branch: main
+
+anchors:
+  north_star: NORTHSTAR.md
+
+milestones:
+  - label: m1-public-proposal-contract
+    idea: .megaplan/briefs/reigh-foundation-closure/m1-public-proposal-contract.md
+    branch: epic/reigh-foundation-closure-m1-proposal-contract
+    profile: partnered-5
+    robustness: full
+    depth: high
+    vendor: codex
+    with_prep: true
+    prep_direction: "Focus on public SDK contract integrity: ProposalRuntime import capability, edge proposal import typing, stale tests, and the foundation contract ledger. Do not expand proposal UX beyond making the public contract real and tested."
+    notes: "Make proposal import a public typed contract rather than a concrete-runtime implementation detail."
+
+  - label: m2-agent-proposal-vertical-proof
+    idea: .megaplan/briefs/reigh-foundation-closure/m2-agent-proposal-vertical-proof.md
+    branch: epic/reigh-foundation-closure-m2-proposal-vertical
+    profile: partnered-5
+    robustness: full
+    depth: high
+    vendor: codex
+    with_prep: true
+    prep_direction: "Focus on one production-path behavioral proof: mocked edge proposal response -> useAgentSession import -> ProposalPanel visible -> accept -> TimelineOps.apply; assert no timeline mutation before acceptance."
+    notes: "Prove the proposal path end to end, not just sectional helpers."
+
+  - label: m3-settings-runtime-write-through
+    idea: .megaplan/briefs/reigh-foundation-closure/m3-settings-runtime-write-through.md
+    branch: epic/reigh-foundation-closure-m3-settings-runtime
+    profile: partnered-5
+    robustness: full
+    depth: high
+    vendor: codex
+    with_prep: true
+    prep_direction: "Focus on createExtensionSettingsService and provider-backed repository semantics: settings.set write-through, failure diagnostics, localStorage compatibility, dispose safety, and manager/runtime coherence."
+    notes: "Finish the repository-first settings runtime contract that prior M3 failed to publish."
+
+  - label: m4-release-readiness-gate
+    idea: .megaplan/briefs/reigh-foundation-closure/m4-release-readiness-gate.md
+    branch: epic/reigh-foundation-closure-m4-readiness-gate
+    profile: partnered-5
+    robustness: full
+    depth: high
+    vendor: codex
+    with_prep: true
+    prep_direction: "Focus on turning readiness from narrative/anchor validation into executable release evidence: quality:check wiring, contract ledger closure, pending-vs-terminal proposal reload decision, and final adversarial audit artifact."
+    notes: "Declare foundation closure only if release-quality commands prove the blocking contracts."
+
+on_failure:
+  abort: stop_chain
+on_escalate:
+  abort: stop_chain
+merge_policy: auto
+
+driver:
+  robustness: full
+  auto_approve: true
+  max_iterations: 120
+  poll_sleep: 8.0
