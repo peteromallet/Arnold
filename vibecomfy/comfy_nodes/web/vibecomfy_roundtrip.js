@@ -5306,6 +5306,7 @@ function rememberTurnDetailSnapshot(panel, detail = {}) {
     turn_id: turnId,
     session_id: sessionId,
     status: detail.status || detail.phase || panel.state.phase || null,
+    queueAllowed: detail.queueAllowed ?? panel.state.queueAllowed ?? null,
     message:
       detail.message
       || panel.state.message
@@ -5669,6 +5670,21 @@ function updatePendingResponseProgress(panel, progress, label = null, canonicalA
     || progress.execute === "active";
   if (hasActivePhase || typeof label === "string") {
     pending.text = "";
+  }
+  // Mirror the progress update onto the canonical transcript source so that
+  // renderers using selectTranscriptMessages see live websocket progress.
+  const transcriptMessages = Array.isArray(panel?.state?.transcriptMessages)
+    ? panel.state.transcriptMessages
+    : [];
+  const transcriptPending = transcriptMessages.find((message) => (
+    message?.role === "agent" && (message.pending_response === true || message.executor_pending === true)
+  ));
+  if (transcriptPending && transcriptPending !== pending) {
+    transcriptPending.progress = progress;
+    transcriptPending.progress_label = pending.progress_label;
+    if (hasActivePhase || typeof label === "string") {
+      transcriptPending.text = "";
+    }
   }
   return true;
 }
