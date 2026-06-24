@@ -4,6 +4,9 @@ This sub-package holds the pure-dataclass / Protocol types that define
 a pipeline without reference to Megaplan-specific semantics:
 
 * ``Pipeline``          — named DAG of stages and edges.
+* ``Stage``             — a single-step stage with labelled edges.
+* ``ParallelStage``     — a fan-out stage whose steps run concurrently.
+* ``Edge``              — materialised dependency between two stages.
 * ``Step``              — Protocol for executable units.
 * ``StepContext``       — runtime context passed to every step.
 * ``StepResult``        — result of executing a single step.
@@ -50,14 +53,19 @@ Sub-modules:
 * ``schema_registry`` — neutral file-backed schema registry with atomic writes.
 * ``content_validation`` — content-type keyed validation hooks for blob metadata.
 * ``audit_policy``    — deterministic audit-mode selection for size-threshold seams.
+* ``native``          — canonical native program compilation, projection, and execution
+  entrypoints re-exported here for convenience.
 
-The obsolete public builder/executor symbols (``PipelineBuilder``, ``Stage``,
-``Edge``, ``ParallelStage``, ``run_pipeline``) are no longer re-exported from
-this package.  They remain reachable from their originating submodules only
-while internal callers are migrated; new code should use ``arnold.workflow``.
+All public names are re-exported here.  Import from ``arnold.pipeline``:
+
+    from arnold.pipeline import Pipeline, Stage, StepContext, StateDelta
+    from arnold.pipeline import NativeProgram, compile_pipeline, run_native_pipeline
+
+No Megaplan re-exports appear here; this is the neutral surface.
 """
 
 from arnold.pipeline.audit_policy import AuditMode, AuditPolicyHook, select_audit_mode
+from arnold.pipeline.builder import PipelineBuilder
 from arnold.pipeline.content_validation import (
     ContentValidator,
     ContentValidatorRegistry,
@@ -99,8 +107,20 @@ from arnold.pipeline.executor import (
     DEFAULT_PARALLEL_SAFE,
     MediaCostAccumulator,
     ParallelSafePredicate,
+    run_pipeline,
+    run_pipeline_resume,
 )
 from arnold.pipeline.hooks import ExecutorHooks, NullExecutorHooks, account_media_cost_from_result
+from arnold.pipeline.native import (
+    NativeExecutionResult,
+    NativeProgram,
+    NativeRuntimeHooks,
+    NullNativeRuntimeHooks,
+    compile_pipeline,
+    force_legacy_runtime,
+    project_graph,
+    run_native_pipeline,
+)
 from arnold.pipeline.model_resource_capabilities import (
     CAPABILITY_ALIASES,
     MODEL_RESOURCE_CAPABILITIES,
@@ -212,10 +232,12 @@ from arnold.pipeline.types import (
     ContentTypeRegistry,
     ContractResult,
     ContractStatus,
+    Edge,
     EvidenceArtifactRef,
     EvidenceStatus,
     Freshness,
     HumanSuspension,
+    ParallelStage,
     Pipeline,
     PipelineVerdict,
     Port,
@@ -227,6 +249,7 @@ from arnold.pipeline.types import (
     ReduceResult,
     RoutingKey,
     SelectionResult,
+    Stage,
     Step,
     StepContext,
     StepResult,
@@ -235,9 +258,18 @@ from arnold.pipeline.types import (
     register_schema,
 )
 
+
+# Re-exports from arnold.runtime for downstream consumers
+from arnold.runtime.envelope import RuntimeEnvelope
+from arnold.runtime.resume import ResumeCursorRef
+from arnold.runtime.driver import AdvanceOutcome, CheckpointOutcome
+from arnold.pipeline.driver import StepwiseDriver
+
 __all__ = [
     "AcceptedVersionRange",
     "account_media_cost_from_result",
+    "AdvanceOutcome",
+    "CheckpointOutcome",
     "AuditMode",
     "AuditPolicyHook",
     "BillingRoute",
@@ -259,6 +291,7 @@ __all__ = [
     "DEFAULT_MEDIA_PRICING",
     "DEFAULT_PARALLEL_SAFE",
     "DEFAULT_PRICING",
+    "Edge",
     "ExecutorHooks",
     "EvidenceArtifactRef",
     "EvidenceStatus",
@@ -272,8 +305,14 @@ __all__ = [
     "MediaPricingEntry",
     "MediaUsage",
     "MODEL_RESOURCE_CAPABILITIES",
+    "NativeExecutionResult",
+    "NativeProgram",
+    "NativeRuntimeHooks",
+    "NullNativeRuntimeHooks",
     "ParallelSafePredicate",
+    "ParallelStage",
     "Pipeline",
+    "PipelineBuilder",
     "PipelineIdRegistry",
     "PipelineIdRegistryError",
     "PipelineRegistry",
@@ -287,17 +326,16 @@ __all__ = [
     "Provenance",
     "ReduceResult",
     "ReadRef",
+    "ResumeCursorRef",
     "RoutingKey",
     "ReducePolicy",
+    "RuntimeEnvelope",
     "SelectionResult",
-    "Step",
+    "Stage",
     "StateDelta",
     "SuiteDelta",
     "SuiteRunProtocol",
-    "StepInvocation",
-    "StepInvocationAdapter",
-    "StepInvocationAdapterRegistry",
-    "StepInvocationResult",
+    "Step",
     "StepIOClassification",
     "StepIOContractContext",
     "StepIOContractDecision",
@@ -306,8 +344,13 @@ __all__ = [
     "StepIOHandoffResult",
     "StepIOOperation",
     "StepIOPolicy",
+    "StepInvocation",
+    "StepInvocationAdapter",
+    "StepInvocationAdapterRegistry",
+    "StepInvocationResult",
     "StepContext",
     "StepResult",
+    "StepwiseDriver",
     "Suspension",
     "SchemaRegistryError",
     "SeamId",
@@ -326,6 +369,7 @@ __all__ = [
     "classify_step_io_contract",
     "compute_delta",
     "UsageExtraction",
+    "compile_pipeline",
     "compute_media_cost",
     "coerce",
     "decide_step_io_read",
@@ -336,6 +380,7 @@ __all__ = [
     "decision_blocks_write",
     "estimate_cost_usd",
     "estimate_usage_cost",
+    "force_legacy_runtime",
     "is_legal_coercion",
     "is_step_io_envelope",
     "is_step_io_enforcement_eligible",
@@ -366,6 +411,7 @@ __all__ = [
     "persist_resume_cursor",
     "persist_composite_resume_cursor",
     "plateau",
+    "project_graph",
     "prove_invocation_capabilities",
     "prove_stage_required_capabilities",
     "read_manifest",
@@ -390,6 +436,9 @@ __all__ = [
     "resolve_step_io_policy",
     "record_step_io_self_validation_marker",
     "resolve_seam_from_binding_map",
+    "run_pipeline",
+    "run_pipeline_resume",
+    "run_native_pipeline",
     "schema_version_for",
     "select",
     "select_audit_mode",

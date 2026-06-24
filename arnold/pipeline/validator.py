@@ -1126,6 +1126,31 @@ def _pipeline_resource_bundles(pipeline: Any) -> tuple[Any, ...]:
     return ()
 
 
+def _looks_like_native_program(bundle: Any) -> bool:
+    """Return True for compiled native execution bundles.
+
+    Native programs live in ``resource_bundles`` for dispatch, but they
+    are not prompt/resource bundles and their ``name`` field should not
+    satisfy or constrain prompt-key validation.
+    """
+    return (
+        hasattr(bundle, "instructions")
+        and hasattr(bundle, "phases")
+        and hasattr(bundle, "decisions")
+    )
+
+
+def _prompt_key_covered_by_bundle_prompts(
+    prompt_key: str,
+    bundle_prompt_keys: set[str],
+) -> bool:
+    """Return whether a bundle-owned prompt mapping can satisfy *prompt_key*."""
+    if prompt_key in bundle_prompt_keys:
+        return True
+    scoped_suffix = f"/{prompt_key}"
+    return any(key.endswith(scoped_suffix) for key in bundle_prompt_keys)
+
+
 def validate_resource_dependencies(
     pipeline: Any, options: ValidationOptions | None = None
 ) -> Diagnostics:
@@ -1174,13 +1199,23 @@ def validate_resource_dependencies(
 
     bundles = _pipeline_resource_bundles(pipeline)
 
-    # Collect known bundle identifiers — a bundle may be a string name
-    # or an object carrying a ``name`` / ``bundle_key`` attribute.
+    # Collect known bundle identifiers — a bundle may be a string name,
+    # an object carrying a ``name`` / ``bundle_key`` attribute, or a
+    # PipelineResourceBundle-style object with a prompt mapping.
     known_bundle_names: set[str] = set()
+    bundle_prompt_keys: set[str] = set()
     for b in bundles:
         if isinstance(b, str):
             known_bundle_names.add(b)
         else:
+            prompts = getattr(b, "prompts", None)
+            if isinstance(prompts, Mapping):
+                bundle_prompt_keys.update(
+                    key for key in prompts if isinstance(key, str)
+                )
+                continue
+            if _looks_like_native_program(b):
+                continue
             bname = getattr(b, "name", None) or getattr(b, "bundle_key", None)
             if bname is not None and isinstance(bname, str):
                 known_bundle_names.add(bname)
@@ -1192,30 +1227,26 @@ def validate_resource_dependencies(
 
         if prompt_key is not None and isinstance(prompt_key, str) and prompt_key.strip():
             # A step declares it needs a prompt_key — check against bundles
-            if known_bundle_names and prompt_key not in known_bundle_names:
-                # Check if any bundle can satisfy: look for a bundle with
-                # a bundle_key matching or prefix-matching the prompt_key
-                resolved = False
-                for b in bundles:
-                    if isinstance(b, str):
-                        if b == prompt_key or prompt_key.startswith(b):
-                            resolved = True
-                            break
-                    else:
-                        bname = getattr(b, "name", None) or getattr(b, "bundle_key", None)
-                        if bname is not None and isinstance(bname, str):
-                            if bname == prompt_key or prompt_key.startswith(bname):
-                                resolved = True
-                                break
-                if not resolved and known_bundle_names:
+            if known_bundle_names or bundle_prompt_keys:
+                resolved = _prompt_key_covered_by_bundle_prompts(
+                    prompt_key,
+                    bundle_prompt_keys,
+                )
+                if not resolved:
+                    resolved = any(
+                        name == prompt_key or prompt_key.startswith(name)
+                        for name in known_bundle_names
+                    )
+                if not resolved:
+                    available = sorted(known_bundle_names | bundle_prompt_keys)
                     diag.add_defect(
                         f"stage {stage_name!r}: prompt_key {prompt_key!r} references "
-                        f"no known resource bundle (available: {sorted(known_bundle_names)})",
+                        f"no known resource bundle (available: {available})",
                         code="prompt_key_unknown_resource_bundle",
                         stage=stage_name,
                         details={
                             "prompt_key": prompt_key,
-                            "available_bundles": sorted(known_bundle_names),
+                            "available_bundles": available,
                         },
                     )
 

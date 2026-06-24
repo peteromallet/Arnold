@@ -367,6 +367,9 @@ class ModelStepInvocationAdapter:
 def install_model_step_adapter(registry: StepInvocationAdapterRegistry) -> None:
     """Install the concrete model adapter through the reserved placeholder path."""
 
+    current = registry.resolve("model")
+    if isinstance(current, ModelStepInvocationAdapter):
+        return
     registry.replace_reserved("model", ModelStepInvocationAdapter())
 
 

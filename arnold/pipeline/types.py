@@ -56,6 +56,7 @@ from arnold.runtime.envelope import RunContext
 
 if TYPE_CHECKING:  # pragma: no cover - typing-only import
     from arnold.pipeline.step_invocation import StepInvocation
+    from arnold.pipeline.native.ir import NativeProgram
 
 
 # ---------------------------------------------------------------------------
@@ -312,6 +313,7 @@ class Pipeline:
     entry: str
     binding_map: dict | None = None
     resource_bundles: tuple[Any, ...] = field(default_factory=tuple)
+    native_program: NativeProgram | None = None
 
     @property
     def stages_by_name(self) -> Mapping[str, "Stage | ParallelStage"]:

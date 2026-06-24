@@ -1,233 +1,116 @@
-# Creating a new Arnold pipeline (Megaplan-style)
+# Creating a New Arnold Pipeline
 
-A copy-paste guide for adding a new pipeline to Arnold that follows the same planning topology as Megaplan:
+This is the M7 copy-paste guide for adding a new Arnold pipeline. New converted
+pipelines should be native-authored first, then projected to a validation graph.
 
-```
-prep → plan → critique → gate → revise → finalize → execute → review
-                             ↑___________|
-```
-
-This doc is designed to be handed straight to a coding agent.
-
-## 1. Scaffold the module
+## 1. Scaffold the Module
 
 From the repo root:
 
 ```bash
-python -m arnold pipelines new my-planning-pipeline --driver graph
+arnold pipelines new my-planning-pipeline
 ```
 
-This creates:
+This creates a native-authored module and a sibling `SKILL.md` stub. The
+CLI-visible name is the hyphenated form: `my-planning-pipeline`.
 
-```
-arnold/pipelines/
-└── my_planning_pipeline/
-    ├── __init__.py                       # the Python module
-    └── skills/
-        └── my-planning-pipeline/
-            └── SKILL.md                  # agent-facing docs
-```
+Do not use the graph scaffold for new work; `--driver graph` is deprecated
+and exists only for temporary compatibility baselines.
 
-The CLI-visible name is the hyphenated form: `my-planning-pipeline`.
+## 2. Replace the Skeleton
 
-## 2. Replace the skeleton `build_pipeline()`
-
-Open `arnold/pipelines/my_planning_pipeline/__init__.py` and paste the following complete module.
+Open the generated module and keep the native declaration shape. A minimal
+planning-style pipeline looks like this:
 
 ```python
-"""Python composition of the my-planning-pipeline pipeline."""
-
 from __future__ import annotations
 
-import dataclasses
-from dataclasses import dataclass
-from pathlib import Path
+from typing import Any
 
-from arnold.pipelines.megaplan._pipeline.patterns import (
-    critique_revise_gate_loop,
-    phase_zero_gate,
+from arnold.pipeline.native import (
+    compile_pipeline,
+    decision,
+    native_panel,
+    parallel,
+    phase,
+    pipeline,
+    project_graph,
 )
-from arnold.pipelines.megaplan._pipeline.types import (
-    Edge,
-    Pipeline,
-    PipelineVerdict,
-    Stage,
-    StepContext,
-    StepResult,
-)
+from arnold.pipeline.subpipeline import run_subpipeline
+from arnold.pipeline.types import Pipeline
 
-
-# ── Module-level contract fields (required + recommended) ────────────────
 
 name: str = "my-planning-pipeline"
-description: str = "A minimal planning pipeline with prep, plan, critique, gate, revise, finalize, execute, review."
-default_profile: str | None = None          # required by the static manifest reader
-supported_modes: tuple[str, ...] = ("code",)  # required by the static manifest reader
-driver: tuple[str, str] = ("graph", "dispatch+emit")
+description: str = "A minimal native planning pipeline."
+default_profile: str | None = None
+supported_modes: tuple[str, ...] = ("code",)
+driver: tuple[str, str] = ("native", "project+validate")
 entrypoint: str = "build_pipeline"
 arnold_api_version: str = "1.0"
 capabilities: tuple[str, ...] = ("planning",)
 
 
-# Directory where prompts and other resources live.
-_PIPELINE_DIR: Path = Path(__file__).parent
+@phase(name="prep")
+def prep(ctx: Any) -> dict[str, Any]:
+    return {"prepped": True}
 
 
-# ── Step implementations ─────────────────────────────────────────────────
-# Each step must expose `name`, `kind`, and a `run(ctx: StepContext) -> StepResult`
-# method.  In a real pipeline these runs call models, read/write artifacts,
-# and inspect ctx.inputs / ctx.state.
+@phase(name="plan")
+def plan(ctx: Any) -> dict[str, Any]:
+    return {"planned": True}
 
 
-@dataclass
-class PrepStep:
-    name: str = "prep"
-    kind: str = "produce"
-
-    def run(self, ctx: StepContext) -> StepResult:
-        # Real work: inspect repo, gather context, write a prep artifact.
-        return StepResult(next="plan", state_patch={"prepped": True})
+@phase(name="review_fast")
+def review_fast(ctx: Any) -> dict[str, Any]:
+    return {"fast_review": "TODO"}
 
 
-@dataclass
-class PlanStep:
-    name: str = "plan"
-    kind: str = "produce"
-
-    def run(self, ctx: StepContext) -> StepResult:
-        return StepResult(next="critique", state_patch={"planned": True})
+@phase(name="review_deep")
+def review_deep(ctx: Any) -> dict[str, Any]:
+    return {"deep_review": "TODO"}
 
 
-@dataclass
-class CritiqueStep:
-    name: str = "critique"
-    kind: str = "judge"
-
-    def run(self, ctx: StepContext) -> StepResult:
-        iteration = int(ctx.state.get("iteration", 0))
-        recommendation = "iterate" if iteration < 1 else "proceed"
-        return StepResult(
-            next="gate",
-            state_patch={
-                "iteration": iteration + 1,
-                "gate_rec": recommendation,
-            },
-        )
+@decision(name="gate", vocabulary=frozenset({"proceed", "revise"}))
+def gate(ctx: Any) -> str:
+    state = getattr(ctx, "state", {}) if not isinstance(ctx, dict) else ctx.get("state", {})
+    return "revise" if isinstance(state, dict) and state.get("needs_revision") else "proceed"
 
 
-@dataclass
-class GateStep:
-    name: str = "gate"
-    kind: str = "decide"
-
-    def run(self, ctx: StepContext) -> StepResult:
-        rec = ctx.state.get("gate_rec", "proceed")
-        return StepResult(
-            next="gate",
-            verdict=PipelineVerdict(score=0.5, recommendation=rec),
-        )
+@phase(name="revise")
+def revise(ctx: Any) -> dict[str, Any]:
+    return {"revised": True}
 
 
-@dataclass
-class ReviseStep:
-    name: str = "revise"
-    kind: str = "produce"
-
-    def run(self, ctx: StepContext) -> StepResult:
-        return StepResult(next="critique")
+@phase(name="execute")
+def execute(ctx: Any) -> dict[str, Any]:
+    return {"executed": True}
 
 
-@dataclass
-class FinalizeStep:
-    name: str = "finalize"
-    kind: str = "produce"
-
-    def run(self, ctx: StepContext) -> StepResult:
-        return StepResult(next="execute")
+@phase(name="review")
+def review(ctx: Any) -> dict[str, Any]:
+    return {"reviewed": True}
 
 
-@dataclass
-class ExecuteStep:
-    name: str = "execute"
-    kind: str = "produce"
+@pipeline("my-planning-pipeline", description=description)
+def my_planning_pipeline(ctx: Any) -> Any:
+    yield prep(ctx)
+    yield plan(ctx)
+    for branch in parallel([review_fast, review_deep], name="planning_panel"):
+        yield branch(ctx)
+    for branch in native_panel(
+        "editorial_panel",
+        (("fast", review_fast), ("deep", review_deep)),
+    ):
+        yield branch(ctx)
+    if gate(ctx) == "revise":
+        yield revise(ctx)
+    yield execute(ctx)
+    yield review(ctx)
 
-    def run(self, ctx: StepContext) -> StepResult:
-        return StepResult(next="review")
-
-
-@dataclass
-class ReviewStep:
-    name: str = "review"
-    kind: str = "judge"
-
-    def run(self, ctx: StepContext) -> StepResult:
-        return StepResult(next="halt")
-
-
-# ── Pipeline assembly ────────────────────────────────────────────────────
 
 def build_pipeline() -> Pipeline:
-    """Return the canonical my-planning-pipeline graph."""
-
-    prep_stage = phase_zero_gate(
-        PrepStep(), name="prep", on_pass="plan", on_fail="halt"
-    )
-
-    plan_stage = Stage(
-        name="plan",
-        step=PlanStep(),
-        edges=(Edge(label="critique", target="critique"),),
-    )
-
-    cycle = critique_revise_gate_loop(
-        CritiqueStep(),
-        GateStep(),
-        ReviseStep(),
-        on_proceed="finalize",
-        on_iterate="revise",
-        on_tiebreaker="halt",
-        on_escalate="halt",
-        revise_target="critique",
-    )
-    # Guard the critique→gate→revise cycle so validation does not complain
-    # about an unguarded loop.  The lambda receives the executor's loop state.
-    cycle["gate"] = dataclasses.replace(
-        cycle["gate"],
-        loop_condition=lambda loop_state: int(
-            getattr(loop_state, "iteration", 0) or 0
-        )
-        >= 3,
-    )
-
-    finalize_stage = Stage(
-        name="finalize",
-        step=FinalizeStep(),
-        edges=(Edge(label="execute", target="execute"),),
-    )
-    execute_stage = Stage(
-        name="execute",
-        step=ExecuteStep(),
-        edges=(Edge(label="review", target="review"),),
-    )
-    review_stage = Stage(
-        name="review",
-        step=ReviewStep(),
-        edges=(Edge(label="halt", target="halt"),),
-    )
-
-    return Pipeline(
-        stages={
-            "prep": prep_stage,
-            "plan": plan_stage,
-            "critique": cycle["critique"],
-            "gate": cycle["gate"],
-            "revise": cycle["revise"],
-            "finalize": finalize_stage,
-            "execute": execute_stage,
-            "review": review_stage,
-        },
-        entry="prep",
-    )
+    program = compile_pipeline(my_planning_pipeline)
+    return project_graph(program, key_mode="phase")
 
 
 __all__ = [
@@ -243,93 +126,72 @@ __all__ = [
 ]
 ```
 
-### What the pieces mean
+Use `run_subpipeline(...)` inside a `@phase` when the work should delegate to a
+child pipeline with an explicit parent/child resume boundary. Keep that call in
+one phase rather than hiding child workflow state in a graph edge.
 
-| Field | Required? | Notes |
-|---|---|---|
-| `name` | **yes** | CLI-visible name. Must match the hyphenated form derived from the directory name. |
-| `description` | **yes** | One-liner shown in `arnold pipelines list`. |
-| `arnold_api_version` | **yes** | Keep `"1.0"` unless targeting a newer SDK. |
-| `capabilities` | **yes** | Non-empty tuple of labels. |
-| `driver` | **yes** | Use `("graph", "dispatch+emit")` for graph-driven pipelines; `"in_process"` for simple in-process graphs. |
-| `entrypoint` | **yes** | Bare name `"build_pipeline"` or fully-qualified `"module:name"`. |
-| `build_pipeline` | **yes** | Nullary callable returning a `Pipeline`. |
-| `default_profile` | recommended | Declare even as `None`; the static manifest reader requires it. |
-| `supported_modes` | recommended | Declare even as `()`; the static manifest reader requires it. |
+## 3. Validate and Run
 
-## 3. Add prompts (optional)
-
-For model-backed stages, place prompt files inside the package:
-
-```
-arnold/pipelines/my_planning_pipeline/
-├── __init__.py
-├── skills/
-│   └── my-planning-pipeline/
-│       └── SKILL.md
-└── prompts/
-    ├── plan.md
-    ├── critique.md
-    └── execute.md
+```bash
+arnold pipelines check my-planning-pipeline
+arnold pipelines list
+arnold pipelines run my-planning-pipeline "Implement a dark mode toggle"
 ```
 
-Prompt paths are resolved relative to `_PIPELINE_DIR`.  A stage can read a prompt directly:
+Fresh converted/native-capable runs default to native and persist
+`state.json.runtime_envelope.runtime` plus `state.json.meta.executor`. To force
+the deprecation-window fallback:
 
-```python
-prompt_text = (_PIPELINE_DIR / "prompts" / "plan.md").read_text()
+```bash
+arnold pipelines run my-planning-pipeline --runtime graph
 ```
 
-Or use the built-in `AgentStep` / `PipelineBuilder.agent(..., prompt="prompts/plan.md")` machinery.  See `arnold/pipelines/megaplan/_pipeline/steps/agent.py` and the `creative` pipeline for real examples.
+## 4. Profiles and Prompts
 
-## 4. Add a profile (optional)
-
-If you want `--profile my-planning-pipeline:default` to work, create:
-
-```
-arnold/pipelines/my_planning_pipeline/profiles/default.toml
-```
+Profiles are still keyed by public stage name:
 
 ```toml
 [profiles.default]
-prep     = "hermes:deepseek:deepseek-v4-pro"
-plan     = "claude"
-critique = "hermes:deepseek:deepseek-v4-pro"
-execute  = "hermes:deepseek:deepseek-v4-pro"
-review   = "claude"
+prep = "hermes:deepseek:deepseek-v4-pro"
+plan = "claude"
+execute = "hermes:deepseek:deepseek-v4-pro"
+review = "claude"
 ```
 
-The keys are your stage names.  Values are agent specs understood by the Megaplan key pool (`claude`, `codex`, `hermes:deepseek:deepseek-v4-pro`, etc.).
+Static prompt files, callable prompt builders, and model-backed steps can still
+live behind the phase implementation. The native declaration owns topology;
+the phase body owns how work is performed.
 
-## 5. Validate and run
+## 5. Resume and Old Graph Plans
+
+Native runs write native-owned `resume_cursor.json` files. Graph-born in-flight
+plans keep resuming on graph unless you explicitly upgrade the cursor:
 
 ```bash
-# Must pass with zero defects.
-python -m arnold pipelines check my-planning-pipeline
-
-# List it.
-python -m arnold pipelines list
-
-# Run it.
-python -m arnold run my-planning-pipeline "Implement a dark mode toggle"
+arnold pipelines upgrade-cursor <plan-dir>
+arnold pipelines upgrade-cursor <plan-dir> --write
 ```
 
-`arnold run` maps the positional argument to `ctx.inputs["draft"]`.
+The first command is a dry run. The write command keeps a graph cursor backup
+and fails without mutation if the graph stage cannot map to exactly one native
+reentry point.
 
-## 6. Common gotchas
+## 6. Common Gotchas
 
-- **No leading underscore.** Files or directories starting with `_` or `.` are silently skipped by the discovery scanner. The `_template` package is named that way on purpose.
-- **`build_pipeline()` must be callable with no arguments.** The registry calls it as `builder()` during discovery and validation.
-- **Declare `default_profile` and `supported_modes` even if empty.** The runtime validator only warns about them (`info:`), but the static manifest reader rejects packages that omit them.
-- **Guard every cycle.** If your graph has a back-edge, attach a `loop_condition` to a stage in the cycle, otherwise `arnold pipelines check` fails with `unguarded_cycle_detected`.
-- **Decision routing uses `PipelineVerdict.recommendation`.** Gate stages need `kind="decide"` steps that return `StepResult(verdict=PipelineVerdict(recommendation="..."))`. The executor matches that against `kind="decision"` edges.
-- **Keep module-level metadata as simple literals.** The static manifest reader parses the file with AST literal eval; it cannot follow function calls, aliases, or dynamic values.
-- **SKILL.md location.** For a package module, the registry looks for `skills/<cli-name>/SKILL.md` inside the package directory. The scaffold already creates it.
+- `build_pipeline()` must be callable with no arguments.
+- Keep module metadata as simple literals so no-import discovery can parse it.
+- Use `@decision` vocabularies that match the labels your workflow branches on.
+- Use `parallel(...)` and `native_panel(...)` only for fixed branch sets.
+- Keep runtime-sized fanout or profile-sized panels inside a delegating phase
+  until the native compiler/runtime explicitly supports that shape.
+- Graph scaffolds are compatibility fallback tools, not the default path for
+  new converted pipelines.
 
-## 7. Where to look for reference implementations
+## 7. Reference Implementations
 
-- `arnold/pipelines/megaplan/pipeline.py` — the canonical Megaplan planning graph.
-- `arnold/pipelines/creative/__init__.py` — a model-backed multi-stage pipeline.
-- `arnold/pipelines/writing_panel_strict/__init__.py` — a package pipeline with panels.
-- `arnold/pipelines/epic_blitz/` — a package pipeline with parallel review panels.
-- `arnold/pipelines/evidence_pack/` — a package-style pipeline with typed ports, hooks, and continuation.
-- `docs/arnold/authoring-guide.md` and `docs/arnold/package-authoring-contract.md` — full contract details.
+- `arnold/pipelines/megaplan/pipeline.py` - native Megaplan planning topology.
+- `arnold/pipelines/megaplan/pipelines/epic_blitz.py` - native panels.
+- `arnold/pipelines/megaplan/pipelines/select_tournament/__init__.py` - fixed
+  native parallel branches with typed ports.
+- `docs/arnold/authoring-guide.md` and
+  `docs/arnold/package-authoring-contract.md` - full contract details.

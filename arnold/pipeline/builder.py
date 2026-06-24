@@ -134,7 +134,7 @@ class PipelineBuilder:
 
     # ── build ─────────────────────────────────────────────────────────
 
-    def build(self, *, derive_bindings: bool = False) -> Pipeline:
+    def build(self, *, derive_bindings: bool = False, native_program: Any = None) -> Pipeline:
         """Assemble and return the frozen :class:`Pipeline`.
 
         Raises :class:`ValueError` if no stages have been added.
@@ -142,6 +142,10 @@ class PipelineBuilder:
         ``derive_bindings=True`` computes the typed-port binding map from
         declared ports; the default ``False`` leaves ``binding_map=None``
         (binding derivation is a Megaplan opinion, not a generic concern).
+
+        ``native_program`` is an optional :class:`~arnold.pipeline.native.ir.NativeProgram`
+        to attach to the projected pipeline.  When ``None`` (the default)
+        the field on the resulting :class:`Pipeline` is left as ``None``.
         """
         if self._entry is None:
             raise ValueError(
@@ -158,6 +162,7 @@ class PipelineBuilder:
             entry=self._entry,
             binding_map=derive_binding_map(dict(self._stages), edges) if derive_bindings else None,
             resource_bundles=tuple(self.resource_bundles),
+            native_program=native_program,
         )
 
     # ── internals ─────────────────────────────────────────────────────

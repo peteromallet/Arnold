@@ -1,138 +1,143 @@
 # Arnold Package Authoring Contract
 
-This page is the authoritative field-level contract for Arnold workflow package
-modules.  It is derived from the reference packages under
-``arnold_pipelines/evidence_pack`` and ``arnold_pipelines/megaplan`` and from the
-workflow manifest discovery rules.
+This page is the authoritative field-level contract for Arnold pipeline
+package modules. It is derived from the two reference packages —
+`arnold/pipelines/evidence_pack/__init__.py` and
+`arnold/pipelines/megaplan/__init__.py` — and from the discovery rules in
+`arnold/pipeline/discovery/manifest.py` and
+`arnold/pipelines/megaplan/_pipeline/registry.py`.
 
-## Workflow Authoring Contract
-
-The V1 source contract for new Python-shaped workflows is
-``arnold.workflow.authoring.v1``.  In that source shape, workflow imports are the
-package's dependency graph and source of truth: workflow files import typed
-module-level component exports and declare a workflow over those imports.  The
-compiler lowers that constrained source to ``arnold.workflow.dsl.Pipeline`` and
-then to ``WorkflowManifest`` data.
-
-A package's current public entrypoint is still ``build_pipeline()``.  Discovery,
-``arnold workflow check``, dry runs, and package registries continue to address
-the package as ``<module>:build_pipeline``.  The entrypoint must remain
-importable and callable from the registry's perspective; it may build the
-explicit-node DSL directly today or, once the compiler is wired in, delegate to
-the Python-shaped source compiler.  It must not treat generated catalogs or
-manifest JSON as editable source.
-
-``WorkflowManifest`` remains compiler output produced by
-``arnold.workflow.compile_pipeline()``.  Generated component catalogs may exist
-later for inspection, caching, packaging, or editor support, but they are
-derived artifacts from typed component exports and workflow imports.  They are
-not canonical workflow source and must not be hand-edited to define package
-behavior.  See [`workflow-authoring.md`](workflow-authoring.md) and
-[`python-shaped-authoring-contract.md`](python-shaped-authoring-contract.md) for
-the full authoring boundary.
-
-## Component Layout
-
-Python-shaped workflow packages should keep authored components as module-level
-typed exports.  Recommended package-local files are:
-
-```text
-arnold_pipelines/<package>/
-  __init__.py              # metadata and build_pipeline()
-  workflow.py              # imports components and declares workflow(...)
-  steps.py                 # StepComponent exports
-  prompts.py               # PromptComponent exports
-  policies.py              # PolicyComponent exports
-  schemas.py               # SchemaComponent exports
-  subflows.py              # SubflowComponent exports
-```
-
-Kind-based files are a readability convention, not a resolver rule.  Feature
-modules are also valid when they export typed component objects.  The contract is
-the module-level export shape: step, prompt, policy, schema, and subflow
-components must carry the component kind and stable provenance needed for static
-validation without executing workflow source.
-
-Workflow source should import these exports explicitly:
-
-```python
-from arnold.workflow.authoring import workflow
-from .steps import plan, execute, review
-
-workflow(
-    id="my-pipeline",
-    version="1.0",
-    steps=[
-        plan(id="plan"),
-        execute(id="execute"),
-        review(id="review"),
-    ],
-)
-```
-
-Do not route workflow authoring through root-package imports, star imports,
-dynamic imports, legacy/native builders, or generated catalogs.  Aliased
-component imports are allowed only when provenance preserves the original
-``module:qualname`` and the local alias.
+The contract is **native-first**: every package compiles a `@pipeline`
+declaration, projects it into a `Pipeline` graph shell, and attaches the
+compiled `NativeProgram` as `native_program`. The graph shell is still
+validated and may still be executed by the legacy graph executor, but the
+native declaration is the canonical source of truth.
 
 ## Field Table
 
 | Field | Required | Description | Accepts |
 |---|---|---|---|
-| ``name`` | **required** | Public pipeline name. Must be a non-empty ``str``, kept stable so discovery and deduplication work predictably. | ``str`` |
-| ``description`` | **required** | Human-readable one-liner describing what the pipeline does. | ``str`` |
-| ``arnold_api_version`` | **required** | Semver ``major.minor`` string declaring the Arnold SDK version this package targets. Must satisfy ``1 ≤ major < CURRENT_MAJOR``. | ``str`` (e.g. ``"1.0"``) |
-| ``capabilities`` | **required** | Labels used by the CLI, contracts, and registry filtering to classify what the pipeline can do. | ``tuple[str, ...]`` |
-| ``driver`` | **required** | Declares the execution driver shape. Accepts a plain string or a tuple of strings. | ``str`` or ``tuple[str, ...]`` |
-| ``entrypoint`` | **required** | The callable that returns a ``Pipeline``. Two formats are accepted: a bare name (e.g. ``"build_pipeline"``) or a ``"module:name"`` string. | ``str`` |
-| ``build_pipeline`` | **required** | The nullary (or effectively nullary) package entrypoint callable. It currently returns ``arnold.workflow.dsl.Pipeline`` and is the registry/CLI target. It may later delegate to the Python-shaped source compiler, but remains the package entrypoint rather than a generated catalog. | ``Callable[[], Pipeline]`` |
-| ``default_profile`` | **recommended** | The default profile name when the caller does not specify one. May be ``None``. | ``str`` or ``None`` |
-| ``supported_modes`` | **recommended** | Tuple of mode strings the pipeline explicitly supports. | ``tuple[str, ...]`` |
+| `name` | **required** | Public CLI-visible pipeline name. Must be a non-empty `str`, kept stable so discovery and deduplication work predictably. | `str` |
+| `description` | **required** | Human-readable one-liner describing what the pipeline does. Shown in `doctor`, `list`, and Capsule projections. | `str` |
+| `arnold_api_version` | **required** | Semver `major.minor` string declaring the Arnold SDK version this package targets. Must satisfy `1 ≤ major < CURRENT_MAJOR` (currently `CURRENT_MAJOR = 2`). | `str` (e.g. `"1.0"`) |
+| `capabilities` | **required** | Labels used by the CLI, Capsule contracts, and registry filtering to classify what the pipeline can do. | `tuple[str, ...]` |
+| `driver` | **required** | Declares the execution driver shape. Native-first packages use `("native", "<kind>")` where `<kind>` describes the topology (e.g. `"linear"`, `"fanout+reduce"`, `"panel"`). | `tuple[str, ...]` |
+| `entrypoint` | **required** | The callable that returns a `Pipeline`. Two formats are accepted: a bare name (e.g. `"build_pipeline"`) resolved from the module's top-level namespace, or a `"module:name"` string (e.g. `"arnold.pipelines.evidence_pack:build_pipeline"`) where the part after the colon is the bare name. Evidence-pack uses the colon form; Megaplan uses a bare name. | `str` (bare or `"module:name"`) |
+| `build_pipeline` | **required** | The nullary (or effectively nullary) entrypoint callable. Must return a `Pipeline` shell with `native_program` set. Aliased bindings are valid — the runtime validator uses `import` + `getattr`, not AST parsing. | `Callable[[], Pipeline]` |
+| `native_program` | **required** | The compiled `NativeProgram` produced by `compile_pipeline(...)`. It is attached to the returned `Pipeline` shell so the runtime can execute the native declaration directly. | `NativeProgram` |
+| `default_profile` | **recommended** | The default profile name when the caller does not specify one. May be `None`. | `str` \| `None` |
+| `supported_modes` | **recommended** | Tuple of mode strings the pipeline explicitly supports (e.g. `("code", "doc", "creative", "joke")`). For native-only packages this is typically `("native",)` or a mode tuple that includes `"native"`. | `tuple[str, ...]` |
 
-## Manifest Discovery
+Legacy-only fields (removed in the native-first contract):
 
-Static discovery reads module-level constants without importing the module.  The
-reader uses ``ast.parse`` and ``ast.literal_eval``; computed attributes, aliases,
-and ``__getattr__`` lazy-loading are only visible at runtime.  Authors should
-keep the fields above as literal bindings so discovery succeeds.
+- `hooks` — package-level lifecycle hooks are replaced by runtime-neutral `NativeRuntimeHooks` or trace hooks.
+- `resume` — package-local resume drivers are replaced by the shared native runtime resume path.
+- `build_continuation_pipeline` — continuation pipelines are replaced by native cursor resume.
 
-The discovery scanner skips any file or directory whose name begins with ``_`` or
-``.``.  Use ``_`` prefixes for private helpers and template modules that should
-not appear in the public pipeline registry.
+## Manifest REQUIRED_FIELDS Divergence
 
-## Runtime Validation
+The static manifest reader in `arnold/pipeline/discovery/manifest.py` defines
+`REQUIRED_FIELDS` as:
 
-The workflow CLI validates a builder target by importing the module and calling
-``build_pipeline``:
-
-```bash
-arnold workflow check --module arnold_pipelines.evidence_pack:build_pipeline
+```python
+REQUIRED_FIELDS: tuple[str, ...] = (
+    "name",
+    "description",
+    "default_profile",
+    "supported_modes",
+    "driver",
+    "entrypoint",
+    "arnold_api_version",
+    "capabilities",
+)
 ```
 
-This deliberately diverges from static discovery: runtime validation checks
-correctness, while static discovery checks identity.
+This set is **stricter** than the authoring contract above. The manifest reader
+requires `default_profile` and `supported_modes` as module-level constant
+bindings, and will reject a package that omits them during no-import discovery.
 
-For Python-shaped packages, runtime validation still enters through
-``build_pipeline``.  The workflow ``.py`` source and its imports define the
-authored workflow; generated manifests and catalogs are checked as outputs of
-that authoring path, not as replacement package sources.
+The authoring contract deliberately treats `default_profile` and
+`supported_modes` as **recommended**, not required, because some reference
+packages omit them at the module level. Making them required would force
+changes to existing reference packages.
 
-## SKILL.md Expectations
+**Practical rule for authors:** Declare `default_profile` (even as `None`) and
+`supported_modes` (even as an empty tuple or `("native",)`) so the package
+passes manifest-first discovery. Packages that skip these fields will still
+work at runtime (the runtime validator uses `import` + `getattr` and reports
+their absence as informational), but will be rejected by the static manifest
+reader.
 
-Every discoverable package should ship a sibling ``SKILL.md`` that describes the
-workflow's purpose, required capabilities, inputs/outputs, suspension and
-resume semantics, and any human-in-the-loop expectations.  The skill file is
-consumed by agentic callers and is not a substitute for the machine-readable
-module metadata above, but it must stay consistent with the ``capabilities``,
-``driver``, and ``build_pipeline`` contract.
+## Registry Discovery: Underscore Skip Rule
+
+The pipeline discovery scanner at
+`arnold/pipelines/megaplan/_pipeline/registry.py:904` skips any file or
+directory whose name begins with `_` or `.`:
+
+```python
+if entry.name.startswith("_") or entry.name.startswith("."):
+    continue
+```
+
+This means:
+
+- **`_template.py`** (and any `_`-prefixed module) is invisible to pipeline
+  discovery. Use `_` prefixes for private helpers, base classes, and template
+  modules that should not appear in `megaplan pipelines list`.
+- **`__init__.py`** is matched separately as a package entry point (line 912)
+  and is not affected by this rule.
+- **Dotfiles** (`.gitkeep`, `.DS_Store`) are also skipped.
+
+This rule is the canonical mechanism for keeping internal implementation
+details out of the public pipeline registry. Package authors should use it
+deliberately: name internal modules with a leading underscore when they must
+live alongside discoverable packages in a scan root.
+
+## Runtime Validation vs. Static Manifest Reading
+
+The validator at `validate_package_module` (used by `pipelines check`) imports
+the module and inspects its attributes via `getattr`. This **deliberately**
+diverges from `read_manifest` which uses `ast.parse` + `ast.literal_eval` and
+never imports the module.
+
+The runtime approach correctly resolves:
+
+- **Aliased bindings**: `build_pipeline = _build_pipeline` works at runtime but
+  would not be resolvable by AST literal scanning.
+- **Computed attributes**: Megaplan's `__getattr__` lazy-loading works at
+  runtime but has no static representation.
+
+This divergence is documented and intentional: static discovery is for
+cataloguing and identity; runtime validation is for correctness checking.
+Authors should ensure both paths succeed for their package.
+
+At validation time the runtime also checks that `build_pipeline()` returns a
+`Pipeline` whose `native_program` attribute is a `NativeProgram`. A package
+that returns a graph-only pipeline without `native_program` will fail the
+check under the native-first contract.
+
+## Reference Package Summary
+
+| Field | evidence_pack | megaplan |
+|---|---|---|
+| `name` | `"evidence-pack"` | `"megaplan"` |
+| `description` | ✓ | ✓ |
+| `arnold_api_version` | `"1.0"` | `"1.0"` |
+| `capabilities` | `("artifact-verification", "evidence-pack")` | `("planning", "execution", "review")` |
+| `driver` | `("native", "evidence-pack")` | `("native", "planning")` |
+| `entrypoint` | `"arnold.pipelines.evidence_pack:build_pipeline"` (module:name) | `"build_pipeline"` (bare) |
+| `build_pipeline` | native-backed factory | native-backed factory |
+| `native_program` | ✓ | ✓ |
+| `default_profile` | `None` | `None` |
+| `supported_modes` | `("native",)` | `("native",)` |
 
 ## Cross-References
 
 - [`package-contract.md`](package-contract.md) — narrative contract for package
-  layout, entrypoint rules, static identity, and runtime interaction.
-- [`workflow-authoring.md`](workflow-authoring.md) — explicit-node authoring
-  contract and stable inspect/dry-run fields.
-- [`python-shaped-authoring-contract.md`](python-shaped-authoring-contract.md)
-  — V1 Python-shaped source grammar, component imports, diagnostics, and
-  provenance rules.
-- [`workflow-manifest.md`](workflow-manifest.md) — serialized manifest contract.
+  layout, entrypoint rules, static identity, and Capsule interaction.
+- [`authoring-guide.md`](authoring-guide.md) — hands-on guide for scaffolding
+  native-first packages and validating locally.
+- [`arnold/pipeline/discovery/manifest.py`](../arnold/pipeline/discovery/manifest.py) —
+  static manifest reader and `REQUIRED_FIELDS` definition.
+- [`arnold/pipelines/megaplan/_pipeline/registry.py`](../arnold/pipelines/megaplan/_pipeline/registry.py) —
+  discovery scanner with the underscore skip rule (line 904).

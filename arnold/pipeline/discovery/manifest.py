@@ -54,7 +54,7 @@ class Manifest:
     description: str
     default_profile: str | None
     supported_modes: tuple[str, ...]
-    driver: object
+    driver: tuple[str, ...]
     entrypoint: str
     arnold_api_version: str
     capabilities: tuple[str, ...]
@@ -80,33 +80,20 @@ def _derive_name(module_file: Path) -> str:
 def _skill_md_sibling(module_file: Path) -> Path:
     """Resolve the SKILL.md path for *module_file*.
 
-    Layout (per-pipeline skills):
-    * Sibling-file modules → ``<parent>/<cli-name>/skills/<cli-name>/SKILL.md``
-      (e.g. ``pipelines/writing-panel-strict/skills/writing-panel-strict/SKILL.md``).
-    * Package modules → ``<parent>/skills/<name>/SKILL.md``.
-
-    Falls back to the legacy flat locations for backwards compatibility.
+    Layout:
+    * Sibling-file modules → ``<parent>/<cli-name>/SKILL.md``
+      (e.g. ``pipelines/foo-bar/SKILL.md`` for ``foo_bar.py``).
+    * Package modules → ``<parent>/SKILL.md`` (e.g.
+      ``pipelines/writing_panel_strict/SKILL.md``).
     """
-    parent = module_file.parent
     if module_file.name == "__init__.py":
-        # Skill directories use the CLI-visible (hyphenated) form of the
-        # package directory name.
-        name = parent.name.replace("_", "-")
-        candidates = [
-            parent / "skills" / name / "SKILL.md",
-            parent / "SKILL.md",
-        ]
-    else:
-        name = module_file.stem.replace("_", "-")
-        candidates = [
-            parent / name / "skills" / name / "SKILL.md",
-            parent / name / "SKILL.md",
-            parent / "SKILL.md",
-        ]
-    for candidate in candidates:
-        if candidate.is_file():
-            return candidate
-    return candidates[0]
+        return module_file.parent / "SKILL.md"
+    resource_dir_skill = (
+        module_file.parent / module_file.stem.replace("_", "-") / "SKILL.md"
+    )
+    if resource_dir_skill.is_file():
+        return resource_dir_skill
+    return module_file.parent / "SKILL.md"
 
 
 def _extract_top_level_constants(
@@ -158,6 +145,52 @@ def _coerce_str_tuple(value: object) -> tuple[str, ...] | None:
     if isinstance(value, (list, tuple)) and all(isinstance(x, str) for x in value):
         return tuple(value)
     return None
+
+
+def _validate_entrypoint(value: object) -> tuple[str | None, str | None]:
+    if not isinstance(value, str) or not value:
+        return None, (
+            f"field 'entrypoint' in manifest: expected non-empty str, "
+            f"got {type(value).__name__}"
+        )
+    if ":" in value or "." in value:
+        return None, (
+            "entrypoint must be a bare top-level symbol, not a module:symbol reference"
+        )
+    if not value.isidentifier():
+        return None, (
+            "field 'entrypoint' in manifest: expected a valid Python identifier"
+        )
+    return value, None
+
+
+def _validate_driver(value: object) -> tuple[tuple[str, ...] | None, str | None]:
+    driver = _coerce_str_tuple(value)
+    if driver is None or not driver:
+        return None, (
+            "field 'driver' in manifest: expected non-empty sequence of str"
+        )
+    if driver[0] not in {"native", "graph"}:
+        return None, (
+            "field 'driver' in manifest: first item must be 'native' or 'graph'"
+        )
+    return driver, None
+
+
+def _validate_supported_modes(
+    value: object,
+) -> tuple[tuple[str, ...] | None, str | None]:
+    supported_modes = _coerce_str_tuple(value)
+    if supported_modes is None or not supported_modes:
+        return None, (
+            "field 'supported_modes' in manifest: expected non-empty sequence of str"
+        )
+    if "native" not in supported_modes and "graph" not in supported_modes:
+        return None, (
+            "field 'supported_modes' in manifest: expected at least one of "
+            "'native' or 'graph'"
+        )
+    return supported_modes, None
 
 
 def _validate_api_version(value: object) -> tuple[bool, str]:
@@ -297,15 +330,10 @@ def read_manifest(
             ),
         )
 
-    entrypoint = constants["entrypoint"]
-    if not isinstance(entrypoint, str) or not entrypoint:
-        return ManifestError(
-            path=path,
-            reason=(
-                f"field 'entrypoint' in manifest: expected non-empty str, "
-                f"got {type(entrypoint).__name__}"
-            ),
-        )
+    entrypoint, entrypoint_error = _validate_entrypoint(constants["entrypoint"])
+    if entrypoint_error is not None:
+        return ManifestError(path=path, reason=entrypoint_error)
+    assert entrypoint is not None
     if entrypoint not in top_level_symbols:
         return ManifestError(
             path=path,
@@ -332,12 +360,17 @@ def read_manifest(
             ),
         )
 
-    supported_modes = _coerce_str_tuple(constants["supported_modes"])
-    if supported_modes is None:
-        return ManifestError(
-            path=path,
-            reason="field 'supported_modes' in manifest: expected sequence of str",
-        )
+    driver, driver_error = _validate_driver(constants["driver"])
+    if driver_error is not None:
+        return ManifestError(path=path, reason=driver_error)
+    assert driver is not None
+
+    supported_modes, modes_error = _validate_supported_modes(
+        constants["supported_modes"]
+    )
+    if modes_error is not None:
+        return ManifestError(path=path, reason=modes_error)
+    assert supported_modes is not None
 
     capabilities = _coerce_str_tuple(constants["capabilities"])
     if capabilities is None:
@@ -364,7 +397,7 @@ def read_manifest(
         description=description,
         default_profile=default_profile,
         supported_modes=supported_modes,
-        driver=constants["driver"],
+        driver=driver,
         entrypoint=entrypoint,
         arnold_api_version=constants["arnold_api_version"],  # type: ignore[arg-type]
         capabilities=capabilities,
@@ -378,7 +411,7 @@ def read_manifest(
         description=description,
         default_profile=default_profile,
         supported_modes=supported_modes,
-        driver=constants["driver"],
+        driver=driver,
         entrypoint=entrypoint,
         arnold_api_version=constants["arnold_api_version"],  # type: ignore[arg-type]
         capabilities=capabilities,
