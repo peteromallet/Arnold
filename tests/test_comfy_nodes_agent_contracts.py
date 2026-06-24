@@ -32,6 +32,10 @@ from vibecomfy.comfy_nodes.agent.contracts import (
     derive_pending_response_key,
     failure_envelope,
     product_failure_envelope_fields,
+    public_chat_rehydrate_payload,
+    public_latest_candidate,
+    public_response_details,
+    public_session_json_payload,
     public_outcome_from_turn_outcome,
     repair_field_changes,
     success_envelope,
@@ -59,6 +63,44 @@ def _json_paths_containing(value: object, needle: str, path: str = "$") -> list[
     if isinstance(value, str) and needle in value:
         return [path]
     return []
+
+
+def _json_key_paths(value: object, forbidden_keys: set[str], path: str = "$") -> list[str]:
+    if isinstance(value, dict):
+        paths: list[str] = []
+        for key, item in value.items():
+            child_path = f"{path}.{key}"
+            if key in forbidden_keys:
+                paths.append(child_path)
+            paths.extend(_json_key_paths(item, forbidden_keys, child_path))
+        return paths
+    if isinstance(value, list):
+        paths = []
+        for index, item in enumerate(value):
+            paths.extend(_json_key_paths(item, forbidden_keys, f"{path}[{index}]"))
+        return paths
+    return []
+
+
+def _assert_public_projection_has_no_forbidden_sentinels(value: object) -> None:
+    forbidden_keys = {
+        "audit_path",
+        "audit_ref",
+        "batch_turns",
+        "budget",
+        "budget_trace",
+        "debug_payload",
+        "detail_json_path",
+        "path",
+        "prompt",
+        "provider_diagnostics",
+        "raw_prompt",
+        "raw_session_state",
+        "request_path",
+        "response_path",
+    }
+    assert _json_key_paths(value, forbidden_keys) == []
+    assert _json_paths_containing(value, "SECRET_PUBLIC_PROJECTION_SENTINEL") == []
 
 
 def test_canonical_backend_contract_objects_serialize_snake_case() -> None:
@@ -1512,6 +1554,257 @@ def test_all_internal_turn_outcome_kinds_map_to_public_union() -> None:
                 f"{internal_kind!r} should map to {internal_to_public[internal_kind]!r}, "
                 f"got {result['kind']!r}"
             )
+
+
+def test_public_projection_helpers_do_not_leak_raw_rehydrate_fields() -> None:
+    sentinel = "SECRET_PUBLIC_PROJECTION_SENTINEL"
+    raw_change_details = {
+        "code": "queue_blocked",
+        "severity": "warning",
+        "message": "Queue remains blocked.",
+        "lifecycle": "candidate",
+        "stage": "queue_validate",
+        "ok": False,
+        "path": f"/private/{sentinel}/audit.json",
+        "audit_path": f"/private/{sentinel}/audit.json",
+        "request_path": f"/private/{sentinel}/request.json",
+        "response_path": f"/private/{sentinel}/response.json",
+        "raw_prompt": f"raw prompt {sentinel}",
+        "prompt": f"expanded prompt {sentinel}",
+        "budget": {"remaining": sentinel},
+        "budget_trace": [{"remaining": sentinel}],
+        "debug_payload": {"stack": sentinel},
+        "raw_session_state": {"canvas": sentinel},
+        "provider_diagnostics": {"trace": sentinel},
+        "batch_turns": [
+            {
+                "stage": "agent_response",
+                "ok": True,
+                "code": "batch_step_complete",
+                "message": "First batch turn completed.",
+                "raw_prompt": f"batch prompt {sentinel}",
+                "budget": {"remaining": sentinel},
+                "debug_payload": {"trace": sentinel},
+            }
+        ],
+    }
+    raw_audit_ref = {
+        "path": f"/private/{sentinel}/turns/0002/audit.json",
+        "sha256": "abc123",
+        "byte_count": 42,
+        "preview": "audit ok",
+    }
+    raw_response = {
+        "ok": True,
+        "session_id": "sess-1",
+        "turn_id": "0002",
+        "message": "Candidate ready.",
+        "outcome": {"kind": "edit", "changes": []},
+        "candidate_graph_hash": "graph-hash",
+        "change_details": raw_change_details,
+        "audit_ref": raw_audit_ref,
+        "debug_payload": {"response": sentinel},
+        "raw_session_state": {"state": sentinel},
+        "provider_diagnostics": {"tokens": sentinel},
+        "budget": {"remaining": sentinel},
+    }
+    raw_latest_candidate = {
+        **raw_response,
+        "graph": {"nodes": [{"id": 1}], "links": []},
+        "candidate": {"state": "candidate", "graph_hash": "graph-hash"},
+    }
+
+    public_values = [
+        public_response_details(raw_response),
+        public_latest_candidate(raw_latest_candidate),
+        public_chat_rehydrate_payload(
+            {
+                "ok": True,
+                "exists": True,
+                "session_id": "sess-1",
+                "latest_turn_id": "0002",
+                "messages": [
+                    {
+                        "role": "assistant",
+                        "text": "Candidate ready.",
+                        "turn_id": "0002",
+                        "timestamp": "2026-06-24T12:00:00Z",
+                        "outcome": {"kind": "edit", "changes": []},
+                        "change_details": raw_change_details,
+                        "audit_ref": raw_audit_ref,
+                        "debug_payload": {"message": sentinel},
+                        "raw_prompt": f"message prompt {sentinel}",
+                    }
+                ],
+                "latest_candidate": raw_latest_candidate,
+                "diagnostics": [
+                    {
+                        "code": "reload_warning",
+                        "message": "Reload warning.",
+                        "path": f"/private/{sentinel}/diagnostic.json",
+                        "debug_payload": {"diagnostic": sentinel},
+                    }
+                ],
+                "audit_artifacts": [raw_audit_ref],
+                "debug_payload": {"rehydrate": sentinel},
+                "raw_session_state": {"state": sentinel},
+                "provider_diagnostics": {"provider": sentinel},
+            }
+        ),
+        public_session_json_payload(
+            {
+                "ok": True,
+                "session_id": "sess-1",
+                "latest_turn_id": "0002",
+                "turn_count": 1,
+                "messages": [
+                    {
+                        "role": "assistant",
+                        "text": "Candidate ready.",
+                        "turn_id": "0002",
+                        "change_details": raw_change_details,
+                        "audit_ref": raw_audit_ref,
+                    }
+                ],
+                "turns": [
+                    {
+                        "turn_id": "0002",
+                        "message_count": 2,
+                        "error": None,
+                        "audit_path": f"/private/{sentinel}/audit.json",
+                        "detail_json_path": f"/private/{sentinel}/detail.json",
+                        "request.json": {"path": f"/private/{sentinel}/request.json"},
+                        "response.json": {"path": f"/private/{sentinel}/response.json"},
+                        "chat.json": {"path": f"/private/{sentinel}/chat.json"},
+                        "audit_ref": raw_audit_ref,
+                        "raw_session_state": {"turn": sentinel},
+                        "provider_diagnostics": {"turn": sentinel},
+                    }
+                ],
+                "debug_payload": {"session": sentinel},
+                "raw_session_state": {"session": sentinel},
+                "provider_diagnostics": {"session": sentinel},
+            }
+        ),
+    ]
+
+    for value in public_values:
+        assert value is not None
+        _assert_public_projection_has_no_forbidden_sentinels(value)
+
+
+def test_public_chat_rehydrate_projection_keeps_compact_reload_diagnostics() -> None:
+    projected = public_chat_rehydrate_payload(
+        {
+            "ok": True,
+            "exists": True,
+            "session_id": "sess-1",
+            "latest_turn_id": "0002",
+            "messages": [
+                {
+                    "role": "assistant",
+                    "text": "Candidate ready.",
+                    "turn_id": "0002",
+                    "change_details": {
+                        "code": "queue_blocked",
+                        "severity": "warning",
+                        "message": "Queue remains blocked.",
+                        "lifecycle": "candidate",
+                        "stage": "queue_validate",
+                        "ok": False,
+                        "queue_allowed": False,
+                        "candidate_nodes": 3,
+                        "batch_turns": [
+                            {
+                                "code": "batch_step_complete",
+                                "message": "Validated step one.",
+                                "stage": "agent_response",
+                                "ok": True,
+                                "landed_operation_count": 2,
+                            }
+                        ],
+                    },
+                    "audit_ref": {
+                        "path": "/private/session/turns/0002/audit.json",
+                        "sha256": "abc123",
+                        "byte_count": 42,
+                        "preview": "audit ok",
+                    },
+                }
+            ],
+            "diagnostics": [
+                {
+                    "turn_id": "0001",
+                    "source": "persisted",
+                    "code": "prior_warning",
+                    "message": "Prior warning.",
+                    "severity": "info",
+                    "stage": "ui_emit",
+                    "ok": True,
+                }
+            ],
+            "audit_artifacts": [
+                {
+                    "turn_id": "0001",
+                    "source": "persisted",
+                    "path": "/private/session/turns/0001/audit.json",
+                    "sha256": "def456",
+                    "byte_count": 24,
+                    "preview": "prior audit ok",
+                }
+            ],
+        }
+    )
+
+    assert projected["diagnostics"] == [
+        {
+            "turn_id": "0002",
+            "source": "messages.change_details",
+            "code": "queue_blocked",
+            "severity": "warning",
+            "message": "Queue remains blocked.",
+            "lifecycle": "candidate",
+            "stage": "queue_validate",
+            "ok": False,
+            "queue_allowed": False,
+            "candidate_nodes": 3,
+        },
+        {
+            "turn_id": "0002",
+            "source": "messages.change_details.batch_turns[0]",
+            "code": "batch_step_complete",
+            "message": "Validated step one.",
+            "stage": "agent_response",
+            "ok": True,
+            "landed_operation_count": 2,
+        },
+        {
+            "turn_id": "0001",
+            "source": "persisted",
+            "code": "prior_warning",
+            "message": "Prior warning.",
+            "severity": "info",
+            "stage": "ui_emit",
+            "ok": True,
+        },
+    ]
+    assert projected["audit_artifacts"] == [
+        {
+            "turn_id": "0002",
+            "source": "messages",
+            "sha256": "abc123",
+            "byte_count": 42,
+            "preview": "audit ok",
+        },
+        {
+            "turn_id": "0001",
+            "source": "persisted",
+            "sha256": "def456",
+            "byte_count": 24,
+            "preview": "prior audit ok",
+        },
+    ]
+    _assert_public_projection_has_no_forbidden_sentinels(projected)
 
 
 def test_diagnostic_record_round_trips_through_dict() -> None:

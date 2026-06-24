@@ -75,6 +75,42 @@ export const FORBIDDEN_NORMAL_PROJECTION_KEYS = Object.freeze(new Set([
   "promptMessages",
 ]));
 
+export const FORBIDDEN_PUBLIC_ENVELOPE_PATH_KEYS = Object.freeze(new Set([
+  "path",
+  "raw_path",
+  "rawPath",
+  "artifact_path",
+  "artifactPath",
+  "audit_path",
+  "auditPath",
+  "request_path",
+  "requestPath",
+  "response_path",
+  "responsePath",
+  "chat_path",
+  "chatPath",
+  "candidate_path",
+  "candidatePath",
+  "debug_path",
+  "debugPath",
+  "session_path",
+  "sessionPath",
+  "session_path_resolved",
+  "sessionPathResolved",
+  "detail_path",
+  "detailPath",
+  "detail_json_path",
+  "detailJsonPath",
+  "detail_json_path_resolved",
+  "detailJsonPathResolved",
+  "baseline_graph_source_path",
+  "baselineGraphSourcePath",
+  "model_request_path",
+  "modelRequestPath",
+  "model_response_path",
+  "modelResponsePath",
+]));
+
 export const FORBIDDEN_NORMAL_PROJECTION_VALUE_PATTERNS = Object.freeze([
   /\/(?:real\/)?ComfyUI\/out\/editor_sessions\//i,
   /\bturns\/\d+\/(?:response|messages|candidate|debug)\.[a-z0-9]+/i,
@@ -168,6 +204,38 @@ export function assertRehydratePayloadIsProjectionInputOnly(
       projectionName: normalDetailName,
       path: "$.normalResponseDetail",
     });
+  }
+}
+
+export function assertPublicEnvelopeHasNoPathAliases(
+  value,
+  {
+    projectionName = PROJECTION_SURFACES.REHYDRATE_PROJECTION_INPUT,
+    path = "$",
+  } = {},
+) {
+  assertNoForbiddenPublicEnvelopePathAliases(value, path, projectionName);
+}
+
+function assertNoForbiddenPublicEnvelopePathAliases(value, path, projectionName) {
+  if (!value || typeof value !== "object") {
+    return;
+  }
+  if (Array.isArray(value)) {
+    value.forEach((entry, index) => {
+      assertNoForbiddenPublicEnvelopePathAliases(entry, `${path}[${index}]`, projectionName);
+    });
+    return;
+  }
+
+  for (const [key, entry] of Object.entries(value)) {
+    const keyPath = `${path}.${key}`;
+    assert.equal(
+      FORBIDDEN_PUBLIC_ENVELOPE_PATH_KEYS.has(key),
+      false,
+      `${projectionName} must not expose public envelope path alias ${keyPath}`,
+    );
+    assertNoForbiddenPublicEnvelopePathAliases(entry, keyPath, projectionName);
   }
 }
 

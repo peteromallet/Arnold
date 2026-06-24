@@ -6,6 +6,7 @@ import {
   assertCanonicalNormalPathHasNoLegacyAliases,
   assertNormalDomTextHasNoForbiddenFieldOrValue,
   assertNormalProjectionHasNoForbiddenFieldOrValue,
+  assertPublicEnvelopeHasNoPathAliases,
   assertRehydratePayloadIsProjectionInputOnly,
   isExplicitProjectionAffordance,
 } from "./projection_boundary_helpers.mjs";
@@ -125,6 +126,35 @@ test("rehydrate payload helper treats raw payloads as projection input only", ()
     ),
     /forbidden internal key .*raw_payload/,
   );
+});
+
+test("public envelope helper rejects old path aliases in snake_case and camelCase", () => {
+  assertPublicEnvelopeHasNoPathAliases({
+    ok: true,
+    session_id: "sess-public",
+    latest_candidate: {
+      candidate_graph_hash: "hash-safe",
+      audit_artifacts: [{ sha256: "abc123", preview: "safe" }],
+    },
+    diagnostics: [{ source: "messages.change_details", message: "safe" }],
+  });
+
+  for (const [key, value] of [
+    ["session_path", "out/editor_sessions/sess-public"],
+    ["sessionPath", "out/editor_sessions/sess-public"],
+    ["detail_json_path", "out/editor_sessions/sess-public/session.json"],
+    ["detailJsonPath", "out/editor_sessions/sess-public/session.json"],
+    ["audit_path", "turns/0001/audit.json"],
+    ["auditPath", "turns/0001/audit.json"],
+    ["baseline_graph_source_path", "turns/0000/response.json"],
+    ["baselineGraphSourcePath", "turns/0000/response.json"],
+  ]) {
+    assert.throws(
+      () => assertPublicEnvelopeHasNoPathAliases({ ok: true, [key]: value }),
+      /public envelope path alias/,
+      `expected ${key} to be rejected`,
+    );
+  }
 });
 
 test("legacy alias helper remains available for canonical payload fixtures", () => {

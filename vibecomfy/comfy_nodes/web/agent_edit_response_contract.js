@@ -1303,6 +1303,30 @@ function batchTurns(raw) {
     || [];
 }
 
+function compactDiagnosticSummary(raw) {
+  if (!isObject(raw)) {
+    return null;
+  }
+  const summary = compactObject({
+    session_id: asString(raw.session_id) || asString(raw.sessionId),
+    turn_id: asString(raw.turn_id) || asString(raw.turnId),
+    source: asString(raw.source),
+    code: asString(raw.code),
+    severity: asString(raw.severity),
+    message: asString(raw.message),
+    lifecycle: asString(raw.lifecycle),
+    stage: asString(raw.stage),
+    status: asString(raw.status),
+    ok: asBooleanOrNull(raw.ok),
+    queue_allowed: asBooleanOrNull(raw.queue_allowed) ?? asBooleanOrNull(raw.queueAllowed),
+    candidate_nodes: Number.isFinite(raw.candidate_nodes) ? raw.candidate_nodes
+      : Number.isFinite(raw.candidateNodes) ? raw.candidateNodes : null,
+    landed_operation_count: Number.isFinite(raw.landed_operation_count) ? raw.landed_operation_count
+      : Number.isFinite(raw.landedOperationCount) ? raw.landedOperationCount : null,
+  });
+  return Object.keys(summary).length ? freezePlainData(summary) : null;
+}
+
 /**
  * Project explicit diagnostic execution data. This surface may include
  * reasoning, provider diagnostics, debug payloads, and batch_turns because it is
@@ -1314,6 +1338,7 @@ export function projectExecutionEvent(value) {
     return null;
   }
   const outcome = isObject(source.outcome) ? source.outcome : null;
+  const diagnosticSummary = compactDiagnosticSummary(source);
   return compactFrozenObject({
     session_id: asString(source.session_id) || asString(source.sessionId),
     turn_id: asString(source.turn_id) || asString(source.turnId),
@@ -1324,6 +1349,20 @@ export function projectExecutionEvent(value) {
     failure_kind: asString(source.failure_kind) || asString(source.failureKind) || asString(outcome?.failure_kind),
     failure_stage: asString(source.failure_stage) || asString(source.failureStage) || asString(outcome?.stage),
     done_summary: asString(source.done_summary) || asString(source.doneSummary),
+    source: asString(source.source),
+    code: asString(source.code),
+    severity: asString(source.severity),
+    lifecycle: asString(source.lifecycle),
+    stage: asString(source.stage),
+    ok: asBooleanOrNull(source.ok),
+    queue_allowed: asBooleanOrNull(source.queue_allowed) ?? asBooleanOrNull(source.queueAllowed),
+    candidate_nodes: Number.isFinite(source.candidate_nodes) ? source.candidate_nodes
+      : Number.isFinite(source.candidateNodes) ? source.candidateNodes : null,
+    landed_operation_count: Number.isFinite(source.landed_operation_count) ? source.landed_operation_count
+      : Number.isFinite(source.landedOperationCount) ? source.landedOperationCount : null,
+    diagnostics: Array.isArray(source.diagnostics)
+      ? frozenPlainClone(source.diagnostics.map(compactDiagnosticSummary).filter(Boolean))
+      : diagnosticSummary ? freezePlainData([diagnosticSummary]) : null,
     change_details: isObject(source.change_details) ? frozenPlainClone(source.change_details)
       : isObject(source.changeDetails) ? frozenPlainClone(source.changeDetails)
         : null,
@@ -1351,6 +1390,11 @@ export function projectAuditArtifact(value) {
   return compactFrozenObject({
     session_id: asString(source.session_id) || asString(source.sessionId),
     turn_id: asString(source.turn_id) || asString(source.turnId),
+    source: asString(source.source),
+    sha256: asString(source.sha256),
+    byte_count: Number.isFinite(source.byte_count) ? source.byte_count
+      : Number.isFinite(source.byteCount) ? source.byteCount : null,
+    preview: asString(source.preview),
     auditRef: auditRef ? frozenPlainClone(auditRef) : null,
     artifactRefs: frozenPlainClone(Array.isArray(artifactRefs) ? artifactRefs : []),
   });
@@ -1370,7 +1414,12 @@ function sourceHasDiagnosticEvent(source) {
     || source?.report?.providerDiagnostics
     || source?.report?.provider_diagnostics
     || source?.report?.executor?.reasoning
-    || source?.reasoning,
+    || source?.reasoning
+    || source?.code
+    || source?.severity
+    || source?.stage
+    || source?.lifecycle
+    || Array.isArray(source?.diagnostics),
   );
 }
 
@@ -1380,21 +1429,43 @@ function sourceHasAuditArtifact(source) {
     || source?.audit_ref
     || source?.artifactRefs
     || source?.artifact_refs
-    || source?.artifacts,
+    || source?.artifacts
+    || source?.sha256
+    || source?.byte_count
+    || source?.byteCount
+    || source?.preview,
   );
+}
+
+function withRehydrateEnvelopeSession(raw, entry) {
+  if (!isObject(entry)) {
+    return entry;
+  }
+  const sessionId = asString(raw?.session_id) || asString(raw?.sessionId);
+  if (!sessionId || entry.session_id || entry.sessionId) {
+    return entry;
+  }
+  return { ...entry, session_id: sessionId };
 }
 
 export function splitRehydrateProjectionInput(raw) {
   const messages = Array.isArray(raw?.messages) ? raw.messages : [];
+  const diagnostics = Array.isArray(raw?.diagnostics) ? raw.diagnostics : [];
+  const auditArtifacts = Array.isArray(raw?.audit_artifacts) ? raw.audit_artifacts
+    : Array.isArray(raw?.auditArtifacts) ? raw.auditArtifacts : [];
   return freezePlainData({
     normalTranscriptMessage: messages.map(projectTranscriptMessage).filter(Boolean),
     normalResponseDetail: messages.map(projectResponseDetail).filter(Boolean),
-    explicitDiagnosticEvent: messages
-      .filter(sourceHasDiagnosticEvent)
+    explicitDiagnosticEvent: [
+      ...messages.filter(sourceHasDiagnosticEvent),
+      ...diagnostics.map((entry) => withRehydrateEnvelopeSession(raw, entry)),
+    ]
       .map(projectExecutionEvent)
       .filter(Boolean),
-    explicitAuditArtifact: messages
-      .filter(sourceHasAuditArtifact)
+    explicitAuditArtifact: [
+      ...messages.filter(sourceHasAuditArtifact),
+      ...auditArtifacts.map((entry) => withRehydrateEnvelopeSession(raw, entry)),
+    ]
       .map(projectAuditArtifact)
       .filter(Boolean),
   });

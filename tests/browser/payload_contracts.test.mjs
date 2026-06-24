@@ -68,6 +68,7 @@ import {
   PROJECTION_SURFACES,
   assertCanonicalNormalPathHasNoLegacyAliases,
   assertNormalProjectionHasNoForbiddenFieldOrValue,
+  assertPublicEnvelopeHasNoPathAliases,
   assertRehydratePayloadIsProjectionInputOnly,
 } from "./projection_boundary_helpers.mjs";
 
@@ -305,10 +306,20 @@ test("chat_rehydrate_response.json — structural contract", () => {
   assert.equal(raw.ok, true);
   assert.equal(raw.exists, true);
   assert.equal(raw.session_id, "sess-123");
-  assert.ok(raw.session_path, "should have session_path");
-  assert.ok(raw.detail_json_path, "should have detail_json_path");
+  assert.equal("session_path" in raw, false);
+  assert.equal("sessionPath" in raw, false);
+  assert.equal("detail_json_path" in raw, false);
+  assert.equal("detailJsonPath" in raw, false);
+  assertPublicEnvelopeHasNoPathAliases(raw);
   assert.ok(Array.isArray(raw.messages));
   assert.ok(raw.messages.length >= 2);
+  assert.deepEqual(Object.keys(raw.messages[0]).sort(), [
+    "role",
+    "text",
+    "timestamp",
+    "turn_id",
+  ]);
+  assert.equal(raw.messages[1].outcome.kind, "candidate");
 
   // Latest candidate is an agent-edit sub-payload; validate it normalizes
   assert.ok(raw.latest_candidate, "should have latest_candidate");
@@ -317,10 +328,47 @@ test("chat_rehydrate_response.json — structural contract", () => {
   });
   assert.equal(candidateNorm.outcome.kind, "candidate");
   assert.ok(candidateNorm.candidateGraph);
+  assert.equal(readApplyCandidate(candidateNorm).graphHash, "candidate-hash-new");
+  assert.equal(readEligibility(candidateNorm).applyable, true);
 
-  // Baseline fields
-  assert.equal(raw.baseline.baseline_turn_id, "0000");
-  assert.equal(typeof raw.baseline.baseline_graph_hash, "string");
+  // Diagnostics and audit summaries are explicit public buckets, not hidden paths.
+  assert.ok(Array.isArray(raw.diagnostics));
+  assert.ok(raw.diagnostics.length >= 2);
+  assert.deepEqual(raw.diagnostics[0], {
+    turn_id: "0001",
+    source: "messages.change_details",
+    code: "queue_blocked",
+    severity: "warning",
+    message: "Queue remains blocked.",
+    lifecycle: "candidate",
+    stage: "queue_validate",
+    ok: false,
+    queue_allowed: false,
+    candidate_nodes: 1,
+  });
+  assert.ok(Array.isArray(raw.audit_artifacts));
+  assert.deepEqual(raw.audit_artifacts[0], {
+    turn_id: "0001",
+    source: "messages",
+    sha256: "abc123",
+    byte_count: 42,
+    preview: "audit ok",
+  });
+  const split = splitContaminatedRehydrateProjectionInput(raw);
+  assert.equal(split.explicitDiagnosticEvent.length, raw.diagnostics.length);
+  assert.equal(split.explicitDiagnosticEvent[0].diagnostics[0].code, "queue_blocked");
+  assert.equal(split.explicitAuditArtifact.length, raw.audit_artifacts.length);
+  assert.equal(split.explicitAuditArtifact[0].sha256, "abc123");
+  assertNormalProjectionHasNoForbiddenFieldOrValue(split.normalTranscriptMessage, {
+    projectionName: PROJECTION_SURFACES.NORMAL_TRANSCRIPT_MESSAGE,
+  });
+  assertNormalProjectionHasNoForbiddenFieldOrValue(split.normalResponseDetail, {
+    projectionName: PROJECTION_SURFACES.NORMAL_RESPONSE_DETAIL,
+  });
+
+  // Baseline fields are retained on the public latest-candidate payload.
+  assert.equal(raw.latest_candidate.baseline_turn_id, "0000");
+  assert.equal(raw.latest_candidate.baseline_graph_hash, "base-hash-old");
 });
 
 test("canonical session rehydrate fixture normalizes latest candidate with allowLegacy=false", () => {
@@ -823,6 +871,45 @@ test("rehydrate projection input feeds chatMessages safe mirror plus explicit di
         },
       },
     ],
+    diagnostics: [
+      {
+        turn_id: "0001",
+        source: "messages.change_details",
+        code: "QUEUE_BLOCKED",
+        severity: "warning",
+        message: "Queue remains blocked.",
+        lifecycle: "candidate",
+        stage: "queue_validate",
+        ok: false,
+        queue_allowed: false,
+        candidate_nodes: 1,
+      },
+      {
+        turn_id: "0001",
+        source: "latest_candidate.change_details.batch_turns[0]",
+        code: "BATCH_STEP_COMPLETE",
+        message: "Validated candidate reload step.",
+        stage: "agent_response",
+        ok: true,
+        landed_operation_count: 1,
+      },
+    ],
+    audit_artifacts: [
+      {
+        turn_id: "0001",
+        source: "messages",
+        sha256: "abc123",
+        byte_count: 42,
+        preview: "audit ok",
+      },
+      {
+        turn_id: "0001",
+        source: "latest_candidate",
+        sha256: "def456",
+        byte_count: 24,
+        preview: "latest candidate audit ok",
+      },
+    ],
   };
 
   const split = splitContaminatedRehydrateProjectionInput(rehydrateProjectionInput);
@@ -830,8 +917,8 @@ test("rehydrate projection input feeds chatMessages safe mirror plus explicit di
   assertRehydratePayloadIsProjectionInputOnly(rehydrateProjectionInput, split);
   assert.equal(split.normalTranscriptMessage.length, 2);
   assert.equal(split.normalResponseDetail.length, 2);
-  assert.equal(split.explicitDiagnosticEvent.length, 1);
-  assert.equal(split.explicitAuditArtifact.length, 1);
+  assert.equal(split.explicitDiagnosticEvent.length, 3);
+  assert.equal(split.explicitAuditArtifact.length, 3);
 
   assert.deepEqual(split.normalTranscriptMessage[1], {
     role: "agent",
@@ -864,21 +951,50 @@ test("rehydrate projection input feeds chatMessages safe mirror plus explicit di
       diagnostics: [{ code: "ENGINE_DIAG", message: "raw diagnostic" }],
     },
   ]);
+  assert.deepEqual(split.explicitDiagnosticEvent[1].diagnostics, [
+    {
+      session_id: "sess-rehydrate-contaminated",
+      turn_id: "0001",
+      source: "messages.change_details",
+      code: "QUEUE_BLOCKED",
+      severity: "warning",
+      message: "Queue remains blocked.",
+      lifecycle: "candidate",
+      stage: "queue_validate",
+      ok: false,
+      queue_allowed: false,
+      candidate_nodes: 1,
+    },
+  ]);
+  assert.equal(split.explicitDiagnosticEvent[2].landed_operation_count, 1);
   assert.deepEqual(split.explicitAuditArtifact[0].auditRef, {
     path: "/real/ComfyUI/out/editor_sessions/sess-rehydrate-contaminated/turns/0001/audit.json",
+  });
+  assert.deepEqual(split.explicitAuditArtifact[1], {
+    session_id: "sess-rehydrate-contaminated",
+    turn_id: "0001",
+    source: "messages",
+    sha256: "abc123",
+    byte_count: 42,
+    preview: "audit ok",
+    artifactRefs: [],
   });
 
   rehydrateProjectionInput.messages[1].report.executor.reasoning[0].text = "mutated reasoning";
   rehydrateProjectionInput.messages[1].debugPayload.provider_payload.raw_response = "mutated debug";
   rehydrateProjectionInput.messages[1].change_details.batch_turns[0].message = "mutated batch";
   rehydrateProjectionInput.messages[1].audit_ref.path = "mutated-audit.json";
+  rehydrateProjectionInput.diagnostics[0].message = "mutated diagnostic";
+  rehydrateProjectionInput.audit_artifacts[0].preview = "mutated audit";
   assert.equal(explicitDiagnosticEvent.reasoning[0].text, "Inspected graph before editing.");
   assert.equal(explicitDiagnosticEvent.debugPayload.provider_payload.raw_response, "debug payload");
   assert.equal(explicitDiagnosticEvent.batchTurns[0].message, "raw diagnostic reasoning");
+  assert.equal(split.explicitDiagnosticEvent[1].diagnostics[0].message, "Queue remains blocked.");
   assert.equal(
     split.explicitAuditArtifact[0].auditRef.path,
     "/real/ComfyUI/out/editor_sessions/sess-rehydrate-contaminated/turns/0001/audit.json",
   );
+  assert.equal(split.explicitAuditArtifact[1].preview, "audit ok");
 });
 
 test("ResponseDetail excludes AuditArtifact and ExecutionEvent data retained for explicit compatibility surfaces", () => {

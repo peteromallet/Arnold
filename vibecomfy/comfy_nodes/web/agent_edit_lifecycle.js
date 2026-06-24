@@ -1308,6 +1308,7 @@ function _hasExplicitDebugRecord(event) {
   return Boolean(
     event?.debugPayload
     || (Array.isArray(event?.reasoning) && event.reasoning.length)
+    || (Array.isArray(event?.diagnostics) && event.diagnostics.length)
     || (Array.isArray(event?.providerDiagnostics) && event.providerDiagnostics.length)
     || (
       event?.providerDiagnostics
@@ -1561,6 +1562,7 @@ export function ingestChatRehydratePayload(panelState, payload) {
     messages: Array.isArray(panelState?.chatMessages) ? panelState.chatMessages : [],
   });
   const rehydrateProjection = splitRehydrateProjectionInput({
+    ...payload,
     messages,
   });
   const chatMessages = reconcileChatMessages(
@@ -1579,6 +1581,7 @@ export function ingestChatRehydratePayload(panelState, payload) {
       session_id: event.session_id,
       turn_id: event.turn_id,
       reasoning: event.reasoning,
+      diagnostics: event.diagnostics,
       providerDiagnostics: event.providerDiagnostics,
       debugPayload: event.debugPayload,
       batchTurns: event.batchTurns,

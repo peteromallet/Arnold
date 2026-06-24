@@ -344,6 +344,10 @@ test("CHAT_REHYDRATE_SUCCESS keeps chatMessages as a safe transcript compatibili
   assert.deepEqual(panel.state.transcriptMessages, panel.state.chatMessages);
   assert.deepEqual(Object.keys(panel.state.responseDetails), ["turn-contaminated"]);
   assert.equal(panel.state.responseDetails["turn-contaminated"].outcome.kind, "noop");
+  assertNormalProjectionHasNoForbiddenFieldOrValue(panel.state.responseDetails, {
+    projectionName: "normalResponseDetail",
+    path: "$.responseDetails",
+  });
   assert.equal(panel.state.executionEvents.length, 1);
   assert.equal(
     panel.state.executionEvents[0].providerDiagnostics.message,
@@ -377,6 +381,118 @@ test("CHAT_REHYDRATE_SUCCESS keeps chatMessages as a safe transcript compatibili
       path: "$.chatMessages[]",
     });
   }
+});
+
+test("CHAT_REHYDRATE_SUCCESS consumes public diagnostic and audit buckets outside renderer state", () => {
+  const panel = makePanel({
+    sessionId: "sess-public-rehydrate",
+    chatRehydrateEpoch: 5,
+    turns: [],
+  });
+
+  transition(panel, "CHAT_REHYDRATE_SUCCESS", {
+    requestEpoch: 5,
+    session_id: "sess-public-rehydrate",
+    messages: [
+      {
+        role: "user",
+        text: "reload diagnostics",
+        turn_id: "turn-public",
+      },
+      {
+        role: "agent",
+        text: "Candidate ready.",
+        turn_id: "turn-public",
+        outcome: { kind: "candidate", summary: "Ready." },
+      },
+    ],
+    diagnostics: [
+      {
+        turn_id: "turn-public",
+        source: "messages.change_details",
+        code: "QUEUE_BLOCKED",
+        severity: "warning",
+        message: "Queue remains blocked.",
+        lifecycle: "candidate",
+        stage: "queue_validate",
+        ok: false,
+        queue_allowed: false,
+        candidate_nodes: 1,
+      },
+      {
+        turn_id: "turn-public",
+        source: "latest_candidate.change_details.batch_turns[0]",
+        code: "BATCH_STEP_COMPLETE",
+        message: "Validated candidate reload step.",
+        stage: "agent_response",
+        ok: true,
+        landed_operation_count: 1,
+      },
+    ],
+    audit_artifacts: [
+      {
+        turn_id: "turn-public",
+        source: "messages",
+        sha256: "abc123",
+        byte_count: 42,
+        preview: "audit ok",
+      },
+    ],
+  });
+
+  assert.deepEqual(panel.state.chatMessages, [
+    {
+      role: "user",
+      text: "reload diagnostics",
+      turn_id: "turn-public",
+      session_id: "sess-public-rehydrate",
+    },
+    {
+      role: "agent",
+      text: "Candidate ready.",
+      turn_id: "turn-public",
+      session_id: "sess-public-rehydrate",
+    },
+  ]);
+  assert.deepEqual(Object.keys(panel.state.responseDetails), ["turn-public"]);
+  assert.deepEqual(panel.state.responseDetails["turn-public"], {
+    turn: {
+      sessionId: "sess-public-rehydrate",
+      turnId: "turn-public",
+      status: "candidate",
+    },
+    outcome: { kind: "candidate", summary: "Ready." },
+    changes: [],
+  });
+  assertNormalProjectionHasNoForbiddenFieldOrValue(panel.state.responseDetails, {
+    projectionName: "normalResponseDetail",
+    path: "$.responseDetails",
+  });
+  assert.equal(panel.state.executionEvents.length, 2);
+  assert.equal(panel.state.executionEvents[0].session_id, "sess-public-rehydrate");
+  assert.equal(panel.state.executionEvents[0].diagnostics[0].code, "QUEUE_BLOCKED");
+  assert.equal(panel.state.executionEvents[1].landed_operation_count, 1);
+  assert.equal(panel.state.auditArtifacts.length, 1);
+  assert.deepEqual(panel.state.auditArtifacts[0], {
+    session_id: "sess-public-rehydrate",
+    turn_id: "turn-public",
+    source: "messages",
+    sha256: "abc123",
+    byte_count: 42,
+    preview: "audit ok",
+    artifactRefs: [],
+  });
+  assert.equal(panel.state.debugDiagnostics.rehydrate.length, 2);
+  assert.equal(panel.state.debugDiagnostics.rehydrate[0].diagnostics[0].message, "Queue remains blocked.");
+
+  for (const message of panel.state.chatMessages) {
+    assertNormalProjectionHasNoForbiddenFieldOrValue(message, {
+      projectionName: "normalTranscriptMessage",
+      path: "$.chatMessages[]",
+    });
+  }
+  assert.equal("diagnostics" in panel.state.chatMessages[1], false);
+  assert.equal("audit_artifacts" in panel.state.chatMessages[1], false);
 });
 
 test("CHAT_REHYDRATE_FAILURE preserves only safe optimistic transcript fields", () => {

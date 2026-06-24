@@ -24,6 +24,8 @@ from .contracts import (
     ensure_agent_edit_response_contract,
     failure_envelope,
     product_failure_envelope_fields,
+    public_chat_rehydrate_payload,
+    public_session_json_payload,
 )
 from .provider import readiness, handle_credential_submission
 from .hivemind_feedback import submit_hivemind_feedback
@@ -808,8 +810,9 @@ def _handle_agent_edit_chat(
         if isinstance(latest_candidate, Mapping) and isinstance(latest_candidate.get("outcome"), Mapping)
         else {"kind": "noop"}
     )
-    response = dict(result)
-    response["ok"] = True
+    raw_response = dict(result)
+    raw_response["ok"] = True
+    response = public_chat_rehydrate_payload(raw_response)
     response["outcome"] = dict(outcome) if isinstance(outcome, Mapping) else {"kind": "noop"}
     return response
 
@@ -1455,7 +1458,7 @@ def register_agent_edit_routes(app) -> None:
                 _ensure_contract(failure.to_dict(), stage="chat"),
                 status=500,
             )
-        return _web.json_response(_to_serializable(result))
+        return _web.json_response(_to_serializable(public_chat_rehydrate_payload(result)))
 
     @app.routes.get("/vibecomfy/agent-edit/session-bundle")
     async def _agent_edit_session_bundle_route(request):  # type: ignore[no-untyped-def]
@@ -1489,7 +1492,7 @@ def register_agent_edit_routes(app) -> None:
                 _ensure_contract(failure.to_dict(), stage="session_json"),
                 status=500,
             )
-        return _web.json_response(_to_serializable(result))
+        return _web.json_response(_to_serializable(public_session_json_payload(result)))
 
 
 # ── Route registration (guarded: no-op when VIBECOMFY_HEADLESS=1) ──────────
