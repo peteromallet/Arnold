@@ -1495,6 +1495,9 @@ def _codex_writable_roots(
         seen.add(root_str)
         overlap = classify_path_overlap(root, env.engine_root)
         if overlap != "disjoint" and not trusted:
+            if _is_self_hosted_engine_target_root(root, source, state, env):
+                filtered.append(root_str)
+                continue
             if source == "auto" and not (root / ".git").exists():
                 continue
             raise isolation_cli_error(
@@ -1512,6 +1515,46 @@ def _codex_writable_roots(
     if work_str not in filtered:
         filtered.insert(0, work_str)
     return filtered
+
+
+def _is_self_hosted_engine_target_root(
+    root: Path,
+    source: str,
+    state: PlanState,
+    env: ExecutionEnvironment,
+) -> bool:
+    """Allow only intentional self-hosted engine development writes.
+
+    A normal target project must not receive writable access to a separate
+    Megaplan engine checkout.  When the target, work, and engine roots are the
+    same repository, however, the plan is explicitly operating on Megaplan
+    itself; refusing the target root would make editable engine work
+    impossible.  Keep the exception exact so parent/auto/configured roots that
+    merely contain the engine stay blocked.
+    """
+
+    if source != "target_work_dir":
+        return False
+    configured_mode = ""
+    try:
+        configured_mode = str(
+            state.get("config", {}).get("engine_isolation_mode", "")
+            or state.get("config", {}).get("engine_isolation_provider", "")
+        ).strip()
+    except Exception:
+        configured_mode = ""
+    provider = (
+        os.environ.get("MEGAPLAN_ENGINE_ISOLATION_PROVIDER", "")
+        or os.environ.get("MEGPLAN_ENGINE_ISOLATION_PROVIDER", "")
+        or configured_mode
+    ).strip()
+    if provider != "self_hosted_editable":
+        return False
+    return (
+        root == env.engine_root
+        and root == env.target_root
+        and root == env.work_dir
+    )
 
 
 def _codex_sandbox_fingerprint(work_dir: Path | str, state: PlanState, env: ExecutionEnvironment) -> str:

@@ -421,18 +421,34 @@ def _drive_plan(
     writer,
 ) -> DriverOutcome:
     """Run the auto driver for a single plan."""
-    return auto_drive(
-        plan,
-        cwd=root,
-        stall_threshold=spec.stall_threshold,
-        max_iterations=spec.max_iterations,
-        on_escalate=spec.escalate_action,
-        poll_sleep=spec.poll_sleep,
-        phase_timeout=spec.phase_timeout,
-        status_timeout=spec.status_timeout,
-        on_phase_complete=on_phase_complete,
-        writer=writer,
-    )
+    previous_provider = os.environ.get("MEGAPLAN_ENGINE_ISOLATION_PROVIDER")
+    self_hosted = False
+    if not previous_provider:
+        try:
+            self_hosted = root.resolve() == megaplan_engine_root()
+        except Exception:
+            self_hosted = False
+        if self_hosted:
+            os.environ["MEGAPLAN_ENGINE_ISOLATION_PROVIDER"] = "self_hosted_editable"
+    try:
+        return auto_drive(
+            plan,
+            cwd=root,
+            stall_threshold=spec.stall_threshold,
+            max_iterations=spec.max_iterations,
+            on_escalate=spec.escalate_action,
+            poll_sleep=spec.poll_sleep,
+            phase_timeout=spec.phase_timeout,
+            status_timeout=spec.status_timeout,
+            on_phase_complete=on_phase_complete,
+            writer=writer,
+        )
+    finally:
+        if self_hosted:
+            if previous_provider is None:
+                os.environ.pop("MEGAPLAN_ENGINE_ISOLATION_PROVIDER", None)
+            else:
+                os.environ["MEGAPLAN_ENGINE_ISOLATION_PROVIDER"] = previous_provider
 
 
 def _execution_batch_sort_key(path: Path) -> tuple[int, str]:
