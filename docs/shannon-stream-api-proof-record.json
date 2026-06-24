@@ -44,7 +44,7 @@
   },
   "migration_triggers": [
     "Claude subscription rate-event schema or permission semantics break the stream-json path",
-    "sustained premium-turn utilization exceeds the host-wide cap's safe operating envelope",
+    "sustained utilization requires provider-backed API quota or enterprise billing controls",
     "megaplan becomes multi-tenant or commercial",
     "provider policy or billing guidance requires API-key usage"
   ]

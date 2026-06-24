@@ -14,7 +14,7 @@ this branch is checked out). `PYENV_VERSION=3.11.11` if you use pyenv.
 ```bash
 # 1. Code is correct (offline, no Claude, no network):
 python -m pytest tests/test_workers_shannon_stream.py tests/test_workers_shannon_session.py \
-                 tests/test_worker_dispatch.py tests/test_workers_turn_cap.py \
+                 tests/test_worker_dispatch.py \
                  tests/test_channel_parity.py tests/bakeoff/test_channel_shadow.py -q
 
 # 2. The channel really works against real Claude (needs a logged-in `claude` CLI):
@@ -22,13 +22,13 @@ MEGAPLAN_SHANNON_STREAM_CONFORMANCE=1 python -m pytest tests/test_shannon_stream
 ```
 
 If both pass, the channel is good. Everything below is for proving the *integration* (a real
-python -m arnold.pipelines.megaplan phase flowing through the new worker) and exercising the cap / shadow / cutover knobs.
+python -m arnold.pipelines.megaplan phase flowing through the new worker) and exercising the shadow / cutover knobs.
 
 ---
 
 ## Level 1 — Offline unit verification (no Claude, no network)
 
-Proves the worker, parser, session handling, cap, and shadow/parity logic are correct.
+Proves the worker, parser, session handling, and shadow/parity logic are correct.
 
 ```bash
 python -m pytest \
@@ -36,7 +36,6 @@ python -m pytest \
   tests/test_workers_shannon_session.py \
   tests/test_worker_dispatch.py \
   tests/test_shannon_stream_idle_timeout.py \
-  tests/test_workers_turn_cap.py \
   tests/test_channel_parity.py \
   tests/bakeoff/test_channel_shadow.py \
   tests/test_shannon_stream_conformance.py \
@@ -133,7 +132,6 @@ from arnold.pipelines.megaplan.workers.shannon_stream import run_shannon_stream_
 
 | Feature | Env knob | Quick check |
 |---|---|---|
-| **Concurrency cap** | `MEGAPLAN_WORKER_TURN_CAP=2` | start 3+ Claude turns at once; only 2 run concurrently, the rest queue (slot files under `MEGAPLAN_WORKER_TURN_CAP_DIR`). |
 | **Auth channel** | `MEGAPLAN_SHANNON_STREAM_AUTH_CHANNEL=subscription` (default) or `api_key` | with `api_key`, set `ANTHROPIC_API_KEY`/`MEGAPLAN_SHANNON_STREAM_API_KEY` to bill the API instead of the subscription (the "validated flip"). |
 | **Sampled shadow** | `MEGAPLAN_CHANNEL_SHADOW_SAMPLE_RATE=0.1` | runs the tmux + stream channels on a ≤10% sample and records deterministic-artifact parity (reuses the bakeoff harness; see `arnold/pipelines/megaplan/bakeoff/channel_shadow.py`). |
 | **Idle / execute timeouts** | `MEGAPLAN_SHANNON_STREAM_IDLE_TIMEOUT_SECONDS`, `..._EXECUTE_TIMEOUT_SECONDS` | tune liveness bounds. |
@@ -197,16 +195,15 @@ env -i PATH="$PATH" HOME="$HOME" \
 **Tests for:** whether "it works" generalizes from your terminal to how megaplan actually runs it.
 **Until this passes in your real run context, treat the channel as proven only for interactive use.**
 
-### 4c. Concurrency + the cap under contention
+### 4c. Concurrency under contention
 
 ```bash
-export MEGAPLAN_SHANNON_STREAM_WORKER=1 MEGAPLAN_WORKER_TURN_CAP=2
+export MEGAPLAN_SHANNON_STREAM_WORKER=1
 # launch 3–4 real chains at once (the original pain was "many concurrent on one box")
 ```
-Watch: only 2 `claude --print` turns run concurrently (rest queue on slot files under
-`MEGAPLAN_WORKER_TURN_CAP_DIR`); the `rate_limit` signal logs and backpressure engages as the
-subscription window fills; `finalize` doesn't starve behind a held slot. **Tests for:** failure #6
-(subscription starvation) and the cap's whole reason to exist — invisible in a single-chain run.
+Watch: provider `rate_limit` / capacity failures surface as normal external errors and the chain remains
+recoverable without any host-wide admission throttle. **Tests for:** failure #6 (subscription
+starvation) without reintroducing a local cap that can block unrelated agents.
 
 ### 4d. Failure injection — does it fail *fast*, not hang?
 

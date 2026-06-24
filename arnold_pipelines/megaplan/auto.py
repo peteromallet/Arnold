@@ -51,7 +51,6 @@ from arnold_pipelines.megaplan.observability.events import (
 )
 from arnold_pipelines.megaplan.orchestration.phase_result import (
     ExitKind,
-    ExternalError,
     PhaseResult,
     read_phase_result,
 )
@@ -353,35 +352,6 @@ def _non_retryable_infrastructure_error_payload(
     return payload
 
 
-def _external_error_from_cli_payload(payload: dict[str, Any] | None) -> ExternalError | None:
-    if payload is None:
-        return None
-    error_code = str(payload.get("error") or "").lower()
-    details = payload.get("details")
-    details = details if isinstance(details, dict) else {}
-    source = str(details.get("source") or "").lower()
-    message = str(payload.get("message") or error_code)
-    if error_code == "rate_limit" and source == "host_turn_cap":
-        return ExternalError(
-            provider="host_turn_cap",
-            error_kind="rate_limit",
-            message=message[:500],
-            provider_error_code="host_turn_cap",
-            error_layer="host_turn_cap",
-            source="host_turn_cap",
-        )
-    return None
-
-
-def _is_host_turn_cap_external_error(external_error: object | None) -> bool:
-    if external_error is None:
-        return False
-    return (
-        str(getattr(external_error, "source", "") or "").lower() == "host_turn_cap"
-        and str(getattr(external_error, "error_kind", "") or "").lower() == "rate_limit"
-    )
-
-
 def _non_negative_int(value: str) -> int:
     try:
         parsed = int(value)
@@ -422,11 +392,8 @@ def _is_retryable_external_error(phase: str, external_error: object | None) -> b
         getattr(external_error, "provider_error_code", "") or ""
     ).lower()
     error_layer = str(getattr(external_error, "error_layer", "") or "").lower()
-    source = str(getattr(external_error, "source", "") or "").lower()
     message = str(getattr(external_error, "message", "") or "").lower()
 
-    if source == "host_turn_cap" and error_kind == "rate_limit":
-        return True
     if error_kind in EXTERNAL_PERMANENT_ERROR_KINDS:
         return False
     if retry_after_s is not None:
@@ -2549,16 +2516,7 @@ def drive(
             return code, out, err, result
 
         # Synthesize a PhaseResult when the file is missing
-        cli_error_payload = _extract_cli_error_payload(out, err)
-        external_error = _external_error_from_cli_payload(cli_error_payload)
-        if external_error is not None:
-            result = PhaseResult(
-                phase=next_step,
-                invocation_id="synthesized",
-                exit_kind=ExitKind.external_error.value,
-                external_error=external_error,
-            )
-        elif code == PHASE_TIMEOUT_EXIT_CODE:
+        if code == PHASE_TIMEOUT_EXIT_CODE:
             result = PhaseResult(
                 phase=next_step,
                 invocation_id="synthesized",
@@ -3519,27 +3477,6 @@ def drive(
                 if "--fresh" not in cmd:
                     cmd = [*cmd, "--fresh"]
                 code, out, err, result = _run_phase(cmd, next_step)
-
-        # Targeted external retry loop: transient stream stalls and timeout-shaped
-        # network failures can clear on a fresh phase invocation, but only for
-        # non-execute phases. Execute may have already mutated the worktree or
-        # run user-approved commands, so external execute failures remain
-        # blocked/resumable instead of being replayed blindly.
-        while (
-            result is not None
-            and getattr(result, "exit_kind", None) == ExitKind.external_error.value
-            and _is_host_turn_cap_external_error(getattr(result, "external_error", None))
-        ):
-            wait_seconds = max(float(poll_sleep or 0), 5.0)
-            log(
-                f"phase '{next_step}' waiting for host premium-turn capacity "
-                f"({wait_seconds:.0f}s) before retrying",
-                phase=next_step,
-                provider="host_turn_cap",
-                error_kind="rate_limit",
-            )
-            time.sleep(wait_seconds)
-            code, out, err, result = _run_phase(cmd, next_step)
 
         while (
             max_external_retries > 0

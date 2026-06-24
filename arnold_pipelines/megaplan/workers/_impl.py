@@ -84,7 +84,6 @@ from arnold_pipelines.megaplan.runtime.execution_environment import (
 
 
 from arnold_pipelines.megaplan.workers._mock_payloads import _EXECUTE_STEPS, _build_mock_payload
-from arnold_pipelines.megaplan.workers.turn_cap import acquire_turn_slot
 
 _CROSS_CALL_PERSISTENT_STEPS = _EXECUTE_STEPS
 _MUTATING_WORKER_STEPS = {"execute", "revise", "loop_execute"}
@@ -2667,30 +2666,6 @@ _VALID_CODEX_EFFORTS = ("minimal", "low", "medium", "high")
 _CODEX_EFFORT_ALIASES = {"xhigh": "high", "max": "high"}
 
 
-def _turn_cap_channel_for_agent(agent: str) -> str:
-    if agent == "codex":
-        return "cli"
-    if agent == "claude":
-        return "shannon"
-    return agent
-
-
-def _run_with_turn_cap(
-    func: Callable[[], WorkerResult],
-    *,
-    engine: str,
-    step: str,
-    plan_dir: Path,
-) -> WorkerResult:
-    with acquire_turn_slot(
-        engine=engine,
-        channel=_turn_cap_channel_for_agent(engine),
-        step=step,
-        plan=plan_dir,
-    ):
-        return func()
-
-
 def _normalize_codex_effort(effort: str | None) -> str | None:
     if effort is None:
         return None
@@ -3476,27 +3451,22 @@ def run_codex_step(
     free_text: bool = False,
     repair_attempted: bool = False,
 ) -> WorkerResult:
-    return _run_with_turn_cap(
-        lambda: _run_codex_step_uncapped(
-            step,
-            state,
-            plan_dir,
-            root=root,
-            persistent=persistent,
-            fresh=fresh,
-            json_trace=json_trace,
-            prompt_override=prompt_override,
-            prompt_kwargs=prompt_kwargs,
-            effort=effort,
-            model=model,
-            read_only=read_only,
-            output_path=output_path,
-            free_text=free_text,
-            repair_attempted=repair_attempted,
-        ),
-        engine="codex",
-        step=step,
-        plan_dir=plan_dir,
+    return _run_codex_step_uncapped(
+        step,
+        state,
+        plan_dir,
+        root=root,
+        persistent=persistent,
+        fresh=fresh,
+        json_trace=json_trace,
+        prompt_override=prompt_override,
+        prompt_kwargs=prompt_kwargs,
+        effort=effort,
+        model=model,
+        read_only=read_only,
+        output_path=output_path,
+        free_text=free_text,
+        repair_attempted=repair_attempted,
     )
 
 

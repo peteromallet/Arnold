@@ -127,20 +127,6 @@ def test_external_rate_limit_halts():
     assert d.halt_kind == "permanent_external"
 
 
-def test_host_turn_cap_rate_limit_retries():
-    err = _err(
-        exit_kind=ExitKind.external_error,
-        error_kind="rate_limit",
-        source="host_turn_cap",
-        provider_error_code="host_turn_cap",
-        error_layer="host_turn_cap",
-    )
-    d = RecoveryPolicy().classify(err, "phase", phase="finalize")
-    assert d.action == "retry_transient"
-    assert d.budget_kind == "external"
-    assert d.budget_delta == 1
-
-
 def test_external_on_execute_phase_is_non_retryable():
     # execute is NOT in EXTERNAL_RETRYABLE_PHASES -> permanent.
     d = RecoveryPolicy().classify(_transient_err(), "phase", phase="execute")

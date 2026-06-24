@@ -171,7 +171,7 @@ def test_channel_shadow_admitted_shadow_routes_through_worker_seam(tmp_path: Pat
     run_worker.assert_called_once()
 
 
-def test_channel_shadow_host_cap_refusal_is_recorded_as_pressure_skip(
+def test_channel_shadow_rate_limit_refusal_is_recorded_as_unavailable(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
@@ -179,7 +179,7 @@ def test_channel_shadow_host_cap_refusal_is_recorded_as_pressure_skip(
     error = CliError(
         "rate_limit",
         "cap full",
-        extra={"source": "host_turn_cap", "retryable": True},
+        extra={"source": "provider_rate_limit", "retryable": True},
     )
     with patch(
         "arnold_pipelines.megaplan.bakeoff.channel_shadow.worker_module.run_step_with_worker",
@@ -190,7 +190,7 @@ def test_channel_shadow_host_cap_refusal_is_recorded_as_pressure_skip(
     state = load_channel_shadow_state(tmp_path / "root", "plan-shadow")
     record = state["records"][0]
     assert record["decision"]["sampled"] is True
-    assert record["decision"]["skip_reason"] == "cap_pressure"
+    assert record["decision"]["skip_reason"] == "shadow_unavailable"
     assert record["shadow_receipt"] is None
 
 

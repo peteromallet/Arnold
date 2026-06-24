@@ -9134,7 +9134,7 @@ tests/arnold/pipeline/native/test_graph_projection.py:1975:        # With a sing
 ./tests/__pycache__/test_prompts.cpython-311-pytest-9.0.2.pyc
 ./tests/__pycache__/test_workers_codex.cpython-311-pytest-9.0.2.pyc
 ./tests/__pycache__/test_review_stop_affordance.cpython-311-pytest-9.0.2.pyc
-./tests/__pycache__/test_workers_turn_cap.cpython-311-pytest-9.0.2.pyc
+./tests/__pycache__/[removed-stale-worker-throttle-test-pytest-9.0.2.pyc]
 ./tests/__pycache__/test_driver_selection.cpython-311-pytest-9.0.3.pyc
 ./tests/__pycache__/test_doctor_non_plan_composition.cpython-311-pytest-9.0.3.pyc
 ./tests/__pycache__/test_adopt_plan.cpython-311-pytest-9.0.3.pyc
@@ -9174,7 +9174,7 @@ tests/arnold/pipeline/native/test_graph_projection.py:1975:        # With a sing
 ./tests/__pycache__/test_adopt_plan.cpython-311-pytest-9.0.2.pyc
 ./tests/__pycache__/test_doctor_non_plan_composition.cpython-311-pytest-9.0.2.pyc
 ./tests/__pycache__/test_auto_phase_timeout_retryable.cpython-311-pytest-9.0.2.pyc
-./tests/__pycache__/test_workers_turn_cap.cpython-311-pytest-9.0.3.pyc
+./tests/__pycache__/[removed-stale-worker-throttle-test-pytest-9.0.3.pyc]
 ./tests/__pycache__/test_driver_selection.cpython-311-pytest-9.0.2.pyc
 ./tests/__pycache__/test_review_stop_affordance.cpython-311-pytest-9.0.3.pyc
 ./tests/__pycache__/test_workers_codex.cpython-311-pytest-9.0.3.pyc

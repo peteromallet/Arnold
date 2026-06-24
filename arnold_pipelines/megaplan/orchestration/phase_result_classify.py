@@ -60,7 +60,6 @@ def classify_external_error_payload(
 
     status_code = _extract_status_code(exc, message)
     code = getattr(exc, "code", None)
-    source = extra.get("source") if isinstance(extra, dict) else None
     if code == "worker_stall" or "stalled stream" in combined:
         inferred_provider = provider
         if inferred_provider == "unknown":
@@ -76,16 +75,6 @@ def classify_external_error_payload(
             "provider_error_code": "timeout",
             "error_layer": "worker_stream_stall",
         }
-    if code == "rate_limit" and source == "host_turn_cap":
-        return {
-            "provider": "host_turn_cap",
-            "error_kind": "rate_limit",
-            "message": message[:500],
-            "provider_error_code": "host_turn_cap",
-            "error_layer": "host_turn_cap",
-            "source": "host_turn_cap",
-        }
-
     error_kind: str | None = None
     if status_code == 429 or re.search(
         r"\b(rate[-_\s]?limit(?:ed)?|too many requests)\b", combined
