@@ -27,6 +27,7 @@ from arnold.cli.workflow_diagnostics import (
     render_human_diagnostics,
     render_json_envelope,
 )
+from arnold.cli.workflow_explain import build_explain_entries
 from arnold.execution import ExecutionRegistries, run
 from arnold.execution.backend import SkeletalBackend
 from arnold.execution.observability import ExecutionLogger
@@ -40,13 +41,6 @@ from arnold.workflow import (
     inspect_manifest,
     to_dot,
     to_yaml,
-)
-from arnold.workflow.source_compiler import (
-    ParsedBranchBlock,
-    ParsedIntrinsicCall,
-    ParsedLoopBlock,
-    ParsedStepCall,
-    ParsedSubflowCall,
 )
 from arnold_pipelines.discovery import load_builder
 
@@ -415,63 +409,12 @@ def _cmd_explain(args: argparse.Namespace) -> int:
         print(f"explain failed: {exc}", file=sys.stderr)
         return 1
 
-    nodes_by_id = {node.id: node for node in manifest.nodes}
-    entries: list[dict[str, Any]] = []
     decl = check_result.parsed_source.workflow
     if decl is None:
         print("explain failed: no workflow declaration found", file=sys.stderr)
         return 1
 
-    for statement in decl.source_block.statements:
-        if isinstance(statement, ParsedStepCall):
-            node = nodes_by_id.get(statement.id)
-            entry: dict[str, Any] = {
-                "kind": "step",
-                "id": statement.id,
-                "summary": f"step {statement.id} calls {statement.component_ref}",
-                "component_ref": statement.component_ref,
-                "source": _span_dict(statement.source_span),
-            }
-            if node is not None and node.source_span is not None:
-                entry["node_id"] = node.id
-            entries.append(entry)
-        elif isinstance(statement, ParsedSubflowCall):
-            entries.append(
-                {
-                    "kind": "subflow",
-                    "id": statement.id,
-                    "summary": f"subflow {statement.id} calls {statement.component_ref}",
-                    "component_ref": statement.component_ref,
-                    "source": _span_dict(statement.source_span),
-                }
-            )
-        elif isinstance(statement, ParsedBranchBlock):
-            entries.append(
-                {
-                    "kind": "branch",
-                    "id": f"branch-on-{statement.decision_output}",
-                    "summary": f"branch on {statement.decision_output} with {len(statement.arms)} arm(s)",
-                    "source": _span_dict(statement.source_span),
-                }
-            )
-        elif isinstance(statement, ParsedLoopBlock):
-            entries.append(
-                {
-                    "kind": "loop",
-                    "id": statement.policy.reentry_id,
-                    "summary": f"bounded loop with reentry {statement.policy.reentry_id}",
-                    "source": _span_dict(statement.source_span),
-                }
-            )
-        elif isinstance(statement, ParsedIntrinsicCall):
-            entries.append(
-                {
-                    "kind": "intrinsic",
-                    "id": statement.name,
-                    "summary": f"intrinsic {statement.name}",
-                    "source": _span_dict(statement.source_span),
-                }
-            )
+    entries = build_explain_entries(decl, manifest)
 
     if args.format == "json":
         print(
@@ -498,6 +441,77 @@ def _cmd_explain(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_graph(args: argparse.Namespace) -> int:
+    source_path = _source_path_or_none(args)
+    if source_path is None:
+        print("graph requires <workflow.py>", file=sys.stderr)
+        return 2
+
+    try:
+        manifest = workflow.compile_workflow_file(source_path)
+    except (workflow.SourceCompileError, workflow.ManifestValidationError) as exc:
+        if args.format == "json":
+            print(render_json_envelope(exc, source_path=source_path))
+        else:
+            print(
+                render_human_diagnostics(exc, source_path=source_path),
+                file=sys.stderr,
+            )
+        return 1
+    except Exception as exc:
+        print(f"graph failed: {exc}", file=sys.stderr)
+        return 1
+
+    fmt = args.format
+    output: str
+    if fmt == "dot":
+        output = workflow.to_dot(manifest)
+    elif fmt == "mermaid":
+        lines = ["flowchart TD"]
+        for node in manifest.nodes:
+            label = node.label or node.id
+            lines.append(f"    {node.id}[\"{label}\"]")
+        for edge in manifest.edges:
+            label = edge.label or ""
+            if edge.condition_ref:
+                label = f"{label}:{edge.condition_ref}"
+            lines.append(f"    {edge.source} -->|{label}| {edge.target}")
+        output = "\n".join(lines)
+    elif fmt == "json":
+        nodes = []
+        for node in manifest.nodes:
+            nodes.append(
+                {
+                    "id": node.id,
+                    "kind": node.kind,
+                    "label": node.label,
+                    "source_span": _span_dict(node.source_span),
+                }
+            )
+        edges = [
+            {
+                "id": edge.id,
+                "source": edge.source,
+                "target": edge.target,
+                "label": edge.label,
+                "condition_ref": edge.condition_ref,
+            }
+            for edge in manifest.edges
+        ]
+        output = json.dumps(
+            {"nodes": nodes, "edges": edges}, sort_keys=True, indent=2
+        )
+    else:
+        print(f"unsupported graph format: {fmt}", file=sys.stderr)
+        return 2
+
+    if args.out:
+        _write_atomic(Path(args.out), output + "\n")
+    else:
+        print(output)
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     """Return the ``arnold workflow`` argument parser."""
 
@@ -507,12 +521,13 @@ def build_parser() -> argparse.ArgumentParser:
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
 
-    source_file_commands = {"check", "compile", "inspect", "explain"}
+    source_file_commands = {"check", "compile", "inspect", "explain", "graph"}
     for name, help_text in [
         ("check", "Validate a workflow source file or builder target."),
         ("compile", "Compile a workflow source file or builder target to a manifest."),
         ("inspect", "Inspect a workflow source file or builder target."),
         ("explain", "Explain a workflow source file as an ordered narrative."),
+        ("graph", "Render a topology graph of a workflow source file."),
         ("manifest", "Emit the compiled workflow manifest."),
         ("dot", "Emit a DOT graph of the compiled manifest."),
         ("dry-run", "Print a dry-run report without executing."),
@@ -532,13 +547,25 @@ def build_parser() -> argparse.ArgumentParser:
             required=name not in source_file_commands,
             help="Builder target: package.module:build_pipeline",
         )
-        default_fmt = "human" if name in {"check", "inspect", "explain"} else "yaml"
-        sub.add_argument(
-            "--format",
-            choices=["human", "yaml", "json"],
-            default=default_fmt,
-            help="Output format.",
-        )
+        if name == "graph":
+            sub.add_argument(
+                "--format",
+                choices=["dot", "mermaid", "json"],
+                default="dot",
+                help="Graph output format.",
+            )
+            sub.add_argument(
+                "--out",
+                help="Output path for the graph.",
+            )
+        else:
+            default_fmt = "human" if name in {"check", "inspect", "explain"} else "yaml"
+            sub.add_argument(
+                "--format",
+                choices=["human", "yaml", "json"],
+                default=default_fmt,
+                help="Output format.",
+            )
         if name == "compile":
             sub.add_argument(
                 "--out",
@@ -591,6 +618,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         "compile": _cmd_compile,
         "inspect": _cmd_inspect,
         "explain": _cmd_explain,
+        "graph": _cmd_graph,
         "manifest": _cmd_manifest,
         "dot": _cmd_dot,
         "dry-run": _cmd_dry_run,
