@@ -4,12 +4,17 @@ from __future__ import annotations
 
 import json
 import os
+import time
+import uuid
+from contextlib import contextmanager
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from threading import Lock
-from typing import Any
+from threading import Lock, RLock
+from typing import Any, Iterator
 from typing import Protocol, runtime_checkable
+
+import fcntl
 
 from .events import OperationEvent
 from .operation import OperationRun, OperationState, RetryMetadata
@@ -70,33 +75,39 @@ class ScheduledTaskLeaseTokenMismatch(RuntimeError):
 class FileBackedDurableOpsStore:
     """JSON current-state store for operation runs, resources, and events."""
 
+    lock_timeout_seconds = 30.0
+
     def __init__(self, root: str | os.PathLike[str]) -> None:
         self._root = Path(root)
         self._path = self._root / "operation_runs.json"
+        self._lock_path = self._root / "operation_runs.lock"
         self._lock = Lock()
 
     def create_operation_run(self, run: OperationRun) -> OperationRun:
         with self._lock:
-            data = self._read_data()
-            runs = data["operation_runs"]
-            if run.id in runs:
-                raise OperationAlreadyExists(run.id)
-            stored = replace(run, lock_version=0)
-            runs[stored.id] = _operation_run_to_json(stored)
-            self._write_data(data)
-            return stored
+            with interprocess_json_lock(self._lock_path, timeout_seconds=self.lock_timeout_seconds):
+                data = self._read_data()
+                runs = data["operation_runs"]
+                if run.id in runs:
+                    raise OperationAlreadyExists(run.id)
+                stored = replace(run, lock_version=0)
+                runs[stored.id] = _operation_run_to_json(stored)
+                self._write_data(data)
+                return stored
 
     def load_operation_run(self, operation_id: str) -> OperationRun:
         with self._lock:
-            return self._load_operation_run_unlocked(operation_id)
+            with interprocess_json_lock(self._lock_path, timeout_seconds=self.lock_timeout_seconds):
+                return self._load_operation_run_unlocked(operation_id)
 
     def list_operation_runs(self) -> tuple[OperationRun, ...]:
         with self._lock:
-            data = self._read_data()
-            return tuple(
-                _operation_run_from_json(data["operation_runs"][operation_id])
-                for operation_id in sorted(data["operation_runs"])
-            )
+            with interprocess_json_lock(self._lock_path, timeout_seconds=self.lock_timeout_seconds):
+                data = self._read_data()
+                return tuple(
+                    _operation_run_from_json(data["operation_runs"][operation_id])
+                    for operation_id in sorted(data["operation_runs"])
+                )
 
     def update_operation_run(
         self,
@@ -105,85 +116,93 @@ class FileBackedDurableOpsStore:
         expected_lock_version: int,
     ) -> OperationRun:
         with self._lock:
-            data = self._read_data()
-            runs = data["operation_runs"]
-            try:
-                current = _operation_run_from_json(runs[run.id])
-            except KeyError as exc:
-                raise OperationNotFound(run.id) from exc
-            if current.lock_version != expected_lock_version:
-                raise OperationLockConflict(run.id)
-            stored = replace(run, lock_version=current.lock_version + 1)
-            runs[stored.id] = _operation_run_to_json(stored)
-            self._write_data(data)
-            return stored
+            with interprocess_json_lock(self._lock_path, timeout_seconds=self.lock_timeout_seconds):
+                data = self._read_data()
+                runs = data["operation_runs"]
+                try:
+                    current = _operation_run_from_json(runs[run.id])
+                except KeyError as exc:
+                    raise OperationNotFound(run.id) from exc
+                if current.lock_version != expected_lock_version:
+                    raise OperationLockConflict(run.id)
+                stored = replace(run, lock_version=current.lock_version + 1)
+                runs[stored.id] = _operation_run_to_json(stored)
+                self._write_data(data)
+                return stored
 
     def create_typed_resource(self, resource: TypedResource) -> TypedResource:
         with self._lock:
-            data = self._read_data()
-            self._load_operation_run_unlocked(resource.operation_id, data=data)
-            resources = data["typed_resources"]
-            if resource.id in resources:
-                raise TypedResourceAlreadyExists(resource.id)
-            resources[resource.id] = _typed_resource_to_json(resource)
-            self._write_data(data)
-            return resource
+            with interprocess_json_lock(self._lock_path, timeout_seconds=self.lock_timeout_seconds):
+                data = self._read_data()
+                self._load_operation_run_unlocked(resource.operation_id, data=data)
+                resources = data["typed_resources"]
+                if resource.id in resources:
+                    raise TypedResourceAlreadyExists(resource.id)
+                resources[resource.id] = _typed_resource_to_json(resource)
+                self._write_data(data)
+                return resource
 
     def list_typed_resources(self, operation_id: str) -> tuple[TypedResource, ...]:
         with self._lock:
-            data = self._read_data()
-            return tuple(
-                _typed_resource_from_json(data["typed_resources"][resource_id])
-                for resource_id in sorted(data["typed_resources"])
-                if data["typed_resources"][resource_id].get("operation_id")
-                == operation_id
-            )
+            with interprocess_json_lock(self._lock_path, timeout_seconds=self.lock_timeout_seconds):
+                data = self._read_data()
+                return tuple(
+                    _typed_resource_from_json(data["typed_resources"][resource_id])
+                    for resource_id in sorted(data["typed_resources"])
+                    if data["typed_resources"][resource_id].get("operation_id")
+                    == operation_id
+                )
 
     def append_operation_event(self, event: OperationEvent) -> OperationEvent:
         with self._lock:
-            data = self._read_data()
-            self._load_operation_run_unlocked(event.operation_id, data=data)
-            events = data["operation_events"]
-            if event.id in events:
-                raise OperationEventAlreadyExists(event.id)
-            sequence = _next_event_sequence(events, operation_id=event.operation_id)
-            stored = replace(event, sequence=sequence)
-            events[stored.id] = _operation_event_to_json(stored)
-            self._write_data(data)
-            return stored
+            with interprocess_json_lock(self._lock_path, timeout_seconds=self.lock_timeout_seconds):
+                data = self._read_data()
+                self._load_operation_run_unlocked(event.operation_id, data=data)
+                events = data["operation_events"]
+                if event.id in events:
+                    raise OperationEventAlreadyExists(event.id)
+                sequence = _next_event_sequence(events, operation_id=event.operation_id)
+                stored = replace(event, sequence=sequence)
+                events[stored.id] = _operation_event_to_json(stored)
+                self._write_data(data)
+                return stored
 
     def list_operation_events(self, operation_id: str) -> tuple[OperationEvent, ...]:
         with self._lock:
-            data = self._read_data()
-            events = (
-                _operation_event_from_json(raw)
-                for raw in data["operation_events"].values()
-                if raw.get("operation_id") == operation_id
-            )
-            return tuple(sorted(events, key=lambda event: event.sequence))
+            with interprocess_json_lock(self._lock_path, timeout_seconds=self.lock_timeout_seconds):
+                data = self._read_data()
+                events = (
+                    _operation_event_from_json(raw)
+                    for raw in data["operation_events"].values()
+                    if raw.get("operation_id") == operation_id
+                )
+                return tuple(sorted(events, key=lambda event: event.sequence))
 
     def create_scheduled_task(self, task: ScheduledTask) -> ScheduledTask:
         with self._lock:
-            data = self._read_data()
-            tasks = data["scheduled_tasks"]
-            if task.id in tasks:
-                raise ScheduledTaskAlreadyExists(task.id)
-            stored = replace(task, lock_version=0)
-            tasks[stored.id] = _scheduled_task_to_json(stored)
-            self._write_data(data)
-            return stored
+            with interprocess_json_lock(self._lock_path, timeout_seconds=self.lock_timeout_seconds):
+                data = self._read_data()
+                tasks = data["scheduled_tasks"]
+                if task.id in tasks:
+                    raise ScheduledTaskAlreadyExists(task.id)
+                stored = replace(task, lock_version=0)
+                tasks[stored.id] = _scheduled_task_to_json(stored)
+                self._write_data(data)
+                return stored
 
     def load_scheduled_task(self, task_id: str) -> ScheduledTask:
         with self._lock:
-            return self._load_scheduled_task_unlocked(task_id)
+            with interprocess_json_lock(self._lock_path, timeout_seconds=self.lock_timeout_seconds):
+                return self._load_scheduled_task_unlocked(task_id)
 
     def list_scheduled_tasks(self) -> tuple[ScheduledTask, ...]:
         with self._lock:
-            data = self._read_data()
-            return tuple(
-                _scheduled_task_from_json(data["scheduled_tasks"][task_id])
-                for task_id in sorted(data["scheduled_tasks"])
-            )
+            with interprocess_json_lock(self._lock_path, timeout_seconds=self.lock_timeout_seconds):
+                data = self._read_data()
+                return tuple(
+                    _scheduled_task_from_json(data["scheduled_tasks"][task_id])
+                    for task_id in sorted(data["scheduled_tasks"])
+                )
 
     def claim_scheduled_task(
         self,
@@ -195,26 +214,27 @@ class FileBackedDurableOpsStore:
         now: datetime | None = None,
     ) -> ScheduledTask:
         with self._lock:
-            data = self._read_data()
-            task = self._load_scheduled_task_unlocked(task_id, data=data)
-            timestamp = now or _utc_now()
-            if lease_seconds <= 0:
-                raise ScheduledTaskLeaseConflict(task_id)
-            if task.has_active_lease(timestamp):
-                raise ScheduledTaskLeaseConflict(task_id)
-            try:
-                claimed = task.claim(
-                    lease_owner=lease_owner,
-                    lease_token=lease_token,
-                    lease_expires_at=timestamp + timedelta(seconds=lease_seconds),
-                    now=timestamp,
-                )
-            except ValueError as exc:
-                raise ScheduledTaskLeaseConflict(task_id) from exc
-            stored = replace(claimed, lock_version=task.lock_version + 1)
-            data["scheduled_tasks"][stored.id] = _scheduled_task_to_json(stored)
-            self._write_data(data)
-            return stored
+            with interprocess_json_lock(self._lock_path, timeout_seconds=self.lock_timeout_seconds):
+                data = self._read_data()
+                task = self._load_scheduled_task_unlocked(task_id, data=data)
+                timestamp = now or _utc_now()
+                if lease_seconds <= 0:
+                    raise ScheduledTaskLeaseConflict(task_id)
+                if task.has_active_lease(timestamp):
+                    raise ScheduledTaskLeaseConflict(task_id)
+                try:
+                    claimed = task.claim(
+                        lease_owner=lease_owner,
+                        lease_token=lease_token,
+                        lease_expires_at=timestamp + timedelta(seconds=lease_seconds),
+                        now=timestamp,
+                    )
+                except ValueError as exc:
+                    raise ScheduledTaskLeaseConflict(task_id) from exc
+                stored = replace(claimed, lock_version=task.lock_version + 1)
+                data["scheduled_tasks"][stored.id] = _scheduled_task_to_json(stored)
+                self._write_data(data)
+                return stored
 
     def complete_scheduled_task(
         self,
@@ -225,26 +245,27 @@ class FileBackedDurableOpsStore:
         now: datetime | None = None,
     ) -> ScheduledTask:
         with self._lock:
-            data = self._read_data()
-            raw = self._load_scheduled_task_json_unlocked(task_id, data=data)
-            task = _scheduled_task_from_json(raw)
-            if raw.get("_last_completed_lease_token") == lease_token:
-                return task
-            try:
-                completed = task.complete(
-                    lease_token=lease_token,
-                    result=result,
-                    now=now,
-                )
-            except ValueError as exc:
-                raise ScheduledTaskLeaseTokenMismatch(task_id) from exc
-            stored = replace(completed, lock_version=task.lock_version + 1)
-            data["scheduled_tasks"][stored.id] = {
-                **_scheduled_task_to_json(stored),
-                "_last_completed_lease_token": lease_token,
-            }
-            self._write_data(data)
-            return stored
+            with interprocess_json_lock(self._lock_path, timeout_seconds=self.lock_timeout_seconds):
+                data = self._read_data()
+                raw = self._load_scheduled_task_json_unlocked(task_id, data=data)
+                task = _scheduled_task_from_json(raw)
+                if raw.get("_last_completed_lease_token") == lease_token:
+                    return task
+                try:
+                    completed = task.complete(
+                        lease_token=lease_token,
+                        result=result,
+                        now=now,
+                    )
+                except ValueError as exc:
+                    raise ScheduledTaskLeaseTokenMismatch(task_id) from exc
+                stored = replace(completed, lock_version=task.lock_version + 1)
+                data["scheduled_tasks"][stored.id] = {
+                    **_scheduled_task_to_json(stored),
+                    "_last_completed_lease_token": lease_token,
+                }
+                self._write_data(data)
+                return stored
 
     def fail_scheduled_task(
         self,
@@ -255,20 +276,21 @@ class FileBackedDurableOpsStore:
         now: datetime | None = None,
     ) -> ScheduledTask:
         with self._lock:
-            data = self._read_data()
-            task = self._load_scheduled_task_unlocked(task_id, data=data)
-            try:
-                failed = task.fail(
-                    lease_token=lease_token,
-                    result=result,
-                    now=now,
-                )
-            except ValueError as exc:
-                raise ScheduledTaskLeaseTokenMismatch(task_id) from exc
-            stored = replace(failed, lock_version=task.lock_version + 1)
-            data["scheduled_tasks"][stored.id] = _scheduled_task_to_json(stored)
-            self._write_data(data)
-            return stored
+            with interprocess_json_lock(self._lock_path, timeout_seconds=self.lock_timeout_seconds):
+                data = self._read_data()
+                task = self._load_scheduled_task_unlocked(task_id, data=data)
+                try:
+                    failed = task.fail(
+                        lease_token=lease_token,
+                        result=result,
+                        now=now,
+                    )
+                except ValueError as exc:
+                    raise ScheduledTaskLeaseTokenMismatch(task_id) from exc
+                stored = replace(failed, lock_version=task.lock_version + 1)
+                data["scheduled_tasks"][stored.id] = _scheduled_task_to_json(stored)
+                self._write_data(data)
+                return stored
 
     def cancel_scheduled_task(
         self,
@@ -277,13 +299,92 @@ class FileBackedDurableOpsStore:
         now: datetime | None = None,
     ) -> ScheduledTask:
         with self._lock:
-            data = self._read_data()
-            task = self._load_scheduled_task_unlocked(task_id, data=data)
-            cancelled = task.cancel(now=now)
-            stored = replace(cancelled, lock_version=task.lock_version + 1)
-            data["scheduled_tasks"][stored.id] = _scheduled_task_to_json(stored)
-            self._write_data(data)
-            return stored
+            with interprocess_json_lock(self._lock_path, timeout_seconds=self.lock_timeout_seconds):
+                data = self._read_data()
+                task = self._load_scheduled_task_unlocked(task_id, data=data)
+                cancelled = task.cancel(now=now)
+                stored = replace(cancelled, lock_version=task.lock_version + 1)
+                data["scheduled_tasks"][stored.id] = _scheduled_task_to_json(stored)
+                self._write_data(data)
+                return stored
+
+    def claim_due_scheduled_tasks(
+        self,
+        owner_id: str,
+        task_types: tuple[str, ...],
+        *,
+        lease_owner: str,
+        lease_seconds: int,
+        max_count: int,
+        now: datetime | None = None,
+    ) -> tuple[ScheduledTask, ...]:
+        """Atomically claim up to ``max_count`` due scheduled tasks.
+
+        Tasks are filtered by ``owner_id`` and ``task_types`` and must be
+        claimable at ``now``.  Each claimed task receives a unique lease token.
+        """
+
+        with self._lock:
+            with interprocess_json_lock(self._lock_path, timeout_seconds=self.lock_timeout_seconds):
+                data = self._read_data()
+                timestamp = now or _utc_now()
+                due_tasks = [
+                    (task_id, _scheduled_task_from_json(raw))
+                    for task_id, raw in data["scheduled_tasks"].items()
+                ]
+                due_tasks = [
+                    (task_id, task)
+                    for task_id, task in due_tasks
+                    if task.owner_id == owner_id
+                    and task.task_type in task_types
+                    and task.is_claimable(timestamp)
+                ]
+                due_tasks.sort(key=lambda item: (item[1].next_run_at or timestamp, item[0]))
+                claimed: list[ScheduledTask] = []
+                for task_id, task in due_tasks[:max_count]:
+                    lease_token = f"{lease_owner}:{task_id}:{uuid.uuid4().hex}"
+                    claimed_task = task.claim(
+                        lease_owner=lease_owner,
+                        lease_token=lease_token,
+                        lease_expires_at=timestamp + timedelta(seconds=lease_seconds),
+                        now=timestamp,
+                    )
+                    stored = replace(claimed_task, lock_version=task.lock_version + 1)
+                    data["scheduled_tasks"][task_id] = _scheduled_task_to_json(stored)
+                    claimed.append(stored)
+                self._write_data(data)
+                return tuple(sorted(claimed, key=lambda task: task.id))
+
+    def heartbeat_scheduled_task(
+        self,
+        task_id: str,
+        lease_token: str,
+        *,
+        lease_seconds: int,
+        now: datetime | None = None,
+    ) -> ScheduledTask:
+        """Extend the lease of an actively leased scheduled task."""
+
+        with self._lock:
+            with interprocess_json_lock(self._lock_path, timeout_seconds=self.lock_timeout_seconds):
+                data = self._read_data()
+                task = self._load_scheduled_task_unlocked(task_id, data=data)
+                timestamp = now or _utc_now()
+                if task.state is not ScheduledTaskState.LEASED:
+                    raise ScheduledTaskLeaseTokenMismatch(task_id)
+                if task.lease_token != lease_token:
+                    raise ScheduledTaskLeaseTokenMismatch(task_id)
+                if not task.has_active_lease(timestamp):
+                    raise ScheduledTaskLeaseConflict(task_id)
+                stored = replace(
+                    task,
+                    lease_expires_at=timestamp + timedelta(seconds=lease_seconds),
+                    updated_at=timestamp,
+                    lock_version=task.lock_version + 1,
+                )
+                data["scheduled_tasks"][task_id] = _scheduled_task_to_json(stored)
+                self._write_data(data)
+                return stored
 
     def _load_operation_run_unlocked(
         self,
@@ -340,12 +441,66 @@ class FileBackedDurableOpsStore:
         return data
 
     def _write_data(self, data: dict[str, dict[str, dict[str, Any]]]) -> None:
-        self._root.mkdir(parents=True, exist_ok=True)
-        tmp_path = self._path.with_suffix(".json.tmp")
+        write_json_atomically(self._path, data)
+
+
+_PROCESS_LOCKS_GUARD = Lock()
+_PROCESS_LOCKS: dict[Path, RLock] = {}
+
+
+def _process_lock_for(path: Path) -> RLock:
+    resolved = path.resolve()
+    with _PROCESS_LOCKS_GUARD:
+        lock = _PROCESS_LOCKS.get(resolved)
+        if lock is None:
+            lock = RLock()
+            _PROCESS_LOCKS[resolved] = lock
+        return lock
+
+
+@contextmanager
+def interprocess_json_lock(
+    lock_path: Path,
+    *,
+    timeout_seconds: float = 30.0,
+    poll_seconds: float = 0.05,
+) -> Iterator[None]:
+    """Acquire a process-local and flock-backed lock for shared JSON state."""
+
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    process_lock = _process_lock_for(lock_path)
+    with process_lock:
+        fd = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o600)
+        try:
+            deadline = time.monotonic() + timeout_seconds
+            while True:
+                try:
+                    fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    break
+                except BlockingIOError:
+                    if time.monotonic() >= deadline:
+                        raise TimeoutError(f"timed out acquiring lock {lock_path}")
+                    time.sleep(poll_seconds)
+            try:
+                yield
+            finally:
+                fcntl.flock(fd, fcntl.LOCK_UN)
+        finally:
+            os.close(fd)
+
+
+def write_json_atomically(path: Path, data: Any) -> None:
+    """Write JSON through a unique temp path before replacing ``path``."""
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = path.with_name(f"{path.name}.{uuid.uuid4().hex}.tmp")
+    try:
         with tmp_path.open("w", encoding="utf-8") as handle:
             json.dump(data, handle, indent=2, sort_keys=True)
             handle.write("\n")
-        tmp_path.replace(self._path)
+        tmp_path.replace(path)
+    finally:
+        tmp_path.unlink(missing_ok=True)
 
 
 @runtime_checkable

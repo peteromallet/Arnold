@@ -365,6 +365,7 @@ class AgentBoxOperatorProfile:
         agentbox_config = self.agentbox_config_factory()
         operation_id = (payload.operation_id or "").strip() or _new_chain_operation_id()
         handler = load_operation_adapter(MEGAPLAN_CHAIN_OPERATION_TYPE)
+        guardian_notification_metadata = self._guardian_notification_metadata()
         try:
             result = handler.launch(
                 agentbox_config,
@@ -372,6 +373,7 @@ class AgentBoxOperatorProfile:
                 repo_name=payload.repo,
                 spec_path=Path(payload.spec),
                 base_ref=payload.base_ref,
+                metadata=guardian_notification_metadata,
             )
         except Exception as exc:
             return ToolResult(
@@ -403,7 +405,43 @@ class AgentBoxOperatorProfile:
                     diagnostics=_result_diagnostics(result),
                 ),
             ),
+            )
+
+    def _guardian_notification_metadata(self) -> dict[str, Any]:
+        runtime_context = _runtime_context()
+        conversation_id = getattr(runtime_context, "conversation_id", None)
+        if not conversation_id:
+            return {
+                "guardian_notifications_disabled": True,
+                "guardian_notifications_disabled_reason": "runtime_conversation_id_missing",
+            }
+        metadata: dict[str, Any] = {
+            "guardian_notification_conversation_id": conversation_id,
+        }
+        if self.store is None:
+            metadata.update(
+                {
+                    "guardian_notifications_disabled": True,
+                    "guardian_notifications_disabled_reason": "resident_store_unavailable",
+                }
+            )
+            return metadata
+        conversation = self.store.load_resident_conversation(conversation_id)
+        if conversation is None:
+            metadata.update(
+                {
+                    "guardian_notifications_disabled": True,
+                    "guardian_notifications_disabled_reason": "resident_conversation_not_found",
+                }
+            )
+            return metadata
+        metadata.update(
+            {
+                "guardian_notification_conversation_key": conversation.conversation_key,
+                "guardian_notifications_disabled": False,
+            }
         )
+        return metadata
 
     def _resolve_reference(self, kind: str, query: str) -> dict[str, Any]:
         if kind == "operation":
@@ -742,8 +780,12 @@ def _operation_context(config: AgentBoxConfig, operation_id: str) -> dict[str, A
 
 
 def _runtime_subject() -> Any | None:
-    runtime_context = _resident_symbol("agent_loop", "current_tool_runtime_context")()
+    runtime_context = _runtime_context()
     return getattr(runtime_context, "subject", None)
+
+
+def _runtime_context() -> Any | None:
+    return _resident_symbol("agent_loop", "current_tool_runtime_context")()
 
 
 def _chain_launch_target_summary(payload: ChainLaunchInput) -> str:

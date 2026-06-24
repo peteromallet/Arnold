@@ -80,6 +80,7 @@ class MegaplanChainHandler:
         repo_name: str,
         spec_path: Path | str,
         base_ref: str | None = None,
+        metadata: Mapping[str, Any] | None = None,
         lock_timeout_seconds: float = 30.0,
     ) -> MegaplanChainLaunchResult:
         """Prepare AgentBox resources, validate the chain spec, then start tmux."""
@@ -106,12 +107,25 @@ class MegaplanChainHandler:
                 )
             running_result = _summarize_live_running_session(config, existing)
             if running_result is not None:
+                if metadata:
+                    update_agentbox_operation(
+                        config,
+                        operation_id,
+                        metadata=metadata,
+                        expected_lock_version=existing.lock_version,
+                    )
                 return MegaplanChainLaunchResult(
                     host_result=running_result,
                     resolved_spec_path=_resolved_spec_from_metadata(existing.metadata),
                     project_root=_project_root_from_metadata(existing.metadata),
                 )
 
+        launch_metadata = {
+            "adapter": "megaplan_chain",
+            "spec_path": str(spec_path),
+        }
+        if metadata:
+            launch_metadata.update(dict(metadata))
         prepared = prepare_host_resources(
             config,
             operation_id,
@@ -120,10 +134,7 @@ class MegaplanChainHandler:
             repo_names=(repo_name,),
             base_refs={repo_name: base_ref} if base_ref else None,
             launch_intent="megaplan_chain",
-            metadata={
-                "adapter": "megaplan_chain",
-                "spec_path": str(spec_path),
-            },
+            metadata=launch_metadata,
             lock_timeout_seconds=lock_timeout_seconds,
         )
         project_root = _primary_worktree(prepared)
