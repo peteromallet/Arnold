@@ -27,6 +27,162 @@ from arnold.workflow import (
 )
 
 
+def _issues_by_code(exc: ManifestValidationError, code: str):
+    return [issue for issue in exc.issues if issue.code == code]
+
+
+def _assert_issue(
+    exc: ManifestValidationError,
+    *,
+    code: str,
+    message_contains: str,
+    field: str,
+    node_id: str | None = None,
+    edge_id: str | None = None,
+) -> None:
+    matches = _issues_by_code(exc, code)
+    assert matches, exc.issues
+    issue = matches[0]
+    assert message_contains in issue.message
+    assert issue.field == field
+    assert issue.node_id == node_id
+    assert issue.edge_id == edge_id
+
+
+def test_validation_structures_duplicate_node_id_issues_and_preserves_message() -> None:
+    manifest = WorkflowManifest(
+        id="planning",
+        nodes=(WorkflowNode("plan", "agent"), WorkflowNode("plan", "effect")),
+    )
+
+    with pytest.raises(ManifestValidationError, match="node ids must be unique") as exc_info:
+        validate_manifest(manifest)
+
+    _assert_issue(
+        exc_info.value,
+        code="duplicate_node_id",
+        message_contains="node ids must be unique",
+        field="nodes[].id",
+        node_id="plan",
+    )
+    assert "node ids must be unique" in str(exc_info.value)
+
+
+def test_validation_structures_dangling_route_issues_and_preserves_message() -> None:
+    manifest = WorkflowManifest(
+        id="planning",
+        nodes=(WorkflowNode("plan", "agent"),),
+        edges=(
+            WorkflowEdge("missing-source", "missing", "plan"),
+            WorkflowEdge("missing-target", "plan", "missing"),
+        ),
+    )
+
+    with pytest.raises(ManifestValidationError, match="dangling") as exc_info:
+        validate_manifest(manifest)
+
+    _assert_issue(
+        exc_info.value,
+        code="dangling_edge_source",
+        message_contains="source 'missing' is dangling",
+        field="edges[].source",
+        edge_id="missing-source",
+    )
+    _assert_issue(
+        exc_info.value,
+        code="dangling_edge_target",
+        message_contains="target 'missing' is dangling",
+        field="edges[].target",
+        edge_id="missing-target",
+    )
+    assert "edge 'missing-source' source 'missing' is dangling" in str(exc_info.value)
+    assert "edge 'missing-target' target 'missing' is dangling" in str(exc_info.value)
+
+
+def test_validation_structures_invalid_node_field_issues_and_preserves_message() -> None:
+    manifest = WorkflowManifest(
+        id="planning",
+        nodes=(WorkflowNode("bad id", "agent", outputs=("draft/out",)),),
+    )
+
+    with pytest.raises(ManifestValidationError, match="invalid ref format") as exc_info:
+        validate_manifest(manifest)
+
+    _assert_issue(
+        exc_info.value,
+        code="invalid_node_id",
+        message_contains="node id has invalid ref format",
+        field="nodes[].id",
+        node_id="bad id",
+    )
+    _assert_issue(
+        exc_info.value,
+        code="invalid_node_output",
+        message_contains="output has invalid ref format",
+        field="nodes[].outputs[]",
+        node_id="bad id",
+    )
+    assert "node id has invalid ref format: 'bad id'" in str(exc_info.value)
+    assert "node 'bad id' output has invalid ref format: 'draft/out'" in str(exc_info.value)
+
+
+def test_validation_structures_reserved_metadata_issues_and_preserves_message() -> None:
+    manifest = WorkflowManifest(
+        id="planning",
+        nodes=(WorkflowNode("plan", "agent", metadata={"nested": {"event_journal": []}}),),
+    )
+
+    with pytest.raises(ManifestValidationError, match="reserved metadata key") as exc_info:
+        validate_manifest(manifest)
+
+    _assert_issue(
+        exc_info.value,
+        code="reserved_metadata_key",
+        message_contains="reserved metadata key: 'event_journal'",
+        field="nodes[].metadata.nested.event_journal",
+        node_id="plan",
+    )
+    assert "reserved metadata key: 'event_journal'" in str(exc_info.value)
+
+
+def test_validation_structures_hash_and_canonical_json_failures() -> None:
+    manifest = WorkflowManifest(
+        id="planning",
+        nodes=(WorkflowNode("plan", "agent"),),
+    )
+    tampered = replace(
+        manifest,
+        topology_hash="sha256:" + "0" * 64,
+        manifest_hash="sha256:" + "1" * 64,
+    )
+
+    with pytest.raises(ManifestValidationError, match="canonical") as exc_info:
+        object.__setattr__(tampered, "to_json", lambda: '{"schema_version":"not-canonical"}')
+        validate_manifest(tampered)
+
+    _assert_issue(
+        exc_info.value,
+        code="topology_hash_mismatch",
+        message_contains="topology_hash does not match canonical topology",
+        field="topology_hash",
+    )
+    _assert_issue(
+        exc_info.value,
+        code="manifest_hash_mismatch",
+        message_contains="manifest_hash does not match canonical manifest",
+        field="manifest_hash",
+    )
+    _assert_issue(
+        exc_info.value,
+        code="manifest_json_not_canonical",
+        message_contains="manifest JSON is not canonical",
+        field="manifest",
+    )
+    assert "topology_hash does not match canonical topology" in str(exc_info.value)
+    assert "manifest_hash does not match canonical manifest" in str(exc_info.value)
+    assert "manifest JSON is not canonical" in str(exc_info.value)
+
+
 def test_validation_rejects_dangling_edges() -> None:
     manifest = WorkflowManifest(
         id="planning",

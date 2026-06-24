@@ -11,9 +11,12 @@ from arnold.cli.workflow import main as workflow_main
 
 EXPECTED_WORKFLOW_SUBCOMMANDS = [
     "check",
+    "compile",
     "describe",
     "dot",
     "dry-run",
+    "explain",
+    "inspect",
     "manifest",
     "resume",
     "run",
