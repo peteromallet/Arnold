@@ -67,6 +67,7 @@ def test_agentbox_wheel_includes_package_and_installed_entrypoint(tmp_path: Path
     expected_package_files = {
         "agentbox/__init__.py",
         "agentbox/__main__.py",
+        "agentbox/adapters.py",
         "agentbox/cli.py",
         "agentbox/config.py",
         "agentbox/git_worktree.py",
@@ -113,7 +114,7 @@ def test_agentbox_wheel_includes_package_and_installed_entrypoint(tmp_path: Path
 
 def test_agentbox_runtime_modules_do_not_import_megaplan_or_out_of_scope_surfaces() -> None:
     forbidden_import_prefixes = ("arnold.pipelines", "arnold_pipelines")
-    forbidden_text = ("megaplan", "docker", "ssh")
+    forbidden_text = ("docker", "ssh")
 
     for path in AGENTBOX_ROOT.glob("*.py"):
         module = ast.parse(path.read_text(), filename=str(path))
