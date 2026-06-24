@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import json
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -22,6 +23,7 @@ from arnold_pipelines.megaplan.resident.cli import (
 from arnold_pipelines.megaplan.resident.agent_loop import AgentRequest, FakeAgentRunner, FakeAgentStep
 from arnold_pipelines.megaplan.resident.auth import AuthorizationSubject, ConfirmationManager, ResidentAuthorizer
 from arnold_pipelines.megaplan.resident.config import ResidentConfig
+from arnold_pipelines.megaplan.resident.runtime import InboundEvent, OutboundMessage, ResidentRuntime
 from arnold_pipelines.megaplan.store import FileStore, ResidentConversationInput
 
 
@@ -220,6 +222,186 @@ def test_agentbox_operator_profile_selected_by_config_and_discord_cli(
     assert isinstance(selected, AgentBoxOperatorProfile)
     assert ResidentConfig().profile == "megaplan"
     assert env_config.profile == "agentbox_operator"
+
+
+def test_agentbox_operator_runs_through_resident_runtime_persistence_and_outbound_sink(
+    tmp_path: Path,
+) -> None:
+    store = FileStore(tmp_path / "store")
+    codebase = store.create_codebase(
+        owner="owner",
+        name="repo",
+        default_branch="main",
+        codebase_id="codebase-1",
+    )
+    config = ResidentConfig(
+        profile="agentbox_operator",
+        allowed_user_ids=("user-1",),
+        burst_idle_delay_s=0,
+        burst_max_delay_s=1,
+    )
+    outbound = _FakeOutboundSink()
+    runtime = ResidentRuntime(
+        config=config,
+        authorizer=ResidentAuthorizer(config),
+        store=store,
+        profile=AgentBoxOperatorProfile(
+            store=store,
+            authorizer=ResidentAuthorizer(config),
+            agentbox_config_factory=lambda: AgentBoxConfig(workspace_root=tmp_path / "agentbox"),
+        ),
+        runner=FakeAgentRunner(
+            [
+                FakeAgentStep.call(
+                    "ticket_new",
+                    {
+                        "repo": "owner/repo",
+                        "title": "Runtime Persistence",
+                        "body": "Exercise the resident runtime path.",
+                        "tags": ["discord", "runtime"],
+                    },
+                ),
+                FakeAgentStep.final("ticket filed"),
+            ]
+        ),
+        outbound=outbound,
+    )
+    subject = AuthorizationSubject(user_id="user-1", guild_id="g1", channel_id="c1")
+
+    asyncio.run(
+        _receive_and_flush(
+            runtime,
+            InboundEvent(
+                idempotency_key="discord:message:m1",
+                conversation_key="discord:guild:g1:channel:c1",
+                subject=subject,
+                content="file a ticket",
+                raw={"discord_message_id": "m1", "conversation_metadata": {"source": "test"}},
+            ),
+        )
+    )
+
+    conversations = store.list_resident_conversations(transport="discord")
+    assert len(conversations) == 1
+    conversation = conversations[0]
+    assert conversation.conversation_key == "discord:guild:g1:channel:c1"
+    assert conversation.guild_id == "g1"
+    assert conversation.channel_id == "c1"
+    assert conversation.metadata["last_subject_user_id"] == "user-1"
+    assert conversation.metadata["source"] == "test"
+
+    turns = store.list_recent_turns(n=1)
+    assert len(turns) == 1
+    turn = turns[0]
+    assert turn.status == "completed"
+    assert turn.message_sent is True
+    assert turn.final_output_message_id == conversation.last_outbound_message_id
+    assert turn.state_at_turn["profile"] == "agentbox_operator"
+
+    inbound_messages = store.load_messages(turn.triggered_by_message_ids)
+    assert len(inbound_messages) == 1
+    assert inbound_messages[0].direction == "inbound"
+    assert inbound_messages[0].content == "file a ticket"
+    assert inbound_messages[0].bot_turn_id == turn.id
+
+    outbound_message = store.latest_outbound_message()
+    assert outbound_message is not None
+    assert outbound_message.id == turn.final_output_message_id
+    assert outbound_message.conversation_id == conversation.id
+    assert outbound_message.content == "ticket filed"
+    assert outbound.sent == [
+        OutboundMessage(
+            conversation_key="discord:guild:g1:channel:c1",
+            content="ticket filed",
+            idempotency_key=outbound_message.idempotency_key,
+            metadata={
+                "conversation_id": conversation.id,
+                "message_id": outbound_message.id,
+                "turn_id": turn.id,
+            },
+        )
+    ]
+
+    tool_calls = store.search_tool_calls_by(tool_name="ticket_new", limit=10)
+    assert len(tool_calls) == 1
+    assert tool_calls[0].turn_id == turn.id
+    assert tool_calls[0].result["ok"] is True
+    ticket_id = tool_calls[0].result["data"]["ticket_id"]
+    ticket = store.load_ticket(ticket_id)
+    assert ticket is not None
+    assert ticket.title == "Runtime Persistence"
+    assert ticket.codebase_id == codebase.id
+    assert ticket.filed_by_actor_id == "user-1"
+
+
+def test_agentbox_operator_resident_runtime_denies_non_allowlisted_discord_author_before_execution(
+    tmp_path: Path,
+) -> None:
+    store = FileStore(tmp_path / "store")
+    config = ResidentConfig(
+        profile="agentbox_operator",
+        allowed_user_ids=("user-1",),
+        burst_idle_delay_s=0,
+        burst_max_delay_s=1,
+    )
+    authorizer = ResidentAuthorizer(config)
+    outbound = _FakeOutboundSink()
+    runtime = ResidentRuntime(
+        config=config,
+        authorizer=authorizer,
+        store=store,
+        profile=AgentBoxOperatorProfile(
+            store=store,
+            authorizer=authorizer,
+            agentbox_config_factory=lambda: AgentBoxConfig(workspace_root=tmp_path / "agentbox"),
+        ),
+        runner=_ExplodingAgentRunner(),
+        outbound=outbound,
+    )
+
+    asyncio.run(
+        _receive_and_flush(
+            runtime,
+            InboundEvent(
+                idempotency_key="discord:message:denied-m1",
+                conversation_key="discord:guild:g1:channel:c1",
+                subject=AuthorizationSubject(user_id="user-2", guild_id="g1", channel_id="c1"),
+                content="file a ticket",
+                raw={"discord_message_id": "denied-m1"},
+            ),
+        )
+    )
+
+    assert outbound.sent == []
+    assert store.list_resident_conversations(transport="discord") == []
+    assert store.list_recent_turns(n=10) == []
+    assert store.search_tool_calls_by(limit=10) == []
+    assert store.latest_outbound_message() is None
+
+    assert len(authorizer.denials) == 1
+    denial = authorizer.denials[0]
+    assert denial.user_id == "user-2"
+    assert denial.guild_id == "g1"
+    assert denial.channel_id == "c1"
+    assert denial.action == "inbound"
+    assert denial.reason == "user_not_allowed"
+
+    log_files = list((tmp_path / "store" / "system_logs").glob("*.json"))
+    assert len(log_files) == 1
+    log = json.loads(log_files[0].read_text(encoding="utf-8"))
+    assert log["level"] == "warn"
+    assert log["category"] == "system"
+    assert log["event_type"] == "resident_inbound_denied"
+    assert log["message"] == "Resident inbound event denied before execution"
+    assert log["details"]["reason"] == "user_not_allowed"
+    assert log["details"]["audit"] | {"occurred_at": "<dynamic>"} == {
+        "user_id": "user-2",
+        "guild_id": "g1",
+        "channel_id": "c1",
+        "action": "inbound",
+        "reason": "user_not_allowed",
+        "occurred_at": "<dynamic>",
+    }
 
 
 def test_agentbox_operator_ticket_new_uses_runtime_subject_for_actor_and_slug(
@@ -655,11 +837,21 @@ def test_agentbox_operator_status_and_resolve_ask_one_clarifying_question_on_amb
         command="echo beta",
         metadata={"resolved_spec_path": "shared/chain.yaml"},
     )
+    create_agentbox_operation(
+        agentbox_config,
+        "gamma-chain",
+        command="echo gamma",
+        repo_names=["owner/repo"],
+        launch_state="running",
+        metadata={"resolved_spec_path": "unique/chain.yaml"},
+    )
     profile = AgentBoxOperatorProfile(agentbox_config_factory=lambda: agentbox_config)
     runner = FakeAgentRunner(
         [
             FakeAgentStep.call("status", {"operation": "shared"}),
+            FakeAgentStep.call("resolve", {"kind": "operation", "query": "gamma-chain"}),
             FakeAgentStep.call("resolve", {"kind": "operation", "query": "shared"}),
+            FakeAgentStep.call("resolve", {"kind": "operation", "query": "missing"}),
             FakeAgentStep.final("done"),
         ]
     )
@@ -676,7 +868,9 @@ def test_agentbox_operator_status_and_resolve_ask_one_clarifying_question_on_amb
     )
 
     status_result = response.tool_calls[0].result
-    resolve_result = response.tool_calls[1].result
+    resolve_single = response.tool_calls[1].result
+    resolve_ambiguous = response.tool_calls[2].result
+    resolve_missing = response.tool_calls[3].result
 
     assert status_result["ok"] is False
     assert status_result["message"] == "Which operation did you mean: alpha-chain, beta-chain?"
@@ -685,11 +879,39 @@ def test_agentbox_operator_status_and_resolve_ask_one_clarifying_question_on_amb
         "alpha-chain",
         "beta-chain",
     ]
-    assert resolve_result["ok"] is False
-    assert resolve_result["message"] == "Which operation did you mean: alpha-chain, beta-chain?"
-    assert resolve_result["data"]["resolve"] == status_result["data"]["resolve"]
-    assert resolve_result["data"]["action"] == "resolve"
-    assert resolve_result["data"]["next_state"] == "needs_clarification"
+    assert resolve_single["ok"] is True
+    assert resolve_single["message"] == "gamma-chain"
+    assert resolve_single["data"]["operation_id"] == "gamma-chain"
+    assert resolve_single["data"]["next_state"] == "resolved"
+    assert resolve_single["data"]["resolve"] == {
+        "status": "single",
+        "query": "gamma-chain",
+        "operation": {
+            "operation_id": "gamma-chain",
+            "operation_type": "agentbox_host",
+            "operation_state": "pending",
+            "launch_state": "running",
+            "repo_names": ["owner/repo"],
+            "matched_by": "operation_id_exact",
+        },
+        "candidates": [],
+        "question": None,
+    }
+    assert resolve_ambiguous["ok"] is False
+    assert resolve_ambiguous["message"] == "Which operation did you mean: alpha-chain, beta-chain?"
+    assert resolve_ambiguous["data"]["resolve"] == status_result["data"]["resolve"]
+    assert resolve_ambiguous["data"]["action"] == "resolve"
+    assert resolve_ambiguous["data"]["next_state"] == "needs_clarification"
+    assert resolve_missing["ok"] is False
+    assert resolve_missing["message"] == "No AgentBox operation matched 'missing'. Which operation id should I use?"
+    assert resolve_missing["data"]["next_state"] == "not_found"
+    assert resolve_missing["data"]["resolve"] == {
+        "status": "no_match",
+        "query": "missing",
+        "operation": None,
+        "candidates": [],
+        "question": "No AgentBox operation matched 'missing'. Which operation id should I use?",
+    }
 
 
 def test_agentbox_operator_resolve_shapes_repo_and_ticket_results_without_side_effects(
@@ -801,6 +1023,179 @@ def test_agentbox_operator_resolve_shapes_repo_and_ticket_results_without_side_e
     }
 
 
+def test_agentbox_operator_runtime_exercises_all_six_v0_tools(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    store = FileStore(tmp_path / "store")
+    store.create_codebase(
+        owner="owner",
+        name="repo",
+        default_branch="main",
+        codebase_id="codebase-1",
+    )
+    agentbox_config = AgentBoxConfig(workspace_root=tmp_path / "agentbox")
+    handler = _FakeChainLaunchHandler(agentbox_config)
+    monkeypatch.setattr("agentbox.resident_profile.load_operation_adapter", lambda kind: handler)
+
+    create_agentbox_operation(
+        agentbox_config,
+        "op-chain-1",
+        operation_type="megaplan_chain",
+        command=("fake", "chain"),
+        repo_names=("owner/repo",),
+        launch_state="running",
+        metadata={"resolved_spec_path": str(agentbox_config.workspace_root / "resolved-chain.yaml")},
+    )
+    update_agentbox_operation(agentbox_config, "op-chain-1", state=OperationState.RUNNING)
+    create_agentbox_operation(
+        agentbox_config,
+        "op-other",
+        operation_type="megaplan_chain",
+        command=("fake", "chain"),
+        repo_names=("owner/repo",),
+        launch_state="running",
+        metadata={"resolved_spec_path": str(agentbox_config.workspace_root / "other-chain.yaml")},
+    )
+    update_agentbox_operation(agentbox_config, "op-other", state=OperationState.RUNNING)
+
+    config = ResidentConfig(
+        profile="agentbox_operator",
+        allowed_user_ids=("admin-1",),
+        admin_user_ids=("admin-1",),
+        burst_idle_delay_s=0,
+        burst_max_delay_s=1,
+    )
+    authorizer = ResidentAuthorizer(config)
+    confirmation_manager = ConfirmationManager(config)
+    subject = AuthorizationSubject(user_id="admin-1", guild_id="g1", channel_id="c1")
+    request = confirmation_manager.request_confirmation(
+        subject=subject,
+        action="cloud_start",
+        target_summary="owner/repo plans/chain.yaml",
+        metadata={"tool": "chain_launch"},
+    )
+
+    outbound = _FakeOutboundSink()
+    runtime = ResidentRuntime(
+        config=config,
+        authorizer=authorizer,
+        store=store,
+        profile=AgentBoxOperatorProfile(
+            store=store,
+            authorizer=authorizer,
+            confirmation_manager=confirmation_manager,
+            agentbox_config_factory=lambda: agentbox_config,
+        ),
+        runner=FakeAgentRunner(
+            [
+                FakeAgentStep.call(
+                    "ticket_new",
+                    {
+                        "repo": "owner/repo",
+                        "title": "Runtime coverage",
+                        "body": "Exercise all six v0 tools.",
+                        "tags": ["runtime"],
+                    },
+                ),
+                FakeAgentStep.call(
+                    "chain_launch",
+                    {
+                        "repo": "owner/repo",
+                        "spec": "plans/chain.yaml",
+                        "operation_id": "chain-1",
+                        "confirmation_request_id": request.id,
+                        "confirmation_phrase": request.exact_phrase,
+                    },
+                ),
+                FakeAgentStep.call("status", {"operation": "chain-1"}),
+                FakeAgentStep.call("logs", {"operation": "chain-1", "lines": 10}),
+                FakeAgentStep.call("resolve", {"kind": "operation", "query": "op-chain-1"}),
+                FakeAgentStep.call("resolve", {"kind": "operation", "query": "op"}),
+                FakeAgentStep.call("help", {}),
+                FakeAgentStep.final("all tools exercised"),
+            ]
+        ),
+        outbound=outbound,
+    )
+
+    asyncio.run(
+        _receive_and_flush(
+            runtime,
+            InboundEvent(
+                idempotency_key="discord:message:all-tools",
+                conversation_key="discord:guild:g1:channel:c1",
+                subject=subject,
+                content="run all tools",
+                raw={
+                    "discord_message_id": "all-tools",
+                    "conversation_metadata": {"source": "test"},
+                },
+            ),
+        )
+    )
+
+    turns = store.list_recent_turns(n=1)
+    assert len(turns) == 1
+    turn = turns[0]
+    assert turn.status == "completed"
+
+    ticket_call = store.search_tool_calls_by(tool_name="ticket_new", limit=1)[0]
+    ticket_id = ticket_call.result["data"]["ticket_id"]
+    assert ticket_id is not None
+    ticket = store.load_ticket(ticket_id)
+    assert ticket.title == "Runtime coverage"
+    assert ticket.filed_by_actor_id == "admin-1"
+
+    chain_call = store.search_tool_calls_by(tool_name="chain_launch", limit=1)[0]
+    assert chain_call.result["ok"] is True
+    assert chain_call.result["data"]["operation_id"] == "chain-1"
+    assert chain_call.result["data"]["next_state"] == "operation_running"
+    assert handler.launch_calls == [
+        {
+            "operation_id": "chain-1",
+            "repo_name": "owner/repo",
+            "spec_path": Path("plans/chain.yaml"),
+            "base_ref": None,
+        }
+    ]
+
+    status_call = store.search_tool_calls_by(tool_name="status", limit=1)[0]
+    assert status_call.result["data"]["operation_id"] == "chain-1"
+    assert status_call.result["data"]["next_state"] == "inspected_operation"
+
+    logs_call = store.search_tool_calls_by(tool_name="logs", limit=1)[0]
+    assert logs_call.result["data"]["operation_id"] == "chain-1"
+    assert logs_call.result["data"]["next_state"] == "inspected_logs"
+
+    resolve_calls = store.search_tool_calls_by(tool_name="resolve", limit=2)
+    single_results = [
+        call for call in resolve_calls
+        if call.result["data"]["resolve"]["status"] == "single"
+    ]
+    ambiguous_results = [
+        call for call in resolve_calls
+        if call.result["data"]["resolve"]["status"] == "ambiguous"
+    ]
+    assert len(single_results) == 1
+    assert len(ambiguous_results) == 1
+    single_result = single_results[0].result
+    ambiguous_result = ambiguous_results[0].result
+    assert single_result["data"]["operation_id"] == "op-chain-1"
+    assert single_result["data"]["next_state"] == "resolved"
+    assert ambiguous_result["data"]["resolve"]["status"] == "ambiguous"
+    assert ambiguous_result["data"]["next_state"] == "needs_clarification"
+    assert "question" in ambiguous_result["data"]["resolve"]
+    assert len(ambiguous_result["data"]["resolve"]["candidates"]) >= 2
+
+    help_call = store.search_tool_calls_by(tool_name="help", limit=1)[0]
+    assert help_call.result["data"]["next_state"] == "choose_v0_tool"
+    assert any(tool["name"] == "chain_launch" for tool in help_call.result["data"]["tools"])
+
+    assert outbound.sent
+    assert outbound.sent[0].content == "all tools exercised"
+
+
 class _FakeChainLaunchHandler:
     def __init__(
         self,
@@ -878,3 +1273,21 @@ class _FakeChainLaunchError(RuntimeError):
     def __init__(self, message: str, *, diagnostics: dict[str, object]) -> None:
         super().__init__(message)
         self.diagnostics = diagnostics
+
+
+class _FakeOutboundSink:
+    def __init__(self) -> None:
+        self.sent: list[OutboundMessage] = []
+
+    async def send(self, message: OutboundMessage) -> None:
+        self.sent.append(message)
+
+
+class _ExplodingAgentRunner:
+    async def run(self, request: AgentRequest, tools: object) -> object:
+        raise AssertionError("resident runner should not execute for denied inbound events")
+
+
+async def _receive_and_flush(runtime: ResidentRuntime, event: InboundEvent) -> None:
+    await runtime.receive(event)
+    await runtime.coalescer.flush_all()
