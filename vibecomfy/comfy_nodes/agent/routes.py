@@ -369,10 +369,6 @@ def _strip_non_applyable_forbidden_fields(value: Any) -> Any:
     return value
 
 
-# Legacy alias kept for callers that reference the old name.
-_strip_clarify_forbidden_fields = _strip_non_applyable_forbidden_fields
-
-
 def _sanitize_clarify_payload(payload: Mapping[str, Any]) -> dict[str, Any]:
     sanitized = dict(payload)
     outcome = sanitized.get("outcome")

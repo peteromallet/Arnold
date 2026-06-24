@@ -51,6 +51,10 @@ and must not be committed.
 | `input/` | runtime | User-provided images and other inputs. |
 | `models/`, `custom_nodes/` | ComfyUI | External model weights and custom node packs. |
 
+`make clean-artifacts` deletes `out/` as local development hygiene.  Use it
+only for disposable local sessions; do not run it against production,
+customer-support, or support-critical session directories.
+
 ## Diagnostic export
 
 Files produced explicitly for support, debugging, or issue reporting.  They are
@@ -62,7 +66,7 @@ not part of normal UI/chat state.
 | `<session>/turns/<turn>/response.json` | `edit.py` | `session.py:iter_turn_records`, CLI debug | Durable turn response. |
 | `<session>/turns/<turn>/request.json` | `edit.py` | CLI debug | Durable turn request. |
 | `<session>/session_state.json` | `session.py` | `session.py`, CLI debug | Lifecycle and baseline state. |
-| `vibecomfy_debug bundle` | `_agent_edit_debug.py` | support / triage | Tarball exported by the CLI debug tool. |
+| `vibecomfy_debug bundle` | `vibecomfy/commands/_agent_edit_debug.py` | support / triage | Tarball exported by the CLI debug tool. |
 
 ## Scratch
 

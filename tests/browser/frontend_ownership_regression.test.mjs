@@ -61,28 +61,40 @@ test("vibecomfy_roundtrip keeps status and settings/provider-test ownership dele
     "setPersistedAgentProvider",
     "persistAgentSettings",
     "storeOpenRouterCredential",
+    "buildStatusUrl",
+    "clearAgentStatusRetry",
+    "refreshAgentStatus",
+    "scheduleAgentStatusRetry",
+    "populateRouteSelect",
+    "syncChooseEngineGate",
+    "testAgentSettings",
   ]) {
     assertNoOwnerDefinition(name);
   }
 
-  assertDelegatingWrapper("buildStatusUrl", /buildStatusUrlImpl\(/);
-  assertDelegatingWrapper("clearAgentStatusRetry", /clearAgentStatusRetryImpl\(/);
-  assertDelegatingWrapper("scheduleAgentStatusRetry", /pollerScheduleAgentStatusRetry\(/);
-  assertDelegatingWrapper("populateRouteSelect", /pollerPopulateRouteSelect\(/);
-  assertDelegatingWrapper("refreshAgentStatus", /pollerRefreshAgentStatus\(/);
-  assertDelegatingWrapper("syncChooseEngineGate", /pollerSyncChooseEngineGate\(/);
-  assertDelegatingWrapper("testAgentSettings", /testAgentSettingsImpl\(/);
-
+  assert.match(roundtripSource, /from\s+["']\.\/agent_status_poller\.js["']/);
+  assert.match(roundtripSource, /refreshAgentStatus:\s*\(panel,\s*opts\)\s*=>\s*pollerRefreshAgentStatus\(/);
+  assert.match(roundtripSource, /scheduleAgentStatusRetry:\s*\(panel,\s*route,\s*model,\s*opts\)\s*=>\s*[\s\S]*?pollerScheduleAgentStatusRetry\(/);
+  assert.match(roundtripSource, /syncChooseEngineGate:\s*\(panel\)\s*=>\s*pollerSyncChooseEngineGate\(/);
+  assert.match(roundtripSource, /pollerPopulateRouteSelect\(.*agentStatusDeps\(\)\)/);
   assert.match(roundtripSource, /persistAgentSettings\(panel,\s*\{\s*includeCredential\s*\},\s*agentStatusDeps\(\)\)/);
-  assert.match(roundtripSource, /testAgentSettingsImpl\(panel,\s*agentStatusDeps\(\)\)/);
+  assert.match(roundtripSource, /testAgentSettingsImpl\(currentAgentPanel\(\),\s*agentStatusDeps\(\)\)/);
+  assert.match(roundtripSource, /storeOpenRouterCredential\(panel,\s*apiKey\)/);
+
   assert.doesNotMatch(roundtripSource, /fetch\(\s*["'`]\/vibecomfy\/agent\/settings/);
   assert.doesNotMatch(roundtripSource, /fetch\(\s*["'`]\/vibecomfy\/agent\/test/);
   assert.doesNotMatch(roundtripSource, /fetch\(\s*["'`]\/vibecomfy\/agent\/credential/);
+  assert.doesNotMatch(roundtripSource, /\blocalStorage\s*[=.]/);
 });
 
 test("vibecomfy_roundtrip keeps composer and candidate selector ownership delegated", () => {
   for (const name of [
+    "renderDeveloper",
+    "renderDeveloperDisclosure",
     "renderDeveloperSubsection",
+    "renderSettings",
+    "renderSettingsSection",
+    "renderDeveloperSection",
     "normalizeApplyEligibility",
     "ensureMissingEligibilityWarning",
     "missingContractApplyEligibility",
@@ -97,17 +109,20 @@ test("vibecomfy_roundtrip keeps composer and candidate selector ownership delega
     assertNoOwnerDefinition(name);
   }
 
-  assert.match(roundtripSource, /renderDeveloperImpl\(panel,\s*buildPanelComposerRenderDeps\(\)\)/);
-  assert.match(roundtripSource, /renderDeveloperDisclosureImpl\(panel,\s*buildPanelComposerRenderDeps\(\)\)/);
-  assert.match(roundtripSource, /renderSettingsImpl\(panel,\s*buildPanelComposerRenderDeps\(\)\)/);
+  assert.match(roundtripSource, /from\s+["']\.\/panel_composer\.js["']/);
   assert.match(roundtripSource, /from\s+["']\.\/agent_candidate_actions\.js["']/);
+  assert.match(roundtripSource, /composerRenderSettingsSection\(nextPanel,\s*composerRenderDeps\(\)\)/);
+  assert.match(roundtripSource, /composerRenderDeveloperSection\(panel,\s*composerRenderDeps\(\)\)/);
+  assert.match(roundtripSource, /composerRenderDeveloperSection\(nextPanel,\s*composerRenderDeps\(\)\)/);
 
-  for (const name of ["renderDeveloper", "renderDeveloperDisclosure", "renderSettings"]) {
-    const body = functionBody(name);
-    assert.doesNotMatch(body, /\bel\s*\(/, `${name} must not construct DOM locally`);
-    assert.doesNotMatch(body, /\.appendChild\b/, `${name} must not render DOM locally`);
-    assert.doesNotMatch(body, /\.textContent\s*=/, `${name} must not render copy locally`);
-  }
+  const composerSectionCallPattern = /composerRender(?:Settings|Developer)Section\([^)]*,\s*composerRenderDeps\(\)\)/;
+  assert.match(roundtripSource, composerSectionCallPattern);
+
+  assert.doesNotMatch(roundtripSource, /function\s+renderDeveloper\s*\(/);
+  assert.doesNotMatch(roundtripSource, /function\s+renderDeveloperDisclosure\s*\(/);
+  assert.doesNotMatch(roundtripSource, /function\s+renderSettings\s*\(/);
+  assert.doesNotMatch(roundtripSource, /function\s+renderDeveloperSection\s*\(/);
+  assert.doesNotMatch(roundtripSource, /function\s+renderSettingsSection\s*\(/);
 });
 
 test("canonical frontend owners expose the expected public APIs", () => {
@@ -150,8 +165,8 @@ test("canonical frontend owners expose the expected public APIs", () => {
   assert.equal(Object.hasOwn(panelComposer, "renderDeveloperSubsection"), false);
 });
 
-test("canonical route policy keeps DeepSeek as an OpenRouter alias only", () => {
-  assert.equal(statusPoller.ROUTE_ALIASES.deepseek, "openrouter");
-  assert.equal(Object.hasOwn(statusPoller.ROUTE_LABELS, "deepseek"), false);
-  assert.equal(statusPoller.CANONICAL_AGENT_PROVIDERS.has("deepseek"), false);
+test("canonical route policy keeps DeepSeek as a distinct provider route", () => {
+  assert.equal(statusPoller.ROUTE_ALIASES.deepseek, "deepseek");
+  assert.equal(Object.hasOwn(statusPoller.ROUTE_LABELS, "deepseek"), true);
+  assert.equal(statusPoller.CANONICAL_AGENT_PROVIDERS.has("deepseek"), true);
 });

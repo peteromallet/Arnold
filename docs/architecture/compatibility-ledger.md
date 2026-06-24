@@ -109,19 +109,114 @@ trigger.
   `eligibility.applyable` and `ApplyCandidate` state are the only frontend
   apply contract.
 
+### `apply_eligibility` legacy object
+
+- **Owner**: agent-edit backend contract migration and frontend response
+  normalizer/status boundaries.
+- **Purpose**: Retained compatibility object for old submit, action,
+  rebaseline, and rehydrate payloads. New code should treat this as a
+  deletion-oriented bridge toward canonical `eligibility` / `apply_eligible`
+  data, not as a permanent API commitment.
+- **Caller evidence**: `contracts.py`, `edit.py`, `gates.py`, `routes.py`, and
+  `session.py` still stamp, preserve, or derive the object while
+  `agent_edit_response_contract.js`, its generated mirror, `agent_status_poller.js`,
+  and `vibecomfy_roundtrip.js` normalize or display old payloads at boundary
+  surfaces.
+- **Fixture coverage**: `tests/browser/agent_edit_response_contract.test.mjs`,
+  `tests/browser/agent_edit_response_malformed.test.mjs`,
+  `tests/browser/agent_edit_lifecycle.test.mjs`,
+  `tests/browser/payload_contracts.test.mjs`, and
+  `tests/browser/roundtrip_smoke.test.mjs`.
+- **Deletion trigger**: Delete once canonical `eligibility` or `apply_eligible`
+  payloads are required by all active fixtures and old persisted sessions are
+  outside the supported rehydrate window.
+
+### `candidate_graph` / `graph` legacy candidate aliases
+
+- **Owner**: agent-edit backend candidate compatibility adapter and frontend
+  response normalizer/status display boundaries.
+- **Purpose**: Preserve readability for historical candidate artifacts that
+  carried a top-level `candidate_graph` or `graph` alias. This path exists to
+  migrate callers to canonical `candidate.graph` plus `candidate_graph_hash`,
+  not to commit new normal render or lifecycle code to top-level graph aliases.
+- **Caller evidence**: `edit.py`, `routes.py`, and `session.py` still synthesize
+  or rehydrate top-level candidate graph shapes; `agent_edit_response_contract.js`,
+  its generated mirror, `agent_status_poller.js`, `panel_composer.js`, and
+  `vibecomfy_roundtrip.js` read them only as boundary normalization,
+  status/debug, or compatibility display inputs.
+- **Fixture coverage**: `tests/browser/agent_edit_response_contract.test.mjs`,
+  `tests/browser/payload_contracts.test.mjs`,
+  `tests/browser/roundtrip_smoke.test.mjs`, and payload contract fixtures under
+  `tests/fixtures/payload_contracts/`.
+- **Deletion trigger**: Delete once canonical `candidate.graph` /
+  `candidate_graph_hash` fixtures normalize with `allowLegacy=false` and
+  persisted session rehydrate no longer needs top-level graph aliases.
+
+### `field_changes` flat arrays on turns/messages
+
+- **Owner**: agent-edit field-change projection migration across backend
+  audit/session output and frontend response normalization/reporting.
+- **Purpose**: Retain flat turn/message `field_changes` arrays so old audit,
+  characterization, and rehydrate artifacts remain readable while normal code
+  moves to canonical outcome `changes` and named field-change accessors.
+- **Caller evidence**: `audit.py` and `edit.py` still write historical flat
+  field-change shapes; `vibecomfy_roundtrip.js`, `panel_thread.js`,
+  `agent_edit_response_contract.js`, and `diagnostics_reporting.js` extract or
+  compact them for compatibility display/reporting.
+- **Fixture coverage**: `tests/browser/roundtrip_smoke.test.mjs`,
+  `tests/browser/agent_edit_lifecycle.test.mjs`,
+  `tests/browser/agent_edit_response_contract.test.mjs`,
+  `tests/browser/panel_thread_rating.test.mjs`,
+  `tests/browser/payload_contracts.test.mjs`, and characterization fixtures
+  under `tests/characterization/fixtures/agent_edit/`.
+- **Deletion trigger**: Delete from normal render/lifecycle readers once
+  `readFieldChanges()` is the only frontend accessor and rehydrate fixtures
+  carry canonical outcome `changes`. Diagnostics and audit may keep read-only
+  support only until historical artifacts age out.
+
 ### Clarify/noop forbidden-key guards
 
 - **Owner**: `vibecomfy/comfy_nodes/agent/routes.py`.
-- **Purpose**: `_CLARIFY_FORBIDDEN_KEYS` and the shared non-applyable forbidden
-  key set prevent candidate/apply fields from leaking into clarify/noop
-  responses.
-- **Caller evidence**: Route stamping uses the guard before returning
-  non-applyable response shapes.
+- **Purpose**: `_NON_APPLYABLE_FORBIDDEN_KEYS` and
+  `_strip_non_applyable_forbidden_fields` are the active production
+  route-envelope guard that prevents candidate/apply fields from leaking into
+  clarify/noop responses. `_CLARIFY_FORBIDDEN_KEYS` is a retained legacy alias
+  for documentation/test traceability, not a compatibility path with production
+  callers.
+- **Caller evidence**: `_sanitize_clarify_payload` and
+  `_make_not_applyable_payload` call `_strip_non_applyable_forbidden_fields`
+  before returning non-applyable response shapes. No production caller reads
+  `_CLARIFY_FORBIDDEN_KEYS`; it aliases `_NON_APPLYABLE_FORBIDDEN_KEYS`.
 - **Fixture coverage**: Clarify/noop response tests in
   `tests/test_comfy_nodes_agent_edit.py` and forbidden-field assertions in
   `tests/browser/payload_contracts.test.mjs`.
 - **Deletion trigger**: N/A — this is a route contract guard, not a compatibility
-  shim.
+  shim. Keep `_CLARIFY_FORBIDDEN_KEYS` only while ledger/test traceability needs
+  the old name.
+
+### Edit-layer clarify-response sanitizer
+
+- **Owner**: `vibecomfy/comfy_nodes/agent/edit.py` response assembly.
+- **Purpose**: `_CLARIFY_FORBIDDEN_RESPONSE_KEYS` and
+  `_strip_clarify_forbidden_response_fields` sanitize pure clarify responses
+  after backend response assembly so candidate/apply fields do not leak into the
+  assembled clarify response. The edit-layer key set is content-identical to
+  the route-layer set today, but it is owned by response assembly, not the
+  route-envelope stripping boundary.
+- **Caller evidence**: `_sanitize_pure_clarify_response` normalizes the public
+  clarify outcome/message shape and then calls
+  `_strip_clarify_forbidden_response_fields`. The batch and non-batch edit
+  response builders call `_sanitize_pure_clarify_response` after
+  `build_legacy_agent_edit_v1(...)` may have added candidate/apply aliases for
+  legacy response compatibility.
+- **Fixture coverage**: `tests/test_comfy_nodes_agent_edit.py` pure clarify
+  response tests, including
+  `test_batch_repl_response_no_candidate_for_pure_clarify`, and the ledger
+  marker assertions in `tests/test_agent_edit_compatibility_ledger.py`.
+- **Deletion trigger**: Delete this sanitizer only after tests prove pure clarify
+  response assembly no longer emits candidate/apply fields before sanitization;
+  until then, keep it separate from the route-layer guard so route-envelope and
+  edit-response ownership can be removed independently.
 
 ### Graph hash fields
 
@@ -174,13 +269,71 @@ trigger.
 ### Legacy import wrappers in `vibecomfy_roundtrip.js`
 
 - **Owner**: frontend panel
-- **Purpose**: Re-export or adapt older module shapes so existing call sites
-  keep working.
-- **Caller evidence**: Some internal panel modules still import through these
-  wrappers.
-- **Fixture coverage**: Browser smoke tests.
-- **Deletion trigger**: When all internal callers import directly from the
-  canonical owner module.
+- **Purpose**: Current import-wrapper surface while the panel is being split
+  into owner modules. This documents the surfaces that exist today so they are
+  auditable; it is not an indefinite preservation promise.
+- **Caller evidence**: `vibecomfy_roundtrip.js` currently re-exports
+  diagnostics helpers from `diagnostics_reporting.js`
+  (`configureDiagnosticsDeps`, `buildIssueReport`, `buildAgentSolvePrompt`,
+  `buildCurrentAuditEnvelope`, `downloadCurrentAudit`,
+  `collectIssueReportFiles`, `downloadIssueReportZip`, `showIssueModal`,
+  `submitRating`, and `installBrowserDiagnosticsCapture`); exposes facade
+  entry points that adapt local graph helpers (`normalizeForSerialize`,
+  `normalizeForDisplay`, `normalizeForApply`, and `repairLiveNodes`); and
+  forwards scheduler exports from `panel_scheduler.js` / lifecycle state
+  (`RENDER_SECTIONS`, `markAgentPanelDirty`, `markAllAgentPanelDirty`, and
+  `scheduleRenderAgentPanel`). The related frontend view-model compatibility
+  surface is the camelCase state field set listed in the fixture ledger:
+  `applyAllowed`, `canvasApplyAllowed`, `auditRef`, `debugPayload`, and
+  `lastSubmitFieldChanges`.
+- **Fixture coverage**: `tests/browser/roundtrip_smoke.test.mjs`,
+  `tests/browser/agent_status_poller.test.mjs`,
+  `tests/browser/agent_edit_lifecycle.test.mjs`, and
+  `tests/browser/agent_edit_lifecycle_transcript.test.mjs`.
+- **Deletion trigger**: Remove each wrapper when its callers import directly
+  from the canonical owner module or consume a named selector/view model
+  instead of the retained camelCase panel-state field; keep only the smaller
+  panel entry point needed by ComfyUI.
+
+### `executor_pending`
+
+- **Owner**: frontend lifecycle/transcript migration.
+- **Purpose**: Temporary optimistic pending-row marker for in-flight assistant
+  entries. Durable transcripts should converge on canonical `TurnIdentity` plus
+  `pending_response` / stage state; this is deletion-oriented UI compatibility,
+  not a persisted transcript API.
+- **Caller evidence**: `vibecomfy_roundtrip.js` and `agent_edit_lifecycle.js`
+  still construct or reconcile optimistic pending messages, and
+  `panel_thread.js` renders pending rows while canonical rehydrate strips the
+  marker from durable messages.
+- **Fixture coverage**: `tests/browser/agent_edit_lifecycle.test.mjs`,
+  `tests/browser/agent_edit_lifecycle_transcript.test.mjs`,
+  `tests/browser/active_row_rendering.test.mjs`,
+  `tests/browser/agent_edit_response_contract.test.mjs`,
+  `tests/browser/panel_thread_rating.test.mjs`,
+  `tests/browser/payload_contracts.test.mjs`, and
+  `tests/browser/roundtrip_smoke.test.mjs`.
+- **Deletion trigger**: Delete when pending assistant entries are keyed by
+  canonical `TurnIdentity` plus `pending_response` / stage state, and transcript
+  tests assert no durable rehydrate message carries `executor_pending`.
+
+### camelCase frontend view-model fields
+
+- **Owner**: frontend lifecycle/composer state migration.
+- **Purpose**: Retain camelCase normalized state fields such as `applyAllowed`,
+  `canvasApplyAllowed`, `auditRef`, `debugPayload`, and
+  `lastSubmitFieldChanges` while tests and reducers still inspect internal view
+  models. These are frontend view-model compatibility fields, not backend wire
+  aliases or permanent API names.
+- **Caller evidence**: `agent_edit_lifecycle.js`, `vibecomfy_roundtrip.js`, and
+  `panel_composer.js` keep camelCase reducer/view-model fields that browser
+  tests inspect directly while the wire contract remains canonical snake_case.
+- **Fixture coverage**: `tests/browser/agent_edit_lifecycle.test.mjs`,
+  `tests/browser/agent_edit_lifecycle_transcript.test.mjs`, and
+  `tests/browser/roundtrip_smoke.test.mjs`.
+- **Deletion trigger**: Delete or rename when canonical frontend selectors/view
+  models replace panel state fields and tests no longer inspect reducer
+  internals by camelCase name.
 
 ## Removed in this epic
 

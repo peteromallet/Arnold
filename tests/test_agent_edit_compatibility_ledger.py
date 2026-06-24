@@ -70,6 +70,54 @@ PROHIBITED_ALLOWLIST_FRAGMENTS = (
     "provider_model",
 )
 
+FIXTURE_TOKEN_CLASSIFICATION_ANCHORS = {
+    "_CLARIFY_FORBIDDEN_KEYS": (
+        "### Clarify/noop forbidden-key guards",
+        "retained legacy alias",
+        "_CLARIFY_FORBIDDEN_KEYS`; it aliases `_NON_APPLYABLE_FORBIDDEN_KEYS`",
+    ),
+    "_CLARIFY_FORBIDDEN_RESPONSE_KEYS": (
+        "### Edit-layer clarify-response sanitizer",
+        "owned by response assembly",
+        "keep it separate from the route-layer guard",
+    ),
+    "_strip_clarify_forbidden_response_fields": (
+        "### Edit-layer clarify-response sanitizer",
+        "_sanitize_pure_clarify_response",
+        "may have added candidate/apply aliases",
+    ),
+    "apply_eligible": (
+        "### `apply_eligible`",
+        "Canonical executor/apply authorization bit",
+        "N/A for the canonical authorization field",
+    ),
+    "candidate_graph_hash": (
+        "### Graph hash fields",
+        "active/session/diagnostic fields, not removable legacy aliases",
+        "not removable legacy aliases",
+    ),
+    "client_graph_hash": (
+        "### Graph hash fields",
+        "active/session/diagnostic fields, not removable legacy aliases",
+        "not removable legacy aliases",
+    ),
+    "graph": (
+        "### `candidate_graph` / `graph` legacy candidate aliases",
+        "top-level `candidate_graph` or `graph` alias",
+        "status/debug, or compatibility display inputs",
+    ),
+    "action_client_graph_hash": (
+        "### `submitted_client_graph_hash` / `action_client_graph_hash`",
+        "Session migration/action-validation fields",
+        "records `action_client_graph_hash`",
+    ),
+    "submitted_client_graph_hash": (
+        "### `submitted_client_graph_hash` / `action_client_graph_hash`",
+        "Session migration/action-validation fields",
+        "Session allocation stores `submitted_client_graph_hash`",
+    ),
+}
+
 
 def _iter_text_files() -> list[Path]:
     files: list[Path] = []
@@ -99,6 +147,31 @@ def _read_ledgers() -> dict[str, str]:
 
 def _normalized_ledgers() -> dict[str, str]:
     return {name: re.sub(r"\s+", " ", text) for name, text in _read_ledgers().items()}
+
+
+def _fixture_retained_alias_tokens_by_row() -> dict[str, str]:
+    text = LEDGER_PATH.read_text(encoding="utf-8")
+    header = "| Alias or shape | Owner | Allowed files | Fixture coverage | Deletion trigger |"
+    in_table = False
+    tokens_by_row: dict[str, str] = {}
+
+    for line in text.splitlines():
+        if line == header:
+            in_table = True
+            continue
+        if not in_table:
+            continue
+        if not line.startswith("|"):
+            break
+        cells = [cell.strip() for cell in line.strip().strip("|").split("|")]
+        if not cells or set(cells[0]) <= {"-", ":"}:
+            continue
+        for token in re.findall(r"`([^`]+)`", cells[0]):
+            assert token not in tokens_by_row, f"duplicate fixture ledger table token: {token}"
+            tokens_by_row[token] = cells[0]
+
+    assert tokens_by_row, "Fixture compatibility ledger retained-alias table has no tokens."
+    return tokens_by_row
 
 
 def test_agent_edit_legacy_aliases_stay_inside_compatibility_ledger_allowlist() -> None:
@@ -148,7 +221,39 @@ def test_ledger_scanner_allowlists_do_not_cover_frontend_render_or_routing_paths
     )
 
 
-def test_ledgers_document_required_retained_aliases_and_shims() -> None:
+def test_fixture_retained_alias_table_tokens_are_covered_by_architecture_ledger() -> None:
+    architecture_text = ARCHITECTURE_LEDGER_PATH.read_text(encoding="utf-8")
+    tokens_by_row = _fixture_retained_alias_tokens_by_row()
+    uncovered_tokens: list[str] = []
+
+    for token, row_label in tokens_by_row.items():
+        if f"`{token}`" in architecture_text:
+            continue
+        anchors = FIXTURE_TOKEN_CLASSIFICATION_ANCHORS.get(token)
+        if anchors and all(anchor in architecture_text for anchor in anchors):
+            continue
+        uncovered_tokens.append(f"{token} from fixture row {row_label!r}")
+
+    assert not uncovered_tokens, (
+        "Every backticked token in the fixture retained-alias table must be "
+        "covered by exact architecture-ledger presence or by an explicit "
+        "classification-map entry whose anchors exist:\n"
+        + "\n".join(uncovered_tokens)
+    )
+
+    missing_classification_anchors = {
+        token: [anchor for anchor in anchors if anchor not in architecture_text]
+        for token, anchors in FIXTURE_TOKEN_CLASSIFICATION_ANCHORS.items()
+    }
+    missing_classification_anchors = {
+        token: anchors
+        for token, anchors in missing_classification_anchors.items()
+        if anchors
+    }
+    assert not missing_classification_anchors
+
+
+def test_ledgers_document_high_risk_retained_alias_distinctions() -> None:
     required_markers = {
         "AgentError": (
             "`AgentError`",
@@ -170,6 +275,14 @@ def test_ledgers_document_required_retained_aliases_and_shims() -> None:
             "_CLARIFY_FORBIDDEN_KEYS",
             "route contract guard",
             "not a compatibility",
+        ),
+        "edit_layer_clarify_response_sanitizer": (
+            "_CLARIFY_FORBIDDEN_RESPONSE_KEYS",
+            "_strip_clarify_forbidden_response_fields",
+            "_sanitize_pure_clarify_response",
+            "response assembly",
+            "content-identical to the route-layer set today",
+            "pure clarify response assembly no longer emits candidate/apply fields before sanitization",
         ),
     }
 
