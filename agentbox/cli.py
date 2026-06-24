@@ -12,9 +12,11 @@ from collections.abc import Sequence
 from enum import Enum
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 from arnold.runtime.durable_ops import ResourceType, TypedResource
 
+from agentbox.adapters import get_operation_adapter, list_operation_adapters
 from agentbox.config import AgentBoxConfigError, load_agentbox_config
 from agentbox.operations import (
     AgentBoxOperationError,
@@ -39,6 +41,18 @@ def build_parser() -> argparse.ArgumentParser:
     )
     subparsers = parser.add_subparsers(dest="command")
 
+    run = subparsers.add_parser("run", help="Run a registered AgentBox operation adapter.")
+    run.add_argument("--repo", required=True, help="Registered AgentBox repository name.")
+    run.add_argument(
+        "--kind",
+        required=True,
+        choices=[adapter.kind for adapter in list_operation_adapters()],
+        help="Registered operation adapter kind.",
+    )
+    run.add_argument("--spec", required=True, help="Operation spec path.")
+    run.add_argument("--operation-id")
+    run.add_argument("--json", action="store_true", help="Write stable JSON output.")
+
     status = subparsers.add_parser("status", help="Show AgentBox host operation status.")
     status.add_argument("operation_id", nargs="?")
     status.add_argument("--json", action="store_true", help="Write stable JSON output.")
@@ -62,13 +76,25 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: Sequence[str] | None = None) -> int:
     parser = build_parser()
-    args = parser.parse_args(argv)
+    try:
+        args = parser.parse_args(argv)
+    except SystemExit as exc:
+        return int(exc.code) if isinstance(exc.code, int) else 1
     if args.command is None:
         return 0
 
     json_output = bool(getattr(args, "json", False))
     try:
         config = load_agentbox_config()
+        if args.command == "run":
+            return _run(
+                config,
+                repo_name=args.repo,
+                kind=args.kind,
+                spec_path=args.spec,
+                operation_id=args.operation_id,
+                json_output=json_output,
+            )
         if args.command == "status":
             return _status(config, args.operation_id, json_output=json_output)
         if args.command == "logs":
@@ -88,12 +114,62 @@ def main(argv: Sequence[str] | None = None) -> int:
     return _diagnostic(f"unknown command: {args.command}", json_output=json_output)
 
 
+def _run(
+    config: Any,
+    *,
+    repo_name: str,
+    kind: str,
+    spec_path: str,
+    operation_id: str | None,
+    json_output: bool,
+) -> int:
+    operation_id = operation_id or _new_operation_id(kind)
+    try:
+        registration = get_operation_adapter(kind)
+    except KeyError as exc:
+        return _diagnostic(str(exc), json_output=json_output)
+
+    handler = registration.load()
+    try:
+        result = handler.launch(
+            config,
+            operation_id,
+            repo_name=repo_name,
+            spec_path=Path(spec_path),
+        )
+    except Exception as exc:
+        payload = _run_error_payload(
+            config,
+            operation_id,
+            kind=kind,
+            operation_type=registration.operation_type,
+            exc=exc,
+        )
+        _emit(payload, json_output=json_output)
+        return 1
+
+    payload = _run_result_payload(
+        config,
+        operation_id,
+        kind=kind,
+        operation_type=registration.operation_type,
+        result=result,
+        handler=handler,
+    )
+    _emit(payload, json_output=json_output)
+    return 0
+
+
 def _status(config: Any, operation_id: str | None, *, json_output: bool) -> int:
     if operation_id:
         run = load_agentbox_operation(config, operation_id)
+        run = _tick_operation_for_status(config, run)
         payload: Any = _operation_status(config, run)
     else:
-        payload = [_operation_status(config, run) for run in list_agentbox_operations(config)]
+        payload = [
+            _operation_status(config, _tick_operation_for_status(config, run))
+            for run in list_agentbox_operations(config)
+        ]
     _emit(payload, json_output=json_output)
     return 0
 
@@ -182,6 +258,153 @@ def _operation_status(config: Any, run: Any) -> dict[str, Any]:
         "resource_count": len(resources),
         "session": _jsonable(session_status),
     }
+
+
+def _tick_operation_for_status(config: Any, run: Any) -> Any:
+    registration = _operation_adapter_for_type(run.operation_type)
+    if registration is None:
+        return run
+
+    handler = registration.load()
+    tick = getattr(handler, "tick", None)
+    if not callable(tick):
+        return run
+
+    updated = tick(config, run.id)
+    return updated if getattr(updated, "id", None) == run.id else load_agentbox_operation(
+        config,
+        run.id,
+        operation_types=(registration.operation_type,),
+    )
+
+
+def _operation_adapter_for_type(operation_type: str) -> Any | None:
+    for registration in list_operation_adapters():
+        if registration.operation_type == operation_type:
+            return registration
+    return None
+
+
+def _run_result_payload(
+    config: Any,
+    operation_id: str,
+    *,
+    kind: str,
+    operation_type: str,
+    result: Any,
+    handler: Any,
+) -> dict[str, Any]:
+    run = load_agentbox_operation(config, operation_id, operation_types=(operation_type,))
+    resources = open_operation_store(config).list_typed_resources(operation_id)
+    paths = run_dir_paths(config, operation_id)
+    diagnostics = _result_diagnostics(result)
+    classification = _handler_classification(config, operation_id, handler, diagnostics)
+    return {
+        "operation_id": operation_id,
+        "kind": kind,
+        "operation_type": run.operation_type,
+        "operation_state": run.state.value,
+        "launch_state": run.metadata.get("launch_state"),
+        "run_dir": str(paths.root),
+        "resources": _resource_payloads(resources),
+        "resolved_spec_path": _resolved_spec_path(result, run.metadata),
+        "validation": run.metadata.get("validation"),
+        "classification": classification,
+        "diagnostics": diagnostics,
+    }
+
+
+def _run_error_payload(
+    config: Any,
+    operation_id: str,
+    *,
+    kind: str,
+    operation_type: str,
+    exc: Exception,
+) -> dict[str, Any]:
+    run = None
+    resources: tuple[TypedResource, ...] = ()
+    try:
+        run = load_agentbox_operation(config, operation_id, operation_types=(operation_type,))
+        resources = open_operation_store(config).list_typed_resources(operation_id)
+    except Exception:
+        pass
+
+    paths = run_dir_paths(config, operation_id)
+    diagnostics = _exception_diagnostics(exc)
+    return {
+        "operation_id": operation_id,
+        "kind": kind,
+        "operation_type": operation_type,
+        "operation_state": run.state.value if run is not None else None,
+        "launch_state": run.metadata.get("launch_state") if run is not None else None,
+        "run_dir": str(paths.root),
+        "resources": _resource_payloads(resources),
+        "resolved_spec_path": (
+            str(run.metadata.get("resolved_spec_path"))
+            if run is not None and run.metadata.get("resolved_spec_path")
+            else None
+        ),
+        "validation": run.metadata.get("validation") if run is not None else None,
+        "classification": run.metadata.get("chain_status") if run is not None else None,
+        "diagnostics": diagnostics,
+        "error": str(exc),
+    }
+
+
+def _handler_classification(
+    config: Any,
+    operation_id: str,
+    handler: Any,
+    diagnostics: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    status = getattr(handler, "status", None)
+    if not callable(status):
+        return None
+    try:
+        snapshot = status(config, operation_id)
+    except Exception as exc:
+        if diagnostics is not None:
+            diagnostics["classification"] = {
+                "kind": type(exc).__name__,
+                "message": str(exc),
+            }
+        return None
+    classification = getattr(snapshot, "classification", None)
+    to_dict = getattr(classification, "to_dict", None)
+    if callable(to_dict):
+        return to_dict()
+    return _jsonable(classification) if classification is not None else None
+
+
+def _result_diagnostics(result: Any) -> dict[str, Any] | None:
+    host_result = getattr(result, "host_result", None)
+    diagnostics = getattr(host_result, "diagnostics", None)
+    return dict(diagnostics) if isinstance(diagnostics, dict) else _jsonable(diagnostics)
+
+
+def _exception_diagnostics(exc: Exception) -> dict[str, Any]:
+    diagnostics = getattr(exc, "diagnostics", None)
+    if isinstance(diagnostics, dict):
+        return dict(diagnostics)
+    return {"kind": getattr(exc, "kind", type(exc).__name__), "message": str(exc)}
+
+
+def _resolved_spec_path(result: Any, metadata: dict[str, Any]) -> str | None:
+    value = getattr(result, "resolved_spec_path", None) or metadata.get("resolved_spec_path")
+    return str(value) if value else None
+
+
+def _resource_payloads(resources: Sequence[TypedResource]) -> list[dict[str, Any]]:
+    return [
+        {
+            "id": resource.id,
+            "type": resource.resource_type.value,
+            "name": resource.name,
+            "details": dict(resource.details),
+        }
+        for resource in resources
+    ]
 
 
 def _log_entry(
@@ -310,6 +533,10 @@ def _positive_int(value: str) -> int:
     if parsed < 0:
         raise argparse.ArgumentTypeError("value must be >= 0")
     return parsed
+
+
+def _new_operation_id(kind: str) -> str:
+    return f"{kind}-{uuid4().hex[:12]}"
 
 
 __all__ = ["build_parser", "main"]
