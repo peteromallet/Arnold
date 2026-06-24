@@ -37,7 +37,7 @@ import {
 } from 'lucide-react';
 import { useVideoEditorRuntime } from '@/tools/video-editor/contexts/DataProviderContext';
 import type { PackageState } from '@/tools/video-editor/runtime/extensionLoader';
-import type { PackageStateInventoryEntry } from '@/tools/video-editor/runtime/extensionSurface';
+import type { PackageStateInventoryEntry, PackageContributionSummary } from '@/tools/video-editor/runtime/extensionSurface';
 import type { ContributionKind, Diagnostic, DiagnosticSeverity, ExtensionManifest } from '@reigh/editor-sdk';
 import type {
   ExtensionEnablementState,
@@ -955,11 +955,14 @@ function PackageCard({
   const publisher = packageMetadata?.publisher;
   const description = packageMetadata?.description;
 
+  // T11: Direct host-supplied extensions are read-only (no install/update/toggle affordances).
+  const isDirectEntry = stateReason === 'Direct host-supplied extension';
+
   const [saveState, setSaveState] = useState<SaveState>('idle');
   const [saveError, setSaveError] = useState<string | null>(null);
   const [diagnosticsExpanded, setDiagnosticsExpanded] = useState(false);
 
-  const isToggleable = packageState === 'loaded' || packageState === 'disabled-by-user';
+  const isToggleable = (packageState === 'loaded' || packageState === 'disabled-by-user') && !isDirectEntry;
   const isCurrentlyEnabled = packageState === 'loaded';
 
   // Derive diagnostic counts from summary or fallback to zero
@@ -1128,6 +1131,16 @@ function PackageCard({
                 </>
               )}
             </button>
+          )}
+          {isDirectEntry && (
+            <span
+              className="inline-flex items-center gap-1 rounded border px-1.5 py-0.5 text-[10px] font-medium bg-blue-500/10 border-blue-500/30 text-blue-400"
+              title="Direct host-supplied extension — read-only"
+              data-video-editor-extension-direct-entry={extensionId}
+            >
+              <Zap className="h-3 w-3" />
+              Direct
+            </span>
           )}
           <PackageStateBadge state={packageState} />
         </div>
@@ -1325,15 +1338,29 @@ export function ExtensionManager() {
     () => EMPTY_DIAGNOSTIC_SNAPSHOT,
   );
 
-  // Derive contribution summaries per package from the runtime
+  // Derive contribution summaries per package from the runtime.
+  // Prefer the precomputed PackageContributionSummary from normalizeExtensionRuntime,
+  // falling back to the live deriveContributionSummary for backward compatibility.
   const contributionSummaries = useMemo(() => {
     if (!extensionRuntime) return new Map<string, ContributionSummary | null>();
     const map = new Map<string, ContributionSummary | null>();
     for (const entry of packageStateInventory) {
-      map.set(
-        entry.extensionId,
-        deriveContributionSummary(entry.extensionId, extensionRuntime),
-      );
+      const precomputed = entry.contributionSummary;
+      if (precomputed) {
+        // Convert PackageContributionSummary → ContributionSummary (subset used by UI)
+        map.set(entry.extensionId, {
+          declared: precomputed.declared,
+          active: precomputed.active >= 0 ? precomputed.active : 0,
+          inactive: precomputed.inactive >= 0 ? precomputed.inactive : 0,
+          kinds: precomputed.kinds,
+        });
+      } else {
+        // Fallback: derive from active runtime descriptors
+        map.set(
+          entry.extensionId,
+          deriveContributionSummary(entry.extensionId, extensionRuntime),
+        );
+      }
     }
     return map;
   }, [extensionRuntime, packageStateInventory]);

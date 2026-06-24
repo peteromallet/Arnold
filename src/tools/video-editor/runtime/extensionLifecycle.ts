@@ -17,7 +17,7 @@ import type {
   ExtensionDiagnosticsService,
   DiagnosticSeverity,
 } from '@reigh/editor-sdk';
-import { disposeExtensionContextServices } from '@reigh/editor-sdk';
+import { disposeExtensionContextServices, DIAGNOSTIC_SOURCE_EXTENSION } from '@reigh/editor-sdk';
 import type { LiveDataRegistry } from '@/tools/video-editor/runtime/liveDataRegistry.ts';
 
 // ---------------------------------------------------------------------------
@@ -127,10 +127,11 @@ export function createExtensionDiagnosticsService(
   const diagnostics: ExtensionDiagnostic[] = [];
 
   const service: ExtensionDiagnosticsService = {
-    report(diag: Omit<ExtensionDiagnostic, 'extensionId'>): void {
+    report(diag: Omit<ExtensionDiagnostic, 'extensionId' | 'source'>): void {
       const full: ExtensionDiagnostic = Object.freeze({
         ...diag,
         extensionId,
+        source: DIAGNOSTIC_SOURCE_EXTENSION,
       });
       diagnostics.push(full);
     },
@@ -490,6 +491,30 @@ export interface ExtensionLifecycleHost {
    */
   onLifecycleDisposed(callback: (extensionId: string) => void): DisposeHandle;
 
+  /**
+   * Get the current recovery key for an extension.
+   *
+   * The recovery key is a monotonic string token owned by the lifecycle host.
+   * It increments on activation, manifest replacement, re-add, or explicit
+   * retry, and stays stable across unrelated parent re-renders or unchanged
+   * active synchronization. Returns "0" for unknown extension IDs.
+   *
+   * Upstream consumers (e.g. ContributionErrorBoundary) use the recovery key
+   * to detect when a crashed contribution should attempt a fresh render
+   * without unrelated remount churn.
+   */
+  getRecoveryKey(extensionId: string): string;
+
+  /**
+   * Explicitly increment the recovery key for an extension.
+   *
+   * This is the programmatic retry signal: after incrementing, any
+   * ContributionErrorBoundary that receives the new key will clear its
+   * error state and attempt a fresh render. Returns the new key string.
+   * No-op for unknown or disposed extension IDs (returns "0").
+   */
+  incrementRecoveryKey(extensionId: string): string;
+
   /** The live data registry associated with this host (if any). */
   readonly liveDataRegistry: LiveDataRegistry | undefined;
 }
@@ -513,6 +538,8 @@ export function createExtensionLifecycleHost(
   const hostDiagnostics: ExtensionDiagnostic[] = [];
   const disposedCallbacks = new Set<(extensionId: string) => void>();
   let disposed = false;
+  /** Monotonic recovery-key counter per extension ID. Never decrements. */
+  const recoveryKeys = new Map<string, number>();
 
   /** Notify all registered disposal callbacks that a lifecycle was disposed. */
   function notifyLifecycleDisposed(extensionId: string): void {
@@ -573,13 +600,19 @@ export function createExtensionLifecycleHost(
           notifyLifecycleDisposed(oldId);
           const newLc = createExtensionLifecycle(ext);
           lifecycles.set(id, newLc);
+          // Manifest change → increment recovery key (re-activation)
+          const prevRk = recoveryKeys.get(id) ?? 0;
+          recoveryKeys.set(id, prevRk + 1);
           toActivate.push(newLc);
         }
-        // else: same extension, nothing to do
+        // else: same extension, nothing to do (recovery key stable)
       } else {
-        // New extension
+        // New extension (or re-add after prior removal)
         const lc = createExtensionLifecycle(ext);
         lifecycles.set(id, lc);
+        // Increment recovery key for first activation or re-add
+        const prevRk = recoveryKeys.get(id) ?? 0;
+        recoveryKeys.set(id, prevRk + 1);
         toActivate.push(lc);
       }
     }
@@ -671,6 +704,18 @@ export function createExtensionLifecycleHost(
     },
     get liveDataRegistry() {
       return liveDataRegistry;
+    },
+    getRecoveryKey(extensionId: string): string {
+      const key = recoveryKeys.get(extensionId);
+      return key !== undefined ? String(key) : '0';
+    },
+    incrementRecoveryKey(extensionId: string): string {
+      if (disposed) return '0';
+      if (!lifecycles.has(extensionId)) return '0';
+      const current = recoveryKeys.get(extensionId) ?? 0;
+      const next = current + 1;
+      recoveryKeys.set(extensionId, next);
+      return String(next);
     },
     synchronize,
     disposeAll,

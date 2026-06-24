@@ -28,8 +28,16 @@ export default defineConfig({
   },
   projects: [
     {
-      name: 'chromium',
+      name: 'chromium-desktop',
       use: { ...devices['Desktop Chrome'] },
+    },
+    {
+      name: 'chromium-condensed',
+      use: { ...devices['iPad Mini'] },
+    },
+    {
+      name: 'chromium-mobile',
+      use: { ...devices['iPhone 13'] },
     },
   ],
 });

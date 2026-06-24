@@ -50,7 +50,7 @@ import {
 import { useOptionalClipTypeRegistryContext } from '@/tools/video-editor/clip-types/ClipTypeRegistryContext.tsx';
 import type { ClipTypeRegistryRecord } from '@/tools/video-editor/clip-types/ClipTypeRegistry.ts';
 import {
-  ContributionErrorBoundary,
+  HostContributionErrorBoundary,
   type ContributionErrorInfo,
 } from '@/tools/video-editor/runtime/ContributionErrorBoundary.tsx';
 import {
@@ -1696,7 +1696,7 @@ export function ClipPanel({
 
         return (
           <div className="mt-3 rounded-xl border border-border bg-card/70 p-3">
-            <ContributionErrorBoundary
+            <HostContributionErrorBoundary
               contributionId={
                 clipTypeRegistryRecord.contributionId ??
                 `clip-inspector:${clip.clipType}`
@@ -1718,7 +1718,7 @@ export function ClipPanel({
                   onChange({ params })
                 }
               />
-            </ContributionErrorBoundary>
+            </HostContributionErrorBoundary>
           </div>
         );
       })()}

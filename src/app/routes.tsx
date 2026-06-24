@@ -14,6 +14,10 @@ import CharacterAnimatePage from '@/tools/character-animate/pages/CharacterAnima
 import JoinClipsPage from '@/tools/join-clips/pages/JoinClipsPage';
 import EditVideoPage from '@/tools/edit-video/pages/EditVideoPage';
 import VideoEditorPage from '@/tools/video-editor/pages/VideoEditorPage';
+// Dev-only test harness route for extension activity region and manager states
+const ExtensionHarnessPage = import.meta.env.DEV
+  ? lazy(() => import('@/tools/video-editor/pages/ExtensionHarnessPage'))
+  : null;
 // Secondary tools: lazy-loaded (not default landing pages, so hydration race is less likely)
 const EditImagesPage = lazy(() => import('@/tools/edit-images/pages/EditImagesPage'));
 const TrainingDataHelperPage = lazy(() => import('@/tools/training-data-helper/pages/TrainingDataHelperPage'));
@@ -142,6 +146,12 @@ export function AppRoutes() {
           path="/tools/video-editor"
           element={<ToolErrorBoundary toolName="Video Editor"><VideoEditorPage /></ToolErrorBoundary>}
         />
+        {import.meta.env.DEV && ExtensionHarnessPage ? (
+          <Route
+            path="/tools/video-editor/harness"
+            element={<ToolErrorBoundary toolName="Extension Harness"><ExtensionHarnessPage /></ToolErrorBoundary>}
+          />
+        ) : null}
         <Route
           path="/tools/training-data-helper"
           element={(

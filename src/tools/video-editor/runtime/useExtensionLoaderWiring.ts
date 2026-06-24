@@ -23,6 +23,8 @@ import {
 } from '@/tools/video-editor/runtime/extensionLoader';
 import type { ExtensionPackRecord } from '@/tools/video-editor/runtime/extensionStateRepository';
 import type { PackageStateInventoryEntry } from '@/tools/video-editor/runtime/extensionSurface';
+import { computePackageContributionSummary } from '@/tools/video-editor/runtime/extensionSurface';
+import type { ExtensionContribution } from '@reigh/editor-sdk';
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -194,6 +196,25 @@ function createSettingsErrorDiagnostic(extensionId: string, reason: string): Ext
   };
 }
 
+function contributionsFromManifest(manifest: Partial<ReighExtension['manifest']> | null | undefined): readonly ExtensionContribution[] | null {
+  if (!manifest || !manifest.contributions) return null;
+  const contribs = manifest.contributions;
+  if (!Array.isArray(contribs)) return null;
+  try {
+    return Object.freeze(contribs.map((c) => ({ ...c })));
+  } catch {
+    return null;
+  }
+}
+
+function contributionsFromInput(input: ExtensionLoaderInput): readonly ExtensionContribution[] | null {
+  if (input.kind === 'installed') {
+    return contributionsFromManifest(input.packRecord.manifestSnapshot);
+  }
+  return contributionsFromManifest(input.extension.manifest);
+}
+
+
 // ---------------------------------------------------------------------------
 // Bundle content store (separate from metadata repo per SD2)
 // ---------------------------------------------------------------------------
@@ -340,14 +361,32 @@ export function useExtensionLoaderWiring(
 
   // ---- No repository → fast path (no loader needed) ---------------------
   if (!repository) {
-    return useMemo<UseExtensionLoaderWiringResult>(() => ({
-      resolvedExtensions: direct,
-      diagnostics: [],
-      isResolving: false,
-      loaderResult: null,
-      error: null,
-      packageStateEntries: [],
-    }), [direct]);
+    return useMemo<UseExtensionLoaderWiringResult>(() => {
+      const packageStateEntries: PackageStateInventoryEntry[] = direct.map((ext) => {
+        const manifest = ext.manifest;
+        const rawId = manifest.id;
+        const extensionId = (typeof rawId === 'string' && rawId.length > 0) ? rawId : '(unknown)';
+        const metadata = metadataFromManifest(manifest);
+        const contribs = contributionsFromManifest(manifest);
+        const summary = computePackageContributionSummary(contribs);
+        return {
+          extensionId,
+          packageState: 'loaded' as const,
+          stateReason: 'Direct host-supplied extension',
+          packageMetadata: metadata,
+          manifestContributions: contribs,
+          contributionSummary: summary,
+        };
+      });
+      return {
+        resolvedExtensions: direct,
+        diagnostics: [],
+        isResolving: false,
+        loaderResult: null,
+        error: null,
+        packageStateEntries: Object.freeze(packageStateEntries),
+      };
+    }, [direct]);
   }
 
   // ---- Repository path --------------------------------------------------
@@ -430,6 +469,23 @@ export function useExtensionLoaderWiring(
         // 2. Build loader inputs: direct + installed
         const inputs: ExtensionLoaderInput[] = [];
 
+        // ---- Build input-metadata map for manifest-contribution resolution ----
+        // Tracks per-extensionId direct and installed manifest contributions
+        // so load result entries (which don't carry form information) can be
+        // enriched with the correct manifestContributions and contributionSummary.
+        interface InputMeta {
+          manifestContributions: readonly ExtensionContribution[] | null;
+        }
+        const inputMetaByExtId = new Map<string, { direct: InputMeta | null; installed: InputMeta | null }>();
+        function ensureMeta(extId: string) {
+          let meta = inputMetaByExtId.get(extId);
+          if (!meta) {
+            meta = { direct: null, installed: null };
+            inputMetaByExtId.set(extId, meta);
+          }
+          return meta;
+        }
+
         // Direct extensions (workspace source)
         for (const ext of direct) {
           inputs.push({
@@ -453,6 +509,13 @@ export function useExtensionLoaderWiring(
             continue;
           }
 
+          // Populate installed input metadata for manifest contribution resolution
+          const extId = record.extensionId;
+          const installedMeta = ensureMeta(extId);
+          installedMeta.installed = {
+            manifestContributions: contributionsFromManifest(record.manifestSnapshot),
+          };
+
           bundleRefToInput.set(record.bundleContentRef, {
             kind: 'installed',
             packRecord: record,
@@ -464,6 +527,15 @@ export function useExtensionLoaderWiring(
 
         if (cancelled) return;
 
+        // Populate direct input metadata (extracted from extension manifests)
+        for (const ext of direct) {
+          const extId = (ext.manifest.id as string) || '(unknown)';
+          const directMeta = ensureMeta(extId);
+          directMeta.direct = {
+            manifestContributions: contributionsFromManifest(ext.manifest),
+          };
+        }
+
         // 3. Validate
         const validation = loader.validate(inputs);
 
@@ -471,12 +543,20 @@ export function useExtensionLoaderWiring(
 
         const invalidPackageStateEntries: PackageStateInventoryEntry[] = validation.entries
           .filter((entry) => !entry.valid)
-          .map((entry) => ({
-            extensionId: extensionIdFromInput(entry.input, entry.errors),
-            packageState: 'invalid',
-            stateReason: diagnosticMessage(entry.errors, 'Manifest validation failed.'),
-            packageMetadata: metadataFromInput(entry.input),
-          }));
+          .map((entry) => {
+            const extId = extensionIdFromInput(entry.input, entry.errors);
+            const manifestContribs = contributionsFromInput(entry.input);
+            return {
+              extensionId: extId,
+              packageState: 'invalid' as const,
+              stateReason: diagnosticMessage(entry.errors, 'Manifest validation failed.'),
+              packageMetadata: metadataFromInput(entry.input),
+              manifestContributions: manifestContribs,
+              contributionSummary: manifestContribs && manifestContribs.length > 0
+                ? computePackageContributionSummary(manifestContribs)
+                : null,
+            };
+          });
 
         const validPackages = validation.entries
           .filter((entry) => entry.valid && entry.validatedPackage)
@@ -497,12 +577,19 @@ export function useExtensionLoaderWiring(
                 'settings snapshot values must be a JSON object.',
               );
               settingsDiagnostics.push(diagnostic);
-              settingsErrorEntries.push({
-                extensionId,
-                packageState: 'settings-error',
-                stateReason: diagnostic.message,
-                packageMetadata: metadataFromManifest(manifest),
-              });
+              {
+                const manifestContribs = contributionsFromManifest(manifest);
+                settingsErrorEntries.push({
+                  extensionId,
+                  packageState: 'settings-error' as const,
+                  stateReason: diagnostic.message,
+                  packageMetadata: metadataFromManifest(manifest),
+                  manifestContributions: manifestContribs,
+                  contributionSummary: manifestContribs && manifestContribs.length > 0
+                    ? computePackageContributionSummary(manifestContribs)
+                    : null,
+                });
+              }
               return false;
             }
 
@@ -513,12 +600,19 @@ export function useExtensionLoaderWiring(
             if (validationError) {
               const diagnostic = createSettingsErrorDiagnostic(extensionId, validationError);
               settingsDiagnostics.push(diagnostic);
-              settingsErrorEntries.push({
-                extensionId,
-                packageState: 'settings-error',
-                stateReason: diagnostic.message,
-                packageMetadata: metadataFromManifest(manifest),
-              });
+              {
+                const manifestContribs = contributionsFromManifest(manifest);
+                settingsErrorEntries.push({
+                  extensionId,
+                  packageState: 'settings-error' as const,
+                  stateReason: diagnostic.message,
+                  packageMetadata: metadataFromManifest(manifest),
+                  manifestContributions: manifestContribs,
+                  contributionSummary: manifestContribs && manifestContribs.length > 0
+                    ? computePackageContributionSummary(manifestContribs)
+                    : null,
+                });
+              }
               return false;
             }
           } catch (err) {
@@ -527,12 +621,19 @@ export function useExtensionLoaderWiring(
               err instanceof Error ? err.message : String(err),
             );
             settingsDiagnostics.push(diagnostic);
-            settingsErrorEntries.push({
-              extensionId,
-              packageState: 'settings-error',
-              stateReason: diagnostic.message,
-              packageMetadata: metadataFromManifest(manifest),
-            });
+            {
+              const manifestContribs = contributionsFromManifest(manifest);
+              settingsErrorEntries.push({
+                extensionId,
+                packageState: 'settings-error' as const,
+                stateReason: diagnostic.message,
+                packageMetadata: metadataFromManifest(manifest),
+                manifestContributions: manifestContribs,
+                contributionSummary: manifestContribs && manifestContribs.length > 0
+                  ? computePackageContributionSummary(manifestContribs)
+                  : null,
+              });
+            }
             return false;
           }
 
@@ -546,17 +647,69 @@ export function useExtensionLoaderWiring(
 
         lastResolvedKeyRef.current = resolveKey;
 
+        // ---- Resolve manifestContributions for load result entries ----
+        // ExtensionLoadEntry does not carry manifest contributions, so we
+        // resolve them from the input-metadata map. For conflicting extension
+        // IDs (both direct and installed forms), we use the conflict-resolution
+        // result to determine which form won or lost.
+        function resolveContributionsForLoadEntry(
+          extId: string,
+          packageState: string,
+        ): { manifestContributions: readonly ExtensionContribution[] | null; contributionSummary: PackageContributionSummary | null } {
+          const meta = inputMetaByExtId.get(extId);
+          const conflictEntry = loadResult.conflictResolution?.entries.find(
+            (ce) => ce.extensionId === extId,
+          );
+
+          let manifestContributions: readonly ExtensionContribution[] | null = null;
+
+          if (meta) {
+            if (conflictEntry && conflictEntry.hasConflict) {
+              // For winner entries (loaded, incompatible, runtime-error): use winner's form.
+              // For loser entries (duplicate, disabled-by-user): use the opposite form.
+              if (packageState === 'duplicate' || packageState === 'disabled-by-user') {
+                // Loser: opposite of winner
+                manifestContributions = conflictEntry.winner === 'local'
+                  ? meta.installed?.manifestContributions ?? null
+                  : meta.direct?.manifestContributions ?? null;
+              } else {
+                // Winner (loaded, incompatible, runtime-error)
+                manifestContributions = conflictEntry.winner === 'local'
+                  ? meta.direct?.manifestContributions ?? null
+                  : meta.installed?.manifestContributions ?? null;
+              }
+            } else {
+              // No conflict: use whichever form exists (prefer direct over installed)
+              manifestContributions = meta.direct?.manifestContributions
+                ?? meta.installed?.manifestContributions
+                ?? null;
+            }
+          }
+
+          return {
+            manifestContributions,
+            contributionSummary: manifestContributions && manifestContributions.length > 0
+              ? computePackageContributionSummary(manifestContributions)
+              : null,
+          };
+        }
+
         // Derive packageStateEntries from loader result entries
         const packageStateEntries: PackageStateInventoryEntry[] =
           [
             ...invalidPackageStateEntries,
             ...settingsErrorEntries,
-            ...loadResult.entries.map((entry) => ({
-              extensionId: entry.extensionId,
-              packageState: entry.packageState,
-              stateReason: entry.stateReason,
-              packageMetadata: entry.packageMetadata,
-            })),
+            ...loadResult.entries.map((entry) => {
+              const resolved = resolveContributionsForLoadEntry(entry.extensionId, entry.packageState);
+              return {
+                extensionId: entry.extensionId,
+                packageState: entry.packageState,
+                stateReason: entry.stateReason,
+                packageMetadata: entry.packageMetadata,
+                manifestContributions: resolved.manifestContributions,
+                contributionSummary: resolved.contributionSummary,
+              };
+            }),
           ];
 
         setState({

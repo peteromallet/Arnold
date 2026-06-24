@@ -19,7 +19,9 @@
  */
 
 import { Component, type ErrorInfo, type ReactNode } from 'react';
-import { AlertTriangle } from 'lucide-react';
+import { useState, useCallback, useEffect, useMemo, useRef } from 'react';
+import { AlertTriangle, RefreshCw } from 'lucide-react';
+import { useOptionalVideoEditorRuntime } from '@/tools/video-editor/contexts/DataProviderContext.tsx';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -64,7 +66,50 @@ export interface ContributionErrorBoundaryProps {
   recoveryKey?: string;
   /** Called when the boundary catches an error. */
   onError?: (info: ContributionErrorInfo) => void;
+  /**
+   * User-visible retry callback.  When provided, the fallback UI renders a
+   * "Retry" button that invokes this callback.  The host wrapper uses this
+   * to implement bounded, debounced retry via the lifecycle-host recovery
+   * key system.
+   *
+   * When undefined (no owning extension known) the retry button is not shown
+   * and the boundary falls back to legacy children-change reset.
+   */
+  onRetry?: () => void;
+  /** When true, the retry button is disabled (retries exhausted). */
+  retryDisabled?: boolean;
+  /** Number of retries remaining (shown in button text). */
+  retriesRemaining?: number;
   children: ReactNode;
+}
+
+export interface HostContributionErrorBoundaryProps {
+  /** Stable ID of the failing contribution (used in diagnostics). */
+  contributionId: string;
+  /** Extension that owns this contribution (if known). */
+  extensionId?: string;
+  /** Contribution kind for contextual fallback label. */
+  kind: ErrorBoundaryContributionKind;
+  /** Human-readable label shown in the fallback UI (defaults to contributionId). */
+  label?: string;
+  /** Called when the boundary catches an error. */
+  onError?: (info: ContributionErrorInfo) => void;
+  children: ReactNode;
+  /**
+   * Maximum number of user-initiated retry attempts when the owning extension
+   * is known.  After this many retries the retry button is disabled until an
+   * external recovery signal (e.g. extension re-activation) clears the error.
+   *
+   * @default 3
+   */
+  maxRetries?: number;
+  /**
+   * Minimum time (in ms) between user-initiated retry attempts.  Prevents
+   * retry-storm when a persistently-broken renderer crashes on every attempt.
+   *
+   * @default 5000
+   */
+  retryDebounceMs?: number;
 }
 
 interface ContributionErrorBoundaryState {
@@ -79,10 +124,16 @@ function ContributionErrorFallback({
   kind,
   label,
   error,
+  onRetry,
+  retryDisabled = false,
+  retriesRemaining,
 }: {
   kind: ErrorBoundaryContributionKind;
   label: string;
   error: Error | null;
+  onRetry?: () => void;
+  retryDisabled?: boolean;
+  retriesRemaining?: number;
 }) {
   const kindLabel = {
     slot: 'Slot',
@@ -127,6 +178,35 @@ function ContributionErrorFallback({
             </div>
           )}
         </div>
+        {onRetry && (
+          <button
+            type="button"
+            onClick={onRetry}
+            disabled={retryDisabled}
+            data-video-editor-contribution-retry="true"
+            className={
+              isInline
+                ? 'ml-auto shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium text-red-300 hover:bg-red-500/20 disabled:cursor-not-allowed disabled:opacity-40'
+                : 'ml-auto shrink-0 rounded px-2 py-1 text-[11px] font-medium text-red-300 hover:bg-red-500/20 disabled:cursor-not-allowed disabled:opacity-40'
+            }
+            title={
+              retryDisabled
+                ? 'Retries exhausted — extension must be re-activated to recover'
+                : retriesRemaining != null
+                  ? `${retriesRemaining} retr${retriesRemaining === 1 ? 'y' : 'ies'} remaining`
+                  : 'Retry this contribution'
+            }
+          >
+            <RefreshCw
+              className={isInline ? 'mr-0.5 inline h-2.5 w-2.5' : 'mr-1 inline h-3 w-3'}
+            />
+            {retryDisabled
+              ? 'Exhausted'
+              : retriesRemaining != null
+                ? `Retry (${retriesRemaining})`
+                : 'Retry'}
+          </button>
+        )}
       </div>
     </div>
   );
@@ -204,17 +284,155 @@ export class ContributionErrorBoundary extends Component<
 
   render(): ReactNode {
     if (this.state.error) {
-      const { kind, label, contributionId } = this.props;
+      const { kind, label, contributionId, onRetry, retryDisabled, retriesRemaining } = this.props;
       const displayLabel = label ?? contributionId;
       return (
         <ContributionErrorFallback
           kind={kind}
           label={displayLabel}
           error={this.state.error}
+          onRetry={onRetry}
+          retryDisabled={retryDisabled}
+          retriesRemaining={retriesRemaining}
         />
       );
     }
 
     return this.props.children;
   }
+}
+
+// ---------------------------------------------------------------------------
+// HostContributionErrorBoundary — function component wrapper that wires
+// lifecycle-host-owned recovery keys and a user-visible bounded retry
+// control into the underlying ContributionErrorBoundary class component.
+// ---------------------------------------------------------------------------
+
+/**
+ * Host-owned contribution error boundary.
+ *
+ * Wraps {@link ContributionErrorBoundary} and wires in host-owned recovery-key
+ * state from the {@link VideoEditorRuntimeContextValue}. When an owning
+ * extension is known (`extensionId` is set), the boundary:
+ *
+ *  1. Pulls the current monotonic recovery key from the lifecycle host.
+ *  2. Passes it to the underlying boundary, preventing legacy children-change
+ *     auto-reset and anchoring reset semantics to host-owned lifecycle events.
+ *  3. Exposes a user-visible "Retry" button on the error fallback.  Activating
+ *     it increments the lifecycle-host recovery key (up to `maxRetries`, with
+ *     at least `retryDebounceMs` between attempts) and triggers a fresh render
+ *     of the contribution children.
+ *
+ * When no owning extension is known (`extensionId` is undefined or the runtime
+ * context is unavailable) the boundary falls back to the legacy
+ * {@link ContributionErrorBoundary} behaviour (reset on children change,
+ * no recovery key, no retry button).
+ *
+ * The existing fallback appearance is fully preserved — this component only
+ * adds host wiring and the bounded, user-visible retry control.
+ */
+export function HostContributionErrorBoundary({
+  contributionId,
+  extensionId,
+  kind,
+  label,
+  onError,
+  children,
+  maxRetries = 3,
+  retryDebounceMs = 5000,
+}: HostContributionErrorBoundaryProps) {
+  const runtime = useOptionalVideoEditorRuntime();
+
+  // ── Retry bookkeeping (reset when extensionId changes) ────────────────
+  const retryCountRef = useRef(0);
+  const lastRetryTimeRef = useRef(0);
+
+  // Reset retry state when the owning extension changes identity.
+  useEffect(() => {
+    retryCountRef.current = 0;
+    lastRetryTimeRef.current = 0;
+  }, [extensionId]);
+
+  // ── Recovery key state ────────────────────────────────────────────────
+  // We maintain a local counter so that HostContributionErrorBoundary can
+  // trigger its own re-render when it increments the recovery key.
+  // The actual host key is passed through for external resets.
+  const [localEpoch, setLocalEpoch] = useState(0);
+
+  // Read the host-owned recovery key (changes on activation, manifest
+  // replacement, re-add, or external incrementRecoveryKey calls).
+  const hostKey = useMemo(() => {
+    if (extensionId && runtime?.getRecoveryKey) {
+      const key = runtime.getRecoveryKey(extensionId);
+      return key !== '0' ? key : undefined;
+    }
+    return undefined;
+  }, [extensionId, runtime]);
+
+  // Reset local epoch when the host key changes externally (so external
+  // recovery signals are honoured without double-incrementing).
+  useEffect(() => {
+    setLocalEpoch(0);
+  }, [hostKey]);
+
+  // Composite recovery key: host key + local retry epoch.
+  // When either changes, the underlying boundary resets.
+  const recoveryKey = useMemo(() => {
+    if (!extensionId || !hostKey) return undefined;
+    return `${hostKey}:${localEpoch}`;
+  }, [extensionId, hostKey, localEpoch]);
+
+  // ── Error handler (no auto-retry — retry is user-initiated) ───────────
+  const handleError = useCallback(
+    (info: ContributionErrorInfo) => {
+      // Forward to the caller's callback only.
+      onError?.(info);
+    },
+    [onError],
+  );
+
+  // ── Bounded, debounced retry handler for the visible button ───────────
+  const handleRetry = useCallback(() => {
+    if (!extensionId || !runtime?.incrementRecoveryKey) return;
+
+    const now = Date.now();
+    const elapsed = now - lastRetryTimeRef.current;
+
+    if (retryCountRef.current >= maxRetries) return; // exhausted
+    if (elapsed < retryDebounceMs) return; // debounced
+
+    retryCountRef.current++;
+    lastRetryTimeRef.current = now;
+
+    // Increment the host key so that other boundaries scoped to the
+    // same extension also see the recovery signal.
+    runtime.incrementRecoveryKey(extensionId);
+
+    // Bump our local epoch to trigger re-render with the new composite key.
+    setLocalEpoch((prev) => prev + 1);
+  }, [extensionId, runtime, maxRetries, retryDebounceMs]);
+
+  // ── Derived retry button state ────────────────────────────────────────
+  const retriesRemaining = Math.max(0, maxRetries - retryCountRef.current);
+  const retryDisabled = retryCountRef.current >= maxRetries;
+
+  // Only expose retry when the owning extension is known.
+  const onRetry = extensionId ? handleRetry : undefined;
+
+  // ── Render ────────────────────────────────────────────────────────────
+  return (
+    <ContributionErrorBoundary
+      contributionId={contributionId}
+      extensionId={extensionId}
+      kind={kind}
+      label={label}
+      recoveryKey={recoveryKey}
+      onError={handleError}
+      onRetry={onRetry}
+      retryDisabled={retryDisabled}
+      retriesRemaining={retriesRemaining}
+    >
+      {children}
+    </ContributionErrorBoundary>
+  );
 }

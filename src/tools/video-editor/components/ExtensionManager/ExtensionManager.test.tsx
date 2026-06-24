@@ -2295,3 +2295,876 @@ describe('ExtensionManager — diagnostic badges and inline details', () => {
     });
   });
 });
+
+// ---------------------------------------------------------------------------
+// T11: Direct entry read-only, package inventory card source, and state tests
+// ---------------------------------------------------------------------------
+
+describe('ExtensionManager — direct entry read-only (T11)', () => {
+  beforeEach(() => {
+    mockUseVideoEditorRuntime.mockReset();
+  });
+
+  describe('direct entry toggle suppression', () => {
+    it('does NOT show enable/disable toggle for direct host-supplied loaded entries', () => {
+      const repo = makeRepository();
+      mockUseVideoEditorRuntime.mockReturnValue({
+        extensionRuntime: makeRuntime([
+          {
+            extensionId: 'ext.direct',
+            packageState: 'loaded',
+            label: 'Direct Package',
+            stateReason: 'Direct host-supplied extension',
+          },
+        ]),
+        extensionStateRepository: repo,
+        triggerExtensionRefresh: vi.fn(),
+      });
+
+      render(<ExtensionManager />);
+
+      // Package renders
+      expect(screen.getByText('Direct Package')).toBeInTheDocument();
+
+      // No toggle button for direct entries
+      expect(
+        screen.queryByRole('button', { name: /ext\.direct/i }),
+      ).not.toBeInTheDocument();
+    });
+
+    it('does NOT show toggle for direct entries even when disabled-by-user state (edge case)', () => {
+      const repo = makeRepository();
+      mockUseVideoEditorRuntime.mockReturnValue({
+        extensionRuntime: makeRuntime([
+          {
+            extensionId: 'ext.direct',
+            packageState: 'disabled-by-user',
+            label: 'Direct Disabled',
+            stateReason: 'Direct host-supplied extension',
+          },
+        ]),
+        extensionStateRepository: repo,
+        triggerExtensionRefresh: vi.fn(),
+      });
+
+      render(<ExtensionManager />);
+
+      expect(screen.getByText('Direct Disabled')).toBeInTheDocument();
+      expect(
+        screen.queryByRole('button', { name: /ext\.direct/i }),
+      ).not.toBeInTheDocument();
+    });
+
+    it('shows toggle for managed loaded packages alongside direct entries', () => {
+      const repo = makeRepository();
+      mockUseVideoEditorRuntime.mockReturnValue({
+        extensionRuntime: makeRuntime([
+          {
+            extensionId: 'ext.direct',
+            packageState: 'loaded',
+            label: 'Direct Package',
+            stateReason: 'Direct host-supplied extension',
+          },
+          {
+            extensionId: 'ext.managed',
+            packageState: 'loaded',
+            label: 'Managed Package',
+          },
+        ]),
+        extensionStateRepository: repo,
+        triggerExtensionRefresh: vi.fn(),
+      });
+
+      render(<ExtensionManager />);
+
+      // Direct package has no toggle
+      expect(screen.getByText('Direct Package')).toBeInTheDocument();
+      expect(
+        screen.queryByRole('button', { name: /ext\.direct/i }),
+      ).not.toBeInTheDocument();
+
+      // Managed package has toggle
+      expect(screen.getByText('Managed Package')).toBeInTheDocument();
+      const managedToggle = screen.getByRole('button', {
+        name: /disable ext\.managed/i,
+      });
+      expect(managedToggle).toBeInTheDocument();
+      expect(managedToggle).toHaveTextContent('Enabled');
+    });
+  });
+
+  describe('direct entry badge', () => {
+    it('renders Direct badge with Zap icon on direct host-supplied entries', () => {
+      const repo = makeRepository();
+      mockUseVideoEditorRuntime.mockReturnValue({
+        extensionRuntime: makeRuntime([
+          {
+            extensionId: 'ext.direct',
+            packageState: 'loaded',
+            label: 'Direct Package',
+            stateReason: 'Direct host-supplied extension',
+          },
+        ]),
+        extensionStateRepository: repo,
+        triggerExtensionRefresh: vi.fn(),
+      });
+
+      render(<ExtensionManager />);
+
+      // Direct badge should be visible
+      const directBadge = document.querySelector(
+        '[data-video-editor-extension-direct-entry="ext.direct"]',
+      );
+      expect(directBadge).toBeInTheDocument();
+      expect(directBadge).toHaveTextContent('Direct');
+    });
+
+    it('does NOT render Direct badge on managed (non-direct) entries', () => {
+      const repo = makeRepository();
+      mockUseVideoEditorRuntime.mockReturnValue({
+        extensionRuntime: makeRuntime([
+          {
+            extensionId: 'ext.managed',
+            packageState: 'loaded',
+            label: 'Managed Package',
+            stateReason: 'Loaded successfully',
+          },
+        ]),
+        extensionStateRepository: repo,
+        triggerExtensionRefresh: vi.fn(),
+      });
+
+      render(<ExtensionManager />);
+
+      // No Direct badge
+      expect(
+        document.querySelector('[data-video-editor-extension-direct-entry]'),
+      ).not.toBeInTheDocument();
+
+      // PackageStateBadge should show Loaded
+      expect(screen.getByText('Loaded')).toBeInTheDocument();
+    });
+
+    it('renders both Direct badge and Loaded state badge on a direct loaded entry', () => {
+      const repo = makeRepository();
+      mockUseVideoEditorRuntime.mockReturnValue({
+        extensionRuntime: makeRuntime([
+          {
+            extensionId: 'ext.direct',
+            packageState: 'loaded',
+            label: 'Direct Package',
+            stateReason: 'Direct host-supplied extension',
+          },
+        ]),
+        extensionStateRepository: repo,
+        triggerExtensionRefresh: vi.fn(),
+      });
+
+      render(<ExtensionManager />);
+
+      // Both badges present
+      expect(screen.getByText('Direct')).toBeInTheDocument();
+      expect(screen.getByText('Loaded')).toBeInTheDocument();
+    });
+  });
+
+  describe('direct entry metadata and state reason', () => {
+    it('displays full metadata for direct entries', () => {
+      const repo = makeRepository();
+      mockUseVideoEditorRuntime.mockReturnValue({
+        extensionRuntime: makeRuntime([
+          {
+            extensionId: 'ext.direct',
+            packageState: 'loaded',
+            label: 'Direct Full Package',
+            version: '3.2.1',
+            publisher: 'Host Publisher',
+            description: 'A direct host-supplied package',
+            stateReason: 'Direct host-supplied extension',
+          },
+        ]),
+        extensionStateRepository: repo,
+        triggerExtensionRefresh: vi.fn(),
+      });
+
+      render(<ExtensionManager />);
+
+      expect(screen.getByText('Direct Full Package')).toBeInTheDocument();
+      expect(screen.getByText('v3.2.1')).toBeInTheDocument();
+      expect(screen.getByText('Host Publisher')).toBeInTheDocument();
+      expect(
+        screen.getByText('A direct host-supplied package'),
+      ).toBeInTheDocument();
+    });
+
+    it('shows Direct host-supplied extension as state reason', () => {
+      const repo = makeRepository();
+      mockUseVideoEditorRuntime.mockReturnValue({
+        extensionRuntime: makeRuntime([
+          {
+            extensionId: 'ext.direct',
+            packageState: 'loaded',
+            label: 'Direct Package',
+            stateReason: 'Direct host-supplied extension',
+          },
+        ]),
+        extensionStateRepository: repo,
+        triggerExtensionRefresh: vi.fn(),
+      });
+
+      render(<ExtensionManager />);
+
+      expect(
+        screen.getByText('Direct host-supplied extension'),
+      ).toBeInTheDocument();
+    });
+  });
+
+  describe('direct entry settings remain accessible', () => {
+    it('settings section is still toggleable on direct entries', () => {
+      const repo = makeRepository();
+      mockUseVideoEditorRuntime.mockReturnValue({
+        extensionRuntime: makeRuntime([
+          {
+            extensionId: 'ext.direct',
+            packageState: 'loaded',
+            label: 'Direct Package',
+            stateReason: 'Direct host-supplied extension',
+          },
+        ]),
+        extensionStateRepository: repo,
+        triggerExtensionRefresh: vi.fn(),
+      });
+
+      render(<ExtensionManager />);
+
+      // Settings toggle should be present
+      const settingsToggle = screen.getByRole('button', {
+        name: 'Show extension settings',
+      });
+      expect(settingsToggle).toBeInTheDocument();
+    });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// T11: Package inventory contribution summary tests
+// ---------------------------------------------------------------------------
+
+describe('ExtensionManager — contribution summary from inventory (T11)', () => {
+  beforeEach(() => {
+    mockUseVideoEditorRuntime.mockReset();
+  });
+
+  describe('contribution summary display', () => {
+    it('renders contribution line from precomputed contributionSummary on entry', () => {
+      const repo = makeRepository();
+      mockUseVideoEditorRuntime.mockReturnValue({
+        extensionRuntime: makeRuntime([
+          {
+            extensionId: 'ext.a',
+            packageState: 'loaded',
+            label: 'Package A',
+            stateReason: 'Loaded from repository',
+          },
+        ]),
+        extensionStateRepository: repo,
+        triggerExtensionRefresh: vi.fn(),
+      });
+
+      // Override the runtime's packageStateInventory to include contributionSummary
+      const runtime = mockUseVideoEditorRuntime.getMockImplementation()?.()?.extensionRuntime;
+      if (runtime) {
+        // Patch the first entry with a precomputed contribution summary
+        const entries = [...runtime.packageStateInventory] as any[];
+        entries[0] = {
+          ...entries[0],
+          contributionSummary: {
+            declared: 5,
+            active: 3,
+            inactive: 1,
+            kinds: Object.freeze(['Effect', 'Panel', 'Slot', 'Transition']),
+            contributionIds: Object.freeze({
+              Effect: Object.freeze(['effect-1', 'effect-2']),
+              Panel: Object.freeze(['panel-1']),
+              Slot: Object.freeze(['slot-1']),
+              Transition: Object.freeze(['transition-1']),
+            }),
+          },
+        };
+        runtime.packageStateInventory = entries;
+      }
+
+      render(<ExtensionManager />);
+
+      // Should show "5 contributions · 3 active · 1 inactive"
+      expect(screen.getByText(/5 contributions/)).toBeInTheDocument();
+      expect(screen.getByText(/3 active/)).toBeInTheDocument();
+      expect(screen.getByText(/1 inactive/)).toBeInTheDocument();
+    });
+
+    it('shows contribution line without active count when all declared are active', () => {
+      const repo = makeRepository();
+      mockUseVideoEditorRuntime.mockReturnValue({
+        extensionRuntime: makeRuntime([
+          {
+            extensionId: 'ext.a',
+            packageState: 'loaded',
+            label: 'Package A',
+          },
+        ]),
+        extensionStateRepository: repo,
+        triggerExtensionRefresh: vi.fn(),
+      });
+
+      const runtime = mockUseVideoEditorRuntime.getMockImplementation()?.()?.extensionRuntime;
+      if (runtime) {
+        const entries = [...runtime.packageStateInventory] as any[];
+        entries[0] = {
+          ...entries[0],
+          contributionSummary: {
+            declared: 3,
+            active: 3,
+            inactive: 0,
+            kinds: Object.freeze(['Slot']),
+            contributionIds: Object.freeze({
+              Slot: Object.freeze(['slot-1', 'slot-2', 'slot-3']),
+            }),
+          },
+        };
+        runtime.packageStateInventory = entries;
+      }
+
+      render(<ExtensionManager />);
+
+      expect(screen.getByText(/3 contributions/)).toBeInTheDocument();
+      // Should NOT show "3 active" since all are active
+      expect(screen.queryByText(/3 active/)).not.toBeInTheDocument();
+    });
+
+    it('shows contribution line for disabled-by-user packages with precomputed summary', () => {
+      const repo = makeRepository();
+      mockUseVideoEditorRuntime.mockReturnValue({
+        extensionRuntime: makeRuntime([
+          {
+            extensionId: 'ext.disabled',
+            packageState: 'disabled-by-user',
+            label: 'Disabled Package',
+            stateReason: 'User disabled via extension manager',
+          },
+        ]),
+        extensionStateRepository: repo,
+        triggerExtensionRefresh: vi.fn(),
+      });
+
+      const runtime = mockUseVideoEditorRuntime.getMockImplementation()?.()?.extensionRuntime;
+      if (runtime) {
+        const entries = [...runtime.packageStateInventory] as any[];
+        entries[0] = {
+          ...entries[0],
+          contributionSummary: {
+            declared: 4,
+            active: -1, // unknown — extension is disabled
+            inactive: 2,
+            kinds: Object.freeze(['Inspector section', 'Panel']),
+            contributionIds: Object.freeze({
+              'Inspector section': Object.freeze(['insp-1']),
+              Panel: Object.freeze(['panel-1', 'panel-2', 'panel-3']),
+            }),
+          },
+        };
+        runtime.packageStateInventory = entries;
+      }
+
+      render(<ExtensionManager />);
+
+      // Should show contributions even though package is disabled
+      expect(screen.getByText(/4 contributions/)).toBeInTheDocument();
+      expect(screen.getByText(/2 inactive/)).toBeInTheDocument();
+    });
+
+    it('shows contribution line for error-state packages with precomputed summary', () => {
+      const repo = makeRepository();
+      mockUseVideoEditorRuntime.mockReturnValue({
+        extensionRuntime: makeRuntime([
+          {
+            extensionId: 'ext.invalid',
+            packageState: 'invalid',
+            label: 'Invalid Package',
+            stateReason: 'Manifest parse error',
+          },
+        ]),
+        extensionStateRepository: repo,
+        triggerExtensionRefresh: vi.fn(),
+      });
+
+      const runtime = mockUseVideoEditorRuntime.getMockImplementation()?.()?.extensionRuntime;
+      if (runtime) {
+        const entries = [...runtime.packageStateInventory] as any[];
+        entries[0] = {
+          ...entries[0],
+          contributionSummary: {
+            declared: 2,
+            active: -1,
+            inactive: -1,
+            kinds: Object.freeze(['Slot']),
+            contributionIds: Object.freeze({
+              Slot: Object.freeze(['slot-1', 'slot-2']),
+            }),
+          },
+        };
+        runtime.packageStateInventory = entries;
+      }
+
+      render(<ExtensionManager />);
+
+      // Error state packages should still show their declared contributions
+      expect(screen.getByText(/2 contributions/)).toBeInTheDocument();
+    });
+
+    it('does NOT show contribution line when contributionSummary.declared is 0', () => {
+      const repo = makeRepository();
+      mockUseVideoEditorRuntime.mockReturnValue({
+        extensionRuntime: makeRuntime([
+          {
+            extensionId: 'ext.a',
+            packageState: 'loaded',
+            label: 'Package A',
+          },
+        ]),
+        extensionStateRepository: repo,
+        triggerExtensionRefresh: vi.fn(),
+      });
+
+      const runtime = mockUseVideoEditorRuntime.getMockImplementation()?.()?.extensionRuntime;
+      if (runtime) {
+        const entries = [...runtime.packageStateInventory] as any[];
+        entries[0] = {
+          ...entries[0],
+          contributionSummary: {
+            declared: 0,
+            active: -1,
+            inactive: -1,
+            kinds: Object.freeze([]),
+            contributionIds: Object.freeze({}),
+          },
+        };
+        runtime.packageStateInventory = entries;
+      }
+
+      render(<ExtensionManager />);
+
+      // No contribution line should appear
+      expect(screen.queryByText(/contributions/)).not.toBeInTheDocument();
+      expect(screen.queryByText(/active/)).not.toBeInTheDocument();
+      expect(screen.queryByText(/inactive/)).not.toBeInTheDocument();
+    });
+  });
+
+  describe('fallback to manifest-derived summaries', () => {
+    it('falls back to deriveContributionSummary when no precomputed contributionSummary on entry', () => {
+      const repo = makeRepository();
+      mockUseVideoEditorRuntime.mockReturnValue({
+        extensionRuntime: makeRuntime(
+          [
+            {
+              extensionId: 'ext.a',
+              packageState: 'loaded',
+              label: 'Package A',
+            },
+          ],
+          [
+            {
+              manifest: {
+                id: 'ext.a',
+                version: '1.0.0',
+                label: 'Package A',
+                contributions: [
+                  { id: 'slot-header', kind: 'slot', slot: 'header' },
+                  { id: 'panel-main', kind: 'panel' },
+                ],
+              },
+            },
+          ],
+        ),
+        extensionStateRepository: repo,
+        triggerExtensionRefresh: vi.fn(),
+      });
+
+      render(<ExtensionManager />);
+
+      // Should derive 2 declared contributions from the manifest
+      expect(screen.getByText(/2 contributions/)).toBeInTheDocument();
+    });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// T11: Empty, error, and mixed state tests
+// ---------------------------------------------------------------------------
+
+describe('ExtensionManager — empty, error, and mixed states (T11)', () => {
+  beforeEach(() => {
+    mockUseVideoEditorRuntime.mockReset();
+  });
+
+  describe('empty state', () => {
+    it('renders empty state with Zap icon when no packages in inventory', () => {
+      mockUseVideoEditorRuntime.mockReturnValue({
+        extensionRuntime: makeRuntime([]),
+        extensionStateRepository: null,
+        triggerExtensionRefresh: undefined,
+      });
+
+      render(<ExtensionManager />);
+
+      expect(screen.getByText('No packages in inventory.')).toBeInTheDocument();
+      expect(
+        screen.getByText('Extensions supplied by the host will appear here.'),
+      ).toBeInTheDocument();
+      expect(screen.getByRole('status', { name: 'No packages in inventory' })).toBeInTheDocument();
+    });
+
+    it('renders trust warning banner in empty state', () => {
+      mockUseVideoEditorRuntime.mockReturnValue({
+        extensionRuntime: makeRuntime([]),
+        extensionStateRepository: null,
+        triggerExtensionRefresh: undefined,
+      });
+
+      render(<ExtensionManager />);
+
+      const warning = screen.getByRole('note', { name: 'Extension trust warning' });
+      expect(warning).toBeInTheDocument();
+    });
+
+    it('does NOT render summary bar when inventory is empty', () => {
+      mockUseVideoEditorRuntime.mockReturnValue({
+        extensionRuntime: makeRuntime([]),
+        extensionStateRepository: null,
+        triggerExtensionRefresh: undefined,
+      });
+
+      render(<ExtensionManager />);
+
+      // Summary bar should not exist when no packages
+      // (The aria-label "Extension summary: N packages, M loaded" only appears on the summary bar)
+      expect(
+        screen.queryByLabelText(/Extension summary/),
+      ).not.toBeInTheDocument();
+    });
+  });
+
+  describe('active state', () => {
+    it('renders loaded package with full interactivity (toggle, settings, diagnostics)', () => {
+      const repo = makeRepository();
+      mockUseVideoEditorRuntime.mockReturnValue({
+        extensionRuntime: makeRuntime([
+          {
+            extensionId: 'ext.active',
+            packageState: 'loaded',
+            label: 'Active Package',
+            version: '1.2.0',
+            publisher: 'Active Publisher',
+            stateReason: 'Loaded successfully',
+          },
+        ]),
+        extensionStateRepository: repo,
+        triggerExtensionRefresh: vi.fn(),
+      });
+
+      render(<ExtensionManager />);
+
+      // Full metadata
+      expect(screen.getByText('Active Package')).toBeInTheDocument();
+      expect(screen.getByText('v1.2.0')).toBeInTheDocument();
+      expect(screen.getByText('Active Publisher')).toBeInTheDocument();
+
+      // Toggle is present and shows Enabled
+      const toggle = screen.getByRole('button', { name: /disable ext\.active/i });
+      expect(toggle).toBeInTheDocument();
+      expect(toggle).toHaveTextContent('Enabled');
+
+      // State badge
+      expect(screen.getByText('Loaded')).toBeInTheDocument();
+
+      // State reason
+      expect(screen.getByText('Loaded successfully')).toBeInTheDocument();
+
+      // Settings toggle
+      expect(
+        screen.getByRole('button', { name: 'Show extension settings' }),
+      ).toBeInTheDocument();
+    });
+  });
+
+  describe('error states', () => {
+    it('renders runtime-error packages with full visibility and state reason', () => {
+      mockUseVideoEditorRuntime.mockReturnValue({
+        extensionRuntime: makeRuntime([
+          {
+            extensionId: 'ext.rterr',
+            packageState: 'runtime-error',
+            label: 'Runtime Error Package',
+            stateReason: 'Integrity hash mismatch',
+          },
+        ]),
+        extensionStateRepository: makeRepository(),
+        triggerExtensionRefresh: vi.fn(),
+      });
+
+      render(<ExtensionManager />);
+
+      expect(screen.getByText('Runtime Error Package')).toBeInTheDocument();
+      expect(screen.getByText('Runtime Error')).toBeInTheDocument();
+      expect(screen.getByText('Integrity hash mismatch')).toBeInTheDocument();
+
+      // No toggle for error states
+      expect(
+        screen.queryByRole('button', { name: /ext\.rterr/i }),
+      ).not.toBeInTheDocument();
+    });
+
+    it('renders settings-error packages with full visibility', () => {
+      mockUseVideoEditorRuntime.mockReturnValue({
+        extensionRuntime: makeRuntime([
+          {
+            extensionId: 'ext.settingserr',
+            packageState: 'settings-error',
+            label: 'Settings Error Package',
+            stateReason: 'Settings schema validation failed',
+          },
+        ]),
+        extensionStateRepository: makeRepository(),
+        triggerExtensionRefresh: vi.fn(),
+      });
+
+      render(<ExtensionManager />);
+
+      expect(screen.getByText('Settings Error Package')).toBeInTheDocument();
+      expect(screen.getByText('Settings Error')).toBeInTheDocument();
+      expect(
+        screen.getByText('Settings schema validation failed'),
+      ).toBeInTheDocument();
+
+      // Settings toggle should still be present
+      expect(
+        screen.getByRole('button', { name: 'Show extension settings' }),
+      ).toBeInTheDocument();
+    });
+
+    it('renders invalid packages with metadata preserved', () => {
+      mockUseVideoEditorRuntime.mockReturnValue({
+        extensionRuntime: makeRuntime([
+          {
+            extensionId: 'ext.invalid',
+            packageState: 'invalid',
+            label: 'Invalid Package',
+            version: '0.9.0',
+            publisher: 'Bad Publisher',
+            description: 'This package has an invalid manifest',
+            stateReason: 'Missing required dependency com.example.foo',
+          },
+        ]),
+        extensionStateRepository: makeRepository(),
+        triggerExtensionRefresh: vi.fn(),
+      });
+
+      render(<ExtensionManager />);
+
+      expect(screen.getByText('Invalid Package')).toBeInTheDocument();
+      expect(screen.getByText('v0.9.0')).toBeInTheDocument();
+      expect(screen.getByText('Bad Publisher')).toBeInTheDocument();
+      expect(
+        screen.getByText('This package has an invalid manifest'),
+      ).toBeInTheDocument();
+      expect(screen.getByText('Invalid')).toBeInTheDocument();
+      expect(
+        screen.getByText('Missing required dependency com.example.foo'),
+      ).toBeInTheDocument();
+    });
+
+    it('renders incompatible packages with state reason', () => {
+      mockUseVideoEditorRuntime.mockReturnValue({
+        extensionRuntime: makeRuntime([
+          {
+            extensionId: 'ext.incompat',
+            packageState: 'incompatible',
+            label: 'Incompatible Package',
+            stateReason: 'API version mismatch: requires v2, host is v1',
+          },
+        ]),
+        extensionStateRepository: makeRepository(),
+        triggerExtensionRefresh: vi.fn(),
+      });
+
+      render(<ExtensionManager />);
+
+      expect(screen.getByText('Incompatible Package')).toBeInTheDocument();
+      expect(screen.getByText('Incompatible')).toBeInTheDocument();
+      expect(
+        screen.getByText('API version mismatch: requires v2, host is v1'),
+      ).toBeInTheDocument();
+    });
+
+    it('renders duplicate packages with state reason', () => {
+      mockUseVideoEditorRuntime.mockReturnValue({
+        extensionRuntime: makeRuntime([
+          {
+            extensionId: 'ext.dup',
+            packageState: 'duplicate',
+            label: 'Duplicate Package',
+            stateReason: 'Installed pack takes precedence',
+          },
+        ]),
+        extensionStateRepository: makeRepository(),
+        triggerExtensionRefresh: vi.fn(),
+      });
+
+      render(<ExtensionManager />);
+
+      expect(screen.getByText('Duplicate Package')).toBeInTheDocument();
+      expect(screen.getByText('Duplicate')).toBeInTheDocument();
+      expect(
+        screen.getByText('Installed pack takes precedence'),
+      ).toBeInTheDocument();
+    });
+  });
+
+  describe('mixed direct and managed entries', () => {
+    it('summary bar counts both direct and managed entries', () => {
+      const repo = makeRepository();
+      mockUseVideoEditorRuntime.mockReturnValue({
+        extensionRuntime: makeRuntime([
+          {
+            extensionId: 'ext.direct',
+            packageState: 'loaded',
+            label: 'Direct Package',
+            stateReason: 'Direct host-supplied extension',
+          },
+          {
+            extensionId: 'ext.managed',
+            packageState: 'loaded',
+            label: 'Managed Package',
+            stateReason: 'Loaded from repository',
+          },
+        ]),
+        extensionStateRepository: repo,
+        triggerExtensionRefresh: vi.fn(),
+      });
+
+      render(<ExtensionManager />);
+
+      // Summary bar should show 2 packages, 2 loaded
+      expect(screen.getByText('2 packages')).toBeInTheDocument();
+      expect(screen.getByText('2 loaded')).toBeInTheDocument();
+    });
+
+    it('Direct badge appears only on direct entries, not on managed', () => {
+      const repo = makeRepository();
+      mockUseVideoEditorRuntime.mockReturnValue({
+        extensionRuntime: makeRuntime([
+          {
+            extensionId: 'ext.direct',
+            packageState: 'loaded',
+            label: 'Direct Package',
+            stateReason: 'Direct host-supplied extension',
+          },
+          {
+            extensionId: 'ext.managed',
+            packageState: 'loaded',
+            label: 'Managed Package',
+            stateReason: 'Loaded from repository',
+          },
+        ]),
+        extensionStateRepository: repo,
+        triggerExtensionRefresh: vi.fn(),
+      });
+
+      render(<ExtensionManager />);
+
+      // Exactly one Direct badge
+      const directBadges = document.querySelectorAll(
+        '[data-video-editor-extension-direct-entry]',
+      );
+      expect(directBadges.length).toBe(1);
+      expect(directBadges[0]).toHaveAttribute(
+        'data-video-editor-extension-direct-entry',
+        'ext.direct',
+      );
+      expect(directBadges[0]).toHaveTextContent('Direct');
+    });
+
+    it('toggle only appears on managed entry, not direct', () => {
+      const repo = makeRepository();
+      mockUseVideoEditorRuntime.mockReturnValue({
+        extensionRuntime: makeRuntime([
+          {
+            extensionId: 'ext.direct',
+            packageState: 'loaded',
+            label: 'Direct Package',
+            stateReason: 'Direct host-supplied extension',
+          },
+          {
+            extensionId: 'ext.managed',
+            packageState: 'loaded',
+            label: 'Managed Package',
+            stateReason: 'Loaded from repository',
+          },
+        ]),
+        extensionStateRepository: repo,
+        triggerExtensionRefresh: vi.fn(),
+      });
+
+      render(<ExtensionManager />);
+
+      // No toggle for direct
+      expect(
+        screen.queryByRole('button', { name: /ext\.direct/i }),
+      ).not.toBeInTheDocument();
+
+      // Toggle for managed
+      const managedToggle = screen.getByRole('button', {
+        name: /disable ext\.managed/i,
+      });
+      expect(managedToggle).toBeInTheDocument();
+    });
+  });
+
+  describe('data attributes on direct and error entries', () => {
+    it('sets data-video-editor-extension-package-state on all entry cards', () => {
+      const repo = makeRepository();
+      mockUseVideoEditorRuntime.mockReturnValue({
+        extensionRuntime: makeRuntime([
+          {
+            extensionId: 'ext.direct',
+            packageState: 'loaded',
+            label: 'Direct Package',
+            stateReason: 'Direct host-supplied extension',
+          },
+          {
+            extensionId: 'ext.err',
+            packageState: 'runtime-error',
+            label: 'Error Package',
+            stateReason: 'Integrity failure',
+          },
+        ]),
+        extensionStateRepository: repo,
+        triggerExtensionRefresh: vi.fn(),
+      });
+
+      render(<ExtensionManager />);
+
+      expect(
+        document.querySelector(
+          '[data-video-editor-extension-package-state="loaded"]',
+        ),
+      ).toBeInTheDocument();
+      expect(
+        document.querySelector(
+          '[data-video-editor-extension-package-state="runtime-error"]',
+        ),
+      ).toBeInTheDocument();
+    });
+  });
+});

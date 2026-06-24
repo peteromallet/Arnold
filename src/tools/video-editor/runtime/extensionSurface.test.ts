@@ -1645,3 +1645,371 @@ describe('normalizeExtensionRuntime — M6 combined contributions', () => {
     expect(rt.config).not.toBe(DEFAULT_VIDEO_EDITOR_EXTENSION_RUNTIME);
   });
 });
+
+// ---------------------------------------------------------------------------
+// M5: PackageContributionSummary helpers
+// ---------------------------------------------------------------------------
+
+import {
+  computePackageContributionSummary,
+  type PackageContributionSummary,
+  type PackageStateInventoryEntry,
+} from '@/tools/video-editor/runtime/extensionSurface.ts';
+
+describe('computePackageContributionSummary', () => {
+  it('returns null for undefined manifest contributions', () => {
+    expect(computePackageContributionSummary(undefined)).toBeNull();
+  });
+
+  it('returns null for null manifest contributions', () => {
+    expect(computePackageContributionSummary(null)).toBeNull();
+  });
+
+  it('returns null for an empty contributions array', () => {
+    expect(computePackageContributionSummary([])).toBeNull();
+  });
+
+  it('computes declared count and kinds from manifest contributions', () => {
+    const contribs = [
+      { id: 'slot1' as any, kind: 'slot', slot: 'toolbar' },
+      { id: 'dlg1' as any, kind: 'dialog' },
+      { id: 'panel1' as any, kind: 'panel' },
+    ];
+    const summary = computePackageContributionSummary(contribs);
+    expect(summary).not.toBeNull();
+    expect(summary!.declared).toBe(3);
+    expect(summary!.active).toBe(-1); // unknown
+    expect(summary!.inactive).toBe(-1); // unknown
+    expect(summary!.kinds).toEqual(['Dialog', 'Panel', 'Slot']);
+  });
+
+  it('computes active count when activeIds is provided', () => {
+    const contribs = [
+      { id: 'a' as any, kind: 'slot', slot: 'toolbar' },
+      { id: 'b' as any, kind: 'dialog' },
+      { id: 'c' as any, kind: 'panel' },
+    ];
+    const activeIds = new Set(['a', 'b']);
+    const summary = computePackageContributionSummary(contribs, activeIds);
+    expect(summary!.active).toBe(2);
+    expect(summary!.inactive).toBe(-1);
+  });
+
+  it('uses the provided inactiveCount', () => {
+    const contribs = [{ id: 'x' as any, kind: 'slot', slot: 'toolbar' }];
+    const summary = computePackageContributionSummary(contribs, undefined, 5);
+    expect(summary!.inactive).toBe(5);
+  });
+
+  it('computes per-kind contribution IDs', () => {
+    const contribs = [
+      { id: 'slot-a' as any, kind: 'slot', slot: 'toolbar' },
+      { id: 'slot-b' as any, kind: 'slot', slot: 'header' },
+      { id: 'dlg-1' as any, kind: 'dialog' },
+    ];
+    const summary = computePackageContributionSummary(contribs);
+    expect(summary!.contributionIds['Slot']).toEqual(['slot-a', 'slot-b']);
+    expect(summary!.contributionIds['Dialog']).toEqual(['dlg-1']);
+  });
+
+  it('falls back to raw contribution kind when kind label is unknown', () => {
+    const contribs = [
+      { id: 'weird' as any, kind: 'future-kind' as any },
+    ];
+    const summary = computePackageContributionSummary(contribs);
+    expect(summary!.kinds).toEqual(['future-kind']);
+  });
+
+  it('returns a frozen summary object', () => {
+    const contribs = [{ id: 'a' as any, kind: 'slot', slot: 'toolbar' }];
+    const summary = computePackageContributionSummary(contribs);
+    expect(Object.isFrozen(summary)).toBe(true);
+    expect(Object.isFrozen(summary!.kinds)).toBe(true);
+    expect(Object.isFrozen(summary!.contributionIds)).toBe(true);
+  });
+
+  it('returns a frozen summary even when nested objects are large', () => {
+    const contribs = [
+      { id: 'a' as any, kind: 'slot', slot: 'toolbar' },
+      { id: 'b' as any, kind: 'dialog' },
+      { id: 'c' as any, kind: 'panel' },
+      { id: 'd' as any, kind: 'inspectorSection' },
+    ];
+    const summary = computePackageContributionSummary(contribs);
+    expect(Object.isFrozen(summary)).toBe(true);
+    expect(Object.isFrozen(summary!.kinds)).toBe(true);
+    expect(Object.isFrozen(summary!.contributionIds)).toBe(true);
+    // All per-kind arrays should be frozen
+    for (const ids of Object.values(summary!.contributionIds)) {
+      expect(Object.isFrozen(ids)).toBe(true);
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// M5: PackageContributionSummary in normalizeExtensionRuntime
+// ---------------------------------------------------------------------------
+
+describe('normalizeExtensionRuntime — package contribution summaries', () => {
+  it('attaches contributionSummary to packageStateInventory for active extensions', () => {
+    const ex = ext('com.example.active', {
+      manifest: {
+        contributions: [
+          { id: 'btn' as any, kind: 'slot', slot: 'toolbar' },
+          { id: 'dlg' as any, kind: 'dialog' },
+        ],
+      },
+    });
+
+    const pkgEntry: PackageStateInventoryEntry = {
+      extensionId: 'com.example.active',
+      packageState: 'loaded',
+      stateReason: 'Loaded successfully.',
+      packageMetadata: { label: 'Test', version: '1.0.0' },
+    };
+
+    const rt = normalizeExtensionRuntime([ex], [pkgEntry]);
+    expect(rt.packageStateInventory).toHaveLength(1);
+
+    const entry = rt.packageStateInventory[0];
+    expect(entry.contributionSummary).not.toBeNull();
+    expect(entry.contributionSummary!.declared).toBe(2);
+    expect(entry.contributionSummary!.active).toBeGreaterThanOrEqual(0);
+    expect(entry.contributionSummary!.inactive).toBeGreaterThanOrEqual(0);
+    expect(entry.contributionSummary!.kinds).toContain('Slot');
+    expect(entry.contributionSummary!.kinds).toContain('Dialog');
+    expect(Object.isFrozen(entry.contributionSummary)).toBe(true);
+  });
+
+  it('attaches contributionSummary from manifestContributions for non-active packages', () => {
+    const manifestContributions = [
+      { id: 'parsing' as any, kind: 'parser', label: 'Parse' },
+      { id: 'searching' as any, kind: 'searchProvider', label: 'Search' },
+    ];
+
+    const pkgEntry: PackageStateInventoryEntry = {
+      extensionId: 'com.example.blocked',
+      packageState: 'incompatible',
+      stateReason: 'Missing required dependency.',
+      packageMetadata: { label: 'Blocked', version: '1.0.0' },
+      manifestContributions,
+    };
+
+    // No active extension for this package
+    const rt = normalizeExtensionRuntime([], [pkgEntry]);
+    expect(rt.packageStateInventory).toHaveLength(1);
+
+    const entry = rt.packageStateInventory[0];
+    expect(entry.contributionSummary).not.toBeNull();
+    expect(entry.contributionSummary!.declared).toBe(2);
+    expect(entry.contributionSummary!.active).toBe(-1); // unknown — no active descriptor
+    expect(entry.contributionSummary!.inactive).toBe(-1); // unknown
+    expect(entry.contributionSummary!.kinds).toContain('Parser');
+    expect(entry.contributionSummary!.kinds).toContain('Search provider');
+  });
+
+  it('sets contributionSummary to null when no manifest data is available', () => {
+    const pkgEntry: PackageStateInventoryEntry = {
+      extensionId: 'com.example.orphan',
+      packageState: 'invalid',
+      stateReason: 'No manifest found.',
+      packageMetadata: null,
+    };
+
+    const rt = normalizeExtensionRuntime([], [pkgEntry]);
+    expect(rt.packageStateInventory).toHaveLength(1);
+    expect(rt.packageStateInventory[0].contributionSummary).toBeNull();
+  });
+
+  it('preserves pre-existing contributionSummary from caller', () => {
+    const precomputed: PackageContributionSummary = Object.freeze({
+      declared: 3,
+      active: 2,
+      inactive: 1,
+      kinds: Object.freeze(['Slot', 'Dialog']),
+      contributionIds: Object.freeze({}),
+    });
+
+    const pkgEntry: PackageStateInventoryEntry = {
+      extensionId: 'com.example.precomputed',
+      packageState: 'loaded',
+      stateReason: 'Already computed.',
+      packageMetadata: { label: 'Pre', version: '1.0.0' },
+      contributionSummary: precomputed,
+    };
+
+    const rt = normalizeExtensionRuntime([], [pkgEntry]);
+    // The summary is re-frozen by normalizeExtensionRuntime, so identity differs but values are equal
+    expect(rt.packageStateInventory[0].contributionSummary).toEqual(precomputed);
+  });
+
+  it('freezes the contributionSummary inside packageStateInventory', () => {
+    const ex = ext('com.example.freeze-summary', {
+      manifest: {
+        contributions: [
+          { id: 'btn' as any, kind: 'slot', slot: 'toolbar' },
+        ],
+      },
+    });
+
+    const pkgEntry: PackageStateInventoryEntry = {
+      extensionId: 'com.example.freeze-summary',
+      packageState: 'loaded',
+      stateReason: 'Loaded.',
+      packageMetadata: { label: 'Freeze', version: '1.0.0' },
+    };
+
+    const rt = normalizeExtensionRuntime([ex], [pkgEntry]);
+    const entry = rt.packageStateInventory[0];
+    expect(Object.isFrozen(entry)).toBe(true);
+    expect(Object.isFrozen(entry.contributionSummary)).toBe(true);
+
+    // Attempt mutation should throw
+    expect(() => {
+      (entry.contributionSummary as any).declared = 999;
+    }).toThrow();
+  });
+
+  it('throws when attempting to mutate contributionSummary kinds', () => {
+    const ex = ext('com.example.immutable-kinds', {
+      manifest: {
+        contributions: [
+          { id: 'btn' as any, kind: 'slot', slot: 'toolbar' },
+        ],
+      },
+    });
+
+    const pkgEntry: PackageStateInventoryEntry = {
+      extensionId: 'com.example.immutable-kinds',
+      packageState: 'loaded',
+      stateReason: 'Loaded.',
+      packageMetadata: { label: 'Immutable', version: '1.0.0' },
+    };
+
+    const rt = normalizeExtensionRuntime([ex], [pkgEntry]);
+    const summary = rt.packageStateInventory[0].contributionSummary!;
+    
+    expect(() => {
+      (summary.kinds as any).push('Invalid');
+    }).toThrow();
+  });
+
+  it('throws when attempting to mutate contributionIds', () => {
+    const ex = ext('com.example.immutable-ids', {
+      manifest: {
+        contributions: [
+          { id: 'slot-a' as any, kind: 'slot', slot: 'toolbar' },
+          { id: 'slot-b' as any, kind: 'slot', slot: 'header' },
+        ],
+      },
+    });
+
+    const pkgEntry: PackageStateInventoryEntry = {
+      extensionId: 'com.example.immutable-ids',
+      packageState: 'loaded',
+      stateReason: 'Loaded.',
+      packageMetadata: { label: 'Immutable', version: '1.0.0' },
+    };
+
+    const rt = normalizeExtensionRuntime([ex], [pkgEntry]);
+    const summary = rt.packageStateInventory[0].contributionSummary!;
+    
+    expect(() => {
+      (summary.contributionIds as any)['New'] = ['should-fail'];
+    }).toThrow();
+  });
+
+  it('can produce declared counts, kind labels, and contribution IDs for manifest-only entries without active runtime descriptors', () => {
+    // This directly addresses SC8
+    const manifestContributions = [
+      { id: 'error-parser' as any, kind: 'parser', label: 'ErrorParser' },
+      { id: 'error-shader' as any, kind: 'shader', shaderId: 'myShader', label: 'ErrorShader' },
+      { id: 'error-tool' as any, kind: 'agentTool', toolId: 'myTool', label: 'ErrorTool' },
+    ];
+
+    const pkgEntry: PackageStateInventoryEntry = {
+      extensionId: 'com.example.disabled-error',
+      packageState: 'disabled-by-user',
+      stateReason: 'User disabled via extension manager.',
+      packageMetadata: { label: 'Disabled Package', version: '2.0.0' },
+      manifestContributions,
+    };
+
+    const rt = normalizeExtensionRuntime([], [pkgEntry]);
+    expect(rt.packageStateInventory).toHaveLength(1);
+
+    const entry = rt.packageStateInventory[0];
+    const summary = entry.contributionSummary;
+    expect(summary).not.toBeNull();
+
+    // Declared count
+    expect(summary!.declared).toBe(3);
+
+    // Kind labels
+    expect(summary!.kinds).toContain('Parser');
+    expect(summary!.kinds).toContain('Shader');
+    expect(summary!.kinds).toContain('Agent tool');
+
+    // Contribution IDs per kind
+    expect(summary!.contributionIds['Parser']).toEqual(['error-parser']);
+    expect(summary!.contributionIds['Shader']).toEqual(['error-shader']);
+    expect(summary!.contributionIds['Agent tool']).toEqual(['error-tool']);
+
+    // State reason preserved
+    expect(entry.stateReason).toBe('User disabled via extension manager.');
+
+    // Active/inactive are unknown (-1) since there's no active runtime descriptor
+    expect(summary!.active).toBe(-1);
+    expect(summary!.inactive).toBe(-1);
+
+    // All frozen
+    expect(Object.isFrozen(entry)).toBe(true);
+    expect(Object.isFrozen(summary)).toBe(true);
+    expect(Object.isFrozen(summary!.kinds)).toBe(true);
+    expect(Object.isFrozen(summary!.contributionIds)).toBe(true);
+  });
+
+  it('computes contribution summaries correctly for a mix of active and inactive packages', () => {
+    const activeExt = ext('com.example.active', {
+      manifest: {
+        contributions: [
+          { id: 'btn' as any, kind: 'slot', slot: 'toolbar' },
+          { id: 'dlg' as any, kind: 'dialog' },
+        ],
+      },
+    });
+
+    const manifestContributionsDisabled = [
+      { id: 'disabled-panel' as any, kind: 'panel' },
+    ];
+
+    const activeEntry: PackageStateInventoryEntry = {
+      extensionId: 'com.example.active',
+      packageState: 'loaded',
+      stateReason: 'Loaded.',
+      packageMetadata: { label: 'Active', version: '1.0.0' },
+    };
+
+    const disabledEntry: PackageStateInventoryEntry = {
+      extensionId: 'com.example.disabled',
+      packageState: 'disabled-by-user',
+      stateReason: 'User disabled.',
+      packageMetadata: { label: 'Disabled', version: '1.0.0' },
+      manifestContributions: manifestContributionsDisabled,
+    };
+
+    const rt = normalizeExtensionRuntime([activeExt], [activeEntry, disabledEntry]);
+    expect(rt.packageStateInventory).toHaveLength(2);
+
+    const activeSummary = rt.packageStateInventory[0].contributionSummary;
+    expect(activeSummary).not.toBeNull();
+    expect(activeSummary!.declared).toBe(2);
+    expect(activeSummary!.active).toBeGreaterThanOrEqual(0); // computed from activeIds
+
+    const disabledSummary = rt.packageStateInventory[1].contributionSummary;
+    expect(disabledSummary).not.toBeNull();
+    expect(disabledSummary!.declared).toBe(1);
+    expect(disabledSummary!.active).toBe(-1); // no active descriptor
+    expect(disabledSummary!.kinds).toEqual(['Panel']);
+  });
+});

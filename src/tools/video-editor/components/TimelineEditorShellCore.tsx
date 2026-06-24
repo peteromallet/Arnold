@@ -50,8 +50,10 @@ import { useEditorSync } from '@/tools/video-editor/hooks/useEditorSync.ts';
 import { dispatchAppEvent } from '@/shared/lib/typedEvents.ts'
 import {
   ContributionErrorBoundary,
+  HostContributionErrorBoundary,
   type ContributionErrorInfo,
 } from '@/tools/video-editor/runtime/ContributionErrorBoundary.tsx';
+import { useOptionalVideoEditorRuntime } from '@/tools/video-editor/contexts/DataProviderContext.tsx';
 import type { VideoEditorSlotName, VideoEditorRenderContext, VideoEditorOutputFormatDescriptor } from '@/tools/video-editor/runtime/extensionSurface';
 import { CodePanelCanary } from '@/tools/video-editor/components/Canary/CodePanelCanary';
 import { WritingPanelCanary } from '@/tools/video-editor/components/Canary/WritingPanelCanary';
@@ -427,6 +429,29 @@ function TimelineEditorShellCoreComponent({
   const contributedAssetPanels = useVideoEditorAssetPanels();
   const dialogDescriptors = useVideoEditorDialogDescriptors();
 
+  const runtime = useOptionalVideoEditorRuntime();
+
+  // M5: Normalized slot → extensionId mapping derived from contribution manifests.
+  // Used by HostContributionErrorBoundary to wire host-owned recovery keys.
+  const slotOwnerMap = useMemo<ReadonlyMap<string, string>>(() => {
+    const map = new Map<string, string>();
+    const extensions = runtime?.extensionRuntime?.extensions;
+    if (!extensions) return map;
+    for (const ext of extensions) {
+      const extId = ext.manifest.id as string;
+      const contribs = ext.manifest.contributions ?? [];
+      for (const c of contribs) {
+        if (c.kind === 'slot' && c.slot) {
+          // First extension wins per deterministic extension order
+          if (!map.has(c.slot)) {
+            map.set(c.slot, extId);
+          }
+        }
+      }
+    }
+    return map;
+  }, [runtime?.extensionRuntime?.extensions]);
+
   const handleContributionError = useCallback((info: ContributionErrorInfo) => {
     // Host-owned diagnostics sink: log to console with structured data.
     // Future: aggregate into a diagnostics context shared across the shell.
@@ -440,7 +465,7 @@ function TimelineEditorShellCoreComponent({
 
   /**
    * Resolve a surface slot renderer or return a canary for reserved slots.
-   * - If a renderer is registered → wrap in ContributionErrorBoundary
+   * - If a renderer is registered → wrap in HostContributionErrorBoundary
    * - If the slot is reserved with a canary → render the canary
    * - If the slot is reserved without a canary → render inert placeholder
    * - Otherwise → null (slot is unclaimed)
@@ -450,15 +475,16 @@ function TimelineEditorShellCoreComponent({
       const renderer = slotRenderers[slotName];
       if (renderer) {
         return (
-          <ContributionErrorBoundary
+          <HostContributionErrorBoundary
             key={slotName}
             contributionId={`slot:${slotName}`}
+            extensionId={slotOwnerMap.get(slotName)}
             kind="slot"
             label={label}
             onError={handleContributionError}
           >
             {renderer(renderContext)}
-          </ContributionErrorBoundary>
+          </HostContributionErrorBoundary>
         );
       }
       if (RESERVED_SLOT_NAMES.has(slotName)) {
@@ -475,74 +501,80 @@ function TimelineEditorShellCoreComponent({
       }
       return null;
     },
-    [handleContributionError, renderContext, slotRenderers],
+    [handleContributionError, renderContext, slotRenderers, slotOwnerMap],
   );
 
   const headerSlot = slotRenderers.header ? (
-    <ContributionErrorBoundary
+    <HostContributionErrorBoundary
       contributionId="slot:header"
+      extensionId={slotOwnerMap.get("header")}
       kind="slot"
       label="Header"
       onError={handleContributionError}
     >
       {slotRenderers.header(renderContext)}
-    </ContributionErrorBoundary>
+    </HostContributionErrorBoundary>
   ) : null;
   const toolbarSlot = slotRenderers.toolbar ? (
-    <ContributionErrorBoundary
+    <HostContributionErrorBoundary
       contributionId="slot:toolbar"
+      extensionId={slotOwnerMap.get("toolbar")}
       kind="slot"
       label="Toolbar"
       onError={handleContributionError}
     >
       {slotRenderers.toolbar(renderContext)}
-    </ContributionErrorBoundary>
+    </HostContributionErrorBoundary>
   ) : null;
   const assetPanelSlot = slotRenderers.assetPanel
     ? (
-      <ContributionErrorBoundary
+      <HostContributionErrorBoundary
         contributionId="slot:assetPanel"
+        extensionId={slotOwnerMap.get("assetPanel")}
         kind="slot"
         label="Asset panel"
         onError={handleContributionError}
       >
         {slotRenderers.assetPanel(renderContext)}
-      </ContributionErrorBoundary>
+      </HostContributionErrorBoundary>
     )
     : (contributedAssetPanels.length > 0 ? <VideoEditorAssetPanelSurface includeBuiltIn={false} /> : null);
   const inspectorPanelSlot = slotRenderers.inspectorPanel
     ? (
-      <ContributionErrorBoundary
+      <HostContributionErrorBoundary
         contributionId="slot:inspectorPanel"
+        extensionId={slotOwnerMap.get("inspectorPanel")}
         kind="slot"
         label="Inspector panel"
         onError={handleContributionError}
       >
         {slotRenderers.inspectorPanel(renderContext)}
-      </ContributionErrorBoundary>
+      </HostContributionErrorBoundary>
     )
     : null;
   const timelineFooterSlot = slotRenderers.timelineFooter
     ? (
-      <ContributionErrorBoundary
+      <HostContributionErrorBoundary
         contributionId="slot:timelineFooter"
+        extensionId={slotOwnerMap.get("timelineFooter")}
         kind="slot"
         label="Timeline footer"
         onError={handleContributionError}
       >
         {slotRenderers.timelineFooter(renderContext)}
-      </ContributionErrorBoundary>
+      </HostContributionErrorBoundary>
     )
     : null;
   const statusBarSlot = slotRenderers.statusBar ? (
-    <ContributionErrorBoundary
+    <HostContributionErrorBoundary
       contributionId="slot:statusBar"
+      extensionId={slotOwnerMap.get("statusBar")}
       kind="slot"
       label="Status bar"
       onError={handleContributionError}
     >
       {slotRenderers.statusBar(renderContext)}
-    </ContributionErrorBoundary>
+    </HostContributionErrorBoundary>
   ) : null;
 
   // ---- New M2 surface slots ------------------------------------------------
@@ -554,14 +586,15 @@ function TimelineEditorShellCoreComponent({
 
   // ---- Dialog slot: render extension-contributed dialogs --------------------
   const dialogsSlot = slotRenderers.dialogs ? (
-    <ContributionErrorBoundary
+    <HostContributionErrorBoundary
       contributionId="slot:dialogs"
+      extensionId={slotOwnerMap.get("dialogs")}
       kind="slot"
       label="Dialogs"
       onError={handleContributionError}
     >
       {slotRenderers.dialogs(renderContext)}
-    </ContributionErrorBoundary>
+    </HostContributionErrorBoundary>
   ) : null;
 
   const gridTemplateRows = isTimelineMaximized

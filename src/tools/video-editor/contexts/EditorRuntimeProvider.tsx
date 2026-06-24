@@ -1001,6 +1001,10 @@ export function EditorRuntimeProvider({
     extensionStateRepository: extensionStateRepository ?? null,
     triggerExtensionRefresh,
     settingsNotificationRegistry: settingsNotificationRegistryRef.current ?? undefined,
+    getRecoveryKey: (extensionId: string) =>
+      lifecycleHostRef.current?.getRecoveryKey(extensionId) ?? "0",
+    incrementRecoveryKey: (extensionId: string) =>
+      lifecycleHostRef.current?.incrementRecoveryKey(extensionId) ?? "0",
   }), [
     dataProvider,
     runtime?.assetResolver,

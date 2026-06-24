@@ -1005,6 +1005,10 @@ export function VideoEditorProvider({
     commandRegistry: commandRegistryRef.current ?? undefined,
     agentToolRegistry: agentToolRegistryRef.current ?? undefined,
     diagnosticCollection: diagnosticCollectionRef.current ?? undefined,
+    getRecoveryKey: (extensionId: string) =>
+      lifecycleHostRef.current?.getRecoveryKey(extensionId) ?? "0",
+    incrementRecoveryKey: (extensionId: string) =>
+      lifecycleHostRef.current?.incrementRecoveryKey(extensionId) ?? "0",
   }), [agentChatRegistry.register, agentChatRegistry.unregister, dataProvider, projectId, shotsHost, timelineId, timelineName, userId, extensionRuntime.config, extensionRuntime]);
 
   return (

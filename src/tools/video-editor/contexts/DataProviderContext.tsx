@@ -59,6 +59,14 @@ export interface VideoEditorRuntimeContextValue {
   triggerExtensionRefresh?: () => void;
   /** T9: Host-visible settings notification registry for manager/runtime coherence. */
   settingsNotificationRegistry?: ExtensionSettingsNotificationRegistry;
+  /** M5: Recovery key facade backed by ExtensionLifecycleHost.
+   *  Returns the current monotonic recovery key for an extension, or "0"
+   *  for unknown/disposed extension IDs. */
+  getRecoveryKey?: (extensionId: string) => string;
+  /** M5: Increment the recovery key for an extension and return the new key.
+   *  This is the programmatic retry signal for ContributionErrorBoundary.
+   *  No-op for unknown/disposed extension IDs (returns "0"). */
+  incrementRecoveryKey?: (extensionId: string) => string;
 }
 
 export const DataProviderContext = createContext<VideoEditorRuntimeContextValue | null>(null);
