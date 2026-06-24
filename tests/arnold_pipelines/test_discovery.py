@@ -43,6 +43,24 @@ def test_discover_migrated_pipelines_have_builders() -> None:
         assert isinstance(pipeline, Pipeline)
 
 
+def test_migrated_subpipeline_rows_use_normalized_package_paths() -> None:
+    results = discover_migrated_pipelines()
+    by_id = {info.id: info for info in results}
+
+    expected = {
+        "select-tournament": "arnold_pipelines/megaplan/pipelines/select_tournament",
+        "writing-panel-strict": "arnold_pipelines/megaplan/pipelines/writing_panel_strict",
+    }
+    for pipeline_id, package_path in expected.items():
+        info = by_id[pipeline_id]
+        assert info.package_path == package_path
+        assert info.docs_path == f"{package_path}/SKILL.md"
+        assert not info.package_path.endswith(".py")
+        assert "-" not in info.package_path
+        assert info.builder is not None
+        assert info.builder().id == pipeline_id
+
+
 def test_load_builder_works_with_module_target() -> None:
     builder = load_builder("arnold_pipelines.megaplan.pipelines.jokes:build_pipeline")
     pipeline = builder()

@@ -48,8 +48,15 @@ def build_pipeline() -> Pipeline:
     )
 
 
+def build_writing_panel_strict_pipeline() -> Pipeline:
+    """Return the canonical ``writing-panel-strict`` pipeline."""
+
+    return build_pipeline()
+
+
 __all__ = [
     "build_pipeline",
+    "build_writing_panel_strict_pipeline",
     "description",
     "default_profile",
     "supported_modes",

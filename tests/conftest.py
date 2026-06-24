@@ -1,9 +1,15 @@
 from __future__ import annotations
 
+import argparse
+import dataclasses
+import json
 from pathlib import Path
+from typing import Any, Callable
 
 import pytest
 
+import arnold_pipelines.megaplan as megaplan
+from arnold_pipelines.megaplan.cli.parser import build_parser
 from arnold_pipelines.megaplan.orchestration.phase_result import (
     BlockedTask,
     Deviation,
@@ -13,6 +19,62 @@ from arnold_pipelines.megaplan.orchestration.phase_result import (
 )
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
+
+
+@dataclasses.dataclass
+class PlanFixture:
+    """Lightweight handle for a freshly initialized megaplan plan."""
+
+    root: Path
+    project_dir: Path
+    plan_name: str
+    plan_dir: Path
+    make_args: Callable[..., argparse.Namespace]
+
+
+def make_args_factory(project_dir: Path) -> Callable[..., argparse.Namespace]:
+    """Return a helper that builds argparse Namespaces for megaplan handlers."""
+
+    base = build_parser().parse_args(["init"])
+
+    def _make_args(**kwargs: Any) -> argparse.Namespace:
+        args = argparse.Namespace(**vars(base))
+        args.project_dir = str(project_dir)
+        for key, value in kwargs.items():
+            setattr(args, key, value)
+        return args
+
+    return _make_args
+
+
+def load_state(plan_dir: Path) -> dict[str, Any]:
+    """Read a plan's state.json."""
+
+    return json.loads((plan_dir / "state.json").read_text(encoding="utf-8"))
+
+
+@pytest.fixture
+def plan_fixture(tmp_path: Path) -> PlanFixture:
+    """Create a temporary megaplan plan and expose its directories/args helper."""
+
+    root = tmp_path / "root"
+    root.mkdir()
+    project_dir = tmp_path / "project"
+    project_dir.mkdir()
+    make_args = make_args_factory(project_dir)
+    response = megaplan.handle_init(
+        root,
+        make_args(idea="fixture plan", name="fixture-plan", robustness="standard"),
+    )
+    plan_name = response["plan"]
+    plan_dir = megaplan.plans_root(root) / plan_name
+    return PlanFixture(
+        root=root,
+        project_dir=project_dir,
+        plan_name=plan_name,
+        plan_dir=plan_dir,
+        make_args=make_args,
+    )
 
 
 def pytest_addoption(parser: pytest.Parser) -> None:

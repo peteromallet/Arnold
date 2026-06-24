@@ -17,10 +17,8 @@ Status enum: `migrate`, `delete`, `archive`, `whitelist`.
 | `arnold_pipelines/megaplan/pipelines/creative` | migrate | `arnold_pipelines/megaplan/pipelines/creative` | yes | `megaplan.creative` | active | keep |
 | `arnold_pipelines/megaplan/pipelines/jokes` | migrate | `arnold_pipelines/megaplan/pipelines/jokes` | yes | `megaplan.jokes` | active | keep |
 | `arnold_pipelines/megaplan/pipelines/live_supervisor` | migrate | `arnold_pipelines/megaplan/pipelines/live_supervisor` | yes | `megaplan.live_supervisor` | active | keep |
-| `arnold_pipelines/megaplan/pipelines/select_tournament.py` | migrate | `arnold_pipelines/megaplan/pipelines/select_tournament.py` | yes | `megaplan.select_tournament` | active | keep |
-| `arnold_pipelines/megaplan/pipelines/select-tournament` | migrate | `arnold_pipelines/megaplan/pipelines/select-tournament` (resources) | yes | — | active | keep |
-| `arnold_pipelines/megaplan/pipelines/writing_panel_strict.py` | migrate | `arnold_pipelines/megaplan/pipelines/writing_panel_strict.py` | yes | `megaplan.writing_panel_strict` | active | keep |
-| `arnold_pipelines/megaplan/pipelines/writing-panel-strict` | migrate | `arnold_pipelines/megaplan/pipelines/writing-panel-strict` (resources) | yes | — | active | keep |
+| `arnold_pipelines/megaplan/pipelines/select_tournament` | migrate | `arnold_pipelines/megaplan/pipelines/select_tournament` | yes | `megaplan.select_tournament` | active | keep |
+| `arnold_pipelines/megaplan/pipelines/writing_panel_strict` | migrate | `arnold_pipelines/megaplan/pipelines/writing_panel_strict` | yes | `megaplan.writing_panel_strict` | active | keep |
 | `arnold_pipelines/evidence_pack` | migrate | `arnold_pipelines/evidence_pack` | yes | `evidence_pack.verifier` | active | keep |
 | `arnold_pipelines/_template` | migrate | `arnold_pipelines/_template` | yes | — | active | keep |
 | `arnold_pipelines/megaplan/pipelines/epic_blitz.py` | archive | `docs/archive/m5/epic_blitz.py` | no | — | archival | delete |

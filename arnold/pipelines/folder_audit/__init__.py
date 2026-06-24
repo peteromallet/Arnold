@@ -25,11 +25,20 @@ name: str = "folder-audit"
 description: str = "Audit a directory tree, classify files, and emit a structured report."
 """Short description surfaced in the pipeline registry."""
 
+default_profile: str | None = None
+"""No default profile; worker is supplied at runtime."""
+
+supported_modes: tuple[str, ...] = ("graph",)
+"""Supported execution modes."""
+
 driver: tuple[str, ...] = ("graph", "dispatch+emit")
 """Execution driver spec — graph execution by default."""
 
 entrypoint: str = "build_pipeline"
 """Default entrypoint callable name."""
+
+arnold_api_version: str = "1.0"
+"""Arnold API version this manifest targets."""
 
 capabilities: tuple[str, ...] = ("audit", "folder-audit", "tree-walk")
 """Declared pipeline capabilities."""

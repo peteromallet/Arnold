@@ -99,7 +99,7 @@ testpaths = ["tests"]
 pythonpath = ["."]
 addopts = "--import-mode=importlib"
 python_files = ["test_*.py", "editorial_*.py"]
-norecursedirs = ["tests/archive", ".*", "build", "dist", "CVS", "_darcs", "{arch}", "*.egg"]
+norecursedirs = ["tests/archive", "tests/arnold/pipelines/deliberation", ".*", "build", "dist", "CVS", "_darcs", "{arch}", "*.egg"]
 markers = [
     "asyncio: async tests, primarily for the vendored agent runtime",
     "conformance: opt-in live conformance tests that require external authenticated CLIs",

@@ -31,7 +31,7 @@ description: str = (
     "tightens the beat, and emits the final artifact."
 )
 default_profile: str | None = None
-supported_modes: tuple[str, ...] = ("joke",)
+supported_modes: tuple[str, ...] = ("joke", "graph")
 recommended_profiles: tuple[str, ...] = ()
 driver: tuple[str, str] = ("graph", "dispatch+emit")
 entrypoint: str = "build_pipeline"
