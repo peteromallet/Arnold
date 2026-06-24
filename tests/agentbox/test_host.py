@@ -10,7 +10,12 @@ from arnold.runtime.durable_ops import OperationState, ResourceType
 
 from agentbox.config import AgentBoxConfig
 from agentbox.git_worktree import has_local_branch
-from agentbox.host import HostLaunchError, launch_host
+from agentbox.host import (
+    HostLaunchError,
+    launch_host,
+    prepare_host_resources,
+    start_host_session,
+)
 from agentbox.operations import load_agentbox_operation, open_operation_store
 from agentbox.repos import register_repo
 from agentbox.run_dirs import read_metadata
@@ -146,6 +151,114 @@ def test_launch_host_retry_reuses_successful_worktree_after_partial_failure(
     assert result.worktrees[0].status == "reused_registered_worktree"
     assert app_resource == first_app_resource
     assert load_agentbox_operation(config, "op-1").state is OperationState.RUNNING
+
+
+def test_prepare_host_resources_reuses_successful_worktree_after_partial_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = _config_with_repos(tmp_path, "app", "infra")
+    infra_repo = config.repos_root / "infra"
+    conflicting_branch = branch_name("op-1", "infra")
+    _git(infra_repo, "update-ref", f"refs/remotes/origin/{conflicting_branch}", "HEAD")
+
+    def fail_if_called(*args, **kwargs):
+        raise AssertionError("prepare must not start tmux")
+
+    monkeypatch.setattr("agentbox.host.start_session", fail_if_called)
+
+    with pytest.raises(HostLaunchError) as exc_info:
+        prepare_host_resources(
+            config,
+            "op-1",
+            command="echo hi",
+            repo_names=("app", "infra"),
+        )
+    first_app_path = worktree_path(config, "op-1", "app")
+    first_resources = open_operation_store(config).list_typed_resources("op-1")
+    first_app_resource = [
+        resource for resource in first_resources
+        if resource.resource_type is ResourceType.GIT_WORKTREE
+        and resource.details["repo_name"] == "app"
+    ][0]
+
+    _git(infra_repo, "update-ref", "-d", f"refs/remotes/origin/{conflicting_branch}")
+    prepared = prepare_host_resources(
+        config,
+        "op-1",
+        command="echo hi",
+        repo_names=("app", "infra"),
+    )
+    resources = open_operation_store(config).list_typed_resources("op-1")
+    app_resource = [
+        resource for resource in resources
+        if resource.resource_type is ResourceType.GIT_WORKTREE
+        and resource.details["repo_name"] == "app"
+    ][0]
+
+    assert exc_info.value.diagnostics["completed_repos"] == ["app"]
+    assert prepared.worktrees[0].repo_name == "app"
+    assert prepared.worktrees[0].worktree_path == first_app_path
+    assert prepared.worktrees[0].status == "reused_registered_worktree"
+    assert app_resource == first_app_resource
+    assert sum(
+        resource.resource_type is ResourceType.PROCESS_SESSION
+        for resource in resources
+    ) == 0
+
+
+def test_start_host_session_marks_prepared_resources_running(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = _config_with_repos(tmp_path, "app")
+    calls: list[dict[str, object]] = []
+    prepared = prepare_host_resources(
+        config,
+        "op-1",
+        command="echo hi",
+        repo_names=("app",),
+    )
+
+    def fake_start_session(operation_id, command, *, cwd=None, run_paths=None):
+        calls.append(
+            {
+                "operation_id": operation_id,
+                "command": command,
+                "cwd": cwd,
+                "run_paths": run_paths,
+            }
+        )
+        return "agentbox-op-1"
+
+    monkeypatch.setattr("agentbox.host.start_session", fake_start_session)
+    monkeypatch.setattr(
+        "agentbox.host.inspect_session",
+        lambda name: SessionStatus(name, "running", True),
+    )
+
+    result = start_host_session(config, prepared, command="echo hi")
+    resources = open_operation_store(config).list_typed_resources("op-1")
+    events = _events(result.run_paths.events_path)
+
+    assert result.launch_state == "running"
+    assert result.run_paths == prepared.run_paths
+    assert result.worktrees == prepared.worktrees
+    assert result.log_resources == prepared.log_resources
+    assert calls == [
+        {
+            "operation_id": "op-1",
+            "command": "echo hi",
+            "cwd": prepared.worktrees[0].worktree_path,
+            "run_paths": prepared.run_paths,
+        }
+    ]
+    assert load_agentbox_operation(config, "op-1").state is OperationState.RUNNING
+    assert sum(
+        resource.resource_type is ResourceType.PROCESS_SESSION
+        for resource in resources
+    ) == 1
+    assert events[-1]["event_type"] == "host_launch.running"
 
 
 def test_launch_host_records_tmux_failure_without_marking_running(

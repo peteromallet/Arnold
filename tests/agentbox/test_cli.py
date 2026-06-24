@@ -4,19 +4,169 @@ import json
 import subprocess
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import yaml
 
-from arnold.runtime.durable_ops import OperationState, ResourceType, TypedResource
+from arnold.runtime.durable_ops import OperationRun, OperationState, ResourceType, TypedResource
 
 from agentbox.cli import main
 from agentbox.config import AGENTBOX_CONFIG_ENV, AgentBoxConfig
 from agentbox.operations import create_agentbox_operation, open_operation_store, update_agentbox_operation
-from agentbox.run_dirs import append_stderr, append_stdout, ensure_run_dir, record_log_resources
+from agentbox.run_dirs import append_stderr, append_stdout, ensure_run_dir, record_log_resources, run_dir_paths
 from agentbox.tmux import SessionStatus, session_name
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
+
+
+def test_run_dispatches_registered_handler_and_returns_stable_json(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    config_path, config = _config_file(tmp_path)
+    monkeypatch.setenv(AGENTBOX_CONFIG_ENV, str(config_path))
+    handler = _FakeRunHandler()
+    _install_fake_run_adapter(monkeypatch, handler)
+
+    assert (
+        main(
+            [
+                "run",
+                "--repo",
+                "app",
+                "--kind",
+                "fake_chain",
+                "--spec",
+                "chain.yaml",
+                "--operation-id",
+                "chain-1",
+                "--json",
+            ]
+        )
+        == 0
+    )
+
+    payload = json.loads(capsys.readouterr().out)
+    assert handler.launch_calls == [
+        {
+            "operation_id": "chain-1",
+            "repo_name": "app",
+            "spec_path": Path("chain.yaml"),
+        }
+    ]
+    assert payload["operation_id"] == "chain-1"
+    assert payload["kind"] == "fake_chain"
+    assert payload["operation_type"] == "megaplan_chain"
+    assert payload["operation_state"] == "running"
+    assert payload["launch_state"] == "running"
+    assert payload["run_dir"] == str(run_dir_paths(config, "chain-1").root)
+    assert payload["resources"][0]["type"] == "log"
+    assert payload["resolved_spec_path"] == str(config.workspace_root / "resolved-chain.yaml")
+    assert payload["validation"] == {
+        "status": "passed",
+        "spec_path": str(config.workspace_root / "resolved-chain.yaml"),
+    }
+    assert payload["classification"] == {
+        "effective_status": "running",
+        "operation_state": "running",
+        "reason": "fake",
+    }
+    assert payload["diagnostics"] is None
+
+
+def test_run_returns_nonzero_json_for_handler_retry_errors(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    config_path, config = _config_file(tmp_path)
+    monkeypatch.setenv(AGENTBOX_CONFIG_ENV, str(config_path))
+    handler = _FakeRunHandler(error_kind="terminal_operation")
+    _install_fake_run_adapter(monkeypatch, handler)
+
+    assert (
+        main(
+            [
+                "run",
+                "--repo",
+                "app",
+                "--kind",
+                "fake_chain",
+                "--spec",
+                "chain.yaml",
+                "--operation-id",
+                "chain-1",
+                "--json",
+            ]
+        )
+        == 1
+    )
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["operation_id"] == "chain-1"
+    assert payload["operation_state"] == "failed"
+    assert payload["launch_state"] == "failed_before_running"
+    assert payload["run_dir"] == str(run_dir_paths(config, "chain-1").root)
+    assert payload["validation"]["status"] == "failed"
+    assert payload["diagnostics"]["kind"] == "terminal_operation"
+    assert payload["error"] == "terminal retry refused"
+
+
+def test_run_reports_duplicate_live_session_without_error(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    config_path, _config = _config_file(tmp_path)
+    monkeypatch.setenv(AGENTBOX_CONFIG_ENV, str(config_path))
+    handler = _FakeRunHandler(diagnostics={"kind": "already_running", "session_name": "live"})
+    _install_fake_run_adapter(monkeypatch, handler)
+
+    assert (
+        main(
+            [
+                "run",
+                "--repo",
+                "app",
+                "--kind",
+                "fake_chain",
+                "--spec",
+                "chain.yaml",
+                "--operation-id",
+                "chain-1",
+                "--json",
+            ]
+        )
+        == 0
+    )
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["operation_state"] == "running"
+    assert payload["diagnostics"] == {"kind": "already_running", "session_name": "live"}
+
+
+def test_run_missing_and_unknown_arguments_are_nonzero(
+    monkeypatch,
+) -> None:
+    _install_fake_run_adapter(monkeypatch, _FakeRunHandler())
+
+    assert main(["run", "--repo", "app", "--kind", "fake_chain"]) == 2
+    assert (
+        main(
+            [
+                "run",
+                "--repo",
+                "app",
+                "--kind",
+                "unknown",
+                "--spec",
+                "chain.yaml",
+            ]
+        )
+        == 2
+    )
 
 
 def test_status_json_reports_local_operation_and_session_state(
@@ -230,6 +380,90 @@ def test_status_json_lists_partial_launch_without_process_session_resource(
     assert payload[0]["resource_count"] == 0
 
 
+def test_status_and_logs_accept_registered_adapter_operation_type(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    config_path, config = _config_file(tmp_path)
+    monkeypatch.setenv(AGENTBOX_CONFIG_ENV, str(config_path))
+    run = open_operation_store(config).create_operation_run(
+        OperationRun(
+            id="chain-1",
+            operation_type="megaplan_chain",
+            operation_dir=str(config.runs_root / "chain-1"),
+            metadata={
+                "command": ["megaplan", "chain", "start", "spec.yaml"],
+                "launch_state": "running",
+                "repo_names": ["app"],
+            },
+        ).transition_to(OperationState.RUNNING)
+    )
+    paths = ensure_run_dir(config, run.id, metadata=dict(run.metadata))
+    record_log_resources(config, run.id)
+    append_stdout(paths, "chain output\n")
+
+    assert main(["status", "chain-1", "--json"]) == 0
+    status_payload = json.loads(capsys.readouterr().out)
+    assert status_payload["operation_id"] == "chain-1"
+    assert status_payload["operation_type"] == "megaplan_chain"
+    assert status_payload["operation_state"] == "suspended"
+
+    assert main(["logs", "chain-1", "--stream", "stdout", "--json"]) == 0
+    logs_payload = json.loads(capsys.readouterr().out)
+    assert logs_payload["logs"][0]["text"] == "chain output\n"
+
+
+def test_status_ticks_registered_adapter_before_rendering(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    config_path, config = _config_file(tmp_path)
+    monkeypatch.setenv(AGENTBOX_CONFIG_ENV, str(config_path))
+    handler = _FakeRunHandler()
+    _install_fake_run_adapter(monkeypatch, handler)
+    create_agentbox_operation(
+        config,
+        "op-1",
+        command="echo host",
+        repo_names=["app"],
+        launch_state="running",
+    )
+    open_operation_store(config).create_operation_run(
+        OperationRun(
+            id="chain-1",
+            operation_type="megaplan_chain",
+            operation_dir=str(config.runs_root / "chain-1"),
+            metadata={
+                "command": ["fake", "run"],
+                "launch_state": "running",
+                "repo_names": ["app"],
+            },
+        ).transition_to(OperationState.RUNNING)
+    )
+
+    assert main(["status", "--json"]) == 0
+
+    payload = json.loads(capsys.readouterr().out)
+    by_id = {item["operation_id"]: item for item in payload}
+    assert handler.tick_calls == ["chain-1"]
+    assert by_id["chain-1"]["operation_state"] == "succeeded"
+    assert by_id["chain-1"]["launch_state"] == "ticked"
+    assert by_id["op-1"] == {
+        "operation_id": "op-1",
+        "operation_type": "agentbox_host",
+        "operation_state": "pending",
+        "launch_state": "running",
+        "command": "echo host",
+        "repo_names": ["app"],
+        "run_dir": str(run_dir_paths(config, "op-1").root),
+        "run_dir_exists": False,
+        "resource_count": 0,
+        "session": None,
+    }
+
+
 def test_reconcile_json_reports_partial_launch_without_process_session_resource(
     tmp_path: Path,
     monkeypatch,
@@ -367,6 +601,116 @@ def test_cli_source_has_no_forbidden_invocation_reference() -> None:
     source = Path("agentbox/cli.py").read_text(encoding="utf-8").lower()
 
     assert "megaplan" not in source
+
+
+class _FakeRunHandler:
+    def __init__(
+        self,
+        *,
+        diagnostics: dict[str, object] | None = None,
+        error_kind: str | None = None,
+    ) -> None:
+        self.diagnostics = diagnostics
+        self.error_kind = error_kind
+        self.launch_calls: list[dict[str, object]] = []
+        self.tick_calls: list[str] = []
+
+    def launch(self, config, operation_id, *, repo_name, spec_path):
+        self.launch_calls.append(
+            {
+                "operation_id": operation_id,
+                "repo_name": repo_name,
+                "spec_path": spec_path,
+            }
+        )
+        paths = ensure_run_dir(config, operation_id)
+        if self.error_kind:
+            create_agentbox_operation(
+                config,
+                operation_id,
+                operation_type="megaplan_chain",
+                command=("fake", "run"),
+                repo_names=[repo_name],
+                metadata={
+                    "validation": {"status": "failed"},
+                    "launch_diagnostics": {
+                        "kind": self.error_kind,
+                        "message": "terminal retry refused",
+                    },
+                },
+            )
+            update_agentbox_operation(
+                config,
+                operation_id,
+                launch_state="failed_before_running",
+                state=OperationState.FAILED,
+            )
+            raise _FakeRunError(
+                "terminal retry refused",
+                diagnostics={"kind": self.error_kind, "message": "terminal retry refused"},
+            )
+
+        create_agentbox_operation(
+            config,
+            operation_id,
+            operation_type="megaplan_chain",
+            command=("fake", "run"),
+            repo_names=[repo_name],
+            metadata={
+                "resolved_spec_path": str(config.workspace_root / "resolved-chain.yaml"),
+                "validation": {
+                    "status": "passed",
+                    "spec_path": str(config.workspace_root / "resolved-chain.yaml"),
+                },
+            },
+        )
+        update_agentbox_operation(
+            config,
+            operation_id,
+            launch_state="running",
+            state=OperationState.RUNNING,
+        )
+        record_log_resources(config, operation_id)
+        return SimpleNamespace(
+            resolved_spec_path=config.workspace_root / "resolved-chain.yaml",
+            host_result=SimpleNamespace(diagnostics=self.diagnostics),
+        )
+
+    def status(self, config, operation_id):
+        return SimpleNamespace(
+            classification=SimpleNamespace(
+                to_dict=lambda: {
+                    "effective_status": "running",
+                    "operation_state": "running",
+                    "reason": "fake",
+                }
+            )
+        )
+
+    def tick(self, config, operation_id):
+        self.tick_calls.append(operation_id)
+        return update_agentbox_operation(
+            config,
+            operation_id,
+            launch_state="ticked",
+            state=OperationState.SUCCEEDED,
+        )
+
+
+class _FakeRunError(RuntimeError):
+    def __init__(self, message: str, *, diagnostics: dict[str, object]) -> None:
+        super().__init__(message)
+        self.diagnostics = diagnostics
+
+
+def _install_fake_run_adapter(monkeypatch, handler: _FakeRunHandler) -> None:
+    adapter = SimpleNamespace(
+        kind="fake_chain",
+        operation_type="megaplan_chain",
+        load=lambda: handler,
+    )
+    monkeypatch.setattr("agentbox.cli.list_operation_adapters", lambda: (adapter,))
+    monkeypatch.setattr("agentbox.cli.get_operation_adapter", lambda kind: adapter)
 
 
 def _config_file(tmp_path: Path) -> tuple[Path, AgentBoxConfig]:

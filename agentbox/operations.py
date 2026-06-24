@@ -13,14 +13,16 @@ from arnold.runtime.durable_ops import (
     RetryMetadata,
 )
 
+from agentbox.adapters import (
+    AGENTBOX_HOST_OPERATION_TYPE,
+    is_agentbox_operation_type,
+    list_agentbox_operation_types,
+)
 from agentbox.config import AgentBoxConfig
 
 
-AGENTBOX_HOST_OPERATION_TYPE = "agentbox_host"
-
-
 class AgentBoxOperationError(ValueError):
-    """Raised when a durable operation is not an AgentBox host operation."""
+    """Raised when a durable operation is not managed by AgentBox."""
 
 
 def open_operation_store(config: AgentBoxConfig) -> FileBackedDurableOpsStore:
@@ -39,6 +41,7 @@ def create_agentbox_operation(
     config: AgentBoxConfig,
     operation_id: str,
     *,
+    operation_type: str = AGENTBOX_HOST_OPERATION_TYPE,
     command: Sequence[str] | str,
     repo_names: Iterable[str] = (),
     launch_intent: str = "host_local",
@@ -48,7 +51,9 @@ def create_agentbox_operation(
     max_attempts: int = 1,
     metadata: Mapping[str, Any] | None = None,
 ) -> OperationRun:
-    """Create an AgentBox host operation run with launch metadata."""
+    """Create an AgentBox-managed operation run with launch metadata."""
+
+    operation_type = ensure_agentbox_operation_type(operation_type)
 
     launch_metadata = build_launch_metadata(
         config,
@@ -61,7 +66,7 @@ def create_agentbox_operation(
     )
     run = OperationRun(
         id=operation_id,
-        operation_type=AGENTBOX_HOST_OPERATION_TYPE,
+        operation_type=operation_type,
         parent_operation_id=parent_operation_id,
         operation_dir=str(operation_run_dir(config, operation_id)),
         retry=RetryMetadata(max_attempts=max_attempts),
@@ -71,20 +76,30 @@ def create_agentbox_operation(
     return open_operation_store(config).create_operation_run(run)
 
 
-def load_agentbox_operation(config: AgentBoxConfig, operation_id: str) -> OperationRun:
-    """Load one AgentBox host operation run and reject other operation types."""
+def load_agentbox_operation(
+    config: AgentBoxConfig,
+    operation_id: str,
+    *,
+    operation_types: Iterable[str] | None = None,
+) -> OperationRun:
+    """Load one AgentBox-managed operation run and reject other operation types."""
 
     run = open_operation_store(config).load_operation_run(operation_id)
-    return ensure_agentbox_operation(run)
+    return ensure_agentbox_operation(run, operation_types=operation_types)
 
 
-def list_agentbox_operations(config: AgentBoxConfig) -> tuple[OperationRun, ...]:
-    """List persisted AgentBox host operation runs ordered by operation id."""
+def list_agentbox_operations(
+    config: AgentBoxConfig,
+    *,
+    operation_types: Iterable[str] | None = None,
+) -> tuple[OperationRun, ...]:
+    """List persisted AgentBox-managed operation runs ordered by operation id."""
 
+    allowed_types = _agentbox_operation_type_set(operation_types)
     return tuple(
         run
         for run in open_operation_store(config).list_operation_runs()
-        if run.operation_type == AGENTBOX_HOST_OPERATION_TYPE
+        if run.operation_type in allowed_types
     )
 
 
@@ -147,15 +162,40 @@ def build_launch_metadata(
     return launch_metadata
 
 
-def ensure_agentbox_operation(run: OperationRun) -> OperationRun:
+def ensure_agentbox_operation(
+    run: OperationRun,
+    *,
+    operation_types: Iterable[str] | None = None,
+) -> OperationRun:
     """Return ``run`` when it belongs to AgentBox, otherwise raise."""
 
-    if run.operation_type != AGENTBOX_HOST_OPERATION_TYPE:
+    allowed_types = _agentbox_operation_type_set(operation_types)
+    if run.operation_type not in allowed_types:
         raise AgentBoxOperationError(
             f"operation {run.id!r} has type {run.operation_type!r}, "
-            f"expected {AGENTBOX_HOST_OPERATION_TYPE!r}"
+            "expected an AgentBox-managed operation type from "
+            f"{sorted(allowed_types)!r}"
         )
     return run
+
+
+def ensure_agentbox_operation_type(operation_type: str) -> str:
+    """Return a registered AgentBox operation type, otherwise raise."""
+
+    if not is_agentbox_operation_type(operation_type):
+        raise AgentBoxOperationError(
+            f"operation type {operation_type!r} is not managed by AgentBox"
+        )
+    return operation_type
+
+
+def _agentbox_operation_type_set(operation_types: Iterable[str] | None) -> set[str]:
+    if operation_types is None:
+        return set(list_agentbox_operation_types())
+    return {
+        ensure_agentbox_operation_type(operation_type)
+        for operation_type in operation_types
+    }
 
 
 def _command_to_metadata(command: Sequence[str] | str) -> str | list[str]:
@@ -170,6 +210,7 @@ __all__ = [
     "build_launch_metadata",
     "create_agentbox_operation",
     "ensure_agentbox_operation",
+    "ensure_agentbox_operation_type",
     "list_agentbox_operations",
     "load_agentbox_operation",
     "open_operation_store",
