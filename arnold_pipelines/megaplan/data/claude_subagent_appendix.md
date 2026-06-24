@@ -66,7 +66,8 @@ Start the run like this:
 4. Capture the returned plan name.
 5. Output `PLAN_NAME: <name>` on its own line immediately after init and before any `BREAKPOINT:` or `COMPLETE:`.
 6. Run `<launcher> status --plan <name>`.
-7. From then on, use that plan name and the same `<launcher>` for every command.
+7. If `status` reports anchors, run `<launcher> anchors show --plan <name>` once and treat the captured North Star as durable alignment context.
+8. From then on, use that plan name and the same `<launcher>` for every command.
 
 At startup and after every later resume:
 - Read `state`, `next_step`, and `valid_next`.

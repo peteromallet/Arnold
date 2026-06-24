@@ -3,6 +3,12 @@
 # .megaplan/briefs/<epic-slug>/chain.yaml beside the milestone briefs.
 # Progress is persisted under .megaplan/plans/.chains/.
 
+# Optional durable alignment anchors. For epics and architecture migrations,
+# keep NORTHSTAR.md beside this chain.yaml and uncomment this block.
+# Anchor paths resolve relative to this chain.yaml, not the shell CWD.
+# anchors:
+#   north_star: NORTHSTAR.md
+
 seed:
   # Plan that was kicked off manually before the chain took over. If its state
   # is already done/aborted/failed, the chain skips it; otherwise it is driven
@@ -23,6 +29,9 @@ milestones:
     with_prep: true
     with_feedback: true
     deepseek_provider: direct
+    # Optional milestone-level North Star that extends the epic anchor.
+    # anchors:
+    #   north_star: M1-northstar.md
   - label: m1a
     idea: .megaplan/briefs/foundation-store/M1a-settings-store.txt
     branch: megaplan/m1a-settings-store

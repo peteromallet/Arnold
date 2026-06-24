@@ -55,6 +55,100 @@
       ],
       "positionals": [],
       "subcommands": {
+        "anchors": {
+          "mutually_exclusive_groups": [],
+          "options": [
+            {
+              "action": "_HelpAction",
+              "choices": null,
+              "const": null,
+              "default": "<SUPPRESS>",
+              "dest": "help",
+              "help": "show this help message and exit",
+              "metavar": null,
+              "nargs": "0",
+              "option_strings": [
+                "--help",
+                "-h"
+              ],
+              "required": false,
+              "type": null
+            }
+          ],
+          "positionals": [],
+          "subcommands": {
+            "show": {
+              "mutually_exclusive_groups": [],
+              "options": [
+                {
+                  "action": "_HelpAction",
+                  "choices": null,
+                  "const": null,
+                  "default": "<SUPPRESS>",
+                  "dest": "help",
+                  "help": "show this help message and exit",
+                  "metavar": null,
+                  "nargs": "0",
+                  "option_strings": [
+                    "--help",
+                    "-h"
+                  ],
+                  "required": false,
+                  "type": null
+                },
+                {
+                  "action": "_StoreAction",
+                  "choices": null,
+                  "const": null,
+                  "default": null,
+                  "dest": "plan",
+                  "help": null,
+                  "metavar": null,
+                  "nargs": null,
+                  "option_strings": [
+                    "--plan"
+                  ],
+                  "required": true,
+                  "type": null
+                },
+                {
+                  "action": "_StoreTrueAction",
+                  "choices": null,
+                  "const": true,
+                  "default": false,
+                  "dest": "as_json",
+                  "help": null,
+                  "metavar": null,
+                  "nargs": "0",
+                  "option_strings": [
+                    "--json"
+                  ],
+                  "required": false,
+                  "type": null
+                },
+                {
+                  "action": "_StoreAction",
+                  "choices": [
+                    "north_star"
+                  ],
+                  "const": null,
+                  "default": "north_star",
+                  "dest": "anchor_type",
+                  "help": null,
+                  "metavar": null,
+                  "nargs": null,
+                  "option_strings": [
+                    "--type"
+                  ],
+                  "required": false,
+                  "type": null
+                }
+              ],
+              "positionals": [],
+              "subcommands": {}
+            }
+          }
+        },
         "audit": {
           "mutually_exclusive_groups": [],
           "options": [
@@ -1269,6 +1363,21 @@
               "choices": null,
               "const": true,
               "default": false,
+              "dest": "fresh",
+              "help": "With --in-worktree: remove an existing registered worktree/branch for this name before creating the new chain worktree.",
+              "metavar": null,
+              "nargs": "0",
+              "option_strings": [
+                "--fresh"
+              ],
+              "required": false,
+              "type": null
+            },
+            {
+              "action": "_StoreTrueAction",
+              "choices": null,
+              "const": true,
+              "default": false,
               "dest": "clean_worktree",
               "help": "With --in-worktree: fork from a clean base ref and leave any uncommitted state behind in the source repo (no carry).",
               "metavar": null,
@@ -1335,6 +1444,21 @@
               "nargs": "0",
               "option_strings": [
                 "--one"
+              ],
+              "required": false,
+              "type": null
+            },
+            {
+              "action": "_StoreTrueAction",
+              "choices": null,
+              "const": true,
+              "default": false,
+              "dest": "require_anchor",
+              "help": "Reject chain specs that do not declare top-level anchors.north_star.",
+              "metavar": null,
+              "nargs": "0",
+              "option_strings": [
+                "--require-anchor"
               ],
               "required": false,
               "type": null
@@ -1533,6 +1657,21 @@
                   "choices": null,
                   "const": true,
                   "default": false,
+                  "dest": "fresh",
+                  "help": "With --in-worktree: remove an existing registered worktree/branch for this name before creating the new chain worktree.",
+                  "metavar": null,
+                  "nargs": "0",
+                  "option_strings": [
+                    "--fresh"
+                  ],
+                  "required": false,
+                  "type": null
+                },
+                {
+                  "action": "_StoreTrueAction",
+                  "choices": null,
+                  "const": true,
+                  "default": false,
                   "dest": "clean_worktree",
                   "help": "With --in-worktree: fork from a clean base ref and leave any uncommitted state behind in the source repo (no carry).",
                   "metavar": null,
@@ -1599,6 +1738,21 @@
                   "nargs": "0",
                   "option_strings": [
                     "--one"
+                  ],
+                  "required": false,
+                  "type": null
+                },
+                {
+                  "action": "_StoreTrueAction",
+                  "choices": null,
+                  "const": true,
+                  "default": false,
+                  "dest": "require_anchor",
+                  "help": "Reject chain specs that do not declare top-level anchors.north_star.",
+                  "metavar": null,
+                  "nargs": "0",
+                  "option_strings": [
+                    "--require-anchor"
                   ],
                   "required": false,
                   "type": null
@@ -4870,6 +5024,21 @@
               "nargs": null,
               "option_strings": [
                 "--from-doc"
+              ],
+              "required": false,
+              "type": null
+            },
+            {
+              "action": "_StoreAction",
+              "choices": null,
+              "const": null,
+              "default": null,
+              "dest": "north_star",
+              "help": "Snapshot a UTF-8 North Star anchor file into the new plan.",
+              "metavar": "PATH",
+              "nargs": null,
+              "option_strings": [
+                "--north-star"
               ],
               "required": false,
               "type": null

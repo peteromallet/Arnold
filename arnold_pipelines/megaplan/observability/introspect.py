@@ -18,6 +18,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional, Tuple
 
+from arnold_pipelines.megaplan.anchors import anchor_summary
 from arnold_pipelines.megaplan.control_interface import read_valid_targets
 from arnold_pipelines.megaplan.observability.events import EventKind, read_events
 from arnold.runtime.outcome import RunOutcome
@@ -653,6 +654,7 @@ def build_introspect_payload(plan_dir: Path) -> dict:
         "plan_state": plan_state,
         "iteration": iteration,
         "plan_dir": str(plan_dir),
+        "anchors": anchor_summary(state or {}, plan_dir),
         "binary_git": binary_git,
         "evidence": evidence,
         "rubric_doc": rubric_doc,

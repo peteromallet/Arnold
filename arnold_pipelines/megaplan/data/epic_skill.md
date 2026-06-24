@@ -40,6 +40,10 @@ Store durable epic artifacts under `.megaplan/briefs/<epic-slug>/`: put the exec
 ```yaml
 base_branch: main
 
+# Optional but recommended for long or drift-sensitive epics.
+anchors:
+  north_star: NORTHSTAR.md
+
 # Optional: a pre-existing plan whose output seeds the first milestone's repo state.
 seed:
   plan: scoping-from-docs-20260415-0217
@@ -62,6 +66,8 @@ milestones:
     idea: .megaplan/briefs/artifact-store/m3-api.md
     profile: partnered               # tier 3 — once schema+storage are locked, the API is mechanical
     depth: medium
+    anchors:
+      north_star: m3-api-northstar.md # optional milestone extension; does not override the epic anchor
 
   - label: m4-docs
     idea: .megaplan/briefs/artifact-store/m4-docs.md
@@ -93,6 +99,7 @@ driver:
 | `with_prep`, `with_feedback` | no | Booleans. |
 | `phase_model` | no | List of `phase=spec` strings — the surgical escape hatch. |
 | `deepseek_provider` | no | `direct` / `fireworks`. |
+| `anchors` | no | Currently supports `north_star: <path>`. Milestone anchors extend the top-level epic North Star for that milestone. |
 | `bakeoff` | no | Bake-off spec; rarely needed inside a chain. |
 | `notes` | no | Free text retained in state for the audit trail. |
 
@@ -117,6 +124,9 @@ The shorthand from megaplan-prep works for chain-spec notes: a milestone block a
 ```bash
 # Drive the full chain until completion (or failure).
 megaplan chain start --spec /path/to/chain.yaml
+
+# Reject chains that lack a top-level North Star.
+megaplan chain start --require-anchor --spec /path/to/chain.yaml
 
 # Drive at most one pending milestone, persist progress, stop cleanly.
 megaplan chain start --spec /path/to/chain.yaml --one
@@ -158,6 +168,7 @@ Scope: build a new artifact store that downstream sprints will consume. ~5 weeks
 .megaplan/briefs/artifact-store/m2-storage.md        # storage layer against the schema
 .megaplan/briefs/artifact-store/m3-api.md            # public API over storage
 .megaplan/briefs/artifact-store/m4-docs.md           # docs + migration guide
+.megaplan/briefs/artifact-store/NORTHSTAR.md         # durable end-state intent
 .megaplan/briefs/artifact-store/chain.yaml           # chain spec
 ```
 
@@ -195,3 +206,4 @@ Shows current milestone index, current plan name, last state, completed mileston
 - **Don't tier-flatten** — uniformly picking `partnered` for every milestone misses the point of the per-milestone rubric. Differentiate; the high-stakes milestone deserves a higher tier and the cheap milestone doesn't.
 - **Don't bake-off inside a chain unless you genuinely need it.** Bakeoffs are independent runs; nesting them inside a chain spec multiplies the cost without typically producing useful signal.
 - **Don't edit the spec mid-flight expecting completed milestones to re-run.** State is sticky for completed entries by design — that's how resume works.
+- **Don't leave `NORTHSTAR.md` undeclared.** A file beside `chain.yaml` is not auto-discovered; declare `anchors.north_star: NORTHSTAR.md` or run with `--require-anchor` to make omission fail fast.

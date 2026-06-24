@@ -32,11 +32,13 @@ Default to building on top of any existing uncommitted changes in the working tr
 ## Start
 Run `<launcher> config show` before `init`. If `raw_config.execution.auto_approve` is explicitly present, do not ask the execution-mode question and honor that configured override, including configured `false`. If that raw key is absent, ask execution mode (auto-approve or review) before `init`. In the same config check, respect `execution.robustness` as a settable override when it is configured; otherwise pick robustness yourself per the **megaplan-prep** skill.
 ```bash
-<launcher> init --project-dir "$PROJECT_DIR" [--auto-approve] [--robustness bare|light|full|thorough|extreme] [--mode code|metaplan] [--output docs/foo.md] [--from-doc docs/prior.md] "$IDEA"
+<launcher> init --project-dir "$PROJECT_DIR" [--auto-approve] [--robustness bare|light|full|thorough|extreme] [--mode code|metaplan] [--output docs/foo.md] [--from-doc docs/prior.md] [--north-star path/to/NORTHSTAR.md] "$IDEA"
 ```
 Legacy robustness names (`tiny|standard|robust|superrobust`) are still accepted on the CLI and in stored config — they map to `bare|full|thorough|extreme` respectively — but new plans should use the canonical names.
 For metaplan-mode runs, pass `--mode metaplan --output <relative/path>` (the path is where the final document artifact is written, relative to the project dir). Everything else is identical to code mode.
 Pass `--from-doc <relative/path>` when the new run should inherit decisions from a prior doc artifact. The path must be relative to the project dir, must exist as a file, and can be used with either `--mode code` or `--mode metaplan`. When the source doc contains a `## Settled Decisions` section, megaplan imports those decisions and automatically promotes them into success criteria for the new plan: `load_bearing: true` decisions become `must` criteria and `load_bearing: false` decisions become `info` criteria.
+
+Pass `--north-star <path>` when the plan needs durable end-state intent beyond the local brief. `init` snapshots the UTF-8 markdown/text file into the plan under `anchors/north_star/plan.md`; later source edits do not affect the active plan. First iteration supports only the `north_star` anchor type. When anchors exist, relevant prompts begin with `## Anchor Context: North Star` after the nested-harness guard.
 ## Settled Decisions Section Format
 When authoring a doc artifact that makes design decisions, use either of these canonical markdown shapes (the parser accepts both):
 
@@ -208,11 +210,22 @@ path handling, slug normalization, optional frontmatter parsing, keyword
 filtering, and snippets. Use `<launcher> brief list`, `<launcher> brief show`, and
 `<launcher> brief search` for the brief side of that common read surface.
 
+For epics, `<launcher> brief epic` also scaffolds `NORTHSTAR.md` beside
+`chain.yaml` and declares it through `anchors.north_star`. Edit it before
+`chain start`. Use the North Star for the durable destination and milestone
+briefs for local scope.
+
 `<launcher> init --idea-file <path>` reads the file and snapshots its text; it does
 not move arbitrary files into `.megaplan/briefs/`. If the idea file is a markdown
 artifact with YAML frontmatter, `init` snapshots only the markdown body. Use
 `<launcher> brief new --init` to create the canonical source file first and then
 initialize from it.
+
+Inspect captured anchors with:
+
+```bash
+<launcher> anchors show --plan <name> [--json]
+```
 
 ## Feedback
 See **megaplan-prep** for when to add the feedback phase (`--with-feedback`). This section covers the CLI mechanics once you've decided to use it.
