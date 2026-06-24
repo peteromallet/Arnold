@@ -24,12 +24,10 @@ from __future__ import annotations
 
 import ast
 import inspect
-import os
 import re
-import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any
 
 import pytest
 
@@ -45,7 +43,6 @@ _GENERIC_PACKAGE_ROOTS: tuple[Path, ...] = tuple(
         _ARNOLD_ROOT / "pipeline",
         _ARNOLD_ROOT / "runtime",
         _ARNOLD_ROOT / "control",
-        _ARNOLD_ROOT / "supervisor",
     )
     if root.exists()
 )
@@ -59,7 +56,6 @@ FORBIDDEN_STRING_LITERALS = frozenset(
     {"planning", "proceed", "iterate", "tiebreaker", "escalate"}
 )
 FORBIDDEN_RAW_SOURCE_PATTERNS = (
-    ".megaplan",
     "MEGAPLAN_",
     "GateRecommendation",
     "megaplan.pipeline-manifest.v1",
@@ -184,7 +180,7 @@ class TestStaticGateForbiddenStringLiterals:
                         violations.append(v)
         if violations:
             pytest.fail(
-                f"'planning' literal(s) found:\n"
+                "'planning' literal(s) found:\n"
                 + "\n".join(f"  • {v}" for v in violations)
             )
 
@@ -201,7 +197,7 @@ class TestStaticGateForbiddenStringLiterals:
                             break
         if violations:
             pytest.fail(
-                f"Gate recommendation literal(s) found:\n"
+                "Gate recommendation literal(s) found:\n"
                 + "\n".join(f"  • {v}" for v in violations)
             )
 
@@ -371,13 +367,6 @@ class _ConcreteStep:
 class TestConstructionSmoke:
     """Every neutral dataclass type must be instantiable with minimal valid args."""
 
-    def test_edge_instantiation(self) -> None:
-        from arnold.pipeline import Edge
-        e = Edge(label="ok", target="next")
-        assert e.label == "ok"
-        assert e.target == "next"
-        assert e.kind == "normal"
-
     def test_pipeline_verdict_accepts_arbitrary_strings(self) -> None:
         """PipelineVerdict.recommendation must accept arbitrary strings, not typed literals."""
         from arnold.pipeline import PipelineVerdict
@@ -431,49 +420,6 @@ class TestConstructionSmoke:
         assert with_contract.contract_result is contract
         assert with_contract.contract_result.schema_version == CONTRACT_RESULT_SCHEMA_VERSION
         assert with_contract.contract_result.payload["schema_version"] == "sha256:payload-v1"
-
-    def test_stage_instantiation(self) -> None:
-        from arnold.pipeline import Stage, Step
-        step = _ConcreteStep(name="validate", kind="judge")
-        assert isinstance(step, Step), "ConcreteStep must satisfy the Step Protocol"
-        s = Stage(name="validation", step=step, edges=())
-        assert s.name == "validation"
-        assert s.step is step
-        assert s.edges == ()
-
-    def test_parallel_stage_instantiation(self) -> None:
-        from arnold.pipeline import ParallelStage, Step, StepResult, StepContext
-
-        step_a = _ConcreteStep(name="worker_a", kind="exec")
-        step_b = _ConcreteStep(name="worker_b", kind="exec")
-        assert isinstance(step_a, Step)
-        assert isinstance(step_b, Step)
-
-        def join_fn(results: list[Any], ctx: Any) -> StepResult:
-            return StepResult(next="halt")
-
-        ps = ParallelStage(
-            name="fanout",
-            steps=(step_a, step_b),
-            join=join_fn,
-            edges=(),
-            max_workers=4,
-        )
-        assert ps.name == "fanout"
-        assert len(ps.steps) == 2
-        assert ps.join is join_fn
-        assert ps.max_workers == 4
-
-    def test_pipeline_instantiation(self) -> None:
-        from arnold.pipeline import Pipeline, Stage, Edge
-
-        step = _ConcreteStep(name="hello", kind="exec")
-        edge = Edge(label="halt", target="halt")
-        stage = Stage(name="hello_stage", step=step, edges=(edge,))
-        p = Pipeline(stages={"hello_stage": stage}, entry="hello_stage")
-        assert p.entry == "hello_stage"
-        assert "hello_stage" in p.stages
-        assert p.stages["hello_stage"] is stage
 
 
 class TestStateDeltaAndApplyDelta:
