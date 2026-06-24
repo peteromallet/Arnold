@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 import subprocess
 from typing import Any
@@ -20,6 +21,28 @@ def _is_runtime_artifact_path(path: str) -> bool:
     while normalized.startswith("./"):
         normalized = normalized[2:]
     return normalized == ".megaplan" or normalized.startswith(".megaplan/")
+
+
+def _pre_existing_task_ids(plan_dir: Path | None) -> set[str]:
+    """Return task IDs declared as pre-existing in ``contract.json``."""
+
+    if plan_dir is None:
+        return set()
+    contract_path = plan_dir / "contract.json"
+    try:
+        data = json.loads(contract_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return set()
+    if not isinstance(data, dict):
+        return set()
+    pre_existing = data.get("pre_existing")
+    if not isinstance(pre_existing, list):
+        return set()
+    return {
+        str(item).strip()
+        for item in pre_existing
+        if isinstance(item, str) and item.strip()
+    }
 
 
 def validate_execution_evidence(
@@ -246,7 +269,11 @@ def _validate_execution_evidence_code(
 
     declared_authoritative = base_ref is not None and base_sha is not None
     committed_paths = (
-        _collect_declared_committed_paths(project_dir, base_sha)
+        {
+            path
+            for path in _collect_declared_committed_paths(project_dir, base_sha)
+            if not _is_runtime_artifact_path(path)
+        }
         if declared_authoritative
         else set()
     )
@@ -335,6 +362,7 @@ def _validate_execution_evidence_code(
     skipped_without_reason: list[str] = []
     blocked_without_reason: list[str] = []
     hollow_done_tasks: list[str] = []
+    pre_existing_ids = _pre_existing_task_ids(plan_dir)
     for task in finalize_data.get("tasks", []):
         task_id = task.get("id", "?")
         status = task.get("status", "")
@@ -350,6 +378,8 @@ def _validate_execution_evidence_code(
             blocked_without_reason.append(task_id)
             continue
         if status == "done":
+            if task_id in pre_existing_ids:
+                continue
             files = task.get("files_changed") or []
             commands = task.get("commands_run") or []
             if not files and not commands:

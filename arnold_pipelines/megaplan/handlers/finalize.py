@@ -1293,11 +1293,16 @@ def _fallback_baseline_test_selection(
 
 def _write_finalize_artifacts(plan_dir: Path, payload: dict[str, Any], state: PlanState) -> str:
     contract_payload = normalize_contract_payload(
-        {"provides": payload.get("provides", []), "assumes": payload.get("assumes", [])},
+        {
+            "provides": payload.get("provides", []),
+            "assumes": payload.get("assumes", []),
+            "pre_existing": payload.get("pre_existing", []),
+        },
         root=Path(state["config"]["project_dir"]),
     )
     payload["provides"] = contract_payload["provides"]
     payload["assumes"] = contract_payload["assumes"]
+    payload["pre_existing"] = contract_payload["pre_existing"]
     if state["config"].get("mode") in {"doc", "joke"}:
         payload["baseline_test_failures"] = None
         payload["baseline_test_command"] = None

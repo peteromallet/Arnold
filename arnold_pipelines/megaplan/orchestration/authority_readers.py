@@ -353,6 +353,23 @@ def _task_records(payload: Mapping[str, Any]) -> tuple[Mapping[str, Any], ...]:
     return tuple(records)
 
 
+def _best_effort_git_head_for_path(path: Path) -> str | None:
+    """Return the git HEAD for the repo containing *path*, if available."""
+
+    root = path if path.is_dir() else path.parent
+    try:
+        completed = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=root,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return completed.stdout.strip() or None
+
+
 def _evidence_from_task_record(
     record: Mapping[str, Any],
     artifact_path: Path,
@@ -360,6 +377,9 @@ def _evidence_from_task_record(
     root: Path,
 ) -> tuple[EvidenceRef, ...]:
     task_id = _task_id(record)
+    fallback_head = _optional_str(record.get("head_sha") or record.get("head"))
+    if fallback_head is None and root is not None:
+        fallback_head = _best_effort_git_head_for_path(root)
     refs: list[EvidenceRef] = []
     for field_name in ("files_changed", "commands_run", "evidence_files", "sections_written"):
         for value in _string_values(record.get(field_name)):
@@ -371,7 +391,7 @@ def _evidence_from_task_record(
                     details={
                         "task_id": task_id,
                         field_name: [value],
-                        "head_sha": _optional_str(record.get("head_sha") or record.get("head")),
+                        "head_sha": fallback_head,
                         "code_hash": _optional_str(record.get("code_hash")),
                     },
                     trust_class=TrustClass.evidence,
@@ -399,7 +419,7 @@ def _evidence_from_task_record(
                     "task_id": task_id,
                     "kind": kind,
                     "executor_notes_length": len(notes.strip()),
-                    "head_sha": _optional_str(record.get("head_sha") or record.get("head")),
+                    "head_sha": fallback_head,
                     "code_hash": _optional_str(record.get("code_hash")),
                 },
                 trust_class=TrustClass.evidence,
