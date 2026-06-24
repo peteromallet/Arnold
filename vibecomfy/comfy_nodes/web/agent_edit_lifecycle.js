@@ -1578,23 +1578,13 @@ function _projectSyntheticTranscriptMessage(message) {
 }
 
 export function ingestChatRehydratePayload(panelState, payload) {
-  const payloadSessionId = typeof payload?.sessionId === "string" && payload.sessionId
-    ? payload.sessionId
-    : (typeof payload?.session_id === "string" && payload.session_id ? payload.session_id : null);
   const rawMessages = Array.isArray(payload?.messages) ? payload.messages : [];
-  const messages = payloadSessionId
-    ? rawMessages.map((message) => (
-        message && typeof message === "object" && !message.session_id && !message.sessionId
-          ? { ...message, session_id: payloadSessionId }
-          : message
-      ))
-    : rawMessages;
   const existingProjection = splitRehydrateProjectionInput({
     messages: Array.isArray(panelState?.chatMessages) ? panelState.chatMessages : [],
   });
   const rehydrateProjection = splitRehydrateProjectionInput({
     ...payload,
-    messages,
+    messages: rawMessages,
   });
   const chatMessages = reconcileChatMessages(
     existingProjection.normalTranscriptMessage,

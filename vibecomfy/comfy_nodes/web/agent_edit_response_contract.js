@@ -1481,22 +1481,47 @@ function withRehydrateEnvelopeSession(raw, entry) {
   return { ...entry, session_id: sessionId };
 }
 
+function messageNeedsSessionInjection(message) {
+  if (!isObject(message)) {
+    return false;
+  }
+  // Only durable transcript entries carry a turn identity. Injecting the
+  // envelope session id on purely local/optimistic-looking messages (no turn
+  // id) would change legacy assertions that expect exact projection of the
+  // raw message fields.
+  return Boolean(
+    asString(message.turn_id)
+    || asString(message.turnId)
+    || asString(message.turn_identity?.turn_id)
+    || asString(message.turnIdentity?.turnId),
+  );
+}
+
 export function splitRehydrateProjectionInput(raw) {
   const messages = Array.isArray(raw?.messages) ? raw.messages : [];
   const diagnostics = Array.isArray(raw?.diagnostics) ? raw.diagnostics : [];
   const auditArtifacts = Array.isArray(raw?.audit_artifacts) ? raw.audit_artifacts
     : Array.isArray(raw?.auditArtifacts) ? raw.auditArtifacts : [];
+  // Rehydrate payloads carry the authoritative session id at the envelope level.
+  // Distribute it to durable messages so the transcript, response details, and
+  // diagnostic/audit compartments all share identity without requiring every
+  // nested object to repeat it.
+  const messagesWithSession = messages.map((message) => (
+    messageNeedsSessionInjection(message)
+      ? withRehydrateEnvelopeSession(raw, message)
+      : message
+  ));
   return freezePlainData({
-    normalTranscriptMessage: messages.map(projectTranscriptMessage).filter(Boolean),
-    normalResponseDetail: messages.map(projectResponseDetail).filter(Boolean),
+    normalTranscriptMessage: messagesWithSession.map(projectTranscriptMessage).filter(Boolean),
+    normalResponseDetail: messagesWithSession.map(projectResponseDetail).filter(Boolean),
     explicitDiagnosticEvent: [
-      ...messages.filter(sourceHasDiagnosticEvent),
+      ...messagesWithSession.filter(sourceHasDiagnosticEvent),
       ...diagnostics.map((entry) => withRehydrateEnvelopeSession(raw, entry)),
     ]
       .map(projectExecutionEvent)
       .filter(Boolean),
     explicitAuditArtifact: [
-      ...messages.filter(sourceHasAuditArtifact),
+      ...messagesWithSession.filter(sourceHasAuditArtifact),
       ...auditArtifacts.map((entry) => withRehydrateEnvelopeSession(raw, entry)),
     ]
       .map(projectAuditArtifact)

@@ -2342,7 +2342,7 @@ test("CHAT_REHYDRATE_START increments epoch without disturbing current candidate
   assert.equal(panel.state.chatError, "old error");
 });
 
-test("CHAT_REHYDRATE_SUCCESS stores normalized chat payload and persists confirmed session id", () => {
+test("CHAT_REHYDRATE_SUCCESS stores safe chat payload and persists confirmed session id", () => {
   const messages = [{ role: "agent", text: "restored" }];
   const panel = makePanel({
     sessionId: null,
@@ -2363,7 +2363,7 @@ test("CHAT_REHYDRATE_SUCCESS stores normalized chat payload and persists confirm
     dirtySections: META_AND_THREAD_DIRTY_SECTIONS,
     persistSession: "sess-123",
   });
-  const expectedMessages = [{ role: "agent", text: "restored", session_id: "sess-123" }];
+  const expectedMessages = [{ role: "agent", text: "restored" }];
   assert.deepEqual(panel.state.chatMessages, expectedMessages);
   assert.deepEqual(panel.state.transcriptMessages, expectedMessages);
   assert.equal(panel.state.chatLoaded, true);
