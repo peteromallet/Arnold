@@ -1256,12 +1256,43 @@ function _handleChatRehydrateSuccess(panel, payload) {
   // replaces wholesale (backward-compatible with existing behaviour).
   panel.state.chatMessages = ingested.chatMessages;
   panel.state.transcriptMessages = panel.state.chatMessages.slice();
-  panel.state.responseDetails = ingested.responseDetails;
+  // Preserve locally-built Queue/detail compartments for turns the backend
+  // rehydrate projection does not repopulate (e.g. queueAllowed/eligibility).
+  // Merge per-turn: ingested fields win, but existing queueDisplay/candidate
+  // compartments are kept when the rehydrate projection drops them.
+  const existingResponseDetails = panel.state.responseDetails || {};
+  const mergedResponseDetails = { ...existingResponseDetails, ...ingested.responseDetails };
+  const PRESERVED_DETAIL_KEYS = ["queueDisplay", "candidate", "eligibility"];
+  for (const turnId of Object.keys(ingested.responseDetails)) {
+    const existingDetail = existingResponseDetails[turnId];
+    const ingestedDetail = ingested.responseDetails[turnId];
+    if (!existingDetail) {
+      continue;
+    }
+    let mergedDetail = null;
+    for (const key of PRESERVED_DETAIL_KEYS) {
+      if (existingDetail?.[key] != null && ingestedDetail?.[key] == null) {
+        mergedDetail ||= { ...ingestedDetail };
+        mergedDetail[key] = existingDetail[key];
+      }
+    }
+    if (mergedDetail) {
+      mergedResponseDetails[turnId] = mergedDetail;
+    }
+  }
+  panel.state.responseDetails = mergedResponseDetails;
   panel.state.executionEvents = ingested.executionEvents;
   panel.state.turns = ingested.turns;
   panel.state.auditArtifacts = ingested.auditArtifacts;
   panel.state.debugDiagnostics = ingested.debugDiagnostics;
-  panel.state.compartmentIndexes = ingested.compartmentIndexes;
+  panel.state.compartmentIndexes = {
+    ...(panel.state.compartmentIndexes || {}),
+    ...ingested.compartmentIndexes,
+    responseDetailsByTurnId: {
+      ...(panel.state.compartmentIndexes?.responseDetailsByTurnId || {}),
+      ...ingested.compartmentIndexes.responseDetailsByTurnId,
+    },
+  };
   panel.state.chatLoaded = true;
   panel.state.chatError = null;
   panel.state.chatSessionPath = typeof payload?.chatSessionPath === "string" ? payload.chatSessionPath : null;
