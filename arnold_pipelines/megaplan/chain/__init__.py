@@ -39,6 +39,7 @@ Progress is persisted under ``.megaplan/plans/.chains/`` so a relaunched
 process can resume where the previous run left off without dirtying milestone
 branches.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -82,9 +83,17 @@ from arnold_pipelines.megaplan.profiles import (
     _resolve_default_vendor,
     load_profile_metadata,
 )
-from arnold_pipelines.megaplan.runtime.process import megaplan_engine_env, megaplan_engine_root
+from arnold_pipelines.megaplan.runtime.process import (
+    megaplan_engine_env,
+    megaplan_engine_root,
+)
 from arnold_pipelines.megaplan.types import CliError
-from arnold_pipelines.megaplan.planning.state import STATE_AWAITING_PR_MERGE, STATE_EXECUTED, STATE_FINALIZED
+from arnold_pipelines.megaplan.planning.state import (
+    STATE_AWAITING_PR_MERGE,
+    STATE_DONE,
+    STATE_EXECUTED,
+    STATE_FINALIZED,
+)
 from . import spec as chain_spec
 
 APEX_EXTREME_RETRY_CAP = chain_spec.APEX_EXTREME_RETRY_CAP
@@ -101,7 +110,9 @@ VALID_FAILURE_ACTIONS = chain_spec.VALID_FAILURE_ACTIONS
 VALID_CLEAN_MILESTONE_PR_POLICIES = chain_spec.VALID_CLEAN_MILESTONE_PR_POLICIES
 VALID_PREREQUISITE_POLICIES = chain_spec.VALID_PREREQUISITE_POLICIES
 VALID_VALIDATION_POLICIES = chain_spec.VALID_VALIDATION_POLICIES
-RESUMABLE_RETRY_STATES = frozenset({STATE_FINALIZED, STATE_EXECUTED, "critiqued", "gated"})
+RESUMABLE_RETRY_STATES = frozenset(
+    {STATE_FINALIZED, STATE_EXECUTED, "critiqued", "gated"}
+)
 _bump_one_tier = chain_spec._bump_one_tier
 _legacy_state_path_for = chain_spec._legacy_state_path_for
 _optional_bool = chain_spec._optional_bool
@@ -121,6 +132,10 @@ log = logging.getLogger("megaplan")
 
 
 TERMINAL_SKIP_STATES = ("done", "aborted", "failed")
+NOOP_COMPLETION_SCHEMA = "megaplan.noop_completion"
+NOOP_COMPLETION_SCOPES = frozenset(
+    {"docs_only", "already_satisfied_by_base", "planning_only", "infra_only"}
+)
 GH_TRANSIENT_ERROR_PATTERNS = (
     " 500",
     " 502",
@@ -144,6 +159,8 @@ GH_TRANSIENT_ERROR_PATTERNS = (
     "try again",
 )
 GH_PR_STATE_ATTEMPTS = 3
+
+
 def _write_chain_policy_into_plan_meta(
     root: Path,
     plan_name: str,
@@ -213,7 +230,9 @@ def _write_chain_policy_into_plan_meta(
         meta["chain_policy"] = chain_policy
         return True
 
-    write_plan_state(plan_dir, mode="patch-many", patch={}, mutation=_patch_chain_policy)
+    write_plan_state(
+        plan_dir, mode="patch-many", patch={}, mutation=_patch_chain_policy
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -318,7 +337,14 @@ def _init_plan(
         vendor=vendor,
         writer=writer,
     )
-    args = [sys.executable, "-m", "arnold_pipelines.megaplan", "init", "--project-dir", str(root)]
+    args = [
+        sys.executable,
+        "-m",
+        "arnold_pipelines.megaplan",
+        "init",
+        "--project-dir",
+        str(root),
+    ]
     if auto_approve:
         args.append("--auto-approve")
     args.extend(["--robustness", robustness])
@@ -362,7 +388,9 @@ def _init_plan(
     try:
         payload = json.loads(proc.stdout)
     except json.JSONDecodeError as exc:
-        raise CliError("init_failed", f"megaplan init produced non-JSON output: {exc}") from exc
+        raise CliError(
+            "init_failed", f"megaplan init produced non-JSON output: {exc}"
+        ) from exc
     plan = payload.get("plan")
     if not isinstance(plan, str) or not plan:
         raise CliError("init_failed", "megaplan init did not return a plan name")
@@ -543,7 +571,11 @@ def _verify_completed_chain(
         state = _read_plan_state_payload_from_dir(plan_dir)
         project_dir = _project_dir_from_plan_state(root, state)
         meta = state.get("meta") if isinstance(state.get("meta"), dict) else {}
-        policy = meta.get("chain_policy") if isinstance(meta.get("chain_policy"), dict) else {}
+        policy = (
+            meta.get("chain_policy")
+            if isinstance(meta.get("chain_policy"), dict)
+            else {}
+        )
         milestone_base_sha = policy.get("milestone_base_sha")
         verdict = compute_verdict(
             plan_dir=plan_dir or (root / ".megaplan" / "plans" / plan_name),
@@ -558,9 +590,13 @@ def _verify_completed_chain(
             ),
             mode=verify_mode,
             providers=(LandedDiffProvider(),),
-            git_base_ref=milestone_base_sha if isinstance(milestone_base_sha, str) else None,
+            git_base_ref=(
+                milestone_base_sha if isinstance(milestone_base_sha, str) else None
+            ),
         )
-        landed_diff = next((ref for ref in verdict.evidence if ref.kind == "landed_diff"), None)
+        landed_diff = next(
+            (ref for ref in verdict.evidence if ref.kind == "landed_diff"), None
+        )
         details = landed_diff.details if landed_diff is not None else {}
         if not verdict.accepted:
             divergence_count += 1
@@ -574,7 +610,9 @@ def _verify_completed_chain(
                 "failures": list(verdict.failures),
                 "files_claimed": list(details.get("files_claimed") or []),
                 "files_in_diff": list(details.get("files_in_diff") or []),
-                "files_in_committed_range": list(details.get("files_in_committed_range") or []),
+                "files_in_committed_range": list(
+                    details.get("files_in_committed_range") or []
+                ),
                 "evidence_window": dict(details.get("evidence_window") or {}),
                 "diff_source": details.get("diff_source"),
             }
@@ -615,7 +653,9 @@ def _shadow_milestone_completion_verdict(
             extract_green_suite_info,
             normalize_contract_mode,
         )
-        from arnold_pipelines.megaplan.orchestration.completion_io import write_completion_verdict
+        from arnold_pipelines.megaplan.orchestration.completion_io import (
+            write_completion_verdict,
+        )
 
         mode = normalize_contract_mode(contract_mode)
         if mode == CONTRACT_MODE_OFF:
@@ -627,7 +667,7 @@ def _shadow_milestone_completion_verdict(
 
         plan_dir = resolve_plan_dir(root, plan_name)
         if plan_dir is None:
-                return False
+            return False
 
         state: dict[str, Any] = {}
         try:
@@ -638,7 +678,9 @@ def _shadow_milestone_completion_verdict(
             state = {}
 
         config = state.get("config") if isinstance(state.get("config"), dict) else {}
-        project_dir_str = config.get("project_dir") if isinstance(config, dict) else None
+        project_dir_str = (
+            config.get("project_dir") if isinstance(config, dict) else None
+        )
         if isinstance(project_dir_str, str) and project_dir_str:
             project_dir = Path(project_dir_str)
         else:
@@ -674,7 +716,11 @@ def _shadow_milestone_completion_verdict(
         if mode == CONTRACT_MODE_WARN:
             if verdict.would_block:
                 delta_dict, _ = extract_green_suite_info(verdict)
-                newly_failing = (delta_dict or {}).get("newly_failing", []) if delta_dict else list(verdict.failures)
+                newly_failing = (
+                    (delta_dict or {}).get("newly_failing", [])
+                    if delta_dict
+                    else list(verdict.failures)
+                )
                 log.warning(
                     "completion_contract_mode=warn: advisory — verdict would block "
                     "milestone %r; newly_failing=%r failures=%r",
@@ -851,7 +897,9 @@ def _run_full_suite_backstop_gate(
             raise FileNotFoundError(f"plan directory not found for {plan_name!r}")
 
         try:
-            raw_state = json.loads((plan_dir / "state.json").read_text(encoding="utf-8"))
+            raw_state = json.loads(
+                (plan_dir / "state.json").read_text(encoding="utf-8")
+            )
         except Exception:
             raw_state = {}
         config = raw_state.get("config", {}) if isinstance(raw_state, dict) else {}
@@ -896,9 +944,7 @@ def _run_full_suite_backstop_gate(
         failure_suffix = (
             f"; newly_failing={newly_failing[:5]}"
             if newly_failing
-            else f"; deleted_tests={deleted_tests[:5]}"
-            if deleted_tests
-            else ""
+            else f"; deleted_tests={deleted_tests[:5]}" if deleted_tests else ""
         )
         log_fn(
             "full_suite_backstop "
@@ -975,9 +1021,16 @@ def _latest_execution_batch_all_tasks_done(plan_dir: Path) -> tuple[bool, str]:
         plan_dir=plan_dir,
         decisions=batch_decisions,
     )
-    incomplete = _non_authoritative_task_reasons(task_records, completed, batch_decisions)
+    if not completed:
+        return False, f"{latest.name} has no corroborated completed task IDs"
+    incomplete = _non_authoritative_task_reasons(
+        task_records, completed, batch_decisions
+    )
     if incomplete:
-        return False, f"{latest.name} has non-authoritative tasks: {', '.join(incomplete)}"
+        return (
+            False,
+            f"{latest.name} has non-authoritative tasks: {', '.join(incomplete)}",
+        )
     finalize_path = plan_dir / "finalize.json"
     if finalize_path.exists():
         try:
@@ -985,10 +1038,14 @@ def _latest_execution_batch_all_tasks_done(plan_dir: Path) -> tuple[bool, str]:
         except (OSError, json.JSONDecodeError) as error:
             return False, f"finalize.json could not be read: {error}"
         finalize_tasks = (
-            finalize_payload.get("tasks") if isinstance(finalize_payload, dict) else None
+            finalize_payload.get("tasks")
+            if isinstance(finalize_payload, dict)
+            else None
         )
         if isinstance(finalize_tasks, list) and finalize_tasks:
-            finalize_records = [task for task in finalize_tasks if isinstance(task, dict)]
+            finalize_records = [
+                task for task in finalize_tasks if isinstance(task, dict)
+            ]
             from arnold_pipelines.megaplan.execute.batch import (
                 baseline_unavailable_checkpoint_ids,
             )
@@ -1018,19 +1075,384 @@ def _latest_execution_batch_all_tasks_done(plan_dir: Path) -> tuple[bool, str]:
                 finalize_decisions,
             )
             pending.extend(
-                _finalize_records_missing_authority_fields(authoritative_finalize_records)
+                _finalize_records_missing_authority_fields(
+                    authoritative_finalize_records
+                )
             )
             if pending:
-                return False, f"finalize.json has non-authoritative tasks: {', '.join(pending)}"
+                return (
+                    False,
+                    f"finalize.json has non-authoritative tasks: {', '.join(pending)}",
+                )
     return True, latest.name
 
 
-def _plan_terminal_completion_is_authoritative(root: Path, plan_name: str) -> tuple[bool, str]:
+def _plan_terminal_completion_is_authoritative(
+    root: Path, plan_name: str
+) -> tuple[bool, str]:
     try:
         plan_dir = resolve_plan_dir(root, plan_name)
     except CliError:
-        return True, f"plan {plan_name} directory unavailable; no chain artifacts to inspect"
+        return (
+            True,
+            f"plan {plan_name} directory unavailable; no chain artifacts to inspect",
+        )
     return _latest_execution_batch_all_tasks_done(plan_dir)
+
+
+def _read_typed_noop_completion_waiver(
+    plan_dir: Path,
+    *,
+    expected_base_sha: str | None = None,
+    expected_plan: str | None = None,
+    expected_milestone: str | None = None,
+) -> tuple[bool, str]:
+    """Return whether an explicit typed no-op completion waiver is valid."""
+
+    candidates = (
+        plan_dir / "completion_noop.json",
+        plan_dir / "no_op_completion.json",
+    )
+    for candidate in candidates:
+        if not candidate.exists():
+            continue
+        try:
+            payload = json.loads(candidate.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as error:
+            return False, f"{candidate.name} could not be read: {error}"
+        if not isinstance(payload, dict):
+            return False, f"{candidate.name} payload is not an object"
+        if payload.get("schema") != NOOP_COMPLETION_SCHEMA:
+            return False, f"{candidate.name} schema must be {NOOP_COMPLETION_SCHEMA!r}"
+        plan = payload.get("plan")
+        if expected_plan and plan != expected_plan:
+            return (
+                False,
+                f"{candidate.name} plan {plan!r} does not match {expected_plan!r}",
+            )
+        milestone = payload.get("milestone_label")
+        if expected_milestone and milestone != expected_milestone:
+            return (
+                False,
+                f"{candidate.name} milestone_label {milestone!r} does not match "
+                f"{expected_milestone!r}",
+            )
+        reason = payload.get("reason")
+        if not isinstance(reason, str) or not reason.strip():
+            return False, f"{candidate.name} requires a non-empty reason"
+        scope = payload.get("scope")
+        if scope not in NOOP_COMPLETION_SCOPES:
+            allowed = ", ".join(sorted(NOOP_COMPLETION_SCOPES))
+            return False, f"{candidate.name} scope must be one of: {allowed}"
+        base_sha = payload.get("base_sha")
+        if not isinstance(base_sha, str) or not base_sha.strip():
+            return False, f"{candidate.name} requires a non-empty base_sha"
+        if expected_base_sha and base_sha != expected_base_sha:
+            return (
+                False,
+                f"{candidate.name} base_sha {base_sha!r} does not match "
+                f"milestone_base_sha {expected_base_sha!r}",
+            )
+        return True, f"{candidate.name} scope={scope} reason={reason.strip()}"
+    return False, "no typed no-op completion waiver found"
+
+
+def _finalize_output_has_empty_tasks(plan_dir: Path) -> tuple[bool, str]:
+    finalize_output = plan_dir / "finalize_output.json"
+    if not finalize_output.exists():
+        return False, "finalize_output.json not present"
+    try:
+        payload = json.loads(finalize_output.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        return True, f"finalize_output.json could not be read: {error}"
+    if not isinstance(payload, dict):
+        return True, "finalize_output.json payload is not an object"
+    tasks = payload.get("tasks")
+    if isinstance(tasks, list) and not tasks:
+        return True, "finalize_output.json tasks is empty"
+    return False, "finalize_output.json tasks is non-empty or absent"
+
+
+def _milestone_base_sha_from_plan_state(state: dict[str, Any]) -> str | None:
+    meta = state.get("meta") if isinstance(state.get("meta"), dict) else {}
+    policy = (
+        meta.get("chain_policy") if isinstance(meta.get("chain_policy"), dict) else {}
+    )
+    base_sha = policy.get("milestone_base_sha")
+    return base_sha if isinstance(base_sha, str) and base_sha.strip() else None
+
+
+def _semantic_diff_nonempty_between_refs(
+    root: Path, base_sha: str | None, target_ref: str, *, target_label: str
+) -> tuple[bool, str]:
+    if not base_sha:
+        return False, "milestone_base_sha unavailable"
+    target_ref = target_ref.strip()
+    if not target_ref:
+        return False, f"{target_label} unavailable"
+    proc = subprocess.run(
+        ["git", "diff", "--name-only", base_sha, target_ref, "--"],
+        cwd=str(root),
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=60,
+    )
+    if proc.returncode != 0:
+        return (
+            False,
+            f"git diff from milestone_base_sha to {target_label} failed: "
+            f"{proc.stderr.strip() or proc.stdout.strip()}",
+        )
+    changed = [
+        line.strip()
+        for line in proc.stdout.splitlines()
+        if line.strip()
+        and line.strip() != ".megaplan"
+        and not line.strip().startswith(".megaplan/")
+    ]
+    if not changed:
+        return (
+            False,
+            f"no semantic diff from milestone_base_sha {base_sha} to {target_label}",
+        )
+    return True, f"{target_label} semantic diff files: {', '.join(changed[:10])}"
+
+
+def _semantic_diff_nonempty_from_base(
+    root: Path, base_sha: str | None
+) -> tuple[bool, str]:
+    return _semantic_diff_nonempty_between_refs(
+        root, base_sha, "HEAD", target_label="local HEAD"
+    )
+
+
+def _string_value(value: Any) -> str | None:
+    return value.strip() if isinstance(value, str) and value.strip() else None
+
+
+def _sha_from_payload_value(value: Any) -> str | None:
+    direct = _string_value(value)
+    if direct:
+        return direct
+    if isinstance(value, dict):
+        for key in ("oid", "sha", "id"):
+            nested = _string_value(value.get(key))
+            if nested:
+                return nested
+    return None
+
+
+def _published_pr_target_from_record(
+    record: dict[str, Any],
+    chain_state: ChainState | None = None,
+) -> tuple[str | None, str]:
+    merge_sha_keys = (
+        "pr_merge_sha",
+        "merge_commit_sha",
+        "merge_commit",
+        "mergeCommit",
+        "published_merge_sha",
+    )
+    head_sha_keys = (
+        "pr_head_sha",
+        "pr_head",
+        "head_ref_oid",
+        "headRefOid",
+        "published_head_sha",
+        "published_commit_sha",
+    )
+    for key in merge_sha_keys:
+        sha = _sha_from_payload_value(record.get(key))
+        if sha:
+            return sha, f"record.{key}"
+    pr_payload = record.get("pr")
+    if isinstance(pr_payload, dict):
+        for key in merge_sha_keys:
+            sha = _sha_from_payload_value(pr_payload.get(key))
+            if sha:
+                return sha, f"record.pr.{key}"
+    for key in head_sha_keys:
+        sha = _sha_from_payload_value(record.get(key))
+        if sha:
+            return sha, f"record.{key}"
+    if isinstance(pr_payload, dict):
+        for key in head_sha_keys:
+            sha = _sha_from_payload_value(pr_payload.get(key))
+            if sha:
+                return sha, f"record.pr.{key}"
+    if chain_state is not None:
+        sha = _string_value(chain_state.pr_head)
+        if sha:
+            return sha, "chain_state.pr_head"
+    return None, "record/chain_state"
+
+
+def _published_pr_target_from_gh(
+    root: Path, pr_number: int
+) -> tuple[str | None, str]:
+    try:
+        proc = subprocess.run(
+            [
+                "gh",
+                "pr",
+                "view",
+                str(pr_number),
+                "--json",
+                "state,mergeCommit,headRefOid",
+            ],
+            cwd=str(root),
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=120,
+        )
+    except (OSError, subprocess.TimeoutExpired) as error:
+        return None, f"gh pr view #{pr_number} failed: {error}"
+    if proc.returncode != 0:
+        detail = proc.stderr.strip() or proc.stdout.strip() or "gh pr view failed"
+        return None, f"gh pr view #{pr_number} failed: {detail}"
+    try:
+        payload = json.loads(proc.stdout or "{}")
+    except json.JSONDecodeError as error:
+        return None, f"gh pr view #{pr_number} produced non-JSON output: {error}"
+    if not isinstance(payload, dict):
+        return None, f"gh pr view #{pr_number} payload is not an object"
+    state = _string_value(payload.get("state"))
+    if not state or state.lower() != "merged":
+        return None, f"gh pr view #{pr_number} state={state!r} is not merged"
+    merge_sha = _sha_from_payload_value(payload.get("mergeCommit"))
+    if merge_sha:
+        return merge_sha, f"gh.pr#{pr_number}.mergeCommit"
+    head_sha = _sha_from_payload_value(payload.get("headRefOid"))
+    if head_sha:
+        return head_sha, f"gh.pr#{pr_number}.headRefOid"
+    return None, f"gh pr view #{pr_number} did not return a mergeCommit/headRefOid"
+
+
+def _completion_record_is_merged_pr(record: dict[str, Any]) -> bool:
+    pr_state = _string_value(record.get("pr_state"))
+    return bool(pr_state and pr_state.lower() == "merged")
+
+
+def _published_pr_semantic_diff_nonempty_from_base(
+    root: Path,
+    base_sha: str | None,
+    record: dict[str, Any],
+    *,
+    chain_state: ChainState | None = None,
+) -> tuple[bool, str]:
+    target, source = _published_pr_target_from_record(record, chain_state)
+    if target is None:
+        pr_number = record.get("pr_number")
+        if isinstance(pr_number, int):
+            target, source = _published_pr_target_from_gh(root, pr_number)
+        elif isinstance(pr_number, str) and pr_number.strip().isdigit():
+            target, source = _published_pr_target_from_gh(root, int(pr_number.strip()))
+    if target is None:
+        return False, f"published PR target unavailable: {source}"
+    return _semantic_diff_nonempty_between_refs(
+        root,
+        base_sha,
+        target,
+        target_label=f"published PR target {target[:12]} ({source})",
+    )
+
+
+def _chain_completion_guard(
+    root: Path,
+    record: dict[str, Any],
+    *,
+    implementation_milestone: bool,
+    chain_state: ChainState | None = None,
+) -> tuple[bool, str]:
+    plan_name = record.get("plan")
+    if not isinstance(plan_name, str) or not plan_name.strip():
+        return False, "completion record has no plan name"
+    try:
+        plan_dir = resolve_plan_dir(root, plan_name)
+    except CliError as error:
+        return False, f"plan {plan_name} directory unavailable: {error.message}"
+
+    plan_state = _read_plan_state_payload_from_dir(plan_dir)
+    current_state = plan_state.get("current_state")
+    if current_state != STATE_DONE:
+        return (
+            False,
+            f"plan {plan_name} current_state={current_state!r} is not terminal-success "
+            f"{STATE_DONE!r}",
+        )
+
+    if not implementation_milestone:
+        return True, "non-implementation completion guard passed"
+
+    milestone_base_sha = _milestone_base_sha_from_plan_state(plan_state)
+    waiver_ok, waiver_reason = _read_typed_noop_completion_waiver(
+        plan_dir,
+        expected_base_sha=milestone_base_sha,
+        expected_plan=plan_name,
+        expected_milestone=(
+            record.get("label") if isinstance(record.get("label"), str) else None
+        ),
+    )
+
+    authoritative, reason = _latest_execution_batch_all_tasks_done(plan_dir)
+    if not authoritative and not waiver_ok:
+        return (
+            False,
+            f"execution evidence blocked completion: {reason}; {waiver_reason}",
+        )
+
+    empty_finalize_tasks, finalize_reason = _finalize_output_has_empty_tasks(plan_dir)
+    if empty_finalize_tasks and not waiver_ok:
+        return False, f"{finalize_reason}; {waiver_reason}"
+
+    diff_ok, diff_reason = _semantic_diff_nonempty_from_base(root, milestone_base_sha)
+    if not diff_ok and not waiver_ok:
+        return False, f"{diff_reason}; {waiver_reason}"
+
+    published_diff_reason: str | None = None
+    if _completion_record_is_merged_pr(record):
+        published_diff_ok, published_diff_reason = (
+            _published_pr_semantic_diff_nonempty_from_base(
+                root,
+                milestone_base_sha,
+                record,
+                chain_state=chain_state,
+            )
+        )
+        if not published_diff_ok and not waiver_ok:
+            return False, f"{published_diff_reason}; {waiver_reason}"
+
+    if waiver_ok:
+        return True, f"typed no-op waiver accepted: {waiver_reason}"
+    reason_parts = [reason, finalize_reason, diff_reason]
+    if published_diff_reason is not None:
+        reason_parts.append(published_diff_reason)
+    return True, f"completion guard passed: {'; '.join(reason_parts)}"
+
+
+def _append_completed_with_guard(
+    root: Path,
+    state: ChainState,
+    record: dict[str, Any],
+    *,
+    implementation_milestone: bool,
+    writer,
+) -> tuple[bool, str]:
+    ok, reason = _chain_completion_guard(
+        root,
+        record,
+        implementation_milestone=implementation_milestone,
+        chain_state=state,
+    )
+    if not ok:
+        state.last_state = "authority_divergence"
+        label = record.get("label") or "unknown"
+        writer(f"[chain] completion guard blocked {label}: {reason}\n")
+        return False, reason
+    state.completed.append(record)
+    return True, reason
 
 
 def _finalize_records_missing_authority_fields(
@@ -1041,7 +1463,16 @@ def _finalize_records_missing_authority_fields(
     missing: list[str] = []
     for task in task_records:
         task_id = str(task.get("task_id") or task.get("id") or "?")
-        if any(task.get(field) for field in ("files_changed", "commands_run", "evidence_files", "sections_written", "evidence")):
+        if any(
+            task.get(field)
+            for field in (
+                "files_changed",
+                "commands_run",
+                "evidence_files",
+                "sections_written",
+                "evidence",
+            )
+        ):
             continue
         kind = task.get("kind")
         notes = task.get("executor_notes")
@@ -1164,9 +1595,8 @@ def _milestone_retry_cap(milestone: "MilestoneSpec | None", spec: ChainSpec) -> 
     """
     profile = (milestone.profile if milestone else None) or None
     robustness = (
-        (milestone.robustness if milestone and milestone.robustness else spec.robustness)
-        or "standard"
-    )
+        milestone.robustness if milestone and milestone.robustness else spec.robustness
+    ) or "standard"
     if profile == "apex" or robustness == "extreme":
         return APEX_EXTREME_RETRY_CAP
     return DEFAULT_MILESTONE_RETRY_CAP
@@ -1180,7 +1610,13 @@ def _resumable_retry_state(root: Path, plan: str | None) -> str | None:
     try:
         plan_dir = resolve_plan_dir(root, plan)
         raw = json.loads((plan_dir / "state.json").read_text(encoding="utf-8"))
-    except (CliError, FileNotFoundError, json.JSONDecodeError, OSError, UnicodeDecodeError):
+    except (
+        CliError,
+        FileNotFoundError,
+        json.JSONDecodeError,
+        OSError,
+        UnicodeDecodeError,
+    ):
         return None
     if not isinstance(raw, dict):
         return None
@@ -1196,7 +1632,13 @@ def _plan_current_state_from_payload(root: Path, plan: str | None) -> str | None
     try:
         plan_dir = resolve_plan_dir(root, plan)
         raw = json.loads((plan_dir / "state.json").read_text(encoding="utf-8"))
-    except (CliError, FileNotFoundError, json.JSONDecodeError, OSError, UnicodeDecodeError):
+    except (
+        CliError,
+        FileNotFoundError,
+        json.JSONDecodeError,
+        OSError,
+        UnicodeDecodeError,
+    ):
         return None
     if not isinstance(raw, dict):
         return None
@@ -1296,7 +1738,9 @@ def _apply_ladder_action(
     if action in ("retry_milestone", "resume_milestone"):
         return "retry"
     if action == "bump_profile":
-        current = state.profile_bumps.get(label) or (milestone.profile if milestone else None)
+        current = state.profile_bumps.get(label) or (
+            milestone.profile if milestone else None
+        )
         nxt, bumped = chain_spec._bump_one_tier(current, PROFILE_BUMP_ORDER)
         if not bumped:
             writer(
@@ -1306,7 +1750,9 @@ def _apply_ladder_action(
             return "stop"
         state.profile_bumps[label] = nxt or ""
         # Couple a depth bump so a harder retry also thinks deeper.
-        cur_depth = state.depth_bumps.get(label) or (milestone.depth if milestone else None)
+        cur_depth = state.depth_bumps.get(label) or (
+            milestone.depth if milestone else None
+        )
         d_next, d_bumped = chain_spec._bump_one_tier(cur_depth, DEPTH_BUMP_ORDER)
         if d_bumped and d_next:
             state.depth_bumps[label] = d_next
@@ -1314,7 +1760,11 @@ def _apply_ladder_action(
         return "retry"
     if action == "bump_robustness":
         current = state.robustness_bumps.get(label) or (
-            (milestone.robustness if milestone and milestone.robustness else spec.robustness)
+            (
+                milestone.robustness
+                if milestone and milestone.robustness
+                else spec.robustness
+            )
         )
         nxt, bumped = chain_spec._bump_one_tier(current, ROBUSTNESS_BUMP_ORDER)
         if not bumped:
@@ -1383,7 +1833,9 @@ def _handle_outcome(
         if status == "aborted":
             writer(f"[chain] plan {outcome.plan} ended aborted\n")
         else:
-            writer(f"[chain] plan {outcome.plan} escalated — applying on_escalate policy\n")
+            writer(
+                f"[chain] plan {outcome.plan} escalated — applying on_escalate policy\n"
+            )
         policy = spec.on_escalate_policy
     else:
         # failed, stalled, cap, awaiting_human, blocked, … → treat as failure
@@ -1408,9 +1860,7 @@ def _handle_outcome(
         spent = state.retry_counts.get(label, 0)
         if spent < cap:
             state.retry_counts[label] = spent + 1
-            writer(
-                f"[chain] {label}: retry {spent + 1}/{cap}\n"
-            )
+            writer(f"[chain] {label}: retry {spent + 1}/{cap}\n")
             return "retry"
         # Retries exhausted → climb to the bump rung.
         writer(f"[chain] {label}: retries exhausted ({spent}/{cap})\n")
@@ -1481,8 +1931,14 @@ def _assert_clean_base(
             f"({sample}); auto-stashing before init\n"
         )
         proc = subprocess.run(
-            ["git", "stash", "push", "--include-untracked", "-m",
-             f"megaplan-chain require_clean_base {milestone.label}"],
+            [
+                "git",
+                "stash",
+                "push",
+                "--include-untracked",
+                "-m",
+                f"megaplan-chain require_clean_base {milestone.label}",
+            ],
             cwd=str(root),
             capture_output=True,
             text=True,
@@ -1590,7 +2046,13 @@ def run_chain(
         )
     chain_spec.save_chain_state(spec_path, state)
     preexisting_dirty_paths = _dirty_worktree_paths(root)
-    push_enabled = not no_push and os.environ.get("MEGAPLAN_CHAIN_NO_PUSH") not in {"1", "true", "TRUE", "yes", "YES"}
+    push_enabled = not no_push and os.environ.get("MEGAPLAN_CHAIN_NO_PUSH") not in {
+        "1",
+        "true",
+        "TRUE",
+        "yes",
+        "YES",
+    }
 
     events: list[dict[str, Any]] = []
 
@@ -1625,7 +2087,13 @@ def run_chain(
                     reason=f"seed plan terminal outcome lacks authority",
                 )
             if decision == "stop":
-                return _result("stopped", state, events, spec=spec, reason=f"seed plan {outcome.status}")
+                return _result(
+                    "stopped",
+                    state,
+                    events,
+                    spec=spec,
+                    reason=f"seed plan {outcome.status}",
+                )
             if decision == "retry":
                 # Recursive retry kept simple: re-drive seed once.
                 outcome = _drive_plan_with_blocked_execute_recovery(
@@ -1637,7 +2105,9 @@ def run_chain(
                 state.last_state = outcome.status
                 chain_spec.save_chain_state(spec_path, state)
                 if outcome.status != "done":
-                    return _result("stopped", state, events, spec=spec, reason="seed retry failed")
+                    return _result(
+                        "stopped", state, events, spec=spec, reason="seed retry failed"
+                    )
                 authoritative, reason = _plan_terminal_completion_is_authoritative(
                     root, spec.seed_plan
                 )
@@ -1675,9 +2145,26 @@ def run_chain(
                     spec=spec,
                     reason=f"seed plan terminal state lacks authority: {reason}",
                 )
-        state.completed.append(
-            {"label": "seed", "plan": spec.seed_plan, "status": state.last_state or seed_state}
+        appended, reason = _append_completed_with_guard(
+            root,
+            state,
+            {
+                "label": "seed",
+                "plan": spec.seed_plan,
+                "status": state.last_state or seed_state,
+            },
+            implementation_milestone=False,
+            writer=writer,
         )
+        if not appended:
+            chain_spec.save_chain_state(spec_path, state)
+            return _result(
+                "blocked",
+                state,
+                events,
+                spec=spec,
+                reason=f"seed completion guard blocked append: {reason}",
+            )
         state.current_milestone_index = 0
         state.current_plan_name = None
         chain_spec.save_chain_state(spec_path, state)
@@ -1703,9 +2190,14 @@ def run_chain(
         log(f"milestone {milestone.label} starting")
         use_pr = push_enabled and bool(milestone.branch)
 
-        if state.last_state == STATE_AWAITING_PR_MERGE and state.current_milestone_index == idx:
+        if (
+            state.last_state == STATE_AWAITING_PR_MERGE
+            and state.current_milestone_index == idx
+        ):
             if not use_pr or state.pr_number is None:
-                log(f"review merge wait for {milestone.label} has no PR context; advancing")
+                log(
+                    f"review merge wait for {milestone.label} has no PR context; advancing"
+                )
                 state.pr_state = None
             else:
                 pr_state = _pr_state(root, state.pr_number, writer=writer)
@@ -1721,15 +2213,28 @@ def run_chain(
                         reason=f"milestone {milestone.label} PR #{state.pr_number} is {pr_state}",
                     )
                 log(f"PR #{state.pr_number} merged; advancing past {milestone.label}")
-            state.completed.append(
+            appended, reason = _append_completed_with_guard(
+                root,
+                state,
                 {
                     "label": milestone.label,
                     "plan": state.current_plan_name,
                     "status": "done",
                     "pr_number": state.pr_number,
                     "pr_state": "merged" if state.pr_number is not None else None,
-                }
+                },
+                implementation_milestone=True,
+                writer=writer,
             )
+            if not appended:
+                chain_spec.save_chain_state(spec_path, state)
+                return _result(
+                    "blocked",
+                    state,
+                    events,
+                    spec=spec,
+                    reason=f"milestone {milestone.label} completion guard blocked append: {reason}",
+                )
             idx += 1
             state.current_milestone_index = idx
             state.current_plan_name = None
@@ -1799,9 +2304,11 @@ def run_chain(
                 or spec.robustness
             )
             eff_depth = state.depth_bumps.get(milestone.label) or milestone.depth
-            if eff_profile != milestone.profile or eff_robustness != (
-                milestone.robustness or spec.robustness
-            ) or eff_depth != milestone.depth:
+            if (
+                eff_profile != milestone.profile
+                or eff_robustness != (milestone.robustness or spec.robustness)
+                or eff_depth != milestone.depth
+            ):
                 log(
                     f"milestone {milestone.label} using bumped tiers "
                     f"profile={eff_profile} robustness={eff_robustness} depth={eff_depth}"
@@ -1890,7 +2397,12 @@ def run_chain(
         state.last_state = outcome.status
         chain_spec.save_chain_state(spec_path, state)
         decision = _handle_outcome(
-            outcome, spec=spec, writer=writer, milestone=milestone, state=state, root=root
+            outcome,
+            spec=spec,
+            writer=writer,
+            milestone=milestone,
+            state=state,
+            root=root,
         )
         if decision == "authority_blocked":
             state.last_state = "authority_divergence"
@@ -1903,7 +2415,9 @@ def run_chain(
                 reason=f"milestone {milestone.label} terminal outcome lacks authority",
             )
         if decision in {"advance", "skip"}:
-            authoritative, reason = _plan_terminal_completion_is_authoritative(root, plan_name)
+            authoritative, reason = _plan_terminal_completion_is_authoritative(
+                root, plan_name
+            )
             if not authoritative:
                 writer(
                     f"[chain] milestone {milestone.label} outcome={outcome.status} "
@@ -1972,9 +2486,9 @@ def run_chain(
                 failing_suffix = (
                     f"; newly_failing={newly_failing[:10]}"
                     if newly_failing
-                    else f"; deleted_tests={deleted_tests[:10]}"
-                    if deleted_tests
-                    else ""
+                    else (
+                        f"; deleted_tests={deleted_tests[:10]}" if deleted_tests else ""
+                    )
                 )
                 chain_spec.save_chain_state(spec_path, state)
                 return _result(
@@ -2039,7 +2553,9 @@ def run_chain(
                         spec=spec,
                         reason=f"milestone {milestone.label} PR #{state.pr_number} awaiting merge",
                     )
-                state.pr_state = _enable_auto_merge(root, state.pr_number, writer=writer)
+                state.pr_state = _enable_auto_merge(
+                    root, state.pr_number, writer=writer
+                )
                 chain_spec.save_chain_state(spec_path, state)
         # Completion-verification contract (SHADOW-MODE, fail-open): compute +
         # persist + log a milestone-level verdict. NEVER alters the append,
@@ -2057,14 +2573,22 @@ def run_chain(
             max_retries = 2
             try:
                 plan_dir = resolve_plan_dir(root, plan_name)
-                raw_state = json.loads((plan_dir / "state.json").read_text(encoding="utf-8"))
+                raw_state = json.loads(
+                    (plan_dir / "state.json").read_text(encoding="utf-8")
+                )
                 if isinstance(raw_state, dict):
-                    cfg = raw_state.get("config", {}) if isinstance(raw_state.get("config"), dict) else {}
+                    cfg = (
+                        raw_state.get("config", {})
+                        if isinstance(raw_state.get("config"), dict)
+                        else {}
+                    )
                     max_retries = int(cfg.get("enforce_revise_max_retries", 2))
             except Exception:
                 pass
 
-            milestone_retry_count = int(state.enforce_revise_counts.get(milestone.label, 0))
+            milestone_retry_count = int(
+                state.enforce_revise_counts.get(milestone.label, 0)
+            )
             if milestone_retry_count >= max_retries:
                 log(
                     f"completion_contract_mode=enforce: milestone {milestone.label!r} "
@@ -2122,7 +2646,22 @@ def run_chain(
             completed_record["plan_branch"] = spec.base_branch
         if full_suite_backstop_summary is not None:
             completed_record["full_suite_backstop"] = full_suite_backstop_summary
-        state.completed.append(completed_record)
+        appended, reason = _append_completed_with_guard(
+            root,
+            state,
+            completed_record,
+            implementation_milestone=True,
+            writer=writer,
+        )
+        if not appended:
+            chain_spec.save_chain_state(spec_path, state)
+            return _result(
+                "blocked",
+                state,
+                events,
+                spec=spec,
+                reason=f"milestone {milestone.label} completion guard blocked append: {reason}",
+            )
         idx += 1
         state.current_milestone_index = idx
         state.current_plan_name = None
@@ -2144,7 +2683,12 @@ def run_chain(
 
 
 def _result(
-    status: str, state: ChainState, events: list[dict[str, Any]], *, spec: ChainSpec | None = None, reason: str = ""
+    status: str,
+    state: ChainState,
+    events: list[dict[str, Any]],
+    *,
+    spec: ChainSpec | None = None,
+    reason: str = "",
 ) -> dict[str, Any]:
     result = {
         "status": status,
@@ -2226,8 +2770,12 @@ def _write_chain_status_pretty(summary: dict[str, Any], *, writer) -> None:
         current_label = f"{current['label']} (index {current['index']})"
     completed = summary.get("completed") or []
     remaining = summary.get("remaining") or []
-    completed_labels = ", ".join(item["label"] for item in completed) if completed else "none"
-    remaining_labels = ", ".join(item["label"] for item in remaining) if remaining else "none"
+    completed_labels = (
+        ", ".join(item["label"] for item in completed) if completed else "none"
+    )
+    remaining_labels = (
+        ", ".join(item["label"] for item in remaining) if remaining else "none"
+    )
     writer(f"Current milestone: {current_label}\n")
     writer(f"Completed: {completed_labels}\n")
     writer(f"Remaining: {remaining_labels}\n")
@@ -2239,7 +2787,9 @@ def _write_chain_status_pretty(summary: dict[str, Any], *, writer) -> None:
     if summary.get("last_state"):
         writer(f"Last state: {summary['last_state']}\n")
     if summary.get("pr_number"):
-        writer(f"Current PR: #{summary['pr_number']} ({summary.get('pr_state') or 'unknown'})\n")
+        writer(
+            f"Current PR: #{summary['pr_number']} ({summary.get('pr_state') or 'unknown'})\n"
+        )
     # Sync section (branch/PR sync state)
     sync = summary.get("sync") or {}
     if any(v is not None for v in sync.values()) or sync.get("dirty_flag"):
@@ -2261,7 +2811,9 @@ def _write_chain_status_pretty(summary: dict[str, Any], *, writer) -> None:
         writer(f"  Prerequisite: {policy.get('prerequisite_policy', 'none')}\n")
         writer(f"  Validation: {policy.get('validation_policy', 'none')}\n")
         review_policy = policy.get("review_policy") or {}
-        writer(f"  Review (clean_milestone_pr): {review_policy.get('clean_milestone_pr', 'auto')}\n")
+        writer(
+            f"  Review (clean_milestone_pr): {review_policy.get('clean_milestone_pr', 'auto')}\n"
+        )
     writer("Per-milestone:\n")
     for item in summary.get("per_milestone") or []:
         writer(f"  - [{item['status']}] {item['label']} (index {item['index']})\n")
@@ -2317,7 +2869,9 @@ def build_chain_parser(subparsers: Any) -> None:
     )
 
     start_parser = chain_sub.add_parser("start", help="Drive a chain spec")
-    start_parser.add_argument("--spec", required=True, help="Path to the chain spec YAML")
+    start_parser.add_argument(
+        "--spec", required=True, help="Path to the chain spec YAML"
+    )
     start_parser.add_argument(
         "--project-dir",
         required=False,
@@ -2346,7 +2900,9 @@ def build_chain_parser(subparsers: Any) -> None:
     status_parser = chain_sub.add_parser(
         "status", help="Show persisted chain progress without driving"
     )
-    status_parser.add_argument("--spec", required=True, help="Path to the chain spec YAML")
+    status_parser.add_argument(
+        "--spec", required=True, help="Path to the chain spec YAML"
+    )
     status_parser.add_argument(
         "--project-dir",
         required=False,
@@ -2356,7 +2912,9 @@ def build_chain_parser(subparsers: Any) -> None:
     verify_parser = chain_sub.add_parser(
         "verify", help="Replay landed-diff completion evidence for completed milestones"
     )
-    verify_parser.add_argument("--spec", required=True, help="Path to the chain spec YAML")
+    verify_parser.add_argument(
+        "--spec", required=True, help="Path to the chain spec YAML"
+    )
     verify_parser.add_argument(
         "--project-dir",
         required=False,
@@ -2366,7 +2924,9 @@ def build_chain_parser(subparsers: Any) -> None:
     override_parser = chain_sub.add_parser(
         "override", help="Set runtime policy overrides without editing chain.yaml"
     )
-    override_parser.add_argument("--spec", required=True, help="Path to the chain spec YAML")
+    override_parser.add_argument(
+        "--spec", required=True, help="Path to the chain spec YAML"
+    )
     override_parser.add_argument(
         "--project-dir",
         required=False,
@@ -2442,7 +3002,9 @@ def _add_chain_worktree_args(parser: Any) -> None:
     )
 
 
-def run_chain_cli(root: Path, args: argparse.Namespace, *, writer=sys.stderr.write) -> int:
+def run_chain_cli(
+    root: Path, args: argparse.Namespace, *, writer=sys.stderr.write
+) -> int:
     action = getattr(args, "chain_action", None)
     spec_arg = getattr(args, "spec", None)
     if not spec_arg:
@@ -2538,7 +3100,9 @@ def run_chain_cli(root: Path, args: argparse.Namespace, *, writer=sys.stderr.wri
     fresh = bool(getattr(args, "fresh", False))
     try:
         if supervisor_tier_routing_on():
-            from arnold_pipelines.megaplan.supervisor.chain_runner import run_chain as supervisor_run_chain
+            from arnold_pipelines.megaplan.supervisor.chain_runner import (
+                run_chain as supervisor_run_chain,
+            )
 
             result = supervisor_run_chain(
                 spec_path,
