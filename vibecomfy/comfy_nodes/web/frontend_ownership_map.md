@@ -1,8 +1,8 @@
 # Frontend Module Ownership Map
 
-> Generated for M5: Frontend Module And Poller Decomposition.
-> Documents current ownership, allowed responsibilities, and duplicate/stale candidates
-> still resident in `vibecomfy_roundtrip.js`.
+> Preserved from the frontend decomposition audit.
+> Documents current ownership, allowed responsibilities, and duplicate/stale
+> candidates still resident in `vibecomfy_roundtrip.js`.
 
 ---
 
@@ -30,7 +30,7 @@
 
 | Module | Status | Owner Role |
 |--------|--------|------------|
-| `agent_candidate_actions.js` | **To be created (T4/T5)** | Candidate apply/reject visibility, eligibility selectors, `candidateActionState()`, `applyEligibility()`, `APPLY_ELIGIBILITY_REASON`. Moves existing logic; no new behavioral contract. |
+| `agent_candidate_actions.js` | **Absent in M1; intended M3/M4 follow-up owner** | Candidate apply/reject visibility, eligibility selectors, `candidateActionState()`, `applyEligibility()`, `APPLY_ELIGIBILITY_REASON`. This is a preserved extraction boundary for moving existing logic out of `vibecomfy_roundtrip.js`; no new behavioral contract. |
 
 ---
 
@@ -113,11 +113,15 @@ These items currently exist in `vibecomfy_roundtrip.js` but are **also owned by*
 | `renderDeveloperSubsection()` | 8264–8283 | `panel_composer.js` (internal helper) | Duplicate helper; only exists in roundtrip |
 | `renderDeveloperSection()` | 8487–8491 | `panel_composer.js:709` | Thin wrapper; delegates to local `renderDeveloper()` + `renderDeveloperDisclosure()` |
 
-### 3.3 Candidate Apply/Eligibility Logic (planned owner: `agent_candidate_actions.js`)
+### 3.3 Candidate Apply/Eligibility Logic (intended owner: `agent_candidate_actions.js`)
+
+`agent_candidate_actions.js` is not present in the M1 audit baseline.  The
+items below remain in `vibecomfy_roundtrip.js` and mark the intended preserved
+boundary for M3/M4 extraction.
 
 | Candidate in roundtrip | Line(s) | Planned owner | Status |
 |------------------------|---------|---------------|--------|
-| `APPLY_ELIGIBILITY_REASON` | 263–273 | `agent_candidate_actions.js` | Defined only in roundtrip; needs extraction |
+| `APPLY_ELIGIBILITY_REASON` | 263–273 | `agent_candidate_actions.js` | Defined only in roundtrip; intended extraction |
 | `normalizeApplyEligibility()` | 3188–3201 | `agent_candidate_actions.js` | Eligibility normalizer |
 | `noCandidateApplyEligibility()` | 3203–3210 | `agent_candidate_actions.js` | Sentinel "no candidate" eligibility |
 | `ensureMissingEligibilityWarning()` | 3212–3234 | `agent_candidate_actions.js` | Warning dedup + storage |
@@ -166,7 +170,7 @@ These are correctly imported from their owners but still have thin wrappers in t
 | 1 | T1 | Land this ownership map **(current task)** |
 | 2 | T2 | Status poller migration: delete local poller duplicates, wire `agent_status_poller.js` |
 | 3 | T3 | Composer/settings delegation: delete local renderer duplicates, wire `panel_composer.js` |
-| 4 | T4, T5 | Extract candidate action selectors into `agent_candidate_actions.js`, delete state mirrors |
+| 4 | M3/M4 follow-up | Extract candidate action selectors into `agent_candidate_actions.js`, delete state mirrors |
 | 5 | T6, T7 | Delete stale activity code and state mirrors |
 | 6 | T8 | Shell audit of `vibecomfy_roundtrip.js` |
 | 7 | T9, T10, T11 | Browser smoke test parity + final tests |

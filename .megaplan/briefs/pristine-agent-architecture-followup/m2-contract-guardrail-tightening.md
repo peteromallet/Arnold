@@ -54,4 +54,3 @@ Out:
 .venv/bin/python -m pytest -q tests/test_pristine_architecture_guardrails.py tests/test_agent_edit_compatibility_ledger.py tests/test_comfy_nodes_agent_contracts.py tests/test_comfy_nodes_agent_backend_spine.py
 git diff --check origin/main...HEAD
 ```
-

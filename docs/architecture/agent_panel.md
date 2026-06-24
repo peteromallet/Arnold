@@ -45,8 +45,10 @@ No other module may define competing shapes for these concepts.
 - `agent_status_poller.js` owns status polling and route/provider readiness.
 - `panel_composer.js` owns settings and developer renderer bodies.
 - `panel_thread.js` owns thread rendering.
-- `agent_candidate_actions.js` (created in M5) owns candidate apply/reject
-  eligibility selectors.
+- Candidate apply/reject eligibility selectors are a preserved ownership
+  boundary that should move out of `vibecomfy_roundtrip.js` in M3/M4 follow-up
+  work.  `agent_candidate_actions.js` is the intended owner once that module is
+  created; it is not present in the M1 audit baseline.
 - `agent_edit_lifecycle.js` owns durable session/turn lifecycle state.
 
 ## Allowed data flow
