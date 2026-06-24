@@ -57,6 +57,7 @@ def test_reconcile_reports_ready_operation_resources_run_dir_and_session(
     assert op.worktrees[0].recommended_action == "none"
     assert op.worktrees[0].canonical_repo_path == str(repo)
     assert op.worktrees[0].worktree_path == str(allocation.worktree_path)
+    assert op.worktrees[0].cleanup_recommendation is not None
     assert op.sessions[0].state == "running"
     assert op.sessions[0].durable_resource_id == process_resource.id
     assert report.orphan_run_dirs == ()

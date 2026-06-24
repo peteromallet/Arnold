@@ -204,6 +204,92 @@ def _command_to_metadata(command: Sequence[str] | str) -> str | list[str]:
     return list(command)
 
 
+def record_operation_pr(
+    config: AgentBoxConfig,
+    operation_id: str,
+    *,
+    repo_name: str,
+    branch: str,
+    pr_number: int | None,
+    pr_url: str | None,
+) -> OperationRun:
+    """Record PR information for one operation repo."""
+
+    pr_info = {
+        "branch": branch,
+        "number": pr_number,
+        "url": pr_url,
+        "recorded_at": _utc_now_iso(),
+    }
+    from agentbox.run_dirs import append_event, run_dir_paths
+
+    updated = update_agentbox_operation(
+        config,
+        operation_id,
+        metadata={"pr_info": {repo_name: pr_info}},
+    )
+    paths = run_dir_paths(config, operation_id)
+    append_event(
+        paths,
+        "operation.pr_recorded",
+        payload={"repo_name": repo_name, "pr_info": pr_info},
+    )
+    return updated
+
+
+def record_operation_ci_status(
+    config: AgentBoxConfig,
+    operation_id: str,
+    *,
+    repo_name: str,
+    ci_status: str,
+) -> OperationRun:
+    """Record CI status for one operation repo."""
+
+    return update_agentbox_operation(
+        config,
+        operation_id,
+        metadata={"ci_status": {repo_name: ci_status}},
+    )
+
+
+def record_operation_cleanup_state(
+    config: AgentBoxConfig,
+    operation_id: str,
+    *,
+    repo_name: str,
+    state: str,
+    reason: str | None = None,
+) -> OperationRun:
+    """Record cleanup state for one operation repo and emit an event."""
+
+    from agentbox.run_dirs import append_event, run_dir_paths
+
+    cleanup_state = {
+        "state": state,
+        "reason": reason,
+        "recorded_at": _utc_now_iso(),
+    }
+    updated = update_agentbox_operation(
+        config,
+        operation_id,
+        metadata={"cleanup_state": {repo_name: cleanup_state}},
+    )
+    paths = run_dir_paths(config, operation_id)
+    append_event(
+        paths,
+        "operation.cleanup_state_changed",
+        payload={"repo_name": repo_name, "cleanup_state": cleanup_state},
+    )
+    return updated
+
+
+def _utc_now_iso() -> str:
+    from datetime import UTC, datetime
+
+    return datetime.now(UTC).isoformat().replace("+00:00", "Z")
+
+
 __all__ = [
     "AGENTBOX_HOST_OPERATION_TYPE",
     "AgentBoxOperationError",
@@ -215,5 +301,8 @@ __all__ = [
     "load_agentbox_operation",
     "open_operation_store",
     "operation_run_dir",
+    "record_operation_cleanup_state",
+    "record_operation_ci_status",
+    "record_operation_pr",
     "update_agentbox_operation",
 ]
