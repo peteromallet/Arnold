@@ -1,10 +1,10 @@
 {
   "schema_version": 0,
-  "current_milestone_index": 1,
-  "current_plan_name": "m2-agent-proposal-vertical-20260624-1828",
-  "current_milestone_base_sha": null,
-  "last_state": "done",
-  "pr_number": 66,
+  "current_milestone_index": 2,
+  "current_plan_name": "m3-settings-runtime-write-20260624-1941",
+  "current_milestone_base_sha": "5becfecbac8bcf05060367329daccd3647f5c054",
+  "last_state": "worker_blocked",
+  "pr_number": 67,
   "pr_state": "open",
   "completed": [
     {
@@ -13,11 +13,18 @@
       "status": "done",
       "pr_number": 65,
       "pr_state": "open"
+    },
+    {
+      "label": "m2-agent-proposal-vertical-proof",
+      "plan": "m2-agent-proposal-vertical-20260624-1828",
+      "status": "done",
+      "pr_number": 66,
+      "pr_state": "merged"
     }
   ],
-  "branch_head": "62e56ca7ed8ed21831bcdfeb3c2b14f8647076d2",
-  "pr_head": "62e56ca7ed8ed21831bcdfeb3c2b14f8647076d2",
-  "last_pushed_commit": "62e56ca7ed8ed21831bcdfeb3c2b14f8647076d2",
+  "branch_head": "36b7e586e59444ce5c96676b536a4a3142493461",
+  "pr_head": "36b7e586e59444ce5c96676b536a4a3142493461",
+  "last_pushed_commit": "36b7e586e59444ce5c96676b536a4a3142493461",
   "dirty_flag": false,
   "sync_state": "clean",
   "extra_repos": [],
@@ -41,7 +48,7 @@
       "target_root": "/Users/peteromalley/Documents/.codex-worktrees/reigh-foundation-closure-epic",
       "work_dir": "/Users/peteromalley/Documents/.codex-worktrees/reigh-foundation-closure-epic",
       "engine_root": "/Users/peteromalley/Documents/.megaplan-worktrees/native-python-pipelines-completion-thread2",
-      "target_head": "62e56ca7ed8ed21831bcdfeb3c2b14f8647076d2",
+      "target_head": "88e6b010ef0bec256079dc7cbc68a86f3b97de25",
       "target_base": "2a31bb073299a158077df139d56448804b6054fd",
       "target_base_ref": "main",
       "target_fallback_reason": null

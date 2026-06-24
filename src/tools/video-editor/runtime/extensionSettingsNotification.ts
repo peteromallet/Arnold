@@ -7,13 +7,16 @@
  *
  * ## Design
  *
- * The registry is a simple observer that collects per-extension notification
- * subscriptions.  When the runtime creates an `ExtensionSettingsService`
- * (via `createExtensionSettingsService`), the host registers the service's
- * `subscribe()` handle with this registry.  Any host-owned consumer (e.g.
- * the ExtensionManager UI, diagnostic panels, persistence bridges) can then
- * subscribe to *all* extension-level settings changes through a single
- * host-visible subscription.
+ * The registry has two notification lanes:
+ *
+ * - Host-visible notifications are delivered only by explicit
+ *   `notifySettingsChanged()` calls after repository persistence has completed.
+ *   Manager reload consumers subscribe to this lane so they never re-read a
+ *   stale repository snapshot from an SDK-local, pre-persist mutation.
+ * - Local service notifications are delivered from the registered SDK
+ *   `ExtensionSettingsService.subscribe()` callback. They are intentionally
+ *   exposed only through `subscribeToLocalExtension()` for consumers that need
+ *   same-turn local change observation and do not perform repository reloads.
  *
  * ## Lifecycle
  *
@@ -26,9 +29,8 @@
  * ## Thread safety
  *
  * All operations are synchronous and safe to call from any context that has
- * access to the registry.  Listeners are called synchronously when any
- * registered settings service fires a notification.  Listener errors are
- * caught and silently dropped (same contract as the SDK settings service).
+ * access to the registry. Listener errors are caught and silently dropped
+ * (same contract as the SDK settings service).
  */
 
 import type { DisposeHandle, ExtensionSettingsService } from '@reigh/editor-sdk';
@@ -63,27 +65,38 @@ export interface ExtensionSettingsNotificationRegistry {
   ): DisposeHandle;
 
   /**
-   * Subscribe to ALL extension settings changes.
+   * Subscribe to ALL post-persist extension settings changes.
    *
-   * The listener is called (with the extension ID) whenever any registered
-   * settings service fires a notification (set/delete).  No values are
-   * passed — consumers should re-read from the service if they need the
-   * updated state.
+   * The listener is called (with the extension ID) only when the host explicitly
+   * publishes a persisted settings change via `notifySettingsChanged()`. It is
+   * not called by SDK-local `set()` / `delete()` notifications.
    *
    * Returns a `DisposeHandle` to unsubscribe.  Idempotent.
    */
   subscribe(listener: (extensionId: string) => void): DisposeHandle;
 
   /**
-   * Subscribe to settings changes for a single extension.
+   * Subscribe to post-persist settings changes for a single extension.
    *
-   * The listener is called only when the specified extension's settings
-   * service fires a notification.  If the extension is not yet registered,
-   * the listener will never fire until registration.
+   * The listener is called only when the host explicitly publishes a persisted
+   * settings change for the specified extension via `notifySettingsChanged()`.
    *
    * Returns a `DisposeHandle` to unsubscribe.  Idempotent.
    */
   subscribeToExtension(
+    extensionId: string,
+    listener: () => void,
+  ): DisposeHandle;
+
+  /**
+   * Subscribe to immediate SDK-local settings changes for a single extension.
+   *
+   * This lane is fed by the registered ExtensionSettingsService's own
+   * `subscribe()` callback and fires before repository persistence completes.
+   * It is intentionally separate from manager-visible subscriptions; consumers
+   * that reload repository snapshots should use `subscribeToExtension()`.
+   */
+  subscribeToLocalExtension(
     extensionId: string,
     listener: () => void,
   ): DisposeHandle;
@@ -104,11 +117,9 @@ export interface ExtensionSettingsNotificationRegistry {
 
   /**
    * Manually notify host-side listeners that an extension's settings have
-   * changed.  This is intended for host-owned consumers (e.g. the manager UI)
-   * that write settings through the repository directly rather than through
-   * a registered ExtensionSettingsService.  Active extensions that have
-   * subscribed to the registry will see the notification and can re-read the
-   * updated settings from their service.
+   * changed after persistence. This is intended for host-owned consumers
+   * (e.g. the manager UI) and SDK persistence-success callbacks that have
+   * already written through to the repository.
    *
    * Safe to call when the registry is disposed — it will silently no-op.
    */
@@ -141,6 +152,9 @@ export function createExtensionSettingsNotificationRegistry(): ExtensionSettings
   // Host-side listeners: per-extension
   const perExtensionListeners = new Map<string, Set<() => void>>();
 
+  // Immediate service listeners: per-extension, explicitly local-only.
+  const perExtensionLocalListeners = new Map<string, Set<() => void>>();
+
   let disposed = false;
 
   // ---- internal -----------------------------------------------------------
@@ -169,6 +183,20 @@ export function createExtensionSettingsNotificationRegistry(): ExtensionSettings
     }
   }
 
+  /** Notify explicit local-only listeners that a registered service changed. */
+  function notifyLocalListeners(extensionId: string): void {
+    const extListeners = perExtensionLocalListeners.get(extensionId);
+    if (!extListeners) return;
+
+    for (const listener of extListeners) {
+      try {
+        listener();
+      } catch {
+        // Listener errors are silently dropped
+      }
+    }
+  }
+
   // ---- public -------------------------------------------------------------
 
   function registerService(
@@ -189,9 +217,10 @@ export function createExtensionSettingsNotificationRegistry(): ExtensionSettings
       }
     }
 
-    // Subscribe to the service's internal notification
+    // Subscribe to the service's internal, pre-persist notification. This is
+    // intentionally isolated from host-visible manager reload subscribers.
     const handle = service.subscribe(() => {
-      notifyHostListeners(extensionId);
+      notifyLocalListeners(extensionId);
     });
 
     serviceSubscriptions.set(extensionId, handle);
@@ -240,6 +269,26 @@ export function createExtensionSettingsNotificationRegistry(): ExtensionSettings
     };
   }
 
+  function subscribeToLocalExtension(
+    extensionId: string,
+    listener: () => void,
+  ): DisposeHandle {
+    if (!perExtensionLocalListeners.has(extensionId)) {
+      perExtensionLocalListeners.set(extensionId, new Set());
+    }
+    const extListeners = perExtensionLocalListeners.get(extensionId)!;
+    extListeners.add(listener);
+
+    return {
+      dispose(): void {
+        extListeners.delete(listener);
+        if (extListeners.size === 0) {
+          perExtensionLocalListeners.delete(extensionId);
+        }
+      },
+    };
+  }
+
   function disposeRegistry(): void {
     if (disposed) return;
     disposed = true;
@@ -257,6 +306,7 @@ export function createExtensionSettingsNotificationRegistry(): ExtensionSettings
     // Clear all host-side listeners
     globalListeners.clear();
     perExtensionListeners.clear();
+    perExtensionLocalListeners.clear();
   }
 
   function notifySettingsChanged(extensionId: string): void {
@@ -272,6 +322,7 @@ export function createExtensionSettingsNotificationRegistry(): ExtensionSettings
     registerService,
     subscribe,
     subscribeToExtension,
+    subscribeToLocalExtension,
     notifySettingsChanged,
     get isDisposed(): boolean {
       return disposed;

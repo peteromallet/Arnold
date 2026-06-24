@@ -86,7 +86,7 @@ import {
   createExtensionSettingsNotificationRegistry,
   type ExtensionSettingsNotificationRegistry,
 } from '@/tools/video-editor/runtime/extensionSettingsNotification';
-import type { CreateExtensionSettingsServiceOptions } from '@reigh/editor-sdk';
+import type { CreateExtensionSettingsServiceOptions, SettingsPersistenceError } from '@reigh/editor-sdk';
 import {
   TransitionRegistryProvider,
   useTransitionRegistryContext,
@@ -166,6 +166,27 @@ function createExtensionLiveSessions(
       return registry.getDiagnostics(sourceId);
     },
   };
+}
+
+function publishSettingsPersistenceDiagnostic(
+  diagnosticCollection: DiagnosticCollection | null | undefined,
+  event: SettingsPersistenceError,
+): void {
+  diagnosticCollection?.publish({
+    id: `settings-persistence:${event.extensionId}:${event.revision}`,
+    extensionId: event.extensionId,
+    severity: 'warning',
+    code: 'extension.settings.persistence_failed',
+    message: `Failed to persist extension settings: ${event.message}`,
+    source: 'provider',
+    detail: {
+      source: 'settings-persistence',
+      operation: event.operation,
+      revision: event.revision,
+      message: event.message,
+      ...(event.key !== undefined ? { key: event.key } : {}),
+    },
+  });
 }
 
 function EditorRuntimeProviderInner({
@@ -402,6 +423,17 @@ function EditorRuntimeProviderInner({
                 initialSnapshot:
                   settingsSnapshotsRef.current?.[extId] ??
                   undefined,
+                onPersistenceSuccess(event) {
+                  const notifyReg = settingsNotificationRegistryRef.current;
+                  if (notifyReg && !notifyReg.isDisposed && event.extensionId === extId) {
+                    notifyReg.notifySettingsChanged(extId);
+                  }
+                },
+                onPersistenceError(event) {
+                  if (event.extensionId === extId) {
+                    publishSettingsPersistenceDiagnostic(diagnosticCollection, event);
+                  }
+                },
               }
             : undefined;
 
@@ -417,9 +449,9 @@ function EditorRuntimeProviderInner({
           settingsOptions,
         );
 
-        // T9: Register the settings service with the host-visible notification
-        // registry so that manager/host consumers can observe settings changes
-        // across all active extensions through a single seam.
+        // Register the settings service for explicit local-only listeners.
+        // Manager-visible reload notifications are published from the
+        // post-persist success callback above.
         const notifyReg = settingsNotificationRegistryRef.current;
         if (notifyReg && !notifyReg.isDisposed) {
           notifyReg.registerService(extId, ctx.services.settings);
@@ -432,7 +464,7 @@ function EditorRuntimeProviderInner({
       ...extensionRuntime.diagnostics,
       ...host.diagnostics,
     ], { activeExtensionIds });
-  }, [activeExtensionIds, diagnosticCollection, lifecycleHostRef, extensionRuntime, liveCreativeOverrides, commandRegistryRef, shaderRegistryRef, settingsNotificationRegistryRef]);
+  }, [activeExtensionIds, diagnosticCollection, lifecycleHostRef, extensionRuntime, liveCreativeOverrides, commandRegistryRef, shaderRegistryRef, settingsNotificationRegistryRef, settingsSnapshotsRef, extensionStateRepository]);
 
   // Sync live registry diagnostics into the provider diagnostic collection
   useEffect(() => {

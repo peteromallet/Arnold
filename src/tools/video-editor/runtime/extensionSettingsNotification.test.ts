@@ -3,10 +3,10 @@
  *
  * Validates:
  *  - Registry creation and disposal
- *  - Service registration and notification forwarding
+ *  - Service registration and local-only notification forwarding
  *  - Global and per-extension subscriptions
  *  - Idempotent disposal and error isolation
- *  - Integration with SDK settings service subscribe()
+ *  - Manager-visible notifications stay post-persist only
  */
 
 import { describe, it, expect, beforeEach } from 'vitest';
@@ -126,7 +126,7 @@ describe('ExtensionSettingsNotificationRegistry', () => {
   });
 
   describe('global subscriptions', () => {
-    it('notifies global listener when a registered service fires', () => {
+    it('notifies global listener when host publishes persisted change', () => {
       const manifest = makeManifest('test.global');
       const { service } = createExtensionSettingsService('test.global', manifest);
       registry.registerService('test.global', service);
@@ -137,6 +137,9 @@ describe('ExtensionSettingsNotificationRegistry', () => {
       });
 
       service.set('myKey', 'myValue');
+      expect(calls).toEqual([]);
+
+      registry.notifySettingsChanged('test.global');
 
       expect(calls).toEqual(['test.global']);
       unsub.dispose();
@@ -154,7 +157,7 @@ describe('ExtensionSettingsNotificationRegistry', () => {
       });
 
       unsub.dispose();
-      service.set('key', 'value');
+      registry.notifySettingsChanged('test.unsub');
 
       expect(calls).toEqual([]);
       cleanupLocalStorage('test.unsub');
@@ -170,7 +173,7 @@ describe('ExtensionSettingsNotificationRegistry', () => {
       registry.subscribe((extId) => calls1.push(extId));
       registry.subscribe((extId) => calls2.push(extId));
 
-      service.set('a', 1);
+      registry.notifySettingsChanged('test.multi');
 
       expect(calls1).toEqual(['test.multi']);
       expect(calls2).toEqual(['test.multi']);
@@ -189,7 +192,7 @@ describe('ExtensionSettingsNotificationRegistry', () => {
       registry.subscribe((extId) => calls.push(extId));
 
       // Should not throw
-      service.set('x', 1);
+      registry.notifySettingsChanged('test.error');
 
       expect(calls).toEqual(['test.error']);
       cleanupLocalStorage('test.error');
@@ -218,6 +221,9 @@ describe('ExtensionSettingsNotificationRegistry', () => {
       });
 
       svcA.set('key', 'val');
+      expect(callCountA).toBe(0);
+
+      registry.notifySettingsChanged('test.per-ext-a');
 
       expect(callCountA).toBe(1);
       expect(actualCallCountB).toBe(0);
@@ -237,7 +243,7 @@ describe('ExtensionSettingsNotificationRegistry', () => {
       });
 
       unsub.dispose();
-      service.set('a', 1);
+      registry.notifySettingsChanged('test.ext-unsub');
 
       expect(calls).toBe(0);
       cleanupLocalStorage('test.ext-unsub');
@@ -253,10 +259,51 @@ describe('ExtensionSettingsNotificationRegistry', () => {
       const { service } = createExtensionSettingsService('test.other', manifest);
       registry.registerService('test.other', service);
 
-      service.set('x', 1);
+      registry.notifySettingsChanged('test.other');
 
       expect(calls).toBe(0);
       cleanupLocalStorage('test.other');
+    });
+  });
+
+  describe('local-only service notifications', () => {
+    it('does not forward SDK-local service notifications to manager-visible subscribers', () => {
+      const manifest = makeManifest('test.local-isolated');
+      const { service } = createExtensionSettingsService('test.local-isolated', manifest);
+      registry.registerService('test.local-isolated', service);
+
+      const globalCalls: string[] = [];
+      let persistedExtCalls = 0;
+      registry.subscribe((extId) => globalCalls.push(extId));
+      registry.subscribeToExtension('test.local-isolated', () => {
+        persistedExtCalls++;
+      });
+
+      service.set('key', 'value');
+
+      expect(globalCalls).toEqual([]);
+      expect(persistedExtCalls).toBe(0);
+      cleanupLocalStorage('test.local-isolated');
+    });
+
+    it('exposes explicit local-only subscription for immediate service notifications', () => {
+      const manifest = makeManifest('test.local-only');
+      const { service } = createExtensionSettingsService('test.local-only', manifest);
+      registry.registerService('test.local-only', service);
+
+      let localCalls = 0;
+      const handle = registry.subscribeToLocalExtension('test.local-only', () => {
+        localCalls++;
+      });
+
+      service.set('key', 'value');
+      expect(localCalls).toBe(1);
+
+      handle.dispose();
+      service.delete('key');
+      expect(localCalls).toBe(1);
+
+      cleanupLocalStorage('test.local-only');
     });
   });
 
@@ -291,7 +338,7 @@ describe('ExtensionSettingsNotificationRegistry', () => {
 
       // The service itself still works, but registry should not forward
       let notified = false;
-      const sub = registry.subscribe(() => notified = true);
+      const sub = registry.subscribeToLocalExtension('test.cleanup', () => notified = true);
       service.set('k', 'v');
       expect(notified).toBe(false);
       sub.dispose();
@@ -368,7 +415,7 @@ describe('ExtensionSettingsNotificationRegistry', () => {
   });
 
   describe('integration: global + per-extension coexistence', () => {
-    it('both global and per-extension listeners receive notifications', () => {
+    it('both global and per-extension listeners receive post-persist notifications', () => {
       const manifest = makeManifest('test.both');
       const { service } = createExtensionSettingsService('test.both', manifest);
       registry.registerService('test.both', service);
@@ -380,6 +427,10 @@ describe('ExtensionSettingsNotificationRegistry', () => {
       registry.subscribeToExtension('test.both', () => extCalls++);
 
       service.set('hello', 'world');
+      expect(globalCalls).toEqual([]);
+      expect(extCalls).toBe(0);
+
+      registry.notifySettingsChanged('test.both');
 
       expect(globalCalls).toEqual(['test.both']);
       expect(extCalls).toBe(1);

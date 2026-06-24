@@ -16,7 +16,7 @@
  *  - Legacy key migration behavior
  */
 
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import {
   createExtensionSettingsService,
   getSettingsPrefix,
@@ -32,6 +32,7 @@ import type {
   ExtensionStateRepository,
   ExtensionSettingsSnapshot,
 } from '@/tools/video-editor/runtime/extensionStateRepository';
+import type { SettingsSnapshot, StateRepository } from './contracts';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -93,6 +94,89 @@ function makeRepo(): { repo: ExtensionStateRepository; cleanup: () => void } {
   return {
     repo,
     cleanup: () => { /* InMemory needs no cleanup */ },
+  };
+}
+
+function createDeferred<T = void>() {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+}
+
+function makeDeferredSettingsRepository(): {
+  repo: StateRepository;
+  putSettingsSnapshot: ReturnType<typeof vi.fn>;
+  writes: SettingsSnapshot[];
+  deferred: ReturnType<typeof createDeferred<void>>;
+} {
+  const writes: SettingsSnapshot[] = [];
+  const deferred = createDeferred<void>();
+  const putSettingsSnapshot = vi.fn((snapshot: SettingsSnapshot) => {
+    writes.push(snapshot);
+    return deferred.promise;
+  });
+  return {
+    repo: {
+      get isDisposed() {
+        return false;
+      },
+      putSettingsSnapshot,
+      appendLifecycleEvent: vi.fn().mockResolvedValue(undefined),
+    },
+    putSettingsSnapshot,
+    writes,
+    deferred,
+  };
+}
+
+function makeSequencedSettingsRepository(): {
+  repo: StateRepository;
+  putSettingsSnapshot: ReturnType<typeof vi.fn>;
+  writes: Array<{
+    snapshot: SettingsSnapshot;
+    deferred: ReturnType<typeof createDeferred<void>>;
+  }>;
+} {
+  const writes: Array<{
+    snapshot: SettingsSnapshot;
+    deferred: ReturnType<typeof createDeferred<void>>;
+  }> = [];
+  const putSettingsSnapshot = vi.fn((snapshot: SettingsSnapshot) => {
+    const deferred = createDeferred<void>();
+    writes.push({ snapshot, deferred });
+    return deferred.promise;
+  });
+  return {
+    repo: {
+      get isDisposed() {
+        return false;
+      },
+      putSettingsSnapshot,
+      appendLifecycleEvent: vi.fn().mockResolvedValue(undefined),
+    },
+    putSettingsSnapshot,
+    writes,
+  };
+}
+
+function makeRejectingSettingsRepository(error: unknown): {
+  repo: StateRepository;
+  putSettingsSnapshot: ReturnType<typeof vi.fn>;
+} {
+  const putSettingsSnapshot = vi.fn().mockRejectedValue(error);
+  return {
+    repo: {
+      get isDisposed() {
+        return false;
+      },
+      putSettingsSnapshot,
+      appendLifecycleEvent: vi.fn().mockResolvedValue(undefined),
+    },
+    putSettingsSnapshot,
   };
 }
 
@@ -777,6 +861,289 @@ describe('T9: Reload-equivalent repository reinitialization', () => {
     expect(snapshot!.schemaVersion).toBe(3);
     expect(snapshot!.values.oldKey).toBe('oldValue');
     expect(snapshot!.values.newKey).toBe('newValue');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// M3: Repository-backed runtime write-through
+// ---------------------------------------------------------------------------
+
+describe('M3: Repository-backed runtime write-through', () => {
+  const EXT_ID = 'm3.write-through.ext';
+
+  beforeEach(() => {
+    cleanupLocalStorage(EXT_ID);
+  });
+
+  afterEach(() => {
+    cleanupLocalStorage(EXT_ID);
+  });
+
+  it('set() writes the repository snapshot before dispose()', async () => {
+    const persisted = vi.fn();
+    const { repo, putSettingsSnapshot, deferred } = makeDeferredSettingsRepository();
+
+    const { service: s, dispose: d } = createExtensionSettingsService(
+      EXT_ID,
+      makeManifest(EXT_ID, { theme: 'light' }),
+      {
+        repository: repo,
+        onPersistenceSuccess: persisted,
+      } as any,
+    );
+
+    s.set('theme', 'dark');
+    await Promise.resolve();
+
+    expect(putSettingsSnapshot).toHaveBeenCalledTimes(1);
+    const snapshot = putSettingsSnapshot.mock.calls[0][0] as SettingsSnapshot;
+    expect(snapshot.extensionId).toBe(EXT_ID);
+    expect(snapshot.values.theme).toBe('dark');
+    expect(persisted).not.toHaveBeenCalled();
+
+    deferred.resolve();
+    d();
+  });
+
+  it('delete() writes a repository snapshot without the deleted key before dispose()', async () => {
+    const { repo, putSettingsSnapshot, deferred } = makeDeferredSettingsRepository();
+    const initialSnapshot = makeSnapshot(EXT_ID, 1, {
+      theme: 'dark',
+      retained: true,
+    });
+
+    const { service: s, dispose: d } = createExtensionSettingsService(
+      EXT_ID,
+      makeManifest(EXT_ID, { theme: 'light' }),
+      {
+        repository: repo,
+        initialSnapshot,
+      } as any,
+    );
+
+    expect(s.get('theme')).toBe('dark');
+    s.delete('theme');
+    await Promise.resolve();
+
+    expect(putSettingsSnapshot).toHaveBeenCalledTimes(1);
+    const snapshot = putSettingsSnapshot.mock.calls[0][0] as SettingsSnapshot;
+    expect(snapshot.values).not.toHaveProperty('theme');
+    expect(snapshot.values.retained).toBe(true);
+    expect(s.get('theme')).toBe('light');
+
+    deferred.resolve();
+    d();
+  });
+
+  it('rejected write-through reports sanitized error metadata and does not throw', async () => {
+    const onPersistenceError = vi.fn();
+    const { repo } = makeRejectingSettingsRepository(
+      new Error('disk full while writing value secret-token'),
+    );
+
+    const { service: s, dispose: d } = createExtensionSettingsService(
+      EXT_ID,
+      makeManifest(EXT_ID),
+      {
+        repository: repo,
+        onPersistenceError,
+      } as any,
+    );
+
+    expect(() => s.set('apiToken', 'secret-token')).not.toThrow();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(onPersistenceError).toHaveBeenCalledTimes(1);
+    expect(onPersistenceError).toHaveBeenCalledWith(
+      expect.objectContaining({
+        extensionId: EXT_ID,
+        operation: 'set',
+        key: 'apiToken',
+        revision: expect.any(Number),
+        message: expect.any(String),
+      }),
+    );
+    const payload = onPersistenceError.mock.calls[0][0];
+    expect(payload.message).toContain('disk full');
+    expect(payload.message).not.toContain('secret-token');
+    expect(payload).not.toHaveProperty('value');
+    expect(payload).not.toHaveProperty('values');
+
+    d();
+  });
+
+  it('success callback fires only after repository persistence resolves', async () => {
+    const onPersistenceSuccess = vi.fn();
+    const immediateListener = vi.fn();
+    const { repo, deferred, writes } = makeDeferredSettingsRepository();
+
+    const { service: s, dispose: d } = createExtensionSettingsService(
+      EXT_ID,
+      makeManifest(EXT_ID),
+      {
+        repository: repo,
+        onPersistenceSuccess,
+      } as any,
+    );
+    const subscription = s.subscribe(immediateListener);
+
+    s.set('volume', 7);
+    expect(s.get('volume')).toBe(7);
+    expect(immediateListener).toHaveBeenCalledTimes(1);
+    expect(onPersistenceSuccess).not.toHaveBeenCalled();
+    expect(writes[0]?.values.volume).toBe(7);
+
+    deferred.resolve();
+    await deferred.promise;
+    await Promise.resolve();
+
+    expect(onPersistenceSuccess).toHaveBeenCalledTimes(1);
+    expect(onPersistenceSuccess).toHaveBeenCalledWith(
+      expect.objectContaining({
+        extensionId: EXT_ID,
+        operation: 'set',
+        key: 'volume',
+        revision: expect.any(Number),
+      }),
+    );
+
+    subscription.dispose();
+    d();
+  });
+
+  it('without a repository preserves synchronous localStorage-backed set/delete/get/keys', () => {
+    const onPersistenceSuccess = vi.fn();
+    const onPersistenceError = vi.fn();
+    const { service: s, dispose: d } = createExtensionSettingsService(
+      EXT_ID,
+      makeManifest(EXT_ID, { fallback: 'manifest' }),
+      {
+        onPersistenceSuccess,
+        onPersistenceError,
+      } as any,
+    );
+
+    s.set('theme', 'dark');
+    s.set('count', 2);
+    expect(s.get('theme')).toBe('dark');
+    expect(s.get('count')).toBe(2);
+    expect(localStorage.getItem(getSettingsPrefix(EXT_ID) + 'theme')).toBe(JSON.stringify('dark'));
+
+    expect(s.keys()).toEqual(expect.arrayContaining(['theme', 'count', 'fallback']));
+
+    s.delete('theme');
+    expect(s.get('theme')).toBeUndefined();
+    expect(s.keys()).not.toContain('theme');
+    expect(localStorage.getItem(getSettingsPrefix(EXT_ID) + 'theme')).toBeNull();
+    expect(s.get('fallback')).toBe('manifest');
+    expect(onPersistenceSuccess).not.toHaveBeenCalled();
+    expect(onPersistenceError).not.toHaveBeenCalled();
+
+    d();
+  });
+
+  it('orders rapid set/set/delete repository writes so stale snapshots cannot win', async () => {
+    const { repo, putSettingsSnapshot, writes } = makeSequencedSettingsRepository();
+    const { service: s, dispose: d } = createExtensionSettingsService(
+      EXT_ID,
+      makeManifest(EXT_ID),
+      { repository: repo } as any,
+    );
+
+    s.set('a', 'first');
+    s.set('b', 'second');
+    s.delete('a');
+    await Promise.resolve();
+
+    expect(putSettingsSnapshot).toHaveBeenCalledTimes(1);
+    expect(writes[0].snapshot.values).toEqual({ a: 'first' });
+
+    writes[0].deferred.resolve();
+    await writes[0].deferred.promise;
+    await Promise.resolve();
+
+    expect(putSettingsSnapshot).toHaveBeenCalledTimes(2);
+    expect(writes[1].snapshot.values).toEqual({ b: 'second' });
+
+    writes[1].deferred.resolve();
+    await writes[1].deferred.promise;
+    await Promise.resolve();
+
+    expect(putSettingsSnapshot).toHaveBeenCalledTimes(2);
+    d();
+  });
+
+  it('dispose queues through the same persistence path instead of launching a parallel stale write', async () => {
+    const { repo, putSettingsSnapshot, writes } = makeSequencedSettingsRepository();
+    const { service: s, dispose: d } = createExtensionSettingsService(
+      EXT_ID,
+      makeManifest(EXT_ID),
+      { repository: repo } as any,
+    );
+
+    s.set('a', 'older');
+    await Promise.resolve();
+    expect(putSettingsSnapshot).toHaveBeenCalledTimes(1);
+    expect(writes[0].snapshot.values).toEqual({ a: 'older' });
+
+    s.set('b', 'newer');
+    d();
+    await Promise.resolve();
+
+    expect(putSettingsSnapshot).toHaveBeenCalledTimes(1);
+
+    writes[0].deferred.resolve();
+    await writes[0].deferred.promise;
+    await Promise.resolve();
+
+    expect(putSettingsSnapshot).toHaveBeenCalledTimes(2);
+    expect(writes[1].snapshot.values).toEqual({ a: 'older', b: 'newer' });
+
+    writes[1].deferred.resolve();
+    await writes[1].deferred.promise;
+    await Promise.resolve();
+
+    expect(putSettingsSnapshot).toHaveBeenCalledTimes(2);
+  });
+
+  it('dispose preserves localStorage fallback data while the latest provider write is in flight', async () => {
+    const { repo, writes } = makeSequencedSettingsRepository();
+    const storageKey = getSettingsPrefix(EXT_ID) + 'token';
+    const { service: s, dispose: d } = createExtensionSettingsService(
+      EXT_ID,
+      makeManifest(EXT_ID),
+      { repository: repo } as any,
+    );
+
+    s.set('token', 'latest-local');
+    await Promise.resolve();
+    expect(writes).toHaveLength(1);
+
+    d();
+
+    expect(localStorage.getItem(storageKey)).toBe(JSON.stringify('latest-local'));
+
+    writes[0].deferred.resolve();
+    await writes[0].deferred.promise;
+  });
+
+  it('dispose preserves localStorage fallback data when the latest provider write failed', async () => {
+    const { repo } = makeRejectingSettingsRepository(new Error('storage offline'));
+    const storageKey = getSettingsPrefix(EXT_ID) + 'token';
+    const { service: s, dispose: d } = createExtensionSettingsService(
+      EXT_ID,
+      makeManifest(EXT_ID),
+      { repository: repo } as any,
+    );
+
+    s.set('token', 'retry-later');
+    await Promise.resolve();
+    await Promise.resolve();
+
+    d();
+
+    expect(localStorage.getItem(storageKey)).toBe(JSON.stringify('retry-later'));
   });
 });
 

@@ -3099,10 +3099,17 @@ export interface ExtensionSettingsService {
   subscribe(listener: () => void): DisposeHandle;
 }
 
-// Re-export the injectable settings service factory (T8)
+// Re-export the injectable settings service factory and persistence callbacks.
 export { createExtensionSettingsService, getSettingsPrefix } from './extensionSettingsService';
 export { runSettingsMigration, getManifestSettingsSchemaVersion, findSettingsMigrationDeclarations } from './extensionSettingsMigration';
-export type { ExtensionSettingsServiceFactoryResult, CreateExtensionSettingsServiceOptions, SettingsMigrationConfig } from './extensionSettingsService';
+export type {
+  ExtensionSettingsServiceFactoryResult,
+  CreateExtensionSettingsServiceOptions,
+  SettingsMigrationConfig,
+  SettingsPersistenceError,
+  SettingsPersistenceOperation,
+  SettingsPersistenceSuccess,
+} from './extensionSettingsService';
 export type { SettingsMigrationHandler, SettingsMigrationResult, RunSettingsMigrationOptions } from './extensionSettingsMigration';
 
 // SDK-owned state repository contracts (used by settings services)

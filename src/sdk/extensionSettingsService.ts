@@ -81,6 +81,19 @@ export interface SettingsMigrationConfig {
   readonly settingsHandlers?: Readonly<Record<string, SettingsMigrationHandler>>;
 }
 
+export type SettingsPersistenceOperation = 'set' | 'delete' | 'dispose';
+
+export interface SettingsPersistenceSuccess {
+  readonly extensionId: string;
+  readonly operation: SettingsPersistenceOperation;
+  readonly key?: string;
+  readonly revision: number;
+}
+
+export interface SettingsPersistenceError extends SettingsPersistenceSuccess {
+  readonly message: string;
+}
+
 /**
  * Optional configuration for createExtensionSettingsService.
  *
@@ -99,6 +112,8 @@ export interface CreateExtensionSettingsServiceOptions {
   readonly repository?: StateRepository;
   readonly initialSnapshot?: SettingsSnapshot;
   readonly migration?: SettingsMigrationConfig;
+  readonly onPersistenceSuccess?: (event: SettingsPersistenceSuccess) => void;
+  readonly onPersistenceError?: (event: SettingsPersistenceError) => void;
 }
 
 // ---------------------------------------------------------------------------
@@ -174,8 +189,8 @@ export function createExtensionSettingsService(
    * Effective snapshot values — may be replaced by migration output
    * when a schema-version change triggers a migration run.
    */
-  let effectiveSnapshotValues: Record<string, unknown>;
-  let effectiveSnapshotSchemaVersion: number;
+  let effectiveSnapshotValues: Record<string, unknown> = {};
+  let effectiveSnapshotSchemaVersion = getManifestSettingsSchemaVersion(manifest);
 
   const rawInitialSnapshot = options?.initialSnapshot;
   const migrationConfig = options?.migration;
@@ -357,6 +372,142 @@ export function createExtensionSettingsService(
     }
   }
 
+  type PersistenceJob = {
+    readonly snapshot: SettingsSnapshot;
+    readonly operation: SettingsPersistenceOperation;
+    readonly key?: string;
+    readonly revision: number;
+  };
+
+  let mutationRevision = 0;
+  let latestAttemptRevision = 0;
+  let latestSuccessRevision = 0;
+  let pendingPersistenceJob: PersistenceJob | null = null;
+  let persistenceInFlight = false;
+
+  function buildSettingsSnapshot(): SettingsSnapshot {
+    const merged = buildMergedSettings();
+    return Object.freeze({
+      extensionId,
+      schemaVersion: snapshotSchemaVersion,
+      values: Object.freeze({ ...merged }),
+      lastWrittenAt: new Date().toISOString(),
+    });
+  }
+
+  function sanitizePersistenceError(error: unknown): string {
+    const raw = error instanceof Error ? error.message : String(error);
+    const valueStrings = Object.values(buildMergedSettings())
+      .filter((value): value is string => typeof value === 'string' && value.length > 0);
+
+    return valueStrings.reduce(
+      (message, value) => message.split(value).join('[redacted]'),
+      raw,
+    );
+  }
+
+  function reportPersistenceSuccess(job: PersistenceJob): void {
+    // Success is reported for every settled write, not just the latest
+    // revision, so host subscribers can observe each persisted mutation.
+    // Revision tracking elsewhere prevents stale completions from confusing
+    // dispose-time fallback cleanup.
+    try {
+      options?.onPersistenceSuccess?.({
+        extensionId,
+        operation: job.operation,
+        ...(job.key !== undefined ? { key: job.key } : {}),
+        revision: job.revision,
+      });
+    } catch {
+      // Persistence callbacks are observability hooks and must not break settings.
+    }
+  }
+
+  function reportPersistenceError(job: PersistenceJob, error: unknown): void {
+    if (job.revision !== mutationRevision) return;
+
+    try {
+      options?.onPersistenceError?.({
+        extensionId,
+        operation: job.operation,
+        ...(job.key !== undefined ? { key: job.key } : {}),
+        revision: job.revision,
+        message: sanitizePersistenceError(error),
+      });
+    } catch {
+      // Persistence callbacks are observability hooks and must not break settings.
+    }
+  }
+
+  function cleanupWrittenLocalStorageKeys(): void {
+    try {
+      writtenKeys.forEach((key) => {
+        localStorage.removeItem(settingsPrefix + key);
+      });
+      writtenKeys.clear();
+    } catch {
+      // localStorage unavailable — silently no-op
+    }
+  }
+
+  function cleanupFallbackAfterLatestPersistence(): void {
+    if (!disposed) return;
+    if (!repository || repository.isDisposed) return;
+    if (latestSuccessRevision < mutationRevision) return;
+    cleanupWrittenLocalStorageKeys();
+  }
+
+  function drainPersistenceQueue(): void {
+    if (persistenceInFlight) return;
+    if (!repository || repository.isDisposed) return;
+
+    const job = pendingPersistenceJob;
+    if (!job) return;
+
+    pendingPersistenceJob = null;
+    persistenceInFlight = true;
+    latestAttemptRevision = job.revision;
+
+    repository.putSettingsSnapshot(job.snapshot).then(
+      () => {
+        try {
+          if (job.revision >= latestAttemptRevision && job.revision >= latestSuccessRevision) {
+            latestSuccessRevision = job.revision;
+          }
+          reportPersistenceSuccess(job);
+          cleanupFallbackAfterLatestPersistence();
+        } finally {
+          persistenceInFlight = false;
+          drainPersistenceQueue();
+        }
+      },
+      (error: unknown) => {
+        try {
+          reportPersistenceError(job, error);
+        } finally {
+          persistenceInFlight = false;
+          drainPersistenceQueue();
+        }
+      },
+    );
+  }
+
+  function enqueuePersistence(
+    operation: SettingsPersistenceOperation,
+    key?: string,
+  ): void {
+    if (!repository || repository.isDisposed) return;
+
+    mutationRevision += 1;
+    pendingPersistenceJob = {
+      snapshot: buildSettingsSnapshot(),
+      operation,
+      ...(key !== undefined ? { key } : {}),
+      revision: mutationRevision,
+    };
+    drainPersistenceQueue();
+  }
+
   // -----------------------------------------------------------------------
   // Compute the effective merged value for a key at read time
   // -----------------------------------------------------------------------
@@ -520,6 +671,7 @@ export function createExtensionSettingsService(
         writtenKeys.add(key);
         deletedKeys.delete(key);
         notifyListeners();
+        enqueuePersistence('set', key);
       } catch {
         // localStorage quota exceeded or unavailable — silently no-op
       }
@@ -530,6 +682,7 @@ export function createExtensionSettingsService(
         writtenKeys.delete(key);
         deletedKeys.add(key);
         notifyListeners();
+        enqueuePersistence('delete', key);
       } catch {
         // localStorage unavailable — silently no-op
       }
@@ -587,33 +740,18 @@ export function createExtensionSettingsService(
   function dispose(): void {
     if (disposed) return;
 
-    // Write final snapshot to repository (fire-and-forget)
-    const repo = options?.repository;
-    if (repo && !repo.isDisposed) {
-      const merged = buildMergedSettings();
-      const snapshot: SettingsSnapshot = Object.freeze({
-        extensionId,
-        schemaVersion: snapshotSchemaVersion,
-        values: Object.freeze({ ...merged }),
-        lastWrittenAt: new Date().toISOString(),
-      });
-      // Fire-and-forget — if the repo write fails, localStorage still has the data
-      repo.putSettingsSnapshot(snapshot).catch(() => {
-        // Repository write failed — settings still persist in localStorage
-      });
-    }
-
-    // Clean up localStorage keys written by this service
-    try {
-      writtenKeys.forEach((key) => {
-        localStorage.removeItem(settingsPrefix + key);
-      });
-      writtenKeys.clear();
-    } catch {
-      // localStorage unavailable — silently no-op
-    }
-
     disposed = true;
+
+    if (repository && !repository.isDisposed) {
+      enqueuePersistence('dispose');
+      cleanupFallbackAfterLatestPersistence();
+      return;
+    }
+
+    // Local-only settings keep legacy dispose cleanup behavior.
+    if (!repository) {
+      cleanupWrittenLocalStorageKeys();
+    }
   }
 
   return { service, dispose, migrationResult };

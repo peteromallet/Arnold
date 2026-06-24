@@ -1,9 +1,9 @@
 import { fireEvent, render, waitFor } from '@testing-library/react';
 import { useEffect } from 'react';
 import type { FC, ReactNode } from 'react';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { defineExtension } from '@reigh/editor-sdk';
-import type { Diagnostic, ExtensionContribution } from '@reigh/editor-sdk';
+import type { Diagnostic, ExtensionContribution, ExtensionSettingsService } from '@reigh/editor-sdk';
 import type { DataProvider, ExtensionPersistenceService } from '@/tools/video-editor/data/DataProvider.ts';
 import type { EffectRegistryRecord } from '@/tools/video-editor/effects/registry/types.ts';
 import { useEffectRegistryContext } from '@/tools/video-editor/effects/registry/EffectRegistryContext.tsx';
@@ -17,6 +17,10 @@ import { useVideoEditorRuntime } from '@/tools/video-editor/contexts/DataProvide
 import { EditorRuntimeProvider } from '@/tools/video-editor/contexts/EditorRuntimeProvider.tsx';
 import type { LiveDataRegistry } from '@/tools/video-editor/runtime/liveDataRegistry.ts';
 import type { LivePermissionService } from '@/tools/video-editor/runtime/livePermissions.ts';
+import type {
+  ExtensionSettingsSnapshot,
+  ExtensionStateRepository,
+} from '@/tools/video-editor/runtime/extensionStateRepository.ts';
 import { ExtensionSettingsPanel } from '@/tools/video-editor/components/ExtensionSettings/ExtensionSettingsPanel';
 import {
   createProposalRuntime,
@@ -263,6 +267,52 @@ function TrustedLocalEffectPackLoader({ packs }: { packs: readonly TrustedLocalE
   }, [packs, registry]);
 
   return null;
+}
+
+interface RuntimeSettingsWrite {
+  readonly snapshot: ExtensionSettingsSnapshot;
+  resolve(): void;
+  reject(error: unknown): void;
+}
+
+function makeDeferredRuntimeSettingsRepository() {
+  const writes: RuntimeSettingsWrite[] = [];
+  const snapshots = new Map<string, ExtensionSettingsSnapshot>();
+
+  const repository = {
+    initialize: vi.fn().mockResolvedValue(undefined),
+    dispose: vi.fn().mockResolvedValue(undefined),
+    isDisposed: false,
+    putSettingsSnapshot: vi.fn((snapshot: ExtensionSettingsSnapshot) => new Promise<void>((resolve, reject) => {
+      writes.push({
+        snapshot,
+        resolve() {
+          snapshots.set(snapshot.extensionId, snapshot);
+          resolve();
+        },
+        reject,
+      });
+    })),
+    getSettingsSnapshot: vi.fn(async (extensionId: string) => snapshots.get(extensionId) ?? null),
+    getAllSettingsSnapshots: vi.fn(async () => Array.from(snapshots.values())),
+    deleteSettingsSnapshot: vi.fn(async (extensionId: string) => {
+      snapshots.delete(extensionId);
+    }),
+  } as Partial<ExtensionStateRepository> as ExtensionStateRepository;
+
+  return { repository, writes };
+}
+
+function cleanupRuntimeSettingsLocalStorage(extensionId: string): void {
+  const prefix = `reigh.ext.${extensionId}.`;
+  const keysToRemove: string[] = [];
+  for (let i = 0; i < localStorage.length; i++) {
+    const key = localStorage.key(i);
+    if (key?.startsWith(prefix)) {
+      keysToRemove.push(key);
+    }
+  }
+  keysToRemove.forEach((key) => localStorage.removeItem(key));
 }
 
 describe('EditorRuntimeProvider effect registry lifecycle', () => {
@@ -1003,6 +1053,214 @@ describe('EditorRuntimeProvider live data registry lifecycle', () => {
           && diagnostic.detail?.sourceId === sourceId,
       )).toBe(true);
       expect(liveDiagnostics.every((diagnostic) => diagnostic.extensionId === undefined)).toBe(true);
+    });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// M3: Repository-backed runtime settings write-through
+// ---------------------------------------------------------------------------
+
+describe('EditorRuntimeProvider repository-backed runtime settings', () => {
+  const EXTENSION_ID = 'com.example.runtime-settings';
+
+  function makeSettingsExtension(capture: (settings: ExtensionSettingsService) => void) {
+    return defineExtension({
+      manifest: {
+        id: EXTENSION_ID as never,
+        version: '1.0.0',
+        label: 'Runtime settings extension',
+        settingsSchemaVersion: 3,
+        settingsDefaults: {
+          theme: 'system',
+        },
+      },
+      activate(ctx) {
+        capture(ctx.services.settings);
+        return { dispose() {} };
+      },
+    });
+  }
+
+  beforeEach(() => {
+    cleanupRuntimeSettingsLocalStorage(EXTENSION_ID);
+  });
+
+  afterEach(() => {
+    cleanupRuntimeSettingsLocalStorage(EXTENSION_ID);
+  });
+
+  it('persists set and delete before disposal and notifies only after provider writes resolve', async () => {
+    const { repository, writes } = makeDeferredRuntimeSettingsRepository();
+    let settings: ExtensionSettingsService | null = null;
+    let subscriptionReady = false;
+    let notifications = 0;
+
+    function CaptureSettingsNotifications() {
+      const runtime = useVideoEditorRuntime();
+      useEffect(() => {
+        const registry = runtime.settingsNotificationRegistry;
+        if (!registry) return undefined;
+        const handle = registry.subscribeToExtension(EXTENSION_ID, () => {
+          notifications += 1;
+        });
+        subscriptionReady = true;
+        return () => handle.dispose();
+      }, [runtime.settingsNotificationRegistry]);
+      return null;
+    }
+
+    render(
+      <EditorRuntimeProvider
+        dataProvider={{} as DataProvider}
+        timelineId="timeline-1"
+        userId="user-1"
+        extensions={[makeSettingsExtension((svc) => { settings = svc; })]}
+        extensionStateRepository={repository}
+      >
+        <CaptureSettingsNotifications />
+      </EditorRuntimeProvider>,
+    );
+
+    await waitFor(() => {
+      expect(settings).not.toBeNull();
+      expect(subscriptionReady).toBe(true);
+    });
+
+    settings!.set('theme', 'dark');
+
+    expect(repository.putSettingsSnapshot).toHaveBeenCalledTimes(1);
+    expect(writes[0].snapshot.extensionId).toBe(EXTENSION_ID);
+    expect(writes[0].snapshot.schemaVersion).toBe(3);
+    expect(writes[0].snapshot.values).toMatchObject({ theme: 'dark' });
+    expect(notifications).toBe(0);
+
+    writes[0].resolve();
+
+    await waitFor(() => {
+      expect(notifications).toBe(1);
+    });
+
+    settings!.delete('theme');
+
+    await waitFor(() => {
+      expect(repository.putSettingsSnapshot).toHaveBeenCalledTimes(2);
+    });
+    expect(writes[1].snapshot.values).not.toHaveProperty('theme');
+    expect(notifications).toBe(1);
+
+    writes[1].resolve();
+
+    await waitFor(() => {
+      expect(notifications).toBe(2);
+    });
+  });
+
+  it('serializes rapid runtime mutations so the replayed provider snapshot is latest-wins', async () => {
+    const { repository, writes } = makeDeferredRuntimeSettingsRepository();
+    let settings: ExtensionSettingsService | null = null;
+    let subscriptionReady = false;
+    let notifications = 0;
+
+    function CaptureSettingsNotifications() {
+      const runtime = useVideoEditorRuntime();
+      useEffect(() => {
+        const registry = runtime.settingsNotificationRegistry;
+        if (!registry) return undefined;
+        const handle = registry.subscribeToExtension(EXTENSION_ID, () => {
+          notifications += 1;
+        });
+        subscriptionReady = true;
+        return () => handle.dispose();
+      }, [runtime.settingsNotificationRegistry]);
+      return null;
+    }
+
+    render(
+      <EditorRuntimeProvider
+        dataProvider={{} as DataProvider}
+        timelineId="timeline-1"
+        userId="user-1"
+        extensions={[makeSettingsExtension((svc) => { settings = svc; })]}
+        extensionStateRepository={repository}
+      >
+        <CaptureSettingsNotifications />
+      </EditorRuntimeProvider>,
+    );
+
+    await waitFor(() => {
+      expect(settings).not.toBeNull();
+      expect(subscriptionReady).toBe(true);
+    });
+
+    settings!.set('a', 'first');
+    settings!.set('b', 'second');
+    settings!.delete('a');
+
+    expect(repository.putSettingsSnapshot).toHaveBeenCalledTimes(1);
+    expect(writes[0].snapshot.values).toMatchObject({ a: 'first' });
+    expect(notifications).toBe(0);
+
+    writes[0].resolve();
+
+    await waitFor(() => {
+      expect(repository.putSettingsSnapshot).toHaveBeenCalledTimes(2);
+    });
+    expect(writes[1].snapshot.values).toMatchObject({ b: 'second' });
+    expect(writes[1].snapshot.values).not.toHaveProperty('a');
+
+    writes[1].resolve();
+
+    await waitFor(() => {
+      expect(notifications).toBe(2);
+    });
+  });
+
+  it('publishes sanitized provider diagnostics when runtime settings persistence rejects', async () => {
+    const { repository, writes } = makeDeferredRuntimeSettingsRepository();
+    let settings: ExtensionSettingsService | null = null;
+    let collection: ReturnType<typeof useVideoEditorRuntime>['diagnosticCollection'] = null;
+
+    function CaptureDiagnostics() {
+      const runtime = useVideoEditorRuntime();
+      collection = runtime.diagnosticCollection ?? null;
+      return null;
+    }
+
+    render(
+      <EditorRuntimeProvider
+        dataProvider={{} as DataProvider}
+        timelineId="timeline-1"
+        userId="user-1"
+        extensions={[makeSettingsExtension((svc) => { settings = svc; })]}
+        extensionStateRepository={repository}
+      >
+        <CaptureDiagnostics />
+      </EditorRuntimeProvider>,
+    );
+
+    await waitFor(() => {
+      expect(settings).not.toBeNull();
+      expect(collection).not.toBeNull();
+    });
+
+    settings!.set('safeKey', 'secret-value');
+    writes[0].reject(new Error('token secret-value leaked from backend'));
+
+    await waitFor(() => {
+      const diagnostics = collection?.getSnapshot() ?? [];
+      expect(diagnostics.some((diagnostic) =>
+        diagnostic.code === 'extension.settings.persistence_failed'
+        && diagnostic.extensionId === EXTENSION_ID
+        && diagnostic.source === 'provider'
+        && diagnostic.detail?.source === 'settings-persistence'
+        && diagnostic.detail?.operation === 'set'
+        && diagnostic.detail?.key === 'safeKey'
+        && diagnostic.detail?.revision === 1
+        && typeof diagnostic.detail?.message === 'string'
+        && !diagnostic.message.includes('secret-value')
+        && !diagnostic.detail.message.includes('secret-value'),
+      )).toBe(true);
     });
   });
 });
