@@ -15,11 +15,18 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
+import shutil
 import sys
+import tempfile
 from pathlib import Path
 from typing import Any, Callable, Sequence
 
 import arnold.workflow as workflow
+from arnold.cli.workflow_diagnostics import (
+    render_human_diagnostics,
+    render_json_envelope,
+)
 from arnold.execution import ExecutionRegistries, run
 from arnold.execution.backend import SkeletalBackend
 from arnold.execution.observability import ExecutionLogger
@@ -33,6 +40,13 @@ from arnold.workflow import (
     inspect_manifest,
     to_dot,
     to_yaml,
+)
+from arnold.workflow.source_compiler import (
+    ParsedBranchBlock,
+    ParsedIntrinsicCall,
+    ParsedLoopBlock,
+    ParsedStepCall,
+    ParsedSubflowCall,
 )
 from arnold_pipelines.discovery import load_builder
 
@@ -57,6 +71,23 @@ def _output(data: Any, fmt: str) -> str:
     return to_yaml(data)
 
 
+def _write_atomic(path: Path, content: str) -> None:
+    """Write ``content`` to ``path`` atomically via a temporary file."""
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp_name = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(content)
+        shutil.move(tmp_name, path)
+    except Exception:
+        try:
+            os.unlink(tmp_name)
+        except FileNotFoundError:
+            pass
+        raise
+
+
 def _print_result(result: ExecutionResult) -> None:
     payload = {
         "state": result.state.value,
@@ -75,10 +106,46 @@ def _print_result(result: ExecutionResult) -> None:
 
 
 def _cmd_check(args: argparse.Namespace) -> int:
+    if getattr(args, "source_path", None):
+        source_path = Path(args.source_path)
+        result = workflow.check_workflow_file(source_path)
+        if args.format == "json":
+            if result.ok:
+                print(
+                    json.dumps(
+                        {
+                            "ok": True,
+                            "source": {"kind": "python", "path": str(source_path)},
+                            "diagnostics": [],
+                        },
+                        sort_keys=True,
+                        indent=2,
+                    )
+                )
+            else:
+                print(render_json_envelope(result.diagnostics, source_path=source_path))
+        elif result.ok:
+            print(f"ok: {source_path}")
+        else:
+            print(render_human_diagnostics(result.diagnostics, source_path=source_path))
+        return 0 if result.ok else 1
+
+    if not args.module:
+        print(
+            render_human_diagnostics(
+                "check requires either <workflow.py> or --module package.module:build_pipeline"
+            ),
+            file=sys.stderr,
+        )
+        return 2
+
     try:
         manifest = _compile_from_target(args.module)
     except Exception as exc:
-        print(f"check failed: {exc}", file=sys.stderr)
+        if args.format == "json":
+            print(render_json_envelope(exc, source_kind="module"))
+        else:
+            print(f"check failed: {exc}", file=sys.stderr)
         return 1
     print(f"ok: {manifest.id} ({manifest.manifest_hash})")
     return 0
@@ -212,6 +279,225 @@ def _cmd_describe(args: argparse.Namespace) -> int:
     return 0
 
 
+def _source_path_or_none(args: argparse.Namespace) -> Path | None:
+    raw = getattr(args, "source_path", None)
+    return Path(raw) if raw else None
+
+
+def _cmd_compile(args: argparse.Namespace) -> int:
+    source_path = _source_path_or_none(args)
+    try:
+        if source_path is not None:
+            manifest = workflow.compile_workflow_file(source_path)
+        elif args.module:
+            manifest = _compile_from_target(args.module)
+        else:
+            print(
+                "compile requires either <workflow.py> or --module package.module:build_pipeline",
+                file=sys.stderr,
+            )
+            return 2
+    except (workflow.SourceCompileError, workflow.ManifestValidationError) as exc:
+        diagnostics_json = getattr(args, "diagnostics_json", None)
+        if diagnostics_json:
+            rendered = render_json_envelope(exc, source_path=source_path)
+            if diagnostics_json == "-":
+                print(rendered)
+            else:
+                _write_atomic(Path(diagnostics_json), rendered + "\n")
+        else:
+            print(
+                render_human_diagnostics(exc, source_path=source_path),
+                file=sys.stderr,
+            )
+        return 1
+    except Exception as exc:
+        print(f"compile failed: {exc}", file=sys.stderr)
+        return 1
+
+    manifest_json = manifest.to_json()
+    if args.out:
+        _write_atomic(Path(args.out), manifest_json + "\n")
+    else:
+        print(manifest_json)
+    return 0
+
+
+def _cmd_inspect(args: argparse.Namespace) -> int:
+    source_path = _source_path_or_none(args)
+    try:
+        if source_path is not None:
+            check_result = workflow.check_workflow_file(source_path)
+            manifest = workflow.compile_workflow_file(source_path)
+        elif args.module:
+            check_result = None
+            manifest = _compile_from_target(args.module)
+        else:
+            print(
+                "inspect requires either <workflow.py> or --module package.module:build_pipeline",
+                file=sys.stderr,
+            )
+            return 2
+    except (workflow.SourceCompileError, workflow.ManifestValidationError) as exc:
+        if args.format == "json":
+            print(render_json_envelope(exc, source_path=source_path))
+        else:
+            print(
+                render_human_diagnostics(exc, source_path=source_path),
+                file=sys.stderr,
+            )
+        return 1
+    except Exception as exc:
+        print(f"inspect failed: {exc}", file=sys.stderr)
+        return 1
+
+    view = inspect_manifest(manifest)
+    if source_path is not None and check_result is not None:
+        decl = check_result.parsed_source.workflow
+        if decl is not None:
+            view["workflow"] = {
+                "id": decl.id,
+                "version": decl.version,
+                "source_form": decl.source_form,
+                "function_name": decl.function_name,
+                "parameters": decl.parameters,
+                "source_path": str(source_path),
+            }
+            view["components"] = [
+                {
+                    "id": step.id,
+                    "component_ref": step.component_ref,
+                    "source_span": _span_dict(step.source_span),
+                }
+                for step in decl.source_block.steps
+            ]
+        view.pop("hash_inputs", None)
+    if args.module:
+        view["builder_target"] = args.module
+    print(_output(view, args.format))
+    return 0
+
+
+def _span_dict(span: Any) -> dict[str, Any] | None:
+    if span is None:
+        return None
+    return {
+        "path": span.path,
+        "start_line": span.start_line,
+        "start_column": span.start_column,
+        "end_line": span.end_line,
+        "end_column": span.end_column,
+    }
+
+
+def _cmd_explain(args: argparse.Namespace) -> int:
+    source_path = _source_path_or_none(args)
+    if source_path is None:
+        print(
+            "explain requires <workflow.py>",
+            file=sys.stderr,
+        )
+        return 2
+
+    try:
+        check_result = workflow.check_workflow_file(source_path)
+        manifest = workflow.compile_workflow_file(source_path)
+    except (workflow.SourceCompileError, workflow.ManifestValidationError) as exc:
+        if args.format == "json":
+            print(render_json_envelope(exc, source_path=source_path))
+        else:
+            print(
+                render_human_diagnostics(exc, source_path=source_path),
+                file=sys.stderr,
+            )
+        return 1
+    except Exception as exc:
+        print(f"explain failed: {exc}", file=sys.stderr)
+        return 1
+
+    nodes_by_id = {node.id: node for node in manifest.nodes}
+    entries: list[dict[str, Any]] = []
+    decl = check_result.parsed_source.workflow
+    if decl is None:
+        print("explain failed: no workflow declaration found", file=sys.stderr)
+        return 1
+
+    for statement in decl.source_block.statements:
+        if isinstance(statement, ParsedStepCall):
+            node = nodes_by_id.get(statement.id)
+            entry: dict[str, Any] = {
+                "kind": "step",
+                "id": statement.id,
+                "summary": f"step {statement.id} calls {statement.component_ref}",
+                "component_ref": statement.component_ref,
+                "source": _span_dict(statement.source_span),
+            }
+            if node is not None and node.source_span is not None:
+                entry["node_id"] = node.id
+            entries.append(entry)
+        elif isinstance(statement, ParsedSubflowCall):
+            entries.append(
+                {
+                    "kind": "subflow",
+                    "id": statement.id,
+                    "summary": f"subflow {statement.id} calls {statement.component_ref}",
+                    "component_ref": statement.component_ref,
+                    "source": _span_dict(statement.source_span),
+                }
+            )
+        elif isinstance(statement, ParsedBranchBlock):
+            entries.append(
+                {
+                    "kind": "branch",
+                    "id": f"branch-on-{statement.decision_output}",
+                    "summary": f"branch on {statement.decision_output} with {len(statement.arms)} arm(s)",
+                    "source": _span_dict(statement.source_span),
+                }
+            )
+        elif isinstance(statement, ParsedLoopBlock):
+            entries.append(
+                {
+                    "kind": "loop",
+                    "id": statement.policy.reentry_id,
+                    "summary": f"bounded loop with reentry {statement.policy.reentry_id}",
+                    "source": _span_dict(statement.source_span),
+                }
+            )
+        elif isinstance(statement, ParsedIntrinsicCall):
+            entries.append(
+                {
+                    "kind": "intrinsic",
+                    "id": statement.name,
+                    "summary": f"intrinsic {statement.name}",
+                    "source": _span_dict(statement.source_span),
+                }
+            )
+
+    if args.format == "json":
+        print(
+            json.dumps(
+                {
+                    "workflow": {
+                        "id": decl.id,
+                        "version": decl.version,
+                        "source_path": str(source_path),
+                    },
+                    "entries": entries,
+                },
+                sort_keys=True,
+                indent=2,
+            )
+        )
+    else:
+        print(f"Workflow {decl.id} (v{decl.version}) in {source_path}")
+        for idx, entry in enumerate(entries, start=1):
+            source = entry.get("source") or {}
+            line = source.get("start_line")
+            loc = f"line {line}" if line is not None else "unknown location"
+            print(f"{idx}. [{entry['kind']}] {entry['id']} ({loc}) - {entry['summary']}")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     """Return the ``arnold workflow`` argument parser."""
 
@@ -221,8 +507,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
 
+    source_file_commands = {"check", "compile", "inspect", "explain"}
     for name, help_text in [
-        ("check", "Validate a pipeline builder target."),
+        ("check", "Validate a workflow source file or builder target."),
+        ("compile", "Compile a workflow source file or builder target to a manifest."),
+        ("inspect", "Inspect a workflow source file or builder target."),
+        ("explain", "Explain a workflow source file as an ordered narrative."),
         ("manifest", "Emit the compiled workflow manifest."),
         ("dot", "Emit a DOT graph of the compiled manifest."),
         ("dry-run", "Print a dry-run report without executing."),
@@ -231,17 +521,34 @@ def build_parser() -> argparse.ArgumentParser:
         ("describe", "Inspect a compiled workflow manifest."),
     ]:
         sub = subparsers.add_parser(name, help=help_text)
+        if name in source_file_commands:
+            sub.add_argument(
+                "source_path",
+                nargs="?",
+                help="Python-shaped workflow source file.",
+            )
         sub.add_argument(
             "--module",
-            required=True,
+            required=name not in source_file_commands,
             help="Builder target: package.module:build_pipeline",
         )
+        default_fmt = "human" if name in {"check", "inspect", "explain"} else "yaml"
         sub.add_argument(
             "--format",
-            choices=["yaml", "json"],
-            default="yaml",
-            help="Output format for manifest/dry-run/describe.",
+            choices=["human", "yaml", "json"],
+            default=default_fmt,
+            help="Output format.",
         )
+        if name == "compile":
+            sub.add_argument(
+                "--out",
+                help="Output path for the compiled manifest JSON.",
+            )
+            sub.add_argument(
+                "--diagnostics-json",
+                dest="diagnostics_json",
+                help="Write machine-readable failure diagnostics to PATH or '-' for stdout.",
+            )
         if name in {"run", "resume"}:
             sub.add_argument(
                 "--artifact-root",
@@ -281,6 +588,9 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     dispatch = {
         "check": _cmd_check,
+        "compile": _cmd_compile,
+        "inspect": _cmd_inspect,
+        "explain": _cmd_explain,
         "manifest": _cmd_manifest,
         "dot": _cmd_dot,
         "dry-run": _cmd_dry_run,

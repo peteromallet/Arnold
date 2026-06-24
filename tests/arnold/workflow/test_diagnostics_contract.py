@@ -174,3 +174,5 @@ def test_diagnostics_module_is_declarative_and_static_only() -> None:
 
     assert imports.isdisjoint(forbidden_imports)
     assert not any(name.startswith(("parse", "validate", "resolve")) for name in function_names)
+    assert not any(name.startswith(("render", "format")) for name in function_names)
+    assert "cli" not in source_path.read_text(encoding="utf-8").lower()
