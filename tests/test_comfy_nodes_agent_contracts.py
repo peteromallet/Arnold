@@ -8,9 +8,12 @@ from vibecomfy.comfy_nodes.agent.contracts import (
     AGENT_EDIT_TURN_CONTRACT_VERSION,
     CANVAS_APPLY_GATE_NAMES,
     DEFAULT_GATE_NAMES,
+    FAILURE_HINT_KEYS,
     DiagnosticRecord,
     FAILURE_SPECS,
+    INTERNAL_TO_PUBLIC_OUTCOME,
     PUBLIC_OUTCOME_KINDS,
+    REBASELINE_RECOVERY_FIELDS,
     SCAN_CODE_FAILURE_KIND,
     AgentError,
     ApplyCandidate,
@@ -42,6 +45,27 @@ from vibecomfy.security.agent_generated_loader import (
     AgentGeneratedLoadError,
     ScanFailure,
     ScanReport,
+)
+
+
+EXPECTED_REBASELINE_RECOVERY_FIELDS = (
+    "action",
+    "endpoint",
+    "reason",
+    "last_known_baseline_graph_hash",
+    "submit_graph_hash",
+    "submit_structural_graph_hash",
+    "client_graph_hash",
+    "client_structural_graph_hash",
+)
+
+EXPECTED_SCOPED_ACCEPT_RECOVERY_FIELDS = (
+    "action",
+    "endpoint",
+    "reason",
+    "turn_id",
+    "submit_graph_hash",
+    "candidate_graph_hash",
 )
 
 
@@ -665,6 +689,7 @@ def test_ensure_agent_edit_response_contract_accepts_scoped_conflict_recovery_is
         "action": "rebaseline",
         "endpoint": "/vibecomfy/agent-edit/rebaseline",
         "reason": "scoped_accept_conflict",
+        "turn_id": "turn-7",
         "submit_graph_hash": "submit-hash",
         "candidate_graph_hash": "candidate-hash",
     }
@@ -694,6 +719,137 @@ def test_ensure_agent_edit_response_contract_accepts_scoped_conflict_recovery_is
     assert payload["rebaseline_recovery"] == recovery
     assert payload["outcome"]["rebaseline_recovery"] == recovery
     assert payload["agent_failure_context"]["issues"][0]["rebaseline_recovery"] == recovery
+    assert tuple(payload["rebaseline_recovery"]) == EXPECTED_SCOPED_ACCEPT_RECOVERY_FIELDS
+    assert set(payload["rebaseline_recovery"]) == set(EXPECTED_SCOPED_ACCEPT_RECOVERY_FIELDS)
+    assert "candidate_graph_hash" not in REBASELINE_RECOVERY_FIELDS
+
+
+def test_rebaseline_recovery_fields_are_exact_canonical_tuple() -> None:
+    assert REBASELINE_RECOVERY_FIELDS == EXPECTED_REBASELINE_RECOVERY_FIELDS
+    assert len(REBASELINE_RECOVERY_FIELDS) == 8
+
+
+def test_stale_rebaseline_recovery_issue_uses_only_canonical_recovery_fields(
+    tmp_path,
+) -> None:
+    from vibecomfy.comfy_nodes.agent.edit import (
+        AgentEditState,
+        _stale_rebaseline_recovery_issue,
+    )
+
+    graph = {"nodes": [], "links": []}
+    state = AgentEditState(
+        task="Update the workflow.",
+        graph=graph,
+        request_payload={"graph": graph},
+        schema_provider=None,
+        baseline_graph_hash="baseline-hash",
+        submit_graph_hash="submit-hash",
+        submit_structural_graph_hash="submit-structural-hash",
+        submitted_client_graph_hash="client-hash",
+        submitted_client_structural_graph_hash="client-structural-hash",
+        session_dir=tmp_path / "session",
+        turn_dir=tmp_path / "session" / "turns" / "0001",
+        request_path=tmp_path / "session" / "turns" / "0001" / "request.json",
+        original_ui_path=tmp_path / "session" / "turns" / "0001" / "original.ui.json",
+        before_py_path=tmp_path / "session" / "turns" / "0001" / "before.py",
+        after_py_path=tmp_path / "session" / "turns" / "0001" / "after.py",
+        projection_path=tmp_path / "session" / "turns" / "0001" / "projection.txt",
+        model_request_path=tmp_path / "session" / "turns" / "0001" / "model_request.json",
+        model_response_path=tmp_path / "session" / "turns" / "0001" / "model_response.json",
+        candidate_ui_path=tmp_path / "session" / "turns" / "0001" / "candidate.ui.json",
+        messages_path=tmp_path / "session" / "turns" / "0001" / "messages.jsonl",
+    )
+
+    issue = _stale_rebaseline_recovery_issue(
+        state,
+        {
+            "reason": "hash_mismatch",
+            "baseline_graph_hash": "baseline-hash",
+        },
+    )
+    recovery = issue["rebaseline_recovery"]
+
+    assert tuple(recovery) == REBASELINE_RECOVERY_FIELDS
+    assert set(recovery) == set(REBASELINE_RECOVERY_FIELDS)
+    assert recovery == {
+        "action": "rebaseline",
+        "endpoint": "/vibecomfy/agent-edit/rebaseline",
+        "reason": "stale_state_recovery",
+        "last_known_baseline_graph_hash": "baseline-hash",
+        "submit_graph_hash": "submit-hash",
+        "submit_structural_graph_hash": "submit-structural-hash",
+        "client_graph_hash": "client-hash",
+        "client_structural_graph_hash": "client-structural-hash",
+    }
+
+
+def test_route_stale_recovery_repair_emits_only_available_recovery_fields() -> None:
+    # Private route-boundary helper coverage is intentional: _ensure_stale_recovery
+    # repairs older flat failures into a public recovery payload at the route edge.
+    from vibecomfy.comfy_nodes.agent.routes import _ensure_stale_recovery
+
+    payload = _ensure_stale_recovery(
+        {
+            "kind": FailureKind.STALE_STATE_MISMATCH.value,
+            "message": "Submitted graph no longer matches the current baseline.",
+            "expected_baseline_graph_hash": "baseline-hash",
+            "submit_structural_graph_hash": "submit-structural-hash",
+            "outcome": {"kind": "error"},
+            "agent_failure_context": {"reason": "stale_state_recovery"},
+        }
+    )
+    recovery = payload["rebaseline_recovery"]
+
+    route_repair_fields = {
+        "action",
+        "endpoint",
+        "reason",
+        "last_known_baseline_graph_hash",
+        "submit_structural_graph_hash",
+    }
+    unavailable_hash_fields = {
+        "submit_graph_hash",
+        "client_graph_hash",
+        "client_structural_graph_hash",
+    }
+
+    assert set(recovery) == route_repair_fields
+    assert recovery == {
+        "action": "rebaseline",
+        "endpoint": "/vibecomfy/agent-edit/rebaseline",
+        "reason": "stale_state_recovery",
+        "last_known_baseline_graph_hash": "baseline-hash",
+        "submit_structural_graph_hash": "submit-structural-hash",
+    }
+    assert unavailable_hash_fields.isdisjoint(recovery)
+    assert payload["agent_failure_context"]["issues"][0]["rebaseline_recovery"] == recovery
+    assert payload["outcome"]["rebaseline_recovery"] == recovery
+    assert (
+        set(payload["agent_failure_context"]["issues"][0]["rebaseline_recovery"])
+        == route_repair_fields
+    )
+    assert set(payload["outcome"]["rebaseline_recovery"]) == route_repair_fields
+
+
+def test_rebaseline_recovery_js_codegen_is_limited_to_canonical_tuple() -> None:
+    from tools import generate_agent_contract_js
+
+    fields = generate_agent_contract_js._load_fields()
+    js_source = generate_agent_contract_js.generate_js(fields)
+    normalizer_body = js_source.split("export function normalizeRebaselineRecovery", 1)[1]
+    normalizer_body = normalizer_body.split("};", 1)[0]
+    generated_fields = tuple(
+        line.strip().split(":", 1)[0]
+        for line in normalizer_body.splitlines()
+        if "asString(recovery." in line
+    )
+
+    assert fields == REBASELINE_RECOVERY_FIELDS
+    assert generated_fields == REBASELINE_RECOVERY_FIELDS
+    assert set(generated_fields) == set(REBASELINE_RECOVERY_FIELDS)
+    assert "candidate_graph_hash: asString(recovery.candidate_graph_hash)" not in js_source
+    assert "submit_graph_hash: asString(recovery.submit_graph_hash)" in js_source
 
 
 def test_turn_envelope_serializes_versioned_product_contract() -> None:
@@ -797,6 +953,206 @@ def test_build_legacy_agent_edit_v1_adds_aliases_after_canonical_payload() -> No
     assert payload["queue_allowed"] is False
     assert payload["candidate_graph"] == canonical["candidate"]["graph"]
     assert payload["graph"] == canonical["candidate"]["graph"]
+
+
+def test_build_legacy_agent_edit_v1_accepts_apply_eligibility_dataclass() -> None:
+    from vibecomfy.comfy_nodes.agent.contracts import build_legacy_agent_edit_v1
+
+    candidate_graph = {"nodes": [{"id": 1}], "links": []}
+    eligibility = ApplyEligibility(
+        applyable=True,
+        reason="applyable",
+        message="Ready to apply.",
+    )
+
+    # Defensive compatibility coverage: older internal callers may pass the
+    # dataclass directly instead of the public mapping shape.
+    payload = build_legacy_agent_edit_v1(
+        {
+            "message": "Updated the workflow.",
+            "outcome": {"kind": "candidate", "changes": []},
+            "candidate": {
+                "state": "candidate",
+                "graph": candidate_graph,
+                "graph_hash": "candidate-hash",
+                "structural_graph_hash": "candidate-structural-hash",
+            },
+            "eligibility": eligibility,
+            "canvas_apply_allowed": True,
+            "queue_allowed": False,
+        }
+    )
+
+    assert payload["eligibility"] == eligibility.to_dict()
+    assert payload["apply_eligibility"] == eligibility.to_dict()
+    assert payload["apply_allowed"] is True
+    assert payload["canvas_apply_allowed"] is True
+    assert payload["queue_allowed"] is False
+    assert payload["candidate_graph"] == candidate_graph
+    assert payload["graph"] == candidate_graph
+
+
+def test_build_legacy_agent_edit_v1_uses_apply_eligibility_mapping_fallback() -> None:
+    from vibecomfy.comfy_nodes.agent.contracts import build_legacy_agent_edit_v1
+
+    candidate_graph = {"nodes": [{"id": 1}], "links": []}
+    eligibility = {
+        "applyable": True,
+        "reason": "applyable",
+        "message": "Ready to apply.",
+        "warnings": [],
+    }
+
+    payload = build_legacy_agent_edit_v1(
+        {
+            "message": "Updated the workflow.",
+            "outcome": {"kind": "candidate", "changes": []},
+            "candidate": {
+                "state": "candidate",
+                "graph": candidate_graph,
+                "graph_hash": "candidate-hash",
+                "structural_graph_hash": "candidate-structural-hash",
+            },
+            "apply_eligibility": eligibility,
+            "canvas_apply_allowed": True,
+            "queue_allowed": False,
+        }
+    )
+
+    assert payload["eligibility"] == eligibility
+    assert payload["apply_eligibility"] == eligibility
+    assert payload["apply_allowed"] is True
+    assert payload["canvas_apply_allowed"] is True
+    assert payload["queue_allowed"] is False
+    assert payload["candidate_graph"] == candidate_graph
+    assert payload["graph"] == candidate_graph
+
+
+@pytest.mark.parametrize(
+    ("apply_eligible", "expected_reason", "expected_message"),
+    [
+        (True, "applyable", "Ready to apply."),
+        (False, "no_candidate", "No candidate is available to apply."),
+    ],
+)
+def test_build_legacy_agent_edit_v1_uses_apply_eligible_boolean_fallback(
+    apply_eligible: bool,
+    expected_reason: str,
+    expected_message: str,
+) -> None:
+    from vibecomfy.comfy_nodes.agent.contracts import build_legacy_agent_edit_v1
+
+    payload = build_legacy_agent_edit_v1(
+        {
+            "message": "Updated the workflow.",
+            "outcome": {"kind": "noop"},
+            "apply_eligible": apply_eligible,
+        }
+    )
+
+    assert payload["eligibility"] == {
+        "applyable": apply_eligible,
+        "reason": expected_reason,
+        "message": expected_message,
+        "warnings": [],
+    }
+    assert payload["apply_eligibility"] == payload["eligibility"]
+    assert payload["apply_allowed"] is apply_eligible
+    assert payload["canvas_apply_allowed"] is apply_eligible
+    assert payload["queue_allowed"] is apply_eligible
+
+
+@pytest.mark.parametrize(
+    "candidate",
+    [
+        None,
+        "not-a-candidate",
+        {"state": "candidate"},
+        {"state": "candidate", "graph": None},
+        {"state": "candidate", "graph": []},
+    ],
+)
+def test_build_legacy_agent_edit_v1_does_not_stamp_graph_aliases_without_candidate_graph(
+    candidate: object,
+) -> None:
+    from vibecomfy.comfy_nodes.agent.contracts import build_legacy_agent_edit_v1
+
+    canonical: dict[str, object] = {
+        "message": "No graph candidate.",
+        "outcome": {"kind": "noop"},
+        "eligibility": {
+            "applyable": False,
+            "reason": "no_candidate",
+            "message": "No candidate is available to apply.",
+            "warnings": [],
+        },
+    }
+    if candidate is not None:
+        canonical["candidate"] = candidate
+
+    payload = build_legacy_agent_edit_v1(canonical)
+
+    assert "candidate_graph" not in payload
+    assert "graph" not in payload
+    assert payload["graph_unchanged"] is True
+
+
+def test_build_legacy_agent_edit_v1_stamps_graph_aliases_and_defaults_changed() -> None:
+    from vibecomfy.comfy_nodes.agent.contracts import build_legacy_agent_edit_v1
+
+    candidate_graph = {"nodes": [{"id": 1}], "links": []}
+
+    payload = build_legacy_agent_edit_v1(
+        {
+            "message": "Updated the workflow.",
+            "outcome": {"kind": "candidate", "changes": []},
+            "candidate": {
+                "state": "candidate",
+                "graph": candidate_graph,
+            },
+            "eligibility": {
+                "applyable": True,
+                "reason": "applyable",
+                "message": "Ready to apply.",
+                "warnings": [],
+            },
+        }
+    )
+
+    assert payload["candidate_graph"] == candidate_graph
+    assert payload["graph"] == candidate_graph
+    assert payload["graph_unchanged"] is False
+
+
+@pytest.mark.parametrize("graph_unchanged", [True, False])
+def test_build_legacy_agent_edit_v1_preserves_existing_graph_unchanged(
+    graph_unchanged: bool,
+) -> None:
+    from vibecomfy.comfy_nodes.agent.contracts import build_legacy_agent_edit_v1
+
+    candidate_graph = {"nodes": [{"id": 1}], "links": []}
+
+    payload = build_legacy_agent_edit_v1(
+        {
+            "message": "Updated the workflow.",
+            "outcome": {"kind": "candidate", "changes": []},
+            "candidate": {
+                "state": "candidate",
+                "graph": candidate_graph,
+            },
+            "eligibility": {
+                "applyable": True,
+                "reason": "applyable",
+                "message": "Ready to apply.",
+                "warnings": [],
+            },
+            "graph_unchanged": graph_unchanged,
+        }
+    )
+
+    assert payload["candidate_graph"] == candidate_graph
+    assert payload["graph"] == candidate_graph
+    assert payload["graph_unchanged"] is graph_unchanged
 
 
 # ---------------------------------------------------------------------------
@@ -1465,6 +1821,106 @@ def test_public_outcome_kinds_are_the_closed_contract_set() -> None:
     assert len(set(PUBLIC_OUTCOME_KINDS)) == 4
 
 
+def test_internal_to_public_outcome_is_closed_authoritative_mapping() -> None:
+    """Every internal kind has one declared public default; budget defaults to
+    noop and is promoted only when a candidate payload exists."""
+    assert dict(INTERNAL_TO_PUBLIC_OUTCOME) == {
+        "edit": "candidate",
+        "edit+clarify": "candidate",
+        "clarify": "clarify",
+        "failure": "error",
+        "noop": "noop",
+        "budget": "noop",
+    }
+    assert set(INTERNAL_TO_PUBLIC_OUTCOME) == set(TURN_OUTCOME_KINDS)
+    assert set(INTERNAL_TO_PUBLIC_OUTCOME.values()) <= set(PUBLIC_OUTCOME_KINDS)
+
+
+def test_budget_public_outcome_uses_mapping_default_and_candidate_override() -> None:
+    assert INTERNAL_TO_PUBLIC_OUTCOME["budget"] == "noop"
+
+    default_public = public_outcome_from_turn_outcome(
+        {"kind": "budget", "reason": "turn budget exhausted"},
+        response={},
+    )
+    candidate_public = public_outcome_from_turn_outcome(
+        {"kind": "budget", "reason": "turn budget exhausted"},
+        response={"candidate": {"graph_hash": "candidate-hash"}},
+    )
+
+    assert default_public == {
+        "kind": "noop",
+        "budget_exhausted": True,
+        "reason": "turn budget exhausted",
+    }
+    assert candidate_public == {
+        "kind": "candidate",
+        "budget_exhausted": True,
+        "reason": "turn budget exhausted",
+        "changes": [],
+    }
+
+
+@pytest.mark.parametrize(
+    "outcome",
+    [
+        {"kind": "error"},
+        {
+            "kind": "error",
+            "failure_kind": FailureKind.TIMEOUT_ERROR.value,
+            "stage": "agent_response",
+            "retryable": "true",
+            "next_action": "retry",
+            "graph_unchanged": True,
+        },
+        {
+            "kind": "error",
+            "failure_kind": FailureKind.TIMEOUT_ERROR.value,
+            "stage": "agent_response",
+            "retryable": True,
+            "next_action": "retry",
+        },
+    ],
+)
+def test_public_outcome_from_turn_outcome_rejects_malformed_public_error(outcome: dict[str, object]) -> None:
+    with pytest.raises(ValueError, match="public error outcome"):
+        public_outcome_from_turn_outcome(outcome)
+
+
+def test_ensure_agent_edit_response_contract_maps_all_failure_hint_keys_to_error() -> None:
+    assert set(FAILURE_HINT_KEYS) == {
+        "agent_failure_context",
+        "failureKind",
+        "failure_kind",
+        "nextAction",
+        "next_action",
+        "retryable",
+    }
+
+    payload = ensure_agent_edit_response_contract(
+        {
+            "ok": True,
+            "failureKind": FailureKind.AUTH_ERROR.value,
+            "stage": "agent_response",
+            "retryable": False,
+            "nextAction": "check credentials in Agent Settings",
+            "graph_unchanged": True,
+            "agent_failure_context": {"explanation": "HTTP 401"},
+        },
+        stage="agent_response",
+    )
+
+    assert payload["outcome"] == {
+        "kind": "error",
+        "failure_kind": FailureKind.AUTH_ERROR.value,
+        "stage": "agent_response",
+        "retryable": False,
+        "next_action": "check credentials in Agent Settings",
+        "graph_unchanged": True,
+        "agent_failure_context": {"explanation": "HTTP 401"},
+    }
+
+
 def test_all_internal_turn_outcome_kinds_map_to_public_union() -> None:
     """Every internal TurnOutcome kind maps to a valid public kind via
     public_outcome_from_turn_outcome."""
@@ -1545,6 +2001,62 @@ def test_diagnostic_record_round_trips_through_dict() -> None:
     # Extra fields in older on-disk records are ignored.
     payload["future_field"] = "ignored"
     assert DiagnosticRecord.from_dict(payload) == record
+
+
+def test_diagnostic_record_requires_string_identity_fields() -> None:
+    base_payload = {
+        "session_id": "sess-1",
+        "turn_id": "0003",
+    }
+    invalid_values = (
+        ("session_id", "<missing>"),
+        ("session_id", None),
+        ("session_id", 123),
+        ("turn_id", "<missing>"),
+        ("turn_id", None),
+        ("turn_id", 123),
+    )
+
+    for field, value in invalid_values:
+        payload = dict(base_payload)
+        if value == "<missing>":
+            del payload[field]
+        else:
+            payload[field] = value
+
+        with pytest.raises(ValueError, match=rf"DiagnosticRecord\.{field} must be a string"):
+            DiagnosticRecord.from_dict(payload)
+
+
+def test_diagnostic_record_preserves_permissive_optional_historical_fields() -> None:
+    payload = {
+        "session_id": "sess-1",
+        "turn_id": "0003",
+        "path": 123,
+        "mtime": "not-a-float",
+        "baseline_turn_id": 456,
+        "ok": "yes",
+        "kind": 789,
+        "outcome": {"kind": "candidate"},
+        "lifecycle": ["candidate"],
+        "fidelity_ok": "true",
+        "state_match_ok": 1,
+        "queue_validate_ok": None,
+        "canvas_apply_allowed": "allowed",
+        "queue_allowed": [],
+        "candidate_nodes": "seven",
+        "task": {"prompt": "make it pop"},
+        "route": 42,
+        "protocol": False,
+        "summary": ["changed saturation"],
+        "is_baseline": "no",
+        "accepted_at": 123.45,
+        "live_token": {"token": "abc"},
+    }
+
+    record = DiagnosticRecord.from_dict(payload)
+
+    assert record.to_dict() == payload
 
 
 def test_repair_field_changes_fills_missing_old_value_from_ui_graph() -> None:

@@ -1432,7 +1432,11 @@ def _stamped_turn_response_outcome(
     if not isinstance(response, Mapping):
         return None
     try:
-        stamped = ensure_agent_edit_response_contract(dict(response), stage=stage)
+        stamped = ensure_agent_edit_response_contract(
+            dict(response),
+            stage=stage,
+            compatibility_mode=True,
+        )
     except Exception:
         return None
     outcome = stamped.get("outcome")
@@ -1450,6 +1454,7 @@ def _stamped_message_outcome(
         stamped = ensure_agent_edit_response_contract(
             {"ok": True, "outcome": dict(outcome)},
             stage=stage,
+            compatibility_mode=True,
         )
     except Exception:
         return None

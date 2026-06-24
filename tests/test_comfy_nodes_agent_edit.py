@@ -27,6 +27,8 @@ from vibecomfy.comfy_nodes.agent.edit import (
     _repair_field_changes_from_original_ui,
     _run_batch_repl_product_path,
     _safe_session_id,
+    _stamped_message_outcome,
+    _stamped_turn_response_outcome,
     _synthesize_batch_repl_message,
     _write_turn_chat_artifact,
     _ws_send,
@@ -8855,6 +8857,69 @@ def test_chat_agent_message_outcome_kinds_are_public_union_members(
         assert "outcome" in msg, f"agent message missing outcome: {msg}"
         kind = msg["outcome"]["kind"]
         assert kind in PUBLIC_OUTCOME_KINDS, f"unexpected outcome kind {kind!r}"
+
+
+@pytest.mark.parametrize(
+    "persisted_outcome",
+    [
+        {"kind": "error", "failure_kind": FailureKind.STALE_STATE_MISMATCH.value},
+        {"kind": "error", "failureKind": FailureKind.STALE_STATE_MISMATCH.value},
+    ],
+)
+def test_stamped_message_outcome_preserves_persisted_minimal_error_outcomes(
+    persisted_outcome: dict[str, Any],
+) -> None:
+    """Persisted chat.json outcomes may predate strict live error fields.
+
+    Rehydration stamping owns compatibility normalization so frontend render code
+    does not need to infer missing error metadata from historical artifacts.
+    """
+    stamped = _stamped_message_outcome(persisted_outcome, stage="chat")
+
+    assert stamped == {
+        "kind": "error",
+        "failure_kind": FailureKind.STALE_STATE_MISMATCH.value,
+        "stage": "chat",
+        "retryable": False,
+        "next_action": "resubmit from the current canvas",
+        "graph_unchanged": True,
+        "agent_failure_context": {
+            "explanation": "The submitted graph no longer matches the current canvas. Resubmit."
+        },
+    }
+
+
+@pytest.mark.parametrize(
+    "persisted_outcome",
+    [
+        {"kind": "error", "failure_kind": FailureKind.STALE_STATE_MISMATCH.value},
+        {"kind": "error", "failureKind": FailureKind.STALE_STATE_MISMATCH.value},
+    ],
+)
+def test_stamped_turn_response_outcome_preserves_persisted_minimal_error_outcomes(
+    persisted_outcome: dict[str, Any],
+) -> None:
+    """Persisted response.json outcomes survive fallback chat rehydration.
+
+    The safe defaults are applied at the edit.py stamping helper rather than by
+    browser selectors or render paths.
+    """
+    stamped = _stamped_turn_response_outcome(
+        {"ok": False, "outcome": persisted_outcome},
+        stage="submit",
+    )
+
+    assert stamped == {
+        "kind": "error",
+        "failure_kind": FailureKind.STALE_STATE_MISMATCH.value,
+        "stage": "submit",
+        "retryable": False,
+        "next_action": "resubmit from the current canvas",
+        "graph_unchanged": True,
+        "agent_failure_context": {
+            "explanation": "The submitted graph no longer matches the current canvas. Resubmit."
+        },
+    }
 
 
 def test_chat_user_messages_never_carry_outcome(

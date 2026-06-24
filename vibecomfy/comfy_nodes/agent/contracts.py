@@ -82,6 +82,7 @@ INTERNAL_TO_PUBLIC_OUTCOME: Mapping[str, str] = MappingProxyType({
     "edit+clarify": "candidate",
     "clarify": "clarify",
     "noop": "noop",
+    "budget": "noop",
     "failure": "error",
 })
 
@@ -342,6 +343,7 @@ def build_legacy_agent_edit_v1(canonical: Mapping[str, Any]) -> dict[str, Any]:
     raw_eligibility = payload.get("eligibility")
     if isinstance(raw_eligibility, ApplyEligibility):
         eligibility_payload = raw_eligibility.to_dict()
+        payload["eligibility"] = eligibility_payload
     elif isinstance(raw_eligibility, Mapping):
         eligibility_payload = dict(raw_eligibility)
     elif isinstance(payload.get("apply_eligibility"), Mapping):
@@ -1105,6 +1107,9 @@ class DiagnosticRecord:
 
     @classmethod
     def from_dict(cls, payload: Mapping[str, Any]) -> "DiagnosticRecord":
+        for identity_field in ("session_id", "turn_id"):
+            if not isinstance(payload.get(identity_field), str):
+                raise ValueError(f"DiagnosticRecord.{identity_field} must be a string")
         fields = {
             "session_id",
             "turn_id",
@@ -1187,27 +1192,60 @@ def _public_error_outcome_from_response(
     response: Mapping[str, Any],
     *,
     default_stage: str | None = None,
+    compatibility_mode: bool = False,
 ) -> dict[str, Any]:
     failure_kind = response.get("failure_kind")
+    if not isinstance(failure_kind, str):
+        failure_kind = response.get("failureKind")
     if not isinstance(failure_kind, str):
         kind_value = response.get("kind")
         if isinstance(kind_value, str) and kind_value in {kind.value for kind in FailureKind}:
             failure_kind = kind_value
+    next_action = response.get("next_action")
+    if not isinstance(next_action, str):
+        next_action = response.get("nextAction")
+    stage = response.get("stage") if isinstance(response.get("stage"), str) else default_stage
+    retryable = response.get("retryable") if isinstance(response.get("retryable"), bool) else None
+    graph_unchanged = response.get("graph_unchanged") if isinstance(response.get("graph_unchanged"), bool) else None
+    spec: FailureSpec | None = None
+    if isinstance(failure_kind, str):
+        try:
+            spec = FAILURE_SPECS[FailureKind(failure_kind)]
+        except ValueError:
+            spec = None
+    if compatibility_mode and spec is not None:
+        retryable = spec.retryable if retryable is None else retryable
+        next_action = spec.next_action if not isinstance(next_action, str) else next_action
+        graph_unchanged = spec.graph_unchanged if graph_unchanged is None else graph_unchanged
     payload: dict[str, Any] = {
         "kind": "error",
         "failure_kind": failure_kind,
-        "stage": response.get("stage") if isinstance(response.get("stage"), str) else default_stage,
-        "retryable": response.get("retryable") if isinstance(response.get("retryable"), bool) else None,
-        "next_action": response.get("next_action") if isinstance(response.get("next_action"), str) else None,
-        "graph_unchanged": response.get("graph_unchanged") if isinstance(response.get("graph_unchanged"), bool) else None,
+        "stage": stage,
+        "retryable": retryable,
+        "next_action": next_action if isinstance(next_action, str) else None,
+        "graph_unchanged": graph_unchanged,
     }
     failure_context = response.get("agent_failure_context")
     if isinstance(failure_context, Mapping):
         payload["agent_failure_context"] = _thaw_jsonish(_freeze_jsonish(failure_context))
+    elif compatibility_mode and spec is not None:
+        payload["agent_failure_context"] = {"explanation": spec.user_facing_message}
     recovery = _extract_rebaseline_recovery(response)
     if recovery is not None:
         payload["rebaseline_recovery"] = recovery
     return {key: value for key, value in payload.items() if value is not None}
+
+
+def _validate_public_error_outcome(outcome: Mapping[str, Any]) -> None:
+    if (
+        not isinstance(outcome.get("failure_kind"), str)
+        or outcome.get("failure_kind") not in {kind.value for kind in FailureKind}
+        or not isinstance(outcome.get("stage"), str)
+        or not isinstance(outcome.get("retryable"), bool)
+        or not isinstance(outcome.get("next_action"), str)
+        or not isinstance(outcome.get("graph_unchanged"), bool)
+    ):
+        raise ValueError("Malformed public error outcome.")
 
 
 def _failure_response_contract_fields(
@@ -1237,6 +1275,8 @@ def public_outcome_from_turn_outcome(
     internal_outcome: TurnOutcome | Mapping[str, Any],
     *,
     response: Mapping[str, Any] | None = None,
+    compatibility_mode: bool = False,
+    default_stage: str | None = None,
 ) -> dict[str, Any]:
     is_internal_turn_outcome = isinstance(internal_outcome, TurnOutcome)
     outcome = internal_outcome.to_dict() if is_internal_turn_outcome else dict(internal_outcome)
@@ -1245,33 +1285,48 @@ def public_outcome_from_turn_outcome(
         raise ValueError("Turn outcome is missing a string kind.")
     if kind in PUBLIC_OUTCOME_KINDS and not is_internal_turn_outcome:
         public = dict(outcome)
+        if public["kind"] == "error":
+            public = _public_error_outcome_from_response(
+                public,
+                default_stage=(
+                    public.get("stage")
+                    if isinstance(public.get("stage"), str)
+                    else default_stage
+                ),
+                compatibility_mode=compatibility_mode,
+            )
+            _validate_public_error_outcome(public)
         recovery = _extract_rebaseline_recovery(response)
         if public["kind"] == "error" and recovery is not None and "rebaseline_recovery" not in public:
             public["rebaseline_recovery"] = recovery
         return public
+    public_kind = INTERNAL_TO_PUBLIC_OUTCOME.get(kind)
+    if public_kind is None:
+        raise ValueError(f"Unknown TurnOutcome kind {kind!r}")
     if kind == "edit":
         return {
-            "kind": "candidate",
+            "kind": public_kind,
             "changes": list(outcome.get("changes", [])),
         }
     if kind == "edit+clarify":
         public = {
-            "kind": "candidate",
+            "kind": public_kind,
             "changes": list(outcome.get("changes", [])),
         }
         public.update(_clarification_payload(outcome.get("question")))
         return public
     if kind == "clarify":
-        public = {"kind": "clarify"}
+        public = {"kind": public_kind}
         public.update(_clarification_payload(outcome.get("question")))
         return public
     if kind == "noop":
-        public = {"kind": "noop"}
+        public = {"kind": public_kind}
         if isinstance(outcome.get("reason"), str) and outcome["reason"].strip():
             public["reason"] = outcome["reason"].strip()
         return public
     if kind == "budget":
-        public_kind = "candidate" if _response_has_candidate_payload(response) else "noop"
+        if _response_has_candidate_payload(response):
+            public_kind = INTERNAL_TO_PUBLIC_OUTCOME["edit"]
         public = {
             "kind": public_kind,
             "budget_exhausted": True,
@@ -1289,8 +1344,8 @@ def public_outcome_from_turn_outcome(
                 "rebaseline_recovery": _extract_rebaseline_recovery(response),
             },
             default_stage=outcome.get("stage") if isinstance(outcome.get("stage"), str) else None,
+            compatibility_mode=compatibility_mode,
         )
-    raise ValueError(f"Unknown TurnOutcome kind {kind!r}")
 
 
 def _public_agent_failure_context(failure: FailureEnvelope) -> dict[str, Any]:
@@ -1379,16 +1434,26 @@ def ensure_agent_edit_response_contract(
     response: Mapping[str, Any],
     *,
     stage: str,
+    compatibility_mode: bool = False,
 ) -> dict[str, Any]:
     payload = dict(response)
     raw_outcome = payload.get("outcome")
     if isinstance(raw_outcome, Mapping) or isinstance(raw_outcome, TurnOutcome):
-        outcome = public_outcome_from_turn_outcome(raw_outcome, response=payload)
+        outcome = public_outcome_from_turn_outcome(
+            raw_outcome,
+            response=payload,
+            compatibility_mode=compatibility_mode,
+            default_stage=stage,
+        )
     elif payload.get("ok") is False or any(
         key in payload
-        for key in ("agent_failure_context", "retryable", "next_action", "failure_kind")
+        for key in FAILURE_HINT_KEYS
     ):
-        outcome = _public_error_outcome_from_response(payload, default_stage=stage)
+        outcome = _public_error_outcome_from_response(
+            payload,
+            default_stage=stage,
+            compatibility_mode=compatibility_mode,
+        )
     else:
         raise ValueError(f"Agent edit response for {stage!r} is missing outcome.")
     kind = outcome.get("kind")
@@ -1398,6 +1463,7 @@ def ensure_agent_edit_response_contract(
         )
     payload["outcome"] = outcome
     if outcome["kind"] == "error":
+        _validate_public_error_outcome(outcome)
         recovery = _extract_rebaseline_recovery(payload)
         if recovery is not None:
             payload["rebaseline_recovery"] = recovery

@@ -547,7 +547,7 @@ def read_state(session_dir: Path) -> dict[str, Any]:
     path = session_dir / STATE_FILE_NAME
     try:
         state = json.loads(path.read_text(encoding="utf-8"))
-    except FileNotFoundError:
+    except (OSError, json.JSONDecodeError, UnicodeDecodeError):
         return default_state()
     if not isinstance(state, dict):
         return default_state()
