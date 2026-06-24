@@ -66,6 +66,17 @@ class HostLaunchResult:
     diagnostics: Mapping[str, Any] | None = None
 
 
+@dataclass(frozen=True)
+class HostPreparedResources:
+    """Durable resources created before a host process is started."""
+
+    operation_id: str
+    run_paths: RunDirPaths
+    requested_repo_names: tuple[str, ...]
+    worktrees: tuple[WorktreeAllocation, ...]
+    log_resources: tuple[TypedResource, TypedResource]
+
+
 def launch_host(
     config: AgentBoxConfig,
     operation_id: str,
@@ -84,11 +95,48 @@ def launch_host(
     artifacts are left in place and represented in metadata/events for retry.
     """
 
-    run = _create_or_load_operation(
+    prepared = prepare_host_resources(
         config,
         operation_id,
         command=command,
         repo_names=repo_names,
+        base_refs=base_refs,
+        metadata=metadata,
+        lock_timeout_seconds=lock_timeout_seconds,
+    )
+    return start_host_session(
+        config,
+        prepared,
+        command=command,
+        cwd=cwd,
+    )
+
+
+def prepare_host_resources(
+    config: AgentBoxConfig,
+    operation_id: str,
+    *,
+    operation_type: str | None = None,
+    command: Sequence[str] | str,
+    repo_names: Sequence[str] = (),
+    base_refs: Mapping[str, str] | None = None,
+    launch_intent: str = "host_local",
+    metadata: Mapping[str, Any] | None = None,
+    lock_timeout_seconds: float = 30.0,
+) -> HostPreparedResources:
+    """Create/load an operation and provision durable host resources.
+
+    This intentionally does not start a process session. Successful resources
+    remain reusable if a later repository fails and the same operation is retried.
+    """
+
+    run = _create_or_load_operation(
+        config,
+        operation_id,
+        operation_type=operation_type,
+        command=command,
+        repo_names=repo_names,
+        launch_intent=launch_intent,
         metadata=metadata,
     )
     run_paths = ensure_run_dir(config, operation_id, metadata=dict(run.metadata))
@@ -137,6 +185,30 @@ def launch_host(
         _record_failed_attempt(config, operation_id, run_paths, diagnostics)
         raise HostLaunchError("worktree_provision_failed", str(exc), diagnostics=diagnostics) from exc
 
+    return HostPreparedResources(
+        operation_id=operation_id,
+        run_paths=run_paths,
+        requested_repo_names=tuple(repo_names),
+        worktrees=tuple(worktrees),
+        log_resources=log_resources,
+    )
+
+
+def start_host_session(
+    config: AgentBoxConfig,
+    prepared: HostPreparedResources,
+    *,
+    command: Sequence[str] | str,
+    cwd: Path | str | None = None,
+) -> HostLaunchResult:
+    """Start tmux for prepared host resources and mark the operation running."""
+
+    operation_id = prepared.operation_id
+    run_paths = prepared.run_paths
+    requested_repo_names = prepared.requested_repo_names
+    worktrees = prepared.worktrees
+    log_resources = prepared.log_resources
+
     session_name = None
     try:
         session_name = start_session(
@@ -160,7 +232,7 @@ def launch_host(
             "message": str(exc),
             "session_name": session_name,
             "completed_repos": [allocation.repo_name for allocation in worktrees],
-            "requested_repos": list(repo_names),
+            "requested_repos": list(requested_repo_names),
         }
         _record_failed_attempt(config, operation_id, run_paths, diagnostics)
         raise HostLaunchError("tmux_launch_failed", str(exc), diagnostics=diagnostics) from exc
@@ -206,16 +278,23 @@ def _create_or_load_operation(
     config: AgentBoxConfig,
     operation_id: str,
     *,
+    operation_type: str | None,
     command: Sequence[str] | str,
     repo_names: Sequence[str],
+    launch_intent: str,
     metadata: Mapping[str, Any] | None,
 ) -> Any:
     try:
+        kwargs: dict[str, Any] = {}
+        if operation_type is not None:
+            kwargs["operation_type"] = operation_type
         return create_agentbox_operation(
             config,
             operation_id,
+            **kwargs,
             command=command,
             repo_names=repo_names,
+            launch_intent=launch_intent,
             launch_state="launching",
             metadata=metadata,
         )
@@ -278,5 +357,8 @@ def _command_payload(command: Sequence[str] | str) -> str | list[str]:
 __all__ = [
     "HostLaunchError",
     "HostLaunchResult",
+    "HostPreparedResources",
     "launch_host",
+    "prepare_host_resources",
+    "start_host_session",
 ]
