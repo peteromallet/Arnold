@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 from pathlib import Path
 
 import pytest
@@ -192,7 +193,7 @@ def test_resume_plan_preserves_graph_born_resume_operation_fallback(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from arnold.pipelines.megaplan._core import workflow
-    from arnold.pipelines.megaplan._pipeline import registry
+    from arnold.pipelines.megaplan import registry
 
     _stub_megaplan_resume(monkeypatch)
     plan_dir = _write_resume_plan(tmp_path, "resume-graph-born", phase="plan")
@@ -1814,3 +1815,38 @@ def test_handle_resume_routes_typed_programmatic_resume_to_resume_plan(
 
     assert result == {"success": True, "phase": "execute"}
     assert captured == {"root": tmp_path, "plan": "plan", "store": None}
+
+
+def test_handle_resume_opts_into_self_hosted_editable_for_engine_root(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    plan_dir = tmp_path / "plan"
+    plan_dir.mkdir()
+    (plan_dir / "state.json").write_text(json.dumps({"current_state": "failed"}), encoding="utf-8")
+    seen_provider: list[str | None] = []
+
+    monkeypatch.delenv("MEGAPLAN_ENGINE_ISOLATION_PROVIDER", raising=False)
+    monkeypatch.setattr(
+        "arnold.pipelines.megaplan.cli.megaplan_engine_root",
+        lambda: tmp_path.resolve(),
+    )
+    monkeypatch.setattr(
+        "arnold.pipelines.megaplan._core.io.find_plan_dir",
+        lambda root, requested_name: plan_dir,
+    )
+
+    def fake_resume_plan(*_args, **_kwargs):
+        seen_provider.append(os.environ.get("MEGAPLAN_ENGINE_ISOLATION_PROVIDER"))
+        return {"success": True, "phase": "finalize"}
+
+    monkeypatch.setattr("arnold.pipelines.megaplan.cli.resume_plan", fake_resume_plan)
+
+    result = megaplan_cli.handle_resume(
+        tmp_path,
+        argparse.Namespace(plan="plan", choice=None, actor=None, backend=None),
+    )
+
+    assert result == {"success": True, "phase": "finalize"}
+    assert seen_provider == ["self_hosted_editable"]
+    assert os.environ.get("MEGAPLAN_ENGINE_ISOLATION_PROVIDER") is None
