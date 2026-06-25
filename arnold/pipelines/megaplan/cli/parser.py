@@ -1433,12 +1433,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
     pipelines_new_parser.add_argument(
         "--driver",
-        choices=["native", "graph"],
+        choices=["native"],
         default="native",
         help=(
-            "Scaffold authoring style. 'native' uses @pipeline/@phase with "
-            "derived graph validation; 'graph' emits the deprecated hand-built "
-            "graph fallback shape."
+            "Scaffold authoring style. 'native' is the only supported style; "
+            "it uses @pipeline/@phase declarations with a derived graph shell."
         ),
     )
     pipelines_upgrade_cursor_parser = pipelines_sub.add_parser(

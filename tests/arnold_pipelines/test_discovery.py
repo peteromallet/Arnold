@@ -104,13 +104,16 @@ def test_discovery_exposes_load_state_contracts_and_deferred_native() -> None:
     workflow_rows = {
         "megaplan",
         "evidence_pack_verifier",
-        "my-pipeline",
     }
     for pipeline_id in workflow_rows:
         info = by_id[pipeline_id]
         assert info.builder_contract == "workflow"
         assert info.load_state == "workflow"
         assert info.canonical_builder_path is not None
+
+    assert by_id["my-pipeline"].builder_contract == "native"
+    assert by_id["my-pipeline"].load_state == "loadable-native"
+    assert by_id["my-pipeline"].canonical_builder_path is not None
 
     assert by_id["creative"].builder_contract == "native"
     assert by_id["creative"].load_state == "loadable-native"
@@ -141,13 +144,15 @@ def test_native_discovery_does_not_canonicalize_mirrored_modules() -> None:
         "select-tournament": "arnold.pipelines.megaplan.pipelines.select_tournament:build_pipeline",
         "folder-audit": "arnold.pipelines.folder_audit:build_pipeline",
         "deliberation": "arnold.pipelines.deliberation:build_pipeline",
+        "my-pipeline": "arnold_pipelines._template:build_pipeline",
     }
 
     assert set(native_or_deferred) == set(expected)
     for pipeline_id, target in expected.items():
         info = native_or_deferred[pipeline_id]
         assert info.canonical_builder_path == target
-        assert not info.package_path.startswith("arnold_pipelines/")
+        if pipeline_id != "my-pipeline":
+            assert not info.package_path.startswith("arnold_pipelines/")
 
 
 def test_load_builder_works_with_module_target() -> None:

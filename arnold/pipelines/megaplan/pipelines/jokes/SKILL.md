@@ -3,15 +3,10 @@
 Purpose: provide a tiny standalone SDK pipeline that drafts, tightens, and
 emits a joke artifact without delegating to the `creative` pipeline.
 
-Runtime: `jokes` is a native-default converted pipeline. Fresh runs through
-`megaplan run jokes ...` or `arnold pipelines run jokes ...` persist runtime
-ownership in `state.json.runtime_envelope.runtime` and
-`state.json.meta.executor`. During the M7 deprecation window, the derived graph
-remains available as a compatibility fallback: pass `--runtime graph` (or the
-deprecated `--executor graph`) for a fresh run that must use the graph
-executor. Existing graph-born plan directories keep resuming on graph.
-Native-born runs resume on native, and corrupt native cursors fail closed
-rather than silently falling back to graph.
+Runtime: `jokes` is a native-first pipeline. Fresh runs through
+`megaplan run jokes ...` or `arnold pipelines run jokes ...` execute on the
+native runtime. Native-born runs resume on native, and corrupt native cursors
+fail closed rather than silently falling back to graph.
 
 Topology:
 

@@ -1,54 +1,63 @@
 ---
 name: new-arnold-pipeline-template
-description: Scaffold a new Arnold workflow pipeline package from the _template skeleton.
+description: Scaffold a new Arnold pipeline package from the _template skeleton.
 ---
 
-# New Arnold Workflow Pipeline Template
+# New Arnold Pipeline Template
 
 Copy `arnold_pipelines/_template/` to a new package under `arnold_pipelines/`,
-rename it (remove the leading underscore), and replace the skeleton
-`build_pipeline()` body with your workflow entrypoint.
+rename it (remove the leading underscore), and replace the skeleton native
+declaration body with your workflow entrypoint.
 
 ## Contract
 
-- `build_pipeline(...) -> arnold.workflow.Pipeline`
+- `build_pipeline(...) -> arnold.pipeline.Pipeline` with `native_program` set.
 - Module-level metadata: `name`, `description`, `driver`, `entrypoint`,
   `arnold_api_version`, `capabilities`
 - Optional: `default_profile`, `supported_modes`, `recommended_profiles`
 
-For Python-shaped authoring, keep workflow source in a package-local module that
-imports typed module-level component exports. Recommended component modules are
-`steps.py`, `prompts.py`, `policies.py`, `schemas.py`, and `subflows.py`, though
-feature modules are fine when the exports carry typed component metadata. The
-workflow imports are the source of truth. Generated manifests and catalogs are
-derived artifacts, not editable source.
+New packages must be native-first. Use `@phase` and `@pipeline` declarations
+from `arnold.pipeline.native`, compile them with `compile_pipeline`, and return
+the result of `project_graph(...)`. Do not add `_legacy.py`, graph fallback
+builders, compatibility namespaces, or temporary wrapper modules for new work.
 
 `build_pipeline()` remains the current package entrypoint used by discovery and
-`arnold workflow check`. It may construct explicit-node DSL directly or delegate
-to the Python-shaped source compiler once available.
+`arnold workflow check`.
 
 ## Example
 
 ```python
-from arnold.workflow.dsl import Capability, Input, Output, Pipeline, Route, Step
+from arnold.pipeline.native import compile_pipeline, phase, pipeline, project_graph
+from arnold.pipeline.types import Pipeline
+
+
+@phase(name="start")
+def start(ctx):
+    return {"intermediate": "TODO"}
+
+
+@phase(name="finish")
+def finish(ctx):
+    return {"result": "TODO"}
+
+
+@pipeline("my-pipeline")
+def my_pipeline(ctx):
+    yield start(ctx)
+    yield finish(ctx)
+
 
 def build_pipeline() -> Pipeline:
-    return Pipeline(
-        id="my-pipeline",
-        version="1.0",
-        steps=(
-            Step(id="start", kind="agent", outputs=(Output(name="out"),)),
-            Step(id="finish", kind="emit", inputs=(Input(name="out", value_ref="start.out"),)),
-        ),
-        routes=(Route(id="start:finish", source="start", target="finish"),),
-        capabilities=(Capability(id="my-capability"),),
-    )
+    return project_graph(compile_pipeline(my_pipeline), key_mode="phase")
 ```
 
-## CLI
+## Validation
+
+- Validate import: `arnold_pipelines.my_pipeline:build_pipeline`
+- Contract: `build_pipeline()` returns `arnold.pipeline.Pipeline` with `NativeProgram` set.
+
+Run through the Arnold pipeline checker:
 
 ```bash
-arnold workflow check --module arnold_pipelines.my_pipeline:build_pipeline
-arnold workflow dry-run --module arnold_pipelines.my_pipeline:build_pipeline
-arnold workflow run --module arnold_pipelines.my_pipeline:build_pipeline --backend fake
+arnold pipelines check my-pipeline
 ```

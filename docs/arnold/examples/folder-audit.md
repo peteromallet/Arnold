@@ -272,8 +272,10 @@ class AuditStep:
 
         tree = ctx.state.get("tree", [])
 
-        # Resolve worker spec string from profile
-        profile = ctx.profile
+        # Resolve worker spec string from profile (carried in state or inputs)
+        profile = ctx.state.get("profile")
+        if profile is None:
+            profile = ctx.inputs.get("profile")
         spec = ""
         if isinstance(profile, dict):
             spec = str(profile.get("audit", ""))
@@ -304,7 +306,7 @@ class AuditStep:
             "settled_decisions": settled_decisions,
         }
 
-        plan_dir = _next_version_path(ctx.plan_dir)
+        plan_dir = _next_version_path(Path(ctx.artifact_root))
 
         # Write raw worker output for debugging
         raw_dir = plan_dir / "audit_raw"
@@ -326,7 +328,7 @@ class EmitStep:
     kind: str = "emit"
 
     def run(self, ctx: StepContext) -> StepResult:
-        plan_dir = _next_version_path(ctx.plan_dir)
+        plan_dir = _next_version_path(Path(ctx.artifact_root))
         audit_data = ctx.state.get("audit", {})
         folders = audit_data.get("folders", [])
 
