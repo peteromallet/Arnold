@@ -1,12 +1,12 @@
-# M3 — Runtime Helpers, Strict Packagability, and Readiness
+# M4 — Runtime Helpers, Strict Packagability, and Readiness
 
 ## Outcome
 
-The SDK packagability smoke fails on SDK-internal TypeScript diagnostics. Proposal-runtime ownership is decided and implemented. Author-facing deep imports are replaced. Contract governance recognizes `src/sdk/index.ts` as the extension SDK boundary. Docs and readiness checks reflect the new boundary and family maturity model. The SDK is releasable as a pristine developer surface.
+The SDK packagability smoke fails on SDK-internal TypeScript diagnostics. Proposal-runtime ownership is decided and implemented. Author-facing deep imports are replaced. Contract governance recognizes `src/sdk/index.ts` as the extension SDK boundary. Docs and readiness checks reflect the new boundary, family maturity model, and adapter architecture. The SDK is releasable as a pristine developer surface.
 
 ## Background
 
-M0 defined family maturity. M1 split the SDK into family modules. M2 refactored the host side onto family adapters. M3 closes the loop: it makes the package boundary strict, cleans up remaining couplings, and aligns governance/docs/readiness.
+M0 removed editor imports. M1 defined family maturity. M2 split the SDK. M3 refactored the host onto family adapters. M4 closes the loop: strict package smoke, final decoupling, governance/docs alignment.
 
 ## Scope (in scope)
 
@@ -22,14 +22,13 @@ M0 defined family maturity. M1 split the SDK into family modules. M2 refactored 
    - Determine whether `createProposalRuntime` is public SDK functionality or host implementation.
    - If public: move to `src/sdk/runtime/proposalRuntime.ts` and update consumers.
    - If host-only: expose only `ProposalRuntime` types from SDK and keep `createProposalRuntime` behind a host adapter.
-   - Ensure external consumers do not need `src/tools/video-editor/lib/proposal-runtime.ts` for SDK concepts.
 
 3. **Split `createExtensionContext()` into pure SDK contract plus host wiring.**
-   - The SDK owns a pure context contract.
-   - Host wiring (DOM, localStorage-backed settings, console behavior, default services, lifecycle cleanup) lives in a host factory, not in the base SDK abstraction.
+   - SDK owns a pure context contract.
+   - Host wiring (DOM, localStorage-backed settings, console behavior, default services, lifecycle cleanup) lives in a host factory.
 
 4. **Classify and replace remaining video-editor deep imports.**
-   - Audit every entry in `config/governance/video-editor-sdk-import-allowlist.json`.
+   - Audit `config/governance/video-editor-sdk-import-allowlist.json`.
    - Label each as `author-facing`, `host-facing`, or `internal`.
    - Replace author-facing imports with `@reigh/editor-sdk` or scoped SDK modules.
    - Document host-only/internal entries with owner, rationale, and removal condition.
@@ -41,7 +40,7 @@ M0 defined family maturity. M1 split the SDK into family modules. M2 refactored 
 
 6. **Update compatibility docs and readiness docs.**
    - Update `docs/governance/contracts/compatibility-shims.md` with remaining host-only exceptions.
-   - Update `docs/extensions/phase4-readiness.md` and `docs/extensions/foundation-closure-assessment.md` to reflect the family maturity model and the adapter registry.
+   - Update `docs/extensions/phase4-readiness.md` and `docs/extensions/foundation-closure-assessment.md` to reflect family maturity and adapter registry.
    - Ensure docs do not overstate Phase 4 runtime support.
 
 7. **Final validation and manual merge prep.**
@@ -62,14 +61,13 @@ M0 defined family maturity. M1 split the SDK into family modules. M2 refactored 
 
 - The SDK owns portable contracts and author-facing descriptor types.
 - The video editor owns host implementations, React/provider wiring, runtime normalization, and editor internals.
-- Remaining allowlist entries after this milestone must be explicitly host-only and documented.
+- Remaining allowlist entries must be explicitly host-only and documented.
 - Packagability smoke must fail on SDK-internal type diagnostics.
 
 ## Open questions
 
 - How many existing author-facing deep imports require real replacements versus allowlist documentation?
 - Will moving `proposal-runtime.ts` implementation into the SDK pull in additional video-editor internals?
-- Are there docs/examples that claim Phase 4 runtime support that need explicit corrections?
 
 ## Constraints
 
@@ -84,7 +82,7 @@ M0 defined family maturity. M1 split the SDK into family modules. M2 refactored 
 - [ ] SDK packagability smoke fails on a deliberately introduced SDK type error.
 - [ ] Proposal runtime ownership is decided and implemented.
 - [ ] All author-facing deep imports from `src/tools/video-editor/**` are replaced.
-- [ ] Remaining allowlist entries are classified as host-only/internal with owner, rationale, and removal condition.
+- [ ] Remaining allowlist entries are classified as host-only/internal with owner/rationale/removal condition.
 - [ ] Contract registry recognizes `src/sdk/index.ts` as the extension SDK boundary.
 - [ ] Docs match the new boundary and do not overstate Phase 4 runtime support.
 - [ ] All release gates pass locally.
@@ -105,7 +103,7 @@ M0 defined family maturity. M1 split the SDK into family modules. M2 refactored 
 
 ## Anti-scope (not in this milestone)
 
-- Further splitting the SDK barrel (M1).
+- Further splitting the SDK barrel (M2).
 - Adding new extension families or runtime features.
 - Fixing pre-existing TypeScript errors in host-only video-editor internals.
 - Implementing dynamic extension loading, marketplace, or sandboxing.

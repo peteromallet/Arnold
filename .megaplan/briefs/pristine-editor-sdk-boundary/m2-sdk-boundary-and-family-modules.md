@@ -1,30 +1,19 @@
-# M1 — SDK Boundary and Family Modules
+# M2 — SDK Boundary and Family Modules
 
 ## Outcome
 
-`src/sdk/index.ts` is reduced to a small barrel entrypoint that re-exports scoped SDK-owned modules organized around families and domains (core, manifest, runtime, timeline, rendering, families). The SDK no longer imports from `src/tools/video-editor/*`. Family-specific types live under `src/sdk/families/*`. Existing public SDK exports remain available from `@reigh/editor-sdk` with compatible types.
+`src/sdk/index.ts` is reduced to a small barrel entrypoint that re-exports scoped SDK-owned modules organized around families and domains (core, manifest, runtime, timeline, rendering, families). Family-specific types live under `src/sdk/families/*`. The SDK has no imports from `src/tools/video-editor/*`. Existing public SDK exports remain available from `@reigh/editor-sdk` with compatible types.
 
 ## Background
 
-M0 defined the family contract and maturity model. M1 executes the physical SDK split. The split is organized around the family registry so that future family work has a clear location and adapter contract to target.
+M0 removed video-editor imports. M1 defined the family maturity model. M2 executes the physical SDK split around families and domains.
 
 ## Scope (in scope)
 
-1. **Move renderability/capability/artifact contracts into the SDK.**
-   - Create `src/sdk/rendering/renderability.ts`, `src/sdk/rendering/artifacts.ts`, and `src/sdk/rendering/capabilities.ts` for portable data-only types currently sourced from `src/tools/video-editor/runtime/renderability.ts`:
-     - `RenderRoute`, `DeterminismStatus`, `RenderBlockerReason`, `CapabilityFinding`
-     - `RenderArtifact`, `RenderMaterial`, `RenderMaterialRef`, `RenderStorageLocator`
-     - `ShaderMaterializerRequirementScope`, `shaderMissingMaterializerBlockerMessage`
-   - Update `src/tools/video-editor/runtime/renderability.ts` to depend on SDK-owned contracts.
-   - Replace direct SDK imports from video-editor renderability with SDK-local imports.
+1. **Snapshot the current SDK export surface.**
+   - Run `npm run check:sdk-public-exports -- --release` and record the baseline.
 
-2. **Add an SDK no-video-editor-import guard.**
-   - Add or tighten a check that fails when any file under `src/sdk/**` imports from `src/tools/video-editor/**` or `@/tools/video-editor/**`.
-
-3. **Snapshot the current SDK export surface.**
-   - Run `npm run check:sdk-public-exports -- --release` and record the baseline before moving code.
-
-4. **Split core SDK modules out of `src/sdk/index.ts`.**
+2. **Split core SDK modules out of `src/sdk/index.ts`.**
    - Move clusters into scoped modules, preserving exported names:
      - `src/sdk/ids.ts`
      - `src/sdk/dispose.ts`
@@ -39,7 +28,7 @@ M0 defined the family contract and maturity model. M1 executes the physical SDK 
      - `src/sdk/packaging.ts`
    - Use internal relative imports; do not import back through `src/sdk/index.ts`.
 
-5. **Split family-specific modules.**
+3. **Split family-specific modules.**
    - Move into:
      - `src/sdk/families/effects.ts`
      - `src/sdk/families/transitions.ts`
@@ -49,10 +38,11 @@ M0 defined the family contract and maturity model. M1 executes the physical SDK 
      - `src/sdk/families/liveData.ts`
      - `src/sdk/families/processes.ts`
      - `src/sdk/families/outputFormats.ts`
+     - `src/sdk/families/searchProviders.ts`
      - `src/sdk/families/contributionKinds.ts`
-   - Keep public future-family types where they exist, but ensure they are classified by the M0 registry.
+   - Keep public future-family types, but ensure they are classified by the M1 registry.
 
-6. **Split registry and timeline modules.**
+4. **Split registry and timeline modules.**
    - Move into:
      - `src/sdk/timeline/patch.ts`
      - `src/sdk/timeline/reader.ts`
@@ -64,20 +54,20 @@ M0 defined the family contract and maturity model. M1 executes the physical SDK 
      - `src/sdk/assets/search.ts`
      - `src/sdk/exports/outputFormats.ts`
 
-7. **Reduce `src/sdk/index.ts` to a barrel.**
+5. **Reduce `src/sdk/index.ts` to a barrel.**
    - File should be a small set of imports/exports plus docs.
    - No inline implementation beyond re-exports.
 
-8. **Update contract registry and allowlist.**
+6. **Update contract registry and allowlist.**
    - Update `config/contracts/registry.json` to reflect new module locations.
    - Ensure `config/governance/video-editor-sdk-import-allowlist.json` no longer contains SDK-internal entries.
 
 ## Locked decisions
 
-- SDK modules may not import from `src/tools/video-editor/**` or `@/tools/video-editor/**` after this milestone.
+- SDK modules may not import from `src/tools/video-editor/**` or `@/tools/video-editor/**`.
 - Public exported names from `@reigh/editor-sdk` must remain compatible unless explicitly approved.
 - Internal SDK modules use relative imports, not barrel imports through `src/sdk/index.ts`.
-- Family-specific types stay public but are classified by the M0 registry.
+- Family-specific types stay public but are classified by the M1 registry.
 
 ## Open questions
 
@@ -106,14 +96,12 @@ M0 defined the family contract and maturity model. M1 executes the physical SDK 
 
 - `src/sdk/index.ts`
 - New `src/sdk/*` modules listed above.
-- `src/tools/video-editor/runtime/renderability.ts`
-- `scripts/quality/check-video-editor-sdk-imports.mjs`
 - `config/contracts/registry.json`
 - `config/governance/video-editor-sdk-import-allowlist.json`
 
 ## Anti-scope (not in this milestone)
 
-- Refactoring `extensionSurface.ts` onto host adapters (M2).
-- Deciding proposal-runtime ownership (M2).
-- Making the packagability smoke strict (M2).
-- Updating Phase 4 docs/readiness language (M2).
+- Refactoring `extensionSurface.ts` onto host adapters (M3).
+- Deciding proposal-runtime ownership (M4).
+- Making the packagability smoke strict (M4).
+- Updating docs/readiness language (M4).
