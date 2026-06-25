@@ -1,4 +1,5 @@
-import { BUILTIN_CLIP_TYPES, type ResolvedTimelineClip, type TimelineClip, type TrackDefinition } from '@/tools/video-editor/types/index.ts';
+import { BUILTIN_CLIP_TYPES, type BuiltinClipType } from '@/sdk/video/timeline/clipTypes.ts';
+import { type ResolvedTimelineClip, type TimelineClip, type TrackDefinition } from '@/tools/video-editor/types/index.ts';
 import {
   defineClipType,
   isSequenceParamsSchema,
@@ -16,7 +17,6 @@ import {
 } from './registry.ts';
 import type { ClipTypeRegistryRecord } from './ClipTypeRegistry.ts';
 
-export type BuiltinClipType = (typeof BUILTIN_CLIP_TYPES)[number];
 export type ClipAssetMediaType = 'image' | 'video' | 'audio' | 'unknown';
 
 type BuiltinClipTypeRegistration = {

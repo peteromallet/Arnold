@@ -16,6 +16,7 @@ import { describe, expect, it } from 'vitest';
 // src/tools/video-editor/index.ts.  No deep @/tools/video-editor/… paths.
 import {
   BUILTIN_CLIP_TYPES,
+  getConfigSignature,
   getStableConfigSignature,
   TimelineVersionConflictError,
 } from '@reigh/editor-sdk';
@@ -38,6 +39,10 @@ describe('SDK public-import boundary (@reigh/editor-sdk)', () => {
 
   it('exports getStableConfigSignature as a function', () => {
     expect(typeof getStableConfigSignature).toBe('function');
+  });
+
+  it('exports getConfigSignature as a function', () => {
+    expect(typeof getConfigSignature).toBe('function');
   });
 
   it('exports TimelineVersionConflictError as an Error class', () => {

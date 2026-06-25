@@ -29,7 +29,7 @@ import {
 import type { TimelineData } from '@/tools/video-editor/lib/timeline-data';
 import type { CommitDataOptions } from '@/tools/video-editor/hooks/useTimelineCommit';
 import type { Checkpoint } from '@/tools/video-editor/types/history';
-import { TimelineVersionConflictError } from '@/tools/video-editor/data/DataProvider';
+import { TimelineVersionConflictError } from '@/sdk/video/timeline/errors.ts';
 
 // ---------------------------------------------------------------------------
 // Helpers

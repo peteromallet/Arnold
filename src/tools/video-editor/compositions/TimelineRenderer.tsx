@@ -2,8 +2,8 @@ import { AbsoluteFill, Sequence, useCurrentFrame, useRemotionEnvironment } from 
 import { Component, memo, useContext, useMemo, useSyncExternalStore, type FC, type ReactNode } from 'react';
 import { getAudioTracks, getVisualTracks } from '@/tools/video-editor/lib/editor-utils.ts';
 import { getClipDurationInFrames, getTimelineDurationInFrames, secondsToFrames } from '@/tools/video-editor/lib/config-utils.ts';
+import { BUILTIN_CLIP_TYPES } from '@/sdk/video/timeline/clipTypes.ts';
 import {
-  BUILTIN_CLIP_TYPES,
   type ParameterSchema,
   type ResolvedTimelineClip,
   type ResolvedTimelineConfig,

@@ -300,11 +300,28 @@ export {
 } from '@/sdk/video/timeline/patch.ts';
 
 export {
-  BUILTIN_CLIP_TYPES,
   TimelineVersionConflictError,
   isTimelineVersionConflictError,
+} from '@/sdk/video/timeline/errors.ts';
+
+export {
+  BUILTIN_CLIP_TYPES,
+} from '@/sdk/video/timeline/clipTypes.ts';
+
+export type {
+  BuiltinClipType,
+} from '@/sdk/video/timeline/clipTypes.ts';
+
+export {
+  getConfigSignature,
   getStableConfigSignature,
-} from '@/tools/video-editor';
+} from '@/sdk/video/timeline/configSignature.ts';
+
+export type {
+  StableTimelineAssetRegistryInput,
+  StableTimelineConfigSignatureInput,
+  TimelineConfigSignatureInput,
+} from '@/sdk/video/timeline/configSignature.ts';
 
 export type {
   CapabilityFinding,
