@@ -404,6 +404,8 @@ class ReduceStep:
                 continue
             try:
                 cp_data = _read_json(cp_path)
+                if "checkpoint_id" not in cp_data or "status" not in cp_data:
+                    continue
                 status = cp_data.get("status", "failed")
                 checkpoint_id = cp_data.get("checkpoint_id", key)
                 checkpoint_results.append(

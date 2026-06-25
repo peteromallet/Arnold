@@ -188,14 +188,23 @@ def classify_resume_cursor(artifact_root: str | Path) -> str:
         return "none"
 
     # Read raw JSON — intentionally bypass read_resume_cursor so we
-    # can distinguish malformed JSON from a missing native key.
+    # can distinguish malformed JSON from an absent cursor.
     try:
         raw = json.loads(cursor_path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        # Unreadable or malformed JSON — treat as no usable cursor.
-        # This is the same as "none" because we cannot even determine
-        # whether a native key was intended.
-        return "none"
+    except (OSError, json.JSONDecodeError) as exc:
+        raise NativeCursorCorruptError(
+            f"Resume cursor at {cursor_path} could not be decoded as a JSON object. "
+            f"The cursor file exists but is unreadable — refusing to route.",
+            cursor_path=str(cursor_path),
+        ) from exc
+
+    if not isinstance(raw, dict):
+        raise NativeCursorCorruptError(
+            f"Resume cursor at {cursor_path} is a {type(raw).__name__} "
+            f"(expected JSON object). The cursor file exists but does not "
+            f"have a valid resume shape — refusing to route.",
+            cursor_path=str(cursor_path),
+        )
 
     cursor_kind = classify_resume_cursor_payload(raw)
     if cursor_kind == "none":
@@ -205,7 +214,7 @@ def classify_resume_cursor(artifact_root: str | Path) -> str:
     if cursor_kind == "native":
         return "native"
 
-    native = raw.get("native") if isinstance(raw, dict) else None
+    native = raw.get("native")
     if not isinstance(native, dict):
         raise NativeCursorCorruptError(
             f"Resume cursor at {cursor_path} has a 'native' key "
@@ -525,8 +534,11 @@ def persist_native_cursor(
 def read_native_cursor(artifact_root: str | Path) -> dict[str, Any] | None:
     """Read and validate a native cursor from *artifact_root*/resume_cursor.json.
 
-    Returns ``None`` when the file is missing, malformed, or lacks the
-    required ``native`` sub-dict with ``pc`` and ``version`` fields.
+    Returns ``None`` only when the cursor file is absent or when an existing
+    cursor is graph-owned (no top-level ``native`` key).  Malformed JSON,
+    non-object payloads, and malformed native payloads raise
+    :class:`NativeCursorCorruptError` so resume paths fail closed instead of
+    silently restarting at pc 0.
 
     Old cursors without ``cursor_id`` or ``stage_reentry_points`` are
     accepted; these fields are normalised to ``None`` and ``{}``
@@ -536,20 +548,69 @@ def read_native_cursor(artifact_root: str | Path) -> dict[str, Any] | None:
         artifact_root: Directory containing ``resume_cursor.json``.
 
     Returns:
-        The full cursor dict on success, or ``None`` if invalid/absent.
+        The full cursor dict on success, or ``None`` if absent/non-native.
     """
-    data = read_resume_cursor(artifact_root)
-    if data is None:
+    cursor_path = Path(artifact_root) / RESUME_CURSOR_FILENAME
+    if not cursor_path.exists():
+        return None
+
+    try:
+        raw = json.loads(cursor_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise NativeCursorCorruptError(
+            f"Resume cursor at {cursor_path} could not be decoded as a JSON object. "
+            f"The cursor file exists but is unreadable — refusing to resume.",
+            cursor_path=str(cursor_path),
+        ) from exc
+
+    if not isinstance(raw, dict):
+        raise NativeCursorCorruptError(
+            f"Resume cursor at {cursor_path} is a {type(raw).__name__} "
+            f"(expected JSON object). The cursor file exists but does not "
+            f"have a valid resume shape — refusing to resume.",
+            cursor_path=str(cursor_path),
+        )
+
+    data = raw
+
+    if "native" not in data:
         return None
 
     # Require the additive native key with pc and version
     native = data.get("native")
     if not isinstance(native, dict):
-        return None
+        raise NativeCursorCorruptError(
+            f"Resume cursor at {cursor_path} has a 'native' key "
+            f"that is not a JSON object (got {type(native).__name__}). "
+            f"The cursor claims native ownership but the native payload "
+            f"is unreadable — refusing to resume.",
+            cursor_path=str(cursor_path),
+        )
     if "pc" not in native or "version" not in native:
-        return None
-    if not isinstance(native["pc"], int) or not isinstance(native["version"], int):
-        return None
+        missing = "pc" if "pc" not in native else "version"
+        raise NativeCursorCorruptError(
+            f"Resume cursor at {cursor_path} has a 'native' key "
+            f"that is missing the required '{missing}' field. "
+            f"The cursor claims native ownership but the native payload "
+            f"is incomplete — refusing to resume.",
+            cursor_path=str(cursor_path),
+        )
+    if not isinstance(native["pc"], int):
+        raise NativeCursorCorruptError(
+            f"Resume cursor at {cursor_path} has a 'native.pc' "
+            f"value of type {type(native['pc']).__name__} (expected int). "
+            f"The cursor claims native ownership but the program counter "
+            f"is unreadable — refusing to resume.",
+            cursor_path=str(cursor_path),
+        )
+    if not isinstance(native["version"], int):
+        raise NativeCursorCorruptError(
+            f"Resume cursor at {cursor_path} has a 'native.version' "
+            f"value of type {type(native['version']).__name__} (expected int). "
+            f"The cursor claims native ownership but the schema version "
+            f"is unreadable — refusing to resume.",
+            cursor_path=str(cursor_path),
+        )
 
     # Normalise optional fields to their expected types
     if not isinstance(data.get("stages"), list):

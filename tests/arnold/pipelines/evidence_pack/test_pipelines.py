@@ -1,17 +1,12 @@
-"""Construction tests for the migrated native-first evidence-pack pipeline.
-
-Validates that :func:`build_pipeline` projects a graph with the legacy
-five-stage topology and passes :func:`arnold.pipeline.validator.validate`.
-"""
+"""Construction tests for the native-first evidence-pack pipeline."""
 
 from __future__ import annotations
 
 import ast
 import inspect
 
-import pytest
-
 from arnold.pipeline.declaration_lowering import lower_stage_declarations
+from arnold.pipeline.native.ir import NativeProgram
 from arnold.pipeline.types import (
     ParallelStage,
     Pipeline,
@@ -21,94 +16,151 @@ from arnold.pipeline.types import (
 )
 from arnold.pipeline.validator import validate, Diagnostics
 from arnold.pipelines.evidence_pack.pipeline import build_pipeline
-from arnold.pipelines.evidence_pack.steps import (
-    ContentValidatorStep,
-    EmitAttestationStep,
-    HumanReviewStep,
-    IngestStep,
-    ReduceStep,
+
+
+EXPECTED_PROJECTED_STAGES = (
+    "ingest",
+    "content_validators",
+    "reduce",
+    "human_review",
+    "emit_attestation",
+)
+EXPECTED_VALIDATOR_BRANCHES = (
+    "validator_structural_audit",
+    "validator_budget_enforcement",
+    "validator_suspension_propagation",
+    "validator_by_ref_validation",
+    "validator_human_review_gate",
+)
+EXPECTED_NATIVE_PHASES = (
+    "ingest",
+    *EXPECTED_VALIDATOR_BRANCHES,
+    "reduce",
+    "human_review",
+    "emit_attestation",
+    "emit_attestation",
 )
 
 
+def _port_names(ports: tuple[Port, ...]) -> tuple[str, ...]:
+    return tuple(port.name for port in ports)
+
+
+def _port_ref_names(refs: tuple[PortRef, ...]) -> tuple[str, ...]:
+    return tuple(ref.port_name for ref in refs)
+
+
+def _edge_map(stage: Stage | ParallelStage) -> dict[str, str]:
+    return {edge.label: edge.target for edge in stage.edges}
+
+
+def _imported_modules(source: str) -> set[str]:
+    tree = ast.parse(source)
+    modules: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            modules.update(alias.name for alias in node.names)
+        elif isinstance(node, ast.ImportFrom) and node.module:
+            modules.add(node.module)
+    return modules
+
+
 class TestPipelineConstruction:
-    """Tests for the native-projected evidence-pack pipeline shape."""
+    """Tests for the public shell and native declaration shape."""
 
     def test_builds_without_error(self) -> None:
         pipeline = build_pipeline()
-        assert pipeline is not None
+        assert isinstance(pipeline, Pipeline)
         assert pipeline.entry == "ingest"
 
-    def test_all_stages_registered(self) -> None:
+    def test_projected_pipeline_shell_has_public_stage_shape(self) -> None:
         pipeline = build_pipeline()
-        stage_names = set(pipeline.stages.keys())
-        expected = {"ingest", "content_validators", "reduce", "human_review", "emit_attestation"}
-        assert stage_names == expected
-
-    def test_entry_is_ingest(self) -> None:
-        pipeline = build_pipeline()
+        assert isinstance(pipeline, Pipeline)
+        assert tuple(pipeline.stages) == EXPECTED_PROJECTED_STAGES
         assert pipeline.entry == "ingest"
+        assert pipeline.resource_bundles == ()
 
-    def test_ingest_stage_has_typed_produce(self) -> None:
+    def test_projected_pipeline_declares_native_program(self) -> None:
         pipeline = build_pipeline()
-        ingest = pipeline.stages["ingest"]
-        assert isinstance(ingest, Stage)
-        assert all(isinstance(port, Port) for port in ingest.produces)
-        assert ingest.produces[0].name == "evidence_pack"
-        lowered = lower_stage_declarations(ingest)
-        assert lowered.effective_produces == ingest.produces
-        assert lowered.clean_binding is True
+        assert isinstance(pipeline.native_program, NativeProgram)
+        assert pipeline.native_program.name == "evidence_pack"
 
-    def test_validators_is_parallel_stage(self) -> None:
+    def test_native_program_has_expected_phase_names(self) -> None:
         pipeline = build_pipeline()
+        assert pipeline.native_program is not None
+        assert tuple(phase.name for phase in pipeline.native_program.phases) == (
+            EXPECTED_NATIVE_PHASES
+        )
+        assert tuple(
+            instruction.name
+            for instruction in pipeline.native_program.instructions
+            if instruction.op == "phase"
+        ) == EXPECTED_NATIVE_PHASES
+
+    def test_validator_fanout_is_declared_natively_and_projected(self) -> None:
+        pipeline = build_pipeline()
+        assert pipeline.native_program is not None
+
+        assert len(pipeline.native_program.parallel_blocks) == 1
+        fanout = pipeline.native_program.parallel_blocks[0]
+        assert fanout.name == "content_validators"
+        assert fanout.branches == EXPECTED_VALIDATOR_BRANCHES
+        assert fanout.merge_pc == 7
+
         validators = pipeline.stages["content_validators"]
         assert isinstance(validators, ParallelStage)
+        assert (
+            tuple(step.name for step in validators.steps) == EXPECTED_VALIDATOR_BRANCHES
+        )
+        assert all(step.kind == "native_phase" for step in validators.steps)
 
-    def test_validators_has_five_steps(self) -> None:
+    def test_projected_stages_declare_stable_ports(self) -> None:
         pipeline = build_pipeline()
-        validators = pipeline.stages["content_validators"]
-        assert isinstance(validators, ParallelStage)
-        assert len(validators.steps) == 5
-
-    def test_validator_steps_have_distinct_kinds(self) -> None:
-        pipeline = build_pipeline()
-        validators = pipeline.stages["content_validators"]
-        assert isinstance(validators, ParallelStage)
-        kinds = {s.checkpoint_kind for s in validators.steps}  # type: ignore[union-attr]
-        expected = {
-            "structural_audit",
-            "budget_enforcement",
-            "suspension_propagation",
-            "by_ref_validation",
-            "human_review_gate",
+        expected_ports = {
+            "ingest": (("evidence_pack",), ()),
+            "content_validators": (("checkpoints",), ("evidence_pack",)),
+            "reduce": (("verdict",), ("evidence_pack", "checkpoints")),
+            "human_review": ((), ("evidence_pack", "verdict")),
+            "emit_attestation": (("attestation",), ("evidence_pack", "verdict")),
         }
-        assert kinds == expected
-
-    def test_reduce_stage_consumes_typed_portrefs(self) -> None:
-        pipeline = build_pipeline()
-        reduce_stage = pipeline.stages["reduce"]
-        assert isinstance(reduce_stage, Stage)
-        assert all(isinstance(ref, PortRef) for ref in reduce_stage.consumes)
-        port_names = {ref.port_name for ref in reduce_stage.consumes}
-        assert "evidence_pack" in port_names
-        assert "checkpoints" in port_names
-        assert lower_stage_declarations(reduce_stage).clean_binding is True
-
-    def test_internal_crossings_use_typed_consumes_produces(self) -> None:
-        pipeline = build_pipeline()
-        for name in ("content_validators", "reduce", "human_review", "emit_attestation"):
+        for name, (produces, consumes) in expected_ports.items():
             stage = pipeline.stages[name]
+            assert all(isinstance(port, Port) for port in stage.produces)
             assert all(isinstance(ref, PortRef) for ref in stage.consumes)
-            if name != "human_review":
-                assert all(isinstance(port, Port) for port in stage.produces)
-            assert lower_stage_declarations(stage).clean_binding is True
+            assert _port_names(stage.produces) == produces
+            assert _port_ref_names(stage.consumes) == consumes
+            lowered = lower_stage_declarations(stage)
+            assert lowered.clean_binding is True
+            assert lowered.effective_produces == stage.produces
+            assert lowered.effective_consumes == stage.consumes
 
-    def test_human_review_stage_present(self) -> None:
+    def test_branch_metadata_is_stable_on_projection_and_native_program(self) -> None:
         pipeline = build_pipeline()
-        assert "human_review" in pipeline.stages
+        assert pipeline.native_program is not None
 
-    def test_emit_attestation_stage_present(self) -> None:
-        pipeline = build_pipeline()
-        assert "emit_attestation" in pipeline.stages
+        assert _edge_map(pipeline.stages["ingest"]) == {
+            "validators": "content_validators"
+        }
+        assert _edge_map(pipeline.stages["content_validators"]) == {"reduce": "reduce"}
+        assert _edge_map(pipeline.stages["reduce"]) == {
+            "human_review": "human_review",
+            "emit": "emit_attestation",
+        }
+        assert _edge_map(pipeline.stages["human_review"]) == {
+            "emit": "emit_attestation",
+            "failed": "halt",
+        }
+        assert _edge_map(pipeline.stages["emit_attestation"]) == {"halt": "halt"}
+
+        decision_branches = {
+            instruction.name: set(instruction.branches)
+            for instruction in pipeline.native_program.instructions
+            if instruction.op == "decision"
+        }
+        assert decision_branches == {
+            "verdict_is_fail": {"fail", "pass"},
+            "human_review_decision": {"emit", "failed"},
+        }
 
     def test_validator_validate_passes(self) -> None:
         pipeline = build_pipeline()
@@ -116,41 +168,31 @@ class TestPipelineConstruction:
         assert isinstance(diag, Diagnostics)
         assert diag.defects == [], f"Validator defects: {diag.defects}"
 
-    def test_steps_are_concrete_classes(self) -> None:
+    def test_projected_steps_are_native_phase_adapters(self) -> None:
         pipeline = build_pipeline()
-        ingest_stage = pipeline.stages["ingest"]
-        assert isinstance(ingest_stage, Stage)
-        assert isinstance(ingest_stage.step, IngestStep)
-
-        validators_stage = pipeline.stages["content_validators"]
-        assert isinstance(validators_stage, ParallelStage)
-        for step in validators_stage.steps:
-            assert isinstance(step, ContentValidatorStep)
-
-        reduce_stage = pipeline.stages["reduce"]
-        assert isinstance(reduce_stage, Stage)
-        assert isinstance(reduce_stage.step, ReduceStep)
-
-        human_review_stage = pipeline.stages["human_review"]
-        assert isinstance(human_review_stage, Stage)
-        assert isinstance(human_review_stage.step, HumanReviewStep)
-
-        emit_stage = pipeline.stages["emit_attestation"]
-        assert isinstance(emit_stage, Stage)
-        assert isinstance(emit_stage.step, EmitAttestationStep)
+        for name in ("ingest", "reduce", "human_review", "emit_attestation"):
+            stage = pipeline.stages[name]
+            assert isinstance(stage, Stage)
+            assert stage.step.kind == "native_phase"
+            assert stage.step.name == name
 
     def test_no_megaplan_imports_in_pipeline_module(self) -> None:
         from arnold.pipelines.evidence_pack import pipeline as pkg
 
         source = inspect.getsource(pkg)
-        tree = ast.parse(source)
-        for node in ast.walk(tree):
-            if isinstance(node, (ast.Import, ast.ImportFrom)):
-                if node.module and "megaplan" in node.module:
-                    module_name = node.module
-                    assert False, f"megaplan import found: {module_name}"
+        offenders = sorted(
+            module for module in _imported_modules(source) if "megaplan" in module
+        )
+        assert offenders == []
 
-    def test_native_program_attached(self) -> None:
-        pipeline = build_pipeline()
-        assert pipeline.native_program is not None
-        assert pipeline.native_program.name == "evidence_pack"
+    def test_import_scanner_covers_import_and_importfrom_nodes(self) -> None:
+        source = """
+import megaplan.direct
+from arnold.pipeline import Pipeline
+from megaplan.indirect import thing
+"""
+        assert _imported_modules(source) == {
+            "megaplan.direct",
+            "arnold.pipeline",
+            "megaplan.indirect",
+        }

@@ -45,15 +45,17 @@ class TestClassifyResumeCursor:
         """No resume_cursor.json → "none"."""
         assert classify_resume_cursor(tmp_path) == "none"
 
-    def test_unreadable_json_returns_none(self, tmp_path: Path) -> None:
-        """Malformed JSON that can't be parsed → "none"."""
+    def test_unreadable_json_raises_corrupt_error(self, tmp_path: Path) -> None:
+        """Malformed existing JSON fails closed."""
         (tmp_path / RESUME_CURSOR_FILENAME).write_text("{", encoding="utf-8")
-        assert classify_resume_cursor(tmp_path) == "none"
+        with pytest.raises(NativeCursorCorruptError, match="could not be decoded"):
+            classify_resume_cursor(tmp_path)
 
-    def test_non_dict_json_returns_none(self, tmp_path: Path) -> None:
-        """JSON that isn't a dict → "none"."""
+    def test_non_dict_json_raises_corrupt_error(self, tmp_path: Path) -> None:
+        """Existing JSON that isn't a dict fails closed."""
         (tmp_path / RESUME_CURSOR_FILENAME).write_text("[1, 2, 3]", encoding="utf-8")
-        assert classify_resume_cursor(tmp_path) == "none"
+        with pytest.raises(NativeCursorCorruptError, match="expected JSON object"):
+            classify_resume_cursor(tmp_path)
 
     # ── "graph" cases ───────────────────────────────────────────────
 

@@ -27,20 +27,38 @@ def _read_json(path: Path) -> dict[str, Any]:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
-def test_native_trace_hooks_write_events_and_state(tmp_path: Path) -> None:
-    trace_dir = tmp_path / "traces"
-    program = build_pipeline().native_program
-    pack = make_evidence_pack_payload(
-        evidence_pack_id="pack-hooks",
+def _passing_evidence_pack(evidence_pack_id: str = "pack-hooks") -> dict[str, Any]:
+    return make_evidence_pack_payload(
+        evidence_pack_id=evidence_pack_id,
         source_ticket="ticket-1",
         checkpoints=[
             {
-                "checkpoint_id": "pack-hooks.structural_audit",
+                "checkpoint_id": f"{evidence_pack_id}.structural_audit",
                 "status": "passed",
                 "artifact_refs": [],
             }
         ],
     )
+
+
+def _failing_evidence_pack(evidence_pack_id: str = "pack-hooks") -> dict[str, Any]:
+    return make_evidence_pack_payload(
+        evidence_pack_id=evidence_pack_id,
+        source_ticket="",
+        checkpoints=[
+            {
+                "checkpoint_id": f"{evidence_pack_id}.structural_audit",
+                "status": "passed",
+                "artifact_refs": [],
+            }
+        ],
+    )
+
+
+def test_native_trace_hooks_write_pass_events_and_state(tmp_path: Path) -> None:
+    trace_dir = tmp_path / "traces"
+    program = build_pipeline().native_program
+    pack = _passing_evidence_pack()
     pack_path = tmp_path / "input_pack.json"
     _write_json(pack_path, pack)
 
@@ -51,6 +69,8 @@ def test_native_trace_hooks_write_events_and_state(tmp_path: Path) -> None:
         initial_state={"evidence_pack_path": str(pack_path)},
         hooks=hooks,
     )
+
+    assert not (tmp_path / "resume_cursor.json").exists()
 
     events_path = trace_dir / "events.ndjson"
     assert events_path.exists()
@@ -67,19 +87,9 @@ def test_native_trace_hooks_write_events_and_state(tmp_path: Path) -> None:
     assert "evidence_pack" in state
 
 
-def test_native_runtime_persists_resume_cursor_on_suspension(tmp_path: Path) -> None:
+def test_native_runtime_persists_resume_cursor_on_fail_suspension(tmp_path: Path) -> None:
     program = build_pipeline().native_program
-    pack = make_evidence_pack_payload(
-        evidence_pack_id="pack-hooks",
-        source_ticket="ticket-1",
-        checkpoints=[
-            {
-                "checkpoint_id": "pack-hooks.structural_audit",
-                "status": "passed",
-                "artifact_refs": [],
-            }
-        ],
-    )
+    pack = _failing_evidence_pack()
     pack_path = tmp_path / "input_pack.json"
     _write_json(pack_path, pack)
 
