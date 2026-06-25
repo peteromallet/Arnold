@@ -4,6 +4,7 @@ import assert from "node:assert/strict";
 import { createBrowserHarness } from "./harness.mjs";
 import {
   populateAgentBubbleDetail,
+  renderChatBubbleNode,
   renderRatingWidget,
 } from "../../vibecomfy/comfy_nodes/web/panel_thread.js";
 
@@ -70,9 +71,7 @@ function makeBubbleDetailDeps(document, overrides = {}) {
     return node;
   };
   return {
-    appendAuditDetail: () => {},
     appendCandidateDetail: (target) => appendTextLine(target, "candidate detail"),
-    appendDebugDetail: () => {},
     appendFailureDetail: () => {},
     appendQueueDetail: () => {},
     appendTextLine,
@@ -131,6 +130,37 @@ test("bubble detail renders canonical selector field changes without message fie
   }
 });
 
+test("bubble detail omits normal Audit and Debug sections", async () => {
+  const harness = await createBrowserHarness();
+  try {
+    const target = harness.document.createElement("div");
+    const panel = {
+      state: {
+        sessionId: "sess-no-audit-debug",
+        routeStatus: { kind: "ready", requestedRoute: "revise" },
+      },
+    };
+    populateAgentBubbleDetail(
+      target,
+      panel,
+      {
+        role: "agent",
+        text: "Candidate ready.",
+        turn_id: "turn-no-audit-debug",
+        graph: { nodes: [], links: [] },
+      },
+      null,
+      makeBubbleDetailDeps(harness.document),
+    );
+
+    assert.doesNotMatch(target.textContent, /Audit/);
+    assert.doesNotMatch(target.textContent, /Debug/);
+    assert.match(target.textContent, /Candidate/);
+  } finally {
+    await harness.dispose();
+  }
+});
+
 test("bubble detail candidate section can be gated by reducer RouteStatus", async () => {
   const harness = await createBrowserHarness();
   try {
@@ -152,6 +182,84 @@ test("bubble detail candidate section can be gated by reducer RouteStatus", asyn
 
     assert.match(target.textContent, /Candidate/);
     assert.match(target.textContent, /candidate detail/);
+  } finally {
+    await harness.dispose();
+  }
+});
+
+test("normal bubble rendering uses safe response detail snapshots for expanded details", async () => {
+  const harness = await createBrowserHarness();
+  try {
+    const bubble = harness.document.createElement("div");
+    const threadState = {};
+    const snapshots = [];
+    const queueSnapshots = [];
+    const panel = {
+      document: harness.document,
+      thread: { dataset: {}, scrollTop: 0 },
+      state: {
+        sessionId: "sess-safe-detail",
+        routeStatus: { kind: "ready", requestedRoute: "inspect" },
+        expandedBubbleTurnKeys: { "turn:turn-safe-detail": true },
+        lastAppliedChanges: {
+          items: [{ uid: "stale", label: "stale panel feedback", internal: "raw" }],
+        },
+        responseDetails: {
+          "turn-safe-detail": {
+            turn: { turnId: "turn-safe-detail", sessionId: "sess-safe-detail", status: "done" },
+            outcome: { kind: "candidate", summary: "safe detail ready" },
+            lastAppliedChanges: {
+              mode: "applied",
+              items: [{ uid: "safe", label: "safe feedback", color: "green", internal: "raw" }],
+            },
+            queueDisplay: {
+              state: "blocked",
+              message: "safe queue message",
+              queueAllowed: false,
+            },
+          },
+        },
+        compartmentIndexes: { responseDetailsByTurnId: { "turn-safe-detail": "turn-safe-detail" } },
+      },
+    };
+
+    renderChatBubbleNode(
+      bubble,
+      panel,
+      { role: "agent", text: "Expanded safe detail.", turn_id: "turn-safe-detail" },
+      "message-safe-detail",
+      0,
+      makeBubbleDetailDeps(harness.document, {
+        detailSnapshotForMessage: () => {
+          throw new Error("raw detailSnapshotForMessage should not be called for normal bubble rendering");
+        },
+        appendCandidateDetail: (target, _panel, _message, snapshot) => {
+          snapshots.push(snapshot);
+          if (snapshot?.lastAppliedChanges?.items?.[0]?.label) {
+            target.appendChild(harness.document.createElement("div")).textContent =
+              snapshot.lastAppliedChanges.items[0].label;
+          }
+        },
+        appendQueueDetail: (target, _panel, snapshot) => {
+          queueSnapshots.push(snapshot);
+          if (snapshot?.queueDisplay?.message) {
+            target.appendChild(harness.document.createElement("div")).textContent =
+              snapshot.queueDisplay.message;
+          }
+        },
+        ensureThreadRenderState: () => threadState,
+      }),
+    );
+
+    assert.equal(snapshots.length, 1);
+    assert.equal(snapshots[0].lastAppliedChanges.items[0].label, "safe feedback");
+    assert.equal(snapshots[0].lastAppliedChanges.items[0].internal, undefined);
+    assert.equal(queueSnapshots.length, 1);
+    assert.equal(queueSnapshots[0].queueDisplay.message, "safe queue message");
+    assert.equal(queueSnapshots[0].queueDisplay.queueAllowed, undefined);
+    assert.match(bubble.textContent, /safe feedback/);
+    assert.match(bubble.textContent, /safe queue message/);
+    assert.doesNotMatch(bubble.textContent, /stale panel feedback/);
   } finally {
     await harness.dispose();
   }

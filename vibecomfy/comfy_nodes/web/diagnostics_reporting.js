@@ -3,7 +3,11 @@
 // rating submission, and the "Having issues?" modal.
 // Browser APIs are guarded for Node imports. Monolith-local helpers (DOM creation,
 // UI widgets, clipboard, debug snapshot) are received through dependency injection.
-// This module does NOT import from other vibecomfy web modules.
+import {
+  selectAuditArtifacts,
+  selectExecutionEvents,
+  selectTranscriptMessages,
+} from "./agent_edit_response_contract.js";
 
 // ── Module-level dependency injection ────────────────────────────────────────
 
@@ -87,7 +91,7 @@ function debugSnapshotForReport(panel) {
     phase: panel?.state?.phase || null,
     sessionId: panel?.state?.sessionId || null,
     turnId: panel?.state?.turnId || null,
-    messageCount: Array.isArray(panel?.state?.chatMessages) ? panel.state.chatMessages.length : 0,
+    messageCount: selectTranscriptMessages(panel).length,
     renderErrors: Array.isArray(panel?.__renderErrors) ? panel.__renderErrors.length : 0,
   };
 }
@@ -95,10 +99,6 @@ function debugSnapshotForReport(panel) {
 function turnTaskForReport(entry, panel) {
   return compactReportText(
     entry?.task
-    || entry?.raw_payload?.task
-    || entry?.raw_payload?.user_task
-    || entry?.raw_payload?.request?.task
-    || entry?.raw_payload?.prompt
     || panel?.state?.lastSubmit?.task
     || null,
   );
@@ -106,19 +106,15 @@ function turnTaskForReport(entry, panel) {
 
 function turnFailureForReport(entry) {
   const failure = entry?.failure && typeof entry.failure === "object" ? entry.failure : null;
-  const raw = entry?.raw_payload && typeof entry.raw_payload === "object" ? entry.raw_payload : null;
   const outcome = entry?.outcome && typeof entry.outcome === "object" ? entry.outcome : null;
   const kind =
     entry?.failure_kind
     || failure?.kind
-    || raw?.failure_kind
     || outcome?.failure_kind
     || null;
   const stage =
     entry?.failure_stage
     || failure?.stage
-    || raw?.failure_stage
-    || raw?.stage
     || null;
   // Only surface a failure line for an actual failure. A noop / clarify / candidate
   // turn has a message but is NOT a failure — labeling it "Failure: …" (as the old
@@ -127,7 +123,6 @@ function turnFailureForReport(entry) {
     Boolean(kind)
     || Boolean(failure)
     || outcome?.kind === "error"
-    || raw?.kind === "error"
     || entry?.status === "error"
     || entry?.status === "failed";
   if (!isFailure) {
@@ -138,20 +133,14 @@ function turnFailureForReport(entry) {
     || failure?.user_facing_message
     || failure?.message
     || failure?.error
-    || raw?.user_facing_message
-    || raw?.message
-    || raw?.error
     || null;
   return compactReportText(`${kind || "Failure"}${stage ? ` @ ${stage}` : ""}${message ? `: ${message}` : ""}`);
 }
 
 function turnChangeDetailsForReport(entry) {
-  const raw = entry?.raw_payload && typeof entry.raw_payload === "object" ? entry.raw_payload : null;
   const changeDetails =
     entry?.change_details
     || entry?.changeDetails
-    || raw?.change_details
-    || raw?.changeDetails
     || null;
   if (changeDetails && typeof changeDetails === "object") {
     const summary = compactReportText(changeDetails.done_summary || changeDetails.summary || null);
@@ -176,7 +165,7 @@ function turnChangeDetailsForReport(entry) {
   if (Number.isFinite(entry?.landed_op_count)) {
     return `${entry.landed_op_count} landed operation${entry.landed_op_count === 1 ? "" : "s"}`;
   }
-  const fieldChanges = entry?.field_changes || raw?.field_changes || null;
+  const fieldChanges = entry?.field_changes || null;
   if (Array.isArray(fieldChanges) && fieldChanges.length) {
     return compactReportText(
       fieldChanges
@@ -189,76 +178,6 @@ function turnChangeDetailsForReport(entry) {
   return null;
 }
 
-// Map an agent outcome to a terminal turn status string.
-function _turnStatusFromOutcome(outcome) {
-  const kind = outcome && typeof outcome === "object" ? outcome.kind : null;
-  if (outcome && typeof outcome === "object" && outcome.failure_kind) {
-    return "error";
-  }
-  if (kind === "clarification" || kind === "clarify") {
-    return "clarify";
-  }
-  if (kind === "noop" || kind === "candidate" || kind === "error") {
-    return kind;
-  }
-  return kind || "done";
-}
-
-// Rebuild durable-shaped turn entries from the rehydrated chat transcript.
-//
-// `state.turns` is purely in-memory: it is populated as turns run live, but a
-// page reload restores only `state.chatMessages` (see _handleChatRehydrateSuccess)
-// and leaves `state.turns` empty. Without this fallback every diagnostic built
-// after a reload reports "No recent turn records were captured" even though the
-// full history (including per-step agent reasoning under change_details) is
-// sitting in the rehydrated messages.
-function turnsFromChatMessages(panel) {
-  const messages = Array.isArray(panel?.state?.chatMessages) ? panel.state.chatMessages : [];
-  const order = [];
-  const byKey = new Map();
-  let counter = 0;
-  for (const msg of messages) {
-    if (!msg || typeof msg !== "object") {
-      continue;
-    }
-    const raw = msg.raw && typeof msg.raw === "object" ? msg.raw : msg;
-    const turnId = msg.turnId || msg.turn_id || raw.turn_id || null;
-    const key = turnId || `__idx_${counter}`;
-    counter += 1;
-    let entry = byKey.get(key);
-    if (!entry) {
-      entry = { entry_type: "durable", turn_id: turnId || null };
-      byKey.set(key, entry);
-      order.push(entry);
-    }
-    const role = msg.role || raw.role || null;
-    const text = typeof msg.text === "string" ? msg.text : (typeof raw.text === "string" ? raw.text : null);
-    if (role === "user") {
-      if (!entry.task && text) {
-        entry.task = text;
-      }
-      continue;
-    }
-    // Any non-user message is the agent side of the turn.
-    const outcome = msg.outcome || raw.outcome || null;
-    const changeDetails = msg.change_details || raw.change_details || null;
-    if (text) {
-      entry.message = text;
-    }
-    if (outcome) {
-      entry.outcome = outcome;
-    }
-    if (changeDetails) {
-      entry.change_details = changeDetails;
-    }
-    entry.status = _turnStatusFromOutcome(outcome);
-    entry.failure_kind = (outcome && typeof outcome === "object" && outcome.failure_kind) || null;
-    entry.raw_payload = raw;
-  }
-  // Chat is chronological; most-recent-first matches live `state.turns` order.
-  return order.reverse();
-}
-
 // Surface the agent's actual per-step reasoning for a turn: the message it
 // wrote, whether the batch landed, and the engine diagnostics (which carry the
 // real root data — e.g. value_not_in_enum with the list of valid `choices`, or
@@ -266,21 +185,37 @@ function turnsFromChatMessages(panel) {
 // "why did it do that" lives, so the issue report / coding-agent prompt embed
 // it rather than only the one-line outcome summary.
 function turnReasoningForReport(entry) {
-  const raw = entry?.raw_payload && typeof entry.raw_payload === "object" ? entry.raw_payload : null;
   const changeDetails =
     entry?.change_details
     || entry?.changeDetails
-    || raw?.change_details
-    || raw?.changeDetails
     || null;
-  const steps =
+  const changeDetailSteps =
     changeDetails && typeof changeDetails === "object" && Array.isArray(changeDetails.batch_turns)
       ? changeDetails.batch_turns
-      : null;
-  if (!steps || !steps.length) {
+      : [];
+  const eventSteps = Array.isArray(entry?.batchTurns)
+    ? entry.batchTurns
+    : Array.isArray(entry?.batch_turns)
+      ? entry.batch_turns
+      : [];
+  const steps = changeDetailSteps.concat(eventSteps);
+  const reasoning = Array.isArray(entry?.reasoning) ? entry.reasoning : [];
+  const providerDiagnostics = Array.isArray(entry?.providerDiagnostics)
+    ? entry.providerDiagnostics
+    : (entry?.providerDiagnostics && typeof entry.providerDiagnostics === "object"
+      ? [entry.providerDiagnostics]
+      : []);
+  if (!steps.length && !reasoning.length && !providerDiagnostics.length) {
     return null;
   }
   const lines = [];
+  for (const item of reasoning.slice(0, REASONING_STEP_LIMIT)) {
+    const text = compactReportText(item?.text || item?.message || item?.reason || item, 260);
+    if (text) {
+      const kind = compactReportText(item?.kind || item?.type || null, 80);
+      lines.push(`    reasoning${kind ? ` [${kind}]` : ""}: ${text}`);
+    }
+  }
   const shown = steps.slice(0, REASONING_STEP_LIMIT);
   for (let i = 0; i < shown.length; i += 1) {
     const step = shown[i];
@@ -314,18 +249,86 @@ function turnReasoningForReport(entry) {
       }
     }
   }
+  for (const diag of providerDiagnostics.slice(0, REASONING_DIAG_LIMIT)) {
+    if (!diag || typeof diag !== "object") {
+      continue;
+    }
+    const head = diag.code ? `${diag.code}: ` : "";
+    const diagText = compactReportText(`${head}${diag.message || diag.detail || ""}`, 260);
+    if (diagText) {
+      lines.push(`      provider: ${diagText}`);
+    }
+  }
   if (steps.length > shown.length) {
     lines.push(`    (+${steps.length - shown.length} more step(s) — see messages.jsonl)`);
   }
   return lines.length ? lines.join("\n") : null;
 }
 
+function explicitDiagnosticTurnsFromState(panel) {
+  const turns = [];
+  const seen = new Set();
+  const pushTurn = (entry, fallbackIndex = turns.length) => {
+    if (!entry || typeof entry !== "object") {
+      return;
+    }
+    const key = [
+      entry.session_id || panel?.state?.sessionId || "session",
+      entry.turn_id || entry.turnId || `entry-${fallbackIndex}`,
+      entry.message || "",
+    ].join(":");
+    if (seen.has(key)) {
+      return;
+    }
+    seen.add(key);
+    turns.push(entry);
+  };
+  const events = selectExecutionEvents(panel);
+  events.forEach((event, index) => pushTurn(event, index));
+  const debugDiagnostics = panel?.state?.debugDiagnostics;
+  if (debugDiagnostics && typeof debugDiagnostics === "object") {
+    // Temporary explicit diagnostic fallback for older in-memory writers that
+    // recorded projected diagnostic entries before all readers moved to the
+    // `executionEvents` compartment. This remains an opt-in diagnostic surface,
+    // never normal transcript input.
+    for (const records of Object.values(debugDiagnostics)) {
+      if (!Array.isArray(records)) {
+        continue;
+      }
+      for (const record of records) {
+        if (record?.event && typeof record.event === "object") {
+          pushTurn(record.event);
+        }
+      }
+    }
+  }
+  const snapshots = panel?.state?.turnDetailSnapshots;
+  if (snapshots && typeof snapshots === "object") {
+    for (const [turnId, snapshot] of Object.entries(snapshots)) {
+      const event = snapshot?.explicitDiagnosticEvent;
+      if (!event || typeof event !== "object") {
+        continue;
+      }
+      pushTurn({
+        ...event,
+        turn_id: event.turn_id || snapshot.turn_id || turnId,
+        session_id: event.session_id || snapshot.session_id || panel?.state?.sessionId || null,
+        message: event.message || snapshot.message || null,
+        task: event.task || null,
+        change_details: event.change_details || null,
+      });
+    }
+  }
+  return turns;
+}
+
 function collectRecentTurnSummaries(panel, limit = ISSUE_REPORT_TURN_LIMIT) {
-  let turns = Array.isArray(panel?.state?.turns) ? panel.state.turns : [];
+  let turns = explicitDiagnosticTurnsFromState(panel);
   if (turns.length === 0) {
-    // Reloaded panel: derive from the rehydrated chat transcript so the report
-    // is not blank just because the in-memory turn array was never refilled.
-    turns = turnsFromChatMessages(panel);
+    // Compatibility fallback only: `state.turns` is now a mirror derived from
+    // execution events, but older tests and already-open panels can still seed it
+    // directly. Do not use normal transcript messages for diagnostics here.
+    turns = Array.isArray(panel?.state?.turns) ? panel.state.turns : [];
   }
   return turns.slice(0, limit).map((entry, index) => ({
     label: entry?.turn_id || (Number.isFinite(entry?.turn_number) ? `turn ${entry.turn_number}` : `entry ${index + 1}`),
@@ -407,6 +410,7 @@ export function commitSessionArtifactPathsFromResponse(panel, result) {
 
 export function buildIssueReport(panel) {
   const debug = debugSnapshotForReport(panel);
+  const messageCount = selectTranscriptMessages(panel).length;
   const sessionId = panel?.state?.sessionId || debug.sessionId || "(none)";
   const phase = panel?.state?.phase || debug.phase || "(unknown)";
   const summaries = collectRecentTurnSummaries(panel, ISSUE_REPORT_TURN_LIMIT);
@@ -422,7 +426,7 @@ export function buildIssueReport(panel) {
     `Panel phase: ${phase}`,
     `Panel id: ${debug.panelId || panel?.panelId || "(unknown)"}`,
     `Current turn id: ${panel?.state?.turnId || debug.turnId || "(none)"}`,
-    `Message count: ${debug.messageCount ?? "(unknown)"}`,
+    `Message count: ${messageCount || debug.messageCount || 0}`,
     `Render errors: ${Array.isArray(debug.renderErrors) ? debug.renderErrors.length : (debug.renderErrors ?? 0)}`,
     "",
     "Last turns:",
@@ -514,10 +518,14 @@ function buildAuditEnvelope(turnEntry) {
 }
 
 export function downloadTurnAudit(panel, turnIndex) {
-  if (!panel || !Array.isArray(panel.state.turns)) {
+  if (!panel) {
     return;
   }
-  const turnEntry = panel.state.turns[turnIndex];
+  const explicitEvents = selectExecutionEvents(panel);
+  // Compatibility fallback: legacy callers pass indexes from the derived turns
+  // mirror. Prefer explicit execution events when present.
+  const turnEntry = explicitEvents[turnIndex]
+    || (Array.isArray(panel.state.turns) ? panel.state.turns[turnIndex] : null);
   if (!turnEntry) {
     return;
   }
@@ -550,17 +558,28 @@ export function downloadTurnAuditEntry(turnEntry, turnIndex = 0) {
 }
 
 export function buildCurrentAuditEnvelope(panel) {
-  const latestTurn =
-    Array.isArray(panel.state.turns) && panel.state.turns.length
-      ? panel.state.turns[0]
-      : null;
+  const latestTurn = selectExecutionEvents(panel)[0]
+    // Compatibility fallback for older panels where explicit event state has not
+    // been populated yet but the derived turns mirror still exists.
+    || (Array.isArray(panel.state.turns) && panel.state.turns.length ? panel.state.turns[0] : null);
   const envelope = buildAuditEnvelope(latestTurn);
-  // Attach any current audit_ref
-  if (panel.state.auditRef && !envelope.turn?.audit_ref) {
+  const latestArtifact = selectAuditArtifacts(panel)
+    .find((artifact) => (
+      artifact?.turn_id
+      && (
+        artifact.turn_id === latestTurn?.turn_id
+        || artifact.turn_id === panel?.state?.turnId
+      )
+    ))
+    || selectAuditArtifacts(panel)[0]
+    || null;
+  const auditRef = latestArtifact?.auditRef || panel.state.auditRef || null;
+  // Attach any current audit_ref from the explicit audit artifact compartment.
+  if (auditRef && !envelope.turn?.audit_ref) {
     if (!envelope.turn) {
-      envelope.turn = { audit_ref: panel.state.auditRef };
+      envelope.turn = { audit_ref: auditRef };
     } else {
-      envelope.turn.audit_ref = panel.state.auditRef;
+      envelope.turn.audit_ref = auditRef;
     }
   }
   // Attach current failure if in error state

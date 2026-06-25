@@ -27,6 +27,8 @@ from vibecomfy.comfy_nodes.agent.edit import (
     _repair_field_changes_from_original_ui,
     _run_batch_repl_product_path,
     _safe_session_id,
+    _stamped_message_outcome,
+    _stamped_turn_response_outcome,
     _synthesize_batch_repl_message,
     _write_turn_chat_artifact,
     _ws_send,
@@ -8406,6 +8408,52 @@ def _write_request_response_fallback(
     )
 
 
+def _assert_no_public_session_json_internals(
+    value: object,
+    *,
+    forbidden_values: tuple[str, ...],
+    path_fragment: str,
+) -> None:
+    forbidden_keys = {
+        "session_path",
+        "turns_dir",
+        "turn_path",
+        "detail_json_path",
+        "request.json",
+        "response.json",
+        "chat.json",
+        "raw_prompt",
+        "prompt_budget",
+        "debug_payload",
+        "raw_session_state",
+        "provider_diagnostics",
+        "audit_ref",
+        "audit_path",
+        "batch_turns",
+    }
+    if isinstance(value, dict):
+        for key, item in value.items():
+            assert key not in forbidden_keys
+            _assert_no_public_session_json_internals(
+                item,
+                forbidden_values=forbidden_values,
+                path_fragment=path_fragment,
+            )
+        return
+    if isinstance(value, list):
+        for item in value:
+            _assert_no_public_session_json_internals(
+                item,
+                forbidden_values=forbidden_values,
+                path_fragment=path_fragment,
+            )
+        return
+    if isinstance(value, str):
+        assert path_fragment not in value
+        for forbidden in forbidden_values:
+            assert forbidden not in value
+
+
 def test_read_session_chat_deterministic_sorting(tmp_path: Path) -> None:
     """Turn directories are read in deterministic sorted order (zero-padded integers)."""
     session_id = "sort-test"
@@ -8507,6 +8555,78 @@ def test_agent_edit_chat_endpoint_defaults_to_bounded_fifty_message_window(
     assert oversized_result["ok"] is True
     assert oversized_result["outcome"]["kind"] == "noop"
     assert len(oversized_result["messages"]) == 50
+
+
+def test_agent_edit_chat_endpoint_projects_raw_rehydrate_payload_at_route_boundary(
+    tmp_path: Path,
+) -> None:
+    routes = importlib.import_module("vibecomfy.comfy_nodes.agent.routes")
+    session_id = "endpoint-public-rehydrate"
+    turn_id = "0000"
+    turn_dir = session_dir_for(tmp_path, session_id) / "turns" / turn_id
+    turn_dir.mkdir(parents=True, exist_ok=True)
+    chat_path = turn_dir / "chat.json"
+    raw_change_details = {
+        "raw_prompt": "internal prompt must stay persisted",
+        "batch_turns": [
+            {
+                "message": "Validated compact route diagnostic.",
+                "stage": "queue_validate",
+                "ok": False,
+                "debug_payload": {"trace": "private"},
+            }
+        ],
+    }
+    chat_path.write_text(
+        json.dumps(
+            {
+                "session_id": session_id,
+                "turn_id": turn_id,
+                "messages": [
+                    {"role": "user", "text": "user request", "turn_id": turn_id},
+                    {
+                        "role": "agent",
+                        "text": "agent response",
+                        "turn_id": turn_id,
+                        "change_details": raw_change_details,
+                    },
+                ],
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    raw_result = read_session_chat(tmp_path, session_id, max_messages=10)
+    raw_agent = raw_result["messages"][-1]
+    assert "session_path" in raw_result
+    assert "detail_json_path" in raw_result
+    assert "change_details" in raw_agent
+    assert "batch_turns" in raw_agent["change_details"]
+
+    public_result = routes._handle_agent_edit_chat(
+        {"session_id": session_id, "max_messages": 10},
+        session_root=tmp_path,
+    )
+
+    assert public_result["ok"] is True
+    assert public_result["messages"][-1] == {
+        "role": "agent",
+        "text": "agent response",
+        "turn_id": turn_id,
+        "timestamp": raw_agent["timestamp"],
+    }
+    assert "session_path" not in public_result
+    assert "detail_json_path" not in public_result
+    assert "change_details" not in public_result["messages"][-1]
+    assert {
+        "turn_id": turn_id,
+        "source": "messages.change_details.batch_turns[0]",
+        "message": "Validated compact route diagnostic.",
+    } in public_result["diagnostics"]
+    persisted = json.loads(chat_path.read_text(encoding="utf-8"))
+    assert persisted["messages"][-1]["change_details"]["raw_prompt"] == "internal prompt must stay persisted"
 
 
 def test_read_session_chat_fallback_from_request_response(tmp_path: Path) -> None:
@@ -8724,21 +8844,236 @@ def test_read_session_json_turn_summaries_and_artifacts(tmp_path: Path) -> None:
     # Turn 0000 should have all three artifacts
     t0 = result["turns"][0]
     assert t0["turn_id"] == "0000"
+    assert t0["turn_path"].endswith("/turns/0000")
     assert "chat.json" in t0
     assert "request.json" in t0
     assert "response.json" in t0
+    assert t0["chat.json"].endswith("/chat.json")
+    assert t0["request.json"].endswith("/request.json")
+    assert t0["response.json"].endswith("/response.json")
     assert t0.get("message_count") == 2
 
     # Turn 0001 should have only request.json and response.json
     t1 = result["turns"][1]
     assert t1["turn_id"] == "0001"
+    assert t1["turn_path"].endswith("/turns/0001")
     assert "chat.json" not in t1
     assert "request.json" in t1
     assert "response.json" in t1
+    assert t1["request.json"].endswith("/request.json")
+    assert t1["response.json"].endswith("/response.json")
+    assert result["session_path"].endswith(f"/{session_id}")
+    assert result["turns_dir"].endswith(f"/{session_id}/turns")
+    assert result["detail_json_path"].endswith("/turns/0001/response.json")
 
     # Last-five messages should be present
     assert "messages" in result
     assert len(result["messages"]) == 4  # 2 turns × 2 messages
+
+
+def test_session_json_public_route_projects_artifact_paths_to_boolean_state(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("VIBECOMFY_HEADLESS", "1")
+    routes = importlib.import_module("vibecomfy.comfy_nodes.agent.routes")
+    edit_module = importlib.import_module("vibecomfy.comfy_nodes.agent.edit")
+    monkeypatch.setattr(edit_module, "_SESSION_ROOT", tmp_path)
+
+    registered: dict[tuple[str, str], Any] = {}
+
+    class _Routes:
+        def post(self, path):
+            def _decorator(fn):
+                registered[("POST", path)] = fn
+                return fn
+            return _decorator
+
+        def get(self, path):
+            def _decorator(fn):
+                registered[("GET", path)] = fn
+                return fn
+            return _decorator
+
+    aiohttp_module = types.ModuleType("aiohttp")
+    aiohttp_module.web = types.SimpleNamespace(
+        json_response=lambda body, status=200: {"status": status, "body": body},
+    )
+    monkeypatch.setitem(sys.modules, "aiohttp", aiohttp_module)
+
+    session_id = "session-json-public-route"
+    turn_id = "0000"
+    turn_dir = session_dir_for(tmp_path, session_id) / "turns" / turn_id
+    _write_chat_artifact(turn_dir, session_id, turn_id, "user-0", "agent-0")
+    raw_chat = json.loads((turn_dir / "chat.json").read_text(encoding="utf-8"))
+    raw_chat["session_path"] = str(session_dir_for(tmp_path, session_id))
+    raw_chat["turn_path"] = str(turn_dir)
+    raw_chat["raw_session_state"] = {
+        "debug_payload": "RAW_SESSION_STATE_SENTINEL",
+    }
+    raw_chat["messages"][-1]["change_details"] = {
+        "raw_prompt": "INTERNAL_RAW_PROMPT_SENTINEL",
+        "prompt_budget": "PRIVATE_BUDGET_SENTINEL",
+        "debug_payload": {"secret": "DEBUG_PAYLOAD_SENTINEL"},
+        "raw_session_state": "RAW_SESSION_STATE_SENTINEL",
+        "provider_diagnostics": ["PROVIDER_DIAGNOSTIC_SENTINEL"],
+        "audit_ref": {"path": str(turn_dir / "audit.json")},
+        "batch_turns": [
+            {
+                "code": "internal-debug",
+                "message": "BATCH_TURN_SENTINEL",
+            }
+        ],
+    }
+    (turn_dir / "chat.json").write_text(
+        json.dumps(raw_chat, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    (turn_dir / "request.json").write_text(
+        json.dumps(
+            {
+                "task": "user-0",
+                "raw_prompt": "INTERNAL_RAW_PROMPT_SENTINEL",
+                "debug_payload": "DEBUG_PAYLOAD_SENTINEL",
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (turn_dir / "response.json").write_text(
+        json.dumps(
+            {
+                "message": "agent-0",
+                "ok": True,
+                "provider_diagnostics": ["PROVIDER_DIAGNOSTIC_SENTINEL"],
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (turn_dir / "audit.json").write_text(
+        json.dumps({"path": str(turn_dir / "audit.json")}) + "\n",
+        encoding="utf-8",
+    )
+
+    raw_result = read_session_json(tmp_path, session_id, max_messages=10)
+    raw_turn = raw_result["turns"][0]
+    assert raw_result["session_path"].endswith(f"/{session_id}")
+    assert raw_result["turns_dir"].endswith(f"/{session_id}/turns")
+    assert raw_result["detail_json_path"].endswith("/turns/0000/response.json")
+    assert raw_turn["turn_path"].endswith("/turns/0000")
+    assert raw_turn["request.json"].endswith("/request.json")
+    assert raw_turn["response.json"].endswith("/response.json")
+    assert raw_turn["chat.json"].endswith("/chat.json")
+
+    class _Request:
+        query = {"session_id": session_id}
+
+    routes.register_agent_edit_routes(types.SimpleNamespace(routes=_Routes()))
+    session_json_route = registered[("GET", "/vibecomfy/agent-edit/session-json")]
+    response = asyncio.run(session_json_route(_Request()))
+
+    assert response["status"] == 200
+    body = response["body"]
+    assert body["ok"] is True
+    assert body["session_id"] == session_id
+    assert "session_path" not in body
+    assert "turns_dir" not in body
+    assert "detail_json_path" not in body
+    assert body["messages"] == [
+        {"role": "user", "text": "user-0", "turn_id": turn_id},
+        {"role": "agent", "text": "agent-0", "turn_id": turn_id},
+    ]
+
+    public_turn = body["turns"][0]
+    assert public_turn == {
+        "turn_id": turn_id,
+        "message_count": 2,
+        "artifacts": {
+            "has_request": True,
+            "has_response": True,
+            "has_chat": True,
+            "has_detail": True,
+            "has_audit": False,
+        },
+    }
+    assert set(public_turn["artifacts"]) == {
+        "has_request",
+        "has_response",
+        "has_chat",
+        "has_detail",
+        "has_audit",
+    }
+    assert "request.json" not in public_turn
+    assert "response.json" not in public_turn
+    assert "chat.json" not in public_turn
+    _assert_no_public_session_json_internals(
+        body,
+        forbidden_values=(
+            "INTERNAL_RAW_PROMPT_SENTINEL",
+            "PRIVATE_BUDGET_SENTINEL",
+            "DEBUG_PAYLOAD_SENTINEL",
+            "RAW_SESSION_STATE_SENTINEL",
+            "PROVIDER_DIAGNOSTIC_SENTINEL",
+            "BATCH_TURN_SENTINEL",
+        ),
+        path_fragment=str(tmp_path),
+    )
+
+
+def test_chat_route_honors_max_messages_query_parameter(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """GET /vibecomfy/agent-edit/chat passes max_messages to read_session_chat."""
+    monkeypatch.setenv("VIBECOMFY_HEADLESS", "1")
+    routes = importlib.import_module("vibecomfy.comfy_nodes.agent.routes")
+    edit_module = importlib.import_module("vibecomfy.comfy_nodes.agent.edit")
+    monkeypatch.setattr(edit_module, "_SESSION_ROOT", tmp_path)
+
+    registered: dict[tuple[str, str], Any] = {}
+
+    class _Routes:
+        def post(self, path):
+            def _decorator(fn):
+                registered[("POST", path)] = fn
+                return fn
+            return _decorator
+
+        def get(self, path):
+            def _decorator(fn):
+                registered[("GET", path)] = fn
+                return fn
+            return _decorator
+
+    aiohttp_module = types.ModuleType("aiohttp")
+    aiohttp_module.web = types.SimpleNamespace(
+        json_response=lambda body, status=200: {"status": status, "body": body},
+    )
+    monkeypatch.setitem(sys.modules, "aiohttp", aiohttp_module)
+
+    session_id = "chat-route-max-messages"
+    for tid in ("0000", "0001"):
+        _write_chat_artifact(
+            session_dir_for(tmp_path, session_id) / "turns" / tid,
+            session_id,
+            tid,
+            f"user-{tid}",
+            f"agent-{tid}",
+        )
+
+    routes.register_agent_edit_routes(types.SimpleNamespace(routes=_Routes()))
+    chat_route = registered[("GET", "/vibecomfy/agent-edit/chat")]
+
+    class _Request:
+        query = {"session_id": session_id, "max_messages": "1"}
+
+    response = asyncio.run(chat_route(_Request()))
+    assert response["status"] == 200
+    body = response["body"]
+    assert body["ok"] is True
+    assert len(body["messages"]) == 1
+    assert body["messages"][0]["text"] == "agent-0001"
 
 
 def test_read_session_json_empty_session(tmp_path: Path) -> None:
@@ -8855,6 +9190,69 @@ def test_chat_agent_message_outcome_kinds_are_public_union_members(
         assert "outcome" in msg, f"agent message missing outcome: {msg}"
         kind = msg["outcome"]["kind"]
         assert kind in PUBLIC_OUTCOME_KINDS, f"unexpected outcome kind {kind!r}"
+
+
+@pytest.mark.parametrize(
+    "persisted_outcome",
+    [
+        {"kind": "error", "failure_kind": FailureKind.STALE_STATE_MISMATCH.value},
+        {"kind": "error", "failureKind": FailureKind.STALE_STATE_MISMATCH.value},
+    ],
+)
+def test_stamped_message_outcome_preserves_persisted_minimal_error_outcomes(
+    persisted_outcome: dict[str, Any],
+) -> None:
+    """Persisted chat.json outcomes may predate strict live error fields.
+
+    Rehydration stamping owns compatibility normalization so frontend render code
+    does not need to infer missing error metadata from historical artifacts.
+    """
+    stamped = _stamped_message_outcome(persisted_outcome, stage="chat")
+
+    assert stamped == {
+        "kind": "error",
+        "failure_kind": FailureKind.STALE_STATE_MISMATCH.value,
+        "stage": "chat",
+        "retryable": False,
+        "next_action": "resubmit from the current canvas",
+        "graph_unchanged": True,
+        "agent_failure_context": {
+            "explanation": "The submitted graph no longer matches the current canvas. Resubmit."
+        },
+    }
+
+
+@pytest.mark.parametrize(
+    "persisted_outcome",
+    [
+        {"kind": "error", "failure_kind": FailureKind.STALE_STATE_MISMATCH.value},
+        {"kind": "error", "failureKind": FailureKind.STALE_STATE_MISMATCH.value},
+    ],
+)
+def test_stamped_turn_response_outcome_preserves_persisted_minimal_error_outcomes(
+    persisted_outcome: dict[str, Any],
+) -> None:
+    """Persisted response.json outcomes survive fallback chat rehydration.
+
+    The safe defaults are applied at the edit.py stamping helper rather than by
+    browser selectors or render paths.
+    """
+    stamped = _stamped_turn_response_outcome(
+        {"ok": False, "outcome": persisted_outcome},
+        stage="submit",
+    )
+
+    assert stamped == {
+        "kind": "error",
+        "failure_kind": FailureKind.STALE_STATE_MISMATCH.value,
+        "stage": "submit",
+        "retryable": False,
+        "next_action": "resubmit from the current canvas",
+        "graph_unchanged": True,
+        "agent_failure_context": {
+            "explanation": "The submitted graph no longer matches the current canvas. Resubmit."
+        },
+    }
 
 
 def test_chat_user_messages_never_carry_outcome(
@@ -9206,17 +9604,53 @@ def test_read_session_chat_surfaces_trimmed_agent_reasoning(tmp_path: Path) -> N
 
 
 def test_read_session_bundle_bundles_text_and_binary_artifacts(tmp_path: Path) -> None:
-    """read_session_bundle returns every artifact under a session dir — text
-    files inline, binary as base64 — so the issue ZIP is self-contained."""
+    """read_session_bundle returns every artifact under a session dir.
+
+    This is an explicit raw debug/report retention surface, not a normal public
+    renderer payload. It intentionally remains exempt from
+    _assert_no_public_session_json_internals so issue bundles keep raw evidence
+    that projected browser routes must hide.
+    """
     from vibecomfy.comfy_nodes.agent.edit import read_session_bundle
 
     session_id = "bundle-all"
     session_dir = tmp_path / session_id
     turn_dir = session_dir / "turns" / "0001"
     turn_dir.mkdir(parents=True)
-    (turn_dir / "messages.jsonl").write_text('{"message": "hi"}\n', encoding="utf-8")
-    (turn_dir / "response.json").write_text('{"ok": true}', encoding="utf-8")
-    (session_dir / "session_state.json").write_text('{"turns": {}}', encoding="utf-8")
+    raw_sentinel = "RAW_BUNDLE_RETENTION_SENTINEL"
+    raw_path = str(turn_dir / "raw-debug.json")
+    (turn_dir / "messages.jsonl").write_text(
+        json.dumps(
+            {
+                "message": "hi",
+                "raw_prompt": f"keep raw prompt {raw_sentinel}",
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (turn_dir / "response.json").write_text(
+        json.dumps(
+            {
+                "ok": True,
+                "provider_diagnostics": [raw_sentinel],
+                "audit_ref": {"path": raw_path},
+            }
+        ),
+        encoding="utf-8",
+    )
+    (session_dir / "session_state.json").write_text(
+        json.dumps(
+            {
+                "turns": {},
+                "raw_session_state": {
+                    "debug_payload": raw_sentinel,
+                    "path": raw_path,
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
     png_bytes = b"\x89PNG\r\n\x1a\n\x00\x01\x02\x03"
     (turn_dir / "preview.png").write_bytes(png_bytes)
 
@@ -9225,7 +9659,17 @@ def test_read_session_bundle_bundles_text_and_binary_artifacts(tmp_path: Path) -
     by_name = {f["name"]: f for f in result["files"]}
 
     assert "turns/0001/messages.jsonl" in by_name
-    assert by_name["turns/0001/messages.jsonl"]["text"].strip() == '{"message": "hi"}'
+    messages = json.loads(by_name["turns/0001/messages.jsonl"]["text"])
+    assert messages["message"] == "hi"
+    assert messages["raw_prompt"] == f"keep raw prompt {raw_sentinel}"
+    response = json.loads(by_name["turns/0001/response.json"]["text"])
+    assert response["provider_diagnostics"] == [raw_sentinel]
+    assert response["audit_ref"]["path"] == raw_path
+    session_state = json.loads(by_name["session_state.json"]["text"])
+    assert session_state["raw_session_state"] == {
+        "debug_payload": raw_sentinel,
+        "path": raw_path,
+    }
     assert "session_state.json" in by_name
     png = by_name["turns/0001/preview.png"]
     assert "base64" in png and "text" not in png
@@ -9255,6 +9699,83 @@ def test_read_session_bundle_records_oversize_skips(tmp_path: Path) -> None:
     assert "turns/0001/small.json" in by_name
     skipped = {s["name"]: s for s in result["skipped"]}
     assert skipped.get("turns/0001/big.json", {}).get("reason") == "too_large"
+
+
+def test_session_bundle_route_retains_raw_sentinels(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """HTTP /vibecomfy/agent-edit/session-bundle remains a raw debug/report surface.
+
+    This route-level regression test proves raw sentinel fields survive HTTP
+    serialization, documenting the intentional exemption from normal public-payload
+    projection assertions.
+    """
+    monkeypatch.setenv("VIBECOMFY_HEADLESS", "1")
+    routes = importlib.import_module("vibecomfy.comfy_nodes.agent.routes")
+    edit_module = importlib.import_module("vibecomfy.comfy_nodes.agent.edit")
+    monkeypatch.setattr(edit_module, "_SESSION_ROOT", tmp_path)
+
+    registered: dict[tuple[str, str], Any] = {}
+
+    class _Routes:
+        def post(self, path):
+            def _decorator(fn):
+                registered[("POST", path)] = fn
+                return fn
+            return _decorator
+
+        def get(self, path):
+            def _decorator(fn):
+                registered[("GET", path)] = fn
+                return fn
+            return _decorator
+
+    aiohttp_module = types.ModuleType("aiohttp")
+    aiohttp_module.web = types.SimpleNamespace(
+        json_response=lambda body, status=200: {"status": status, "body": body},
+    )
+    monkeypatch.setitem(sys.modules, "aiohttp", aiohttp_module)
+
+    session_id = "bundle-route-raw"
+    turn_dir = tmp_path / session_id / "turns" / "0000"
+    turn_dir.mkdir(parents=True)
+    (turn_dir / "request.json").write_text(
+        json.dumps({"task": "user-0", "raw_prompt": "INTERNAL_RAW_PROMPT_SENTINEL"})
+        + "\n",
+        encoding="utf-8",
+    )
+    (turn_dir / "response.json").write_text(
+        json.dumps(
+            {
+                "message": "agent-0",
+                "ok": True,
+                "provider_diagnostics": ["PROVIDER_DIAGNOSTIC_SENTINEL"],
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    class _Request:
+        query = {"session_id": session_id}
+
+    routes.register_agent_edit_routes(types.SimpleNamespace(routes=_Routes()))
+    bundle_route = registered[("GET", "/vibecomfy/agent-edit/session-bundle")]
+    response = asyncio.run(bundle_route(_Request()))
+
+    assert response["status"] == 200
+    body = response["body"]
+    assert body["ok"] is True
+    by_name = {f["name"]: f for f in body["files"]}
+    assert "turns/0000/request.json" in by_name
+    assert "turns/0000/response.json" in by_name
+    request_file = by_name["turns/0000/request.json"]
+    response_file = by_name["turns/0000/response.json"]
+    assert "text" in request_file
+    assert "text" in response_file
+    assert "INTERNAL_RAW_PROMPT_SENTINEL" in request_file["text"]
+    assert "PROVIDER_DIAGNOSTIC_SENTINEL" in response_file["text"]
 
 
 # ── batch lint wiring tests ───────────────────────────────────────────────────

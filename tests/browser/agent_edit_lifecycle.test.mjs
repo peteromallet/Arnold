@@ -209,9 +209,9 @@ test("composer apply display state projects canonical candidate, stage, and rout
 
 // ── LIFECYCLE_STATE_FIELDS ──────────────────────────────────────────────────
 
-test("LIFECYCLE_STATE_FIELDS exports frozen array with 40 field names", () => {
+test("LIFECYCLE_STATE_FIELDS exports frozen array with 46 field names", () => {
   assert.ok(Object.isFrozen(LIFECYCLE_STATE_FIELDS));
-  assert.equal(LIFECYCLE_STATE_FIELDS.length, 40);
+  assert.equal(LIFECYCLE_STATE_FIELDS.length, 46);
 
   // Spot-check key categories
   assert.ok(LIFECYCLE_STATE_FIELDS.includes("phase"));
@@ -236,18 +236,24 @@ test("LIFECYCLE_STATE_FIELDS exports frozen array with 40 field names", () => {
   assert.ok(LIFECYCLE_STATE_FIELDS.includes("lastSubmit"));
   assert.ok(LIFECYCLE_STATE_FIELDS.includes("lastAppliedChanges"));
   assert.ok(LIFECYCLE_STATE_FIELDS.includes("changeDetails"));
+  assert.ok(LIFECYCLE_STATE_FIELDS.includes("transcriptMessages"));
+  assert.ok(LIFECYCLE_STATE_FIELDS.includes("responseDetails"));
+  assert.ok(LIFECYCLE_STATE_FIELDS.includes("executionEvents"));
+  assert.ok(LIFECYCLE_STATE_FIELDS.includes("auditArtifacts"));
+  assert.ok(LIFECYCLE_STATE_FIELDS.includes("debugDiagnostics"));
+  assert.ok(LIFECYCLE_STATE_FIELDS.includes("compartmentIndexes"));
   assert.ok(LIFECYCLE_STATE_FIELDS.includes("chatRehydrateEpoch"));
   assert.ok(LIFECYCLE_STATE_FIELDS.includes("chatRehydrateCommittedEpoch"));
   assert.ok(LIFECYCLE_STATE_FIELDS.includes("syntheticAgentMessage"));
   assert.ok(LIFECYCLE_STATE_FIELDS.includes("deltaOps"));
 
   // No duplicates
-  assert.equal(new Set(LIFECYCLE_STATE_FIELDS).size, 40);
+  assert.equal(new Set(LIFECYCLE_STATE_FIELDS).size, 46);
 });
 
 // ── createAgentEditState ────────────────────────────────────────────────────
 
-test("createAgentEditState initializes all 40 lifecycle fields to defaults", () => {
+test("createAgentEditState initializes all 46 lifecycle fields to defaults", () => {
   const state = createAgentEditState();
 
   // Every field from LIFECYCLE_STATE_FIELDS must exist on the returned object
@@ -258,9 +264,9 @@ test("createAgentEditState initializes all 40 lifecycle fields to defaults", () 
     );
   }
 
-  // No extra own keys beyond the 40 fields
+  // No extra own keys beyond the 46 fields
   const ownKeys = Object.keys(state);
-  assert.equal(ownKeys.length, 40);
+  assert.equal(ownKeys.length, 46);
 
   // Phase default
   assert.equal(state.phase, PANEL_STATE.IDLE);
@@ -310,6 +316,18 @@ test("createAgentEditState initializes all 40 lifecycle fields to defaults", () 
   assert.equal(state.lastSubmitFieldChanges, null);
   assert.equal(state.changeDetails, null);
 
+  // Boundary compartments
+  assert.deepEqual(state.transcriptMessages, []);
+  assert.deepEqual(state.responseDetails, {});
+  assert.deepEqual(state.executionEvents, []);
+  assert.deepEqual(state.auditArtifacts, []);
+  assert.deepEqual(state.debugDiagnostics, {});
+  assert.deepEqual(state.compartmentIndexes, {
+    responseDetailsByTurnId: {},
+    executionEventsByKey: {},
+    auditArtifactsByTurnId: {},
+  });
+
   // Epoch
   assert.equal(state.chatRehydrateEpoch, 0);
   assert.equal(state.chatRehydrateCommittedEpoch, 0);
@@ -324,9 +342,21 @@ test("createAgentEditState returns independent objects on each call", () => {
 
   a.phase = PANEL_STATE.SUBMITTING;
   a.baselineTurnId = "0001";
+  a.transcriptMessages.push({ role: "user", text: "ask" });
+  a.responseDetails.turn1 = { message: "detail" };
+  a.executionEvents.push({ type: "batch" });
+  a.auditArtifacts.push({ path: "/tmp/audit.json" });
+  a.debugDiagnostics.raw = { hidden: true };
+  a.compartmentIndexes.responseDetailsByTurnId.turn1 = "turn1";
 
   assert.equal(b.phase, PANEL_STATE.IDLE);
   assert.equal(b.baselineTurnId, null);
+  assert.deepEqual(b.transcriptMessages, []);
+  assert.deepEqual(b.responseDetails, {});
+  assert.deepEqual(b.executionEvents, []);
+  assert.deepEqual(b.auditArtifacts, []);
+  assert.deepEqual(b.debugDiagnostics, {});
+  assert.deepEqual(b.compartmentIndexes.responseDetailsByTurnId, {});
 });
 
 // ── normalizeDeltaOpsFromSubmit ─────────────────────────────────────────────
@@ -2215,6 +2245,16 @@ test("NEW_CONVERSATION resets lifecycle state, increments epochs, and leaves non
     lastAppliedChanges: { changed: [1] },
     lastSubmitFieldChanges: { fields: ["prompt"] },
     changeDetails: { nodes: [1] },
+    transcriptMessages: [{ role: "agent", text: "old transcript" }],
+    responseDetails: { "turn-3": { message: "old detail" } },
+    executionEvents: [{ key: "old-event" }],
+    auditArtifacts: [{ path: "/tmp/old-audit.json" }],
+    debugDiagnostics: { provider: { raw: true } },
+    compartmentIndexes: {
+      responseDetailsByTurnId: { "turn-3": "turn-3" },
+      executionEventsByKey: { "old-event": 0 },
+      auditArtifactsByTurnId: { "turn-3": 0 },
+    },
     chatRehydrateEpoch: 11,
     syntheticAgentMessage: { text: "synthetic" },
     history: ["keep-non-lifecycle"],
@@ -2262,6 +2302,17 @@ test("NEW_CONVERSATION resets lifecycle state, increments epochs, and leaves non
   assert.equal(panel.state.lastSubmit, null);
   assert.equal(panel.state.lastAppliedChanges, null);
   assert.equal(panel.state.lastSubmitFieldChanges, null);
+  assert.equal(panel.state.changeDetails, null);
+  assert.deepEqual(panel.state.transcriptMessages, []);
+  assert.deepEqual(panel.state.responseDetails, {});
+  assert.deepEqual(panel.state.executionEvents, []);
+  assert.deepEqual(panel.state.auditArtifacts, []);
+  assert.deepEqual(panel.state.debugDiagnostics, {});
+  assert.deepEqual(panel.state.compartmentIndexes, {
+    responseDetailsByTurnId: {},
+    executionEventsByKey: {},
+    auditArtifactsByTurnId: {},
+  });
   assert.equal(panel.state.syntheticAgentMessage, null);
   assert.deepEqual(panel.state.history, ["keep-non-lifecycle"]);
   assert.equal(panel.state._previewDiff, undefined);
@@ -2291,7 +2342,7 @@ test("CHAT_REHYDRATE_START increments epoch without disturbing current candidate
   assert.equal(panel.state.chatError, "old error");
 });
 
-test("CHAT_REHYDRATE_SUCCESS stores normalized chat payload and persists confirmed session id", () => {
+test("CHAT_REHYDRATE_SUCCESS stores safe chat payload and persists confirmed session id", () => {
   const messages = [{ role: "agent", text: "restored" }];
   const panel = makePanel({
     sessionId: null,
@@ -2312,7 +2363,9 @@ test("CHAT_REHYDRATE_SUCCESS stores normalized chat payload and persists confirm
     dirtySections: META_AND_THREAD_DIRTY_SECTIONS,
     persistSession: "sess-123",
   });
-  assert.deepEqual(panel.state.chatMessages, messages);
+  const expectedMessages = [{ role: "agent", text: "restored" }];
+  assert.deepEqual(panel.state.chatMessages, expectedMessages);
+  assert.deepEqual(panel.state.transcriptMessages, expectedMessages);
   assert.equal(panel.state.chatLoaded, true);
   assert.equal(panel.state.chatError, null);
   assert.equal(panel.state.chatSessionPath, "out/editor_sessions/sess-123/");
@@ -2478,6 +2531,16 @@ test("CHAT_REHYDRATE_NO_SESSION clears only thread-visible chat state and leaves
     sessionId: "sess-live",
     chatRehydrateEpoch: 4,
     chatMessages: [{ role: "user", text: "old" }],
+    transcriptMessages: [{ role: "user", text: "old" }],
+    responseDetails: { old: { message: "old" } },
+    executionEvents: [{ key: "old" }],
+    auditArtifacts: [{ path: "/tmp/old.json" }],
+    debugDiagnostics: { old: true },
+    compartmentIndexes: {
+      responseDetailsByTurnId: { old: "old" },
+      executionEventsByKey: { old: 0 },
+      auditArtifactsByTurnId: { old: 0 },
+    },
     chatLoaded: true,
     chatError: "old error",
     chatSessionPath: "out/editor_sessions/sess-live/",
@@ -2494,6 +2557,12 @@ test("CHAT_REHYDRATE_NO_SESSION clears only thread-visible chat state and leaves
   });
   assert.equal(panel.state.sessionId, "sess-live");
   assert.deepEqual(panel.state.chatMessages, []);
+  assert.deepEqual(panel.state.transcriptMessages, []);
+  assert.deepEqual(panel.state.responseDetails, {});
+  assert.deepEqual(panel.state.executionEvents, []);
+  assert.deepEqual(panel.state.auditArtifacts, []);
+  assert.deepEqual(panel.state.debugDiagnostics, {});
+  assert.deepEqual(panel.state.compartmentIndexes.responseDetailsByTurnId, {});
   assert.equal(panel.state.chatLoaded, false);
   assert.equal(panel.state.chatError, null);
   assert.equal(panel.state.chatSessionPath, null);
@@ -3000,6 +3069,16 @@ test("CHAT_REHYDRATE_MISSING_SESSION clears visible chat state and forgets only 
     sessionId: "sess-missing",
     chatRehydrateEpoch: 9,
     chatMessages: [{ role: "user", text: "old" }],
+    transcriptMessages: [{ role: "user", text: "old" }],
+    responseDetails: { old: { message: "old" } },
+    executionEvents: [{ key: "old" }],
+    auditArtifacts: [{ path: "/tmp/old.json" }],
+    debugDiagnostics: { old: true },
+    compartmentIndexes: {
+      responseDetailsByTurnId: { old: "old" },
+      executionEventsByKey: { old: 0 },
+      auditArtifactsByTurnId: { old: 0 },
+    },
     chatError: "old error",
     chatSessionPath: "out/editor_sessions/sess-missing/",
     chatDetailJsonPath: "out/editor_sessions/sess-missing/session.json",
@@ -3018,6 +3097,12 @@ test("CHAT_REHYDRATE_MISSING_SESSION clears visible chat state and forgets only 
   });
   assert.equal(panel.state.sessionId, null);
   assert.deepEqual(panel.state.chatMessages, []);
+  assert.deepEqual(panel.state.transcriptMessages, []);
+  assert.deepEqual(panel.state.responseDetails, {});
+  assert.deepEqual(panel.state.executionEvents, []);
+  assert.deepEqual(panel.state.auditArtifacts, []);
+  assert.deepEqual(panel.state.debugDiagnostics, {});
+  assert.deepEqual(panel.state.compartmentIndexes.responseDetailsByTurnId, {});
   assert.equal(panel.state.chatLoaded, true);
   assert.equal(panel.state.chatError, null);
   assert.equal(panel.state.chatSessionPath, null);
@@ -3030,7 +3115,11 @@ test("CHAT_REHYDRATE_FAILURE clears only chat display state and leaves current f
     chatRehydrateEpoch: 12,
     candidateGraphHash: "candidate-hash",
     failure: { code: "CurrentFailure" },
-    chatMessages: [{ role: "agent", text: "stale" }],
+    chatMessages: [
+      { role: "agent", text: "stale" },
+      { role: "user", text: "optimistic", optimistic: true },
+    ],
+    transcriptMessages: [{ role: "agent", text: "stale" }],
     chatSessionPath: "out/editor_sessions/current/",
     chatDetailJsonPath: "out/editor_sessions/current/session.json",
   });
@@ -3044,7 +3133,8 @@ test("CHAT_REHYDRATE_FAILURE clears only chat display state and leaves current f
     render: false,
     dirtySections: THREAD_DIRTY_SECTIONS,
   });
-  assert.deepEqual(panel.state.chatMessages, []);
+  assert.deepEqual(panel.state.chatMessages, [{ role: "user", text: "optimistic", optimistic: true }]);
+  assert.deepEqual(panel.state.transcriptMessages, panel.state.chatMessages);
   assert.equal(panel.state.chatLoaded, false);
   assert.equal(panel.state.chatError, "Server returned 500");
   assert.equal(panel.state.chatSessionPath, null);

@@ -17,6 +17,7 @@ import {
   noteAgentPanelCommit,
   scheduleRenderAgentPanel,
   setRenderGateway,
+  SETTINGS_STATUS_RENDER_SECTIONS,
 } from "./panel_scheduler.js";
 import {
   collectThreadMessageEntries as collectThreadMessageEntriesImpl,
@@ -36,6 +37,8 @@ import {
   renderComposerActions as renderComposerActionsImpl,
   renderComposerNotice as renderComposerNoticeImpl,
   renderComposerNoticeSection as renderComposerNoticeSectionImpl,
+  renderDeveloperSection as composerRenderDeveloperSection,
+  renderSettingsSection as composerRenderSettingsSection,
   submitReadinessState as submitReadinessStateImpl,
   syncComposerButtons as syncComposerButtonsImpl,
 } from "./panel_composer.js";
@@ -48,6 +51,7 @@ import {
 } from "./comfy_adapter.js";
 import {
   createAgentEditState,
+  createAgentStateCompartments,
   RENDER_SECTIONS,
   normalizeDeltaOpsFromSubmit,
   normalizeObligationDirtySections,
@@ -61,6 +65,12 @@ import {
   readRebaselineRecovery,
   readTurnIdentity,
   extractRebaselineRecovery,
+  projectAuditArtifact,
+  projectExecutionEvent,
+  projectResponseDetail,
+  projectTranscriptMessage,
+  selectAuditArtifacts,
+  selectExecutionEvents,
 } from "./agent_edit_response_contract.js";
 
 import {
@@ -95,8 +105,34 @@ import {
   isTerminalAgentTurnStatus,
 } from "./agent_turn_feed.js";
 import {
-  projectRouteStatus,
+  AGENT_STATUS_RETRY_DELAYS_MS,
+  CANONICAL_AGENT_PROVIDERS,
+  ROUTE_ALIASES,
+  ROUTE_LABELS,
+  ROUTE_STATUS_KIND,
+  _lsGet,
+  _lsRemove,
+  _lsSet,
+  getRouteDescriptor,
+  getPersistedAgentProvider,
+  normalizeModelPreference,
+  normalizeRoutePreference,
+  persistAgentSettings,
+  populateRouteSelect as pollerPopulateRouteSelect,
+  refreshAgentStatus as pollerRefreshAgentStatus,
+  routeStatusState,
+  scheduleAgentStatusRetry as pollerScheduleAgentStatusRetry,
+  setPersistedAgentProvider,
+  storeOpenRouterCredential,
+  syncChooseEngineGate as pollerSyncChooseEngineGate,
+  testAgentSettings as testAgentSettingsImpl,
 } from "./agent_status_poller.js";
+import {
+  APPLY_ELIGIBILITY_REASON,
+  applyEligibility,
+  disabledApplyEligibility,
+  candidateActionState,
+} from "./agent_candidate_actions.js";
 
 // Re-export diagnostics functions for tests and external callers.
 export {
@@ -260,26 +296,7 @@ const PANEL_STATE = Object.freeze({
   ERROR: "ERROR",
 });
 
-const APPLY_ELIGIBILITY_REASON = Object.freeze({
-  APPLYABLE: "applyable",
-  NO_CANDIDATE: "no_candidate",
-  MISSING_CONTRACT: "missing_contract",
-  MISSING_DURABLE_TURN_METADATA: "missing_durable_turn_metadata",
-  NOT_LATEST: "not_latest",
-  SUPERSEDED: "superseded",
-  SERVER_BLOCKED: "server_blocked",
-  STALE_CANVAS: "stale_canvas",
-  QUEUE_BLOCKED_WARNING: "queue_blocked_warning",
-});
-
 const ALL_AGENT_PANEL_RENDER_SECTIONS = Object.freeze(Object.values(RENDER_SECTIONS));
-const SETTINGS_STATUS_RENDER_SECTIONS = Object.freeze([
-  RENDER_SECTIONS.THREAD,
-  RENDER_SECTIONS.SETTINGS,
-  RENDER_SECTIONS.COMPOSER,
-  RENDER_SECTIONS.NOTICE,
-]);
-const AGENT_STATUS_RETRY_DELAYS_MS = Object.freeze([250, 1000, 3000]);
 const AGENT_PANEL_SECTION_RENDER_ERROR_LIMIT = 20;
 const AGENT_PANEL_SECTION_RENDER_RETRY_LIMIT = 3;
 const AGENT_SIDEBAR_TAB_ID = "vibecomfy.agent-edit";
@@ -325,33 +342,6 @@ const PANEL_IDS = Object.freeze({
   welcomeOverlay: "vibecomfy-agent-panel-welcome-overlay",
 });
 
-const ROUTE_ALIASES = Object.freeze({
-  auto: "auto",
-  arnold: "auto",
-  deepseek: "deepseek",
-  openrouter: "openrouter",
-  anthropic: "anthropic",
-  claude: "anthropic",
-  "openai-codex": "openai-codex",
-  codex: "openai-codex",
-});
-
-const ROUTE_LABELS = Object.freeze({
-  auto: "auto",
-  deepseek: "deepseek",
-  openrouter: "openrouter",
-  anthropic: "anthropic",
-  "openai-codex": "openai-codex",
-});
-
-const ROUTE_STATUS_KIND = Object.freeze({
-  LOADING: "loading_status",
-  READY: "ready",
-  MISSING_OPTIONS: "missing_route_options",
-  MALFORMED: "malformed_status",
-  UNAVAILABLE: "status_unavailable",
-});
-
 const INTENT_NODE_CLASS_TYPES = new Set(["vibecomfy.code", "vibecomfy.exec", "vibecomfy.loop"]);
 const INTENT_KIND_BY_CLASS_TYPE = Object.freeze({
   "vibecomfy.code": "code",
@@ -383,7 +373,6 @@ const LOWERED_BADGE = "lowered";
 
 // ── localStorage helpers (safe wrappers — tolerate missing/throwing storage) ─
 const LS_ACTIVE_SESSION_KEY = "vibecomfy_active_session_id";
-const LS_AGENT_PROVIDER_KEY = "vibecomfy_agent_provider";
 
 function resolveModuleAssetUrl(path) {
   try {
@@ -397,65 +386,6 @@ function resolveModuleAssetUrl(path) {
 }
 
 const VIBECOMFY_LOGO_URL = resolveModuleAssetUrl("./vibecomfy_agent_icon_cream.png");
-
-function _lsGet(key) {
-  try {
-    const storage = typeof localStorage !== "undefined" && localStorage !== null
-      ? localStorage
-      : globalThis?.localStorage;
-    if (!storage) {
-      return null;
-    }
-    return storage.getItem(key);
-  } catch (_e) {
-    return null;
-  }
-}
-
-function _lsSet(key, value) {
-  try {
-    const storage = typeof localStorage !== "undefined" && localStorage !== null
-      ? localStorage
-      : globalThis?.localStorage;
-    if (!storage) {
-      return;
-    }
-    storage.setItem(key, value);
-  } catch (_e) {
-    // Best-effort: silently swallow set errors (private browsing, quota, etc.)
-  }
-}
-
-function _lsRemove(key) {
-  try {
-    const storage = typeof localStorage !== "undefined" && localStorage !== null
-      ? localStorage
-      : globalThis?.localStorage;
-    if (!storage) {
-      return;
-    }
-    storage.removeItem(key);
-  } catch (_e) {
-    // Best-effort.
-  }
-}
-
-const CANONICAL_AGENT_PROVIDERS = new Set(["anthropic", "deepseek", "openai-codex", "openrouter"]);
-
-function getPersistedAgentProvider() {
-  const raw = _lsGet(LS_AGENT_PROVIDER_KEY);
-  if (raw == null) return null;
-  if (CANONICAL_AGENT_PROVIDERS.has(raw)) return raw;
-  return null;
-}
-
-function setPersistedAgentProvider(value) {
-  if (value == null) {
-    _lsRemove(LS_AGENT_PROVIDER_KEY);
-    return;
-  }
-  _lsSet(LS_AGENT_PROVIDER_KEY, String(value));
-}
 
 // ── Default execution mode (settings combo + localStorage fallback) ─────────
 const DEFAULT_EXECUTION_MODE_LS_KEY = "vibecomfy.defaultExecutionMode";
@@ -2557,18 +2487,6 @@ function captureLiveCanvasToken(_graphHash, structuralHash) {
   return structuralHash ? `structure:${structuralHash}` : `hash:${_graphHash}`;
 }
 
-function normalizeRoutePreference(value) {
-  const normalized = String(value || "")
-    .trim()
-    .toLowerCase();
-  return ROUTE_ALIASES[normalized] || "deepseek";
-}
-
-function normalizeModelPreference(value) {
-  const normalized = String(value || "").trim();
-  return normalized ? normalized : null;
-}
-
 function buildSubmitIdempotencyKey({ sessionId, graphHash, route, model }) {
   const unique = typeof crypto.randomUUID === "function"
     ? crypto.randomUUID()
@@ -2853,251 +2771,26 @@ function getBackendStageInfo(payload) {
   return { stage, progress };
 }
 
-function buildStatusUrl(route, model) {
-  const params = new URLSearchParams();
-  if (route) {
-    params.set("route", route);
-  }
-  if (model) {
-    params.set("model", model);
-  }
-  const query = params.toString();
-  return query ? `/vibecomfy/agent/status?${query}` : "/vibecomfy/agent/status";
-}
-
-function routeStatusState(panel) {
-  return panel?.state?.routeStatus || { kind: ROUTE_STATUS_KIND.LOADING };
-}
-
-function routeOptionsFromStatus(status) {
-  if (!status || typeof status !== "object" || Array.isArray(status)) {
-    return null;
-  }
-  const options = status.route_options;
-  if (!options || typeof options !== "object" || Array.isArray(options)) {
-    return null;
-  }
-  return options;
-}
-
-function getRouteOptions(panel) {
-  return routeOptionsFromStatus(panel.state.statusSnapshot);
-}
-
-function getRouteDescriptor(panel, route = panel.fields.route.value) {
-  const normalized = normalizeRoutePreference(route);
-  return getRouteOptions(panel)?.[normalized] || null;
-}
-
 function nextMacrotask() {
   return new Promise((resolve) => setTimeout(resolve, 0));
 }
 
-function clearAgentStatusRetry(panel) {
-  const retry = panel?.state?.statusRetry;
-  if (retry?.timerId) {
-    clearTimeout(retry.timerId);
-  }
-  if (panel?.state) {
-    panel.state.statusRetry = null;
-  }
-}
-
-function scheduleAgentStatusRetry(panel, route, model, { quiet = true } = {}) {
-  if (!panel?.state) {
-    return;
-  }
-  const prior = panel.state.statusRetry;
-  const priorAttempts =
-    prior?.route === route && prior?.model === model && Number.isFinite(prior?.attempts)
-      ? prior.attempts
-      : 0;
-  const attempts = priorAttempts + 1;
-  if (attempts > AGENT_STATUS_RETRY_DELAYS_MS.length) {
-    panel.state.statusRetry = { route, model, attempts: priorAttempts, exhausted: true, timerId: null };
-    return;
-  }
-  const delayMs = AGENT_STATUS_RETRY_DELAYS_MS[attempts - 1];
-  const timerId = setTimeout(() => {
-    if (!panel?.state?.statusRetry || panel.state.statusRetry.timerId !== timerId) {
-      return;
-    }
-    panel.state.statusRetry.timerId = null;
-    refreshAgentStatus(panel, { quiet });
-  }, delayMs);
-  panel.state.statusRetry = { route, model, attempts, exhausted: false, timerId };
-}
-
-function populateRouteSelect(selectNode, routeOptions, {
-  placeholderLabel = "Loading route/model status…",
-  selectedRoute = selectNode.value,
-} = {}) {
-  const ownerDocument = selectNode?.ownerDocument || (typeof document !== "undefined" ? document : null);
-  if (!ownerDocument) {
-    return;
-  }
-  const preferredRoute = normalizeRoutePreference(selectedRoute);
-  const knownRoutes = Object.keys(ROUTE_LABELS).filter((route) => routeOptions?.[route]);
-  const extraRoutes = Object.keys(routeOptions || {}).filter((route) => !ROUTE_LABELS[route]);
-  const desired = [...knownRoutes, ...extraRoutes];
-  clearNode(selectNode);
-  if (!desired.length) {
-    const node = option(preferredRoute, placeholderLabel, ownerDocument);
-    node.disabled = true;
-    node.selected = true;
-    selectNode.appendChild(node);
-    selectNode.value = preferredRoute;
-    return;
-  }
-  for (const route of desired) {
-    const descriptor = routeOptions?.[route] || null;
-    const label = ROUTE_LABELS[route] || route;
-    const node = option(route, label, ownerDocument);
-    if (descriptor?.normalized_route && descriptor.normalized_route !== route) {
-      node.title = `${label} → ${descriptor.normalized_route}`;
-    }
-    selectNode.appendChild(node);
-  }
-  selectNode.value = desired.includes(preferredRoute) ? preferredRoute : desired[0];
-}
-
-async function refreshAgentStatus(panel, { quiet = false } = {}) {
-  const route = normalizeRoutePreference(panel.fields.route.value);
-  const model = normalizeModelPreference(panel.fields.model.value);
-  const requestEpoch =
-    (Number.isFinite(panel.state.statusRequestEpoch) ? panel.state.statusRequestEpoch : 0) + 1;
-  panel.state.statusRequestEpoch = requestEpoch;
-  const priorRetry = panel.state.statusRetry;
-  const retryAttempts =
-    priorRetry?.route === route && priorRetry?.model === model && Number.isFinite(priorRetry?.attempts)
-      ? priorRetry.attempts
-      : 0;
-  if (priorRetry?.timerId) {
-    clearTimeout(priorRetry.timerId);
-  }
-  panel.state.statusRetry = retryAttempts > 0
-    ? { route, model, attempts: retryAttempts, exhausted: false, timerId: null }
-    : null;
-  panel.state.routeStatus = {
-    kind: ROUTE_STATUS_KIND.LOADING,
-    requestedRoute: route,
-    model,
+function agentStatusDeps() {
+  const deps = {
+    clearCredentialInput,
+    closeChooseEngineOverlay,
+    markAgentPanelDirtyAfterCommit,
+    nextMacrotask,
+    openChooseEngineOverlay,
+    renderAgentPanel,
+    refreshAgentStatus: (panel, opts) => pollerRefreshAgentStatus(panel, opts, deps),
+    scheduleAgentStatusRetry: (panel, route, model, opts) =>
+      pollerScheduleAgentStatusRetry(panel, route, model, opts, deps),
+    SETTINGS_STATUS_RENDER_SECTIONS,
+    RENDER_SECTIONS,
+    syncChooseEngineGate: (panel) => pollerSyncChooseEngineGate(panel, deps),
   };
-  panel.fields.route.disabled = true;
-  panel.fields.model.disabled = true;
-  if (typeof document !== "undefined") {
-    renderAgentPanel(panel, { dirtySections: SETTINGS_STATUS_RENDER_SECTIONS });
-  }
-  try {
-    // Keep the initial "loading" paint observable, then let tests/users observe
-    // the completed state after the request has actually been issued.
-    await nextMacrotask();
-    const statusUrl = buildStatusUrl(route, model);
-    console.log("[vibecomfy] refreshAgentStatus fetching", statusUrl, "current route value:", panel.fields.route.value);
-    const res = await fetch(statusUrl);
-    console.log("[vibecomfy] refreshAgentStatus response status", res.status, "content-type", res.headers.get("content-type"));
-    let status = null;
-    let rawText = "";
-    try {
-      rawText = await res.text();
-      status = JSON.parse(rawText);
-      console.log("[vibecomfy] refreshAgentStatus parsed status", status);
-    } catch (error) {
-      if (Number.isFinite(requestEpoch) && panel.state.statusRequestEpoch !== requestEpoch) {
-        return;
-      }
-      console.warn("[vibecomfy] malformed /vibecomfy/agent/status payload", error, "raw text:", rawText.substring(0, 500));
-      panel.state.statusSnapshot = null;
-      panel.state.routeStatus = {
-        kind: ROUTE_STATUS_KIND.MALFORMED,
-        requestedRoute: route,
-        model,
-        detail: String(error),
-      };
-      panel.state.settingsMessage = "Malformed status payload; route/model controls disabled.";
-      populateRouteSelect(panel.fields.route, null, {
-        placeholderLabel: "Malformed status payload",
-        selectedRoute: route,
-      });
-      panel.fields.route.value = route;
-      if (typeof document !== "undefined") {
-        markAgentPanelDirtyAfterCommit(panel, SETTINGS_STATUS_RENDER_SECTIONS, "status");
-      }
-      return;
-    }
-    if (Number.isFinite(requestEpoch) && panel.state.statusRequestEpoch !== requestEpoch) {
-      console.log("[vibecomfy] refreshAgentStatus stale epoch, dropping response");
-      return;
-    }
-    if (!res.ok) {
-      console.error("[vibecomfy] refreshAgentStatus HTTP error", res.status);
-      throw new Error(`HTTP ${res.status}`);
-    }
-    clearAgentStatusRetry(panel);
-    panel.state.statusSnapshot = status;
-    const projected = projectRouteStatus(status, { route, model, quiet });
-    const requestedRoute = projected.routeStatus.requestedRoute;
-    console.log("[vibecomfy] refreshAgentStatus requestedRoute=", requestedRoute, "routeOptions keys=", Object.keys(projected.routeOptions || {}), "res.ok=", res.ok);
-    if (projected.issue === "malformed_status") {
-      console.warn("[vibecomfy] malformed /vibecomfy/agent/status payload", status);
-    } else if (projected.issue === "missing_route_options") {
-      console.warn("[vibecomfy] status payload missing route_options", status);
-    } else if (projected.issue === "missing_route_descriptor") {
-      console.warn("[vibecomfy] status payload missing descriptor for requested route", {
-        requestedRoute,
-        routeOptions: projected.routeOptions,
-      });
-    }
-    panel.state.routeStatus = projected.routeStatus;
-    if (projected.settingsMessage != null) {
-      panel.state.settingsMessage = projected.settingsMessage;
-    }
-    if (projected.routeOptions) {
-      populateRouteSelect(panel.fields.route, projected.routeOptions, {
-        selectedRoute: requestedRoute,
-      });
-    } else {
-      populateRouteSelect(panel.fields.route, null, {
-        placeholderLabel: projected.placeholderLabel || "Status unavailable",
-        selectedRoute: requestedRoute,
-      });
-    }
-    panel.fields.route.value = requestedRoute;
-    if (typeof status?.model === "string" && !panel.fields.model.value.trim()) {
-      panel.fields.model.value = status.model;
-    }
-  } catch (e) {
-    if (Number.isFinite(requestEpoch) && panel.state.statusRequestEpoch !== requestEpoch) {
-      return;
-    }
-    console.error("[vibecomfy] refreshAgentStatus caught exception", e);
-    panel.state.settingsMessage = `Status unavailable: ${String(e)}`;
-    panel.state.statusSnapshot = null;
-    panel.state.routeStatus = {
-      kind: ROUTE_STATUS_KIND.UNAVAILABLE,
-      requestedRoute: route,
-      model,
-      detail: String(e),
-    };
-    populateRouteSelect(panel.fields.route, null, {
-      placeholderLabel: "Status unavailable",
-      selectedRoute: route,
-    });
-    panel.fields.route.value = route;
-    scheduleAgentStatusRetry(panel, route, model, { quiet: true });
-  }
-  if (typeof document === "undefined") {
-    return;
-  }
-  syncChooseEngineGate(panel);
-  if (typeof panel?.state?.chooseEngineRefresh === "function") {
-    panel.state.chooseEngineRefresh();
-  }
-  const statusDirtySections = Array.isArray(panel?.state?.chatMessages) && panel.state.chatMessages.length
-    ? [...SETTINGS_STATUS_RENDER_SECTIONS, RENDER_SECTIONS.META, RENDER_SECTIONS.THREAD]
-    : SETTINGS_STATUS_RENDER_SECTIONS;
-  console.log("[vibecomfy] refreshAgentStatus final routeStatus=", panel.state.routeStatus?.kind, "settingsMessage=", panel.state.settingsMessage);
-  markAgentPanelDirtyAfterCommit(panel, statusDirtySections, "status");
+  return deps;
 }
 
 function submitReadinessState(panel) {
@@ -3113,6 +2806,10 @@ function clearCredentialInput(panel) {
 
 function hasStoredBrowserCredential(panel, route = panel?.fields?.route?.value) {
   const presence = panel?.state?.statusSnapshot?.credential_presence || {};
+  const requestedRoute = String(route || "").trim().toLowerCase();
+  if (requestedRoute === "deepseek") {
+    return Boolean(presence.deepseek_api_key);
+  }
   const normalizedRoute = normalizeRoutePreference(route);
   if (normalizedRoute === "deepseek") {
     return Boolean(presence.deepseek_api_key);
@@ -3137,119 +2834,17 @@ function closeChooseEngineOverlay(panel) {
   }
 }
 
-function storedReadyProviderFromStatus(panel) {
-  const status = panel?.state?.statusSnapshot;
-  const routeStatus = routeStatusState(panel);
-  if (!status || routeStatus.kind !== ROUTE_STATUS_KIND.READY || status.provider_available === false) {
-    return null;
-  }
-  const resolvedRoute = normalizeRoutePreference(
-    status.route || status.route_metadata?.normalized_route || status.requested_route,
+function normalizeCandidateApplyEligibility(candidateGraph, eligibility) {
+  return applyEligibility(
+    {
+      state: {
+        candidateGraph,
+        applyEligibility: eligibility,
+      },
+    },
+    null,
+    { missingContractAsNull: true },
   );
-  if (resolvedRoute === "deepseek" && status.credential_presence?.deepseek_api_key) {
-    return "deepseek";
-  }
-  if (resolvedRoute === "openrouter" && (status.credential_presence?.openrouter_api_key || status.credential_presence?.deepseek_api_key)) {
-    return "openrouter";
-  }
-  return null;
-}
-
-function syncChooseEngineGate(panel) {
-  if (!panel?.shell || typeof document === "undefined") {
-    return;
-  }
-  const persisted = getPersistedAgentProvider();
-  if (persisted) {
-    closeChooseEngineOverlay(panel);
-    return;
-  }
-  const readyProvider = storedReadyProviderFromStatus(panel);
-  if (readyProvider) {
-    setPersistedAgentProvider(readyProvider);
-    populateRouteSelect(panel.fields.route, routeOptionsFromStatus(panel.state.statusSnapshot), {
-      selectedRoute: readyProvider,
-    });
-    panel.fields.route.value = readyProvider;
-    panel.state.routeStatus = {
-      kind: ROUTE_STATUS_KIND.READY,
-      requestedRoute: readyProvider,
-      model: normalizeModelPreference(panel.fields.model.value),
-    };
-    panel.state.settingsMessage = `${readyProvider} → ${panel.state.statusSnapshot?.route || readyProvider} (provider ready)`;
-    closeChooseEngineOverlay(panel);
-    return;
-  }
-  if (routeStatusState(panel).kind !== ROUTE_STATUS_KIND.LOADING) {
-    openChooseEngineOverlay(panel, { onResolved: () => {} });
-  }
-}
-
-function normalizeApplyEligibility(payload) {
-  if (!payload || typeof payload !== "object") {
-    return null;
-  }
-  if (!Object.values(APPLY_ELIGIBILITY_REASON).includes(payload.reason)) {
-    return null;
-  }
-  return {
-    applyable: payload.applyable !== false,
-    reason: payload.reason,
-    message: typeof payload.message === "string" ? payload.message : "",
-    warnings: Array.isArray(payload.warnings) ? payload.warnings.slice() : [],
-  };
-}
-
-function noCandidateApplyEligibility() {
-  return {
-    applyable: false,
-    reason: APPLY_ELIGIBILITY_REASON.NO_CANDIDATE,
-    message: "No candidate is available to apply.",
-    warnings: [],
-  };
-}
-
-function ensureMissingEligibilityWarning(panel, detail) {
-  if (!panel?.state) {
-    console.warn(`[vibecomfy] ${detail.message}`);
-    return;
-  }
-  const warningKey = [
-    detail.reason,
-    panel.state.turnId || "no-turn",
-    panel.state.candidateGraphHash || "no-candidate-hash",
-  ].join(":");
-  if (panel.state.applyEligibilityWarningKey === warningKey) {
-    return;
-  }
-  panel.state.applyEligibilityWarningKey = warningKey;
-  panel.state.applyEligibilityWarning = detail;
-  panel.state.debugPayload = {
-    ...(panel.state.debugPayload && typeof panel.state.debugPayload === "object"
-      ? panel.state.debugPayload
-      : {}),
-    apply_eligibility_warning: detail,
-  };
-  console.warn(`[vibecomfy] ${detail.message}`);
-}
-
-function missingContractApplyEligibility(panel, detail = {}) {
-  const message = typeof detail.message === "string" && detail.message
-    ? detail.message
-    : "Backend response omitted canonical eligibility for this candidate. Apply is disabled until the contract is present.";
-  const warning = {
-    reason: APPLY_ELIGIBILITY_REASON.MISSING_CONTRACT,
-    message,
-    turn_id: panel?.state?.turnId || null,
-    candidate_graph_hash: panel?.state?.candidateGraphHash || null,
-  };
-  ensureMissingEligibilityWarning(panel, warning);
-  return {
-    applyable: false,
-    reason: APPLY_ELIGIBILITY_REASON.MISSING_CONTRACT,
-    message,
-    warnings: ["missing_contract"],
-  };
 }
 
 export function syncBaselineFromResponse(panel, payload) {
@@ -3352,129 +2947,6 @@ function recoveryForPanelState(recovery) {
         : typeof recovery.clientStructuralGraphHash === "string"
           ? recovery.clientStructuralGraphHash
           : null,
-  };
-}
-
-function applyEligibility(panel, liveCanvasSnapshot = null) {
-  if (!panel?.state?.candidateGraph) {
-    return noCandidateApplyEligibility();
-  }
-  const canonicalEligibility = normalizeApplyEligibility(panel.state.applyEligibility);
-  if (canonicalEligibility) {
-    panel.state.applyEligibilityWarning = null;
-    panel.state.applyEligibilityWarningKey = null;
-    return canonicalEligibility;
-  }
-  return missingContractApplyEligibility(panel);
-}
-
-function disabledApplyEligibility(reason, message, warnings = []) {
-  return {
-    applyable: false,
-    reason,
-    message: typeof message === "string" ? message : "",
-    warnings: Array.isArray(warnings) ? warnings.slice() : [],
-  };
-}
-
-function candidateTurnId(message, snapshot = null) {
-  if (typeof snapshot?.turn_id === "string" && snapshot.turn_id) {
-    return snapshot.turn_id;
-  }
-  if (typeof message?.turn_id === "string" && message.turn_id) {
-    return message.turn_id;
-  }
-  return null;
-}
-
-function candidateGraphPresentForBubble(message, snapshot = null) {
-  if (snapshot && Object.prototype.hasOwnProperty.call(snapshot, "candidateGraphPresent")) {
-    return Boolean(snapshot.candidateGraphPresent);
-  }
-  const candidateGraph = message?.candidateGraph
-    || message?.candidate?.graph
-    || message?.response?.candidateGraph
-    || message?.response?.candidate?.graph
-    || null;
-  return Boolean(candidateGraph && typeof candidateGraph === "object");
-}
-
-function snapshotEligibilityForBubble(message, snapshot = null) {
-  const normalizedSnapshot = normalizeApplyEligibility(snapshot?.applyEligibility);
-  if (normalizedSnapshot) {
-    return normalizedSnapshot;
-  }
-  const normalizedMessage = normalizeApplyEligibility(
-    message?.eligibility
-      || message?.response?.eligibility
-      || message?.apply_eligibility
-      || message?.response?.apply_eligibility
-      || null,
-  );
-  if (normalizedMessage) {
-    return normalizedMessage;
-  }
-  return null;
-}
-
-function candidateActionState(panel, message = null, snapshot = null) {
-  const submitting = panel?.state?.phase === PANEL_STATE.SUBMITTING;
-  const applying = panel?.state?.phase === PANEL_STATE.APPLYING;
-  const activeTurnId =
-    panel?.state?.candidateGraph && typeof panel.state.turnId === "string" && panel.state.turnId
-      ? panel.state.turnId
-      : null;
-  const turnId = candidateTurnId(message, snapshot) || activeTurnId;
-  const candidatePresent = message || snapshot
-    ? candidateGraphPresentForBubble(message, snapshot)
-    : Boolean(panel?.state?.candidateGraph);
-
-  if (!candidatePresent) {
-    return {
-      visible: false,
-      active: false,
-      turnId,
-      eligibility: noCandidateApplyEligibility(),
-      applyDisabled: true,
-      rejectDisabled: true,
-    };
-  }
-
-  const active =
-    !message && !snapshot
-      ? Boolean(candidatePresent && activeTurnId)
-      : Boolean(activeTurnId && turnId && activeTurnId === turnId);
-  let eligibility;
-  if (!message && !snapshot) {
-    eligibility = applyEligibility(panel);
-  } else if (active) {
-    eligibility = applyEligibility(panel);
-  } else {
-    const historicalEligibility = snapshotEligibilityForBubble(message, snapshot);
-    if (historicalEligibility?.reason === APPLY_ELIGIBILITY_REASON.SUPERSEDED) {
-      eligibility = historicalEligibility;
-    } else {
-      eligibility = disabledApplyEligibility(
-        APPLY_ELIGIBILITY_REASON.NOT_LATEST,
-        "Only the latest candidate can be applied.",
-        ["not_latest"],
-      );
-    }
-  }
-
-  const blockerMessage =
-    !eligibility.applyable
-      ? (eligibility.message || (Array.isArray(eligibility.warnings) ? eligibility.warnings[0] : "") || "")
-      : "";
-
-  return {
-    visible: true,
-    active,
-    turnId,
-    eligibility,
-    blockerMessage,
-    applyDisabled: applying || !active || !eligibility.applyable,
-    rejectDisabled: submitting || applying || !active,
   };
 }
 
@@ -3854,7 +3326,7 @@ function createAgentPanelShell() {
     fontSize: "12px",
     boxSizing: "border-box",
   });
-  populateRouteSelect(routeSelect, null, { selectedRoute: "auto" });
+  pollerPopulateRouteSelect(routeSelect, null, { selectedRoute: "auto" }, agentStatusDeps());
   routeSelect.value = "auto";
   const modelInput = document.createElement("input");
   modelInput.id = PANEL_IDS.model;
@@ -3901,12 +3373,13 @@ function createAgentPanelShell() {
     gap: "8px",
     flexWrap: "wrap",
   });
-  const settingsTest = button("Test Provider", () => testAgentSettings(currentAgentPanel()));
+  const settingsTest = button("Test Provider", () =>
+    testAgentSettingsImpl(currentAgentPanel(), agentStatusDeps()));
   settingsTest.id = PANEL_IDS.settingsTest;
   routeSelect.onchange = () => {
     const panel = currentAgentPanel();
     if (panel) {
-      panel.fields.route.value = normalizeRoutePreference(routeSelect.value);
+      panel.fields.route.value = routeSelect.value;
       return autoSaveAgentSettings(panel);
     }
     return undefined;
@@ -3968,7 +3441,7 @@ function createAgentPanelShell() {
       return;
     }
     panel.state.developerExpanded = !panel.state.developerExpanded;
-    renderDeveloperDisclosure(panel);
+    composerRenderDeveloperSection(panel, composerRenderDeps());
   });
   developerToggle.id = PANEL_IDS.developerToggle;
   Object.assign(developerToggle.style, {
@@ -4079,6 +3552,9 @@ function createAgentPanelShell() {
       ...createAgentEditState(),
       // Non-lifecycle fields (read by store handlers but write-owned elsewhere)
       history: [],
+      // Compatibility mirror: derived execution/diagnostic turn feed owned by
+      // the agent panel frontend compatibility layer. Delete after all normal
+      // consumers/tests read ExecutionEvent selectors directly.
       turns: [],
       undoStack: [],
       settingsMessage: null,
@@ -4100,8 +3576,15 @@ function createAgentPanelShell() {
       previewEnabled: false,
       expandedTurnKeys: {},
       expandedBubbleTurnKeys: {},
+      // Compatibility/debug cache: retained raw-ish detail snapshots for
+      // explicit Audit/Debug/download affordances. Delete after those surfaces
+      // read ResponseDetail/AuditArtifact/debug selectors directly.
       turnDetailSnapshots: {},
       // Chat / session rehydration state (M3)
+      // Compatibility mirror: safe transcript data owned by the agent panel
+      // frontend compatibility layer. Delete after normal consumers/tests read
+      // TranscriptMessage selectors and diagnostics stop using raw transcript
+      // fallbacks.
       chatMessages: [],
       chatLoaded: false,
       chatError: null,
@@ -4358,7 +3841,7 @@ function restoreLatestCandidateFromChat(panel, payload) {
     return;
   }
   const eligibility = latestApplyCandidate?.eligibility;
-  const normalizedEligibility = normalizeApplyEligibility(eligibility);
+  const normalizedEligibility = normalizeCandidateApplyEligibility(candidateGraph, eligibility);
   const restoredActionAllowed = Boolean(
     candidateGraph
     && (latestApplyCandidate?.applyable === true || normalizedEligibility?.applyable === true),
@@ -4476,9 +3959,9 @@ function openAgentPanel({ mode = AGENT_PANEL_MOUNT_MODE.LAUNCHER, container = nu
   const persisted = getPersistedAgentProvider();
   if (persisted) {
     panel.fields.route.value = persisted;
-    populateRouteSelect(panel.fields.route, null, { selectedRoute: persisted });
+    pollerPopulateRouteSelect(panel.fields.route, null, { selectedRoute: persisted }, agentStatusDeps());
   }
-  refreshAgentStatus(panel, { quiet: true });
+  pollerRefreshAgentStatus(panel, { quiet: true }, agentStatusDeps());
   ensureScheduledAgentPanelDirtyFlush(panel, "open-backstop");
   return panel;
 }
@@ -4587,6 +4070,143 @@ function sortPanelTurns(turns) {
   return [...durable, ...batch, ...other].slice(0, PANEL_TURN_LIMIT);
 }
 
+function executionEventKeyForTurn(entry, index = null) {
+  if (entry?.turn_key) {
+    return `turn:${entry.turn_key}`;
+  }
+  if (entry?.entry_type === "batch") {
+    return `turn:${batchTurnKey(entry.session_id, entry.turn_number)}`;
+  }
+  if (entry?.entry_type === "durable") {
+    return `turn:${durableTurnKey(entry)}`;
+  }
+  const sessionId = stableTurnSessionId(entry?.session_id);
+  const turnId = entry?.turn_id || `entry-${index ?? "new"}`;
+  return `event:${sessionId}:${turnId}:${index ?? "new"}`;
+}
+
+function syncExecutionEventIndexes(panel) {
+  ensureRoundtripBoundaryCompartments(panel);
+  const executionEventsByKey = {};
+  panel.state.executionEvents.forEach((event, index) => {
+    const eventKey = event?.event_key || executionEventKeyForTurn(event?.turnEntry || event, index);
+    if (eventKey) {
+      executionEventsByKey[eventKey] = index;
+    }
+  });
+  panel.state.compartmentIndexes.executionEventsByKey = executionEventsByKey;
+}
+
+function executionEventTurnEntry(event) {
+  if (!event || typeof event !== "object") {
+    return null;
+  }
+  if (event.mirror === false) {
+    return null;
+  }
+  if (event.turnEntry && typeof event.turnEntry === "object") {
+    return clonePlainData(event.turnEntry);
+  }
+  if (event.entry_type === "batch" || event.entry_type === "durable") {
+    return clonePlainData(event);
+  }
+  if (Array.isArray(event.batchTurns) && event.batchTurns.length) {
+    return null;
+  }
+  if (!event.turn_id && !event.status && !event.message) {
+    return null;
+  }
+  const entry = {
+    entry_type: "durable",
+    status: event.status || "done",
+    session_id: event.session_id || null,
+    turn_id: event.turn_id || null,
+    baseline_turn_id: event.baseline_turn_id || null,
+    task: event.task || null,
+    timestamp: event.timestamp || null,
+    failure_kind: event.failure_kind || null,
+    failure_stage: event.failure_stage || null,
+    message: event.message || null,
+    audit_ref: event.audit_ref || event.auditRef || null,
+    raw_payload: event.raw_payload || null,
+  };
+  entry.turn_key = durableTurnKey(entry);
+  return entry;
+}
+
+function syncTurnsCompatibilityMirror(panel) {
+  if (!panel?.state) {
+    return [];
+  }
+  ensureRoundtripBoundaryCompartments(panel);
+  // Compatibility mirror contract: panel.state.turns is a derived
+  // execution/diagnostic mirror owned by the agent panel frontend compatibility
+  // layer. It is not normal renderer input. Delete after diagnostics, reports,
+  // and tests consume selectExecutionEvents/selectAuditArtifacts directly.
+  const turns = [];
+  for (const event of panel.state.executionEvents) {
+    const entry = executionEventTurnEntry(event);
+    if (entry) {
+      turns.push(entry);
+    }
+  }
+  panel.state.turns = sortPanelTurns(turns);
+  return panel.state.turns;
+}
+
+function upsertExecutionEvent(panel, rawEvent, options = {}) {
+  if (!panel?.state || !rawEvent || typeof rawEvent !== "object") {
+    return null;
+  }
+  ensureRoundtripBoundaryCompartments(panel);
+  const turnEntry = options.turnEntry
+    ? clonePlainData(options.turnEntry)
+    : (rawEvent.entry_type === "batch" || rawEvent.entry_type === "durable" ? clonePlainData(rawEvent) : null);
+  const eventKey = options.eventKey || executionEventKeyForTurn(turnEntry || rawEvent);
+  const projected = projectExecutionEvent({
+    ...rawEvent,
+    session_id: rawEvent.session_id || turnEntry?.session_id,
+    turn_id: rawEvent.turn_id || turnEntry?.turn_id,
+    status: rawEvent.status || turnEntry?.status,
+    message: rawEvent.message || turnEntry?.message,
+  });
+  const incoming = {
+    ...(projected ? clonePlainData(projected) : {}),
+    ...clonePlainData(rawEvent),
+    event_key: eventKey,
+    mirror: options.mirror === false ? false : true,
+    turnEntry,
+  };
+  const currentIndex = panel.state.compartmentIndexes.executionEventsByKey?.[eventKey];
+  if (Number.isInteger(currentIndex) && currentIndex >= 0 && currentIndex < panel.state.executionEvents.length) {
+    const existing = panel.state.executionEvents[currentIndex];
+    const existingTurn = executionEventTurnEntry(existing);
+    const mergedTurn = turnEntry?.entry_type === "batch" && existingTurn?.entry_type === "batch"
+      ? mergeBatchTurnEntry(existingTurn, turnEntry)
+      : (turnEntry || existingTurn);
+    panel.state.executionEvents[currentIndex] = {
+      ...existing,
+      ...incoming,
+      turnEntry: mergedTurn,
+      debugPayload: incoming.debugPayload || existing.debugPayload || null,
+      reasoning: Array.isArray(incoming.reasoning) && incoming.reasoning.length ? incoming.reasoning : existing.reasoning,
+      providerDiagnostics:
+        incoming.providerDiagnostics && (
+          (Array.isArray(incoming.providerDiagnostics) && incoming.providerDiagnostics.length)
+          || (!Array.isArray(incoming.providerDiagnostics) && typeof incoming.providerDiagnostics === "object" && Object.keys(incoming.providerDiagnostics).length)
+        )
+          ? incoming.providerDiagnostics
+          : existing.providerDiagnostics,
+      batchTurns: Array.isArray(incoming.batchTurns) && incoming.batchTurns.length ? incoming.batchTurns : existing.batchTurns,
+    };
+  } else {
+    panel.state.executionEvents.push(incoming);
+  }
+  syncExecutionEventIndexes(panel);
+  syncTurnsCompatibilityMirror(panel);
+  return incoming;
+}
+
 function pushTurnStatus(panel, status, extra = {}) {
   const entry = {
     entry_type: "durable",
@@ -4603,13 +4223,14 @@ function pushTurnStatus(panel, status, extra = {}) {
     raw_payload: extra.raw_payload || null,
   };
   entry.turn_key = durableTurnKey(entry);
-  if (status !== "pending") {
-    panel.state.turns = Array.isArray(panel.state.turns)
-      ? panel.state.turns.filter((existing) => !(existing?.entry_type === "durable" && existing.status === "pending"))
-      : [];
+  if (status !== "pending" && Array.isArray(panel?.state?.executionEvents)) {
+    panel.state.executionEvents = panel.state.executionEvents.filter((event) => {
+      const existing = executionEventTurnEntry(event);
+      return !(existing?.entry_type === "durable" && existing.status === "pending");
+    });
+    syncExecutionEventIndexes(panel);
   }
-  panel.state.turns.unshift(entry);
-  panel.state.turns = sortPanelTurns(panel.state.turns);
+  upsertExecutionEvent(panel, entry, { turnEntry: entry, eventKey: executionEventKeyForTurn(entry) });
   markAgentPanelDirty(panel, [RENDER_SECTIONS.THREAD]);
   return entry;
 }
@@ -4955,13 +4576,64 @@ function normalizeFieldChangesFromMessage(message) {
 }
 
 function changeDetailsForMessage(panel, message, snapshot = null) {
-  if (message?.change_details && typeof message.change_details === "object") {
-    return message.change_details;
+  const responseDetail = responseDetailForMessage(panel, message, snapshot);
+  const safeChangeDetails = changeDetailsFromResponseDetail(responseDetail);
+  if (safeChangeDetails) {
+    return safeChangeDetails;
   }
-  if (snapshot?.changeDetails && typeof snapshot.changeDetails === "object") {
+  if (snapshot?.changeDetails && typeof snapshot.changeDetails === "object" && snapshot?.debugPayload == null) {
     return snapshot.changeDetails;
   }
   return panel?.state?.changeDetails || null;
+}
+
+function responseDetailForMessage(panel, message, snapshot = null) {
+  const turnId = turnIdForDetailLookup(panel, message, snapshot);
+  if (!turnId) {
+    return null;
+  }
+  const detailKey = panel?.state?.compartmentIndexes?.responseDetailsByTurnId?.[turnId] || turnId;
+  return panel?.state?.responseDetails?.[detailKey] || null;
+}
+
+function turnIdForDetailLookup(panel, message = null, snapshot = null) {
+  return (
+    (typeof message?.turn_id === "string" && message.turn_id)
+    || (typeof message?.detail_turn_id === "string" && message.detail_turn_id)
+    || (typeof snapshot?.turn_id === "string" && snapshot.turn_id)
+    || (typeof snapshot?.turn?.turnId === "string" && snapshot.turn.turnId)
+    || (typeof panel?.state?.turnId === "string" && panel.state.turnId)
+    || null
+  );
+}
+
+function changeDetailsFromResponseDetail(detail) {
+  if (!detail || typeof detail !== "object") {
+    return null;
+  }
+  const changes = Array.isArray(detail.changes) ? detail.changes : [];
+  const summary =
+    typeof detail.outcome?.summary === "string" && detail.outcome.summary
+      ? detail.outcome.summary
+      : typeof detail.outcome?.question === "string" && detail.outcome.question
+        ? detail.outcome.question
+        : null;
+  if (!changes.length) {
+    return null;
+  }
+  return {
+    landed_operation_count: changes.length,
+    operations: changes.map((change) => ({
+      uid: change.uid,
+      field_path: change.fieldPath || change.field_path,
+      old: Object.prototype.hasOwnProperty.call(change, "old") ? clonePlainData(change.old) : undefined,
+      new: Object.prototype.hasOwnProperty.call(change, "new") ? clonePlainData(change.new) : undefined,
+      summary: change.fieldPath || change.field_path
+        ? `${change.fieldPath || change.field_path} changed`
+        : "field changed",
+    })),
+    done_summary: summary,
+  };
 }
 
 function normalizeBatchTurn(payload, { source = "response", sessionId = null, status = null, parentTurnId = null, canonicalActivity = null } = {}) {
@@ -5091,15 +4763,76 @@ function rememberTurnDetailSnapshot(panel, detail = {}) {
   if (!turnId) {
     return null;
   }
+  ensureRoundtripBoundaryCompartments(panel);
+  const sessionId =
+    typeof detail.session_id === "string" && detail.session_id
+      ? detail.session_id
+      : (typeof panel.state.sessionId === "string" && panel.state.sessionId ? panel.state.sessionId : null);
+  const safeResponseSource = {
+    turn_id: turnId,
+    session_id: sessionId,
+    status: detail.status || detail.phase || panel.state.phase || null,
+    queueAllowed: detail.queueAllowed ?? panel.state.queueAllowed ?? null,
+    message:
+      detail.message
+      || panel.state.message
+      || panel.state.clarification?.message
+      || panel.state.failure?.user_facing_message
+      || panel.state.failure?.message
+      || panel.state.failure?.error
+      || null,
+    outcome: detail.outcome && typeof detail.outcome === "object"
+      ? detail.outcome
+      : (detail.clarification || panel.state.clarification)
+        ? {
+            kind: "clarify",
+            question: (detail.clarification || panel.state.clarification)?.message || null,
+          }
+        : detail.failure || panel.state.failure
+          ? {
+              kind: "error",
+              summary:
+                detail.failure?.user_facing_message
+                || detail.failure?.message
+                || detail.failure?.error
+                || panel.state.failure?.user_facing_message
+                || panel.state.failure?.message
+                || panel.state.failure?.error
+                || null,
+            }
+          : null,
+    changes: detail.fieldChanges ?? panel.state.lastSubmitFieldChanges ?? null,
+    changeDetails: detail.changeDetails ?? panel.state.changeDetails ?? null,
+    candidate: detail.candidateGraphHash || panel.state.candidateGraphHash
+      ? {
+          graphHash: detail.candidateGraphHash || panel.state.candidateGraphHash,
+          structuralGraphHash: detail.candidateStructuralGraphHash || null,
+          baselineGraphHash: detail.baselineGraphHash || panel.state.baselineGraphHash || null,
+        }
+      : null,
+    eligibility: detail.applyEligibility ?? panel.state.applyEligibility ?? null,
+    report: detail.candidateReport ?? panel.state.candidateReport ?? null,
+    progress: detail.progress || null,
+  };
+  recordRoundtripResponseCompartments(panel, {
+    ...safeResponseSource,
+    auditRef: detail.auditRef ?? panel.state.auditRef ?? null,
+    debugPayload: detail.debugPayload ?? panel.state.debugPayload ?? null,
+  }, {
+    includeSourceAsDebugPayload: false,
+    debugBucket: "detailSnapshots",
+  });
   if (!panel.state.turnDetailSnapshots || typeof panel.state.turnDetailSnapshots !== "object") {
     panel.state.turnDetailSnapshots = {};
   }
+  // Compatibility/debug cache: retained raw detail snapshots are debug/audit
+  // only, owned by the agent panel frontend compatibility layer for explicit
+  // Audit/Debug/download affordances. Delete after those explicit surfaces use
+  // responseDetails plus AuditArtifact/debug selectors and normal consumers no
+  // longer need legacy detail mirrors.
   const snapshot = {
     turn_id: turnId,
-    session_id:
-      typeof detail.session_id === "string" && detail.session_id
-        ? detail.session_id
-        : (typeof panel.state.sessionId === "string" && panel.state.sessionId ? panel.state.sessionId : null),
+    session_id: sessionId,
     phase: detail.phase || panel.state.phase,
     message:
       detail.message
@@ -5135,6 +4868,8 @@ function detailSnapshotForMessage(panel, message) {
   if (!turnId) {
     return null;
   }
+  // Explicit-surface compatibility only. Normal response detail lookups should
+  // use responseDetails through responseDetailForMessage/changeDetailsForMessage.
   return panel?.state?.turnDetailSnapshots?.[turnId] || null;
 }
 
@@ -5254,14 +4989,19 @@ function buildSyntheticAgentMessage(panel) {
           && (!turnId || msg.turn_id === turnId)
         ))
       : false;
-    return alreadyInThread ? null : synthetic;
+    return alreadyInThread ? null : mutableTranscriptMessage(synthetic);
   }
   return null;
 }
 
+function mutableTranscriptMessage(message) {
+  const projected = projectTranscriptMessage(message);
+  return projected ? clonePlainData(projected) : null;
+}
+
 function makePendingResponseChatMessage(panel, task, progress, submitEpoch) {
   const epoch = submitEpoch || Date.now();
-  return {
+  return mutableTranscriptMessage({
     role: "agent",
     text: "",
     source: "agent-edit",
@@ -5275,7 +5015,91 @@ function makePendingResponseChatMessage(panel, task, progress, submitEpoch) {
     session_id: panel?.state?.sessionId || null,
     task: typeof task === "string" ? task : null,
     timestamp: new Date().toISOString(),
+  });
+}
+
+function ensureRoundtripBoundaryCompartments(panel) {
+  if (!panel?.state) {
+    return;
+  }
+  if (!Array.isArray(panel.state.transcriptMessages)) {
+    panel.state.transcriptMessages = [];
+  }
+  if (!panel.state.responseDetails || typeof panel.state.responseDetails !== "object") {
+    panel.state.responseDetails = {};
+  }
+  if (!Array.isArray(panel.state.executionEvents)) {
+    panel.state.executionEvents = [];
+  }
+  if (!Array.isArray(panel.state.auditArtifacts)) {
+    panel.state.auditArtifacts = [];
+  }
+  if (!panel.state.debugDiagnostics || typeof panel.state.debugDiagnostics !== "object") {
+    panel.state.debugDiagnostics = {};
+  }
+  if (!panel.state.compartmentIndexes || typeof panel.state.compartmentIndexes !== "object") {
+    panel.state.compartmentIndexes = {};
+  }
+  panel.state.compartmentIndexes.responseDetailsByTurnId ||= {};
+  panel.state.compartmentIndexes.executionEventsByKey ||= {};
+  panel.state.compartmentIndexes.auditArtifactsByTurnId ||= {};
+}
+
+function recordRoundtripResponseCompartments(panel, source, options = {}) {
+  if (!source || typeof source !== "object") {
+    return;
+  }
+  const {
+    includeSourceAsDebugPayload = true,
+    debugBucket = "local",
+  } = options;
+  ensureRoundtripBoundaryCompartments(panel);
+  const detail = projectResponseDetail(source);
+  const turnId = detail?.turn?.turnId || source.turn_id || source.turnId || null;
+  if (detail && typeof turnId === "string" && turnId) {
+    panel.state.responseDetails[turnId] = detail;
+    panel.state.compartmentIndexes.responseDetailsByTurnId[turnId] = turnId;
+  }
+  const explicitDebugPayload =
+    source.debugPayload
+    || source.debug_payload
+    || source.debug
+    || (includeSourceAsDebugPayload ? (source.raw || source) : null);
+  const diagnosticSource = {
+    ...source,
+    ...(explicitDebugPayload ? { debugPayload: explicitDebugPayload } : {}),
   };
+  const event = projectExecutionEvent(diagnosticSource);
+  const hasExplicitDiagnosticData = Boolean(
+    explicitDebugPayload
+    || (Array.isArray(event?.reasoning) && event.reasoning.length)
+    || (Array.isArray(event?.providerDiagnostics) && event.providerDiagnostics.length)
+    || (Array.isArray(event?.batchTurns) && event.batchTurns.length),
+  );
+  if (event && hasExplicitDiagnosticData) {
+    const eventKey = `${event.session_id || "session"}:${event.turn_id || `entry-${panel.state.executionEvents.length}`}:diagnostic`;
+    upsertExecutionEvent(panel, event, { eventKey, mirror: false });
+    panel.state.debugDiagnostics[debugBucket] = [
+      ...(Array.isArray(panel.state.debugDiagnostics[debugBucket]) ? panel.state.debugDiagnostics[debugBucket] : []),
+      {
+        key: eventKey,
+        session_id: event.session_id,
+        turn_id: event.turn_id,
+        debugPayload: event.debugPayload,
+        reasoning: event.reasoning,
+        providerDiagnostics: event.providerDiagnostics,
+        batchTurns: event.batchTurns,
+      },
+    ];
+  }
+  const artifact = projectAuditArtifact(source);
+  if (artifact?.auditRef || (Array.isArray(artifact?.artifactRefs) && artifact.artifactRefs.length)) {
+    const index = panel.state.auditArtifacts.length;
+    panel.state.auditArtifacts.push(artifact);
+    if (artifact.turn_id) {
+      panel.state.compartmentIndexes.auditArtifactsByTurnId[artifact.turn_id] = index;
+    }
+  }
 }
 
 function findPendingResponseMessage(panel) {
@@ -5299,7 +5123,12 @@ function updatePendingResponseProgress(panel, progress, label = null, canonicalA
   // Use canonical headline as the progress label.
   pending.progress_label = typeof label === "string" && label ? label : null;
   if (canonicalActivity && typeof canonicalActivity === "object") {
-    pending.canonical_activity = clonePlainData(canonicalActivity);
+    recordRoundtripResponseCompartments(panel, {
+      session_id: panel?.state?.sessionId || null,
+      turn_id: panel?.state?.turnId || null,
+      message: typeof label === "string" && label ? label : null,
+      debugPayload: { canonical_activity: canonicalActivity },
+    });
   }
   // Only blank the text if we have a meaningful progress update to show.
   const hasActivePhase = progress.decide === "active"
@@ -5308,6 +5137,21 @@ function updatePendingResponseProgress(panel, progress, label = null, canonicalA
   if (hasActivePhase || typeof label === "string") {
     pending.text = "";
   }
+  // Mirror the progress update onto the canonical transcript source so that
+  // renderers using selectTranscriptMessages see live websocket progress.
+  const transcriptMessages = Array.isArray(panel?.state?.transcriptMessages)
+    ? panel.state.transcriptMessages
+    : [];
+  const transcriptPending = transcriptMessages.find((message) => (
+    message?.role === "agent" && (message.pending_response === true || message.executor_pending === true)
+  ));
+  if (transcriptPending && transcriptPending !== pending) {
+    transcriptPending.progress = progress;
+    transcriptPending.progress_label = pending.progress_label;
+    if (hasActivePhase || typeof label === "string") {
+      transcriptPending.text = "";
+    }
+  }
   return true;
 }
 
@@ -5315,10 +5159,15 @@ function promotePendingResponseMessage(panel, result, options = {}) {
   if (!Array.isArray(panel?.state?.chatMessages)) {
     return false;
   }
-  const pending = findPendingResponseMessage(panel);
-  if (!pending) {
+  const pendingIndex = panel.state.chatMessages.findIndex((message) => (
+    message?.role === "agent" && (message.pending_response === true || message.executor_pending === true)
+  ));
+  const pendingBase = pendingIndex >= 0 ? panel.state.chatMessages[pendingIndex] : null;
+  if (!pendingBase) {
     return false;
   }
+  const pending = clonePlainData(pendingBase);
+  recordRoundtripResponseCompartments(panel, result);
   const terminalText = options.message
     || result?.message
     || result?.reply
@@ -5370,6 +5219,13 @@ function promotePendingResponseMessage(panel, result, options = {}) {
   if (panel?.state?.applyEligibility && typeof panel.state.applyEligibility === "object") {
     pending.apply_eligibility = clonePlainData(panel.state.applyEligibility);
   }
+  const safePending = mutableTranscriptMessage(pending);
+  if (safePending) {
+    panel.state.chatMessages[pendingIndex] = safePending;
+    panel.state.transcriptMessages = panel.state.chatMessages
+      .map(mutableTranscriptMessage)
+      .filter(Boolean);
+  }
   return true;
 }
 
@@ -5384,6 +5240,10 @@ function clearPendingResponseMessages(panel) {
   ));
   const changed = panel.state.chatMessages.length !== before;
   if (changed && panel?.state) {
+    panel.state.chatMessages = panel.state.chatMessages
+      .map(mutableTranscriptMessage)
+      .filter(Boolean);
+    panel.state.transcriptMessages = panel.state.chatMessages.slice();
     // Clear only the active activity state; terminal progress stays.
     const progress = panel.state.executorProgress;
     if (progress && typeof progress === "object") {
@@ -5433,15 +5293,10 @@ function upsertBatchTurn(panel, payload, options = {}) {
   if (!normalized) {
     return null;
   }
-  const existingIndex = panel.state.turns.findIndex(
-    (entry) => entry?.entry_type === "batch" && entry.turn_key === normalized.turn_key,
-  );
-  if (existingIndex >= 0) {
-    panel.state.turns[existingIndex] = mergeBatchTurnEntry(panel.state.turns[existingIndex], normalized);
-  } else {
-    panel.state.turns.push(normalized);
-  }
-  panel.state.turns = sortPanelTurns(panel.state.turns);
+  upsertExecutionEvent(panel, payload, {
+    turnEntry: normalized,
+    eventKey: executionEventKeyForTurn(normalized),
+  });
   restoreExpandedTurnKeys(panel, previousExpanded);
   markAgentPanelDirty(panel, [RENDER_SECTIONS.THREAD]);
   return normalized;
@@ -5456,12 +5311,12 @@ function reconcileResponseBatchTurns(panel, result) {
     typeof result?.session_id === "string" && result.session_id
       ? result.session_id
       : (typeof panel?.state?.sessionId === "string" && panel.state.sessionId ? panel.state.sessionId : null);
-  const nextTurns = [];
   // Derive canonical activity feed from current batch turns and merge with response turns.
   const existingBatchByKey = new Map();
-  for (const entry of Array.isArray(panel?.state?.turns) ? panel.state.turns : []) {
+  const existingEvents = Array.isArray(panel?.state?.executionEvents) ? panel.state.executionEvents : [];
+  for (const event of existingEvents) {
+    const entry = executionEventTurnEntry(event);
     if (entry?.entry_type !== "batch") {
-      nextTurns.push(entry);
       continue;
     }
     if (responseSessionId && entry.session_id === responseSessionId) {
@@ -5476,9 +5331,15 @@ function reconcileResponseBatchTurns(panel, result) {
       }
       continue;
     }
-    nextTurns.push(entry);
   }
-  panel.state.turns = nextTurns;
+  if (responseSessionId && Array.isArray(panel?.state?.executionEvents)) {
+    panel.state.executionEvents = panel.state.executionEvents.filter((event) => {
+      const entry = executionEventTurnEntry(event);
+      return !(entry?.entry_type === "batch" && entry.session_id === responseSessionId);
+    });
+    syncExecutionEventIndexes(panel);
+    syncTurnsCompatibilityMirror(panel);
+  }
   const finalIndex = result.batch_turns.length - 1;
   const resultApplyCandidate = (() => {
     try {
@@ -5732,9 +5593,7 @@ function collectThreadMessageEntries(panel) {
 
 function renderChatBubbleNode(bubble, panel, msg, messageKey, messageIndex) {
   return renderChatBubbleNodeImpl(bubble, panel, msg, messageKey, messageIndex, {
-    appendAuditDetail,
     appendCandidateDetail,
-    appendDebugDetail,
     appendFailureDetail,
     appendQueueDetail,
     appendTextLine,
@@ -5743,7 +5602,6 @@ function renderChatBubbleNode(bubble, panel, msg, messageKey, messageIndex) {
     clearNode,
     createBubbleDetailSection,
     createDetails,
-    detailSnapshotForMessage,
     el,
     ensureThreadRenderState,
     showIssueModal,
@@ -5753,10 +5611,8 @@ function renderChatBubbleNode(bubble, panel, msg, messageKey, messageIndex) {
 
 function reconcileChatBubbles(panel, messagesMount, displayEntries) {
   return reconcileChatBubblesImpl(panel, messagesMount, displayEntries, {
-    appendAuditDetail,
     appendCandidateDetail,
     appendChildOnce,
-    appendDebugDetail,
     appendFailureDetail,
     appendQueueDetail,
     appendTextLine,
@@ -5765,7 +5621,6 @@ function reconcileChatBubbles(panel, messagesMount, displayEntries) {
     clearNode,
     createBubbleDetailSection,
     createDetails,
-    detailSnapshotForMessage,
     el,
     ensureThreadRenderState,
     messageSignature,
@@ -5874,12 +5729,11 @@ function installAgentPanelDebugHook() {
 
 function populateAgentBubbleDetail(target, panel, message, snapshot = null) {
   return populateAgentBubbleDetailImpl(target, panel, message, snapshot, {
-    appendAuditDetail,
     appendCandidateDetail,
-    appendDebugDetail,
     appendFailureDetail,
     appendQueueDetail,
     appendTextLine,
+    candidateActionState,
     changeDetailsForMessage,
     clearNode,
     createBubbleDetailSection,
@@ -6624,7 +6478,7 @@ function _computeGhostDimensions(cn, ctx) {
   var PAD_Y = 12;
   var MIN_W = 140;
 
-  var title = (typeof cn.title === "string" && cn.title) || (typeof cn.type === "string" && cn.type) || "Node";
+  var title = safePreviewOverlayText((typeof cn.title === "string" && cn.title) || (typeof cn.type === "string" && cn.type) || "Node", "Node");
   var inputs = Array.isArray(cn.inputs) ? cn.inputs : [];
   var outputs = Array.isArray(cn.outputs) ? cn.outputs : [];
   var widgetValues = readWidgetValues(cn);
@@ -6645,11 +6499,11 @@ function _computeGhostDimensions(cn, ctx) {
 
     var maxSlotW = 0;
     for (var s = 0; s < inputs.length; s += 1) {
-      var lbl = inputs[s] && inputs[s].name;
+      var lbl = safePreviewOverlayText(inputs[s] && inputs[s].name, "");
       if (lbl) maxSlotW = Math.max(maxSlotW, ctx.measureText(_trunc(lbl, 30)).width);
     }
     for (var t = 0; t < outputs.length; t += 1) {
-      var olbl = outputs[t] && outputs[t].name;
+      var olbl = safePreviewOverlayText(outputs[t] && outputs[t].name, "");
       if (olbl) maxSlotW = Math.max(maxSlotW, ctx.measureText(_trunc(olbl, 30)).width);
     }
 
@@ -6674,10 +6528,28 @@ function _computeGhostDimensions(cn, ctx) {
   }
 }
 
+const FORBIDDEN_PREVIEW_OVERLAY_TEXT_PATTERNS = [
+  /\b(?:canvas_apply_allowed|canvasApplyAllowed|queue_allowed|queueAllowed)\b/i,
+  /\b(?:debug_payload|debugPayload|audit_ref|auditRef|raw_path|rawPath|artifact_path|artifactPath)\b/i,
+  /\/(?:real\/)?ComfyUI\/out\/editor_sessions\//i,
+  /\bturns\/\d+\/(?:response|messages|candidate|debug)\.[a-z0-9]+/i,
+  /\b(?:ProviderError|Traceback|stack trace|engine diagnostics|raw diagnostic)\b/i,
+  /\b(?:model prompt|system prompt|prompt messages)\b/i,
+  /\b(?:token budget|exit mode|remaining batches)\b/i,
+];
+
+function safePreviewOverlayText(text, fallback = "") {
+  const value = String(text == null ? "" : text).trim();
+  if (!value) return "";
+  return FORBIDDEN_PREVIEW_OVERLAY_TEXT_PATTERNS.some((pattern) => pattern.test(value))
+    ? fallback
+    : value;
+}
+
 // ── Widget-value preview text (T3) ────────────────────────────────────────
 function widgetValuePreviewText(value) {
   if (value == null) return "";
-  if (typeof value === "string") return value;
+  if (typeof value === "string") return safePreviewOverlayText(value, "");
   if (typeof value === "number" || typeof value === "boolean") return String(value);
   if (Array.isArray(value)) return "[…]";
   return "{…}";
@@ -6835,14 +6707,14 @@ export function drawPreviewOverlay(ctx, diff) {
       if (field && field.new_value !== null && field.new_value !== undefined) {
         label += ": " + field.new_value;
       }
-      return _trunc(label, 48);
+      return _trunc(safePreviewOverlayText(label, "field"), 48);
     };
 
     var _fieldNewValueLabel = function (field) {
       if (!field || field.new_value === null || field.new_value === undefined) {
         return "";
       }
-      return String(field.new_value);
+      return safePreviewOverlayText(field.new_value, "");
     };
 
     var editedFieldsByUid = new Map();
@@ -7080,7 +6952,7 @@ export function drawPreviewOverlay(ctx, diff) {
           ctx.textBaseline = "top";
 
           // Title
-          var titleText = (typeof cn.title === "string" && cn.title) || (typeof cn.type === "string" && cn.type) || "Node";
+          var titleText = safePreviewOverlayText((typeof cn.title === "string" && cn.title) || (typeof cn.type === "string" && cn.type) || "Node", "Node");
           var displayTitle = _trunc(titleText, 40);
           ctx.fillStyle = addedTextColor;
           ctx.fillText(displayTitle, cx + 10, cy + (TITLE_H - 14) / 2);
@@ -7097,13 +6969,13 @@ export function drawPreviewOverlay(ctx, diff) {
             if (si < inputs.length && inputs[si] && inputs[si].name) {
               ctx.fillStyle = addedTextColor;
               ctx.textAlign = "left";
-              ctx.fillText(_trunc(inputs[si].name, 30), cx + 16, slotY);
+              ctx.fillText(_trunc(safePreviewOverlayText(inputs[si].name, ""), 30), cx + 16, slotY);
             }
             // Output label (right side)
             if (si < outputs.length && outputs[si] && outputs[si].name) {
               ctx.fillStyle = addedTextColor;
               ctx.textAlign = "right";
-              ctx.fillText(_trunc(outputs[si].name, 30), cx + cw - 16, slotY);
+              ctx.fillText(_trunc(safePreviewOverlayText(outputs[si].name, ""), 30), cx + cw - 16, slotY);
             }
           }
 
@@ -7497,7 +7369,8 @@ function installQueueGuard() {
 }
 
 function appendCandidateDetail(body, panel, message = null, snapshot = null) {
-  const candidateGraphPresent = candidateGraphPresentForBubble(message, snapshot)
+  const normalDetailMode = Boolean(snapshot);
+  const candidateGraphPresent = candidateActionState(panel, message, snapshot).visible
     || (!message && !snapshot && Boolean(panel.state.candidateGraph));
   const phase = snapshot?.phase || panel.state.phase;
   const clarification = snapshot?.clarification || panel.state.clarification;
@@ -7543,9 +7416,9 @@ function appendCandidateDetail(body, panel, message = null, snapshot = null) {
     }
     return;
   }
-  const debugPayload = snapshot?.debugPayload || panel.state.debugPayload;
-  const stageInfo = getBackendStageInfo(debugPayload);
-  if (stageInfo) {
+  const debugPayload = normalDetailMode ? null : (snapshot?.debugPayload || panel.state.debugPayload);
+  const stageInfo = debugPayload ? getBackendStageInfo(debugPayload) : null;
+  if (!normalDetailMode && stageInfo) {
     appendTextLine(
       body,
       `backend stage: ${stageInfo.stage || "unknown"}${stageInfo.progress != null ? ` (${stageInfo.progress})` : ""}`,
@@ -7561,11 +7434,13 @@ function appendCandidateDetail(body, panel, message = null, snapshot = null) {
   }
   const actionState = candidateActionState(panel, message, snapshot);
   const eligibility = actionState.eligibility;
-  const canvasApplyAllowed = snapshot?.canvasApplyAllowed ?? panel.state.canvasApplyAllowed;
-  const queueAllowed = snapshot?.queueAllowed ?? panel.state.queueAllowed;
-  appendTextLine(body, `canvas_apply_allowed=${String(canvasApplyAllowed)}`, canvasApplyAllowed ? "#4caf50" : "#ffb86c");
+  if (!normalDetailMode) {
+    const canvasApplyAllowed = snapshot?.canvasApplyAllowed ?? panel.state.canvasApplyAllowed;
+    const queueAllowed = snapshot?.queueAllowed ?? panel.state.queueAllowed;
+    appendTextLine(body, `canvas_apply_allowed=${String(canvasApplyAllowed)}`, canvasApplyAllowed ? "#4caf50" : "#ffb86c");
+    appendTextLine(body, `queue_allowed=${String(queueAllowed)}`, queueAllowed ? "#4caf50" : "#ffb86c");
+  }
   appendTextLine(body, `apply_eligibility=${eligibility.reason}`, eligibility.applyable ? "#4caf50" : "#ffb86c");
-  appendTextLine(body, `queue_allowed=${String(queueAllowed)}`, queueAllowed ? "#4caf50" : "#ffb86c");
   if (eligibility.message) {
     appendTextLine(body, eligibility.message, "#9ed0ff");
   }
@@ -7620,7 +7495,9 @@ function appendCandidateDetail(body, panel, message = null, snapshot = null) {
       appendTextLine(body, actionState.blockerMessage, "#9ed0ff");
     }
   }
-  const rows = collectDiffRows(snapshot?.candidateReport || message?.report || panel.state.candidateReport);
+  const report = snapshot?.candidateReport || (!normalDetailMode ? (message?.report || panel.state.candidateReport) : null);
+  const queueIssueReport = report;
+  const rows = collectDiffRows(report);
   if (!rows.length) {
     body.appendChild(muted("Candidate returned without report rows."));
   }
@@ -7643,26 +7520,28 @@ function appendCandidateDetail(body, panel, message = null, snapshot = null) {
     lowered: rows.filter((item) => item.text.startsWith("lowered:")).length,
   };
   body.appendChild(createDetails("affected node preview", affected));
-  const issues = collectQueueIssues(snapshot?.candidateReport || message?.report || panel.state.candidateReport);
+  const issues = collectQueueIssues(queueIssueReport);
   if (issues.length) {
     for (const issue of issues) {
       appendTextLine(body, `${issue.code}: ${issue.message}`, issue.severity === "error" ? "#ffb86c" : "#9ed0ff");
-      if (issue.detail && Object.keys(issue.detail).length) {
+      if (!normalDetailMode && issue.detail && Object.keys(issue.detail).length) {
         body.appendChild(createDetails("queue blocker detail", issue.detail));
       }
     }
   }
   const artifacts = debugPayload?.artifacts;
-  if (artifacts && typeof artifacts === "object") {
+  if (!normalDetailMode && artifacts && typeof artifacts === "object") {
     for (const [name, value] of Object.entries(artifacts)) {
       appendCodeLine(body, `${name}: ${value}`);
     }
   }
-  const auditRef = snapshot?.auditRef || panel.state.auditRef;
+  const auditRef = !normalDetailMode ? (snapshot?.auditRef || panel.state.auditRef) : null;
   if (auditRef?.path) {
     appendCodeLine(body, `audit: ${auditRef.path}`, "#9ed0ff");
   }
-  body.appendChild(createDetails("raw report", snapshot?.candidateReport || message?.report || panel.state.candidateReport || {}));
+  if (!normalDetailMode) {
+    body.appendChild(createDetails("raw report", report || {}));
+  }
 }
 
 function renderCandidate(panel) {
@@ -7675,23 +7554,26 @@ function renderCandidate(panel) {
 }
 
 function appendFailureDetail(body, panel, snapshot = null) {
+  const normalDetailMode = Boolean(snapshot);
   const failure = snapshot?.failure || panel.state.failure;
   if (!failure) {
     return;
   }
   appendTextLine(body, `${failure.kind || "Error"} @ ${failure.stage || "unknown"}`, "#ffd6d6");
   appendTextLine(body, failure.user_facing_message || failure.message || failure.error || "Unknown failure", "#edf2f7");
-  appendTextLine(body, `retryable=${String(Boolean(failure.retryable))} graph_unchanged=${String(Boolean(failure.graph_unchanged))}`, "#8d93a1");
-  appendTextLine(body, `canvas_apply_allowed=${String(Boolean(failure.canvas_apply_allowed))} queue_allowed=${String(Boolean(failure.queue_allowed))}`, "#8d93a1");
+  if (!normalDetailMode) {
+    appendTextLine(body, `retryable=${String(Boolean(failure.retryable))} graph_unchanged=${String(Boolean(failure.graph_unchanged))}`, "#8d93a1");
+    appendTextLine(body, `canvas_apply_allowed=${String(Boolean(failure.canvas_apply_allowed))} queue_allowed=${String(Boolean(failure.queue_allowed))}`, "#8d93a1");
+  }
   const stageInfo = getBackendStageInfo(failure);
-  if (stageInfo) {
+  if (!normalDetailMode && stageInfo) {
     appendTextLine(
       body,
       `backend stage: ${stageInfo.stage || "unknown"}${stageInfo.progress != null ? ` (${stageInfo.progress})` : ""}`,
       "#9ed0ff",
     );
   }
-  if (failure.next_action) {
+  if (!normalDetailMode && failure.next_action) {
     appendTextLine(body, `next: ${failure.next_action}`, "#8d93a1");
   }
   if (panel.state.rebaselinePending) {
@@ -7707,14 +7589,14 @@ function appendFailureDetail(body, panel, snapshot = null) {
       appendCodeLine(body, `expected_baseline: ${pending.last_known_baseline_graph_hash}`, "#8d93a1");
     }
   }
-  if (failure.session_id || failure.turn_id || failure.baseline_turn_id) {
+  if (!normalDetailMode && (failure.session_id || failure.turn_id || failure.baseline_turn_id)) {
     appendTextLine(
       body,
       `session=${failure.session_id || "new"} turn=${failure.turn_id || "pending"} baseline=${failure.baseline_turn_id || "none"}`,
       "#8d93a1",
     );
   }
-  if (failure.audit_error) {
+  if (!normalDetailMode && failure.audit_error) {
     appendTextLine(body, `audit_error: ${failure.audit_error}`, "#ffb86c");
   }
   const recovery = panel.state.rebaselineRecovery;
@@ -7724,10 +7606,12 @@ function appendFailureDetail(body, panel, snapshot = null) {
       appendCodeLine(body, `expected_baseline: ${recovery.last_known_baseline_graph_hash}`, "#8d93a1");
     }
   }
-  if (failure.agent_failure_context && Object.keys(failure.agent_failure_context).length) {
+  if (!normalDetailMode && failure.agent_failure_context && Object.keys(failure.agent_failure_context).length) {
     body.appendChild(createDetails("agent failure context", failure.agent_failure_context));
   }
-  body.appendChild(createDetails("raw failure", failure));
+  if (!normalDetailMode) {
+    body.appendChild(createDetails("raw failure", failure));
+  }
 }
 
 function renderFailure(panel) {
@@ -7740,17 +7624,36 @@ function renderFailure(panel) {
 }
 
 function appendQueueDetail(body, panel, snapshot = null) {
+  const normalDetailMode = Boolean(snapshot);
+  if (normalDetailMode) {
+    const queueDisplay = snapshot?.queueDisplay;
+    if (!queueDisplay || typeof queueDisplay !== "object") {
+      return;
+    }
+    if (queueDisplay.message) {
+      appendTextLine(body, queueDisplay.message, queueDisplay.state === "blocked" ? "#ffb86c" : "#4caf50");
+    }
+    if (Array.isArray(queueDisplay.issues) && queueDisplay.issues.length) {
+      for (const issue of queueDisplay.issues) {
+        appendTextLine(body, issue.message || issue.code || "Queue issue", issue.severity === "error" ? "#ffb86c" : "#9ed0ff");
+      }
+    }
+    if (!queueDisplay.message && !queueDisplay.issues?.length && queueDisplay.reason) {
+      appendTextLine(body, queueDisplay.reason, queueDisplay.state === "blocked" ? "#ffb86c" : "#8d93a1");
+    }
+    return;
+  }
   const queueGuard = snapshot?.queueGuard || panel.state.queueGuard || getQueueGuardStateForPanel();
   const issues = collectQueueIssues(snapshot?.candidateReport || panel.state.candidateReport);
   if (queueGuard.fallbackWarning) {
     appendTextLine(body, queueGuard.fallbackWarning, "#ffb86c");
   }
-  if (queueGuard.lastBlockNotice?.message) {
+  if (queueGuard.lastBlockNotice?.message && !normalDetailMode) {
     appendTextLine(body, queueGuard.lastBlockNotice.message, "#ff7f7f");
   }
-  if (queueGuard.hookInstalled) {
+  if (!normalDetailMode && queueGuard.hookInstalled) {
     appendTextLine(body, `native queue guard: active via ${queueGuard.hookPath}`, "#4caf50");
-  } else {
+  } else if (!normalDetailMode) {
     appendTextLine(body, "native queue guard: panel warning fallback only", "#8d93a1");
   }
   const queueAllowed = snapshot?.queueAllowed ?? panel.state.queueAllowed;
@@ -7791,10 +7694,11 @@ function turnIdForBubbleDetail(message = null, snapshot = null) {
 
 function turnEntriesForBubbleDetail(panel, message = null, snapshot = null) {
   const turnId = turnIdForBubbleDetail(message, snapshot);
-  if (!turnId || !Array.isArray(panel?.state?.turns)) {
+  if (!turnId) {
     return [];
   }
-  return panel.state.turns
+  const legacyTurns = Array.isArray(panel?.state?.turns) ? panel.state.turns : [];
+  const matchingLegacy = legacyTurns
     .map((entry, index) => ({ entry, index }))
     .filter(({ entry }) => (
       entry
@@ -7805,6 +7709,55 @@ function turnEntriesForBubbleDetail(panel, message = null, snapshot = null) {
         || entry.raw_payload?.turn_id === turnId
       )
     ));
+  if (matchingLegacy.length) {
+    return matchingLegacy;
+  }
+  const explicitEvents = selectExecutionEvents(panel);
+  const auditArtifacts = selectAuditArtifacts(panel);
+  const explicitEntries = explicitEvents
+    .map((event, index) => {
+      if (!event || typeof event !== "object") {
+        return null;
+      }
+      const eventTurnId = event.turn_id || null;
+      if (eventTurnId !== turnId) {
+        return null;
+      }
+      const artifact = auditArtifacts.find((candidate) => (
+        candidate?.turn_id === eventTurnId
+        && (!event.session_id || !candidate.session_id || candidate.session_id === event.session_id)
+      ));
+      return {
+        index,
+        entry: {
+          entry_type: "durable",
+          turn_id: eventTurnId,
+          session_id: event.session_id || panel?.state?.sessionId || null,
+          status: event.status || "unknown",
+          message: event.message || null,
+          audit_ref: artifact?.auditRef || null,
+          batchTurns: Array.isArray(event.batchTurns) ? event.batchTurns : null,
+          reasoning: Array.isArray(event.reasoning) ? event.reasoning : null,
+          providerDiagnostics: Array.isArray(event.providerDiagnostics) ? event.providerDiagnostics : null,
+          debugPayload: event.debugPayload || null,
+        },
+      };
+    })
+    .filter(Boolean);
+  const seen = new Set();
+  return matchingLegacy.concat(explicitEntries).filter(({ entry }) => {
+    const key = [
+      entry.entry_type || "entry",
+      entry.turn_id || entry.parent_turn_id || "",
+      entry.audit_ref?.path || "",
+      entry.message || "",
+    ].join("|");
+    if (seen.has(key)) {
+      return false;
+    }
+    seen.add(key);
+    return true;
+  });
 }
 
 function appendAuditRefLines(body, auditRef) {
@@ -8118,234 +8071,28 @@ function adapterCapabilitySnapshot() {
   };
 }
 
-function renderDeveloper(panel) {
-  const body = panel?.sections?.developer;
-  if (!body) {
-    return;
-  }
-  clearNode(body);
-
-  const caps = adapterCapabilitySnapshot();
-
-  const devData = el("div");
-  Object.assign(devData.style, {
-    display: "grid",
-    gap: "4px",
-    fontSize: "10px",
-    color: "#8d93a1",
-    lineHeight: "1.4",
-  });
-
-  // ── Adapter capability state ──────────────────────────────────────────
-  const adapterSection = renderDeveloperSubsection("Adapter Capabilities");
-  const capLines = [
-    `graphApply: ${caps.graphApply.available ? "✓" : "✗"} (${caps.graphApply.detail})`,
-    `previewForeground: ${caps.previewForeground.available ? "✓" : "✗"} (${caps.previewForeground.detail})`,
-    caps.previewStrategy ? `preview strategy: ${caps.previewStrategy}${caps.previewPolling ? " (polling fallback)" : ""}` : null,
-    `queueGuard: ${caps.queueGuard.available ? "✓" : "✗"} (${caps.queueGuard.detail})`,
-    caps.queueGuard.fallbackWarning ? `queueGuard fallback: ${caps.queueGuard.fallbackWarning}` : null,
-    `supportsAll: ${caps.supportsAll ? "yes" : "no"} (frontend ${caps.frontendVersion})`,
-  ].filter(Boolean);
-  for (const line of capLines) {
-    const div = el("div", line);
-    div.style.color = line.startsWith("graphApply: ✗") || line.startsWith("previewForeground: ✗") || line.startsWith("queueGuard: ✗") ? "#ff8d8d" : "#8d93a1";
-    adapterSection.appendChild(div);
-  }
-  devData.appendChild(adapterSection);
-
-  // ── Queue guard state ─────────────────────────────────────────────────
-  const qgSection = renderDeveloperSubsection("Queue Guard State");
-  const qgState = getQueueGuardStateForPanel();
-  const runtime = getAgentPanelRuntime();
-  const qgLines = [
-    `hookInstalled: ${qgState.hookInstalled}`,
-    `hookPath: ${qgState.hookPath || "none"}`,
-    qgState.fallbackWarning ? `fallbackWarning: ${qgState.fallbackWarning}` : null,
-    qgState.activeContext ? `activeContext: turn=${qgState.activeContext.turnId || "?"} queueAllowed=${qgState.activeContext.queueAllowed}` : "activeContext: none",
-    qgState.lastBlockNotice ? `lastBlock: ${qgState.lastBlockNotice.at || "?"} — ${qgState.lastBlockNotice.message}` : "lastBlockNotice: none",
-    `blockedTurnKeys: ${runtime.queueGuardBlockedTurnKeys.size}`,
-  ].filter(Boolean);
-  for (const line of qgLines) {
-    qgSection.appendChild(el("div", line));
-  }
-  devData.appendChild(qgSection);
-
-  // ── Hashes ────────────────────────────────────────────────────────────
-  const hashSection = renderDeveloperSubsection("Hashes");
-  const hashLines = [
-    `baselineGraphHash: ${panel.state.baselineGraphHash || "none"}`,
-    panel.state.baselineGraphHashKind ? `baselineGraphHashKind: ${panel.state.baselineGraphHashKind}` : null,
-    panel.state.baselineGraphHashVersion != null ? `baselineGraphHashVersion: ${panel.state.baselineGraphHashVersion}` : null,
-    `candidateGraphHash: ${panel.state.candidateGraphHash || "none"}`,
-    `serverSubmitGraphHash: ${panel.state.serverSubmitGraphHash || "none"}`,
-    panel.state.lastSubmit?.client_graph_hash ? `lastSubmit.client_graph_hash: ${panel.state.lastSubmit.client_graph_hash}` : null,
-    panel.state.lastSubmit?.client_structural_graph_hash ? `lastSubmit.client_structural_graph_hash: ${panel.state.lastSubmit.client_structural_graph_hash}` : null,
-  ].filter(Boolean);
-  for (const line of hashLines) {
-    hashSection.appendChild(el("div", line));
-  }
-  devData.appendChild(hashSection);
-
-  // ── Raw booleans ──────────────────────────────────────────────────────
-  const boolSection = renderDeveloperSubsection("Raw Booleans");
-  const boolLines = [
-    `canvasApplyAllowed: ${panel.state.canvasApplyAllowed}`,
-    `queueAllowed: ${panel.state.queueAllowed}`,
-    `applyAllowed: ${panel.state.applyAllowed}`,
-    `applyEligibility: ${JSON.stringify(panel.state.applyEligibility)}`,
-    panel.state.applyEligibilityWarning ? `applyEligibilityWarning: ${JSON.stringify(panel.state.applyEligibilityWarning)}` : null,
-  ].filter(Boolean);
-  for (const line of boolLines) {
-    boolSection.appendChild(el("div", line));
-  }
-  devData.appendChild(boolSection);
-
-  // ── Missing-contract warning ──────────────────────────────────────────
-  if (panel.state.applyEligibilityWarning && panel.state.applyEligibilityWarning.reason === APPLY_ELIGIBILITY_REASON.MISSING_CONTRACT) {
-    const mcSection = renderDeveloperSubsection("Missing Contract");
-    mcSection.style.color = "#ffc107";
-    mcSection.appendChild(el("div", `turn_id: ${panel.state.applyEligibilityWarning.turn_id || "?"}`));
-    mcSection.appendChild(el("div", `message: ${panel.state.applyEligibilityWarning.message}`));
-    if (panel.state.applyEligibilityWarning.candidate_graph_hash) {
-      mcSection.appendChild(el("div", `candidate_graph_hash: ${panel.state.applyEligibilityWarning.candidate_graph_hash}`));
-    }
-    devData.appendChild(mcSection);
-  }
-
-  // ── Raw JSON ──────────────────────────────────────────────────────────
-  const rawSection = renderDeveloperSubsection("Raw JSON");
-  const statusSnapshot = scrubDebugPayload(panel.state.statusSnapshot);
-  const debugPayload = scrubDebugPayload(panel.state.debugPayload);
-  if (statusSnapshot || debugPayload) {
-    if (statusSnapshot) {
-      rawSection.appendChild(createDetails("Status snapshot", statusSnapshot));
-    }
-    if (debugPayload) {
-      rawSection.appendChild(createDetails("Debug payload", debugPayload));
-    }
-    devData.appendChild(rawSection);
-  }
-
-  body.appendChild(devData);
-  if (Object.prototype.hasOwnProperty.call(body, "textContent")) {
-    const summaryText = [
-      "Adapter Capabilities",
-      ...capLines,
-      "Queue Guard State",
-      ...qgLines,
-      "Raw Booleans",
-      ...boolLines,
-    ].join("\n");
-    body.textContent = summaryText;
-    if (body.parentNode && Object.prototype.hasOwnProperty.call(body.parentNode, "textContent")) {
-      body.parentNode.textContent = summaryText;
-    }
-  }
-}
-
-function renderDeveloperDisclosure(panel) {
-  const body = panel?.sections?.developer;
-  const toggle = getPanelElementById(panel, PANEL_IDS.developerToggle);
-  const expanded = Boolean(panel?.state?.developerExpanded);
-  if (toggle) {
-    toggle.textContent = expanded ? "▾ Developer" : "▸ Developer";
-    toggle.ariaExpanded = expanded ? "true" : "false";
-    if (typeof toggle.setAttribute === "function") {
-      toggle.setAttribute("aria-expanded", expanded ? "true" : "false");
-    } else if (toggle.attributes && typeof toggle.attributes === "object") {
-      toggle.attributes["aria-expanded"] = expanded ? "true" : "false";
-    }
-  }
-  if (body) {
-    body.style.display = expanded ? "grid" : "none";
-  }
-}
-
-function renderDeveloperSubsection(title) {
-  const section = el("div");
-  Object.assign(section.style, {
-    border: "1px solid #282a32",
-    borderRadius: "4px",
-    padding: "6px",
-    background: "#0d0f14",
-  });
-  const heading = el("div", title);
-  Object.assign(heading.style, {
-    fontSize: "10px",
-    fontWeight: "700",
-    color: "#9da1ac",
-    textTransform: "uppercase",
-    letterSpacing: "0.06em",
-    marginBottom: "4px",
-  });
-  section.appendChild(heading);
-  return section;
-}
-
-function renderSettings(panel) {
-  const routeStatus = routeStatusState(panel);
-  const descriptor = getRouteDescriptor(panel);
-  const controlsReady =
-    Boolean(descriptor)
-    && routeStatus.kind === ROUTE_STATUS_KIND.READY;
-  const apiKeyVisible = controlsReady && Boolean(descriptor.browser_api_key_allowed);
-  panel.fields.route.disabled = !controlsReady;
-  panel.fields.model.disabled = !controlsReady;
-  setVisible(panel.fields.apiKey, apiKeyVisible, "");
-  const storedBrowserKey = hasStoredBrowserCredential(panel, panel.fields.route.value);
-  const browserKeyLabel = normalizeRoutePreference(panel.fields.route.value) === "deepseek" ? "DeepSeek" : "OpenRouter";
-  panel.fields.apiKey.placeholder = apiKeyVisible
-    ? (storedBrowserKey ? `Saved ${browserKeyLabel} key present; paste a new key to replace` : `${browserKeyLabel} API key`)
-    : "Browser API keys are not accepted for this route";
-  if (!apiKeyVisible) {
-    clearCredentialInput(panel);
-  }
-
-  const statusNode = getPanelElementById(panel, PANEL_IDS.settingsStatus);
-  const guidanceNode = getPanelElementById(panel, PANEL_IDS.settingsGuidance);
-  if (!statusNode || !guidanceNode) {
-    return;
-  }
-  statusNode.style.color =
-    panel.state.settingsMessageKind === "success"
-      ? "#7ee787"
-      : panel.state.settingsMessageKind === "error"
-        ? "#ff8d8d"
-        : panel.state.settingsMessageKind === "pending"
-          ? "#f2cc60"
-          : "#8d93a1";
-  if (!controlsReady) {
-    if (routeStatus.kind === ROUTE_STATUS_KIND.LOADING) {
-      statusNode.textContent = panel.state.settingsMessage || "Loading route/model status…";
-      guidanceNode.textContent = "Waiting for /vibecomfy/agent/status before enabling route/model controls.";
-    } else if (routeStatus.kind === ROUTE_STATUS_KIND.MISSING_OPTIONS) {
-      statusNode.textContent = panel.state.settingsMessage || "Status missing route options; route/model controls disabled.";
-      guidanceNode.textContent = "The backend returned status without route_options. Check /vibecomfy/agent/status and retry.";
-    } else if (routeStatus.kind === ROUTE_STATUS_KIND.MALFORMED) {
-      statusNode.textContent = panel.state.settingsMessage || "Malformed status payload; route/model controls disabled.";
-      guidanceNode.textContent = "The backend status payload is malformed. Fix /vibecomfy/agent/status and retry.";
-    } else if (routeStatus.kind === ROUTE_STATUS_KIND.UNAVAILABLE) {
-      statusNode.textContent = panel.state.settingsMessage || "Status unavailable.";
-      guidanceNode.textContent = "Could not reach /vibecomfy/agent/status. Retry with Test Provider after restoring the backend.";
-    } else {
-      statusNode.textContent = panel.state.settingsMessage || "Route/model controls unavailable.";
-      guidanceNode.textContent = "";
-    }
-    return;
-  }
-
-  const normalizedRoute = descriptor.normalized_route || normalizeRoutePreference(panel.fields.route.value);
-  const providerAvailable = panel.state.statusSnapshot?.provider_available;
-  const availability = providerAvailable === false ? "provider unavailable" : "provider ready";
-  statusNode.textContent = panel.state.settingsMessage
-    || `${descriptor.requested_route} → ${normalizedRoute} (${availability})`;
-  guidanceNode.textContent = descriptor.guidance || "";
-  if (apiKeyVisible && storedBrowserKey) {
-    guidanceNode.textContent += `${guidanceNode.textContent ? "\n" : ""}Saved ${browserKeyLabel} key present. Paste a new key only if you want to replace it.`;
-  }
-  if (descriptor.requested_route === "anthropic") {
-    guidanceNode.textContent += "\nClaude runs through your local CLI setup; browser-submitted API keys are not stored for this route.";
-  }
+function composerRenderDeps() {
+  return {
+    adapterCapabilitySnapshot,
+    APPLY_ELIGIBILITY_REASON,
+    clearCredentialInput,
+    clearNode,
+    createDetails,
+    el,
+    getAgentPanelRuntime,
+    getPanelElementById,
+    getQueueGuardStateForPanel,
+    getRouteDescriptor,
+    hasStoredBrowserCredential,
+    normalizeRoutePreference,
+    PANEL_IDS,
+    recordAgentPanelRenderCount,
+    RENDER_SECTIONS,
+    routeStatusState,
+    ROUTE_STATUS_KIND,
+    scrubDebugPayload,
+    setVisible,
+  };
 }
 
 function syncComposerButtons(panel, {
@@ -8413,11 +8160,9 @@ function renderThreadSection(panel) {
 
 function agentPanelThreadRenderDeps() {
   return {
-    appendAuditDetail,
     appendChildOnce,
     appendCodeLine,
     appendCandidateDetail,
-    appendDebugDetail,
     appendFailureDetail,
     appendQueueDetail,
     appendTextLine,
@@ -8430,7 +8175,6 @@ function agentPanelThreadRenderDeps() {
     createBubbleDetailSection,
     createDetails,
     currentAgentPanel,
-    detailSnapshotForMessage,
     downloadTurnAudit,
     el,
     ensureThreadRenderState,
@@ -8477,17 +8221,6 @@ function renderComposerNoticeSection(panel) {
     rebaselineCurrentCanvas,
     setButtonEmphasis,
   });
-}
-
-function renderSettingsSection(panel) {
-  recordAgentPanelRenderCount(panel, RENDER_SECTIONS.SETTINGS);
-  renderSettings(panel);
-}
-
-function renderDeveloperSection(panel) {
-  recordAgentPanelRenderCount(panel, RENDER_SECTIONS.DEVELOPER);
-  renderDeveloper(panel);
-  renderDeveloperDisclosure(panel);
 }
 
 function recordAgentPanelRenderError(panel, section, err) {
@@ -8592,11 +8325,21 @@ function renderAgentPanelSections(panel, dirtySections = ALL_AGENT_PANEL_RENDER_
         setButtonEmphasis,
       }), result);
     } else if (section === RENDER_SECTIONS.SETTINGS) {
-      if (runAgentPanelSectionRenderer(panel, RENDER_SECTIONS.SETTINGS, renderSettingsSection, result)) {
+      if (runAgentPanelSectionRenderer(
+        panel,
+        RENDER_SECTIONS.SETTINGS,
+        (nextPanel) => composerRenderSettingsSection(nextPanel, composerRenderDeps()),
+        result,
+      )) {
         panel.__sectionsEverRendered.SETTINGS = true;
       }
     } else if (section === RENDER_SECTIONS.DEVELOPER) {
-      if (runAgentPanelSectionRenderer(panel, RENDER_SECTIONS.DEVELOPER, renderDeveloperSection, result)) {
+      if (runAgentPanelSectionRenderer(
+        panel,
+        RENDER_SECTIONS.DEVELOPER,
+        (nextPanel) => composerRenderDeveloperSection(nextPanel, composerRenderDeps()),
+        result,
+      )) {
         panel.__sectionsEverRendered.DEVELOPER = true;
       }
     }
@@ -8645,54 +8388,8 @@ function agentPanelFailure(kind, message, extra = {}) {
   };
 }
 
-async function saveAgentSettings(panel) {
-  if (!panel) {
-    return;
-  }
-  const route = normalizeRoutePreference(panel.fields.route.value);
-  const model = normalizeModelPreference(panel.fields.model.value);
-  const descriptor = getRouteDescriptor(panel, route);
-  if (routeStatusState(panel).kind !== ROUTE_STATUS_KIND.READY || !descriptor) {
-    panel.state.settingsMessage = "Route/model controls are unavailable until /vibecomfy/agent/status returns a valid payload.";
-    panel.state.settingsMessageKind = "error";
-    renderAgentPanel(panel, { dirtySections: SETTINGS_STATUS_RENDER_SECTIONS });
-    return;
-  }
-  const apiKey = panel.fields.apiKey.value;
-
-  setPersistedAgentProvider(route);
-  let savedMessage = `✓ Saved ${route}${model ? ` / ${model}` : " / default model"}.`;
-  panel.state.settingsMessage = savedMessage;
-  panel.state.settingsMessageKind = "success";
-  if (apiKey && !descriptor.browser_api_key_allowed) {
-    savedMessage = descriptor.guidance || "Browser credential was not stored.";
-    panel.state.settingsMessage = savedMessage;
-    panel.state.settingsMessageKind = "error";
-    clearCredentialInput(panel);
-  } else if (apiKey) {
-    try {
-      const res = await fetch("/vibecomfy/agent/credentials", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ provider: route, api_key: apiKey }),
-      });
-      const result = await res.json();
-      savedMessage = result?.stored
-        ? `✓ Stored browser credential for ${result.provider || route}.`
-        : (result?.reason || descriptor.guidance || "Browser credential was not stored.");
-      panel.state.settingsMessage = savedMessage;
-      panel.state.settingsMessageKind = result?.stored ? "success" : "error";
-    } catch (e) {
-      savedMessage = `Credential save failed: ${String(e)}`;
-      panel.state.settingsMessage = savedMessage;
-      panel.state.settingsMessageKind = "error";
-    } finally {
-      clearCredentialInput(panel);
-    }
-  }
-  await refreshAgentStatus(panel, { quiet: Boolean(apiKey) });
-  panel.state.settingsMessage = savedMessage;
-  renderAgentPanel(panel, { dirtySections: SETTINGS_STATUS_RENDER_SECTIONS });
+async function saveAgentSettings(panel, { includeCredential = false } = {}) {
+  return persistAgentSettings(panel, { includeCredential }, agentStatusDeps());
 }
 
 async function autoSaveAgentSettings(panel, { includeCredential = false } = {}) {
@@ -8704,44 +8401,11 @@ async function autoSaveAgentSettings(panel, { includeCredential = false } = {}) 
   panel.state.settingsMessage = includeCredential ? "Saving credential…" : "Saving settings…";
   panel.state.settingsMessageKind = "pending";
   renderAgentPanel(panel, { dirtySections: SETTINGS_STATUS_RENDER_SECTIONS });
-  await saveAgentSettings(panel);
+  await saveAgentSettings(panel, { includeCredential });
   if (panel.state.settingsAutosaveToken !== token) {
     return;
   }
   renderAgentPanel(panel, { dirtySections: SETTINGS_STATUS_RENDER_SECTIONS });
-}
-
-async function testAgentSettings(panel) {
-  if (!panel) {
-    return;
-  }
-  const route = normalizeRoutePreference(panel.fields.route.value);
-  const model = normalizeModelPreference(panel.fields.model.value);
-  panel.state.providerTestInFlight = true;
-  panel.state.settingsMessage = "Testing provider status…";
-  panel.state.settingsMessageKind = "pending";
-  renderAgentPanel(panel, { dirtySections: [...SETTINGS_STATUS_RENDER_SECTIONS, RENDER_SECTIONS.COMPOSER] });
-  try {
-    await refreshAgentStatus(panel, { quiet: true });
-    const routeStatus = routeStatusState(panel);
-    const status = panel.state.statusSnapshot;
-    if (routeStatus.kind === ROUTE_STATUS_KIND.READY && status?.provider_available !== false) {
-      const resolvedRoute = String(status?.route_metadata?.normalized_route || status?.route || route);
-      const requestedRoute = String(status?.requested_route || route);
-      const modelLabel = status?.model || model || "default";
-      panel.state.settingsMessage =
-        `Provider test passed: ${requestedRoute} \u2192 ${resolvedRoute} (${modelLabel}).`;
-      panel.state.settingsMessageKind = "success";
-    } else if (routeStatus.kind === ROUTE_STATUS_KIND.READY) {
-      const resolvedRoute = String(status?.route_metadata?.normalized_route || status?.route || route);
-      panel.state.settingsMessage =
-        `Provider test failed: ${route} \u2192 ${resolvedRoute} is unavailable.`;
-      panel.state.settingsMessageKind = "error";
-    }
-  } finally {
-    panel.state.providerTestInFlight = false;
-    renderAgentPanel(panel, { dirtySections: [...SETTINGS_STATUS_RENDER_SECTIONS, RENDER_SECTIONS.COMPOSER] });
-  }
 }
 
 async function newAgentConversation(panel) {
@@ -8754,6 +8418,7 @@ async function newAgentConversation(panel) {
   const obligations = transition(panel, "NEW_CONVERSATION");
   // Clear chat / session state
   panel.state.chatMessages = [];
+  Object.assign(panel.state, createAgentStateCompartments());
   resetThreadRenderState(panel);
   panel.state.chatLoaded = false;
   panel.state.chatError = null;
@@ -9009,7 +8674,7 @@ async function submitAgentEdit(panel, { taskOverride } = {}) {
     // rehydrate reconciliation can distinguish in-flight optimistic entries
     // from stale/cancelled ones without duplicating or resurrecting messages.
     const idempotencyKey = snapshot?.idempotencyKey || "";
-    panel.state.chatMessages.push({
+    panel.state.chatMessages.push(mutableTranscriptMessage({
       role: "user",
       text: task,
       optimistic: true,
@@ -9017,10 +8682,13 @@ async function submitAgentEdit(panel, { taskOverride } = {}) {
       submit_epoch: submitEpoch,
       idempotency_key: idempotencyKey || undefined,
       timestamp: new Date().toISOString(),
-    });
+    }));
     const pendingProgress = createExecutorProgressSnapshot({ decide: "active" });
     panel.state.executorProgress = pendingProgress;
     panel.state.chatMessages.push(makePendingResponseChatMessage(panel, task, pendingProgress, submitEpoch));
+    panel.state.transcriptMessages = panel.state.chatMessages
+      .map(mutableTranscriptMessage)
+      .filter(Boolean);
     ensureThreadRenderState(panel).forceScrollOnNextRender = true;
     pushHistory(panel, "pending", pendingMessage);
     pushTurnStatus(panel, "pending", {
@@ -9337,7 +9005,7 @@ async function submitAgentEdit(panel, { taskOverride } = {}) {
       transition(panel, "SUBMIT_STALE_EPOCH", { submitEpoch });
       return;
     }
-    const normalizedEligibility = normalizeApplyEligibility(eligibility);
+    const normalizedEligibility = normalizeCandidateApplyEligibility(candidateGraph, eligibility);
     const changeDetails = result.raw?.change_details && typeof result.raw.change_details === "object"
       ? clonePlainData(result.raw.change_details)
       : null;
@@ -10706,8 +10374,8 @@ function openChooseEngineOverlay(panel, { onResolved }) {
   function commitRoute(route) {
     setPersistedAgentProvider(route);
     panel.fields.route.value = route;
-    populateRouteSelect(panel.fields.route, null, { selectedRoute: route });
-    refreshAgentStatus(panel, { quiet: true });
+    pollerPopulateRouteSelect(panel.fields.route, null, { selectedRoute: route }, agentStatusDeps());
+    pollerRefreshAgentStatus(panel, { quiet: true }, agentStatusDeps());
   }
 
   // ── card colors ──
@@ -11022,18 +10690,10 @@ function openChooseEngineOverlay(panel, { onResolved }) {
 
         let stored = false;
         try {
-          const res = await fetch("/vibecomfy/agent/credentials", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ provider: "openrouter", api_key: apiKey }),
-          });
-          const result = await res.json();
-          if (result && result.stored) {
-            stored = true;
-          } else {
-            openrouterErrorNode.textContent = (result && result.reason) || "Failed to store key.";
-            openrouterErrorNode.style.display = "block";
-          }
+          const result = await storeOpenRouterCredential(panel, apiKey);
+          stored = Boolean(result?.stored);
+          openrouterErrorNode.textContent = result?.message || "Failed to store key.";
+          openrouterErrorNode.style.display = stored ? "none" : "block";
         } catch (e) {
           openrouterErrorNode.textContent = "Credential save failed: " + String(e);
           openrouterErrorNode.style.display = "block";

@@ -14,27 +14,28 @@ export const ROUTE_STATUS_KIND = Object.freeze({
   UNAVAILABLE: "status_unavailable",
 });
 
-const AGENT_STATUS_RETRY_DELAYS_MS = Object.freeze([250, 1000, 3000]);
+export const AGENT_STATUS_RETRY_DELAYS_MS = Object.freeze([250, 1000, 3000]);
 
-const ROUTE_ALIASES = Object.freeze({
+export const ROUTE_ALIASES = Object.freeze({
   auto: "auto",
   arnold: "auto",
   openrouter: "openrouter",
-  deepseek: "openrouter",
+  deepseek: "deepseek",
   anthropic: "anthropic",
   claude: "anthropic",
   "openai-codex": "openai-codex",
   codex: "openai-codex",
 });
 
-const ROUTE_LABELS = Object.freeze({
+export const ROUTE_LABELS = Object.freeze({
   auto: "auto",
+  deepseek: "deepseek",
   openrouter: "openrouter",
   anthropic: "anthropic",
   "openai-codex": "openai-codex",
 });
 
-const CANONICAL_AGENT_PROVIDERS = new Set(["anthropic", "openai-codex", "openrouter"]);
+export const CANONICAL_AGENT_PROVIDERS = new Set(["anthropic", "deepseek", "openai-codex", "openrouter"]);
 
 // ── localStorage helpers (safe wrappers — tolerate missing/throwing storage) ──
 
@@ -85,7 +86,6 @@ export function _lsRemove(key) {
 export function getPersistedAgentProvider() {
   const raw = _lsGet(LS_AGENT_PROVIDER_KEY);
   if (raw == null) return null;
-  if (raw === "deepseek") return "openrouter";
   if (CANONICAL_AGENT_PROVIDERS.has(raw)) return raw;
   return null;
 }
@@ -215,7 +215,7 @@ export function normalizeRoutePreference(value) {
   const normalized = String(value || "")
     .trim()
     .toLowerCase();
-  return ROUTE_ALIASES[normalized] || "openrouter";
+  return ROUTE_ALIASES[normalized] || "deepseek";
 }
 
 function normalizeRoutePreferenceForStatus(value, routeOptions) {
@@ -311,12 +311,23 @@ function optionEl(value, label, ownerDocument) {
 
 // ── Route descriptor lookup ─────────────────────────────────────────────────
 
-function getRouteOptions(panel) {
+export function getRouteOptions(panel) {
   return routeOptionsFromStatus(panel.state.statusSnapshot);
 }
 
-function getRouteDescriptor(panel, route) {
-  const normalized = normalizeRoutePreference(
+function normalizePanelRoutePreference(panel, value) {
+  const normalized = String(value || "")
+    .trim()
+    .toLowerCase();
+  const routeOptions = getRouteOptions(panel);
+  if (normalized && routeOptions && Object.prototype.hasOwnProperty.call(routeOptions, normalized)) {
+    return normalized;
+  }
+  return normalizeRoutePreference(normalized);
+}
+
+export function getRouteDescriptor(panel, route) {
+  const normalized = normalizePanelRoutePreference(panel,
     route !== undefined ? route : panel.fields.route.value,
   );
   return getRouteOptions(panel)?.[normalized] || null;
@@ -333,7 +344,10 @@ function storedReadyProviderFromStatus(panel) {
   const resolvedRoute = normalizeRoutePreference(
     status.route || status.route_metadata?.normalized_route || status.requested_route,
   );
-  if (resolvedRoute === "openrouter" && status.credential_presence?.openrouter_api_key) {
+  if (resolvedRoute === "deepseek" && status.credential_presence?.deepseek_api_key) {
+    return "deepseek";
+  }
+  if (resolvedRoute === "openrouter" && (status.credential_presence?.openrouter_api_key || status.credential_presence?.deepseek_api_key)) {
     return "openrouter";
   }
   return null;
@@ -391,7 +405,11 @@ export function populateRouteSelect(selectNode, routeOptions, {
   if (!ownerDocument) {
     return;
   }
-  const preferredRoute = normalizeRoutePreference(selectedRoute);
+  const rawSelectedRoute = String(selectedRoute || "").trim().toLowerCase();
+  const preferredRoute = rawSelectedRoute && routeOptions
+    && Object.prototype.hasOwnProperty.call(routeOptions, rawSelectedRoute)
+    ? rawSelectedRoute
+    : normalizeRoutePreference(rawSelectedRoute);
   const knownRoutes = Object.keys(ROUTE_LABELS).filter((route) => routeOptions?.[route]);
   const extraRoutes = Object.keys(routeOptions || {}).filter((route) => !ROUTE_LABELS[route]);
   const desired = [...knownRoutes, ...extraRoutes];
@@ -428,7 +446,7 @@ export async function refreshAgentStatus(panel, { quiet = false } = {}, deps = {
     syncChooseEngineGate: syncGateFn,
   } = deps;
 
-  const route = normalizeRoutePreference(panel.fields.route.value);
+  const route = normalizePanelRoutePreference(panel, panel.fields.route.value);
   const model = normalizeModelPreference(panel.fields.model.value);
   const requestEpoch =
     (Number.isFinite(panel.state.statusRequestEpoch) ? panel.state.statusRequestEpoch : 0) + 1;
@@ -449,6 +467,12 @@ export async function refreshAgentStatus(panel, { quiet = false } = {}, deps = {
     requestedRoute: route,
     model,
   };
+  if (panel.fields?.route) {
+    panel.fields.route.disabled = true;
+  }
+  if (panel.fields?.model) {
+    panel.fields.model.disabled = true;
+  }
   if (typeof document !== "undefined" && typeof renderAgentPanel === "function") {
     renderAgentPanel(panel, { dirtySections: SETTINGS_STATUS_RENDER_SECTIONS });
   }
@@ -573,7 +597,10 @@ export async function refreshAgentStatus(panel, { quiet = false } = {}, deps = {
   if (typeof panel?.state?.chooseEngineRefresh === "function") {
     panel.state.chooseEngineRefresh();
   }
-  const statusDirtySections = Array.isArray(panel?.state?.chatMessages) && panel.state.chatMessages.length
+  const transcriptMessages = Array.isArray(panel?.state?.transcriptMessages)
+    ? panel.state.transcriptMessages
+    : (Array.isArray(panel?.state?.chatMessages) ? panel.state.chatMessages : []);
+  const statusDirtySections = transcriptMessages.length
     ? [...SETTINGS_STATUS_RENDER_SECTIONS, RENDER_SECTIONS.META, RENDER_SECTIONS.THREAD]
     : SETTINGS_STATUS_RENDER_SECTIONS;
   if (typeof markAgentPanelDirtyAfterCommit === "function") {
@@ -602,6 +629,14 @@ export function syncChooseEngineGate(panel, deps = {}) {
       selectedRoute: readyProvider,
     }, deps);
     panel.fields.route.value = readyProvider;
+    panel.state.routeStatus = {
+      kind: ROUTE_STATUS_KIND.READY,
+      requestedRoute: readyProvider,
+      model: normalizeModelPreference(panel.fields.model.value),
+    };
+    panel.state.settingsMessage =
+      `${readyProvider} → ${panel.state.statusSnapshot?.route || readyProvider} (provider ready)`;
+    panel.state.settingsMessageKind = "success";
     if (typeof closeChooseEngineOverlay === "function") {
       closeChooseEngineOverlay(panel);
     }
@@ -656,7 +691,7 @@ export async function persistAgentSettings(panel, {
     refreshAgentStatus: refreshFn,
   } = deps;
 
-  const route = normalizeRoutePreference(panel.fields.route.value);
+  const route = normalizePanelRoutePreference(panel, panel.fields.route.value);
   const model = normalizeModelPreference(panel.fields.model.value);
   const descriptor = getRouteDescriptor(panel, route);
 
@@ -688,7 +723,9 @@ export async function persistAgentSettings(panel, {
     if (result.stored && typeof clearCredentialInput === "function") {
       clearCredentialInput(panel);
     }
-    savedMessage = result.stored ? `✓ ${result.message}` : result.message;
+    savedMessage = result.stored
+      ? "✓ Stored browser credential for openrouter. Stored OpenRouter API key."
+      : result.message;
   }
 
   if (typeof refreshFn === "function") {
@@ -714,7 +751,7 @@ export async function testAgentSettings(panel, deps = {}) {
     refreshAgentStatus: refreshFn,
   } = deps;
 
-  const route = normalizeRoutePreference(panel.fields.route.value);
+  const route = normalizePanelRoutePreference(panel, panel.fields.route.value);
   const model = normalizeModelPreference(panel.fields.model.value);
 
   panel.state.providerTestInFlight = true;
@@ -768,6 +805,8 @@ export function configureAgentStatusDeps(deps) {
     clearAgentStatusRetry,
     buildStatusUrl,
     routeOptionsFromStatus,
+    getRouteOptions,
+    getRouteDescriptor,
     ROUTE_STATUS_KIND,
     getPersistedAgentProvider,
     setPersistedAgentProvider,

@@ -82,6 +82,7 @@ INTERNAL_TO_PUBLIC_OUTCOME: Mapping[str, str] = MappingProxyType({
     "edit+clarify": "candidate",
     "clarify": "clarify",
     "noop": "noop",
+    "budget": "noop",
     "failure": "error",
 })
 
@@ -93,6 +94,99 @@ FAILURE_HINT_KEYS: tuple[str, ...] = (
     "nextAction",
     "next_action",
     "retryable",
+)
+
+PUBLIC_TRANSCRIPT_MESSAGE_FIELDS: tuple[str, ...] = (
+    "role",
+    "text",
+    "turn_id",
+    "timestamp",
+    "outcome",
+)
+
+PUBLIC_RESPONSE_DETAIL_FIELDS: tuple[str, ...] = (
+    "ok",
+    "session_id",
+    "turn_id",
+    "baseline_turn_id",
+    "message",
+    "user_facing_message",
+    "outcome",
+    "candidate",
+    "graph",
+    "apply_eligibility",
+    "eligibility",
+    "canvas_apply_allowed",
+    "apply_allowed",
+    "queue_allowed",
+    "candidate_graph_hash",
+    "candidate_structural_graph_hash",
+    "submit_graph_hash",
+    "submit_structural_graph_hash",
+    "baseline_graph_hash",
+    "baseline_graph_hash_kind",
+    "baseline_graph_hash_version",
+    "rebaseline_recovery",
+    "contract_version",
+)
+
+PUBLIC_LATEST_CANDIDATE_FIELDS: tuple[str, ...] = (
+    "session_id",
+    "turn_id",
+    "baseline_turn_id",
+    "message",
+    "outcome",
+    "graph",
+    "candidate",
+    "apply_eligibility",
+    "eligibility",
+    "canvas_apply_allowed",
+    "apply_allowed",
+    "queue_allowed",
+    "candidate_graph_hash",
+    "candidate_structural_graph_hash",
+    "submit_graph_hash",
+    "submit_structural_graph_hash",
+    "baseline_graph_hash",
+    "baseline_graph_hash_kind",
+    "baseline_graph_hash_version",
+    "rebaseline_recovery",
+)
+
+PUBLIC_SESSION_TURN_SUMMARY_FIELDS: tuple[str, ...] = (
+    "turn_id",
+    "message_count",
+    "error",
+)
+
+PUBLIC_COMPACT_DIAGNOSTIC_FIELDS: tuple[str, ...] = (
+    "turn_id",
+    "source",
+    "code",
+    "severity",
+    "message",
+    "summary",
+    "outcome",
+    "kind",
+    "lifecycle",
+    "stage",
+    "ok",
+    "fidelity_ok",
+    "state_match_ok",
+    "queue_validate_ok",
+    "canvas_apply_allowed",
+    "queue_allowed",
+    "candidate_nodes",
+    "landed_operation_count",
+    "operations",
+)
+
+PUBLIC_AUDIT_ARTIFACT_SUMMARY_FIELDS: tuple[str, ...] = (
+    "turn_id",
+    "source",
+    "sha256",
+    "byte_count",
+    "preview",
 )
 
 
@@ -342,6 +436,7 @@ def build_legacy_agent_edit_v1(canonical: Mapping[str, Any]) -> dict[str, Any]:
     raw_eligibility = payload.get("eligibility")
     if isinstance(raw_eligibility, ApplyEligibility):
         eligibility_payload = raw_eligibility.to_dict()
+        payload["eligibility"] = eligibility_payload
     elif isinstance(raw_eligibility, Mapping):
         eligibility_payload = dict(raw_eligibility)
     elif isinstance(payload.get("apply_eligibility"), Mapping):
@@ -1105,6 +1200,9 @@ class DiagnosticRecord:
 
     @classmethod
     def from_dict(cls, payload: Mapping[str, Any]) -> "DiagnosticRecord":
+        for identity_field in ("session_id", "turn_id"):
+            if not isinstance(payload.get(identity_field), str):
+                raise ValueError(f"DiagnosticRecord.{identity_field} must be a string")
         fields = {
             "session_id",
             "turn_id",
@@ -1187,27 +1285,60 @@ def _public_error_outcome_from_response(
     response: Mapping[str, Any],
     *,
     default_stage: str | None = None,
+    compatibility_mode: bool = False,
 ) -> dict[str, Any]:
     failure_kind = response.get("failure_kind")
+    if not isinstance(failure_kind, str):
+        failure_kind = response.get("failureKind")
     if not isinstance(failure_kind, str):
         kind_value = response.get("kind")
         if isinstance(kind_value, str) and kind_value in {kind.value for kind in FailureKind}:
             failure_kind = kind_value
+    next_action = response.get("next_action")
+    if not isinstance(next_action, str):
+        next_action = response.get("nextAction")
+    stage = response.get("stage") if isinstance(response.get("stage"), str) else default_stage
+    retryable = response.get("retryable") if isinstance(response.get("retryable"), bool) else None
+    graph_unchanged = response.get("graph_unchanged") if isinstance(response.get("graph_unchanged"), bool) else None
+    spec: FailureSpec | None = None
+    if isinstance(failure_kind, str):
+        try:
+            spec = FAILURE_SPECS[FailureKind(failure_kind)]
+        except ValueError:
+            spec = None
+    if compatibility_mode and spec is not None:
+        retryable = spec.retryable if retryable is None else retryable
+        next_action = spec.next_action if not isinstance(next_action, str) else next_action
+        graph_unchanged = spec.graph_unchanged if graph_unchanged is None else graph_unchanged
     payload: dict[str, Any] = {
         "kind": "error",
         "failure_kind": failure_kind,
-        "stage": response.get("stage") if isinstance(response.get("stage"), str) else default_stage,
-        "retryable": response.get("retryable") if isinstance(response.get("retryable"), bool) else None,
-        "next_action": response.get("next_action") if isinstance(response.get("next_action"), str) else None,
-        "graph_unchanged": response.get("graph_unchanged") if isinstance(response.get("graph_unchanged"), bool) else None,
+        "stage": stage,
+        "retryable": retryable,
+        "next_action": next_action if isinstance(next_action, str) else None,
+        "graph_unchanged": graph_unchanged,
     }
     failure_context = response.get("agent_failure_context")
     if isinstance(failure_context, Mapping):
         payload["agent_failure_context"] = _thaw_jsonish(_freeze_jsonish(failure_context))
+    elif compatibility_mode and spec is not None:
+        payload["agent_failure_context"] = {"explanation": spec.user_facing_message}
     recovery = _extract_rebaseline_recovery(response)
     if recovery is not None:
         payload["rebaseline_recovery"] = recovery
     return {key: value for key, value in payload.items() if value is not None}
+
+
+def _validate_public_error_outcome(outcome: Mapping[str, Any]) -> None:
+    if (
+        not isinstance(outcome.get("failure_kind"), str)
+        or outcome.get("failure_kind") not in {kind.value for kind in FailureKind}
+        or not isinstance(outcome.get("stage"), str)
+        or not isinstance(outcome.get("retryable"), bool)
+        or not isinstance(outcome.get("next_action"), str)
+        or not isinstance(outcome.get("graph_unchanged"), bool)
+    ):
+        raise ValueError("Malformed public error outcome.")
 
 
 def _failure_response_contract_fields(
@@ -1237,6 +1368,8 @@ def public_outcome_from_turn_outcome(
     internal_outcome: TurnOutcome | Mapping[str, Any],
     *,
     response: Mapping[str, Any] | None = None,
+    compatibility_mode: bool = False,
+    default_stage: str | None = None,
 ) -> dict[str, Any]:
     is_internal_turn_outcome = isinstance(internal_outcome, TurnOutcome)
     outcome = internal_outcome.to_dict() if is_internal_turn_outcome else dict(internal_outcome)
@@ -1245,33 +1378,48 @@ def public_outcome_from_turn_outcome(
         raise ValueError("Turn outcome is missing a string kind.")
     if kind in PUBLIC_OUTCOME_KINDS and not is_internal_turn_outcome:
         public = dict(outcome)
+        if public["kind"] == "error":
+            public = _public_error_outcome_from_response(
+                public,
+                default_stage=(
+                    public.get("stage")
+                    if isinstance(public.get("stage"), str)
+                    else default_stage
+                ),
+                compatibility_mode=compatibility_mode,
+            )
+            _validate_public_error_outcome(public)
         recovery = _extract_rebaseline_recovery(response)
         if public["kind"] == "error" and recovery is not None and "rebaseline_recovery" not in public:
             public["rebaseline_recovery"] = recovery
         return public
+    public_kind = INTERNAL_TO_PUBLIC_OUTCOME.get(kind)
+    if public_kind is None:
+        raise ValueError(f"Unknown TurnOutcome kind {kind!r}")
     if kind == "edit":
         return {
-            "kind": "candidate",
+            "kind": public_kind,
             "changes": list(outcome.get("changes", [])),
         }
     if kind == "edit+clarify":
         public = {
-            "kind": "candidate",
+            "kind": public_kind,
             "changes": list(outcome.get("changes", [])),
         }
         public.update(_clarification_payload(outcome.get("question")))
         return public
     if kind == "clarify":
-        public = {"kind": "clarify"}
+        public = {"kind": public_kind}
         public.update(_clarification_payload(outcome.get("question")))
         return public
     if kind == "noop":
-        public = {"kind": "noop"}
+        public = {"kind": public_kind}
         if isinstance(outcome.get("reason"), str) and outcome["reason"].strip():
             public["reason"] = outcome["reason"].strip()
         return public
     if kind == "budget":
-        public_kind = "candidate" if _response_has_candidate_payload(response) else "noop"
+        if _response_has_candidate_payload(response):
+            public_kind = INTERNAL_TO_PUBLIC_OUTCOME["edit"]
         public = {
             "kind": public_kind,
             "budget_exhausted": True,
@@ -1289,8 +1437,8 @@ def public_outcome_from_turn_outcome(
                 "rebaseline_recovery": _extract_rebaseline_recovery(response),
             },
             default_stage=outcome.get("stage") if isinstance(outcome.get("stage"), str) else None,
+            compatibility_mode=compatibility_mode,
         )
-    raise ValueError(f"Unknown TurnOutcome kind {kind!r}")
 
 
 def _public_agent_failure_context(failure: FailureEnvelope) -> dict[str, Any]:
@@ -1379,16 +1527,26 @@ def ensure_agent_edit_response_contract(
     response: Mapping[str, Any],
     *,
     stage: str,
+    compatibility_mode: bool = False,
 ) -> dict[str, Any]:
     payload = dict(response)
     raw_outcome = payload.get("outcome")
     if isinstance(raw_outcome, Mapping) or isinstance(raw_outcome, TurnOutcome):
-        outcome = public_outcome_from_turn_outcome(raw_outcome, response=payload)
+        outcome = public_outcome_from_turn_outcome(
+            raw_outcome,
+            response=payload,
+            compatibility_mode=compatibility_mode,
+            default_stage=stage,
+        )
     elif payload.get("ok") is False or any(
         key in payload
-        for key in ("agent_failure_context", "retryable", "next_action", "failure_kind")
+        for key in FAILURE_HINT_KEYS
     ):
-        outcome = _public_error_outcome_from_response(payload, default_stage=stage)
+        outcome = _public_error_outcome_from_response(
+            payload,
+            default_stage=stage,
+            compatibility_mode=compatibility_mode,
+        )
     else:
         raise ValueError(f"Agent edit response for {stage!r} is missing outcome.")
     kind = outcome.get("kind")
@@ -1398,10 +1556,254 @@ def ensure_agent_edit_response_contract(
         )
     payload["outcome"] = outcome
     if outcome["kind"] == "error":
+        _validate_public_error_outcome(outcome)
         recovery = _extract_rebaseline_recovery(payload)
         if recovery is not None:
             payload["rebaseline_recovery"] = recovery
     return payload
+
+
+def _jsonish_copy(value: Any) -> Any:
+    return _thaw_jsonish(_freeze_jsonish(value))
+
+
+def _project_mapping(
+    payload: Mapping[str, Any],
+    fields: tuple[str, ...],
+) -> dict[str, Any]:
+    return {
+        key: _jsonish_copy(payload[key])
+        for key in fields
+        if key in payload and payload[key] is not None
+    }
+
+
+def _public_outcome_payload(value: Any) -> dict[str, Any] | None:
+    if not isinstance(value, Mapping):
+        return None
+    try:
+        outcome = public_outcome_from_turn_outcome(value)
+    except Exception:
+        return None
+    return outcome if outcome.get("kind") in PUBLIC_OUTCOME_KINDS else None
+
+
+def public_compact_diagnostic(
+    diagnostic: Mapping[str, Any],
+    *,
+    source: str | None = None,
+    turn_id: str | None = None,
+) -> dict[str, Any]:
+    """Return a compact reload diagnostic using an explicit public field list."""
+    payload = _project_mapping(diagnostic, PUBLIC_COMPACT_DIAGNOSTIC_FIELDS)
+    if source is not None:
+        payload["source"] = source
+    if turn_id is not None and "turn_id" not in payload:
+        payload["turn_id"] = turn_id
+    outcome = _public_outcome_payload(payload.get("outcome"))
+    if outcome is not None:
+        payload["outcome"] = outcome
+    return payload
+
+
+def public_audit_artifact_summary(
+    artifact: Mapping[str, Any] | ArtifactRef | None,
+    *,
+    turn_id: str | None = None,
+    source: str | None = None,
+) -> dict[str, Any] | None:
+    """Summarize an audit artifact without exposing filesystem paths."""
+    if artifact is None:
+        return None
+    payload = artifact.to_dict() if isinstance(artifact, ArtifactRef) else dict(artifact)
+    summary = _project_mapping(payload, PUBLIC_AUDIT_ARTIFACT_SUMMARY_FIELDS)
+    if turn_id is not None:
+        summary["turn_id"] = turn_id
+    if source is not None:
+        summary["source"] = source
+    return summary or None
+
+
+def _collect_public_diagnostics_from_change_details(
+    change_details: Any,
+    *,
+    source: str,
+    turn_id: str | None,
+) -> list[dict[str, Any]]:
+    if not isinstance(change_details, Mapping):
+        return []
+    diagnostics: list[dict[str, Any]] = []
+    compact = public_compact_diagnostic(change_details, source=source, turn_id=turn_id)
+    if compact:
+        diagnostics.append(compact)
+    for key in ("diagnostics", "issues"):
+        raw_items = change_details.get(key)
+        if isinstance(raw_items, list):
+            for item in raw_items:
+                if isinstance(item, Mapping):
+                    diagnostics.append(
+                        public_compact_diagnostic(
+                            item,
+                            source=f"{source}.{key}",
+                            turn_id=turn_id,
+                        )
+                    )
+    batch_turns = change_details.get("batch_turns")
+    if isinstance(batch_turns, list):
+        for index, step in enumerate(batch_turns):
+            if isinstance(step, Mapping):
+                diagnostics.append(
+                    public_compact_diagnostic(
+                        step,
+                        source=f"{source}.batch_turns[{index}]",
+                        turn_id=turn_id,
+                    )
+                )
+    return [item for item in diagnostics if item]
+
+
+def public_transcript_message(message: Mapping[str, Any]) -> dict[str, Any]:
+    """Project a transcript message to the public browser payload shape."""
+    payload = _project_mapping(message, PUBLIC_TRANSCRIPT_MESSAGE_FIELDS)
+    outcome = _public_outcome_payload(payload.get("outcome"))
+    if outcome is not None:
+        payload["outcome"] = outcome
+    elif "outcome" in payload:
+        payload.pop("outcome", None)
+    return payload
+
+
+def public_response_details(response: Mapping[str, Any]) -> dict[str, Any]:
+    """Project one response/detail object for normal browser consumption."""
+    payload = _project_mapping(response, PUBLIC_RESPONSE_DETAIL_FIELDS)
+    outcome = _public_outcome_payload(payload.get("outcome"))
+    if outcome is not None:
+        payload["outcome"] = outcome
+    elif "outcome" in payload:
+        payload.pop("outcome", None)
+    return payload
+
+
+def public_latest_candidate(candidate: Mapping[str, Any] | None) -> dict[str, Any] | None:
+    """Project the latest-candidate object while retaining review/apply data."""
+    if not isinstance(candidate, Mapping):
+        return None
+    payload = _project_mapping(candidate, PUBLIC_LATEST_CANDIDATE_FIELDS)
+    outcome = _public_outcome_payload(payload.get("outcome"))
+    if outcome is not None:
+        payload["outcome"] = outcome
+    elif "outcome" in payload:
+        payload.pop("outcome", None)
+    return payload
+
+
+def public_session_turn_summary(turn: Mapping[str, Any]) -> dict[str, Any]:
+    """Project one session-json turn summary with boolean artifact presence."""
+    payload = _project_mapping(turn, PUBLIC_SESSION_TURN_SUMMARY_FIELDS)
+    payload["artifacts"] = {
+        "has_request": bool(turn.get("request.json")),
+        "has_response": bool(turn.get("response.json")),
+        "has_chat": bool(turn.get("chat.json")),
+        "has_detail": bool(turn.get("detail.json") or turn.get("detail_json_path") or turn.get("response.json")),
+        "has_audit": bool(turn.get("audit.json") or turn.get("audit_ref") or turn.get("audit_path")),
+    }
+    return payload
+
+
+def public_chat_rehydrate_payload(payload: Mapping[str, Any]) -> dict[str, Any]:
+    """Project a raw chat rehydrate envelope to the browser-safe public shape."""
+    public: dict[str, Any] = {
+        "ok": payload.get("ok") is not False,
+        "exists": bool(payload.get("exists")),
+        "session_id": payload.get("session_id"),
+        "latest_turn_id": payload.get("latest_turn_id"),
+        "messages": [],
+        "latest_candidate": public_latest_candidate(payload.get("latest_candidate")),
+        "diagnostics": [],
+        "audit_artifacts": [],
+    }
+    raw_messages = payload.get("messages")
+    if isinstance(raw_messages, list):
+        messages: list[dict[str, Any]] = []
+        diagnostics: list[dict[str, Any]] = []
+        audit_artifacts: list[dict[str, Any]] = []
+        for raw in raw_messages:
+            if not isinstance(raw, Mapping):
+                continue
+            messages.append(public_transcript_message(raw))
+            turn_id = raw.get("turn_id") if isinstance(raw.get("turn_id"), str) else None
+            diagnostics.extend(
+                _collect_public_diagnostics_from_change_details(
+                    raw.get("change_details"),
+                    source="messages.change_details",
+                    turn_id=turn_id,
+                )
+            )
+            audit_summary = public_audit_artifact_summary(raw.get("audit_ref"), turn_id=turn_id, source="messages")
+            if audit_summary is not None:
+                audit_artifacts.append(audit_summary)
+        public["messages"] = messages
+        public["diagnostics"] = diagnostics
+        public["audit_artifacts"] = audit_artifacts
+    existing_diagnostics = payload.get("diagnostics")
+    if isinstance(existing_diagnostics, list):
+        public["diagnostics"].extend(
+            public_compact_diagnostic(item)
+            for item in existing_diagnostics
+            if isinstance(item, Mapping)
+        )
+    existing_audit_artifacts = payload.get("audit_artifacts")
+    if isinstance(existing_audit_artifacts, list):
+        for item in existing_audit_artifacts:
+            if isinstance(item, Mapping):
+                audit_summary = public_audit_artifact_summary(item)
+                if audit_summary is not None:
+                    public["audit_artifacts"].append(audit_summary)
+    latest = payload.get("latest_candidate")
+    if isinstance(latest, Mapping):
+        latest_turn_id = latest.get("turn_id") if isinstance(latest.get("turn_id"), str) else None
+        public["diagnostics"].extend(
+            _collect_public_diagnostics_from_change_details(
+                latest.get("change_details"),
+                source="latest_candidate.change_details",
+                turn_id=latest_turn_id,
+            )
+        )
+        audit_summary = public_audit_artifact_summary(
+            latest.get("audit_ref"),
+            turn_id=latest_turn_id,
+            source="latest_candidate",
+        )
+        if audit_summary is not None:
+            public["audit_artifacts"].append(audit_summary)
+    return public
+
+
+def public_session_json_payload(payload: Mapping[str, Any]) -> dict[str, Any]:
+    """Project raw session-json data to the public browser route contract."""
+    public: dict[str, Any] = {
+        "ok": payload.get("ok") is not False,
+        "session_id": payload.get("session_id"),
+        "latest_turn_id": payload.get("latest_turn_id"),
+        "turn_count": payload.get("turn_count") if isinstance(payload.get("turn_count"), int) else 0,
+        "messages": [],
+        "turns": [],
+    }
+    raw_messages = payload.get("messages")
+    if isinstance(raw_messages, list):
+        public["messages"] = [
+            public_transcript_message(message)
+            for message in raw_messages
+            if isinstance(message, Mapping)
+        ]
+    raw_turns = payload.get("turns")
+    if isinstance(raw_turns, list):
+        public["turns"] = [
+            public_session_turn_summary(turn)
+            for turn in raw_turns
+            if isinstance(turn, Mapping)
+        ]
+    return public
 
 
 def _lookup_status_code(value: Any) -> int | None:
@@ -1963,7 +2365,15 @@ __all__ = [
     "DiagnosticRecord",
     "ensure_agent_edit_response_contract",
     "failure_envelope",
+    "public_audit_artifact_summary",
+    "public_chat_rehydrate_payload",
+    "public_compact_diagnostic",
+    "public_latest_candidate",
     "public_outcome_from_turn_outcome",
+    "public_response_details",
+    "public_session_json_payload",
+    "public_session_turn_summary",
+    "public_transcript_message",
     "product_failure_envelope_fields",
     "repair_field_changes",
     "success_envelope",
