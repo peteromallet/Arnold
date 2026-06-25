@@ -49,8 +49,8 @@ milestones:
     depth: high
     notes: "partnered-5 @codex. Refactor extensionSurface.ts onto a host family adapter registry."
 
-  - label: m4-runtime-packagability-and-readiness
-    idea: .megaplan/briefs/pristine-editor-sdk-boundary/m4-runtime-packagability-and-readiness.md
+  - label: m4-runtime-helpers-governance-and-readiness
+    idea: .megaplan/briefs/pristine-editor-sdk-boundary/m4-runtime-helpers-governance-and-readiness.md
     branch: epic/reigh-pristine-sdk-boundary-m4
     profile: partnered-5
     vendor: codex

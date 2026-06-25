@@ -26,10 +26,19 @@ M2 split the SDK into family modules. M3 inverts the host side so that adding a 
 2. **Create the host adapter registry.**
    - `src/tools/video-editor/runtime/families/familyAdapterRegistry.ts` maps `ContributionKind` to adapters and provides `normalizeAll`, `disposeExtension`, `projectCapabilities`, `auditConformance`.
 
-3. **Implement adapters for existing runtime families.**
-   - Start with families currently normalized in `extensionSurface.ts`:
-     - surfaces, commands, parser, metadataFacet, assetDetailSection, outputFormat, process, effect, transition, clipType, shader, agentTool, searchProvider.
-   - Each adapter owns normalization, disposal, planner projection, and conformance report.
+3. **Build the host adapter registry skeleton and prove it with representative families.**
+   - Do not migrate every runtime family in this milestone; prove the pattern deeply across three risk types:
+     - **Metadata family:** `metadataFacet` or `assetDetailSection`.
+     - **Render-relevant family:** `shader` or `effect`.
+     - **Execution/process-like family:** `process` or `agentTool`.
+   - For each representative family:
+     - implement a `HostFamilyAdapter` that owns normalization, disposal, planner projection, and conformance report,
+     - remove the corresponding switch cases from `extensionSurface.ts`,
+     - add tests that fail if the adapter regresses.
+   - For all other families with execution maturity >= `runtime-bridged`, register a placeholder adapter that:
+     - delegates to the existing `extensionSurface.ts` logic,
+     - reports a conformance gap,
+     - does not block this milestone from passing.
 
 4. **Refactor `extensionSurface.ts`.**
    - Replace family switch cases with adapter registry calls.
@@ -70,10 +79,12 @@ M2 split the SDK into family modules. M3 inverts the host side so that adding a 
 
 ## Done criteria
 
-- [ ] `HostFamilyAdapter` interface exists and is implemented for every `runtime-bridged` or higher family.
-- [ ] `extensionSurface.ts` uses the adapter registry instead of family switch cases.
+- [ ] `HostFamilyAdapter` interface exists and the registry can dispatch adapters by `ContributionKind`.
+- [ ] Three representative families (metadata, render-relevant, execution/process-like) have real adapters that replace their `extensionSurface.ts` switch cases.
+- [ ] Remaining `runtime-bridged` or higher families have placeholder adapters that delegate to existing logic and report conformance gaps.
+- [ ] `extensionSurface.ts` uses the registry for representative families and keeps a documented escape hatch for placeholders.
 - [ ] Adapter registry tests pass.
-- [ ] Family conformance check fails release mode when an adapter is missing.
+- [ ] Family conformance check reports gaps in audit mode and fails release mode only for representative families missing adapters.
 - [ ] `npm run quality:check` and `npm run test:readiness` pass.
 
 ## Touchpoints

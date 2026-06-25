@@ -46,6 +46,24 @@ The SDK currently declares it must not depend on editor internals, yet it import
    - Run the check; fix all failures.
    - Add a negative test: a deliberately introduced SDK import from video-editor internals fails the guard.
 
+7. **Add an external packagability smoke.**
+   - Create a temporary external package fixture under `scripts/quality/fixtures/sdk-consumer-package/` that:
+     - depends only on `@reigh/editor-sdk` (resolved to the local SDK source via a relative path or tsconfig paths),
+     - imports the full public SDK surface,
+     - has no Vite app context,
+     - does not use the `@/` alias to reach app internals.
+   - Run `tsc --noEmit` in that fixture and fail if it emits any diagnostic from `src/sdk/**`.
+   - Do not filter SDK diagnostics; `skipLibCheck` should remain true only for third-party `.d.ts`.
+   - Wire the smoke into `npm run check:video-editor-sdk-imports` or `npm run test:extensions`.
+
+8. **Add a representative family contract sanity check.**
+   - Pick three families of different risk types: one metadata family (e.g. `metadataFacet`), one render-relevant family (e.g. `shader`), and one execution/process-like family (e.g. `process`).
+   - For each, document in code comments:
+     - what is portable vs. host-only today,
+     - which SDK types are declaration-only,
+     - which host behavior must remain in `src/tools/video-editor`.
+   - This sanity check is documentation-only; it validates the contract extraction boundaries before M2/M3 broaden the work.
+
 ## Locked decisions
 
 - After M0, no file under `src/sdk/**` may import from `src/tools/video-editor/**` or `@/tools/video-editor/**`.
@@ -68,6 +86,8 @@ The SDK currently declares it must not depend on editor internals, yet it import
 
 - [ ] `src/sdk/**` has zero imports from `src/tools/video-editor/**` or `@/tools/video-editor/**`.
 - [ ] `npm run check:video-editor-sdk-imports` passes and catches deliberate violations.
+- [ ] The external SDK-consumer package fixture compiles with `tsc --noEmit` and emits no diagnostics from `src/sdk/**`.
+- [ ] Representative family sanity check documents portable vs. host-only boundaries for one metadata, one render-relevant, and one execution/process-like family.
 - [ ] All existing public SDK exports remain available from `@reigh/editor-sdk` with compatible types.
 - [ ] `npm run quality:check` and `npm run test:readiness` pass.
 
@@ -85,4 +105,4 @@ The SDK currently declares it must not depend on editor internals, yet it import
 - Splitting `src/sdk/index.ts` into many scoped modules (M2).
 - Defining the family maturity registry (M1).
 - Refactoring `extensionSurface.ts` onto adapters (M3).
-- Making the packagability smoke strict (M4).
+- Governance/docs closure and final release merge (M4).

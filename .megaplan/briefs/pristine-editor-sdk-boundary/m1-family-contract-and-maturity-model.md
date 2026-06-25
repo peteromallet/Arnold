@@ -60,6 +60,15 @@ M0 removed video-editor imports from the SDK. M1 defines the family architecture
    - `scripts/quality/check-extension-family-conformance.mjs` with `--audit` mode.
    - Wire `check:extension-family-conformance` into `package.json`.
 
+6. **Make the family matrix machine-readable and generative.**
+   - Expose a function `getFamilyMatrix(): FamilyDefinition[]` from the registry.
+   - Add a script `scripts/quality/generate-extension-family-matrix.mjs` that:
+     - emits a JSON matrix,
+     - asserts every family in the matrix has a non-empty `manifestSchemaDefinition`, `sdkModules`, and obligation checklist,
+     - fails if declaration maturity and execution maturity are not both set.
+   - Commit the generated matrix to `docs/extensions/extension-family-matrix.json` so docs/schema/examples can consume it.
+   - Add a test that fails if `docs/extensions/extension-family-matrix.json` is out of sync with the registry.
+
 ## Locked decisions
 
 - A `ContributionKind` without a `FamilyDefinition` is a bug.
@@ -87,6 +96,7 @@ M0 removed video-editor imports from the SDK. M1 defines the family architecture
 - [ ] `contributionKindNotYetBridged()` is no longer the sole source of truth.
 - [ ] SDK/schema drift for `RenderRoute`, `DeterminismStatus`, and shader types is fixed and guarded.
 - [ ] `npm run check:extension-family-conformance -- --audit` produces a report.
+- [ ] `docs/extensions/extension-family-matrix.json` is generated and in sync with the registry.
 - [ ] All existing tests pass.
 
 ## Touchpoints
