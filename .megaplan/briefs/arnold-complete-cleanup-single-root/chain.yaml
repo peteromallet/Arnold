@@ -1,0 +1,103 @@
+base_branch: main
+
+milestones:
+  - label: m0-loose-work-baseline
+    idea: .megaplan/briefs/arnold-complete-cleanup-single-root/m0-loose-work-baseline.md
+    profile: partnered-5
+    vendor: codex
+    robustness: thorough
+    depth: high
+    branch: cleanup-single-root-m0-baseline
+    prep_clarify: false
+    prep_direction: "Start from the post-native-completion local main. Verify the cleanup ledger, current git/worktree state, ticket 01KVZZ45DAZW9P5H4JA66JWNY3, and remaining external exceptions. Do not begin code migration before the baseline and loose-work disposition record are machine-checkable."
+    notes: "Turns the prior cleanup decisions into an enforceable baseline and closes non-product loose work decisions."
+
+  - label: m1-inventory-ratchets
+    idea: .megaplan/briefs/arnold-complete-cleanup-single-root/m1-inventory-ratchets.md
+    profile: partnered-5
+    vendor: codex
+    robustness: thorough
+    depth: high
+    branch: cleanup-single-root-m1-inventory
+    depends_on:
+      - m0-loose-work-baseline
+    prep_clarify: false
+    prep_direction: "Build the import/caller/surface inventory before moving files. Focus on AST scans, command-string scans, discovery rows, public exports, side-effect surfaces, _pipeline callers, docs/skills, and a shrink-only legacy-file registry."
+    notes: "Creates the tripwires that make the rest of the epic safe."
+
+  - label: m2-canonical-side-effects
+    idea: .megaplan/briefs/arnold-complete-cleanup-single-root/m2-canonical-side-effects.md
+    profile: partnered-5
+    vendor: codex
+    robustness: thorough
+    depth: high
+    branch: cleanup-single-root-m2-side-effects
+    depends_on:
+      - m1-inventory-ratchets
+    prep_clarify: false
+    prep_direction: "Invert authority for package init and public surfaces without deleting the legacy tree yet. Side effects must be idempotent and import-order deterministic. Do not shim to missing canonical modules."
+    notes: "Makes canonical import behavior real before deeper runtime extraction."
+
+  - label: m3-pipeline-runtime-extraction
+    idea: .megaplan/briefs/arnold-complete-cleanup-single-root/m3-pipeline-runtime-extraction.md
+    profile: partnered-5
+    vendor: codex
+    robustness: thorough
+    depth: high
+    branch: cleanup-single-root-m3-runtime-extraction
+    depends_on:
+      - m2-canonical-side-effects
+    prep_clarify: false
+    prep_direction: "Extract legacy _pipeline and runtime responsibilities into named canonical modules under arnold_pipelines.megaplan. Do not recreate a final arnold_pipelines.megaplan._pipeline namespace. Migrate callers/tests as responsibilities move."
+    notes: "The load-bearing implementation migration."
+
+  - label: m4-behavior-parity-surfaces
+    idea: .megaplan/briefs/arnold-complete-cleanup-single-root/m4-behavior-parity-surfaces.md
+    profile: partnered-5
+    vendor: codex
+    robustness: thorough
+    depth: high
+    branch: cleanup-single-root-m4-parity
+    depends_on:
+      - m3-pipeline-runtime-extraction
+    prep_clarify: false
+    prep_direction: "Prove supported behavior through canonical paths: CLI, chain, resume/status, PR helpers, workers, engine isolation, discovery, docs, skills, generated assets, editable install, and wheel install. Legacy path may remain only as a tracked temporary shim if still needed."
+    notes: "Prevents functionality loss before deletion."
+
+  - label: m5-delete-legacy-root
+    idea: .megaplan/briefs/arnold-complete-cleanup-single-root/m5-delete-legacy-root.md
+    profile: partnered-5
+    vendor: codex
+    robustness: thorough
+    depth: high
+    branch: cleanup-single-root-m5-delete
+    depends_on:
+      - m4-behavior-parity-surfaces
+    prep_clarify: false
+    prep_direction: "Delete or intentionally fail the legacy arnold.pipelines.megaplan import path only after all canonical parity gates are green. Preserve no permanent shims. Purge stale docs, skills, generated assets, __pycache__, and symlink churn."
+    notes: "The clean-break deletion sprint."
+
+  - label: m6-merge-result-closeout
+    idea: .megaplan/briefs/arnold-complete-cleanup-single-root/m6-merge-result-closeout.md
+    profile: partnered-5
+    vendor: codex
+    robustness: thorough
+    depth: high
+    branch: cleanup-single-root-m6-closeout
+    depends_on:
+      - m5-delete-legacy-root
+    prep_clarify: false
+    prep_direction: "Run only post-merge conformance on the integrated result and close remaining external cleanup exceptions. Verify the old TypeScript Arnold snapshot is archived or deleted per policy and active operational worktrees are not retained after their processes exit."
+    notes: "Blocks final completion unless the merged state, not just milestone branches, is clean."
+
+on_failure:
+  abort: stop_chain
+on_escalate:
+  abort: stop_chain
+merge_policy: review
+
+driver:
+  robustness: thorough
+  auto_approve: true
+  max_iterations: 120
+  poll_sleep: 8.0
