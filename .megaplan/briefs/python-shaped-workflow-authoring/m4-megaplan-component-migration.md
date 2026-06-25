@@ -7,7 +7,7 @@ Make the actual Megaplan planning workflow readable and editable as Python-shape
 ## Source Material
 
 - M1-M3 outputs.
-- `.megaplan/briefs/workflow-manifest-runtime-cleanup/codex-end-state-megaplan-planning.py`
+- `docs/arnold/python-shaped-authoring-contract.md`
 - Existing `arnold_pipelines.megaplan.pipeline.build_pipeline()`.
 - Current Megaplan handlers, prompts, policies, settings, and manifest/golden fixtures.
 

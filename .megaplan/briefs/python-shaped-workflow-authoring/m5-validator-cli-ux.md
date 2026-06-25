@@ -8,7 +8,7 @@ Ship the authoring surface as a usable product interface, not just an internal c
 
 - M1-M4 outputs.
 - Existing workflow CLI conventions.
-- `.megaplan/briefs/workflow-manifest-runtime-cleanup/python-shaped-authoring-production-polish-plan.md`
+- `docs/arnold/python-shaped-authoring-contract.md`
 
 ## Scope
 
