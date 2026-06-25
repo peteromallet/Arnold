@@ -1,0 +1,50 @@
+base_branch: main
+
+on_failure:
+  abort: stop_chain
+on_escalate:
+  abort: stop_chain
+merge_policy: manual
+
+driver:
+  robustness: full
+  auto_approve: true
+  max_iterations: 60
+  poll_sleep: 8.0
+
+milestones:
+  - label: m0-family-contract-and-maturity-model
+    idea: .megaplan/briefs/pristine-editor-sdk-boundary/m0-family-contract-and-maturity-model.md
+    branch: epic/reigh-pristine-sdk-boundary-m0
+    profile: partnered-5
+    vendor: codex
+    robustness: full
+    depth: high
+    notes: "partnered-5 @codex. Defines the canonical family registry and maturity model before the SDK barrel split."
+
+  - label: m1-sdk-boundary-and-family-modules
+    idea: .megaplan/briefs/pristine-editor-sdk-boundary/m1-sdk-boundary-and-family-modules.md
+    branch: epic/reigh-pristine-sdk-boundary-m1
+    profile: partnered-5
+    vendor: codex
+    robustness: full
+    depth: high
+    notes: "partnered-5 @codex. Splits src/sdk/index.ts into scoped family modules and removes video-editor imports from the SDK."
+
+  - label: m2-host-family-adapter-registry
+    idea: .megaplan/briefs/pristine-editor-sdk-boundary/m2-host-family-adapter-registry.md
+    branch: epic/reigh-pristine-sdk-boundary-m2
+    profile: partnered-5
+    vendor: codex
+    robustness: full
+    depth: high
+    notes: "partnered-5 @codex. Refactors extensionSurface.ts onto a host family adapter registry."
+
+  - label: m3-runtime-packagability-and-readiness
+    idea: .megaplan/briefs/pristine-editor-sdk-boundary/m3-runtime-packagability-and-readiness.md
+    branch: epic/reigh-pristine-sdk-boundary-m3
+    profile: partnered-5
+    vendor: codex
+    robustness: full
+    depth: high
+    notes: "partnered-5 @codex. Strict packagability smoke, runtime helper ownership, governance/docs closure, and release readiness."
