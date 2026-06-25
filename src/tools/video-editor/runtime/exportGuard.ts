@@ -15,7 +15,10 @@ import type {
   ContributionKind,
   ExtensionContribution,
 } from '@reigh/editor-sdk';
-import { contributionKindNotYetBridged } from '@reigh/editor-sdk';
+import {
+  getVideoFamilyDefinition,
+  getVideoFamilyLegacyBridgeStatus,
+} from '@reigh/editor-sdk';
 import { BUILTIN_CLIP_TYPES } from '@/sdk/video/timeline/clipTypes.ts';
 import type { ResolvedTimelineClip, ResolvedTimelineConfig, TimelineConfig } from '@/tools/video-editor/types/index.ts';
 import {
@@ -79,6 +82,19 @@ export interface InactiveKnownIds {
   readonly transitionIds: ReadonlySet<string>;
   /** Clip-type IDs declared by inactive extension contributions. */
   readonly clipTypeIds: ReadonlySet<string>;
+}
+
+function getContributionRuntimeStatus(kind: ContributionKind): {
+  readonly legacyBridgeStatus: string | null;
+  readonly isBridged: boolean;
+} {
+  const family = getVideoFamilyDefinition(kind);
+  return {
+    legacyBridgeStatus: getVideoFamilyLegacyBridgeStatus(kind),
+    isBridged: family?.executionMaturity === 'runtime-bridged' ||
+      family?.executionMaturity === 'host-integrated' ||
+      family?.executionMaturity === 'public-supported',
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -175,8 +191,10 @@ export function collectExtensionDeclaredIds(
   const clipTypeIds = new Set<string>();
 
   for (const contrib of contributions) {
-    // Clip type declarations still act as inactive export metadata even though
-    // clipType is now bridged. Other bridged render kinds are skipped.
+    // Preserve the current clipType declared-ID bypass under the maturity
+    // model: clipType is runtime-bridged in the registry, but declared IDs
+    // still feed metadata-only export diagnostics when the runtime registry
+    // does not have an active clip-type record yet.
     if (contrib.kind === 'clipType') {
       if (contrib.clipTypeId) {
         clipTypeIds.add(contrib.clipTypeId);
@@ -184,8 +202,8 @@ export function collectExtensionDeclaredIds(
       continue;
     }
 
-    const notBridged = contributionKindNotYetBridged(contrib.kind);
-    if (notBridged === null) continue; // Already bridged — skip
+    const runtimeStatus = getContributionRuntimeStatus(contrib.kind);
+    if (runtimeStatus.isBridged || runtimeStatus.legacyBridgeStatus === null) continue;
 
     switch (contrib.kind) {
       case 'effect':

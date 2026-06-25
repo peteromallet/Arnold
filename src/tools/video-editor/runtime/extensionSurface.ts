@@ -43,7 +43,10 @@ import type {
   ProcessOperationSpec,
   ProjectExtensionRequirement,
 } from '@reigh/editor-sdk';
-import { contributionKindNotYetBridged } from '@reigh/editor-sdk';
+import {
+  getVideoFamilyDefinition,
+  getVideoFamilyLegacyBridgeStatus,
+} from '@reigh/editor-sdk';
 import type { TimelineGestureOwner } from '@/tools/video-editor/lib/mobile-interaction-model';
 import type {
   PackageState,
@@ -608,6 +611,50 @@ const EMPTY_EFFECTS: readonly VideoEditorEffectDescriptor[] = Object.freeze([]);
 const EMPTY_TRANSITIONS: readonly VideoEditorTransitionDescriptor[] = Object.freeze([]);
 const EMPTY_SHADERS: readonly VideoEditorShaderDescriptor[] = Object.freeze([]);
 const EMPTY_AGENT_TOOLS: readonly VideoEditorAgentToolDescriptor[] = Object.freeze([]);
+
+interface ContributionRuntimeStatus {
+  readonly legacyBridgeStatus: string | null;
+  readonly isDelegated: boolean;
+}
+
+function getContributionRuntimeStatus(kind: ContributionKind): ContributionRuntimeStatus {
+  const family = getVideoFamilyDefinition(kind);
+  const legacyBridgeStatus = getVideoFamilyLegacyBridgeStatus(kind);
+  return {
+    legacyBridgeStatus,
+    isDelegated: family?.executionMaturity === 'delegated',
+  };
+}
+
+function recordInactiveReservedContribution(
+  inactiveReserved: InactiveReservedContribution[],
+  diagnostics: ExtensionDiagnostic[],
+  knownRenderIds: Set<string>,
+  extensionId: string,
+  contribution: ExtensionContribution,
+  milestone: string,
+): void {
+  inactiveReserved.push({
+    extensionId,
+    contributionId: contribution.id as string,
+    kind: contribution.kind,
+    milestone,
+  });
+  diagnostics.push({
+    severity: 'info',
+    code: 'runtime/contribution-kind-not-yet-bridged',
+    message:
+      `Contribution "${contribution.id as string}" (kind: ${contribution.kind}) in extension "${extensionId}" ` +
+      `is reserved for ${milestone}.`,
+    extensionId,
+    contributionId: contribution.id as string,
+    milestone,
+  });
+  if (contribution.render) {
+    knownRenderIds.add(contribution.render);
+  }
+}
+
 const EMPTY_RESOLVED_PANEL_REGISTRY: ResolvedVideoEditorPanelRegistry = Object.freeze({
   assetPanels: EMPTY_PANELS,
   inspectorSections: Object.freeze({
@@ -738,8 +785,8 @@ export function normalizeExtensionRuntime(
       }
       seenContributionIds.set(contribId, extId);
 
-      // Check if the contribution kind is bridged in the current runtime
-      const notYetBridged = contributionKindNotYetBridged(contrib.kind);
+      const runtimeStatus = getContributionRuntimeStatus(contrib.kind);
+      const notYetBridged = runtimeStatus.legacyBridgeStatus;
 
       // M7: Effect contributions with component metadata (effectId) are
       // treated as active and projected into deterministic descriptors.
@@ -814,30 +861,18 @@ export function normalizeExtensionRuntime(
       // M6: OutputFormat and SearchProvider are reserved for execution but
       // must still be collected as descriptors in the runtime config.
       if (
+        runtimeStatus.isDelegated &&
         notYetBridged !== null &&
         (contrib.kind === 'outputFormat' || contrib.kind === 'searchProvider')
       ) {
-        // Add to inactive reserved for diagnostics
-        inactiveReserved.push({
-          extensionId: extId,
-          contributionId: contribId,
-          kind: contrib.kind,
-          milestone: notYetBridged,
-        });
-        diagnostics.push({
-          severity: 'info',
-          code: 'runtime/contribution-kind-not-yet-bridged',
-          message:
-            `Contribution "${contribId}" (kind: ${contrib.kind}) in extension "${extId}" ` +
-            `is reserved for ${notYetBridged}.`,
-          extensionId: extId,
-          contributionId: contribId,
-          milestone: notYetBridged,
-        });
-        // Still collect known render IDs even for inactive contributions
-        if (contrib.render) {
-          knownRenderIds.add(contrib.render);
-        }
+        recordInactiveReservedContribution(
+          inactiveReserved,
+          diagnostics,
+          knownRenderIds,
+          extId,
+          contrib,
+          notYetBridged,
+        );
         // Collect into the appropriate M6 reserved list for later projection
         if (contrib.kind === 'outputFormat') {
           m6ReservedOutputFormats.push({ contribution: contrib, extensionId: extId });
@@ -846,50 +881,27 @@ export function normalizeExtensionRuntime(
         }
         continue;
       }
-      if (notYetBridged !== null && contrib.kind === 'process') {
-        inactiveReserved.push({
-          extensionId: extId,
-          contributionId: contribId,
-          kind: contrib.kind,
-          milestone: notYetBridged,
-        });
-        diagnostics.push({
-          severity: 'info',
-          code: 'runtime/contribution-kind-not-yet-bridged',
-          message:
-            `Contribution "${contribId}" (kind: ${contrib.kind}) in extension "${extId}" ` +
-            `is reserved for ${notYetBridged}.`,
-          extensionId: extId,
-          contributionId: contribId,
-          milestone: notYetBridged,
-        });
-        if (contrib.render) {
-          knownRenderIds.add(contrib.render);
-        }
+      if (runtimeStatus.isDelegated && notYetBridged !== null && contrib.kind === 'process') {
+        recordInactiveReservedContribution(
+          inactiveReserved,
+          diagnostics,
+          knownRenderIds,
+          extId,
+          contrib,
+          notYetBridged,
+        );
         m12ReservedProcesses.push({ contribution: contrib, extensionId: extId });
         continue;
       }
       if (notYetBridged !== null) {
-        inactiveReserved.push({
-          extensionId: extId,
-          contributionId: contribId,
-          kind: contrib.kind,
-          milestone: notYetBridged,
-        });
-        diagnostics.push({
-          severity: 'info',
-          code: 'runtime/contribution-kind-not-yet-bridged',
-          message:
-            `Contribution "${contribId}" (kind: ${contrib.kind}) in extension "${extId}" ` +
-            `is reserved for ${notYetBridged}.`,
-          extensionId: extId,
-          contributionId: contribId,
-          milestone: notYetBridged,
-        });
-        // Still collect known render IDs even for inactive contributions
-        if (contrib.render) {
-          knownRenderIds.add(contrib.render);
-        }
+        recordInactiveReservedContribution(
+          inactiveReserved,
+          diagnostics,
+          knownRenderIds,
+          extId,
+          contrib,
+          notYetBridged,
+        );
         continue;
       }
 

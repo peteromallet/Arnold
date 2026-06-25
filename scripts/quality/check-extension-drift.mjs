@@ -35,6 +35,12 @@ import { readFileSync, existsSync, readdirSync } from 'node:fs';
 import { resolve, dirname, basename } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import {
+  parseSdkContributionKinds,
+  loadFamilyMaturityMatrix,
+  readFileIfExists,
+} from './lib/drift-check-helpers.mjs';
+
 // ---------------------------------------------------------------------------
 // Path resolution
 // ---------------------------------------------------------------------------
@@ -52,6 +58,7 @@ const EXTENSIONS_DIR = resolve(
   repoRoot,
   'src/tools/video-editor/examples/extensions',
 );
+const FAMILY_MATURITY_PATH = resolve(repoRoot, 'config/extensions/family-maturity.json');
 
 // ---------------------------------------------------------------------------
 // CLI
@@ -127,150 +134,32 @@ const R = new DriftReport();
 // ---------------------------------------------------------------------------
 // 1. Parse SDK ContributionKind and bridged/reserved status
 // ---------------------------------------------------------------------------
+//
+// Bridged/reserved classification now comes from the family maturity
+// matrix (config/extensions/family-maturity.json) — the canonical
+// registry-derived source of truth.  The legacy regex-parsed
+// contributionKindNotYetBridged() authority is removed from the
+// production drift gate.
 
-/**
- * Parse the ContributionKind type union from the SDK source.
- * Looks for `export type ContributionKind = …` and extracts string literals.
- */
-function parseSdkContributionKinds() {
-  if (!existsSync(SDK_INDEX)) {
-    R.error(`SDK index not found: ${SDK_INDEX}`);
-    return { kinds: [], bridged: new Set(), reserved: new Set(), milestoneMap: {} };
-  }
+// Load the family maturity matrix for bridged/reserved authority.
+const familyMatrix = loadFamilyMaturityMatrix(FAMILY_MATURITY_PATH);
 
-  const source = readFileSync(SDK_INDEX, 'utf8');
-
-  // Extract ContributionKind type union members
-  const kindRe = /\|\s*'([a-zA-Z][a-zA-Z0-9]*)'/g;
-  const kindBlockRe = /export type ContributionKind\s*=\s*([\s\S]*?);/;
-  const kindBlock = source.match(kindBlockRe);
-
-  /** @type {string[]} */
-  const kinds = [];
-  if (kindBlock) {
-    for (const m of kindBlock[1].matchAll(kindRe)) {
-      if (!kinds.includes(m[1])) kinds.push(m[1]);
-    }
-  }
-
-  // Also extract KNOWN_CONTRIBUTION_KINDS array for cross-validation
-  const knownArrayRe = /export const KNOWN_CONTRIBUTION_KINDS[\s\S]*?=\s*\[([\s\S]*?)\]\s*as const/;
-  const knownArrayMatch = source.match(knownArrayRe);
-  /** @type {string[]} */
-  const knownArrayKinds = [];
-  if (knownArrayMatch) {
-    for (const m of knownArrayMatch[1].matchAll(kindRe)) {
-      if (!knownArrayKinds.includes(m[1])) knownArrayKinds.push(m[1]);
-    }
-  }
-
-  // Validate type union and array match
-  const typeSet = new Set(kinds);
-  const arraySet = new Set(knownArrayKinds);
-  if (knownArrayKinds.length > 0) {
-    for (const k of kinds) {
-      if (!arraySet.has(k)) {
-        R.warn(`SDK kind '${k}' in ContributionKind type but NOT in KNOWN_CONTRIBUTION_KINDS array`);
-      }
-    }
-    for (const k of knownArrayKinds) {
-      if (!typeSet.has(k)) {
-        R.warn(`SDK kind '${k}' in KNOWN_CONTRIBUTION_KINDS array but NOT in ContributionKind type`);
-      }
-    }
-  }
-
-  // Parse CONTRIBUTION_KIND_MILESTONE
-  const milestoneRe = /export const CONTRIBUTION_KIND_MILESTONE[\s\S]*?=\s*\{([\s\S]*?)\};/;
-  const milestoneMatch = source.match(milestoneRe);
-  /** @type {Record<string, string>} */
-  const milestoneMap = {};
-  if (milestoneMatch) {
-    const entryRe = /(\w+)\s*:\s*'([^']*)'/g;
-    for (const m of milestoneMatch[1].matchAll(entryRe)) {
-      milestoneMap[m[1]] = m[2];
-    }
-  }
-
-  // Parse contributionKindNotYetBridged to determine bridged vs reserved
-  // We statically evaluate the function logic
-  /** @type {Set<string>} */
-  const bridged = new Set();
-  /** @type {Set<string>} */
-  const reserved = new Set();
-
-  for (const kind of kinds) {
-    const milestone = milestoneMap[kind];
-    if (!milestone) {
-      reserved.add(kind);
-      continue;
-    }
-
-    // M1/M2 are fully bridged
-    if (milestone === 'M1' || milestone === 'M2') {
-      bridged.add(kind);
-      continue;
-    }
-
-    // M4: command, keybinding, contextMenuItem bridged
-    if (milestone === 'M4') {
-      if (kind === 'command' || kind === 'keybinding' || kind === 'contextMenuItem') {
-        bridged.add(kind);
-      } else {
-        reserved.add(kind);
-      }
-      continue;
-    }
-
-    // M6: parser, metadataFacet, assetDetailSection bridged
-    if (milestone === 'M6') {
-      if (kind === 'parser' || kind === 'metadataFacet' || kind === 'assetDetailSection') {
-        bridged.add(kind);
-      } else {
-        reserved.add(kind);
-      }
-      continue;
-    }
-
-    // M7: effect bridged
-    if (milestone === 'M7' && kind === 'effect') {
-      bridged.add(kind);
-      continue;
-    }
-
-    // M8: transition bridged
-    if (milestone === 'M8' && kind === 'transition') {
-      bridged.add(kind);
-      continue;
-    }
-
-    // M9: clipType, automation bridged
-    if (milestone === 'M9' && (kind === 'clipType' || kind === 'automation')) {
-      bridged.add(kind);
-      continue;
-    }
-
-    // M10: agentTool, agent bridged
-    if (milestone === 'M10' && (kind === 'agentTool' || kind === 'agent')) {
-      bridged.add(kind);
-      continue;
-    }
-
-    // M13: shader bridged
-    if (milestone === 'M13' && kind === 'shader') {
-      bridged.add(kind);
-      continue;
-    }
-
-    // Everything else is reserved
-    reserved.add(kind);
-  }
-
-  return { kinds, bridged, reserved, milestoneMap };
+// Parse SDK kinds from source and apply registry-based bridged/reserved.
+// Read both index.ts (barrel) and kinds.ts (authority module) since
+// ContributionKind is now a type alias re-exported from kinds.ts.
+const KINDS_PATH = resolve(repoRoot, 'src/sdk/video/families/kinds.ts');
+const sdkSource = (readFileIfExists(SDK_INDEX) || '') + '\n' + (readFileIfExists(KINDS_PATH) || '');
+if (!sdkSource.trim()) {
+  R.error(`SDK index not found: ${SDK_INDEX}`);
 }
 
-const sdk = parseSdkContributionKinds();
+const sdk = parseSdkContributionKinds(sdkSource, {
+  bridged: familyMatrix.bridged,
+  reserved: familyMatrix.reserved,
+  milestoneMap: familyMatrix.milestoneMap,
+});
 console.log(`${LABEL} SDK: ${sdk.kinds.length} kinds (${sdk.bridged.size} bridged, ${sdk.reserved.size} reserved)`);
+console.log(`${LABEL} Matrix: ${familyMatrix.bridged.size} bridged, ${familyMatrix.reserved.size} reserved from family-maturity.json`);
 
 // ---------------------------------------------------------------------------
 // 2. Parse schema enums and definitions

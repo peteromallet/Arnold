@@ -2,19 +2,23 @@
  * overlay-example — M2 timelineOverlay contribution example.
  *
  * Demonstrates registering a timeline overlay contribution using only
- * the public @reigh/editor-sdk entrypoint.  Timeline overlays are an M2
- * feature that render above the edit area with viewport and interaction
- * policy props.
+ * the public @reigh/editor-sdk entrypoint. Timeline overlays render above
+ * the edit area with viewport and interaction policy props; the example
+ * reports registry-derived family status instead of treating milestone
+ * constants as authoritative.
  *
  * @publicContract
  */
 
-import { defineExtension, CONTRIBUTION_KIND_MILESTONE } from '@reigh/editor-sdk';
+import {
+  defineExtension,
+  getVideoFamilyDefinition,
+  getVideoFamilyLegacyBridgeStatus,
+} from '@reigh/editor-sdk';
 import type {
   ReighExtension,
   ExtensionContext,
   DisposeHandle,
-  ExtensionDiagnostic,
   DiagnosticSeverity,
 } from '@reigh/editor-sdk';
 
@@ -37,20 +41,26 @@ export const overlayExample: ReighExtension = defineExtension({
     messages: {
       'activated': 'M2 Timeline Overlay example activated.',
       'disposed': 'M2 Timeline Overlay example disposed.',
-      'overlay-milestone':
-        'timelineOverlay kind is bridged at milestone {{milestone}}.',
+      'overlay-family-status':
+        'timelineOverlay is {{status}} with {{executionMaturity}} execution maturity; legacy milestone {{milestone}} is compatibility metadata.',
+      'overlay-family-missing':
+        'timelineOverlay is absent from the family registry; compatibility metadata is unavailable.',
     },
   },
 
   activate(ctx: ExtensionContext): DisposeHandle {
-    // Demonstrate milestone lookup for the timelineOverlay kind
-    const overlayMilestone = CONTRIBUTION_KIND_MILESTONE['timelineOverlay'];
-    const milestoneMsg = ctx.services.i18n.t('overlay-milestone', {
-      milestone: String(overlayMilestone ?? 'unknown'),
-    });
+    const overlayFamily = getVideoFamilyDefinition('timelineOverlay');
+    const legacyBridgeStatus = getVideoFamilyLegacyBridgeStatus('timelineOverlay');
+    const milestoneMsg = overlayFamily
+      ? ctx.services.i18n.t('overlay-family-status', {
+          status: legacyBridgeStatus === null ? 'active' : overlayFamily.executionMaturity,
+          executionMaturity: overlayFamily.executionMaturity,
+          milestone: overlayFamily.legacyMilestone ?? legacyBridgeStatus ?? 'unknown',
+        })
+      : ctx.services.i18n.t('overlay-family-missing');
     ctx.services.diagnostics.report({
       severity: 'info' as DiagnosticSeverity,
-      code: 'overlay/milestone-info',
+      code: overlayFamily ? 'overlay/family-status' : 'overlay/family-missing',
       message: milestoneMsg,
     });
 

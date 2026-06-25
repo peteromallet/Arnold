@@ -13,6 +13,62 @@ import { readFileSync, existsSync, readdirSync } from 'node:fs';
 import { resolve } from 'node:path';
 
 // ---------------------------------------------------------------------------
+// 0. Load bridged/reserved authority from the generated family maturity matrix
+// ---------------------------------------------------------------------------
+
+/**
+ * Load bridged/reserved classification from the generated family maturity
+ * JSON matrix.  This is the canonical source of truth for bridge/reserved
+ * status — it derives from the TypeScript registry via the generator.
+ *
+ * @param {string} matrixPath - Path to config/extensions/family-maturity.json
+ * @returns {{ bridged: Set<string>, reserved: Set<string>, milestoneMap: Record<string, string> }}
+ */
+export function loadFamilyMaturityMatrix(matrixPath) {
+  /** @type {Set<string>} */
+  const bridged = new Set();
+  /** @type {Set<string>} */
+  const reserved = new Set();
+  /** @type {Record<string, string>} */
+  const milestoneMap = {};
+
+  if (!existsSync(matrixPath)) {
+    return { bridged, reserved, milestoneMap };
+  }
+
+  /** @type {any[]} */
+  let matrix;
+  try {
+    matrix = JSON.parse(readFileSync(matrixPath, 'utf8'));
+  } catch {
+    return { bridged, reserved, milestoneMap };
+  }
+
+  if (!Array.isArray(matrix)) {
+    return { bridged, reserved, milestoneMap };
+  }
+
+  for (const row of matrix) {
+    const kind = row.kind;
+    if (!kind || typeof kind !== 'string') continue;
+
+    const legacy = row.legacyCompatibility;
+    const milestone = legacy?.milestone;
+    if (milestone && typeof milestone === 'string') {
+      milestoneMap[kind] = milestone;
+    }
+
+    if (legacy?.bridged === true) {
+      bridged.add(kind);
+    } else {
+      reserved.add(kind);
+    }
+  }
+
+  return { bridged, reserved, milestoneMap };
+}
+
+// ---------------------------------------------------------------------------
 // 1. Parse SDK ContributionKind and bridged/reserved status
 // ---------------------------------------------------------------------------
 
@@ -20,7 +76,14 @@ import { resolve } from 'node:path';
  * Parse the ContributionKind type union from an SDK source string.
  * Looks for `export type ContributionKind = …` and extracts string literals.
  *
+ * When `externalAuthority` is supplied (from the family maturity matrix),
+ * bridged/reserved classification and milestoneMap come from the registry.
+ * Otherwise the legacy regex-parsed milestone logic is used — this preserves
+ * compatibility with old-shape fixtures that intentionally exercise the
+ * legacy parsing path.
+ *
  * @param {string} source - Raw TypeScript source of the SDK index file.
+ * @param {{ bridged?: Set<string>, reserved?: Set<string>, milestoneMap?: Record<string, string> }} [externalAuthority]
  * @returns {{
  *   kinds: string[],
  *   bridged: Set<string>,
@@ -28,8 +91,10 @@ import { resolve } from 'node:path';
  *   milestoneMap: Record<string, string>
  * }}
  */
-export function parseSdkContributionKinds(source) {
+export function parseSdkContributionKinds(source, externalAuthority) {
   const kindRe = /\|\s*'([a-zA-Z][a-zA-Z0-9]*)'/g;
+
+  // Try the original ContributionKind type alias (legacy inline union).
   const kindBlockRe = /export type ContributionKind\s*=\s*([\s\S]*?);/;
   const kindBlock = source.match(kindBlockRe);
 
@@ -41,8 +106,20 @@ export function parseSdkContributionKinds(source) {
     }
   }
 
-  // Also extract KNOWN_CONTRIBUTION_KINDS array for cross-validation
-  const knownArrayRe = /export const KNOWN_CONTRIBUTION_KINDS[\s\S]*?=\s*\[([\s\S]*?)\]\s*as const/;
+  // If the above is a type alias (e.g. `= VideoContributionKind`), look for
+  // the VideoContributionKind union in the same source or a combined kinds.ts.
+  if (kinds.length === 0) {
+    const videoKindBlockRe = /export type VideoContributionKind\s*=\s*([\s\S]*?);/;
+    const videoKindBlock = source.match(videoKindBlockRe);
+    if (videoKindBlock) {
+      for (const m of videoKindBlock[1].matchAll(kindRe)) {
+        if (!kinds.includes(m[1])) kinds.push(m[1]);
+      }
+    }
+  }
+
+  // Also extract KNOWN_CONTRIBUTION_KINDS / VIDEO_CONTRIBUTION_KINDS array.
+  const knownArrayRe = /export const (?:KNOWN_CONTRIBUTION_KINDS|VIDEO_CONTRIBUTION_KINDS)[\s\S]*?=\s*\[([\s\S]*?)\]\s*as const/;
   const knownArrayMatch = source.match(knownArrayRe);
   /** @type {string[]} */
   const knownArrayKinds = [];
@@ -51,6 +128,43 @@ export function parseSdkContributionKinds(source) {
       if (!knownArrayKinds.includes(m[1])) knownArrayKinds.push(m[1]);
     }
   }
+
+  // If external authority is provided, use it for bridged/reserved/milestoneMap.
+  if (externalAuthority) {
+    // If regex parsing found 0 kinds, derive kinds from the external authority.
+    /** @type {string[]} */
+    let resolvedKinds = kinds;
+    if (resolvedKinds.length === 0) {
+      const matrixKinds = Object.keys(externalAuthority.milestoneMap || {});
+      if (matrixKinds.length > 0) {
+        resolvedKinds = matrixKinds.sort();
+      }
+    }
+
+    /** @type {Set<string>} */
+    const bridged = new Set(externalAuthority.bridged || []);
+    /** @type {Set<string>} */
+    const reserved = new Set(externalAuthority.reserved || []);
+
+    // Only classify kinds that are in the external authority.
+    // Kinds not in the authority default to reserved.
+    for (const kind of resolvedKinds) {
+      if (!bridged.has(kind) && !reserved.has(kind)) {
+        reserved.add(kind);
+      }
+    }
+
+    return {
+      kinds: resolvedKinds,
+      bridged,
+      reserved,
+      milestoneMap: { ...(externalAuthority.milestoneMap || {}) },
+    };
+  }
+
+  // Legacy path: regex-parse CONTRIBUTION_KIND_MILESTONE and apply
+  // hard-coded milestone-to-bridged logic.  Kept for old-shape fixture
+  // compatibility — real drift checks pass externalAuthority instead.
 
   // Parse CONTRIBUTION_KIND_MILESTONE
   const milestoneRe = /export const CONTRIBUTION_KIND_MILESTONE[\s\S]*?=\s*\{([\s\S]*?)\};/;
@@ -583,12 +697,18 @@ export function readFileIfExists(path) {
 /**
  * Run a full drift check against arbitrary files and return structured results.
  *
+ * When `familyMaturityPath` is provided, bridged/reserved classification
+ * comes from the generated matrix instead of legacy regex-parsed milestone
+ * logic.  This is the production path — the family maturity matrix is the
+ * canonical source of truth.
+ *
  * @param {object} opts
  * @param {string} opts.sdkSource - SDK index.ts content
  * @param {string} opts.schemaJson - Schema JSON content
  * @param {string} opts.docsContent - Docs markdown content
  * @param {string} opts.extensionsDir - Path to extensions directory
  * @param {string} [opts.repoRoot] - For relative path reporting
+ * @param {string} [opts.familyMaturityPath] - Path to config/extensions/family-maturity.json
  * @returns {{
  *   sdk: ReturnType<typeof parseSdkContributionKinds>,
  *   schema: ReturnType<typeof parseSchema>,
@@ -599,9 +719,14 @@ export function readFileIfExists(path) {
  * }}
  */
 export function runFullDriftCheck(opts) {
-  const { sdkSource, schemaJson, docsContent, extensionsDir, repoRoot } = opts;
+  const { sdkSource, schemaJson, docsContent, extensionsDir, repoRoot, familyMaturityPath } = opts;
 
-  const sdk = parseSdkContributionKinds(sdkSource);
+  // Load registry-based authority when available.
+  const externalAuthority = familyMaturityPath
+    ? loadFamilyMaturityMatrix(familyMaturityPath)
+    : undefined;
+
+  const sdk = parseSdkContributionKinds(sdkSource, externalAuthority);
   const schema = parseSchema(schemaJson);
   const docs = parseDocs(docsContent, sdk.kinds);
   const manifests = parseExtensionManifests(extensionsDir, sdk.kinds);

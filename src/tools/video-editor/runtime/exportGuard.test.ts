@@ -6,6 +6,10 @@ import {
   scanExportConfig,
 } from '@/tools/video-editor/runtime/exportGuard.ts';
 import { planRender } from '@/tools/video-editor/runtime/renderPlanner.ts';
+import {
+  getVideoFamilyDefinition,
+  getVideoFamilyLegacyBridgeStatus,
+} from '@reigh/editor-sdk';
 import type {
   KnownIdCollection,
   InactiveKnownIds,
@@ -255,11 +259,13 @@ describe('collectExtensionDeclaredIds', () => {
     expect(result.transitionIds.has('my-custom-transition')).toBe(false);
   });
 
-  it('collects clipTypeId from clipType-kind inactive contributions', () => {
+  it('preserves the clipType declared-ID bypass even though clipType is runtime-bridged', () => {
     const contributions: ExtensionContribution[] = [
       { id: 'contrib.3' as any, kind: 'clipType', clipTypeId: 'my-custom-clip' },
     ];
     const result = collectExtensionDeclaredIds(contributions);
+    expect(getVideoFamilyDefinition('clipType')?.executionMaturity).toBe('runtime-bridged');
+    expect(getVideoFamilyLegacyBridgeStatus('clipType')).toBeNull();
     expect(result.clipTypeIds.has('my-custom-clip')).toBe(true);
   });
 
@@ -622,7 +628,7 @@ describe('scanExportConfig — unknown effects', () => {
   });
 
   it('emits warning for extension-declared (inactive) clipType with unknown effect', () => {
-    // Effect is M7-bridged, so we test with clipType (M3, not bridged)
+    // Effect is bridged, so the metadata-only declared-ID bypass is exercised via clipType.
     const extIdsWithClip = collectExtensionDeclaredIds([
       {
         id: 'contrib.e' as any,
@@ -945,7 +951,7 @@ describe('scanExportConfig — unknown transitions', () => {
   });
 
   it('emits warning for extension-declared (inactive) clipType with unknown transition', () => {
-    // Transition is M8-bridged, so we test with clipType (M3, not bridged)
+    // Transition is bridged, so the metadata-only declared-ID bypass is exercised via clipType.
     const extIdsWithClip = collectExtensionDeclaredIds([
       {
         id: 'contrib.t' as any,
@@ -1096,7 +1102,7 @@ describe('scanExportConfig — effect-layer clips', () => {
   });
 
   it('emits warning for extension-declared clipType on effect-layer clip', () => {
-    // Effect is M7-bridged, so we test with clipType (M3, not bridged)
+    // Effect is bridged, so the metadata-only declared-ID bypass is exercised via clipType.
     const extIdsWithClip = collectExtensionDeclaredIds([
       {
         id: 'contrib.el' as any,
