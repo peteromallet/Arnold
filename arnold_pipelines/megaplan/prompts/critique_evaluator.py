@@ -337,6 +337,9 @@ def _critique_evaluator_prompt(
             "Each entry needs: `flag_id`, `lens` (one of the lens ids above),",
             "`outcome` (verified / open / accepted_tradeoff), and `rationale`",
             "(cite specific lines from the diff or plan text).",
+            "Use exactly one catalog lens id for `lens`; do not combine ids",
+            "with slashes, commas, plus signs, or prose such as",
+            "`correctness/all_locations`.",
             "",
             "Always include the `flag_verifications` field. Use an empty list",
             "`[]` when there are no flag resolutions to verify.",
@@ -461,7 +464,9 @@ def _critique_evaluator_prompt(
         - `flag_verifications`: list of
           {{flag_id, lens, outcome, rationale}} objects where outcome is
           one of "verified" / "open" / "accepted_tradeoff"; use [] when the
-          Flag Resolution Verification section is absent
+          Flag Resolution Verification section is absent. `lens` must be
+          exactly one catalog lens id; combined lens strings such as
+          `correctness/all_locations` are invalid.
 
         Remember: prefer the smallest selected set that still covers the real
         risk.  Skipping requires a justification.  When you skip, explain *why
