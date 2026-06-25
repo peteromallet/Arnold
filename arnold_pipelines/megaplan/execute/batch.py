@@ -215,13 +215,28 @@ def _scheduler_completed_ids_for_tasks(
         root=root,
         current_head=current_head,
     )
-    return scheduler_completed_ids(
+    completed = scheduler_completed_ids(
         tasks,
         plan_dir=plan_dir,
         current_head=current_head,
         execution_window=execution_window,
         decisions=decisions,
     )
+    # Baseline-unavailable checkpoints are deferred by the harness during
+    # finalize (status="skipped" with an executor note). They are not real
+    # work items, so dependents should still be scheduled.
+    skipped_with_reason = {
+        task["id"]
+        for task in tasks
+        if isinstance(task, dict)
+        and isinstance(task.get("id"), str)
+        and task.get("status") == "skipped"
+        and isinstance(task.get("executor_notes"), str)
+        and task["executor_notes"].strip()
+    }
+    if skipped_with_reason:
+        completed = completed | skipped_with_reason
+    return completed
 
 
 def _execution_window_from_state(

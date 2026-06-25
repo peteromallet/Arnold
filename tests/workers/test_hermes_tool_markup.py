@@ -39,6 +39,22 @@ def test_content_tool_calls_parse_invoke_read_alias() -> None:
     assert _arguments(calls[0]) == {"path": "src/app.py"}
 
 
+@pytest.mark.parametrize(
+    "markup",
+    [
+        "<read_file></read_file>",
+        '<read_file path="   "/>',
+        '<file_read offset="3"/>',
+        '<invoke name="read"><parameter name="offset">3</parameter></invoke>',
+        "<search_files></search_files>",
+        '<web_search query="   "/>',
+        "<web_extract></web_extract>",
+    ],
+)
+def test_content_tool_calls_ignore_markup_missing_required_args(markup: str) -> None:
+    assert _content_xml_tool_calls(markup) == []
+
+
 def test_normalize_response_recovers_write_tool_markup() -> None:
     response = SimpleNamespace(
         choices=[

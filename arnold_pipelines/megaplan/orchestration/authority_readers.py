@@ -381,26 +381,33 @@ def _evidence_from_task_record(
     if fallback_head is None and root is not None:
         fallback_head = _best_effort_git_head_for_path(root)
     refs: list[EvidenceRef] = []
-    for field_name in ("files_changed", "commands_run", "evidence_files", "sections_written"):
-        for value in _string_values(record.get(field_name)):
-            refs.append(
-                EvidenceRef(
-                    kind=f"task_{field_name}",
-                    status=EvidenceStatus.satisfied,
-                    summary=f"{field_name} reported for {task_id}",
-                    details={
-                        "task_id": task_id,
-                        field_name: [value],
-                        "head_sha": fallback_head,
-                        "code_hash": _optional_str(record.get("code_hash")),
-                    },
-                    trust_class=TrustClass.evidence,
-                    artifact=ArtifactRef(path=_relative_artifact_path(artifact_path, root)),
-                    source=artifact_path.name,
-                    subject=task_id,
-                    code_hash=_optional_str(record.get("code_hash")),
+    # Only treat reported files/commands as corroborating evidence when the
+    # task has reached a terminal state. Finalize may pre-attribute expected
+    # files to pending tasks; those speculative attributions must not count
+    # as completed work before the executor has run.
+    terminal_statuses = {"done", "skipped", "waived", "not_applicable"}
+    status = _optional_str(record.get("status"))
+    if status in terminal_statuses:
+        for field_name in ("files_changed", "commands_run", "evidence_files", "sections_written"):
+            for value in _string_values(record.get(field_name)):
+                refs.append(
+                    EvidenceRef(
+                        kind=f"task_{field_name}",
+                        status=EvidenceStatus.satisfied,
+                        summary=f"{field_name} reported for {task_id}",
+                        details={
+                            "task_id": task_id,
+                            field_name: [value],
+                            "head_sha": fallback_head,
+                            "code_hash": _optional_str(record.get("code_hash")),
+                        },
+                        trust_class=TrustClass.evidence,
+                        artifact=ArtifactRef(path=_relative_artifact_path(artifact_path, root)),
+                        source=artifact_path.name,
+                        subject=task_id,
+                        code_hash=_optional_str(record.get("code_hash")),
+                    )
                 )
-            )
     kind = _optional_str(record.get("kind"))
     notes = _optional_str(record.get("executor_notes"))
     if (

@@ -136,7 +136,8 @@ def _gate_prompt(
         {robustness}
 
         Your output template is at: {output_path}
-        Read this file first — it contains the expected JSON structure.
+        Read this file first by calling `read_file` with `path` exactly `{output_path}` — it contains the expected JSON structure.
+        If you cannot supply that exact non-empty path, do not call `read_file`.
         Fill the JSON structure with your results and write the file back.
         Valid flag IDs are: {json_dump([flag["id"] for flag in open_flags]).strip()}
         If you cannot use file tools, return the populated JSON structure inline as your response instead.
