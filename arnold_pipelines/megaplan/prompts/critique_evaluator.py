@@ -445,6 +445,11 @@ def _critique_evaluator_prompt(
           custom critique area), `why` (the probe question for the critic),
           `complexity`, and `complexity_justification`. At most {MAX_OTHER_AREAS}
           `other` areas.
+        - **Do not invent check IDs**: North Star, anchor, product, or project-
+          specific concerns must either use one of the catalog lens IDs above
+          or `check_id: "other"` with the specific concern named in `area`.
+          Values such as `north_star_alignment`, `compatibility_shim_risk`, or
+          `behavior_preservation` are invalid as `check_id`s.
 
         Your output must be a JSON object with these keys:
         - `selections`: list of objects. For catalog lenses:
