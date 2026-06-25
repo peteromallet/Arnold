@@ -228,6 +228,51 @@ def _command_env(cmd: list[str]) -> dict[str, str] | None:
     return env
 
 
+def _require_git_worktree_root(root: Path, *, operation: str) -> None:
+    """Fail before mutating when *root* is not the intended git worktree root."""
+    root = Path(root).expanduser().resolve()
+    try:
+        inside = subprocess.run(
+            ["git", "rev-parse", "--is-inside-work-tree"],
+            cwd=str(root),
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=30,
+        )
+        toplevel = subprocess.run(
+            ["git", "rev-parse", "--show-toplevel"],
+            cwd=str(root),
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=30,
+        )
+    except (subprocess.TimeoutExpired, FileNotFoundError, OSError) as exc:
+        raise CliError(
+            "chain_git_worktree_required",
+            f"{operation} requires a valid git worktree root at {root}: {exc}",
+        ) from exc
+    if inside.returncode != 0 or inside.stdout.strip() != "true":
+        detail = (inside.stderr or inside.stdout or "").strip()
+        raise CliError(
+            "chain_git_worktree_required",
+            f"{operation} requires a valid git worktree root at {root}: {detail}",
+        )
+    if toplevel.returncode != 0:
+        detail = (toplevel.stderr or toplevel.stdout or "").strip()
+        raise CliError(
+            "chain_git_worktree_required",
+            f"{operation} could not resolve git toplevel for {root}: {detail}",
+        )
+    actual = Path(toplevel.stdout.strip()).resolve()
+    if actual != root:
+        raise CliError(
+            "chain_git_worktree_required",
+            f"{operation} must run at the intended git worktree root; got {root}, git toplevel is {actual}",
+        )
+
+
 def _remote_branch_exists(root: Path, branch: str, *, writer) -> bool:
     proc = _compat().subprocess.run(
         ["git", "ls-remote", "--exit-code", "--heads", "origin", branch],
@@ -257,6 +302,7 @@ def _clean_worktree_for_chain(root: Path, writer) -> None:
     changes from a previous run (modified schemas, deleted events.jsonl files,
     telemetry dumps, lock files) would otherwise block branch checkouts.
     """
+    _require_git_worktree_root(root, operation="chain worktree cleanup")
     writer("[chain] cleaning worktree for automated branch checkout\n")
     _compat()._run_command(
         root,
@@ -1061,6 +1107,7 @@ def _commit_phase(
     It never runs ``git checkout`` and never pushes. Returns the new commit sha,
     or ``None`` when there was nothing to commit (and ``phase != "init"``).
     """
+    _require_git_worktree_root(root, operation=f"chain phase commit ({phase})")
     dirty_nested = _compat()._dirty_nested_repos_from_claimed_paths(root, plan, writer=writer)
     if dirty_nested:
         raise CliError(
