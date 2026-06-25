@@ -651,9 +651,11 @@ describe('runSettingsMigration — repository integration', () => {
     await new Promise((r) => setTimeout(r, 30));
 
     const events = await repo.getLifecycleEvents(EXT_ID);
-    const migrationEvents = events.filter((e) =>
-      ['migration_start', 'migration_success', 'migration_failure', 'migration_reset'].includes(e.kind),
-    );
+    const migrationEvents = events
+      .filter((e) =>
+        ['migration_start', 'migration_success', 'migration_failure', 'migration_reset'].includes(e.kind),
+      )
+      .sort((a, b) => a.timestamp.localeCompare(b.timestamp));
 
     expect(migrationEvents).toHaveLength(2);
     expect(migrationEvents[0].kind).toBe('migration_start');
