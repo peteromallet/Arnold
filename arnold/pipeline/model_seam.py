@@ -442,7 +442,7 @@ _PROVIDER_PREFIXES = (
 
 _FAMILY_BUDGET_DEFAULTS: dict[ModelFamily, ModelBudgetDefaults] = {
     ModelFamily.CODEX: ModelBudgetDefaults(
-        max_input_tokens=192_000, tokenizer_source="tiktoken:o200k_base"
+        max_input_tokens=256_000, tokenizer_source="tiktoken:o200k_base"
     ),
     ModelFamily.CLAUDE: ModelBudgetDefaults(
         max_input_tokens=180_000, tokenizer_source="claude_conservative_estimate"
