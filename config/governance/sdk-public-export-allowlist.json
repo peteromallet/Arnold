@@ -1,53 +1,907 @@
 {
   "$schema": "../schemas/sdk-public-export-allowlist.schema.json",
-  "description": "Allowlist for @reigh/editor-sdk public re-exports that originate from internal paths outside src/sdk/. Every entry must include a justification explaining why the re-export belongs on the public boundary.",
-  "allowlist": [
+  "description": "Allowlist for @reigh/editor-sdk public re-exports that originate from internal paths outside src/sdk/, plus inlineDeclarations for SDK-inline exports that remain at the boundary pending extraction milestones.",
+  "allowlist": [],
+  "inlineDeclarations": [
     {
-      "sourcePath": "@/tools/video-editor/runtime/renderability.ts",
-      "kind": "value",
-      "exports": [
-        "DETERMINISM_STATUSES",
-        "RENDER_BLOCKER_REASONS",
-        "RENDER_ROUTES",
-        "shaderMissingMaterializerBlockerMessage"
-      ],
-      "justification": "M5 renderability contracts: these are stable runtime constants used by extension authors to classify render blockers, determinism statuses, and planner-owned render routes. The matcher message helper is a pure function that produces a diagnostic string from a shaderId and scope — it has no side effects and no internal coupling."
+      "symbol": "EffectComponent",
+      "owner": "family-owners",
+      "rationale": "M7 Effect family registration: trusted local component type for effect contributions. Deferred until family extraction milestone M7.",
+      "expiration": "M2b"
     },
     {
-      "sourcePath": "@/tools/video-editor/runtime/renderability.ts",
-      "kind": "type",
-      "exports": [
-        "ArtifactBoundary",
-        "BakeContract",
-        "CapabilityFinding",
-        "CapabilityFindingSeverity",
-        "ContributionRenderability",
-        "DeterminismStatus",
-        "RenderArtifact",
-        "RenderBlocker",
-        "RenderBlockerReason",
-        "RenderCapability",
-        "RenderCapabilityStatus",
-        "RenderLocatorKind",
-        "RenderMaterial",
-        "RenderMaterialMediaKind",
-        "RenderMaterialRef",
-        "RenderRoute",
-        "RenderStorageLocator",
-        "ShaderMaterializerRequirementScope"
-      ],
-      "justification": "M5 renderability type contracts: these types define the public vocabulary for render blockers, material refs, artifact boundaries, capability findings, and shader scopes. Extension authors reference these when implementing export-level contracts, and the SDK must expose them to avoid duplicate type taxonomies."
+      "symbol": "EffectParameterDefinition",
+      "owner": "family-owners",
+      "rationale": "M7 Effect family registration: parameter schema contract for effect contributions. Deferred until family extraction milestone M7.",
+      "expiration": "M2b"
     },
     {
-      "sourcePath": "@/tools/video-editor/index.ts",
-      "kind": "value",
-      "exports": [
-        "BUILTIN_CLIP_TYPES",
-        "getStableConfigSignature",
-        "TimelineVersionConflictError",
-        "isTimelineVersionConflictError"
-      ],
-      "justification": "Public SDK boundary re-exports from the video-editor barrel: BUILTIN_CLIP_TYPES (M9 clip type contracts), getStableConfigSignature (M5 config utility), and TimelineVersionConflictError / isTimelineVersionConflictError (M6 data provider contracts). These stable values are exposed through the canonical public entrypoint so extensions and host code can consume them without deep-importing internals."
+      "symbol": "EffectParameterSchema",
+      "owner": "family-owners",
+      "rationale": "M7 Effect family registration: ordered parameter schema type. Deferred until family extraction milestone M7.",
+      "expiration": "M2b"
+    },
+    {
+      "symbol": "EffectRegistrationOptions",
+      "owner": "family-owners",
+      "rationale": "M7 Effect family registration: registration options contract. Deferred until family extraction milestone M7.",
+      "expiration": "M2b"
+    },
+    {
+      "symbol": "EffectRegistrationService",
+      "owner": "family-owners",
+      "rationale": "M7 Effect family registration: runtime registration service interface. Deferred until family extraction milestone M7.",
+      "expiration": "M2b"
+    },
+    {
+      "symbol": "TransitionRenderer",
+      "owner": "family-owners",
+      "rationale": "M8 Transition family registration: trusted local renderer type for transition contributions. Deferred until family extraction milestone M8.",
+      "expiration": "M2b"
+    },
+    {
+      "symbol": "TransitionParameterDefinition",
+      "owner": "family-owners",
+      "rationale": "M8 Transition family registration: parameter schema contract for transition contributions. Deferred until family extraction milestone M8.",
+      "expiration": "M2b"
+    },
+    {
+      "symbol": "TransitionParameterSchema",
+      "owner": "family-owners",
+      "rationale": "M8 Transition family registration: ordered parameter schema type. Deferred until family extraction milestone M8.",
+      "expiration": "M2b"
+    },
+    {
+      "symbol": "TransitionRegistrationOptions",
+      "owner": "family-owners",
+      "rationale": "M8 Transition family registration: registration options contract. Deferred until family extraction milestone M8.",
+      "expiration": "M2b"
+    },
+    {
+      "symbol": "TransitionRegistrationService",
+      "owner": "family-owners",
+      "rationale": "M8 Transition family registration: runtime registration service interface. Deferred until family extraction milestone M8.",
+      "expiration": "M2b"
+    },
+    {
+      "symbol": "ClipRenderer",
+      "owner": "family-owners",
+      "rationale": "M9 Clip-type family: renderer component type for clip type contributions. Deferred until family extraction milestone M9.",
+      "expiration": "M2b"
+    },
+    {
+      "symbol": "ClipInspector",
+      "owner": "family-owners",
+      "rationale": "M9 Clip-type family: inspector component type for clip type contributions. Deferred until family extraction milestone M9.",
+      "expiration": "M2b"
+    },
+    {
+      "symbol": "ClipParameterDefinition",
+      "owner": "family-owners",
+      "rationale": "M9 Clip-type family: parameter schema contract for clip type contributions. Deferred until family extraction milestone M9.",
+      "expiration": "M2b"
+    },
+    {
+      "symbol": "ClipParameterSchema",
+      "owner": "family-owners",
+      "rationale": "M9 Clip-type family: parameter schema type. Deferred until family extraction milestone M9.",
+      "expiration": "M2b"
+    },
+    {
+      "symbol": "ClipTypeRegistrationOptions",
+      "owner": "family-owners",
+      "rationale": "M9 Clip-type family: registration options contract. Deferred until family extraction milestone M9.",
+      "expiration": "M2b"
+    },
+    {
+      "symbol": "ClipTypeRegistrationService",
+      "owner": "family-owners",
+      "rationale": "M9 Clip-type family: runtime registration service interface. Deferred until family extraction milestone M9.",
+      "expiration": "M2b"
+    },
+    {
+      "symbol": "ShaderPassKind",
+      "owner": "family-owners",
+      "rationale": "M13 Shader family: shader pass kind type. Deferred until family extraction milestone M13.",
+      "expiration": "M2b"
+    },
+    {
+      "symbol": "ShaderColorSpace",
+      "owner": "family-owners",
+      "rationale": "M13 Shader family: shader color space type. Deferred until family extraction milestone M13.",
+      "expiration": "M2b"
+    },
+    {
+      "symbol": "ShaderFallbackBehavior",
+      "owner": "family-owners",
+      "rationale": "M13 Shader family: shader fallback behavior type. Deferred until family extraction milestone M13.",
+      "expiration": "M2b"
+    },
+    {
+      "symbol": "ShaderTextureSourceKind",
+      "owner": "family-owners",
+      "rationale": "M13 Shader family: shader texture source kind type. Deferred until family extraction milestone M13.",
+      "expiration": "M2b"
+    },
+    {
+      "symbol": "ShaderTextureFilter",
+      "owner": "family-owners",
+      "rationale": "M13 Shader family: shader texture filter type. Deferred until family extraction milestone M13.",
+      "expiration": "M2b"
+    },
+    {
+      "symbol": "ShaderTextureWrap",
+      "owner": "family-owners",
+      "rationale": "M13 Shader family: shader texture wrap type. Deferred until family extraction milestone M13.",
+      "expiration": "M2b"
+    },
+    {
+      "symbol": "ShaderInlineSource",
+      "owner": "family-owners",
+      "rationale": "M13 Shader family: inline shader source interface. Deferred until family extraction milestone M13.",
+      "expiration": "M2b"
+    },
+    {
+      "symbol": "ShaderModuleSource",
+      "owner": "family-owners",
+      "rationale": "M13 Shader family: module shader source interface. Deferred until family extraction milestone M13.",
+      "expiration": "M2b"
+    },
+    {
+      "symbol": "ShaderSourceDescriptor",
+      "owner": "family-owners",
+      "rationale": "M13 Shader family: shader source descriptor type. Deferred until family extraction milestone M13.",
+      "expiration": "M2b"
+    },
+    {
+      "symbol": "ShaderPassDescriptor",
+      "owner": "family-owners",
+      "rationale": "M13 Shader family: shader pass descriptor interface. Deferred until family extraction milestone M13.",
+      "expiration": "M2b"
+    },
+    {
+      "symbol": "ShaderUniformType",
+      "owner": "family-owners",
+      "rationale": "M13 Shader family: shader uniform type. Deferred until family extraction milestone M13.",
+      "expiration": "M2b"
+    },
+    {
+      "symbol": "ShaderUniformEnumOption",
+      "owner": "family-owners",
+      "rationale": "M13 Shader family: shader uniform enum option interface. Deferred until family extraction milestone M13.",
+      "expiration": "M2b"
+    },
+    {
+      "symbol": "ShaderTextureRef",
+      "owner": "family-owners",
+      "rationale": "M13 Shader family: shader texture ref interface. Deferred until family extraction milestone M13.",
+      "expiration": "M2b"
+    },
+    {
+      "symbol": "ShaderUniformDefaultValue",
+      "owner": "family-owners",
+      "rationale": "M13 Shader family: shader uniform default value type. Deferred until family extraction milestone M13.",
+      "expiration": "M2b"
+    },
+    {
+      "symbol": "ShaderUniformDefinition",
+      "owner": "family-owners",
+      "rationale": "M13 Shader family: shader uniform definition interface. Deferred until family extraction milestone M13.",
+      "expiration": "M2b"
+    },
+    {
+      "symbol": "ShaderUniformSchema",
+      "owner": "family-owners",
+      "rationale": "M13 Shader family: shader uniform schema type. Deferred until family extraction milestone M13.",
+      "expiration": "M2b"
+    },
+    {
+      "symbol": "ShaderTextureDefinition",
+      "owner": "family-owners",
+      "rationale": "M13 Shader family: shader texture definition interface. Deferred until family extraction milestone M13.",
+      "expiration": "M2b"
+    },
+    {
+      "symbol": "ShaderTextureSchema",
+      "owner": "family-owners",
+      "rationale": "M13 Shader family: shader texture schema type. Deferred until family extraction milestone M13.",
+      "expiration": "M2b"
+    },
+    {
+      "symbol": "ShaderMaterializerDescriptor",
+      "owner": "family-owners",
+      "rationale": "M13 Shader family: shader materializer descriptor interface. Deferred until family extraction milestone M13.",
+      "expiration": "M2b"
+    },
+    {
+      "symbol": "ShaderRegistrationOptions",
+      "owner": "family-owners",
+      "rationale": "M13 Shader family: registration options contract. Deferred until family extraction milestone M13.",
+      "expiration": "M2b"
+    },
+    {
+      "symbol": "ShaderRegistrationService",
+      "owner": "family-owners",
+      "rationale": "M13 Shader family: runtime registration service interface. Deferred until family extraction milestone M13.",
+      "expiration": "M2b"
+    },
+    {
+      "symbol": "KeyframeInterpolation",
+      "owner": "family-owners",
+      "rationale": "Keyframe/Automation family: interpolation type for keyframe automation. Deferred until family extraction.",
+      "expiration": "M2b"
+    },
+    {
+      "symbol": "Keyframe",
+      "owner": "family-owners",
+      "rationale": "Keyframe/Automation family: keyframe data interface. Deferred until family extraction.",
+      "expiration": "M2b"
+    },
+    {
+      "symbol": "InterpolatedParam",
+      "owner": "family-owners",
+      "rationale": "Keyframe/Automation family: interpolated parameter interface. Deferred until family extraction.",
+      "expiration": "M2b"
+    },
+    {
+      "symbol": "AutomationClipTarget",
+      "owner": "family-owners",
+      "rationale": "Keyframe/Automation family: automation clip target interface. Deferred until family extraction.",
+      "expiration": "M2b"
+    },
+    {
+      "symbol": "AutomationClipParams",
+      "owner": "family-owners",
+      "rationale": "Keyframe/Automation family: automation clip params interface. Deferred until family extraction.",
+      "expiration": "M2b"
+    },
+    {
+      "symbol": "AgentToolInputSchema",
+      "owner": "family-owners",
+      "rationale": "M10 Agent tool family: tool input schema interface. Deferred until family extraction milestone M10.",
+      "expiration": "M2b"
+    },
+    {
+      "symbol": "AgentToolInputProperty",
+      "owner": "family-owners",
+      "rationale": "M10 Agent tool family: tool input property interface. Deferred until family extraction milestone M10.",
+      "expiration": "M2b"
+    },
+    {
+      "symbol": "ToolResultFamily",
+      "owner": "family-owners",
+      "rationale": "M10 Agent tool family: tool result family type. Deferred until family extraction milestone M10.",
+      "expiration": "M2b"
+    },
+    {
+      "symbol": "ToolResult",
+      "owner": "family-owners",
+      "rationale": "M10 Agent tool family: tool result union type. Deferred until family extraction milestone M10.",
+      "expiration": "M2b"
+    },
+    {
+      "symbol": "ToolMutationProposalResult",
+      "owner": "family-owners",
+      "rationale": "M10 Agent tool family: mutation proposal result interface. Deferred until family extraction milestone M10.",
+      "expiration": "M2b"
+    },
+    {
+      "symbol": "ToolGenerationSessionResult",
+      "owner": "family-owners",
+      "rationale": "M10 Agent tool family: generation session result interface. Deferred until family extraction milestone M10.",
+      "expiration": "M2b"
+    },
+    {
+      "symbol": "ToolMaterialArtifactResult",
+      "owner": "family-owners",
+      "rationale": "M10 Agent tool family: material artifact result interface. Deferred until family extraction milestone M10.",
+      "expiration": "M2b"
+    },
+    {
+      "symbol": "ToolEnrichmentSearchResult",
+      "owner": "family-owners",
+      "rationale": "M10 Agent tool family: enrichment search result interface. Deferred until family extraction milestone M10.",
+      "expiration": "M2b"
+    },
+    {
+      "symbol": "ToolExportResult",
+      "owner": "family-owners",
+      "rationale": "M10 Agent tool family: export result interface. Deferred until family extraction milestone M10.",
+      "expiration": "M2b"
+    },
+    {
+      "symbol": "ToolProcessResult",
+      "owner": "family-owners",
+      "rationale": "M10 Agent tool family: process result interface. Deferred until family extraction milestone M10.",
+      "expiration": "M2b"
+    },
+    {
+      "symbol": "ToolUISummaryResult",
+      "owner": "family-owners",
+      "rationale": "M10 Agent tool family: UI summary result interface. Deferred until family extraction milestone M10.",
+      "expiration": "M2b"
+    },
+    {
+      "symbol": "ToolSourceRef",
+      "owner": "family-owners",
+      "rationale": "M10 Agent tool family: source reference interface. Deferred until family extraction milestone M10.",
+      "expiration": "M2b"
+    },
+    {
+      "symbol": "ToolArtifactRef",
+      "owner": "family-owners",
+      "rationale": "M10 Agent tool family: artifact reference interface. Deferred until family extraction milestone M10.",
+      "expiration": "M2b"
+    },
+    {
+      "symbol": "ToolSearchResultMatch",
+      "owner": "family-owners",
+      "rationale": "M10 Agent tool family: search result match interface. Deferred until family extraction milestone M10.",
+      "expiration": "M2b"
+    },
+    {
+      "symbol": "ToolResultDiagnostic",
+      "owner": "family-owners",
+      "rationale": "M10 Agent tool family: result diagnostic interface. Deferred until family extraction milestone M10.",
+      "expiration": "M2b"
+    },
+    {
+      "symbol": "AgentToolInvocationRequest",
+      "owner": "family-owners",
+      "rationale": "M10 Agent tool family: invocation request interface. Deferred until family extraction milestone M10.",
+      "expiration": "M2b"
+    },
+    {
+      "symbol": "AgentToolRequestContext",
+      "owner": "family-owners",
+      "rationale": "M10 Agent tool family: request context interface. Deferred until family extraction milestone M10.",
+      "expiration": "M2b"
+    },
+    {
+      "symbol": "AgentToolExportContext",
+      "owner": "family-owners",
+      "rationale": "M10 Agent tool family: export context interface. Deferred until family extraction milestone M10.",
+      "expiration": "M2b"
+    },
+    {
+      "symbol": "GenerationSession",
+      "owner": "family-owners",
+      "rationale": "M10 Agent tool family: generation session interface. Deferred until family extraction milestone M10.",
+      "expiration": "M2b"
+    },
+    {
+      "symbol": "AgentToolRegistrationService",
+      "owner": "family-owners",
+      "rationale": "M10 Agent tool family: runtime registration service interface. Deferred until family extraction milestone M10.",
+      "expiration": "M2b"
+    },
+    {
+      "symbol": "AgentToolHandler",
+      "owner": "family-owners",
+      "rationale": "M10 Agent tool family: tool handler type. Deferred until family extraction milestone M10.",
+      "expiration": "M2b"
+    },
+    {
+      "symbol": "ProcessSpawnConfig",
+      "owner": "family-owners",
+      "rationale": "M12 Process family: process spawn configuration interface. Deferred until family extraction.",
+      "expiration": "M2b"
+    },
+    {
+      "symbol": "ProcessManifestEntry",
+      "owner": "family-owners",
+      "rationale": "M12 Process family: process manifest entry type. Deferred until family extraction.",
+      "expiration": "M2b"
+    },
+    {
+      "symbol": "ProcessEnvFieldSpec",
+      "owner": "family-owners",
+      "rationale": "M12 Process family: process environment field spec interface. Deferred until family extraction.",
+      "expiration": "M2b"
+    },
+    {
+      "symbol": "ProcessOperationSpec",
+      "owner": "family-owners",
+      "rationale": "M12 Process family: process operation spec interface. Deferred until family extraction.",
+      "expiration": "M2b"
+    },
+    {
+      "symbol": "ProcessSpec",
+      "owner": "family-owners",
+      "rationale": "M12 Process family: process spec interface. Deferred until family extraction.",
+      "expiration": "M2b"
+    },
+    {
+      "symbol": "ProcessLifecycleState",
+      "owner": "family-owners",
+      "rationale": "M12 Process family: process lifecycle state type. Deferred until family extraction.",
+      "expiration": "M2b"
+    },
+    {
+      "symbol": "ProcessStatusBase",
+      "owner": "family-owners",
+      "rationale": "M12 Process family: process status base interface. Deferred until family extraction.",
+      "expiration": "M2b"
+    },
+    {
+      "symbol": "ProcessStatus",
+      "owner": "family-owners",
+      "rationale": "M12 Process family: process status union type. Deferred until family extraction.",
+      "expiration": "M2b"
+    },
+    {
+      "symbol": "LiveSourceKind",
+      "owner": "family-owners",
+      "rationale": "M11 Live source family: live source kind type. Deferred until family extraction milestone M11.",
+      "expiration": "M2b"
+    },
+    {
+      "symbol": "LiveSourceStatus",
+      "owner": "family-owners",
+      "rationale": "M11 Live source family: live source status type. Deferred until family extraction milestone M11.",
+      "expiration": "M2b"
+    },
+    {
+      "symbol": "LiveSourceDiagnostic",
+      "owner": "family-owners",
+      "rationale": "M11 Live source family: live source diagnostic interface. Deferred until family extraction milestone M11.",
+      "expiration": "M2b"
+    },
+    {
+      "symbol": "LiveSource",
+      "owner": "family-owners",
+      "rationale": "M11 Live source family: live source interface. Deferred until family extraction milestone M11.",
+      "expiration": "M2b"
+    },
+    {
+      "symbol": "LiveChannelKind",
+      "owner": "family-owners",
+      "rationale": "M11 Live source family: live channel kind type. Deferred until family extraction milestone M11.",
+      "expiration": "M2b"
+    },
+    {
+      "symbol": "LiveChannelDescriptor",
+      "owner": "family-owners",
+      "rationale": "M11 Live source family: live channel descriptor type. Deferred until family extraction milestone M11.",
+      "expiration": "M2b"
+    },
+    {
+      "symbol": "LiveChannelMetadata",
+      "owner": "family-owners",
+      "rationale": "M11 Live source family: live channel metadata interface. Deferred until family extraction milestone M11.",
+      "expiration": "M2b"
+    },
+    {
+      "symbol": "LiveSampleFormat",
+      "owner": "family-owners",
+      "rationale": "M11 Live source family: live sample format type. Deferred until family extraction milestone M11.",
+      "expiration": "M2b"
+    },
+    {
+      "symbol": "LiveSampleFrame",
+      "owner": "family-owners",
+      "rationale": "M11 Live source family: live sample frame interface. Deferred until family extraction milestone M11.",
+      "expiration": "M2b"
+    },
+    {
+      "symbol": "LiveSample",
+      "owner": "family-owners",
+      "rationale": "M11 Live source family: live sample interface. Deferred until family extraction milestone M11.",
+      "expiration": "M2b"
+    },
+    {
+      "symbol": "LivePermissionState",
+      "owner": "family-owners",
+      "rationale": "M11 Live source family: live permission state type. Deferred until family extraction milestone M11.",
+      "expiration": "M2b"
+    },
+    {
+      "symbol": "LiveSourcePermission",
+      "owner": "family-owners",
+      "rationale": "M11 Live source family: live source permission interface. Deferred until family extraction milestone M11.",
+      "expiration": "M2b"
+    },
+    {
+      "symbol": "LiveRecordingMode",
+      "owner": "family-owners",
+      "rationale": "M11 Live source family: live recording mode type. Deferred until family extraction milestone M11.",
+      "expiration": "M2b"
+    },
+    {
+      "symbol": "LiveRecordingState",
+      "owner": "family-owners",
+      "rationale": "M11 Live source family: live recording state interface. Deferred until family extraction milestone M11.",
+      "expiration": "M2b"
+    },
+    {
+      "symbol": "LiveLearnMode",
+      "owner": "family-owners",
+      "rationale": "M11 Live source family: live learn mode type. Deferred until family extraction milestone M11.",
+      "expiration": "M2b"
+    },
+    {
+      "symbol": "LiveBakeTargetKind",
+      "owner": "family-owners",
+      "rationale": "M11 Live source family: live bake target kind type. Deferred until family extraction milestone M11.",
+      "expiration": "M2b"
+    },
+    {
+      "symbol": "LiveBakeTarget",
+      "owner": "family-owners",
+      "rationale": "M11 Live source family: live bake target interface. Deferred until family extraction milestone M11.",
+      "expiration": "M2b"
+    },
+    {
+      "symbol": "LiveBakeSelection",
+      "owner": "family-owners",
+      "rationale": "M11 Live source family: live bake selection interface. Deferred until family extraction milestone M11.",
+      "expiration": "M2b"
+    },
+    {
+      "symbol": "LiveBakeResult",
+      "owner": "family-owners",
+      "rationale": "M11 Live source family: live bake result interface. Deferred until family extraction milestone M11.",
+      "expiration": "M2b"
+    },
+    {
+      "symbol": "SteeringDecisionKind",
+      "owner": "family-owners",
+      "rationale": "M11 Steering family: steering decision kind type. Deferred until family extraction milestone M11.",
+      "expiration": "M2b"
+    },
+    {
+      "symbol": "SteeringParameterHotness",
+      "owner": "family-owners",
+      "rationale": "M11 Steering family: steering parameter hotness type. Deferred until family extraction milestone M11.",
+      "expiration": "M2b"
+    },
+    {
+      "symbol": "SteeringPriorSamplePolicy",
+      "owner": "family-owners",
+      "rationale": "M11 Steering family: steering prior sample policy type. Deferred until family extraction milestone M11.",
+      "expiration": "M2b"
+    },
+    {
+      "symbol": "SteeringProvenance",
+      "owner": "family-owners",
+      "rationale": "M11 Steering family: steering provenance interface. Deferred until family extraction milestone M11.",
+      "expiration": "M2b"
+    },
+    {
+      "symbol": "SteeringParameterChange",
+      "owner": "family-owners",
+      "rationale": "M11 Steering family: steering parameter change interface. Deferred until family extraction milestone M11.",
+      "expiration": "M2b"
+    },
+    {
+      "symbol": "SteeringLineage",
+      "owner": "family-owners",
+      "rationale": "M11 Steering family: steering lineage interface. Deferred until family extraction milestone M11.",
+      "expiration": "M2b"
+    },
+    {
+      "symbol": "SteeringDecision",
+      "owner": "family-owners",
+      "rationale": "M11 Steering family: steering decision interface. Deferred until family extraction milestone M11.",
+      "expiration": "M2b"
+    },
+    {
+      "symbol": "GenerationSessionLiveDelivery",
+      "owner": "family-owners",
+      "rationale": "M11 Steering family: generation session live delivery interface. Deferred until family extraction milestone M11.",
+      "expiration": "M2b"
+    },
+    {
+      "symbol": "BindingResolutionStatus",
+      "owner": "family-owners",
+      "rationale": "M11 Live binding family: binding resolution status type. Deferred until family extraction milestone M11.",
+      "expiration": "M2b"
+    },
+    {
+      "symbol": "LiveBinding",
+      "owner": "family-owners",
+      "rationale": "M11 Live binding family: live binding interface. Deferred until family extraction milestone M11.",
+      "expiration": "M2b"
+    },
+    {
+      "symbol": "LiveBindingResolution",
+      "owner": "family-owners",
+      "rationale": "M11 Live binding family: live binding resolution interface. Deferred until family extraction milestone M11.",
+      "expiration": "M2b"
+    },
+    {
+      "symbol": "LiveBindingMetadata",
+      "owner": "family-owners",
+      "rationale": "M11 Live binding family: live binding metadata interface. Deferred until family extraction milestone M11.",
+      "expiration": "M2b"
+    },
+    {
+      "symbol": "LiveSessionsService",
+      "owner": "family-owners",
+      "rationale": "M11 Live binding family: live sessions service interface. Deferred until family extraction milestone M11.",
+      "expiration": "M2b"
+    },
+    {
+      "symbol": "CONTRIBUTION_KIND_MILESTONE",
+      "owner": "family-owners",
+      "rationale": "Family bridge: maps contribution kinds to their milestone identifiers. Thin wrapper around family registry data; will be cleaned up when families are extracted.",
+      "expiration": "M2b"
+    },
+    {
+      "symbol": "contributionKindNotYetBridged",
+      "owner": "family-owners",
+      "rationale": "Family bridge: checks whether a contribution kind has not been bridged. Thin wrapper; cleanup deferred to family extraction.",
+      "expiration": "M2b"
+    },
+    {
+      "symbol": "getVideoFamilyDefinition",
+      "owner": "family-owners",
+      "rationale": "Family bridge: retrieves family definition for video editor families. Thin wrapper; cleanup deferred to family extraction.",
+      "expiration": "M2b"
+    },
+    {
+      "symbol": "getVideoFamilyConformanceReport",
+      "owner": "family-owners",
+      "rationale": "Family bridge: retrieves family conformance report. Thin wrapper; cleanup deferred to family extraction.",
+      "expiration": "M2b"
+    },
+    {
+      "symbol": "getVideoFamilyLegacyBridgeStatus",
+      "owner": "family-owners",
+      "rationale": "Family bridge: retrieves legacy bridge status for video families. Thin wrapper; cleanup deferred to family extraction.",
+      "expiration": "M2b"
+    },
+    {
+      "symbol": "setEditorShellRoot",
+      "owner": "package-reigh",
+      "rationale": "M4 exception: Host shell DOM wiring function. Deeply coupled to host shell mount/unmount lifecycle. Extraction requires M4 host-adapter refactoring.",
+      "expiration": "M4"
+    },
+    {
+      "symbol": "getEditorShellRoot",
+      "owner": "package-reigh",
+      "rationale": "M4 exception: Host shell DOM wiring function. Deeply coupled to host shell mount/unmount lifecycle. Extraction requires M4 host-adapter refactoring.",
+      "expiration": "M4"
+    },
+    {
+      "symbol": "createExtensionContext",
+      "owner": "package-reigh",
+      "rationale": "M4 exception: ~400-line factory deeply coupled to host wiring, provider services, storage, console behavior, timeline contexts, and React lifecycle. Extracting it would pull host-adapter refactoring into this milestone.",
+      "expiration": "M4"
+    },
+    {
+      "symbol": "MetadataFacetContribution",
+      "owner": "package-reigh",
+      "rationale": "M6: Manifest contribution interface for metadata facet declarations. M2a core type blocked from extraction by circular dependency on M2b contribution type aliases still inline in index.ts. Will move to src/sdk/manifest.ts in M2b.",
+      "expiration": "M2b"
+    },
+    {
+      "symbol": "AssetDetailSectionContribution",
+      "owner": "package-reigh",
+      "rationale": "M6: Manifest contribution interface for asset detail section declarations. M2a core type blocked from extraction by circular dependency on M2b contribution type aliases still inline in index.ts. Will move to src/sdk/manifest.ts in M2b.",
+      "expiration": "M2b"
+    },
+    {
+      "symbol": "CommandContribution",
+      "owner": "package-reigh",
+      "rationale": "M4: Manifest contribution interface for command declarations. M2a core type blocked from extraction by circular dependency on M2b contribution type aliases still inline in index.ts. Will move to src/sdk/manifest.ts in M2b.",
+      "expiration": "M2b"
+    },
+    {
+      "symbol": "KeybindingContribution",
+      "owner": "package-reigh",
+      "rationale": "M4: Manifest contribution interface for keybinding declarations. M2a core type blocked from extraction by circular dependency on M2b contribution type aliases still inline in index.ts. Will move to src/sdk/manifest.ts in M2b.",
+      "expiration": "M2b"
+    },
+    {
+      "symbol": "ContextMenuItemContribution",
+      "owner": "package-reigh",
+      "rationale": "M4: Manifest contribution interface for context menu item declarations. M2a core type blocked from extraction by circular dependency on M2b contribution type aliases still inline in index.ts. Will move to src/sdk/manifest.ts in M2b.",
+      "expiration": "M2b"
+    },
+    {
+      "symbol": "ParserContribution",
+      "owner": "package-reigh",
+      "rationale": "M6: Manifest contribution interface for parser declarations. M2a core type blocked from extraction by circular dependency on M2b contribution type aliases still inline in index.ts. Will move to src/sdk/manifest.ts in M2b.",
+      "expiration": "M2b"
+    },
+    {
+      "symbol": "OutputFormatContribution",
+      "owner": "package-reigh",
+      "rationale": "M6: Manifest contribution interface for output format declarations. M2a core type blocked from extraction by circular dependency on M2b contribution type aliases still inline in index.ts. Will move to src/sdk/manifest.ts in M2b.",
+      "expiration": "M2b"
+    },
+    {
+      "symbol": "CompileOnlyOutputFormatContribution",
+      "owner": "package-reigh",
+      "rationale": "M12: Compile-only output format contribution. M2a core type blocked from extraction by circular dependency on M2b contribution type aliases still inline in index.ts. Will move to src/sdk/manifest.ts in M2b.",
+      "expiration": "M2b"
+    },
+    {
+      "symbol": "RenderDependentOutputFormatContribution",
+      "owner": "package-reigh",
+      "rationale": "M12: Render-dependent output format contribution. M2a core type blocked from extraction by circular dependency on M2b contribution type aliases still inline in index.ts. Will move to src/sdk/manifest.ts in M2b.",
+      "expiration": "M2b"
+    },
+    {
+      "symbol": "RenderDependentOutputDescriptor",
+      "owner": "package-reigh",
+      "rationale": "M12: Render-dependent output descriptor for output format contributions. M2a core type blocked from extraction by circular dependency on M2b contribution type aliases still inline in index.ts. Will move to src/sdk/manifest.ts in M2b.",
+      "expiration": "M2b"
+    },
+    {
+      "symbol": "SearchProviderContribution",
+      "owner": "package-reigh",
+      "rationale": "M6: Manifest contribution interface for search provider declarations. M2a core type blocked from extraction by circular dependency on M2b contribution type aliases still inline in index.ts. Will move to src/sdk/manifest.ts in M2b.",
+      "expiration": "M2b"
+    },
+    {
+      "symbol": "EffectContribution",
+      "owner": "package-reigh",
+      "rationale": "M7: Manifest contribution interface for effect declarations. M2a core type blocked from extraction by circular dependency on M2b contribution type aliases still inline in index.ts. Will move to src/sdk/manifest.ts in M2b.",
+      "expiration": "M2b"
+    },
+    {
+      "symbol": "TransitionContribution",
+      "owner": "package-reigh",
+      "rationale": "M8: Manifest contribution interface for transition declarations. M2a core type blocked from extraction by circular dependency on M2b contribution type aliases still inline in index.ts. Will move to src/sdk/manifest.ts in M2b.",
+      "expiration": "M2b"
+    },
+    {
+      "symbol": "ClipTypeContribution",
+      "owner": "package-reigh",
+      "rationale": "M9: Manifest contribution interface for clip type declarations. M2a core type blocked from extraction by circular dependency on M2b contribution type aliases still inline in index.ts. Will move to src/sdk/manifest.ts in M2b.",
+      "expiration": "M2b"
+    },
+    {
+      "symbol": "ShaderContribution",
+      "owner": "package-reigh",
+      "rationale": "M13: Manifest contribution interface for shader declarations. M2a core type blocked from extraction by circular dependency on M2b contribution type aliases still inline in index.ts. Will move to src/sdk/manifest.ts in M2b.",
+      "expiration": "M2b"
+    },
+    {
+      "symbol": "AgentToolContribution",
+      "owner": "package-reigh",
+      "rationale": "M10: Manifest contribution interface for agent tool declarations. M2a core type blocked from extraction by circular dependency on M2b contribution type aliases still inline in index.ts. Will move to src/sdk/manifest.ts in M2b.",
+      "expiration": "M2b"
+    },
+    {
+      "symbol": "ProcessContribution",
+      "owner": "package-reigh",
+      "rationale": "M12: Manifest contribution interface for process declarations. M2a core type blocked from extraction by circular dependency on M2b contribution type aliases still inline in index.ts. Will move to src/sdk/manifest.ts in M2b.",
+      "expiration": "M2b"
+    },
+    {
+      "symbol": "ExtensionPermissionDeclaration",
+      "owner": "package-reigh",
+      "rationale": "M6: Extension permission declaration interface. M2a core type blocked from extraction by circular dependency on M2b contribution type aliases still inline in index.ts. Will move to src/sdk/manifest.ts in M2b.",
+      "expiration": "M2b"
+    },
+    {
+      "symbol": "InstalledExtensionPackage",
+      "owner": "package-reigh",
+      "rationale": "M2a core packaging type: describes an installed extension package. Depends on ExtensionManifest which is blocked from extraction by circular deps on M2b contribution type aliases. Will move to src/sdk/packaging.ts in M2b.",
+      "expiration": "M2b"
+    },
+    {
+      "symbol": "validateManifest",
+      "owner": "package-reigh",
+      "rationale": "M2a core validation function: validates an extension manifest against schema and contribution contracts. Uses ExtensionManifest and all contribution type aliases inline. Will move to src/sdk/manifest.ts (or manifestValidation.ts) in M2b when contribution types are extracted.",
+      "expiration": "M2b"
+    },
+    {
+      "symbol": "validateInstalledPackage",
+      "owner": "package-reigh",
+      "rationale": "M2a core validation function: validates an installed extension package. Depends on InstalledExtensionPackage and ExtensionManifest which are blocked. Will move to src/sdk/packaging.ts in M2b.",
+      "expiration": "M2b"
+    },
+    {
+      "symbol": "ExtensionManifest",
+      "owner": "package-reigh",
+      "rationale": "M2a core manifest type: the top-level extension manifest interface. Depends on ~18 contribution type aliases (EffectContribution, TransitionContribution, etc.) that are still inline in index.ts. Will move to src/sdk/manifest.ts in M2b once contribution types have canonical modules.",
+      "expiration": "M2b"
+    },
+    {
+      "symbol": "ProjectExtensionRequirement",
+      "owner": "package-reigh",
+      "rationale": "M2a core packaging type: describes project-level extension requirements. Depends on ExtensionId, ContributionId and installed package types. Will move to src/sdk/packaging.ts in M2b.",
+      "expiration": "M2b"
+    },
+    {
+      "symbol": "ProjectExtensionRequirements",
+      "owner": "package-reigh",
+      "rationale": "M2a core packaging type: collection of project extension requirements. Depends on ProjectExtensionRequirement. Will move to src/sdk/packaging.ts in M2b.",
+      "expiration": "M2b"
+    },
+    {
+      "symbol": "TimelineOps",
+      "owner": "package-reigh",
+      "rationale": "M3 core timeline mutation contracts. Portable interface describing timeline mutation operations. Awaits extraction to src/sdk/timeline.ts.",
+      "expiration": "M2b"
+    },
+    {
+      "symbol": "ProposalState",
+      "owner": "package-reigh",
+      "rationale": "M3 core proposal contract: proposal lifecycle state type. Awaits extraction to src/sdk/proposals.ts.",
+      "expiration": "M2b"
+    },
+    {
+      "symbol": "ProposalExpiryDetail",
+      "owner": "package-reigh",
+      "rationale": "M3 core proposal contract: proposal expiry detail interface. Awaits extraction to src/sdk/proposals.ts.",
+      "expiration": "M2b"
+    },
+    {
+      "symbol": "TimelineProposal",
+      "owner": "package-reigh",
+      "rationale": "M3 core proposal contract: timeline proposal interface. Awaits extraction to src/sdk/proposals.ts.",
+      "expiration": "M2b"
+    },
+    {
+      "symbol": "ProposalListener",
+      "owner": "package-reigh",
+      "rationale": "M3 core proposal contract: proposal listener callback type. Awaits extraction to src/sdk/proposals.ts.",
+      "expiration": "M2b"
+    },
+    {
+      "symbol": "ProposalRuntime",
+      "owner": "package-reigh",
+      "rationale": "M3 core proposal contract: proposal runtime service interface. Awaits extraction to src/sdk/proposals.ts.",
+      "expiration": "M2b"
+    },
+    {
+      "symbol": "SourceMapRuntime",
+      "owner": "package-reigh",
+      "rationale": "M3 core proposal contract: source map runtime interface for mapping generated objects to timeline sources. Awaits extraction to src/sdk/proposals.ts.",
+      "expiration": "M2b"
+    },
+    {
+      "symbol": "SourceMapEntry",
+      "owner": "package-reigh",
+      "rationale": "M3 core proposal contract: source map entry interface. Awaits extraction to src/sdk/proposals.ts.",
+      "expiration": "M2b"
+    },
+    {
+      "symbol": "GeneratedObjectMeta",
+      "owner": "package-reigh",
+      "rationale": "M3 core proposal contract: generated object metadata interface. Awaits extraction to src/sdk/proposals.ts.",
+      "expiration": "M2b"
+    },
+    {
+      "symbol": "ProposalPanelState",
+      "owner": "package-reigh",
+      "rationale": "M3 core proposal contract: proposal panel state interface. Awaits extraction to src/sdk/proposals.ts.",
+      "expiration": "M2b"
+    },
+    {
+      "symbol": "ProposalPanelAction",
+      "owner": "package-reigh",
+      "rationale": "M3 core proposal contract: proposal panel action type. Awaits extraction to src/sdk/proposals.ts.",
+      "expiration": "M2b"
+    },
+    {
+      "symbol": "ProposalEnvelope",
+      "owner": "package-reigh",
+      "rationale": "M3 core proposal contract: proposal envelope interface. Awaits extraction to src/sdk/proposals.ts.",
+      "expiration": "M2b"
+    },
+    {
+      "symbol": "ProposalImportStatus",
+      "owner": "package-reigh",
+      "rationale": "M1: Proposal import status type for import/export of proposals. Awaits extraction to src/sdk/proposals.ts.",
+      "expiration": "M2b"
+    },
+    {
+      "symbol": "ProposalImportDiagnostic",
+      "owner": "package-reigh",
+      "rationale": "M1: Proposal import diagnostic interface for import validation. Awaits extraction to src/sdk/proposals.ts.",
+      "expiration": "M2b"
+    },
+    {
+      "symbol": "ProposalImportResult",
+      "owner": "package-reigh",
+      "rationale": "M1: Proposal import result interface. Awaits extraction to src/sdk/proposals.ts.",
+      "expiration": "M2b"
     }
   ]
 }

@@ -18,11 +18,7 @@ import type {
   TimelineSnapshot,
   TimelineProposalInput,
 } from '@/sdk/video/timeline/reader.ts';
-import type { VideoContributionKind } from '@/sdk/video/families/kinds.ts';
-import {
-  VIDEO_CONTRIBUTION_KINDS,
-  VIDEO_CONTRIBUTION_KINDS_SET,
-} from '@/sdk/video/families/kinds.ts';
+
 import {
   VIDEO_FAMILY_LEGACY_MILESTONE_MAP,
   getVideoFamily,
@@ -33,260 +29,200 @@ import type { FamilyConformanceReport } from '@/sdk/core/families/conformance';
 import type { ExecutionMaturity } from '@/sdk/core/families/maturity';
 
 // ---------------------------------------------------------------------------
-// ID validation
+// Re-exports from leaf modules
 // ---------------------------------------------------------------------------
 
-/** A non-empty string that uniquely identifies an extension or contribution. */
-export type ExtensionId = string & { readonly __brand: 'ExtensionId' };
+// Import for internal use within this file
+import {
+  type ExtensionId,
+  type ContributionId,
+  validateExtensionId,
+  validateContributionId,
+} from './ids';
+import type { DisposeHandle } from './dispose';
+import {
+  type TargetContext,
+  type TargetContextPayload,
+  type CommandRunContext,
+  type CommandHandler,
+  type CommandRegistrationOptions,
+} from './commands';
+import {
+  type ExtensionChromeService,
+  type ChromeEvent,
+  type ChromeEventPayload,
+  type ChromeProgressPayload,
+} from './chrome';
+import {
+  type ExtensionI18nService,
+  type ExtensionDiagnosticsService,
+  type CreativeContext,
+  type ExtensionCommandService,
+  type ExtensionContext,
+  createCreativeContext,
+  createCreativeContextStubs,
+  disposeExtensionContextServices,
+  CONTEXT_DISPOSE_SYMBOL,
+  ExtensionNotImplementedError,
+  CREATIVE_MEMBER_MILESTONE,
+} from './context';
+import {
+  type ExtensionActivateFn,
+  type ReighExtension,
+  type DefineExtensionOptions,
+  defineExtension,
+} from './lifecycle';
+import type {
+  CapabilityVersion,
+  CapabilitySourceRef,
+  RouteFitMetadata,
+  CapabilityRequirement,
+  IntegrationCapabilities,
+  SamplingStrategy,
+  SamplingSourceRef,
+  SamplingRange,
+  SamplingAttachmentKind,
+  SamplingAttachmentRule,
+  SamplingConfig,
+  SamplingResultItem,
+  SamplingResult,
+  ProcessRoundtripRequest,
+  ProcessRoundtripAction,
+  ProcessRoundtripResult,
+  ProcessProgressEvent,
+  ProcessLogSummary,
+} from './capabilities';
+import { getCapabilityRequirements } from './capabilities';
 
-/** A non-empty string that uniquely identifies a contribution within an extension. */
-export type ContributionId = string & { readonly __brand: 'ContributionId' };
+// Re-export publicly
+export {
+  type ExtensionId,
+  type ContributionId,
+  validateExtensionId,
+  validateContributionId,
+};
 
-const ID_RE = /^[a-z][a-z0-9_-]*(\.[a-z][a-z0-9_-]*)*$/i;
-
-/**
- * Validate an extension or contribution ID.
- * Returns an array of error messages (empty = valid).
- */
-export function validateExtensionId(id: string): string[] {
-  const errors: string[] = [];
-  if (typeof id !== 'string' || id.length === 0) {
-    errors.push('ID must be a non-empty string');
-    return errors;
-  }
-  if (id.length > 128) {
-    errors.push('ID must be 128 characters or fewer');
-  }
-  if (!ID_RE.test(id)) {
-    errors.push(
-      "ID must match /^[a-z][a-z0-9_-]*(\\.[a-z][a-z0-9_-]*)*$/i " +
-        '(lowercase start, dot-separated segments of letters/digits/hyphens/underscores)',
-    );
-  }
-  return errors;
-}
-
-/**
- * Validate a contribution ID. Same rules as extension IDs.
- */
-export function validateContributionId(id: string): string[] {
-  return validateExtensionId(id);
-}
+export type { DisposeHandle };
 
 // ---------------------------------------------------------------------------
-// DisposeHandle
-// ---------------------------------------------------------------------------
+// Commands
+export {
+  type TargetContext,
+  type TargetContextPayload,
+  type CommandRunContext,
+  type CommandHandler,
+  type CommandRegistrationOptions,
+} from './commands';
 
-/** A handle returned by lifecycle methods that require cleanup. */
-export interface DisposeHandle {
-  /** Synchronous, idempotent, must not throw. */
-  dispose(): void;
-  /** Optional explicit resource management support. */
-  readonly [Symbol.dispose]?: () => void;
-}
+// ---------------------------------------------------------------------------
+// Chrome
+export {
+  type ExtensionChromeService,
+  type ChromeEvent,
+  type ChromeToastPayload,
+  type ChromeProgressPayload,
+  type ChromeSavePayload,
+  type ChromeRenderStatusPayload,
+  type ChromeEventPayload,
+} from './chrome';
 
 // ---------------------------------------------------------------------------
 // Diagnostics
 // ---------------------------------------------------------------------------
 
-export type DiagnosticSeverity = 'error' | 'warning' | 'info';
+// Import for internal use within this file
+import {
+  type DiagnosticSeverity,
+  type DiagnosticSource,
+  DIAGNOSTIC_SOURCE_EXTENSION,
+  type ExtensionDiagnostic,
+  type DiagnosticSourceRange,
+  type Diagnostic,
+  type DiagnosticCollection,
+  DEFAULT_DIAGNOSTIC_PER_EXTENSION_CAPACITY,
+  type CreateDiagnosticCollectionOptions,
+  createDiagnosticCollection,
+  type ExportDiagnostic,
+} from './diagnostics';
 
-/**
- * Diagnostic provenance source.
- *
- * - `extension` — authored by a trusted local extension (the only source
- *   extensions themselves can produce).  The SDK pins this value for
- *   extension-reported diagnostics.
- * - `render` — emitted by the host render pipeline.
- * - `provider` — emitted by a host provider (editor runtime, etc.).
- *
- * Extensions MUST NOT set host-owned sources.
- */
-export type DiagnosticSource = 'extension' | 'render' | 'provider';
+// Re-export publicly
+export {
+  type DiagnosticSeverity,
+  type DiagnosticSource,
+  DIAGNOSTIC_SOURCE_EXTENSION,
+  type ExtensionDiagnostic,
+  type DiagnosticSourceRange,
+  type Diagnostic,
+  type DiagnosticCollection,
+  DEFAULT_DIAGNOSTIC_PER_EXTENSION_CAPACITY,
+  type CreateDiagnosticCollectionOptions,
+  createDiagnosticCollection,
+  type ExportDiagnostic,
+};
 
-/** The only diagnostic source extensions are permitted to use. */
-export const DIAGNOSTIC_SOURCE_EXTENSION: DiagnosticSource = 'extension';
+// ---------------------------------------------------------------------------
+// Manifest
+// ---------------------------------------------------------------------------
 
-export interface ExtensionDiagnostic {
-  severity: DiagnosticSeverity;
-  code: string;
-  message: string;
-  extensionId?: string;
-  contributionId?: string;
-  /** The earliest milestone that is expected to activate this feature. */
-  milestone?: string;
-  /**
-   * Diagnostic provenance source.
-   * Extension-authored diagnostics always use {@link DIAGNOSTIC_SOURCE_EXTENSION}.
-   */
-  source?: DiagnosticSource;
-  /** Additional structured detail (clip reference, effect ID, etc.). */
-  detail?: Record<string, unknown>;
-}
+// Import for internal use within this file (validateManifest, etc.)
+import {
+  type ContributionKind,
+  type VideoEditorSlotName,
+  type ExtensionContribution,
+  KNOWN_CONTRIBUTION_KINDS,
+  KNOWN_CONTRIBUTION_KINDS_SET,
+  KNOWN_SLOT_NAMES,
+  KNOWN_SLOT_NAMES_SET,
+  INSPECTOR_SECTION_PLACEMENTS,
+  PANEL_PLACEMENTS,
+  ASSET_DETAIL_SECTION_PLACEMENTS,
+  ALL_VALID_PLACEMENTS,
+  type ManifestValidationMode,
+  type ManifestValidationResult,
+} from './manifest';
 
-export interface DiagnosticSourceRange {
-  startLine: number;
-  startCol: number;
-  endLine: number;
-  endCol: number;
-}
+// Re-export publicly
+export {
+  type ContributionKind,
+  type VideoEditorSlotName,
+  type ExtensionContribution,
+  KNOWN_CONTRIBUTION_KINDS,
+  KNOWN_CONTRIBUTION_KINDS_SET,
+  KNOWN_SLOT_NAMES,
+  KNOWN_SLOT_NAMES_SET,
+  INSPECTOR_SECTION_PLACEMENTS,
+  PANEL_PLACEMENTS,
+  ASSET_DETAIL_SECTION_PLACEMENTS,
+  ALL_VALID_PLACEMENTS,
+  type ManifestValidationMode,
+  type ManifestValidationResult,
+};
 
-export interface Diagnostic extends ExtensionDiagnostic {
-  id: string;
-  sourceRange?: DiagnosticSourceRange;
-  relatedRanges?: readonly DiagnosticSourceRange[];
-}
+// ---------------------------------------------------------------------------
+// Packaging
+// ---------------------------------------------------------------------------
 
-export interface DiagnosticCollection {
-  readonly snapshot: readonly Diagnostic[];
-  publish(diagnostic: Diagnostic): void;
-  remove(predicate: (diagnostic: Diagnostic) => boolean): void;
-  /** Remove all diagnostics belonging to the given extension ID. */
-  removeByExtensionId(extensionId: string): void;
-  clear(): void;
-  subscribe(listener: () => void): DisposeHandle;
-  getSnapshot(): readonly Diagnostic[];
-}
+// Import for internal use within this file (validateInstalledPackage, etc.)
+import type {
+  DependencyPosture,
+  ExtensionDependency,
+  IntegrityAlgorithm,
+  IntegrityHash,
+  MigrationHookKind,
+  MigrationDeclaration,
+  InstalledExtensionMetadata,
+} from './packaging';
 
-/** Default per-extension diagnostic capacity before oldest-first eviction. */
-export const DEFAULT_DIAGNOSTIC_PER_EXTENSION_CAPACITY = 100;
-
-function freezeDiagnostic(diagnostic: Diagnostic): Diagnostic {
-  return Object.freeze({
-    ...diagnostic,
-    ...(diagnostic.sourceRange ? { sourceRange: Object.freeze({ ...diagnostic.sourceRange }) } : {}),
-    ...(diagnostic.relatedRanges
-      ? { relatedRanges: Object.freeze(diagnostic.relatedRanges.map((range) => Object.freeze({ ...range }))) }
-      : {}),
-    ...(diagnostic.detail ? { detail: Object.freeze({ ...diagnostic.detail }) } : {}),
-  });
-}
-
-export interface CreateDiagnosticCollectionOptions {
-  /**
-   * Maximum number of diagnostics allowed per extension ID.
-   * When publishing a new diagnostic (not replacing an existing one by ID)
-   * would exceed this limit, the oldest diagnostic for that extension is
-   * evicted before the new one is added.
-   * @default {@link DEFAULT_DIAGNOSTIC_PER_EXTENSION_CAPACITY}
-   */
-  perExtensionCapacity?: number;
-}
-
-export function createDiagnosticCollection(
-  initialDiagnostics: readonly Diagnostic[] = [],
-  options: CreateDiagnosticCollectionOptions = {},
-): DiagnosticCollection {
-  const capacity = options.perExtensionCapacity ?? DEFAULT_DIAGNOSTIC_PER_EXTENSION_CAPACITY;
-  const diagnostics: Diagnostic[] = initialDiagnostics.map(freezeDiagnostic);
-  const listeners = new Set<() => void>();
-  let snapshot: readonly Diagnostic[] = Object.freeze([...diagnostics]);
-
-  const publishSnapshot = () => {
-    snapshot = Object.freeze([...diagnostics]);
-    for (const listener of listeners) {
-      listener();
-    }
-  };
-
-  const evictOldestForExtension = (extensionId: string): void => {
-    // Find the oldest (lowest index) diagnostic for this extension
-    for (let i = 0; i < diagnostics.length; i += 1) {
-      if (diagnostics[i].extensionId === extensionId) {
-        diagnostics.splice(i, 1);
-        return; // only evict one — the oldest
-      }
-    }
-  };
-
-  return {
-    get snapshot(): readonly Diagnostic[] {
-      return snapshot;
-    },
-    publish(diagnostic: Diagnostic): void {
-      const frozen = freezeDiagnostic(diagnostic);
-      const existingIndex = diagnostics.findIndex((item) => item.id === frozen.id);
-      if (existingIndex >= 0) {
-        // Replace in-place — does NOT count toward capacity
-        diagnostics[existingIndex] = frozen;
-      } else {
-        // New diagnostic: enforce per-extension capacity
-        const extId = frozen.extensionId;
-        if (extId) {
-          const extCount = diagnostics.reduce(
-            (count, d) => count + (d.extensionId === extId ? 1 : 0),
-            0,
-          );
-          if (extCount >= capacity) {
-            evictOldestForExtension(extId);
-          }
-        }
-        diagnostics.push(frozen);
-      }
-      publishSnapshot();
-    },
-    remove(predicate: (diagnostic: Diagnostic) => boolean): void {
-      let changed = false;
-      for (let index = diagnostics.length - 1; index >= 0; index -= 1) {
-        if (predicate(diagnostics[index])) {
-          diagnostics.splice(index, 1);
-          changed = true;
-        }
-      }
-      if (changed) {
-        publishSnapshot();
-      }
-    },
-    removeByExtensionId(extensionId: string): void {
-      let changed = false;
-      for (let index = diagnostics.length - 1; index >= 0; index -= 1) {
-        if (diagnostics[index].extensionId === extensionId) {
-          diagnostics.splice(index, 1);
-          changed = true;
-        }
-      }
-      if (changed) {
-        publishSnapshot();
-      }
-    },
-    clear(): void {
-      if (diagnostics.length === 0) return;
-      diagnostics.length = 0;
-      publishSnapshot();
-    },
-    subscribe(listener: () => void): DisposeHandle {
-      listeners.add(listener);
-      return {
-        dispose(): void {
-          listeners.delete(listener);
-        },
-      };
-    },
-    getSnapshot(): readonly Diagnostic[] {
-      return snapshot;
-    },
-  };
-}
-
-/**
- * An export-scoped diagnostic produced by the pre-render export guard.
- * Carries the same shape as {@link ExtensionDiagnostic} but uses
- * export-prefixed diagnostic codes (e.g. `export/unknown-clip-type`)
- * and includes timeline-specific detail (clip ID, effect name, etc.).
- */
-export interface ExportDiagnostic extends ExtensionDiagnostic {
-  /** The diagnostic code is always an export-prefixed string. */
-  code: `export/${string}`;
-  /** Timeline-scoped detail such as clip ID, effect/transition name. */
-  detail?: Record<string, unknown> & {
-    clipId?: string;
-    clipType?: string;
-    effectType?: string;
-    transitionType?: string;
-    shaderId?: string;
-    shaderScope?: ShaderMaterializerRequirementScope;
-  };
-}
+// Re-export publicly
+export type {
+  DependencyPosture,
+  ExtensionDependency,
+  IntegrityAlgorithm,
+  IntegrityHash,
+  MigrationHookKind,
+  MigrationDeclaration,
+  InstalledExtensionMetadata,
+};
 
 // ---------------------------------------------------------------------------
 // M5: Renderability, blocker, material, and artifact contracts
@@ -401,197 +337,42 @@ export type {
 } from '@/sdk/video/timeline/reader.ts';
 
 // ---------------------------------------------------------------------------
+// Lifecycle
+// ---------------------------------------------------------------------------
+export {
+  type ExtensionActivateFn,
+  type ReighExtension,
+  type DefineExtensionOptions,
+  defineExtension,
+} from './lifecycle';
+
+// ---------------------------------------------------------------------------
+// Capabilities, sampling, and process roundtrip
+// ---------------------------------------------------------------------------
+export type {
+  CapabilityVersion,
+  CapabilitySourceRef,
+  RouteFitMetadata,
+  CapabilityRequirement,
+  IntegrationCapabilities,
+  SamplingStrategy,
+  SamplingSourceRef,
+  SamplingRange,
+  SamplingAttachmentKind,
+  SamplingAttachmentRule,
+  SamplingConfig,
+  SamplingResultItem,
+  SamplingResult,
+  ProcessRoundtripRequest,
+  ProcessRoundtripAction,
+  ProcessRoundtripResult,
+  ProcessProgressEvent,
+  ProcessLogSummary,
+} from './capabilities';
+export { getCapabilityRequirements } from './capabilities';
+
+// ---------------------------------------------------------------------------
 // M4: Commands, Keybindings, Context Menus — target and handler contracts
-// ---------------------------------------------------------------------------
-
-/**
- * Sealed target context union for context-menu contributions.
- *
- * - `clip` — right-click on a single clip
- * - `clip-selection` — right-click when multiple clips are selected
- * - `track` — right-click on a track header/label
- * - `timeline-area` — right-click on the editable canvas background
- *
- * Shot-group contributions are **reserved** and diagnosed rather than
- * silently ignored until the shot-group ambiguity is resolved.
- */
-export type TargetContext = 'clip' | 'clip-selection' | 'track' | 'timeline-area';
-
-/**
- * Typed payload discriminator for command invocations originating
- * from a context menu or other target-scoped trigger.
- */
-export type TargetContextPayload =
-  | { readonly target: 'clip'; readonly clipId: string; readonly trackId: string }
-  | { readonly target: 'clip-selection'; readonly clipIds: readonly string[]; readonly trackId: string }
-  | { readonly target: 'track'; readonly trackId: string }
-  | { readonly target: 'timeline-area' };
-
-/**
- * Context passed to a command handler on invocation.
- *
- * Handlers receive the fully-qualified command ID, the owning extension ID,
- * and an optional `target` payload populated when the command is triggered
- * from a context-menu or other target-scoped surface.
- */
-export interface CommandRunContext {
-  /** The fully-qualified command ID that was invoked. */
-  readonly commandId: string;
-  /** The extension that registered the handler. */
-  readonly extensionId: string;
-  /** The target context, with its typed payload, when applicable. */
-  readonly target?: TargetContextPayload;
-}
-
-/**
- * A command handler function registered by an extension during activate().
- *
- * May be synchronous or async.  Thrown errors (or rejected promises) are
- * caught by the runtime and published as diagnostics + host toasts — they
- * must not crash the palette, menus, or editor shell.
- */
-export type CommandHandler = (ctx: CommandRunContext) => void | Promise<void>;
-
-/** Options for imperative command registration via ctx.commands.registerCommand(). */
-export interface CommandRegistrationOptions {
-  /** Human-readable label for the palette (defaults to command ID when absent). */
-  label?: string;
-  /** Category for palette grouping. */
-  category?: string;
-}
-
-// ---------------------------------------------------------------------------
-// Manifest
-// ---------------------------------------------------------------------------
-
-/**
- * Known contribution kinds. Reserved/inactive kinds are validated but not bridged.
- *
- * Alias of {@link VideoContributionKind} from `src/sdk/video/families/kinds.ts`,
- * which is the single source of truth for the kind union.
- */
-export type ContributionKind = VideoContributionKind;
-
-/** Slot names the host shell recognizes. */
-export type VideoEditorSlotName =
-  | 'header'
-  | 'toolbar'
-  | 'leftPanel'
-  | 'rightPanel'
-  | 'codePanel'
-  | 'writingPanel'
-  | 'stagePanel'
-  | 'timelineFooter'
-  | 'statusBar'
-  | 'dialogs'
-  | 'assetPanel'
-  | 'inspectorPanel';
-
-/** A single contribution declaration inside an extension manifest. */
-export interface ExtensionContribution {
-  /** Unique within the extension. */
-  id: ContributionId;
-  kind: ContributionKind;
-  /** Lower values sort first. Default 0. */
-  order?: number;
-  /** Slot name — required when kind === 'slot'. */
-  slot?: VideoEditorSlotName;
-  /** Dialog layer when kind === 'dialog'. */
-  layer?: 'modal' | 'overlay';
-  /** Inspector placement when kind === 'inspectorSection'. */
-  placement?: 'before-default' | 'after-default';
-  /** Human-readable label for diagnostics / UI. */
-  label?: string;
-  /** Optional visibility predicate (evaluated by host). */
-  when?: string;
-  /** Reserved for future render provider descriptors. */
-  render?: string;
-  /** Reserved for future effect descriptors. */
-  effectId?: string;
-  /** Reserved for future transition descriptors. */
-  transitionId?: string;
-  /** Reserved for future clip-type descriptors. */
-  clipTypeId?: string;
-  /** M13: Shader identifier declared by the extension. */
-  shaderId?: string;
-  /** M6: Parser identifier declared by the extension. */
-  parserId?: string;
-  /** M6: Output format identifier declared by the extension. */
-  outputFormatId?: string;
-  /** M6: Search provider identifier declared by the extension. */
-  searchProviderId?: string;
-  /** M6: Metadata facet identifier declared by the extension. */
-  metadataFacetId?: string;
-  /** M6: Asset detail section identifier declared by the extension. */
-  assetDetailSectionId?: string;
-  /** M10: Agent tool identifier declared by the extension. */
-  agentToolId?: string;
-}
-
-// ---------------------------------------------------------------------------
-// Runtime-inspectable contract constants
-// ---------------------------------------------------------------------------
-
-/**
- * All known contribution kinds as a runtime-inspectable readonly array.
- * Use this to enumerate valid kinds at runtime without relying on the
- * TypeScript type system alone.
- *
- * Re-export of {@link VIDEO_CONTRIBUTION_KINDS} from
- * `src/sdk/video/families/kinds.ts`.
- */
-export const KNOWN_CONTRIBUTION_KINDS: readonly ContributionKind[] = VIDEO_CONTRIBUTION_KINDS;
-
-/** Set form of {@link KNOWN_CONTRIBUTION_KINDS} for fast lookups. */
-export const KNOWN_CONTRIBUTION_KINDS_SET = VIDEO_CONTRIBUTION_KINDS_SET;
-
-/**
- * All known slot names as a runtime-inspectable readonly array.
- */
-export const KNOWN_SLOT_NAMES: readonly VideoEditorSlotName[] = [
-  'header',
-  'toolbar',
-  'leftPanel',
-  'rightPanel',
-  'codePanel',
-  'writingPanel',
-  'stagePanel',
-  'timelineFooter',
-  'statusBar',
-  'dialogs',
-  'assetPanel',
-  'inspectorPanel',
-] as const;
-
-/** Set form of {@link KNOWN_SLOT_NAMES} for fast lookups. */
-export const KNOWN_SLOT_NAMES_SET: ReadonlySet<string> = new Set(KNOWN_SLOT_NAMES);
-
-// ---- Placement value constants ----
-
-/** Valid placement values for inspectorSection contributions. */
-export const INSPECTOR_SECTION_PLACEMENTS: readonly string[] = [
-  'before-default',
-  'after-default',
-] as const;
-
-/** Valid placement values for panel contributions. */
-export const PANEL_PLACEMENTS: readonly string[] = [
-  'asset-panel',
-] as const;
-
-/** Valid placement values for assetDetailSection contributions. */
-export const ASSET_DETAIL_SECTION_PLACEMENTS: readonly string[] = [
-  'before-default',
-  'after-default',
-] as const;
-
-/** Union of all valid placement values across contribution kinds. */
-export const ALL_VALID_PLACEMENTS: readonly string[] = [
-  'before-default',
-  'after-default',
-  'asset-panel',
-] as const;
-
 // ---------------------------------------------------------------------------
 // M6: Metadata facet / asset detail section contributions
 // ---------------------------------------------------------------------------
@@ -1808,22 +1589,6 @@ export type ProcessStatus =
   | (ProcessStatusBase & { readonly state: 'failed'; readonly errorCode?: string; readonly recoverable?: boolean })
   | (ProcessStatusBase & { readonly state: 'stopping'; readonly reason?: string });
 
-export interface ProcessProgressEvent {
-  readonly operationId: string;
-  readonly percent?: number;
-  readonly message?: string;
-  readonly currentStep?: string;
-  readonly totalSteps?: number;
-}
-
-export interface ProcessLogSummary {
-  readonly level: 'debug' | 'info' | 'warning' | 'error';
-  readonly message: string;
-  readonly at?: string;
-  readonly detail?: Record<string, unknown>;
-}
-
-// ---------------------------------------------------------------------------
 // M11: Live Data Bridge — source, channel, sample, bake, permission,
 // recording, learn, steering, and binding-resolution contracts
 // ---------------------------------------------------------------------------
@@ -2496,81 +2261,11 @@ export interface ExtensionPermissionDeclaration {
 // M14: Packaging, integrity, settings-schema, and dependency contracts
 // ---------------------------------------------------------------------------
 
-/** Posture of a dependency: required blocks activation, optional degrades. */
-export type DependencyPosture = 'required' | 'optional';
+// Import for internal use within this file
+import type { ExtensionSettingsSchema } from './settings';
 
-/** A typed dependency declared by an extension. */
-export interface ExtensionDependency {
-  /** Extension ID this dependency references. */
-  extensionId: string;
-  /** Semver range (e.g. "^1.2.0", ">=2.0.0 <3.0.0"). */
-  versionRange?: string;
-  /** Specific contribution IDs required from the dependency. */
-  contributionIds?: readonly string[];
-  /** Whether this dependency was originally declared as optional. */
-  optional?: boolean;
-  /** Dependency posture: required blocks activation, optional allows degraded activation. */
-  posture?: DependencyPosture;
-}
-
-/** Settings schema descriptor with version for migration tracking. */
-export interface ExtensionSettingsSchema {
-  /** Monotonic version number; increments when the settings shape changes. */
-  version: number;
-  /** Optional JSON Schema-like shape descriptor (subset). */
-  schema?: Record<string, unknown>;
-}
-
-/** Supported integrity algorithms. */
-export type IntegrityAlgorithm = 'sha256';
-
-/** An SRI-style integrity hash. */
-export interface IntegrityHash {
-  algorithm: IntegrityAlgorithm;
-  /** Base64-encoded hash value (without algorithm prefix). */
-  value: string;
-}
-
-/** Kinds of migration hooks an extension may declare. */
-export type MigrationHookKind = 'settings' | 'contribution' | 'manifest';
-
-/** A typed migration declaration for extension upgrades. */
-export interface MigrationDeclaration {
-  kind: MigrationHookKind;
-  /** Semver of the source version being migrated from. */
-  fromVersion: string;
-  /** Semver of the target version being migrated to. */
-  toVersion: string;
-  /** Handler identifier (module export name or inline function name). */
-  handler?: string;
-  /** Human-readable description of the migration. */
-  description?: string;
-}
-
-/** Metadata recorded when an extension is installed as a trusted bundle. */
-export interface InstalledExtensionMetadata {
-  extensionId: ExtensionId;
-  version: string;
-  apiVersion?: number;
-  /** Required: SHA-256 SRI integrity of the installed bundle. */
-  integrity: IntegrityHash;
-  /** ISO 8601 timestamp of installation. */
-  installedAt?: string;
-  /** Whether the extension is currently enabled. */
-  enabled: boolean;
-  /** Settings schema version at install time. */
-  settingsSchemaVersion?: number;
-  /** Resolved dependency graph at install time. */
-  dependencies?: readonly ExtensionDependency[];
-  /** Stored extension-scoped settings keyed by key. */
-  settings?: Record<string, unknown>;
-  /** Optional publisher identity for installed extensions. */
-  publisher?: string;
-  /** Optional SPDX license identifier. */
-  license?: string;
-  /** Optional icon URL or data URI. */
-  icon?: string;
-}
+// Re-export publicly
+export type { ExtensionSettingsSchema };
 
 /** A full installed extension package: manifest + bundle + tracked metadata. */
 export interface InstalledExtensionPackage {
@@ -2578,19 +2273,6 @@ export interface InstalledExtensionPackage {
   manifest: ExtensionManifest;
   /** Raw trusted bundle source (bundle.mjs content). */
   bundleContent: string;
-}
-
-/** Validation mode: 'dev' produces warnings, 'installed' produces strict errors. */
-export type ManifestValidationMode = 'dev' | 'installed';
-
-/** Result of validating an extension manifest. */
-export interface ManifestValidationResult {
-  /** True when no blocking errors exist. */
-  valid: boolean;
-  /** Blocking diagnostics (strict errors in installed mode). */
-  errors: readonly ExtensionDiagnostic[];
-  /** Non-blocking diagnostics (warnings in dev mode, supplemental in installed mode). */
-  warnings: readonly ExtensionDiagnostic[];
 }
 
 /**
@@ -3067,6 +2749,10 @@ export function validateInstalledPackage(
 // ---------------------------------------------------------------------------
 // Extension manifest
 // ---------------------------------------------------------------------------
+// NOTE: ExtensionManifest remains inline here (not yet in manifest.ts) because
+// its contributions union references types (CommandContribution, etc.) that are
+// still defined inline in this file. Once those types are extracted to canonical
+// modules, ExtensionManifest can move to manifest.ts with direct imports.
 
 export interface ExtensionManifest {
   id: ExtensionId;
@@ -3131,21 +2817,11 @@ export interface ExtensionManifest {
 // Services
 // ---------------------------------------------------------------------------
 
-/** Settings service: localStorage-backed key-value store scoped per extension. */
-export interface ExtensionSettingsService {
-  get<T = unknown>(key: string): T | undefined;
-  set<T = unknown>(key: string, value: T): void;
-  delete(key: string): void;
-  keys(): readonly string[];
-  /**
-   * Subscribe to settings change notifications.
-   *
-   * The listener is called after every successful `set()` or `delete()`.
-   * Invalid writes blocked by Ajv validation do NOT trigger notifications.
-   * Returns a {@link DisposeHandle} to unsubscribe.
-   */
-  subscribe(listener: () => void): DisposeHandle;
-}
+// Import for internal use within this file
+import type { ExtensionSettingsService } from './settings';
+
+// Re-export publicly
+export type { ExtensionSettingsService };
 
 // Re-export the injectable settings service factory and persistence callbacks.
 export { createExtensionSettingsService, getSettingsPrefix } from './extensionSettingsService';
@@ -3168,239 +2844,23 @@ export type {
 } from './contracts';
 export { createLifecycleEvent } from './contracts';
 
-/** i18n service: minimal t() scaffolding with namespace fallback. */
-export interface ExtensionI18nService {
-  t(key: string, replacements?: Record<string, string | number>): string;
-}
-
-/** Diagnostics service: emit structured diagnostics from extension code. */
-export interface ExtensionDiagnosticsService {
-  /**
-   * Report a diagnostic.  `extensionId` and `source` are owned by the
-   * extension lifecycle — the host overwrites any caller-provided values
-   * with the authoritative extension ID and {@link DIAGNOSTIC_SOURCE_EXTENSION}.
-   */
-  report(diagnostic: Omit<ExtensionDiagnostic, 'extensionId' | 'source'>): void;
-  /** All diagnostics emitted by this extension (live snapshot). */
-  readonly diagnostics: readonly ExtensionDiagnostic[];
-}
-
-/** Chrome service: host-visible toast/progress/subscribe scaffolding. */
-export interface ExtensionChromeService {
-  toast(message: string, severity?: DiagnosticSeverity): void;
-  progress(percent: number, label?: string): void;
-  subscribe<E extends ChromeEvent>(
-    event: E,
-    handler: (payload: ChromeEventPayload<E>) => void,
-  ): DisposeHandle;
-  /**
-   * Focus an element matching the CSS selector within the editor shell root.
-   *
-   * Scoped to the editor shell root: only descendants of the shell root are
-   * considered valid targets.  Emits diagnostics when:
-   * - No shell root is mounted (`chrome/focus-no-shell`)
-   * - The selector matches an element outside the shell root, e.g. a portal
-   *   target (`chrome/focus-out-of-shell`)
-   * - The selector does not match any element (`chrome/focus-missing-selector`)
-   *
-   * Safe to call from extension code at any time.
-   */
-  focus(selector: string): void;
-  /**
-   * Announce a message to assistive technology via an aria-live region
-   * within the editor shell root.
-   *
-   * Creates a `.sr-only` container with `aria-live` and `aria-atomic`
-   * inside the shell root on first call.  Subsequent calls update the
-   * text content so screen readers re-announce.  If no shell root is
-   * mounted the message is logged to the console as a fallback.
-   *
-   * @param message     The text to announce.
-   * @param politeness  `'polite'` (default) or `'assertive'`.
-   */
-  announce(message: string, politeness?: 'polite' | 'assertive'): void;
-}
-
 // ---------------------------------------------------------------------------
-// Chrome events
+// Re-exports from context module
 // ---------------------------------------------------------------------------
 
-export type ChromeEvent =
-  | 'toast'
-  | 'progress'
-  | 'save'
-  | 'renderStatus';
-
-export interface ChromeToastPayload {
-  message: string;
-  severity: DiagnosticSeverity;
-}
-
-export interface ChromeProgressPayload {
-  percent: number;
-  label?: string;
-}
-
-export interface ChromeSavePayload {
-  status: 'started' | 'completed' | 'failed';
-  error?: string;
-}
-
-export interface ChromeRenderStatusPayload {
-  status: 'idle' | 'rendering' | 'completed' | 'failed';
-  error?: string;
-}
-
-export type ChromeEventPayload<E extends ChromeEvent> =
-  E extends 'toast' ? ChromeToastPayload :
-  E extends 'progress' ? ChromeProgressPayload :
-  E extends 'save' ? ChromeSavePayload :
-  E extends 'renderStatus' ? ChromeRenderStatusPayload :
-  never;
-
-// ---------------------------------------------------------------------------
-// Creative context (reserved stubs)
-// ---------------------------------------------------------------------------
-
-/** Reserved creative context members — each becomes live in its owning milestone. */
-export interface CreativeContext {
-  readonly project: unknown;
-  /** Public mutation surface for atomic timeline operations (M3). */
-  readonly timeline: TimelineOps;
-  /** Read-only snapshot projection of the current timeline state (M3). */
-  readonly reader: TimelineReader;
-  /** Provider-scoped proposal lifecycle manager (M3). */
-  readonly proposals: ProposalRuntime;
-  /** Read-only asset metadata surface (M6). */
-  readonly assets: AssetReadSurface;
-  /** Read-only material metadata surface (M6). */
-  readonly materials: MaterialReadSurface;
-  /** Live data sessions service for source/channel/bake/steering operations (M11). */
-  readonly sessions: LiveSessionsService;
-  /** Export service for registering output format handlers (M6). */
-  readonly export: ExportService;
-  readonly stage: unknown;
-  readonly writing: unknown;
-}
-
-/** The milestone that activates each creative context member. */
-export const CREATIVE_MEMBER_MILESTONE: Record<keyof CreativeContext, string> = {
-  project: 'M2',
-  timeline: 'M3',
-  reader: 'M3',
-  proposals: 'M3',
-  assets: 'M6',
-  materials: 'M6',
-  sessions: 'M11',
-  export: 'M2',
-  stage: 'M5',
-  writing: 'M2',
-};
-
-/**
- * Error thrown when accessing a reserved creative context member
- * that is not yet implemented in the current milestone.
- */
-export class ExtensionNotImplementedError extends Error {
-  readonly feature: string;
-  readonly milestone: string;
-
-  constructor(feature: string, milestone: string) {
-    super(`ctx.creative.${feature} is not implemented until ${milestone}.`);
-    this.name = 'ExtensionNotImplementedError';
-    this.feature = feature;
-    this.milestone = milestone;
-  }
-}
-
-/** Create a creative context object whose every member throws on access. */
-export function createCreativeContextStubs(): CreativeContext {
-  const members = Object.keys(CREATIVE_MEMBER_MILESTONE) as (keyof CreativeContext)[];
-
-  const stub: Record<string, unknown> = {};
-  for (const member of members) {
-    const milestone = CREATIVE_MEMBER_MILESTONE[member];
-    Object.defineProperty(stub, member, {
-      get(): never {
-        throw new ExtensionNotImplementedError(member, milestone);
-      },
-      enumerable: true,
-      configurable: false,
-    });
-  }
-
-  return Object.freeze(stub) as unknown as CreativeContext;
-}
-
-/**
- * Create a CreativeContext with optional live overrides.
- *
- * Members present in `overrides` are used directly; all other members
- * retain the default throwing-stub behavior from createCreativeContextStubs().
- * This lets host providers inject live timeline services for extensions
- * running inside a mounted video-editor context while keeping stubs for
- * unmounted or non-editor contexts.
- */
-export function createCreativeContext(
-  overrides?: Partial<CreativeContext>,
-): CreativeContext {
-  if (!overrides) {
-    return createCreativeContextStubs();
-  }
-
-  const members = Object.keys(CREATIVE_MEMBER_MILESTONE) as (keyof CreativeContext)[];
-  const merged: Record<string, unknown> = {};
-
-  for (const member of members) {
-    if (member in overrides) {
-      Object.defineProperty(merged, member, {
-        value: (overrides as Record<string, unknown>)[member],
-        enumerable: true,
-        writable: false,
-        configurable: false,
-      });
-    } else {
-      const milestone = CREATIVE_MEMBER_MILESTONE[member];
-      Object.defineProperty(merged, member, {
-        get(): never {
-          throw new ExtensionNotImplementedError(member, milestone);
-        },
-        enumerable: true,
-        configurable: false,
-      });
-    }
-  }
-
-  return Object.freeze(merged) as unknown as CreativeContext;
-}
-
-// ---------------------------------------------------------------------------
-// M4: Command registration service
-// ---------------------------------------------------------------------------
-
-/**
- * Command registration service available as `ctx.commands` during activate().
- *
- * Commands must have a matching `command` contribution in the extension
- * manifest.  Handlers are registered imperatively via `registerCommand()`
- * and the returned DisposeHandle unregisters them on dispose.
- */
-export interface ExtensionCommandService {
-  /**
-   * Register a command handler imperatively during activate().
-   *
-   * The `commandId` must match the `command` field of a `CommandContribution`
-   * declared by this extension in its manifest.
-   *
-   * Returns a DisposeHandle that unregisters the handler when dispose() is
-   * called (safe to call multiple times; idempotent).
-   */
-  registerCommand(
-    commandId: string,
-    handler: CommandHandler,
-    options?: CommandRegistrationOptions,
-  ): DisposeHandle;
-}
+export {
+  type ExtensionI18nService,
+  type ExtensionDiagnosticsService,
+  type CreativeContext,
+  type ExtensionCommandService,
+  type ExtensionContext,
+  createCreativeContext,
+  createCreativeContextStubs,
+  disposeExtensionContextServices,
+  CONTEXT_DISPOSE_SYMBOL,
+  ExtensionNotImplementedError,
+  CREATIVE_MEMBER_MILESTONE,
+} from './context';
 
 // ---------------------------------------------------------------------------
 // M7: Effect registration service
@@ -3568,46 +3028,6 @@ export interface TransitionRegistrationService {
     renderer: TransitionRenderer,
     options?: TransitionRegistrationOptions,
   ): DisposeHandle;
-}
-
-/**
- * The context passed to an extension during activation.
- * Exposes only approved M1 members; no raw DataProvider, applyEdit,
- * timeline store, or internal mutation escape hatch.
- */
-export interface ExtensionContext {
-  /** Current API version (1 in M1). */
-  readonly apiVersion: number;
-  /** Readonly extension metadata. */
-  readonly extension: {
-    readonly id: ExtensionId;
-    readonly version: string;
-    readonly label: string;
-    readonly description?: string;
-    readonly manifest: Readonly<ExtensionManifest>;
-  };
-  /** Host chrome services. */
-  readonly chrome: ExtensionChromeService;
-  /** Scoped services. */
-  readonly services: {
-    readonly settings: ExtensionSettingsService;
-    readonly i18n: ExtensionI18nService;
-    readonly diagnostics: ExtensionDiagnosticsService;
-  };
-  /** Reserved creative context stubs — throw typed \"not implemented until Mx\". */
-  readonly creative: CreativeContext;
-  /** M4: Command registration service for imperative handler binding. */
-  readonly commands: ExtensionCommandService;
-  /** M7: Effect registration service for trusted component effects. */
-  readonly effects: EffectRegistrationService;
-  /** M8: Transition registration service for trusted component transitions. */
-  readonly transitions: TransitionRegistrationService;
-  /** M9: Clip-type registration service for contributed clip types. */
-  readonly clipTypes: ClipTypeRegistrationService;
-  /** M13: Shader registration service for dedicated WebGL shader passes. */
-  readonly shaders: ShaderRegistrationService;
-  /** M10: Agent tool registration service for host-mediated agent tools. */
-  readonly agentTools: AgentToolRegistrationService;
 }
 
 // ---------------------------------------------------------------------------
@@ -3995,123 +3415,6 @@ export function createExtensionContext(
   return frozenCtx;
 }
 
-/**
- * Symbol key for host-service disposal attached to every ExtensionContext.
- * The runtime lifecycle calls this during deactivation/disposal to clean up
- * localStorage keys, chrome event subscribers, and any future host-owned
- * service state scoped to this extension activation.
- */
-export const CONTEXT_DISPOSE_SYMBOL: unique symbol = Symbol('reigh.extensionContext.dispose');
-
-/**
- * Dispose host-owned services (settings localStorage, chrome subscriptions)
- * attached to an ExtensionContext. Safe to call on contexts that lack the
- * dispose function or on already-disposed contexts.
- */
-export function disposeExtensionContextServices(ctx: ExtensionContext): void {
-  const dispose = (ctx as unknown as Record<string | symbol, unknown>)[CONTEXT_DISPOSE_SYMBOL];
-  if (typeof dispose === 'function') {
-    try {
-      (dispose as () => void)();
-    } catch {
-      // dispose functions are internally safe, but double-guard
-    }
-  }
-}
-
-// ---------------------------------------------------------------------------
-// Extension lifecycle
-// ---------------------------------------------------------------------------
-
-/** An extension's activate function. */
-export type ExtensionActivateFn = (ctx: ExtensionContext) => DisposeHandle | void;
-
-/** The public extension shape returned by defineExtension(). */
-export interface ReighExtension {
-  readonly manifest: Readonly<ExtensionManifest>;
-  readonly activate?: ExtensionActivateFn;
-}
-
-// ---------------------------------------------------------------------------
-// defineExtension()
-// ---------------------------------------------------------------------------
-
-/** Options passed to defineExtension(). */
-export interface DefineExtensionOptions {
-  manifest: ExtensionManifest;
-  activate?: ExtensionActivateFn;
-}
-
-function freezeManifestValue<T>(value: T): T {
-  if (ArrayBuffer.isView(value) || value instanceof ArrayBuffer) {
-    return value;
-  }
-  if (Array.isArray(value)) {
-    return Object.freeze(value.map((item) => freezeManifestValue(item))) as T;
-  }
-  if (value && typeof value === 'object') {
-    const frozenEntries = Object.entries(value as Record<string, unknown>).map(
-      ([key, entry]) => [key, freezeManifestValue(entry)],
-    );
-    return Object.freeze(Object.fromEntries(frozenEntries)) as T;
-  }
-  return value;
-}
-
-/**
- * Create a frozen ReighExtension from a manifest and optional activate function.
- * Validates the extension ID and contribution IDs, and preserves literal IDs
- * through the returned object.
- */
-export function defineExtension(options: DefineExtensionOptions): ReighExtension {
-  const { manifest, activate } = options;
-
-  // Validate extension ID
-  const idErrors = validateExtensionId(manifest.id);
-  if (idErrors.length > 0) {
-    throw new Error(`Invalid extension ID "${manifest.id}": ${idErrors.join('; ')}`);
-  }
-
-  // Validate contribution IDs for uniqueness
-  if (manifest.contributions && manifest.contributions.length > 0) {
-    const seen = new Set<string>();
-    for (const contribution of manifest.contributions) {
-      const cErrors = validateContributionId(contribution.id);
-      if (cErrors.length > 0) {
-        throw new Error(
-          `Invalid contribution ID "${contribution.id}" in extension "${manifest.id}": ${cErrors.join('; ')}`,
-        );
-      }
-      if (seen.has(contribution.id)) {
-        throw new Error(
-          `Duplicate contribution ID "${contribution.id}" in extension "${manifest.id}"`,
-        );
-      }
-      seen.add(contribution.id);
-    }
-  }
-
-  // Freeze the manifest deeply so literal IDs are preserved and the shape is immutable
-  const frozenManifest: ExtensionManifest = Object.freeze({
-    ...manifest,
-    contributions: manifest.contributions ? freezeManifestValue(manifest.contributions) : undefined,
-    permissions: manifest.permissions ? freezeManifestValue(manifest.permissions) : undefined,
-    processes: manifest.processes ? freezeManifestValue(manifest.processes) : undefined,
-    dependsOn: manifest.dependsOn ? freezeManifestValue(manifest.dependsOn) : undefined,
-    migrations: manifest.migrations ? freezeManifestValue(manifest.migrations) : undefined,
-    settingsDefaults: manifest.settingsDefaults ? freezeManifestValue(manifest.settingsDefaults) : undefined,
-    settingsSchema: manifest.settingsSchema ? freezeManifestValue(manifest.settingsSchema) : undefined,
-    messages: manifest.messages ? freezeManifestValue(manifest.messages) : undefined,
-  });
-
-  const extension: ReighExtension = Object.freeze({
-    manifest: frozenManifest,
-    activate,
-  });
-
-  return extension;
-}
-
 // ---------------------------------------------------------------------------
 // Contribution kind bridging
 // ---------------------------------------------------------------------------
@@ -4215,19 +3518,14 @@ export interface ProjectExtensionRequirements {
 import type {
   RenderArtifact,
   RenderArtifactSidecarDescriptor,
-  RenderArtifactSidecarKind,
   RenderMaterial,
-  RenderMaterialRef,
   RenderStorageLocator,
 } from '@/sdk/video/rendering/artifacts.ts';
 import type {
   CapabilityFinding,
   DeterminismStatus,
-  RenderBlockerReason,
   RenderRoute,
 } from '@/sdk/video/rendering/renderability.ts';
-import type { ShaderMaterializerRequirementScope } from '@/sdk/video/rendering/capabilities.ts';
-import { shaderMissingMaterializerBlockerMessage } from '@/sdk/video/rendering/capabilities.ts';
 import type {
   TimelineDiff,
   TimelineDiffGranularity,
@@ -4242,233 +3540,6 @@ import type {
   MaterialReadSurface,
   MetadataFacetValueKind,
 } from '@/sdk/video/assets/metadata.ts';
-
-// ---------------------------------------------------------------------------
-// M12: Planner requirement contracts — capability requirements, source refs,
-// route-fit metadata, capability versioning, and integration capabilities
-// ---------------------------------------------------------------------------
-
-/**
- * M12: Version descriptor for a capability or contribution declaration.
- *
- * Carries a semver version and declaration provenance so planners can
- * detect version conflicts and stale registrations without importing
- * registry internals.
- */
-export interface CapabilityVersion {
-  /** Semantic version string (e.g. "1.0.0"). */
-  readonly semver: string;
-  /** Extension that declared this version, when applicable. */
-  readonly declaredBy?: string;
-  /** Contribution that declared this version, when applicable. */
-  readonly contributionId?: string;
-}
-
-/**
- * M12: Source reference for a capability requirement.
- *
- * Identifies where a capability requirement originates so planners
- * can attribute blockers and findings to the right extension,
- * registry, or built-in source.
- */
-export interface CapabilitySourceRef {
-  /** The kind of source that produced this capability. */
-  readonly source: 'extension' | 'built-in' | 'registry' | 'manifest' | 'provider';
-  /** Extension ID, when the source is an extension. */
-  readonly extensionId?: string;
-  /** Contribution ID, when the source is a specific contribution. */
-  readonly contributionId?: string;
-  /** Version of the capability declaration, when known. */
-  readonly version?: CapabilityVersion;
-}
-
-/**
- * M12: Route-fit metadata describing how well a capability maps to a route.
- *
- * Planners use route-fit metadata to decide whether a contribution can
- * authoritatively execute on a given route, or whether it must fall back
- * or block.
- */
-export interface RouteFitMetadata {
-  /** The route this fit metadata applies to. */
-  readonly route: RenderRoute;
-  /** Whether the capability supports, blocks, degrades, or is unknown for this route. */
-  readonly fit: 'supported' | 'blocked' | 'degraded' | 'unknown';
-  /** Reason for the fit, when not 'supported'. */
-  readonly reason?: RenderBlockerReason;
-  /** Human-readable message explaining the fit. */
-  readonly message?: string;
-}
-
-/**
- * M12: A single capability requirement produced by the planner.
- *
- * Each CapabilityRequirement describes what a contribution needs for a
- * specific route, its determinism posture, version, source provenance,
- * and any findings discovered during planning. This is the primary
- * record consumed by TimelineReader capability inspection and
- * renderPlanner aggregation.
- */
-export interface CapabilityRequirement {
-  /** Stable, unique identifier for this requirement. */
-  readonly id: string;
-  /** Where this requirement originates from. */
-  readonly sourceRef: CapabilitySourceRef;
-  /** The route this requirement applies to. */
-  readonly route: RenderRoute;
-  /** Required capabilities for this route (e.g. 'browser-export', 'worker-export'). */
-  readonly requiredCapabilities: readonly string[];
-  /** Determinism posture for this requirement. */
-  readonly determinism: DeterminismStatus;
-  /** Route-fit metadata describing how well this requirement fits the route. */
-  readonly routeFit?: RouteFitMetadata;
-  /** Version of the capability declaration, when known. */
-  readonly version?: CapabilityVersion;
-  /** Capability findings produced during planning. */
-  readonly findings?: readonly CapabilityFinding[];
-  /** Whether this requirement is a blocker for its route. */
-  readonly blocking?: boolean;
-}
-
-/**
- * M12: Minimal integration capabilities consumed by TimelineReader and
- * renderPlanner.
- *
- * Aggregates capability requirements, source references, and route
- * summaries so planners can consume a single normalized capabilities
- * record without importing registry internals or provider state.
- */
-export interface IntegrationCapabilities {
-  /** Extension that owns these capabilities, when scoped to a single extension. */
-  readonly extensionId?: string;
-  /** Contribution that owns these capabilities, when scoped to a single contribution. */
-  readonly contributionId?: string;
-  /** Routes covered by these capabilities. */
-  readonly routes: readonly RenderRoute[];
-  /** Aggregate determinism posture across all capabilities. */
-  readonly determinism: DeterminismStatus;
-  /** Individual capability requirements collected during planning. */
-  readonly capabilityRequirements: readonly CapabilityRequirement[];
-  /** Source references for all capabilities in this integration record. */
-  readonly sourceRefs: readonly CapabilitySourceRef[];
-  /** Whether all routes are fully supported (no blockers). */
-  readonly fullySupported: boolean;
-  /** Whether any route is blocked. */
-  readonly anyBlocked: boolean;
-}
-
-// ---------------------------------------------------------------------------
-// M12: Artifact manifest, sidecar, sampling, and process roundtrip contracts
-// ---------------------------------------------------------------------------
-
-export type SamplingStrategy =
-  | 'whole-timeline'
-  | 'clip-slices'
-  | 'frame-extracts'
-  | 'thumbnail-grid'
-  | 'audio-windows'
-  | 'render-groups';
-
-export interface SamplingSourceRef {
-  readonly kind: 'timeline' | 'clip' | 'track' | 'asset' | 'material' | 'render-group';
-  readonly id: string;
-  readonly clipId?: string;
-  readonly trackId?: string;
-  readonly assetKey?: string;
-  readonly materialRefId?: string;
-  readonly renderGroupId?: string;
-}
-
-export interface SamplingRange {
-  readonly startFrame?: number;
-  readonly endFrame?: number;
-  readonly startSeconds?: number;
-  readonly endSeconds?: number;
-  readonly startSample?: number;
-  readonly endSample?: number;
-}
-
-export type SamplingAttachmentKind = 'label' | 'caption' | 'cue' | 'provenance' | 'metadata';
-
-export interface SamplingAttachmentRule {
-  readonly kind: SamplingAttachmentKind;
-  readonly fieldPath?: string;
-  readonly sidecarKind?: RenderArtifactSidecarKind;
-  readonly required?: boolean;
-}
-
-/** M12: Declarative sampling request consumed by planners and export shells. */
-export interface SamplingConfig {
-  readonly id?: string;
-  readonly strategy: SamplingStrategy;
-  readonly sources: readonly SamplingSourceRef[];
-  readonly range?: SamplingRange;
-  readonly fps?: number;
-  readonly sampleRate?: number;
-  readonly resolution?: string;
-  readonly sliceClips?: boolean;
-  readonly attachments?: readonly SamplingAttachmentRule[];
-  readonly includeLabels?: boolean;
-  readonly includeCaptions?: boolean;
-  readonly includeProvenance?: boolean;
-}
-
-export interface SamplingResultItem {
-  readonly id: string;
-  readonly sourceRef: SamplingSourceRef;
-  readonly range?: SamplingRange;
-  readonly frame?: number;
-  readonly timestampSeconds?: number;
-  readonly artifactId?: string;
-  readonly manifestEntryId?: string;
-  readonly sidecars?: readonly RenderArtifactSidecarDescriptor[];
-  readonly diagnostics?: readonly CapabilityFinding[];
-}
-
-/** M12: Result vocabulary for dry-runs and dataset/show-control exports. */
-export interface SamplingResult {
-  readonly configId?: string;
-  readonly items: readonly SamplingResultItem[];
-  readonly sidecars?: readonly RenderArtifactSidecarDescriptor[];
-  readonly manifestRefs?: readonly string[];
-  readonly diagnostics?: readonly CapabilityFinding[];
-}
-
-export interface ProcessRoundtripRequest {
-  readonly id: string;
-  readonly processId: string;
-  readonly operationId: string;
-  readonly inputMaterialRefs?: readonly RenderMaterialRef[];
-  readonly inputArtifactRefs?: readonly RenderArtifact[];
-  readonly params?: Record<string, unknown>;
-  readonly frameRange?: SamplingRange;
-  readonly renderGroupId?: string;
-  readonly passNames?: readonly string[];
-  readonly sampling?: SamplingConfig;
-}
-
-export type ProcessRoundtripAction =
-  | 'insert-as-clip'
-  | 'replace-clip'
-  | 'attach-to-clip'
-  | 'download-sidecar'
-  | 'discard'
-  | 'create-proposal';
-
-export interface ProcessRoundtripResult {
-  readonly requestId: string;
-  readonly processId: string;
-  readonly operationId: string;
-  readonly status: 'completed' | 'failed' | 'cancelled';
-  readonly returnedMaterials: readonly RenderMaterial[];
-  readonly artifacts?: readonly RenderArtifact[];
-  readonly sidecars?: readonly RenderArtifactSidecarDescriptor[];
-  readonly diagnostics?: readonly CapabilityFinding[];
-  readonly logs?: readonly ProcessLogSummary[];
-  readonly progress?: ProcessProgressEvent;
-  readonly availableActions?: readonly ProcessRoundtripAction[];
-  readonly metadata?: Record<string, unknown>;
-}
 
 // ---------------------------------------------------------------------------
 // M3: TimelineOps — atomic mutation interface
@@ -4524,277 +3595,6 @@ export interface TimelineOps {
    * Returns the diff describing which tracks were affected.
    */
   setAllTracksMuted(muted: boolean): TimelineDiff;
-}
-
-// ---------------------------------------------------------------------------
-// M3 / M12: TimelineSnapshot, summary types, TimelineReader — now in
-// src/sdk/video/timeline/reader.ts (re-exported above)
-// ---------------------------------------------------------------------------
-// M12: getCapabilityRequirements — provider-free capability inspection
-// (TimelineSnapshot, summary types, and TimelineReader are now defined in
-// src/sdk/video/timeline/reader.ts and re-exported above.)
-// ---------------------------------------------------------------------------
-
-/**
- * M12: Derive capability requirements from a TimelineSnapshot.
- *
- * Inspects clip types, effects, transitions, live bindings, and material
- * refs present in the snapshot and emits {@link CapabilityRequirement}
- * records without importing provider stores, raw timeline rows, or
- * mutation APIs.
- *
- * The returned requirements are data-only; they carry route-fit metadata
- * and determinism posture so planners can aggregate them without
- * re-deriving the same information from raw timeline data.
- *
- * @param snapshot - A TimelineSnapshot produced by a TimelineReader.
- * @returns Ordered array of CapabilityRequirement records.
- */
-export function getCapabilityRequirements(
-  snapshot: TimelineSnapshot,
-): CapabilityRequirement[] {
-  const requirements: CapabilityRequirement[] = [];
-  let reqCounter = 0;
-
-  const nextId = (prefix: string): string => {
-    reqCounter += 1;
-    return `snapshot.${prefix}.${reqCounter}`;
-  };
-
-  // Guard: if snapshot has no clips, return empty.
-  if (!snapshot.clips || snapshot.clips.length === 0) {
-    return requirements;
-  }
-
-  // ── Clip-type requirements ──────────────────────────────────────────
-  const seenClipTypes = new Set<string>();
-  for (const clip of snapshot.clips) {
-    if (!clip.clipType || seenClipTypes.has(clip.clipType)) continue;
-    seenClipTypes.add(clip.clipType);
-
-    const sourceRef: CapabilitySourceRef = clip.managedBy
-      ? {
-          source: 'extension',
-          extensionId: clip.managedBy,
-        }
-      : { source: 'built-in' };
-
-    requirements.push({
-      id: nextId('clipType'),
-      sourceRef,
-      route: 'browser-export',
-      requiredCapabilities: ['browser-export'],
-      determinism: clip.managedBy ? 'preview-only' : 'deterministic',
-    });
-  }
-
-  // ── Effect requirements ─────────────────────────────────────────────
-  const seenEffects = new Set<string>();
-  for (const clip of snapshot.clips) {
-    if (!clip.effects) continue;
-    for (const effect of clip.effects) {
-      const effectKey = `${clip.id}.${effect.effectType ?? 'unknown'}`;
-      if (seenEffects.has(effectKey)) continue;
-      seenEffects.add(effectKey);
-
-      const sourceRef: CapabilitySourceRef = effect.managedBy
-        ? {
-            source: 'extension',
-            extensionId: effect.managedBy,
-          }
-        : { source: 'built-in' };
-
-      requirements.push({
-        id: nextId('effect'),
-        sourceRef,
-        route: 'browser-export',
-        requiredCapabilities: ['browser-export'],
-        determinism: effect.managedBy ? 'preview-only' : 'deterministic',
-        findings: effect.managedBy
-          ? undefined
-          : [
-              {
-                id: `builtin.effect.${effect.effectType ?? 'unknown'}.${clip.id}`,
-                severity: 'info',
-                route: 'browser-export',
-                message: `Built-in effect "${effect.effectType ?? 'unknown'}" on clip "${clip.id}" is deterministic for browser export.`,
-                clipId: clip.id,
-              },
-            ],
-      });
-    }
-  }
-
-  // ── Transition requirements ─────────────────────────────────────────
-  const seenTransitions = new Set<string>();
-  for (const clip of snapshot.clips) {
-    if (!clip.transition) continue;
-    const tKey = `${clip.id}.${clip.transition.transitionType ?? 'unknown'}`;
-    if (seenTransitions.has(tKey)) continue;
-    seenTransitions.add(tKey);
-
-    const sourceRef: CapabilitySourceRef = clip.transition.managedBy
-      ? {
-          source: 'extension',
-          extensionId: clip.transition.managedBy,
-        }
-      : { source: 'built-in' };
-
-    requirements.push({
-      id: nextId('transition'),
-      sourceRef,
-      route: 'browser-export',
-      requiredCapabilities: ['browser-export'],
-      determinism: clip.transition.managedBy ? 'preview-only' : 'deterministic',
-    });
-  }
-
-  // ── Live-binding requirements ───────────────────────────────────────
-  if (snapshot.liveBindings) {
-    const seenBindings = new Set<string>();
-    for (const binding of snapshot.liveBindings) {
-      if (seenBindings.has(binding.bindingId)) continue;
-      seenBindings.add(binding.bindingId);
-
-      const sourceRef: CapabilitySourceRef = {
-        source: 'provider',
-      };
-
-      const isBlocking = binding.status !== 'resolved';
-
-      requirements.push({
-        id: nextId('liveBinding'),
-        sourceRef,
-        route: 'browser-export',
-        requiredCapabilities: ['browser-export', 'sidecar-export'],
-        determinism: 'live-unbaked',
-        blocking: isBlocking,
-        routeFit: isBlocking
-          ? {
-              route: 'browser-export',
-              fit: 'blocked',
-              reason: 'live-unbaked',
-              message: `Live binding "${binding.bindingId}" on clip "${binding.clipId}" is not resolved.`,
-            }
-          : {
-              route: 'browser-export',
-              fit: 'supported',
-            },
-        findings: [
-          isBlocking
-            ? {
-                id: `liveBinding.${binding.bindingId}.${binding.clipId}`,
-                severity: 'warning',
-                route: 'browser-export',
-                reason: 'live-unbaked',
-                message: `Live binding "${binding.bindingId}" (source: ${binding.sourceKind}) on clip "${binding.clipId}" has status "${binding.status ?? 'unknown'}".`,
-                clipId: binding.clipId,
-              }
-            : {
-                id: `liveBinding.${binding.bindingId}.${binding.clipId}`,
-                severity: 'info',
-                route: 'browser-export',
-                message: `Live binding "${binding.bindingId}" on clip "${binding.clipId}" is resolved.`,
-                clipId: binding.clipId,
-              },
-        ],
-      });
-    }
-  }
-
-  // ── Material-ref requirements ───────────────────────────────────────
-  if (snapshot.materialRefs) {
-    for (const ref of snapshot.materialRefs) {
-      const sourceRef: CapabilitySourceRef = {
-        source: 'registry',
-      };
-
-      requirements.push({
-        id: nextId('materialRef'),
-        sourceRef,
-        route: 'browser-export',
-        requiredCapabilities: ['browser-export'],
-        determinism: ref.determinism ?? 'unknown',
-      });
-    }
-  }
-
-  // ── Source-ref requirements ────────────────────────────────────────
-  if (snapshot.sourceRefs) {
-    for (const ref of snapshot.sourceRefs) {
-      const sourceRef: CapabilitySourceRef = ref.extensionId
-        ? {
-            source: 'extension',
-            extensionId: ref.extensionId,
-          }
-        : {
-            source: ref.sourceKind === 'generation' ? 'provider' : 'registry',
-          };
-
-      const determinism = ref.determinism ?? 'unknown';
-      const blocksBrowserExport =
-        determinism === 'process-dependent' || determinism === 'live-unbaked';
-
-      requirements.push({
-        id: nextId('sourceRef'),
-        sourceRef,
-        route: 'browser-export',
-        requiredCapabilities: blocksBrowserExport
-          ? ['browser-export', 'sidecar-export']
-          : ['browser-export'],
-        determinism,
-        ...(blocksBrowserExport
-          ? {
-              blocking: true,
-              routeFit: {
-                route: 'browser-export',
-                fit: 'blocked',
-                reason: determinism,
-                message: `Source ref "${ref.id}" on clip "${ref.clipId}" requires materialization before browser export.`,
-              },
-            }
-          : {}),
-      });
-    }
-  }
-
-  // ── Shader materializer requirements ───────────────────────────────
-  if (snapshot.shaders) {
-    for (const shader of snapshot.shaders) {
-      if (shader.enabled === false) continue;
-
-      const sourceRef: CapabilitySourceRef = {
-        source: 'extension',
-        extensionId: shader.extensionId,
-        contributionId: shader.contributionId,
-      };
-      const routes: readonly RenderRoute[] = ['browser-export', 'worker-export'];
-
-      for (const route of routes) {
-        const message = shaderMissingMaterializerBlockerMessage(
-          shader.shaderId,
-          shader.scope,
-          shader.clipId,
-        );
-        requirements.push({
-          id: nextId('shader'),
-          sourceRef,
-          route,
-          requiredCapabilities: ['render-material', 'shader-materializer'],
-          determinism: 'preview-only',
-          blocking: true,
-          routeFit: {
-            route,
-            fit: 'blocked',
-            reason: 'missing-material',
-            message,
-          },
-        });
-      }
-    }
-  }
-
-  return requirements;
 }
 
 // ---------------------------------------------------------------------------

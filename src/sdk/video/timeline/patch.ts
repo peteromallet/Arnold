@@ -12,7 +12,7 @@
  * @publicContract
  */
 
-import type { DiagnosticSeverity } from '@/sdk/index';
+import type { DiagnosticSeverity } from '../../diagnostics';
 
 /** Top-level operation families supported by TimelinePatch. */
 export type TimelinePatchOpFamily =

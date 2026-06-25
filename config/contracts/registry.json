@@ -628,6 +628,171 @@
         "validateInstalledPackage",
         "validateManifest"
       ]
+    },
+    {
+      "id": "editor-sdk-ids",
+      "class": "runtime_contract",
+      "path": "src/sdk/ids.ts",
+      "requiredTags": [
+        "@publicContract"
+      ],
+      "expectedExports": [
+        "ExtensionId",
+        "ContributionId",
+        "validateExtensionId",
+        "validateContributionId"
+      ]
+    },
+    {
+      "id": "editor-sdk-dispose",
+      "class": "runtime_contract",
+      "path": "src/sdk/dispose.ts",
+      "requiredTags": [
+        "@publicContract"
+      ],
+      "expectedExports": [
+        "DisposeHandle"
+      ]
+    },
+    {
+      "id": "editor-sdk-diagnostics",
+      "class": "runtime_contract",
+      "path": "src/sdk/diagnostics.ts",
+      "requiredTags": [
+        "@publicContract"
+      ],
+      "expectedExports": [
+        "DiagnosticSeverity",
+        "DiagnosticSource",
+        "DIAGNOSTIC_SOURCE_EXTENSION",
+        "ExtensionDiagnostic",
+        "DiagnosticSourceRange",
+        "Diagnostic",
+        "DiagnosticCollection",
+        "DEFAULT_DIAGNOSTIC_PER_EXTENSION_CAPACITY",
+        "CreateDiagnosticCollectionOptions",
+        "createDiagnosticCollection",
+        "ExportDiagnostic"
+      ]
+    },
+    {
+      "id": "editor-sdk-manifest",
+      "class": "runtime_contract",
+      "path": "src/sdk/manifest.ts",
+      "requiredTags": [
+        "@publicContract"
+      ],
+      "expectedExports": [
+        "ContributionKind",
+        "VideoEditorSlotName",
+        "ExtensionContribution",
+        "KNOWN_CONTRIBUTION_KINDS",
+        "KNOWN_CONTRIBUTION_KINDS_SET",
+        "KNOWN_SLOT_NAMES",
+        "KNOWN_SLOT_NAMES_SET",
+        "INSPECTOR_SECTION_PLACEMENTS",
+        "PANEL_PLACEMENTS",
+        "ASSET_DETAIL_SECTION_PLACEMENTS",
+        "ALL_VALID_PLACEMENTS",
+        "ManifestValidationMode",
+        "ManifestValidationResult"
+      ]
+    },
+    {
+      "id": "editor-sdk-packaging",
+      "class": "runtime_contract",
+      "path": "src/sdk/packaging.ts",
+      "requiredTags": [
+        "@publicContract"
+      ],
+      "expectedExports": [
+        "DependencyPosture",
+        "ExtensionDependency",
+        "IntegrityAlgorithm",
+        "IntegrityHash",
+        "MigrationHookKind",
+        "MigrationDeclaration",
+        "InstalledExtensionMetadata"
+      ]
+    },
+    {
+      "id": "editor-sdk-settings",
+      "class": "runtime_contract",
+      "path": "src/sdk/settings.ts",
+      "requiredTags": [
+        "@publicContract"
+      ],
+      "expectedExports": [
+        "ExtensionSettingsSchema",
+        "ExtensionSettingsService"
+      ]
+    },
+    {
+      "id": "editor-sdk-commands",
+      "class": "runtime_contract",
+      "path": "src/sdk/commands.ts",
+      "requiredTags": [
+        "@publicContract"
+      ],
+      "expectedExports": [
+        "TargetContext",
+        "TargetContextPayload",
+        "CommandRunContext",
+        "CommandHandler",
+        "CommandRegistrationOptions"
+      ]
+    },
+    {
+      "id": "editor-sdk-chrome",
+      "class": "runtime_contract",
+      "path": "src/sdk/chrome.ts",
+      "requiredTags": [
+        "@publicContract"
+      ],
+      "expectedExports": [
+        "ExtensionChromeService",
+        "ChromeEvent",
+        "ChromeToastPayload",
+        "ChromeProgressPayload",
+        "ChromeSavePayload",
+        "ChromeRenderStatusPayload",
+        "ChromeEventPayload"
+      ]
+    },
+    {
+      "id": "editor-sdk-context",
+      "class": "runtime_contract",
+      "path": "src/sdk/context.ts",
+      "requiredTags": [
+        "@publicContract"
+      ],
+      "expectedExports": [
+        "ExtensionI18nService",
+        "ExtensionDiagnosticsService",
+        "CreativeContext",
+        "CREATIVE_MEMBER_MILESTONE",
+        "ExtensionNotImplementedError",
+        "createCreativeContextStubs",
+        "createCreativeContext",
+        "ExtensionCommandService",
+        "ExtensionContext",
+        "CONTEXT_DISPOSE_SYMBOL",
+        "disposeExtensionContextServices"
+      ]
+    },
+    {
+      "id": "editor-sdk-lifecycle",
+      "class": "runtime_contract",
+      "path": "src/sdk/lifecycle.ts",
+      "requiredTags": [
+        "@publicContract"
+      ],
+      "expectedExports": [
+        "ExtensionActivateFn",
+        "ReighExtension",
+        "DefineExtensionOptions",
+        "defineExtension"
+      ]
     }
   ]
 }

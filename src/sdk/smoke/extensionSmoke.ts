@@ -14,8 +14,8 @@
  * @publicContract
  */
 
-import { defineExtension } from '@reigh/editor-sdk';
-import type { ContributionId, ExtensionId, ReighExtension } from '@reigh/editor-sdk';
+import { defineExtension, type ReighExtension } from '../lifecycle';
+import type { ContributionId, ExtensionId } from '../ids';
 
 // ---------------------------------------------------------------------------
 // Constants

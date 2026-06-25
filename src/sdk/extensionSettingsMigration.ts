@@ -8,10 +8,8 @@
  * persisted for audit.
  */
 
-import type {
-  ExtensionManifest,
-  MigrationDeclaration,
-} from '@/sdk/index';
+import type { MigrationDeclaration } from './packaging';
+import type { ExtensionManifest } from './manifest';
 import type {
   StateRepository,
   SettingsSnapshot,
